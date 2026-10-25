@@ -144,7 +144,12 @@ public sealed class FacWarMgrService(FwService factionWarfare, FacWarMgrCallback
             case "GetCharacterRankOverview":
                 return await RankOverviewAsync(Id(call, 0), cancellation);
             case "CheckForRankChange":
-                return PyNone.Instance;
+            {
+                if (characterId <= 0 || !FwFactions.IsOccupier(warFactionId))
+                    return PyNone.Instance;
+                var standing = await callbacks.ReadStandingAsync(characterId, FwFactions.MilitiaCorporationOf(warFactionId), cancellation);
+                return new PyInt(FwRules.RankOf(standing));
+            }
             case "GetSolarSystemLPs":
             case "GetSolarSystemLPsEx":
                 return new PyInt(await factionWarfare.SolarSystemLpsAsync(Id(call, 0), cancellation));

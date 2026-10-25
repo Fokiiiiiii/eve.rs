@@ -35,7 +35,7 @@ Production registration is in `dotnet/src/Eve.Host/Rpc/CorporationRpc.cs:46,60`.
 - `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/src/Eve.Services.Corporations/Eve.Services.Corporations.csproj --no-restore -p:UseSharedCompilation=false -p:BuildProjectReferences=false` — passed, 0 warnings and 0 errors.
 - `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore -p:UseSharedCompilation=false -p:BuildProjectReferences=false` — passed, 0 warnings and 0 errors.
 - `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-build --filter 'FullyQualifiedName~Corporation_read_rpcs_keep_client_shapes_through_host_with_transport_kwargs' -p:UseSharedCompilation=false` — passed, 1 test, 0 skipped.
-- The preceding pushed increment `93a5c7b5` passed agent-test run `40173516530`; its push-triggered `ci.yml` run `40173509928` was still running at handoff update time.
+- Pushed SHA `93a5c7b5` passed agent-test run `40173516530`; its push-triggered `ci.yml` run `40173509928` remained in progress at the latest check. Pushed SHA `34a9e462` passed agent-test run `40174450658`; its push-triggered `ci.yml` run `40174443344` was queued at the latest check.
 - Graphical-client behavior was not exercised.
 
 The remaining requested Host checks are positive-state calls for public corporation info, asset search, medal creation/list/details/received, and employment history. They were not included because those paths read persisted corporation/character state and this task forbids using a PostgreSQL database. Do not close the RPC rows based on the test above.

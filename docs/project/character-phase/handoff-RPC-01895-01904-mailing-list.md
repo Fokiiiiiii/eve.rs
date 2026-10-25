@@ -29,4 +29,6 @@ The client-side decision points above were searched across the full /home/user/e
 
 - PASS: MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --filter 'FullyQualifiedName~Mailing_list_manager_mutations_are_forwarded_through_registered_host_wire' — 1 passed, 0 failed, 0 skipped.
 - The same focused test was rerun after tightening the Join KeyVal field assertion — 1 passed, 0 failed, 0 skipped.
+- GitHub Actions agent-test run 40212503977 for commit 6fbb4951 succeeded: the selected Host test passed, with no failed tests or jobs.
+- `python3 tools/dev/ci-status.py failures 6fbb4951` returned “No ci.yml run found” when checked after the focused run.
 - A real graphical client walk was not performed.

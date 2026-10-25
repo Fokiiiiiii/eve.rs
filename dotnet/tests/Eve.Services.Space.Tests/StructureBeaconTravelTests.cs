@@ -43,9 +43,11 @@ public sealed class StructureBeaconTravelTests
     [Theory]
     [InlineData("CmdGroupJumpToStructureBeacon")]
     [InlineData("CmdBridgeToStructureBeacon")]
-    public async Task Group_and_bridge_calls_do_not_fall_through_to_a_single_pilot_jump(string method)
+    public async Task Group_and_bridge_calls_use_their_own_runtime(string method)
     {
+        var calledMethod = (string?)null;
         var jumpCalled = false;
+        var expected = PyBool.True;
         var travel = new StructureBeaconTravel(
             (_, _) => ValueTask.FromResult<StructureBeaconInfo?>(new(StructureBeaconTravel.PharoluxCynoBeaconType, DestinationSystemId, true)),
             (_, _) => ValueTask.FromResult(false),
@@ -54,11 +56,20 @@ public sealed class StructureBeaconTravelTests
             {
                 jumpCalled = true;
                 return Task.FromResult<PyValue>(new PyInt(1));
+            },
+            bridge: (call, _, _) =>
+            {
+                calledMethod = call.Method;
+                return ValueTask.FromResult<PyValue>(expected);
+            },
+            groupJump: (call, _, _) =>
+            {
+                calledMethod = call.Method;
+                return ValueTask.FromResult<PyValue>(expected);
             });
 
-        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => travel.TravelAsync(Call(method)).AsTask());
-
-        Assert.Contains("not supported", NotifyText(error));
+        Assert.Same(expected, await travel.TravelAsync(Call(method)));
+        Assert.Equal(method, calledMethod);
         Assert.False(jumpCalled);
     }
 

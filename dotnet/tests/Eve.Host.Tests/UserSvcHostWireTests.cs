@@ -19,6 +19,7 @@ public sealed class UserSvcHostWireTests
         var characterId = await rig.CreateCharacterAsync();
         var session = new ClientSession { UserId = userId, CharacterId = characterId };
         session.Set("stationid", new PyLong(rig.Station));
+        rig.Sessions.Enter(characterId, session);
         var userSvc = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("userSvc"));
 
         foreach (var method in new[]
@@ -72,7 +73,6 @@ public sealed class UserSvcHostWireTests
         Assert.Equal(PyBool.True, await Call(userSvc, session, "ReportISKSpammer",
             new PyLong(characterId + 1), new PyStr("local"), new PyList([])));
 
-        rig.Sessions.Enter(characterId, session);
         Assert.Equal(PyBool.True, await Call(userSvc, session, "UserLogOffCharacter"));
     }
 

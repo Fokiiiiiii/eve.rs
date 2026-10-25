@@ -826,3 +826,15 @@ Regression tests added: `DungeonWaveTests.A_system_owned_wave_waits_until_a_pilo
 - The provider binding has moved to the actual Host registration call: `HostComposition` passes the existing `InvBrokerService` from the character service set as `contractInventoryReader` to `CoreServices.Create`. The invalid lookup was removed from `CharacterServiceList`.
 - Focused Agent run 558 (`40182198650`) also caught an assertion indexing error: `PyPackedRow.Values[0]` is itemID and `Values[1]` is typeID, so the wire test now checks item IDs 7001/8001 at index 0 and SDE type ID 34 at index 1. Its Asset Safety test passed; its contract wire test failed only on that expected column.
 - Local Host build was queued behind the shared heavy-build lock when these corrections were prepared. Agent test and push-gate runs after the next push will be recorded here.
+
+
+## 2026-10-25 push-gate 902 failure follow-up
+
+Push CI run 40183830326 for 7ba739e0 failed in Host shards 1, 2 and 3. The failures and fixes are:
+
+- `Contract_reads_and_mutations_are_dispatched_through_the_host_with_client_shapes` expected itemID at packed-row column 1; `PyPackedRow.Values[0]` is itemID and `[1]` is SDE typeID 34. The Host wire assertion now checks the proper columns.
+- `Asset_safety_client_rpcs_reach_the_real_host_and_persist_wire_visible_state` completed delivery but timed out waiting for `OnAssetSafetyDelivered`. The manual-delivery handler used to process automatic deliveries before resolving the wrap owner; that could remove the wrap before notification routing. It now resolves owner state first, then performs the requested delivery. This matches EveJS v0.12.9 `structureAssetSafetyService.js:291-306` and `structureAssetSafetyState.js:1840-1844`, which deliver the requested wrap without refreshing it through the automatic-delivery tick first.
+- `Registered_user_service_replies_match_the_v24_consumers` called redeem claiming with a detached `ClientSession`; the production provider reads location from the Host session store. The fixture now enters the session before invoking the service.
+- `Real_host_registry_methods_are_enumerable` expected 1396 routes while the registered Host exposes 1399 after the three contract inventory RPCs were added. Its expected count is updated.
+
+The merged HostComposition already passes the registered `InvBrokerService` to CoreServices; a duplicate argument introduced while merging this work was removed. Local Host test-project compilation is pending. No local PostgreSQL connection was used. The corrected push-gate result will be added after Actions completes.

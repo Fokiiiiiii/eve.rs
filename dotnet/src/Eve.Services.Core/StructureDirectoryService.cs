@@ -733,7 +733,6 @@ public sealed class StructureAssetSafetyService(
                 if (characterId <= 0 || assetWrapId <= 0 || solarSystemId <= 0 || destinationId <= 0)
                     throw Eve.Services.MachoErrors.ThrowUserError(
                         "CustomNotify", ("notify", new PyWString("Invalid Asset Safety delivery request.")));
-                await _read.ProcessDueAutomaticDeliveriesAsync(call.Cancellation);
                 var personalWraps = await _read.GetItemsInSafetyForCharacterAsync(characterId, call.Cancellation);
                 var ownerId = ContainsWrap(personalWraps, assetWrapId) ? characterId : 0;
                 var corporationOwned = false;

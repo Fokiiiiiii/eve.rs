@@ -32,11 +32,8 @@ The existing compatibility record documents the only client-irrelevant reply dif
 
 ## Checks
 
-- PASS: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false` (0 warnings, 0 errors).
-- PASS: focused `IndustryJobsHostWireTests.Registered_industry_manager_routes_keep_client_shapes_and_accept_transport_kwargs` (1 passed, 0 failed, 0 skipped). It sends real Macho CallReq packets, includes transport `machoVersion`, dispatches through `ServiceRegistry` and `PacketDispatcher`, and checks replies plus subsequent state reads without PostgreSQL.
-- PASS: Actions run `40179556882` on `c5387254` completed successfully with no failed tests or jobs.
-- PASS: Actions run `40179555776` on `c5387254` completed successfully with no failed tests or jobs.
-- Existing monitor regression `IndustryMonitorNoticeTests.Host_inventory_dispatch_publishes_changed_materials_once_after_item_change_and_isolates_sessions` was selected in its own Host test dispatch.
-- At these successful run summaries, the status tool reported no failed tests but did not include skipped-test totals.
-- PASS: push-triggered `ci.yml` run `40179543366` for `c5387254` completed successfully with no failed tests or jobs.
-- PostgreSQL and graphical-client sessions were not used for this batch. The persistence implementation has separate PostgreSQL tests; the new wire regression checks the service and transport contract without that lane.
+- PASS: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore -p:UseSharedCompilation=false` (0 warnings, 0 errors).
+- PASS: focused `IndustryHostRpcTests` (2 passed, 0 failed, 0 skipped). The real service implementations are dispatched as Macho CallReq through `ServiceRegistry` and `PacketDispatcher`; industry mutations use a recording operations-port fixture, and monitor materials use a provider fixture. No PostgreSQL was used.
+- The regression checks all seven manager calls and both monitor calls, manager wire shapes and typed mutation inputs, material-change notification delivery, and disconnect cleanup.
+- Actions and push-triggered CI checks for this batch are pending.
+- PostgreSQL and graphical-client sessions were not used.

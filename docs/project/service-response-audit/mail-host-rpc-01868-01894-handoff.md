@@ -32,5 +32,5 @@ Whole-tree Serena searches across `/home/user/eve-logic/eve/client` found no add
 - The existing `MailingListService` routes remain registered in the mail Host composition; the real Host wire regression exercises Create, Delete, ClearEntityAccess, ClearWelcomeMail and the five read methods with the transport's `machoVersion` keyword.
 - `MailRpcHostWireTests` also checks SyncMail's populated client fields, all selected mail mutation routes, persisted in-memory status/label transitions, and an accepted 500-ID MarkAsRead burst.
 - Local Host.Tests build succeeded with 0 warnings and 0 errors. The focused wire test passed (1 passed, 0 skipped). No PostgreSQL database or graphical client was used.
-
-Remote Actions results will be added after dispatch and the push-triggered gate finish.
+- Agent-test Actions run [40214976142](https://github.com/Fokiiiiiii/eve.rs/actions/runs/40214976142) passed for source commit `28f1fbb16cec`, with no failed tests or jobs.
+- Push-triggered ci.yml run [40214970900](https://github.com/Fokiiiiiii/eve.rs/actions/runs/40214970900) for `28f1fbb16cec` was still in progress at the last status check.

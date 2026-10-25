@@ -100,3 +100,7 @@ EveJS v0.12.9 dispatches the manager calls in `server/src/services/fleets/fleetM
 ### Follow-up verification after commit c3635591
 
 The first Agent-test attempt (40229018434) and push CI (40229011102) failed during `actions/setup-dotnet` because downloads from dotnetorigin.blob.core.windows.net returned HTTP 409. Agent-test retry 40229373637 passed setup but exposed an existing compile error in `ShipRpcHostTests.cs`: its uses of `Py` lacked the `Eve.Services` import. Added that namespace import. After merging latest main (dc360683, including the CI SDK download fix), local Host test-project build passed (0 warnings/errors), and the focused fleet wire test passed (1 passed, 0 skipped). The retried CI build's unrelated compile failure is corrected; a fresh post-fix Actions run is pending.
+
+### Latest Actions result and follow-up
+
+Agent-test run 40230877435 on 9f4975e0 failed because the concurrent main merge added the same `Eve.Services` import, leaving a duplicate directive. Removed the duplicate after the merge. The merged tree now builds locally (Host test project, 0 warnings/errors), and the fleet focused wire test passes (1 passed, 0 skipped). This cleanup is ready to push; its Actions result will be recorded after dispatch.

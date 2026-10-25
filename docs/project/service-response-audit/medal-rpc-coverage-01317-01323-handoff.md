@@ -29,3 +29,4 @@ The current Host `dotnet/src/Eve.Services.Corporations/CorporationService.cs` re
 - GitHub Agent test run `40175314720`, dispatched with ref `495d74b1`: succeeded with no failed tests or jobs. The completed workflow reports tested SHA `c752afd43372`, which contains the medal Host test and notification changes.
 - `python3 tools/dev/ci-status.py failures c752afd43372`: no `ci.yml` run was found for that SHA.
 - Real graphical V24.01 client behavior was not exercised.
+- Push-triggered CI for `a9592bb09c3c` also ran the unrelated `MarketTradeHostWireTests.Registered_market_and_trade_calls_reply_and_update_persisted_state` and failed because nested `PyList` equality compared record fields instead of list contents. The assertion now checks the trader values as an element sequence; Host.Tests builds successfully after the correction.

@@ -31,8 +31,11 @@ public partial class HostServerTests
             var reply = Assert.IsType<Send>(await front.ReceiveAsync());
             var response = MarshalCodec.Decode(reply.Payload);
             var responseState = ((PyTuple)((PyObject)response).Args).Items;
+            var errorName = response is PyObject { Name: PyBytes name }
+                ? System.Text.Encoding.UTF8.GetString(name.Value.Span)
+                : response.ToString();
             Assert.True(((PyInt)responseState[0]).Value == 7,
-                $"{method} returned an error response: {response}");
+                $"{method} returned an error response {errorName}: {response}");
             return Result(response)!;
         }
 

@@ -36,3 +36,12 @@ The client-side decision points above were searched across the full /home/user/e
 - GitHub Actions agent-test run 40212503977 for commit 6fbb4951 succeeded: the selected Host test passed, with no failed tests or jobs.
 - `python3 tools/dev/ci-status.py failures 6fbb4951` returned “No ci.yml run found” when checked after the focused run.
 - A real graphical client walk was not performed.
+
+
+## Follow-up on pushed CI
+
+- Commit `3bbc382b` was pushed to `main`. Agent-test run `40230484611` passed the selected mailing-list Host wire test (1 passed, 0 failed, 0 skipped).
+- Push-triggered CI run `40230469827` failed in unrelated Host test cases. Its registry inventory reported 1,420 RPC rows instead of the old 1,414 snapshot; the snapshot was updated to 1,420. In a local no-database invocation this registry test reports only 236 rows and therefore does not represent the CI Host composition.
+- Other CI failures exposed stale wire-test assumptions: decoded strings are `PyBytes`, error packets use `MachoMessage.ErrorResponse` (15), and inventory movement emits a notification before the call reply. The affected assertions/read loop now follow those observed wire shapes.
+- The CI insurance purchase test failed because the Rifter produced no 50% quote from its returned insurance value. It remains to be resolved on the database-backed Actions lane; local database tests were not run as required.
+- Local Host test project build passed with 0 errors (6 transient file-copy retry warnings while another process held `Eve.Services.Space.dll`). The no-database inventory focused invocation failed with 236 rows versus the CI snapshot of 1,420; no database was used.

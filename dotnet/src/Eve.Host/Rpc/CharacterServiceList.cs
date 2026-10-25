@@ -67,6 +67,7 @@ internal sealed partial class CharacterServicesComposition
             .. AgentRpc(),
         ];
         services = [.. services, .. SpaceRpc()];
+        SingleRegisteredService<ContractProxyService>(services).Inventory = SingleRegisteredService<InvBrokerService>(services);
         services = [.. services, new RepackagingService(SingleRegisteredService<InvBrokerService>(services))];
         services = [.. services, new Eve.Services.Corporations.BillMgrService(
             corporations,

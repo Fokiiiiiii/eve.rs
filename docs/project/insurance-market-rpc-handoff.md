@@ -1,0 +1,19 @@
+# Insurance / market Host RPC coverage handoff
+
+## Scope and implementation
+
+All requested service methods were present in this worktree. Insurance uses the production persisted read/write models in `dotnet/src/Eve.Host/Composition/CharacterComposition.cs:201-212` and is registered in `dotnet/src/Eve.Host/Rpc/MailRpc.cs:141-145`. Its ship-loss and boarding paths use the same insurance writer in `dotnet/src/Eve.Host/Composition/SpaceComposition.cs:334-355`. Market methods are composed by the economy RPC registration. No handler or storage implementation was duplicated.
+
+Extended `dotnet/tests/Eve.Host.Tests/MarketHostTests.cs:156-182` to call all six insurance methods through the production Host registry, checking contract list/None replies, numeric price and keyed bulk-price shapes, plus refusal errors when the ship has no persisted insurance eligibility. Added `MarketRpcHostWireTests.cs`; it builds `HostComposition`, looks up the registered market proxy, calls the target read methods, and checks decoded rowset/keyval/list/dict shapes. Existing `MarketHostTests.cs:140-187` exercises BuyMultipleItems fill, CharGetTransactions contents, wallet debit and restart persistence; other scenarios cover cancellation and asks.
+
+## V24.01 client callers and consumers
+
+Whole-tree search in `/home/user/eve-logic` found insurance callers in `eve/client/script/ui/station/insurance/base_insurance.py:113-141` (personal/corporation contracts, ship contract, single/bulk prices), `:160-193` (eligibility and quote construction), `:286-300` (contract window), `:390-401` (cancellation), and `:466-542` (quote display and purchase, including `voidOld=True` retry). Contract data is read through `shipID`, owner, fraction and end date at `:118-120`, `:286-291`, and `:493-504`. Other callers are `eve/client/script/ui/shared/info/infoContentBase.py:655-656`, `eve/client/script/ui/shared/info/shipInfoPanels/panelOverview.py:191-192`, `eve/client/script/ui/services/menuSvcExtras/invItemFunctions.py:522`, and `eve/client/script/ui/station/insurance/insuranceTooltip.py:18`.
+
+Market calls are forwarded by `eve/client/script/ui/services/marketsvc.py:270-281` (multi-buy/cancel), `:296-305` (station/system asks), `:317-318` (bulk history), `:333-336` (PLEX old/new history), and `:388-400` (personal/corporation orders and escrow). The transaction service calls Char/CorpGetTransactions in `eve/client/script/ui/shared/marketSvc.py:17-29` and consumes transaction fields in `:37-64`. The market UI consumes ask mappings in `eve/client/script/ui/shared/market/quote.py:90-100` and `eve/client/script/ui/shared/market/marketbase.py:653-663`; corporation order export uses `eve/client/script/ui/shared/market/marketOrdersWnd.py:75`; the wallet transaction panel consumes the transaction service in `eve/client/script/ui/shared/neocom/wallet/panels/marketTransactionsPanel.py`.
+
+## EveJS comparison and checks
+
+EveJS v0.12.9 insurance service delegates the matching methods at `server/src/services/insurance/insuranceService.js:26-89`; its runtime supplies persisted contracts and quote/purchase behavior. Market proxy handlers for these rows are in `server/src/services/market/marketProxyService.js:6211-6965` (asks, owner data, histories, transactions, cancellation and multi-buy). The current eve.rs implementation follows the same client-facing reply categories while validating and persisting against the authoritative state. No compatibility deviation was introduced.
+
+Local check: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false -p:BuildProjectReferences=false --no-restore` passed, 0 warnings/errors. PostgreSQL tests were not run locally. The new Host wire test and existing Host regressions require Actions verification. Graphical-client operation has not been exercised.

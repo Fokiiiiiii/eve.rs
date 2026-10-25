@@ -3,11 +3,12 @@
 ## Current snapshot
 
 - Client source: /home/user/eve-logic, commit 1dbb5711a072a146e1d228365668ac05655eefe1.
-- Host source used for generation: origin/main ac29183a8fff50b4a8cb1299cad0e8fb1d1dd8c plus this task's changes.
+- Host source used for generation: origin/main ec27cb3462ebc3ff5bd2b9acb34c5e82221afdbe plus this task's changes.
 - Regenerate both CSVs and the P0/P1 work queue with:
   python3 tools/spec-extract/run_service_audit_current.py --queue-dir /tmp/service-audit-cx6-final
 - The service-audit Python regression tests run in the `ci.yml` Python job.
-- Generated totals: 4,173 client rows, 2,345 RPC rows, 1,408 active Host routes, and 0 queue files. Coverage: CLIENT-LOCAL 1, HOLLOW 10, IMPLEMENTED-TESTED 379, IMPLEMENTED-UNTESTED 1,552, MISSING 403, and no REJECTS-VALID-INPUT rows.
+- Generated totals: 4,173 client rows, 2,345 RPC rows, 1,408 active Host routes, and 60 queue files. Coverage: CLIENT-LOCAL 1, HOLLOW 10, IMPLEMENTED-TESTED 379, IMPLEMENTED-UNTESTED 1,552, MISSING 403, and no REJECTS-VALID-INPUT rows.
+- The audit now classifies client-local calls separately; later RPC row IDs can shift when those calls are reclassified. Compare target methods by service/method and client source path.
 - The Host route scanner resolves string constants referenced by HasMethod comparisons and inspects the full Host Composition directory, including partial AgentRpc and MissionComposition files. This includes SearchQueryService.Query, whose route compares against QueryMethod, and AgentMissionService, which is returned from AgentRpcServices and registered through the Host characterServices list.
 
 ## P0 service-audit review (2026-10-25)

@@ -55,3 +55,13 @@ The client-side decision points above were searched across the full /home/user/e
 - On `f70c174e`, push-triggered CI run `40235234218` was queued when this handoff was updated.
 - Local Host test project build after the latest wire expectation changes passed: 0 warnings, 0 errors. The no-database inventory test invocation reported 236 rows, while database-backed CI had reported 1,420; no PostgreSQL database was used locally.
 - The mailing-list focused Agent test passed on `3bbc382b` (run `40230484611`, 1 passed, 0 failed, 0 skipped). The latest edits do not change that test or production mailing-list code.
+
+
+## Final Actions result
+
+- Push-triggered CI run `40235234218` for `f70c174e` completed with failures. The .NET build, Rust checks, Python tests, end-to-end/headless job, Windows job, and most .NET shards passed. Two Host shards failed:
+  - `Character_manager_mutations_persist_through_registered_host_wire` received ERRORRESPONSE type 15 while fetching the owner note after the preceding mutations.
+  - `Ship_fitting_info_and_dirt_timestamp_use_the_registered_host_routes` still expected PyStr for two decoded strings; the wire values were PyBytes.
+  - `Insurance_rpc_purchase_lookup_list_and_cancellation_follow_the_persisted_host_state` still found no 50% quote for the Rifter insurance value.
+- Agent test run `40235241341` for the selected five Host tests failed after starting the project test command; its recorded step output did not include test names or a test summary. The mailing-list test itself passed in run `40230484611` before these unrelated Host-test follow-ups.
+- The code under review is the pushed `f70c174e` state; later `main` merges add unrelated work. This handoff includes that state’s completed Actions results. No real graphical-client walkthrough was done, and no PostgreSQL database was used locally.

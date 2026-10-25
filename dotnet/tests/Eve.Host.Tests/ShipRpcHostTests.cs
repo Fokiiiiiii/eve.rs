@@ -30,9 +30,10 @@ public partial class HostServerTests
             Packets.CallWithKwargs(open, 1, "ship", "GetShipFittingInfo", Py.Tuple(new PyInt(7001)), kwargs))));
         var fitting = Assert.IsType<PyTuple>(Result(MarshalCodec.Decode(
             Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
-        Assert.Equal(
-            Py.Tuple(new PyStr("Rifter fit"), new PyStr("res:/fit.png"), new PyInt(587), PyNone.Instance).Items,
-            fitting.Items);
+        Assert.Equal("Rifter fit", JsSemantics.StringValue(fitting.Items[0]));
+        Assert.Equal("res:/fit.png", JsSemantics.StringValue(fitting.Items[1]));
+        Assert.Equal(new PyInt(587), fitting.Items[2]);
+        Assert.Same(PyNone.Instance, fitting.Items[3]);
 
         var bindArgs = Py.Tuple(
             Py.Tuple(new PyInt(600), new PyInt(15)),

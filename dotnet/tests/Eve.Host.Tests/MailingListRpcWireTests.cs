@@ -55,8 +55,12 @@ public partial class HostServerTests
         for (var index = 0; index < calls.Length; index++)
         {
             var call = calls[index];
+            var kwargs = new PyDict([
+                new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1)),
+            ]);
             await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
-                Packets.Call(open, (uint)(index + 1), "mailingListsMgr", call.Method, call.Args))));
+                Packets.CallWithKwargs(open, (uint)(index + 1), "mailingListsMgr", call.Method,
+                    new PyTuple(call.Args), kwargs))));
             var reply = Assert.IsType<Send>(await front.ReceiveAsync());
             var result = Result(MarshalCodec.Decode(reply.Payload));
             if (call.ManagerMethod == MailingListManagerMethod.Join)

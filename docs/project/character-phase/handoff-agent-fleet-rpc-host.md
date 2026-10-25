@@ -95,3 +95,8 @@ EveJS v0.12.9 dispatches the manager calls in `server/src/services/fleets/fleetM
 - Focused `Fleet_rows_01559_to_01610_use_registered_services_and_client_wire_shapes`: passed, 1 passed, 0 skipped.
 - The regression covers no-fleet and malformed-input paths plus accepted transport and set shapes; persisted successful mutations, positive composition rows, notification delivery/order, restart behavior and the graphical client were not exercised.
 - No intentional client-visible deviation from EveJS is recorded.
+
+
+### Follow-up verification after commit c3635591
+
+The first Agent-test attempt (40229018434) and push CI (40229011102) failed during `actions/setup-dotnet` because downloads from dotnetorigin.blob.core.windows.net returned HTTP 409. Agent-test retry 40229373637 passed setup but exposed an existing compile error in `ShipRpcHostTests.cs`: its uses of `Py` lacked the `Eve.Services` import. Added that namespace import. After merging latest main (dc360683, including the CI SDK download fix), local Host test-project build passed (0 warnings/errors), and the focused fleet wire test passed (1 passed, 0 skipped). The retried CI build's unrelated compile failure is corrected; a fresh post-fix Actions run is pending.

@@ -439,7 +439,7 @@ public sealed partial class CharMgrService(
     public async ValueTask<PyValue> SaveCharacterSetting(ServiceCall call)
     {
         var rawKey = call.Arg(0);
-        if (rawKey is not (PyBytes or PyStr or PyWString or PyToken or PyInt or PyLong or PyBool or PyReal or PyNone))
+        if (rawKey is not (PyStr or PyWString or PyToken or PyBytes or PyInt or PyLong or PyBool or PyReal or PyNone))
             throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Character setting keys must be scalar values.")));
         var key = OptionalText(rawKey)?.Trim();
         if (string.IsNullOrEmpty(key))

@@ -66,6 +66,13 @@ public interface IContractWriteModel
     ValueTask<bool> SplitStackAsync(long itemId, long quantity, long characterId, long corporationId,
         long stationId, bool forCorporation, int flag, CancellationToken cancellationToken);
 
+    ValueTask<bool> DismissNotificationAsync(long contractId, long characterId, long corporationId,
+        bool forCorporation, bool hasCorpContractManager, CancellationToken cancellationToken);
+
+    ValueTask<bool> FinishAuctionAsync(long contractId, CancellationToken cancellationToken);
+
+    ValueTask<bool> ExpireContractNowAsync(long contractId, CancellationToken cancellationToken);
+
     ValueTask<CreatedContract> CreateItemExchangeAsync(
         CreateItemExchangeRequest request,
         CancellationToken cancellationToken) => CreateContractAsync(request, cancellationToken);

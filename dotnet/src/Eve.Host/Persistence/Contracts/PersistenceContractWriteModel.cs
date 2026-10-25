@@ -505,6 +505,57 @@ public sealed class PersistenceContractWriteModel(
         return true;
     }
 
+    public async ValueTask<bool> DismissNotificationAsync(long contractId, long characterId, long corporationId,
+        bool forCorporation, bool hasCorpContractManager, CancellationToken cancellationToken)
+    {
+        if (contractId <= 0 || characterId <= 0 || corporationId < 0 ||
+            forCorporation && (corporationId <= 0 || !hasCorpContractManager))
+            throw new ContractUserErrorException("ConContractNotAvailable");
+
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using (var command = new NpgsqlCommand($"""
+            INSERT INTO {_schema}.contract_notice_dismissals
+                (character_id, corporation_id, contract_id, for_corporation)
+            SELECT $2, $3, c.contract_id, $4
+            FROM {_schema}.contract_records AS c
+            WHERE c.contract_id = $1 AND (
+                ($4 AND ((c.is_corporation_issued AND c.issuer_corporation_id = $3) OR c.acceptor_id = $3))
+                OR (NOT $4 AND ((NOT c.is_corporation_issued AND c.issuer_id = $2) OR c.acceptor_id = $2))
+            )
+            ON CONFLICT DO NOTHING
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue(contractId);
+            command.Parameters.AddWithValue(characterId);
+            command.Parameters.AddWithValue(corporationId);
+            command.Parameters.AddWithValue(forCorporation);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using var check = new NpgsqlCommand($"""
+            SELECT EXISTS (
+                SELECT 1 FROM {_schema}.contract_notice_dismissals
+                WHERE character_id = $2 AND corporation_id = $3 AND contract_id = $1 AND for_corporation = $4
+            )
+            """, connection, transaction);
+        check.Parameters.AddWithValue(contractId);
+        check.Parameters.AddWithValue(characterId);
+        check.Parameters.AddWithValue(corporationId);
+        check.Parameters.AddWithValue(forCorporation);
+        var dismissed = (bool)(await check.ExecuteScalarAsync(cancellationToken) ?? false);
+        await transaction.CommitAsync(cancellationToken);
+        return dismissed;
+    }
+
+    public async ValueTask<bool> FinishAuctionAsync(long contractId, CancellationToken cancellationToken) =>
+        await (expiryJobs ?? throw new InvalidOperationException("contract expiry jobs are not wired"))
+            .SettleExpiredAsync(contractId, nowUnixMs(), cancellationToken);
+
+    public ValueTask<bool> ExpireContractNowAsync(long contractId, CancellationToken cancellationToken) =>
+        new((expiryJobs ?? throw new InvalidOperationException("contract expiry jobs are not wired"))
+            .ExpireNowAsync(contractId, nowUnixMs(), cancellationToken));
+
     public async ValueTask<bool> DeleteContractAsync(long contractId, long characterId, long corporationId,
         bool hasCorpContractManager, CancellationToken cancellationToken)
     {

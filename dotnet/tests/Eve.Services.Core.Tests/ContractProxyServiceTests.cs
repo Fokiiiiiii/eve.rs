@@ -576,6 +576,16 @@ public sealed class ContractProxyServiceTests
         public ValueTask<bool> SplitStackAsync(long itemId, long quantity, long characterId, long corporationId,
             long stationId, bool forCorporation, int flag, CancellationToken cancellationToken) =>
             ValueTask.FromException<bool>(new NotSupportedException());
+
+        public ValueTask<bool> DismissNotificationAsync(long contractId, long characterId, long corporationId,
+            bool forCorporation, bool hasCorpContractManager, CancellationToken cancellationToken) =>
+            ValueTask.FromResult(true);
+
+        public ValueTask<bool> FinishAuctionAsync(long contractId, CancellationToken cancellationToken) =>
+            ValueTask.FromResult(true);
+
+        public ValueTask<bool> ExpireContractNowAsync(long contractId, CancellationToken cancellationToken) =>
+            ValueTask.FromResult(true);
     }
 
     private static PyObject Rowset(PyObject keyVal, string name) => Assert.IsType<PyObject>(Value(keyVal, name));
@@ -604,6 +614,16 @@ public sealed class ContractProxyServiceTests
         public int OwnerPageSize { get; private set; }
         public long? OwnerStartContractId { get; private set; }
         public ContractSearchQuery? SearchQuery { get; private set; }
+
+        public ValueTask<ContractDetailRead?> GetContractAsync(long contractId, CancellationToken cancellationToken)
+        {
+            var contract = Contract();
+            return ValueTask.FromResult<ContractDetailRead?>(new ContractDetailRead(contract, 30_000_001, 10_000_001,
+                30_000_002, 10_000_002, 20_000_001, 20_000_002, "Solar System", [5], [6], [34]));
+        }
+
+        public ValueTask<ContractReadSnapshot?> GetCourierContractFromItemIdAsync(long itemId, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<ContractReadSnapshot?>(Contract());
 
         public ValueTask<ContractLoginInfo> GetLoginInfoAsync(
             long characterId, long corporationId, long allianceId, long nowFileTime, CancellationToken cancellationToken)

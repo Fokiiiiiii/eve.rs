@@ -466,6 +466,92 @@ public sealed partial class ContractProxyService(
         return BuildContractSearchResult(result);
     }
 
+    [Method("GetContract")]
+    public async Task<PyValue> GetContract(ServiceCall call)
+    {
+        var store = readModel ?? throw new InvalidOperationException("contract read model is not wired");
+        var contractId = ContractLong(call.Arg(0));
+        var contract = await store.GetContractAsync(contractId, call.Cancellation);
+        return contract is null ? PyNone.Instance : BuildContractDetail(contract);
+    }
+
+    [Method("GetCourierContractFromItemID")]
+    public async Task<PyValue> GetCourierContractFromItemId(ServiceCall call)
+    {
+        var store = readModel ?? throw new InvalidOperationException("contract read model is not wired");
+        var itemId = ContractLong(call.Arg(0));
+        var contract = await store.GetCourierContractFromItemIdAsync(itemId, call.Cancellation);
+        return contract is null ? PyNone.Instance : BuildContractRow(contract);
+    }
+
+    [Method("DeleteNotification")]
+    public async Task<PyValue> DeleteNotification(ServiceCall call)
+    {
+        var writer = writeModel ?? throw new InvalidOperationException("contract writer is not wired");
+        var characterId = call.Session.CharacterId
+            ?? throw new InvalidOperationException("contract notification dismissal requires a character session");
+        var (corporationId, _) = await ReadCurrentOrganizationIdsAsync(call);
+        var contractId = ContractLong(call.Arg(0));
+        var forCorporation = ContractSearchBool(call.Arg(1));
+        var hasRole = await HasContractManagerRoleAsync(call, characterId, corporationId);
+        return await writer.DismissNotificationAsync(contractId, characterId, corporationId,
+            forCorporation, hasRole, call.Cancellation) ? PyBool.True : PyBool.False;
+    }
+
+    [Method("DeleteContractNotification")]
+    public async Task<PyValue> DeleteContractNotification(ServiceCall call)
+    {
+        var writer = writeModel ?? throw new InvalidOperationException("contract writer is not wired");
+        var characterId = call.Session.CharacterId
+            ?? throw new InvalidOperationException("contract notification dismissal requires a character session");
+        var (corporationId, _) = await ReadCurrentOrganizationIdsAsync(call);
+        var contractId = ContractLong(call.Arg(0));
+        var forCorporation = ContractSearchBool(call.Arg(1));
+        var hasRole = await HasContractManagerRoleAsync(call, characterId, corporationId);
+        await writer.DismissNotificationAsync(contractId, characterId, corporationId,
+            forCorporation, hasRole, call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    [Method("FinishAuction")]
+    public async Task<PyValue> FinishAuction(ServiceCall call)
+    {
+        var store = readModel ?? throw new InvalidOperationException("contract read model is not wired");
+        var writer = writeModel ?? throw new InvalidOperationException("contract writer is not wired");
+        var characterId = call.Session.CharacterId
+            ?? throw new InvalidOperationException("auction settlement requires a character session");
+        var (corporationId, _) = await ReadCurrentOrganizationIdsAsync(call);
+        var contract = await store.GetContractAsync(ContractLong(call.Arg(0)), call.Cancellation)
+            ?? throw MachoErrors.ThrowUserError("ConContractNotFound");
+        var snapshot = contract.Contract;
+        if (snapshot.Type != 2)
+            throw MachoErrors.ThrowUserError("ConIllegalType");
+        var isIssuer = ContractSearchBool(call.Arg(1));
+        var hasRole = await HasContractManagerRoleAsync(call, characterId, corporationId);
+        var actorOwnsIssuer = snapshot.IsCorporationIssued
+            ? corporationId == snapshot.IssuerCorporationId && hasRole
+            : characterId == snapshot.IssuerId;
+        var highestBid = snapshot.Bids.OrderByDescending(bid => bid.Amount)
+            .ThenByDescending(bid => bid.CreatedAtFileTime).FirstOrDefault();
+        var actorOwnsWinningBid = highestBid is not null &&
+            (highestBid.IsCorporation ? corporationId == highestBid.BidderId && hasRole : characterId == highestBid.BidderId);
+        if (isIssuer ? !actorOwnsIssuer : !actorOwnsWinningBid)
+            throw MachoErrors.ThrowUserError("ConContractNotAvailable");
+        if (snapshot.Status == 4)
+            return PyBool.True;
+        return await writer.FinishAuctionAsync(snapshot.ContractId, call.Cancellation) ? PyBool.True : PyBool.False;
+    }
+
+    [Method("GM_ExpireContract")]
+    public async Task<PyValue> GmExpireContract(ServiceCall call)
+    {
+        if (!CompatibilityRpc.IsStaff(call))
+            throw MachoErrors.ThrowUserError("ConContractNotAvailable");
+        var writer = writeModel ?? throw new InvalidOperationException("contract writer is not wired");
+        return await writer.ExpireContractNowAsync(ContractLong(call.Arg(0)), call.Cancellation)
+            ? PyBool.True : PyBool.False;
+    }
+
     [Method("GetLoginInfo")]
     public async Task<PyValue> GetLoginInfo(ServiceCall call)
     {
@@ -771,6 +857,116 @@ public sealed partial class ContractProxyService(
             ("quantity", new PyInt(item.Quantity)),
             ("inCrate", item.InCrate ? PyBool.True : PyBool.False),
             ("isPackage", item.IsPackage ? PyBool.True : PyBool.False));
+
+    private static readonly Descriptor ContractDetailRowDescriptor = Descriptor.FromHeader(new PyObjectEx(
+        ObjectExKind.Ex1,
+        Py.Tuple(new PyToken("blue.DBRowDescriptor"), Py.Tuple(Py.Tuple(
+            Py.Tuple(new PyStr("contractID"), new PyInt(3)), Py.Tuple(new PyStr("type"), new PyInt(3)),
+            Py.Tuple(new PyStr("issuerID"), new PyInt(3)), Py.Tuple(new PyStr("issuerCorpID"), new PyInt(3)),
+            Py.Tuple(new PyStr("forCorp"), new PyInt(11)), Py.Tuple(new PyStr("availability"), new PyInt(3)),
+            Py.Tuple(new PyStr("assigneeID"), new PyInt(3)), Py.Tuple(new PyStr("acceptorID"), new PyInt(3)),
+            Py.Tuple(new PyStr("dateIssued"), new PyInt(64)), Py.Tuple(new PyStr("dateExpired"), new PyInt(64)),
+            Py.Tuple(new PyStr("dateAccepted"), new PyInt(64)), Py.Tuple(new PyStr("numDays"), new PyInt(3)),
+            Py.Tuple(new PyStr("dateCompleted"), new PyInt(64)), Py.Tuple(new PyStr("dateDeleted"), new PyInt(64)),
+            Py.Tuple(new PyStr("startStationID"), new PyInt(20)), Py.Tuple(new PyStr("startSolarSystemID"), new PyInt(3)),
+            Py.Tuple(new PyStr("startRegionID"), new PyInt(3)), Py.Tuple(new PyStr("endStationID"), new PyInt(20)),
+            Py.Tuple(new PyStr("endSolarSystemID"), new PyInt(3)), Py.Tuple(new PyStr("endRegionID"), new PyInt(3)),
+            Py.Tuple(new PyStr("price"), new PyInt(5)), Py.Tuple(new PyStr("reward"), new PyInt(5)),
+            Py.Tuple(new PyStr("collateral"), new PyInt(5)), Py.Tuple(new PyStr("title"), new PyInt(130)),
+            Py.Tuple(new PyStr("description"), new PyInt(130)), Py.Tuple(new PyStr("status"), new PyInt(3)),
+            Py.Tuple(new PyStr("crateID"), new PyInt(20)), Py.Tuple(new PyStr("volume"), new PyInt(5)),
+            Py.Tuple(new PyStr("startStationDivision"), new PyInt(3)), Py.Tuple(new PyStr("issuerWalletKey"), new PyInt(3)),
+            Py.Tuple(new PyStr("acceptorWalletKey"), new PyInt(3))))),
+        [], []));
+
+    private static readonly Descriptor ContractDetailItemDescriptor = Descriptor.FromHeader(new PyObjectEx(
+        ObjectExKind.Ex1,
+        Py.Tuple(new PyToken("blue.DBRowDescriptor"), Py.Tuple(Py.Tuple(
+            Py.Tuple(new PyStr("contractID"), new PyInt(3)), Py.Tuple(new PyStr("itemID"), new PyInt(20)),
+            Py.Tuple(new PyStr("quantity"), new PyInt(20)), Py.Tuple(new PyStr("itemTypeID"), new PyInt(3)),
+            Py.Tuple(new PyStr("inCrate"), new PyInt(11)), Py.Tuple(new PyStr("parentID"), new PyInt(20)),
+            Py.Tuple(new PyStr("productivityLevel"), new PyInt(3)), Py.Tuple(new PyStr("materialLevel"), new PyInt(3)),
+            Py.Tuple(new PyStr("copy"), new PyInt(11)), Py.Tuple(new PyStr("licensedProductionRunsRemaining"), new PyInt(3)),
+            Py.Tuple(new PyStr("damage"), new PyInt(5)), Py.Tuple(new PyStr("flagID"), new PyInt(3)),
+            Py.Tuple(new PyStr("recordID"), new PyInt(20))))),
+        [], []));
+
+    private static PyValue BuildContractRow(ContractReadSnapshot contract) => Eve.Services.Py.KeyVal(
+        ("contractID", new PyInt(contract.ContractId)),
+        ("type", new PyInt(contract.Type)),
+        ("status", new PyInt(contract.Status)),
+        ("availability", new PyInt(contract.Availability)),
+        ("issuerID", new PyInt(contract.IssuerId)),
+        ("issuerCorpID", new PyInt(contract.IssuerCorporationId)),
+        ("forCorp", contract.IsCorporationIssued ? PyBool.True : PyBool.False),
+        ("assigneeID", new PyInt(contract.AssigneeId)),
+        ("acceptorID", new PyInt(contract.AcceptorId)),
+        ("acceptorWalletKey", contract.AcceptorWalletKey is { } walletKey ? new PyInt(walletKey) : PyNone.Instance),
+        ("dateIssued", new PyLong(contract.DateIssuedFileTime)),
+        ("dateExpired", new PyLong(contract.DateExpiredFileTime)),
+        ("dateAccepted", new PyLong(contract.DateAcceptedFileTime)),
+        ("dateCompleted", new PyLong(contract.DateCompletedFileTime)),
+        ("numDays", new PyInt(contract.NumDays)),
+        ("startStationID", new PyLong(contract.StartStationId)),
+        ("endStationID", new PyLong(contract.EndStationId)),
+        ("startSolarSystemID", new PyInt(contract.StartSolarSystemId)),
+        ("endSolarSystemID", new PyInt(contract.EndSolarSystemId)),
+        ("startRegionID", new PyInt(contract.StartRegionId)),
+        ("endRegionID", new PyInt(contract.EndRegionId)),
+        ("price", Eve.Services.Py.Number((double)contract.Price)),
+        ("reward", Eve.Services.Py.Number((double)contract.Reward)),
+        ("collateral", Eve.Services.Py.Number((double)contract.Collateral)),
+        ("volume", Eve.Services.Py.Number(contract.Volume)),
+        ("title", new PyStr(contract.Title)),
+        ("description", new PyStr(contract.Description)));
+
+    private static PyObjectEx PythonSet(IEnumerable<PyValue> values) =>
+        new(ObjectExKind.Ex1, Py.Tuple(new PyToken("__builtin__.set"), Py.Tuple(new PyList(values.ToArray()))), [], []);
+
+    private static PyValue BuildContractDetail(ContractDetailRead detail)
+    {
+        var contract = detail.Contract;
+        var row = new PyPackedRow(ContractDetailRowDescriptor, [
+            new PyInt(contract.ContractId), new PyInt(contract.Type), new PyInt(contract.IssuerId),
+            new PyInt(contract.IssuerCorporationId), contract.IsCorporationIssued ? PyBool.True : PyBool.False,
+            new PyInt(contract.Availability), new PyInt(contract.AssigneeId), new PyInt(contract.AcceptorId),
+            new PyLong(contract.DateIssuedFileTime), new PyLong(contract.DateExpiredFileTime),
+            new PyLong(contract.DateAcceptedFileTime), new PyInt(contract.NumDays),
+            new PyLong(contract.DateCompletedFileTime), new PyLong(0), new PyLong(contract.StartStationId),
+            new PyInt(detail.StartSolarSystemId), new PyInt(detail.StartRegionId), new PyLong(contract.EndStationId),
+            new PyInt(detail.EndSolarSystemId), new PyInt(detail.EndRegionId),
+            Eve.Services.Py.Number((double)contract.Price), Eve.Services.Py.Number((double)contract.Reward),
+            Eve.Services.Py.Number((double)contract.Collateral), new PyStr(contract.Title), new PyStr(contract.Description),
+            new PyInt(contract.Status), new PyLong(9_300_000_000L + contract.ContractId),
+            Eve.Services.Py.Number(contract.Volume), new PyInt(contract.StartStationDivision),
+            new PyInt(contract.IssuerWalletKey),
+            contract.AcceptorWalletKey is { } walletKey ? new PyInt(walletKey) : PyNone.Instance,
+        ]);
+        var items = new PyList(contract.Items.Select(item => (PyValue)new PyPackedRow(ContractDetailItemDescriptor, [
+            new PyInt(contract.ContractId), new PyLong(item.ItemId), new PyLong(item.Quantity), new PyInt(item.TypeId),
+            item.InCrate ? PyBool.True : PyBool.False, new PyLong(0), PyNone.Instance, PyNone.Instance,
+            PyNone.Instance, PyNone.Instance, PyNone.Instance, new PyInt(0), new PyLong(item.ItemId),
+        ])).ToArray());
+        var bids = new PyList(contract.Bids.OrderByDescending(bid => bid.Amount)
+            .ThenByDescending(bid => bid.CreatedAtFileTime)
+            .Select(bid => (PyValue)Eve.Services.Py.KeyVal(
+                ("bidderID", new PyInt(bid.BidderId)),
+                ("amount", Eve.Services.Py.Number((double)bid.Amount)),
+                ("dateBid", new PyLong(bid.CreatedAtFileTime)),
+                ("forCorp", bid.IsCorporation ? PyBool.True : PyBool.False))).ToArray());
+        return Eve.Services.Py.KeyVal(
+            ("startSolarSystemName", new PyStr(detail.StartSolarSystemName)),
+            ("items", items),
+            ("bids", bids),
+            ("contract", row),
+            ("itemGroups", PythonSet(detail.ItemGroups.Select(id => (PyValue)new PyInt(id)))),
+            ("startSolarSystemID", new PyInt(detail.StartSolarSystemId)),
+            ("startConstellationID", new PyInt(detail.StartConstellationId)),
+            ("endConstellationID", new PyInt(detail.EndConstellationId)),
+            ("itemCategories", PythonSet(detail.ItemCategories.Select(id => (PyValue)new PyInt(id)))),
+            ("itemTypes", PythonSet(detail.ItemTypes.Select(id => (PyValue)new PyInt(id)))),
+            ("endSolarSystemID", new PyInt(detail.EndSolarSystemId)));
+    }
 
     private static PyValue BuildContractBundle(ContractReadBundle bundle)
     {

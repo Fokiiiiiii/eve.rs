@@ -65,8 +65,20 @@ public sealed class ContractExpiryJobs(
         return settled;
     }
 
+    public async Task<bool> ExpireNowAsync(long contractId, long nowMs, CancellationToken cancellationToken)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var settled = await SettleAsync(contractId, connection, transaction, nowMs, null, cancellationToken, force: true);
+        if (settled) await CancelAsync(connection, transaction, contractId, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        if (settled) events?.Wake();
+        return settled;
+    }
+
     private async Task<bool> SettleAsync(long contractId, NpgsqlConnection connection, NpgsqlTransaction transaction,
-        long nowMs, Func<JobSpec, CancellationToken, Task<long>>? schedule, CancellationToken cancellationToken)
+        long nowMs, Func<JobSpec, CancellationToken, Task<long>>? schedule, CancellationToken cancellationToken,
+        bool force = false)
     {
         ExpiredContract contract;
         await using (var command = new NpgsqlCommand($"""
@@ -85,7 +97,7 @@ public sealed class ContractExpiryJobs(
         }
 
         var nowFileTime = checked(FileTimeUnixEpoch + nowMs * TicksPerMillisecond);
-        if (contract.ExpiredFileTime > nowFileTime)
+        if (!force && contract.ExpiredFileTime > nowFileTime)
         {
             if (schedule is not null)
                 await schedule(new JobSpec(JobKind, ToUnixMs(contract.ExpiredFileTime))

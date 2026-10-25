@@ -113,6 +113,15 @@ public sealed class PersistenceContractReadModel : IContractReadModel
         new Eve.Data.Migration("0008_contract_search_index", """
             CREATE INDEX contract_records_public_search ON contract_records (availability, date_expired_filetime, contract_id) WHERE status = 0;
             """),
+        new Eve.Data.Migration("0009_contract_notice_dismissal", """
+            CREATE TABLE contract_notice_dismissals (
+                character_id bigint NOT NULL CHECK (character_id > 0),
+                corporation_id bigint NOT NULL CHECK (corporation_id >= 0),
+                contract_id bigint NOT NULL REFERENCES contract_records(contract_id) ON DELETE CASCADE,
+                for_corporation boolean NOT NULL,
+                PRIMARY KEY (character_id, corporation_id, contract_id, for_corporation)
+            );
+            """),
     ];
 
     public static Task MigrateAsync(
@@ -120,6 +129,128 @@ public sealed class PersistenceContractReadModel : IContractReadModel
         string schema = DefaultSchema,
         CancellationToken cancellationToken = default) =>
         Eve.Data.Migrations.ApplyAsync(source, ValidateSchema(schema), MigrationSet(), cancellationToken);
+
+    public async ValueTask<ContractDetailRead?> GetContractAsync(long contractId, CancellationToken cancellationToken)
+    {
+        var contract = await ReadContractAsync("contract_id = $1", contractId, cancellationToken);
+        if (contract is null)
+            return null;
+
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        long startSystemId = 0, startRegionId = 0, endSystemId = 0, endRegionId = 0, startConstellationId = 0, endConstellationId = 0;
+        var startSystemName = "";
+        await using (var command = new NpgsqlCommand($"""
+            SELECT COALESCE(start_system.key, 0),
+                   COALESCE((start_system.doc->>'regionID')::bigint, 0),
+                   COALESCE(end_system.key, 0),
+                   COALESCE((end_system.doc->>'regionID')::bigint, 0),
+                   COALESCE((start_system.doc->>'constellationID')::bigint, 0),
+                   COALESCE((end_system.doc->>'constellationID')::bigint, 0),
+                   COALESCE(start_system.doc->'name'->>'en', start_system.doc->>'name', ''),
+                   c.issuer_item_flag, c.issuer_wallet_account_key,
+                   CASE WHEN c.acceptor_id = 0 THEN NULL ELSE c.acceptor_wallet_account_key END,
+                   COALESCE(volume_data.volume, 0)
+            FROM {_schema}.contract_records AS c
+            LEFT JOIN {_sdeSchema}.npcStations AS start_station ON start_station.key = c.start_station_id
+            LEFT JOIN {_sdeSchema}.mapSolarSystems AS start_system
+                ON start_system.key = NULLIF(start_station.doc->>'solarSystemID', '')::bigint
+            LEFT JOIN {_sdeSchema}.npcStations AS end_station ON end_station.key = c.end_station_id
+            LEFT JOIN {_sdeSchema}.mapSolarSystems AS end_system
+                ON end_system.key = NULLIF(end_station.doc->>'solarSystemID', '')::bigint
+            LEFT JOIN LATERAL (
+                SELECT COALESCE(SUM(NULLIF(item_type.doc->>'volume', '')::numeric * item.quantity), 0) AS volume
+                FROM {_schema}.contract_items AS item
+                LEFT JOIN {_sdeSchema}.types AS item_type ON item_type.key = item.type_id
+                WHERE item.contract_id = c.contract_id AND item.in_crate
+            ) AS volume_data ON TRUE
+            WHERE c.contract_id = $1
+            """, connection))
+        {
+            command.Parameters.AddWithValue(contractId);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                return null;
+            startSystemId = reader.GetInt64(0);
+            startRegionId = reader.GetInt64(1);
+            endSystemId = reader.GetInt64(2);
+            endRegionId = reader.GetInt64(3);
+            startConstellationId = reader.GetInt64(4);
+            endConstellationId = reader.GetInt64(5);
+            startSystemName = reader.GetString(6);
+            contract = contract with
+            {
+                StartSolarSystemId = startSystemId,
+                StartRegionId = startRegionId,
+                EndSolarSystemId = endSystemId,
+                EndRegionId = endRegionId,
+                StartStationDivision = reader.GetInt32(7),
+                IssuerWalletKey = reader.GetInt32(8),
+                AcceptorWalletKey = reader.IsDBNull(9) ? null : reader.GetInt32(9),
+                Volume = reader.GetDouble(10),
+            };
+        }
+
+        var groups = new HashSet<int>();
+        var categories = new HashSet<int>();
+        var types = new HashSet<int>();
+        await using (var command = new NpgsqlCommand($"""
+            SELECT DISTINCT item.type_id, NULLIF(item_type.doc->>'groupID', '')::integer,
+                   NULLIF(item_type.doc->>'categoryID', '')::integer
+            FROM {_schema}.contract_items AS item
+            LEFT JOIN {_sdeSchema}.types AS item_type ON item_type.key = item.type_id
+            WHERE item.contract_id = $1
+            """, connection))
+        {
+            command.Parameters.AddWithValue(contractId);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                types.Add(reader.GetInt32(0));
+                if (!reader.IsDBNull(1)) groups.Add(reader.GetInt32(1));
+                if (!reader.IsDBNull(2)) categories.Add(reader.GetInt32(2));
+            }
+        }
+
+        return new ContractDetailRead(contract, startSystemId, startRegionId, endSystemId, endRegionId,
+            startConstellationId, endConstellationId, startSystemName, groups.Order().ToArray(),
+            categories.Order().ToArray(), types.Order().ToArray());
+    }
+
+    public ValueTask<ContractReadSnapshot?> GetCourierContractFromItemIdAsync(long itemId, CancellationToken cancellationToken) =>
+        ReadContractAsync("contract_type = 3 AND plastic_wrap_item_id = $1", itemId, cancellationToken);
+
+    private async ValueTask<ContractReadSnapshot?> ReadContractAsync(string predicate, long id, CancellationToken cancellationToken)
+    {
+        if (id <= 0)
+            return null;
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        ContractReadSnapshot? contract = null;
+        await using (var command = new NpgsqlCommand($"""
+            SELECT c.contract_id, c.contract_type, c.status, c.availability, c.issuer_id,
+                   c.issuer_corporation_id, c.is_corporation_issued, c.assignee_id, c.acceptor_id,
+                   c.created_at_filetime, c.date_expired_filetime, c.date_accepted_filetime,
+                   c.date_completed_filetime, c.num_days, c.start_station_id, c.end_station_id,
+                   c.price_isk, c.reward_isk, c.collateral_isk, c.title, c.description
+            FROM {_schema}.contract_records AS c
+            WHERE {predicate}
+            """, connection))
+        {
+            command.Parameters.AddWithValue(id);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (await reader.ReadAsync(cancellationToken))
+                contract = new ContractReadSnapshot(
+                    reader.GetInt64(0), reader.GetInt16(1), reader.GetInt16(2), reader.GetInt16(3),
+                    reader.GetInt64(4), reader.GetInt64(5), reader.GetBoolean(6), reader.GetInt64(7),
+                    reader.GetInt64(8), reader.GetInt64(9), reader.GetInt64(10), reader.GetInt64(11),
+                    reader.GetInt64(12), reader.GetInt32(13), reader.GetInt64(14), reader.GetInt64(15),
+                    reader.GetDecimal(16), reader.GetDecimal(17), reader.GetDecimal(18), reader.GetString(19),
+                    reader.GetString(20), [], []);
+        }
+        if (contract is null)
+            return null;
+        var attached = await AttachChildrenAsync(connection, [contract], cancellationToken);
+        return attached.Contracts.Single();
+    }
 
     public async ValueTask<ContractLoginInfo> GetLoginInfoAsync(
         long characterId,
@@ -137,6 +268,18 @@ public sealed class PersistenceContractReadModel : IContractReadModel
         var inProgress = new List<ContractInProgressRow>();
         var assigned = new List<ContractAssignedToMeRow>();
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        var dismissed = new HashSet<(long ContractId, bool ForCorporation)>();
+        await using (var dismissalCommand = new NpgsqlCommand($"""
+            SELECT contract_id, for_corporation FROM {_schema}.contract_notice_dismissals
+            WHERE character_id = $1 AND corporation_id = $2
+            """, connection))
+        {
+            dismissalCommand.Parameters.AddWithValue(characterId);
+            dismissalCommand.Parameters.AddWithValue(corporationId);
+            await using var dismissalReader = await dismissalCommand.ExecuteReaderAsync(cancellationToken);
+            while (await dismissalReader.ReadAsync(cancellationToken))
+                dismissed.Add((dismissalReader.GetInt64(0), dismissalReader.GetBoolean(1)));
+        }
         await using var command = new NpgsqlCommand($"""
             SELECT contract_id, issuer_id, issuer_corporation_id, is_corporation_issued,
                    acceptor_id, assignee_id, status, start_station_id, end_station_id,
@@ -183,8 +326,10 @@ public sealed class PersistenceContractReadModel : IContractReadModel
                 var personal = (!isCorporationIssued && issuerId == characterId) || acceptorId == characterId;
                 var corporation = corporationId > 0 &&
                     ((isCorporationIssued && issuerCorporationId == corporationId) || acceptorId == corporationId);
-                if (personal) attention.Add(new ContractNeedsAttentionRow(contractId, 0));
-                if (corporation) attention.Add(new ContractNeedsAttentionRow(contractId, 1));
+                if (personal && !dismissed.Contains((contractId, false)))
+                    attention.Add(new ContractNeedsAttentionRow(contractId, 0));
+                if (corporation && !dismissed.Contains((contractId, true)))
+                    attention.Add(new ContractNeedsAttentionRow(contractId, 1));
             }
 
             if (status == InProgress && (acceptorId == characterId || acceptorId == corporationId))
@@ -321,6 +466,11 @@ public sealed class PersistenceContractReadModel : IContractReadModel
                  OR ($6 = 4 AND c.status IN (2, 3, 4, 5, 8, 9))
                  OR ($6 = -1 AND (c.status IN (6, 7) OR (c.status = 0 AND c.date_expired_filetime < $8)))
               )
+              AND ($6 <> -1 OR NOT EXISTS (
+                  SELECT 1 FROM {_schema}.contract_notice_dismissals AS d
+                  WHERE d.character_id = $9 AND d.corporation_id = $10
+                    AND d.contract_id = c.contract_id AND d.for_corporation = $11
+              ))
             ORDER BY c.contract_id DESC
             LIMIT $7
             """, connection))
@@ -333,6 +483,9 @@ public sealed class PersistenceContractReadModel : IContractReadModel
             command.Parameters.AddWithValue(status);
             command.Parameters.AddWithValue(pageSize);
             command.Parameters.AddWithValue(nowFileTime);
+            command.Parameters.AddWithValue(characterId);
+            command.Parameters.AddWithValue(corporationId);
+            command.Parameters.AddWithValue(ownerId == corporationId && corporationId > 0);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
             {
@@ -678,11 +831,19 @@ public sealed class PersistenceContractReadModel : IContractReadModel
                 OR (c.is_corporation_issued AND c.issuer_corporation_id = @owner)
                 OR c.acceptor_id = @owner)
               AND (c.status IN (6, 7) OR (c.status = 0 AND c.date_expired_filetime < @now))
+              AND NOT EXISTS (
+                  SELECT 1 FROM {_schema}.contract_notice_dismissals AS d
+                  WHERE d.character_id = @character AND d.corporation_id = @corporation
+                    AND d.contract_id = c.contract_id AND d.for_corporation = @for_corporation
+              )
             ORDER BY c.contract_id DESC
             """, connection))
         {
             command.Parameters.AddWithValue("owner", ownerId);
             command.Parameters.AddWithValue("now", nowFileTime);
+            command.Parameters.AddWithValue("character", characterId);
+            command.Parameters.AddWithValue("corporation", corporationId);
+            command.Parameters.AddWithValue("for_corporation", forCorporation);
             await ReadContractRowsAsync(command, contracts, cancellationToken);
         }
 

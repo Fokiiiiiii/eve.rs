@@ -27,7 +27,7 @@ The calls all originate in eve/client/script/parklife/fleetSvc.py; CBM whole-pro
 
 ## EveJS v0.12.9 comparison
 
-server/src/services/fleets/fleetObjectHandlerService.js:173-411 dispatches these same getters, mutations and broadcasts to fleetRuntime.js and preserves the corresponding runtime result. In particular, fleetRuntime.js:1933-1979 returns true from MoveMember and the successfully moved character ID list from MassMoveMembers; those are consumed in the client flow above. In eve.rs, the handler is backed by FleetStore and Host callbacks, and mutation notifications are emitted from the persisted before/after snapshots. A positive-state Host regression for these replies and notifications remains outstanding. Serena replace_content and replace_in_files rejected edits with “No language servers available in the manager”; no fallback editor was used.
+server/src/services/fleets/fleetObjectHandlerService.js:173-411 dispatches these same getters, mutations and broadcasts to fleetRuntime.js and preserves the corresponding runtime result. In particular, fleetRuntime.js:1933-1979 returns true from MoveMember and the successfully moved character ID list from MassMoveMembers; those are consumed in the client flow above. In eve.rs, the handler is backed by FleetStore and Host callbacks, and mutation notifications are emitted from the persisted before/after snapshots. A positive-state Host regression for these replies and notifications remains outstanding.
 
 ## Checks
 
@@ -38,24 +38,24 @@ server/src/services/fleets/fleetObjectHandlerService.js:173-411 dispatches these
 - The graphical V24.01 client was not exercised.
 
 
-## RPC-01609–01619 resolution
+## RPC-01609–01619 resolution and whole-tree audit
 
-The V24.01 call and consumer trace across the client tree is:
+The caller and consumer scan covers all of `/home/user/eve-logic/eve/client/script`, using CBM graph searches plus Serena literal searches. The relevant trace is:
 
-| Row | Client evidence and consumed behavior |
+| Row | Client calls and consumers |
 |---|---|
-| RPC-01609 | `eve/client/script/parklife/fleetSvc.py:421-423` forwards the bool setting to the bound fleet object; the return is ignored. |
-| RPC-01610 | `fleetSvc.py:1799-1811` periodically sends `GetMyShipTypeID()`; no reply is consumed. |
-| RPC-01611 | `fleetSvc.py:2369-2376` sends `GetData()`, clears the cached finder list, and wraps a returned advert as `FleetAdvertObject`. |
-| RPC-01612 | `fleetSvc.py:1898-1910` uses a truthy result to raise `FleetApplicationReceived`; `ui/shared/fleet/fleetFinderEntry.py:68-73` invokes this flow from the finder entry. |
-| RPC-01613 | `fleetSvc.py:1890-1892` consumes a fleetID-to-advert mapping, iterates its local dict with `iteritems()`, and constructs `FleetAdvertObject` values. `AskJoinFleetFromLink` checks the map at `fleetSvc.py:1918-1922`. |
-| RPC-01614 | `fleetSvc.py:2393-2398` wraps a present advert or returns None; `GetCurrentAdvertForMyFleet` feeds the register window at `fleetSvc.py:1924-1939`. |
-| RPC-01615 | `fleetSvc.py:2385-2391` wraps a present advert and clears the memoized finder list; client callers include remove/update and unregister flows. |
-| RPC-01616 | `fleetSvc.py:2407-2412` wraps the updated advert; callers are `UpdateAllowedEntitiesInAdvert` and `OnContactChange` (the latter refreshes after contact edits). |
-| RPC-01617 | `fleetSvc.py:2400-2405` wraps the updated advert; `UpdateAdvertInfoThread` calls it at `fleetSvc.py:1734-1752` after recomputing member count and access differences. |
-| RPC-01618 | `fleetSvc.py:2378-2383` wraps the advert after leader change; callers are `TryUpdateFleetFinderAdvertWithNewBoss` and `OnFleetMemberChanged`. |
-| RPC-01619 | This is a local Python dict operation, not an RPC: the receiver is the result of `GetAvailableFleetAds()` on `fleetSvc.py:1891`. Whole-project graph search found no `fleetProxy.iteritems` service caller. EveJS likewise returns the built advert map from `fleetProxyService.js:17-21` and defines no `iteritems` handler. No Host method was added for a client-local operation. |
+| RPC-01609 | `fleetSvc.py:421` sends the setting to `self.fleet`; `fleetSvc.py:422-423` ignores the reply. |
+| RPC-01610 | `fleetSvc.py:1799-1811` schedules `UpdateMemberInfo(GetMyShipTypeID())`; the return is ignored. |
+| RPC-01611 | `fleetSvc.py:1858-1868` registers an advert with `GetData()`; `fleetSvc.py:2368-2376` converts the advert object to a dict and wraps a returned dict as `FleetAdvertObject`, then clears the available-ad cache. |
+| RPC-01612 | `fleetSvc.py:1897-1910` calls the proxy and raises `FleetApplicationReceived` only for a truthy result. Callers in the full client tree: `fleetSvc.py:1918-1922` (fleet link), `ui/shared/fleet/fleetFinderEntry.py:67-73`, `ui/shared/fleet/fleetfinder.py:365-373`, and `ui/shared/agencyNew/ui/contentPagesUI/fleetupUI/joinFleetConfirmation.py:18-24`; the confirmation passes `autoAccept=True`. |
+| RPC-01613 | `fleetSvc.py:1889-1895` expects a mapping and turns each advert dict into `FleetAdvertObject`. Whole-tree consumers: `ui/shared/fleet/fleetfinder.py:480` and `ui/shared/agencyNew/ui/contentPagesUI/fleetupUI/fleetupSearchCont.py:123`; link joining verifies the fleet ID at `fleetSvc.py:1916-1922`. The finder UI's advert data uses the wrapped fields in its fleet entry widgets. |
+| RPC-01614 | `fleetSvc.py:1923-1940` handles None as no current advert and otherwise adds local standing and route data. Whole-tree UI callers: `ui/shared/fleet/fleetFinderEntry.py:54`, `ui/shared/fleet/fleetfinder.py:156`, `ui/shared/agencyNew/ui/contentPagesUI/fleetupUI/fleetRegisterController.py:16-24`, and `ui/shared/agencyNew/ui/contentPagesUI/fleetupFleetEntries.py:183`. |
+| RPC-01615 | `fleetSvc.py:938-939`, `1853-1854`, and `1885-1886` remove adverts in leader-change, unregister, and setup flows. `fleetSvc.py:2384-2391` wraps a present advert or returns None and clears the available-ad cache. |
+| RPC-01616 | `fleetSvc.py:1368-1369` refreshes allowed entities after contact changes; `fleetSvc.py:1780-1785` calls the update and stores the returned advert as current state. `fleetSvc.py:2406-2412` wraps the optional advert payload. |
+| RPC-01617 | `fleetSvc.py:1733-1752` updates the advert after recalculating member count and access-list differences, stores a present reply, and ignores None. Wrapper: `fleetSvc.py:2399-2405`. |
+| RPC-01618 | `fleetSvc.py:944-954` refreshes the advert after the boss changes; the member-change handler at `fleetSvc.py:1258-1283` triggers it. The wrapper at `fleetSvc.py:2377-2383` returns a `FleetAdvertObject` for a payload or None. |
+| RPC-01619 | `fleetSvc.py:1890-1892` invokes Python's `iteritems()` on the local mapping returned by RPC-01613. Whole-tree search found no proxy service caller for `iteritems`; it is not a remote method and requires no Host registration. |
 
-EveJS v0.12.9 dispatches RPC-01611–01618 in `server/src/services/fleets/fleetProxyService.js:17-69`, returning the advert map, advert payload, bool, or null from the fleet runtime. Its bound-object `SetTakesFleetWarp` and `UpdateMemberInfo` handlers delegate to the fleet runtime in `fleetObjectHandlerService.js:350-357,377-383`. eve.rs already uses the durable `FleetStore` and Host advert callback for these operations; no gameplay behavior changed in this coverage slice.
+EveJS v0.12.9 dispatches the two bound-object methods through `fleetObjectHandlerService.js:350-357,377-383`. `fleetProxyService.js:17-69` dispatches RPC-01611–01618 into `fleetRuntime.js`: available-ad filtering is at `2608-2620`; add/remove/get/update-advert operations are at `2622-2728`; join requests and invites are at `2730-2797`. These return a fleet-ID mapping, advert dict or null, or the join-request boolean; the runtime emits `OnFleetOptionsChanged` on advert-registration changes and `OnFleetJoinRequest` for applications requiring approval. eve.rs composes both production services in `FleetComposition.cs:196-212`, passes advert operations to `FleetStore.FleetFinderAdvertOperationAsync`, and sends registration-change notifications from `FleetProxyService.cs` after the persisted mutation. No intentional client-visible difference is recorded.
 
-The new `Fleet_finder_rpcs_are_dispatched_through_host_with_transport_kwargs` regression registers real `FleetObjectService` and `FleetProxyService` instances in `HostServer`, sends MachoNet calls with `machoVersion`, and checks their wire replies. It covers RPC-01609–01618; `GetAvailableFleetAds` returns a PyDict, `ApplyToJoinFleet` returns the client error object for a session without a character, and the empty-state mutations return None. It does not exercise persisted positive-state advert mutations, restart, notification delivery, or the graphical client. No PostgreSQL database was used.
+Local verification on this handoff update: Host test project build passed (0 warnings/errors); focused `Fleet_finder_rpcs_are_dispatched_through_host_with_transport_kwargs` passed (1 passed, 0 skipped). The test exercises the registered service objects through HostServer's MachoNet socket path with the transport `machoVersion` kwarg and covers the empty-state return shapes for RPC-01609–01618. It does not establish positive persisted-advert state, restart behavior, or notification delivery. No PostgreSQL database or graphical client was used. Agent-test workflow run 40180130687 for commit `e2338bf8` passed with no failed tests or jobs. `ci-status.py failures e2338bf8` returned `No ci.yml run found`; that push-triggered workflow has no result to record.

@@ -14,7 +14,7 @@ The full `/home/user/eve-logic` search found the `industryManager` remote calls 
 - RPC-01672/01673 `GetJob`: `industrySvc.py:56-60` turns the returned KeyVal into a job; UI consumers include `industryWnd.py:147,223,451` and `nodegraph/client/events/industry.py:16`.
 - RPC-01674/01675 `GetJobCounts`: `industrySvc.py:242-244` stores the returned dict and raises `OnIndustrySlotsUpdated`; `jobsStrip.py:92-119,176-191` and `industryTooltips.py:431,504` display its activity counts.
 - RPC-01676/01677 `GetJobsByOwner`: `industrySvc.py:62-88` maps each returned KeyVal to a job; `browserJobs.py:204-206` displays personal/corporation job lists and `nodegraph/client/conditions/industry.py:35` checks character jobs.
-- RPC-01678/01679 `InstallJob`: UI callers are `submitButton.py:220` and `blueprintEntry.py:306`; `industrySvc.py:139-146` sends `job.dump()` and returns the job ID.
+- RPC-01678/01679 `InstallJob`: UI callers are `submitButton.py:220` and `blueprintEntry.py:306`; `industrySvc.py:139-146` sends `job.dump()` and returns the job ID. Both UI callers discard that result and follow the resulting job event/state.
 
 RPC-01680 is not a remote call: `industrySvc.py:380-386` reads `self.slots.get(activityID, 0)` from the local dict returned by `GetJobCounts`. EveJS v0.12.9 has no `industryManager.get` method. No fake route was added.
 
@@ -34,6 +34,9 @@ The existing compatibility record documents the only client-irrelevant reply dif
 
 - PASS: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false` (0 warnings, 0 errors).
 - PASS: focused `IndustryJobsHostWireTests.Registered_industry_manager_routes_keep_client_shapes_and_accept_transport_kwargs` (1 passed, 0 failed, 0 skipped). It sends real Macho CallReq packets, includes transport `machoVersion`, dispatches through `ServiceRegistry` and `PacketDispatcher`, and checks replies plus subsequent state reads without PostgreSQL.
-- Existing monitor regression: `IndustryMonitorNoticeTests.Host_inventory_dispatch_publishes_changed_materials_once_after_item_change_and_isolates_sessions` exercises ConnectJob, the inventory notification order, matching monitor ID, unchanged quantities and session isolation through Host dispatch.
-- Targeted Actions checks will be dispatched after the commit is pushed.
+- PASS: Actions run `40179556882` on `c5387254` completed successfully with no failed tests or jobs.
+- PASS: Actions run `40179555776` on `c5387254` completed successfully with no failed tests or jobs.
+- Existing monitor regression `IndustryMonitorNoticeTests.Host_inventory_dispatch_publishes_changed_materials_once_after_item_change_and_isolates_sessions` was selected in its own Host test dispatch.
+- At these successful run summaries, the status tool reported no failed tests but did not include skipped-test totals.
+- PASS: push-triggered `ci.yml` run `40179543366` for `c5387254` completed successfully with no failed tests or jobs.
 - PostgreSQL and graphical-client sessions were not used for this batch. The persistence implementation has separate PostgreSQL tests; the new wire regression checks the service and transport contract without that lane.

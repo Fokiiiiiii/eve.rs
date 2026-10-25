@@ -2,16 +2,24 @@
 
 Updated 2026-10-25.
 
-## Increment: inventory descriptor
+## Verified client and EveJS behavior
 
-RPC-01725 and RPC-01726 use the same no-argument invbroker.GetItemDescriptor call at eve/client/script/environment/invCache.py:430. GetItemHeader caches its reply (invCache.py:428-432); godma.itemrd returns that cached descriptor (eve/client/script/environment/godma.py:124-127). invCacheContainer.List constructs a CRowset from the descriptor and filters every returned inventory row by its header length (invCache.py:1131-1165); ListByFlags does the same before returning its rows (invCache.py:1167-1201). The descriptor is therefore consumed as the inventory DB row header, not as arbitrary metadata.
+- Inventory descriptors: `invCache.py:428-432` caches `GetItemDescriptor`; `godma.py:124-127` exposes it as `itemrd`. `invCache.py:1131-1165,1167-1201` builds rowsets and checks each inventory row against the descriptor. EveJS `invBrokerService.js:13567-13571,9966-9971` builds the descriptor from inventory row columns.
+- Dynamic items: `dynamicItemSvc.py:21-37` decodes and caches `GetDynamicItemInfo`, then reads `mutatorTypeID` and `attributes`; `dynamicItemSvc.py:43-44` creates a mutation. `craftingWindow.py:232-256` calls Create, fetches mutation info, and updates the result UI. EveJS `dynamicItemService.js:426-436,438-534` reads dynamic info and performs/persists mutation changes.
+- Encoded items: `menuFunctions.py:473-477` calls `DecodeItem` and opens the encoded-item window only for a returned URL. EveJS `encodedItemsService.js:178-209` accepts supported item resource URLs (`.png` and `.webm`).
+- Item locking: `itemLocking.py:11-79` caches the location-to-item map, tests membership, and invalidates/scatters on lock changes; `corp_ui_accounts.py:509-595` consumes locked locations to render lockdown groupings. EveJS `itemLockingService.js:21-36` returns keyed item records.
+- Mutual war invites: `mutualWarInvites.py:8-41` is the client wrapper for all six methods. Pending invite rows are returned to callers; the other mutation RPC results are ignored, while the block query result is consumed. EveJS `mutualWarInviteMgrService.js:87-108` filters invite rows by current owner and sorts newest first.
+- Asset safety: `assetSafetySvc.py:25-30` returns the character/corporation calls; `assetSafetyControllers.py:10-17` consumes those row lists. EveJS `structureAssetSafetyService.js:185-192` returns persisted safety wraps as a list.
 
-Current eve.rs has the handler at dotnet/src/Eve.Services.Inventory/InvBrokerService.cs:326-327, where it returns InventoryWire.DescriptorHeader. Host composition creates the broker in dotnet/src/Eve.Host/Rpc/InventoryRpc.cs:43-46, wraps it with IndustryInventoryChangePublisher (which forwards the inner service name and method calls at dotnet/src/Eve.Host/IndustryInventoryChangePublisher.cs:16-26), and includes it in the registered character service list at dotnet/src/Eve.Host/Rpc/CharacterServiceList.cs:47-70.
+## eve.rs wiring and transport
 
-EveJS v0.12.9 returns the result of _buildInventoryRowDescriptor() from server/src/services/inventory/invBrokerService.js:13567-13571; that delegates to buildPackedRowDescriptor at invBrokerService.js:9966-9971. The current shared descriptor declares the stored item columns plus virtual stacksize and singleton at dotnet/src/Eve.Services/InventoryWire.cs:9-29.
+- Inventory: `InvBrokerService.cs:326-327` returns `InventoryWire.DescriptorHeader`; `InventoryRpc.cs:43-46` creates it, `IndustryInventoryChangePublisher.cs:16-26` forwards its route, and `CharacterServiceList.cs:47-70` registers the wrapper.
+- Other services are in the active Host composition: `DynamicItemRpcService.cs` (`dynamicItemService`), `OperationalRpcServices.cs` (`encodedItems`), `CorpMgrRpcServices.cs` (`mutualWarInviteMgr`, `itemLocking`), and `StructureDirectoryService.cs` (`structureAssetSafety`).
+- Client transport appends `machoVersion` in `ServiceCallGPCS.py:221-225` and `ObjectCallGPCS.py:403-407`; the wire tests include it.
 
-Added dotnet/tests/Eve.Host.Tests/InvBrokerDescriptorHostTests.cs. It sends a client packet with machoVersion=1 through HostServer, registers the real broker behind the Host inventory notification wrapper, and compares the decoded CallRsp descriptor against the shared inventory header. The test does not need a database because this descriptor is static.
+## Tests and remaining scope
 
-Verified locally: Host.Tests build passed with 0 warnings and 0 errors; the focused test passed 1/1 with 0 skipped. No database or graphical client was used.
-
-The generated EVE_RS_COVERAGE.csv still reports RPC-01725/01726 as MISSING: its current route scanner does not follow IndustryInventoryChangePublisher from InventoryRpc.cs to the wrapped broker, despite the concrete registration above. Fixing scanner resolution or updating the generated row is pending. RPC-01420 through RPC-02804 remain to be covered by this handoff.
+- `InvBrokerDescriptorHostTests.cs` sends a packet through HostServer with the actual registered publisher and broker; the static reply matches the shared inventory header.
+- `ServiceResponseBatchHostWireTests.cs` sends HostServer packets through actual service registrations. It checks DynamicItemService's missing-character refusal; encoded URL; sorted/filtered invite rows, integer block state, None replies and callback argument order; personal/corporate asset-safety row fields and owner IDs; and empty locking collections without a corporation context.
+- Local Host.Tests compile check succeeded (0 warnings, 0 errors). The five focused service tests passed (0 skipped); the descriptor focused test passed (1/1, 0 skipped). The pushed head `74208f93a950` passed Actions run `40181736937`. Push CI run `40181728597` was still in progress at this update.
+- The create test checks the no-character refusal only. Successful mutation persistence and a populated `GetDynamicItemInfo` reply are not covered here. No database or graphical-client run was performed. The generated coverage scanner still fails to follow the inventory publisher wrapper and currently labels RPC-01725/01726 MISSING despite the real Host registration/test; its matcher also misses the shared wire-test helpers.

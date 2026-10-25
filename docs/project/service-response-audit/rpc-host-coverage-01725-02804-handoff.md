@@ -13,13 +13,13 @@ Updated 2026-10-25.
 
 ## eve.rs wiring and transport
 
-- Inventory: `InvBrokerService.cs:326-327` returns `InventoryWire.DescriptorHeader`; `InventoryRpc.cs:43-46` creates it, `IndustryInventoryChangePublisher.cs:16-26` forwards its route, and `CharacterServiceList.cs:47-70` registers the wrapper.
-- Other services are in the active Host composition: `DynamicItemRpcService.cs` (`dynamicItemService`), `OperationalRpcServices.cs` (`encodedItems`), `CorpMgrRpcServices.cs` (`mutualWarInviteMgr`, `itemLocking`), and `StructureDirectoryService.cs` (`structureAssetSafety`).
+- Inventory: `InvBrokerService.GetItemDescriptor` at current main source lines 225-226 returns `InventoryWire.DescriptorHeader`; current registered composition wraps and registers the broker. This includes origin/main inventory-service changes merged at `24a2628c`.
+- Other services are in active Host composition: `DynamicItemRpcService.cs` (`dynamicItemService`), `OperationalRpcServices.cs` (`encodedItems`), `CorpMgrRpcServices.cs` (`mutualWarInviteMgr`, `itemLocking`), and `StructureDirectoryService.cs` (`structureAssetSafety`).
 - Client transport appends `machoVersion` in `ServiceCallGPCS.py:221-225` and `ObjectCallGPCS.py:403-407`; the wire tests include it.
 
 ## Tests and remaining scope
 
 - `InvBrokerDescriptorHostTests.cs` sends a packet through HostServer with the actual registered publisher and broker; the static reply matches the shared inventory header.
 - `ServiceResponseBatchHostWireTests.cs` sends HostServer packets through actual service registrations. It checks DynamicItemService's missing-character refusal; encoded URL; sorted/filtered invite rows, integer block state, None replies and callback argument order; personal/corporate asset-safety row fields and owner IDs; and empty locking collections without a corporation context.
-- Local Host.Tests compile check succeeded (0 warnings, 0 errors). The five focused service tests passed (0 skipped); the descriptor focused test passed (1/1, 0 skipped). The pushed head `74208f93a950` passed Actions run `40181736937`. Push CI run `40181728597` was still in progress at this update.
-- The create test checks the no-character refusal only. Successful mutation persistence and a populated `GetDynamicItemInfo` reply are not covered here. No database or graphical-client run was performed. The generated coverage scanner still fails to follow the inventory publisher wrapper and currently labels RPC-01725/01726 MISSING despite the real Host registration/test; its matcher also misses the shared wire-test helpers.
+- The initial local Host.Tests compile check succeeded (0 warnings/errors), the five service focused tests passed (0 skipped), and descriptor test passed (1/1, 0 skipped). After merge at `24a2628c`, Host.Tests compiled again (0 warnings/errors) and all six focused tests passed (0 skipped). Actions run `40182343738` succeeded. `ci-status.py failures 24a2628c` returned no ci.yml run for that merge commit.
+- Create testing covers the missing-character refusal only. Successful mutation persistence and a populated `GetDynamicItemInfo` reply are not covered here. No database or graphical-client run was performed. The generated coverage scanner still fails to follow the inventory publisher wrapper and its matcher misses these shared wire-test helpers, so the audit CSV continues to report stale coverage.

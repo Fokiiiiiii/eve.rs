@@ -18,8 +18,11 @@ public partial class HostServerTests
         await front.SendAsync(open);
         await front.ReceiveAsync();
 
-        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(
-            open, 1, "shipKillCounter", "GetItemKillCountPlayer", [new PyLong(9001)]))));
+        var kwargs = new PyDict([new KeyValuePair<PyValue, PyValue>(
+            new PyStr("machoVersion"), new PyInt(1))]);
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.CallWithKwargs(
+            open, 1, "shipKillCounter", "GetItemKillCountPlayer",
+            new PyTuple([new PyLong(9001)]), kwargs))));
         var reply = Assert.IsType<Send>(await front.ReceiveAsync());
 
         Assert.Equal(new PyInt(23), Result(MarshalCodec.Decode(reply.Payload)));

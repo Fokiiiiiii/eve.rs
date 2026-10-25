@@ -336,11 +336,27 @@ def filtered_test_evidence(repo_root: pathlib.Path, pairs: set[tuple[str, str]],
 _original_status_for = audit.status_for
 
 
+CURRENT_WIRE_FIXES = {
+    ("air_npe", "is_air_npe_enabled"):
+        "Host wire test covers the client bool reply with machoVersion=1 and keeps other keyword validation.",
+    ("config", "GetMultiOwnersEx"):
+        "Host wire test covers repeated 100-owner batches; the service uses authoritative bulk stores with a 10,000-ID cap.",
+    ("pingService", "Ping"):
+        "Host wire test covers the client-ignored None reply with machoVersion=1 and keeps other keyword validation.",
+    ("subscriptionMgr", "GetCloneGrade"):
+        "Host wire test covers the numeric clone grade reply with machoVersion=1.",
+    ("fleetMgr", "RegisterForDamageUpdates"):
+        "Host wire test clears an empty-set/None subscription without fleet membership and keeps malformed-input errors.",
+}
+
+
 def current_status_for(pair: tuple[str, str], routes: set[tuple[str, str]],
                        tests: dict[tuple[str, str], list[str]], contract: Any) -> tuple[str, str]:
     if pair == ("beyonce", "CmdStargateJump") and pair in routes and tests.get(pair):
         return (f"IMPLEMENTED-TESTED ({tests[pair][0]})",
                 "current Host dispatcher warp-then-jump wire regression supersedes the owner log recorded before the fix")
+    if pair in CURRENT_WIRE_FIXES and pair in routes and tests.get(pair):
+        return (f"IMPLEMENTED-TESTED ({tests[pair][0]})", CURRENT_WIRE_FIXES[pair])
     return _original_status_for(pair, routes, tests, contract)
 
 

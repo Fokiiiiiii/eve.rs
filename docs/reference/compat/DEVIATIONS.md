@@ -5528,7 +5528,7 @@ The PI and industry test harnesses advance colony and job timestamps to fit prod
 
 ## Config RPC bounds (2026-10-23)
 
-`config.GetMultiOwnersEx`, `GetMultiCorpTickerNamesEx`, `GetMultiAllianceShortNamesEx`, and `GetMultiLocationsEx` now refuse more than 500 raw IDs before provider or item lookups with `CONFIG_BULK_LIMIT_EXCEEDED`; each consumes 10 weighted per-session units. `GetAverageMarketPrices` also consumes 10 units for its market read. The 160-unit default leaves room for a normal initial lookup sequence. Focused service and dispatcher regressions cover the cap and named budget.
+`config.GetMultiOwnersEx` accepts up to 10,000 raw owner IDs and charges `ceil(count/100)` expensive-RPC units (bounded at 100). The three other config bulk methods retain their 500-ID and 10-unit caps; `GetAverageMarketPrices` also consumes 10. The 160-unit default allows up to 16,000 owner IDs per minute across 100-item batches, while each owner request remains capped at 10,000 IDs.
 
 
 ## PLEX market RPC classification (2026-10-23)
@@ -5584,7 +5584,7 @@ The overview now points to the config, crimewatch, station, and map method-level
 
 `marketProxy.BuyMultipleItems` now requires a list or tuple and validates every line's type ID, nonnegative quantity, minimum volume, and price before passing any nonzero line to the writer. A zero-quantity line is ignored, as exercised by `Buy_multi_fills_each_line_at_its_limit_and_books_the_unfilled_rest_of_each_line`; negative quantities and bad lines return `MARKET_BULK_ARGUMENT_INVALID`. The client’s `marketsvc.BuyMulti` supplies a list of complete order rows, and `MarketRpcTests.Buy_multi_refuses_malformed_batches_before_any_order_is_written` verifies malformed mixed batches do not create orders.
 
-`config.GetMultiOwnersEx`, `GetMultiCorpTickerNamesEx`, `GetMultiAllianceShortNamesEx`, and `GetMultiLocationsEx` now reject malformed IDs and more than 500 raw list entries before data access. V24.01 cache priming supplies lists; location 0 remains supported for the none row. This bounds repeated owner and item reads while preserving valid client request shapes.
+- `GetMultiOwnersEx` accepts well-formed lists or tuples up to 10,000 raw IDs, while the other bulk owner, corporation, alliance, and location methods retain the 500-ID cap. It rejects malformed containers, non-integer IDs, negative IDs, and disallowed zero IDs before data access; the existing character, corporation, and alliance stores load authoritative rows in bulk, and the reply keeps the client owner tuple-set columns. Location 0 remains supported for its none row.
 
 The four `config` multi-ID lookup RPCs consume 10 weighted per-session work units because each may perform up to 500 provider reads. Valid V24.01 list-based requests retain their response shape; repeated scans receive the dispatcher's named budget refusal.
 
@@ -5830,3 +5830,9 @@ System-owned dungeon and incursion waves therefore wait for any pilot in the sys
 ## Industry job completion replies (2026-10-25)
 
 EveJS v0.12.9 returns a job row from `CompleteJob` and `CancelJob`, and a list of delivered job rows from `CompleteManyJobs` (`server/src/services/industry/industryManagerService.js:97-125`). eve.rs returns `None` after each committed transition. The V24.01 client calls at `eve/client/script/industry/industrySvc.py:149-160` do not return or inspect those values, so the difference does not change the client-visible flow. `InstallJob` continues to return the committed job id used by the caller (`industrySvc.py:139-146`).
+
+## Fleet damage watchlist clearing while fleetless (2026-10-25)
+
+The V24.01 fleet watchlist menu exposes damage-update toggles without checking fleet membership (`eve/client/script/ui/shared/fleet/fleetWatchList.py:155-164,177-181`). `FleetSvc.SetDamageUpdates` re-registers the favorites set when enabled and `None` when disabled (`eve/client/script/parklife/fleetSvc.py:450-453,787-795`); leaving a fleet clears favorites and re-registers on the solar-system transition (`fleetSvc.py:1681-1691`). The client ignores the method reply.
+
+EveJS 261018.1 delegates the favorites to `fleetRuntime.registerForDamageUpdates` (`server/src/services/fleets/fleetMgrService.js:33-38`), which filters/stores the watchlist (`server/src/services/fleets/fleetRuntime.js:2572-2587`) after `ensureFleetMembership` (`fleetRuntime.js:633-642`); a fleetless call therefore raises `FleetNotInFleet`. eve.rs intentionally accepts only an explicit `None` or a well-formed empty set/list/tuple as an unsubscribe without membership, clears the session `fleetWatchlist`, and returns `True`. Nonempty requests still require fleet membership, and malformed inputs still raise `FleetError`.

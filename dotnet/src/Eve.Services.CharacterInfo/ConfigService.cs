@@ -95,7 +95,7 @@ public sealed partial class ConfigService(
     [Method("GetMultiOwnersEx")]
     public async ValueTask<PyValue> GetMultiOwnersEx(ServiceCall call)
     {
-        var ids = RequestedIds(call.Arg(0), agentOwners: agentOwners);
+        var ids = RequestedIds(call.Arg(0), maximumCount: MaximumCachedOwnerIds);
         var nonAgentIds = agentOwners is null ? ids : ids.Where(id => !agentOwners.ContainsKey(id)).ToArray();
         var corporationById = nonAgentIds.Length == 0
             ? new Dictionary<long, Corporation>()
@@ -105,6 +105,9 @@ public sealed partial class ConfigService(
             : (await corporations.AlliancesByIdsAsync(nonAgentIds, call.Cancellation))
                 .Where(alliance => !alliance.Deleted)
                 .ToDictionary(alliance => alliance.Id);
+        var characterById = nonAgentIds.Length == 0
+            ? null
+            : (await characters.GetManyAsync(nonAgentIds, call.Cancellation)).ToDictionary(character => character.Id);
         var rows = new List<PyTuple>(ids.Length);
         foreach (var id in ids)
         {
@@ -119,8 +122,7 @@ public sealed partial class ConfigService(
                 continue;
             }
 
-            var character = await characters.GetAsync(id, call.Cancellation);
-            if (character is not null)
+            if (characterById?.GetValueOrDefault(id) is { } character)
             {
                 rows.Add(Row(
                     PyValue.Of(character.Id),
@@ -251,7 +253,7 @@ public sealed partial class ConfigService(
     private static long[] RequestedIds(
         PyValue value,
         bool includeZero = false,
-        IReadOnlyDictionary<long, AgentOwnerInfo>? agentOwners = null)
+        int maximumCount = MaximumRequestedIds)
     {
         var items = value switch
         {
@@ -259,11 +261,10 @@ public sealed partial class ConfigService(
             PyTuple tuple => tuple.Items,
             _ => throw MachoErrors.ThrowUserError("CONFIG_IDENTIFIER_LIST_INVALID"),
         };
-        if (items.Count > (agentOwners is null ? MaximumRequestedIds : MaximumCachedOwnerIds))
+        if (items.Count > maximumCount)
             throw MachoErrors.ThrowUserError("CONFIG_BULK_LIMIT_EXCEEDED");
 
         var ids = new long[items.Count];
-        var databaseIdCount = 0;
         for (var index = 0; index < items.Count; index++)
         {
             var id = items[index] switch
@@ -274,8 +275,6 @@ public sealed partial class ConfigService(
             };
             if (id < 0 || id == 0 && !includeZero)
                 throw MachoErrors.ThrowUserError("CONFIG_IDENTIFIER_INVALID");
-            if (agentOwners?.ContainsKey(id) != true && ++databaseIdCount > MaximumRequestedIds)
-                throw MachoErrors.ThrowUserError("CONFIG_BULK_LIMIT_EXCEEDED");
             ids[index] = id;
         }
         return ids.Distinct().ToArray();

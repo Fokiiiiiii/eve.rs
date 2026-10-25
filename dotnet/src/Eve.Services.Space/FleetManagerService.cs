@@ -63,11 +63,20 @@ public sealed partial class FleetManagerService(
     [Method("RegisterForDamageUpdates")]
     public async ValueTask<PyValue> RegisterForDamageUpdates(ServiceCall call)
     {
+        if (call.Args.Count != 1)
+            throw MachoErrors.ThrowUserError("FleetError");
+        var ids = call.Arg(0) is PyNone ? Array.Empty<long>() : Ids(call.Arg(0));
+        if (ids.Count == 0)
+        {
+            SetWatchlist(call.Session, WatchlistSessionKey, []);
+            return PyBool.True;
+        }
+
         var context = await ContextAsync(call);
         if (context is null) throw MachoErrors.ThrowUserError("FleetNotInFleet");
-        var (fleetId, snapshot, _) = context.Value;
+        var (_, snapshot, _) = context.Value;
         var members = snapshot.Members.Select(member => member.CharacterId).ToHashSet();
-        var watchlist = Ids(call.Arg(0)).Where(members.Contains).Distinct().Take(100).ToArray();
+        var watchlist = ids.Where(members.Contains).Distinct().Take(100).ToArray();
         SetWatchlist(call.Session, WatchlistSessionKey, watchlist);
         return PyBool.True;
     }

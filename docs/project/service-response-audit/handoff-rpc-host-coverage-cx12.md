@@ -23,8 +23,13 @@ Scope: RPC-01767–RPC-01768, RPC-01839–RPC-01845, RPC-02109–RPC-02110, RPC-
 - `SearchQueryServiceTests.QuickQuery_returns_a_unique_flat_list_and_honors_alias_and_npc_filters` checks list shape, duplicate IDs, ticker aliases with the V24 `exact=-1`/`onlyAltName=True` request, and NPC filtering.
 - `SearchQueryHostTests.Host_registers_search_and_returns_the_client_query_wire_shape` builds the real Host composition and checks registration and the empty-list wire shape, including an extra `machoVersion` keyword.
 - The actual network walk `test_search_query_and_quickquery_use_the_registered_host_route` sends both search methods through the live Host and compares their Rifter type IDs. `test_login_configuration_and_loyalty_rpc_routes_keep_their_wire_contracts` covers the Kiring, machoNet, multi-login and LP methods with `machoVersion`; the population-cap walk checks a valid move and invalid choices through the bound Host route.
-- Locally: `Eve.Services.Core` and `Eve.Host.Tests` builds succeeded; the focused QuickQuery test passed (1 passed, 0 skipped). The live headless tests require Actions; no database was used locally and no graphical-client test was performed.
+- The contract batch wire test now correlates each received response with the request call ID from the returned client address. The full CI shard had consumed an unrelated Host send before the `DeleteContract` response; the focused reproduction passed, and the response correlation removes that ordering assumption.
+- Registering `QuickQuery` raises the Host RPC inventory by one method; `RpcSecurityInventoryTests` now expects 1,400 registered rows.
+- Locally: `Eve.Services.Core` and `Eve.Host.Tests` builds succeeded; the focused QuickQuery test passed (1 passed, 0 skipped). No database was used locally and no graphical-client test was performed.
 
-## Remaining Actions gate
+## Actions status
 
-Run the focused Core and Host tests plus the two named headless tests on Actions, then inspect the push-triggered CI run. Record the run IDs and result here before another handoff.
+- On `63a64d23`, focused Core and Host Actions runs succeeded (`40190235392`, `40190236662`). Push-gate CI (`40190222770`) failed because the Host response helper consumed a preceding Host send and because the RPC inventory expected 1,399 methods after QuickQuery raised it to 1,400. The selected agent-test run (`40190235213`) failed; its output did not identify an individual failing test.
+- On `5dbc0a2c`, the alias-mode Core test passed (`40191564033`), and the isolated contract batch Host test passed (`40191989482`). Push-gate CI (`40191553927`) failed only on the stale RPC inventory count.
+- On `64db67d5`, the focused Host Actions run (`40193666282`) passed both `Contract_reads_and_mutations_are_dispatched_through_the_host_with_client_shapes` and `Real_host_registry_methods_are_enumerable`. Push-gate CI (`40193659035`) is queued/in progress; run `failures 64db67d5` for its final result.
+- Local `Eve.Services.Core` and `Eve.Host.Tests` builds succeeded. The focused QuickQuery unit test passed (1 passed, 0 skipped). No database was used locally and no graphical-client test was performed.

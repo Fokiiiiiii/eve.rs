@@ -70,7 +70,7 @@ public sealed class SearchQueryServiceTests
         {
             Method = "QuickQuery",
             Args = [new PyStr("ALP"), new PyList([new PyInt(3)])],
-            Kwargs = Py.Dict(("exact", new PyInt(1)), ("onlyAltName", PyBool.True)),
+            Kwargs = Py.Dict(("exact", new PyInt(-1)), ("onlyAltName", PyBool.True)),
             Session = new ClientSession(),
         };
         result = Assert.IsType<PyList>(await service.CallAsync(aliasRequest));

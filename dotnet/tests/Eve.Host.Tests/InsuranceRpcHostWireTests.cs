@@ -86,6 +86,13 @@ public sealed class InsuranceRpcHostWireTests : IAsyncLifetime
     private static PyValue Field(PyObject row, string name) =>
         Assert.IsType<PyDict>(row.Args).Entries.Single(entry => JsSemantics.PlainText(entry.Key) == name).Value;
 
+    private static long Integer(PyValue value) => value switch
+    {
+        PyInt number => number.Value,
+        PyLong number => number.Value,
+        _ => throw new Xunit.Sdk.XunitException($"Unexpected integer wire type: {value.GetType().Name}"),
+    };
+
     private static long Cents(PyValue amount) => amount switch
     {
         PyInt value => checked(value.Value * 100),
@@ -171,7 +178,7 @@ public sealed class InsuranceRpcHostWireTests : IAsyncLifetime
         Assert.Same(PyNone.Instance, await insurance.CallAsync(Call(session, "InsureShip", 5, new PyLong(shipId),
             new PyReal(quote.PremiumCents / 100d), PyBool.False)));
         var contract = Assert.IsType<PyObject>(await insurance.CallAsync(Call(session, "GetContractForShip", 6, new PyLong(shipId))));
-        Assert.Equal(new PyLong(shipId), Field(contract, "shipID"));
+        Assert.Equal(shipId, Integer(Field(contract, "shipID")));
         Assert.Equal(new PyInt(rifterTypeId), Field(contract, "typeID"));
         Assert.Equal(new PyInt(characterId), Field(contract, "ownerID"));
         Assert.Equal(new PyReal(0.5), Field(contract, "fraction"));

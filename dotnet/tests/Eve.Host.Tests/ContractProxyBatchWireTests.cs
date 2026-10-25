@@ -29,7 +29,11 @@ public partial class HostServerTests
             await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
                 Packets.Call(open, id, "contractProxy", method, args))));
             var reply = Assert.IsType<Send>(await front.ReceiveAsync());
-            return Result(MarshalCodec.Decode(reply.Payload))!;
+            var response = MarshalCodec.Decode(reply.Payload);
+            var responseState = ((PyTuple)((PyObject)response).Args).Items;
+            Assert.True(((PyInt)responseState[0]).Value == 7,
+                $"{method} returned an error response: {response}");
+            return Result(response)!;
         }
 
         var deleteResult = Assert.IsType<PyTuple>(await Rpc(1, "DeleteMultipleContracts",

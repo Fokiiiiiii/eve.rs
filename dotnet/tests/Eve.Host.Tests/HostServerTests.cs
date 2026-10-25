@@ -319,7 +319,7 @@ public partial class HostServerTests : IAsyncLifetime
     private static PyValue? Result(PyValue response)
     {
         var state = ((PyTuple)((PyObject)response).Args).Items;
-        Assert.Equal(7, ((PyInt)state[0]).Value); // CALL_RSP
+        Assert.Equal(7, ((PyInt)state[0]).Value, $"Response: {response}"); // CALL_RSP
         var payload = (PyTuple)state[4];
         return payload.Items[0] is PySubStream { Decoded: { } inner } ? inner : payload.Items[0];
     }

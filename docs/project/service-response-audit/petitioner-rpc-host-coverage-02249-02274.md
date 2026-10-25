@@ -42,8 +42,9 @@ The notification caller supplies the ticket ID as text. EveJS's shared `normaliz
 
 ## Verification
 
-- `Eve.Services.Core` build: passed, 0 warnings and 0 errors.
-- `Eve.Host.Tests` build: passed, 0 warnings and 0 errors.
-- Focused `Petitioner_client_methods_answer_through_registered_host_wire`: passed, 1 test, 0 skipped.
-- GitHub Actions and push-gate results: pending.
+- Pre-merge `Eve.Services.Core` build: passed, 0 warnings and 0 errors.
+- Post-merge `Eve.Host.Tests` build: passed, 0 errors; one transient MSB3026 DLL copy lock from a concurrent build retried successfully.
+- Focused `Petitioner_client_methods_answer_through_registered_host_wire`: passed locally, 1 test, 0 skipped.
+- GitHub Actions agent-test run 40207478662 for commit de4f8401: passed; 1 test job, no failed tests or jobs.
+- Push-triggered `ci.yml` run 40207469674 for de4f8401: in progress at last check.
 - Graphical-client verification: not performed.

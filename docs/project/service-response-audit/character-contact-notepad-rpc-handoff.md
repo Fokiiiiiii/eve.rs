@@ -52,3 +52,14 @@ dotnet/tests/Eve.Host.Tests/CharacterContactNotepadHostTests.cs adds two databas
 - Focused Host Actions run 40104870619 passed the RPC snapshot, contract read and ContractProxy wire tests (3 passed, 0 failed, 0 skipped).
 - Latest push gate, `ci.yml` run 40104855348 for `e7ba3843`, completed with failure: all Host shards, Rust checks, .NET build, Windows and Python succeeded; the headless structure-anchor case failed with `CustomNotify: You must be in space to deploy a structure`, and `.NET (space tests 4/4)` was cancelled. The E2E job skipped 8 other tests (one skill-speed check and seven slow-live checks). This structure-anchor failure remains outside the requested Host RPC rows; the exact failing authority checks session location and simulation ship position.
 - Focused Actions run 40107780101 on pushed SHA `081ac3c0` passed `CharacterContactNotepadHostTests` with no failed tests; the focused Host regression therefore passes on the latest source. `ci-status.py failures 081ac3c0` still reports no push-triggered `ci.yml` run for that SHA.
+
+
+## 2026-10-25 wire-dispatch verification
+
+Source inspection corrected an earlier coverage claim: the pre-existing `CharacterContactNotepadHostTests` retrieves the concrete services from the production `CharacterHostRig.Registry`, but calls `IService.CallAsync` directly. It verifies authoritative state, response values and restart persistence; it does not pass Macho packets through the dispatcher.
+
+Added `dotnet/tests/Eve.Host.Tests/CharacterContactNotepadWireHostTests.cs`. Its focused database-backed scenario sends CallReq-shaped packets with transport-added `machoVersion=3396210` into `PacketDispatcher` using the production Host runtime registry, then checks the CallRsp substream results and persisted contact, block, note and settings state after restart. This is dispatcher-level wire coverage, not a TCP HostServer or graphical-client run. Contact mutations retain the normal 500-owner burst bound. The same V24.01 caller/consumer paths remain those listed above: fitting slot and nodegraph inventory moves at `fittingSlotController.py:237-241` and `nodegraph/client/actions/module.py:74-78`; address-book contacts/blocks/deletes/relationship changes at `addressbookService.py:657-697,733,819-842`; note ID/text consumers at `notepad.py:172-214,515-519,544-545,622-647`; settings deletion at `characterSettingsSvc.py:55-56`. EveJS v0.12.9 behavior is recorded above.
+
+- Local compile-check: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false` succeeded (0 warnings, 0 errors).
+- No local PostgreSQL was used; the focused `PgFact` is to be run on GitHub Actions after push.
+- No TCP client or graphical client verification was performed.

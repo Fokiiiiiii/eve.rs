@@ -4,9 +4,8 @@
 
 - Client source: /home/user/eve-logic, commit 1dbb5711a072a146e1d228365668ac05655eefe1.
 - Host source: this worktree after merging origin/main at fb5aa2b9ebeebdda8b26ff48113c37bae13fc665 and the P0 audit changes.
-- Pushed to main: 21f75f92.
-- Focused Actions run 40219719160 passed for Search_quick_query_returns_client_id_list_through_host_with_transport_kwargs; no failed tests or jobs.
-- Push CI run 40219660982 passed; no failed tests or jobs.
+- P0 implementation/test push: 21f75f92. Latest main synchronization push: 22c62010.
+- Focused Actions run 40219719160 passed for Search_quick_query_returns_client_id_list_through_host_with_transport_kwargs; no failed tests or jobs. Push CI run 40219660982 passed; no failed tests or jobs. No separate ci.yml run was created for the docs-only synchronization at 22c62010.
 - Regenerate both CSVs and the P0/P1 work queue with:
   python3 tools/spec-extract/run_service_audit_current.py --queue-dir /tmp/service-audit-cx5-final
 - Latest generated totals (2026-10-25): 4,173 client rows, 2,345 RPC rows, 1,408 active Host routes, and 61 queue files. Coverage: CLIENT-LOCAL 1, HOLLOW 10, IMPLEMENTED-TESTED 371, IMPLEMENTED-UNTESTED 1,552, MISSING 403, REJECTS-VALID-INPUT 8.
@@ -32,8 +31,8 @@
 ### Local checks and limits
 
 - Passed: python3 -m unittest tools.spec-extract.test_service_audit_local_calls.
-- Passed after latest merge: target-only dotnet builds for Eve.Services.Space.Tests and Eve.Host.Tests, both zero warnings/errors. Dependencies had passed earlier full builds. The Host inventory test source was restored from the complete main-checkout version after the latest upstream file was truncated; the corrected source compiles.
-- No PostgreSQL database was used. The focused QuickQuery .NET test was run on Actions, not locally. The graphical V24.01 client has not been exercised.
+- Passed after latest merge: target-only dotnet builds for Eve.Services.Space.Tests and Eve.Host.Tests, both zero warnings/errors. Their dependencies passed earlier full builds. The Host inventory test source was restored from the complete main-checkout version after an upstream update truncated it; the corrected source compiles.
+- No PostgreSQL database was used. The focused QuickQuery .NET test passed on Actions, not locally. The graphical V24.01 client has not been exercised.
 
 ## Existing audit follow-up
 

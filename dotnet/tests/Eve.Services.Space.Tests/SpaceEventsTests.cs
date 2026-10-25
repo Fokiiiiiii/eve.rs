@@ -149,8 +149,8 @@ public class SpaceEventsTests
         var loss = Assert.Single(lost);
         Assert.Equal((victim.CharacterId, ShipLossCause.Player, killer.CharacterId), (loss.CharacterId, loss.Cause, loss.KillerCharacterId));
         Assert.Contains(rig.Log, line => line.Contains("a handler of ShipLost failed: an insurance that failed"));
-        // and the client was still told: the pilot is in a capsule
-        Assert.Contains(Events.Of(victimSession, clear: false), e => e.Name == "OnItemChange");
+        // and the client was told that the pilot is in a capsule
+        Assert.Contains(Events.Of(victimSession, clear: false), e => e.Name == "OnPodOrCorvetteAssembly");
     }
 
     // ── a pilot's affiliation changed ────────────────────────────────────────

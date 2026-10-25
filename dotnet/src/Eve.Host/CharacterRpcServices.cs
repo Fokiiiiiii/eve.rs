@@ -350,11 +350,11 @@ public sealed class ClientStatLoggerRpcService : IService
         call.Cancellation.ThrowIfCancellationRequested();
         if (call.Args.Count != 1 || call.Kwargs is not PyNone)
             throw MachoErrors.ThrowUserError("CLIENT_LOG_ARGUMENTS_INVALID");
-        if (call.Arg(0) is not PyStr text)
+        var message = Eve.Macho.JsSemantics.StringValue(call.Arg(0));
+        if (message is null)
             throw MachoErrors.ThrowUserError("CLIENT_LOG_MESSAGE_INVALID");
-        if (System.Text.Encoding.UTF8.GetByteCount(text.Value) > MaxMessageBytes)
+        if (System.Text.Encoding.UTF8.GetByteCount(message) > MaxMessageBytes)
             throw MachoErrors.ThrowUserError("CLIENT_LOG_MESSAGE_LIMIT_EXCEEDED");
-        var message = text.Value;
         _log(message);
         return ValueTask.FromResult<PyValue>(PyNone.Instance);
     }

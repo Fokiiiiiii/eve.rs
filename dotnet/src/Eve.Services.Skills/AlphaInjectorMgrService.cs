@@ -9,7 +9,9 @@ public sealed partial class AlphaInjectorMgrService(PgSkillStore store, SkillCat
     [Method("GetNextAvailableInjection")]
     public async ValueTask<PyValue> GetNextAvailableInjection(ServiceCall call)
     {
-        if (call.Args.Count != 0 || call.Kwargs is not PyNone)
+        var validKwargs = call.Kwargs is PyNone || call.Kwargs is PyDict kwargs &&
+            kwargs.Entries.All(entry => entry.Key is PyStr { Value: "machoVersion" } && entry.Value is (PyInt or PyLong));
+        if (call.Args.Count != 0 || !validKwargs)
             throw MachoErrors.ThrowUserError("ALPHA_INJECTOR_ARGUMENTS_INVALID");
         if (call.Session.CharacterId is not { } character || catalog.ItemTypeId("Daily Alpha Injector") is not { } typeId
             || await store.DailyAlphaSkillInjectorUsedAtAsync(character, typeId, call.Cancellation) is not { } usedAt)

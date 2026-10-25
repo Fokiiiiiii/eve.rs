@@ -86,6 +86,17 @@ owners = Recordset(EveOwners, "ownerID", "GetOwnersEx", "GetMultiOwnersEx")
         )
         self.assertIn("supersedes the owner log", evidence)
 
+    def test_client_local_inventory_cache_eviction_is_not_reported_as_missing(self):
+        contract = service_audit.audit.load_contract()
+        status, evidence = current_service_audit.audit.status_for(
+            ("charMgr", "InvalidateStationItemsCache"),
+            set(),
+            {},
+            contract,
+        )
+        self.assertEqual("CLIENT-LOCAL", status)
+        self.assertIn("invCache.py:855-859", evidence)
+
     def test_host_route_extraction_resolves_registered_string_constants(self):
         contract = service_audit.audit.load_contract()
         with tempfile.TemporaryDirectory() as temporary:

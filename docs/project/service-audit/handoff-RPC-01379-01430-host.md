@@ -28,6 +28,7 @@ DungeonDynamicResourceHostWireTests.cs covers the PyList, escalating-path rowset
 
 ## Checks and limits
 
-PASS: Dungeon_and_dynamic_resource_cache_calls_round_trip_through_host_registration (1 passed, 0 failed, 0 skipped).
-PASS: dotnet build dotnet/src/Eve.Services.Space/Eve.Services.Space.csproj -p:UseSharedCompilation=false (0 warnings, 0 errors). The focused test build also compiled Eve.Host.Tests successfully.
+PASS: Dungeon_and_dynamic_resource_cache_calls_round_trip_through_host_registration (1 passed, 0 failed, 0 skipped), after resolving the helper collision.
+PASS: dotnet build dotnet/src/Eve.Services.Space/Eve.Services.Space.csproj -p:UseSharedCompilation=false (0 warnings, 0 errors). The focused test invocation also compiled Eve.Host.Tests successfully.
+Actions run 40196410619 for 21f001c failed because merged DynamicResourceCacheMgrHostTests.cs:69 collided with the Value helper in this test. The helper was renamed; the focused test passes locally. The selected agent-test run 40196417010 also failed on that SHA; its rerun is pending.
 Not exercised: graphical client, PostgreSQL-backed Host composition, or nonzero dynamic-bounty activation. The disabled pair matches EveJS v0.12.9.

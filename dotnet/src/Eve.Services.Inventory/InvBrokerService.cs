@@ -18,7 +18,7 @@ public sealed partial class InvBrokerService(
     PgItemStore items, ItemTypeCatalog types, StationCatalog stations, CharacterShips ships, DogmaStatic statics, Func<long> nowUnixMs, ISpaceContainers? space = null, ISpaceDroneBays? droneBays = null, CorporationHangarAccess? corporationHangarAccess = null, IReadOnlyList<Eve.Services.ICharacterEntryHook>? entryHooks = null,
     Func<ClientSession, long, CancellationToken, ValueTask<ControlledStructureInventory?>>? controlledStructureInventory = null,
             Func<IReadOnlyCollection<long>, CancellationToken, Task<IReadOnlyDictionary<long, double>>>? crystalDamage = null,
-            Func<long, CancellationToken, ValueTask<DockableAssetLocation?>>? dockableAssetLocation = null) : IBoundObjectReleaseHandler
+            Func<long, CancellationToken, ValueTask<DockableAssetLocation?>>? dockableAssetLocation = null) : IBoundObjectReleaseHandler, IContractInventoryReader
 {
     /// <summary>The container the client asks for to get the hangar of the station it is docked at.</summary>
     public const int ContainerHangar = 10004;
@@ -232,6 +232,53 @@ public sealed partial class InvBrokerService(
         if (StationOf(session) is not { } station || session.CharacterId is not { } character)
             return [];
         return await RowsAsync(await StationItemsAsync(session, character, station, cancellationToken), cancellationToken);
+    }
+
+    public async ValueTask<IReadOnlyList<ItemRow>> GetContractDockableItemsAsync(
+        ClientSession session, long stationId, bool forCorporation, CancellationToken cancellationToken)
+    {
+        if (stationId <= 0 || StationOf(session) != stationId || session.CharacterId is not { } character)
+            return [];
+        var ownerId = forCorporation ? CorporationIdOf(session) : character;
+        if (ownerId <= 0)
+            return [];
+        var itemsAtStation = await StationItemsAsync(session, character, stationId, cancellationToken);
+        return await RowsAsync(itemsAtStation
+            .Where(item => item.OwnerId == ownerId && (forCorporation
+                ? ItemFlags.IsCorporationHangar(item.Flag)
+                : item.Flag == 4))
+            .OrderBy(item => item.Id), cancellationToken);
+    }
+
+    public async ValueTask<IReadOnlyList<ItemRow>> GetContractContainerItemsAsync(
+        ClientSession session, long stationId, long containerId, bool forCorporation, int flagId,
+        CancellationToken cancellationToken)
+    {
+        if (stationId <= 0 || containerId <= 0 || StationOf(session) != stationId
+            || session.CharacterId is not { } character)
+            return [];
+        var ownerId = forCorporation ? CorporationIdOf(session) : character;
+        if (ownerId <= 0 || await items.GetAsync(containerId, cancellationToken) is not { } container
+            || container.OwnerId != ownerId || container.LocationId != stationId)
+            return [];
+
+        if (forCorporation)
+        {
+            var flagAllowed = ItemFlags.IsCorporationHangar(container.Flag) || container.Flag == 4;
+            var selectedFlagAllowed = flagId <= 0 || ItemFlags.IsCorporationHangar(flagId) || flagId == 4;
+            var sameDivision = flagId <= 0 || container.Flag == flagId
+                || container.Flag == 4 && flagId == 115 || container.Flag == 115 && flagId == 4;
+            if (!flagAllowed || !selectedFlagAllowed || !sameDivision
+                || !await CanAccessCorporationItemAsync(session, container, CorporationHangarOperation.Query, cancellationToken))
+                return [];
+        }
+        else if (container.Flag != 4)
+        {
+            return [];
+        }
+
+        var contents = await items.InContainerAsync(containerId, cancellationToken);
+        return await RowsAsync(contents.Where(item => item.OwnerId == ownerId).OrderBy(item => item.Id), cancellationToken);
     }
 
     /// <summary>What is in the bound inventory: the hangar's ships, a ship's fitted modules and cargo, or what a can or a wreck holds.</summary>

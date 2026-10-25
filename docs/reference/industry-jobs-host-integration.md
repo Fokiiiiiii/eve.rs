@@ -12,11 +12,11 @@ projects. Host owns composition and one PostgreSQL transaction per lifecycle ope
 new IndustryJobsService(readIndustryJobs, industryJobOperations, currentFileTime, ...)
 ```
 
-**現状:** `Program.cs` applies migration `001_jobs`, constructs `PersistenceIndustryJobOperations`, and passes `ReadJobsAsync` plus the operations provider to `IndustryJobsService`. **コードあり:** DB transaction behavior for item custody, wallet settlement, job state, and outbox is not yet covered by DB/Host tests or a successful build. Keep using the existing inventory, wallet, and event stores; do not add parallel caches.
+**Verified:** `CharacterServicesComposition.IndustryRpc()` registers `IndustryJobsService` with `PersistenceIndustryJobOperations`; `InventoryRpc()` registers `IndustryMonitorRpcService` and wraps inventory mutations with `IndustryInventoryChangePublisher`. `IndustryHostRpcTests` routes through `ServiceRegistry` and `PacketDispatcher` and covers all seven manager RPCs plus monitor connect/disconnect and the material notification. This task did not run PostgreSQL tests, so transaction persistence and outbox delivery were not re-exercised here.
 
-The existing `readJobs` callback must ultimately read/project rows from `industry.jobs`, so the existing
-wire reader sees the same authoritative records the mutation port writes. A JSON projection for the existing
-marshal adapter is acceptable; writing a second `GameStore` job table is not.
+The `readJobs` callback uses `PersistenceIndustryJobOperations.ReadJobsAsync`, which queries `industry.jobs`
+ordered by job id and projects each row through `ReadWireJob` for the existing marshal adapter. Lifecycle reads
+and mutations use the same persisted table; there is no parallel `GameStore` job table.
 
 ## Typed requests and RPC wire contract
 
@@ -141,6 +141,17 @@ Migration/implementation notes:
   sessions after commit. The client itself raises its ready notification when its local timer observes the
   persisted end date.
 
+## RPC-01666–RPC-01684 coverage resolution
+
+The whole V24.01 client tree has only one `industryManager` RPC caller file: `eve/client/script/industry/industrySvc.py`. `GetJobByID` passes the `GetJob` result into `_JobInstance(..., fetchBlueprint=True)` (line 59); `GetOwnerJobs` iterates the `GetJobsByOwner` list and caches job instances/facility ids (lines 63–83); `InstallJob` returns the installed id (lines 139–146); `CompleteJob`, `CompleteJobs` and `CancelJob` issue the calls and discard their replies (lines 149–160). `_UpdateSlots_thread` assigns the `GetJobCounts` dict to `self.slots` (lines 242–246), and `GetJobCountForActivity` reads it locally with `self.slots.get(activityID, 0)` (line 386). Thus the reported `industryManager.get` at line 386 is a local Python dictionary lookup, not an RPC method.
+
+The same file connects `industryMonitor.ConnectJob(job.dump())` and consumes its `(monitorID, availableMaterials)` pair (lines 304–308); `DisconnectJob` sends the monitor id (lines 310–313). The `OnIndustryMaterials(jobID, materials)` consumer replaces `job.available` only for the currently watched monitor (lines 323–326). `industryWnd.py:107` also disconnects the job when its window closes.
+
+EveJS v0.12.9 exposes matching manager handlers in `server/src/services/industry/industryManagerService.js`: `GetJob` lines 65–76, `GetJobsByOwner` 78–89, `InstallJob` 91–95, `CompleteJob` 97–101, `CompleteManyJobs` 103–119, `CancelJob` 121–125 and `GetJobCounts` 127–148. `industryMonitorService.js` returns `(monitorID, availableMaterials)` from `ConnectJob` (20–27), and `DisconnectJob` returns null (29–33); `industryRuntimeState.js` allocates/persists the monitor row and calculates its available materials (5522–5553).
+
+Production Host registration is in `dotnet/src/Eve.Host/Rpc/IndustryRpc.cs:43` and `Rpc/InventoryRpc.cs:42,79`. The focused Host wire regression `dotnet/tests/Eve.Host.Tests/IndustryHostRpcTests.cs:13,78` dispatches every manager and monitor call through `ServiceRegistry` and `PacketDispatcher`, verifies reply shapes and typed mutation inputs, and observes `OnIndustryMaterials` and disconnect cleanup. The local focused run passed 2 tests with no skips. It did not exercise PostgreSQL persistence or the graphical client.
+
+EveJS returns a job row for single completion/cancellation and a list for batch completion, while eve.rs returns `None`; the V24.01 client methods at lines 149–160 do not return or inspect these replies. This is an intentional client-invisible reply difference; install still returns the job id consumed by its caller.
 ## Behavior references
 
 CCP documentation has precedence for game rules: [Activities and Job Types](https://support.eveonline.com/hc/en-us/articles/203210272-Activities-and-Job-Types),

@@ -95,6 +95,7 @@ public partial class HostServerTests
         Assert.Equal(15, ((PyInt)((PyTuple)((PyObject)MarshalCodec.Decode(earlyDelivery.Payload)).Args).Items[0]).Value);
         Assert.Contains("eveexceptions.UserError", earlyError);
 
+        // Five-day manual-delivery wait plus the GM's five-day timer shift.
         rig.Now += 10 * AssetSafetyPgRig.DayMs + 1;
         var delivered = await SendCall(7, "MoveSafetyWrapToStructure",
             new PyTuple([new PyLong(personalWrapId), new PyLong(rig.SameSystemStation.SolarSystemId)]),

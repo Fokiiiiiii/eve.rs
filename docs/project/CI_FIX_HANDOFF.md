@@ -197,7 +197,6 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 ## 2026-10-23 CI 647/648 root-cause review- The E2E and Host logs report `42P01` for `sde.skinrComponentPointValues`. These records are in the mission SDE. The failing Host composition passed the regular SDE reader to the SKINR catalog, and the live harness loaded only the regular SDE build. Main commit `a00e62c9` now reads the catalog through `sde_mission`, verifies mission tables when reusing the loaded build, and has the live harness ensure the mission build. The cache key update in `86c11a0c` is separate from this schema mismatch.- Run 648 also reports `ShipSkinrDispatchTests.Draft_save_and_read_responses_keep_the_v24_row_shape` failing its decoded skin string assertion. Main commit `bb6029d1` corrects the test's nested response decoding.- Run 647/648 predate these changes. Run 683 on `8610990c` is checking the corrected SKINR live fixture shape; run 684 on the later head `253597a9` is now the newest push gate. Check both completed results before closing these causes.
 
 ## 2026-10-23 Agent-test selection review
-
 - Agent run 104 on `8b3c8e04` selected `Eve.Host.Tests` with `FullyQualifiedName~IndustryMonitorNoticeTests`; the failed Release build reported CS1593 because the fixture supplied a two-argument lambda to `Action<long>`. Main commit `ed01d2d8` changes the callback fixture to the actual one-argument delegate. The selection did not match the handoff/harness files changed by the tested merge.
 - Agent run 108 on `951a8744` selected `Eve.Services.Inventory.Tests,Eve.Ships.Tests` with filter `FullyQualifiedName~Capacity` plus live `test_cargo_capacity_module.py`; that commit changed only `docs/project/roller/handoff-fit-cargo-capacity.md`. Its selected-test failure does not validate the documentation-only commit. For future handoff-only commits, do not dispatch tests; source commits should use a filter from the changed source test and its owning project.
 
@@ -497,7 +496,6 @@ CI run 672 on `1669e6dc` failed the structure market Host test because the fixtu
 
 
 
-
 ## 2026-10-24 CORE stargate jump after warp
 
 - Root behavior: `Flight` distinguishes alignment, active warp and post-warp coast. Stargate jump now refuses alignment/warp with `IN_WARP`, accepts coasting only after the simulation's gate surface-distance check passes, then clears the previous flight. Host clears its `_warping` marker only after the simulation accepted the jump.
@@ -597,7 +595,6 @@ Regression tests added: `DungeonWaveTests.A_system_owned_wave_waits_until_a_pilo
 - The change now clears the approach marker on arrival and leaves the ship in space. The next `CmdDock` accepts docking and emits the existing notification and session transition. This matches EveJS v0.12.9 `Handle_CmdDock` (`server/src/services/ship/beyonceService.js:4133-4194`): out of range it starts `followBall` and returns `DockingApproach`; it calls `acceptDocking` only when already in range. The reference movement command is `followBall` (`server/src/space/runtime/scene/pilotCommands.js:282-302`).
 - Whole-tree V24.01 cross-check: the only `CmdDock` RPC caller is `RealDock`, which sends `itemID` and `session.shipid` in `movementFunctions.py:505-516`; selected-item actions route through `selectedItemConst.py:200-213`. All `OnDockingAccepted` consumers found are `spaceMgr.py:510-514` (HUD travel state and client event), `tacticalNavigationService.py:486-489` (travel state), and `dockingHeroNotificationService.py:22,33-34` (hero notification). The argument remains the station ID; reply, notification and session shapes are unchanged.
 - Updated the existing `scene::tests::a_dock_request_from_out_of_range_approaches_and_completes_docking_on_arrival` regression to match the client sequence: the approach stops in range, the first poll emits no acceptance, and the client's second `CmdDock` accepts it. The focused test passed. On push SHA `8c299486`, Rust CI caught the stale arrival-acceptance assertion on Linux and Windows; this update fixes that root cause. Corrected live run `40090893730` is checking movement, undock, celestial warp and gate-jump walks.
-
 ## 2026-10-24 CORE FIX 5 docking and scene-refusal correction
 
 - A system with no simulation scene can refuse a transient NPC spawn with `NO_SCENE`. `SpawnAsync` now suppresses that expected refusal even for spawn paths without a callback; dungeon-wave callers still receive their existing scene-unavailable signal and can retry. The host checks for pilots before each ship in a batch, so a wave stops if its system scene closes while the batch is being made.
@@ -842,3 +839,17 @@ Regression tests added: `DungeonWaveTests.A_system_owned_wave_waits_until_a_pilo
 - Runs 841 and 842 failed E2E case `test_a_director_anchors_an_astrahus_from_its_ship_in_a_legal_system_and_the_structure_is_placed_and_told` (`tools/headless-client/tests/test_structures.py:459-510)); pytest reported `CustomNotify: You must be in space to deploy a structure.` at line 490. Run 873 repeated it; runs 874 and 875 passed after simulation frame cancellation. Run 647's missing mission-SDE relation (`42P01`) was a separate startup issue.
 - The run-841/842 pytest summary listed eight skipped cases: the skill-training-speed check and the seven slow-live cases for movement, warp, jump, others, target, module, and health. Those were not counted as passes.
 - The latest completed push gate (906) is red on the compile error above. The next green push-gate streak starts at zero; three consecutive full-gate passes remain required.
+
+
+## 2026-10-25 post-merge wire and notification corrections
+
+The registered Asset Safety delivery RPC now resolves the wrap owner before any automatic-delivery processing can remove the readable wrap. This preserves the owner and emits `OnAssetSafetyDelivered` after the successful response. The client call path is `assetSafetyDeliverWindow.py:147-158`; EveJS v0.12.9 calls `deliverWrapToDestination` directly in `structureAssetSafetyService.js:291-306`, and that state helper reads the requested wrap with refresh disabled at `structureAssetSafetyState.js:1840-1844`.
+
+Push-gate run 907 (`40185852943`, SHA `f6a38240`) failed because the packed row itemID was a `PyInt` for these small IDs while the assertion expected `PyLong`. The latest origin/main version now locates the `itemID` field by name and expects `PyInt`, matching `InventoryWire.PackedRow`. The post-merge Host test-project build on 72746bc0 completed with zero warnings and errors; the updated merged code is being rebuilt. Actions run 909 and focused Agent run 579 are being checked for this correction. No local PostgreSQL connection was used.
+
+
+## 2026-10-25 push gate 909 contract RPC budget follow-up
+
+Push gate run 909 (`40186841175`, SHA `71b96203`) completed red on Host shard 1/4. The contract Host test expected CALL_RSP (7) during its CompleteContract call and received CallError (15); that run did not include the decoded error payload. The updated test formatter exposed `SessionRpcBudgetExceeded` locally when the expanded socket batch reached the corporation expired-list RPC with the dispatcher at its production default budget. This is the same synthetic-batch budget path that can reject the earlier completion RPC after the long read sequence.
+
+The socket test now sets `MaxExpensiveRpcUnitsPerMinute` to 100,000 solely for this multi-call wire scenario; the dedicated budget refusal coverage remains separate. The focused Release Host test passed after that fixture change (1 passed, 0 failed, 0 skipped). The next Actions run will verify the original push-gate failure is cleared. No PostgreSQL database was used.

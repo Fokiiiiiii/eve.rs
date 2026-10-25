@@ -38,5 +38,5 @@ The existing compatibility record documents the only client-irrelevant reply dif
 - PASS: Actions run `40179555776` on `c5387254` completed successfully with no failed tests or jobs.
 - Existing monitor regression `IndustryMonitorNoticeTests.Host_inventory_dispatch_publishes_changed_materials_once_after_item_change_and_isolates_sessions` was selected in its own Host test dispatch.
 - At these successful run summaries, the status tool reported no failed tests but did not include skipped-test totals.
-- Push-triggered `ci.yml` run `40179543366` for `c5387254` was queued at the last check; inspect it before closing the batch.
+- PASS: push-triggered `ci.yml` run `40179543366` for `c5387254` completed successfully with no failed tests or jobs.
 - PostgreSQL and graphical-client sessions were not used for this batch. The persistence implementation has separate PostgreSQL tests; the new wire regression checks the service and transport contract without that lane.

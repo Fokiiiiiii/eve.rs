@@ -114,7 +114,7 @@ public partial class HostServerTests
         var wrapper = Assert.IsType<PyObject>(result);
         Assert.Equal(
             "carbon.common.script.net.objectCaching.CachedMethodCallResult",
-            Assert.IsType<PyStr>(wrapper.Name).Value);
+            JsSemantics.StringValue(wrapper.Name));
         return Assert.IsType<PySubStream>(Assert.IsType<PyTuple>(wrapper.Args).Items[1]).Decoded!;
     }
 

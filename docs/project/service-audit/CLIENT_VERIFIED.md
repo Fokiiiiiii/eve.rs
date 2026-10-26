@@ -455,3 +455,13 @@ Existing registered Host tests use recording contract backends, so this verifies
 | RPC-02237 | rewardMgr.GetRewardLPLogs | Same wallet-panel caller and row consumer as RPC-02236; whole-tree search found no other client consumer. | Same handler, Host test, and EveJS reference as RPC-02235. | MATCHES |
 
 The real Host tests cover both a non-empty delayed-reward row and an empty LP-log list. EveJS also returns an empty LP-log list; the client accepts it without reading row fields.
+
+## Batch 7 continued — shared settings
+
+| row_id | service.method | client callsite and whole-tree consumers | Host handler and wire test | verdict |
+|---|---|---|---|---|
+| RPC-02275 | sharedSettingsMgr.StoreSettingLinkAndGetID | `eve/client/script/ui/control/eveEditPlainText.py:169-170` passes the returned KeyVal to `GetSettingKeyFromKeyVal`; that consumer reads `hashvalue`, `sqID`, and `settingTypeID` and forms the key tuple (`sharedSettings/util.py:22-29`). | `dotnet/src/Eve.Services.Core/GameRpcServices.cs:1051-1096`; registered Host test asserts the three KeyVal fields and uses that tuple in the next read RPC: `dotnet/tests/Eve.Host.Tests/SharedSettingsHostWireTests.cs:7-26`. EveJS builds the same KeyVal fields: `server/src/services/settings/sharedSettingsMgrService.js:193-199,263-276`. | MATCHES |
+| RPC-02276 | sharedSettingsMgr.StoreSettingLinkAndGetID | Same client call and key consumer as RPC-02275; whole-tree search found no other consumer of this reply. | Same handler, Host test, and EveJS reference as RPC-02275. | MATCHES |
+| RPC-02277 | sharedSettingsMgr.StoreSettingLinkAndGetID | `eve/client/script/ui/shared/inventory/filterSvc.py:449-450` passes the returned KeyVal to the same helper, which returns the three-field tuple for later stored-setting access. | Same handler, Host test, and EveJS reference as RPC-02275. | MATCHES |
+
+The new test exercises real Host dispatch and the subsequent GetStoredSharedSetting call with the tuple the client constructs; its payload state is owned by the registered service's in-memory fallback.

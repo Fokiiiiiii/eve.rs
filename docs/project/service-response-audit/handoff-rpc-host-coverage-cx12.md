@@ -37,6 +37,8 @@ The added `ProjectDiscoveryHostWireTests` case exercises `get_player_analysis_kr
 
 ## Actions status
 
+- Commit `00e6e75d`: focused Host Actions run `40265046708` passed (1 passed, 0 failed, 0 skipped); push-gate `ci.yml` run `40265040444` passed with no failed jobs.
+
 - On `63a64d23`, focused Core and Host Actions runs succeeded (`40190235392`, `40190236662`). Push-gate CI (`40190222770`) exposed two issues: the Host response helper consumed a preceding Host send, and RPC inventory expected 1,399 methods after QuickQuery raised it to 1,400. The response helper now correlates by call ID; the inventory expectation is 1,400.
 - On `5dbc0a2c`, alias-mode Core (`40191564033`) and isolated contract Host (`40191989482`) tests passed. Push-gate CI (`40191553927`) failed on the stale RPC inventory count.
 - On `64db67d5`, focused Host tests (`40193666282`) and the login live test (`40194520823`) passed. Its push-gate jobs all succeeded, but run `40193659035` was cancelled by a newer main push before the required gate completed.

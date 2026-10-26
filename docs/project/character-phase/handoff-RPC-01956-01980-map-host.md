@@ -25,4 +25,4 @@ The tests used no PostgreSQL database. The graphical V24.01 client was not exerc
 
 ## CI follow-up
 
-The first push gate reported `RpcSecurityInventoryTests.Real_host_registry_methods_are_enumerable` expected 1420 rows but found 1423 after the merged Host composition changes. Updated its stale expected inventory count to 1423; `Eve.Host.Tests` builds successfully. The focused inventory test uses database schema setup, so it is being checked by Actions rather than against a local database.
+The first push gate reported `RpcSecurityInventoryTests.Real_host_registry_methods_are_enumerable` expected 1420 rows but found 1423 after the initial Host merge. A later `origin/main` merge added 18 `accessGroupBookmarkMgr` routes and one `BookmarkScanResult` route, bringing the expected total to 1442. Updated the inventory assertion to match those registered methods. `Eve.Host.Tests` builds successfully. The focused inventory test uses database schema setup, so it is checked by Actions rather than against a local database.

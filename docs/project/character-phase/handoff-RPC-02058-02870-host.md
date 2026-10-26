@@ -50,8 +50,11 @@ A whole-tree Serena search for `SlashCmd` also found shared client helper caller
 ## Verification
 
 - Added `Slash_command_is_dispatched_through_the_registered_host_with_macho_version` in `dotnet/tests/Eve.Host.Tests/SlashHostWireTests.cs`. It uses the live HostServer, strict RPC routing and the production SlashService class. The result is the existing `Select a character before using /heal.` PyStr branch.
+- Initial Actions compile failures were fixed: added the `Eve.Services` import for `GameMasterRoles`, then used the serialized `Packet` envelope in the merged RPC coverage test.
+- Selected Host test runs `40277112061` (`1e11b18d`), `40277857506` (`e59639fa`), `40277940730` (`563e94b2`), `40278650613` (`19937d9a`), `40279478952` (`03c3a14f`), and `40280293864` (`8077348e`) passed without failed tests or jobs.
+- The local focused test rerun was canceled after prolonged shared build contention; it did not produce a test result.
+- `ci-status.py failures` found no `ci.yml` run for `8077348e` or `422c192b`. Earlier concurrent push-gate runs remained queued or in progress when checked.
 - Command-specific mutations for `/create`, `/structure` and other command forms are outside this one shared-route wire assertion. The test establishes the route, transport kwargs, role gate and reply encoding for one listed caller shape; it does not verify command-specific persistence or notifications for every caller.
-- At the time of this note, the Host.Tests build and focused test are still in progress.
 
 ## Follow-up
 

@@ -24,11 +24,14 @@ public sealed class BillMgrHostRpcTests
             CharacterId = 104,
         };
         var open = new SessionOpen(101, 102, 103, 0, "127.0.0.1", "EN", "GB");
+        var kwargs = new PyDict([
+            new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1)),
+        ]);
 
         async Task<(int Type, PyValue? Result)> Call(long callId, string method, params PyValue[] args)
         {
             capture.Sent.Clear();
-            var request = Packets.Call(open, callId, "billMgr", method, args);
+            var request = Packets.CallWithKwargs(open, callId, "billMgr", method, new PyTuple(args), kwargs);
             var decodedRequest = MarshalCodec.Decode(MarshalCodec.Encode(request));
             Assert.True(await dispatcher.DispatchAsync(decodedRequest, session));
             var responseValue = Assert.Single(capture.Sent, packet =>

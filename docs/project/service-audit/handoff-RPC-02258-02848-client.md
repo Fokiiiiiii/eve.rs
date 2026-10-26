@@ -75,3 +75,8 @@ Focused tests after the changes: 2 passed, 0 failed, 0 skipped (`Standing_rowset
 ### Batch 18 push verification
 
 Commit `ec0be07abc90` was pushed to `main` after merging `origin/main`. Agent Actions run `40343246448` passed the two focused tests (no failed jobs/tests). The push-triggered `ci.yml` run `40343217296` was still in progress at handoff update; check it with `python3 tools/dev/ci-status.py failures ec0be07a` and address any failures at root cause.
+
+
+### CI regression and correction
+
+Push-triggered CI for `ec0be07a` found that the cached empty composition CRowset descriptor contained only `standing`; `ownerID` was lost because its descriptor columns were nested one level too shallow. Corrected `EmptyCompositionRowset` to build the same descriptor structure used by `RowSet.Descriptor`. The three focused registered Host tests now pass locally (3/3, including the existing composition assertion). The full Host project rerun completed with 471 passed, 101 failed, and 227 skipped; its failures require the assigned PostgreSQL/SDE test lane, which this task prohibits using. The correction is pending merge, push, and Actions verification.

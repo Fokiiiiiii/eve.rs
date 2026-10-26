@@ -234,9 +234,9 @@ public sealed partial class StandingMgrService
         Py.Dict(
             ("header", Eve.Marshal.Descriptor.FromHeader(new PyObjectEx(
                 ObjectExKind.Ex1,
-                Py.Tuple(new PyToken("blue.DBRowDescriptor"), Py.Tuple(
-                    Py.Tuple(Py.Tuple(new PyStr("standing"), new PyInt(5))),
-                    Py.Tuple(Py.Tuple(new PyStr("ownerID"), new PyInt(3))))),
+                Py.Tuple(new PyToken("blue.DBRowDescriptor"), Py.Tuple(Py.Tuple(
+                    Py.Tuple(new PyStr("standing"), new PyInt(5)),
+                    Py.Tuple(new PyStr("ownerID"), new PyInt(3))))),
                 [],
                 [])).Header),
             ("RowClass", new PyToken("util.Row")),

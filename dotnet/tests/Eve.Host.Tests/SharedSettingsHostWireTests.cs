@@ -1,5 +1,5 @@
+using Eve.Macho;
 using Eve.Marshal;
-using Eve.Services;
 
 namespace Eve.Host.Tests;
 
@@ -22,10 +22,8 @@ public partial class HostServerTests
         Assert.False(string.IsNullOrEmpty(JsSemantics.StringValue(hash)));
         Assert.True(WireInteger(sqId) > 0);
         Assert.Equal(2, WireInteger(settingTypeId));
-        var stored = await HostRpcAsync(
+        Assert.Equal(new PyStr("preset"), await HostRpcAsync(
             front, open, 2, "sharedSettingsMgr", "GetStoredSharedSetting",
-            new PyTuple([hash, sqId, settingTypeId]));
-        Assert.IsType<PyBytes>(stored);
-        Assert.Equal("preset", JsSemantics.StringValue(stored));
+            new PyTuple([hash, sqId, settingTypeId])));
     }
 }

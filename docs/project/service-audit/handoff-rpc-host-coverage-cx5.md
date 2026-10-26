@@ -40,6 +40,6 @@ eve.rs already registers `lookupSvc` through `CoreServices.CreateLookupService`,
 - Focused RPC inventory test passed in Actions run 40280610994 with the updated count of 1,424.
 - Focused tournament fallback test passed in Actions run 40282048198; `QueryShipList` returns a dict with an empty `allowedShipList`.
 - Push CI 40278138665 exposed the decoded unicode assertion failures and the stale count after `DevIndexManagerRpcService.GetAllDevelopmentIndices` was registered (`OperationalRpcServices.cs:27-41`). Those test issues were corrected. Push CI 40280164556 exposed the tournament test expecting a bare list; its expected shape was corrected.
-- Latest push-triggered `ci.yml` run 40282042017 for `0a430473` is queued. Wait for completion and inspect failures before closing the handoff.
+- Latest push-triggered `ci.yml` run 40282042017 for `0a430473` completed successfully: all jobs passed with no skips or failures.
 - The local focused `dotnet test` process was stopped after 47 minutes waiting through compilation under shared-machine load; it produced no test result. The same focused Host wire test passed in Actions.
 - No graphical-client run was performed.

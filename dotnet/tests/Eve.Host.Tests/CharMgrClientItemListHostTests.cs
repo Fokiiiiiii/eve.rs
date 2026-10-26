@@ -33,7 +33,7 @@ public partial class HostServerTests
         await front.SendAsync(open);
         _ = await front.ReceiveAsync();
 
-        foreach (var (callId, method, args) in new (long, string, PyValue)[]
+        foreach (var (callId, method, args) in new (uint, string, PyValue)[]
         {
             (1, "List", Py.Tuple([])),
             (2, "ListStationItems", Py.Tuple(new PyLong(60000001))),

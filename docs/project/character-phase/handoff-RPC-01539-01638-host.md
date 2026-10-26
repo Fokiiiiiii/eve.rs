@@ -37,7 +37,7 @@ EveJS references are from `Fokiiiiiii/evejs-v0.12.9`. No protocol deviation is i
 - `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --no-restore -p:BuildProjectReferences=false`: passed, 0 warnings/errors (6m 23s).
 - Focused real-Host wire test `Fighter_manager_maps_and_state_shapes_cross_the_registered_host_rpc`: passed, 1 passed, 0 failed, 0 skipped.
 - A prior selected Actions run for task commit `922b3f1d` passed (run 40282911210); push CI for that commit passed (run 40282887458). No PostgreSQL database or graphical-client session was used.
-- This audit added no production code; the inherited Host routes and state transitions were already implemented. The local build and wire test above were rerun at the current worktree state.
+- The inherited Host routes and state transitions were already implemented; this update strengthens the fighter wire regression without changing production code. The local build and wire test above were rerun.
 
 
 ## Latest push verification
@@ -46,3 +46,11 @@ EveJS references are from `Fokiiiiiii/evejs-v0.12.9`. No protocol deviation is i
 - `python3 tools/dev/ci-status.py failures 316cba77` reported that no `ci.yml` run was found for this documentation-and-verification commit.
 
 - Victory-point focused wire test selected run [40288197017](https://github.com/Fokiiiiiii/eve.rs/actions/runs/40288197017) for `ba2a3dd0` completed successfully with no failed tests or jobs.
+
+
+## Populated fighter wire regression
+
+The registered Host wire test now sends non-empty fixture data through the packet dispatcher and checks both four-column client rows plus the fighter-keyed pair of charge/cooldown dictionaries. The shape follows `shipFighterState.py:210-229` and EveJS `fighterMgrService.js:273-305`; per-ID refusal-map behavior, including success and refusal entries, remains covered in the same wire test.
+
+- Updated local Host test-project build: passed, 0 warnings/errors (7m 59s).
+- Updated focused `Fighter_manager_maps_and_state_shapes_cross_the_registered_host_rpc`: passed, 1 passed, 0 failed, 0 skipped.

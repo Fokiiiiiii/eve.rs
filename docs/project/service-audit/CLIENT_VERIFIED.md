@@ -43,3 +43,44 @@ These are client call/consumer traces, not a completed wire-shape comparison. Ex
 ## Remaining work
 
 Compare all 12 methods against EveJS 261018.1 and `reports/2026-10-24-core-breakage-from-owner-logs.md`; inspect each method's Host registration and reply encoding; add focused real-Host wire assertions and replace these provisional NO-TEST verdicts with MATCHES or MISMATCH. The status_evidence updater interface was not checked, so the CSV was left unchanged. No database was used.
+
+
+# Client verification — P0 implemented rows, batch 5
+
+Whole-tree V24.01 caller searches show all consumers summarized below. The owner capture analysis (2026-10-24-core-breakage-from-owner-logs.md, findings 1–8) does not name any of these methods; that is not evidence that calls succeeded. EveJS 261018.1 uses the corresponding return intents at `charMgrService.js:626-628, 1104-10, 1112-21, 1123-40, 1142-52, 1199-1205, 1214-28`; creation/deletion at `charService.js:1089-1373,1869-79` and `characterDeletionRuntime.js:685-704,706-789`; Omega status at `charService.js:1526-29`.
+
+| row_id | service.method | client call site | consumers | handler | verdict |
+|---|---|---|---|---|---|
+| RPC-01100 | charMgr.ListStations | `assetsWindow.py:922` | iterates station rows | `CharMgrService.cs:307-320`; registered Host rowset assertion `CharMgrRpcHostWireTests.cs:41-48` | MATCHES |
+| RPC-01101 | charMgr.ListStations | `quote.py:364` | iterates station rows for market selector | `CharMgrService.cs:307-320`; `CharMgrRpcHostWireTests.cs:41-48` | MATCHES |
+| RPC-01102 | charMgr.ListStations | `assetsinfo.py:148` | iterates station rows | `CharMgrService.cs:307-320`; `CharMgrRpcHostWireTests.cs:41-48` | MATCHES |
+| RPC-01103 | charMgr.ListStations | `createContractWnd.py:1571` | iterates station rows | `CharMgrService.cs:307-320`; `CharMgrRpcHostWireTests.cs:41-48` | MATCHES |
+| RPC-01104 | charMgr.ListStations | `corp_ui_accounts.py:752` | indexes rows by `stationID` | `CharMgrService.cs:307-320`; `CharMgrRpcHostWireTests.cs:41-48` | MATCHES |
+| RPC-01105 | charMgr.LogSettings | `settingsSvc.py:153` | only called for nonempty stats; reply ignored | `CharMgrService.cs:1083-1099`; Host asserts `PyNone`, `CharMgrRpcHostWireTests.cs:67` | MATCHES |
+| RPC-01106 | charMgr.LogSettings | `settingsSvc.py:153` | same call; reply ignored | `CharMgrService.cs:1083-1099`; `CharMgrRpcHostWireTests.cs:67` | MATCHES |
+| RPC-01108 | charMgr.RemoveOwnerNote | `notepad.py:107` | parallel cleanup of invalid note IDs; reply ignored | `CharMgrService.cs:1102-1131`; Host asserts `PyNone`, `CharMgrRpcHostWireTests.cs:68` | MATCHES |
+| RPC-01109 | charMgr.RemoveOwnerNote | `notepad.py:179` | parallel cleanup of stale note IDs; reply ignored | `CharMgrService.cs:1102-1131`; `CharMgrRpcHostWireTests.cs:68` | MATCHES |
+| RPC-01110 | charMgr.RemoveOwnerNote | `notepad.py:703` | deletes note and reloads notepad; reply ignored | `CharMgrService.cs:1102-1131`; `CharMgrRpcHostWireTests.cs:68` | MATCHES |
+| RPC-01111 | charMgr.RemoveOwnerNote | `notepad.py:703` | same delete flow; reply ignored | `CharMgrService.cs:1102-1131`; `CharMgrRpcHostWireTests.cs:68` | MATCHES |
+| RPC-01112 | charMgr.SaveCharacterSetting | `characterSettingsSvc.py:48` | writes key/value then updates local cache; empty values use Delete; client caps values at 100 KB | `CharMgrService.cs:437-462`; registered Host persistence test `CharacterManagerMutationHostWireTests.cs:9-80` asserts `PyNone` and round-trips state | MATCHES |
+| RPC-01113 | charMgr.SetActivityStatus | `gameui.py:338` | active status with FILETIME extraInfo; reply ignored | `CharMgrService.cs:1143-1157` | NO-TEST |
+| RPC-01114 | charMgr.SetActivityStatus | `gameui.py:338` | same active transition | `CharMgrService.cs:1143-1157` | NO-TEST |
+| RPC-01115 | charMgr.SetActivityStatus | `gameui.py:333` | AFK status with FILETIME extraInfo; reply ignored | `CharMgrService.cs:1143-1157` | NO-TEST |
+| RPC-01116 | charMgr.SetActivityStatus | `gameui.py:333` | same AFK transition | `CharMgrService.cs:1143-1157` | NO-TEST |
+| RPC-01117 | charMgr.SetCharacterDescription | `bioPanel.py:60` | autosaves text; on exception reloads it; reply ignored | `CharMgrService.cs:203-229` | NO-TEST |
+| RPC-01118 | charMgr.SetCharacterDescription | `bioPanel.py:60` | same exception recovery | `CharMgrService.cs:203-229` | NO-TEST |
+| RPC-01119 | charMgr.SetNote | `notepad.py:540` | asynchronous item note save; reply ignored | `CharMgrService.cs:1159-1185` | NO-TEST |
+| RPC-01120 | charMgr.SetNote | `panelNotes.py:60` | saves changed text or empty string; reply ignored | `CharMgrService.cs:1159-1185` | NO-TEST |
+| RPC-01121 | charMgr.SetNote | `panelNotes.py:60` | same note editor flow | `CharMgrService.cs:1159-1185` | NO-TEST |
+| RPC-01122 | charMgr.UnblockOwners | `addressbookService.py:673` | local blocked cache update and `OnUnblockContacts` precede refresh; reply ignored | `CharMgrService.cs:1187-1195` | NO-TEST |
+| RPC-01123 | charMgr.UnblockOwners | `addressbookService.py:673` | same unblock flow | `CharMgrService.cs:1187-1195` | NO-TEST |
+| RPC-01125 | charUnboundMgr.CancelCharacterDeletePrepare | `characterSelection.py:870` | cancels deletion then refreshes slot; reply ignored | `CharUnboundMgrService.cs:449-462` | NO-TEST |
+| RPC-01126 | charUnboundMgr.CancelCharacterDeletePrepare | `characterSelection.py:870` | same cancel and refresh | `CharUnboundMgrService.cs:449-462` | NO-TEST |
+| RPC-01127 | charUnboundMgr.CreateCharacterWithDoll | `ccSvc.py:96` | reply ID clears selection cache; both creation UIs use ID for portrait insertion (`characterCreationContainer_new.py:1300-1304`, `characterCreationContainer.py:1839-1848`) | `CharUnboundMgrService.cs:261-305` | NO-TEST |
+| RPC-01128 | charUnboundMgr.CreateCharacterWithDoll | `ccSvc.py:96` | same reply ID consumers | `CharUnboundMgrService.cs:261-305` | NO-TEST |
+| RPC-01129 | charUnboundMgr.DeleteCharacter | `characterSelection.py:847` | expects falsey success; truthy error is displayed, otherwise selection refreshes (`characterSelection.py:851-859`) | `CharUnboundMgrService.cs:502-526` | NO-TEST |
+| RPC-01130 | charUnboundMgr.GetCharOmegaDowngradeStatus | `characterSelection.py:300` | bool controls lapsed-subscription warning creation; errors are caught | `CharUnboundMgrService.cs:157-168`; registered Host bool test `CharUnboundOmegaHostTests.cs:9-46` | MATCHES |
+
+## Batch 5 remaining work
+
+The inspected registered-Host tests verify ListStations, LogSettings, RemoveOwnerNote, SaveCharacterSetting, and GetCharOmegaDowngradeStatus. Seven distinct methods remain NO-TEST: SetActivityStatus, SetCharacterDescription, SetNote, UnblockOwners, CancelCharacterDeletePrepare, CreateCharacterWithDoll, and DeleteCharacter. Existing service-level or persistence tests do not replace their missing client-shaped Host assertions. `run_service_audit_current.py --help` exposes only client/repository/queue roots, and its current status override has no batch-5 evidence entries; EVE_RS_COVERAGE.csv was left unchanged. No database, graphical client, or focused test was used for this verification.

@@ -146,3 +146,8 @@ Batch 7 Actions correction update: push CI 40261450475 failed compilation with x
 
 
 Batch 7 final Actions update: focused run 40264056905 passed the selected Host RPC checks. A later selected run 40264532613 also passed. Push CI 40264527362 passed for descendant main SHA 5e7e5d7e, containing the batch-7 commits and analyzer fix; no failed tests or jobs were reported. The focused run summary did not list per-test skip counts. No local database or graphical V24.01 client was used.
+
+
+## Client verification batch 3 follow-up (2026-10-26)
+
+All 30 rows RPC-00984–01972 are documented in `CLIENT_VERIFIED.md`. Whole-tree V24.01 callers and reply consumers, current eve.rs handlers, and EveJS 261018.1 behavior were checked. Existing registered Host regressions cover the character and map routes; the moon route regression checks corporation filtering, resource map types, client fields and FILETIME. Local selected Host tests passed 5/5 (0 skipped). Agent Test run 40333750699 and push CI run 40333723518 passed at `16987fce`; no failed tests or jobs. No PostgreSQL database or graphical client was used.

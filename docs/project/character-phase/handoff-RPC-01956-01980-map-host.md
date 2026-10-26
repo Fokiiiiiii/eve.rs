@@ -22,3 +22,7 @@ EveJS v0.12.9 matches these contracts: `server/src/services/map/mapService.js:59
 - `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --filter 'FullyQualifiedName~Map_industry_cost_wire_reply_preserves_solar_system_dictionary_keys' -p:UseSharedCompilation=false`: passed, 1/1, no skips.
 
 The tests used no PostgreSQL database. The graphical V24.01 client was not exercised.
+
+## CI follow-up
+
+The first push gate reported `RpcSecurityInventoryTests.Real_host_registry_methods_are_enumerable` expected 1420 rows but found 1423 after the merged Host composition changes. Updated its stale expected inventory count to 1423; `Eve.Host.Tests` builds successfully. The focused inventory test uses database schema setup, so it is being checked by Actions rather than against a local database.

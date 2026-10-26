@@ -59,7 +59,7 @@ public partial class HostServerTests
         Assert.Equal(sourceId, launchedSourceId);
         Assert.Equal(itemId, launchedItemId);
 
-        Assert.Equal(new PyStr("https://assets.example/item.png"),
+        Assert.Equal(new PyBytes("https://assets.example/item.png"u8.ToArray()),
             await Call(2, "encodedItems", "DecodeItem", new PyLong(itemId)));
         Assert.Equal(PyNone.Instance,
             await Call(3, "encodedItems", "DecodeItem", new PyLong(itemId + 1)));

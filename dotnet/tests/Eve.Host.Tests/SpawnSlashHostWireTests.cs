@@ -32,7 +32,7 @@ public partial class HostServerTests
 
         spawns.Result = new SpawnResult([], SpawnResult.NotInSpace);
         var refused = await HostRpcAsync(front, open, 2, "slash", "SlashCmd", new PyStr("/spawn Rifter"));
-        Assert.Equal(new PyStr("You must be in space before using /spawn."), refused);
+        Assert.Equal(new PyBytes("You must be in space before using /spawn."u8.ToArray()), refused);
     }
 
     private sealed class TestSpaceSpawns : ISpaceSpawns

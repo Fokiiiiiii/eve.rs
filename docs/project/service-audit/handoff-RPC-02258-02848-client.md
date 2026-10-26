@@ -59,3 +59,8 @@ Final audit documentation SHA `da5ebf2e9326` also passed Agent Actions run `4033
 ### Final merge verification
 
 The post-merge source SHA `904ff3b09dab` passed Agent Actions run `40337503102` for the focused Host test (1 passed, 0 failed, 0 skipped); there were no failed jobs. `ci-status.py failures` found no `ci.yml` run for that SHA. Rust `cargo +1.94.1 fmt --all -- --check` and `CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target-cx cargo +1.94.1 clippy --workspace --all-targets -- -D warnings` both passed.
+
+
+### Latest main verification
+
+After push/merge through `c1c71676`, the local focused Host test passed (1/1). Agent Actions run `40339412767` completed successfully with no failed jobs/tests; the wait script reported the requested ref `c1c71676` and run SHA `e75bbced6d1f`. `ci-status.py failures c1c71676` found no push-triggered `ci.yml` run.

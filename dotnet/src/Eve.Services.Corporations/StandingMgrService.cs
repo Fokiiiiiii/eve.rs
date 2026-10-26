@@ -216,7 +216,7 @@ public sealed partial class StandingMgrService
             (await _corporations.MemberAsync(characterId, call.Cancellation))?.CorporationId != corporationId ||
             await _corporations.GetAsync(corporationId, call.Cancellation) is not { IsNpc: false })
         {
-            return EmptyCompositionRowset();
+            return ObjectCaching.MethodResult(EmptyCompositionRowset(), _nowUnixMs(), "5 minutes", "corpid");
         }
         var rows = await _reads.RowsAsync(CompositionQuery, [fromId, corporationId], call.Cancellation);
         return ObjectCaching.MethodResult(rows.ToCRowset(), _nowUnixMs(), "5 minutes", "corpid");

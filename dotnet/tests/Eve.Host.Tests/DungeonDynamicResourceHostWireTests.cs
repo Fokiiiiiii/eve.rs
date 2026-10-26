@@ -87,7 +87,7 @@ public partial class HostServerTests
             Py.Dict(("archetypeID", new PyInt(68)), ("factionID", new PyInt(500010)))));
         var filteredDungeon = Assert.IsType<PyObject>(Assert.Single(filteredDungeons.Items));
         Assert.Equal(new PyInt(5001), RowField(filteredDungeon, "dungeonID"));
-        Assert.Equal(new PyStr("Combat Site"), RowField(filteredDungeon, "dungeonName"));
+        Assert.Equal("Combat Site", Text(RowField(filteredDungeon, "dungeonName")));
         Assert.Equal(new PyInt(500010), RowField(filteredDungeon, "factionID"));
 
         var selectedDungeon = Assert.IsType<PyList>(
@@ -97,10 +97,13 @@ public partial class HostServerTests
             "dungeon",
             "DEGetRooms",
             Py.Dict(("dungeonID", new PyInt(5001)))));
-        Assert.Equal(new PyTuple([new PyInt(9001), new PyStr("Entrance")]), Assert.Single(rooms.Items));
+        var room = Assert.IsType<PyTuple>(Assert.Single(rooms.Items));
+        Assert.Equal(new PyInt(9001), room.Items[0]);
+        Assert.Equal("Entrance", Text(room.Items[1]));
         var palette = Assert.IsType<PyList>(await Call("dungeon", "DEGetRoomObjectPaletteData"));
-        Assert.Equal(new PyTuple([new PyInt(70001), new PyStr("Acceleration Gate")]),
-            Assert.Single(palette.Items));
+        var paletteEntry = Assert.IsType<PyTuple>(Assert.Single(palette.Items));
+        Assert.Equal(new PyInt(70001), paletteEntry.Items[0]);
+        Assert.Equal("Acceleration Gate", Text(paletteEntry.Items[1]));
 
         var escalation = Assert.IsType<PyObject>(await Call("dungeonExplorationMgr", "GetMyEscalatingPathDetails"));
         var cached = Assert.IsType<PyTuple>(escalation.Args);

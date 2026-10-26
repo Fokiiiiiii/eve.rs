@@ -1,4 +1,72 @@
-# コアプレイヤーパス再確認
+# Core service path re-check
+
+## 2026-10-26 checkpoint
+
+This is a continuation record. The cross-service audit is not closed; only the findings below have been traced far enough to classify.
+
+### Market: five M1 handlers confirmed present
+
+- Client calls: V24.01 `marketsvc.py:253-295` routes through `marketProxy`. `BuyMulti` returns the `ordersCreated` sequence and immediately reads each row's `typeID` (`marketsvc.py:270-273`); `SellMulti` and `SellPlex` return their proxy values, while cancel/modify calls consume no result (`marketsvc.py:275-295`). Transaction rows are read by client code in `marketsvc.py:41-64`.
+- Host handlers: `MarketProxyService.cs:560-645` implements `BuyMultipleItems`, `PlacePlexSellOrder`, `ModifyPlexCharOrder`, `CharGetTransactions`, and `CorpGetTransactions`. The Host method table and production registration checks are in `MarketHostTests.cs:28-34` and `MarketRpcHostWireTests.cs:90-105`; other market Host wire cases are in `MarketTradeHostWireTests.cs`.
+- Reference: EveJS 261018.1 `server/src/services/market/marketProxyService.js` implements the corresponding proxy operations; its transaction entry builder is compared against the V24 fields consumed at `marketsvc.py:41-64`.
+- Reconciliation: `docs/project/TODO.md:1084` is historical M1 completion context, not a current missing-handler claim. The methods are present and Host-registered. M1 tests and the listed live market walk cover earlier work; this re-check has not replayed all five through the current production Host and compared each persisted transition to EveJS.
+
+### Mail: six client operations do not reach a handler
+
+- Client calls in the whole V24.01 mail service include `mailMgr.EmptyTrash` (`mailSvc.py:458-476`), `DeleteMail` (`mailSvc.py:478-491`), `CreateLabel` (`mailSvc.py:727-737`), `EditLabel` (`mailSvc.py:711-725`), `DeleteLabel` (`mailSvc.py:739-754`), and `AssignLabels` (`mailSvc.py:756-772`). These methods update the client header/body caches; `CreateLabel` also consumes the returned label ID. Mailbox synchronization consumes `newMail`, `oldMail`, and `mailStatus`, including each status row's `messageID`, `statusMask`, and `labelMask` (`mailSvc.py:156-234`).
+- Current Host surface: `MailService.HasMethod` in `dotnet/src/Eve.Services.Core/MailService.cs:44-50` omits all six names. `CallAsync` therefore does not route these calls to persistence. `MailboxMutation.Apply` in the same file handles status and label-mask changes only; it does not remove trashed/deleted statuses, add labels, or persist label definitions.
+- Reference: EveJS 261018.1 `mailMgrService.js:429-518` routes these operations to `mailState.js` mutations (including returned label IDs and deletion/update notifications). This gap needs service callbacks, persisted mutations and Host wire assertions. It is not closed by the current `MailRpcHostWireTests.cs`, which exercises the currently supported mutations only.
+- The chat-poke path is different: V24 calls it from `xmppchatsvc.py:1794-1795`; Host composition supplies `mailSendWriter.SendGmChatPokeAsync` in `MailRpc.cs:144-153`; EveJS composes the same titled mail in `mailState.js:2159-2176`.
+
+### Other paths: inventory evidence gathered; full per-call review remains open
+
+- Mailing lists: client RPC calls are in `mailingListsSvc.py:42-191`. Consumers use `GetInfo().displayName`, `Join().id`, the member map keys, and welcome-mail return values (`mailingListsSvc.py:55-108,141-193`). Host wire tests exist in `MailRpcHostWireTests.cs` and `MailingListRpcWireTests.cs`; the full call/result matrix still needs comparison to EveJS.
+- Fleet: the V24 service entry points and client transitions are in `fleetSvc.py:254-383`, with fleet-proxy and settings paths later in that file. Host wire coverage is split across `FleetObjectRpcWireTests.cs`, `FleetRows01559To01610HostWireTests.cs`, `FleetDamageSubscriptionHostWireTests.cs`, and `PersistenceFleetSettingsTests.cs`. This inventory does not yet certify every caller, consumed field, or EveJS transition.
+- Chat and LSC: client `XmppChatMgr` calls are in `xmppchatsvc.py:283,311,349,996-1007,1082,1123-1134,1197-1204,1257,1484,1817-1818`; the channel window also calls `GrantChannelOwnership` in `xmppchannelsettings.py:124`. `XmppChatMgrServiceTests.cs` covers hostname, channel names, private channels and resync. XMPP room discovery and client-side member/message consumption are in `xmppchatsvc.py:461-630,909-945,1013-1172`. The separate LSC channel path and all XMPP consumer fields have not yet been reconciled against Host and EveJS.
+- Contacts and notes: V24 loads personal, corporation and alliance contacts from the `GetContactList` result's `addresses` and `blocked` rows, consuming `contactID`, `inWatchlist`, `relationshipID`, `labelMask`, and `senderID` (`addressbookService.py:193-250`); notepad bootstrap consumes `noteID` and `label` (`notepad.py:86-140`). Host persistence/read-model coverage exists in `HostServerTests.cs:435-649`. A full call-by-call notification and restart comparison remains open.
+
+## 2026-10-26: skills, clones, character sheet, corporation and alliance basics
+
+### Method and scope
+
+I traced the V24.01 callsites and downstream field reads in the whole `/home/user/eve-logic` tree, using the current `docs/project/service-audit/CLIENT_CALL_MATRIX.csv` and `EVE_RS_COVERAGE.csv` as indexes. The client evidence below identifies the calls and the data the caller uses. Host and EveJS comparisons are based on current source in this worktree and `/home/user/evejs-261018.1`.
+
+This is a source audit, not a graphical-client run. This turn made no handler or test changes. Existing Host test source is reported as source coverage only; this turn did not execute those tests.
+
+### Skills and training queue
+
+- `eve/client/script/ui/services/skillsvc.py:130-142` binds `skillMgr2.GetMySkillHandler()`, then consumes `GetSkills()` and `GetAllSkills()` as maps keyed by skill type ID. The skill UI reads levels and SP from those records through `skillsvc.py:214-230,282-342,713-734`.
+- `skillsvc.py:220-229` obtains `GetAttributes()` as an attribute-ID to value map, iterates every pair, and applies each value to the local dogma state. `skillsvc.py:360-364` caches the `GetSkillHistory(maxresults)` reply. `skillsvc.py:379-385` consumes `GetSkillChangesForISIS()` as `(typeID, pointChange)` pairs.
+- `eve/client/script/ui/services/skillQueueSvc.py:105-127` unpacks `GetSkillQueueAndFreePoints()` into the queue and free-SP count. Positive free SP updates the skill service; queue entries are subsequently read through `trainingTypeID`, `trainingToLevel`, and `trainingEndTime` at `skillQueueSvc.py:124-135`. Queue edits are sent via `CharStartTrainingSkill` (`skillsvc.py:772`) and `AbortTraining` (`skillsvc.py:796`); the mutation replies are ignored.
+- Other core reads/mutations and their response use are indexed at `CLIENT_CALL_MATRIX.csv:2321-2342`: injector/extractor methods, free SP, implant/booster lists, training attributes, queue, and the skill handler binder. In particular `GetImplants` and `GetBoosters` are cached by `skillsvc.py:962-968`; `GetDiminishedSpFromInjectors` is returned directly by `skillsvc.py:1000-1002`; the alpha-injection time is returned directly at `skillsvc.py:1004-1005`.
+- Host coverage lists the P1 `skillHandler` methods from AbortTraining through SplitSkillInjector as `IMPLEMENTED-TESTED` against `SkillHandlerRpcHostTests.Skill_rpcs_accept_transport_macho_version_and_keep_the_client_wire_shapes_on_the_host`; `skillMgr2.GetMySkillHandler` is `IMPLEMENTED-TESTED` against `SkillMgr2HostWireTests.Skill_mgr2_returns_its_bound_skill_handler_moniker_over_the_host_route` (`EVE_RS_COVERAGE.csv:1663-1686`). The lower-priority development notification read and skill-purchase RPC have active routes but no matching Host wire-test source in this inventory.
+- EveJS binds the same object in `server/src/services/skills/skillMgr2Service.js:10-21`; its queue and skill-map builders are in `skillMgrService.js:289-303,351-354,429-432`. The observed map/tuple/list consumption above agrees with the Host method families and their registered wire-test coverage. Alpha-injector scheduling uses persisted use state in EveJS `server/src/services/_other/alphaInjectorMgrService.js:15-20`; eve.rs tracks the corresponding state in `Eve.Services.Skills/AlphaInjectorMgrService.cs`, and source tests cover first-use, next downtime, and restart (`SkillServiceTests.cs:692-712`). The older fixed-value adapter is not the active method implementation.
+
+### Character sheet and clones / implants
+
+- `eve/client/script/ui/shared/neocom/charactersheet.py:48-54` reads `charMgr.GetHomeStationRow()` and consumes `stationID`; rank notifications are passed to the faction-warfare service at `:60-71`. Skills and attributes are obtained by the skill service described above.
+- `eve/client/script/ui/services/clonejumpsvc.py:73-84` binds `jumpCloneSvc` at the current solar system or station, calls `GetCloneState()`, and consumes the KeyVal fields `clones`, `implants`, and `timeLastJump`. Ship and station clone lists are separately cached from `GetShipCloneState()` and `GetStationCloneState()` at `:87-96`. The UI also uses the integer result of `GetNumClonesInPilotsStructure()` (`:99`) and consumes validation error-label strings or (label, args) pairs from `ValidateInstallJumpClone()` (`:385-399`). Jumping is a session change through `CloneJump` (`:225-248`).
+- EveJS builds the clone-state KeyVal in `server/src/services/station/jumpCloneRuntime.js:405-415` and serves it in `jumpCloneService.js:42-45`; the jump transition is in `:96-105`. The Host exposes persisted clone reads and mutations through `GameRpcServices.cs` and `HostJumpCloneStore`. Current Host source coverage marks the client-used clone count and validation methods as tested, citing `JumpCloneReadHostTests.Jump_clone_reads_return_count_and_install_validation_labels_through_host` (`EVE_RS_COVERAGE.csv:984-986`). The broader persisted clone jump/implant swap lifecycle is covered by existing Host and live test sources recorded in the character-phase plan, but was not run in this audit.
+
+### Corporation members, titles and roles
+
+- `eve/client/script/ui/services/corporation/bco_members.py:26-32` pages the result of `corp.GetMembersPaged(page)`; `:37-42` indexes `GetMembersByIds` rows by `characterID`; `:143-157` uses `GetMember` and preserves the returned member row. These are iterable member rows, not a scalar result.
+- `eve/client/script/ui/services/corporation/bco_titles.py:52-86` consumes `GetTitles()` as a mapping keyed by `titleID`; each row uses `titleName` and the role/grantable-role masks (general, HQ, base and other location masks). Its write calls forward that exact mask set via `UpdateTitle`, `UpdateTitles`, and `DeleteTitle`. The members editor also forwards the same per-location masks and title ID through `UpdateMember` (`bco_members.py:243-270`).
+- Host handlers are in `Eve.Services.Corporations/CorporationServices.cs` (`CorpRegistryService.GetTitles`: 953-955; `UpdateMember`: 1332-1343); persistent role/title state is in `Eve.Corporations/CorporationStore.Roles.cs`. EveJS implements matching methods in `server/src/services/corporation/corpRegistryRuntime.js:2669-2675,2929-2939`. Existing focused service tests assert title and role-mask behavior in `CorporationTests.Directors_and_titles_have_the_references_effective_and_grantable_masks` and protocol tests assert native packed member/title/login/bind shapes (`CorporationProtocolTests.Public_rows_packed_members_titles_login_and_bind_are_native_client_shapes`). This turn did not find or run a registered-Host wire test for these title/member replies, so Host source registration and service-level assertions must not be read as wire-test execution.
+
+### Alliance basics
+
+- `eve/client/script/ui/services/alliances/all_cso_alliance.py:27-31` calls `GetRankedAlliances(maxLen)` and indexes each reply row by `allianceID`; `:49-58` calls `GetAlliance(allianceID)` and indexes the returned rowset by `allianceID`.
+- `eve/client/script/ui/shared/info/infosvc.py:2894-2904` consumes `GetAllianceMembers(itemID)` as rows with `corporationID`, then primes the owner cache from those IDs. `corpDonateEMPanel.py:41-52` consumes `GetDaysInAlliance(allianceID, corporationID)` as a number and `GetAllianceMembersOlderThan(...)` as corporation IDs.
+- Host handlers construct alliance headers/rows and member rows in `Eve.Services.Corporations/AllianceRegistryService.cs:27-58,104-133,177-185`. EveJS implements ranking and alliance member reads in `server/src/services/corporation/allianceRegistryRuntime.js:537-551`. The current service-audit inventory finds active Host routes for these P1 calls but no matching Host wire-test source (`EVE_RS_COVERAGE.csv:208-227`). No input-rejection defect was demonstrated in this source pass; the missing wire-test evidence remains a follow-up.
+
+### Findings and next checks
+
+No missing or hollow P1 skill-handler route, no mismatch in the client-consumed skill or clone shape listed above, and no confirmed over-rejection was found in the reviewed source paths. The alliance basic routes are present but lack focused Host wire-test evidence in the current inventory. Corporation title/member service tests verify the described shapes and persistence at service level; a Host-dispatch test was not located during this pass. The untested lower-priority skill notification/purchase paths and the real graphical client remain outside the verification performed here.
+
+No source code changed and no tests were run. No PostgreSQL database was used.
+
+## Core player path recheck — 2026-10-26
 
 確認対象: `origin/main` の `c73e7c1655ab`。ローカル PostgreSQL と実 GUI クライアントは使用していない。ライブ確認は GitHub Actions のサーバースタック＋headless client で実施。
 

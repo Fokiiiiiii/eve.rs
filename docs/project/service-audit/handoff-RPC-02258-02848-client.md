@@ -6,16 +6,16 @@ Client-call and reply-consumer review is recorded in `CLIENT_VERIFIED.md` for al
 
 `populationCap.MoveCharacterToNewSystem` remains NO-TEST. Its handler validates the selected system/token and persists the move through `PgCharacterStore`; this database-free batch does not exercise the successful owned-character state transition. Close this row after a real Host test asserts the successful None reply and persisted system transition.
 
-The push-triggered CI run for `30f44c84` exposed three unrelated failures inherited from the merged charMgr work: wire string tags in `CharMgrClientReadHostWireTests`, a stale RPC inventory total, and a member-editor test expecting Rowset instead of the implemented `util.Row`. The fixes are staged for the next commit: preserve `util.Row` and check wire string text independent of bytes/unicode representation, sync the inventory total to 1423 registered rows, and assert the actual row object shape.
+Push CI for `30f44c84` exposed three failures from the merged charMgr work: wire string comparison, an outdated registry count (1442 vs 1423), and a member editor test comparing `util.Row` to Rowset. The fixes are committed as `1376ec5b`; merge `8ec5a681` preserved the concurrent main updates, including its stronger full two-row and text-normalization wire assertions. The merged changes are ready to push; Actions verification is pending.
 
 ## Verification
 
-- Host test project builds cleanly; focused local `Char_mgr_client_read_shapes_match_the_registered_host_wire_contract` passes (1/1).
-- CharacterInfo test project builds cleanly. Its PostgreSQL test was not run locally because this task forbids database use.
+- Before the merge update, the Host test project compiled and the focused `Char_mgr_client_read_shapes_match_the_registered_host_wire_contract` passed (1/1).
+- CharacterInfo test project compiled. Its PostgreSQL test was not run locally because this task forbids database use.
+- Earlier batch 8 Agent test run `40258937083` passed both new batch tests.
 - No graphical client session or database was used.
 - Audit-current has no status-evidence update option; the audit CSV is unchanged.
-- Commit `e54fb4e1` was merged with `origin/main` and pushed as `30f44c84`; push CI failed on the three issues above.
-- Agent test run `40258937083` passed the two batch 8 focused tests.
+- Batch 8 was pushed as `30f44c84`; its push CI failed as recorded above.
 
 ## Files
 

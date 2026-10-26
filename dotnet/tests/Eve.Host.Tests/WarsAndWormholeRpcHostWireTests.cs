@@ -121,9 +121,9 @@ public partial class HostServerTests
     private static IReadOnlyDictionary<string, PyValue> WarKeyValFields(PyValue value)
     {
         var keyVal = Assert.IsType<PyObject>(value);
-        Assert.Equal("util.KeyVal", Assert.IsType<PyStr>(keyVal.Name).Value);
+        Assert.Equal("util.KeyVal", JsSemantics.StringValue(keyVal.Name));
         return Assert.IsType<PyDict>(keyVal.Args).Entries
-            .ToDictionary(entry => Assert.IsType<PyStr>(entry.Key).Value, entry => entry.Value);
+            .ToDictionary(entry => JsSemantics.StringValue(entry.Key)!, entry => entry.Value);
     }
 
     private static long ReadWarNumber(PyValue value) => value switch

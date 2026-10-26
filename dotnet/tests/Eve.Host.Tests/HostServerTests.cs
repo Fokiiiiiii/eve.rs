@@ -581,7 +581,7 @@ public partial class HostServerTests : IAsyncLifetime
         // the reference's notification omits None-valued keys: inDetention is not sent (the client reads an absent attribute as None)
         Assert.False(initial.ContainsKey("inDetention"));
         Assert.Equal(
-            ["languageID", "countryCode", "userid", "userType", "role", "address"],
+            ["userid", "userType", "role", "address", "languageID", "countryCode"],
             ((PyDict)payload[2]).Entries.Select(e => T(e.Key)!));
         // the client's address: type 2 (client), its client id
         var destination = (PyTuple)((PyObject)state[2]).Args;

@@ -29,3 +29,10 @@ Commit the verified diff, fetch and merge origin/main, then push HEAD to main. D
 - Extended `StructureRpcHostCoverageTests.Structure_control_delivery_deployment_and_beacon_calls_use_registered_host_routes` to assert `GetStructurePilot`'s `None` reply over the Host packet loop, exercising the client's no-current-pilot branch. Its callback is a wire-contract fixture, so it does not establish persistence or notification ordering.
 - Focused Host test passed (1 passed, 0 skipped). Full `Eve.Host.Tests` run: 470 passed, 101 failed, 227 skipped, 798 total. It ran without a database URL as required; database-backed cases failed while obtaining a connection. Graphical-client behavior and delivery notification ordering were not exercised.
 - Remaining: fetch and merge `origin/main`, commit only the two service-audit documentation files, push `HEAD:main`, then inspect the Actions runs as required by the task.
+
+
+## Batch 28 push record
+
+- Pushed commit `aa61a1465571` to `main` after merging `origin/main`.
+- Agent test run `40355639048` succeeded for the focused `Eve.Host.Tests` filter; no failed tests or jobs.
+- Push-triggered `ci.yml` run `40355621319` was still in progress at handoff update; inspect it before closing the batch.

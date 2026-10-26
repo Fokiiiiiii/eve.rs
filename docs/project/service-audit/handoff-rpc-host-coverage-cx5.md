@@ -41,4 +41,9 @@ eve.rs already registers `lookupSvc` through `CoreServices.CreateLookupService`,
 - Actions 40276677603 built Host.Tests but the focused test timed out because the test sent RPC packets before Host's `Open` session message. The regression now opens the session and consumes initial state before RPC calls.
 - The corrected change is pushed in `b1689998`. Selected run 40277519916 is in progress. The push-triggered `ci.yml` run 40277439667 was queued when last checked.
 - A local focused `dotnet test` invocation is active but progressing slowly under shared-machine load; result pending.
+- Actions run 40277519916 failed one assertion because decoded Python unicode values use `PyBytes`; the wire response's KeyVal shape was correct. Replaced exact-type checks with the suite's `T(...)` decoder helper.
+- Corrected focused Actions run 40278146386 passed: 1 passed, 0 failed, 0 skipped.
+- Push-triggered `ci.yml` run 40278138665 for `b5c21d53` is in progress.
+- The local focused `dotnet test` process was stopped after 47 minutes waiting through compilation under shared-machine load; it produced no test result. The same focused test passed in Actions run 40278146386.
+
 - No graphical-client run was performed.

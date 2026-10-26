@@ -241,12 +241,14 @@ public sealed partial class CharMgrService(
         var balance = readBalance is null ? 0m : (await readBalance(character.Id, call.Cancellation)) ?? 0m;
         var security = await readCharacterSecurityStatus(character.Id, call.Cancellation);
         var fields = new[] { "characterID", "gender", "createDateTime", "raceID", "bloodlineID", "ancestryID", "balance", "securityRating" };
-        var row = new PyList([
+        var row = Py.Tuple(
             new PyInt(character.Id), new PyInt(character.Gender), FileTime(character.CreatedAt),
             new PyInt(character.RaceId), new PyInt(character.BloodlineId), new PyInt(character.AncestryId),
-            Py.Number((double)balance), Py.Number(security),
-        ]);
-        return Py.Rowset(fields, [row]);
+            Py.Number((double)balance), Py.Number(security));
+        return new PyObject(new PyStr("util.Row"), new PyDict([
+            new(new PyStr("header"), new PyList([.. fields.Select(field => (PyValue)new PyStr(field))])),
+            new(new PyStr("line"), new PyList(row.Items)),
+        ]));
     }
 
     /// <summary>The station the character's clone is at, in every spelling the client has asked for it in.</summary>

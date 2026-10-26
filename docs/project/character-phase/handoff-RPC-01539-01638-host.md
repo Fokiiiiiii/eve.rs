@@ -32,9 +32,9 @@ EveJS comparisons: `Fokiiiiiii/evejs-v0.12.9/server/src/services/fighter/fighter
 
 ## Verification
 
-- After the second `git fetch origin main && git merge origin/main` (the first push was rejected as non-fast-forward), the Host test project build passed: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --no-restore -p:BuildProjectReferences=false`, 0 warnings/errors (4m 30s).
+- After the latest upstream merge and push (`4a00f337`), the Host test project build passed: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --no-restore -p:BuildProjectReferences=false`, 0 warnings/errors (3m 38s).
 - Re-ran the focused fighter/FW RPCs and adjacent RPC-01790 route: 3 passed, 0 failed, 0 skipped.
 - The upstream RPC-01790 test fix opens the session, uses the Host packet frame, and reads string tokens with the existing decoder.
-- No PostgreSQL database or graphical client was used.
-- On pushed commit `922b3f1d`, selected `agent-test.yml` run [40282911210](https://github.com/Fokiiiiiii/eve.rs/actions/runs/40282911210) succeeded with no failed tests or jobs reported. The local focused run counted 3 passed, 0 skipped.
-- Push-triggered `ci.yml` run 40282887458 is still in progress.
+- On task commit `922b3f1d`, selected `agent-test.yml` run [40282911210](https://github.com/Fokiiiiiii/eve.rs/actions/runs/40282911210) succeeded with no failed tests or jobs reported.
+- Push-triggered `ci.yml` run [40282887458](https://github.com/Fokiiiiiii/eve.rs/actions/runs/40282887458) for `922b3f1d` completed successfully with no failed tests or jobs.
+- No PostgreSQL database or graphical client was used. The focused local run recorded 0 skipped tests.

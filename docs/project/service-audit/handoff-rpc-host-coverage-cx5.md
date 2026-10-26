@@ -53,4 +53,15 @@ eve.rs already registers `lookupSvc` through `CoreServices.CreateLookupService`,
 - Local Host project build passed with zero warnings/errors. Focused Host test passed (1/1, no skips). Required full Eve.Host.Tests run had 471 passed, 327 failed, 2 skipped; failures were PostgreSQL-backed tests lacking EVE_PG_URL. No database was used. Graphical client was not used.
 - Updated EVE_RS_COVERAGE.csv and CLIENT_VERIFIED.md for both duplicate call rows.
 
-The focused agent-test and push-CI runs are pending until this commit is pushed.
+Focused agent-test run 40366101679 and push CI run 40366086777 passed for e4dd35c0c3b5, with no failed tests or jobs.
+
+
+## P2 client verification batch 30 — RPC-02814–02817
+
+- Whole-client search found five GetKillMail callers: notificationEntry.py:218; notificationCenter.py:300; warKillEntry.py:133; killReportUtil.py:41; ghostControllerMixin.py:213. The selected P2 notification paths pass the returned KeyVal into the report window; killReport.py:149-184 consumes the mail, and eveCommonUtils.py:140-286 parses killBlob into attackers and items. ghostControllerMixin uses victimShipTypeID and parsed items to simulate a fitting.
+- Production route: CoreServices.cs:84 registers WarStatisticMgrService; CharacterComposition.cs:225-240 passes its reader; MissionComposition.cs:160-165 reads killmails records from GameStore. The handler GameRpcServices.cs:1518-1564 returns None for missing records or hash mismatch, otherwise the client KeyVal.
+- EveJS 261018.1 warStatisticMgrService.js:183-196 performs the same lookup and hash rejection; killmailState.js:684-716 builds the KeyVal reply.
+- Added DB-free Host socket test WarStatisticKillmailRpcHostWireTests.cs:13-70 for the registered service. It checks killID, killTime, victimShipTypeID and UTF-8 killBlob bytes, plus wrong-hash and missing-record None replies. The first assertion showed that serialized PyStr is decoded as PyBytes; the regression asserts the actual decoded wire bytes and text.
+- After origin/main merge: Host test project build passed; focused Host test passed 1/1, no skips. Full Eve.Host.Tests had 477 passed, 327 failed, 2 skipped. PostgreSQL-backed failures cannot connect without EVE_PG_URL; no database was used. Graphical client not used.
+
+The focused Actions and push-CI checks for this batch are pending.

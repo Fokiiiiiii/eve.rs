@@ -789,3 +789,19 @@ Both rows are the same wormholeMgr.GetWormholePolarization callsite and reply co
 | RPC-02843 | Same sole callsite, consumers, and response fields as RPC-02842. | Same Host registration, handler, Host wire regression, and EveJS method as RPC-02842. | MATCHES |
 
 Local checks: Host test project build passed (0 warnings, 0 errors). The focused registered-Host socket test passed (1 passed, 0 failed, 0 skipped). The required full Eve.Host.Tests shard reported 471 passed, 327 failed, and 2 skipped; the failures are PostgreSQL-backed cases that could not connect because this job has no database URL, and no database was used. The graphical client was not exercised.
+
+
+## Batch 30 — RPC-02814–02817
+
+All four rows resolve to the same warStatisticMgr.GetKillMail endpoint used by notification UI callers.
+
+| Row | Client call and consumed reply fields | Host handler and EveJS comparison | Verdict |
+|---|---|---|---|
+| RPC-02814 | notifications/client/controls/notificationEntry.py:215-221 reads kill ID/hash from notification data, stores the returned killmail as fakeNode.mail, and returns a KillMail drag object. The report window consumes the returned victimShipTypeID and killBlob: eve/client/script/ui/shared/killReport.py:149-184 loads the mail and calls GetKillMailInfo; eve/common/script/util/eveCommonUtils.py:140-286 parses attacker and item data from killBlob. | The production service is registered in dotnet/src/Eve.Services.Core/CoreServices.cs:84; CharacterComposition.cs:225-240 supplies its reader, and MissionComposition.cs:160-165 loads records from the GameStore killmails table. GameRpcServices.cs:1518-1532 validates ID/hash and returns None when absent or mismatched; :1537-1564 builds the client KeyVal, including killID, killTime, victimShipTypeID and killBlob. Host socket test WarStatisticKillmailRpcHostWireTests.cs:13-70 checks these fields, valid hash, wrong hash and missing record. EveJS server/src/services/corporation/warStatisticMgrService.js:183-196 has the same missing/hash rejection; server/src/services/killmail/killmailState.js:684-716 builds the KeyVal fields. | MATCHES |
+| RPC-02815 | Same notification entry caller and report-window consumers as RPC-02814. | Same production wiring, handler, Host wire regression and EveJS methods as RPC-02814. | MATCHES |
+| RPC-02816 | notifications/client/notificationCenter.py:297-302 reads kill ID/hash, calls GetKillMail and passes the reply to killReportUtil.OpenKillReport. The report window then consumes victimShipTypeID and killBlob as described for RPC-02814. | Same production wiring, handler, Host wire regression and EveJS methods as RPC-02814. | MATCHES |
+| RPC-02817 | Same notification center caller and report-window consumers as RPC-02816. | Same production wiring, handler, Host wire regression and EveJS methods as RPC-02814. | MATCHES |
+
+Whole-tree caller search also found warKillEntry.py:131-133 returning GetKillMail for a kill entry, killReportUtil.py:39-44 checking for None before opening the report, and ghostControllerMixin.py:212-217 reading victimShipTypeID and parsed item data to simulate a fitting. The notification entry and center paths above are the selected P2 rows.
+
+Local checks after the origin/main merge: Host test project build and focused registered-Host socket test passed (1 passed, 0 failed, 0 skipped). Full Eve.Host.Tests reported 477 passed, 327 failed and 2 skipped; PostgreSQL-backed failures could not connect because this job has no EVE_PG_URL. No PostgreSQL database or graphical client was used.

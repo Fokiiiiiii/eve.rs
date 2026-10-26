@@ -30,3 +30,10 @@ A whole-tree search of `/home/user/eve-logic` found:
 - The local Host test-project build was attempted twice with shared compilation disabled; both attempts stalled while Roslyn compiled `Eve.Host.Tests` and were interrupted. No local test passed.
 - Focused GitHub Actions dispatch and push-gate checks are pending for the commit containing this handoff.
 - No graphical-client run was made. Report recording/durable retention remains open as noted above.
+
+
+## Follow-up CI compile fix
+
+The first pushed revision's GitHub Actions logs identified five compile errors in the already-present `Rpc01790HostCoverageTests.cs`: missing `Eve.Services` import for `Py` and incorrect `TestFront.Packets` qualification for the top-level `Packets` type. The fix adds the import and calls `Packets.CallWithKwargs`. This was unrelated to the new support/insurgency test but blocked the shared Host test project.
+
+The Host test-project build was retried locally after that fix; Roslyn stalled without output and was interrupted. No local compile or focused test passed. A fresh focused Actions run and push CI check are pending for the follow-up commit.

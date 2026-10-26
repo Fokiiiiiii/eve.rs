@@ -1,4 +1,5 @@
 using Eve.Marshal;
+using Eve.Services;
 using Eve.Services.Core;
 using System.Text.Json.Nodes;
 
@@ -54,7 +55,7 @@ public partial class HostServerTests
         var machoVersion = Py.Tuple(new PyInt(0), new PyInt(3396210));
         async Task<PyValue?> Call(long id, string service, string method, params PyValue[] args)
         {
-            var packet = TestFront.Packets.CallWithKwargs(
+            var packet = Packets.CallWithKwargs(
                 open, id, service, method, new PyTuple(args),
                 Py.Dict(("machoVersion", machoVersion)));
             await front.SendAsync(packet);

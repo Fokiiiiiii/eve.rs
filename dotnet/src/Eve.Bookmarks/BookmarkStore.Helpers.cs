@@ -6,8 +6,8 @@ public sealed partial class BookmarkStore
 {
     private const string FolderColumns = "folder_id, owner_id, folder_name, description, is_personal, is_active, created_ms, admin_group_id, manage_group_id, use_group_id, view_group_id";
     private const string FolderColumnsF = "f.folder_id, f.owner_id, f.folder_name, f.description, f.is_personal, f.is_active, f.created_ms, f.admin_group_id, f.manage_group_id, f.use_group_id, f.view_group_id";
-    private const string BookmarkColumns = "bookmark_id, folder_id, subfolder_id, item_id, type_id, location_id, memo, note, creator_id, created_ms, expiry_ms";
-    private const string BookmarkSelect = "b.bookmark_id, b.folder_id, b.subfolder_id, b.item_id, b.type_id, b.location_id, b.memo, b.note, b.creator_id, b.created_ms, b.expiry_ms";
+    private const string BookmarkColumns = "bookmark_id, folder_id, subfolder_id, item_id, type_id, location_id, memo, note, creator_id, created_ms, expiry_ms, x, y, z";
+    private const string BookmarkSelect = "b.bookmark_id, b.folder_id, b.subfolder_id, b.item_id, b.type_id, b.location_id, b.memo, b.note, b.creator_id, b.created_ms, b.expiry_ms, b.x, b.y, b.z";
     private const string SubfolderColumns = "subfolder_id, folder_id, subfolder_name, creator_id, created_ms";
 
     /// <summary>The column after the folder columns of a folder view query: the character's connection state (null when it has none).</summary>
@@ -167,9 +167,9 @@ public sealed partial class BookmarkStore
 
     private async Task InsertBookmarkAsync(NpgsqlConnection connection, NpgsqlTransaction tx, Bookmark bookmark, CancellationToken token) =>
         await Execute(connection, tx,
-            $"INSERT INTO {_schema}.bookmarks({BookmarkColumns}) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)", token,
+            $"INSERT INTO {_schema}.bookmarks({BookmarkColumns}) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)", token,
             bookmark.BookmarkId, bookmark.FolderId, bookmark.SubfolderId, bookmark.ItemId, bookmark.TypeId, bookmark.LocationId,
-            bookmark.Memo, bookmark.Note, bookmark.CreatorId, bookmark.CreatedMs, bookmark.ExpiryMs);
+            bookmark.Memo, bookmark.Note, bookmark.CreatorId, bookmark.CreatedMs, bookmark.ExpiryMs, bookmark.X, bookmark.Y, bookmark.Z);
 
     private async Task<long> NextIdAsync(NpgsqlConnection connection, NpgsqlTransaction tx, CancellationToken token)
     {
@@ -230,6 +230,7 @@ public sealed partial class BookmarkStore
     private static BookmarkSubfolder ReadSubfolder(NpgsqlDataReader r) => new(r.GetInt64(0), r.GetInt64(1), r.GetString(2), r.GetInt64(3), r.GetInt64(4));
 
     private static Bookmark ReadBookmark(NpgsqlDataReader r) => new(r.GetInt64(0), r.GetInt64(1), r.IsDBNull(2) ? null : r.GetInt64(2),
-        r.GetInt64(3), r.GetInt32(4), r.GetInt64(5), r.GetString(6), r.GetString(7), r.GetInt64(8), r.GetInt64(9),
-        r.IsDBNull(10) ? null : r.GetInt64(10));
+        r.IsDBNull(3) ? null : r.GetInt64(3), r.GetInt32(4), r.GetInt64(5), r.GetString(6), r.GetString(7), r.GetInt64(8), r.GetInt64(9),
+        r.IsDBNull(10) ? null : r.GetInt64(10), r.IsDBNull(11) ? null : r.GetDouble(11),
+        r.IsDBNull(12) ? null : r.GetDouble(12), r.IsDBNull(13) ? null : r.GetDouble(13));
 }

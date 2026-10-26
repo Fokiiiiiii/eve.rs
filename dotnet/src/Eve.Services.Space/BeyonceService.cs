@@ -1,8 +1,11 @@
 using Eve.Macho;
 using Eve.Marshal;
+using Eve.Services.Space.Scanning;
 using Eve.Space;
 
 namespace Eve.Services.Space;
+
+public sealed record ScanBookmarkTarget(long SolarSystemId, double X, double Y, double Z);
 
 [Service("beyonce")]
 public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUnixMs, FleetStore? fleetStore = null, Func<long, ClientSession?>? sessionForCharacter = null) : IBoundObjectReleaseHandler
@@ -28,6 +31,12 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
     public Func<long, long, int, CancellationToken, Task<WarpCoordinates?>>? LaunchTargetForCharacter { get; set; }
 
     public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { get; set; }
+
+    /// <summary>The live cosmic signatures the probe scanner reads in each system.</summary>
+    public ICosmicSiteSource? ScanSites { get; set; }
+
+    /// <summary>The access checked bookmark store writer from the host composition.</summary>
+    public Func<ServiceCall, ScanBookmarkTarget, long, string?, string?, int, long?, ValueTask<PyValue>>? SaveBookmarkScanResult { get; set; }
 
     private static WarpCoordinates? Coordinates(PyValue value)
     {
@@ -89,14 +98,88 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
     [Method("MachoBindObject")]
     public async ValueTask<PyValue> MachoBindObject(ServiceCall call)
     {
-        if (Binding.PlaceOf(call.Arg(0)) is not { } place || call.Session.GetInt("solarsystemid") != place || !space.IsInSpace(call.Session))
+        if (Binding.PlaceOf(call.Arg(0)) is not { } place || call.Session.GetInt("solarsystemid") != place
+            || space is not null && !space.IsInSpace(call.Session))
         {
             return None;
         }
         var (bound, oid) = _binding.Bind(call.Session);
         var result = await Binding.NestedAsync(this, call, oid);
-        call.Session.AfterResponse(() => space.Bind(call.Session));
+        if (space is not null)
+            call.Session.AfterResponse(() => space.Bind(call.Session));
         return Py.Tuple(bound, result);
+    }
+
+    [Method("BookmarkScanResult")]
+    public async ValueTask<PyValue> BookmarkScanResult(ServiceCall call)
+    {
+        var locationId = BookmarkInteger(call.Arg(0));
+        var folderId = BookmarkInteger(call.Arg(4));
+        var expiryValue = BookmarkInteger(call.Arg(5));
+        var name = BookmarkText(call.Arg(1));
+        var note = BookmarkText(call.Arg(2));
+        if (call.Session.CharacterId is not > 0 || locationId is not > 0 or > int.MaxValue
+            || call.Session.GetInt("solarsystemid") != locationId
+            || folderId is not > 0 || expiryValue is null or < int.MinValue or > int.MaxValue
+            || name is null || note is null)
+        {
+            throw Eve.Services.MachoErrors.ThrowUserError("BookmarkNotAvailable");
+        }
+
+        var (siteId, siteCode) = ScanSiteId(call.Arg(3));
+        if (siteId is <= 0 || siteCode is not null and "")
+        {
+            throw Eve.Services.MachoErrors.ThrowUserError("BookmarkNotAvailable");
+        }
+        var sites = ScanSites ?? throw new InvalidOperationException("Cosmic signature source is not configured.");
+        var save = SaveBookmarkScanResult ?? throw new InvalidOperationException("Scan bookmark storage is not configured.");
+        var candidates = await sites.SitesInAsync((int)locationId.Value, call.Cancellation);
+        var site = siteId is { } numericId
+            ? candidates.FirstOrDefault(candidate => candidate.IsSignature && candidate.TargetId == numericId)
+            : candidates.FirstOrDefault(candidate => candidate.IsSignature && string.Equals(candidate.Code, siteCode, StringComparison.OrdinalIgnoreCase));
+        if (site is null || site.Position.Length < 3
+            || !double.IsFinite(site.Position[0]) || !double.IsFinite(site.Position[1]) || !double.IsFinite(site.Position[2]))
+        {
+            throw Eve.Services.MachoErrors.ThrowUserError("BookmarkNotAvailable");
+        }
+
+        var subfolderValue = call.Kwarg("subfolderID");
+        var subfolderId = subfolderValue is null or PyNone ? null : BookmarkInteger(subfolderValue);
+        if (subfolderValue is not null and not PyNone && subfolderId is not > 0)
+        {
+            throw Eve.Services.MachoErrors.ThrowUserError("BookmarkSubfolderNoLongerThere");
+        }
+        return await save(call, new ScanBookmarkTarget(locationId.Value, site.Position[0], site.Position[1], site.Position[2]),
+            folderId.Value, name, note, (int)expiryValue.Value, subfolderId);
+    }
+
+    private static long? BookmarkInteger(PyValue value) => value switch
+    {
+        PyInt number => number.Value,
+        PyLong number => number.Value,
+        _ => null,
+    };
+
+    private static string? BookmarkText(PyValue value) => value switch
+    {
+        PyStr text => text.Value,
+        PyWString text => text.Value,
+        PyNone => "",
+        _ => null,
+    };
+
+    private static (long? Id, string? Code) ScanSiteId(PyValue value)
+    {
+        if (BookmarkInteger(value) is { } number)
+        {
+            return (number, null);
+        }
+        var text = BookmarkText(value)?.Trim();
+        if (string.IsNullOrEmpty(text))
+        {
+            return (null, null);
+        }
+        return long.TryParse(text, out var id) ? (id, null) : (null, text);
     }
 
     /// <summary>The host can provide the live bubble lookup when the simulation exposes it.</summary>

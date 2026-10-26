@@ -43,7 +43,6 @@ public partial class HostServerTests : IAsyncLifetime
     private void Start(AccountOptions? identity = null, int maxPending = 10_000, Action<ServiceRegistry>? configure = null, IAccountDirectory? accounts = null, bool strictRpc = false, Action<string, Exception?>? onProblem = null, Action<ClientSession>? sessionOpened = null, long maxOutboundBytes = 8 * 1024 * 1024, long maxPendingBytes = 16 * 1024 * 1024, int maxConnections = 1_024, ISsoTokenVerifier? ssoTokenVerifier = null)
     {
         var registry = new ServiceRegistry();
-        configure?.Invoke(registry);
         Func<long> now = () => FixedNowMs;
         var calendarStore = new TestCalendarStore();
         var calendarAudience = new TestCalendarAudienceReader();
@@ -51,6 +50,7 @@ public partial class HostServerTests : IAsyncLifetime
         {
             registry.Register(service);
         }
+        configure?.Invoke(registry);
         var config = GlobalConfig.Build(Options);
         registry.Register(new MachoNetService(new Info(registry, config), now));
         var dispatcher = new PacketDispatcher(registry, now) { StrictRpc = strictRpc, OnProblem = onProblem };

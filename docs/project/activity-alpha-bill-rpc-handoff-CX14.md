@@ -2,9 +2,11 @@
 
 ## Progress
 
-RPC-00834, RPC-00835, and RPC-00836 now have a focused wire regression through the real `ServiceRegistry` and `PacketDispatcher`. It checks the default popup state, a persisted-in-service state change, character isolation, the wide activity ID wire value, and notification-before-reply ordering. No service code changed.
-
-The remaining rows in this batch are RPC-00897–RPC-00898 and RPC-00930–RPC-00949.
+- RPC-00834, RPC-00835, and RPC-00836 have a focused wire regression through the real `ServiceRegistry` and `PacketDispatcher`. It checks the default popup state, a state change and reread, character isolation, a wide activity ID wire value, and notification-before-reply ordering.
+- Added an initial billMgr wire regression for empty corporation reads and refusal responses for calls without corporation state. It does not cover a persisted corporation's successful bill/payment flow.
+- RPC-00897–RPC-00898 still need Host wire coverage.
+- The production `billMgr` construction omits `PayCharacterBillAsync`; `CharPayBill` therefore refuses every request. The implementation has no personal bill store or payment authority. The task's IMPLEMENTED-UNTESTED classification does not match this code.
+- The remaining corporation bill methods need a successful stateful Host wire regression.
 
 ## V24.01 client evidence
 
@@ -24,6 +26,9 @@ The remaining rows in this batch are RPC-00897–RPC-00898 and RPC-00930–RPC-0
 
 ## Checks
 
-- Local: `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore --filter 'FullyQualifiedName~Activity_mgr_calls_route_through_host_wire_and_preserve_character_state' -p:UseSharedCompilation=false` — 1 passed, 0 failed, 0 skipped.
+- Local activity Host test: `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore --filter 'FullyQualifiedName~Activity_mgr_calls_route_through_host_wire_and_preserve_character_state' -p:UseSharedCompilation=false` — 1 passed, 0 failed, 0 skipped.
+- Local billMgr Host test: `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore --filter 'FullyQualifiedName~Bill_manager_routes_empty_corporation_reads_and_refuses_unavailable_payments' -p:UseSharedCompilation=false -p:BuildProjectReferences=false` — 1 passed, 0 failed, 0 skipped.
+- Activity Actions run 40264834187 for pushed revision 60a532ea — passed, 1 passed, 0 failed, 0 skipped.
+- Push-triggered ci.yml run 40264824565 for revision 60a532ea was still in progress at the last check.
 - No database connection was used.
 - Real graphical-client verification has not been performed.

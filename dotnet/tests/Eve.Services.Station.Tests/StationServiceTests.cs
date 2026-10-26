@@ -184,12 +184,14 @@ public class StationServiceTests
     private static StationService Make(
         OnlineCharacters? online = null,
         PgCharacterStore? characters = null,
-        Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? sovereigntySystemsForAlliance = null) =>
+        Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? sovereigntySystemsForAlliance = null,
+        Func<CancellationToken, ValueTask<IReadOnlyList<(long SolarSystemId, long AllianceId)>>>? allAllianceSystems = null) =>
         new(Data.Stations,
             characters ?? new PgCharacterStore(NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest("Host=localhost")), "characters"),
             online ?? new OnlineCharacters(),
             () => Data.ClockMs,
-            sovereigntySystemsForAlliance);
+            sovereigntySystemsForAlliance,
+            allAllianceSystems: allAllianceSystems);
 
     [Fact]
     public async Task An_unknown_station_or_a_bad_id_is_answered_with_none()
@@ -265,14 +267,27 @@ public class StationServiceTests
                 .OrderBy(systemId => systemId)
                 .ToArray());
 
-        var service = Make(sovereigntySystemsForAlliance: SystemsForAlliance);
+        ValueTask<IReadOnlyList<(long SolarSystemId, long AllianceId)>> AllSystems(CancellationToken _) =>
+            ValueTask.FromResult<IReadOnlyList<(long SolarSystemId, long AllianceId)>>(
+                [(30000142, allianceId), (30000143, allianceId), (30000144, 99000002)]);
+
+        var service = Make(
+            sovereigntySystemsForAlliance: SystemsForAlliance,
+            allAllianceSystems: AllSystems);
         var (session, _) = Data.Session(60015249);
         session.Set("allianceid", new PyInt(allianceId));
 
-        var mySystems = await Data.CallAsync(service, session, "GetAllianceSystems");
-        var requestedSystems = await Data.CallAsync(service, session, "GetSystemsForAlliance", new PyInt(allianceId));
-        Assert.Equal(new PyList([new PyInt(30000142), new PyInt(30000143)]), mySystems);
-        Assert.Equal(mySystems, requestedSystems);
+        var allSystems = Assert.IsType<PyList>(await Data.CallAsync(service, session, "GetAllianceSystems"));
+        var firstRecord = Assert.IsType<PyObject>(allSystems.Items[0]);
+        Assert.Equal(new PyInt(30000142), Data.Fields(firstRecord)["solarSystemID"]);
+        Assert.Equal(new PyInt(allianceId), Data.Fields(firstRecord)["allianceID"]);
+        Assert.Equal(3, allSystems.Items.Count);
+        var requestedSystems = Assert.IsType<PyList>(
+            await Data.CallAsync(service, session, "GetSystemsForAlliance", new PyInt(allianceId)));
+        var requestedSystem = Assert.IsType<PyObject>(requestedSystems.Items[0]);
+        Assert.Equal(new PyInt(30000142), Data.Fields(requestedSystem)["solarSystemID"]);
+        Assert.Equal(new PyInt(allianceId), Data.Fields(requestedSystem)["allianceID"]);
+        Assert.Equal(2, requestedSystems.Items.Count);
         Assert.Equal(new PyList([]), await Data.CallAsync(service, session, "GetSystemsForAlliance", new PyInt(0)));
     }
 

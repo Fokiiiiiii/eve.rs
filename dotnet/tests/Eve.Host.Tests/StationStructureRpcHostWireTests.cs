@@ -26,7 +26,9 @@ public partial class HostServerTests
             new PgCharacterStore(source),
             new OnlineCharacters(),
             () => FixedNowMs,
-            (id, _) => ValueTask.FromResult<IReadOnlyList<long>>(id == allianceId ? [systemId] : []));
+            (id, _) => ValueTask.FromResult<IReadOnlyList<long>>(id == allianceId ? [systemId] : []),
+            allAllianceSystems: _ => ValueTask.FromResult<IReadOnlyList<(long SolarSystemId, long AllianceId)>>(
+                [(systemId, allianceId)]));
 
         Start(
             configure: registry =>
@@ -45,9 +47,14 @@ public partial class HostServerTests
 
         var allianceSystems = Assert.IsType<PyList>(
             await HostRpcAsync(front, open, 2, "stationSvc", "GetAllianceSystems"));
-        Assert.Equal(new PyList([new PyInt(systemId)]), allianceSystems);
-        Assert.Equal(allianceSystems,
+        var allianceSystem = Assert.IsType<PyObject>(Assert.Single(allianceSystems.Items));
+        Assert.Equal(new PyInt(systemId), WireField(allianceSystem, "solarSystemID"));
+        Assert.Equal(new PyInt(allianceId), WireField(allianceSystem, "allianceID"));
+        var requestedAllianceSystems = Assert.IsType<PyList>(
             await HostRpcAsync(front, open, 3, "stationSvc", "GetSystemsForAlliance", new PyLong(allianceId)));
+        var requestedSystem = Assert.IsType<PyObject>(Assert.Single(requestedAllianceSystems.Items));
+        Assert.Equal(new PyInt(systemId), WireField(requestedSystem, "solarSystemID"));
+        Assert.Equal(new PyInt(allianceId), WireField(requestedSystem, "allianceID"));
 
         var stationBits = Assert.IsType<PyTuple>(
             await HostRpcAsync(front, open, 4, "stationSvc", "GetStationItemBits"));

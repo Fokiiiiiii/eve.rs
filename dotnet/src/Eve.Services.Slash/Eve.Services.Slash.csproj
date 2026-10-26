@@ -15,5 +15,6 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Eve.Services.Slash.Tests" />
+    <InternalsVisibleTo Include="Eve.Host.Tests" />
   </ItemGroup>
 </Project>

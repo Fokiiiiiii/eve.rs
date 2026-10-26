@@ -47,6 +47,10 @@ is better off, and how it is tested. A behaviour is either:
   and the difference is listed below;
 - **internal**: the client cannot observe it; eve.rs is free.
 
+## Slash `/spawn` result type (2026-10-26)
+
+V24.01 `eve/devtools/script/svc_slash.py:1309,1316-1337` passes the successful `slash.SlashCmd('/spawn ...')` result as a ship item ID to `/load` and `%d` formatting. EveJS 261018.1 has no bare `/spawn` handler in `src/server/src/services/chat/chatCommands.js:409,1287`; eve.rs implements the client-observed flow and returns the single spawned item ID as a Python long while retaining text replies for failures. `SpawnSlashHostWireTests.Spawn_slash_reply_is_the_ship_id_consumed_by_client_load_calls` checks the Host wire result and refusal.
+
 ## Direct trade input bounds (2026-10-20)
 
 The V24.01 trade window builds a two-pilot money manifest and a set of offered item rows, then calls the bound `trademgr` methods. EveJS 261018.1 accepts those same list and amount shapes without a count bound. eve.rs preserves the normal client calls while limiting `MultiAdd` and `MakeOffer` item collections to 256 entries, rejecting nonpositive item IDs, and refusing non-finite or out-of-range ISK values with `CustomNotify`. This affects malformed or oversized calls only. `TradeMgrRpcTests` covers the count, identifier, and amount refusals; graphical-client acceptance is open.

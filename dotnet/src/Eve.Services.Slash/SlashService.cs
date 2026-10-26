@@ -116,6 +116,8 @@ public sealed partial class SlashService(ShipHealthCommands health, DeathTestCom
         // the client sends the same names with and without the slash (the Insider's `heal 5 0`, `warpto 5`)
         var name = "/" + (space < 0 ? text : text[..space]).TrimStart('/').ToLowerInvariant();
         var argument = space < 0 ? "" : text[(space + 1)..].Trim();
+        if (name == "/spawn" && _commands.ContainsKey(name))
+            return await spawn!.SpawnClientAsync(call.Session, argument, call.Cancellation);
         var message = _commands.TryGetValue(name, out var command)
             ? await command(call, argument)
             : $"Unknown command: {text}. Use /help.";

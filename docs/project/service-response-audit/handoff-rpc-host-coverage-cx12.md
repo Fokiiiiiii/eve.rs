@@ -30,6 +30,11 @@ Scope: RPC-01767–RPC-01768, RPC-01839–RPC-01845, RPC-02109–RPC-02110, RPC-
 
 The added `ProjectDiscoveryHostWireTests` case exercises `get_player_analysis_kredits` through the registered Host packet route with transport `machoVersion`, checks the configured character-state reader receives `charid`, and verifies nonnegative integer shaping. The Host test harness now registers explicit per-test services after its defaults so a focused test can exercise a configured production service instance instead of being silently replaced by the default service.
 
+## Latest local check
+
+- `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore -p:UseSharedCompilation=false`: passed, 0 warnings and errors.
+- Focused `Project_discovery_analysis_kredits_reads_character_state_through_registered_host_wire`: passed, 1 passed, 0 skipped. The first run exposed that the shared Host test fixture registered default services after per-test registrations; the fixture order was corrected and the focused test passed. No PostgreSQL database was used.
+
 ## Actions status
 
 - On `63a64d23`, focused Core and Host Actions runs succeeded (`40190235392`, `40190236662`). Push-gate CI (`40190222770`) exposed two issues: the Host response helper consumed a preceding Host send, and RPC inventory expected 1,399 methods after QuickQuery raised it to 1,400. The response helper now correlates by call ID; the inventory expectation is 1,400.

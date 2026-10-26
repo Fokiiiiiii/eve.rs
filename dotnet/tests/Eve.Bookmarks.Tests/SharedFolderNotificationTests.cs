@@ -41,7 +41,7 @@ public sealed class SharedFolderNotificationTests
         await Call(service, bob, "AddToKnownFolders", new PyLong(folder), PyValue.Of(true));
         Assert.Empty(bobSink.Packets);
 
-        await Call(service, alice, "BookmarkStaticLocation", new PyLong(Station.ItemId), new PyLong(folder), new PyStr("Jita"), new PyStr(""), new PyInt(0));
+        await Call(service, alice, "BookmarkStaticLocation", new PyLong(Station.ItemId!.Value), new PyLong(folder), new PyStr("Jita"), new PyStr(""), new PyInt(0));
         Assert.Empty(bobSink.Packets);
         alice.RunAfterResponse();
         var heard = Assert.Single(Notifications(bobSink));
@@ -53,7 +53,7 @@ public sealed class SharedFolderNotificationTests
         Assert.Empty(Notifications(aliceSink));
 
         lists[Bob] = new(new Dictionary<long, int>());
-        await Call(service, alice, "BookmarkStaticLocation", new PyLong(Station.ItemId), new PyLong(folder), new PyStr("Amarr"), new PyStr(""), new PyInt(0));
+        await Call(service, alice, "BookmarkStaticLocation", new PyLong(Station.ItemId!.Value), new PyLong(folder), new PyStr("Amarr"), new PyStr(""), new PyInt(0));
         alice.RunAfterResponse();
         Assert.Single(Notifications(bobSink));
     }

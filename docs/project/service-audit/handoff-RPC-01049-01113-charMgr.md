@@ -39,6 +39,9 @@ The full Eve.Host.Tests project built locally with 0 warnings and 0 errors. The 
 Committed batch verification records in `CLIENT_VERIFIED.md`. The new registered-Host item-list shape test passed in Actions run 40258181572 for 655f60ce. The first run found two test compile issues, fixed in the follow-up commit; the focused rerun passed. A valid-session Host wire assertion for recent kills is still missing; the service-level paged row test covers finalCharacterID/victimCharacterID and pagination. The push-triggered ci.yml run 40258172650 was still in progress at this update. No database or graphical client was used locally.
 
 
+
 ## P0 batch 5 update (2026-10-26)
 
 The batch 5 client contracts and verdicts are recorded in `CLIENT_VERIFIED.md`. The DB-free registered-Host mutation wire test covers SetCharacterDescription, SetActivityStatus keyword arguments including FILETIME extraInfo, SetNote read-back, and UnblockOwners state; it passed locally after the origin/main merge (1 passed, 0 skipped). Existing registered Host assertions cover ListStations, LogSettings, RemoveOwnerNote, SaveCharacterSetting, and GetCharOmegaDowngradeStatus. CancelCharacterDeletePrepare, CreateCharacterWithDoll, and DeleteCharacter remain NO-TEST because valid success-path state requires persisted characters and this job forbids PostgreSQL; no fake success was used. No graphical client was run. The Actions focused run for the new wire test is pending.
+
+The 655f60ce push CI run reported three merged-test failures (wire string type, stale RPC count, and stale private-info Rowset expectation). Their tests have been corrected in the pending follow-up; the new recent-kill Host test passed locally.

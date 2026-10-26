@@ -43,3 +43,18 @@ EveJS v0.12.9 handlers are in `server/src/services/character/charService.js`: Ge
 ## Continuation
 
 Complete the six remaining methods with Host tests for valid/error inputs, persistent effects and client follow-up state. The user explicitly disallowed PostgreSQL for this job; no database-backed path was exercised. Reconcile run `40094011027` and check for CI for the merged push `8a4a51db754d`.
+
+
+## P0 client verification batch 6 (2026-10-26)
+
+- Reviewed all 29 rows RPC-01131–RPC-01159 against the whole V24.01 client tree. The client callsites, reply consumers, and Host handlers are tabulated in `docs/project/service-audit/CLIENT_VERIFIED.md` under batch 6.
+- EveJS 261018.1 handler locations were checked for all 12 distinct methods in `server/src/services/character/charService.js` (deletion delegates to `characterDeletionRuntime`). The inspected Host reply types agree with client consumption. No discrepancy was found in the owner-log report: it lists no charUnboundMgr calls or failures.
+- MATCHES: GetCharacterLockType, GetCohortsForUser, GetQAStarterSystemIDs, ToggleValidation, ValidateNameEx. NO-TEST: GetCharacterInfo, GetNumCharacters, GetValidRandomName, PrepareCharacterForDelete, SelectCharacterID, UpdateCharacterBloodline, UpdateCharacterGender. Existing service-level tests do not substitute for Host wire coverage.
+- No PostgreSQL database was used. Attempts to extend the existing stateless Host test with extra calls hit its per-session RPC budget (ErrorResponse); those assertions were removed, leaving that test source unchanged. No local test result is claimed for this batch.
+- The audit updater help exposes only client-root, repo-root, and queue-dir options; it has no status_evidence option, so the CSV was left unchanged. The 03-allsvc-batch queue was not regenerated.
+- Next: add focused real-Host tests for the seven methods still marked NO-TEST, then run the focused Host checks on Actions. This batch is not complete.
+
+
+### Verification probe detail
+
+A temporary Host test tried to exercise GetNumCharacters/GetCharacterInfo with null character-store dependencies. The Host returned ErrorResponse, and the temporary test was removed; no live store or database was substituted. This result does not establish a service mismatch because the probe lacked the character store needed for an authenticated Host session. The documented NO-TEST verdicts remain open.

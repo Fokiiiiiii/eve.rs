@@ -54,3 +54,8 @@ Docs-only audit commit `ebe5c1be91b7` is on main. Agent Actions run `40334870781
 
 
 Final audit documentation SHA `da5ebf2e9326` also passed Agent Actions run `40335825708` for the focused Host test (1 passed, 0 failed, 0 skipped); no failed jobs/tests. `ci-status.py failures` found no `ci.yml` run for that SHA.
+
+
+### Final merge verification
+
+The post-merge source SHA `904ff3b09dab` passed Agent Actions run `40337503102` for the focused Host test (1 passed, 0 failed, 0 skipped); there were no failed jobs. `ci-status.py failures` found no `ci.yml` run for that SHA. Rust `cargo +1.94.1 fmt --all -- --check` and `CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target-cx cargo +1.94.1 clippy --workspace --all-targets -- -D warnings` both passed.

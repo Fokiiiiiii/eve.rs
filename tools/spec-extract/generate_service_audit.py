@@ -27,15 +27,15 @@ REGISTRATION_FILES = (
 )
 DIRECT_BIND = re.compile(
     r"\b(?:sm|session|self\.session)\.(RemoteSvc|ProxySvc|ConnectToRemoteService|"
-    r"ConnectToAnyService|ConnectToSolServerService|ConnectToProxyServerService|ConnectToService)"
+    r"ConnectToSolarSystemService|ConnectToAnyService|ConnectToSolServerService|ConnectToProxyServerService|ConnectToService)"
     r"\s*\(\s*(['\"])([A-Za-z0-9_]+)\2\s*\)"
     r"\s*(?:\.\s*NoBlock)?\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)\s*\("
 )
 REMOTE_ASSIGN = re.compile(
     r"(?P<lhs>(?:self\.)?[A-Za-z_][A-Za-z0-9_]*)\s*=\s*"
-    r"(?:sm|session|self\.session)\.(?:RemoteSvc|ProxySvc|ConnectToRemoteService|"
+    r"(?:sm|session|self\.session)\.(?:RemoteSvc|ProxySvc|ConnectToRemoteService|ConnectToSolarSystemService|"
     r"ConnectToAnyService|ConnectToSolServerService|ConnectToProxyServerService|ConnectToService)"
-    r"\s*\(\s*(['\"])(?P<service>[A-Za-z0-9_]+)\2\s*\)"
+    r"\s*\(\s*(['\"])(?P<service>[A-Za-z0-9_]+)\2\s*\)(?:\s*\.\s*NoBlock)?(?!\s*\.)"
 )
 ALIAS_METHOD = re.compile(
     r"(?P<lhs>(?:self\.)?[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*"

@@ -15,6 +15,30 @@
 - The audit now classifies client-local calls separately; later RPC row IDs can shift when those calls are reclassified. Compare target methods by service/method and client source path.
 - The Host route scanner resolves string constants referenced by HasMethod comparisons and inspects the full Host Composition directory, including partial AgentRpc and MissionComposition files. This includes SearchQueryService.Query, whose route compares against QueryMethod, and AgentMissionService, which is returned from AgentRpcServices and registered through the Host characterServices list.
 
+## Service-audit receiver tracing correction (2026-10-26)
+
+- `REMOTE_ASSIGN` previously accepted a service-connection prefix even when the assignment continued through `.GetXxx(...)`; calls on that returned rowset, dict, list, or other local object were then labeled as service RPCs. The extractor now accepts an alias only when the assigned expression is the connection itself, and it recognizes direct `ConnectToSolarSystemService` calls.
+- Client evidence confirms the distinction: `agents.py:92` calls `agentMgr.GetAgents().Clone()`, while `agents.py:93-108` adds row fields and performs `Index`/`Filter` on the returned local rowset. `epicArcController.py:68-69` gets the messages from `agentMgr`, then performs a local dictionary lookup. `mapViewColorHandler.py:579-591` receives deadspace rows from `map`, groups them in a local `solmap` dictionary, then iterates that dictionary. These operations are not RPCs.
+- Whole-client follow-up of the removed local-method rows found the same receiver transition at `lpStoreSvc.py:529-532` (RWManager result `.get`), `corpBillsAutoPaySettingsPanel.py:59` (local settings dict `.get`), `base_corporation.py:271-274` (corpmgr reply mapping `.iteritems`), `dungeoneditor.py:196-199` (dungeon reply list `sort`/`insert`), and `contentProviderSignatures.py:18-22` (dungeon instance mapping `.iteritems`). It also found `fightersSvc.py:110-116,137` (fighterMgr reply mappings), `fwVictoryPointSvc.py:46-48` (fwVictoryPointMgr reply mapping `.get`), `industrySvc.py:386` (local slots mapping `.get`), and `infoGatheringSvc.py:93-97` (infoGatheringMgr reply mapping `.iteritems`). Further cases are `sovSvc.py:257-260` and `uisvc.py:245-247` (map reply rowsets indexed locally), `petitionWindow.py:155-160,248-254` (local lookup/list operations around petitioner calls), `planetSvc.py:164` (local colonization list append), `skillsvc.py:220-225,246` (skill attribute and skill maps), and `war_cso.py:130-134` (warsInfoMgr reply mapping). The service calls themselves remain in the matrix where present; only methods on their local results were removed.
+- Focused regression coverage includes the reported `map`, `agentMgr`, `petitioner`, `dungeon`, `fighterMgr`, and `planetMgr` local container methods, plus direct remote connection, moniker, bound moniker proxy, and solar-system service call shapes. `test_service_audit_receiver_tracing.py` passed locally (2 tests).
+- Regenerated with `python3 tools/spec-extract/run_service_audit_current.py --queue-dir /tmp/claude-0/-home-user/fb9607a2-2996-57a7-a22d-383b9f5b5fae/scratchpad/stray/queue-dryrun`; 4,030 client rows, 2,202 RPC rows, 1,418 active Host routes, and 46 dry-run queue files. `CLIENT_CALL_MATRIX.csv` and `EVE_RS_COVERAGE.csv` were refreshed. Old/new coverage counts by priority and status:
+
+| Status | P0 old → new | P1 old → new | P2 old → new |
+|---|---:|---:|---:|
+| CLIENT-LOCAL | 1 → 1 | 0 → 0 | 0 → 0 |
+| MISSING | 6 → 5 | 211 → 119 | 178 → 166 |
+| IMPLEMENTED-TESTED | 127 → 149 | 410 → 383 | 29 → 29 |
+| IMPLEMENTED-UNTESTED | 98 → 76 | 805 → 794 | 470 → 470 |
+| HOLLOW | 0 → 0 | 10 → 10 | 0 → 0 |
+
+- Remaining P1 normal-play review order, with client call and reply-use evidence:
+  1. `contractProxy`: contract acceptance at `contracts.py:422-430` consumes the returned contract to update in-progress state; `CollectMyPageInfo` at `contracts.py:728+` consumes and caches page data used to render contract limits. This service remains the first P1 review target.
+  2. `skillMgr2` / bound `skillHandler`: `skillsvc.py:130` obtains and caches the bound handler; `skillsvc.py:134-140` consumes skill lists. Skill queue start calls use the bound handler (`skillsvc.py:768-772`), and the queue service processes the resulting skill state.
+  3. `mailMgr`: `mailSvc.py:180-193` consumes returned mail header rows into client mail state; `mailSvc.py:339-343` applies read-state changes and refreshes mail counters. Mail list, read, and label actions are therefore frequent social UI flows.
+  4. `scanMgr`: `scanSvc.py:113-116` caches `GetSystemScanMgr`; `scanSvc.py:193-197` submits probe scans. Directional scan calls `ConeScan` through that proxy and emits its result at `directionalScanSvc.py:32-49`.
+  5. `structureDocking` / `structureControl`: docking is requested after navigation at `structureDocking.py:64-81`, and undocking is a session-change callback at `:25-53`; control/boarding calls are gated by structure session state at `structureControl.py:29-59,87-103`.
+- The broad client search/read checks above covered the cited service binders, callers, and reply consumers in `/home/user/eve-logic`. The real graphical client was not used.
+
 ## P0 service-audit review (2026-10-25)
 
 Coverage statuses match current Host source registrations and known behavior gaps. IMPLEMENTED-TESTED rows name a focused test found in source; that label records test evidence and does not assert that the test ran during this audit. Queue batches contain up to 25 P0/P1 RPC rows grouped by service family, with fix classes A/B/C and real-Host wire-test, whole-client trace, push, and Actions instructions.### Whole-client evidence and Host behavior

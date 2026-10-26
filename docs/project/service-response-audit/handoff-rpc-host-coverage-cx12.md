@@ -1,6 +1,6 @@
 # Host RPC coverage handoff: CX12
 
-Scope: RPC-01767–RPC-01768, RPC-01839–RPC-01845, RPC-02109–RPC-02110, RPC-02302–RPC-02303, RPC-02400–RPC-02401, and RPC-00668–RPC-00678.
+Scope: RPC-01767–RPC-01768, RPC-01839–RPC-01845, RPC-02109–RPC-02110, RPC-02302–RPC-02303, RPC-02400–RPC-02401, RPC-00668–RPC-00678, and RPC-00687.
 
 ## V24.01 client trace and EveJS comparison
 
@@ -15,6 +15,7 @@ Scope: RPC-01767–RPC-01768, RPC-01839–RPC-01845, RPC-02109–RPC-02110, RPC-
 | RPC-00670–RPC-00673 | `lpStoreSvc.py:239-266` chooses the character or corporation purchase RPC and uses its boolean to show success. Callers include `lpOfferEntry.py:131,381` and `lpOfferEntry2.py:182`. | `lpStoreMgrService.js:383-421` routes both purchases through the offer purchase logic. |
 | RPC-00674 | `lpStoreSvc.py:101-103` forwards the selected corporation and amount; the UI action is `lpExchangeDialog.py:100`. Wallet state is refreshed through LP change notifications. | `server/src/services/corporation/lpService.js:166-169` is a stub. eve.rs refuses this unsupported operation with a client error, as documented in DEVIATIONS.md, Agents slice AG-1. |
 | RPC-00675, RPC-00676 | `loyaltyPointsWalletSvc.py:29-39` converts each two-column row into an issuer-to-balance map. Wallet panels, LP store affordability checks and donation panels consume the maps; `OnLPChange`/`OnCorpLPChange` invalidate them at lines 53-63. | `lpService.js:95-109` returns the character and corporation balance rowsets. |
+| RPC-00687 | `lpStoreSvc.py:345-348` caches the scalar balance returned by `ProjectDiscovery.get_player_analysis_kredits`; `lpStoreSvc.py:495` and `lpStorePanel.py:215,378-380` consume it as an analysis-kredit offer requirement and filter. | `server/src/services/character/projectDiscoveryService.js:252-257` returns the session's analysisKredits normalized to a nonnegative integer. |
 | RPC-00677, RPC-00678 | `loyaltyPointsWalletSvc.py:93-100` forwards receiver corporation, issuer corporation and amount from `corpDonateLPPanel.py:46` and `personalDonateLPPanel.py:45`. The callers refresh from notifications; they do not consume a success payload. | `lpService.js:122-154` contains the matching methods. eve.rs currently returns an explicit error because destination, Evermark, director and membership checks are not implemented; this is recorded in the AG-1 deviation. |
 
 ## Change and regression coverage
@@ -26,6 +27,13 @@ Scope: RPC-01767–RPC-01768, RPC-01839–RPC-01845, RPC-02109–RPC-02110, RPC-
 - The contract batch wire test now correlates each received response with the request call ID from the returned client address. The full CI shard had consumed an unrelated Host send before the `DeleteContract` response; the focused reproduction passed, and the response correlation removes that ordering assumption.
 - Registering `QuickQuery` raises the Host RPC inventory by one method; `RpcSecurityInventoryTests` now expects 1,400 registered rows.
 - Locally: `Eve.Services.Core` and `Eve.Host.Tests` builds succeeded; the focused QuickQuery test passed (1 passed, 0 skipped). No database was used locally and no graphical-client test was performed.
+
+The added `ProjectDiscoveryHostWireTests` case exercises `get_player_analysis_kredits` through the registered Host packet route with transport `machoVersion`, checks the configured character-state reader receives `charid`, and verifies nonnegative integer shaping. The Host test harness now registers explicit per-test services after its defaults so a focused test can exercise a configured production service instance instead of being silently replaced by the default service.
+
+## Latest local check
+
+- `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore -p:UseSharedCompilation=false`: passed, 0 warnings and errors.
+- Focused `Project_discovery_analysis_kredits_reads_character_state_through_registered_host_wire`: passed, 1 passed, 0 skipped. The first run exposed that the shared Host test fixture registered default services after per-test registrations; the fixture order was corrected and the focused test passed. No PostgreSQL database was used.
 
 ## Actions status
 

@@ -49,9 +49,11 @@ A whole-tree Serena search for `SlashCmd` also found shared client helper caller
 
 ## Verification
 
+- `Petition_support_reads_and_mutations_keep_the_EveJS_wire_shapes_through_the_host` passed after merge: 1/1 focused test, actual Host registration, transport `machoVersion`, EveJS-compatible list/None reply shapes.
+- The origin/main merge added `Rpc01790HostCoverageTests.cs` with a raw `PyValue` passed to `HostFront.SendAsync`; corrected the packet encoding to `Packet(open.SessionId, MarshalCodec.Encode(packet))` so the Host.Tests project compiles.
 - Added `Slash_command_is_dispatched_through_the_registered_host_with_macho_version` in `dotnet/tests/Eve.Host.Tests/SlashHostWireTests.cs`. It uses the live HostServer, strict RPC routing and the production SlashService class. The result is the existing `Select a character before using /heal.` PyStr branch.
 - Command-specific mutations for `/create`, `/structure` and other command forms are outside this one shared-route wire assertion. The test establishes the route, transport kwargs, role gate and reply encoding for one listed caller shape; it does not verify command-specific persistence or notifications for every caller.
-- At the time of this note, the Host.Tests build and focused test are still in progress.
+- The Petitioner Host wire regression passed locally before and after the origin/main merge (1/1 each run). The post-merge run also compiled the merged Host.Tests project.
 
 ## RPC-02280–02287 and RPC-02304–02320 status (2026-10-26)
 
@@ -73,7 +75,7 @@ Client evidence from the whole `/home/user/eve-logic` tree:
 EveJS comparison checked so far:
 - petitionerService.js:178-183 returns an empty list for PropertyPopulationInfo; :266-271 and :295-300 return null for UnClaimPetition and UpdatePetitionRating (with audit records).
 - posMgrService.js:488-503 derives GetControlTowers rows from its provider, normalizes them, and returns the rows.
-- The remaining assigned posMgr handlers still need per-method EveJS comparison and authoritative Host wiring.
+- The per-method EveJS contracts are listed below; the corresponding posMgr routes and authoritative Host state wiring for this assignment remain incomplete.
 
 Additional EveJS evidence for the assigned posMgr methods (all in `server/src/services/planet/posMgrService.js`):
 - `GetTowerSentrySettings` (:391-405) returns a mutable row with the five fields the client tuple-unpacks; `GetTowerNotificationSettings` (:415-420) returns a KeyVal-shaped notification object.

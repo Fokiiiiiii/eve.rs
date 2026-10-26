@@ -89,7 +89,7 @@ public partial class HostServerTests
         {
             var packet = Packets.CallWithKwargs(
                 open, id, service, method, new PyTuple(args), kwargs);
-            await front.SendAsync(packet);
+            await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(packet)));
             var response = Assert.IsType<Send>(await front.ReceiveAsync());
             return Result(MarshalCodec.Decode(response.Payload));
         }

@@ -102,7 +102,7 @@ def remote_park_method_references(contract: Any, path: pathlib.Path, source: str
             "service": "beyonce", "method": method, "arguments": arguments,
             "file": path.as_posix(), "line": line, "kind": "bound-object-method-reference",
             "via": "GetRemotePark moniker passed to PerformSessionChange",
-            "consumer": audit.rpc_context(contract, source, line),
+            "consumer": audit.rpc_context(contract, source, line, method=method),
         })
     return calls
 
@@ -201,7 +201,7 @@ def optimized_client_inventory(contract: Any, client_root: pathlib.Path, server_
             prefix = text.split(call["method"], 1)[0]
             assignment = audit.re.search(r"(?:(?:self\.)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*)[^=]*$", prefix)
             variable = assignment.group(1) if assignment else None
-            consumer = audit.rpc_context(contract, source, line, variable)
+            consumer = audit.rpc_context(contract, source, line, variable, call["method"])
             audit.add_call(rows, call["service"], call["method"], call["arguments"], call["kind"],
                            call["via"], relative, line, consumer)
         for match in _CONNECTOR.finditer(source):

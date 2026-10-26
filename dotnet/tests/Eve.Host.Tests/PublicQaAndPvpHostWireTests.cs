@@ -58,9 +58,5 @@ public partial class HostServerTests
         Assert.Equal(9001, WireInteger(entry.Key));
         var rows = Assert.IsType<PyList>(entry.Value);
         Assert.Equal(250_000, WireInteger(WireField(Assert.Single(rows.Items), "rewardQuantity")));
-
-        var lpLogs = Assert.IsType<PyList>(await HostRpcAsync(
-            front, open, 2, "rewardMgr", "GetRewardLPLogs"));
-        Assert.Empty(lpLogs.Items);
     }
 }

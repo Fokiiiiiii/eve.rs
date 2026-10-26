@@ -1,25 +1,21 @@
-# P1 client verification batch 7 handoff
+# Handoff — client wire verification batch 7
 
-## Current state
+## Status: 10/30 observations match, 19 need Host wire tests, 1 behavior mismatch
 
-- Worktree: `/home/user/wt-cx4`; base pushed commit is `299b1111`.
-- Updated `docs/project/service-audit/CLIENT_VERIFIED.md` with all 30 row IDs and per-row client, handler, and EveJS comparison.
-- Modified `dotnet/tests/Eve.Host.Tests/PublicQaAndPvpHostWireTests.cs`: the registered-Host delayed-rewards test now also calls `rewardMgr.GetRewardLPLogs` and asserts the empty PyList response.
-- Compile check passed: `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false` (0 warnings/errors).
-- Focused test passed: `Delayed_incursion_rewards_return_the_rows_consumed_by_the_journal_through_host_dispatch` (1 passed, 0 skipped).
-- No PostgreSQL database or graphical client was used.
+The verified matches in `CLIENT_VERIFIED.md` are RPC-02233–02237 (rewards), RPC-02275–02277 (shared settings), and RPC-02331–02332 (ship stance). Registered Host tests cover the reward list shapes, shared-setting KeyVal plus subsequent lookup, and stance response/notification.
 
-## Remaining work
+NO-TEST rows are RPC-02231, RPC-02305–02324, and RPC-02334–02340. Direct service tests exist for some mutations, but there is no successful registered-Host reply assertion. Do not treat the no-character/null-dependency skill Host test as success coverage.
 
-1. Root-fix `RepairItemsInStructure`: current handler rejects it while EveJS implements repair. Do not replace it with an empty success.
-2. Add registered-Host success-shape tests for station repair, shared-setting persistence, ship cosmetics mutations and successful free-skill-point application. Current skill wire test covers no-character None, not the integer the client consumes after a successful `ApplyFreeSkillPoints`.
-3. Dispatch and inspect the focused GitHub Actions run and push-triggered CI, then commit/fetch/merge/push with the required identity. This is a partial audit increment; the above behavior gaps are open.
+RPC-02232 is a MISMATCH: `RepairItemsInStructure` rejects the call while EveJS runs structure repair. The client ignores its return at `base_repairshop.py:68-71`; the server behavior and state transition differ. No fix has been made.
 
-## Key source evidence
+## Verification and next steps
 
-- eve-logic repair caller: `eve/client/script/ui/station/repairshop/base_repairshop.py:66-69`.
-- eve-logic reward consumers: `incursionSvc.py:254-259`, `journal.py:782,832-833`, `lpIncursionsPanel.py:73-74`.
-- eve-logic shared-settings consumers: `eveEditPlainText.py:169-171`, `filterSvc.py:449-451`.
-- eve-logic cosmetics callers: `shipUtil.py:27-28`, `cosmeticsSvc.py:161`, `devMenuFunctions.py:8-36,77-84`.
-- eve-logic skill consumers: `skillsvc.py:770-772,795,885,972,982,1016`.
-- Detailed row-by-row citations and verdicts are in `CLIENT_VERIFIED.md`.
+- Focused reward Actions run 40296391366 for 05564516 passed (1 test, no skips).
+- Push CI run 40296376456 failed on a merged wars-info Host assertion: a wire-decoded string was expected as PyStr but is PyBytes. The assertion now uses `JsSemantics.StringValue` in commit 915cb727, pushed in c19c223e.
+- Follow-up Actions run 40298615792 for c19c223e was cancelled before tests began because setup provisioned PostgreSQL, which this task explicitly forbids. It is not a test result.
+- Push CI for c19c223e was queued at last check; inspect it with `python3 tools/dev/ci-status.py failures c19c223e`.
+- Local `Eve.Host.Tests` build passed with 0 warnings and errors after removing an invalid `using Eve.Services.ObjectCaching;` from `ClientRowsMapHostWireTests.cs` (ObjectCaching is a type in Eve.Services).
+- Focused local delayed-rewards Host test passed (1 passed, 0 skipped).
+- Focused local LP-log Host test `Incursion_lp_logs_return_the_row_list_consumed_by_the_client_through_host_dispatch` passed (1 passed, 0 skipped).
+
+No PostgreSQL database or graphical client was used locally. Continue with the repair behavior gap and meaningful DB-free registered-Host tests for the NO-TEST rows. Update this handoff after each push.

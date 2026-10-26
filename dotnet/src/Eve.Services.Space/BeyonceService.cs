@@ -631,14 +631,16 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
     }
 
     /// <summary>
-    /// <c>CmdStargateJump(fromGate, toGate, shipID)</c>: go into a stargate. The answer is the bound object and the time it can be used from again;
-    /// the ship is in the other solar system a few seconds later, when the client is told the session has changed.
+    /// <c>CmdStargateJump(fromGate, toGate, shipID)</c>: go into a stargate. The client ignores the reply and learns of the session change separately.
     /// </summary>
     [Method("CmdStargateJump")]
-    public async ValueTask<PyValue> CmdStargateJump(ServiceCall call) =>
-        _binding.Owns(call) && Number(call.Arg(0)) is { } gate
-            ? await space.JumpAsync(call.Session, (long)gate, (long)(Number(call.Arg(1)) ?? 0), (long)(Number(call.Arg(2)) ?? 0), call.BoundObjectId, call.Cancellation)
-            : None;
+    public async ValueTask<PyValue> CmdStargateJump(ServiceCall call)
+    {
+        if (!_binding.Owns(call) || Number(call.Arg(0)) is not { } gate)
+            return None;
+        await space.JumpAsync(call.Session, (long)gate, (long)(Number(call.Arg(1)) ?? 0), (long)(Number(call.Arg(2)) ?? 0), call.BoundObjectId, call.Cancellation);
+        return None;
+    }
 
     /// <summary>
     /// <c>CmdJumpToFleetModuleBeacon(charID, beaconID, solarsystemID)</c>: the jump drive to the cynosural field a fleet member lit (the beacon is the field, and

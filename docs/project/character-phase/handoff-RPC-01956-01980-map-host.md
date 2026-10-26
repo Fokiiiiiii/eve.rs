@@ -20,7 +20,7 @@ Whole-tree search of V24.01 eve-logic found these callers and consumers:
 
 ## EveJS comparison and eve.rs route
 
-EveJS v0.12.9 normalizes the history arguments and wraps the rowset with a one-minute version check [J `server/src/services/map/mapService.js:591-604`]; history column selection is at `:378-391`. Its incursion report reads active incursions [J `:571-575`], with record fields built in `server/src/services/incursion/incursionPayloads.js:57-95`. The industry handler returns an activity-specific cost-index dictionary [J `:645-649`].
+EveJS v0.12.9 normalizes the history arguments and wraps the rowset with a one-minute version check [J `server/src/services/map/mapService.js:591-604`]; history column selection is at `:378-391`. Its incursion report reads active incursions [J `:571-575`], with record fields built in `server/src/services/incursion/incursionPayloads.js:57-95`. The industry handler returns an activity-specific cost-index dictionary [J `:645-649`.
 
 eve.rs uses the real registered `map` Host route: `IncursionAnomalyService` owns `GetIncursionGlobalReport` and delegates other map methods to its `MapService` fallback. The Host test asserts the actual wire response, including object-cached history, list-shaped incursion records, and dictionary cost modifiers.
 
@@ -33,3 +33,9 @@ eve.rs uses the real registered `map` Host route: `IncursionAnomalyService` owns
 ## CI follow-up
 
 The earlier push gate reported `RpcSecurityInventoryTests.Real_host_registry_methods_are_enumerable` expected 1420 rows but found 1423 after the initial Host merge. A later `origin/main` merge added 18 `accessGroupBookmarkMgr` routes and one `BookmarkScanResult` route, bringing the expected total to 1442. The inventory assertion was updated in that prior work. The focused inventory test uses database schema setup, so it is checked by Actions rather than locally.
+
+## This batch push
+
+- Commit `8b196aad` documented the complete client caller/consumer audit.
+- Fetched and merged `origin/main`; pushed merge commit `d5b3f590` to `origin/main`.
+- Focused Actions and push-gate results are pending for the batch commit.

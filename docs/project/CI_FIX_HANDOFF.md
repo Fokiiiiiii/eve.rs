@@ -934,3 +934,9 @@ Commit 9d7a5789 updates the Dogma spawn test helper to preserve each SlashCmd re
 ## Earlier flagged shared-settings byte assertion
 
 The `Shared_setting_store_returns_the_keyval_consumed_by_the_client_through_host_dispatch` failure is already corrected by main commit 6693eab6. V24.01 `filterSvc.py:448-450` and `eveEditPlainText.py:169-172` consume the returned keyVal fields; `sharedSettings/util.py:10-25` passes `GetStoredSharedSetting` to `yaml.safe_load`. EveJS 261018.1 `sharedSettingsMgrService.js:263-293` returns a keyVal and the stored payload string. eve.rs returns the same key fields and payload (`GameRpcServices.cs:1052-1120`); Python 2 string values arrive at the Host decoder as PyBytes, so the Host test asserts PyBytes and reads the text with JsSemantics.StringValue. The case was absent from failures in runs 1112–1114.
+
+## Push 7ef12d1a status
+
+Commit 7ef12d1a unwraps cached standing replies before inspecting the negative CRowset branches. Main CI run 1116 (Actions run 40322730735) completed red only on `test_docked_corporation_members_trade_at_an_eligible_upwell_structure` and `test_a_seller_and_a_buyer_trade_through_the_market`. Standing, Dogma, all four Host shards, build, Rust, Python client, fixtures, space shards, and Windows passed. Run 1116 reported one skipped Dogma benchmark, one skipped market benchmark, and eight E2E skips (seven slow-live checks and skill-training speed); skips are not passes.
+
+Run 1117 on the same SHA (`40323901513`) shows a successful gate, but every test/build job was skipped. It is not a green verification run and does not count toward the three-push streak.

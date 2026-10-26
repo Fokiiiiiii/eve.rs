@@ -49,12 +49,42 @@ A whole-tree Serena search for `SlashCmd` also found shared client helper caller
 
 ## Verification
 
+- `Petition_support_reads_and_mutations_keep_the_EveJS_wire_shapes_through_the_host` passed after the latest origin/main merge and conflict resolution: 1/1 focused test, actual Host registration, transport `machoVersion`, EveJS-compatible list/None reply shapes.
+- The origin/main merge added `Rpc01790HostCoverageTests.cs` with a raw `PyValue` passed to `HostFront.SendAsync`; corrected the packet encoding to `Packet(open.SessionId, MarshalCodec.Encode(payload))` so the Host.Tests project compiles.
 - Added `Slash_command_is_dispatched_through_the_registered_host_with_macho_version` in `dotnet/tests/Eve.Host.Tests/SlashHostWireTests.cs`. It uses the live HostServer, strict RPC routing and the production SlashService class. The result is the existing `Select a character before using /heal.` PyStr branch.
 - Initial Actions compile failures were fixed: added the `Eve.Services` import for `GameMasterRoles`, then used the serialized `Packet` envelope in the merged RPC coverage test.
-- Selected Host test runs `40277112061` (`1e11b18d`), `40277857506` (`e59639fa`), `40277940730` (`563e94b2`), `40278650613` (`19937d9a`), and `40279478952` (`03c3a14f`) passed without failed tests or jobs.
-- The local focused test rerun was canceled after prolonged shared build contention; it did not produce a test result.
-- Push-triggered `ci.yml` runs were queued/in progress on concurrent main commits; `ci-status.py failures` found no run for the tested `03c3a14f` commit.
+- Selected Host test runs `40277112061` (`1e11b18d`), `40277857506` (`e59639fa`), `40277940730` (`563e94b2`), `40278650613` (`19937d9a`), `40279478952` (`03c3a14f`), and `40280293864` (`8077348e`) passed without failed tests or jobs.
+- `ci-status.py failures` found no `ci.yml` run for `8077348e` or `422c192b`. Earlier concurrent push-gate runs remained queued or in progress when checked.
 - Command-specific mutations for `/create`, `/structure` and other command forms are outside this one shared-route wire assertion. The test establishes the route, transport kwargs, role gate and reply encoding for one listed caller shape; it does not verify command-specific persistence or notifications for every caller.
+
+## RPC-02280–02287 and RPC-02304–02320 status (2026-10-26)
+
+This assigned batch is not complete. The worktree started with a pending Host wire test at `dotnet/tests/Eve.Host.Tests/PetitionerRpcHostWireTests.cs`; it exercises the real registered Host route and the client transport's `machoVersion` kwarg for `PropertyPopulationInfo`, `UnClaimPetition`, and `UpdatePetitionRating`. The test checks only the existing EveJS-compatible empty-list/None replies. It does not provide a petition backend, mutation state, or persistence, so it must not be treated as end-to-end petition functionality.
+
+Client evidence from the whole `/home/user/eve-logic` tree:
+- `PropertyPopulationInfo`: petitionWindow.py:212-213 uses the result as dropdown entries (each row is formatted from an ID and label).
+- `UnClaimPetition`: petition.py:1026-1029 invokes it and then switches to the claimed-petitions panel.
+- `UpdatePetitionRating`: petition.py:445-447 sends petition ID, three rating values, and comment when a value changed.
+- Searches for `petitioner.append` and `petitioner.has_key` found no remote-service dispatches. In the nearby caller flow, append is local list construction (petitionWindow.py:250-252) and has_key is local dictionary membership (petitionWindow.py:157-160); these labels do not identify server RPC methods.
+- `GetControlTowers`: moonmining.py:359-361 consumes rows as (typeID, structureID, solarSystemID), grouping by system and skipping the current tower.
+- `GetTowerSentrySettings`, `GetTowerNotificationSettings`, `GetConsumptionFactor`, `GetStarbasePermissions`, and `SetStarbasePermissions`: moonmining.py:540-541, 578-579, 589-590, 703-704, and 741-742 consume settings/permission values and persist edits.
+- `GetMoonForTower`, `LinkResourceForTower`, `ChangeStructureProvisionType`, `RunMoonProcessCycleforTower`, and `GetMoonProcessInfoForTower`: moonmining.py:1228-1234, 1271-1274, 1315-1327, and 1341-1346 consume moon/process state, issue topology/provision mutations, or run a cycle.
+- `SetTowerNotifications`: moonmining.py:1203-1209 sends calendar/fuel settings after change.
+- `AnchorOrbital`: menusvc.py:1919-1921 exposes the action and :3665-3669 invokes the moniker method.
+- `OnlineOrbital`: orbitalMaterialUI.py:161-163 invokes it and closes the window.
+- `GetSiloCapacityByItemID`: invCache.py:1271-1273 and :1311-1314 uses the result as actual inventory capacity before falling back to type attributes; godma.py:347-348 also calls the same capacity helper for starbase silos.
+
+EveJS comparison checked so far:
+- petitionerService.js:178-183 returns an empty list for PropertyPopulationInfo; :266-271 and :295-300 return null for UnClaimPetition and UpdatePetitionRating (with audit records).
+- posMgrService.js:488-503 derives GetControlTowers rows from its provider, normalizes them, and returns the rows.
+- The per-method EveJS contracts are listed below; the corresponding posMgr routes and authoritative Host state wiring for this assignment remain incomplete.
+
+Additional EveJS evidence for the assigned posMgr methods (all in `server/src/services/planet/posMgrService.js`):
+- `GetTowerSentrySettings` (:391-405) returns a mutable row with the five fields the client tuple-unpacks; `GetTowerNotificationSettings` (:415-420) returns a KeyVal-shaped notification object.
+- `SetTowerNotifications` (:422-428) and `SetStarbasePermissions` (:467-473) validate access through the starbase configuration runtime and return None after mutation. `GetStarbasePermissions` (:450-465) returns a two-element value: deploy flags mapping and mutable usage-flags rowset.
+- `GetConsumptionFactor` (:505-516) returns 1.0 for the current fixed-burn runtime. `GetMoonForTower` (:586-589) reads production state. `ChangeStructureProvisionType` (:591-596), `LinkResourceForTower` (:598-604), and `RunMoonProcessCycleforTower` (:606-610) mutate the production runtime; linking returns True. `GetMoonProcessInfoForTower` (:612-615) propagates the runtime's unavailable-process result.
+- `AnchorOrbital` (:617-629) and `OnlineOrbital` (:645-661) mutate orbital state, consume upgrade items on online, and refresh the scene; both return None.
+- `GetControlTowers` (:488-503) normalizes provider rows. A code search for `GetSiloCapacityByItemID` found no same-named handler in the pinned EveJS tree; its implementation contract still needs tracing through the inventory capacity path.
 
 ## Follow-up
 

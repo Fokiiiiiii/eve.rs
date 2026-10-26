@@ -64,6 +64,19 @@ The same sweep rechecked moniker routing. V24 `eveMoniker.py:8-23` selects a sol
 Local verification: the dependency-inclusive `Eve.Host.Tests` build succeeded before the latest-main merge with 0 warnings and 0 errors; the focused Host test passed 2/2 with 0 skipped. After fetching and merging `origin/main`, `Eve.Host` and `Eve.Host.Tests` each built with `--no-restore -p:BuildProjectReferences=false -p:UseSharedCompilation=false -m:1`, both with 0 warnings and 0 errors. A second dependency-inclusive rebuild was canceled during unrelated `Eve.Events` compilation; the changed projects then passed their isolated builds. No PostgreSQL database or graphical V24 client was used. Focused Actions and push-CI results will be recorded after dispatch.
 
 
+## Station-view contract: DeleteSubfolder notifications (2026-10-26)
+
+### Contract and implementation
+
+V24.01 processes access-group bookmark notifications in arrival order (eve/client/script/ui/shared/bookmarks/bookmarkSvc.py:232-271). Its DeleteSubfolder path removes returned bookmark IDs before removing the subfolder (bookmarkSvc.py:578-597). EveJS emits subfolderRemoved before bookmarksRemoved (server/src/services/accessGroupBookmarkMgrService.js:617-643); eve.rs now sends the same order and omits bookmarksRemoved when the folder contained no bookmarks. The existing Host test registers the production refusal-wrapped service in ServiceRegistry and dispatches all 17 methods through PacketDispatcher; the new wire-contract test covers both notification cases.
+
+### Verification
+
+- Local Core and Host test-project builds passed with 0 warnings and 0 errors.
+- Focused tests passed: DeleteSubfolder notification order (1 passed, 0 skipped) and the registered bookmark dispatcher refusal/wire test (1 passed, 0 skipped). Neither connects to PostgreSQL.
+- This change has not yet been pushed or checked on GitHub Actions. No graphical client session was run.
+
+
 ## Dogma bound module activation and Destiny notifications (2026-10-26)
 
 The prior contract and scene handoffs already cover ballpark add processing, gate/warp transition order, and damage-state forwarding. The remaining Host-level gap found here was a bound dogma activation exercised from both client location contexts. Production registration already supplies the active `SpaceSessions` implementation to `DogmaIMService` (`dotnet/src/Eve.Host/Rpc/InventoryRpc.cs:80-84`).

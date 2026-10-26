@@ -33,3 +33,11 @@ Appended all 30 requested rows RPC-02542 through RPC-02617 to `CLIENT_VERIFIED.m
 Outstanding NO-TEST rows: RPC-02577–02582 (four StandingMgr methods) have no populated registered Host reply-shape test; RPC-02586–02587 (station.GetGuests) only have an empty-list Host assertion, not the four-integer tuple rows the client unpacks. The StandingMgr handlers depend on the PostgreSQL-backed Rowset Read Side; the station guest handler loads character state through PgCharacterStore. This task prohibits database use, so those success shapes were not exercised and no test was added. These rows remain open. The remaining rows match existing registered Host wire tests, including populated station map, station record/tuple, interference, slash dispatch, and asset-safety rows.
 
 No code changed, no database or graphical client was used, and no tests were run in this docs-only update. Follow up by adding populated registered Host tests for the six rows above under an approved non-local database test lane.
+
+
+### Batch 18 local verification update
+
+After merging current origin/main, `dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false` built the Host test project, then ended with 466 passed, 101 failed, and 227 skipped (794 total). Failures include tests that require `EVE_PG_URL`; no PostgreSQL database was used, as this task prohibits it. Skips are not counted as passing. The new upstream `StandingMgrHostWireTests.cs` covers an empty transaction list and cached empty CRowset shape, but does not assert populated row fields; the six NO-TEST rows recorded above remain open.
+
+
+The focused non-database registered Host test `Standing_history_and_composition_keep_client_wire_shapes_through_host_dispatch` passed locally (1 passed, 0 failed, 0 skipped). It covers empty transaction/composition results only, not populated client rows.

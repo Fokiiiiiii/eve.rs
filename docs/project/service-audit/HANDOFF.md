@@ -110,3 +110,6 @@ Three database-free real-Host wire tests were added for monochrome bools, the em
 The audit-current generator was run without a queue directory. It refreshed the coverage CSV broadly; the queue files were not regenerated. Its static route detector currently reports the dynamically bound `invbroker.Add` rows as MISSING even though `ServiceAuditP0HostWireTests.Invbroker_add_accepts_client_kwargs_through_registered_host_route` exercises the real bound Host route; the client verification table cites that route and test. This is a generator detection gap, not a wire-shape discrepancy.
 
 No local PostgreSQL database or graphical EVE client was used. The Actions-selected test job provisions its own test database; the three new Host tests do not open a database connection.
+
+
+Batch 7 follow-up update: origin/main advanced during correction and supplied explicit `util.Row` assertions for the failing service test. The merged assertion needed a typed string array and materialized PyValue list; the final `Eve.Services.CharacterInfo.Tests` build passed with zero warnings/errors. Focused Actions and push CI reruns for this follow-up are pending.

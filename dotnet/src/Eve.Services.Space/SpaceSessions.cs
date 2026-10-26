@@ -858,6 +858,9 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                 case SimNotify notify when _pilots.TryGetValue(notify.SessionId, out var pilot):
                     Forward(pilot.Session, notify);
                     break;
+                case SimServiceNotify serviceNotify when _pilots.TryGetValue(serviceNotify.SessionId, out var servicePilot):
+                    Forward(servicePilot.Session, serviceNotify);
+                    break;
                 case SimAccepted accepted when !_structureObservers.ContainsKey(accepted.SessionId) && accepted.Command != SimCommands.ControlStructure && _pilots.TryGetValue(accepted.SessionId, out var mover):
                     if (accepted.Command == SimCommands.Stop)
                         _warping.TryRemove(accepted.SessionId, out _);
@@ -1017,6 +1020,12 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         var args = MarshalCodec.Decode(notify.Args.ToArray()) is PyTuple tuple ? tuple.Items : [];
         session.SendNotification(notify.Name, notify.IdType, [.. args]);
         if (!IsStructureObserver(session) && (notify.Name == "SetState" || notify.Name == "DoDestinyUpdate" && args.Any(HasBallparkState))) ReplayTetherFx(session);
+    }
+
+    private static void Forward(ClientSession session, SimServiceNotify notify)
+    {
+        var args = MarshalCodec.Decode(notify.Args.ToArray()) is PyTuple tuple ? tuple.Items : [];
+        session.SendServiceNotification(notify.Service, notify.Method, args);
     }
 
     // ── the end of a jump ────────────────────────────────────────────────────

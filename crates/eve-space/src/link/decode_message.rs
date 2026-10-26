@@ -839,6 +839,12 @@ impl Message {
                 id_type: r.text()?,
                 args: r.bytes()?,
             },
+            kind::SERVICE_NOTIFY => Message::ServiceNotify {
+                session_id: r.u64()?,
+                service: r.text()?,
+                method: r.text()?,
+                args: r.bytes()?,
+            },
             kind::DOCKED => Message::Docked {
                 session_id: r.u64()?,
                 station_id: r.i64()?,

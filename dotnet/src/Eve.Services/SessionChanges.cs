@@ -49,7 +49,7 @@ public static class SessionChangeNotification
     }
 }
 
-/// <summary>The packet that delivers a named event to a client (a <c>Notification</c> to a broadcast address).</summary>
+/// <summary>The packet that delivers a named broadcast event or calls a client-side service.</summary>
 public static class ClientNotification
 {
     public const string ClassName = "carbon.common.script.net.machoNetPacket.Notification";
@@ -62,8 +62,20 @@ public static class ClientNotification
     public static PyValue Build(long userId, int nodeId, string name, string idType, IReadOnlyList<PyValue> args, int sequence)
     {
         var inner = MarshalCodec.Encode(new PyTuple([new PyInt(0), new PyTuple([new PyInt(1), new PyTuple(args)])]));
-        var source = new MachoAddress(AddressKind.Node, NodeId: new PyInt(nodeId));
         var destination = new MachoAddress(AddressKind.Broadcast, BroadcastId: name, IdType: idType);
+        return BuildPacket(userId, nodeId, destination, inner, sequence);
+    }
+
+    /// <summary>Builds a notification addressed to a client-side service method.</summary>
+    public static PyValue BuildService(long userId, int nodeId, string service, string method, IReadOnlyList<PyValue> args, int sequence)
+    {
+        var inner = MarshalCodec.Encode(new PyTuple([new PyInt(1), new PyStr(method), new PyTuple(args)]));
+        return BuildPacket(userId, nodeId, MachoAddress.Any(service), inner, sequence);
+    }
+
+    private static PyValue BuildPacket(long userId, int nodeId, MachoAddress destination, byte[] inner, int sequence)
+    {
+        var source = new MachoAddress(AddressKind.Node, NodeId: new PyInt(nodeId));
         PyValue[] packet =
         [
             new PyInt(MachoMessage.Notification),

@@ -229,15 +229,42 @@ fn a_lock_asked_for_again_says_whether_it_is_had_or_going_and_starts_nothing() {
 }
 
 #[test]
-fn a_lock_given_up_says_nothing_and_is_never_had() {
+fn an_explicitly_cancelled_lock_returns_the_empty_target_list_and_is_never_had() {
     let (mut scene, t) = crowd(2);
     scene.target_order(B, Order::Lock(ship_id(A)), t);
     let out = scene.target_order(B, Order::Cancel(ship_id(A)), t + SECOND);
-    assert_eq!(out.len(), 1, "{out:?}");
     assert_eq!(answer(&out), (false, vec![]));
+    assert!(matches!(out.as_slice(), [Out::Targets { session: B, .. }]), "{out:?}");
     let (later, _) = poll_until(&mut scene, t, 8.0);
     assert!(on_target(&later).is_empty(), "{later:?}");
+    assert!(later.iter().all(|out| !matches!(out, Out::ServiceNotify { .. })), "{later:?}");
     assert_eq!(answer(&scene.target_order(B, Order::Targets, t + 9 * SECOND)), (false, vec![]));
+}
+
+#[test]
+fn a_lock_that_goes_out_of_range_sends_one_fail_lock_target_to_the_client_service() {
+    let (mut scene, t) = crowd(2);
+    scene.target_order(B, Order::Lock(ship_id(A)), t);
+    scene.pilots.get_mut(&A).unwrap().ship.position.x += 1_000_000.0;
+
+    let messages = crate::sim::Sim::messages(scene.poll(t + SECOND / 4));
+    let notices: Vec<_> = messages
+        .iter()
+        .filter_map(|message| match message {
+            crate::link::Message::ServiceNotify { session_id, service, method, args } => {
+                Some((*session_id, service.clone(), method.clone(), args.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    let expected_args = eve_marshal::encode(&Value::Tuple(vec![crate::wire::id(ship_id(A))])).unwrap();
+    assert_eq!(notices, vec![(B, "target".to_string(), "FailLockTarget".to_string(), expected_args)],);
+
+    let later = crate::sim::Sim::messages(scene.poll(t + SECOND / 2));
+    assert!(
+        later.iter().all(|message| !matches!(message, crate::link::Message::ServiceNotify { .. })),
+        "{later:?}"
+    );
 }
 
 #[test]

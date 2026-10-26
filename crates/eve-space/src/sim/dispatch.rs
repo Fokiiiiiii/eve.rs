@@ -140,6 +140,15 @@ impl Sim {
                     args,
                 }
             }
+            Out::ServiceNotify { session, service, method, args } => {
+                let args = eve_marshal::encode(&Value::Tuple(args)).expect("the sim's own values encode");
+                Message::ServiceNotify {
+                    session_id: session,
+                    service: service.to_string(),
+                    method: method.to_string(),
+                    args,
+                }
+            }
             Out::Accepted { session, command, at } => Message::Accepted { session_id: session, command, at },
             Out::Position { session, command, position } => Message::Position {
                 session_id: session,

@@ -26,10 +26,6 @@ public partial class HostServerTests
                     Py.Tuple(InventoryWire.Id(targetId),
                         Py.KeyVal(("targetID", InventoryWire.Id(targetId)), ("bounty", new PyInt(150))))
                 ]),
-                "GetMyBounties" => new PyList([
-                    Py.KeyVal(("contributionID", new PyLong(31)), ("targetID", InventoryWire.Id(targetId)),
-                        ("amount", new PyInt(150)))
-                ]),
                 "GetTopPilotBountyHunters" or "GetTopCorporationBountyHunters" or "GetTopAllianceBountyHunters" =>
                     Py.Tuple(new PyList([
                         Py.KeyVal(("bountyHunterID", InventoryWire.Id(characterId)),
@@ -83,10 +79,14 @@ public partial class HostServerTests
             (await Call("GetBounties", new PyList([new PyLong(targetId)]))).Result);
         Assert.Equal(new PyInt(targetId), Assert.IsType<PyTuple>(Assert.Single(bounties.Items)).Items[0]);
         var mine = Assert.IsType<PyList>((await Call("GetMyBounties")).Result);
-        Assert.Equal(new PyLong(31), Field(Assert.Single(mine.Items), "contributionID"));
+        Assert.Empty(mine.Items);
 
         var killRights = Assert.IsType<PyList>((await Call("GetMyKillRights")).Result);
         Assert.Equal(new PyLong(17), Field(Assert.Single(killRights.Items), "killRightID"));
+        var forCharacters = Assert.IsType<PyList>(
+            (await Call("GetKillRightsOnCharacters", new PyList([new PyLong(targetId)]))).Result);
+        Assert.Empty(forCharacters.Items);
+
         foreach (var method in new[]
         {
             "GetTopPilotBountyHunters", "GetTopCorporationBountyHunters", "GetTopAllianceBountyHunters",
@@ -96,5 +96,18 @@ public partial class HostServerTests
             Assert.Single(Assert.IsType<PyList>(ranked.Items[0]).Items);
             Assert.IsType<PyLong>(ranked.Items[1]);
         }
+
+        foreach (var method in new[] { "GMReimburseBounties", "GMClearBountyCache" })
+        {
+            var result = await Call(method);
+            Assert.Equal(MachoMessage.CallRsp, result.Type);
+            Assert.Same(PyNone.Instance, result.Result);
+        }
+
+        var sellWithoutStore = await Call("SellKillRight", new PyLong(17), new PyReal(250), PyNone.Instance);
+        Assert.Equal(MachoMessage.ErrorResponse, sellWithoutStore.Type);
+        var cancel = await Call("CancelSellKillRight", new PyLong(17), new PyLong(targetId));
+        Assert.Equal(MachoMessage.CallRsp, cancel.Type);
+        Assert.Same(PyNone.Instance, cancel.Result);
     }
 }

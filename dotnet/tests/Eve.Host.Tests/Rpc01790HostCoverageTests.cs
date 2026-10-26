@@ -82,6 +82,8 @@ public partial class HostServerTests
 
         var front = await Handshaken(await ConnectAsync());
         var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
         var machoVersion = new PyTuple([new PyInt(0), new PyInt(3396210)]);
         var kwargs = new PyDict([
             new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), machoVersion),

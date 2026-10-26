@@ -41,7 +41,13 @@ public partial class HostServerTests
         }
 
         var config = Assert.IsType<PyObject>(await Call(1, "infoGatheringMgr", "GetStateAndConfig"));
-        Assert.IsType<PyTuple>(config.Args);
+        Assert.Equal(Eve.Services.Py.KeyVal(
+            ("isEnabled", new PyInt(0)),
+            ("infoTypes", new PyList([])),
+            ("clientWorkerInterval", new PyInt(0)),
+            ("infoTypesOncePerRun", new PyList([])),
+            ("infoTypeAggregates", new PyDict([])),
+            ("infoTypeParameters", new PyDict([]))), config);
         var statuses = Assert.IsType<PyDict>(await Call(2, "infoGatheringMgr", "LogInfoEventsFromClient", events));
         Assert.Empty(statuses.Entries);
 

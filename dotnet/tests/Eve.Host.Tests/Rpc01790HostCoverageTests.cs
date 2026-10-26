@@ -1,4 +1,5 @@
 using Eve.Marshal;
+using Eve.Macho;
 using Eve.Services;
 using Eve.Services.Core;
 using System.Text.Json.Nodes;
@@ -87,9 +88,9 @@ public partial class HostServerTests
         ]);
         async Task<PyValue?> Call(long id, string service, string method, params PyValue[] args)
         {
-            var packet = new Packet(open.SessionId, MarshalCodec.Encode(
-                Packets.CallWithKwargs(open, id, service, method, new PyTuple(args), kwargs)));
-            await front.SendAsync(packet);
+            var payload = Packets.CallWithKwargs(
+                open, id, service, method, new PyTuple(args), kwargs);
+            await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(payload)));
             var response = Assert.IsType<Send>(await front.ReceiveAsync());
             return Result(MarshalCodec.Decode(response.Payload));
         }

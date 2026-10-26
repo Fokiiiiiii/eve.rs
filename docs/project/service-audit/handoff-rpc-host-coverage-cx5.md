@@ -39,5 +39,6 @@ eve.rs already registers `lookupSvc` through `CoreServices.CreateLookupService`,
 - Actions run 40279953894 passed the two additional regressions fixed after push CI failures: dungeon dynamic-resource wire decoding and support/insurgency KeyVal shape.
 - Push CI run 40278138665 found those two decoder assertion failures and found the Host RPC inventory count changed from 1,423 to 1,424 after `DevIndexManagerRpcService.GetAllDevelopmentIndices` became registered (`OperationalRpcServices.cs:27-41`). Assertions were corrected; the updated inventory test is in the current main head.
 - Push CI run 40280164556 for `78afe095` is in progress. It includes the resolved regressions and subsequent Host RPC additions; inspect its final Host shards and failures before closing this handoff.
+- CI run 40280164556 found a `TourneyMgrService.QueryShipList` fallback shape mismatch: service returns a dict with an empty `allowedShipList`, while its test expected a bare list. Updated the focused service test to assert that dict/field shape; dispatch its focused regression after push.
 - The local focused `dotnet test` process was stopped after 47 minutes waiting through compilation under shared-machine load; it produced no test result. The same focused test passed in Actions.
 - No graphical-client run was performed.

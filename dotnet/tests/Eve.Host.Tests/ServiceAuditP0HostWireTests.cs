@@ -138,7 +138,7 @@ public partial class HostServerTests
 
         var response = Assert.IsType<PyTuple>(Result(MarshalCodec.Decode(
             Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
-        Assert.Equal(new PyLong(itemId), response.Items[1]);
+        Assert.Equal(new PyInt(itemId), response.Items[1]);
         var move = Assert.Single(space.Moves);
         Assert.True(move.CharacterId > 0);
         Assert.Equal(itemId, move.ItemId);

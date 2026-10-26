@@ -46,3 +46,8 @@ The focused non-database registered Host test `Standing_history_and_composition_
 ### Post-merge rerun
 
 After the next `origin/main` merge, the full Host test project built but finished with 468 passed, 101 failed, and 227 skipped (796 total); database/SDE environment tests still fail or skip without their assigned lane. No PostgreSQL database was used. The focused `Standing_history_and_composition_keep_client_wire_shapes_through_host_dispatch` test passed again (1 passed, 0 failed, 0 skipped).
+
+
+### Pushed verification
+
+Docs-only audit commit `ebe5c1be91b7` is on main. Agent Actions run `40334870781` succeeded for the focused Host test (1 passed, 0 failed, 0 skipped). `python3 tools/dev/ci-status.py failures ebe5c1be91b7b1b1aff71d9ce3e4e080f45b3118` reported no push-triggered `ci.yml` run for that SHA.

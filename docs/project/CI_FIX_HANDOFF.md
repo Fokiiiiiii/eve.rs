@@ -944,3 +944,8 @@ Run 1117 on the same SHA (`40323901513`) shows a successful gate, but every test
 ## Push 0af395db status
 
 Commit 0af395db updates the market E2E assertions to check the client-consumed util.Row shape. Push-triggered main CI run 1118 (Actions run 40324888977) completed successfully on 2026-10-26. `ci-status.py failures 0af395dbd83a` reported no failed tests or jobs; all build, Rust, Python, E2E, Windows, 32 .NET space shards, four Host shards, and three other .NET shards completed successfully. This is the first completed green push in the requested three-push watch. The status script does not report skipped test cases for a successful run, so test-level skip counts could not be confirmed; skipped jobs do not count.
+
+
+## Follow-up push de67439b status
+
+Commit de67439b records the successful run 1118 result. It changed only this Markdown handoff, and `.github/workflows/ci.yml` ignores `docs/**` and `**/*.md` on push, so no main CI run was created. This documentation-only push does not count toward the three-run streak.

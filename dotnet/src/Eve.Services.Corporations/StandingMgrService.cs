@@ -13,11 +13,11 @@ public sealed partial class StandingMgrService
     private const string CorporationQuery = "standing.corporation";
     private const string TransactionQuery = "standing.transactions";
     private const string CompositionQuery = "standing.compositions";
-    private readonly Eve.ReadSide.ReadSide _reads;
+    private readonly Eve.ReadSide.IRowsetReadSide _reads;
     private readonly Eve.Corporations.CorporationStore _corporations;
     private readonly Func<long> _nowUnixMs;
 
-    public StandingMgrService(Eve.ReadSide.ReadSide reads, Eve.Corporations.CorporationStore corporations, Func<long> nowUnixMs)
+    public StandingMgrService(Eve.ReadSide.IRowsetReadSide reads, Eve.Corporations.CorporationStore corporations, Func<long> nowUnixMs)
     {
         _reads = reads;
         _corporations = corporations;

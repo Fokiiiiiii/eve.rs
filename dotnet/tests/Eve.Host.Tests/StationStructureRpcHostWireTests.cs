@@ -106,4 +106,47 @@ public partial class HostServerTests
 
         Assert.Equal(["dock:1000000000051:1000000000052", "undock:1000000000051:1000000000052:False"], transitions);
     }
+
+    [Fact]
+    public async Task Station_guests_return_the_four_integer_client_row_through_host_dispatch()
+    {
+        const long stationId = 60_000_124;
+        const long characterId = 90_000_124;
+        const long corporationId = 98_000_124;
+        const long allianceId = 99_000_124;
+        const long warFactionId = 500_124;
+        long observedStationId = 0;
+        IReadOnlySet<long>? observedGuests = null;
+        await using var source = NpgsqlDataSource.Create("Host=localhost;Timeout=1");
+        var service = new StationService(
+            new StationCatalog([]),
+            new PgCharacterStore(source),
+            new OnlineCharacters(),
+            () => FixedNowMs,
+            seedObserverGuestLedger: (_, id, ids) =>
+            {
+                observedStationId = id;
+                observedGuests = ids;
+            },
+            getStationGuests: (_, _) => ValueTask.FromResult<IReadOnlyList<StationGuest>>(
+                [new StationGuest(characterId, corporationId, allianceId, warFactionId)]));
+
+        Start(
+            configure: registry =>
+            {
+                registry.Register(service);
+                registry.RegisterAlias("station", "stationSvc");
+            },
+            sessionOpened: session => session.Set("stationid", new PyLong(stationId)));
+        var (front, open) = await OpenFrontAsync();
+
+        var guests = Assert.IsType<PyList>(await HostRpcAsync(front, open, 1, "station", "GetGuests"));
+        var guest = Assert.IsType<PyTuple>(Assert.Single(guests.Items));
+        Assert.Equal(
+            [new PyInt(characterId), new PyInt(corporationId), new PyInt(allianceId), new PyInt(warFactionId)],
+            guest.Items);
+        Assert.Equal(stationId, observedStationId);
+        Assert.Equal(new HashSet<long> { characterId }, observedGuests);
+    }
+
 }

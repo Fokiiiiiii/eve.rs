@@ -4,8 +4,10 @@ using Eve.Universe;
 
 namespace Eve.Services.Station;
 
+public sealed record StationGuest(long CharacterId, long CorporationId, long AllianceId, long WarFactionId);
+
 [Service("stationSvc", Aliases = ["station"])]
-public sealed partial class StationService(StationCatalog stations, PgCharacterStore characters, OnlineCharacters online, Func<long> nowUnixMs, Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? sovereigntySystemsForAlliance = null, Eve.Services.Corporations.OfficeManagerService? officeManager = null, SeedObserverGuestLedgerCallback? seedObserverGuestLedger = null, CharacterSessions? characterSessions = null, Func<CancellationToken, ValueTask<IReadOnlyList<(long SolarSystemId, long AllianceId)>>>? allAllianceSystems = null)
+public sealed partial class StationService(StationCatalog stations, PgCharacterStore characters, OnlineCharacters online, Func<long> nowUnixMs, Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? sovereigntySystemsForAlliance = null, Eve.Services.Corporations.OfficeManagerService? officeManager = null, SeedObserverGuestLedgerCallback? seedObserverGuestLedger = null, CharacterSessions? characterSessions = null, Func<CancellationToken, ValueTask<IReadOnlyList<(long SolarSystemId, long AllianceId)>>>? allAllianceSystems = null, Func<long, CancellationToken, ValueTask<IReadOnlyList<StationGuest>>>? getStationGuests = null)
 {
     /// <summary>The station services (repair, reprocessing, market, ...) every NPC station offers, as the client's bit mask.</summary>
     public const long AllServicesMask = 1_143_312;
@@ -99,6 +101,18 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
         var stationId = call.Session.GetInt("stationid") ?? call.Session.GetInt("stationID") ?? 0;
         if (stationId <= 0)
             return new PyList([]);
+
+        if (getStationGuests is { } readGuests)
+        {
+            var snapshot = await readGuests(stationId, call.Cancellation);
+            seedObserverGuestLedger?.Invoke(call.Session, stationId,
+                snapshot.Select(guest => guest.CharacterId).Where(id => id > 0).ToHashSet());
+            return new PyList([.. snapshot.Select(guest => (PyValue)Py.Tuple(
+                new PyInt(guest.CharacterId),
+                new PyInt(guest.CorporationId),
+                new PyInt(guest.AllianceId),
+                new PyInt(guest.WarFactionId)))]);
+        }
 
         var guestSessions = characterSessions?.InStation(stationId) ?? [];
         var sessionsByCharacter = guestSessions

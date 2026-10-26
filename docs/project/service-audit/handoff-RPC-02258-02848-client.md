@@ -64,3 +64,10 @@ The post-merge source SHA `904ff3b09dab` passed Agent Actions run `40337503102` 
 ### Latest main verification
 
 After push/merge through `c1c71676`, the local focused Host test passed (1/1). Agent Actions run `40339412767` completed successfully with no failed jobs/tests; the wait script reported the requested ref `c1c71676` and run SHA `e75bbced6d1f`. `ci-status.py failures c1c71676` found no push-triggered `ci.yml` run.
+
+
+### Batch 18 completion update
+
+Added populated registered Host wire assertions for StandingMgr rowsets, standing transactions, and station guests. StandingMgr's read-side dependency now accepts the shared Rowset Read Side interface, with a validated RowSet factory for test/provider rows; station guests accept an injectable async source while preserving the existing PostgreSQL-backed path. No database was accessed.
+
+Focused tests after the changes: 2 passed, 0 failed, 0 skipped (`Standing_rowsets_and_history_use_client_consumed_wire_shapes_through_host_dispatch` and `Station_guests_return_the_four_integer_client_row_through_host_dispatch`). Full Host project after changes: 470 passed, 102 failed, 227 skipped (799 total). The failures include existing database/SDE lane requirements; no PostgreSQL database was started or accessed. The six rows now have registered Host shape assertions. Rust was not changed.

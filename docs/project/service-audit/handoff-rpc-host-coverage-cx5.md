@@ -43,3 +43,14 @@ eve.rs already registers `lookupSvc` through `CoreServices.CreateLookupService`,
 - Latest push-triggered `ci.yml` run 40282042017 for `0a430473` completed successfully: all jobs passed with no skips or failures.
 - The local focused `dotnet test` process was stopped after 47 minutes waiting through compilation under shared-machine load; it produced no test result. The same focused Host wire test passed in Actions.
 - No graphical-client run was performed.
+
+
+## P2 client verification batch 29 — RPC-02842–02843
+
+- Verified the whole V24.01 client tree: only spacecomponents/client/components/jumpPolarization.py:23 calls GetWormholePolarization. OnAddedToSpace starts it at :18-19; None clears the component timer fields at :24-25,38-41; populated replies supply end FILETIME and duration used by jumppolarizationcontroller.py:21-30.
+- EveJS 261018.1 server/src/services/exploration/wormholes/wormholeMgrService.js:185-205 returns null or [FILETIME, duration seconds]. eve.rs ActivityTravelRpcServices.cs:183-196 uses the endpoint and session character, returns None or [PyLong(FILETIME), PyInt(seconds)]; SpaceRpc.cs:71-75 is the production registration.
+- Added a DB-free registered-Host socket test in dotnet/tests/Eve.Host.Tests/WormholePolarizationRpcHostWireTests.cs. It verifies endpoint/character inputs, populated fields and absent state with machoVersion=1.
+- Local Host project build passed with zero warnings/errors. Focused Host test passed (1/1, no skips). Required full Eve.Host.Tests run had 471 passed, 327 failed, 2 skipped; failures were PostgreSQL-backed tests lacking EVE_PG_URL. No database was used. Graphical client was not used.
+- Updated EVE_RS_COVERAGE.csv and CLIENT_VERIFIED.md for both duplicate call rows.
+
+The focused agent-test and push-CI runs are pending until this commit is pushed.

@@ -777,3 +777,15 @@ All seven rows resolve to four distinct RPC methods. The client-consumed Host re
 | RPC-02642 | `structureDeployment.Anchor` | Same sole caller and post-call reload as RPC-02641: `structureDeployment.py:166-176`. | Same handler/test: `StructureRpcServices.cs:163-170`, `StructureRpcHostCoverageTests.cs:127-133`. EveJS: `structureDeploymentService.js:20-44`. | MATCHES |
 
 The client consumes pilot ID or `None` for the read and ignores the `None` result for all three actions. No client notification is consumed from these RPC return values. Delivery's inventory updates and delivered-item notification are operation side effects; this wire test checks callback arguments, not persistence or notification ordering. The focused Host test passed locally (1 passed). Full `Eve.Host.Tests`: 470 passed, 101 failed, 227 skipped. No database URL was used; database-backed cases failed while obtaining a connection. The graphical client was not exercised.
+
+
+## Batch 29 — RPC-02842–02843
+
+Both rows are the same wormholeMgr.GetWormholePolarization callsite and reply contract.
+
+| Row | Client call and consumed fields | Host handler and EveJS comparison | Verdict |
+|---|---|---|---|
+| RPC-02842 | Whole-tree search found the sole RPC call at spacecomponents/client/components/jumpPolarization.py:23, started as the wormhole component enters space at :18-19. A None reply clears timer state (:24-25,38-41); otherwise it unpacks end FILETIME and duration seconds (:27-35). The counter controller subscribes to the component update and uses both values for its countdown at eve/client/script/spacecomponents/jumppolarizationcontroller.py:21-30. | Production registration is dotnet/src/Eve.Host/Rpc/SpaceRpc.cs:71-75. WormholeMgrService reads endpoint and session character, returns None when state is absent, or [PyLong(FILETIME), PyInt(durationSeconds)] at dotnet/src/Eve.Services.Space/ActivityTravelRpcServices.cs:183-196. Host socket regression dotnet/tests/Eve.Host.Tests/WormholePolarizationRpcHostWireTests.cs:10-50 checks registered dispatch, transport kwarg, both consumed fields, callback IDs, and absent state. EveJS 261018.1 does the same lookup and returns [FILETIME, durationSeconds] or null at server/src/services/exploration/wormholes/wormholeMgrService.js:185-205. | MATCHES |
+| RPC-02843 | Same sole callsite, consumers, and response fields as RPC-02842. | Same Host registration, handler, Host wire regression, and EveJS method as RPC-02842. | MATCHES |
+
+Local checks: Host test project build passed (0 warnings, 0 errors). The focused registered-Host socket test passed (1 passed, 0 failed, 0 skipped). The required full Eve.Host.Tests shard reported 471 passed, 327 failed, and 2 skipped; the failures are PostgreSQL-backed cases that could not connect because this job has no database URL, and no database was used. The graphical client was not exercised.

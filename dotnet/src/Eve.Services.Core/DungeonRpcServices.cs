@@ -81,7 +81,7 @@ public sealed class DungeonService(
 
     private static PyValue GetDungeons(DungeonEditorCatalog catalog, ServiceCall call)
     {
-        var dungeonId = OptionalInteger(call.Kwarg("dungeonID") ?? call.Arg(0));
+        var dungeonId = OptionalInteger(call.Kwarg("dungeonID") ?? (call.Args.Count > 0 ? call.Arg(0) : null));
         var archetypeId = OptionalInteger(call.Kwarg("archetypeID"));
         var factionId = OptionalInteger(call.Kwarg("factionID"));
         return new PyList(catalog.Dungeons
@@ -99,7 +99,7 @@ public sealed class DungeonService(
 
     private static PyValue GetRooms(DungeonEditorCatalog catalog, ServiceCall call)
     {
-        var dungeonId = OptionalInteger(call.Kwarg("dungeonID") ?? call.Arg(0));
+        var dungeonId = OptionalInteger(call.Kwarg("dungeonID") ?? (call.Args.Count > 0 ? call.Arg(0) : null));
         if (dungeonId is not { } id || !catalog.RoomsByDungeonId.TryGetValue(id, out var rooms))
             return new PyList([]);
         return new PyList(rooms.Select(room => (PyValue)Py.Tuple(

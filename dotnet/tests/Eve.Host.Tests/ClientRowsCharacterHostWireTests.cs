@@ -44,6 +44,10 @@ public partial class HostServerTests
         const long characterId = 90_000_001;
         const long contactId = 90_000_002;
         var personal = CharMgrPersonalData.Empty;
+        var senderCharacter = new Character(
+            characterId, 1, "Wire Pilot", 1, 1, 1, 1, 35, 1373, 1_000_001,
+            null, null, 60_000_001, 60_000_001, 30_000_142, 20_000_020, 10_000_002, null,
+            DateTimeOffset.UnixEpoch, null, null);
         var contactCharacter = new Character(
             contactId, 1, "Contact Pilot", 1, 1, 1, 1, 35, 1373, 1_000_001,
             null, null, 60_000_001, 60_000_001, 30_000_142, 20_000_020, 10_000_002, null,
@@ -63,7 +67,12 @@ public partial class HostServerTests
                 personal = update(personal);
                 return ValueTask.FromResult<CharMgrPersonalData?>(personal);
             },
-            readCharacterById: (id, _) => ValueTask.FromResult<Character?>(id == contactId ? contactCharacter : null),
+            readCharacterById: (id, _) => ValueTask.FromResult<Character?>(id switch
+            {
+                characterId => senderCharacter,
+                contactId => contactCharacter,
+                _ => null,
+            }),
             writeContactNotification: (sender, receiver, type, relationship, message, _) =>
             {
                 notification = (sender, receiver, type, relationship, message);

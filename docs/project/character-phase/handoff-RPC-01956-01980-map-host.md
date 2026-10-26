@@ -20,22 +20,27 @@ Whole-tree search of V24.01 eve-logic found these callers and consumers:
 
 ## EveJS comparison and eve.rs route
 
-EveJS v0.12.9 normalizes the history arguments and wraps the rowset with a one-minute version check [J `server/src/services/map/mapService.js:591-604`]; history column selection is at `:378-391`. Its incursion report reads active incursions [J `:571-575`], with record fields built in `server/src/services/incursion/incursionPayloads.js:57-95`. The industry handler returns an activity-specific cost-index dictionary [J `:645-649`.
+EveJS v0.12.9 normalizes the history arguments and wraps the rowset with a one-minute version check [J `server/src/services/map/mapService.js:591-604`]; history column selection is at `:378-391`. Its incursion report reads active incursions [J `:571-575`], with record fields built in `server/src/services/incursion/incursionPayloads.js:57-95`. The industry handler returns an activity-specific cost-index dictionary [J `server/src/services/map/mapService.js:645-649`].
 
 eve.rs uses the real registered `map` Host route: `IncursionAnomalyService` owns `GetIncursionGlobalReport` and delegates other map methods to its `MapService` fallback. The Host test asserts the actual wire response, including object-cached history, list-shaped incursion records, and dictionary cost modifiers.
 
 ## Verification
 
-- Current run: `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --filter 'FullyQualifiedName~Map_history_incursion_and_industry_cost_replies_follow_registered_host_routes' -p:UseSharedCompilation=false`: passed, 1/1, no skips.
+- Local focused test: `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --filter 'FullyQualifiedName~Map_history_incursion_and_industry_cost_replies_follow_registered_host_routes' -p:UseSharedCompilation=false`: passed, 1/1, no skips.
 - Previously recorded: `Map_industry_cost_wire_reply_preserves_solar_system_dictionary_keys`: passed, 1/1, no skips.
+- Focused Actions runs `40281416831` (`5014f255`), `40282615837` (`63e1afa6`), and `40283219446` (`a44e0efe`): all success; no failed tests or jobs.
 - No database was used. Real graphical-client behavior was not checked.
 
 ## CI follow-up
 
 The earlier push gate reported `RpcSecurityInventoryTests.Real_host_registry_methods_are_enumerable` expected 1420 rows but found 1423 after the initial Host merge. A later `origin/main` merge added 18 `accessGroupBookmarkMgr` routes and one `BookmarkScanResult` route, bringing the expected total to 1442. The inventory assertion was updated in that prior work. The focused inventory test uses database schema setup, so it is checked by Actions rather than locally.
 
+`python3 tools/dev/ci-status.py failures` found no `ci.yml` run for `5014f255`, `d5b3f590`, `63e1afa6`, or `a44e0efe`. The focused Actions workflow passed for the latest checked code state.
+
 ## This batch push
 
 - Commit `8b196aad` documented the complete client caller/consumer audit.
 - Fetched and merged `origin/main`; pushed merge commit `d5b3f590` to `origin/main`.
-- Focused Actions and push-gate results are pending for the batch commit.
+- Handoff/status commit `5014f255` was pushed to `origin/main`; focused Actions run `40281416831` passed.
+- Fetched and merged `origin/main` again; pushed merge commit `63e1afa6`; focused Actions run `40282615837` passed.
+- Fetched and merged `origin/main` again; pushed merge commit `a44e0efe`; focused Actions run `40283219446` passed.

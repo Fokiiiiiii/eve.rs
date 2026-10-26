@@ -27,8 +27,8 @@ A whole-tree search of `/home/user/eve-logic` found:
 
 ## Checks and remaining work
 
-- Focused Actions test `Support_and_insurgency_rpcs_return_client_shapes_through_host_registration` passed on `da7278cf` (run 40279466798).
-- Push CI for `da7278cf` passed .NET build, Rust checks, fixtures, Python, Windows, end-to-end, and most .NET shards. One unrelated inventory test failed because its expected route count was 1,423 while the registry contained 1,424. Current main updates the expected count to 1,424. Focused Actions verification against current main `5014f255` is pending (run 40281531643); push-gate run 40279458341 is still queued.
+- Focused Actions test `Support_and_insurgency_rpcs_return_client_shapes_through_host_registration` passed on `da7278cf` (run 40279466798), `5014f255` (runs 40281531643 and 40281416831), and `884f6403` (run 40282145655).
+- Push CI for `da7278cf` passed build, Rust, fixtures, Python, Windows, end-to-end, and most .NET shards. A Host shard failed only because the inventory test expected 1,423 routes while the registry had 1,424; current main updates the expectation to 1,424. The required CI gate was still queued at the last check. No push CI run was listed yet for `884f6403`.
 - Local .NET build and focused test commands stalled during Roslyn compilation and were interrupted. No local compile/test passed. No graphical-client run was made.
-- Earlier shared Host compilation/assertion issues identified by Actions were fixed in `Rpc01790HostCoverageTests.cs` and `DungeonDynamicResourceHostWireTests.cs`; the latest Host shard 1 passed.
+- Earlier shared Host compile/assertion issues were fixed in `Rpc01790HostCoverageTests.cs` and `DungeonDynamicResourceHostWireTests.cs`; the latest Host shard 1 passed.
 - Report recording/durable retention remains open as noted above.

@@ -11,6 +11,7 @@ The current snapshot below is authoritative. Dated sections that follow preserve
 - Batch 30 checks RPC-02814–02817: whole-client callers and report consumers are recorded at the file:line locations in `CLIENT_VERIFIED.md`. The registered Host test is `Killmail_notifications_receive_the_client_keyval_through_registered_host`.
 - Selected Actions runs 990 and 992 passed those two focused tests. Main gate run 1128 on `e4dd35c0` completed successfully; its status output listed `Eve.Universe.Tests.ClientStaticDataTests.The_export_and_the_embedded_copies_give_the_same_answers` as skipped. Run 1130 on `80de3fb2` failed `Eve.Services.Tests.DispatchGoldenTests.Every_recorded_step_gets_the_recorded_response_and_leaves_the_recorded_state` for `packets:arguments`. Run 1131 for `b213ee17` and selected Agent run 993 completed successfully; `ci-status.py` reported no failed tests or jobs. Its successful-run output does not provide a skip count.
 - Host project test output recorded in batch 30 was 477 passed, 327 failed and 2 skipped. The failed cases needed PostgreSQL, which this task did not use; these results are not a pass. No graphical-client run is claimed.
+- Documentation reconciliation commit `28963fe1` was pushed after syncing main. `.github/workflows/ci.yml:12-16` ignores `docs/**` and `**/*.md`, so it did not create a new main gate; code verification remains run 1131 on `b213ee17`.
 
 ## Service-audit receiver tracing correction (2026-10-26)
 

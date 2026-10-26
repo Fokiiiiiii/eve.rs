@@ -10,6 +10,7 @@ The current status below is authoritative. Dated entries that follow are histori
 - Main commit `b213ee17` updates that golden fixture to follow V24.01 positional dispatch. Run 1131 (Actions 40371054260) and selected Agent run 993 (Actions 40371091379) completed successfully; `ci-status.py` reported no failed tests or jobs. Its successful-run output does not provide a skip count. The previous selected runs 990 and 992 passed the wormhole polarization and killmail notification Host tests.
 - The client evidence for the fixture correction is `/home/user/eve-logic/carbon/common/script/net/ServiceCallGPCS.py:119,128-134`; EveJS v0.12.9 preserves array arguments at `/home/user/evejs-v0.12.9/server/src/common/pyPacket.js:210-214`. This was a stale fixture, not a server compatibility deviation.
 - The native graphical client was not used for these checks. No PostgreSQL database was used by the documentation refresh.
+- Documentation reconciliation commit `28963fe1` changed only Markdown; `.github/workflows/ci.yml:12-16` excludes `docs/**` and `**/*.md`, so no push-triggered main gate was created. The latest code-bearing commit remains `b213ee17`, verified by run 1131.
 
 ## Required pre-push checks
 

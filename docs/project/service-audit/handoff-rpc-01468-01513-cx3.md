@@ -10,5 +10,6 @@
 ## Checks and remaining work
 
 - Local focused check: `Faction_warfare_rank_calls_round_trip_through_host_registration` passed (1 passed, 0 failed, 0 skipped), including the added militia-corporation response. `dotnet build` of `Eve.Host.Tests` passed with 0 warnings and 0 errors. No database was used.
+- Targeted Actions run `40269183384` passed for `b98c5ef2`, with no failed tests or jobs.
 - `RPC-01502`, `01503`, `01505`–`01507`, and `01511`–`01513` still need success-path Host-wire regression coverage. Their `FwService` provider reads/writes PostgreSQL state. This pass did not exercise those success paths because the task forbade database use.
-- Commit `3c42c6b9` was pushed to `main`. Targeted Actions and the push-triggered CI gate remain to be checked.
+- `python3 tools/dev/ci-status.py failures b98c5ef2` was retried three times; each returned “No ci.yml run found”.

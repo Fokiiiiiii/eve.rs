@@ -37,6 +37,7 @@ namespace Eve.Host;
 
 internal sealed partial class CharacterServicesComposition
 {
+    private Eve.Services.Space.Scanning.ICosmicSiteSource? scanBookmarkSites;
     private async Task EnsureSitesAsync(int solarSystemId)
     {
         try
@@ -526,8 +527,10 @@ internal sealed partial class CharacterServicesComposition
             var containers = spaceContainers;
             var probes = new Eve.Services.Space.SpaceProbes(ships, dogma, new Eve.Ships.PgProbeStore(source, spaceSchema), spaceSessions, sim, now, message => Console.Error.WriteLine($"eve-host: probes: {message}"));
             spaceSessions.Probes = probes;
+            var scanSites = new Eve.Services.Space.Sites.ContentCosmicSites(cosmicSites);
+            scanBookmarkSites = scanSites;
             var probeScans = new Eve.Services.Space.SpaceProbeScans(spaceSessions, sim, dogma, new Eve.Ships.PgProbeStore(source, spaceSchema), ships, skills, foundations.Scheduler, probes, now,
-                sites: new Eve.Services.Space.Sites.ContentCosmicSites(cosmicSites));
+                sites: scanSites);
             // a system a pilot comes to has its sites (a restart or a system nobody has scanned yet)
             // a gas or ore site places its cloud or rocks in the scene of its system through the containers
             if (cosmicSites is { } placingSites)

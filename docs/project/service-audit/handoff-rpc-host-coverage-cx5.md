@@ -38,7 +38,7 @@ eve.rs already registers `lookupSvc` through `CoreServices.CreateLookupService`,
 - Focused real-Host wire regression: `Rpc01790HostCoverageTests.Lookup_machoNet_and_moon_read_calls_use_registered_host_routes_with_macho_version_kwargs`.
 - Actions run 40275193604 found nonexistent `Py` and `TestFront.Packets` helpers; fixed in a064ea7a.
 - Actions run 40275936800 found the missing Host `Packet` envelope and an `Eve.Services` import in the concurrent Slash Host test; both are fixed and pushed in bc20c71b.
-- Corrected selected Actions run 40276677603 is in progress against bc20c71b.
+- Actions run 40276677603 built Host.Tests but the focused test timed out because the test sent RPC packets before the Host `Open` session message. The test now sends `Open` and consumes the initial state before its calls.
 - Push-triggered `ci.yml` run 40276667864 for bc20c71b is in progress.
-- The local focused test/build is still compiling under shared machine load.
+- The corrected focused test and handoff update are in the current worktree.
 - No graphical-client run was performed.

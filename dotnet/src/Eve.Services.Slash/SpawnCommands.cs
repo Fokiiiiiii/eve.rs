@@ -1,4 +1,5 @@
 using System.Globalization;
+using Eve.Marshal;
 using Eve.Services;
 
 namespace Eve.Services.Slash;
@@ -20,7 +21,16 @@ public sealed class SpawnCommands(ItemTypeNames names, ISpaceSpawns spawns)
     {
         if (session.CharacterId is null) return "Select a character before using /spawn.";
         var text = argument.Trim();
-        return text.Length == 0 ? SpawnUsage : await MakeAsync(session, text, 1, 0, cancellationToken);
+        return text.Length == 0 ? SpawnUsage : (await MakeAsync(session, text, 1, 0, cancellationToken)).Message;
+    }
+
+    public async Task<PyValue> SpawnClientAsync(ClientSession session, string argument, CancellationToken cancellationToken)
+    {
+        if (session.CharacterId is null) return new PyStr("Select a character before using /spawn.");
+        var text = argument.Trim();
+        if (text.Length == 0) return new PyStr(SpawnUsage);
+        var outcome = await MakeAsync(session, text, 1, 0, cancellationToken);
+        return outcome.ShipId is { } shipId ? new PyLong(shipId) : new PyStr(outcome.Message);
     }
 
     public async Task<string> SpawnnAsync(ClientSession session, string argument, CancellationToken cancellationToken)
@@ -31,28 +41,29 @@ public sealed class SpawnCommands(ItemTypeNames names, ISpaceSpawns spawns)
             || !double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var deviation) || !double.IsFinite(deviation) || deviation < 0)
             return SpawnnUsage;
         if (amount < 1 || amount > MaxAmount) return $"Spawn amount must be between 1 and {MaxAmount}.";
-        return await MakeAsync(session, parts[2], amount, deviation, cancellationToken);
+        return (await MakeAsync(session, parts[2], amount, deviation, cancellationToken)).Message;
     }
 
-    private async Task<string> MakeAsync(ClientSession session, string type, int count, double deviation, CancellationToken cancellationToken)
+    private async Task<SpawnOutcome> MakeAsync(ClientSession session, string type, int count, double deviation, CancellationToken cancellationToken)
     {
         // a name is often several types (a ship and its wreck, a skin): the ship of that name is the one /spawn makes
         var named = (await names.ExactAsync(type, cancellationToken)).Where(candidate => candidate.CategoryId == ShipCategory).ToList();
         if (named.Count > 1)
-            return $"Ship type is ambiguous: {type}. Use the typeID.";
+            return new SpawnOutcome($"Ship type is ambiguous: {type}. Use the typeID.", null);
         if (named.Count == 0 && await names.FindAsync(type, cancellationToken) is { Type: null } missing)
-            return $"Ship type not found: {type}.{(missing.Suggestions.Count == 0 ? "" : $" Suggestions: {string.Join(", ", missing.Suggestions)}")}";
+            return new SpawnOutcome($"Ship type not found: {type}.{(missing.Suggestions.Count == 0 ? "" : $" Suggestions: {string.Join(", ", missing.Suggestions)}")}", null);
         var entry = named.Count == 1 ? named[0] : (await names.FindAsync(type, cancellationToken)).Type!;
         if (entry.CategoryId != ShipCategory)
-            return $"{entry.Name} is not a ship type. /spawn makes ship hulls only.";
+            return new SpawnOutcome($"{entry.Name} is not a ship type. /spawn makes ship hulls only.", null);
         var made = await spawns.SpawnHullsAsync(session, entry.TypeId, count, deviation, cancellationToken);
-        return made.Error switch
+        var message = made.Error switch
         {
             SpawnResult.NotInSpace => "You must be in space before using /spawn.",
             SpawnResult.SpaceUnavailable => "Space is not available right now. Try again in a moment.",
             SpawnResult.SpawnFailed => $"Spawn failed for {entry.Name}.",
             _ => $"Spawned {made.ShipIds.Count} {entry.Name} in space around you: {string.Join(", ", made.ShipIds)}.",
         };
+        return new SpawnOutcome(message, made.Error is null && count == 1 && made.ShipIds.Count == 1 ? made.ShipIds[0] : null);
     }
 
     public async Task<string> UnspawnAsync(ClientSession session, string argument, CancellationToken cancellationToken)
@@ -108,6 +119,8 @@ public sealed class SpawnCommands(ItemTypeNames names, ISpaceSpawns spawns)
         var removed = await spawns.RemoveAsync(view.Ships.Select(ship => ship.ShipId).ToArray(), cancellationToken);
         return $"Removed {removed} NPC {(removed == 1 ? "ship" : "ships")} from your solar system.";
     }
+
+    private sealed record SpawnOutcome(string Message, long? ShipId);
 
     private static double Distance(IReadOnlyList<double> from, IReadOnlyList<double> to) =>
         Math.Sqrt(Math.Pow(to[0] - from[0], 2) + Math.Pow(to[1] - from[1], 2) + Math.Pow(to[2] - from[2], 2));

@@ -159,14 +159,15 @@ public sealed partial class CharMgrService(
         return actorId > 0 && await canReadPrivateCorporationMemberInfo(actorId, targetCorporationId, call.Cancellation);
     }
 
+    private async ValueTask<Character?> ReadCharacterByIdAsync(long characterId, CancellationToken cancellationToken) =>
+        readCharacterById is null
+            ? await characters.GetAsync(characterId, cancellationToken)
+            : await readCharacterById(characterId, cancellationToken);
+
     private async ValueTask<Character?> CharacterAsync(ServiceCall call)
     {
         var id = IdOf(call.Arg(0));
-        if (id is null)
-            return null;
-        return readCharacterById is null
-            ? await characters.GetAsync(id.Value, call.Cancellation)
-            : await readCharacterById(id.Value, call.Cancellation);
+        return id is null ? null : await ReadCharacterByIdAsync(id.Value, call.Cancellation);
     }
 
     private async ValueTask<PyValue> PublicInfoAsync(Character character, CancellationToken cancellationToken)
@@ -207,7 +208,7 @@ public sealed partial class CharMgrService(
         const int maxDescriptionLength = 2500;
         if (call.Session.CharacterId is not { } characterId || characterId <= 0 ||
             call.Args.Count == 0 ||
-            await characters.GetAsync(characterId, call.Cancellation) is null)
+            await ReadCharacterByIdAsync(characterId, call.Cancellation) is null)
         {
             return None;
         }
@@ -495,7 +496,7 @@ public sealed partial class CharMgrService(
     {
         if (call.Session.CharacterId is not { } characterId || characterId <= 0 ||
             updatePersonalData is null ||
-            await characters.GetAsync(characterId, call.Cancellation) is null)
+            await ReadCharacterByIdAsync(characterId, call.Cancellation) is null)
         {
             return null;
         }
@@ -799,7 +800,6 @@ public sealed partial class CharMgrService(
     }
 
     [Method("GetOwnerNoteLabels")]
-
     public async ValueTask<PyValue> GetOwnerNoteLabels(ServiceCall call)
     {
         var data = await ReadPersonalDataAsync(call);
@@ -1148,7 +1148,7 @@ public sealed partial class CharMgrService(
     {
         if (call.Session.CharacterId is { } characterId && characterId > 0 &&
             writeActivityStatus is not null &&
-            await characters.GetAsync(characterId, call.Cancellation) is not null)
+            await ReadCharacterByIdAsync(characterId, call.Cancellation) is not null)
         {
             var status = NormalizeInteger(call.Kwarg("status") ?? call.Arg(0));
             var extraInfo = OptionalText(call.Kwarg("extraInfo") ?? call.Arg(1));
@@ -1202,7 +1202,7 @@ public sealed partial class CharMgrService(
     public async ValueTask<PyValue> GetRecentShipKillsAndLosses(ServiceCall call)
     {
         if (call.Session.CharacterId is not { } characterId || characterId <= 0 ||
-            await characters.GetAsync(characterId, call.Cancellation) is null)
+            await ReadCharacterByIdAsync(characterId, call.Cancellation) is null)
         {
             return None;
         }

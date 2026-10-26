@@ -139,7 +139,7 @@ def accessor_calls(contract: Any, path: pathlib.Path, source: str) -> list[dict[
         result.append({
             "service": service, "method": method, "arguments": args, "file": path.as_posix(),
             "line": line, "kind": "remote-service-accessor", "via": f"service object returned by {receiver}",
-            "consumer": audit.rpc_context(contract, source, line, variable),
+            "consumer": audit.rpc_context(contract, source, line, variable, method),
         })
 
     result: list[dict[str, Any]] = []

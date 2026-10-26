@@ -47,7 +47,6 @@ The client-wide search found one caller per method except the paired old/new cre
 EveJS 261018.1 handlers are in `/home/user/evejs-261018.1/src/server/src/services/character/charService.js`: GetCharacterInfo 1521-1524, GetCharacterLockType 1924-1927, GetCohortsForUser 1464-1467, GetNumCharacters 1375-1382, GetQAStarterSystemIDs 1887-1891, GetValidRandomName 1881-1885, PrepareCharacterForDelete 1860-1867, SelectCharacterID 1531-1858, ToggleValidation 1893-1912, UpdateCharacterBloodline 1417-1462, UpdateCharacterGender 1384-1415 and ValidateNameEx 1914-1922. The Host handlers match the client-consumed reply type or ignored mutation result at the inspected implementation: `CharUnboundMgrService.cs:50-52,61-84,110-155,157-211,241-320` and its deletion partial. The owner-log report dated 2026-10-24 does not list any charUnboundMgr call or failure, so it adds no observed reply evidence for these rows.
 
 Real Host wire coverage exists for cohorts, QA starter IDs, validation toggle and name validation. Real Host wire tests cover cohorts, QA starter IDs, validation toggles, name validation and the unlocked-character None result. The remaining methods have no Host wire test asserting the reply the client consumes.
-
 | row_id | service.method | client call site | consumers | handler | verdict |
 |---|---|---|---|---|---|
 | RPC-01131 | charUnboundMgr.GetCharacterInfo | `eve/client/script/ui/shared/neocom/petitionWindow.py:57` | iterates character rows; reads characterID/characterName at 61-64 | `CharUnboundMgrService.cs:70-84`; service test `CharUnboundMgrTests.cs:691-703`, no Host wire test | NO-TEST |
@@ -97,9 +96,7 @@ The station owner method returns a list of `util.KeyVal` rows with `ownerID`, `s
 The other pairs also match their client use. Name validation returns the numeric validation code cached and consumed by the creation UI (`chooseNameSection.py:187-202)); EveJS returns that code (`charService.js:1913-1920)). Newbie-ship creation returns `None`, ignored by the caller; EveJS also returns null after its boarding operation (`station/base.py:609-620`, `dogmaService.js:4125-4152`). Both listed `invbroker.Add` callers ignore the result; their shared inventory wrapper forwards to the bound object (`invCache.py:998-1025)); EveJS returns the moved item ID (`invBrokerService.js:12463-13100)), and the Host test asserts the bound-call result and move. The item descriptor is cached as the row header for inventory CRowsets and dogma sub-location descriptors (`invCache.py:427-431,1140-1170`, `godma.py:122-149)); Host and EveJS both return the static descriptor (`invBrokerService.js:14030-14034`).
 
 The style and multi-login calls return booleans consumed by visual branches and the character-entry gate (`characterSelectionUtils.py:71-75`; `characterSelection.py:620-628`; `characterSlots.py:1012-1018)); EveJS returns booleans (`kiringMgrService.js:151-154`, `multiLoginBlockerService.js:162-190`). Modified security systems are an empty indexable Rowset with header `solarSystemID`; the client checks membership before reading `security` and `modifiedSecurity`, so no row produces an empty label (`characterSlots.py:1012-1018`). EveJS returns the same empty rowset (`mapService.js:514-550)). Ping returns `None`, which the idle ping loop ignores (`connectionService.py:178-191)); EveJS also returns null (`pingService.js:17-19)). The current Host wire test passes `machoVersion=1`, addressing the Ping argument errors recorded in the owner-log analysis.
-
 Every row maps to a client call or fetcher. `GetLocationsLocal` is the exception to the remote-call path: `eveCfg.py:665-666` passes it as `clientLocalFetcher`, and `cfg.py:552-576` invokes it directly only for local identity keys. That row is client-local, not a runtime RPC; its Host route mirrors the location-rowset contract and is covered by the Host test. Host tests cover real service registration, request decoding, reply encoding, and the fields consumed by the client. The map test uses the existing read hook to supply the matching empty read-side rowset and does not open a database connection.
-
 | row_id | service.method | client call site | consumers | handler | verdict |
 |---|---|---|---|---|---|
 | RPC-01160 | charUnboundMgr.ValidateNameEx | eve-logic `chooseNameSection.py:188` | numeric name-validation code is cached and returned to the creation UI (`:188-202`) | `CharUnboundMgrService.cs:182-195`; `CharUnboundMgrValidationHostTests.cs:12-47` | MATCHES |
@@ -126,7 +123,8 @@ Every row maps to a client call or fetcher. `GetLocationsLocal` is the exception
 | RPC-01708 | invbroker.GetItemDescriptor | `invCache.py:429-431` | cached descriptor defines inventory rowsets and dogma sub-location fields | `InvBrokerService.cs:373-374`; `InvBrokerDescriptorHostTests.cs:12-37` | MATCHES |
 | RPC-01709 | invbroker.GetItemDescriptor | `invCache.py:429-431` | same cached descriptor and all inventory rowset consumers | `InvBrokerService.cs:373-374`; `InvBrokerDescriptorHostTests.cs:12-37` | MATCHES |
 | RPC-01750 | kiringMgr.IsMonochromeStyleEnabled | `characterSelectionUtils.py:71-75` | bool gates logo, portrait, style and security-status color branches | `CoreCompatibilityServiceAdapters.cs:338-340`; `ImplementedClientRowsHostWireTests.cs:13-25` | MATCHES |
-| RPC-01751 | kiringMgr.IsMonochromeStyleEnabled | `characterSelectionUtils.py:71-75` | same memoized bool, consumed by character selection and slots | `CoreCompatibilityServiceAdapters.cs:338-340`; `ImplementedClientRowsHostWireTests.cs:13-25` | MATCHES || RPC-01962 | map.GetSecurityModifiedSystems | `characterSlots.py:1013-1014` | Indexes by `solarSystemID`; reads security fields only for a present row; otherwise returns empty text | `StationService.cs:293-300`; `ImplementedClientRowsHostWireTests.cs:28-55` | MATCHES |
+| RPC-01751 | kiringMgr.IsMonochromeStyleEnabled | `characterSelectionUtils.py:71-75` | same memoized bool, consumed by character selection and slots | `CoreCompatibilityServiceAdapters.cs:338-340`; `ImplementedClientRowsHostWireTests.cs:13-25` | MATCHES |
+| RPC-01962 | map.GetSecurityModifiedSystems | `characterSlots.py:1013-1014` | Indexes by `solarSystemID`; reads security fields only for a present row; otherwise returns empty text | `StationService.cs:293-300`; `ImplementedClientRowsHostWireTests.cs:28-55` | MATCHES |
 | RPC-02066 | multiLoginBlocker.Login | `characterSelection.py:623-624` | false opens the blocked window and stops login; true continues | `MultiLoginBlockerService.cs:25-50`; `ImplementedClientRowsHostWireTests.cs:59-86` | MATCHES |
 | RPC-02067 | multiLoginBlocker.Login | `characterSelection.py:623-624` | same bool gate when entering a selected character | `MultiLoginBlockerService.cs:25-50`; `ImplementedClientRowsHostWireTests.cs:59-86` | MATCHES |
 | RPC-02247 | pingService.Ping | `connectionService.py:189` | periodic idle ping; reply ignored | `PingService.cs:10-16`; `LoginCompatibilityRpcHostWireTests.cs:57` | MATCHES |
@@ -172,7 +170,6 @@ Whole-tree V24.01 caller searches show all consumers summarized below. The owner
 
 
 ## Batch 5 remaining work
-
 Registered-Host tests verify ListStations, LogSettings, RemoveOwnerNote, SaveCharacterSetting, SetActivityStatus, SetCharacterDescription, SetNote, UnblockOwners, and GetCharOmegaDowngradeStatus. Three distinct methods remain NO-TEST: CancelCharacterDeletePrepare, CreateCharacterWithDoll, and DeleteCharacter. Their relevant service or persistence tests do not assert the client-consumed reply through registered Host routing. This job prohibits PostgreSQL use, and no meaningful success-path Host test for those methods can run against the required persisted character state without it; no fake success was added. `run_service_audit_current.py --help` exposes only client/repository/queue roots, and its current status override has no batch-5 evidence entries; EVE_RS_COVERAGE.csv was left unchanged. No database or graphical client was used. The focused DB-free registered-Host mutation test passed locally.
 
 
@@ -222,7 +219,6 @@ Capture follow-up for RPC-00920: the owner report records six `IN_WARP` jump ref
 # P0 client-side verification — batch 3 (RPC-01040–RPC-01068)
 
 Client references below are from the V24.01 `home-user-eve-logic` tree. The rows with the same method and call site represent separate audit observations but share one client contract and one Host implementation.
-
 ## Wire contracts and whole-tree consumer scan
 
 - `GetOwnerNote`: `eve/client/script/ui/shared/neocom/notepad.py:518-521` indexes the first returned record and reads `.note.strip()` and `.label[2:]`. The neighboring `GetNoteText` path at `:247-251` consumes the same shape. EveJS 261018.1 `server/src/services/character/charMgrService.js:1168-1179` returns a one-element list of KeyVal records; eve.rs returns a one-element list of KeyVal at `dotnet/src/Eve.Services.CharacterInfo/CharMgrService.cs:819-837`. The registered Host wire regression checks note fields in `dotnet/tests/Eve.Host.Tests/CharacterManagerMutationHostWireTests.cs:48-64`.
@@ -273,6 +269,7 @@ The `run_service_audit_current.py` entry point exposes no per-row evidence input
 - The initial local focused `dotnet test` compiled `Eve.Services.CharacterInfo`, then stalled during `Eve.Host` compilation and was cancelled; no test executed. A subsequent no-restore Host test-project build was cancelled during dependency compilation on this shared machine.
 - Actions run 40256730678 and push CI run 40256722236 first failed to compile because the test omitted `using Eve.Characters` (CS0246); that import is fixed.
 - Actions run 40259671514 compiled and ran one test; a test-only object-name assertion expected `PyStr` while the wire decoder returned `PyBytes`. That assertion was corrected to use `JsSemantics.StringValue`. Actions run 40260256757 then failed because `GetOwnerNoteLabels` also returns the default `S:Folders` row; the test now asserts both the user note and that default row.
+
 - Correct-SHA focused Actions run 40261927697 passed the registered Host wire regression (1 passed, 0 failed, 0 skipped). Run 40261002939 failed before checkout because the dispatch ref was `HEAD`; run 40261220302 built the solution and exposed xUnit analyzer errors in the added test plus collection-expression type inference in the merged CharacterInfo test. Those were fixed before the passing run. Push CI run 40261920584 completed with stale assertions in four Space jump tests (now expect the client-visible None reply), Host test fixture registration order (custom services were overwritten by CoreServices), and RowClass token handling (now asserts PyToken). The fixes passed Host focused run 40263509742 (2 tests) and Space focused run 40263508541 (4 tests), with no failed or skipped tests. Push CI run 40263496667 completed successfully; `ci-status.py failures` reported no failed tests or jobs. No PostgreSQL database or graphical client was used.
 
 # Client verification — P0 implemented rows, batch 4 (RPC-01069–RPC-01099)
@@ -312,8 +309,6 @@ Whole-tree client searches confirmed the consumers below. Client paths are relat
 | RPC-01099 | charMgr.ListStations | `eve/client/script/ui/shared/assetsWindow.py:441` | Indexes by stationID; reads stationID, solarSystemID and typeID. Other callers: assetsWindow.py:922, assetsinfo.py:148-153, createContractWnd.py:1571-1575, quote.py:364-369. | `CharMgrService.cs:307-308`; Host CRowset assertion `CharMgrRpcHostWireTests.cs:52-57`. | MATCHES |
 
 EveJS returns GetPublicInfo as KeyVal, GetPublicInfo3 as a one-row CRowset, killmail rows as a list, settings as [Buffer, 0], and global assets as packed rows/station CRowset. eve.rs GetPublicInfo3 returns one PyList record; the listed client consumers index row zero and read named attributes, verified through the Host test. The original global-list Host fixture used tuple entries; this batch adds a Host route assertion for named itemID/typeID/quantity fields. Recent-kill paging and consumed fields are verified at service and registered-Host layers; the Host test verifies the list row over transport. No graphical client was used. The audit generator has no status_evidence input, so EVE_RS_COVERAGE.csv remains unchanged.
-
-
 ## Batch 4 verification update (2026-10-26)
 
 - Focused registered-Host check `Char_mgr_item_list_routes_return_item_records_with_client_accessed_fields` passed in Actions run 40258181572 for commit 655f60ce; no failed tests or jobs. The run's headless-client step was skipped because `--live ''` was requested; this is not graphical-client verification.
@@ -322,7 +317,6 @@ EveJS returns GetPublicInfo as KeyVal, GetPublicInfo3 as a one-row CRowset, kill
 - Push-triggered ci.yml run 40258172650 for 655f60ce was in progress at this update.
 
 - Push CI 40258172650 for 655f60ce failed in three merged tests: PyBytes wire type assertions, stale RPC count (1442 vs current 1423), and a private-info expectation still using Rowset. This pushed fix updates those tests to the observed util.Row wire contract/count; the new focused local Host test passes.
-
 # Client verification: P0 implemented rows, batch 8
 
 Checked the V24.01 client sources and traced the consumers in the full `/home/user/eve-logic` tree. The same handler applies to duplicated audit rows for a given method; each row is listed separately below.
@@ -362,17 +356,255 @@ EveJS comparison: search returns a group-ID keyed dictionary of lists for `Query
 
 - The Host wire tests use the production service handlers and network dispatch. They assert client-used wire types and fields: station cache wrapper/KeyVal, tuple and list rows, station owner fields, alliance rows, integer clone grade, and FILETIME long.
 - The new Query test sends the client's group-ID list and `exact` keyword with the Macho `machoVersion` transport keyword, then checks the dictionary and list value shapes.
-- The new population test exercises the registered service through Host dispatch for an unauthenticated session and verifies the mapping wire type. A successful character move needs owned character persistence and is not exercised by this database-free batch; RPC-02259 remains NO-TEST.- The audit-current generator has no status-evidence update option; the CSV was left unchanged as instructed.
+- The new population test exercises the registered service through Host dispatch for an unauthenticated session and verifies the mapping wire type. A successful character move needs owned character persistence and is not exercised by this database-free batch; RPC-02259 remains NO-TEST.
+- The audit-current generator has no status-evidence update option; the CSV was left unchanged as instructed.
 - Graph/source comparison checked current handlers against EveJS v0.12.9-compatible behavior. The full graphical client was not launched for this batch.
-
 - Actions run 40260608955 stopped at compile on the updated private-info test's PyList header construction; the header now materializes to an array. The affected CharacterInfo test project builds locally with 0 warnings/errors; the selected Actions tests need a rerun.
 
 
 - Actions run 40261514261 failed during compilation on xUnit2031 in `CharMgrClientReadHostWireTests.cs`; the label assertions now use `Assert.Single(collection, predicate)`. The focused Actions rerun is pending. Local Host project build succeeded (0 warnings/errors), and `Char_mgr_client_read_shapes_match_the_registered_host_wire_contract` passed locally (1 passed, 0 skipped); the valid-session recent-kill wire check also passed locally (1 passed, 0 skipped).
-
 - Focused Actions run 40264471982 for 2e9b557f succeeded with no failed tests/jobs, covering the registered-Host client-read, item-list and recent-kill checks plus registry/private-info regressions. The headless-client step was skipped because `--live ''` was requested; graphical-client behavior remains unchecked. Push-triggered `ci.yml` run 40264462725 was still queued when checked.
-
 - Push-triggered `ci.yml` run 40264462725 for 2e9b557f completed successfully with no failed tests/jobs. This closes the selected Host/service regression verification for batch 4; the graphical client was not run.
+
+## Client verification: P1 implemented rows, batch 17
+
+Whole-tree eve-logic searches and caller/consumer reads were completed for each service method. Duplicate row IDs share the same method contract and Host test. EveJS references are under /home/user/evejs-261018.1/src.
+
+| row_id | service.method | client contract and consumers | eve.rs / EveJS / Host test | verdict |
+|---|---|---|---|---|
+| RPC-00981 | charMgr.AddContact | addressbookService.py:733-735 ignores reply, appends agent locally, refreshes. Other AddContact callsites found in the whole-tree scan use it as a mutation. | CharMgrService.cs:928-940 returns None; EveJS charMgrService.js:1025-1071 returns null; CharacterManagerMutationHostWireTests.cs:11-26 | MATCHES |
+| RPC-00986 | charMgr.AddOwnerNote | notepad.py:207-219 consumes returned note ID for folder/cache and schedules EditOwnerNote. | CharMgrService.cs:966-990 returns integer ID; EveJS charMgrService.js:1181-1187 / characterNoteState.js:311-335; CharacterManagerMutationHostWireTests.cs:50-60 | MATCHES |
+| RPC-00987 | charMgr.AddOwnerNote | notepad.py:623-632 stores the ID in the local note and selects it after reload. | Same handler/EveJS/test as RPC-00986 | MATCHES |
+| RPC-00999 | charMgr.EditContactsRelationshipID | addressbookService.py:687-702 ignores reply, updates cached relationship IDs, then scatters OnContactChange. | CharMgrService.cs:1016-1037 returns None; EveJS charMgrService.js:1081-1094 returns null; CharacterManagerMutationHostWireTests.cs:34-40 | MATCHES |
+| RPC-01094 | charUnboundMgr.CancelCharacterDeletePrepare | characterSelection.py:870-872 ignores reply and refreshes the selected slot. | CharUnboundMgrService.cs:449-470 returns None after clearing queued deletion; EveJS charService.js:1869-1873 / characterDeletionRuntime.js:685-704; CharUnboundManagerClientHostWireTests.cs:25-53 | MATCHES |
+| RPC-01107 | charUnboundMgr.GetNumCharacters | characterCreationContainer_new.py:754-757 compares integer to 1; legacy characterCreationContainer.py:906-909 has the same use. | CharUnboundMgrService.cs:63-65 returns PyInt; EveJS charService.js:1375-1382; CharUnboundManagerClientHostWireTests.cs:8-22 | MATCHES |
+| RPC-02570 | station.GetGuests | station/base.py:98-106 unpacks charID, corpID, allianceID, warFactionID and caches charID to a three-value tuple; dockedUI/guests.py:93-95 reads the map. | StationService.cs:103-128 builds four integer tuple rows; EveJS stationService.js:135-156. StationStructureRpcHostWireTests.cs:41 asserts only empty list. | NO-TEST |
+| RPC-02571 | station.GetGuests | Same base/UI tuple consumer as RPC-02570. | Same handler/EveJS; Host checks only empty list, not populated tuple. | NO-TEST |
+| RPC-02572 | stationSvc.GetAllianceSystems | mapViewData.py:99-109 reads solarSystemID/allianceID into a map, then FW occupation overwrites entries. | StationService.cs:150-158 returns KeyVal rows; EveJS stationService.js:192-208; StationStructureRpcHostWireTests.cs:44-48 | MATCHES |
+| RPC-02573 | stationSvc.GetAllianceSystems | Same map-view consumer as RPC-02572. | Same handler/EveJS/test. | MATCHES |
+| RPC-02574 | stationSvc.GetAllianceSystems | starMapSvc.py:1607-1617 reads solarSystemID/allianceID then overlays FW occupation. | Same handler/EveJS; StationStructureRpcHostWireTests.cs:44-48 | MATCHES |
+| RPC-02575 | stationSvc.GetAllianceSystems | Same star-map consumer as RPC-02574. | Same handler/EveJS/test. | MATCHES |
+| RPC-02583 | stationSvc.GetStationItemBits | station/base.py:574-584 turns four-value tuple into Row(ownerID,itemID,operationID,stationTypeID). | StationService.cs:96-100 returns four PyInts in order; EveJS stationService.js:118-133; StationStructureRpcHostWireTests.cs:58-61 | MATCHES |
+| RPC-02584 | stationSvc.GetStationsForOwner | lpStoreSvc.py:534-559 groups KeyVals by solarSystemID and appends stationID for nearest station. | StationService.cs:70-93 returns KeyVals; EveJS stationService.js:158-190; StationStructureRpcHostWireTests.cs:63-69 asserts stationID, stationName and solarSystemID, covering client-used fields. | MATCHES |
+| RPC-02585 | stationSvc.GetStationsForOwner | Same LP-store consumer as RPC-02584. | Same handler/EveJS; Host assertion covers the client-used stationID and solarSystemID fields. | MATCHES |
+| RPC-00668 | LPStoreMgr.GetAvailableOffersFromCorp | lpStoreSvc.py:97-99 caches offer list and iterates rows to calculate sort values; later filters/display consume offer fields. | LpStoreMgrService.cs:38-50 reads cached offers; EveJS lpStoreMgrService.js:360-381 returns list. No Host assertion for client offer fields. | NO-TEST |
+| RPC-00669 | LPStoreMgr.GetAvailableOffersFromCorp | Same offer-row cache/sort consumer as RPC-00668. | Same handler/EveJS; no client-shape Host test. | NO-TEST |
+| RPC-00670 | LPStoreMgr.TakeOfferForCharacter | lpStoreSvc.py:248-260 treats truthy reply as success, invalidates related caches and dirties UI. | LpStoreMgrService.cs:59-76 settles purchase and returns PyBool true; EveJS lpStoreMgrService.js:383-387 delegates purchase; no Host assertion of success/notification order. | NO-TEST |
+| RPC-00671 | LPStoreMgr.TakeOfferForCharacter | Same success/cache consumer as RPC-00670. | Same handler/EveJS; no client-shape Host test. | NO-TEST |
+| RPC-00672 | LPStoreMgr.TakeOfferForCorporation | lpStoreSvc.py:250-260 uses truthy reply for success dialog and refresh, with selected wallet mode. | LpStoreMgrService.cs:66-90 checks director, settles and returns PyBool true; EveJS lpStoreMgrService.js:389-421; no Host assertion of success/notification order. | NO-TEST |
+| RPC-00673 | LPStoreMgr.TakeOfferForCorporation | Same corp-wallet purchase consumer as RPC-00672. | Same handler/EveJS; no client-shape Host test. | NO-TEST |
+| RPC-00674 | LPSvc.ExchangeConcordLP | lpStoreSvc.py:102-103 ignores result and continues exchange dialog flow. | LoyaltyPointsService.cs:31-35 raises user error; EveJS lpService.js:166-169 returns empty dict, so client errors in eve.rs where EveJS returns normally. No Host transition test. | MISMATCH |
+| RPC-00675 | LPSvc.GetAllMyCharacterWalletLPBalances | loyaltyPointsWalletSvc.py:30-31 iterates pair rows and maps row[0] issuer to row[1] points. | LoyaltyPointsService.cs:47-68 returns Rowset with integer issuerCorpID/loyaltyPoints; EveJS lpService.js:95-100 same. Service test checks rows; no Host wire assertion. | NO-TEST |
+| RPC-00676 | LPSvc.GetAllMyCorporationWalletLPBalances | loyaltyPointsWalletSvc.py:36-37 consumes same pair map; cache invalidates on corp session changes. | LoyaltyPointsService.cs:47-68 returns corporation Rowset; EveJS lpService.js:102-109 same. Service test checks rows; no Host wire assertion. | NO-TEST |
+| RPC-00677 | LPSvc.TransferLPFromMyCorpWalletToOtherCorp | loyaltyPointsWalletSvc.py:94-95 sends receiver/issuer/amount; ignores reply; OnCorpLPChange invalidates cache after transfer. | LoyaltyPointsService.cs:31-35 raises user error; EveJS lpService.js:139-154 transfers and returns null. No Host state/notification test. | MISMATCH |
+| RPC-00678 | LPSvc.TransferLPFromMyWalletToOtherCorp | loyaltyPointsWalletSvc.py:98-99 sends receiver/issuer/amount; ignores reply; OnLPChange invalidates cache after transfer. | LoyaltyPointsService.cs:31-35 raises user error; EveJS lpService.js:122-137 transfers and returns null. No Host state/notification test. | MISMATCH |
+| RPC-00748 | RWManager.get_closest_rw_stations | lpStoreSvc.py:530-533 reads corporation-keyed mapping and calls .get(corpID,None). | RWManagerService.cs:19-35 returns integer-keyed mapping; EveJS rwManagerService.js:155-166 same; RwManagerClosestStationsHostWireTests.cs:8-25 | MATCHES |
+| RPC-00749 | RWManager.get_closest_rw_stations | Same map/.get consumer as RPC-00748. | Same handler/EveJS/test. | MATCHES |
+| RPC-00763 | XmppChatMgr.GetHelpChannel | help.py:124-131 calls with no args; truthy room string opens/maximizes room, otherwise joins default help channels. gameui.py:768-772 sets session.languageID. | XmppChatMgrService.cs:19-34 now uses session.languageID first; EveJS xmppChatMgrService.js:168-175 uses session language; XmppHelpChannelHostWireTests.cs:8-22 checks Japanese room over Host. | MATCHES |
+| RPC-00805 | account.GetCashBalance | walletSvc.py:40-48 caches personal balance; corp callers use numeric value, with UserError fallback in walletSvc.py:157-160 and corp_ui_home.py:196-202. | AccountService.cs:156-181 returns PyReal and uses corp account key; EveJS accountService.js:689-711 returns marshal real; AccountWalletHostRpcTests.cs:111-123 checks personal/corp real and changed balance. | MATCHES |
+
+## Batch 17 gaps
+
+- Populated station guest tuples, LP offer fields, LP purchase notification order and LPSvc balances/transitions still lack registered-Host client-shape assertions. Rows marked NO-TEST identify missing Host checks.
+- The three LPSvc mismatches remain open: eve.rs refuses exchange/transfers while EveJS completes them. A correct fix needs authoritative LP mutation, validation and notifications; this batch has not implemented it.
+- No local PostgreSQL was used. The graphical client was not launched. The full client tree and current Host/service/EveJS paths were inspected; only the stated no-database focused Host test is eligible for local execution.
+
+## Client verification batch 3: RPC-00984–01972
+
+The RPC inventory has duplicate row IDs for a single service method; every ID below has an individual verdict. Evidence blocks that follow apply to each listed ID for that method. Client source is the full V24.01 eve-logic tree; EveJS comparison uses `/home/user/evejs-261018.1/src/server/src`.
+
+### Row verdicts
+
+| row_id | service.method | verdict |
+|---|---|---|
+| RPC-00984 | charMgr.AddContact | MATCHES |
+| RPC-00985 | charMgr.AddContact | MATCHES |
+| RPC-00988 | charMgr.AddOwnerNote | MATCHES |
+| RPC-00989 | charMgr.AddOwnerNote | MATCHES |
+| RPC-00990 | charMgr.AddOwnerNote | MATCHES |
+| RPC-00991 | charMgr.AddOwnerNote | MATCHES |
+| RPC-00992 | charMgr.AddOwnerNote | MATCHES |
+| RPC-00993 | charMgr.AddOwnerNote | MATCHES |
+| RPC-00998 | charMgr.DeleteContacts | MATCHES |
+| RPC-01011 | charMgr.GetCharacterCreationDate | MISMATCH (fixed) |
+| RPC-01124 | charUnboundMgr.GetNumCharacters | MATCHES |
+| RPC-01903 | map.GetStationCount | MATCHES |
+| RPC-01904 | map.GetStationCount | MATCHES |
+| RPC-01905 | map.GetStationCount | MATCHES |
+| RPC-01906 | map.GetStationInfo | MATCHES |
+| RPC-01907 | map.GetStationInfo | MATCHES |
+| RPC-01908 | map.GetStationInfo | MATCHES |
+| RPC-01909 | map.GetStationInfo | MATCHES |
+| RPC-01910 | map.GetStationInfo | MATCHES |
+| RPC-01911 | map.GetStationInfo | MATCHES |
+| RPC-01912 | map.GetStationInfo | MATCHES |
+| RPC-01913 | map.GetStationInfo | MATCHES |
+| RPC-01914 | map.GetStationInfo | MATCHES |
+| RPC-01915 | map.GetStationInfo | MATCHES |
+| RPC-01916 | map.GetStationInfo | MATCHES |
+| RPC-01917 | map.GetStationInfo | MATCHES |
+| RPC-01969 | moonExtractions.GetExtractionsForCorp | MATCHES |
+| RPC-01970 | moonExtractions.GetExtractionsForCorp | MATCHES |
+| RPC-01971 | moonExtractions.GetMoonResourcesForStructure | MATCHES |
+| RPC-01972 | moonExtractions.GetMoonResourcesForStructure | MATCHES |
+
+### Client, EveJS and Host evidence
+
+- **RPC-00984/00985 — `charMgr.AddContact`.** Client calls at `eve/client/script/ui/shared/neocom/addressBook/addressbookService.py:732-734,786-789`; the one-argument NPC-agent path ignores the reply then updates the local agent list, and the personal-contact path updates its local contact mapping after the call. The full-tree callers also include tournament setup at `eve/devtools/script/form_tournament.py:301-304`. EveJS `charMgrService.js:1025-1027,1040-1071` returns null and upserts the contact; optional send-notification writes notification type 89 with relationship and message. Host `dotnet/src/Eve.Services.CharacterInfo/CharMgrService.cs:928-964` returns `None`, updates personal state and uses the configured character reader before writing the optional notification. Real Host regression: `dotnet/tests/Eve.Host.Tests/ClientRowsCharacterHostWireTests.cs:41-91` asserts the null reply, contact row, and notification writer arguments.
+- **RPC-00988/00989/00990/00991/00992/00993 — `charMgr.AddOwnerNote`.** Client calls at `eve/client/script/ui/shared/neocom/notepad.py:174-175,206-207,622-624`; each stores or passes the returned note ID to later note/folder operations. EveJS `charMgrService.js:1181-1187` returns the ID from its owner-note state writer. Host `CharMgrService.cs:966-1003` persists the note and returns a `PyInt` ID. The same real Host test at `ClientRowsCharacterHostWireTests.cs:41-91` asserts the integer ID and retrieves the created note by that ID.
+- **RPC-00998 — `charMgr.DeleteContacts`.** Client calls at `addressbookService.py:819-821,841` and `eve/devtools/script/form_tournament.py:810`; UI updates/removes local entries after the call and refreshes the list. EveJS `charMgrService.js:1073-1079` removes the selected IDs and returns null. Host `CharMgrService.cs:1005-1014` removes those IDs and returns `None`; the same real Host test asserts the null reply and empty address rows.
+- **RPC-01011 — `charMgr.GetCharacterCreationDate`.** Client calls without arguments at `eve/client/script/ui/services/ccSvc.py:53-55`; `GetMyAgeInDays` subtracts the returned datetime from now at lines 47-50. EveJS `charMgrService.js:840-844` resolves the character from the session and returns a FILETIME long. The prior Host handler looked only at argument zero and returned `None` for this call. It now reads `session.CharacterId` and returns `PyLong` FILETIME at `CharMgrService.cs:229-239`. Real Host regression `ClientRowsCharacterHostWireTests.cs:12-39` calls it with no arguments and checks the FILETIME value. **MISMATCH fixed.**
+- **RPC-01124 — `charUnboundMgr.GetNumCharacters`.** The old and new creation flows call it without arguments at `characterCreationContainer.py:906-908` and `characterCreationContainer_new.py:754-756`, and only compare the result with 1. EveJS `charService.js:1375-1382` returns the account character count as a number. Host `CharUnboundMgrService.cs:63-65` returns `PyInt`; real Host test `ClientRowsCharacterHostWireTests.cs:92-106` asserts an integer reply for a session without a bound account. The account-backed count branch uses the existing character store.
+- **RPC-01903/01904/01905 — `map.GetStationCount`.** Whole-tree callers are `mapViewColorHandler.py:556-561`, `starModeHandler.py:404-415`, and `mapFilterStationCount.py:18-24`; clients cache the reply and consume iterable `(solarSystemID, count)` pairs as integers/dictionary keys. EveJS `mapService.js:759-781` returns sorted pairs including zero-count systems. Host `StationService.cs:453-460` returns a list of two-`PyInt` tuples from the same station-count read query. Real Host shape regression is `ClientRowsMapHostWireTests.cs:12-49`.
+- **RPC-01906/01907/01908/01909/01910/01911/01912/01913/01914/01915/01916/01917 — `map.GetStationInfo`.** Whole-tree callers/consumers: `facWarSvc.py:471-473` groups stations by owner; `marketsvc.py:639-641` reads `solarSystemID` from the station-ID index; `uisvc.py:244-247` indexes rows by `stationID`; `mapFilterServices.py:20-23`, `mapViewColorHandler.py:746-755`, and `starModeHandler.py:693-705` iterate station, system, owner and operation fields. EveJS `mapService.js:701-757` emits the cached eight-column `eve.common.script.sys.rowset.Rowset` with `util.Row` rows. Host `StationService.cs:286-291` wraps the eight-column read-side rowset in `ObjectCaching.MethodResult`; production rows use integer IDs. Real Host test `ClientRowsMapHostWireTests.cs:12-64` asserts the cache wrapper, header, row class, column count and consumed ID fields.
+- **RPC-01969/01970 — `moonExtractions.GetExtractionsForCorp`.** Client call at `eve/client/script/ui/moonmining/schedulingSvc.py:36-40` has no arguments after the station-manager role check; `moonminingEventsCont.py:96-108` consumes each row's `structureID`, `solarSystemID`, `chunkAvailableTime` and `moonID`. EveJS `moonExtractionsService.js:1128-1143` defaults corporation from session, filters active/fracturing rows and sorts by chunk time. Host `StructureDataRpcServices.cs:76-88` does the same and returns a list of KeyVals. Real Host test `Rpc01790HostCoverageTests.cs:11-16,122-141` now uses the session corporation and asserts the client-used fields and FILETIME type.
+- **RPC-01971/01972 — `moonExtractions.GetMoonResourcesForStructure`.** Client calls without arguments at `schedulingSvc.py:76-78`, forwards the mapping unchanged, and supplies it to `scheduling.py:80-83` for the resource UI. EveJS `moonExtractionsService.js:1145-1165` returns the structure's resource composition mapping. Host `StructureDataRpcServices.cs:90-106` returns a dictionary with integer type IDs and numeric abundances from structure state. The same real Host test `Rpc01790HostCoverageTests.cs:11-16,143-154` verifies the session-structure call, integer key and numeric value.
+### Verification limits
+
+- The character and map focused Host tests use in-memory providers and no PostgreSQL. The map Host hook supplies a representative cached-rowset value; the existing database-backed service test `StationServiceTests.cs:318-363` separately checks static station query fields and ordering.
+- The pre-existing full contact persistence test is database-gated at `CharacterManagerMutationHostWireTests.cs:11-91`; this batch's contact/note/delete Host regression does not need a database.
+- No graphical client session was started. The account-backed character-count query and live database notification persistence path were not exercised here.
+
+- Focused run 40300335873 (`ab564a87`) failed the Release build on an invalid `Eve.Services.ObjectCaching` using; removed it in `245ec903` (pushed with merge `e6480527`). Run 40301815665 (`e6480527`) found compile errors in latest-main Host tests: `WarsAndWormholeRpcHostWireTests.cs` used a nullable dictionary key, fixed in `18d923eb`; `SharedSettingsHostWireTests.cs` needed `JsSemantics` from `Eve.Macho`. Run 40302667474 (`f3b09983`) confirmed the nullable fix but showed `using Eve.Services` did not resolve `JsSemantics`; corrected to `using Eve.Macho` in `ffdc89f5`. The next Actions run will verify the build and focused tests. The push-triggered `ci.yml` result is still pending.
+
+# P1 implemented-untested rows, batch 7 (30 rows)
+
+Whole-tree consumer searches used V24.01 `/home/user/eve-logic`; EveJS comparison used `/home/user/evejs-261018.1/src`. Relevant EveJS handlers: `services/evermarks/lpStoreMgrService.js:359-425`, `services/corporation/lpService.js:94-159,165-168`, `services/ship/shipService.js:1621-1760,1941-1956`, and matching ActivityMgr, BillMgr, AlphaInjectorMgr, ProjectDiscovery, RWManager and XmppChatMgr services. No requested callsite is dead or client-local.
+
+| row_id | service.method | client callsite; whole-tree reply consumers | eve.rs handler/test | verdict |
+|---|---|---|---|---|
+| RPC-00822 | account.GiveCashFromCorpAccount | `transferMoneyWnd.py:150`; reply ignored, success message and close follow (:151-152). | `AccountService.cs:84-135`; Host mutation/reply/notification `AccountWalletHostRpcTests.cs:124-128`. | MATCHES |
+| RPC-02280 | ship.AssembleShip | `invItemFunctions.py:197`; ID/list reply applies default skins (:198-207). | `ShipService.cs:68-120`; service test `StrategicCruiserAssemblyTests.cs:8-10`, no Host reply assertion. | NO-TEST |
+| RPC-02295 | ship.LeaveShip | `structureDocking.py:94`; capsule ID reply passed to MakeShipActive (:95). | `ShipService.cs:138-146`; service test `SpaceServiceTests.cs:653-657`, no Host reply assertion. | NO-TEST |
+| RPC-00668 | LPStoreMgr.GetAvailableOffersFromCorp | `lpStoreSvc.py:98`; caches offer sequence; sorting/UI reads named offer fields (typeID, costs, reqItems, offerID, qty, standings, corpID). | `LpStoreMgrService.cs:30-47,105-116`; service test `LpStoreMgrServiceTests.cs:35-48`, no Host wire test. | NO-TEST |
+| RPC-00669 | LPStoreMgr.GetAvailableOffersFromCorp | Same call and offer-field consumers as RPC-00668. | Same handler and service test. | NO-TEST |
+| RPC-00670 | LPStoreMgr.TakeOfferForCharacter | `lpStoreSvc.py:249`; bool gates accepted prompt, then offer/inventory cache invalidation (:253-258). | `LpStoreMgrService.cs:49-56,83-103`; service test `LpStoreMgrServiceTests.cs:60-97`, no Host wire test. | NO-TEST |
+| RPC-00671 | LPStoreMgr.TakeOfferForCharacter | Same bool/follow-up consumers as RPC-00670. | Same handler and service test. | NO-TEST |
+| RPC-00672 | LPStoreMgr.TakeOfferForCorporation | `lpStoreSvc.py:251`; same bool/follow-up consumers as RPC-00670. | `LpStoreMgrService.cs:58-81,83-103`; service test `LpStoreMgrServiceTests.cs:108-138`, no Host wire test. | NO-TEST |
+| RPC-00673 | LPStoreMgr.TakeOfferForCorporation | Same bool/follow-up consumers as RPC-00672. | Same handler and service test. | NO-TEST |
+| RPC-00674 | LPSvc.ExchangeConcordLP | `lpStoreSvc.py:103`; reply ignored; call must complete for LP store flow to continue. | `LoyaltyPointsService.cs:22-35` throws unavailable; EveJS `lpService.js:165-168` returns empty dict. | MISMATCH |
+| RPC-00675 | LPSvc.GetAllMyCharacterWalletLPBalances | `loyaltyPointsWalletSvc.py:31`; 2-column tuple rows make issuer->balance map, missing issuer defaults 0 (:63-64). | `LoyaltyPointsService.cs:22-32,53-62`; service Rowset test `LoyaltyPointsServiceTests.cs:83-90`, no Host wire test. | NO-TEST |
+| RPC-00676 | LPSvc.GetAllMyCorporationWalletLPBalances | `loyaltyPointsWalletSvc.py:37`; same rows; cache invalidates on corp/role change (:45-47). | Same handler; `LoyaltyPointsServiceTests.cs:83-100`, no Host wire test. | NO-TEST |
+| RPC-00677 | LPSvc.TransferLPFromMyCorpWalletToOtherCorp | `loyaltyPointsWalletSvc.py:95`; reply ignored; LP notification invalidates corp cache (:57-60). | `LoyaltyPointsService.cs:22-35` throws unavailable; EveJS `lpService.js:138-159` transfers and returns None. | MISMATCH |
+| RPC-00678 | LPSvc.TransferLPFromMyWalletToOtherCorp | `loyaltyPointsWalletSvc.py:99`; reply ignored; character LP notification invalidates cache (:53-55). | Same handler; EveJS `lpService.js:121-136` transfers and returns None. | MISMATCH |
+| RPC-00687 | ProjectDiscovery.get_player_analysis_kredits | `lpStoreSvc.py:348`; integer kredits cached for offers. | `ProjectDiscoveryService.cs:251-260`; Host wire test `ProjectDiscoveryHostWireTests.cs:10-58` checks integer and character lookup. | MATCHES |
+| RPC-00688 | ProjectDiscovery.get_player_analysis_kredits | Same integer/cache consumers as RPC-00687. | Same handler and Host test. | MATCHES |
+| RPC-00748 | RWManager.get_closest_rw_stations | `lpStoreSvc.py:531`; dict lookup by corpID, absent key -> None (:532). | `FactionActivityRpcServices.cs`; service test `FactionActivityRpcServicesTests.cs:65-98`, no Host wire test. | NO-TEST |
+| RPC-00749 | RWManager.get_closest_rw_stations | Same corpID->station mapping consumer as RPC-00748. | Same handler and service test. | NO-TEST |
+| RPC-00763 | XmppChatMgr.GetHelpChannel | `help.py:125`; returned string is used as help channel name before joining. | `XmppChatMgrService.cs:19-30`; unit test `XmppChatMgrServiceTests.cs:23-34`, no Host reply test. | NO-TEST |
+| RPC-00831 | activityMgr.ActivitySeen | `activitiesSvc.py:148`; bool gates seen-set update and red-dot refresh (:150-152). | `ActivityMgrService.cs:24-35`; Host test `ActivityAlphaBillRpcHostWireTests.cs:70-80`. | MATCHES |
+| RPC-00832 | activityMgr.GetActivitiesPopState | `activitiesSvc.py:176`; consumes integer state. | `ActivityMgrService.cs:37-44`; Host test `ActivityAlphaBillRpcHostWireTests.cs:83-87`. | MATCHES |
+| RPC-00833 | activityMgr.GetActivityBadgeStatuses | `activitiesSvc.py:47`; list becomes set and drives unseen badges. | `ActivityMgrService.cs:12-22`; Host test `ActivityAlphaBillRpcHostWireTests.cs:70-80` checks list and OnSystemActivityUpdated. | MATCHES |
+| RPC-00834 | activityMgr.SetActivitiesPopState | `activitiesSvc.py:180`; bool gates rollback to inverse state. | `ActivityMgrService.cs:46-54`; Host test `ActivityAlphaBillRpcHostWireTests.cs:83-87`. | MATCHES |
+| RPC-00886 | alphaInjectorMgr.GetNextAvailableInjection | `skillsvc.py:1005`; FILETIME long is subtracted from wallclock (:1006-1007). | `CoreCompatibilityServiceAdapters.cs:48-50`; Host test `ActivityAlphaBillRpcHostWireTests.cs:90-93`. | MATCHES |
+| RPC-00887 | alphaInjectorMgr.GetNextAvailableInjection | Same zero-arg FILETIME-long consumer as RPC-00886. | Same handler and Host test. | MATCHES |
+| RPC-00919 | billMgr.CharPayBill | `walletSvc.py:127`; reply ignored; wallet view refresh follows payment. | `BillMgrService.cs:39-49`; Host test `ActivityAlphaBillRpcHostWireTests.cs:102-110` only checks invalid-bill error. | NO-TEST |
+| RPC-00920 | billMgr.CharPayBill | Same ignored-reply/wallet-refresh consumer as RPC-00919. | Same handler and Host error-path test. | NO-TEST |
+| RPC-00921 | billMgr.GetAutomaticPaySettings | `corpBillsAutoPaidPanel.py:48`; owner mapping membership filters bills (:49-50); payable panel also consumes it. | `BillMgrService.cs:51-52,92-112`; Host test `ActivityAlphaBillRpcHostWireTests.cs:102-110` does not assert successful mapping. | NO-TEST |
+| RPC-00922 | billMgr.GetAutomaticPaySettings | Same mapping consumers as RPC-00921. | Same handler and Host test. | NO-TEST |
+| RPC-00923 | billMgr.GetAutomaticPaySettings | `corpBillsAutoPaySettingsPanel.py:37`; caches mapping to populate settings rows. | Same handler and Host test as RPC-00921. | NO-TEST |
+
+NO-TEST rows still need successful registered-Host reply assertions; service tests and Host error-path tests do not close them. MISMATCH rows remain implementation gaps; no fake success was added. No graphical client was launched.
+
+# Client verification: P1 implemented rows, batch 2 (2026-10-26)
+
+Full-tree eve-logic callers and their wrappers were followed for the values described below. EveJS 261018's contract proxy delegates to matching runtime operations and uses the same KeyVal/list/tuple/bool/None reply conventions (`server/src/services/_other/contractProxyService.js:691-900`; stateful acceptance/completion/page-info logic at `server/src/services/contracts/contractRuntimeState.js:2782-2807,3408-3435,3975-4051`). Market methods likewise return None for StartupCheck/buy/modify and bool for PLEX sell (`server/src/services/market/marketProxyService.js:6283-6291,6960-7015,7130-7162,7164-7397`). No reply-shape differences found.
+
+| row_id | service.method | client call and consumers in eve-logic | handler and registered Host evidence | verdict |
+|---|---|---|---|---|
+| RPC-01947 | marketProxy.ModifyCharOrder | `marketsvc.py:288`; ModifyOrder sends order snapshot and ignores reply (`:286-289`). | `MarketProxyService.cs:544-556`; `MarketTradeHostWireTests.cs:144-151` None and persisted price. | MATCHES |
+| RPC-01948 | marketProxy.ModifyPlexCharOrder | `marketsvc.py:294`; ModifyPlexOrder sends same snapshot and ignores reply (`:291-295`). | `MarketProxyService.cs:618-619`; `MarketTradeHostWireTests.cs:168-174` None and persisted PLEX price. | MATCHES |
+| RPC-01949 | marketProxy.PlaceBuyOrder | `marketsvc.py:266`; BuyStuff ignores reply, then scatters OrderPlaced (`:255-268`). | `MarketProxyService.cs:468-489`; `MarketTradeHostWireTests.cs:136-143` None and persisted order. | MATCHES |
+| RPC-01951 | marketProxy.PlacePlexSellOrder | `marketsvc.py:279`; SellPlex returns the proxy bool. | `MarketProxyService.cs:607-616`; `MarketTradeHostWireTests.cs:154-166` bool and persisted order. | MATCHES |
+| RPC-01952 | marketProxy.StartupCheck | `quote.py:62-77`; success reply ignored, errors propagated/cached. | `MarketProxyService.cs:154-155`; `MarketTradeHostWireTests.cs:133` None. | MATCHES |
+| RPC-01190 | contractProxy.AcceptContract | `contracts.py:421`; response KeyVal type/contractID/stations/dateAccepted/numDays is used for courier progress; cache cleared (`:345-430`). | `GameRpcServices.cs:308-358`; `ContractProxyBatchWireTests.cs:181-185` KeyVal. | MATCHES |
+| RPC-01191 | contractProxy.CollectMyPageInfo | `contracts.py:727`; named counts/tuples feed skill limits and cache; panel caller `contractPanels.py:67`. | `ContractProxyBatchService.cs:86-146`; `ContractProxyBatchWireTests.cs:101-113` fields and four-int tuple. | MATCHES |
+| RPC-01192 | contractProxy.CompleteContract (failed) | `contracts.py:515`; bool returned, cache cleared and progress removed (`:504-521`). | `GameRpcServices.cs:361-390`; `ContractProxyBatchWireTests.cs:186-188` bool/status 7. | MATCHES |
+| RPC-01193 | contractProxy.CompleteContract (finished) | `contracts.py:482`; bool controls progress/prompt (`:475-489`). | `GameRpcServices.cs:361-390`; `ContractProxyBatchWireTests.cs:185-186` bool/status 4. | MATCHES |
+| RPC-01194 | contractProxy.CompleteContract (rejected) | `contracts.py:546`; bool returned (`:535-547`). | `GameRpcServices.cs:361-390`; `ContractProxyBatchWireTests.cs:188-189` bool/status 6. | MATCHES |
+| RPC-01195 | contractProxy.CreateContract | `contracts.py:555`; ID list passed through/cache cleared; create window caller `createContractWnd.py:852-919`. | `GameRpcServices.cs:139-209`; `ContractProxyBatchWireTests.cs:113-127` one-int list. | MATCHES |
+| RPC-01196 | contractProxy.DeleteContract | `contracts.py:445`; bool triggers deletion event/cache clear (`:432-451`). | `GameRpcServices.cs:392-414`; `ContractProxyBatchWireTests.cs:190-192` bool. | MATCHES |
+| RPC-01197 | contractProxy.DeleteContractNotification | `contracts.py:852`; ignored reply, local expired cache cleared (`:851-854`). | `ContractProxyBatchService.cs:154-166`; `ContractProxyBatchWireTests.cs:219-220` None. | MATCHES |
+| RPC-01198 | contractProxy.DeleteMultipleContracts | `contracts.py:458`; (deleted, failed) lists select UI message and deletion event (`:452-470`). | `ContractProxyBatchService.cs:8-45`; `ContractProxyBatchWireTests.cs:40-43` tuple/list/int values. | MATCHES |
+| RPC-01199 | contractProxy.DeleteNotification | `contracts.py:723`; bool controls node removal (`contractentry.py:194-198`). | `GameRpcServices.cs:486-513`; `ContractProxyBatchWireTests.cs:218-219` bool. | MATCHES |
+| RPC-01200 | contractProxy.FinishAuction | `contracts.py:677`; bool reaches entry remove (`contractentry.py:197-210`) or details refresh (`contractsDetailsWnd.py:585-603`). | `GameRpcServices.cs:515-541`; `ContractProxyBatchWireTests.cs:220-222` both boolean paths. | MATCHES |
+| RPC-01201 | contractProxy.GM_ExpireContract | `contractentry.py:168`; GM menu ignores reply (`:167-169`). | `GameRpcServices.cs:544-552`; `ContractProxyBatchWireTests.cs:224-246` success/refusal. | MATCHES |
+| RPC-01202 | contractProxy.GetContract | `contracts.py:336`; cached detail fields/items/bids feed detail, accept and delete (`:329-343,345-560`; `contractsDetailsWnd.py:505-610`). | `GameRpcServices.cs:468-475`; `ContractProxyBatchWireTests.cs:192-197` KeyVal/packed row/lists. | MATCHES |
+| RPC-01203 | contractProxy.GetContractListForOwner | `contractPanels.py:419`; consumes KeyVal contracts/items and renders rows (`:410-421`). | `GameRpcServices.cs:613-642`; `ContractProxyBatchWireTests.cs:175-179` KeyVal rows. | MATCHES |
+| RPC-01204 | contractProxy.GetCourierContractFromItemID | `contracts.py:880`; crate paths consume contractID before full detail lookup (`:858-887`). | `GameRpcServices.cs:477-484`; `ContractProxyBatchWireTests.cs:197-199` KeyVal. | MATCHES |
+| RPC-01205 | contractProxy.GetItemsInContainer | `contracts.py:712`; sorts by typeID; create UI reads itemID/typeID/stacksize (`createContractWnd.py:1337-1348`). | `GameRpcServices.cs:74-87`; `ContractProxyBatchWireTests.cs:70-76` packed-row list. | MATCHES |
+| RPC-01206 | contractProxy.GetItemsInDockableLocation | `contracts.py:718`; creation windows use inventory rows (`createContractWnd.py:92,933,1647`). | `GameRpcServices.cs:106-119`; `ContractProxyBatchWireTests.cs:44-69` set and packed item fields. | MATCHES |
+| RPC-01207 | contractProxy.GetLoginInfo | `contracts.py:190`; Neocom reads assignedToMe/needsAttention/inProgress and dispatches notifications (`:190-203`). | `GameRpcServices.cs:554-573`; `ContractProxyBatchWireTests.cs:151-153` KeyVal keys. | MATCHES |
+| RPC-01208 | contractProxy.GetMyBids | `contracts.py:761`; cached bundle feeds panel `.list`, contracts and items (`:756-767`; `contractPanels.py:416`). | `GameRpcServices.cs:590-611`; `ContractProxyBatchWireTests.cs:157-163` personal/corp bundles. | MATCHES |
+| RPC-01209 | contractProxy.GetMyContractEscrow | `contracts.py:773`; reads numeric escrow fields and returns pair (`:769-781`); slash caller `svc_slash.py:1894`. | `GameRpcServices.cs:576-587`; `ContractProxyBatchWireTests.cs:153-156` numeric KeyVal. | MATCHES |
+| RPC-01210 | contractProxy.GetMyCurrentContractList | `contracts.py:788`; cached bundle flows to panel contracts/items (`:783-795`; `contractPanels.py:410-421`). | `GameRpcServices.cs:644-672`; `ContractProxyBatchWireTests.cs:165-171` personal/corp bundles. | MATCHES |
+| RPC-01211 | contractProxy.GetMyExpiredContractList | `contracts.py:747`; personal bundle stored as mySelf and selected by character owner (`:744-754`; `contractPanels.py:423-428`). | `GameRpcServices.cs:674-699`; `ContractProxyBatchWireTests.cs:173-175` personal. | MATCHES |
+| RPC-01212 | contractProxy.GetMyExpiredContractList | `contracts.py:748`; corp bundle stored as myCorp and selected by corp owner (same consumer). | `GameRpcServices.cs:674-699`; `ContractProxyBatchWireTests.cs:175-177` corp. | MATCHES |
+| RPC-01213 | contractProxy.GetNumItemsInContainers | `contracts.py:715`; create window stores ID/count map and sums values (`createContractWnd.py:1320-1326`). | `GameRpcServices.cs:96-104`; `ContractProxyBatchWireTests.cs:77-86` int map, empty IDs omitted. | MATCHES |
+| RPC-01214 | contractProxy.NumOutstandingContracts | `contracts.py:689`; KeyVal counts feed page and create limits (`:687-690,728-738`; `createContractWnd.py:1210`). | `ContractProxyBatchService.cs:47-84`; `ContractProxyBatchWireTests.cs:47-58` four integer fields. | MATCHES |
+
+Existing registered Host tests use recording contract backends, so this verifies reply shape and dispatch, not persisted contract lifecycle. Market's full Host state test is database-backed; inspected, not run under the no-database rule. The graphical client was not launched.
+
+## Batch 7 — rewardMgr client wire verification
+
+| row_id | service.method | client call site and whole-tree consumers | Host handler and wire test | verdict |
+|---|---|---|---|---|
+| RPC-02233 | rewardMgr.GetDelayedRewardsByGroupIDs | `eve/client/script/ui/shared/incursionSvc.py:256-259` sorts IDs, sends a tuple, and returns the mapping; `journal.py:782` consumes it while rendering the global incursion report. | `dotnet/src/Eve.Services.Core/RewardsService.cs:115-145`; Host test asserts a dict keyed by group ID with list of KeyVal rows containing `rewardQuantity`: `dotnet/tests/Eve.Host.Tests/PublicQaAndPvpHostWireTests.cs:39-59`. EveJS returns a dict at `server/src/services/rewards/rewardMgrService.js:41-50`. | MATCHES |
+| RPC-02234 | rewardMgr.GetDelayedRewardsByGroupIDs | Same caller/consumer: `incursionSvc.py:256-259`, `journal.py:782`; the single-group wrapper uses `.get(rewardGroupID)` at `incursionSvc.py:253-254`, so missing groups yield None. | Same handler, Host test, and EveJS reference as RPC-02233. | MATCHES |
+| RPC-02235 | rewardMgr.GetRewardLPLogs | `eve/client/script/ui/shared/neocom/journal.py:830-833` passes rows to `UpdateIncursionLPLog`, which iterates and reads `rewardMessageKey`, `solarSystemID`, `taleID`, `eventTypeID`, `date`, and `lpAmountAddedToPool` at lines 845-889, defaulting a None LP amount to zero. | `dotnet/src/Eve.Services.Core/RewardsService.cs:119-121` returns a list; Host test asserts PyList: `dotnet/tests/Eve.Host.Tests/RewardLpLogsHostWireTests.cs:7-15`. EveJS returns a list at `server/src/services/rewards/rewardMgrService.js:52-56`. | MATCHES |
+| RPC-02236 | rewardMgr.GetRewardLPLogs | `eve/client/script/ui/shared/neocom/wallet/panels/personal/lpIncursionsPanel.py:73-74` passes rows to its `UpdateIncursionLPLog`; it uses the same row attributes and None-to-zero LP amount fallback at lines 81-124. | Same handler, Host test, and EveJS reference as RPC-02235. | MATCHES |
+| RPC-02237 | rewardMgr.GetRewardLPLogs | Same wallet-panel caller and row consumer as RPC-02236; whole-tree search found no other client consumer. | Same handler, Host test, and EveJS reference as RPC-02235. | MATCHES |
+
+The real Host tests cover both a non-empty delayed-reward row and an empty LP-log list. EveJS also returns an empty LP-log list; the client accepts it without reading row fields.
+
+## Batch 7 continued — shared settings
+
+| row_id | service.method | client callsite and whole-tree consumers | Host handler and wire test | verdict |
+|---|---|---|---|---|
+| RPC-02275 | sharedSettingsMgr.StoreSettingLinkAndGetID | `eve/client/script/ui/control/eveEditPlainText.py:169-170` passes the returned KeyVal to `GetSettingKeyFromKeyVal`; that consumer reads `hashvalue`, `sqID`, and `settingTypeID` and forms the key tuple (`sharedSettings/util.py:22-29`). | `dotnet/src/Eve.Services.Core/GameRpcServices.cs:1051-1096`; registered Host test asserts the three KeyVal fields and uses that tuple in the next read RPC: `dotnet/tests/Eve.Host.Tests/SharedSettingsHostWireTests.cs:7-26`. EveJS builds the same KeyVal fields: `server/src/services/settings/sharedSettingsMgrService.js:193-199,263-276`. | MATCHES |
+| RPC-02276 | sharedSettingsMgr.StoreSettingLinkAndGetID | Same client call and key consumer as RPC-02275; whole-tree search found no other consumer of this reply. | Same handler, Host test, and EveJS reference as RPC-02275. | MATCHES |
+| RPC-02277 | sharedSettingsMgr.StoreSettingLinkAndGetID | `eve/client/script/ui/shared/inventory/filterSvc.py:449-450` passes the returned KeyVal to the same helper, which returns the three-field tuple for later stored-setting access. | Same handler, Host test, and EveJS reference as RPC-02275. | MATCHES |
+
+The new test exercises real Host dispatch and the subsequent GetStoredSharedSetting call with the tuple the client constructs; its payload state is owned by the registered service's in-memory fallback.
+
+## Batch 7 continued — ship stance
+
+| row_id | service.method | client callsite and whole-tree consumers | Host handler and wire test | verdict |
+|---|---|---|---|---|
+| RPC-02331 | shipStanceMgr.SetShipStance | `eve/client/script/ui/inflight/shipstance.py:29-32` ignores the RPC return. `OnStanceActive(shipID, stanceID)` drives the stance button state (`ship_stance_button.py:14,53-58`), fitting controller (`fittingController.py:429-432`), station model (`station/base.py:268-273`), and hangar model (`hangarView.py:707-713`). | `dotnet/src/Eve.Services.Core/GameRpcServices.cs:1312-1341` returns the old stance ID and emits OnStanceActive after a changed commit; registered Host test verifies both order and old ID: `dotnet/tests/Eve.Host.Tests/MovementRpcHostWireTests.cs:15-44`. EveJS returns the old ID and emits the change at `server/src/services/ship/shipStanceMgrService.js:35-49`. | MATCHES |
+| RPC-02332 | shipStanceMgr.SetShipStance | Same caller, ignored return, and whole-tree notification consumers as RPC-02331. | Same handler, test, and EveJS reference as RPC-02331. | MATCHES |
+
+## Batch 7 continued — repair, ship cosmetics, and skills
+
+| row_id | service.method | client callsite and whole-tree reply consumers | Host handler/test and EveJS comparison | verdict |
+|---|---|---|---|---|
+| RPC-02231 | repairSvc.RepairItemsInStation | `base_repairshop.py:64-67` sends item IDs and payment; the return is ignored and the repair window continues. | Host transaction returns None and emits item updates after commit: `RepairService.cs:93-175`; EveJS applies the repair plan and returns null in `server/src/services/station/repairService.js`. No registered Host reply test found. | NO-TEST |
+| RPC-02232 | repairSvc.RepairItemsInStructure | `base_repairshop.py:68-71` sends item IDs; the return is ignored. | Host rejects with “Repair in structures is not available”: `RepairService.cs:177-178`; EveJS runs structure repair through `repairService.js:207-223` and `repairRuntime.js:1470-1496`. This is a behavior/state mismatch; no fix is present. | MISMATCH |
+| RPC-02305 | shipCosmeticsMgr.ApplySkinToShip | `shipUtil.py:27` invokes the RPC and ignores the return; whole-tree search found no reply consumer. | Host mutation returns None after writing ship cosmetics and invoking the ship-skin change callback: `ShipCosmeticsMgrRpcService.cs:166-197`; EveJS returns null after state update/refresh at `server/src/services/ship/shipCosmeticsMgrService.js:311-352`. No registered Host wire test asserts this success reply. | NO-TEST |
+| RPC-02306 | shipCosmeticsMgr.ApplySkinToShip | Same callsite and ignored return as RPC-02305. | Same handler and EveJS behavior; no registered Host wire test. | NO-TEST |
+| RPC-02309 | shipCosmeticsMgr.GMExpireSkinLicense | `devMenuFunctions.py:35` ignores the return; no reply consumer found. | Host returns None after expiring the current character’s license: `ShipCosmeticsMgrRpcService.cs:149-164`; EveJS returns null at `shipCosmeticsMgrService.js:384-398`. No registered Host success wire test. | NO-TEST |
+| RPC-02310 | shipCosmeticsMgr.GMExpireSkinLicense | Same callsite and ignored return as RPC-02309. | Same handler and EveJS behavior; no registered Host wire test. | NO-TEST |
+| RPC-02317 | shipCosmeticsMgr.GiveSkin | `devMenuFunctions.py:20` ignores the return; no reply consumer found. | Host writes a license override and returns None: `ShipCosmeticsMgrRpcService.cs:112-138`; EveJS returns null after `giveSkin` at `shipCosmeticsMgrService.js:354-368`. No registered Host success wire test. | NO-TEST |
+| RPC-02318 | shipCosmeticsMgr.GiveSkin | Same default-argument call and ignored return as RPC-02317. | Same handler and EveJS behavior; no registered Host wire test. | NO-TEST |
+| RPC-02319 | shipCosmeticsMgr.GiveSkin | `devMenuFunctions.py:14` sends the `duration` kwarg and ignores the return; no reply consumer found. | Same stateful Host handler reads `duration`; EveJS reads the same kwarg and returns null: `shipCosmeticsMgrService.js:354-368`. No registered Host success wire test. | NO-TEST |
+| RPC-02320 | shipCosmeticsMgr.GiveSkin | Same duration call and ignored return as RPC-02319. | Same handler and EveJS behavior; no registered Host wire test. | NO-TEST |
+| RPC-02321 | shipCosmeticsMgr.GiveSkin | `devMenuFunctions.py:26` sends `isSingleUse=True` and ignores the return; no reply consumer found. | Same stateful Host handler reads `isSingleUse`; EveJS reads the same kwarg and returns null: `shipCosmeticsMgrService.js:354-368`. No registered Host success wire test. | NO-TEST |
+| RPC-02322 | shipCosmeticsMgr.GiveSkin | Same single-use call and ignored return as RPC-02321. | Same handler and EveJS behavior; no registered Host wire test. | NO-TEST |
+| RPC-02323 | shipCosmeticsMgr.RemoveSkin | `devMenuFunctions.py:83` ignores the return; no reply consumer found. | Host revokes the license and returns None: `ShipCosmeticsMgrRpcService.cs:140-147`; EveJS returns null after `removeSkin` at `shipCosmeticsMgrService.js:370-382`. No registered Host success wire test. | NO-TEST |
+| RPC-02324 | shipCosmeticsMgr.RemoveSkin | Same callsite and ignored return as RPC-02323. | Same handler and EveJS behavior; no registered Host wire test. | NO-TEST |
+| RPC-02334 | skillHandler.AbortTraining | `skillsvc.py:794-796` discards the return; the whole-tree search found no response consumer. | Host stops active training, returns None, and emits the queue-paused/account notifications: `SkillHandlerService.Training.cs:71-79`, `TrainingAnnouncer.cs:169-185`; the client handles server queue changes in `skillQueueSvc.py:748-764`. EveJS returns null at `server/src/services/skills/skillMgrService.js:637-641`. Existing registered Host test only exercises the no-character/null-dependency path (`SkillHandlerRpcHostTests.cs:58-66`), not a real abort. | NO-TEST |
+| RPC-02335 | skillHandler.ApplyFreeSkillPoints | `skillsvc.py:885-886` assigns the reply to `newFreePoints` and passes it to `SetFreeSkillPoints`, which compares and stores a numeric value (`:889-899`). | Host returns remaining free points as PyInt after the training mutation: `SkillHandlerService.cs:678-706`; EveJS returns the remaining-point value at `server/src/services/skills/skillMgrService.js:616-623`. Existing Host test returns None with no character; no successful registered Host shape assertion. | NO-TEST |
+| RPC-02336 | skillHandler.CharStartTrainingSkill | `skillsvc.py:771` ignores the return; training state is reflected through later skill-queue reads/events. | Host starts training and `Answer` emits queue-saved notifications: `SkillHandlerService.Training.cs:35-63`, `TrainingAnnouncer.cs:105-123`; the client handles server queue changes in `skillQueueSvc.py:748-764`. EveJS returns null at `skillMgrService.js:514-525`. No successful registered Host wire test. | NO-TEST |
+| RPC-02338 | skillHandler.CheckInjectionConstraints | `skillsvc.py:981-982` ignores a successful return; `skillInjectorWindow.py:160-168` uses only UserError to disable the action or show an error. | Host validates and returns None on success in `SkillHandlerService.Injection.cs:112-174`; EveJS returns null or raises the constraint error at `skillMgrService.js:653-662`. No successful registered Host wire test. | NO-TEST |
+| RPC-02339 | skillHandler.CombineSkillInjector | `skillsvc.py:1013-1016` discards the return after the client’s minimum-quantity check; menu wrapper also discards it (`menuFunctions.py:503-505`). | Host performs injector transformation at `SkillHandlerService.Injection.cs:324`; EveJS returns null at `skillMgrService.js:694-702`. Service mutation tests exist, but no successful registered Host wire test. | NO-TEST |
+| RPC-02340 | skillHandler.ExtractSkills | `skillsvc.py:969-973` discards the return; whole-tree extractor controller calls the wrapper at `skillExtractorController.py:584-585`. | Host extracts skills at `SkillHandlerService.Injection.cs:176-322`; EveJS returns null at `skillMgrService.js:674-682`. Service mutation tests exist, but no successful registered Host wire test. | NO-TEST |
+
+
+### Batch 17 execution update (2026-10-26)
+
+- Commit `28d29e3a` was pushed in merge commit `662e4174`. Selected Actions run `40303458475` failed in the Host test project build because the incoming `SharedSettingsHostWireTests.cs` used `JsSemantics` without importing `Eve.Macho`; no requested test ran. The compile error was fixed in `6693eab6`.
+- After fetching and merging the newer `origin/main`, commit `3f0f3ca0` was pushed. The source now imports `Eve.Macho`; the upstream correction comparing the `GetStoredSharedSetting` result with `PyStr` is retained. Selected Actions run `40304219303` is in progress. The local Host test project build is still in progress; no local database was used.
+- The LPSvc exchange/transfer mismatch and remaining populated-row wire test gaps above remain open.
 
 ## P1 implemented-untested rows verification - batch 15
 

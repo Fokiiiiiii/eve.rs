@@ -17,7 +17,7 @@ public sealed class IncursionAnomalyService : IService
     private readonly IService? _fallback;
     private readonly Func<long> _nowUnixMs;
 
-    private readonly Func<ServiceCall, ValueTask<PyValue>>? _signalTrackerRegister;
+    private readonly Func<ServiceCall, PyValue, ValueTask<PyValue>>? _signalTrackerRegister;
 
     /// <summary>The recall of a probe (scanMgr <c>DestroyProbe</c>): the probe leaves space and its pilot is told.</summary>
     private readonly Func<ClientSession, long, CancellationToken, ValueTask>? _recallProbe;
@@ -31,7 +31,7 @@ public sealed class IncursionAnomalyService : IService
         Func<long, CancellationToken, ValueTask<IReadOnlyList<JsonObject>>> readAnomalies,
         IService? fallback = null,
         Func<long>? nowUnixMs = null,
-        Func<ServiceCall, ValueTask<PyValue>>? signalTrackerRegister = null,
+        Func<ServiceCall, PyValue, ValueTask<PyValue>>? signalTrackerRegister = null,
         Func<ClientSession, long, CancellationToken, ValueTask>? recallProbe = null,
         Func<string, ServiceCall, ValueTask<PyValue>>? probeScans = null)
     {
@@ -196,10 +196,14 @@ public sealed class IncursionAnomalyService : IService
         return PyNone.Instance;
     }
 
-    private async ValueTask<PyValue> SignalTrackerRegisterAsync(ServiceCall call) =>
-        _signalTrackerRegister is null
-            ? PyNone.Instance
-            : await _signalTrackerRegister(call);
+    private async ValueTask<PyValue> SignalTrackerRegisterAsync(ServiceCall call)
+    {
+        if (_signalTrackerRegister is null)
+            return PyNone.Instance;
+
+        var fullState = await GetFullStateAsync(call);
+        return await _signalTrackerRegister(call, fullState);
+    }
 
     private static PyValue BuildIncursionReport(JsonObject incursion)
     {

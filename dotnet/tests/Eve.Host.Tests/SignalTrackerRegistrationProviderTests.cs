@@ -26,15 +26,17 @@ public sealed class SignalTrackerRegistrationProviderTests
             signalTrackerRegister: provider.RegisterAsync);
 
         Assert.Equal(PyNone.Instance, await service.CallAsync(RegisterCall(first)));
+        first.RunAfterResponse();
         Assert.Equal(PyNone.Instance, await service.CallAsync(RegisterCall(second)));
-        Assert.Empty(firstSink.Packets); // No full-snapshot producer is wired, so registration does not invent one.
-        Assert.Empty(secondSink.Packets);
+        second.RunAfterResponse();
+        AssertSignalTrackerNotification(Assert.Single(firstSink.Packets), systemId, shouldRemoveOldSites: null);
+        AssertSignalTrackerNotification(Assert.Single(secondSink.Packets), systemId + 1, shouldRemoveOldSites: null);
 
         var fullState = new PyList([new PyDict([]), new PyDict([]), new PyDict([]), new PyDict([])]);
         await provider.PublishFullStateAsync(systemId, fullState, shouldRemoveOldSites: true);
 
-        AssertSignalTrackerNotification(Assert.Single(firstSink.Packets), systemId, shouldRemoveOldSites: true);
-        Assert.Empty(secondSink.Packets);
+        AssertSignalTrackerNotification(firstSink.Packets[1], systemId, shouldRemoveOldSites: true);
+        Assert.Single(secondSink.Packets);
     }
 
     [Fact]
@@ -49,8 +51,8 @@ public sealed class SignalTrackerRegistrationProviderTests
         stale.Set("solarsystemid2", new PyInt(systemId));
         var provider = new SignalTrackerRegistrationProvider(sessions);
 
-        await provider.RegisterAsync(RegisterCall(stale));
-        await provider.RegisterAsync(RegisterCall(live));
+        await provider.RegisterAsync(RegisterCall(stale), new PyList([]));
+        await provider.RegisterAsync(RegisterCall(live), new PyList([]));
         live.Set("solarsystemid2", new PyInt(systemId + 1));
         await provider.PublishFullStateAsync(systemId, new PyList([]));
 
@@ -73,7 +75,7 @@ public sealed class SignalTrackerRegistrationProviderTests
         Session = session,
     };
 
-    private static void AssertSignalTrackerNotification(PyValue packetValue, long systemId, bool shouldRemoveOldSites)
+    private static void AssertSignalTrackerNotification(PyValue packetValue, long systemId, bool? shouldRemoveOldSites)
     {
         var packet = Assert.IsType<PyObject>(packetValue);
         Assert.Equal(ClientNotification.ClassName, Str(packet.Name));
@@ -90,8 +92,15 @@ public sealed class SignalTrackerRegistrationProviderTests
         var args = Assert.IsType<PyTuple>(eventCall.Items[1]).Items;
         Assert.Equal(systemId, Assert.IsType<PyInt>(args[0]).Value);
         Assert.IsType<PyList>(args[1]);
-        Assert.True(Assert.IsType<PyBool>(args[2]).Value);
-        Assert.Equal(shouldRemoveOldSites, Assert.IsType<PyBool>(args[2]).Value);
+        if (shouldRemoveOldSites is { } removeOldSites)
+        {
+            Assert.Equal(3, args.Count);
+            Assert.Equal(removeOldSites, Assert.IsType<PyBool>(args[2]).Value);
+        }
+        else
+        {
+            Assert.Equal(2, args.Count);
+        }
     }
 
     private static string Str(PyValue value) => value switch

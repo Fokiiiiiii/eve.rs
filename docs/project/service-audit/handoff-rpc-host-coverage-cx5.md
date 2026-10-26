@@ -44,5 +44,6 @@ eve.rs already registers `lookupSvc` through `CoreServices.CreateLookupService`,
 - Actions run 40277519916 failed one assertion because decoded Python unicode values use `PyBytes`; the wire response's KeyVal shape was correct. Replaced exact-type checks with the suite's `T(...)` decoder helper.
 - Corrected focused Actions run 40278146386 passed: 1 passed, 0 failed, 0 skipped.
 - Push-triggered `ci.yml` run 40278138665 for `b5c21d53` is in progress.
-- The local focused test invocation remains active under high shared-machine load; no result yet.
+- The local focused `dotnet test` process was stopped after 47 minutes waiting through compilation under shared-machine load; it produced no test result. The same focused test passed in Actions run 40278146386.
+
 - No graphical-client run was performed.

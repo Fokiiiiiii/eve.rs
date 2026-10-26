@@ -6,16 +6,17 @@ Client-call and reply-consumer review is recorded in `CLIENT_VERIFIED.md` for al
 
 `populationCap.MoveCharacterToNewSystem` remains NO-TEST. Its handler validates the selected system/token and persists the move through `PgCharacterStore`; this database-free batch does not exercise the successful owned-character state transition. Close this row after a real Host test asserts the successful None reply and persisted system transition.
 
-Push CI for `30f44c84` exposed three failures from the merged charMgr work: wire string comparison, an outdated registry count (1442 vs 1423), and a member editor test comparing `util.Row` to Rowset. The fixes are committed as `1376ec5b`; merge `8ec5a681` preserved the concurrent main updates, including its stronger full two-row and text-normalization wire assertions. The merged fixes were pushed as `ae5a2974`. Agent Actions run `40263434792` is in progress; push CI run `40263423427` is queued.
-
 ## Verification
 
-- Before the merge update, the Host test project compiled and the focused `Char_mgr_client_read_shapes_match_the_registered_host_wire_contract` passed (1/1).
+- Host wire additions compiled locally. The focused search and populationCap load-slot tests passed locally (1/1 each).
 - CharacterInfo test project compiled. Its PostgreSQL test was not run locally because this task forbids database use.
-- Earlier batch 8 Agent test run `40258937083` passed both new batch tests.
-- No graphical client session or database was used.
+- Full push CI `40264738950` for code SHA `43c99ec67f74` completed successfully; all jobs and the required gate passed.
+- Focused Agent Actions `40268618319` on final source SHA `ba472355e9b3` passed the two Host wire tests. Earlier focused run `40267908952` also passed on `28fbd361`.
+- Dispatch `40267317568` failed before executing tests because its filter matched zero tests; it is not counted as a pass.
+- The first push exposed five tests in merged concurrent work; their targeted reruns passed in runs `40264236989`, `40264754322`, and `40265661762`.
+- No graphical client session or database was used locally.
 - Audit-current has no status-evidence update option; the audit CSV is unchanged.
-- Batch 8 was pushed as `30f44c84`; its push CI failed as recorded above. The correction commit `1376ec5b`, merge `8ec5a681`, and handoff update are on main through `ae5a2974`.
+- Client-consumer evidence and verdicts for all 24 rows are in `CLIENT_VERIFIED.md`; batch changes and this handoff are pushed to main.
 
 ## Files
 

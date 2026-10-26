@@ -142,3 +142,6 @@ Batch 7 follow-up update: origin/main advanced during correction and supplied ex
 
 
 Batch 7 Actions correction update: push CI 40261450475 failed compilation with xUnit2031 in the merged `CharMgrClientReadHostWireTests`, where two filtered sequences were passed to `Assert.Single`. Both now use its predicate overload. Local `Eve.Host.Tests` build passed with zero warnings/errors after the correction; focused and push-CI reruns are pending.
+
+
+Batch 7 final Actions update: focused run 40264056905 passed the selected Host RPC checks. A later selected run 40264532613 also passed. Push CI 40264527362 passed for descendant main SHA 5e7e5d7e, containing the batch-7 commits and analyzer fix; no failed tests or jobs were reported. The focused run summary did not list per-test skip counts. No local database or graphical V24.01 client was used.

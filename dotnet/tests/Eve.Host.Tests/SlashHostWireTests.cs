@@ -1,6 +1,7 @@
 using Eve.Identity;
 using Eve.Macho;
 using Eve.Marshal;
+using Eve.Services;
 
 namespace Eve.Host.Tests;
 

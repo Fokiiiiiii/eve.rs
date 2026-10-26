@@ -72,3 +72,10 @@ A temporary Host test tried to exercise GetNumCharacters/GetCharacterInfo with n
 - The handoff update was pushed with merge SHA `143facac` after merging the current `origin/main` changes.
 - `python3 tools/dev/ci-status.py failures 143facac` reported no `ci.yml` run for that SHA.
 - The selected Host run remains `40260450720` on `6f2b9285`, passed. Batch 6 remains incomplete until the seven NO-TEST methods have representative real-Host coverage.
+
+
+## Final status after push 7cd0624c
+
+- The selected Host run `40260450720` passed on `6f2b9285`; no failed tests or jobs.
+- `python3 tools/dev/ci-status.py failures 7cd0624c` reported no `ci.yml` run for this SHA.
+- Client tracing, the EveJS comparison, and the batch 6 verdict table are recorded in `docs/project/service-audit/CLIENT_VERIFIED.md`. Seventeen of the 29 rows remain NO-TEST across seven methods because representative real-Host coverage is absent. The requested database-backed cases were not exercised; no database was used.

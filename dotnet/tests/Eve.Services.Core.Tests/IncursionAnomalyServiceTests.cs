@@ -221,7 +221,7 @@ public sealed class IncursionAnomalyServiceTests
         Assert.Equal(PyNone.Instance, await empty.CallAsync(emptyCall));
 
         var calls = 0;
-        var wired = NewService("scanMgr", signalTrackerRegister: _ =>
+        var wired = NewService("scanMgr", signalTrackerRegister: (_, _) =>
         {
             calls++;
             return ValueTask.FromResult<PyValue>(PyNone.Instance);
@@ -249,7 +249,7 @@ public sealed class IncursionAnomalyServiceTests
         string name,
         IReadOnlyList<JsonObject>? incursions = null,
         IService? fallback = null,
-        Func<ServiceCall, ValueTask<PyValue>>? signalTrackerRegister = null) =>
+        Func<ServiceCall, PyValue, ValueTask<PyValue>>? signalTrackerRegister = null) =>
         new(
             name,
             _ => ValueTask.FromResult<IReadOnlyList<JsonObject>>(incursions ?? Array.Empty<JsonObject>()),

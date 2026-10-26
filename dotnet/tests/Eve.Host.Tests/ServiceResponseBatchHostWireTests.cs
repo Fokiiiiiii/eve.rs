@@ -124,13 +124,18 @@ public partial class HostServerTests
         var personal = Assert.IsType<PyList>(await HostRpcAsync(front, open, 1, "structureAssetSafety", "GetItemsInSafetyForCharacter"));
         var corporate = Assert.IsType<PyList>(await HostRpcAsync(front, open, 2, "structureAssetSafety", "GetItemsInSafetyForCorp"));
         Assert.Single(personal.Items);
-        Assert.Equal(7001, WireInteger(WireField(personal.Items[0], "assetWrapID")));
+        Assert.Equal(7000000001, WireInteger(WireField(personal.Items[0], "assetWrapID")));
         Assert.Equal("Personal assets", WireText(WireField(personal.Items[0], "wrapName")));
         Assert.Equal(133801234567890123, WireInteger(WireField(personal.Items[0], "ejectTime")));
-        Assert.Same(PyNone.Instance, WireField(personal.Items[0], "nearestNPCStationInfo"));
+        var personalStation = WireField(personal.Items[0], "nearestNPCStationInfo");
+        Assert.Equal(6000000001, WireInteger(WireField(personalStation, "itemID")));
+        Assert.Equal(1529, WireInteger(WireField(personalStation, "typeID")));
         Assert.Single(corporate.Items);
-        Assert.Equal(7002, WireInteger(WireField(corporate.Items[0], "assetWrapID")));
+        Assert.Equal(7000000002, WireInteger(WireField(corporate.Items[0], "assetWrapID")));
         Assert.Equal("Corporation assets", WireText(WireField(corporate.Items[0], "wrapName")));
+        var corporateStation = WireField(corporate.Items[0], "nearestNPCStationInfo");
+        Assert.Equal(6000000001, WireInteger(WireField(corporateStation, "itemID")));
+        Assert.Equal(1529, WireInteger(WireField(corporateStation, "typeID")));
         Assert.Equal((200L, 50L), callbacks.CorporateCaller);
         Assert.Equal(2, callbacks.ProcessedReads);
     }
@@ -140,22 +145,22 @@ public partial class HostServerTests
     {
         Start(configure: registry => registry.Register(new ItemLockingService(null!)));
         var (front, open) = await OpenFrontAsync();
-        Assert.Equal(new PyDict([]), await HostRpcAsync(front, open, 1, "itemLocking", "GetItemsByLocation", new PyLong(6001)));
+        Assert.Equal(new PyDict([]), await HostRpcAsync(front, open, 1, "itemLocking", "GetItemsByLocation", new PyLong(6000000001)));
         Assert.Equal(InventoryWire.EmptySet(), await HostRpcAsync(front, open, 2, "itemLocking", "GetLockedItemLocations"));
     }
 
     private sealed class TestAssetSafetyCallbacks : IStructureAssetSafetyReadCallbacks
     {
         public PyList Personal { get; } = new([
-            Py.KeyVal(("assetWrapID", new PyLong(7001)), ("solarSystemID", new PyInt(30000142)),
+            Py.KeyVal(("assetWrapID", new PyLong(7000000001)), ("solarSystemID", new PyInt(30000142)),
                 ("wrapName", new PyStr("Personal assets")), ("ejectTime", new PyLong(133801234567890123)),
                 ("daysUntilCanDeliverConst", new PyInt(5)), ("daysUntilAutoMoveConst", new PyInt(20)),
-                ("nearestNPCStationInfo", PyNone.Instance))]);
+                ("nearestNPCStationInfo", Py.KeyVal(("itemID", new PyLong(6000000001)), ("typeID", new PyInt(1529)))))]);
         public PyList Corporate { get; } = new([
-            Py.KeyVal(("assetWrapID", new PyLong(7002)), ("solarSystemID", new PyInt(30000142)),
+            Py.KeyVal(("assetWrapID", new PyLong(7000000002)), ("solarSystemID", new PyInt(30000142)),
                 ("wrapName", new PyStr("Corporation assets")), ("ejectTime", new PyLong(133801234567890123)),
                 ("daysUntilCanDeliverConst", new PyInt(5)), ("daysUntilAutoMoveConst", new PyInt(20)),
-                ("nearestNPCStationInfo", PyNone.Instance))]);
+                ("nearestNPCStationInfo", Py.KeyVal(("itemID", new PyLong(6000000001)), ("typeID", new PyInt(1529)))))]);
         public (long Character, long Corporation) CorporateCaller { get; private set; }
         public int ProcessedReads { get; private set; }
         public ValueTask ProcessDueAutomaticDeliveriesAsync(CancellationToken token) { ProcessedReads++; return ValueTask.CompletedTask; }

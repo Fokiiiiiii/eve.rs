@@ -4,20 +4,27 @@ using Eve.Services;
 
 namespace Eve.Host;
 
-/// <summary>Tracks live scanMgr listeners and accepts future full snapshots from their producer.</summary>
+/// <summary>Tracks live scanMgr listeners and sends the state returned by the bound scan manager.</summary>
 public sealed class SignalTrackerRegistrationProvider(CharacterSessions sessions)
 {
     private readonly ConcurrentDictionary<long, Registration> _byCharacter = new();
 
-    public ValueTask<PyValue> RegisterAsync(ServiceCall call)
+    public ValueTask<PyValue> RegisterAsync(ServiceCall call, PyValue fullState)
     {
         ArgumentNullException.ThrowIfNull(call);
         var characterId = call.Session.CharacterId ?? 0;
         var systemId = GetSystemId(call.Session);
-        if (characterId <= 0 || systemId <= 0 || !ReferenceEquals(sessions.Of(characterId), call.Session))
+        if (characterId <= 0 || systemId <= 0 || fullState is PyNone ||
+            !ReferenceEquals(sessions.Of(characterId), call.Session))
             return ValueTask.FromResult<PyValue>(PyNone.Instance);
 
-        _byCharacter[characterId] = new Registration(systemId, call.Session);
+        var registration = new Registration(systemId, call.Session);
+        _byCharacter[characterId] = registration;
+        call.Session.AfterResponse(() =>
+        {
+            if (IsCurrent(characterId, registration))
+                call.Session.SendNotification("OnSignalTrackerFullState", "charid", Py.Number(systemId), fullState);
+        });
         return ValueTask.FromResult<PyValue>(PyNone.Instance);
     }
 
@@ -45,15 +52,9 @@ public sealed class SignalTrackerRegistrationProvider(CharacterSessions sessions
             }
 
             if (shouldRemoveOldSites)
-            {
-                registration.Session.SendNotification(
-                    "OnSignalTrackerFullState", "charid", Py.Number(systemId), fullState, PyBool.True);
-            }
+                registration.Session.SendNotification("OnSignalTrackerFullState", "charid", Py.Number(systemId), fullState, PyBool.True);
             else
-            {
-                registration.Session.SendNotification(
-                    "OnSignalTrackerFullState", "charid", Py.Number(systemId), fullState);
-            }
+                registration.Session.SendNotification("OnSignalTrackerFullState", "charid", Py.Number(systemId), fullState);
         }
     }
 

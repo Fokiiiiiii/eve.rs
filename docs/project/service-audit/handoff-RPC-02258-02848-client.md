@@ -24,3 +24,33 @@ Client-call and reply-consumer review is recorded in `CLIENT_VERIFIED.md` for al
 - `dotnet/tests/Eve.Host.Tests/PopulationCapHostWireTests.cs`
 - `docs/project/service-audit/CLIENT_VERIFIED.md`
 - `docs/project/service-audit/handoff-RPC-02258-02848-client.md`
+
+
+## Batch 18 — implemented-row client verification (2026-10-26)
+
+Appended all 30 requested rows RPC-02542 through RPC-02617 to `CLIENT_VERIFIED.md`. Confirmed the whole-tree client callsites/consumers, Host handlers and existing wire assertions, and EveJS 261018.1 handlers for the mapped rows.
+
+Outstanding NO-TEST rows: RPC-02577–02582 (four StandingMgr methods) have no populated registered Host reply-shape test; RPC-02586–02587 (station.GetGuests) only have an empty-list Host assertion, not the four-integer tuple rows the client unpacks. The StandingMgr handlers depend on the PostgreSQL-backed Rowset Read Side; the station guest handler loads character state through PgCharacterStore. This task prohibits database use, so those success shapes were not exercised and no test was added. These rows remain open. The remaining rows match existing registered Host wire tests, including populated station map, station record/tuple, interference, slash dispatch, and asset-safety rows.
+
+No code changed, no database or graphical client was used, and no tests were run in this docs-only update. Follow up by adding populated registered Host tests for the six rows above under an approved non-local database test lane.
+
+
+### Batch 18 local verification update
+
+After merging current origin/main, `dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false` built the Host test project, then ended with 466 passed, 101 failed, and 227 skipped (794 total). Failures include tests that require `EVE_PG_URL`; no PostgreSQL database was used, as this task prohibits it. Skips are not counted as passing. The new upstream `StandingMgrHostWireTests.cs` covers an empty transaction list and cached empty CRowset shape, but does not assert populated row fields; the six NO-TEST rows recorded above remain open.
+
+
+The focused non-database registered Host test `Standing_history_and_composition_keep_client_wire_shapes_through_host_dispatch` passed locally (1 passed, 0 failed, 0 skipped). It covers empty transaction/composition results only, not populated client rows.
+
+
+### Post-merge rerun
+
+After the next `origin/main` merge, the full Host test project built but finished with 468 passed, 101 failed, and 227 skipped (796 total); database/SDE environment tests still fail or skip without their assigned lane. No PostgreSQL database was used. The focused `Standing_history_and_composition_keep_client_wire_shapes_through_host_dispatch` test passed again (1 passed, 0 failed, 0 skipped).
+
+
+### Pushed verification
+
+Docs-only audit commit `ebe5c1be91b7` is on main. Agent Actions run `40334870781` succeeded for the focused Host test (1 passed, 0 failed, 0 skipped). `python3 tools/dev/ci-status.py failures ebe5c1be91b7b1b1aff71d9ce3e4e080f45b3118` reported no push-triggered `ci.yml` run for that SHA.
+
+
+Final audit documentation SHA `da5ebf2e9326` also passed Agent Actions run `40335825708` for the focused Host test (1 passed, 0 failed, 0 skipped); no failed jobs/tests. `ci-status.py failures` found no `ci.yml` run for that SHA.

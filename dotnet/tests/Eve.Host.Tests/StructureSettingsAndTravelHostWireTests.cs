@@ -136,6 +136,7 @@ public partial class HostServerTests
 
         var services = Assert.IsType<PyDict>(await Call(
             "structureSettings", "CharacterGetServices", Py.Tuple(new PyInt(structureId))));
+        Assert.Equal(new PyInt(Eve.Structures.StructureServiceIds.Market), services.Entries.Single().Key);
         Assert.Equal(new PyInt(1), services.Entries.Single().Value);
         Assert.Equal(PyBool.True, await Call(
             "structureSettings", "CharacterHasService",

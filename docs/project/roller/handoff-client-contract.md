@@ -101,3 +101,11 @@ Whole-client V24 evidence shows two consumers of station/system ask values: quot
 - Market and Host test projects built with 0 warnings and 0 errors. MarketStructureWireTests verified named fields, sequence values, and MarshalCodec round-trip (1 passed, 0 skipped).
 - MarketRpcTests, ProtocolTests, and MarketHostTests now assert the populated util.Row shape; they were compiled but not executed because those scenarios require PostgreSQL, which this job forbids using.
 - No graphical V24 client session was run. GitHub Actions verification is pending.
+
+## Destiny damage-state wire contract (2026-10-26)
+
+The V24.01 client stores the incoming state in `Park.OnDamageStateChange` and emits `OnDamageStateChange` with the client-calculated 5-value damage view from `Park.GetDamageState` (`eve/client/script/remote/michelle.py:1017-1031,1536-1543`). The wire payload itself remains `((shield, shieldTau, fileTime), armor, structure)`: ship alerts and ship-health audio read indices 0–2 (`eve/client/script/ui/inflight/shipAlert.py:149-153`, `eveaudio/shiphealthnotification.py:47-53`), while the destroy counter consumes the expanded view and reads hull at index 2 (`objectives/client/objective_task/destroy_counter.py:70-76`). EveJS v0.12.9's `buildDamageState` builds the same nested shield tuple and outer armor/structure values (`server/src/space/combat/damage.js:262-285`).
+
+Strengthened `crates/eve-space/src/health/tests.rs` to assert the full nested tuple lengths, shield recharge tau and FILETIME type, and that `OnModuleAttributeChanges` precedes the owner's and observer's `DoDestinyUpdate` messages. The simulation sends changed attributes only to the pilot and damage state to the owner and visible observer.
+
+Checks passed: `cargo +1.94.1 fmt --all -- --check`; focused `eve-space` damage-state test (1 passed); `cargo +1.94.1 check -p eve-space`; and workspace `cargo +1.94.1 clippy --workspace --all-targets -- -D warnings`. No database or graphical client was used.

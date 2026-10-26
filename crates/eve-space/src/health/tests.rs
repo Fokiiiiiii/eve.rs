@@ -394,6 +394,36 @@ fn a_hit_tells_the_pilot_what_changed_and_everyone_who_can_see_the_ship_its_dama
     assert_eq!(*ship, crate::wire::id(ship_of(&spec())));
     assert_eq!((armor, structure), (&Value::Real(1.0), &Value::Real(1.0)));
     assert_eq!(*shield, Value::Real(0.917525));
+    assert_eq!(
+        out.iter()
+            .filter_map(|out| match out {
+                Out::Notify { name, .. } => Some(*name),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        ["OnModuleAttributeChanges", "DoDestinyUpdate", "DoDestinyUpdate"],
+        "the pilot receives changed Dogma attributes before the owner and observer receive Destiny state"
+    );
+
+    let update = out
+        .iter()
+        .find_map(|out| match out {
+            Out::Notify { session: A, name: "DoDestinyUpdate", args, .. } => Some(args),
+            _ => None,
+        })
+        .unwrap();
+    let Value::List(actions) = &update[0] else { panic!() };
+    let Value::Tuple(pair) = &actions[0] else { panic!() };
+    let Value::Tuple(action) = &pair[1] else { panic!() };
+    let Value::Tuple(arguments) = &action[1] else { panic!() };
+    let Value::Tuple(state) = &arguments[1] else { panic!() };
+    assert_eq!(state.len(), 3, "shield, armor, structure");
+    let Value::Tuple(shield_state) = &state[0] else { panic!() };
+    assert_eq!(shield_state.len(), 3, "shield fraction, recharge tau, FILETIME");
+    assert_eq!(shield_state[1], Value::Real(172_000.0));
+    assert!(matches!(shield_state[2], Value::Long(_)));
+    assert_eq!(state[1], Value::Real(1.0));
+    assert_eq!(state[2], Value::Real(1.0));
 }
 
 #[test]

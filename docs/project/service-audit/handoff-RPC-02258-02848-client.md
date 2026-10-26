@@ -6,7 +6,7 @@ Client-call and reply-consumer review is recorded in `CLIENT_VERIFIED.md` for al
 
 `populationCap.MoveCharacterToNewSystem` remains NO-TEST. Its handler validates the selected system/token and persists the move through `PgCharacterStore`; this database-free batch does not exercise the successful owned-character state transition. Close this row after a real Host test asserts the successful None reply and persisted system transition.
 
-Push CI for `30f44c84` exposed three failures from the merged charMgr work: wire string comparison, an outdated registry count (1442 vs 1423), and a member editor test comparing `util.Row` to Rowset. The fixes are committed as `1376ec5b`; merge `8ec5a681` preserved the concurrent main updates, including its stronger full two-row and text-normalization wire assertions. The merged changes are ready to push; Actions verification is pending.
+Push CI for `30f44c84` exposed three failures from the merged charMgr work: wire string comparison, an outdated registry count (1442 vs 1423), and a member editor test comparing `util.Row` to Rowset. The fixes are committed as `1376ec5b`; merge `8ec5a681` preserved the concurrent main updates, including its stronger full two-row and text-normalization wire assertions. The merged fixes were pushed as `ae5a2974`. Agent Actions run `40263434792` is in progress; push CI run `40263423427` is queued.
 
 ## Verification
 
@@ -15,7 +15,7 @@ Push CI for `30f44c84` exposed three failures from the merged charMgr work: wire
 - Earlier batch 8 Agent test run `40258937083` passed both new batch tests.
 - No graphical client session or database was used.
 - Audit-current has no status-evidence update option; the audit CSV is unchanged.
-- Batch 8 was pushed as `30f44c84`; its push CI failed as recorded above.
+- Batch 8 was pushed as `30f44c84`; its push CI failed as recorded above. The correction commit `1376ec5b`, merge `8ec5a681`, and handoff update are on main through `ae5a2974`.
 
 ## Files
 

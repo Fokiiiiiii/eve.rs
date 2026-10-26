@@ -51,3 +51,6 @@ After the next `origin/main` merge, the full Host test project built but finishe
 ### Pushed verification
 
 Docs-only audit commit `ebe5c1be91b7` is on main. Agent Actions run `40334870781` succeeded for the focused Host test (1 passed, 0 failed, 0 skipped). `python3 tools/dev/ci-status.py failures ebe5c1be91b7b1b1aff71d9ce3e4e080f45b3118` reported no push-triggered `ci.yml` run for that SHA.
+
+
+Final audit documentation SHA `da5ebf2e9326` also passed Agent Actions run `40335825708` for the focused Host test (1 passed, 0 failed, 0 skipped); no failed jobs/tests. `ci-status.py failures` found no `ci.yml` run for that SHA.

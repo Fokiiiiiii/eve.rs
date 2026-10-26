@@ -5,7 +5,7 @@ using Eve.Universe;
 namespace Eve.Services.Station;
 
 [Service("stationSvc", Aliases = ["station"])]
-public sealed partial class StationService(StationCatalog stations, PgCharacterStore characters, OnlineCharacters online, Func<long> nowUnixMs, Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? sovereigntySystemsForAlliance = null, Eve.Services.Corporations.OfficeManagerService? officeManager = null, SeedObserverGuestLedgerCallback? seedObserverGuestLedger = null, CharacterSessions? characterSessions = null)
+public sealed partial class StationService(StationCatalog stations, PgCharacterStore characters, OnlineCharacters online, Func<long> nowUnixMs, Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? sovereigntySystemsForAlliance = null, Eve.Services.Corporations.OfficeManagerService? officeManager = null, SeedObserverGuestLedgerCallback? seedObserverGuestLedger = null, CharacterSessions? characterSessions = null, Func<CancellationToken, ValueTask<IReadOnlyList<(long SolarSystemId, long AllianceId)>>>? allAllianceSystems = null)
 {
     /// <summary>The station services (repair, reprocessing, market, ...) every NPC station offers, as the client's bit mask.</summary>
     public const long AllServicesMask = 1_143_312;
@@ -151,25 +151,30 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
             ("stationTypeID", new PyInt(s.TypeId)))
         : None;
 
-    /// <summary>No alliance holds a system until sovereignty exists.</summary>
+    /// <summary>All alliance-held systems for the star map.</summary>
     [Method("GetAllianceSystems")]
     public async ValueTask<PyValue> GetAllianceSystems(ServiceCall call)
     {
-        var allianceId = call.Session.GetInt("allianceid") ?? 0;
-        if (allianceId <= 0 || sovereigntySystemsForAlliance is null)
-            return new PyList([]);
-        var systems = await sovereigntySystemsForAlliance(allianceId, call.Cancellation);
-        return new PyList([.. systems.Select(systemId => (PyValue)new PyInt(systemId))]);
+        var readSystems = allAllianceSystems ?? throw new InvalidOperationException(
+            "StationService requires the sovereignty read model for GetAllianceSystems.");
+        var systems = await readSystems(call.Cancellation);
+        return new PyList([.. systems.Select(system => (PyValue)Py.KeyVal(
+            ("solarSystemID", new PyInt(system.SolarSystemId)),
+            ("allianceID", new PyInt(system.AllianceId))))]);
     }
 
     [Method("GetSystemsForAlliance")]
     public async ValueTask<PyValue> GetSystemsForAlliance(ServiceCall call)
     {
         var allianceId = IdOf(call.Arg(0)) ?? 0;
-        if (allianceId <= 0 || sovereigntySystemsForAlliance is null)
+        if (allianceId <= 0)
             return new PyList([]);
-        var systems = await sovereigntySystemsForAlliance(allianceId, call.Cancellation);
-        return new PyList([.. systems.Select(systemId => (PyValue)new PyInt(systemId))]);
+        var readSystems = sovereigntySystemsForAlliance ?? throw new InvalidOperationException(
+            "StationService requires the sovereignty read model for GetSystemsForAlliance.");
+        var systems = await readSystems(allianceId, call.Cancellation);
+        return new PyList([.. systems.Select(systemId => (PyValue)Py.KeyVal(
+            ("solarSystemID", new PyInt(systemId)),
+            ("allianceID", new PyInt(allianceId))))]);
     }
 
     private Eve.Services.Corporations.OfficeManagerService RequireOfficeManager() =>

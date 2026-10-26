@@ -230,6 +230,18 @@ public sealed class PersistenceSovFwReadModel(
             .ToArray();
     }
 
+    public async ValueTask<IReadOnlyList<(long SolarSystemId, long AllianceId)>> ReadAllAllianceSystemsAsync(
+        CancellationToken cancellationToken)
+    {
+        var snapshot = await ReadSnapshotAsync(cancellationToken);
+        return snapshot.ClaimsBySolarSystemId
+            .Where(pair => pair.Value.AllianceId is > 0)
+            .Select(pair => (SolarSystemId: pair.Key, AllianceId: pair.Value.AllianceId!.Value))
+            .OrderBy(system => system.SolarSystemId)
+            .ThenBy(system => system.AllianceId)
+            .ToArray();
+    }
+
 
     public async ValueTask<PyValue> ReadCurrentMapDataAsync(
         long locationId,

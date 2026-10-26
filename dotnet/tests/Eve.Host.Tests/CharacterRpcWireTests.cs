@@ -1,11 +1,13 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Text.Json.Nodes;
 using Eve.Host;
 using Eve.Identity;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Core;
+using Eve.Services.CharacterInfo;
 
 namespace Eve.Host.Tests;
 
@@ -32,10 +34,56 @@ public sealed class CharacterRpcWireTests : IAsyncLifetime
     [Fact]
     public async Task Character_and_support_rpc_contracts_reach_registered_host_services()
     {
+        var notifications = new JsonObject
+        {
+            ["byID"] = new JsonObject
+            {
+                ["101"] = new JsonObject
+                {
+                    ["notificationID"] = 101, ["typeID"] = 7, ["senderID"] = 12,
+                    ["receiverID"] = 42, ["groupID"] = 4, ["processed"] = false,
+                    ["created"] = 132_000_000_000_000_000L, ["data"] = new JsonObject { ["message"] = "notice" },
+                },
+                ["100"] = new JsonObject
+                {
+                    ["notificationID"] = 100, ["typeID"] = 8, ["senderID"] = 13,
+                    ["receiverID"] = 42, ["groupID"] = 5, ["processed"] = true,
+                    ["created"] = 132_000_000_000_000_000L, ["data"] = new JsonObject(),
+                },
+            },
+        };
+        var notificationMutations = new List<(string Operation, long? GroupId, IReadOnlyList<long> Ids)>();
+        var sessions = new CharacterSessions();
+        ServiceCall? extractionCall = null;
         var registry = new ServiceRegistry();
-        foreach (var service in CoreServices.Create(new NoAccounts(), () => FixedNowMs))
+        foreach (var service in CoreServices.Create(new NoAccounts(), () => FixedNowMs,
+                     readNonDiminishingInjections: (_, _) => ValueTask.FromResult(7)))
             registry.Register(service);
         registry.Register(new PaperDollServerRpcService());
+        registry.Register(new MoonExtractionsRpcService(
+            () => Task.FromResult<JsonObject?>(new JsonObject
+            {
+                ["resourcesByStructureID"] = new JsonObject
+                {
+                    ["700"] = new JsonObject { ["resources"] = new JsonObject { ["34"] = 0.75, ["35"] = 0.25 } },
+                },
+            }),
+            call =>
+            {
+                extractionCall = call;
+                return ValueTask.FromResult<PyValue>(new PyInt(1));
+            }));
+        registry.Register(new OnlineStatusService(sessions,
+            (id, _) => ValueTask.FromResult<IReadOnlyCollection<long>>(id == 42 ? new long[] { 12 } : new long[] { 42 })));
+        registry.Register(new NotificationMgrService(
+            (_, _) => ValueTask.FromResult<JsonObject?>(notifications),
+            () => FixedNowMs,
+            mutate: (characterId, operation, groupId, ids, _, _) =>
+            {
+                Assert.Equal(42, characterId);
+                notificationMutations.Add((operation, groupId, ids));
+                return ValueTask.CompletedTask;
+            }));
 
         var config = GlobalConfig.Build(Options);
         var encoded = MarshalCodec.Encode(config);
@@ -45,6 +93,12 @@ public sealed class CharacterRpcWireTests : IAsyncLifetime
             {
                 session.Set("allianceID", new PyInt(0));
                 session.Set("corporationID", new PyInt(90_000_001));
+                session.Set("structureid", new PyInt(700));
+                session.Set("charid", new PyInt(42));
+                sessions.Enter(42, session);
+                var other = new ClientSession();
+                other.Set("charid", new PyInt(12));
+                sessions.Enter(12, other);
             }},
             dispatcher,
             new InMemoryAccountDirectory(new AccountOptions { AutoCreate = true }),
@@ -108,6 +162,65 @@ public sealed class CharacterRpcWireTests : IAsyncLifetime
         Assert.IsType<PyNone>(await CallAsync("petitioner", "ClosePetition",
             new PyTuple([petitionId]), PyNone.Instance));
         Assert.Same(PyBool.False, await CallAsync("petitioner", "CreatePetition", petition, PyNone.Instance));
+
+        var resources = Assert.IsType<PyDict>(await CallAsync("moonExtractions", "GetMoonResourcesForStructure",
+            new PyTuple([]), PyNone.Instance));
+        Assert.Contains(resources.Entries, pair => pair.Key == new PyInt(34) && pair.Value == new PyReal(0.75));
+        var extractionResult = await CallAsync("moonExtractions", "StartNewExtraction",
+            new PyTuple([new PyInt(700), new PyInt(604_800), PyBool.True]),
+            new PyDict([new(new PyStr("machoVersion"), new PyInt(1))]));
+        Assert.Equal(new PyInt(1), extractionResult);
+        Assert.Equal(3, extractionCall!.Args.Count);
+        Assert.Equal(new PyInt(604_800), extractionCall.Args[1]);
+
+        Assert.Equal(new PyInt(7), await CallAsync("nonDiminishingInjectionMgr", "GetAvailableNonDiminishingInjections",
+            new PyTuple([]), new PyDict([new(new PyStr("machoVersion"), new PyInt(1))])));
+
+        Assert.Same(PyBool.True, await CallAsync("onlineStatus", "GetOnlineStatus",
+            new PyTuple([new PyInt(12)]), PyNone.Instance));
+        var initialOnline = Assert.IsType<PyObjectEx>(await CallAsync("onlineStatus", "GetInitialState",
+            new PyTuple([]), PyNone.Instance));
+        var presence = Assert.IsType<PyPackedRow>(Assert.Single(initialOnline.List));
+        Assert.Equal(new PyInt(12), presence.Values[0]);
+        Assert.Same(PyBool.True, presence.Values[1]);
+
+        var allNotifications = Assert.IsType<PyList>(await CallAsync("notificationMgr", "GetAllNotifications",
+            new PyTuple([]), new PyDict([new(new PyStr("fromID"), new PyInt(0))])));
+        Assert.Equal(101, Assert.IsType<PyInt>(NotificationField(allNotifications.Items[0], "notificationID")).Value);
+        var groupNotifications = Assert.IsType<PyList>(await CallAsync("notificationMgr", "GetByGroupID",
+            new PyTuple([new PyInt(4)]), PyNone.Instance));
+        Assert.Single(groupNotifications.Items);
+        var unprocessed = Assert.IsType<PyList>(await CallAsync("notificationMgr", "GetUnprocessed",
+            new PyTuple([]), PyNone.Instance));
+        Assert.Single(unprocessed.Items);
+
+        var burstIds = new PyList(Enumerable.Range(1, 100).Select(id => (PyValue)new PyInt(id)).ToArray());
+        foreach (var (method, args) in new (string Method, PyValue Args)[]
+        {
+            ("DeleteAllNotifications", new PyTuple([])),
+            ("DeleteGroupNotifications", new PyTuple([new PyInt(4)])),
+            ("DeleteNotifications", new PyTuple([burstIds])),
+            ("MarkAllAsProcessed", new PyTuple([])),
+            ("MarkAsProcessed", new PyTuple([burstIds])),
+            ("MarkGroupAsProcessed", new PyTuple([new PyInt(4)])),
+        })
+            Assert.IsType<PyNone>(await CallAsync("notificationMgr", method, args, PyNone.Instance));
+        Assert.Equal(
+            ["DeleteAllNotifications", "DeleteGroupNotifications", "DeleteNotifications", "MarkAllAsProcessed", "MarkAsProcessed", "MarkGroupAsProcessed"],
+            notificationMutations.Select(mutation => mutation.Operation));
+        Assert.Equal(100, notificationMutations[2].Ids.Count);
+        Assert.Equal(100, notificationMutations[4].Ids.Count);
+    }
+
+    private static PyValue NotificationField(PyValue value, string name)
+    {
+        var dictionary = Assert.IsType<PyDict>(Assert.IsType<PyObject>(value).Args);
+        return dictionary.Entries.Single(entry => entry.Key switch
+        {
+            PyStr key => key.Value,
+            PyBytes key => System.Text.Encoding.UTF8.GetString(key.Value.Span),
+            _ => string.Empty,
+        } == name).Value;
     }
 
     private sealed class NoAccounts : IOmegaAccountStore

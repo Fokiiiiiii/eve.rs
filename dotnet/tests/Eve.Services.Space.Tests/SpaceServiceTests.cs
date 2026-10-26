@@ -3065,6 +3065,7 @@ public class SpaceServiceTests
 
         rig.Sim.Lose();
         await Rig.UntilAsync(() => session.GetInt("stationid") == Rig.Station);
+        await rig.Space.QuiesceAsync();
 
         Assert.Contains("OnDockingFinished", Sequence.Of(session));
         var ship = (await rig.Items.GetAsync(character.ShipId))!;

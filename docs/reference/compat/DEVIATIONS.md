@@ -5863,3 +5863,8 @@ V24.01 `searchOld.__Search` sets `onlyAltName=True` for corporation/alliance sea
 ## PLEX Vault balance scope (2026-10-26)
 
 The V24.01 `VgsClient.get_plex_account_balance` call sends only `PLX` and returns the numeric reply (`vgs/client/vgsClient.py:28-30`). eve.rs resolves the authenticated account's characters and aggregates their PLEX balances in `PersistenceNewEdenStoreRuntime.GetPlexBalanceAsync`; CCP documents the PLEX Vault as shared across characters on one account ([CCP PLEX Vault](https://support.eveonline.com/hc/en-us/articles/115003168285-PLEX-Vault)). EveJS 261018.1 `vaultManagerService.js:20-31` reads the current session character's wallet projection instead. The account-level aggregation follows the documented game rule; this is an intentional difference from EveJS.
+
+
+## Fast-checkout testing configuration sequence container (2026-10-26)
+
+EveJS 261018.1 returns the three testing configuration values as a JavaScript array, which its store marshal converts to a PyList (`server/src/services/newEdenStore/FastCheckoutService.js:147-154`; `storeMarshal.js:73-107`). eve.rs emits a PyTuple from `FastCheckoutService.GetTestingConfiguration`. V24.01 destructures the reply into exactly the China-funnel bool, fake-offer URL, and shell-execution bool (`fastcheckout/client/fastCheckoutClientService.py:75,93-104`) and does not inspect its container type. The Host tuple preserves the consumed values and order.

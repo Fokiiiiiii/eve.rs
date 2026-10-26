@@ -74,7 +74,7 @@ public static class CoreServices
             new RaffleProxyService(),
             new ContractProxyService(contractReadModel, contractWriteModel, contractSkillLevel, contractBrokerFeeAdjustment,
                 hasContractManagerRole, readCurrentCalendarGroups) { Inventory = contractInventoryReader },
-            new JumpCloneService(gameRpcCallbacks.JumpClones, gameRpcCallbacks.JumpCloneSpace),
+            new JumpCloneService(nowUnixMs, gameRpcCallbacks.JumpClones, gameRpcCallbacks.JumpCloneSpace),
             new ServiceGatewayMgrService(gameRpcCallbacks.SetHijackMode, gameRpcCallbacks.IsHijackModeEnabled),
             new SharedSettingsMgrService(gameRpcCallbacks.ReadSharedSettings, gameRpcCallbacks.WriteSharedSettingsAsync, nowUnixMs),
             new OverviewPresetMgrService(gameRpcCallbacks.ReadOverviewPresets, gameRpcCallbacks.WriteOverviewPresets),

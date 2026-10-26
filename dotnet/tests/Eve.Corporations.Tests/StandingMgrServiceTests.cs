@@ -54,11 +54,11 @@ public sealed class StandingMgrServiceTests
 
             var ownComposition = UnwrapCached(await ((IService)service).CallAsync(Call("GetStandingCompositions", ownerSession, npcStandingOwner, corporation.Id)));
             Assert.Single(CompositionLines(ownComposition).Items);
-            var foreignComposition = await ((IService)service).CallAsync(
-                Call("GetStandingCompositions", ownerSession, npcStandingOwner, otherCorporation.Id));
+            var foreignComposition = UnwrapCached(await ((IService)service).CallAsync(
+                Call("GetStandingCompositions", ownerSession, npcStandingOwner, otherCorporation.Id)));
             Assert.Empty(CompositionLines(foreignComposition).Items);
-            var otherCorporationView = await ((IService)service).CallAsync(
-                Call("GetStandingCompositions", otherSession, npcStandingOwner, corporation.Id));
+            var otherCorporationView = UnwrapCached(await ((IService)service).CallAsync(
+                Call("GetStandingCompositions", otherSession, npcStandingOwner, corporation.Id)));
             Assert.Empty(CompositionLines(otherCorporationView).Items);
         }
         finally

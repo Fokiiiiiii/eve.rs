@@ -926,3 +926,11 @@ Commit 88579c43 fixes the contact Host fixture. Full main CI run 1113 (Actions r
 ## Push 2e5492be status
 
 Commit 2e5492be corrects the two Host Python 2 string wire expectations. Main CI run 1114 (Actions run 40318816492) completed red only on the Dogma SpawnCommand test, standing cached-result test, and the same two station-ask E2E assertions. All four Host shards passed. Build, Rust, Python client, fixtures, all space-test shards, and Windows passed. Run 1114 reported one skipped Dogma benchmark, one skipped market benchmark, and eight E2E skips (seven slow-live checks and skill-training speed); skips are not passes.
+
+## Push 9d7a5789 status
+
+Commit 9d7a5789 updates the Dogma spawn test helper to preserve each SlashCmd reply's PyValue type. Main CI run 1115 (Actions run 40320802804) completed red only on the standing cached-result test and the two station-ask E2E assertions. The Dogma shard and all four Host shards passed. Build, Rust, Python client, fixtures, all space-test shards, and Windows passed. Run 1115 reported one skipped Dogma benchmark, one skipped market benchmark, and eight E2E skips (seven slow-live checks and skill-training speed); skips are not passes.
+
+## Earlier flagged shared-settings byte assertion
+
+The `Shared_setting_store_returns_the_keyval_consumed_by_the_client_through_host_dispatch` failure is already corrected by main commit 6693eab6. V24.01 `filterSvc.py:448-450` and `eveEditPlainText.py:169-172` consume the returned keyVal fields; `sharedSettings/util.py:10-25` passes `GetStoredSharedSetting` to `yaml.safe_load`. EveJS 261018.1 `sharedSettingsMgrService.js:263-293` returns a keyVal and the stored payload string. eve.rs returns the same key fields and payload (`GameRpcServices.cs:1052-1120`); Python 2 string values arrive at the Host decoder as PyBytes, so the Host test asserts PyBytes and reads the text with JsSemantics.StringValue. The case was absent from failures in runs 1112–1114.

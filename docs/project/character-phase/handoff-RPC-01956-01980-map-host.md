@@ -26,16 +26,19 @@ eve.rs uses the real registered `map` Host route: `IncursionAnomalyService` owns
 
 ## Verification
 
-- Current run: `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --filter 'FullyQualifiedName~Map_history_incursion_and_industry_cost_replies_follow_registered_host_routes' -p:UseSharedCompilation=false`: passed, 1/1, no skips.
+- Local focused test: `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --filter 'FullyQualifiedName~Map_history_incursion_and_industry_cost_replies_follow_registered_host_routes' -p:UseSharedCompilation=false`: passed, 1/1, no skips.
 - Previously recorded: `Map_industry_cost_wire_reply_preserves_solar_system_dictionary_keys`: passed, 1/1, no skips.
+- Focused Actions run `40281416831` for `5014f255`: success; no failed tests or jobs.
 - No database was used. Real graphical-client behavior was not checked.
 
 ## CI follow-up
 
 The earlier push gate reported `RpcSecurityInventoryTests.Real_host_registry_methods_are_enumerable` expected 1420 rows but found 1423 after the initial Host merge. A later `origin/main` merge added 18 `accessGroupBookmarkMgr` routes and one `BookmarkScanResult` route, bringing the expected total to 1442. The inventory assertion was updated in that prior work. The focused inventory test uses database schema setup, so it is checked by Actions rather than locally.
 
+For this batch, `python3 tools/dev/ci-status.py failures 5014f255` and the same command for `d5b3f590` both found no `ci.yml` run. The focused Actions workflow passed for the final code and documentation state.
+
 ## This batch push
 
 - Commit `8b196aad` documented the complete client caller/consumer audit.
 - Fetched and merged `origin/main`; pushed merge commit `d5b3f590` to `origin/main`.
-- Focused Actions and push-gate results are pending for the batch commit.
+- Handoff/status commit `5014f255` was pushed to `origin/main`; focused Actions run `40281416831` passed.

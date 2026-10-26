@@ -110,13 +110,27 @@ public sealed partial class AccessGroupBookmarkMgrService(BookmarkStore store, F
     {
         var itemId = Integral(call.Arg(0)) ?? 0;
         var target = resolveStaticTarget(itemId) ?? throw new BookmarkError("BookmarkNotAvailable");
+        return await CreateBookmarkAsync(call, target, Integral(call.Arg(1)) ?? 0, Text(call.Arg(2)), Text(call.Arg(3)),
+            (int)(Integral(call.Arg(4)) ?? 0), Integral(call.Arg(5)));
+    }
+
+    /// <summary>Persists the coordinates of a live cosmic signature through the same access checks and notifications as a static bookmark.</summary>
+    public ValueTask<PyValue> CreateScanBookmarkAsync(ServiceCall call, BookmarkTarget target, long folderId, string? memo, string? note,
+        int expiryMode, long? subfolderId)
+    {
+        if (target.ItemId is not null || target.TypeId != 5 || target.LocationId <= 0
+            || target.X is not { } x || target.Y is not { } y || target.Z is not { } z
+            || !double.IsFinite(x) || !double.IsFinite(y) || !double.IsFinite(z))
+            throw new BookmarkError("BookmarkNotAvailable");
+        return CreateBookmarkAsync(call, target, folderId, memo, note, expiryMode, subfolderId);
+    }
+
+    private async ValueTask<PyValue> CreateBookmarkAsync(ServiceCall call, BookmarkTarget target, long folderId, string? memo, string? note,
+        int expiryMode, long? subfolderId)
+    {
         if (BookmarkRules.DisabledSystems.Contains(target.LocationId))
-        {
             throw new BookmarkError("BookmarkNotAvailable", "Bookmarks are disabled in this system.");
-        }
-        var folderId = Integral(call.Arg(1)) ?? 0;
-        var bookmark = await store.CreateBookmarkAsync(Character(call), folderId, target, Text(call.Arg(2)), Text(call.Arg(3)),
-            (int)(Integral(call.Arg(4)) ?? 0), Integral(call.Arg(5)), await Lists(call), call.Cancellation);
+        var bookmark = await store.CreateBookmarkAsync(Character(call), folderId, target, memo, note, expiryMode, subfolderId, await Lists(call), call.Cancellation);
         await Publish(call, folderId, Update(folderId, "bookmarksAdded", new PyList([BookmarkPayload(bookmark)])));
         return ReplyTuple(bookmark);
     }
@@ -350,15 +364,15 @@ private const int MaxBulkBookmarkIds = 500;
     private static PyValue BookmarkPayload(Bookmark bookmark) => Py.KeyVal(
         ("bookmarkID", InventoryWire.Id(bookmark.BookmarkId)),
         ("folderID", InventoryWire.Id(bookmark.FolderId)),
-        ("itemID", InventoryWire.Id(bookmark.ItemId)),
+        ("itemID", bookmark.ItemId is { } itemId ? InventoryWire.Id(itemId) : PyNone.Instance),
         ("typeID", InventoryWire.Id(bookmark.TypeId == 0 ? StationTypeFallback : bookmark.TypeId)),
         ("flag", PyNone.Instance),
         ("memo", new PyWString(bookmark.Memo)),
         ("created", new PyLong(Py.FileTimeFromUnixMs(bookmark.CreatedMs))),
         ("expiry", bookmark.ExpiryMs is { } expiry ? new PyLong(Py.FileTimeFromUnixMs(expiry)) : PyNone.Instance),
-        ("x", PyNone.Instance),
-        ("y", PyNone.Instance),
-        ("z", PyNone.Instance),
+        ("x", bookmark.X is { } x ? new PyReal(x) : PyNone.Instance),
+        ("y", bookmark.Y is { } y ? new PyReal(y) : PyNone.Instance),
+        ("z", bookmark.Z is { } z ? new PyReal(z) : PyNone.Instance),
         ("locationID", InventoryWire.Id(bookmark.LocationId)),
         ("note", new PyWString(bookmark.Note)),
         ("subfolderID", bookmark.SubfolderId is { } sub ? InventoryWire.Id(sub) : PyNone.Instance),
@@ -367,11 +381,11 @@ private const int MaxBulkBookmarkIds = 500;
     /// <summary>The eight-part tuple the client unpacks from a new bookmark: id, item, type, x, y, z, location, expiry.</summary>
     private static PyValue ReplyTuple(Bookmark bookmark) => new PyTuple([
         InventoryWire.Id(bookmark.BookmarkId),
-        InventoryWire.Id(bookmark.ItemId),
+        bookmark.ItemId is { } itemId ? InventoryWire.Id(itemId) : PyNone.Instance,
         InventoryWire.Id(bookmark.TypeId),
-        PyNone.Instance,
-        PyNone.Instance,
-        PyNone.Instance,
+        bookmark.X is { } x ? new PyReal(x) : PyNone.Instance,
+        bookmark.Y is { } y ? new PyReal(y) : PyNone.Instance,
+        bookmark.Z is { } z ? new PyReal(z) : PyNone.Instance,
         InventoryWire.Id(bookmark.LocationId),
         bookmark.ExpiryMs is { } expiry ? new PyLong(Py.FileTimeFromUnixMs(expiry)) : PyNone.Instance,
     ]);
@@ -387,11 +401,13 @@ public sealed class BookmarkRefusals(IService inner) : IService
 
     public bool HasMethod(string method) => inner.HasMethod(method);
 
-    public async ValueTask<PyValue> CallAsync(ServiceCall call)
+    public ValueTask<PyValue> CallAsync(ServiceCall call) => WithRefusals(() => inner.CallAsync(call));
+
+    public static async ValueTask<T> WithRefusals<T>(Func<ValueTask<T>> operation)
     {
         try
         {
-            return await inner.CallAsync(call);
+            return await operation();
         }
         catch (BookmarkError error)
         {

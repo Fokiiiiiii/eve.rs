@@ -27,9 +27,19 @@ public partial class HostServerTests
 
         var fighters = Assert.IsType<PyTuple>(await Call("GetFightersForShip", []));
         Assert.Equal(3, fighters.Items.Count);
-        Assert.Empty(Assert.IsType<PyList>(fighters.Items[0]).Items);
-        Assert.Empty(Assert.IsType<PyList>(fighters.Items[1]).Items);
-        Assert.Empty(Assert.IsType<PyDict>(fighters.Items[2]).Entries);
+        Assert.Equal(
+            new PyTuple([new PyInt(158), new PyInt(903), new PyInt(32366), new PyInt(9)]),
+            Assert.IsType<PyTuple>(Assert.Single(Assert.IsType<PyList>(fighters.Items[0]).Items)));
+        Assert.Equal(
+            new PyTuple([new PyInt(159), new PyInt(904), new PyInt(32366), new PyInt(8)]),
+            Assert.IsType<PyTuple>(Assert.Single(Assert.IsType<PyList>(fighters.Items[1]).Items)));
+        var abilitiesByFighter = Assert.IsType<PyDict>(fighters.Items[2]);
+        var fighterAbilities = Assert.Single(abilitiesByFighter.Entries);
+        Assert.Equal(new PyInt(904), fighterAbilities.Key);
+        var abilityStates = Assert.IsType<PyTuple>(fighterAbilities.Value);
+        Assert.Equal(2, abilityStates.Items.Count);
+        Assert.Empty(Assert.IsType<PyDict>(abilityStates.Items[0]).Entries);
+        Assert.Empty(Assert.IsType<PyDict>(abilityStates.Items[1]).Entries);
 
         var machoVersion = Py.Dict(("machoVersion", new PyInt(3396210)));
         var ids = new PyList([new PyInt(903), new PyInt(904)]);
@@ -118,7 +128,14 @@ public partial class HostServerTests
         public List<ServiceCall> Calls { get; } = [];
 
         public ValueTask<PyValue> GetFightersForShipAsync(ServiceCall call) =>
-            Answer(call, Py.Tuple(new PyList([]), new PyList([]), new PyDict([])));
+            Answer(call, Py.Tuple(
+                new PyList([Py.Tuple(new PyInt(158), new PyInt(903), new PyInt(32366), new PyInt(9))]),
+                new PyList([Py.Tuple(new PyInt(159), new PyInt(904), new PyInt(32366), new PyInt(8))]),
+                new PyDict([
+                    new KeyValuePair<PyValue, PyValue>(
+                        new PyInt(904),
+                        Py.Tuple(new PyDict([]), new PyDict([]))),
+                ])));
 
         public ValueTask<PyValue> LoadFightersToTubeAsync(ServiceCall call) => Answer(call, PyNone.Instance);
         public ValueTask<PyValue> UnloadTubeToFighterBayAsync(ServiceCall call) => Answer(call, PyNone.Instance);

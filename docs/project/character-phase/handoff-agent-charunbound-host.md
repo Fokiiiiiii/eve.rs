@@ -58,3 +58,10 @@ Complete the six remaining methods with Host tests for valid/error inputs, persi
 ### Verification probe detail
 
 A temporary Host test tried to exercise GetNumCharacters/GetCharacterInfo with null character-store dependencies. The Host returned ErrorResponse, and the temporary test was removed; no live store or database was substituted. This result does not establish a service mismatch because the probe lacked the character store needed for an authenticated Host session. The documented NO-TEST verdicts remain open.
+
+
+## Actions update after push 6f2b9285
+
+- Selected Host run `40260450720` passed for `Char_unbound_mgr_stateless_reads_and_validation_toggle_are_registered_on_the_host` (0 failed tests/jobs). This is existing stateless Host coverage; it does not close the seven NO-TEST methods.
+- `python3 tools/dev/ci-status.py failures 6f2b9285` reported no `ci.yml` run for the pushed SHA at the follow-up check.
+- Local temporary probes with null character-store dependencies returned ErrorResponse for account-backed reads; those test additions were removed. No database or graphical client was used.

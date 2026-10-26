@@ -46,5 +46,6 @@ public partial class HostServerTests
         Assert.IsType<PyObject>(await Call(3, "GetMyCharacterRankInfo"));
         var overview = Assert.IsType<PyList>(await Call(4, "GetMyCharacterRankOverview"));
         Assert.NotEmpty(overview.Items);
+        Assert.Equal(new PyInt(1000180), await Call(5, "GetFactionMilitiaCorporation", new PyInt(500001)));
     }
 }

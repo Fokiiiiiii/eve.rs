@@ -83,10 +83,10 @@ public partial class HostServerTests
             (await Call("GetBounties", new PyList([new PyLong(targetId)]))).Result);
         Assert.Equal(new PyInt(targetId), Assert.IsType<PyTuple>(Assert.Single(bounties.Items)).Items[0]);
         var mine = Assert.IsType<PyList>((await Call("GetMyBounties")).Result);
-        Assert.Equal(new PyInt(31), Field(Assert.Single(mine.Items), "contributionID"));
+        Assert.Equal(new PyLong(31), Field(Assert.Single(mine.Items), "contributionID"));
 
         var killRights = Assert.IsType<PyList>((await Call("GetMyKillRights")).Result);
-        Assert.Equal(new PyInt(17), Field(Assert.Single(killRights.Items), "killRightID"));
+        Assert.Equal(new PyLong(17), Field(Assert.Single(killRights.Items), "killRightID"));
         foreach (var method in new[]
         {
             "GetTopPilotBountyHunters", "GetTopCorporationBountyHunters", "GetTopAllianceBountyHunters",

@@ -1,4 +1,5 @@
 using Eve.Marshal;
+using Eve.Services;
 
 namespace Eve.Host.Tests;
 

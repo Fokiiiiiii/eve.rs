@@ -123,7 +123,7 @@ public partial class HostServerTests
         var keyVal = Assert.IsType<PyObject>(value);
         Assert.Equal("util.KeyVal", JsSemantics.StringValue(keyVal.Name));
         return Assert.IsType<PyDict>(keyVal.Args).Entries
-            .ToDictionary(entry => JsSemantics.StringValue(entry.Key), entry => entry.Value);
+            .ToDictionary(entry => JsSemantics.StringValue(entry.Key)!, entry => entry.Value);
     }
 
     private static long ReadWarNumber(PyValue value) => value switch

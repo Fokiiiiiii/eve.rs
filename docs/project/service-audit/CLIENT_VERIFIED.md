@@ -194,8 +194,10 @@ All 29 rows were checked; duplicate IDs share the same V24.01 caller and contrac
 | RPC-00923 | beyonce.GetCynoJammerState | `sovDashboard/cynoJammerIcon.py:45-47` | PyLong FILETIME schedules refresh; None clears timer and schedules none (:49-59). | `BeyonceService.cs:210-220`; `BeyonceRpcHostTests.cs:53-55` asserts PyLong; `SpaceServiceTests.cs:52-78` covers FILETIME/None. | MATCHES |
 | RPC-00924 | beyonce.GetCynoJammerState | `cynoJammerIcon.py:45-47` | Same nullable FILETIME consumer. | `BeyonceService.cs:210-220`; same Host/behavior tests. | MATCHES |
 | RPC-00927 | beyonce.GetFormations | `eve/client/script/remote/michelle.py:324` | Passes value to native `Ballpark.LoadFormations`, held for ballpark session. | `BeyonceService.cs:223-225`; `BeyonceRpcHostTests.cs:59-68` asserts cache wrapper and decoded formation tuple names/shapes. | MATCHES |
-| RPC-00928 | beyonce.GetFormations | `michelle.py:324` | Same native loader consumer. | `BeyonceService.cs:223-225`; `BeyonceRpcHostTests.cs:59-68`. | MATCHES || RPC-00996 | charMgr.AddContact | `addressbookService.py:732-733` | Agent path sends one ID and ignores reply. Personal path at :788-807 sends relation/watchlist/notification/message, updates cache and emits `OnContactChange`. | `CharMgrService.cs:926-937`; `CharacterManagerMutationHostWireTests.cs:25-32` asserts None and subsequent rowset through Host. | MATCHES |
-| RPC-00997 | charMgr.AddContact | `addressbookService.py:732-733` | Same agent/personal-contact consumers. | `CharMgrService.cs:926-937`; same Host test. | MATCHES || RPC-01000 | charMgr.AddOwnerNote | `notepad.py:206-207` | Returned ID seeds note/folder cache; later edits use it (:208-214). | `CharMgrService.cs:964-985`; `CharacterManagerMutationHostWireTests.cs:52-64` asserts positive PyInt and reads note back. | MATCHES |
+| RPC-00928 | beyonce.GetFormations | `michelle.py:324` | Same native loader consumer. | `BeyonceService.cs:223-225`; `BeyonceRpcHostTests.cs:59-68`. | MATCHES |
+| RPC-00996 | charMgr.AddContact | `addressbookService.py:732-733` | Agent path sends one ID and ignores reply. Personal path at :788-807 sends relation/watchlist/notification/message, updates cache and emits `OnContactChange`. | `CharMgrService.cs:926-937`; `CharacterManagerMutationHostWireTests.cs:25-32` asserts None and subsequent rowset through Host. | MATCHES |
+| RPC-00997 | charMgr.AddContact | `addressbookService.py:732-733` | Same agent/personal-contact consumers. | `CharMgrService.cs:926-937`; same Host test. | MATCHES |
+| RPC-01000 | charMgr.AddOwnerNote | `notepad.py:206-207` | Returned ID seeds note/folder cache; later edits use it (:208-214). | `CharMgrService.cs:964-985`; `CharacterManagerMutationHostWireTests.cs:52-64` asserts positive PyInt and reads note back. | MATCHES |
 | RPC-01001 | charMgr.AddOwnerNote | `notepad.py:206-207` | Same returned note-ID consumer. | `CharMgrService.cs:964-985`; same Host test. | MATCHES |
 | RPC-01002 | charMgr.AddOwnerNote | `notepad.py:622-623` | ID is cache key; note is shown and later edited (:624-633). | `CharMgrService.cs:964-985`; `CharacterManagerMutationHostWireTests.cs:52-64`. | MATCHES |
 | RPC-01003 | charMgr.AddOwnerNote | `notepad.py:622-623` | Same note-ID/cache consumer. | `CharMgrService.cs:964-985`; same Host test. | MATCHES |
@@ -292,9 +294,11 @@ Whole-tree client searches confirmed the consumers below. Client paths are relat
 | RPC-01082 | charMgr.GetPublicInfo3 | `eve/client/script/ui/shared/info/characterInfoWindow.py:194` | Reads info[0].bloodlineID to form description (:193-198). | same | MATCHES |
 | RPC-01083 | charMgr.GetPublicInfo3 | `characterInfoWindow.py:194` | Same bloodlineID contract. | same | MATCHES |
 | RPC-01084 | charMgr.GetRecentShipKillsAndLosses | `eve/client/script/ui/shared/info/infosvc.py:2648` | Iterates rows and filters finalCharacterID == session.charid (:2646-2648). | `CharMgrService.cs:1198-1221`; service paging test `CharacterInfoTests.cs:528-568`; unbound None Host branch `CharMgrRpcHostWireTests.cs:50`; valid-session list and finalCharacterID/victimCharacterID Host assertions `CharMgrRecentKillHostWireTests.cs:10-60` | MATCHES |
-| RPC-01085 | charMgr.GetRecentShipKillsAndLosses | `infosvc.py:2648` | Same finalCharacterID consumer. | same | MATCHES || RPC-01086 | charMgr.GetRecentShipKillsAndLosses | `infosvc.py:2652` | Iterates rows and filters victimCharacterID == session.charid (:2650-2652). | same | MATCHES |
+| RPC-01085 | charMgr.GetRecentShipKillsAndLosses | `infosvc.py:2648` | Same finalCharacterID consumer. | same | MATCHES |
+| RPC-01086 | charMgr.GetRecentShipKillsAndLosses | `infosvc.py:2652` | Iterates rows and filters victimCharacterID == session.charid (:2650-2652). | same | MATCHES |
 | RPC-01087 | charMgr.GetRecentShipKillsAndLosses | `infosvc.py:2652` | Same victimCharacterID consumer. | same | MATCHES |
-| RPC-01088 | charMgr.GetSettingsInfo | `carbonui/services/settingsSvc.py:148` | Unpacks (code, verified), verifies, unmarshals and executes code, then logs nonempty stats (:147-158). | `CharMgrService.cs:344-345`; Host `CharMgrRpcHostWireTests.cs:41-43`; dispatcher `CharMgrSettingsWireTests.cs:10-30`. | MATCHES || RPC-01089 | charMgr.GetSettingsInfo | `settingsSvc.py:148` | Same tuple/Buffer/int and follow-up order. | same | MATCHES |
+| RPC-01088 | charMgr.GetSettingsInfo | `carbonui/services/settingsSvc.py:148` | Unpacks (code, verified), verifies, unmarshals and executes code, then logs nonempty stats (:147-158). | `CharMgrService.cs:344-345`; Host `CharMgrRpcHostWireTests.cs:41-43`; dispatcher `CharMgrSettingsWireTests.cs:10-30`. | MATCHES |
+| RPC-01089 | charMgr.GetSettingsInfo | `settingsSvc.py:148` | Same tuple/Buffer/int and follow-up order. | same | MATCHES |
 | RPC-01091 | charMgr.List | `eve/client/script/ui/station/loyaltyPointStore/lpStoreSvc.py:312` | Iterates inventory records with named item fields. | `CharMgrService.cs:313-314`; registered Host test `CharMgrClientItemListHostTests.cs:10-48`. | MATCHES |
 | RPC-01092 | charMgr.List | `eve/client/script/environment/fittingSvc.py:583` | Iterates named inventory records. | same | MATCHES |
 | RPC-01093 | charMgr.List | `eve/client/script/ui/station/assembleModularShip.py:234` | Iterates named inventory records. | same | MATCHES |
@@ -352,13 +356,13 @@ EveJS comparison: search returns a group-ID keyed dictionary of lists for `Query
 
 - The Host wire tests use the production service handlers and network dispatch. They assert client-used wire types and fields: station cache wrapper/KeyVal, tuple and list rows, station owner fields, alliance rows, integer clone grade, and FILETIME long.
 - The new Query test sends the client's group-ID list and `exact` keyword with the Macho `machoVersion` transport keyword, then checks the dictionary and list value shapes.
-- The new population test exercises the registered service through Host dispatch for an unauthenticated session and verifies the mapping wire type. A successful character move needs owned character persistence and is not exercised by this database-free batch; RPC-02259 remains NO-TEST.- The audit-current generator has no status-evidence update option; the CSV was left unchanged as instructed.
+- The new population test exercises the registered service through Host dispatch for an unauthenticated session and verifies the mapping wire type. A successful character move needs owned character persistence and is not exercised by this database-free batch; RPC-02259 remains NO-TEST.
+- The audit-current generator has no status-evidence update option; the CSV was left unchanged as instructed.
 - Graph/source comparison checked current handlers against EveJS v0.12.9-compatible behavior. The full graphical client was not launched for this batch.
 - Actions run 40260608955 stopped at compile on the updated private-info test's PyList header construction; the header now materializes to an array. The affected CharacterInfo test project builds locally with 0 warnings/errors; the selected Actions tests need a rerun.
 
 
 - Actions run 40261514261 failed during compilation on xUnit2031 in `CharMgrClientReadHostWireTests.cs`; the label assertions now use `Assert.Single(collection, predicate)`. The focused Actions rerun is pending. Local Host project build succeeded (0 warnings/errors), and `Char_mgr_client_read_shapes_match_the_registered_host_wire_contract` passed locally (1 passed, 0 skipped); the valid-session recent-kill wire check also passed locally (1 passed, 0 skipped).
-
 - Focused Actions run 40264471982 for 2e9b557f succeeded with no failed tests/jobs, covering the registered-Host client-read, item-list and recent-kill checks plus registry/private-info regressions. The headless-client step was skipped because `--live ''` was requested; graphical-client behavior remains unchecked. Push-triggered `ci.yml` run 40264462725 was still queued when checked.
 - Push-triggered `ci.yml` run 40264462725 for 2e9b557f completed successfully with no failed tests/jobs. This closes the selected Host/service regression verification for batch 4; the graphical client was not run.
 
@@ -419,6 +423,8 @@ The RPC inventory has duplicate row IDs for a single service method; every ID be
 - The character and map focused Host tests use in-memory providers and no PostgreSQL. The map Host hook supplies a representative cached-rowset value; the existing database-backed service test `StationServiceTests.cs:318-363` separately checks static station query fields and ordering.
 - The pre-existing full contact persistence test is database-gated at `CharacterManagerMutationHostWireTests.cs:11-91`; this batch's contact/note/delete Host regression does not need a database.
 - No graphical client session was started. The account-backed character-count query and live database notification persistence path were not exercised here.
+
+- Focused Actions run 40300335873 for `ab564a87` failed during the Release solution build before tests ran: `ClientRowsMapHostWireTests.cs` imported `Eve.Services.ObjectCaching`, which resolves to a type, not a namespace. Removed that invalid import in commit `245ec903` (merged and pushed as `e6480527`); rerun 40301815665 is pending. The push-triggered `ci.yml` status for the earlier `ab564a87` revision was still in progress at last check.
 
 # P1 implemented-untested rows, batch 7 (30 rows)
 

@@ -531,7 +531,8 @@ public sealed partial class TourneyMgrService(TourneyQueryCallback? query = null
 
     [Method("QueryShipList")]
     public ValueTask<PyValue> QueryShipList(ServiceCall call) =>
-        QueryAsync(call, TourneyQuery.QueryShipList, Positive(call.Arg(0)), new PyList([]));
+        QueryAsync(call, TourneyQuery.QueryShipList, Positive(call.Arg(0)),
+            Py.Dict(("allowedShipList", new PyList([]))));
 
     [Method("GetPotentialMatches")]
     public ValueTask<PyValue> GetPotentialMatches(ServiceCall call) =>

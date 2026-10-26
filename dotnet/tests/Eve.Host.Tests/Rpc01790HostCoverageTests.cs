@@ -1,4 +1,6 @@
 using Eve.Marshal;
+using Eve.Macho;
+using Eve.Services;
 using Eve.Services.Core;
 using System.Text.Json.Nodes;
 
@@ -54,7 +56,7 @@ public partial class HostServerTests
                   "extractionID": 3,
                   "structureID": 30000144,
                   "moonID": 40000003,
-                  "solarSystemID": 30000144,
+                  "solarSystemID": 30000142,
                   "ownerID": 980001,
                   "startMoveTimeMs": 1700000000000,
                   "chunkAvailableTimeMs": 1700518462000,
@@ -81,16 +83,16 @@ public partial class HostServerTests
         var front = await Handshaken(await ConnectAsync());
         var open = Open();
         await front.SendAsync(open);
-        _ = await front.ReceiveAsync();
+_ = await front.ReceiveAsync();
         var machoVersion = new PyTuple([new PyInt(0), new PyInt(3396210)]);
         var kwargs = new PyDict([
             new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), machoVersion),
         ]);
         async Task<PyValue?> Call(long id, string service, string method, params PyValue[] args)
         {
-            var packet = Packets.CallWithKwargs(
+            var payload = Packets.CallWithKwargs(
                 open, id, service, method, new PyTuple(args), kwargs);
-            await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(packet)));
+            await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(payload)));
             var response = Assert.IsType<Send>(await front.ReceiveAsync());
             return Result(MarshalCodec.Decode(response.Payload));
         }

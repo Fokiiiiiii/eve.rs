@@ -32,7 +32,7 @@ EveJS comparisons: `Fokiiiiiii/evejs-v0.12.9/server/src/services/fighter/fighter
 
 ## Verification
 
-- `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --no-restore -p:BuildProjectReferences=false`: passed after merge, 0 warnings/errors (3m 50s).
+- After `git fetch origin main && git merge origin/main` (fast-forward plus conflict resolution in `Rpc01790HostCoverageTests.cs`), full Host test project build passed: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --no-restore -m:1`, 0 warnings/errors (20m 20s).
 - Focused Host tests for the fighter/FW RPCs and the adjacent RPC-01790 route: 3 passed, 0 failed, 0 skipped.
-- The main merge exposed an adjacent Host test that sent a call before `SessionOpen` and expected decoded string tokens as `PyStr`. Fixed its open/frame setup and used the existing byte-string decoder; the same route now passes.
+- The merge exposed an adjacent Host test that omitted `SessionOpen`, sent an unframed marshal value, and asserted wire strings as `PyStr`. The test now opens the session, uses the Host packet frame, and reads string tokens with the existing decoder.
 - No PostgreSQL database or graphical client was used. GitHub Actions verification remains pending.

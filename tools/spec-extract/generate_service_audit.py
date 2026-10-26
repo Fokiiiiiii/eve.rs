@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import collections
 import csv
 import importlib.util
@@ -70,6 +71,14 @@ OWNER_REJECTIONS = {
 CLIENT_LOCAL_APIS = {
     ("charMgr", "InvalidateStationItemsCache"):
         "client-local cache eviction at eve/client/script/environment/invCache.py:855-859; no service or moniker call",
+}
+CLIENT_DEAD_APIS = {
+    ("beyonce", "GetFleetLocationAndInfo"):
+        "unreferenced client helper at eve/client/script/parklife/fleetSvc.py:884-891; no V24.01 caller or EveJS 261018.1 route",
+    ("beyonce", "GetFleetState"):
+        "unreferenced lazy cache helper at eve/client/script/remote/michelle.py:287-295; fleet UI uses OnFleetStateChange and fleetObjectHandler.GetInitState separately",
+    ("beyonce", "GetRelativity"):
+        "unreferenced diagnostics helper at eve/client/script/remote/michelle.py:536-568; no V24.01 caller or EveJS 261018.1 route",
 }
 CORE_SERVICES = {
     "pingService", "air_npe", "config", "subscriptionMgr", "charMgr", "charUnboundMgr",
@@ -142,7 +151,8 @@ def arg_at(contract: Any, source: str, offset: int) -> list[str] | None:
     return contract.split_arguments(raw) if raw is not None else None
 
 
-def rpc_context(contract: Any, source: str, line_no: int, variable: str | None = None) -> str:
+def rpc_context(contract: Any, source: str, line_no: int, variable: str | None = None,
+                method: str | None = None) -> str:
     lines = source.splitlines()
     if not lines or line_no < 1 or line_no > len(lines):
         return ""
@@ -175,9 +185,25 @@ def rpc_context(contract: Any, source: str, line_no: int, variable: str | None =
         use = f"reply assigned to {variable}; later use lines {','.join(map(str, refs[:12])) or 'none in caller'}"
     elif re.search(r"\bawait\b", current_line):
         use = "reply awaited inline"
+    elif method and _is_ignored_call_statement(current_line, method):
+        use = "reply ignored by caller statement"
     else:
         use = "reply consumed inline by caller expression"
     return f"{scope}; {use}"
+
+
+def _is_ignored_call_statement(line: str, method: str) -> bool:
+    try:
+        statement = ast.parse(line).body
+    except SyntaxError:
+        return False
+    return any(
+        isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Attribute)
+        and node.value.func.attr == method
+        for node in statement
+    )
 
 
 def add_call(rows: list[dict[str, str]], service: str, method: str, args: list[str] | None,
@@ -216,7 +242,7 @@ def extended_calls(contract: Any, path: pathlib.Path, source: str) -> list[dict[
         calls.append({
             "service": match.group(3), "method": match.group(4), "arguments": args,
             "file": relative, "line": line, "kind": "proxy-service" if match.group(1) == "ProxySvc" else "remote-service",
-            "via": match.group(1), "consumer": rpc_context(contract, source, line),
+            "via": match.group(1), "consumer": rpc_context(contract, source, line, method=match.group(4)),
         })
     for match in ALIAS_METHOD.finditer(source):
         lhs = match.group("lhs")
@@ -230,7 +256,7 @@ def extended_calls(contract: Any, path: pathlib.Path, source: str) -> list[dict[
             "service": service, "method": match.group("method"),
             "arguments": arg_at(contract, source, match.start("method")),
             "file": relative, "line": line, "kind": "remote-service-alias", "via": "assigned remote object",
-            "consumer": rpc_context(contract, source, line),
+            "consumer": rpc_context(contract, source, line, method=match.group("method")),
         })
     for match in REMOTE_ACCESSOR.finditer(source):
         line = contract.line_at(source, match.start())
@@ -238,7 +264,7 @@ def extended_calls(contract: Any, path: pathlib.Path, source: str) -> list[dict[
             "service": "beyonce", "method": match.group(1),
             "arguments": arg_at(contract, source, match.start(1)),
             "file": relative, "line": line, "kind": "bound-object", "via": "GetRemotePark moniker",
-            "consumer": rpc_context(contract, source, line),
+            "consumer": rpc_context(contract, source, line, method=match.group(1)),
         })
     for match in RECORDSET.finditer(source):
         raw = contract.argument_text(source, match.end() - 1)
@@ -280,7 +306,7 @@ def client_inventory(contract: Any, client_root: pathlib.Path, server_root: path
             prefix = text.split(call["method"], 1)[0]
             assignment = re.search(r"(?:(?:self\.)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*)[^=]*$", prefix)
             variable = assignment.group(1) if assignment else None
-            context = rpc_context(contract, source, line, variable)
+            context = rpc_context(contract, source, line, variable, call["method"])
             add_call(result, call["service"], call["method"], call["arguments"], call["kind"], call["via"],
                      relative, line, context)
     for path in sorted(client_root.rglob("*.py")):
@@ -423,6 +449,8 @@ def host_routes(contract: Any, repo_root: pathlib.Path) -> tuple[set[tuple[str, 
     aliases: dict[str, str] = {}
     for source in registration_sources:
         registered_types.update(re.findall(r"\bnew\s+(?:[A-Za-z_][\w]*\.)*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(|\{)", source))
+        if re.search(r"\bHostInventoryServiceFactory\.CreateInvBroker\s*\(", source):
+            registered_types.add("InvBrokerService")
         aliases.update((match.group(2), match.group(4)) for match in contract.REGISTER_ALIAS.finditer(source))
     active_services = {
         service for service, service_type in type_by_service.items()
@@ -457,7 +485,7 @@ def test_evidence(repo_root: pathlib.Path, pairs: set[tuple[str, str]], type_by_
                 continue
             body = source[opening:end]
             test_name = match.group(1)
-            if not re.search(r"\b(?:HostComposition|HostServer|ServiceRegistry|PacketDispatcher|Macho|DispatchAsync|InvokeAsync|RpcHarness|HostCodec)\b", body):
+            if not re.search(r"\b(?:HostComposition|HostServer|ServiceRegistry|PacketDispatcher|Macho|DispatchAsync|InvokeAsync|RpcHarness|HostCodec|CallWithKwargs)\b", body):
                 continue
             for service, method in pairs:
                 service_type = type_by_service.get(service, "")
@@ -473,6 +501,8 @@ def status_for(pair: tuple[str, str], routes: set[tuple[str, str]], tests: dict[
                contract: Any) -> tuple[str, str]:
     if pair in CLIENT_LOCAL_APIS:
         return "CLIENT-LOCAL", CLIENT_LOCAL_APIS[pair]
+    if pair in CLIENT_DEAD_APIS:
+        return "CLIENT-DEAD", CLIENT_DEAD_APIS[pair]
     if pair in OWNER_REJECTIONS:
         return "REJECTS-VALID-INPUT", OWNER_REJECTIONS[pair]
     if pair in contract.REGISTERED_BEHAVIOR_GAPS:
@@ -497,7 +527,7 @@ def queue_jobs(rows: list[dict[str, Any]], queue_dir: pathlib.Path) -> list[path
     pending = [
         row for row in rows
         if row["row_type"] == "rpc" and row["core_play_priority"] in {"P0", "P1"}
-        and row["status"].split(" (", 1)[0] != "IMPLEMENTED-TESTED"
+        and row["status"].split(" (", 1)[0] not in {"IMPLEMENTED-TESTED", "CLIENT-DEAD"}
     ]
     grouped: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
     for row in pending:

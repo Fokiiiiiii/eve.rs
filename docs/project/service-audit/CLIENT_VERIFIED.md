@@ -49,33 +49,33 @@ Whole-tree V24.01 caller searches show all consumers summarized below. The owner
 
 | row_id | service.method | client call site | consumers | handler | verdict |
 |---|---|---|---|---|---|
-| RPC-01100 | charMgr.ListStations | `assetsWindow.py:922` | iterates station rows | `CharMgrService.cs:307-320`; registered Host rowset assertion `CharMgrRpcHostWireTests.cs:41-48` | MATCHES |
-| RPC-01101 | charMgr.ListStations | `quote.py:364` | iterates station rows for market selector | `CharMgrService.cs:307-320`; `CharMgrRpcHostWireTests.cs:41-48` | MATCHES |
-| RPC-01102 | charMgr.ListStations | `assetsinfo.py:148` | iterates station rows | `CharMgrService.cs:307-320`; `CharMgrRpcHostWireTests.cs:41-48` | MATCHES |
-| RPC-01103 | charMgr.ListStations | `createContractWnd.py:1571` | iterates station rows | `CharMgrService.cs:307-320`; `CharMgrRpcHostWireTests.cs:41-48` | MATCHES |
-| RPC-01104 | charMgr.ListStations | `corp_ui_accounts.py:752` | indexes rows by `stationID` | `CharMgrService.cs:307-320`; `CharMgrRpcHostWireTests.cs:41-48` | MATCHES |
-| RPC-01105 | charMgr.LogSettings | `settingsSvc.py:153` | only called for nonempty stats; reply ignored | `CharMgrService.cs:1083-1099`; Host asserts `PyNone`, `CharMgrRpcHostWireTests.cs:67` | MATCHES |
-| RPC-01106 | charMgr.LogSettings | `settingsSvc.py:153` | same call; reply ignored | `CharMgrService.cs:1083-1099`; `CharMgrRpcHostWireTests.cs:67` | MATCHES || RPC-01108 | charMgr.RemoveOwnerNote | `notepad.py:107` | parallel cleanup of invalid note IDs; reply ignored | `CharMgrService.cs:1102-1131`; Host asserts `PyNone`, `CharMgrRpcHostWireTests.cs:68` | MATCHES |
-| RPC-01109 | charMgr.RemoveOwnerNote | `notepad.py:179` | parallel cleanup of stale note IDs; reply ignored | `CharMgrService.cs:1102-1131`; `CharMgrRpcHostWireTests.cs:68` | MATCHES |
-| RPC-01110 | charMgr.RemoveOwnerNote | `notepad.py:703` | deletes note and reloads notepad; reply ignored | `CharMgrService.cs:1102-1131`; `CharMgrRpcHostWireTests.cs:68` | MATCHES |
-| RPC-01111 | charMgr.RemoveOwnerNote | `notepad.py:703` | same delete flow; reply ignored | `CharMgrService.cs:1102-1131`; `CharMgrRpcHostWireTests.cs:68` | MATCHES |
-| RPC-01112 | charMgr.SaveCharacterSetting | `characterSettingsSvc.py:48` | writes key/value then updates local cache; empty values use Delete; client caps values at 100 KB | `CharMgrService.cs:437-462`; registered Host persistence test `CharacterManagerMutationHostWireTests.cs:9-80` asserts `PyNone` and round-trips state | MATCHES |
-| RPC-01113 | charMgr.SetActivityStatus | `gameui.py:338` | active status with FILETIME extraInfo; reply ignored | `CharMgrService.cs:1143-1157` | NO-TEST |
-| RPC-01114 | charMgr.SetActivityStatus | `gameui.py:338` | same active transition | `CharMgrService.cs:1143-1157` | NO-TEST |
-| RPC-01115 | charMgr.SetActivityStatus | `gameui.py:333` | AFK status with FILETIME extraInfo; reply ignored | `CharMgrService.cs:1143-1157` | NO-TEST |
-| RPC-01116 | charMgr.SetActivityStatus | `gameui.py:333` | same AFK transition | `CharMgrService.cs:1143-1157` | NO-TEST |
-| RPC-01117 | charMgr.SetCharacterDescription | `bioPanel.py:60` | autosaves text; on exception reloads it; reply ignored | `CharMgrService.cs:203-229` | NO-TEST |
-| RPC-01118 | charMgr.SetCharacterDescription | `bioPanel.py:60` | same exception recovery | `CharMgrService.cs:203-229` | NO-TEST |
-| RPC-01119 | charMgr.SetNote | `notepad.py:540` | asynchronous item note save; reply ignored | `CharMgrService.cs:1159-1185` | NO-TEST |
-| RPC-01120 | charMgr.SetNote | `panelNotes.py:60` | saves changed text or empty string; reply ignored | `CharMgrService.cs:1159-1185` | NO-TEST |
-| RPC-01121 | charMgr.SetNote | `panelNotes.py:60` | same note editor flow | `CharMgrService.cs:1159-1185` | NO-TEST |
-| RPC-01122 | charMgr.UnblockOwners | `addressbookService.py:673` | local blocked cache update and `OnUnblockContacts` precede refresh; reply ignored | `CharMgrService.cs:1187-1195` | NO-TEST |
-| RPC-01123 | charMgr.UnblockOwners | `addressbookService.py:673` | same unblock flow | `CharMgrService.cs:1187-1195` | NO-TEST |
-| RPC-01125 | charUnboundMgr.CancelCharacterDeletePrepare | `characterSelection.py:870` | cancels deletion then refreshes slot; reply ignored | `CharUnboundMgrService.cs:449-462` | NO-TEST |
-| RPC-01126 | charUnboundMgr.CancelCharacterDeletePrepare | `characterSelection.py:870` | same cancel and refresh | `CharUnboundMgrService.cs:449-462` | NO-TEST |
-| RPC-01127 | charUnboundMgr.CreateCharacterWithDoll | `ccSvc.py:96` | reply ID clears selection cache; both creation UIs use ID for portrait insertion (`characterCreationContainer_new.py:1300-1304`, `characterCreationContainer.py:1839-1848`) | `CharUnboundMgrService.cs:261-305` | NO-TEST |
-| RPC-01128 | charUnboundMgr.CreateCharacterWithDoll | `ccSvc.py:96` | same reply ID consumers | `CharUnboundMgrService.cs:261-305` | NO-TEST || RPC-01129 | charUnboundMgr.DeleteCharacter | `characterSelection.py:847` | expects falsey success; truthy error is displayed, otherwise selection refreshes (`characterSelection.py:851-859`) | `CharUnboundMgrService.cs:502-526` | NO-TEST |
-| RPC-01130 | charUnboundMgr.GetCharOmegaDowngradeStatus | `characterSelection.py:300` | bool controls lapsed-subscription warning creation; errors are caught | `CharUnboundMgrService.cs:157-168`; registered Host bool test `CharUnboundOmegaHostTests.cs:9-46` | MATCHES |
+| RPC-01100 | charMgr.ListStations | `assetsWindow.py:923` | iterates station rows | `CharMgrService.cs:308-321`; registered Host rowset assertion `CharMgrRpcHostWireTests.cs:53-58` | MATCHES |
+| RPC-01101 | charMgr.ListStations | `quote.py:365` | iterates station rows for market selector | `CharMgrService.cs:308-321`; `CharMgrRpcHostWireTests.cs:53-58` | MATCHES |
+| RPC-01102 | charMgr.ListStations | `assetsinfo.py:149` | iterates station rows | `CharMgrService.cs:308-321`; `CharMgrRpcHostWireTests.cs:53-58` | MATCHES |
+| RPC-01103 | charMgr.ListStations | `createContractWnd.py:1572` | iterates station rows | `CharMgrService.cs:308-321`; `CharMgrRpcHostWireTests.cs:53-58` | MATCHES |
+| RPC-01104 | charMgr.ListStations | `corp_ui_accounts.py:753` | indexes rows by `stationID` | `CharMgrService.cs:308-321`; `CharMgrRpcHostWireTests.cs:53-58` | MATCHES |
+| RPC-01105 | charMgr.LogSettings | `settingsSvc.py:154` | only called for nonempty stats; reply ignored | `CharMgrService.cs:1084-1100`; Host asserts `PyNone`, `CharMgrRpcHostWireTests.cs:68` | MATCHES |
+| RPC-01106 | charMgr.LogSettings | `settingsSvc.py:154` | same call; reply ignored | `CharMgrService.cs:1084-1100`; `CharMgrRpcHostWireTests.cs:68` | MATCHES || RPC-01108 | charMgr.RemoveOwnerNote | `notepad.py:108` | parallel cleanup of invalid note IDs; reply ignored | `CharMgrService.cs:1103-1132`; Host asserts `PyNone`, `CharMgrRpcHostWireTests.cs:69` | MATCHES |
+| RPC-01109 | charMgr.RemoveOwnerNote | `notepad.py:180` | parallel cleanup of stale note IDs; reply ignored | `CharMgrService.cs:1103-1132`; `CharMgrRpcHostWireTests.cs:69` | MATCHES |
+| RPC-01110 | charMgr.RemoveOwnerNote | `notepad.py:704` | deletes note and reloads notepad; reply ignored | `CharMgrService.cs:1103-1132`; `CharMgrRpcHostWireTests.cs:69` | MATCHES |
+| RPC-01111 | charMgr.RemoveOwnerNote | `notepad.py:704` | same delete flow; reply ignored | `CharMgrService.cs:1103-1132`; `CharMgrRpcHostWireTests.cs:69` | MATCHES |
+| RPC-01112 | charMgr.SaveCharacterSetting | `characterSettingsSvc.py:49` | writes key/value then updates local cache; empty values use Delete; client caps values at 100 KB | `CharMgrService.cs:437-462`; registered Host persistence test `CharacterManagerMutationHostWireTests.cs:10-81` asserts `PyNone` and round-trips state | MATCHES |
+| RPC-01113 | charMgr.SetActivityStatus | `gameui.py:339` | active status with FILETIME extraInfo; reply ignored | `CharMgrService.cs:1144-1158` | NO-TEST |
+| RPC-01114 | charMgr.SetActivityStatus | `gameui.py:339` | same active transition | `CharMgrService.cs:1144-1158` | NO-TEST |
+| RPC-01115 | charMgr.SetActivityStatus | `gameui.py:334` | AFK status with FILETIME extraInfo; reply ignored | `CharMgrService.cs:1144-1158` | NO-TEST |
+| RPC-01116 | charMgr.SetActivityStatus | `gameui.py:334` | same AFK transition | `CharMgrService.cs:1144-1158` | NO-TEST |
+| RPC-01117 | charMgr.SetCharacterDescription | `bioPanel.py:61` | autosaves text; on exception reloads it; reply ignored | `CharMgrService.cs:204-230` | NO-TEST |
+| RPC-01118 | charMgr.SetCharacterDescription | `bioPanel.py:61` | same exception recovery | `CharMgrService.cs:204-230` | NO-TEST |
+| RPC-01119 | charMgr.SetNote | `notepad.py:541` | asynchronous item note save; reply ignored | `CharMgrService.cs:1160-1186` | NO-TEST |
+| RPC-01120 | charMgr.SetNote | `panelNotes.py:61` | saves changed text or empty string; reply ignored | `CharMgrService.cs:1160-1186` | NO-TEST |
+| RPC-01121 | charMgr.SetNote | `panelNotes.py:61` | same note editor flow | `CharMgrService.cs:1160-1186` | NO-TEST |
+| RPC-01122 | charMgr.UnblockOwners | `addressbookService.py:674` | local blocked cache update and `OnUnblockContacts` precede refresh; reply ignored | `CharMgrService.cs:1188-1196` | NO-TEST |
+| RPC-01123 | charMgr.UnblockOwners | `addressbookService.py:674` | same unblock flow | `CharMgrService.cs:1188-1196` | NO-TEST |
+| RPC-01125 | charUnboundMgr.CancelCharacterDeletePrepare | `characterSelection.py:871` | cancels deletion then refreshes slot; reply ignored | `CharUnboundMgrService.cs:450-463` | NO-TEST |
+| RPC-01126 | charUnboundMgr.CancelCharacterDeletePrepare | `characterSelection.py:871` | same cancel and refresh | `CharUnboundMgrService.cs:450-463` | NO-TEST |
+| RPC-01127 | charUnboundMgr.CreateCharacterWithDoll | `ccSvc.py:97` | reply ID clears selection cache; both creation UIs use ID for portrait insertion (`characterCreationContainer_new.py:1301-1305`, `characterCreationContainer.py:1840-1849`) | `CharUnboundMgrService.cs:262-306` | NO-TEST |
+| RPC-01128 | charUnboundMgr.CreateCharacterWithDoll | `ccSvc.py:97` | same reply ID consumers | `CharUnboundMgrService.cs:262-306` | NO-TEST || RPC-01129 | charUnboundMgr.DeleteCharacter | `characterSelection.py:848` | expects falsey success; truthy error is displayed, otherwise selection refreshes (`characterSelection.py:852-860`) | `CharUnboundMgrService.cs:503-527` | NO-TEST |
+| RPC-01130 | charUnboundMgr.GetCharOmegaDowngradeStatus | `characterSelection.py:301` | bool controls lapsed-subscription warning creation; errors are caught | `CharUnboundMgrService.cs:158-169`; registered Host bool test `CharUnboundOmegaHostTests.cs:10-47` | MATCHES |
 
 ## Batch 5 remaining work
 
@@ -121,3 +121,55 @@ All 29 rows were checked; duplicate IDs share the same V24.01 caller and contrac
 EveJS 261018.1 agrees on AIR state/boolean/skip (`services/npe/airNpeService.js:24-56`), accrued list/underage boolean (`services/login/authenticationService.js:234-248`), bookmark tuple (`services/ship/beyonceService.js:4374-4402`, `services/bookmark/bookmarkPayloads.js:148-164`), jump tuple/notification and warp None (`services/ship/beyonceService.js:4206-4224,4304-4338`), nullable jammer/formation data (`services/ship/beyonceService.js:2480-2500,2657-2659`), and charMgr mutations (`services/character/charMgrService.js:1024-1100,1180-1204,1229-1233`). The cited client consumer shapes agree with the Host implementations and tests.
 
 The audit generator has no `status_evidence` support; the CSV remains unchanged. Actions run 40256449264 passed the selected registered-Host contract tests; run 40256464803 passed the selected movement wire/flow tests. No PostgreSQL database or graphical client was used.
+
+# P0 client-side verification — batch 3 (RPC-01040–RPC-01068)
+
+Client references below are from the V24.01 `home-user-eve-logic` tree. The rows with the same method and call site represent separate audit observations but share one client contract and one Host implementation.
+
+## Wire contracts and whole-tree consumer scan
+
+- `GetOwnerNote`: `eve/client/script/ui/shared/neocom/notepad.py:518-521` indexes the first returned record and reads `.note.strip()` and `.label[2:]`. The neighboring `GetNoteText` path at `:247-251` consumes the same shape. EveJS 261018.1 `server/src/services/character/charMgrService.js:1168-1179` returns a one-element list of KeyVal records; eve.rs returns a one-element list of KeyVal at `dotnet/src/Eve.Services.CharacterInfo/CharMgrService.cs:819-837`. The registered Host wire regression checks note fields in `dotnet/tests/Eve.Host.Tests/CharacterManagerMutationHostWireTests.cs:48-64`.
+- `GetOwnerNoteLabels`: `notepad.py:87-105` iterates returned rows and reads integer `noteID` and string `label`; it groups `I:`, `N:`, and `S:` labels and removes malformed labels. EveJS 261018.1 `charMgrService.js:1154-1166` and eve.rs `CharMgrService.cs:798-817` both return a `Rowset` with `noteID,label` columns and `util.Row` rows.
+- `GetPaperdollState`: `eve/client/script/ui/station/base.py:195-198` calls with no arguments, caches the scalar reply, and returns it. The character-selection accessor at `loginCharacterselection/charselData.py:170-171` reads a local `charDetails.paperdollState`; it makes no service call. EveJS 261018.1 `charMgrService.js:833-838` returns the scalar resolved state; eve.rs returns a `PyInt` at `CharMgrService.cs:327-336`.
+- `GetPrivateInfo`: `corp_dlg_edit_member.py:148` stores the result in `self.memberinfo`; `:274-284` reads `characterID`, `gender`, `raceID`, and `createDateTime` as object attributes. Whole-file CBM search found these as the result consumers. EveJS 261018.1 `server/src/services/character/charMgrService.js:708-733` returns one `util.Row` (`header` and `line`). The prior eve.rs reply was a `Rowset`, which did not provide the direct row object the client reads; this batch changes it to `util.Row`.- `GetPrivateInfoOnCorpChange`: `personalDonateEMPanel.py:68-75` returns false only when the entire reply is None; otherwise reads `corporationDateTime`, subtracts it from wall clock, and checks the player-corporation predicate. EveJS 261018.1 `charMgrService.js:735-748` and eve.rs `CharMgrService.cs:847-867` return a KeyVal with corporation ID and date. Registered Host wire coverage is `CharMgrRpcHostWireTests.cs:38-52`.
+- Whole-tree `GetPublicInfo` scan (excluding distinct `corpmgr.GetPublicInfo` callers): `avatardisplay/avatardisplay.py:1259-1261,1359-1361` reads bloodline; `ccSvc.py:179-183` reads school; `crimewatchSvc.py:179-187` reads corporation, war faction, and alliance; `scenePortraitQueue.py:125-127` stores the record and maps UserError to None; `scenePortraitRenderer.py:188-204` reads gender and bloodline; `operationDestinationController.py:12-14` reads school; `panelStandings.py:120-126` reads corporation and alliance; `preview.py:851-861` reads gender and passes the record into scene setup; `characterOverviewPanel.py:46-93,141` reads race, bloodline, ancestry, school, and creation time; `agents.py:281-285,519-522` reads school. Nodegraph, homestation, and safespace consumers at `safe_schools_client.py:12-20`, `getters/location.py:31-33`, `homestation/client/service.py:116-119`, and `safespace/client/util.py:8-20` treat a missing record or school as false/no station. EveJS 261018.1 `charMgrService.js:646-650` returns its public KeyVal; eve.rs does so at `CharMgrService.cs:179-183`. The registered Host test asserts the KeyVal fields, scalar/null values, multiple characters, and missing-character result at `CharMgrPublicInfoHostTests.cs:12-107`.
+
+## Row verdicts
+
+| row_id | service.method | client call site | consumers | handler | verdict |
+|---|---|---|---|---|---|
+| RPC-01040 | charMgr.GetOwnerNote | `notepad.py:518` | `ShowNote:518-521`, first record's `note` and `label` | `CharMgrService.cs:819-837`; `CharacterManagerMutationHostWireTests.cs:48-64` | MATCHES |
+| RPC-01041 | charMgr.GetOwnerNote | `notepad.py:518` | `ShowNote:518-521`, first record's `note` and `label` | `CharMgrService.cs:819-837`; `CharacterManagerMutationHostWireTests.cs:48-64` | MATCHES |
+| RPC-01042 | charMgr.GetOwnerNoteLabels | `notepad.py:87` | `LoadNotesData:87-105`, iterable rows with `noteID` and `label` | `CharMgrService.cs:798-817`; `CharMgrClientReadHostWireTests.cs:12-81` | NO-TEST (wire test added; Actions result pending) |
+| RPC-01043 | charMgr.GetOwnerNoteLabels | `notepad.py:87` | `LoadNotesData:87-105`, iterable rows with `noteID` and `label` | `CharMgrService.cs:798-817`; `CharMgrClientReadHostWireTests.cs:12-81` | NO-TEST (wire test added; Actions result pending) |
+| RPC-01044 | charMgr.GetPaperdollState | `station/base.py:197` | `GetPaperdollStateCache:195-198`, caches and returns scalar | `CharMgrService.cs:327-336`; `CharMgrClientReadHostWireTests.cs:12-81` | NO-TEST (wire test added; Actions result pending) |
+| RPC-01045 | charMgr.GetPaperdollState | `station/base.py:197` | `GetPaperdollStateCache:195-198`, caches and returns scalar | `CharMgrService.cs:327-336`; `CharMgrClientReadHostWireTests.cs:12-81` | NO-TEST (wire test added; Actions result pending) |
+| RPC-01046 | charMgr.GetPrivateInfo | `corp_dlg_edit_member.py:148` | `LoadChar:148`, then `OnTabGeneral:274-284` reads four attributes | `CharMgrService.cs:234-250`; `CharMgrClientReadHostWireTests.cs:12-81` | MISMATCH (Rowset corrected to util.Row; Actions result pending) |
+| RPC-01047 | charMgr.GetPrivateInfoOnCorpChange | `personalDonateEMPanel.py:69` | `_is_corp_membership_valid:69-75`, None guard then `corporationDateTime` | `CharMgrService.cs:847-867`; `CharMgrRpcHostWireTests.cs:38-52` | MATCHES |
+| RPC-01048 | charMgr.GetPrivateInfoOnCorpChange | `personalDonateEMPanel.py:69` | `_is_corp_membership_valid:69-75`, None guard then `corporationDateTime` | `CharMgrService.cs:847-867`; `CharMgrRpcHostWireTests.cs:38-52` | MATCHES |
+| RPC-01049 | charMgr.GetPublicInfo | `avatardisplay/avatardisplay.py:1360` | `GetBloodlineFromDNA:1360-1362` reads `bloodlineID` | `CharMgrService.cs:179-183`; `CharMgrPublicInfoHostTests.cs:12-107` | MATCHES |
+| RPC-01050 | charMgr.GetPublicInfo | `avatardisplay/avatardisplay.py:1360` | `GetBloodlineFromDNA:1360-1362` reads `bloodlineID` | `CharMgrService.cs:179-183`; `CharMgrPublicInfoHostTests.cs:12-107` | MATCHES |
+| RPC-01051 | charMgr.GetPublicInfo | `ccSvc.py:180` | `GetSchoolAndSchoolCorpInfoForChar:180-183` reads `schoolID` | `CharMgrService.cs:179-183`; `CharMgrPublicInfoHostTests.cs:12-107` | MATCHES |
+| RPC-01052 | charMgr.GetPublicInfo | `ccSvc.py:180` | `GetSchoolAndSchoolCorpInfoForChar:180-183` reads `schoolID` | `CharMgrService.cs:179-183`; `CharMgrPublicInfoHostTests.cs:12-107` | MATCHES || RPC-01053 | charMgr.GetPublicInfo | `crimewatchSvc.py:180` | `GetSlimItemDataForCharID:180-187` reads corporation, war-faction, and alliance IDs | `CharMgrService.cs:179-183`; `CharMgrPublicInfoHostTests.cs:12-107` | MATCHES |
+| RPC-01054 | charMgr.GetPublicInfo | `crimewatchSvc.py:180` | `GetSlimItemDataForCharID:180-187` reads corporation, war-faction, and alliance IDs | `CharMgrService.cs:179-183`; `CharMgrPublicInfoHostTests.cs:12-107` | MATCHES |
+| RPC-01055 | charMgr.GetPublicInfo | `scenePortraitQueue.py:126` | `_FetchBatchData:125-127` stores KeyVal, maps UserError to None | `CharMgrService.cs:179-183`; `CharMgrPublicInfoHostTests.cs:12-107` | MATCHES |
+| RPC-01056 | charMgr.GetPublicInfo | `scenePortraitQueue.py:126` | `_FetchBatchData:125-127` stores KeyVal, maps UserError to None | `CharMgrService.cs:179-183`; `CharMgrPublicInfoHostTests.cs:12-107` | MATCHES |
+| RPC-01057 | charMgr.GetPublicInfo | `scenePortraitRenderer.py:189` | `Render:188-204` reads `gender` and `bloodlineID` | `CharMgrService.cs:179-183`; `CharMgrPublicInfoHostTests.cs:12-107` | MATCHES |
+| RPC-01058 | charMgr.GetPublicInfo | `scenePortraitRenderer.py:189` | `Render:188-204` reads `gender` and `bloodlineID` | `CharMgrService.cs:179-183`; `CharMgrPublicInfoHostTests.cs:12-107` | MATCHES |
+| RPC-01059 | charMgr.GetPublicInfo | `operationDestinationController.py:13` | `GetSchoolID:12-14` reads `schoolID` | `CharMgrService.cs:179-183`; `CharMgrPublicInfoHostTests.cs:12-107` | MATCHES |
+| RPC-01060 | charMgr.GetPublicInfo | `panelStandings.py:121` | `GetToIDsForPlayerOwner:120-126` reads corporation and alliance IDs | `CharMgrService.cs:179-183`; `CharMgrPublicInfoHostTests.cs:12-107` | MATCHES |
+| RPC-01061 | charMgr.GetPublicInfo | `panelStandings.py:121` | `GetToIDsForPlayerOwner:120-126` reads corporation and alliance IDs | `CharMgrService.cs:179-183`; `CharMgrPublicInfoHostTests.cs:12-107` | MATCHES |
+| RPC-01062 | charMgr.GetPublicInfo | `avatardisplay/avatardisplay.py:1260` | `LoadScene:1259-1261` reads `bloodlineID` | `CharMgrService.cs:179-183`; `CharMgrPublicInfoHostTests.cs:12-107` | MATCHES |
+| RPC-01063 | charMgr.GetPublicInfo | `avatardisplay/avatardisplay.py:1260` | `LoadScene:1259-1261` reads `bloodlineID` | `CharMgrService.cs:179-183`; `CharMgrPublicInfoHostTests.cs:12-107` | MATCHES |
+| RPC-01064 | charMgr.GetPublicInfo | `preview.py:852` | `LoadScene:851-861` reads `gender` and passes the KeyVal into scene setup | `CharMgrService.cs:179-183`; `CharMgrPublicInfoHostTests.cs:12-107` | MATCHES |
+| RPC-01065 | charMgr.GetPublicInfo | `preview.py:852` | `LoadScene:851-861` reads `gender` and passes the KeyVal into scene setup | `CharMgrService.cs:179-183`; `CharMgrPublicInfoHostTests.cs:12-107` | MATCHES |
+| RPC-01066 | charMgr.GetPublicInfo | `characterOverviewPanel.py:47` | `ApplyAttributes:47,90-93,141` reads race, bloodline, ancestry, school, and creation time | `CharMgrService.cs:179-183`; `CharMgrPublicInfoHostTests.cs:12-107` | MATCHES |
+| RPC-01067 | charMgr.GetPublicInfo | `agents.py:282` | `_GetMySchoolAgents:281-285` reads `schoolID` | `CharMgrService.cs:179-183`; `CharMgrPublicInfoHostTests.cs:12-107` | MATCHES |
+| RPC-01068 | charMgr.GetPublicInfo | `agents.py:282` | `_GetMySchoolAgents:281-285` reads `schoolID` | `CharMgrService.cs:179-183`; `CharMgrPublicInfoHostTests.cs:12-107` | MATCHES |
+
+The `run_service_audit_current.py` entry point exposes no per-row evidence input; it delegates to the audit generator and applies only fixed in-script compatibility overrides. The generated CSV was left unchanged, and the queue files were not regenerated.
+
+## Verification state
+- Local focused command: `dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --filter FullyQualifiedName~Char_mgr_client_read_shapes_match_the_registered_host_wire_contract`. The build compiled `Eve.Services.CharacterInfo`, then stalled while compiling `Eve.Host`; it was cancelled after no output for about two minutes. No test executed.
+- No PostgreSQL database or graphical client was used.
+- Focused GitHub Actions verification is pending.

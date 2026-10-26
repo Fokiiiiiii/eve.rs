@@ -93,4 +93,9 @@ The wire metadata fix treats the client-added `machoVersion=1` as transport data
 
 The 29 implemented-row checks are recorded in `CLIENT_VERIFIED.md` under batch 1. Every requested row has a whole-client caller/consumer trace, Host handler/test evidence and a MATCHES verdict. The implementation audit generator has no `status_evidence` update path, so the coverage CSV remains unchanged. No code or tests were changed in this documentation pass. The cited focused tests still need Actions execution; no PostgreSQL database or graphical client was used.
 
-Actions verification completed for batch 1: run 40256449264 passed selected Host wire tests and run 40256464803 passed selected space wire/flow tests (no failed tests or jobs). `ci-status.py failures 089bcd78` found no push-triggered `ci.yml` run for that SHA.
+## Client verification batch 3 (2026-10-26)
+The 29 rows RPC-01040–RPC-01068 are recorded in `CLIENT_VERIFIED.md`. Whole-tree V24.01 consumers were checked for owner notes, paperdoll state, private/public character info, and corporation-change info. `GetPrivateInfo` was returning a `Rowset`; the client reads `util.Row` attributes, so the Host reply was corrected and a registered socket Host regression was added. The same regression covers owner-note labels as a rowset and paperdoll state as an integer. Existing registered Host tests cover owner-note details, GetPrivateInfoOnCorpChange, and GetPublicInfo.
+
+The local focused `Eve.Host.Tests` command compiled `Eve.Services.CharacterInfo` but stalled compiling `Eve.Host`; it was cancelled without executing a test. Focused Actions verification is pending. No database or graphical EVE client was used. The service-audit script has no per-row evidence input, so the coverage CSV remains unchanged; queue files were not regenerated.
+
+Actions verification for batch 1: run 40256449264 passed selected Host wire tests and run 40256464803 passed selected space wire/flow tests, with no failed tests or jobs. `ci-status.py failures 089bcd78` found no push-triggered `ci.yml` run.

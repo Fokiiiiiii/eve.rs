@@ -56,7 +56,7 @@ public partial class HostServerTests
                   "extractionID": 3,
                   "structureID": 30000144,
                   "moonID": 40000003,
-                  "solarSystemID": 30000144,
+                  "solarSystemID": 30000142,
                   "ownerID": 980001,
                   "startMoveTimeMs": 1700000000000,
                   "chunkAvailableTimeMs": 1700518462000,

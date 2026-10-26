@@ -18,8 +18,11 @@ public partial class HostServerTests
              new DungeonEditorDungeon(5002, 7002, "Ice Heist", 500011, 74)],
             [new DungeonEditorOption("Battlefields", 68), new DungeonEditorOption("Ice Heists", 74)],
             [500010, 500011],
-            new Dictionary<long, IReadOnlyList<DungeonEditorRoom>>(),
-            new PyDict([]));
+            new Dictionary<long, IReadOnlyList<DungeonEditorRoom>>
+            {
+                [5001] = [new DungeonEditorRoom(9001, "Entrance")],
+            },
+            new PyList([Py.Tuple(new PyInt(70001), new PyStr("Acceleration Gate"))]));
         var snapshot = new DungeonCacheSnapshot(
             catalog,
             [
@@ -58,6 +61,15 @@ public partial class HostServerTests
             return Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload)) ?? PyNone.Instance;
         }
 
+        async Task<PyValue> CallWithKwargs(string service, string method, PyValue kwargs, params PyValue[] args)
+        {
+            var id = Interlocked.Increment(ref callId);
+            await front.SendAsync(new Packet(open.SessionId,
+                MarshalCodec.Encode(Packets.CallWithKwargs(open, id, service, method,
+                    new PyTuple(args), kwargs))));
+            return Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload)) ?? PyNone.Instance;
+        }
+
         var archetypes = Assert.IsType<PyList>(await Call("dungeon", "DEGetArchetypes"));
         Assert.Equal(2, archetypes.Items.Count);
         var battlefieldOption = Assert.IsType<PyTuple>(archetypes.Items[0]);
@@ -68,6 +80,27 @@ public partial class HostServerTests
         Assert.Equal(new PyInt(74), iceOption.Items[1]);
         Assert.Equal(new PyList([new PyInt(500010), new PyInt(500011)]),
             await Call("dungeon", "DEGetFactions"));
+
+        var filteredDungeons = Assert.IsType<PyList>(await CallWithKwargs(
+            "dungeon",
+            "DEGetDungeons",
+            Py.Dict(("archetypeID", new PyInt(68)), ("factionID", new PyInt(500010)))));
+        var filteredDungeon = Assert.IsType<PyObject>(Assert.Single(filteredDungeons.Items));
+        Assert.Equal(new PyInt(5001), RowField(filteredDungeon, "dungeonID"));
+        Assert.Equal(new PyStr("Combat Site"), RowField(filteredDungeon, "dungeonName"));
+        Assert.Equal(new PyInt(500010), RowField(filteredDungeon, "factionID"));
+
+        var selectedDungeon = Assert.IsType<PyList>(
+            await Call("dungeon", "DEGetDungeons", new PyInt(5001)));
+        Assert.Single(selectedDungeon.Items);
+        var rooms = Assert.IsType<PyList>(await CallWithKwargs(
+            "dungeon",
+            "DEGetRooms",
+            Py.Dict(("dungeonID", new PyInt(5001)))));
+        Assert.Equal(new PyTuple([new PyInt(9001), new PyStr("Entrance")]), Assert.Single(rooms.Items));
+        var palette = Assert.IsType<PyList>(await Call("dungeon", "DEGetRoomObjectPaletteData"));
+        Assert.Equal(new PyTuple([new PyInt(70001), new PyStr("Acceleration Gate")]),
+            Assert.Single(palette.Items));
 
         var escalation = Assert.IsType<PyObject>(await Call("dungeonExplorationMgr", "GetMyEscalatingPathDetails"));
         var cached = Assert.IsType<PyTuple>(escalation.Args);

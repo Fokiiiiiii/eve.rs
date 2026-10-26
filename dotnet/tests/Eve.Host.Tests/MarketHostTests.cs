@@ -357,6 +357,12 @@ public sealed class MarketHostTests : IAsyncLifetime
         }
         static PyValue Field(PyDict fields,string name)=>
             fields.Entries.Single(entry=>JsSemantics.PlainText(entry.Key)==name).Value;
+        static PyTuple AskLine(PyValue value)
+        {
+            var row=Assert.IsType<PyObject>(value);
+            Assert.Equal("util.Row",JsSemantics.PlainText(row.Name));
+            return Assert.IsType<PyTuple>(Field(Assert.IsType<PyDict>(row.Args),"line"));
+        }
 
         var readDenied=await Assert.ThrowsAsync<MachoWrappedException>(() =>
             market.CallAsync(Call(deniedSession,"GetStationAsks",1)).AsTask());
@@ -398,7 +404,7 @@ public sealed class MarketHostTests : IAsyncLifetime
         var publicAsk=Assert.IsType<PyObject>(regional.Entries.Single(entry=>entry.Key==new PyInt(Tritanium)).Value);
         Assert.Equal(new PyLong(station.Id),Field(Assert.IsType<PyDict>(publicAsk.Args),"stationID"));
         var systemAsks=Assert.IsType<PyDict>(Received(await market.CallAsync(Call(deniedSession,"GetSystemAsks",5))));
-        var systemAsk=Assert.IsType<PyTuple>(systemAsks.Entries.Single(entry=>entry.Key==new PyInt(Tritanium)).Value);
+        var systemAsk=AskLine(systemAsks.Entries.Single(entry=>entry.Key==new PyInt(Tritanium)).Value);
         Assert.Equal(4,systemAsk.Items.Count);
         Assert.Equal(new PyInt(12),systemAsk.Items[0]);
         Assert.Equal(new PyInt(10),systemAsk.Items[1]);
@@ -410,7 +416,7 @@ public sealed class MarketHostTests : IAsyncLifetime
         Assert.Equal(new PyBytes("stationid"u8.ToArray()),Field(askDetails,"sessionInfo"));
         var asks=Assert.IsType<PyDict>(Received(askResult));
         Assert.Contains(asks.Entries,entry=>entry.Key==new PyInt(Tritanium));
-        var askSummary=Assert.IsType<PyTuple>(asks.Entries.Single(entry=>entry.Key==new PyInt(Tritanium)).Value);
+        var askSummary=AskLine(asks.Entries.Single(entry=>entry.Key==new PyInt(Tritanium)).Value);
         Assert.Equal(4,askSummary.Items.Count);
         Assert.Equal(new PyInt(10),askSummary.Items[0]);
         Assert.Equal(new PyInt(4),askSummary.Items[1]);

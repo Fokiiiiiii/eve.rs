@@ -63,7 +63,7 @@ V24.01 processes access-group bookmark notifications in arrival order (eve/clien
 
 - Local Core and Host test-project builds passed with 0 warnings and 0 errors.
 - Focused tests passed: DeleteSubfolder notification order (1 passed, 0 skipped) and the registered bookmark dispatcher refusal/wire test (1 passed, 0 skipped). Neither connects to PostgreSQL.
-- This change has not yet been pushed or checked on GitHub Actions. No graphical client session was run.
+- Pushed to main as `05bbdb97` and integrated with origin/main at `1f4240ec`. Focused Actions run `40307247045` passed (no failed tests/jobs and no skips); push-triggered `ci.yml` run `40307213955` is queued. No graphical client session was run.
 
 
 ## Dogma bound module activation and Destiny notifications (2026-10-26)
@@ -77,3 +77,16 @@ The EveJS v0.12.9 `dogmaIM.MachoBindObject` delegates the client's bind argument
 For damage state, EveJS's Destiny action is `OnDamageStateChange(entityID, damageState)` (`server/src/space/destiny/stream/actions.js:321-324`). V24 `Park.OnDamageStateChange` accepts those two values, caches the damage state and scatters the event (`eve/client/script/remote/michelle.py:1535-1541`). The whole-client scan found direct consumers in `shipAlert.py:148`, `droneDamageTracker.py:98`, `destroy_counter.py:69`, `destroy_target.py:56,74`, `healthwidgets.py:100`, `spaceMgr.py:410`, and `shiphealthnotification.py:46` (forwarded by `audioService.py:479-480`). Attribute-level `OnDamageStateChanged` is separately scattered by `clientDogmaLocation.py:336`, with nodegraph and hangar consumers at `nodegraph/client/events/ship.py:10-14` and `eve/client/script/ui/view/hangarView.py:800`. The existing Rust health/destiny tests and the Host damage-forwarding regression cover this payload; the latter is a `[PgFact]` and was not run locally.
 
 Local verification for this addition: `Eve.Host.Tests` build succeeded with zero warnings and errors; `Module_activation_uses_the_registered_bound_host_route_for_docked_and_in_space_client_contexts` passed (1 passed, 0 skipped). No database or graphical client was used. Focused GitHub Actions verification follows the code push.
+
+
+## Station-view contract: Market ask rows (2026-10-26)
+
+### Contract and implementation
+
+Whole-client V24 evidence shows two consumers of station/system ask values: quote.py:94-101 reads GetStationAsks values through ask.typeID and uses ask.stationID when buying (quote.py:253-282); marketbase.py:649-667 converts both maps by sequence into BestByOrder, whose field order is defined at marketutil/__init__.py:8-11. carbon/common/script/sys/row.py:23-36 implements util.Row with attribute and numeric access. EveJS v0.12.9 returns raw four-value arrays from server/src/services/market/marketProxyService.js:334-341, which satisfy sequence unpacking but not quote.py's attribute consumer. Station and system asks now use util.Row (header and line); region-best values remain named KeyVals. The compatibility difference is recorded in docs/reference/compat/DEVIATIONS.md.
+
+### Verification
+
+- Market and Host test projects built with 0 warnings and 0 errors. MarketStructureWireTests verified named fields, sequence values, and MarshalCodec round-trip (1 passed, 0 skipped).
+- MarketRpcTests, ProtocolTests, and MarketHostTests now assert the populated util.Row shape; they were compiled but not executed because those scenarios require PostgreSQL, which this job forbids using.
+- No graphical V24 client session was run. GitHub Actions verification is pending.

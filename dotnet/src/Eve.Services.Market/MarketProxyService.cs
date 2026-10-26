@@ -222,7 +222,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
             catch(MarketError error) { throw Error(error); }
         }
         var entries=rows.Select(row=>new KeyValuePair<PyValue,PyValue>(
-            new PyInt(row.Order.TypeId),MarketWire.BestByOrderTuple(row.Order,row.Quantity))).ToArray();
+            new PyInt(row.Order.TypeId),MarketWire.BestByOrderRow(row.Order,row.Quantity))).ToArray();
         return ObjectCaching.MethodResult(new PyDict(entries),now(),sessionInfo:"stationid");
     }
 
@@ -238,7 +238,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
             rows=await VisibleSummaries(characterId,rows,call.Cancellation);
         }
         var entries=rows.Select(row=>new KeyValuePair<PyValue,PyValue>(
-            new PyInt(row.Order.TypeId),MarketWire.BestByOrderTuple(row.Order,row.Quantity))).ToArray();
+            new PyInt(row.Order.TypeId),MarketWire.BestByOrderRow(row.Order,row.Quantity))).ToArray();
         return ObjectCaching.MethodResult(new PyDict(entries),now(),sessionInfo:"solarsystemid2");
     }
 

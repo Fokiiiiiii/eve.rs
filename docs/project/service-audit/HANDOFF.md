@@ -99,3 +99,14 @@ The 29 rows RPC-01040–RPC-01068 are recorded in `CLIENT_VERIFIED.md`. Whole-tr
 The local focused `Eve.Host.Tests` command compiled `Eve.Services.CharacterInfo` but stalled during Host compilation; a no-restore Host test-project build also stalled during dependency compilation. Both were cancelled without executing a test. Initial Actions run 40256730678 and push CI 40256722236 failed at Host test compilation because the new test lacked `using Eve.Characters` (CS0246); the import is fixed and the focused Actions rerun is pending. No database or graphical EVE client was used. The service-audit script has no per-row evidence input, so the coverage CSV remains unchanged; queue files were not regenerated.
 
 Actions verification for batch 1: run 40256449264 passed selected Host wire tests and run 40256464803 passed selected space wire/flow tests, with no failed tests or jobs. `ci-status.py failures 089bcd78` found no push-triggered `ci.yml` run.
+
+
+## Client verification batch 7 (2026-10-26)
+
+The 29 rows RPC-00994/00995, RPC-01160, RPC-01175–01190, RPC-01355/01356, RPC-01708/01709, RPC-01750/01751, RPC-01962, RPC-02066/02067 and RPC-02247 are recorded in `CLIENT_VERIFIED.md`. The whole V24.01 client tree was traced for call sites, consumers, reply types, fields, defaults and call order; EveJS 261018.1 and the owner-capture analysis were compared. All rows match the client contract. `GetLocationsLocal` is a client-local fetcher and is not invoked as an RPC.
+
+Three database-free real-Host wire tests were added for monochrome bools, the empty indexable map security Rowset, and multi-login bool gating. Config wire coverage now includes the single corporation/alliance wrappers. Local `Eve.Host.Tests` build passed with zero warnings/errors. Focused Actions run 40260169794 failed; the push CI run 40260161379 exposed an existing test expectation for `GetPrivateInfo` still expecting a Rowset, while the client-compatible handler now returns `util.Row`. The service test expectation is corrected in this follow-up and its test project build passed with zero warnings/errors. Focused rerun and final push CI status are pending.
+
+The audit-current generator was run without a queue directory. It refreshed the coverage CSV broadly; the queue files were not regenerated. Its static route detector currently reports the dynamically bound `invbroker.Add` rows as MISSING even though `ServiceAuditP0HostWireTests.Invbroker_add_accepts_client_kwargs_through_registered_host_route` exercises the real bound Host route; the client verification table cites that route and test. This is a generator detection gap, not a wire-shape discrepancy.
+
+No local PostgreSQL database or graphical EVE client was used. The Actions-selected test job provisions its own test database; the three new Host tests do not open a database connection.

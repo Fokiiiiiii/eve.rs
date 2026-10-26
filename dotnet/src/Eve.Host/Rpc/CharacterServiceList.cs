@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using Eve.Characters;
+using Eve.Bookmarks;
 using Eve.Data;
 using Eve.Host;
 using Eve.Identity;
@@ -79,7 +80,18 @@ internal sealed partial class CharacterServicesComposition
         services = [.. services, allianceRegistry];
         UpkeepSharedFolders(sharedNotifier);
         services = [.. services, new Eve.Services.Core.OwnerGroupRefusals(new Eve.Services.Core.OwnerGroupManagerService(accessGroups, OwnerKind, characterSessions, sharedNotifier))];
-        services = [.. services, new Eve.Services.Core.BookmarkRefusals(new Eve.Services.Core.AccessGroupBookmarkMgrService(bookmarks, StaticBookmarkTarget, MemberLists, characterSessions, sharedNotifier))];
+        var bookmarkMgr = new Eve.Services.Core.AccessGroupBookmarkMgrService(bookmarks, StaticBookmarkTarget, MemberLists, characterSessions, sharedNotifier);
+        var bookmarkService = new Eve.Services.Core.BookmarkRefusals(bookmarkMgr);
+        if (spaceSessions is not null)
+        {
+            var beyonce = SingleRegisteredService<BeyonceService>(services);
+            beyonce.ScanSites = scanBookmarkSites;
+            beyonce.SaveBookmarkScanResult = (call, target, folderId, memo, note, expiryMode, subfolderId) =>
+                Eve.Services.Core.BookmarkRefusals.WithRefusals(() => bookmarkMgr.CreateScanBookmarkAsync(call,
+                    new BookmarkTarget(null, 5, target.SolarSystemId, target.X, target.Y, target.Z),
+                    folderId, memo, note, expiryMode, subfolderId));
+        }
+        services = [.. services, bookmarkService];
         services = [.. services, new ActivityMgrService()];
         return Task.CompletedTask;
     }

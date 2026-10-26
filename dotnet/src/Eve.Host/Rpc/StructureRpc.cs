@@ -40,9 +40,26 @@ internal sealed partial class CharacterServicesComposition
     /// <summary>Structures: directory, moon extractions, travel, control, asset safety, settings and skyhooks.</summary>
     private async Task<JsonObject?> ReadMoonExtractionsAsync() => await moonExtractionStore.ReadLegacyAsync();
 
+    private ValueTask JettisonStructureFuelAsync(ServiceCall call, long structureId, IReadOnlyList<long> itemIds)
+    {
+        if (sim is null)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Space is not available for structure fuel jettison.")));
+        var backend = new StructureFuelJettisonBackend(source, structureStore, items, dogma, sim, spaceItemStore,
+            foundations.Events,
+            async (characterId, corporationId, token) =>
+            {
+                var member = await corporations.MemberAsync(characterId, token);
+                return member?.CorporationId == corporationId &&
+                    await corporations.HasRoleAsync(characterId, corporationId, Eve.Corporations.CorporationRoles.StationManager, token);
+            }, now,
+            message => Console.Error.WriteLine($"eve-host: structure fuel jettison: {message}"));
+        return backend.JettisonAsync(call, structureId, itemIds);
+    }
+
     private IReadOnlyList<IService> StructureRpc() =>
     [
             new Eve.Services.Core.StructureDirectoryService(structureDirectoryReadModel),
+            new Eve.Services.Core.StructureMonikerService(JettisonStructureFuelAsync, now),
             // Mutation needs structure-control/drill authority and the space timer/settlement backend.
             new Eve.Services.Core.MoonExtractionsRpcService(
                 readState: ReadMoonExtractionsAsync,

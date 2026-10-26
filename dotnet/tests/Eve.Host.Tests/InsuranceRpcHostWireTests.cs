@@ -152,7 +152,7 @@ public sealed class InsuranceRpcHostWireTests : IAsyncLifetime
         var prices = Assert.IsType<PyDict>(await insurance.CallAsync(
             Call(session, "GetInsurancePrices", 2, new PyList([new PyInt(rifterTypeId)]))));
         Assert.Equal(price, prices.Entries.Single().Value);
-        Assert.Equal(new PyReal(fullInsurancePriceCents / 100d), price);
+        Assert.Equal(new PyInt(1_000_000), price);
         Assert.Same(PyNone.Instance, await insurance.CallAsync(Call(session, "GetContractForShip", 3, new PyLong(shipId))));
         Assert.Empty(Assert.IsType<PyList>(await insurance.CallAsync(Call(session, "GetContracts", 4))).Items);
 

@@ -4,3 +4,8 @@
 - Focused local `Incursion_lp_logs_return_the_row_list_consumed_by_the_client_through_host_dispatch` passed (1 passed, 0 skipped).
 - A previous focused Actions run 40298615792 was cancelled before tests began because setup provisioned PostgreSQL; it is not a test result.
 - Local `Eve.Host.Tests` compile passed with 0 warnings/errors after fixing the invalid `using Eve.Services.ObjectCaching;` in `ClientRowsMapHostWireTests.cs` (ObjectCaching is a type in Eve.Services).
+- Batch 25 covers all 30 assigned row IDs in `CLIENT_VERIFIED.md`. Added actual Host-wire assertions for MCT slot mapping and redeem-token reply fields, plus bound ship calls; whole-tree eve-logic consumers and EveJS references are recorded per row.
+- Post-merge focused local Host tests for `User_service_activation_and_feedback_rpcs_are_dispatched_through_host_wire` and `Ship_bound_calls_keep_none_for_rejected_assembly_and_leave_requests_through_host_wire` passed (2 passed, 0 failed, 0 skipped).
+- Post-merge full local `Eve.Host.Tests` project ran with `EVE_PG_URL` unset as required: 469 passed, 101 failed because DB-backed tests cannot create a connection without the forbidden database, and 227 skipped. The skipped cases are reported separately; no PostgreSQL connection was attempted.
+- Valid successful ship assembly requires the PostgreSQL-backed `CharacterShips`; this pass checked its domain reply logic and the actual Host bound-object failure replies. The graphical client was not launched.
+- Batch commit `a8f6090f` plus merge `52ffbdf7` was pushed as `2cd696ee`. Focused Actions run 40338251550 passed (2 selected Host tests, 0 skipped); push CI run 40338229409 passed with no failed jobs.

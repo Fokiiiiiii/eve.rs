@@ -10,6 +10,16 @@ namespace Eve.ReadSide;
 /// <summary>The rows a query returned, as plain values in column order.</summary>
 public sealed class RowSet
 {
+    /// <summary>Creates a rowset from values returned by a non-PostgreSQL provider.</summary>
+    public static RowSet FromRows(RowsetQuery query, IReadOnlyList<object?[]> rows)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        ArgumentNullException.ThrowIfNull(rows);
+        if (rows.Any(row => row.Length != query.Columns.Count))
+            throw new ArgumentException("each row must match the query column count", nameof(rows));
+        return new RowSet(query, rows);
+    }
+
     internal RowSet(RowsetQuery query, IReadOnlyList<object?[]> rows)
     {
         Query = query;
@@ -93,7 +103,7 @@ public sealed class RowSet
 /// The server's read side: named queries over the static data and over the tables of the modules, answered as the rowsets the client expects. A feature that needs "the types of a
 /// group", "the stations of a system" or "my open orders" registers a <see cref="RowsetQuery"/> and returns <c>RowsAsync(name, args).ToRowset()</c> (or the shape the call needs). The
 /// </summary>
-public sealed class ReadSide
+public sealed class ReadSide : IRowsetReadSide
 {
     private readonly NpgsqlDataSource _source;
     private readonly Dictionary<string, string> _schemas;
@@ -128,6 +138,8 @@ public sealed class ReadSide
         }
         return this;
     }
+
+    void IRowsetReadSide.Register(RowsetQuery query) => Register(query);
 
     public IReadOnlyCollection<string> Names => _queries.Keys;
 

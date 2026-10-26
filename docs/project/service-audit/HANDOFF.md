@@ -11,7 +11,17 @@
 - Regenerate both CSVs and the P0/P1 work queue with:
   python3 tools/spec-extract/run_service_audit_current.py --queue-dir /tmp/service-audit-cx6-final
 - The service-audit Python regression tests run in the `ci.yml` Python job.
-- Latest generation: 4,014 client rows, 2,186 RPC rows, 1,419 active Host routes, and 31 queue files. Coverage: CLIENT-DEAD 3, HOLLOW 10, IMPLEMENTED-TESTED 1,073, IMPLEMENTED-UNTESTED 818, MISSING 282, with no REJECTS-VALID-INPUT rows.
+- Latest generation (2026-10-26): 4,014 client rows, 2,186 RPC rows, 1,419 active Host routes, and 20 queue files. Coverage: CLIENT-DEAD 3, HOLLOW 10, IMPLEMENTED-TESTED 1,369, IMPLEMENTED-UNTESTED 522, MISSING 282, with no REJECTS-VALID-INPUT rows.
+- Coverage by priority and status:
+
+| Status | P0 | P1 | P2 |
+|---|---:|---:|---:|
+| CLIENT-DEAD | 3 | 0 | 0 |
+| HOLLOW | 0 | 10 | 0 |
+| IMPLEMENTED-TESTED | 199 | 958 | 212 |
+| IMPLEMENTED-UNTESTED | 15 | 220 | 287 |
+| MISSING | 0 | 118 | 164 |
+| REJECTS-VALID-INPUT | 0 | 0 | 0 |
 - The audit now classifies client-local calls separately; later RPC row IDs can shift when those calls are reclassified. Compare target methods by service/method and client source path.
 - The Host route scanner resolves string constants referenced by HasMethod comparisons and inspects the full Host Composition directory, including partial AgentRpc and MissionComposition files. This includes SearchQueryService.Query, whose route compares against QueryMethod, and AgentMissionService, which is returned from AgentRpcServices and registered through the Host characterServices list.
 
@@ -160,3 +170,12 @@ All 30 rows RPC-00984–01972 are documented in `CLIENT_VERIFIED.md`. Whole-tree
 - EveJS v0.12.9 `server/src/services/station/stationService.js:134-154` returns four-value guest rows and seeds the observer ledger. Eve.rs `StationService.cs:103-128` matches those wire types and side effect.
 - Focused command: `MSBUILDDISABLENODEREUSE=1 EVE_PG_URL= dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --filter 'FullyQualifiedName~Station_guests_return_the_four_integer_client_row_through_host_dispatch'`; result: 1 passed, 0 failed, 0 skipped. No database was used. The graphical client was not launched.
 - Ship RPC-02280 `AssembleShip` and RPC-02295 `LeaveShip` remain NO-TEST for successful replies. `ClientVerifiedBatch25ShipHostWireTests.Ship_bound_calls_keep_none_for_rejected_assembly_and_leave_requests_through_host_wire` covers only the `None` refusal path. The V24 client uses the returned assembled ship ID/list (`invItemFunctions.py:197-207`) and capsule ID (`structureDocking.py:92-96`); a meaningful successful Host path requires persistent character/item state. No PostgreSQL database was used for this job. Continue with DB-free Host rows in ship/inventory, dogma, movement, session/login, then char/config/market/mail/fleet/corporation.
+
+
+## Service audit regeneration and status reconciliation (2026-10-26)
+
+- Regenerated both CSVs from the current worktree with a fresh queue directory outside the repository: `python3 tools/spec-extract/run_service_audit_current.py --queue-dir /tmp/service-audit-cx3-final-noP1Tx`. The run produced 4,014 client rows, 2,186 RPC rows, 1,419 active Host routes, and 20 queue files.
+- `CLIENT_VERIFIED.md` verdicts were compared by service/method and client source location. Rows marked MATCHES or MISMATCH-FIXED with a real registered Host wire test are IMPLEMENTED-TESTED; rows without that Host wire evidence remain IMPLEMENTED-UNTESTED. The client source locations remain recorded with their consumers and Host test citations in the corresponding verification rows. The LPSvc transfer row is a MISMATCH and has no Host state/notification test, so it remains untested.
+- The extractor now recognizes Host tests that use default Host composition, shared `OpenFrontAsync`/`HostRpcAsync` socket helpers, multiline `registry.Register` callbacks, and the database-backed `[PgFact]` attribute. If the C# block scanner cannot find a test body boundary, the fallback ends at the next test declaration.
+- Whole-tree V24.01 evidence for the affected method groups includes `addressbookService.py:657-663` and `characterSettingsSvc.py:49-56` (character mutations/settings); `scenarioMgr.py:88-131` and `dungeoneditor.py:326` (keeper editor replies); `localizationClient.py:27,30-40` (localization calls and cache notification); `eveEditPlainText.py:169-170`, `filterSvc.py:449-450`, and `sharedSettings/util.py:22-29` (shared setting KeyVal consumption); and `station/base.py:98-109` plus `guests.py:94-95` (guest row unpacking and use). Map/station consumers are recorded per row in `CLIENT_VERIFIED.md`, including `mapViewData.py:100`, `starMapSvc.py:1608`, and `mapSvc.py:529`.
+- No PostgreSQL database or graphical client was used.

@@ -33,18 +33,19 @@ The task rows collapse to service/method signatures; duplicate audit IDs use the
 
 ## eve.rs status
 
-- Sov methods are implemented in `dotnet/src/Eve.Services.Core/SovFwService.cs` and production callbacks use the sovereignty persistence read/write operations. `SovMgrHostWireTests.cs` exercises registered structure/claim/fuel group reads and mutation, including absent state. Focused local result: 1 passed, 0 failed, 0 skipped.
+- Sov methods are implemented in `dotnet/src/Eve.Services.Core/SovFwService.cs` and production callbacks use the sovereignty persistence read/write operations. `SovMgrHostWireTests.cs` exercises registered structure/claim/fuel group reads and mutation, including absent state. Local focused result: 1 passed, 0 failed, 0 skipped.
 - RPC-02761 is a client-local cache invalidation, so no server method should be registered.
-- `TourneyMgrService.QueryShipList` now falls back to a dict containing `allowedShipList: []`, matching EveJS. `TourneyMgrHostWireTests.cs` uses standard CoreServices registration and real Host dispatch to check the field. Focused local result: 1 passed, 0 failed, 0 skipped.
-- `SurveyHostWireTests.cs` covers the active ID, None results for checks/claims, and callback event sequence over real Host dispatch.
-- `SuperWeaponHostWireTests.cs` covers both calls and the integer success result when registered activation callbacks accept. The real host composition lacks production superweapon activation callbacks; the service remains fail-closed rather than fabricating activation success.
+- `TourneyMgrService.QueryShipList` now falls back to a dict containing `allowedShipList: []`, matching EveJS. `TourneyMgrHostWireTests.cs` uses standard CoreServices registration and real Host dispatch to check the field. Local focused result: 1 passed, 0 failed, 0 skipped.
+- `SurveyHostWireTests.cs` covers the active ID, None results for checks/claims, and callback event sequence over real Host dispatch. `SuperWeaponHostWireTests.cs` covers both calls and the integer success result when registered activation callbacks accept.
+- The real Host composition lacks production superweapon activation callbacks; the service remains fail-closed rather than fabricating activation success.
 - Standing reads query pinned SDE and persisted relations through `Eve.ReadSide.ReadSide`. Vote methods use corporation persistence. This task forbids database access, so neither provider has a data-backed Host wire regression.
-- Host test project build succeeded with 0 warnings and 0 errors. Survey and superweapon wire test execution is pending in GitHub Actions.
+- `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --no-restore -m:1` succeeded with 0 warnings and 0 errors.
+- Actions selected Host job `40283057780` on `dd80c61b` completed successfully; `ci-status.py wait` reported no failed tests or jobs. `ci-status.py failures dd80c61b` found no push-triggered `ci.yml` run.
 - All target client callsites and consumers were searched across the whole `/home/user/eve-logic` tree; file:line evidence is listed above.
 
 ## Checkpoint after push
 
-Pushed implementation commit `913059d7` after merging `origin/main`; merge/push checkpoint is `2a527df7`. It includes the standard CoreServices Tourney test and Survey/Superweapon Host socket regressions.
+Pushed implementation commit `913059d7` after merging `origin/main`; merge/push checkpoint `2a527df7` includes these regressions. Handoff checkpoint `dd80c61b` also reached `main`.
 
 ## Checks
 

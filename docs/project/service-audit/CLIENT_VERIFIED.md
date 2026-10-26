@@ -133,7 +133,7 @@ Every row maps to a client call or fetcher. `GetLocationsLocal` is the exception
 
 ## Checks and remaining limits
 
-The status-evidence generator was refreshed without a queue directory, so the 03-allsvc-batch queue files were left untouched. The new tests and existing real-Host wire tests are source checks; Actions results are recorded after the selected run completes. No PostgreSQL database was used. The graphical V24.01 client was not exercised.
+The status-evidence generator was refreshed without a queue directory, so the 03-allsvc-batch queue files were left untouched. Focused Actions run 40264056905 passed the selected Host wire checks; latest selected run 40264532613 also passed. Push CI run 40264527362 passed on descendant main SHA 5e7e5d7e, which contains this batch; no failed tests or jobs were reported. Earlier run failures were corrected: the private-info test now asserts the client-required util.Row, and Host-test xUnit2031 assertions use predicate overloads. No PostgreSQL database was used locally. The graphical V24.01 client was not exercised.
 # Client verification — P0 implemented rows, batch 5
 
 Whole-tree V24.01 caller searches show all consumers summarized below. The owner capture analysis (2026-10-24-core-breakage-from-owner-logs.md, findings 1–8) does not name any of these methods; that is not evidence that calls succeeded. EveJS 261018.1 uses the corresponding return intents at `charMgrService.js:626-628, 1104-10, 1112-21, 1123-40, 1142-52, 1199-1205, 1214-28`; creation/deletion at `charService.js:1089-1373,1869-79` and `characterDeletionRuntime.js:685-704,706-789`; Omega status at `charService.js:1526-29`.
@@ -369,3 +369,7 @@ EveJS comparison: search returns a group-ID keyed dictionary of lists for `Query
 
 
 - Actions run 40261514261 failed during compilation on xUnit2031 in `CharMgrClientReadHostWireTests.cs`; the label assertions now use `Assert.Single(collection, predicate)`. The focused Actions rerun is pending. Local Host project build succeeded (0 warnings/errors), and `Char_mgr_client_read_shapes_match_the_registered_host_wire_contract` passed locally (1 passed, 0 skipped); the valid-session recent-kill wire check also passed locally (1 passed, 0 skipped).
+
+- Focused Actions run 40264471982 for 2e9b557f succeeded with no failed tests/jobs, covering the registered-Host client-read, item-list and recent-kill checks plus registry/private-info regressions. The headless-client step was skipped because `--live ''` was requested; graphical-client behavior remains unchecked. Push-triggered `ci.yml` run 40264462725 was still queued when checked.
+
+- Push-triggered `ci.yml` run 40264462725 for 2e9b557f completed successfully with no failed tests/jobs. This closes the selected Host/service regression verification for batch 4; the graphical client was not run.

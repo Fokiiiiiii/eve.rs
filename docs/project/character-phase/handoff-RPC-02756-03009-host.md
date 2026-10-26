@@ -44,7 +44,7 @@ The task rows collapse to service/method signatures; duplicate audit IDs use the
 
 ## Checkpoint after push
 
-Implementation commit `913059d7` was pushed after merging `origin/main`; merge checkpoint `2a527df7` added Survey and Superweapon regressions. Handoff checkpoint `dd80c61b` was then pushed. A newer main merge checkpoint `03a91013` included additional Host wire tests and passed the focused Actions job.
+Implementation commit `913059d7` was pushed after merging `origin/main`; merge checkpoint `2a527df7` added Survey and Superweapon regressions. Handoff checkpoint `dd80c61b` was then pushed. Merge checkpoint `03a91013` included additional Host wire tests and passed the focused Actions job. Final main sync `cc4846df` carried this handoff update.
 
 ## Checks
 

@@ -24,28 +24,28 @@ The task rows collapse to service/method signatures; duplicate audit IDs use the
 
 ## EveJS comparison
 
-- Sov reads and fuel group handlers: `server/src/services/map/sovMgrService.js:92-124`; structure and claim values are shaped from the sovereignty read data.
-- Standing methods: `server/src/services/character/standingMgrService.js:194-241`; transaction data is projected by `standingRuntime.js:1027-1053`, compositions by :472-512.
-- Superweapon activations: `server/src/services/ship/superWeaponMgrService.js:74-125`; valid module activations return integer 1 and refused activations return null.
-- Survey: `server/src/services/support/surveyService.js:50-63`; active ID comes from the configured survey value and claim/check calls return null.
+- Sov reads and fuel group handlers: `server/src/services/map/sovMgrService.js:92-124`; structure and claim values are shaped from sovereignty read data.
+- Standing methods: `server/src/services/character/standingMgrService.js:194-241`; transactions are projected by `standingRuntime.js:1027-1053`, compositions by :472-512.
+- Superweapon activations: `server/src/services/ship/superWeaponMgrService.js:74-125`; valid activations return integer 1 and refusals return null.
+- Survey: `server/src/services/support/surveyService.js:50-63`; the active ID comes from configured survey state and claim/check calls return null.
 - Tournament: `server/src/services/tournament/tourneyMgrService.js:114-119` returns a dict with an empty `allowedShipList`.
 - Votes: `server/src/services/corporation/voteManagerService.js:213-273`; authority and sanctions live in `voteRuntimeState.js:753-912`.
 
 ## eve.rs status
 
-- Sov methods are implemented in `dotnet/src/Eve.Services.Core/SovFwService.cs` and production callbacks use the sovereignty persistence read/write operations. `SovMgrHostWireTests.cs` exercises registered structure/claim/fuel group reads and mutation, including absent state. Focused local result: 1 passed, 0 failed, 0 skipped.
-- RPC-02761 is a client-local cache invalidation, so no server method should be registered.
-- `TourneyMgrService.QueryShipList` now falls back to a dict containing `allowedShipList: []`, matching EveJS. `TourneyMgrHostWireTests.cs` uses standard CoreServices registration and real Host dispatch to check the field. Focused local result: 1 passed, 0 failed, 0 skipped.
-- `SurveyHostWireTests.cs` covers the active ID, None results for checks/claims, and callback event sequence over real Host dispatch.
-- `SuperWeaponHostWireTests.cs` covers both calls and the integer success result when registered activation callbacks accept. The real host composition lacks production superweapon activation callbacks; the service remains fail-closed rather than fabricating activation success.
-- Standing reads query pinned SDE and persisted relations through `Eve.ReadSide.ReadSide`. Vote methods use corporation persistence. This task forbids database access, so neither provider has a data-backed Host wire regression.
-- Host test project build succeeded with 0 warnings and 0 errors. Survey and superweapon wire test execution is pending in GitHub Actions.
+- Sov methods are implemented in `dotnet/src/Eve.Services.Core/SovFwService.cs` and production callbacks use sovereignty persistence read/write operations. `SovMgrHostWireTests.cs` exercises registered structure/claim/fuel group reads and mutation, including absent state. Local focused result: 1 passed, 0 failed, 0 skipped.
+- RPC-02761 is client-local cache invalidation and has no server method.
+- `TourneyMgrService.QueryShipList` now falls back to a dict containing `allowedShipList: []`, matching EveJS. `TourneyMgrHostWireTests.cs` uses standard CoreServices registration and Host dispatch to check the field. Local focused result: 1 passed, 0 failed, 0 skipped.
+- `SurveyHostWireTests.cs` checks active ID, None results for checks/claims, and callback event sequence through Host. `SuperWeaponHostWireTests.cs` checks both calls and the integer success result when registered activation callbacks accept.
+- Production Host composition lacks superweapon activation callbacks; the route remains fail-closed rather than fabricating success.
+- Standing reads use `Eve.ReadSide.ReadSide` SQL over pinned SDE and persisted relations. Vote methods use corporation persistence. This task forbids database access, so these providers have no data-backed Host wire regression.
+- Host test project build succeeded with 0 warnings and 0 errors. Actions selected Host job `40283833977` on `03a91013` completed successfully; the four selected tests are ordinary `[Fact]` tests and the job had no failures. `ci-status.py failures 03a91013` found no push-triggered `ci.yml` run.
 - All target client callsites and consumers were searched across the whole `/home/user/eve-logic` tree; file:line evidence is listed above.
 
 ## Checkpoint after push
 
-Pushed implementation commit `913059d7` after merging `origin/main`; merge/push checkpoint is `2a527df7`. It includes the standard CoreServices Tourney test and Survey/Superweapon Host socket regressions.
+Implementation commit `913059d7` was pushed after merging `origin/main`; merge checkpoint `2a527df7` added Survey and Superweapon regressions. Handoff checkpoint `dd80c61b` was then pushed. Merge checkpoint `03a91013` included additional Host wire tests and passed the focused Actions job. Final main sync `cc4846df` carried this handoff update.
 
 ## Checks
 
-No database or graphical client was used. The real Host socket checks do not constitute graphical-client acceptance.
+No database or graphical client was used. Host wire checks do not constitute graphical-client acceptance.

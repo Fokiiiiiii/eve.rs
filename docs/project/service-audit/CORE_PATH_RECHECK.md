@@ -68,7 +68,7 @@ No source code changed and no tests were run. No PostgreSQL database was used.
 
 ## Core player path recheck — 2026-10-26
 
-確認対象: `origin/main` の `c73e7c1655ab`。ローカル PostgreSQL と実 GUI クライアントは使用していない。ライブ確認は GitHub Actions のサーバースタック＋headless client で実施。
+確認対象: 現在の `main` は `2401d299`。ソース確認 baseline は `c73e7c1655ab`（以後の関連 merge は監査範囲の server 実装を変更していない）。ローカル PostgreSQL と実 GUI クライアントは使用していない。ライブ確認は GitHub Actions のサーバースタック＋headless client で実施。
 
 ## パスごとの結果
 

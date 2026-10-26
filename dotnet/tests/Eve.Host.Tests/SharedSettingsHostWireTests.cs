@@ -1,3 +1,4 @@
+using Eve.Macho;
 using Eve.Marshal;
 
 namespace Eve.Host.Tests;

@@ -1,7 +1,6 @@
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
-using Eve.Services.ObjectCaching;
 using Eve.Services.Station;
 using Npgsql;
 

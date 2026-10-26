@@ -85,3 +85,8 @@ Push-triggered CI for `ec0be07a` found that the cached empty composition CRowset
 ### Corrected source push verification
 
 Commit `1bd5790d946b` was pushed after merging `origin/main`. Agent Actions run `40346579443` passed all three focused registered Host tests (0 failed, 0 skipped). Push-triggered `ci.yml` run `40346552713` was in progress during this note update; query `python3 tools/dev/ci-status.py failures 1bd5790d` for its final state.
+
+
+### Corrected push CI result
+
+`python3 tools/dev/ci-status.py failures 1bd5790d` completed with CI run `40346552713` successful (`1bd5790d946b`; no failed tests or jobs). The corrected empty composition descriptor and all three focused Host wire tests passed in the selected Actions run `40346579443`.

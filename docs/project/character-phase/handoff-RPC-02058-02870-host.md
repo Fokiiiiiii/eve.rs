@@ -49,11 +49,13 @@ A whole-tree Serena search for `SlashCmd` also found shared client helper caller
 
 ## Verification
 
-- `Petition_support_reads_and_mutations_keep_the_EveJS_wire_shapes_through_the_host` passed after merge: 1/1 focused test, actual Host registration, transport `machoVersion`, EveJS-compatible list/None reply shapes.
-- The origin/main merge added `Rpc01790HostCoverageTests.cs` with a raw `PyValue` passed to `HostFront.SendAsync`; corrected the packet encoding to `Packet(open.SessionId, MarshalCodec.Encode(packet))` so the Host.Tests project compiles.
+- `Petition_support_reads_and_mutations_keep_the_EveJS_wire_shapes_through_the_host` passed after the latest origin/main merge and conflict resolution: 1/1 focused test, actual Host registration, transport `machoVersion`, EveJS-compatible list/None reply shapes.
+- The origin/main merge added `Rpc01790HostCoverageTests.cs` with a raw `PyValue` passed to `HostFront.SendAsync`; corrected the packet encoding to `Packet(open.SessionId, MarshalCodec.Encode(payload))` so the Host.Tests project compiles.
 - Added `Slash_command_is_dispatched_through_the_registered_host_with_macho_version` in `dotnet/tests/Eve.Host.Tests/SlashHostWireTests.cs`. It uses the live HostServer, strict RPC routing and the production SlashService class. The result is the existing `Select a character before using /heal.` PyStr branch.
+- Initial Actions compile failures were fixed: added the `Eve.Services` import for `GameMasterRoles`, then used the serialized `Packet` envelope in the merged RPC coverage test.
+- Selected Host test runs `40277112061` (`1e11b18d`), `40277857506` (`e59639fa`), `40277940730` (`563e94b2`), `40278650613` (`19937d9a`), and `40279478952` (`03c3a14f`) passed without failed tests or jobs.
+- Push-triggered `ci.yml` runs were queued/in progress on concurrent main commits; `ci-status.py failures` found no run for the tested `03c3a14f` commit.
 - Command-specific mutations for `/create`, `/structure` and other command forms are outside this one shared-route wire assertion. The test establishes the route, transport kwargs, role gate and reply encoding for one listed caller shape; it does not verify command-specific persistence or notifications for every caller.
-- The Petitioner Host wire regression passed locally before and after the origin/main merge (1/1 each run). The post-merge run also compiled the merged Host.Tests project.
 
 ## RPC-02280–02287 and RPC-02304–02320 status (2026-10-26)
 

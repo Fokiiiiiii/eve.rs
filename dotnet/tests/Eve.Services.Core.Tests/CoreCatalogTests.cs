@@ -637,7 +637,7 @@ public class CoreCatalogTests
                 "dungeonExplorationMgr", "epicArcStatus", "keeper", "miningScanMgr", "node_graph", "peaceTreatyMgr", "petitioner", "pingService", "posMgr", "publicQaToolsServer", "seasonManager", "subscriptionMgr",
                 "custom_agency_provider", "superWeaponMgr", "tourneyMgr",
                 "raffleMgr", "raffleProxy", "serviceGatewayMgr", "sharedSettingsMgr", "shipStanceMgr",
-                "solarsystemInterferenceMgr", "survey", "warStatisticMgr",
+                "solarsystemInterferenceMgr", "survey", "voidSpaceMgr", "warStatisticMgr",
         }.Order().ToArray();
         Assert.Equal(expectedNames, createdNames);
         Assert.All(createdNames, name => Assert.Contains(name, CoreServices.Names));

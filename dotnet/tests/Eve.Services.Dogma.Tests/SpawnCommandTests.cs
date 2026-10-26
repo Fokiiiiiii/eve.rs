@@ -56,14 +56,14 @@ public class SpawnCommandTests
     private static SpawnedView Ships(params (long Id, double[]? At)[] ships) =>
         new([0d, 0d, 0d], ships.Select(ship => new SpawnedShip(ship.Id, 587, ship.At)).ToArray());
 
-    private static async Task<string> CallAsync(SlashService service, string command, ClientSession? session = null) =>
-        Assert.IsType<PyStr>(await ((IService)service).CallAsync(new ServiceCall
+    private static async Task<PyValue> CallAsync(SlashService service, string command, ClientSession? session = null) =>
+        (await ((IService)service).CallAsync(new ServiceCall
         {
             Method = "SlashCmd",
             Args = [new PyStr(command)],
             Session = session ?? Gm(new ClientSession()),
             CallId = new PyInt(1),
-        })).Value;
+        }));
 
     [PgFact]
     public async Task Spawn_needs_a_character_a_ship_type_and_a_ship()
@@ -146,9 +146,9 @@ public class SpawnCommandTests
         var service = new SlashService(new ShipHealthCommands(null!, null!, () => 0), spawn: new SpawnCommands(new ItemTypeNames(new SdeReader(source)), fake));
         var pilot = Gm(Rig.Session(1001));
 
-        Assert.Equal("Removed 2 NPC ships from your solar system.", await CallAsync(service, "/nuke", pilot));
-        Assert.Equal("No spawned NPC ship is in your solar system.", await CallAsync(service, "/nuke", pilot));
-        Assert.Equal("Nothing to unspawn.", await CallAsync(service, "/unspawn range=5 only=categoryShip", pilot));
+        Assert.Equal(new PyStr("Removed 2 NPC ships from your solar system."), await CallAsync(service, "/nuke", pilot));
+        Assert.Equal(new PyStr("No spawned NPC ship is in your solar system."), await CallAsync(service, "/nuke", pilot));
+        Assert.Equal(new PyStr("Nothing to unspawn."), await CallAsync(service, "/unspawn range=5 only=categoryShip", pilot));
     }
 
     [PgFact]
@@ -159,7 +159,7 @@ public class SpawnCommandTests
 
         var pilot = Gm(Rig.Session(1001));
 
-        Assert.Equal("Spawned 1 Rifter in space around you: 9000.", await CallAsync(service, "spawn Rifter", pilot));
-        Assert.Equal("Spawned 1 Rifter in space around you: 9001.", await CallAsync(service, "/spawn Rifter", pilot));
+        Assert.Equal(new PyLong(9000), await CallAsync(service, "spawn Rifter", pilot));
+        Assert.Equal(new PyLong(9001), await CallAsync(service, "/spawn Rifter", pilot));
     }
 }

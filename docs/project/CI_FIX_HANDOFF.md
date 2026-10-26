@@ -922,3 +922,7 @@ Rule for verification agents: run each touched focused test and the complete Eve
 ## Push 88579c43 status
 
 Commit 88579c43 fixes the contact Host fixture. Full main CI run 1113 (Actions run 40316620877) completed red. Contact now passes in Host shard 1/4; its only Host failures are the encoded-item URL and /spawn refusal byte-string expectations. The same run also failed the Dogma SlashCmd result assertion, the standing cached-result assertion, and both station-ask E2E assertions. Host shards 2/4, 3/4 and 4/4 passed. Build, Rust, Python client, fixtures, all space-test shards, and Windows passed. Run 1113 reported one skipped Dogma benchmark, one skipped market benchmark, and eight E2E skips (seven slow-live checks and skill-training speed); skips are not passes.
+
+## Push 2e5492be status
+
+Commit 2e5492be corrects the two Host Python 2 string wire expectations. Main CI run 1114 (Actions run 40318816492) completed red only on the Dogma SpawnCommand test, standing cached-result test, and the same two station-ask E2E assertions. All four Host shards passed. Build, Rust, Python client, fixtures, all space-test shards, and Windows passed. Run 1114 reported one skipped Dogma benchmark, one skipped market benchmark, and eight E2E skips (seven slow-live checks and skill-training speed); skips are not passes.

@@ -4,18 +4,22 @@
 
 Client-call and reply-consumer review is recorded in `CLIENT_VERIFIED.md` for all 24 requested rows. Existing real Host wire coverage confirms search.QuickQuery, station reads, stationSvc map/rowset endpoints, and subscriptionMgr replies. Added Host wire tests for search.Query and the populationCap load-slot mapping.
 
-`populationCap.MoveCharacterToNewSystem` remains NO-TEST. The current handler validates the selected system/token and persists the move through `PgCharacterStore`; this batch is database-free, so the successful owned-character state transition has not been exercised. Do not close this row until a real Host test asserts the successful None reply and persisted system transition.
+`populationCap.MoveCharacterToNewSystem` remains NO-TEST. Its handler validates the selected system/token and persists the move through `PgCharacterStore`; this database-free batch does not exercise the successful owned-character state transition. Close this row after a real Host test asserts the successful None reply and persisted system transition.
+
+Push CI for `30f44c84` exposed three failures from the merged charMgr work: wire string comparison, an outdated registry count (1442 vs 1423), and a member editor test comparing `util.Row` to Rowset. The fixes are committed as `1376ec5b`; merge `8ec5a681` preserved the concurrent main updates, including its stronger full two-row and text-normalization wire assertions. The merged fixes were pushed as `ae5a2974`. Agent Actions run `40263434792` is in progress; push CI run `40263423427` is queued.
 
 ## Verification
 
-- `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore -m:1 -p:UseSharedCompilation=false` passed.
-- Focused local test `Search_query_returns_group_keyed_result_lists_through_host_with_transport_kwargs` passed (1/1).
-- Population load-slot wire test compiled but has not been run locally.
+- Before the merge update, the Host test project compiled and the focused `Char_mgr_client_read_shapes_match_the_registered_host_wire_contract` passed (1/1).
+- CharacterInfo test project compiled. Its PostgreSQL test was not run locally because this task forbids database use.
+- Earlier batch 8 Agent test run `40258937083` passed both new batch tests.
 - No graphical client session or database was used.
-- Audit-current does not expose a status-evidence option; the audit CSV is unchanged.
+- Audit-current has no status-evidence update option; the audit CSV is unchanged.
+- Batch 8 was pushed as `30f44c84`; its push CI failed as recorded above. The correction commit `1376ec5b`, merge `8ec5a681`, and handoff update are on main through `ae5a2974`.
 
 ## Files
 
 - `dotnet/tests/Eve.Host.Tests/SearchQueryHostWireTests.cs`
 - `dotnet/tests/Eve.Host.Tests/PopulationCapHostWireTests.cs`
 - `docs/project/service-audit/CLIENT_VERIFIED.md`
+- `docs/project/service-audit/handoff-RPC-02258-02848-client.md`

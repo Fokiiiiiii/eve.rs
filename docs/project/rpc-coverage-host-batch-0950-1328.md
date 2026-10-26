@@ -22,7 +22,7 @@ Existing registered-Host wire tests cover blueprint and corporation skyhook read
 
 ## Remaining work
 
-The Bounty and BillMgr Host wire tests pass locally. The Blueprint/Skyhook and Crate registered-Host tests remain selected for Actions. This batch did not use PostgreSQL or the graphical client. Do not classify the three local helper calls above as missing server routes. Record Actions results and the pushed commit here before handing off.
+The Bounty and BillMgr Host wire tests pass locally. Selected Actions run 40279626679 passed for the Bounty, Blueprint/Skyhook, Crate, and BillMgr Host wire filters at commit 0d21ff3e; it reported no failed tests or jobs. The push-triggered ci.yml run was still queued when checked. This batch did not use PostgreSQL or the graphical client. Do not classify the three local helper calls above as missing server routes.
 
 ## Current verification
 

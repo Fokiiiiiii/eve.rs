@@ -87,6 +87,7 @@ public partial class HostServerTests
                 registry.Register(new StructureSettingsService(readModel));
                 registry.Register(new StructureTravelRpcService(
                     "structureJumpBridgeMgr",
+                    jumpBridgeDestination: readModel.GetJbStructureDestinationAsync,
                     linkedStructure: readModel.GetLinkedStructureAsync));
                 registry.Register(new StructureRpcService("structureVulnerability", callbacks));
             },
@@ -107,12 +108,24 @@ public partial class HostServerTests
             return Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload)) ?? PyNone.Instance;
         }
 
+        Assert.Equal(new PyInt(destinationSystemId),
+            await Call("structureJumpBridgeMgr", "GetJbStructureDestination", Py.Tuple(new PyInt(structureId))));
+        Assert.Equal(PyNone.Instance,
+            await Call("structureJumpBridgeMgr", "GetJbStructureDestination", Py.Tuple(new PyInt(88000003))));
         Assert.Equal(
             new PyList([new PyInt(linkedStructureId), new PyInt(destinationSystemId)]),
             await Call("structureJumpBridgeMgr", "GetLinkedStructure", Py.Tuple(new PyInt(structureId))));
         Assert.Equal(
             PyNone.Instance,
             await Call("structureJumpBridgeMgr", "GetLinkedStructure", Py.Tuple(new PyInt(88000003))));
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.CallWithKwargs(open, ++callId, "structureJumpBridgeMgr", "CmdJumpThroughStructureStargate",
+                Py.Tuple(new PyInt(structureId)), kwargs))));
+        var travelRefusal = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.ErrorResponse,
+            Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(travelRefusal.Payload))).Type);
+        Assert.Contains("CustomNotify", System.Text.Encoding.ASCII.GetString(travelRefusal.Payload.Span));
 
         Assert.Equal(PyBool.True, await Call(
             "structureSettings", "CharacterCheckService",

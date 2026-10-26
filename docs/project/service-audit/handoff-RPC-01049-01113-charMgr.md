@@ -50,3 +50,7 @@ The selected Actions run 40260608955 stopped at compile on a missing collection-
 
 
 The follow-up focused Actions run 40261514261 stopped during compilation on xUnit2031 in `CharMgrClientReadHostWireTests.cs`; label assertions now use the predicate overload of `Assert.Single`. A focused rerun is pending. Local `Eve.Host.Tests` build succeeded with 0 warnings/errors, and `Char_mgr_client_read_shapes_match_the_registered_host_wire_contract` passed locally (1 passed, 0 skipped).
+
+The focused Actions rerun 40264471982 for 2e9b557f passed with no failed tests/jobs. The run used `--live ''`, so its headless-client step was skipped; no graphical-client check was made. Push-triggered `ci.yml` run 40264462725 was queued at the last check.
+
+Push-triggered `ci.yml` run 40264462725 for 2e9b557f completed successfully with no failed tests/jobs. The graphical client was not run.

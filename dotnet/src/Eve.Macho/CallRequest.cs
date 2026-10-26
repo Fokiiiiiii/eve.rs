@@ -78,6 +78,7 @@ public sealed record CallRequest(string Method, IReadOnlyList<PyValue> Args, PyV
         IReadOnlyList<PyValue> argList = args switch
         {
             PyTuple tuple => tuple.Items,
+            PyList list => list.Items,
             null or PyNone => [],
             var other => [other],
         };

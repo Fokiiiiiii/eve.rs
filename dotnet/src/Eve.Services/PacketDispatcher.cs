@@ -98,7 +98,8 @@ public sealed class PacketDispatcher
         var call = CallRequest.Decode(packet.Payload);
         if (call is null)
         {
-            return false;
+            SendError(packet, MachoErrors.UserError("UnMachoDestination"), session, serviceName);
+            return true;
         }
 
         // A bound-object call names its object in the call body, not in the address.

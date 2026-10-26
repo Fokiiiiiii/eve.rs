@@ -731,7 +731,9 @@ internal sealed class SessionActor
             }
             catch (MarshalException error)
             {
-                _options.Log?.Invoke($"session {_session.SessionId}: dropped an undecodable packet: {error.Message}");
+                _options.Log?.Invoke($"session {_session.SessionId}: refused an undecodable packet: {error.Message}");
+                _disconnect("InvalidPacket");
+                return;
             }
             catch (OperationCanceledException)
             {
@@ -739,7 +741,9 @@ internal sealed class SessionActor
             }
             catch (Exception error)
             {
-                _options.Log?.Invoke($"session {_session.SessionId}: {error}");
+                _options.Log?.Invoke($"session {_session.SessionId}: refused an invalid packet ({error.GetType().Name})");
+                _disconnect("InvalidPacket");
+                return;
             }
             finally
             {

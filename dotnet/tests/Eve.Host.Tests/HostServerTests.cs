@@ -372,6 +372,36 @@ public partial class HostServerTests : IAsyncLifetime
         Assert.Contains(_log, line => line.Contains("speaks version", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task A_truncated_front_frame_is_dropped_without_stopping_the_host()
+    {
+        Start();
+        var front = await Handshaken(await ConnectAsync());
+        var frame = new byte[5];
+        BinaryPrimitives.WriteUInt32LittleEndian(frame, 16);
+        frame[4] = 1;
+        await front.SendRawAsync(frame);
+        front.Dispose();
+
+        Assert.True(SpinWait.SpinUntil(
+            () => _log.Any(line => line.Contains("middle of a frame", StringComparison.Ordinal)),
+            TimeSpan.FromSeconds(5)));
+        await Handshaken(await ConnectAsync());
+    }
+
+    [Fact]
+    public async Task An_oversized_front_frame_is_rejected_without_stopping_the_host()
+    {
+        Start();
+        var front = await Handshaken(await ConnectAsync());
+        var header = new byte[4];
+        BinaryPrimitives.WriteUInt32LittleEndian(header, (uint)HostCodec.MaxFrame + 1);
+        await front.SendRawAsync(header);
+        Assert.Null(await front.ReceiveOrEndAsync());
+
+        await Handshaken(await ConnectAsync());
+    }
+
     private sealed class FixedSsoTokenVerifier(string expectedToken, VerifiedSsoIdentity identity) : ISsoTokenVerifier
     {
         public bool ReceivedExpectedToken { get; private set; }
@@ -2194,7 +2224,7 @@ public partial class HostServerTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task An_undecodable_packet_is_dropped_and_the_session_carries_on()
+    public async Task An_undecodable_packet_disconnects_its_session_without_stopping_the_front()
     {
         Start();
         var front = await Handshaken(await ConnectAsync());
@@ -2202,10 +2232,15 @@ public partial class HostServerTests : IAsyncLifetime
         await front.SendAsync(open);
         await front.ReceiveAsync();
 
-        await front.SendAsync(new Packet(open.SessionId, new byte[] { 0x7e, 0, 0, 0, 0, 0xff, 0xff, 0xff }));
-        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(open, 1, "pingService", "Ping"))));
-        Assert.IsType<Send>(await front.ReceiveAsync());
+        await front.SendAsync(new Packet(open.SessionId, new byte[] { 0xFF }));
+        var refusal = Assert.IsType<Disconnect>(await front.ReceiveAsync());
+        Assert.Equal(open.SessionId, refusal.SessionId);
+        Assert.Equal("InvalidPacket", refusal.Reason);
         Assert.Contains(_log, line => line.Contains("undecodable", StringComparison.Ordinal));
+
+        var healthy = Open(open.SessionId + 1);
+        await front.SendAsync(healthy);
+        Assert.IsType<Send>(await front.ReceiveAsync());
     }
 
     [Fact]

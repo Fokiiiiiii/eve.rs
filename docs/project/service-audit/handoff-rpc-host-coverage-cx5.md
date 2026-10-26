@@ -36,8 +36,9 @@ eve.rs already registers `lookupSvc` through `CoreServices.CreateLookupService`,
 ## Verification
 
 - Focused real-Host wire regression: `Rpc01790HostCoverageTests.Lookup_machoNet_and_moon_read_calls_use_registered_host_routes_with_macho_version_kwargs`.
-- Actions run 40275193604 found the initial test helper compile errors; fixed in a064ea7a.
-- Actions run 40275936800 found two more compile errors: the wire payload needed the existing `Packet` HostMessage envelope, and the concurrently added Slash Host test needed the `Eve.Services` import for `GameMasterRoles`. Both are fixed in the current unpushed work.
-- Push-triggered `ci.yml` run 40275913312 for b28039ae is still being checked.
+- Actions run 40275193604 found nonexistent `Py` and `TestFront.Packets` helpers; fixed in a064ea7a.
+- Actions run 40275936800 found the missing Host `Packet` envelope and an `Eve.Services` import in the concurrent Slash Host test; both are fixed and pushed in bc20c71b.
+- Corrected selected Actions run 40276677603 is in progress against bc20c71b.
+- Push-triggered `ci.yml` run 40276667864 for bc20c71b is in progress.
 - The local focused test/build is still compiling under shared machine load.
 - No graphical-client run was performed.

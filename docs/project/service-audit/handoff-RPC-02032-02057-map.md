@@ -25,6 +25,7 @@ These callers and downstream consumers were checked across the indexed `/home/us
 
 ## Checks and limits
 
-- Passed: focused `Eve.Host.Tests` test `Map_incursion_and_map_read_replies_keep_client_consumed_shapes_through_host` (1 passed, 0 skipped). This compiled the touched test project.
+- Passed locally: focused `Eve.Host.Tests` test `Map_incursion_and_map_read_replies_keep_client_consumed_shapes_through_host` (1 passed, 0 skipped); it compiled the touched test project.
+- The focused Actions test passed on `09adece5`. The push-triggered CI run on that SHA then found the Host RPC inventory count had grown from 1420 to 1423 after the previous inventory baseline refresh. The inventory assertion is updated to 1423; CI verification of that correction is pending.
 - No PostgreSQL database or graphical client was used.
 - `GetStationInfo` reads the SDE through the Rowset Read Side; that database-backed query was not exercised in this job.

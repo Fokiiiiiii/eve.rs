@@ -147,11 +147,11 @@ Client references below are from the V24.01 `home-user-eve-logic` tree. The rows
 |---|---|---|---|---|---|
 | RPC-01040 | charMgr.GetOwnerNote | `notepad.py:518` | `ShowNote:518-521`, first record's `note` and `label` | `CharMgrService.cs:819-837`; `CharacterManagerMutationHostWireTests.cs:48-64` | MATCHES |
 | RPC-01041 | charMgr.GetOwnerNote | `notepad.py:518` | `ShowNote:518-521`, first record's `note` and `label` | `CharMgrService.cs:819-837`; `CharacterManagerMutationHostWireTests.cs:48-64` | MATCHES |
-| RPC-01042 | charMgr.GetOwnerNoteLabels | `notepad.py:87` | `LoadNotesData:87-105`, iterable rows with `noteID` and `label` | `CharMgrService.cs:798-817`; `CharMgrClientReadHostWireTests.cs:12-81` | NO-TEST (wire test added; Actions result pending) |
-| RPC-01043 | charMgr.GetOwnerNoteLabels | `notepad.py:87` | `LoadNotesData:87-105`, iterable rows with `noteID` and `label` | `CharMgrService.cs:798-817`; `CharMgrClientReadHostWireTests.cs:12-81` | NO-TEST (wire test added; Actions result pending) |
-| RPC-01044 | charMgr.GetPaperdollState | `station/base.py:197` | `GetPaperdollStateCache:195-198`, caches and returns scalar | `CharMgrService.cs:327-336`; `CharMgrClientReadHostWireTests.cs:12-81` | NO-TEST (wire test added; Actions result pending) |
-| RPC-01045 | charMgr.GetPaperdollState | `station/base.py:197` | `GetPaperdollStateCache:195-198`, caches and returns scalar | `CharMgrService.cs:327-336`; `CharMgrClientReadHostWireTests.cs:12-81` | NO-TEST (wire test added; Actions result pending) |
-| RPC-01046 | charMgr.GetPrivateInfo | `corp_dlg_edit_member.py:148` | `LoadChar:148`, then `OnTabGeneral:274-284` reads four attributes | `CharMgrService.cs:234-250`; `CharMgrClientReadHostWireTests.cs:12-81` | MISMATCH (Rowset corrected to util.Row; Actions result pending) |
+| RPC-01042 | charMgr.GetOwnerNoteLabels | `notepad.py:87` | `LoadNotesData:87-105`, iterable rows with `noteID` and `label` | `CharMgrService.cs:798-817`; `CharMgrClientReadHostWireTests.cs:12-81` | NO-TEST (wire test added; first Actions build failed before tests on missing Eve.Characters import (fixed); rerun pending) |
+| RPC-01043 | charMgr.GetOwnerNoteLabels | `notepad.py:87` | `LoadNotesData:87-105`, iterable rows with `noteID` and `label` | `CharMgrService.cs:798-817`; `CharMgrClientReadHostWireTests.cs:12-81` | NO-TEST (wire test added; first Actions build failed before tests on missing Eve.Characters import (fixed); rerun pending) |
+| RPC-01044 | charMgr.GetPaperdollState | `station/base.py:197` | `GetPaperdollStateCache:195-198`, caches and returns scalar | `CharMgrService.cs:327-336`; `CharMgrClientReadHostWireTests.cs:12-81` | NO-TEST (wire test added; first Actions build failed before tests on missing Eve.Characters import (fixed); rerun pending) |
+| RPC-01045 | charMgr.GetPaperdollState | `station/base.py:197` | `GetPaperdollStateCache:195-198`, caches and returns scalar | `CharMgrService.cs:327-336`; `CharMgrClientReadHostWireTests.cs:12-81` | NO-TEST (wire test added; first Actions build failed before tests on missing Eve.Characters import (fixed); rerun pending) |
+| RPC-01046 | charMgr.GetPrivateInfo | `corp_dlg_edit_member.py:148` | `LoadChar:148`, then `OnTabGeneral:274-284` reads four attributes | `CharMgrService.cs:234-250`; `CharMgrClientReadHostWireTests.cs:12-81` | MISMATCH (Rowset corrected to util.Row; first Actions build failed before tests on missing Eve.Characters import (fixed); rerun pending) |
 | RPC-01047 | charMgr.GetPrivateInfoOnCorpChange | `personalDonateEMPanel.py:69` | `_is_corp_membership_valid:69-75`, None guard then `corporationDateTime` | `CharMgrService.cs:847-867`; `CharMgrRpcHostWireTests.cs:38-52` | MATCHES |
 | RPC-01048 | charMgr.GetPrivateInfoOnCorpChange | `personalDonateEMPanel.py:69` | `_is_corp_membership_valid:69-75`, None guard then `corporationDateTime` | `CharMgrService.cs:847-867`; `CharMgrRpcHostWireTests.cs:38-52` | MATCHES |
 | RPC-01049 | charMgr.GetPublicInfo | `avatardisplay/avatardisplay.py:1360` | `GetBloodlineFromDNA:1360-1362` reads `bloodlineID` | `CharMgrService.cs:179-183`; `CharMgrPublicInfoHostTests.cs:12-107` | MATCHES |
@@ -179,6 +179,6 @@ The `run_service_audit_current.py` entry point exposes no per-row evidence input
 
 ## Verification state
 
-- Local focused command: `dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --filter FullyQualifiedName~Char_mgr_client_read_shapes_match_the_registered_host_wire_contract`. The build compiled `Eve.Services.CharacterInfo`, then stalled while compiling `Eve.Host`; it was cancelled after no output for about two minutes. No test executed.
-- No PostgreSQL database or graphical client was used.
-- Focused GitHub Actions verification is pending.
+- The initial local focused `dotnet test` compiled `Eve.Services.CharacterInfo`, then stalled during `Eve.Host` compilation and was cancelled; no test executed. A subsequent no-restore Host test-project build was cancelled during dependency compilation on this shared machine.
+- Actions run 40256730678 failed before tests: the new Host test omitted `using Eve.Characters`, producing CS0246 for `Character`. That import is fixed in the source. Push CI run 40256722236 failed on the same compiler error.
+- Focused GitHub Actions rerun is pending. No PostgreSQL database or graphical client was used.

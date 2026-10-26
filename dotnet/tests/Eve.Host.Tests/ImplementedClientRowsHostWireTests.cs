@@ -20,9 +20,9 @@ public partial class HostServerTests
         await front.SendAsync(open);
         _ = await front.ReceiveAsync();
 
-        Assert.Same(PyBool.True, await HostRpcAsync(front, open, 1, "kiringMgr", "IsMonochromeStyleEnabled"));
+        Assert.Equal(PyBool.True, await HostRpcAsync(front, open, 1, "kiringMgr", "IsMonochromeStyleEnabled"));
         service.MonochromeStyleEnabled = false;
-        Assert.Same(PyBool.False, await HostRpcAsync(front, open, 2, "kiringMgr", "IsMonochromeStyleEnabled"));
+        Assert.Equal(PyBool.False, await HostRpcAsync(front, open, 2, "kiringMgr", "IsMonochromeStyleEnabled"));
     }
 
     [Fact]
@@ -52,7 +52,7 @@ public partial class HostServerTests
             await HostRpcAsync(front, open, 1, "map", "GetSecurityModifiedSystems"));
         Assert.Equal("eve.common.script.sys.rowset.Rowset", WireText(result.Name));
         Assert.Equal(["solarSystemID"], Assert.IsType<PyList>(WireField(result, "header")).Items.Select(WireText));
-        Assert.Equal("util.Row", WireText(WireField(result, "RowClass")));
+        Assert.Equal(new PyToken("util.Row"), WireField(result, "RowClass"));
         Assert.Empty(Assert.IsType<PyList>(WireField(result, "lines")).Items);
     }
 

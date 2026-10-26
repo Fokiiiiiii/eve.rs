@@ -45,6 +45,7 @@ eve.rs already registers `lookupSvc` through `CoreServices.CreateLookupService`,
 - Corrected focused Actions run 40278146386 passed: 1 passed, 0 failed, 0 skipped.
 - Push-triggered `ci.yml` run 40278138665 for `b5c21d53` is in progress.
 - Push CI run 40278138665 surfaced two unrelated Host wire-test assertions that treated decoded unicode as `PyStr`: the dungeon resource cache test and support/insurgency test. Corrected them to assert decoded text and KeyVal fields while preserving the expected wire values; a selected regression run for both is queued after push.
+- The same CI run found the RPC security inventory expected 1,423 methods but found 1,424 after the newly registered `DevIndexManagerRpcService.GetAllDevelopmentIndices` route (`OperationalRpcServices.cs:27-41`). Updated the count assertion to 1,424.
 
 - The local focused `dotnet test` process was stopped after 47 minutes waiting through compilation under shared-machine load; it produced no test result. The same focused test passed in Actions run 40278146386.
 

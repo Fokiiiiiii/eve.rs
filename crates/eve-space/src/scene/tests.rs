@@ -1893,7 +1893,10 @@ fn a_warp_to_a_gate_ends_within_jump_range_of_it_and_the_jump_is_accepted() {
         "{told:?}"
     );
     let refused = scene.command(SESSION, jump(FAR_GATE, 0), warp_at);
-    assert!(refused.iter().any(|out| matches!(out, Out::Refused { reason: "IN_WARP", .. })), "{refused:?}");
+    assert!(
+        refused.iter().any(|out| matches!(out, Out::Refused { reason: "TOO_FAR_FROM_STARGATE", .. })),
+        "{refused:?}"
+    );
 
     let gate = scene.system().body(FAR_GATE).unwrap().clone();
     let mut t = warp_at;
@@ -1909,7 +1912,10 @@ fn a_warp_to_a_gate_ends_within_jump_range_of_it_and_the_jump_is_accepted() {
         "warp did not start by {t}"
     );
     let in_warp = scene.command(SESSION, jump(FAR_GATE, 0), t);
-    assert!(in_warp.iter().any(|out| matches!(out, Out::Refused { reason: "IN_WARP", .. })), "{in_warp:?}");
+    assert!(
+        in_warp.iter().any(|out| matches!(out, Out::Refused { reason: "TOO_FAR_FROM_STARGATE", .. })),
+        "{in_warp:?}"
+    );
 
     while t < NOON + seconds(300) {
         t += 2_500_000;
@@ -1941,6 +1947,33 @@ fn a_warp_to_a_gate_ends_within_jump_range_of_it_and_the_jump_is_accepted() {
     assert_eq!(ship.position, position, "the ship remains stopped while the jump is pending");
     assert!(scene.pilots[&SESSION].flight.is_none(), "the old coast flight does not resume");
 }
+#[test]
+fn a_stargate_jump_within_range_is_accepted_during_warp() {
+    let mut scene = scene_by_a_gate();
+    scene.command(SESSION, Command::SetSpeedFraction(0.0), NOON);
+    let warp_at = NOON + seconds(1);
+    scene.command(SESSION, Command::WarpTo { target_id: FAR_GATE, range: 0.0 }, warp_at);
+
+    let mut now = warp_at;
+    while now < NOON + seconds(300) {
+        now += 2_500_000;
+        scene.poll(now);
+        if scene.pilots[&SESSION].flight.as_ref().is_some_and(|flight| flight.is_warping()) {
+            break;
+        }
+    }
+    assert!(scene.pilots[&SESSION].flight.as_ref().is_some_and(|flight| flight.is_warping()));
+
+    let gate = scene.system().body(FAR_GATE).unwrap().clone();
+    let ship_radius = scene.pilots[&SESSION].ship.spec.radius;
+    scene.pilots.get_mut(&SESSION).unwrap().ship.position =
+        Vec3::new(gate.position.x + gate.radius + ship_radius + 1_000.0, gate.position.y, gate.position.z);
+
+    let out = scene.command(SESSION, jump(FAR_GATE, 0), now);
+    assert!(out.iter().any(|out| matches!(out, Out::Jumping { .. })), "{out:?}");
+    assert!(scene.pilots[&SESSION].flight.is_none());
+}
+
 #[test]
 fn a_warp_to_a_gate_with_the_same_calls_ends_at_the_same_point() {
     let land = || {

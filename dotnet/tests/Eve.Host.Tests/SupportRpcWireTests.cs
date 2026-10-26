@@ -43,18 +43,13 @@ public partial class HostServerTests
         var config = Assert.IsType<PyObject>(await Call(1, "infoGatheringMgr", "GetStateAndConfig"));
         Assert.Equal("util.KeyVal", T(config.Name));
         var configFields = Assert.IsType<PyDict>(config.Args);
-        var expectedConfigFields = new Dictionary<string, PyValue>
-        {
-            ["isEnabled"] = new PyInt(0),
-            ["infoTypes"] = new PyList([]),
-            ["clientWorkerInterval"] = new PyInt(0),
-            ["infoTypesOncePerRun"] = new PyList([]),
-            ["infoTypeAggregates"] = new PyDict([]),
-            ["infoTypeParameters"] = new PyDict([]),
-        };
-        Assert.Equal(expectedConfigFields.Count, configFields.Entries.Count);
-        foreach (var (name, expected) in expectedConfigFields)
-            Assert.Equal(expected, configFields.Entries.Single(entry => T(entry.Key) == name).Value);
+        Assert.Equal(6, configFields.Entries.Count);
+        Assert.Equal(new PyInt(0), configFields.Entries.Single(entry => T(entry.Key) == "isEnabled").Value);
+        Assert.Empty(Assert.IsType<PyList>(configFields.Entries.Single(entry => T(entry.Key) == "infoTypes").Value).Items);
+        Assert.Equal(new PyInt(0), configFields.Entries.Single(entry => T(entry.Key) == "clientWorkerInterval").Value);
+        Assert.Empty(Assert.IsType<PyList>(configFields.Entries.Single(entry => T(entry.Key) == "infoTypesOncePerRun").Value).Items);
+        Assert.Empty(Assert.IsType<PyDict>(configFields.Entries.Single(entry => T(entry.Key) == "infoTypeAggregates").Value).Entries);
+        Assert.Empty(Assert.IsType<PyDict>(configFields.Entries.Single(entry => T(entry.Key) == "infoTypeParameters").Value).Entries);
         var statuses = Assert.IsType<PyDict>(await Call(2, "infoGatheringMgr", "LogInfoEventsFromClient", events));
         Assert.Empty(statuses.Entries);
 
@@ -76,6 +71,11 @@ public partial class HostServerTests
         var all = Assert.IsType<PyList>(await Call(correlationId++, "insurgencySolarsystem", "GetAllVisibleCampaigns"));
         var snapshot = Assert.IsType<PyObjectEx>(Assert.Single(all.Items));
         Assert.Equal(ObjectExKind.Ex2, snapshot.Kind);
+        var snapshotHeader = Assert.IsType<PyTuple>(snapshot.Header);
+        Assert.Equal("pirateinsurgency.campaignClientSnapshot.CampaignClientSnapshot",
+            T(Assert.IsType<PyTuple>(snapshotHeader.Items[0]).Items[0]));
+        var snapshotFields = Assert.IsType<PyDict>(snapshotHeader.Items[1]);
+        Assert.Contains(snapshotFields.Entries, entry => T(entry.Key) == "_campaignID" && entry.Value == new PyInt(7));
         var local = Assert.IsType<PyList>(await Call(correlationId, "insurgencySolarsystem", "GetLocalCampaignClientSnapshot"));
         Assert.Equal(new PyInt(30000142), local.Items[0]);
         Assert.Equal(snapshot, local.Items[1]);

@@ -11,9 +11,10 @@ RPC-02232 is a MISMATCH: `RepairItemsInStructure` rejects the call while EveJS r
 ## Verification and next steps
 
 - Focused reward Actions run 40296391366 for 05564516 passed (1 test, no skips).
-- Focused shared-settings Actions run 40303581991 for 7f508341 passed (1 passed, 0 skipped), covering the KeyVal wire value and subsequent GetStoredSharedSetting call. Hash and stored string fields arrive as PyBytes and are consumed as text by the client.
-- Earlier push CI runs failed on stale commits: c19c223e/5ede8e99 had wars/map Host test byte-string/import issues; 2d63f140/e5a632a9 had successive shared-test type/compile issues. Those root causes are fixed in later commits.
-- Push CI run 40303569025 for 7f508341 remained in progress at last check.
+- Focused shared-settings Actions run 40303581991 for 7f508341 passed (1 passed, 0 skipped), covering the KeyVal and subsequent lookup. Wire string values are PyBytes.
+- Main merge 78948f90 restored a PyStr equality assertion for the subsequent lookup; this contradicted the observed wire type. The working tree restores the PyBytes assertion and verifies text with `JsSemantics.StringValue`; this correction needs a new push and Actions run.
+- Push CI run 40303569025 for 7f508341 was still in progress at last check; it predates the latest main merge.
+- Earlier compile failures on older refs were fixed: Map Host test namespace import, missing `Eve.Macho` using, and nullable dictionary key conversion.
 - A previous focused Actions run 40298615792 was cancelled before tests began because setup provisioned PostgreSQL; it is not a test result.
 - Local Host test could not compile because NuGet assets are absent; restore stalled at package-source resolution. No local pass is claimed.
 

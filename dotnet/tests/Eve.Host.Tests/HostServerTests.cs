@@ -4039,6 +4039,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         Assert.True(await model.IsOnLocalFuelAccessGroupAsync(call));
         Assert.Equal(new[] { systemId }, await model.ReadAllianceSystemsAsync(allianceId, CancellationToken.None));
         Assert.Empty(await model.ReadAllianceSystemsAsync(0, CancellationToken.None));
+        Assert.Equal(new[] { (systemId, allianceId), (otherSystemId, otherAllianceId) },
+            await model.ReadAllAllianceSystemsAsync(CancellationToken.None));
     }
 
 

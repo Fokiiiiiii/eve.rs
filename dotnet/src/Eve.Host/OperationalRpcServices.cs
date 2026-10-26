@@ -12,6 +12,8 @@ public sealed record DevelopmentIndexRecord(
     long IndustrialPoints,
     long ClaimedFor);
 
+public sealed record DevelopmentIndexValue(long AttributeId, long Points, bool Increasing);
+
 public sealed record SpaceCompressionResult(
     long SourceItemId,
     int SourceTypeId,
@@ -22,7 +24,8 @@ public sealed record SpaceCompressionResult(
 
 [Service("devIndexManager")]
 public sealed partial class DevIndexManagerRpcService(
-    Func<CancellationToken, ValueTask<IReadOnlyList<DevelopmentIndexRecord>>> readAll)
+    Func<CancellationToken, ValueTask<IReadOnlyList<DevelopmentIndexRecord>>> readAll,
+    Func<long, CancellationToken, ValueTask<IReadOnlyList<DevelopmentIndexValue>>>? readForSystem = null)
 {
     [Method("GetAllDevelopmentIndices")]
     public async ValueTask<PyValue> GetAllDevelopmentIndices(ServiceCall call)
@@ -38,6 +41,33 @@ public sealed partial class DevIndexManagerRpcService(
                 ("claimedFor", new PyInt(Math.Max(0, record.ClaimedFor)))));
         }
         return new PyList(rows);
+    }
+
+    [Method("GetDevelopmentIndicesForSystem")]
+    public async ValueTask<PyValue> GetDevelopmentIndicesForSystem(ServiceCall call)
+    {
+        if (call.Args.Count > 1 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("DEV_INDEX_ARGUMENTS_INVALID");
+
+        var systemId = call.Args.Count == 0
+            ? call.Session.GetInt("solarsystemid2") ?? call.Session.GetInt("solarsystemid") ?? 0
+            : call.Arg(0) switch
+            {
+                PyInt value => value.Value,
+                PyLong value => value.Value,
+                _ => 0,
+            };
+        if (systemId <= 0)
+            throw MachoErrors.ThrowUserError("DEV_INDEX_SYSTEM_INVALID");
+        if (readForSystem is null)
+            throw new InvalidOperationException("Development index reads are not wired.");
+
+        var indices = await readForSystem(systemId, call.Cancellation);
+        return new PyDict(indices.Select(index => new KeyValuePair<PyValue, PyValue>(
+            Py.Number(index.AttributeId),
+            Py.KeyVal(
+                ("points", Py.Number(Math.Max(0, index.Points))),
+                ("increasing", index.Increasing ? PyBool.True : PyBool.False)))).ToArray());
     }
 }
 

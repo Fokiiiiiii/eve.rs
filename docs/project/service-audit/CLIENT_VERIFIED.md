@@ -373,3 +373,61 @@ EveJS comparison: search returns a group-ID keyed dictionary of lists for `Query
 - Focused Actions run 40264471982 for 2e9b557f succeeded with no failed tests/jobs, covering the registered-Host client-read, item-list and recent-kill checks plus registry/private-info regressions. The headless-client step was skipped because `--live ''` was requested; graphical-client behavior remains unchecked. Push-triggered `ci.yml` run 40264462725 was still queued when checked.
 
 - Push-triggered `ci.yml` run 40264462725 for 2e9b557f completed successfully with no failed tests/jobs. This closes the selected Host/service regression verification for batch 4; the graphical client was not run.
+
+
+## Client verification batch 3: RPC-00984–01972
+
+The RPC inventory has duplicate row IDs for a single service method; every ID below has an individual verdict. Evidence blocks that follow apply to each listed ID for that method. Client source is the full V24.01 eve-logic tree; EveJS comparison uses `/home/user/evejs-261018.1/src/server/src`.
+
+### Row verdicts
+
+| row_id | service.method | verdict |
+|---|---|---|
+| RPC-00984 | charMgr.AddContact | MATCHES |
+| RPC-00985 | charMgr.AddContact | MATCHES |
+| RPC-00988 | charMgr.AddOwnerNote | MATCHES |
+| RPC-00989 | charMgr.AddOwnerNote | MATCHES |
+| RPC-00990 | charMgr.AddOwnerNote | MATCHES |
+| RPC-00991 | charMgr.AddOwnerNote | MATCHES |
+| RPC-00992 | charMgr.AddOwnerNote | MATCHES |
+| RPC-00993 | charMgr.AddOwnerNote | MATCHES |
+| RPC-00998 | charMgr.DeleteContacts | MATCHES |
+| RPC-01011 | charMgr.GetCharacterCreationDate | MISMATCH (fixed) |
+| RPC-01124 | charUnboundMgr.GetNumCharacters | MATCHES |
+| RPC-01903 | map.GetStationCount | MATCHES |
+| RPC-01904 | map.GetStationCount | MATCHES |
+| RPC-01905 | map.GetStationCount | MATCHES |
+| RPC-01906 | map.GetStationInfo | MATCHES |
+| RPC-01907 | map.GetStationInfo | MATCHES |
+| RPC-01908 | map.GetStationInfo | MATCHES |
+| RPC-01909 | map.GetStationInfo | MATCHES |
+| RPC-01910 | map.GetStationInfo | MATCHES |
+| RPC-01911 | map.GetStationInfo | MATCHES |
+| RPC-01912 | map.GetStationInfo | MATCHES |
+| RPC-01913 | map.GetStationInfo | MATCHES |
+| RPC-01914 | map.GetStationInfo | MATCHES |
+| RPC-01915 | map.GetStationInfo | MATCHES |
+| RPC-01916 | map.GetStationInfo | MATCHES |
+| RPC-01917 | map.GetStationInfo | MATCHES |
+| RPC-01969 | moonExtractions.GetExtractionsForCorp | MATCHES |
+| RPC-01970 | moonExtractions.GetExtractionsForCorp | MATCHES |
+| RPC-01971 | moonExtractions.GetMoonResourcesForStructure | MATCHES |
+| RPC-01972 | moonExtractions.GetMoonResourcesForStructure | MATCHES |
+
+### Client, EveJS and Host evidence
+
+- **RPC-00984/00985 — `charMgr.AddContact`.** Client calls at `eve/client/script/ui/shared/neocom/addressBook/addressbookService.py:732-734,786-789`; the one-argument NPC-agent path ignores the reply then updates the local agent list, and the personal-contact path updates its local contact mapping after the call. The full-tree callers also include tournament setup at `eve/devtools/script/form_tournament.py:301-304`. EveJS `charMgrService.js:1025-1027,1040-1071` returns null and upserts the contact; optional send-notification writes notification type 89 with relationship and message. Host `dotnet/src/Eve.Services.CharacterInfo/CharMgrService.cs:928-964` returns `None`, updates personal state and uses the configured character reader before writing the optional notification. Real Host regression: `dotnet/tests/Eve.Host.Tests/ClientRowsCharacterHostWireTests.cs:41-91` asserts the null reply, contact row, and notification writer arguments.
+- **RPC-00988/00989/00990/00991/00992/00993 — `charMgr.AddOwnerNote`.** Client calls at `eve/client/script/ui/shared/neocom/notepad.py:174-175,206-207,622-624`; each stores or passes the returned note ID to later note/folder operations. EveJS `charMgrService.js:1181-1187` returns the ID from its owner-note state writer. Host `CharMgrService.cs:966-1003` persists the note and returns a `PyInt` ID. The same real Host test at `ClientRowsCharacterHostWireTests.cs:41-91` asserts the integer ID and retrieves the created note by that ID.
+- **RPC-00998 — `charMgr.DeleteContacts`.** Client calls at `addressbookService.py:819-821,841` and `eve/devtools/script/form_tournament.py:810`; UI updates/removes local entries after the call and refreshes the list. EveJS `charMgrService.js:1073-1079` removes the selected IDs and returns null. Host `CharMgrService.cs:1005-1014` removes those IDs and returns `None`; the same real Host test asserts the null reply and empty address rows.
+- **RPC-01011 — `charMgr.GetCharacterCreationDate`.** Client calls without arguments at `eve/client/script/ui/services/ccSvc.py:53-55`; `GetMyAgeInDays` subtracts the returned datetime from now at lines 47-50. EveJS `charMgrService.js:840-844` resolves the character from the session and returns a FILETIME long. The prior Host handler looked only at argument zero and returned `None` for this call. It now reads `session.CharacterId` and returns `PyLong` FILETIME at `CharMgrService.cs:229-239`. Real Host regression `ClientRowsCharacterHostWireTests.cs:12-39` calls it with no arguments and checks the FILETIME value. **MISMATCH fixed.**
+- **RPC-01124 — `charUnboundMgr.GetNumCharacters`.** The old and new creation flows call it without arguments at `characterCreationContainer.py:906-908` and `characterCreationContainer_new.py:754-756`, and only compare the result with 1. EveJS `charService.js:1375-1382` returns the account character count as a number. Host `CharUnboundMgrService.cs:63-65` returns `PyInt`; real Host test `ClientRowsCharacterHostWireTests.cs:92-106` asserts an integer reply for a session without a bound account. The account-backed count branch uses the existing character store.
+- **RPC-01903/01904/01905 — `map.GetStationCount`.** Whole-tree callers are `mapViewColorHandler.py:556-561`, `starModeHandler.py:404-415`, and `mapFilterStationCount.py:18-24`; clients cache the reply and consume iterable `(solarSystemID, count)` pairs as integers/dictionary keys. EveJS `mapService.js:759-781` returns sorted pairs including zero-count systems. Host `StationService.cs:453-460` returns a list of two-`PyInt` tuples from the same station-count read query. Real Host shape regression is `ClientRowsMapHostWireTests.cs:12-49`.
+- **RPC-01906/01907/01908/01909/01910/01911/01912/01913/01914/01915/01916/01917 — `map.GetStationInfo`.** Whole-tree callers/consumers: `facWarSvc.py:471-473` groups stations by owner; `marketsvc.py:639-641` reads `solarSystemID` from the station-ID index; `uisvc.py:244-247` indexes rows by `stationID`; `mapFilterServices.py:20-23`, `mapViewColorHandler.py:746-755`, and `starModeHandler.py:693-705` iterate station, system, owner and operation fields. EveJS `mapService.js:701-757` emits the cached eight-column `eve.common.script.sys.rowset.Rowset` with `util.Row` rows. Host `StationService.cs:286-291` wraps the eight-column read-side rowset in `ObjectCaching.MethodResult`; production rows use integer IDs. Real Host test `ClientRowsMapHostWireTests.cs:12-64` asserts the cache wrapper, header, row class, column count and consumed ID fields.
+- **RPC-01969/01970 — `moonExtractions.GetExtractionsForCorp`.** Client call at `eve/client/script/ui/moonmining/schedulingSvc.py:36-40` has no arguments after the station-manager role check; `moonminingEventsCont.py:96-108` consumes each row's `structureID`, `solarSystemID`, `chunkAvailableTime` and `moonID`. EveJS `moonExtractionsService.js:1128-1143` defaults corporation from session, filters active/fracturing rows and sorts by chunk time. Host `StructureDataRpcServices.cs:76-88` does the same and returns a list of KeyVals. Real Host test `Rpc01790HostCoverageTests.cs:11-16,122-141` now uses the session corporation and asserts the client-used fields and FILETIME type.
+- **RPC-01971/01972 — `moonExtractions.GetMoonResourcesForStructure`.** Client calls without arguments at `schedulingSvc.py:76-78`, forwards the mapping unchanged, and supplies it to `scheduling.py:80-83` for the resource UI. EveJS `moonExtractionsService.js:1145-1165` returns the structure's resource composition mapping. Host `StructureDataRpcServices.cs:90-106` returns a dictionary with integer type IDs and numeric abundances from structure state. The same real Host test `Rpc01790HostCoverageTests.cs:11-16,143-154` verifies the session-structure call, integer key and numeric value.
+
+### Verification limits
+
+- The character and map focused Host tests use in-memory providers and no PostgreSQL. The map Host hook supplies a representative cached-rowset value; the existing database-backed service test `StationServiceTests.cs:318-363` separately checks static station query fields and ordering.
+- The pre-existing full contact persistence test is database-gated at `CharacterManagerMutationHostWireTests.cs:11-91`; this batch's contact/note/delete Host regression does not need a database.
+- No graphical client session was started. The account-backed character-count query and live database notification persistence path were not exercised here.

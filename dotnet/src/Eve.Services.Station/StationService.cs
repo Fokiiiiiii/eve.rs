@@ -287,6 +287,9 @@ public sealed partial class MapService
     [Method("GetStationInfo")]
     public async ValueTask<PyValue> GetStationInfo(ServiceCall call)
     {
+        if (ReadDataHook is { } hook && await hook(call) is { } result)
+            return result;
+
         var rows = await _reads.RowsAsync(StationInfoQuery, cancellationToken: call.Cancellation);
         return ObjectCaching.MethodResult(rows.ToRowset(), _nowUnixMs());
     }
@@ -454,6 +457,9 @@ public sealed partial class MapService
     [Method("GetStationCount")]
     public async ValueTask<PyValue> GetStationCount(ServiceCall call)
     {
+        if (ReadDataHook is { } hook && await hook(call) is { } result)
+            return result;
+
         var rows = await _reads.RowsAsync(StationCountQuery, cancellationToken: call.Cancellation);
         return new PyList([.. rows.Rows.Select(row => Py.Tuple(
             new PyInt(Convert.ToInt64(row[0])),

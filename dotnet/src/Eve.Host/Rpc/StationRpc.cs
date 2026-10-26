@@ -44,7 +44,7 @@ internal sealed partial class CharacterServicesComposition
             new Eve.Services.Station.TradeMgrService(characterSessions, tradeAuthority, itemTypes, stations, now),
             new Eve.Services.Station.ReprocessingService(source, items, itemTypes, stations, new Eve.Services.Station.SdeReprocessingData(sde, adjustedPrices), foundations.Relations, skills, economyWallets, wallets, characters, dogma, now),
             new Eve.Services.Station.RepairService(source, items, itemTypes, stations, dogma, modules, adjustedPrices, economyWallets, wallets, now),
-            new Eve.Host.DevIndexManagerRpcService(sovereigntyReadModel.ReadAllDevelopmentIndicesAsync),
+            new Eve.Host.DevIndexManagerRpcService(sovereigntyReadModel.ReadAllDevelopmentIndicesAsync, sovereigntyReadModel.ReadDevelopmentIndicesForSystemAsync),
             new Eve.Host.EjectRpcService(spaceContainers is { } ejectSpace
                 ? (call, sourceId, itemId, cancellationToken) => new ValueTask(
                     ejectSpace.LaunchShipOrContainerFromWreckOrContainerAsync(call.Session, sourceId, itemId, cancellationToken))

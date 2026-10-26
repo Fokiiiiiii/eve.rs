@@ -70,6 +70,46 @@ public sealed class PersistenceSovFwReadModel(
         return records.OrderBy(record => record.SolarSystemId).ToArray();
     }
 
+    public async ValueTask<IReadOnlyList<Eve.Host.DevelopmentIndexValue>> ReadDevelopmentIndicesForSystemAsync(
+        long solarSystemId,
+        CancellationToken cancellationToken)
+    {
+        if (solarSystemId <= 0)
+            return [];
+
+        var state = await readTable("sovereignty", cancellationToken);
+        JsonObject? indices = null;
+        if (state["systems"] is JsonObject systems)
+        {
+            foreach (var (key, node) in systems)
+            {
+                if (node is not JsonObject candidate)
+                    continue;
+                var candidateId = Positive(Integer(candidate["solarSystemID"]));
+                if (candidateId <= 0 &&
+                    !long.TryParse(key, System.Globalization.NumberStyles.Integer,
+                        System.Globalization.CultureInfo.InvariantCulture, out candidateId))
+                    continue;
+                if (candidateId == solarSystemId)
+                {
+                    indices = candidate["devIndices"] as JsonObject;
+                    break;
+                }
+            }
+        }
+        var claimedForDays = Positive(Integer(indices?["claimedForDays"] ?? indices?["claimedFor"]));
+        const long militaryAttributeId = 1583;
+        const long industrialAttributeId = 1584;
+        const long sovereigntyAttributeId = 1615;
+        const long secondsPerDay = TimeSpan.TicksPerDay / TimeSpan.TicksPerSecond;
+        return
+        [
+            new(militaryAttributeId, Positive(Integer(indices?["militaryPoints"])), Truthy(indices?["militaryIncreasing"])),
+            new(industrialAttributeId, Positive(Integer(indices?["industrialPoints"])), Truthy(indices?["industrialIncreasing"])),
+            new(sovereigntyAttributeId, checked(claimedForDays * secondsPerDay), false),
+        ];
+    }
+
     public async ValueTask<Eve.Services.Core.SovFwReadSnapshot> ReadSnapshotAsync(
         Eve.Services.ServiceCall call) =>
         await ReadSnapshotAsync(call.Cancellation);

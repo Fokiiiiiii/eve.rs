@@ -65,3 +65,10 @@ A temporary Host test tried to exercise GetNumCharacters/GetCharacterInfo with n
 - Selected Host run `40260450720` passed for `Char_unbound_mgr_stateless_reads_and_validation_toggle_are_registered_on_the_host` (0 failed tests/jobs). This is existing stateless Host coverage; it does not close the seven NO-TEST methods.
 - `python3 tools/dev/ci-status.py failures 6f2b9285` reported no `ci.yml` run for the pushed SHA at the follow-up check.
 - Local temporary probes with null character-store dependencies returned ErrorResponse for account-backed reads; those test additions were removed. No database or graphical client was used.
+
+
+## Latest push
+
+- The handoff update was pushed with merge SHA `143facac` after merging the current `origin/main` changes.
+- `python3 tools/dev/ci-status.py failures 143facac` reported no `ci.yml` run for that SHA.
+- The selected Host run remains `40260450720` on `6f2b9285`, passed. Batch 6 remains incomplete until the seven NO-TEST methods have representative real-Host coverage.

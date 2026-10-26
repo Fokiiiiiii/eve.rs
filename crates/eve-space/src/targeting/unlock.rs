@@ -37,11 +37,13 @@ impl Scene {
     /// locked are told they are not.
     pub(crate) fn clear_locks(&mut self, session: SessionId, notify_target: bool, now: i64) -> Vec<Out> {
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
+        let pending = pilot.targeting.pending_targets();
         pilot.targeting.pending.clear();
         let held = pilot.targeting.targets();
         pilot.targeting.locked.clear();
         let source_id = pilot.ship.spec.ship_id;
         let mut out = self.stop_weapons_at(session, &held, now);
+        out.extend(pending.into_iter().map(|target| fail_lock_notification(session, target)));
         if notify_target {
             for target in &held {
                 if let Some(other) = self.session_of_ship(*target)
@@ -64,7 +66,7 @@ impl Scene {
             pilot.targeting.pending.iter().map(|p| p.target).filter(|t| !allowed.contains(t)).collect();
         let mut out = Vec::new();
         for target in going {
-            self.cancel_pending(session, target);
+            out.extend(self.cancel_pending(session, target, true));
             out.push(on_target_reason(session, "lost", Some(target), Some("target")));
         }
         for target in self.locked_by(session).into_iter().filter(|t| !allowed.contains(t)) {
@@ -91,9 +93,7 @@ impl Scene {
             .map(|(s, _)| *s)
             .collect();
         for source in sources {
-            if let Some(pilot) = self.pilots.get_mut(&source) {
-                pilot.targeting.pending.retain(|p| p.target != ship_id);
-            }
+            out.extend(self.cancel_pending(source, ship_id, true));
             out.extend(self.remove_locked(source, ship_id, None, false, now));
         }
         out

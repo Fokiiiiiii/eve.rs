@@ -178,6 +178,10 @@ fn on_target(session: SessionId, what: &'static str, target: Option<i64>) -> Out
     Out::Notify { session, name: "OnTarget", id_type: "shipid", args }
 }
 
+fn fail_lock_notification(session: SessionId, target: i64) -> Out {
+    Out::ServiceNotify { session, service: "target", method: "FailLockTarget", args: vec![id(target)] }
+}
+
 impl Scene {
     pub(crate) fn subject(&self, target: i64, now: i64) -> Option<Subject> {
         if let Some((session, pilot)) = self.pilots.iter().find(|(_, p)| p.ship.spec.ship_id == target) {
@@ -390,10 +394,11 @@ impl Scene {
         let told = match &order {
             Order::Lock(target) => self.lock(session, *target, &order, LockOrigin::Player, now),
             Order::Cancel(target) => {
-                if let Some(pilot) = self.pilots.get_mut(&session) {
-                    pilot.targeting.pending.retain(|p| p.target != *target);
-                }
-                Self::answer(session, &order, false, self.locked_by(session))
+                let mut out = Vec::new();
+                self.cancel_pending(session, *target, false);
+
+                out.extend(Self::answer(session, &order, false, self.locked_by(session)));
+                out
             }
             Order::Remove(targets) => {
                 let mut out = Vec::new();

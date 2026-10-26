@@ -549,6 +549,12 @@ impl Message {
                 put_text(&mut out, id_type);
                 put_bytes(&mut out, args);
             }
+            Self::ServiceNotify { session_id, service, method, args } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                put_text(&mut out, service);
+                put_text(&mut out, method);
+                put_bytes(&mut out, args);
+            }
             Self::Docked { session_id, station_id, condition } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.extend_from_slice(&station_id.to_le_bytes());

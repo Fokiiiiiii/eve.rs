@@ -599,13 +599,14 @@ public class CharMgrTests
         session.Set("rolesAtAll", Id(Eve.Corporations.CorporationRoles.PersonnelManager));
 
         var actual = await Rig.CallAsync(rig.CharMgr, session, "GetPrivateInfo", Id(characterId));
-        var expected = Py.Rowset(
-            ["characterID", "gender", "createDateTime", "raceID", "bloodlineID", "ancestryID", "balance", "securityRating"],
-            [new PyList([
+        var expected = new PyObject(new PyStr("util.Row"), new PyDict([
+            new(new PyStr("header"), new PyList(new[] { "characterID", "gender", "createDateTime", "raceID", "bloodlineID", "ancestryID", "balance", "securityRating" }.Select(field => (PyValue)new PyStr(field)).ToArray())),
+            new(new PyStr("line"), new PyList([
                 Id(characterId), new PyInt(character.Gender), await Rig.CallAsync(rig.CharMgr, session, "GetCharacterCreationDate", Id(characterId)),
                 new PyInt(character.RaceId), new PyInt(character.BloodlineId), new PyInt(character.AncestryId),
                 Py.Number(54321.75), Py.Number(-1.25),
-            ])]);
+            ])),
+        ]));
         Assert.True(PyValue.DeepEquals(expected, actual));
     }
 

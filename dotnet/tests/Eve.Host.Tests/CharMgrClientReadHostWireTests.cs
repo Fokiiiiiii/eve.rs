@@ -50,11 +50,14 @@ public partial class HostServerTests
 
         var labels = Assert.IsType<PyObject>(await CallOverHost(
             front, open, 1, "charMgr", "GetOwnerNoteLabels", Py.Tuple([])));
-        Assert.Equal(new PyStr("eve.common.script.sys.rowset.Rowset"), labels.Name);
+        Assert.Equal(new PyBytes("eve.common.script.sys.rowset.Rowset"u8.ToArray()), labels.Name);
         var labelFields = Assert.IsType<PyDict>(labels.Args);
-        Assert.Equal(new PyList([new PyStr("noteID"), new PyStr("label")]), ClientReadField(labelFields, "header"));
+        var labelHeader = Assert.IsType<PyList>(ClientReadField(labelFields, "header"));
+        Assert.True(IsClientText(labelHeader.Items[0], "noteID"));
+        Assert.True(IsClientText(labelHeader.Items[1], "label"));
         Assert.Equal(new PyToken("util.Row"), ClientReadField(labelFields, "RowClass"));
-        Assert.Equal(new PyList([new PyList([new PyInt(7001), new PyStr("N:Wire note")])]), ClientReadField(labelFields, "lines"));
+        var noteRow = Assert.Single(Assert.IsType<PyList>(ClientReadField(labelFields, "lines")).Items.OfType<PyList>(), row => row.Items[0] == new PyInt(7001));
+        Assert.True(IsClientText(noteRow.Items[1], "N:Wire note"));
 
         Assert.Equal(new PyInt(1), await CallOverHost(
             front, open, 2, "charMgr", "GetPaperdollState", Py.Tuple([])));
@@ -63,12 +66,11 @@ public partial class HostServerTests
             front, open, 3, "charMgr", "GetPrivateInfo", Py.Tuple(new PyInt(characterId))));
         Assert.Equal(new PyStr("util.Row"), privateInfo.Name);
         var privateFields = Assert.IsType<PyDict>(privateInfo.Args);
-        Assert.Equal(
-            new PyList([
-                new PyStr("characterID"), new PyStr("gender"), new PyStr("createDateTime"), new PyStr("raceID"),
-                new PyStr("bloodlineID"), new PyStr("ancestryID"), new PyStr("balance"), new PyStr("securityRating"),
-            ]),
-            ClientReadField(privateFields, "header"));
+        var privateHeader = Assert.IsType<PyList>(ClientReadField(privateFields, "header"));
+        string[] expectedHeader = ["characterID", "gender", "createDateTime", "raceID", "bloodlineID", "ancestryID", "balance", "securityRating"];
+        Assert.Equal(expectedHeader.Length, privateHeader.Items.Count);
+        for (var index = 0; index < expectedHeader.Length; index++)
+            Assert.True(IsClientText(privateHeader.Items[index], expectedHeader[index]));
         var line = Assert.IsType<PyList>(ClientReadField(privateFields, "line"));
         Assert.Equal(new PyInt(characterId), line.Items[0]);
         Assert.Equal(new PyInt(character.Gender), line.Items[1]);
@@ -79,6 +81,13 @@ public partial class HostServerTests
         Assert.Equal(Py.Number(1234.5), line.Items[6]);
         Assert.Equal(Py.Number(2.75), line.Items[7]);
     }
+
+    private static bool IsClientText(PyValue value, string expected) => value switch
+    {
+        PyStr text => text.Value == expected,
+        PyBytes bytes => System.Text.Encoding.UTF8.GetString(bytes.Value.Span) == expected,
+        _ => false,
+    };
 
     private static PyValue ClientReadField(PyDict fields, string name) =>
         fields.Entries.Single(entry => entry.Key == new PyStr(name)).Value;

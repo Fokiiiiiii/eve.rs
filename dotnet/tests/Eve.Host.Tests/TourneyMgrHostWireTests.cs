@@ -8,7 +8,7 @@ public partial class HostServerTests
     [Fact]
     public async Task Tournament_ship_list_uses_the_dictionary_field_consumed_by_the_client_through_host_dispatch()
     {
-        Start(configure: registry => registry.Register(new TourneyMgrService()));
+        Start();
         var (front, open) = await OpenFrontAsync();
 
         var result = Assert.IsType<PyDict>(

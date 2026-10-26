@@ -28,8 +28,9 @@ No other V24.01 callers of these named methods or container operations were foun
 ## Checks
 
 - PASS: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore -p:BuildProjectReferences=false -p:UseSharedCompilation=false` (0 warnings, 0 errors).
-- PASS: `Map_client_container_consumers_receive_reference_shapes_through_the_registered_route` (1 passed, 0 failed, 0 skipped; no database).
-- GitHub Actions results will be recorded after dispatch.
+- PASS: focused local Host wire test (1 passed, 0 failed, 0 skipped; no database).
+- PASS: selected Actions run [40264747440](https://github.com/Fokiiiiiii/eve.rs/actions/runs/40264747440), `Eve.Host.Tests` filtered to `Map_client_container_consumers_receive_reference_shapes_through_the_registered_route` (success; no failed tests or jobs).
+- Pushed commit `43c99ec67f740fe74aeee9712d6c9252e1a465de`. Push-triggered `ci.yml` run [40264738950](https://github.com/Fokiiiiiii/eve.rs/actions/runs/40264738950) is queued at the last status check.
 
 ## Remaining work
 

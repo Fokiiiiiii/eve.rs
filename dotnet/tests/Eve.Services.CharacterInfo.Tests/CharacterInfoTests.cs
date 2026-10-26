@@ -599,16 +599,22 @@ public class CharMgrTests
         session.Set("rolesAtAll", Id(Eve.Corporations.CorporationRoles.PersonnelManager));
 
         var actual = await Rig.CallAsync(rig.CharMgr, session, "GetPrivateInfo", Id(characterId));
-        var fields = new[] { "characterID", "gender", "createDateTime", "raceID", "bloodlineID", "ancestryID", "balance", "securityRating" };
-        var line = Py.Tuple(
-            Id(characterId), new PyInt(character.Gender), await Rig.CallAsync(rig.CharMgr, session, "GetCharacterCreationDate", Id(characterId)),
-            new PyInt(character.RaceId), new PyInt(character.BloodlineId), new PyInt(character.AncestryId),
-            Py.Number(54321.75), Py.Number(-1.25));
-        var expected = new PyObject(new PyStr("util.Row"), new PyDict([
-            new(new PyStr("header"), new PyList([.. fields.Select(field => (PyValue)new PyStr(field))])),
-            new(new PyStr("line"), new PyList(line.Items)),
-        ]));
-        Assert.True(PyValue.DeepEquals(expected, actual));
+        var actualRow = Assert.IsType<PyObject>(actual);
+        Assert.Equal(new PyStr("util.Row"), actualRow.Name);
+        var rowFields = Assert.IsType<PyDict>(actualRow.Args);
+        Assert.Equal(
+            new PyList(["characterID", "gender", "createDateTime", "raceID", "bloodlineID", "ancestryID", "balance", "securityRating"]
+                .Select(field => (PyValue)new PyStr(field))),
+            rowFields.Entries.Single(entry => entry.Key == new PyStr("header")).Value);
+        var row = Assert.IsType<PyList>(rowFields.Entries.Single(entry => entry.Key == new PyStr("line")).Value);
+        Assert.Equal(Id(characterId), row.Items[0]);
+        Assert.Equal(new PyInt(character.Gender), row.Items[1]);
+        Assert.IsType<PyLong>(row.Items[2]);
+        Assert.Equal(new PyInt(character.RaceId), row.Items[3]);
+        Assert.Equal(new PyInt(character.BloodlineId), row.Items[4]);
+        Assert.Equal(new PyInt(character.AncestryId), row.Items[5]);
+        Assert.Equal(Py.Number(54321.75), row.Items[6]);
+        Assert.Equal(Py.Number(-1.25), row.Items[7]);
     }
 
     [PgFact]

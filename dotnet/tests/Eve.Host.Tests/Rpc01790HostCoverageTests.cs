@@ -78,6 +78,10 @@ public partial class HostServerTests
         {
             registry.Register(CoreServices.CreateLookupService(lookup));
             registry.Register(new MoonExtractionsRpcService(() => Task.FromResult<JsonObject?>(moonState)));
+        }, sessionOpened: session =>
+        {
+            session.Set("corpid", new PyInt(980001));
+            session.Set("shipid", new PyInt(30000142));
         });
 
         var front = await Handshaken(await ConnectAsync());
@@ -130,17 +134,23 @@ _ = await front.ReceiveAsync();
             6, "machoNet", "GetClusterGameStatisticsForClient", new PyStr("OTHER"), fallback));
 
         var extractions = Assert.IsType<PyList>(await Call(
-            7, "moonExtractions", "GetExtractionsForCorp", new PyInt(980001)));
+            7, "moonExtractions", "GetExtractionsForCorp"));
         Assert.Single(extractions.Items);
+        var extraction = Assert.IsType<PyObject>(extractions.Items[0]);
+        Assert.Equal(new PyInt(30000142), PersonalWireField(extraction, "structureID"));
+        Assert.Equal(new PyInt(30000142), PersonalWireField(extraction, "solarSystemID"));
+        Assert.Equal(new PyInt(40000001), PersonalWireField(extraction, "moonID"));
+        Assert.IsType<PyLong>(PersonalWireField(extraction, "chunkAvailableTime"));
         Assert.Single(Assert.IsType<PyList>(await Call(
             8, "moonExtractions", "GetExtractionsForCorp", new PyInt(980002))).Items);
         Assert.Empty(Assert.IsType<PyList>(await Call(
             9, "moonExtractions", "GetExtractionsForCorp", new PyInt(980003))).Items);
 
         var resources = Assert.IsType<PyDict>(await Call(
-            10, "moonExtractions", "GetMoonResourcesForStructure", new PyInt(30000142)));
+            10, "moonExtractions", "GetMoonResourcesForStructure"));
         Assert.Single(resources.Entries);
         Assert.Equal(new PyInt(34), resources.Entries[0].Key);
+        Assert.Equal(0.75, Assert.IsType<PyReal>(resources.Entries[0].Value).Value);
         var otherResources = Assert.IsType<PyDict>(await Call(
             11, "moonExtractions", "GetMoonResourcesForStructure", new PyInt(30000143)));
         Assert.Equal(new PyInt(35), Assert.Single(otherResources.Entries).Key);

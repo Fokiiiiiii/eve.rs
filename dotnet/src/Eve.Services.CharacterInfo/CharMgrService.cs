@@ -228,8 +228,14 @@ public sealed partial class CharMgrService(
     }
 
     [Method("GetCharacterCreationDate")]
-    public async ValueTask<PyValue> GetCharacterCreationDate(ServiceCall call) =>
-        await CharacterAsync(call) is { } character ? FileTime(character.CreatedAt) : None;
+    public async ValueTask<PyValue> GetCharacterCreationDate(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } characterId ||
+            await ReadCharacterByIdAsync(characterId, call.Cancellation) is not { } character)
+            return None;
+
+        return FileTime(character.CreatedAt);
+    }
 
     /// <summary>The private character row used by the corporation member editor.</summary>
     [Method("GetPrivateInfo")]
@@ -957,7 +963,7 @@ public sealed partial class CharMgrService(
         });
 
         if (updated is not null && sendNotification && contactId >= 90_000_000 && contactId != senderId &&
-            await characters.GetAsync(contactId, call.Cancellation) is not null && writeContactNotification is not null)
+            await ReadCharacterByIdAsync(contactId, call.Cancellation) is not null && writeContactNotification is not null)
         {
             await writeContactNotification(senderId, contactId, notificationType, relationshipId, message, call.Cancellation);
         }

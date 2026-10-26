@@ -65,6 +65,7 @@ public partial class HostServerTests
         var ownedStation = Assert.Single(ownedStations.Items);
         Assert.Equal(new PyInt(stationId), WireField(ownedStation, "stationID"));
         Assert.Equal("Test Station", WireText(WireField(ownedStation, "stationName")));
+        Assert.Equal(new PyInt(systemId), WireField(ownedStation, "solarSystemID"));
 
         var stationResult = Assert.IsType<PyObject>(
             await HostRpcAsync(front, open, 6, "stationSvc", "GetStation", new PyLong(stationId)));

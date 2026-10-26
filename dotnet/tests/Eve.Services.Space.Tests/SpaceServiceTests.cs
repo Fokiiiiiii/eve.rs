@@ -2503,9 +2503,7 @@ public class SpaceServiceTests
         Events.Of(session);
         var before = rig.Sim.Heard.Count;
 
-        var answer = (PyTuple)await JumpAsync(rig, session, oid, character.ShipId);
-        Assert.Equal(oid, JsSemantics.StringValue(answer.Items[0]));
-        Assert.Equal(Py.FileTimeFromUnixMs(Rig.ClockMs + 10_000), Id(answer.Items[1]));
+        Assert.Equal(PyNone.Instance, await JumpAsync(rig, session, oid, character.ShipId));
         Assert.Equal(
             [Describe(new SimCommand((ulong)session.SessionId, SimCommands.Jump, [Gate, NextGate]))],
             rig.Sim.Heard.Skip(before).OfType<SimCommand>().Select(Describe));
@@ -2549,7 +2547,7 @@ public class SpaceServiceTests
         rig.Space.GateRules = new Eve.Services.Space.Gates.GateRules(
             new Dictionary<long, int> { [Gate] = 579 }, new Dictionary<int, IReadOnlySet<int>> { [579] = new HashSet<int> { 25 } },
             new Dictionary<long, long>(), new Dictionary<long, int>(), new Dictionary<int, Eve.Universe.AlignmentToll>());
-        Assert.IsType<PyTuple>(await JumpAsync(rig, session, oid, character.ShipId));
+        Assert.Equal(PyNone.Instance, await JumpAsync(rig, session, oid, character.ShipId));
         Assert.Contains(rig.Sim.Heard, m => m is SimCommand { Code: SimCommands.Jump });
     }
 
@@ -2582,7 +2580,7 @@ public class SpaceServiceTests
 
         // a paid jump is charged once and taken
         payable = true;
-        Assert.IsType<PyTuple>(await JumpAsync(rig, session, oid, character.ShipId));
+        Assert.Equal(PyNone.Instance, await JumpAsync(rig, session, oid, character.ShipId));
         Assert.Single(charges);
         Assert.Equal((character.CharacterId, 10_000m), (charges[0].Character, charges[0].Amount));
         Assert.StartsWith("gate-toll:", charges[0].Key);
@@ -2616,7 +2614,7 @@ public class SpaceServiceTests
         Assert.Empty(inspections);
 
         rig.Sim.JumpAnswer = new CommandReply(true, 0, null, null, NextSystem, 0);
-        Assert.IsType<PyTuple>(await JumpAsync(rig, session, oid, character.ShipId));
+        Assert.Equal(PyNone.Instance, await JumpAsync(rig, session, oid, character.ShipId));
         Assert.Equal([(character.CharacterId, character.ShipId, NextSystem)], inspections);
     }
 

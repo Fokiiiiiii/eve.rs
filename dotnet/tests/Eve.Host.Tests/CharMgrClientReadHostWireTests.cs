@@ -56,11 +56,9 @@ public partial class HostServerTests
         Assert.Equal(new PyToken("util.Row"), ClientReadField(labelFields, "RowClass"));
         var labelRows = Assert.IsType<PyList>(ClientReadField(labelFields, "lines"));
         Assert.Equal(2, labelRows.Items.Count);
-        var noteLabelRow = Assert.IsType<PyList>(Assert.Single(labelRows.Items.OfType<PyList>(),
-            row => JsSemantics.StringValue(row.Items[1]) == "N:Wire note"));
+        var noteLabelRow = Assert.IsType<PyList>(Assert.Single(labelRows.Items.OfType<PyList>(), row => JsSemantics.StringValue(row.Items[1]) == "N:Wire note"));
         Assert.Equal(new PyInt(7001), noteLabelRow.Items[0]);
-        var foldersLabelRow = Assert.IsType<PyList>(Assert.Single(labelRows.Items.OfType<PyList>(),
-            row => JsSemantics.StringValue(row.Items[1]) == "S:Folders"));
+        var foldersLabelRow = Assert.IsType<PyList>(Assert.Single(labelRows.Items.OfType<PyList>(), row => JsSemantics.StringValue(row.Items[1]) == "S:Folders"));
         Assert.Equal(new PyInt(1), foldersLabelRow.Items[0]);
 
         Assert.Equal(new PyInt(1), await CallOverHost(
@@ -83,6 +81,7 @@ public partial class HostServerTests
         Assert.Equal(Py.Number(1234.5), line.Items[6]);
         Assert.Equal(Py.Number(2.75), line.Items[7]);
     }
+
 
     private static PyValue ClientReadField(PyDict fields, string name) =>
         fields.Entries.Single(entry => entry.Key == new PyStr(name)).Value;

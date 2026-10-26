@@ -940,3 +940,7 @@ The `Shared_setting_store_returns_the_keyval_consumed_by_the_client_through_host
 Commit 7ef12d1a unwraps cached standing replies before inspecting the negative CRowset branches. Main CI run 1116 (Actions run 40322730735) completed red only on `test_docked_corporation_members_trade_at_an_eligible_upwell_structure` and `test_a_seller_and_a_buyer_trade_through_the_market`. Standing, Dogma, all four Host shards, build, Rust, Python client, fixtures, space shards, and Windows passed. Run 1116 reported one skipped Dogma benchmark, one skipped market benchmark, and eight E2E skips (seven slow-live checks and skill-training speed); skips are not passes.
 
 Run 1117 on the same SHA (`40323901513`) shows a successful gate, but every test/build job was skipped. It is not a green verification run and does not count toward the three-push streak.
+
+## Push 0af395db status
+
+Commit 0af395db updates the market E2E assertions to check the client-consumed util.Row shape. Push-triggered main CI run 1118 (Actions run 40324888977) completed successfully on 2026-10-26. `ci-status.py failures 0af395dbd83a` reported no failed tests or jobs; all build, Rust, Python, E2E, Windows, 32 .NET space shards, four Host shards, and three other .NET shards completed successfully. This is the first completed green push in the requested three-push watch. The status script does not report skipped test cases for a successful run, so test-level skip counts could not be confirmed; skipped jobs do not count.

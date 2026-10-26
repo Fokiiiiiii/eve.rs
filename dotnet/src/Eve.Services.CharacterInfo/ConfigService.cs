@@ -20,7 +20,9 @@ public sealed partial class ConfigService(
     PgItemStore? items = null,
     DogmaStatic? dogma = null,
     IReadOnlyDictionary<long, AgentOwnerInfo>? agentOwners = null,
-    Func<IReadOnlyList<long>, CancellationToken, Task<IReadOnlyDictionary<long, string>>>? readStructureNames = null)
+    Func<IReadOnlyList<long>, CancellationToken, Task<IReadOnlyDictionary<long, string>>>? readStructureNames = null,
+    Func<IReadOnlyList<long>, CancellationToken, Task<IReadOnlyList<Corporation>>>? readCorporations = null,
+    Func<IReadOnlyList<long>, CancellationToken, Task<IReadOnlyList<Alliance>>>? readAlliances = null)
 {
     private static readonly string[] OwnerColumns = ["ownerID", "ownerName", "typeID", "gender", "ownerNameID"];
     private static readonly string[] CorporationColumns =
@@ -161,7 +163,9 @@ public sealed partial class ConfigService(
         var ids = RequestedIds(call.Arg(0));
         var corporationById = ids.Length == 0
             ? new Dictionary<long, Corporation>()
-            : (await corporations.GetManyAsync(ids, call.Cancellation)).ToDictionary(c => c.Id);
+            : (await (readCorporations is null
+                ? corporations.GetManyAsync(ids, call.Cancellation)
+                : readCorporations(ids, call.Cancellation))).ToDictionary(c => c.Id);
         var rows = new List<PyTuple>(ids.Length);
         foreach (var id in ids)
         {
@@ -190,7 +194,9 @@ public sealed partial class ConfigService(
         var ids = RequestedIds(call.Arg(0));
         var alliances = ids.Length == 0
             ? new Dictionary<long, Alliance>()
-            : (await corporations.AlliancesByIdsAsync(ids, call.Cancellation))
+            : (await (readAlliances is null
+                ? corporations.AlliancesByIdsAsync(ids, call.Cancellation)
+                : readAlliances(ids, call.Cancellation)))
                 .Where(alliance => !alliance.Deleted)
                 .ToDictionary(alliance => alliance.Id);
         var rows = ids

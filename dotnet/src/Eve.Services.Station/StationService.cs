@@ -294,6 +294,8 @@ public sealed partial class MapService
     [Method("GetSecurityModifiedSystems")]
     public async ValueTask<PyValue> GetSecurityModifiedSystems(ServiceCall call)
     {
+        if (ReadDataHook is { } hook && await hook(call) is { } result)
+            return result;
         var rows = await _reads.RowsAsync(SecurityModifiedSystemsQuery, cancellationToken: call.Cancellation);
         return rows.ToRowset();
     }

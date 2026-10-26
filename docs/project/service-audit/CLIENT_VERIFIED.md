@@ -212,3 +212,11 @@ Whole-tree client searches confirmed the consumers below. Client paths are relat
 | RPC-01099 | charMgr.ListStations | `eve/client/script/ui/shared/assetsWindow.py:441` | Indexes by stationID; reads stationID, solarSystemID and typeID. Other callers: assetsWindow.py:922, assetsinfo.py:148-153, createContractWnd.py:1571-1575, quote.py:364-369. | `CharMgrService.cs:307-308`; Host CRowset assertion `CharMgrRpcHostWireTests.cs:52-57`. | MATCHES |
 
 EveJS returns GetPublicInfo as KeyVal, GetPublicInfo3 as a one-row CRowset, killmail rows as a list, settings as [Buffer, 0], and global assets as packed rows/station CRowset. eve.rs GetPublicInfo3 returns one PyList record; the listed client consumers index row zero and read named attributes, verified through the Host test. The original global-list Host fixture used tuple entries; this batch adds a Host route assertion for named itemID/typeID/quantity fields. Recent-kill paging and fields are verified in the service test, but valid-session Host transport remains without a focused assertion. No graphical client was used. The audit generator has no status_evidence input, so EVE_RS_COVERAGE.csv remains unchanged.
+
+
+## Batch 4 verification update (2026-10-26)
+
+- Focused registered-Host check `Char_mgr_item_list_routes_return_item_records_with_client_accessed_fields` passed in Actions run 40258181572 for commit 655f60ce; no failed tests or jobs. The run's headless-client step was skipped because `--live ''` was requested; this is not graphical-client verification.
+- The preceding Actions run 40257537139 found test compile errors (Host call ID type and missing Eve.Characters import). Both were corrected in 655f60ce; the focused rerun passed.
+- The valid-session Host wire shape for `GetRecentShipKillsAndLosses` remains without a focused assertion; service paging/row behavior is covered by the database-backed service test. No database or graphical EVE client was used locally.
+- Push-triggered ci.yml run 40258172650 for 655f60ce was in progress at this update.

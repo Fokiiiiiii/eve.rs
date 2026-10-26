@@ -24,3 +24,12 @@ Client-call and reply-consumer review is recorded in `CLIENT_VERIFIED.md` for al
 - `dotnet/tests/Eve.Host.Tests/PopulationCapHostWireTests.cs`
 - `docs/project/service-audit/CLIENT_VERIFIED.md`
 - `docs/project/service-audit/handoff-RPC-02258-02848-client.md`
+
+
+## Batch 18 — implemented-row client verification (2026-10-26)
+
+Appended all 30 requested rows RPC-02542 through RPC-02617 to `CLIENT_VERIFIED.md`. Confirmed the whole-tree client callsites/consumers, Host handlers and existing wire assertions, and EveJS 261018.1 handlers for the mapped rows.
+
+Outstanding NO-TEST rows: RPC-02577–02582 (four StandingMgr methods) have no populated registered Host reply-shape test; RPC-02586–02587 (station.GetGuests) only have an empty-list Host assertion, not the four-integer tuple rows the client unpacks. The StandingMgr handlers depend on the PostgreSQL-backed Rowset Read Side; the station guest handler loads character state through PgCharacterStore. This task prohibits database use, so those success shapes were not exercised and no test was added. These rows remain open. The remaining rows match existing registered Host wire tests, including populated station map, station record/tuple, interference, slash dispatch, and asset-safety rows.
+
+No code changed, no database or graphical client was used, and no tests were run in this docs-only update. Follow up by adding populated registered Host tests for the six rows above under an approved non-local database test lane.

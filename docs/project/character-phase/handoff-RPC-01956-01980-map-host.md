@@ -2,27 +2,43 @@
 
 ## Result
 
-All requested methods are registered on the real `map` Host service through `IncursionAnomalyService` and its `MapService` fallback. Their existing socket-level regression is `Map_history_incursion_and_industry_cost_replies_follow_registered_host_routes` in `dotnet/tests/Eve.Host.Tests/MapRpcHostWireTests.cs`. It sends transport-added `machoVersion`, decodes actual Host replies, covers `GetHistory` inputs `(1,1), (3,1), (3,24), (5,24)`, checks the cached rowset and one-minute version check, and exercises populated incursion and cost replies.
+All requested methods are registered on the real `map` Host service through `IncursionAnomalyService` and its `MapService` fallback. The socket-level regression `Map_history_incursion_and_industry_cost_replies_follow_registered_host_routes` in `dotnet/tests/Eve.Host.Tests/MapRpcHostWireTests.cs` sends transport-added `machoVersion`, decodes actual Host replies, covers `GetHistory` inputs `(1,1), (3,1), (3,24), (5,24)`, checks the cached rowset and one-minute version check, and exercises populated incursion and cost replies.
 
-Added `Map_industry_cost_wire_reply_preserves_solar_system_dictionary_keys` in `dotnet/tests/Eve.Host.Tests/MapIndustryCostHostWireTests.cs` to assert the `GetIndustryCostModifier` reply maps the solar system ID to its numeric cost. The prior host test checked the dict value but did not pin the key.
+`Map_industry_cost_wire_reply_preserves_solar_system_dictionary_keys` in `dotnet/tests/Eve.Host.Tests/MapIndustryCostHostWireTests.cs` additionally asserts that the `GetIndustryCostModifier` reply maps the solar system ID to its numeric cost.
 
 RPC-01956–01974 share the tested history contract; RPC-01975–01978 share the tested incursion report contract; RPC-01979–01980 share the tested cost-index contract.
 
-EveJS v0.12.9 matches these contracts: `server/src/services/map/mapService.js:591-604` builds history with the one-minute cache; `:571-575` builds the report from active incursions; `:645-649` returns the activity-specific cost dictionary. History row types/selection are in `server/src/services/map/mapService.js:378-391`; report fields are built in `server/src/services/incursion/incursionPayloads.js:57-95`.
+The focused history/incursion/cost Host regression passed locally on 2026-10-26 (1 passed, 0 failed, 0 skipped). It creates a data source but performs no PostgreSQL connection. The additional cost-key test had previously been recorded as passing. The graphical V24.01 client has not been exercised.
 
 ## Client evidence
 
-- History consumers use `solarSystemID`, `value1`, `value2`, and `value3`: `eve/client/script/ui/shared/mapView/mapViewColorHandler.py:612-660`; `eve/client/script/ui/shared/maps/starModeHandler.py:479-575`; `eve/client/script/ui/shared/mapView/filters/mapFilterFactionKills.py:23-27`; `mapFilterPodKills.py:20-26`; `mapFilterKills.py:25-30`; `eve/client/script/util/clientPathfinderService.py:238-246`; `eve/client/script/ui/services/sovSvc.py:145-151`; `eve/client/script/ui/services/facWarSvc.py:75-79`.
-- Incursion callers sort/use `stagingSolarSystemID` and `aggressorFactionID`: `eve/client/script/ui/shared/agencyNew/contentProviders/contentProviderIncursions.py:40-56`. Journal uses `rewardGroupID`, `stagingSolarSystemID`, `influence`, `lastUpdated`, `graceTime`, and `decayRate`: `eve/client/script/ui/shared/neocom/journal.py:780-795`.
-- Cost index callers consume a system-keyed mapping and its values: `eve/client/script/ui/shared/mapView/mapViewColorHandler.py:1061-1067`; `eve/client/script/ui/shared/maps/starModeHandler.py:1237-1246`; `eve/client/script/ui/shared/mapView/filters/mapFilterCostIndex.py:20-25`.
+Whole-tree search of V24.01 eve-logic found these callers and consumers:
+
+- `GetHistory(statID, hours)`: `mapViewColorHandler.py:612-660` and `starModeHandler.py:479-575` consume `solarSystemID`, `value1`, `value2`, and `value3` for jumps, ship kills, faction kills, and pod kills. The faction-kill, pod-kill, ship-kill, and jump filters consume the same columns [C `mapFilterFactionKills.py:23-27`, `mapFilterPodKills.py:20-26`, `mapFilterKills.py:25-30`, `mapFilterJumps.py:21-25`]. The sov panel aggregates `value1-value2` and `value3` per system [C `sovSvc.py:145-151`]; faction-war danger ranking reads `value1-value2` [C `facWarSvc.py:75-79`]; pathfinder caches systems where `value3>0` using the method-result version [C `clientPathfinderService.py:238-246`]; the shipcaster controller indexes rows by `solarSystemID` [C `launcherContController.py:117-119`]. A four-column rowset and the cached result version serve all of these.
+- `GetIncursionGlobalReport()`: the agency sorts/builds content from `stagingSolarSystemID` and `aggressorFactionID` [C `contentProviderIncursions.py:41-56`]. The journal consumes `rewardGroupID`, `stagingSolarSystemID`, `influence`, `lastUpdated`, `graceTime`, and `decayRate` [C `journal.py:780-795`].
+- `GetIndustryCostModifier(activityID)`: star-mode and map-view handlers pass its dictionary to coloring; the cost-index filter passes it to per-system coloring [C `starModeHandler.py:1238-1249`, `mapViewColorHandler.py:1062-1069`, `mapFilterCostIndex.py:20-25`]. They use solar-system IDs as keys and numeric modifiers as values.
+
+## EveJS comparison and eve.rs route
+
+EveJS v0.12.9 normalizes the history arguments and wraps the rowset with a one-minute version check [J `server/src/services/map/mapService.js:591-604`]; history column selection is at `:378-391`. Its incursion report reads active incursions [J `:571-575`], with record fields built in `server/src/services/incursion/incursionPayloads.js:57-95`. The industry handler returns an activity-specific cost-index dictionary [J `:645-649`.
+
+eve.rs uses the real registered `map` Host route: `IncursionAnomalyService` owns `GetIncursionGlobalReport` and delegates other map methods to its `MapService` fallback. The Host test asserts the actual wire response, including object-cached history, list-shaped incursion records, and dictionary cost modifiers.
 
 ## Verification
 
-- `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --filter 'FullyQualifiedName~Map_history_incursion_and_industry_cost_replies_follow_registered_host_routes' -p:UseSharedCompilation=false`: passed, 1/1, no skips.
-- `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --filter 'FullyQualifiedName~Map_industry_cost_wire_reply_preserves_solar_system_dictionary_keys' -p:UseSharedCompilation=false`: passed, 1/1, no skips.
-
-The tests used no PostgreSQL database. The graphical V24.01 client was not exercised.
+- Local focused test: `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --filter 'FullyQualifiedName~Map_history_incursion_and_industry_cost_replies_follow_registered_host_routes' -p:UseSharedCompilation=false`: passed, 1/1, no skips.
+- Previously recorded: `Map_industry_cost_wire_reply_preserves_solar_system_dictionary_keys`: passed, 1/1, no skips.
+- Focused Actions run `40281416831` for `5014f255`: success; no failed tests or jobs.
+- No database was used. Real graphical-client behavior was not checked.
 
 ## CI follow-up
 
-The first push gate reported `RpcSecurityInventoryTests.Real_host_registry_methods_are_enumerable` expected 1420 rows but found 1423 after the initial Host merge. A later `origin/main` merge added 18 `accessGroupBookmarkMgr` routes and one `BookmarkScanResult` route, bringing the expected total to 1442. Updated the inventory assertion to match those registered methods. `Eve.Host.Tests` builds successfully. The focused inventory test uses database schema setup, so it is checked by Actions rather than against a local database.
+The earlier push gate reported `RpcSecurityInventoryTests.Real_host_registry_methods_are_enumerable` expected 1420 rows but found 1423 after the initial Host merge. A later `origin/main` merge added 18 `accessGroupBookmarkMgr` routes and one `BookmarkScanResult` route, bringing the expected total to 1442. The inventory assertion was updated in that prior work. The focused inventory test uses database schema setup, so it is checked by Actions rather than locally.
+
+For this batch, `python3 tools/dev/ci-status.py failures 5014f255` and the same command for `d5b3f590` both found no `ci.yml` run. The focused Actions workflow passed for the final code and documentation state.
+
+## This batch push
+
+- Commit `8b196aad` documented the complete client caller/consumer audit.
+- Fetched and merged `origin/main`; pushed merge commit `d5b3f590` to `origin/main`.
+- Handoff/status commit `5014f255` was pushed to `origin/main`; focused Actions run `40281416831` passed.

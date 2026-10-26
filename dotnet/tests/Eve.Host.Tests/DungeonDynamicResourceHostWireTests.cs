@@ -100,6 +100,7 @@ public partial class HostServerTests
         var room = Assert.IsType<PyTuple>(Assert.Single(rooms.Items));
         Assert.Equal(new PyInt(9001), room.Items[0]);
         Assert.Equal("Entrance", Text(room.Items[1]));
+
         var palette = Assert.IsType<PyList>(await Call("dungeon", "DEGetRoomObjectPaletteData"));
         var paletteEntry = Assert.IsType<PyTuple>(Assert.Single(palette.Items));
         Assert.Equal(new PyInt(70001), paletteEntry.Items[0]);

@@ -11,8 +11,8 @@ RPC-02232 is a MISMATCH: `RepairItemsInStructure` rejects the call while EveJS r
 ## Verification and next steps
 
 - Focused reward Actions run 40296391366 for 05564516 passed (1 test, no skips).
-- Focused shared-settings Actions run 40303581991 for 7f508341 passed (1 passed, 0 skipped), covering the KeyVal and subsequent lookup. Wire string values are PyBytes.
-- Commit `1aa1cf6f` restores the PyBytes assertion and verifies text with `JsSemantics.StringValue`. Focused Actions run 40304737073 is queued/in progress; push CI run 40304724470 is queued.
+- Focused shared-settings Actions run 40304737073 for 1aa1cf6f completed successfully after commit `1aa1cf6f`; push CI run 40304724470 for the same SHA is still queued.
+- The shared-settings test checks the KeyVal fields and the subsequent `GetStoredSharedSetting` reply; its wire string values are PyBytes.
 - Earlier compile failures on older refs were fixed: Map Host test namespace import, missing `Eve.Macho` using, and nullable dictionary key conversion.
 - A previous focused Actions run 40298615792 was cancelled before tests began because setup provisioned PostgreSQL; it is not a test result.
 - Local Host test could not compile because NuGet assets are absent; restore stalled at package-source resolution. No local pass is claimed.

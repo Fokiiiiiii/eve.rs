@@ -1202,7 +1202,9 @@ public sealed partial class CharMgrService(
     public async ValueTask<PyValue> GetRecentShipKillsAndLosses(ServiceCall call)
     {
         if (call.Session.CharacterId is not { } characterId || characterId <= 0 ||
-            await characters.GetAsync(characterId, call.Cancellation) is null)
+            (readCharacterById is null
+                ? await characters.GetAsync(characterId, call.Cancellation)
+                : await readCharacterById(characterId, call.Cancellation)) is null)
         {
             return None;
         }

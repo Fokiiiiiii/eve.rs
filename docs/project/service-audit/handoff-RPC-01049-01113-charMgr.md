@@ -37,3 +37,5 @@ The full Eve.Host.Tests project built locally with 0 warnings and 0 errors. The 
 ## P0 batch 4 update (2026-10-26)
 
 Committed batch verification records in `CLIENT_VERIFIED.md`. The new registered-Host item-list shape test passed in Actions run 40258181572 for 655f60ce. The first run found two test compile issues, fixed in the follow-up commit; the focused rerun passed. A valid-session Host wire assertion for recent kills is still missing; the service-level paged row test covers finalCharacterID/victimCharacterID and pagination. The push-triggered ci.yml run 40258172650 was still in progress at this update. No database or graphical client was used locally.
+
+The 655f60ce push CI run reported three merged-test failures (wire string type, stale RPC count, and stale private-info Rowset expectation). Their tests have been corrected in the pending follow-up; the new recent-kill Host test passed locally.

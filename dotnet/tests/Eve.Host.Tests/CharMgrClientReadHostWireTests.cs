@@ -54,9 +54,14 @@ public partial class HostServerTests
         var labelFields = Assert.IsType<PyDict>(labels.Args);
         Assert.Equal(["noteID", "label"], Assert.IsType<PyList>(ClientReadField(labelFields, "header")).Items.Select(JsSemantics.StringValue));
         Assert.Equal(new PyToken("util.Row"), ClientReadField(labelFields, "RowClass"));
-        var noteLabelRow = Assert.IsType<PyList>(Assert.Single(Assert.IsType<PyList>(ClientReadField(labelFields, "lines")).Items));
+        var labelRows = Assert.IsType<PyList>(ClientReadField(labelFields, "lines"));
+        Assert.Equal(2, labelRows.Items.Count);
+        var noteLabelRow = Assert.IsType<PyList>(Assert.Single(labelRows.Items.OfType<PyList>()
+            .Where(row => JsSemantics.StringValue(row.Items[1]) == "N:Wire note")));
         Assert.Equal(new PyInt(7001), noteLabelRow.Items[0]);
-        Assert.Equal("N:Wire note", JsSemantics.StringValue(noteLabelRow.Items[1]));
+        var foldersLabelRow = Assert.IsType<PyList>(Assert.Single(labelRows.Items.OfType<PyList>()
+            .Where(row => JsSemantics.StringValue(row.Items[1]) == "S:Folders")));
+        Assert.Equal(new PyInt(1), foldersLabelRow.Items[0]);
 
         Assert.Equal(new PyInt(1), await CallOverHost(
             front, open, 2, "charMgr", "GetPaperdollState", Py.Tuple([])));

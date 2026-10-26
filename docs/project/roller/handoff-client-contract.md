@@ -108,4 +108,4 @@ The V24.01 client stores the incoming state in `Park.OnDamageStateChange` and em
 
 Strengthened `crates/eve-space/src/health/tests.rs` to assert the full nested tuple lengths, shield recharge tau and FILETIME type, and that `OnModuleAttributeChanges` precedes the owner's and observer's `DoDestinyUpdate` messages. The simulation sends changed attributes only to the pilot and damage state to the owner and visible observer.
 
-Checks passed: `cargo +1.94.1 fmt --all -- --check`; focused `eve-space` damage-state test (1 passed); `cargo +1.94.1 check -p eve-space`; and workspace `cargo +1.94.1 clippy --workspace --all-targets -- -D warnings`. No database or graphical client was used.
+Checks passed: `cargo +1.94.1 fmt --all -- --check`; focused `eve-space` damage-state test (1 passed); `cargo +1.94.1 check -p eve-space`; and workspace `cargo +1.94.1 clippy --workspace --all-targets -- -D warnings`. No database or graphical client was used. Selected Rust Actions run 40338177155 passed with no failed tests or jobs; .NET and headless selections were skipped. Push-triggered CI run 40336560607 completed successfully.

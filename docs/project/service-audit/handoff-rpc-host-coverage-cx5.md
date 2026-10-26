@@ -64,4 +64,18 @@ Focused agent-test run 40366101679 and push CI run 40366086777 passed for e4dd35
 - Added DB-free Host socket test WarStatisticKillmailRpcHostWireTests.cs:13-70 for the registered service. It checks killID, killTime, victimShipTypeID and UTF-8 killBlob bytes, plus wrong-hash and missing-record None replies. The first assertion showed that serialized PyStr is decoded as PyBytes; the regression asserts the actual decoded wire bytes and text.
 - After origin/main merge: Host test project build passed; focused Host test passed 1/1, no skips. Full Eve.Host.Tests had 477 passed, 327 failed, 2 skipped. PostgreSQL-backed failures cannot connect without EVE_PG_URL; no database was used. Graphical client not used.
 
-The focused Actions and push-CI checks for this batch are pending.
+Focused Agent test 40369367192 passed (1 passed, 0 failed, 0 skipped). Push CI 40369355715 failed only `Eve.Services.Tests.DispatchGoldenTests` for the `packets:arguments` list sequence. After merge, `b213ee17` aligned that fixture with the V24.01 service positional sequence; the full `Eve.Services.Tests` project then passed (261 passed, 0 failed, 0 skipped).
+
+## P2 client verification batch 31 — RPC-02792, RPC-02794–02795
+
+- Whole V24.01 client tree: only `voidspace/client/void_space_service.py:132` invokes `ClientIsReady` on entry to Void Space and ignores its return. The only `VoidSpacePlayerJump` caller is `voidspace/client/void_space_service.py:45-47`; it forwards `itemID,typeID` and ignores normal return. `void_space_activation_controller.py:145-148,158-164` makes the session-change call and consumes the error object's `errors` field. Its `:127-143` stores those code/argument pairs for the activation UI. `voidspace/common/error.py:8-43,46-110` defines code 22 as UNKNOWN_ERROR and maps it to the unknown-jump label.
+- EveJS 261018.1: `server/src/services/activity/voidSpaceMgrService.js:90-93` returns null from ClientIsReady; `:74-80` rejects VoidSpacePlayerJump while the encounter runtime is unavailable; `:49-63` constructs the wrapped error list.
+- eve.rs `dotnet/src/Eve.Services.Core/LoginInitializationRpcServices.cs:704-760` matches that behavior. `CoreServices.Create` registers the service and `CoreServices.Names` exposes its name; production Host registers the CoreServices list at `dotnet/src/Eve.Host/Hosting/HostComposition.cs:235-243`.
+- Added `dotnet/tests/Eve.Host.Tests/VoidSpaceRpcHostWireTests.cs`, covering Host CallRsp/None and ErrorResponse with exact `VoidSpaceJumpError.errors=[(22, [])]`. The existing movement Host test now uses the CoreServices registration rather than adding a test-only service.
+- The duplicate rows RPC-02794/02795 describe the same single client method, covered once by the same wire call.
+- After origin/main merge, focused Host tests passed (5 passed, 0 failed, 0 skipped); the focused Core service registration test passed (1/1, no skips). Full `Eve.Host.Tests` completed with 479 passed, 101 failed and 227 skipped; no database was used. Full `Eve.Services.Tests` passed (261 passed, 0 failed, 0 skipped). No graphical client run was performed.
+- This batch is locally verified; fetch/merge origin/main and repeat the touched and full Host tests before its main push. Actions runs for this batch will be recorded after push.
+
+## Whole-client RPC argument check following batch 30 CI
+
+- `carbon/common/script/net/ServiceCallGPCS.py:66-139` passes the CALL_REQ payload's args slot as the service positional sequence. The client builder at `:172-177,234` constructs that slot from a Python `*args` tuple; `carbon/common/script/sys/basesession.py:1491-1497` likewise forwards `*args`. A list-valued RPC parameter is nested inside that tuple; an args slot that is itself a list is the sequence-compatibility form accepted by eve.rs and EveJS 261018.1 `server/src/common/pyPacket.js:115-239`. The merged fixture correction b213ee17 preserves a strict flattened response assertion for that form.

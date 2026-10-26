@@ -52,7 +52,7 @@ public sealed class AccessGroupBookmarkMgrTests
         var session = Session();
 
         var reply = Assert.IsType<PyTuple>(await Call(service, session, "BookmarkStaticLocation",
-            new PyLong(Station.ItemId), new PyLong(await DefaultFolderAsync(rig)), new PyStr("Jita"), new PyStr(""), new PyInt(0)));
+            new PyLong(Station.ItemId.GetValueOrDefault()), new PyLong(await DefaultFolderAsync(rig)), new PyStr("Jita"), new PyStr(""), new PyInt(0)));
         Assert.Equal(8, reply.Items.Count);
         Assert.Equal(PyNone.Instance, reply.Items[3]);
 
@@ -71,7 +71,7 @@ public sealed class AccessGroupBookmarkMgrTests
         var session = Session();
 
         var error = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
-            await Call(service, session, "BookmarkStaticLocation", new PyLong(fulcrum.ItemId), new PyLong(await DefaultFolderAsync(rig))));
+            await Call(service, session, "BookmarkStaticLocation", new PyLong(fulcrum.ItemId.GetValueOrDefault()), new PyLong(await DefaultFolderAsync(rig))));
         // a refusal with a notice reaches the client as CustomNotify (BookmarkRefusals)
         Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
     }
@@ -84,7 +84,7 @@ public sealed class AccessGroupBookmarkMgrTests
         var session = Session();
         var folder = await DefaultFolderAsync(rig);
         var made = Assert.IsType<PyTuple>(await Call(service, session, "BookmarkStaticLocation",
-            new PyLong(Station.ItemId), new PyLong(folder), new PyStr("Jita"), new PyStr(""), new PyInt(0)));
+            new PyLong(Station.ItemId.GetValueOrDefault()), new PyLong(folder), new PyStr("Jita"), new PyStr(""), new PyInt(0)));
         var bookmarkId = Assert.IsType<PyInt>(made.Items[0]).Value;
 
         var removed = Assert.IsType<PyList>(await Call(service, session, "DeleteBookmarks", new PyLong(folder),

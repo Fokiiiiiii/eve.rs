@@ -82,8 +82,8 @@ public partial class HostServerTests
             ("tabOrder", new PyList([new PyInt(2), new PyInt(1)])));
         var key = Assert.IsType<PyObject>(await Call("StoreLinkAndGetID", payload));
         Assert.Equal(new PyInt(1), WireField(key, "sqID"));
-        var stored = Assert.IsType<PyStr>(await Call("GetStoredPreset", key));
-        Assert.Equal("[[\"presetName\",\"Default\"],[\"tabOrder\",[2,1]]]", stored.Value);
+        var stored = await Call("GetStoredPreset", key);
+        Assert.Equal("[[\"presetName\",\"Default\"],[\"tabOrder\",[2,1]]]", T(stored));
 
         var repeated = Assert.IsType<PyObject>(await Call("StoreLinkAndGetID", payload));
         Assert.Equal(WireField(key, "hashvalue"), WireField(repeated, "hashvalue"));
@@ -132,11 +132,11 @@ public partial class HostServerTests
         var header = Assert.IsType<PyList>(state.Header).Items;
         var attributes = Assert.IsType<PyDict>(header[1]);
         Assert.Contains(attributes.Entries,
-            entry => entry.Key == new PyStr("_operatingState") && entry.Value == new PyInt(1));
+            entry => T(entry.Key) == "_operatingState" && entry.Value == new PyInt(1));
         Assert.Contains(attributes.Entries,
-            entry => entry.Key == new PyStr("_upkeepState") && entry.Value == new PyInt(2));
+            entry => T(entry.Key) == "_upkeepState" && entry.Value == new PyInt(2));
         Assert.Contains(attributes.Entries,
-            entry => entry.Key == new PyStr("_damageState") && entry.Value is PyList);
+            entry => T(entry.Key) == "_damageState" && entry.Value is PyList);
     }
 
     private void StartWithCoreServicesOverridden(Action<ServiceRegistry> configure, bool strictRpc)

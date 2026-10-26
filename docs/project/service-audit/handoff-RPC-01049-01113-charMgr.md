@@ -36,7 +36,7 @@ The full Eve.Host.Tests project built locally with 0 warnings and 0 errors. The 
 
 ## P0 batch 4 update (2026-10-26)
 
-Committed batch verification records in `CLIENT_VERIFIED.md`. The new registered-Host item-list shape test passed in Actions run 40258181572 for 655f60ce. The first run found two test compile issues, fixed in the follow-up commit; the focused rerun passed. A valid-session Host wire assertion for recent kills is still missing; the service-level paged row test covers finalCharacterID/victimCharacterID and pagination. The push-triggered ci.yml run 40258172650 was still in progress at this update. No database or graphical client was used locally.
+Committed batch verification records in `CLIENT_VERIFIED.md`. The new registered-Host item-list shape test passed in Actions run 40258181572 for 655f60ce. The first run found two test compile issues, fixed in the follow-up commit; the focused rerun passed. The registered-Host recent-kill test now asserts the valid-session list and client-consumed finalCharacterID/victimCharacterID fields, plus the page-size cap; the focused check passed locally (1 passed, 0 skipped). The push-triggered ci.yml run 40258172650 was still in progress at this update. No database or graphical client was used locally.
 
 
 
@@ -47,3 +47,6 @@ The batch 5 client contracts and verdicts are recorded in `CLIENT_VERIFIED.md`. 
 The 655f60ce push CI run reported three merged-test failures (wire string type, stale RPC count, and stale private-info Rowset expectation). Their tests have been corrected in the pending follow-up; the new recent-kill Host test passed locally.
 
 The selected Actions run 40260608955 stopped at compile on a missing collection-expression target in the corrected private-info service test. The header was made explicit and materialized; `Eve.Services.CharacterInfo.Tests` builds locally with 0 warnings/errors. The focused Actions rerun is pending.
+
+
+The follow-up focused Actions run 40261514261 stopped during compilation on xUnit2031 in `CharMgrClientReadHostWireTests.cs`; label assertions now use the predicate overload of `Assert.Single`. A focused rerun is pending. Local `Eve.Host.Tests` build succeeded with 0 warnings/errors, and `Char_mgr_client_read_shapes_match_the_registered_host_wire_contract` passed locally (1 passed, 0 skipped).

@@ -36,5 +36,6 @@ eve.rs already registers `lookupSvc` through `CoreServices.CreateLookupService`,
 ## Verification
 
 - Focused real-Host wire regression: `Rpc01790HostCoverageTests.Lookup_machoNet_and_moon_read_calls_use_registered_host_routes_with_macho_version_kwargs`.
-- CI verification: pending push and selected Actions run.
+- First selected Actions run 40275193604 failed at compile: the test used nonexistent `Py` and `TestFront.Packets` helpers. The source is corrected to use `PyTuple`, `PyDict`, and the existing `Packets` helper; the corrected run is pending.
+- Push-triggered `ci.yml` run 40275183455 is in progress.
 - No graphical-client run was performed.

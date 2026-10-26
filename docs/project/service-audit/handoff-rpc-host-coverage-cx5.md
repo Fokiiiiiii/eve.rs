@@ -35,17 +35,11 @@ eve.rs already registers `lookupSvc` through `CoreServices.CreateLookupService`,
 
 ## Verification
 
-- Focused real-Host wire regression: `Rpc01790HostCoverageTests.Lookup_machoNet_and_moon_read_calls_use_registered_host_routes_with_macho_version_kwargs`.
-- Actions 40275193604 found nonexistent `Py` and `TestFront.Packets` helpers; corrected in a064ea7a.
-- Actions 40275936800 found the missing Host `Packet` envelope and an `Eve.Services` import in the concurrent Slash Host test; corrected in bc20c71b.
-- Actions 40276677603 built Host.Tests but the focused test timed out because the test sent RPC packets before Host's `Open` session message. The regression now opens the session and consumes initial state before RPC calls.
-- The corrected change is pushed in `b1689998`. Selected run 40277519916 is in progress. The push-triggered `ci.yml` run 40277439667 was queued when last checked.
-- A local focused `dotnet test` invocation is active but progressing slowly under shared-machine load; result pending.
-- Actions run 40277519916 failed one assertion because decoded Python unicode values use `PyBytes`; the wire response's KeyVal shape was correct. Replaced exact-type checks with the suite's `T(...)` decoder helper.
-- Corrected focused Actions run 40278146386 passed: 1 passed, 0 failed, 0 skipped.
-- Push-triggered `ci.yml` run 40278138665 for `b5c21d53` is in progress.
-- Push CI run 40278138665 surfaced two unrelated Host wire-test assertions that treated decoded unicode as `PyStr`: the dungeon resource cache test and support/insurgency test. Corrected them to assert decoded text and KeyVal fields while preserving the expected wire values; a selected regression run for both is queued after push.
-
-- The local focused `dotnet test` process was stopped after 47 minutes waiting through compilation under shared-machine load; it produced no test result. The same focused test passed in Actions run 40278146386.
-
+- Focused real-Host wire test `Rpc01790HostCoverageTests.Lookup_machoNet_and_moon_read_calls_use_registered_host_routes_with_macho_version_kwargs` passed in Actions run 40278146386 (1 passed, 0 failed, 0 skipped).
+- Focused Host decoder regressions for dungeon resource and support/insurgency RPCs passed in Actions run 40279953894.
+- Focused RPC inventory test passed in Actions run 40280610994 with the updated count of 1,424.
+- Focused tournament fallback test passed in Actions run 40282048198; `QueryShipList` returns a dict with an empty `allowedShipList`.
+- Push CI 40278138665 exposed the decoded unicode assertion failures and the stale count after `DevIndexManagerRpcService.GetAllDevelopmentIndices` was registered (`OperationalRpcServices.cs:27-41`). Those test issues were corrected. Push CI 40280164556 exposed the tournament test expecting a bare list; its expected shape was corrected.
+- Latest push-triggered `ci.yml` run 40282042017 for `0a430473` is queued. Wait for completion and inspect failures before closing the handoff.
+- The local focused `dotnet test` process was stopped after 47 minutes waiting through compilation under shared-machine load; it produced no test result. The same focused Host wire test passed in Actions.
 - No graphical-client run was performed.

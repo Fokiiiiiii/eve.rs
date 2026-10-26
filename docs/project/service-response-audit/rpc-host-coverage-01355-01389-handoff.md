@@ -33,7 +33,8 @@ Whole-tree client searches found no additional callers of these RPC names. CBM g
 
 ## Checks
 
-- PASS: `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false -p:BuildInParallel=false -m:1 --no-restore --filter FullyQualifiedName~Development_indices_are_returned_from_persisted_state_through_registered_rpc_routes` — 1 passed, 0 skipped. This also compiled the changed Host, Services.Core and test projects.
+- PASS: `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false -p:BuildInParallel=false -m:1 --no-restore --filter FullyQualifiedName~Development_indices_are_returned_from_persisted_state_through_registered_rpc_routes` — 1 passed, 0 skipped.
+- PASS: `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false -p:BuildInParallel=false -m:1 --no-restore --filter FullyQualifiedName~Dungeon_and_dynamic_resource_cache_calls_round_trip_through_host_registration` — after correcting the string assertion to compare decoded UTF-8 wire strings, 1 passed, 0 skipped.
 - PASS: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false -m:1 --no-restore` — 0 warnings, 0 errors.
-- GitHub Actions selected checks and push-triggered CI are pending.
+- GitHub Actions: custom agency and development-index selected runs passed. The initial dungeon/cache selected run caught the test's `PyStr` versus wire-decoded `PyBytes` assertion; the test is corrected and its focused local rerun passed. The Actions rerun and push-triggered CI are pending.
 - No database or graphical-client verification was performed.

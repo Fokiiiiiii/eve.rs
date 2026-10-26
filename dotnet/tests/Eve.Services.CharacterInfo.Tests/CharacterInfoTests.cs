@@ -147,7 +147,6 @@ public static HomeStationResolver CreateHomeStationResolver(
         await transaction.CommitAsync();
         return id;
     }
-
     public static (ClientSession Session, IPacketSink Sink) Session(long? characterId)
     {
         var session = new ClientSession { SessionId = 1, ClientId = 2, UserId = 34 };
@@ -286,10 +285,10 @@ public class CharMgrTests
             await Rig.CallAsync(rig.CharMgr, unknownSession, "SetCharacterDescription", new PyWString("ignored")));
         Assert.False(rig.Descriptions.ContainsKey(1));
 
-        var created = ((PyLong)await Rig.CallAsync(rig.CharMgr, session, "GetCharacterCreationDate", Id(id))).Value;
+        var created = ((PyLong)await Rig.CallAsync(rig.CharMgr, session, "GetCharacterCreationDate")).Value;
         var now = Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         Assert.InRange(created, now - (5 * 60 * 10_000_000L), now + (60 * 10_000_000L));
-        Assert.Equal(PyNone.Instance, await Rig.CallAsync(rig.CharMgr, session, "GetCharacterCreationDate", Id(1)));
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(rig.CharMgr, unknownSession, "GetCharacterCreationDate"));
     }
 
     [PgFact]
@@ -447,7 +446,6 @@ public class CharMgrTests
         {
             var resolver = Rig.CreateHomeStationResolver(rig.Characters,
                 (requestedId, _) => Task.FromResult<HomeStationStructure?>(requestedId == structureId ? lost : null));
-
             var home = await Rig.CallAsync(new HomeStationService(resolver), session, "get_home_station");
             var homeFields = ObjectFields(home);
             Assert.Equal(new PyInt(starter.Id), homeFields["id"]);
@@ -497,7 +495,6 @@ public class CharMgrTests
         await using var rig = await Rig.CreateAsync();
         var (session, _) = Rig.Session(await rig.MakeAsync("Ann Lee"));
         Task<PyValue> Ask(string method, params PyValue[] args) => Rig.CallAsync(rig.CharMgr, session, method, args);
-
         // a character made here has no stored doll: the reference answers "no existing customization" (2) for it
         Assert.Equal(Id(2), await Ask("GetPaperdollState"));
         Assert.Equal(new PyList([]), await Ask("GetCohortsForCharacter"));
@@ -597,7 +594,6 @@ public class CharMgrTests
         var (session, _) = Rig.Session(characterId);
         session.Set("corpid", Id(character.CorporationId));
         session.Set("rolesAtAll", Id(Eve.Corporations.CorporationRoles.PersonnelManager));
-
         var actual = await Rig.CallAsync(rig.CharMgr, session, "GetPrivateInfo", Id(characterId));
         var actualRow = Assert.IsType<PyObject>(actual);
         Assert.Equal(new PyStr("util.Row"), actualRow.Name);

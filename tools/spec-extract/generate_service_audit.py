@@ -55,7 +55,7 @@ CONNECTOR = re.compile(
 MONIKER_BIND = re.compile(r"\bMoniker\s*\(")
 GETTER_BIND = re.compile(r"\bGet([A-Z][A-Za-z0-9]*Handler)\s*\(")
 TEST_DECORATED = re.compile(
-    r"\[(?:Fact|Theory)\]\s*(?:\[[^\]]+\]\s*)*"
+    r"\[(?:Fact|Theory|PgFact)\]\s*(?:\[[^\]]+\]\s*)*"
     r"(?:public|private|internal)\s+(?:static\s+)?(?:async\s+)?"
     r"(?:Task(?:\s*<[^>]+>)?|ValueTask(?:\s*<[^>]+>)?|void)\s+"
     r"([A-Za-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*\{"

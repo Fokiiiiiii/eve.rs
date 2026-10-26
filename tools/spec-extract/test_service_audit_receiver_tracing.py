@@ -188,5 +188,59 @@ public class ServiceAuditP0HostWireTests
                 ),
             )
 
+    def test_host_harness_accepts_shared_socket_helpers(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo_root = pathlib.Path(temporary)
+            test_file = repo_root / "dotnet/tests/Eve.Host.Tests/SharedHostWireTests.cs"
+            test_file.parent.mkdir(parents=True)
+            test_file.write_text(
+                """
+public partial class HostServerTests
+{
+    [PgFact]
+    public async Task Client_read_uses_host_wire()
+    {
+        var service = new ClientService();
+        Start(
+            configure: registry =>
+            {
+                registry.Register(service);
+                registry.RegisterAlias("example", "exampleAlias");
+            });
+
+        var (front, open) = await OpenFrontAsync();
+        await HostRpcAsync(front, open, 1, "example", "Read");
+    }
+}
+"""
+            )
+            matches = audit.host_harness_test_evidence(
+                repo_root, {("example", "Read")}, {"example": "ClientService"}
+            )
+            self.assertIn(
+                "dotnet/tests/Eve.Host.Tests/SharedHostWireTests.cs:Client_read_uses_host_wire",
+                matches[("example", "Read")],
+            )
+
+    def test_host_test_with_multiple_pg_facts_is_detected(self):
+        matches = audit.host_harness_test_evidence(
+            ROOT, {("charMgr", "BlockOwners")}, {}
+        )
+        self.assertIn(
+            "dotnet/tests/Eve.Host.Tests/CharacterManagerMutationHostWireTests.cs:"
+            "Character_manager_mutations_persist_through_registered_host_wire",
+            matches[("charMgr", "BlockOwners")],
+        )
+
+    def test_default_host_composition_and_shared_socket_test_is_detected(self):
+        pairs = {("keeper", "GetLevelEditor"), ("localizationServer", "GetAllTextChanges")}
+        matches = audit.host_harness_test_evidence(ROOT, pairs, {})
+        test_name = (
+            "dotnet/tests/Eve.Host.Tests/FocusedRpc01742HostWireTests.cs:"
+            "Keeper_and_localization_RPCs_return_the_EveJS_shapes_through_host_registration"
+        )
+        self.assertIn(test_name, matches[("keeper", "GetLevelEditor")])
+        self.assertIn(test_name, matches[("localizationServer", "GetAllTextChanges")])
+
 if __name__ == "__main__":
     unittest.main()

@@ -317,7 +317,7 @@ def host_harness_test_evidence(
     contract = audit.load_contract()
     real_host_start = re.compile(r"\bStart\s*\(")
     real_host_registration = re.compile(
-        r"\bconfigure\s*:\s*registry\s*=>\s*registry\.Register\s*\("
+        r"\bconfigure\s*:\s*registry\s*=>[\s\S]*?\bregistry\.Register\s*\("
     )
     for path in sorted(test_root.rglob("*.cs")):
         try:
@@ -331,12 +331,16 @@ def host_harness_test_evidence(
                 continue
             end = contract.csharp_block_end(source, opening)
             if end is None:
-                # shortcut: fallback is limited to single-test files; upgrade when csharp_block_end supports these local-function tests.
-                if len(decorated_tests) != 1:
-                    continue
-                end = len(source)
+                end = next(
+                    (candidate.start() for candidate in decorated_tests if candidate.start() > match.start()),
+                    len(source),
+                )
             body = source[opening:end]
-            if not real_host_start.search(body) or not real_host_registration.search(body) or not re.search(r"\bConnectAsync\s*\(", body):
+            host_connection = re.search(r"\bConnectAsync\s*\(", body) or (
+                re.search(r"\bOpenFrontAsync\s*\(", body) and re.search(r"\bHostRpcAsync\s*\(", body)
+            )
+            host_registration = not re.search(r"\bconfigure\s*:", body) or real_host_registration.search(body)
+            if not real_host_start.search(body) or not host_registration or not host_connection:
                 continue
             relative = path.relative_to(repo_root).as_posix()
             test_name = match.group(1)

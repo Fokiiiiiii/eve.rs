@@ -23,8 +23,8 @@ Client searches covered the whole `/home/user/eve-logic/eve` tree. Callers and c
 - Existing production routes: BlueprintManagerService via `IndustryRpc.cs:59-62`; SkyhookResourceMgrService via `SovereigntyComposition.cs:251`; BountyProxyKillRightService via `CrimewatchRpc.cs:119-125` to `PlayerBountyRpc.HandleAsync`, backed by persistent bounty and wallet services.
 - Added `BlueprintAndSkyhookHostWireTests.cs`: real Host socket, production registration, fixture read providers, transport `machoVersion`, limits, item payload, owner list/count, facility filtering, and corporation skyhook rows.
 - Added `BountyProxyHostWireTests.cs`: real Host socket and registered bounty service; exercises read/placement/ranking routes and wire shapes. Persistent placement/retry/refusal/restart behavior is covered by DB-backed `PlayerBountyHostTests`; no database tests were run.
-- Local focused Blueprint/Skyhook Host test passed (1/1). Combined focused Host test initially caught integer-width assertions in bounty payload; corrected to observed PyLong widths. Host.Tests build passed with 0 warnings/errors in 25m 03s.
-- Actions dispatch on commit `95df57874a6944098cb56b38c42c669516b206b7`, run `40266759084`, failed 19 passed / 1 failed because the bounty regression expected PyInt where Host returned PyLong. The assertion has been corrected. The rerun and push-triggered CI outcome for the corrective commit are pending.
+- Local focused Blueprint/Skyhook Host test passed (1/1). Host.Tests build passed with 0 warnings/errors in 25m 03s.
+- Actions dispatch `40266759084` on `95df57874a6944098cb56b38c42c669516b206b7` failed 19 passed / 1 failed because a bounty payload assertion expected PyInt where Host returned PyLong. The assertion was corrected. On corrective commit `46e46c012de8`, focused dispatch `40269695857` passed with no failed tests/jobs. Push-triggered CI run `40269688670` was still in progress at this update.
 
 ## Remaining classification issues
 

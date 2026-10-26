@@ -26,11 +26,15 @@ public static class MarketWire
         ("typeID",new PyInt(order.TypeId)),
         ("stationID",new PyLong(order.Location.StationId)));
 
-    public static PyValue BestByOrderTuple(MarketOrder order,long quantity) => Py.Tuple(
-        Py.Number(MarketRules.RoundIsk((double)order.Price)),
-        Py.Number(quantity),
-        new PyInt(order.TypeId),
-        new PyLong(order.Location.StationId));
+    public static PyValue BestByOrderRow(MarketOrder order,long quantity) => new PyObject(
+        new PyStr("util.Row"),
+        Py.Dict(
+            ("header",Py.Tuple(new PyStr("price"),new PyStr("volRemaining"),new PyStr("typeID"),new PyStr("stationID"))),
+            ("line",Py.Tuple(
+                Py.Number(MarketRules.RoundIsk((double)order.Price)),
+                Py.Number(quantity),
+                new PyInt(order.TypeId),
+                new PyLong(order.Location.StationId)))));
 }
 
 internal static class MarketHistoryWire

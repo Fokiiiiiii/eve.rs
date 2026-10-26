@@ -17,16 +17,16 @@ public static class SessionInitialState
 
     public static PyValue Build(ulong sessionId, ulong clientId, uint userId, ulong role, string address, string language, string countryCode)
     {
-        // The keys and their order are the reference's. maxSessionTime and inDetention are not sent: the reference's
+        // The keys and their order match the reference. maxSessionTime and inDetention are not sent: the reference's
         // notification omits None-valued keys, and the client reads an absent session attribute as None.
 
         var state = Py.Dict(
-            ("languageID", new PyStr(language)),
-            ("countryCode", new PyStr(countryCode)),
             ("userid", new PyInt(userId)),
             ("userType", new PyInt(UserType)),
             ("role", new PyLong(unchecked((long)(role | (ulong)CharUnboundMgrService.SessionBaseRole)))),
-            ("address", new PyStr(address)));
+            ("address", new PyStr(address)),
+            ("languageID", new PyStr(language)),
+            ("countryCode", new PyStr(countryCode)));
         var source = new MachoAddress(AddressKind.Node, NodeId: new PyInt(MachoMessage.ProxyNodeId), CallId: new PyInt(0));
         var destination = new MachoAddress(AddressKind.Client, ClientId: new PyLong(unchecked((long)clientId)), CallId: new PyInt(0));
         PyValue[] packet =

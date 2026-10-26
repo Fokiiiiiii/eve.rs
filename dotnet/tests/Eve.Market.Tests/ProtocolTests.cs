@@ -304,6 +304,12 @@ public class ProtocolTests
             return Assert.IsType<PyDict>(stream.Decoded ?? MarshalCodec.Decode(stream.Raw));
         }
         PyValue ByType(PyDict dict,int typeId) => dict.Entries.Single(entry=>NumberValue(entry.Key)==typeId).Value;
+        PyTuple AskLine(PyDict dict,int typeId)
+        {
+            var row=Assert.IsType<PyObject>(ByType(dict,typeId));
+            Assert.Equal("util.Row",Eve.Macho.JsSemantics.PlainText(row.Name));
+            return Assert.IsType<PyTuple>(Field(Assert.IsType<PyDict>(row.Args),"line"));
+        }
         decimal Decimal(PyValue value) => (decimal)NumberValue(value);
         int IntegerValue(PyValue value) => checked((int)NumberValue(value));
         long LongValue(PyValue value) => checked((long)NumberValue(value));
@@ -321,15 +327,15 @@ public class ProtocolTests
 
         foreach(var dict in new[]{station,system})
         {
-            // V24 expands each station/system range value into BestByOrder(price, volume, typeID, stationID).
-            var type100=Assert.IsType<PyTuple>(ByType(dict,100));
+            // V24 reads named fields directly and unpacks the same four-value sequence for range filtering.
+            var type100=AskLine(dict,100);
             Assert.Equal(4,type100.Items.Count);
             Assert.Equal(30m,Decimal(type100.Items[0]));
             Assert.Equal(1m,Decimal(type100.Items[1]));
             Assert.Equal(100,IntegerValue(type100.Items[2]));
             Assert.Equal(r.Station.Id,LongValue(type100.Items[3]));
 
-            var type200=Assert.IsType<PyTuple>(ByType(dict,200));
+            var type200=AskLine(dict,200);
             Assert.Equal(4,type200.Items.Count);
             Assert.Equal(9m,Decimal(type200.Items[0]));
             Assert.Equal(9m,Decimal(type200.Items[1]));

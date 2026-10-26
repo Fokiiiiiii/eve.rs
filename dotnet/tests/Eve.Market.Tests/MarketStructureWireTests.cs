@@ -44,18 +44,39 @@ public sealed class MarketStructureWireTests
     }
 
     [Fact]
-    public void Station_and_system_ask_summaries_are_tuples_for_the_client_range_converter()
+    public void Station_and_system_ask_rows_support_named_fields_and_sequence_unpacking_on_the_wire()
     {
         const long structureId=9_000_000_001_001;
         var order=new MarketOrder(7,34,false,10m,2,2,1,MarketRules.RangeStation,
             new MarketLocation(structureId,30_000_001,20_000_001,10_000_001),123,90);
-        var summary=Assert.IsType<PyTuple>(MarketWire.BestByOrderTuple(order,2));
 
-        Assert.Equal(4,summary.Items.Count);
-        Assert.Equal(new PyInt(10),summary.Items[0]);
-        Assert.Equal(new PyInt(2),summary.Items[1]);
-        Assert.Equal(new PyInt(34),summary.Items[2]);
-        Assert.Equal(new PyLong(structureId),summary.Items[3]);
+        void AssertRow(PyObject row)
+        {
+            Assert.Equal("util.Row",Eve.Macho.JsSemantics.PlainText(row.Name));
+            var fields=Assert.IsType<PyDict>(row.Args);
+            PyValue Field(string name)=>fields.Entries.Single(entry=>Eve.Macho.JsSemantics.PlainText(entry.Key)==name).Value;
+            var header=Assert.IsType<PyTuple>(Field("header"));
+            Assert.Equal(new[]{"price","volRemaining","typeID","stationID"},
+                header.Items.Select(Eve.Macho.JsSemantics.PlainText));
+            var line=Assert.IsType<PyTuple>(Field("line"));
+            Assert.Equal(4,line.Items.Count);
+            Assert.Equal(10,Number(line.Items[0]));
+            Assert.Equal(2,Number(line.Items[1]));
+            Assert.Equal(34,Number(line.Items[2]));
+            Assert.Equal(structureId,Number(line.Items[3]));
+        }
+
+        var summary=Assert.IsType<PyObject>(MarketWire.BestByOrderRow(order,2));
+        AssertRow(summary);
+        AssertRow(Assert.IsType<PyObject>(MarshalCodec.Decode(MarshalCodec.Encode(summary))));
     }
+
+    private static long Number(PyValue value) => value switch
+    {
+        PyInt number => number.Value,
+        PyLong number => number.Value,
+        PyReal number => (long)number.Value,
+        _ => throw new InvalidOperationException($"expected a number, got {value.GetType().Name}"),
+    };
 
 }

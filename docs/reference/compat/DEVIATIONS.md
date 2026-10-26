@@ -47,6 +47,10 @@ is better off, and how it is tested. A behaviour is either:
   and the difference is listed below;
 - **internal**: the client cannot observe it; eve.rs is free.
 
+## Slash `/spawn` result type (2026-10-26)
+
+V24.01 `eve/devtools/script/svc_slash.py:1309,1316-1337` passes the successful `slash.SlashCmd('/spawn ...')` result as a ship item ID to `/load` and `%d` formatting. EveJS 261018.1 has no bare `/spawn` handler in `src/server/src/services/chat/chatCommands.js:409,1287`; eve.rs implements the client-observed flow and returns the single spawned item ID as a Python long while retaining text replies for failures. `SpawnSlashHostWireTests.Spawn_slash_reply_is_the_ship_id_consumed_by_client_load_calls` checks the Host wire result and refusal.
+
 ## Direct trade input bounds (2026-10-20)
 
 The V24.01 trade window builds a two-pilot money manifest and a set of offered item rows, then calls the bound `trademgr` methods. EveJS 261018.1 accepts those same list and amount shapes without a count bound. eve.rs preserves the normal client calls while limiting `MultiAdd` and `MakeOffer` item collections to 256 entries, rejecting nonpositive item IDs, and refusing non-finite or out-of-range ISK values with `CustomNotify`. This affects malformed or oversized calls only. `TradeMgrRpcTests` covers the count, identifier, and amount refusals; graphical-client acceptance is open.
@@ -4375,7 +4379,7 @@ The earlier local source integration snapshot used protocol 75, preserves public
 ## Structure ST-22 (2026-10-16): wire comparison of the login session
 
 - **Session role bits of the test account (kept).** The login capture against EVE.js (tests/test_live.py, `mitm`, run on eve_p3) differs in `SessionInitialStateNotification.role`: EVE.js grants 21 role bits, eve.rs grants 3. The extra EVE.js bits are the client's administrative roles (`carbon/common/script/sys/serviceConst.py` in eve-logic: ROLE_ADMIN, ROLE_ROLEADMIN, ROLE_GMH, ROLE_GML, ROLE_QA, ROLE_PROGRAMMER, ROLE_SECURITY, ROLE_CONTENT, ROLE_VIPLOGIN and others). The eve.rs account gets ROLE_PLAYER, ROLE_LOGIN and ROLE_IGB. Source of the choice: eve-logic defines the bits and the client gates its administrative UI on them, but it does not say which roles an account receives; the EVE.js grant is a development convenience for its test account. eve.rs keeps the player roles: an ordinary test account must not hold administrative roles. Not changed on the wire. Evidence: `captures/evejs-login.jsonl` and `captures/eve-rs-login.jsonl` (ST-22, local).
-- **Session user id and dictionary order (volatile, not a divergence).** The `userid` value differs (EVE.js 3, eve.rs 1) because the test account is a different row on each server. The keys of the same dictionary come in a different order; the client reads the session dictionary by key, so the order carries no meaning. `mitm diff` still reports the order as the first divergence (ST-22 finding; see WIRE-COMPARE.md).
+- **Session user id and dictionary order (volatile value; order fixed).** The `userid` value differs (EVE.js 3, eve.rs 1) because the captured servers use different account rows. The initial-state keys now follow EveJS order: `userid,userType,role,address,languageID,countryCode`. V24 routes `packet.initialstate` from `SessionChangeGPCS.py:73` into `basesession.py:1254-1290`; values are selected by attribute name, but incoming keys are iterated in order (`basesession.py:1110-1118,1274-1280`), so the payload order determines the application sequence. eve.rs now matches the reference order; the historical `mitm diff` is retained in `WIRE-COMPARE.md`. The capture did not establish a player-visible failure from the former order.
 
 ## Structure ST-23 (2026-10-16): control tower fuel and unanchoring
 

@@ -44,4 +44,53 @@ public partial class HostServerTests
         Assert.Equal(MachoMessage.CallRsp, Assert.IsType<MachoPacket>(MachoPacket.Decode(reply)).Type);
         Assert.Equal(new PyReal(2.5), Result(reply));
     }
+
+    [Fact]
+    public async Task Crimewatch_bound_rpcs_return_the_client_shapes_through_the_registered_host_route()
+    {
+        await using var dataSource = NpgsqlDataSource.Create("Host=127.0.0.1;Database=eve;Username=postgres;Timeout=1;Command Timeout=1");
+        var service = new CrimewatchService(
+            new PgCrimewatchStore(dataSource), null!, () => 1_800_000_000_000,
+            (id, _) => Task.FromResult(id == 90000002 ? 2.5 : 0d));
+        Start(strictRpc: true, configure: registry => registry.Register(service));
+
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+        var kwargs = new PyDict([new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1))]);
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.CallWithKwargs(open, 1, "crimewatch", "MachoBindObject",
+                new PyTuple([new PyTuple([new PyInt(30000142), new PyInt(1)]), PyNone.Instance]), kwargs))));
+        var bind = MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
+        var binding = Assert.IsType<PyTuple>(Result(bind));
+        var oid = BoundObjects.ExtractName(Assert.IsType<PySubStruct>(binding.Items[0]))!;
+
+        long callId = 1;
+        async Task<PyValue> Call(string method, params PyValue[] args)
+        {
+            await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+                Packets.BoundCall(open, ++callId, oid, method, new PyTuple(args), kwargs))));
+            var decoded = MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
+            Assert.Equal(MachoMessage.CallRsp, Assert.IsType<MachoPacket>(MachoPacket.Decode(decoded)).Type);
+            return Result(decoded)!;
+        }
+
+        var states = Assert.IsType<PyTuple>(await Call("GetClientStates"));
+        Assert.Equal(4, states.Items.Count);
+        var timers = Assert.IsType<PyTuple>(states.Items[0]);
+        Assert.Equal(5, timers.Items.Count);
+        Assert.All(timers.Items, timer => Assert.Equal(2, Assert.IsType<PyTuple>(timer).Items.Count));
+        Assert.Empty(Assert.IsType<PyDict>(states.Items[1]).Entries);
+        var flagged = Assert.IsType<PyTuple>(states.Items[2]);
+        Assert.Equal(2, flagged.Items.Count);
+        Assert.Equal(new PyInt(2), states.Items[3]);
+        Assert.Equal(new PyInt(0), await Call("GetMySecurityStatus"));
+        Assert.Equal(new PyReal(2.5), await Call("GetCharacterSecurityStatus", new PyLong(90000002)));
+        Assert.IsType<PyObjectEx>(await Call("GetSecurityStatusTransactions"));
+        Assert.Equal(new PyInt(2), await Call("GetSafetyLevel"));
+        Assert.Equal(new PyInt(2), await Call("SetSafetyLevel", new PyInt(0)));
+        Assert.Equal(PyNone.Instance, await Call("StartDuelChallenge", new PyLong(90000002)));
+        Assert.Equal(PyNone.Instance, await Call("RespondToDuelChallenge", new PyLong(90000002), new PyLong(0), PyBool.True));
+    }
 }

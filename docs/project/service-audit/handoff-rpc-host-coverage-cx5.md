@@ -44,6 +44,8 @@ eve.rs already registers `lookupSvc` through `CoreServices.CreateLookupService`,
 - Actions run 40277519916 failed one assertion because decoded Python unicode values use `PyBytes`; the wire response's KeyVal shape was correct. Replaced exact-type checks with the suite's `T(...)` decoder helper.
 - Corrected focused Actions run 40278146386 passed: 1 passed, 0 failed, 0 skipped.
 - Push-triggered `ci.yml` run 40278138665 for `b5c21d53` is in progress.
+- Push CI run 40278138665 surfaced two unrelated Host wire-test assertions that treated decoded unicode as `PyStr`: the dungeon resource cache test and support/insurgency test. Corrected them to assert decoded text and KeyVal fields while preserving the expected wire values; a selected regression run for both is queued after push.
+
 - The local focused `dotnet test` process was stopped after 47 minutes waiting through compilation under shared-machine load; it produced no test result. The same focused test passed in Actions run 40278146386.
 
 - No graphical-client run was performed.

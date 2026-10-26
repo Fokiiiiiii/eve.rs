@@ -41,13 +41,20 @@ public partial class HostServerTests
         }
 
         var config = Assert.IsType<PyObject>(await Call(1, "infoGatheringMgr", "GetStateAndConfig"));
-        Assert.Equal(Eve.Services.Py.KeyVal(
-            ("isEnabled", new PyInt(0)),
-            ("infoTypes", new PyList([])),
-            ("clientWorkerInterval", new PyInt(0)),
-            ("infoTypesOncePerRun", new PyList([])),
-            ("infoTypeAggregates", new PyDict([])),
-            ("infoTypeParameters", new PyDict([]))), config);
+        Assert.Equal("util.KeyVal", T(config.Name));
+        var configFields = Assert.IsType<PyDict>(config.Args);
+        var expectedConfigFields = new Dictionary<string, PyValue>
+        {
+            ["isEnabled"] = new PyInt(0),
+            ["infoTypes"] = new PyList([]),
+            ["clientWorkerInterval"] = new PyInt(0),
+            ["infoTypesOncePerRun"] = new PyList([]),
+            ["infoTypeAggregates"] = new PyDict([]),
+            ["infoTypeParameters"] = new PyDict([]),
+        };
+        Assert.Equal(expectedConfigFields.Count, configFields.Entries.Count);
+        foreach (var (name, expected) in expectedConfigFields)
+            Assert.Equal(expected, configFields.Entries.Single(entry => T(entry.Key) == name).Value);
         var statuses = Assert.IsType<PyDict>(await Call(2, "infoGatheringMgr", "LogInfoEventsFromClient", events));
         Assert.Empty(statuses.Entries);
 

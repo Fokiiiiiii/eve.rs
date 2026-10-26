@@ -50,7 +50,7 @@ public partial class HostServerTests
 
         var labels = Assert.IsType<PyObject>(await CallOverHost(
             front, open, 1, "charMgr", "GetOwnerNoteLabels", Py.Tuple([])));
-        Assert.Equal(new PyStr("eve.common.script.sys.rowset.Rowset"), labels.Name);
+        Assert.Equal("eve.common.script.sys.rowset.Rowset", JsSemantics.StringValue(labels.Name));
         var labelFields = Assert.IsType<PyDict>(labels.Args);
         Assert.Equal(new PyList([new PyStr("noteID"), new PyStr("label")]), ClientReadField(labelFields, "header"));
         Assert.Equal(new PyToken("util.Row"), ClientReadField(labelFields, "RowClass"));
@@ -61,7 +61,7 @@ public partial class HostServerTests
 
         var privateInfo = Assert.IsType<PyObject>(await CallOverHost(
             front, open, 3, "charMgr", "GetPrivateInfo", Py.Tuple(new PyInt(characterId))));
-        Assert.Equal(new PyStr("util.Row"), privateInfo.Name);
+        Assert.Equal("util.Row", JsSemantics.StringValue(privateInfo.Name));
         var privateFields = Assert.IsType<PyDict>(privateInfo.Args);
         Assert.Equal(
             new PyList([

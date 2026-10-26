@@ -196,10 +196,10 @@ Whole-tree client searches confirmed the consumers below. Client paths are relat
 | RPC-01081 | charMgr.GetPublicInfo3 | `getters/player.py:24` | Same corporationID contract. | same | MATCHES |
 | RPC-01082 | charMgr.GetPublicInfo3 | `eve/client/script/ui/shared/info/characterInfoWindow.py:194` | Reads info[0].bloodlineID to form description (:193-198). | same | MATCHES |
 | RPC-01083 | charMgr.GetPublicInfo3 | `characterInfoWindow.py:194` | Same bloodlineID contract. | same | MATCHES |
-| RPC-01084 | charMgr.GetRecentShipKillsAndLosses | `eve/client/script/ui/shared/info/infosvc.py:2648` | Iterates rows and filters finalCharacterID == session.charid (:2646-2648). | `CharMgrService.cs:1198-1221`; service paging test `CharacterInfoTests.cs:528-568`; Host test at `CharMgrRpcHostWireTests.cs:50` covers only unbound None. | NO-TEST |
-| RPC-01085 | charMgr.GetRecentShipKillsAndLosses | `infosvc.py:2648` | Same finalCharacterID consumer. | same | NO-TEST |
-| RPC-01086 | charMgr.GetRecentShipKillsAndLosses | `infosvc.py:2652` | Iterates rows and filters victimCharacterID == session.charid (:2650-2652). | same | NO-TEST |
-| RPC-01087 | charMgr.GetRecentShipKillsAndLosses | `infosvc.py:2652` | Same victimCharacterID consumer. | same | NO-TEST |
+| RPC-01084 | charMgr.GetRecentShipKillsAndLosses | `eve/client/script/ui/shared/info/infosvc.py:2648` | Iterates rows and filters finalCharacterID == session.charid (:2646-2648). | `CharMgrService.cs:1198-1221`; service paging test `CharacterInfoTests.cs:528-568`; unbound None Host branch `CharMgrRpcHostWireTests.cs:50`; valid-session list and finalCharacterID/victimCharacterID Host assertions `CharMgrRecentKillHostWireTests.cs:10-60` | MATCHES |
+| RPC-01085 | charMgr.GetRecentShipKillsAndLosses | `infosvc.py:2648` | Same finalCharacterID consumer. | same | MATCHES |
+| RPC-01086 | charMgr.GetRecentShipKillsAndLosses | `infosvc.py:2652` | Iterates rows and filters victimCharacterID == session.charid (:2650-2652). | same | MATCHES |
+| RPC-01087 | charMgr.GetRecentShipKillsAndLosses | `infosvc.py:2652` | Same victimCharacterID consumer. | same | MATCHES |
 | RPC-01088 | charMgr.GetSettingsInfo | `carbonui/services/settingsSvc.py:148` | Unpacks (code, verified), verifies, unmarshals and executes code, then logs nonempty stats (:147-158). | `CharMgrService.cs:344-345`; Host `CharMgrRpcHostWireTests.cs:41-43`; dispatcher `CharMgrSettingsWireTests.cs:10-30`. | MATCHES |
 | RPC-01089 | charMgr.GetSettingsInfo | `settingsSvc.py:148` | Same tuple/Buffer/int and follow-up order. | same | MATCHES |
 | RPC-01091 | charMgr.List | `eve/client/script/ui/station/loyaltyPointStore/lpStoreSvc.py:312` | Iterates inventory records with named item fields. | `CharMgrService.cs:313-314`; registered Host test `CharMgrClientItemListHostTests.cs:10-48`. | MATCHES |
@@ -211,12 +211,14 @@ Whole-tree client searches confirmed the consumers below. Client paths are relat
 | RPC-01098 | charMgr.ListStationItems | `eve/client/script/ui/shared/assets/assetSafetySvc.py:36` | Reads itemID to exclude current ship (:35-36). | same | MATCHES |
 | RPC-01099 | charMgr.ListStations | `eve/client/script/ui/shared/assetsWindow.py:441` | Indexes by stationID; reads stationID, solarSystemID and typeID. Other callers: assetsWindow.py:922, assetsinfo.py:148-153, createContractWnd.py:1571-1575, quote.py:364-369. | `CharMgrService.cs:307-308`; Host CRowset assertion `CharMgrRpcHostWireTests.cs:52-57`. | MATCHES |
 
-EveJS returns GetPublicInfo as KeyVal, GetPublicInfo3 as a one-row CRowset, killmail rows as a list, settings as [Buffer, 0], and global assets as packed rows/station CRowset. eve.rs GetPublicInfo3 returns one PyList record; the listed client consumers index row zero and read named attributes, verified through the Host test. The original global-list Host fixture used tuple entries; this batch adds a Host route assertion for named itemID/typeID/quantity fields. Recent-kill paging and fields are verified in the service test, but valid-session Host transport remains without a focused assertion. No graphical client was used. The audit generator has no status_evidence input, so EVE_RS_COVERAGE.csv remains unchanged.
+EveJS returns GetPublicInfo as KeyVal, GetPublicInfo3 as a one-row CRowset, killmail rows as a list, settings as [Buffer, 0], and global assets as packed rows/station CRowset. eve.rs GetPublicInfo3 returns one PyList record; the listed client consumers index row zero and read named attributes, verified through the Host test. The original global-list Host fixture used tuple entries; this batch adds a Host route assertion for named itemID/typeID/quantity fields. Recent-kill paging and consumed fields are verified at service and registered-Host layers; the Host test verifies the list row over transport. No graphical client was used. The audit generator has no status_evidence input, so EVE_RS_COVERAGE.csv remains unchanged.
 
 
 ## Batch 4 verification update (2026-10-26)
 
 - Focused registered-Host check `Char_mgr_item_list_routes_return_item_records_with_client_accessed_fields` passed in Actions run 40258181572 for commit 655f60ce; no failed tests or jobs. The run's headless-client step was skipped because `--live ''` was requested; this is not graphical-client verification.
 - The preceding Actions run 40257537139 found test compile errors (Host call ID type and missing Eve.Characters import). Both were corrected in 655f60ce; the focused rerun passed.
-- The valid-session Host wire shape for `GetRecentShipKillsAndLosses` remains without a focused assertion; service paging/row behavior is covered by the database-backed service test. No database or graphical EVE client was used locally.
+- The valid-session Host wire test for `GetRecentShipKillsAndLosses` passed locally (1 passed, 0 skipped); its focused Actions run is pending. The service paging test is database-backed; the Host test uses no database. No graphical EVE client was used.
 - Push-triggered ci.yml run 40258172650 for 655f60ce was in progress at this update.
+
+- Push CI 40258172650 for 655f60ce failed in three merged tests: PyBytes wire type assertions, stale RPC count (1442 vs current 1423), and a private-info expectation still using Rowset. This pushed fix updates those tests to the observed util.Row wire contract/count; the new focused local Host test passes.

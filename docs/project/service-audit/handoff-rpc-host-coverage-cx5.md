@@ -2,7 +2,7 @@
 
 ## Scope and decision
 
-This batch adds one real-socket Host regression covering the listed lookup, machoNet, and moonExtractions reads. No production endpoint was added: the 15 rows named `machoNet.get` are Python dictionary lookups on the result of the existing RPC `machoNet.GetGlobalConfig()`, not remote method calls. The client source confirms this in every listed callsite; each `.get(key, fallback)` is evaluated locally after the remote call.
+This batch adds one real-socket Host regression covering the listed lookup, machoNet, and moonExtractions reads. No production endpoint was added: the 15 rows named `machoNet.get` are Python dictionary lookups on the result of the existing RPC `machoNet.GetGlobalConfig()`, not remote method calls. Every listed callsite performs its `.get(key, fallback)` locally after the remote call.
 
 ## Client evidence and consumers
 
@@ -22,7 +22,7 @@ This batch adds one real-socket Host regression covering the listed lookup, mach
 - RPC-02103/02104: `eve/client/script/ui/moonmining/schedulingSvc.py:36-40` returns an empty list without the station-manager role and otherwise returns the RPC list; `eve/client/script/ui/structure/structureBrowser/moonminingEventsCont.py:96-113` reads each extraction's structureID, solarSystemID, chunkAvailableTime, and moonID to build browser rows.
 - RPC-02105: `eve/client/script/ui/moonmining/schedulingSvc.py:76-78` returns the resource-composition mapping; `eve/client/script/ui/moonmining/schedulingSvc.py:24-25` and `eve/client/script/ui/moonmining/scheduling.py:80-83` consume it for the moon-mining view.
 
-Whole-tree Serena search for `GetGlobalConfig().get(` found the listed client consumers plus additional uses in character creation, server info, globalConfig helpers, raffles, and monolithconfig. These also use the returned dictionary locally.
+Whole-tree Serena search for `GetGlobalConfig().get(` found these rows plus consumers in character creation, server info, globalConfig helpers, raffles, and monolithconfig. They also use the returned dictionary locally.
 
 ## EveJS and eve.rs behavior
 
@@ -31,14 +31,14 @@ EveJS v0.12.9:
 - `server/src/services/machoNet/machoNetService.js:340-343` returns the global config dictionary. Lines 500-509 return the client-consumed three-part map-stat shape with divisor 1.
 - `server/src/services/structure/moonExtractionsService.js:1128-1165` filters active/fracturing extractions by corporation, orders by chunk-available time, and returns per-structure resource composition.
 
-eve.rs already registers `lookupSvc` through `CoreServices.CreateLookupService`, `machoNet` through `MachoNetService`, and `moonExtractions` through `MoonExtractionsRpcService`. The regression uses those real services over the Host socket dispatcher. Lookup and moon reads use injected directory/state sources; machoNet uses its cluster config and live statistics provider. Read calls make no mutations or notifications. The Host map-stat provider can return live values while EveJS returns safe empty maps; both satisfy the observed client shape and divisor use.
+eve.rs already registers `lookupSvc` through `CoreServices.CreateLookupService`, `machoNet` through `MachoNetService`, and `moonExtractions` through `MoonExtractionsRpcService`. The regression uses those real services over the Host socket dispatcher. Lookup and moon reads use injected directory/state sources; machoNet uses its cluster config and live statistics provider. Reads make no mutations or notifications. The Host map-stat provider can return live values while EveJS returns safe empty maps; both meet the observed client shape and divisor use.
 
 ## Verification
 
 - Focused real-Host wire regression: `Rpc01790HostCoverageTests.Lookup_machoNet_and_moon_read_calls_use_registered_host_routes_with_macho_version_kwargs`.
-- Actions run 40275193604 found nonexistent `Py` and `TestFront.Packets` helpers; fixed in a064ea7a.
-- Actions run 40275936800 found the missing Host `Packet` envelope and an `Eve.Services` import in the concurrent Slash Host test; both are fixed and pushed in bc20c71b.
-- Corrected selected Actions run 40276677603 is in progress against bc20c71b.
-- Push-triggered `ci.yml` run 40276667864 for bc20c71b is in progress.
-- The local focused test/build is still compiling under shared machine load.
+- Actions 40275193604 found nonexistent `Py` and `TestFront.Packets` helpers; corrected in a064ea7a.
+- Actions 40275936800 found the missing Host `Packet` envelope and an `Eve.Services` import in the concurrent Slash Host test; corrected in bc20c71b.
+- Actions 40276677603 built Host.Tests but the focused test timed out because the test sent RPC packets before Host's `Open` session message. The regression now opens the session and consumes initial state before RPC calls.
+- The corrected change is pushed in `b1689998`. Selected run 40277519916 is in progress. The push-triggered `ci.yml` run 40277439667 was queued when last checked.
+- A local focused `dotnet test` invocation is active but progressing slowly under shared-machine load; result pending.
 - No graphical-client run was performed.

@@ -80,3 +80,8 @@ Commit `ec0be07abc90` was pushed to `main` after merging `origin/main`. Agent Ac
 ### CI regression and correction
 
 Push-triggered CI for `ec0be07a` found that the cached empty composition CRowset descriptor contained only `standing`; `ownerID` was lost because its descriptor columns were nested one level too shallow. Corrected `EmptyCompositionRowset` to build the same descriptor structure used by `RowSet.Descriptor`. The three focused registered Host tests now pass locally (3/3, including the existing composition assertion). The full Host project rerun completed with 471 passed, 101 failed, and 227 skipped; its failures require the assigned PostgreSQL/SDE test lane, which this task prohibits using. The correction is pending merge, push, and Actions verification.
+
+
+### Corrected source push verification
+
+Commit `1bd5790d946b` was pushed after merging `origin/main`. Agent Actions run `40346579443` passed all three focused registered Host tests (0 failed, 0 skipped). Push-triggered `ci.yml` run `40346552713` was in progress during this note update; query `python3 tools/dev/ci-status.py failures 1bd5790d` for its final state.

@@ -100,16 +100,16 @@ public partial class HostServerTests
         var characters = Assert.IsType<PyList>(await Call(
             1, "lookupSvc", "LookupEvePlayerCharacters", new PyStr("Alpha"), new PyInt(0)));
         var character = Assert.IsType<PyObject>(Assert.Single(characters.Items));
-        Assert.Equal("util.KeyVal", Assert.IsType<PyStr>(character.Name).Value);
+        Assert.Equal("util.KeyVal", T(character.Name));
 
         var locations = Assert.IsType<PyList>(await Call(
             2, "lookupSvc", "LookupKnownLocationsByGroup", new PyInt(29), new PyStr("Alpha")));
-        Assert.Equal("util.KeyVal", Assert.IsType<PyStr>(Assert.IsType<PyObject>(Assert.Single(locations.Items)).Name).Value);
+        Assert.Equal("util.KeyVal", T(Assert.IsType<PyObject>(Assert.Single(locations.Items)).Name));
 
         var accountOwners = Assert.IsType<PyList>(await Call(
             3, "lookupSvc", "LookupNoneNPCAccountOwners", new PyStr("Beta"), new PyInt(0)));
         Assert.Single(accountOwners.Items);
-        Assert.Equal("util.KeyVal", Assert.IsType<PyStr>(Assert.IsType<PyObject>(accountOwners.Items[0]).Name).Value);
+        Assert.Equal("util.KeyVal", T(Assert.IsType<PyObject>(accountOwners.Items[0]).Name));
 
         var globalConfig = Assert.IsType<PyDict>(await Call(4, "machoNet", "GetGlobalConfig"));
         Assert.Contains(globalConfig.Entries, entry =>

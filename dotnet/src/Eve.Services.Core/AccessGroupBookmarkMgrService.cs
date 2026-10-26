@@ -225,18 +225,25 @@ public sealed partial class AccessGroupBookmarkMgrService(BookmarkStore store, F
         return PyValue.Of(changed);
     }
 
-    /// <summary>Deletes a subfolder with its bookmarks; the bookmarks that went are heard, then the subfolder.</summary>
+    /// <summary>Deletes a subfolder with its bookmarks; clients hear its removal before any removed bookmarks.</summary>
     [Method("DeleteSubfolder")]
     public async ValueTask<PyValue> DeleteSubfolder(ServiceCall call)
     {
         var folderId = Integral(call.Arg(0)) ?? 0;
         var subfolderId = Integral(call.Arg(1)) ?? 0;
         var removed = await store.DeleteSubfolderAsync(Character(call), folderId, subfolderId, await Lists(call), call.Cancellation);
-        if (removed.Count > 0)
-            await Publish(call, folderId, Update(folderId, "bookmarksRemoved", Ids(removed)));
-        await Publish(call, folderId, Update(folderId, "subfolderRemoved", InventoryWire.Id(subfolderId)));
+        foreach (var update in DeleteSubfolderUpdates(folderId, subfolderId, removed))
+            await Publish(call, folderId, update);
         return new PyList([.. removed.Select(id => InventoryWire.Id(id))]);
     }
+
+    internal static IReadOnlyList<PyValue> DeleteSubfolderUpdates(long folderId, long subfolderId, IReadOnlyList<long> removed) =>
+        removed.Count == 0
+            ? [Update(folderId, "subfolderRemoved", InventoryWire.Id(subfolderId))]
+            : [
+                Update(folderId, "subfolderRemoved", InventoryWire.Id(subfolderId)),
+                Update(folderId, "bookmarksRemoved", Ids(removed)),
+            ];
 
     /// <summary>The calling character with its corporation and alliance, from its session.</summary>
     private static Affiliation Who(ServiceCall call)

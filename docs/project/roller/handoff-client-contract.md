@@ -51,3 +51,16 @@ Regressions: `another_pilot_can_scoop_only_a_nearby_abandoned_drone_and_gets_des
 The full-bay regression in `dotnet/tests/Eve.Services.Space.Tests/DroneHostTests.cs` used a fixed stack quantity of 100. The test's fake simulation returns success for a scoop command but does not emit the completion event, so a bay that still has room leaves the RPC waiting. The test now reads the scooper ship's remaining drone-bay volume and the Hobgoblin unit volume from the pinned SDE, then inserts enough drones to exceed that remaining capacity by one unit. This exercises the existing early `DroneBayFull` refusal and asserts that no scoop command is sent. V24 calls this through `ship.ScoopDrone(objectIDs)`; the contract call path and consumers remain documented in this section's parent full-client audit.
 
 The touched test project build passed with zero warnings and zero errors. No local database test was run. Push `26f50332` is on `main`; focused Actions run 40176754977 on the prior fixture and the push-triggered CI result are pending.
+
+
+## Station-view contract: DeleteSubfolder notifications (2026-10-26)
+
+### Contract and implementation
+
+V24.01 processes access-group bookmark notifications in arrival order (eve/client/script/ui/shared/bookmarks/bookmarkSvc.py:232-271). Its DeleteSubfolder path removes returned bookmark IDs before removing the subfolder (bookmarkSvc.py:578-597). EveJS emits subfolderRemoved before bookmarksRemoved (server/src/services/accessGroupBookmarkMgrService.js:617-643); eve.rs now sends the same order and omits bookmarksRemoved when the folder contained no bookmarks. The existing Host test registers the production refusal-wrapped service in ServiceRegistry and dispatches all 17 methods through PacketDispatcher; the new wire-contract test covers both notification cases.
+
+### Verification
+
+- Local Core and Host test-project builds passed with 0 warnings and 0 errors.
+- Focused tests passed: DeleteSubfolder notification order (1 passed, 0 skipped) and the registered bookmark dispatcher refusal/wire test (1 passed, 0 skipped). Neither connects to PostgreSQL.
+- This change has not yet been pushed or checked on GitHub Actions. No graphical client session was run.

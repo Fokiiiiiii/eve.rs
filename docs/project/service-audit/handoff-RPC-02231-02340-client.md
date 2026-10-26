@@ -12,8 +12,9 @@ RPC-02232 is a MISMATCH: `RepairItemsInStructure` rejects the call while EveJS r
 
 - Focused reward Actions run 40296391366 for 05564516 passed (1 test, no skips).
 - Push CI run 40296376456 failed on a merged wars-info Host assertion: a wire-decoded string was expected as PyStr but is PyBytes. The assertion now uses `JsSemantics.StringValue` in commit 915cb727, pushed in c19c223e.
-- Follow-up Actions run 40298615792 for c19c223e was cancelled before tests began because setup provisioned PostgreSQL, which this task explicitly forbids. It is not a test result.
-- Push CI for c19c223e was queued at last check; inspect it with `python3 tools/dev/ci-status.py failures c19c223e`.
+- Follow-up Actions run 40298615792 for c19c223e was cancelled before tests began because its setup provisioned PostgreSQL, which this task explicitly forbids. It is not a test result.
+- Focused shared-settings Actions run 40300261216 for d4e0fe4f is still in progress. The selected test itself uses the registered service's in-memory state and does not open PostgreSQL.
+- Push CI run 40298596855 for c19c223e is queued; no push-CI run was listed yet for d4e0fe4f.
 - Local Host test could not compile because NuGet assets are absent; restore stalled at package-source resolution. No local pass is claimed.
 
-No PostgreSQL database or graphical client was used locally. Continue with the repair behavior gap and meaningful DB-free registered-Host tests for the NO-TEST rows. Update this handoff after each push.
+No PostgreSQL client or database-backed test was used locally. Continue with the structure-repair mismatch and meaningful registered-Host tests for the NO-TEST rows. Update this handoff after each push.

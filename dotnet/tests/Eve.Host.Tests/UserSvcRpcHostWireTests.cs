@@ -1,5 +1,6 @@
 using Eve.Macho;
 using Eve.Marshal;
+using Eve.Services;
 using Eve.Services.Core;
 
 namespace Eve.Host.Tests;
@@ -40,7 +41,11 @@ public partial class HostServerTests
             return Result(response);
         }
 
+        static PyValue Field(PyDict dict, string name) =>
+            dict.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == name).Value;
+
         Assert.Equal(PyBool.True, await Call("ActivateCharacterReSculpt", [new PyLong(99)]));
+        Assert.Equal(PyBool.True, await Call("CastUpvote", []));
         Assert.Equal(PyBool.True, await Call("CastDownvote", []));
         Assert.Equal(PyBool.True, await Call("CastDownvote", [new PyStr("feedback")]));
 
@@ -56,6 +61,24 @@ public partial class HostServerTests
             ("useHomeStation", PyBool.True)));
         Assert.Equal(new PyList([new PyTuple([new PyInt(3), new PyLong(132_537_600_000_000_000)])]), tokenActivation);
         Assert.Equal(tokenActivation, await Call("GetUpdatedMultiCharacterTraining", []));
+
+        var activeSlots = Assert.IsType<PyDict>(await Call("GetMultiCharactersTrainingSlots", []));
+        Assert.Equal(new PyInt(3), Assert.Single(activeSlots.Entries).Key);
+        Assert.Equal(new PyLong(132_537_600_000_000_000), activeSlots.Entries[0].Value);
+
+        var redeemTokens = Assert.IsType<PyObjectEx>(await Call("GetRedeemTokens", []));
+        Assert.Equal(ObjectExKind.Ex2, redeemTokens.Kind);
+        Assert.Empty(redeemTokens.List);
+
+        var redeemResult = Assert.IsType<PyDict>(await Call(
+            "ClaimRedeemTokens", [tokens, new PyLong(42)], ("useHomeStation", PyBool.False)));
+        Assert.Empty(Assert.IsType<PyList>(Field(redeemResult, "errors")).Items);
+        Assert.Empty(Assert.IsType<PyList>(Field(redeemResult, "itemsCreated")).Items);
+        Assert.Same(PyNone.Instance, Field(redeemResult, "stationID"));
+        Assert.Equal(PyBool.True, await Call("ReverseRedeem", [new PyLong(456)]));
+        Assert.Equal(PyBool.True, await Call("TrashRedeemTokens", [tokens]));
+        Assert.Equal(PyBool.True, await Call("ReportBot", [new PyLong(43)]));
+
         Assert.Equal(7L, training.ItemActivation.UserId);
         Assert.Equal(123L, training.ItemActivation.ItemId);
         Assert.Equal(2, training.ItemActivation.Slot);
@@ -71,7 +94,10 @@ public partial class HostServerTests
 
         public ValueTask<PyValue> ClaimRedeemTokensAsync(
             long userId, PyValue tokens, long characterId, bool useHomeStation, CancellationToken cancellationToken) =>
-            ValueTask.FromResult<PyValue>(PyNone.Instance);
+            ValueTask.FromResult<PyValue>(Py.Dict(
+                ("errors", new PyList([])),
+                ("itemsCreated", new PyList([])),
+                ("stationID", PyNone.Instance)));
 
         public ValueTask ReverseRedeemAsync(long userId, PyValue itemId, CancellationToken cancellationToken) =>
             ValueTask.CompletedTask;

@@ -1,3 +1,4 @@
+using Eve.Corporations;
 using Eve.Host;
 using Eve.Macho;
 using Eve.Marshal;
@@ -27,7 +28,11 @@ public partial class HostServerTests
         ]);
         var ids = Enumerable.Range(0, 501).Select(index => 3_000_000L + index).ToArray();
         var agentOwners = ids.Append(agentId).ToDictionary(id => id, id => new AgentOwnerInfo($"Agent {id}", (int)(id % 2)));
-        var service = new ConfigService(null!, null!, stations, solarSystems, agentOwners: agentOwners);
+        var service = new ConfigService(
+            null!, null!, stations, solarSystems,
+            agentOwners: agentOwners,
+            readCorporations: (_, _) => Task.FromResult<IReadOnlyList<Corporation>>([]),
+            readAlliances: (_, _) => Task.FromResult<IReadOnlyList<Alliance>>([]));
         string[] methods =
         [
             "GetAllianceShortNamesEx", "GetCorpTickerNamesEx", "GetLocationsEx", "GetLocationsLocal",
@@ -107,5 +112,10 @@ public partial class HostServerTests
             .ToDictionary(entry => WireText(entry.Key), entry => entry.Value);
         Assert.Equal(new PyInt(systemId), stationFields["solarSystemID"]);
         Assert.Equal(new PyInt(1), stationFields["stationCount"]);
+
+        Rowset(await Call(11, "GetCorpTickerNamesEx", new PyLong(ownerId)),
+            "corporationID", "tickerName", "shape1", "shape2", "shape3", "color1", "color2", "color3");
+        Rowset(await Call(12, "GetAllianceShortNamesEx", new PyLong(ownerId)),
+            "allianceID", "shortName");
     }
 }

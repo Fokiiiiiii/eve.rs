@@ -43,6 +43,57 @@ These are client call/consumer traces, not a completed wire-shape comparison. Ex
 Compare all 12 methods against EveJS 261018.1 and `reports/2026-10-24-core-breakage-from-owner-logs.md`; inspect each method's Host registration and reply encoding; add focused real-Host wire assertions and replace these provisional NO-TEST verdicts with MATCHES or MISMATCH. The status_evidence updater interface was not checked, so the CSV was left unchanged. No database was used.
 
 
+# P0 implemented rows — batch 7
+
+## Client contract and comparison
+
+The client builds the config recordsets in `eve/common/script/sys/eveCfg.py`: alliance short names at :378-379, corporation tickers at :479-480, owners at :549-550, locations at :665-666, and positions at :396-397. `carbon/common/script/sys/cfg.py:537-604` shows the shared `Recordset._Prime` contract: it sends a list of pending keys, accepts a header/rows tuple or rowset, and indexes returned rows by the declared key column. The owner columns are `ownerID, ownerName, typeID, gender, ownerNameID` (`eveCfg.py:591-603)); the location columns include `locationID, locationName, solarSystemID, x, y, z, locationNameID`. The full client tree uses the owner recordset for names/types throughout UI and gameplay; an earlier whole-tree count found 768 `cfg.eveowners.Get` consumers in 275 files (service-audit/HANDOFF.md, P0 evidence).
+
+The Host config calls return the same tuple-set headers and rows, and the single-item wrappers delegate to the tested multi-item reads. The batch Host wire test now also calls the single corporation ticker and alliance short-name routes using valid missing IDs and asserts their full empty headers. This covers the invalid-ID failures in the 2026-10-24 owner-log analysis: the existing owner batch request sends 501 long IDs and `machoVersion=1` through Host (`ConfigRecordsetHostWireTests.cs:13-108)); the dispatch strips transport metadata before the service validates the application list.
+
+The station owner method returns a list of `util.KeyVal` rows with `ownerID`, `solarSystemID`, and `stationCount`, matching EveJS `configService.js:858-867`. The info service schedules this result but does not read its fields (`infosvc.py:1163-1170)); the map color and settled-corporation filter read `solarSystemID` (`mapViewColorHandler.py:199-204`, `mapFilterSettledByCorp.py:16-17`).
+
+The other pairs also match their client use. Name validation returns the numeric validation code cached and consumed by the creation UI (`chooseNameSection.py:187-202)); EveJS returns that code (`charService.js:1913-1920)). Newbie-ship creation returns `None`, ignored by the caller; EveJS also returns null after its boarding operation (`station/base.py:609-620`, `dogmaService.js:4125-4152`). Both listed `invbroker.Add` callers ignore the result; their shared inventory wrapper forwards to the bound object (`invCache.py:998-1025)); EveJS returns the moved item ID (`invBrokerService.js:12463-13100)), and the Host test asserts the bound-call result and move. The item descriptor is cached as the row header for inventory CRowsets and dogma sub-location descriptors (`invCache.py:427-431,1140-1170`, `godma.py:122-149)); Host and EveJS both return the static descriptor (`invBrokerService.js:14030-14034`).
+
+The style and multi-login calls return booleans consumed by visual branches and the character-entry gate (`characterSelectionUtils.py:71-75`; `characterSelection.py:620-628`; `characterSlots.py:1012-1018)); EveJS returns booleans (`kiringMgrService.js:151-154`, `multiLoginBlockerService.js:162-190`). Modified security systems are an empty indexable Rowset with header `solarSystemID`; the client checks membership before reading `security` and `modifiedSecurity`, so no row produces an empty label (`characterSlots.py:1012-1018`). EveJS returns the same empty rowset (`mapService.js:514-550)). Ping returns `None`, which the idle ping loop ignores (`connectionService.py:178-191)); EveJS also returns null (`pingService.js:17-19)). The current Host wire test passes `machoVersion=1`, addressing the Ping argument errors recorded in the owner-log analysis.
+
+Every row maps to a client call or fetcher. `GetLocationsLocal` is the exception to the remote-call path: `eveCfg.py:665-666` passes it as `clientLocalFetcher`, and `cfg.py:552-576` invokes it directly only for local identity keys. That row is client-local, not a runtime RPC; its Host route mirrors the location-rowset contract and is covered by the Host test. Host tests cover real service registration, request decoding, reply encoding, and the fields consumed by the client. The map test uses the existing read hook to supply the matching empty read-side rowset and does not open a database connection.
+
+| row_id | service.method | client call site | consumers | handler | verdict |
+|---|---|---|---|---|---|
+| RPC-01160 | charUnboundMgr.ValidateNameEx | eve-logic `chooseNameSection.py:188` | numeric name-validation code is cached and returned to the creation UI (`:188-202`) | `CharUnboundMgrService.cs:182-195`; `CharUnboundMgrValidationHostTests.cs:12-47` | MATCHES |
+| RPC-01175 | config.GetAllianceShortNamesEx | `eveCfg.py:378-379` | keyed `(header, rows)` recordset; `allianceID`/shortName | `ConfigService.Recordsets.cs:17-19`; `ConfigRecordsetHostWireTests.cs:13,115-118` | MATCHES |
+| RPC-01176 | config.GetCorpTickerNamesEx | `eveCfg.py:479-480` | keyed corporation ticker rows and optional logo/color columns | `ConfigService.Recordsets.cs:13-15`; `ConfigRecordsetHostWireTests.cs:13,113-116` | MATCHES |
+| RPC-01177 | config.GetLocationsEx | `eveCfg.py:665-666` | `evelocations` rowset keyed by `locationID`; lazily loads local IDs then remote misses | `ConfigService.Recordsets.cs:21-23`; `ConfigRecordsetHostWireTests.cs:91-95` | MATCHES |
+| RPC-01178 | config.GetLocationsLocal | `eveCfg.py:665-666` | client-local identity fetch in `cfg.py:552-576`; tuple/columns rows populate `evelocations`, so this route is not called by the client | `ConfigService.Recordsets.cs:25-26`; `ConfigRecordsetHostWireTests.cs:94-95` | MATCHES (client-local path) |
+| RPC-01179 | config.GetMultiAllianceShortNamesEx | `eveCfg.py:378-379` | batch alliance rows are indexed by `allianceID` in `cfg.py:576-604` | `ConfigService.cs:190-210`; `ConfigRecordsetHostWireTests.cs:37,84-86` | MATCHES |
+| RPC-01180 | config.GetMultiCorpTickerNamesEx | `eveCfg.py:479-480` | batch corporation rows are indexed by `corporationID` | `ConfigService.cs:159-188`; `ConfigRecordsetHostWireTests.cs:37,81-83` | MATCHES |
+| RPC-01181 | config.GetMultiLocationsEx | `eveCfg.py:665-666` | batch location rows populate the same `evelocations` cache | `ConfigService.cs:213-256`; `ConfigRecordsetHostWireTests.cs:91-95` | MATCHES |
+| RPC-01182 | config.GetMultiOwnersEx | `eveCfg.py:549-550` | owner rows indexed by `ownerID`; whole-tree `eveowners` consumers read name/type and related columns | `ConfigService.cs:96-154`; `ConfigRecordsetHostWireTests.cs:76-80` | MATCHES |
+| RPC-01183 | config.GetOwnersEx | `eveCfg.py:549-550` | single owner row uses the same owner columns and key | `ConfigService.Recordsets.cs:9-11`; `ConfigRecordsetHostWireTests.cs:70-75` | MATCHES |
+| RPC-01184 | config.GetPositionEx | `eveCfg.py:396-397` | keyed position row reads itemID, coordinates, and rotation values | `ConfigService.Recordsets.cs:28-30`; `ConfigRecordsetHostWireTests.cs:97-104` | MATCHES |
+| RPC-01185 | config.GetPositionsEx | `eveCfg.py:396-397` | batch position rows use the same itemID key and seven columns | `ConfigService.Recordsets.cs:32-39`; `ConfigRecordsetHostWireTests.cs:105-108` | MATCHES |
+| RPC-01186 | config.GetStationSolarSystemsByOwner | `infosvc.py:1163-1164` | parallel result is assigned to `systems`; no fields are read there | `ConfigService.cs:38-57`; `ConfigRecordsetHostWireTests.cs:110-113` | MATCHES |
+| RPC-01187 | config.GetStationSolarSystemsByOwner | `mapViewColorHandler.py:199` | iterates rows and reads `solarSystemID` at :202 | `ConfigService.cs:38-57`; `ConfigRecordsetHostWireTests.cs:110-113` | MATCHES |
+| RPC-01188 | config.GetStationSolarSystemsByOwner | `mapViewColorHandler.py:199` | same map color path; reads each row's `solarSystemID` | `ConfigService.cs:38-57`; `ConfigRecordsetHostWireTests.cs:110-113` | MATCHES |
+| RPC-01189 | config.GetStationSolarSystemsByOwner | `mapFilterSettledByCorp.py:16` | builds solar-system keyed filter data from `solarSystemID` at :17 | `ConfigService.cs:38-57`; `ConfigRecordsetHostWireTests.cs:110-113` | MATCHES |
+| RPC-01190 | config.GetStationSolarSystemsByOwner | `mapFilterSettledByCorp.py:16` | same filter path; reads `solarSystemID` | `ConfigService.cs:38-57`; `ConfigRecordsetHostWireTests.cs:110-113` | MATCHES |
+| RPC-01355 | dogmaIM.CreateNewbieShip | `station/base.py:613` | return ignored; UserError is re-raised, other failures map to station error | `DogmaIMService.cs:184-220`; `DogmaRpcHostTests.cs:11-65` | MATCHES |
+| RPC-01356 | dogmaIM.CreateNewbieShip | `station/base.py:613` | same call; client relies on server boarding side effects, not reply data | `DogmaIMService.cs:184-220`; `DogmaRpcHostTests.cs:11-65` | MATCHES |
+| RPC-00994 | invbroker.Add | `fittingSlotController.py:237-242` | return ignored; module move drives inventory/dogma updates | `InvBrokerService.cs:1255-1300`; `ServiceAuditP0HostWireTests.cs:99-147` | MATCHES |
+| RPC-00995 | invbroker.Add | `nodegraph/client/actions/module.py:73-77` | return ignored; module move is executed through the same inventory wrapper | `InvBrokerService.cs:1255-1300`; `ServiceAuditP0HostWireTests.cs:99-147` | MATCHES |
+| RPC-01708 | invbroker.GetItemDescriptor | `invCache.py:429-431` | cached descriptor defines inventory rowsets and dogma sub-location fields | `InvBrokerService.cs:373-374`; `InvBrokerDescriptorHostTests.cs:12-37` | MATCHES |
+| RPC-01709 | invbroker.GetItemDescriptor | `invCache.py:429-431` | same cached descriptor and all inventory rowset consumers | `InvBrokerService.cs:373-374`; `InvBrokerDescriptorHostTests.cs:12-37` | MATCHES |
+| RPC-01750 | kiringMgr.IsMonochromeStyleEnabled | `characterSelectionUtils.py:71-75` | bool gates logo, portrait, style and security-status color branches | `CoreCompatibilityServiceAdapters.cs:338-340`; `ImplementedClientRowsHostWireTests.cs:13-25` | MATCHES |
+| RPC-01751 | kiringMgr.IsMonochromeStyleEnabled | `characterSelectionUtils.py:71-75` | same memoized bool, consumed by character selection and slots | `CoreCompatibilityServiceAdapters.cs:338-340`; `ImplementedClientRowsHostWireTests.cs:13-25` | MATCHES |
+| RPC-01962 | map.GetSecurityModifiedSystems | `characterSlots.py:1013-1014` | Indexes by `solarSystemID`; reads security fields only for a present row; otherwise returns empty text | `StationService.cs:293-300`; `ImplementedClientRowsHostWireTests.cs:28-55` | MATCHES |
+| RPC-02066 | multiLoginBlocker.Login | `characterSelection.py:623-624` | false opens the blocked window and stops login; true continues | `MultiLoginBlockerService.cs:25-50`; `ImplementedClientRowsHostWireTests.cs:59-86` | MATCHES |
+| RPC-02067 | multiLoginBlocker.Login | `characterSelection.py:623-624` | same bool gate when entering a selected character | `MultiLoginBlockerService.cs:25-50`; `ImplementedClientRowsHostWireTests.cs:59-86` | MATCHES |
+| RPC-02247 | pingService.Ping | `connectionService.py:189` | periodic idle ping; reply ignored | `PingService.cs:10-16`; `LoginCompatibilityRpcHostWireTests.cs:57` | MATCHES |
+
+## Checks and remaining limits
+
+The status-evidence generator was refreshed without a queue directory, so the 03-allsvc-batch queue files were left untouched. The new tests and existing real-Host wire tests are source checks; Actions results are recorded after the selected run completes. No PostgreSQL database was used. The graphical V24.01 client was not exercised.
 # Client verification — P0 implemented rows, batch 5
 
 Whole-tree V24.01 caller searches show all consumers summarized below. The owner capture analysis (2026-10-24-core-breakage-from-owner-logs.md, findings 1–8) does not name any of these methods; that is not evidence that calls succeeded. EveJS 261018.1 uses the corresponding return intents at `charMgrService.js:626-628, 1104-10, 1112-21, 1123-40, 1142-52, 1199-1205, 1214-28`; creation/deletion at `charService.js:1089-1373,1869-79` and `characterDeletionRuntime.js:685-704,706-789`; Omega status at `charService.js:1526-29`.
@@ -142,11 +193,11 @@ Client references below are from the V24.01 `home-user-eve-logic` tree. The rows
 |---|---|---|---|---|---|
 | RPC-01040 | charMgr.GetOwnerNote | `notepad.py:518` | `ShowNote:518-521`, first record's `note` and `label` | `CharMgrService.cs:819-837`; `CharacterManagerMutationHostWireTests.cs:48-64` | MATCHES |
 | RPC-01041 | charMgr.GetOwnerNote | `notepad.py:518` | `ShowNote:518-521`, first record's `note` and `label` | `CharMgrService.cs:819-837`; `CharacterManagerMutationHostWireTests.cs:48-64` | MATCHES |
-| RPC-01042 | charMgr.GetOwnerNoteLabels | `notepad.py:87` | `LoadNotesData:87-105`, iterable rows with `noteID` and `label` | `CharMgrService.cs:798-817`; `CharMgrClientReadHostWireTests.cs:12-81` | NO-TEST (wire test added; Actions result pending) |
-| RPC-01043 | charMgr.GetOwnerNoteLabels | `notepad.py:87` | `LoadNotesData:87-105`, iterable rows with `noteID` and `label` | `CharMgrService.cs:798-817`; `CharMgrClientReadHostWireTests.cs:12-81` | NO-TEST (wire test added; Actions result pending) |
-| RPC-01044 | charMgr.GetPaperdollState | `station/base.py:197` | `GetPaperdollStateCache:195-198`, caches and returns scalar | `CharMgrService.cs:327-336`; `CharMgrClientReadHostWireTests.cs:12-81` | NO-TEST (wire test added; Actions result pending) |
-| RPC-01045 | charMgr.GetPaperdollState | `station/base.py:197` | `GetPaperdollStateCache:195-198`, caches and returns scalar | `CharMgrService.cs:327-336`; `CharMgrClientReadHostWireTests.cs:12-81` | NO-TEST (wire test added; Actions result pending) |
-| RPC-01046 | charMgr.GetPrivateInfo | `corp_dlg_edit_member.py:148` | `LoadChar:148`, then `OnTabGeneral:274-284` reads four attributes | `CharMgrService.cs:234-250`; `CharMgrClientReadHostWireTests.cs:12-81` | MISMATCH (Rowset corrected to util.Row; Actions result pending) |
+| RPC-01042 | charMgr.GetOwnerNoteLabels | `notepad.py:87` | `LoadNotesData:87-105`, iterable rows with `noteID` and `label` | `CharMgrService.cs:798-817`; `CharMgrClientReadHostWireTests.cs:12-81` | NO-TEST (wire test added; first Actions build failed before tests on missing Eve.Characters import (fixed); rerun pending) |
+| RPC-01043 | charMgr.GetOwnerNoteLabels | `notepad.py:87` | `LoadNotesData:87-105`, iterable rows with `noteID` and `label` | `CharMgrService.cs:798-817`; `CharMgrClientReadHostWireTests.cs:12-81` | NO-TEST (wire test added; first Actions build failed before tests on missing Eve.Characters import (fixed); rerun pending) |
+| RPC-01044 | charMgr.GetPaperdollState | `station/base.py:197` | `GetPaperdollStateCache:195-198`, caches and returns scalar | `CharMgrService.cs:327-336`; `CharMgrClientReadHostWireTests.cs:12-81` | NO-TEST (wire test added; first Actions build failed before tests on missing Eve.Characters import (fixed); rerun pending) |
+| RPC-01045 | charMgr.GetPaperdollState | `station/base.py:197` | `GetPaperdollStateCache:195-198`, caches and returns scalar | `CharMgrService.cs:327-336`; `CharMgrClientReadHostWireTests.cs:12-81` | NO-TEST (wire test added; first Actions build failed before tests on missing Eve.Characters import (fixed); rerun pending) |
+| RPC-01046 | charMgr.GetPrivateInfo | `corp_dlg_edit_member.py:148` | `LoadChar:148`, then `OnTabGeneral:274-284` reads four attributes | `CharMgrService.cs:234-250`; `CharMgrClientReadHostWireTests.cs:12-81` | MISMATCH (Rowset corrected to util.Row; first Actions build failed before tests on missing Eve.Characters import (fixed); rerun pending) |
 | RPC-01047 | charMgr.GetPrivateInfoOnCorpChange | `personalDonateEMPanel.py:69` | `_is_corp_membership_valid:69-75`, None guard then `corporationDateTime` | `CharMgrService.cs:847-867`; `CharMgrRpcHostWireTests.cs:38-52` | MATCHES |
 | RPC-01048 | charMgr.GetPrivateInfoOnCorpChange | `personalDonateEMPanel.py:69` | `_is_corp_membership_valid:69-75`, None guard then `corporationDateTime` | `CharMgrService.cs:847-867`; `CharMgrRpcHostWireTests.cs:38-52` | MATCHES |
 | RPC-01049 | charMgr.GetPublicInfo | `avatardisplay/avatardisplay.py:1360` | `GetBloodlineFromDNA:1360-1362` reads `bloodlineID` | `CharMgrService.cs:179-183`; `CharMgrPublicInfoHostTests.cs:12-107` | MATCHES |
@@ -172,6 +223,97 @@ Client references below are from the V24.01 `home-user-eve-logic` tree. The rows
 The `run_service_audit_current.py` entry point exposes no per-row evidence input; it delegates to the audit generator and applies only fixed in-script compatibility overrides. The generated CSV was left unchanged, and the queue files were not regenerated.
 
 ## Verification state
-- Local focused command: `dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --filter FullyQualifiedName~Char_mgr_client_read_shapes_match_the_registered_host_wire_contract`. The build compiled `Eve.Services.CharacterInfo`, then stalled while compiling `Eve.Host`; it was cancelled after no output for about two minutes. No test executed.
-- No PostgreSQL database or graphical client was used.
-- Focused GitHub Actions verification is pending.
+
+- The initial local focused `dotnet test` compiled `Eve.Services.CharacterInfo`, then stalled during `Eve.Host` compilation and was cancelled; no test executed. A subsequent no-restore Host test-project build was cancelled during dependency compilation on this shared machine.
+- Actions run 40256730678 and push CI run 40256722236 first failed to compile because the test omitted `using Eve.Characters` (CS0246); that import is fixed.
+- Actions run 40259671514 compiled successfully and ran one test, which failed on a test-only wrapper assertion: the Host wire decoder returned the `util.Rowset` name as `PyBytes`, while the test expected `PyStr`. The test now checks decoded strings with `JsSemantics.StringValue`.
+- Focused Actions rerun is pending. No PostgreSQL database or graphical client was used.
+
+# Client verification — P0 implemented rows, batch 4 (RPC-01069–RPC-01099)
+
+Whole-tree client searches confirmed the consumers below. Client paths are relative to `/home/user/eve-logic`. EveJS comparison uses `/home/user/evejs-261018.1/src/server/src/services/character/charMgrService.js:645-698,851-854` and `charMgrGlobalAssets.js:544-584`. The owner capture report `/home/user/reports/2026-10-24-core-breakage-from-owner-logs.md` names none of these methods in its failure findings.
+
+| row_id | service.method | client call site | consumers and contract | handler / Host wire evidence | verdict |
+|---|---|---|---|---|---|
+| RPC-01069 | charMgr.GetPublicInfo | `agents.py:520` | Public KeyVal; whole-tree callers additionally read schoolID (safe-school/safespace return false for absent/None), corporationID, allianceID, factionID, bloodlineID, gender, security and portrait fields. | `CharMgrService.cs:132-145`; `CharMgrPublicInfoHostTests.cs:44-98` | MATCHES |
+| RPC-01070 | charMgr.GetPublicInfo | `agents.py:520` | Same KeyVal and field/null contract; duplicate audit observation. | same | MATCHES |
+| RPC-01071 | charMgr.GetPublicInfo | `nodegraph/client/conditions/safe_schools_client.py:13` | Reads schoolID; absent reply/field or None -> false (`:12-22`). | same | MATCHES |
+| RPC-01072 | charMgr.GetPublicInfo | `safe_schools_client.py:13` | Same schoolID and None handling. | same | MATCHES |
+| RPC-01073 | charMgr.GetPublicInfo | `nodegraph/client/getters/location.py:32` | Public record used for character location derivation. | same | MATCHES |
+| RPC-01074 | charMgr.GetPublicInfo | `getters/location.py:32` | Same location consumer. | same | MATCHES |
+| RPC-01075 | charMgr.GetPublicInfo | `safespace/client/util.py:9` | Reads schoolID; absent reply/field or None -> false (`:8-18`). | same | MATCHES |
+| RPC-01076 | charMgr.GetPublicInfo | `safespace/client/util.py:9` | Same schoolID and None handling. | same | MATCHES |
+| RPC-01077 | charMgr.GetPublicInfo3 | `eve/client/script/ui/shared/dockedUI/inControlCont.py:41` | Reads first character record and named fields. | `CharMgrService.cs:148-155`; `CharMgrPublicInfoHostTests.cs:91-98` | MATCHES |
+| RPC-01078 | charMgr.GetPublicInfo3 | `eve/client/script/ui/shared/info/characterInfoWindow.py:64` | Character window consumes first record; another path reads bloodlineID at :193-198. | same | MATCHES |
+| RPC-01079 | charMgr.GetPublicInfo3 | `eve/client/script/ui/shared/info/infoContentBase.py:410` | Info content consumes first record and fields. | same | MATCHES |
+| RPC-01080 | charMgr.GetPublicInfo3 | `nodegraph/client/getters/player.py:24` | Reads info[0].corporationID; falsey reply -> no value (:23-27). | same | MATCHES |
+| RPC-01081 | charMgr.GetPublicInfo3 | `getters/player.py:24` | Same corporationID contract. | same | MATCHES |
+| RPC-01082 | charMgr.GetPublicInfo3 | `eve/client/script/ui/shared/info/characterInfoWindow.py:194` | Reads info[0].bloodlineID to form description (:193-198). | same | MATCHES |
+| RPC-01083 | charMgr.GetPublicInfo3 | `characterInfoWindow.py:194` | Same bloodlineID contract. | same | MATCHES |
+| RPC-01084 | charMgr.GetRecentShipKillsAndLosses | `eve/client/script/ui/shared/info/infosvc.py:2648` | Iterates rows and filters finalCharacterID == session.charid (:2646-2648). | `CharMgrService.cs:1198-1221`; service paging test `CharacterInfoTests.cs:528-568`; Host test at `CharMgrRpcHostWireTests.cs:50` covers only unbound None. | NO-TEST |
+| RPC-01085 | charMgr.GetRecentShipKillsAndLosses | `infosvc.py:2648` | Same finalCharacterID consumer. | same | NO-TEST |
+| RPC-01086 | charMgr.GetRecentShipKillsAndLosses | `infosvc.py:2652` | Iterates rows and filters victimCharacterID == session.charid (:2650-2652). | same | NO-TEST |
+| RPC-01087 | charMgr.GetRecentShipKillsAndLosses | `infosvc.py:2652` | Same victimCharacterID consumer. | same | NO-TEST |
+| RPC-01088 | charMgr.GetSettingsInfo | `carbonui/services/settingsSvc.py:148` | Unpacks (code, verified), verifies, unmarshals and executes code, then logs nonempty stats (:147-158). | `CharMgrService.cs:344-345`; Host `CharMgrRpcHostWireTests.cs:41-43`; dispatcher `CharMgrSettingsWireTests.cs:10-30`. | MATCHES |
+| RPC-01089 | charMgr.GetSettingsInfo | `settingsSvc.py:148` | Same tuple/Buffer/int and follow-up order. | same | MATCHES |
+| RPC-01091 | charMgr.List | `eve/client/script/ui/station/loyaltyPointStore/lpStoreSvc.py:312` | Iterates inventory records with named item fields. | `CharMgrService.cs:313-314`; registered Host test `CharMgrClientItemListHostTests.cs:10-48`. | MATCHES |
+| RPC-01092 | charMgr.List | `eve/client/script/environment/fittingSvc.py:583` | Iterates named inventory records. | same | MATCHES |
+| RPC-01093 | charMgr.List | `eve/client/script/ui/station/assembleModularShip.py:234` | Iterates named inventory records. | same | MATCHES |
+| RPC-01095 | charMgr.ListIncludingContainers | `nodegraph/client/getters/inventory.py:217` | Applies predicate to item record fields (:216-222); assets window also wraps rows (:414-416). | `CharMgrService.cs:316-317`; `CharMgrClientItemListHostTests.cs:10-48`. | MATCHES |
+| RPC-01096 | charMgr.ListStationItems | `eve/client/script/ui/shared/assetsWindow.py:745` | Iterates station inventory item records; other consumers are market quote and safety. | `CharMgrService.cs:310-311`; `CharMgrClientItemListHostTests.cs:10-48`. | MATCHES |
+| RPC-01097 | charMgr.ListStationItems | `eve/client/script/ui/shared/market/quote.py:377` | Filters candidate item records (:376-381). | same | MATCHES |
+| RPC-01098 | charMgr.ListStationItems | `eve/client/script/ui/shared/assets/assetSafetySvc.py:36` | Reads itemID to exclude current ship (:35-36). | same | MATCHES |
+| RPC-01099 | charMgr.ListStations | `eve/client/script/ui/shared/assetsWindow.py:441` | Indexes by stationID; reads stationID, solarSystemID and typeID. Other callers: assetsWindow.py:922, assetsinfo.py:148-153, createContractWnd.py:1571-1575, quote.py:364-369. | `CharMgrService.cs:307-308`; Host CRowset assertion `CharMgrRpcHostWireTests.cs:52-57`. | MATCHES |
+
+EveJS returns GetPublicInfo as KeyVal, GetPublicInfo3 as a one-row CRowset, killmail rows as a list, settings as [Buffer, 0], and global assets as packed rows/station CRowset. eve.rs GetPublicInfo3 returns one PyList record; the listed client consumers index row zero and read named attributes, verified through the Host test. The original global-list Host fixture used tuple entries; this batch adds a Host route assertion for named itemID/typeID/quantity fields. Recent-kill paging and fields are verified in the service test, but valid-session Host transport remains without a focused assertion. No graphical client was used. The audit generator has no status_evidence input, so EVE_RS_COVERAGE.csv remains unchanged.
+
+
+## Batch 4 verification update (2026-10-26)
+
+- Focused registered-Host check `Char_mgr_item_list_routes_return_item_records_with_client_accessed_fields` passed in Actions run 40258181572 for commit 655f60ce; no failed tests or jobs. The run's headless-client step was skipped because `--live ''` was requested; this is not graphical-client verification.
+- The preceding Actions run 40257537139 found test compile errors (Host call ID type and missing Eve.Characters import). Both were corrected in 655f60ce; the focused rerun passed.
+- The valid-session Host wire shape for `GetRecentShipKillsAndLosses` remains without a focused assertion; service paging/row behavior is covered by the database-backed service test. No database or graphical EVE client was used locally.
+- Push-triggered ci.yml run 40258172650 for 655f60ce was in progress at this update.
+
+# Client verification: P0 implemented rows, batch 8
+
+Checked the V24.01 client sources and traced the consumers in the full `/home/user/eve-logic` tree. The same handler applies to duplicated audit rows for a given method; each row is listed separately below.
+
+The 2026-10-24 owner log analysis reports `search.Query` as `ServiceNotFound` in that capture. The current host registers `search`; this does not establish that the captured build had the current route. The report contains no breakage finding for the other methods in this batch.
+
+EveJS comparison: search returns a group-ID keyed dictionary of lists for `Query` and a flat ID list for `QuickQuery` (`/home/user/evejs-261018.1/src/server/src/services/_other/searchService.js:463-500)); station returns a cached KeyVal station record, list-of-four guest rows, tuple bits, and KeyVal station rows (`.../services/station/stationService.js:68-190)); subscription returns clone grade 0/1 and FILETIME long or null (`.../services/subscription/subscriptionMgrService.js:67-81)); population-cap load slots are system-ID-to-token mappings used by the following move call (`.../services/populationCap/populationCapService.js:178-190`). These match the client contracts below. No intentional EveJS difference was identified.
+
+| row_id | service.method | client call site | consumers in eve-logic | handler | verdict |
+|---|---|---|---|---|---|
+| RPC-02258 | populationCap.GetCharacterLoadSlot | `characterSelection.py:750` | `TryEnterGame:750-757` uses a dict: `len`, `keys`, and system-ID lookup for the slot token; one-system answers proceed directly to entry. | `PopulationCapService.cs:55-75`; host wire shape test `PopulationCapHostWireTests.cs:9-31` | MATCHES |
+| RPC-02259 | populationCap.MoveCharacterToNewSystem | `characterSelection.py:758` | `TryEnterGame:751-761` sends the selected system ID and its token, then enters the character; reply is not read. | `PopulationCapService.cs:78-83`; no successful Host transition assertion | NO-TEST |
+| RPC-02354 | search.Query | `searchUtil.py:278` | `searchUtil.py:277-281` treats the reply as a mapping from integer result type to lists of integer IDs, primes owner/type caches and sorts selected result lists; callers include search panels, contracts, maps, kill rights and bounty search. | `SearchQueryService.cs:14-42`; `SearchQueryHostWireTests.cs:10-34` | MATCHES |
+| RPC-02355 | search.QuickQuery | `searchUtil.py:301` | `GetResultsList` returns the reply to UI callers as a flat list of integer IDs; caller families include contracts, maps, petitions, kill rights, bounties and item lookup. | `SearchQueryService.cs:45-77`; `SearchQuickQueryHostWireTests.cs:12-49` | MATCHES |
+| RPC-02724 | station.GetGuests | `station/base.py:102-108` | Each returned row is unpacked as `(charID, corpID, allianceID, warFactionID)`; client caches `charID -> (corpID, allianceID, warFactionID)`. Docked guest UI reads that map at `dockedUI/guests.py:94-95`. | `StationService.cs:103-121`; `StationStructureRpcHostWireTests.cs:15-45` | MATCHES |
+| RPC-02725 | station.GetGuests | `station/base.py:102-108` | Same RPC and consumer as RPC-02724; the response is a list of four-field guest tuples. | `StationService.cs:103-121`; `StationStructureRpcHostWireTests.cs:15-45` | MATCHES |
+| RPC-02726 | stationSvc.GetAllianceSystems | `mapViewData.py:99-106` | Iterates row objects, reads integer `solarSystemID` and `allianceID`, then builds a system-to-alliance dictionary; faction-warfare occupation data overwrites that map afterwards. | `StationService.cs:150-158`; `StationStructureRpcHostWireTests.cs:47-51` | MATCHES |
+| RPC-02727 | stationSvc.GetAllianceSystems | `mapViewData.py:99-106` | Same map consumer as RPC-02726. | `StationService.cs:150-158`; `StationStructureRpcHostWireTests.cs:47-51` | MATCHES |
+| RPC-02728 | stationSvc.GetAllianceSystems | `starMapSvc.py:1607-1614` | Iterates row objects and reads integer `solarSystemID` and `allianceID`; later faction-warfare occupation values overwrite the alliance map. | `StationService.cs:150-158`; `StationStructureRpcHostWireTests.cs:47-51` | MATCHES |
+| RPC-02729 | stationSvc.GetAllianceSystems | `starMapSvc.py:1607-1614` | Same star-map consumer as RPC-02728. | `StationService.cs:150-158`; `StationStructureRpcHostWireTests.cs:47-51` | MATCHES |
+| RPC-02732 | stationSvc.GetStation | `notificationUtil.py:67-70` | Reads `stationTypeID` to create a show-info link. Other whole-tree callers include `mapSvc.py:528-531`, map/info UI and location helpers; map caller reads `stationName` when a local identity overrides it. | `StationService.cs:39-67`; `StationStructureRpcHostWireTests.cs:72-81` | MATCHES |
+| RPC-02733 | stationSvc.GetStation | `notificationUtil.py:67-70` | Same notification utility caller and consumers as RPC-02732. | `StationService.cs:39-67`; `StationStructureRpcHostWireTests.cs:72-81` | MATCHES |
+| RPC-02734 | stationSvc.GetStation | `mapSvc.py:528-532` | Reads the returned cached station object; for local IDs it replaces `stationName` from the location cache. Downstream map, information, market and docking UI read station fields. | `StationService.cs:39-67`; `StationStructureRpcHostWireTests.cs:72-81` | MATCHES |
+| RPC-02735 | stationSvc.GetStation | `mapSvc.py:528-532` | Same map caller and consumers as RPC-02734. | `StationService.cs:39-67`; `StationStructureRpcHostWireTests.cs:72-81` | MATCHES |
+| RPC-02736 | stationSvc.GetStationItemBits | `station/base.py:574-576` | Passes the four-value tuple to `SetStationItemBits`, which creates a Row with fields `ownerID, itemID, operationID, stationTypeID` (`station/base.py:581-584`). | `StationService.cs:96-100`; `StationStructureRpcHostWireTests.cs:58-60` | MATCHES |
+| RPC-02737 | stationSvc.GetStationItemBits | `station/base.py:574-576` | Same tuple-to-Row consumer as RPC-02736. | `StationService.cs:96-100`; `StationStructureRpcHostWireTests.cs:58-60` | MATCHES |
+| RPC-02738 | stationSvc.GetStationsForOwner | `lpStoreSvc.py:534-535` | Iterates station KeyVals and groups by `solarSystemID`, appending each `stationID` to find the nearest dockable LP station (`lpStoreSvc.py:536-559`). | `StationService.cs:70-93`; `StationStructureRpcHostWireTests.cs:62-67` | MATCHES |
+| RPC-02739 | stationSvc.GetStationsForOwner | `lpStoreSvc.py:534-535` | Same LP-store consumer as RPC-02738. | `StationService.cs:70-93`; `StationStructureRpcHostWireTests.cs:62-67` | MATCHES |
+| RPC-02740 | stationSvc.GetSystemsForAlliance | `all_ui_systems.py:31` | Receives the requested alliance's row list and uses system IDs in the alliance systems UI; the call passes `session.allianceid`. | `StationService.cs:160-168`; `StationStructureRpcHostWireTests.cs:52-56` | MATCHES |
+| RPC-02741 | stationSvc.GetSystemsForAlliance | `all_ui_systems.py:31` | Same alliance systems UI consumer as RPC-02740. | `StationService.cs:160-168`; `StationStructureRpcHostWireTests.cs:52-56` | MATCHES |
+| RPC-02845 | subscriptionMgr.GetCloneGrade | `omega/client/clone_grade_svc.py:125` | Caches an integer clone grade and compares it to Alpha/Omega constants (`clone_grade_svc.py:136-147`); other Omega checks use the same cache. | `SubscriptionMgrService.cs:169-170`; `LoginCompatibilityRpcHostWireTests.cs:58-60` | MATCHES |
+| RPC-02846 | subscriptionMgr.GetCloneGrade | `omega/client/clone_grade_svc.py:125` | Same integer 0/1 consumer as RPC-02845. | `SubscriptionMgrService.cs:169-170`; `LoginCompatibilityRpcHostWireTests.cs:58-60` | MATCHES |
+| RPC-02847 | subscriptionMgr.GetSubscriptionTime | `plexPanel.py:145-146` | Panel treats a truthy FILETIME as an Omega expiry and formats it; `None` selects the Alpha display branch (`plexPanel.py:147-154`). | `SubscriptionMgrService.cs:164-167`; `LoginCompatibilityRpcHostWireTests.cs:59-60` | MATCHES |
+| RPC-02848 | subscriptionMgr.GetSubscriptionTime | `plexPanel.py:145-146` | Same FILETIME-long-or-None consumer as RPC-02847. | `SubscriptionMgrService.cs:164-167`; `LoginCompatibilityRpcHostWireTests.cs:59-60` | MATCHES |
+
+## Scope and evidence
+
+- The Host wire tests use the production service handlers and network dispatch. They assert client-used wire types and fields: station cache wrapper/KeyVal, tuple and list rows, station owner fields, alliance rows, integer clone grade, and FILETIME long.
+- The new Query test sends the client's group-ID list and `exact` keyword with the Macho `machoVersion` transport keyword, then checks the dictionary and list value shapes.
+- The new population test exercises the registered service through Host dispatch for an unauthenticated session and verifies the mapping wire type. A successful character move needs owned character persistence and is not exercised by this database-free batch; RPC-02259 remains NO-TEST.
+- The audit-current generator has no status-evidence update option; the CSV was left unchanged as instructed.
+- Graph/source comparison checked current handlers against EveJS v0.12.9-compatible behavior. The full graphical client was not launched for this batch.

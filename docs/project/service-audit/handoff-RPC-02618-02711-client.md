@@ -35,4 +35,5 @@ Commit the verified diff, fetch and merge origin/main, then push HEAD to main. D
 
 - Pushed commit `aa61a1465571` to `main` after merging `origin/main`.
 - Agent test run `40355639048` succeeded for the focused `Eve.Host.Tests` filter; no failed tests or jobs.
-- Push-triggered `ci.yml` run `40355621319` was still in progress at handoff update; inspect it before closing the batch.
+- Push-triggered `ci.yml` run `40355621319` completed successfully with no failed tests or jobs.
+- A later handoff-only push (`2eb6c107`) has no associated `ci.yml` run.

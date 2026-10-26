@@ -37,3 +37,5 @@ A whole-tree search of `/home/user/eve-logic` found:
 The first pushed revision's GitHub Actions logs identified five compile errors in the already-present `Rpc01790HostCoverageTests.cs`: missing `Eve.Services` import for `Py` and incorrect `TestFront.Packets` qualification for the top-level `Packets` type. The fix adds the import and calls `Packets.CallWithKwargs`. This was unrelated to the new support/insurgency test but blocked the shared Host test project.
 
 The Host test-project build was retried locally after that fix; Roslyn stalled without output and was interrupted. No local compile or focused test passed. A fresh focused Actions run and push CI check are pending for the follow-up commit.
+
+The follow-up push CI exposed one additional compile error in the same pre-existing Host test: `Packets.CallWithKwargs` builds a marshal value, while `TestFront.SendAsync` accepts a HostMessage. The test now wraps the encoded value in `new Packet(open.SessionId, MarshalCodec.Encode(...))`, matching the real Host socket test harness. Fresh Actions checks are pending.

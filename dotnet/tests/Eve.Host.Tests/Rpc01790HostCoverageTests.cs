@@ -87,8 +87,8 @@ public partial class HostServerTests
         ]);
         async Task<PyValue?> Call(long id, string service, string method, params PyValue[] args)
         {
-            var packet = Packets.CallWithKwargs(
-                open, id, service, method, new PyTuple(args), kwargs);
+            var packet = new Packet(open.SessionId, MarshalCodec.Encode(
+                Packets.CallWithKwargs(open, id, service, method, new PyTuple(args), kwargs)));
             await front.SendAsync(packet);
             var response = Assert.IsType<Send>(await front.ReceiveAsync());
             return Result(MarshalCodec.Decode(response.Payload));

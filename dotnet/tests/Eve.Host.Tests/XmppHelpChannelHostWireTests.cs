@@ -1,5 +1,6 @@
 using Eve.Host;
 using Eve.Host.Xmpp;
+using System.Text;
 using Eve.Marshal;
 
 namespace Eve.Host.Tests;
@@ -18,7 +19,8 @@ public partial class HostServerTests
 
         var (front, open) = await OpenFrontAsync();
 
-        Assert.Equal(new PyStr("system_263238_263302"),
-            await HostRpcAsync(front, open, 1, "XmppChatMgr", "GetHelpChannel"));
+        var channel = Assert.IsType<PyBytes>(await HostRpcAsync(
+            front, open, 1, "XmppChatMgr", "GetHelpChannel"));
+        Assert.Equal("system_263238_263302", Encoding.ASCII.GetString(channel.Value.Span));
     }
 }

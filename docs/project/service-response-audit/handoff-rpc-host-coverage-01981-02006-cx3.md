@@ -42,7 +42,7 @@ A fresh whole-client `search_code` over `home-user-eve-logic` found every direct
 
 EveJS comparison remains as documented above: `mapService.js:638-659,696-699`, and visit aggregation/recording at `mapTelemetryState.js:171-213,255-290` and `sessions.js:481-490`. The current eve.rs visits reply retains the client rowset shape but has no visit-history state source; the regression verifies its present empty result, not populated visit parity.
 
-Verified locally on 2026-10-26: `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --filter 'FullyQualifiedName~Map_personal_and_industry_replies_follow_registered_host_routes_with_client_kwargs'` passed (1 passed, 0 failed, 0 skipped). No database or graphical client was used. Focused Actions and push-gate checks are pending for the CX9 commit.
+Verified locally on 2026-10-26: `MSBUILDDISABLENODEREUSE=1 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --filter 'FullyQualifiedName~Map_personal_and_industry_replies_follow_registered_host_routes_with_client_kwargs'` passed (1 passed, 0 failed, 0 skipped). Focused Actions run `40254697687` on `106def8a75ff` succeeded with no failed tests or jobs. `python3 tools/dev/ci-status.py failures 106def8a75ff` reported no `ci.yml` run for that SHA. No database or graphical client was used.
 
 ## Push-gate follow-up
 

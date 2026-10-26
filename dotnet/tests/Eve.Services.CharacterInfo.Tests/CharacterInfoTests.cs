@@ -603,7 +603,7 @@ public class CharMgrTests
         Assert.Equal(new PyStr("util.Row"), actualRow.Name);
         var rowFields = Assert.IsType<PyDict>(actualRow.Args);
         Assert.Equal(
-            new PyList(["characterID", "gender", "createDateTime", "raceID", "bloodlineID", "ancestryID", "balance", "securityRating"]
+            new PyList(new[] { "characterID", "gender", "createDateTime", "raceID", "bloodlineID", "ancestryID", "balance", "securityRating" }
                 .Select(field => (PyValue)new PyStr(field))),
             rowFields.Entries.Single(entry => entry.Key == new PyStr("header")).Value);
         var row = Assert.IsType<PyList>(rowFields.Entries.Single(entry => entry.Key == new PyStr("line")).Value);

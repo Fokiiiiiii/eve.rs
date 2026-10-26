@@ -107,6 +107,7 @@ public partial class HostServerTests
         }
 
         Assert.Equal(new PyInt(9001), await Call("structureControl", "GetStructurePilot", Py.Tuple(new PyInt(7001))));
+        Assert.Equal(PyNone.Instance, await Call("structureControl", "GetStructurePilot", Py.Tuple(new PyInt(7002))));
         Assert.Equal(PyNone.Instance, await Call("structureControl", "TakeControl", Py.Tuple()));
         Assert.Equal(PyNone.Instance, await Call("structureControl", "BoardStructure", Py.Tuple(new PyInt(7002))));
         Assert.Equal(PyNone.Instance, await Call("structureControl", "EjectFromStructure", Py.Tuple(new PyInt(7003))));
@@ -147,7 +148,7 @@ public partial class HostServerTests
 
         Assert.Equal(
             [
-                "pilot:7001", "take:7001", "board:7002", "eject:7003", "release",
+                "pilot:7001", "pilot:7002", "take:7001", "board:7002", "eject:7003", "release",
                 "drop:7004:7005:500", "deliver:7001:9002:21,22",
                 "anchor:8001:Structure:3:17",
                 "unanchor:8001", "cancel-unanchor:8001", "rename:8001:Renamed", "beacon",

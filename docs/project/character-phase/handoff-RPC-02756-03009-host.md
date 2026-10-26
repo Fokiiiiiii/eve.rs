@@ -38,6 +38,10 @@ The task rows collapse to service/method signatures; duplicate audit IDs use the
 - `TourneyMgrService.QueryShipList` previously fell back to a bare list, which does not satisfy the client dictionary access. It now falls back to a dict containing `allowedShipList: []`, matching EveJS. `TourneyMgrHostWireTests.cs` exercises the registered service through Host and checks this field. Focused local Host socket test passed: 1 passed, 0 failed, 0 skipped.
 - The remaining standing, superweapon, survey, and vote rows still need Host socket regressions and final wire/provider review before this batch is complete. Superweapon callbacks must remain fail-closed when no authoritative activation callback exists.
 
+## Checkpoint after push
+
+Pushed commit `4a6d0a19` to `main` after merging `origin/main`. The next pass should inspect the new merged Host wire tests before adding duplicate coverage, then finish standing, superweapon, survey, and vote paths.
+
 ## Checks
 
 No database or graphical client was used. The real Host socket check does not constitute graphical-client acceptance.

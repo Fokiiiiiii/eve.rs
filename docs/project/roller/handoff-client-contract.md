@@ -53,6 +53,30 @@ The full-bay regression in `dotnet/tests/Eve.Services.Space.Tests/DroneHostTests
 The touched test project build passed with zero warnings and zero errors. No local database test was run. Push `26f50332` is on `main`; focused Actions run 40176754977 on the prior fixture and the push-triggered CI result are pending.
 
 
+## Initial session state and client contract follow-up (2026-10-26)
+
+The next open login-session difference was the initial-state dictionary order. `SessionInitialState.Build` now emits `userid,userType,role,address,languageID,countryCode` in EveJS v0.12.9 order (`server/src/network/tcp/index.js:603-676`). The real Host test `HostServerTests.Session_initial_state_uses_reference_field_order_and_default_omissions` covers outer user ID 0 as None and 42 as an integer, the complete 14-field notification envelope, session type 5, the six ordered key/value pairs, empty side dictionary, None trailers, and absence of `maxSessionTime`/`inDetention`.
+
+The V24 consumer path was checked through the whole initial-state flow: `machoNetPacket.py:320-323` defines the packet fields; `machoNetTransport.py:712-713` creates the client session from sid/sessionType; `SessionChangeGPCS.py:65-73` passes `packet.initialstate` to `ApplyRemoteAttributeChanges(..., initialState=True)`; and `basesession.py:1107-1118,1254-1290` iterates the incoming dictionary keys, resolves values by name, applies them in that order, then invokes the session-change and object callbacks. Incremental `SessionChangeNotification` is consumed at `SessionChangeGPCS.py:27-32` and its initial-state forwarding path is at `SessionChangeGPCS.py:50-62`. The missing-attribute behavior is also client-visible: `gameui.py:297` and `machoNet.py:2467` guard `maxSessionTime`; `mailSvc.py:995` reads `inDetention` without a guard, and absent attributes resolve to None through `basesession.py`'s default lookup. Therefore, the ordered keys, outer user ID sentinel, and None omissions are asserted separately.
+
+The same sweep rechecked moniker routing. V24 `eveMoniker.py:8-23` selects a solar-system or station bind address; `:35-37` binds station dogma, `:113-124` selects inventory by location group, and `:140-142` binds the ballpark service. Generic `Moniker.Bind` resolves and binds through `MachoResolveObject`/`MachoBindObject` (or the local bound-session path) at `carbon/common/script/net/moniker.py:111-165`; `MonikeredCall` retries one `UnMachoDestination` after unresolve at `:167-198`. The named location helpers do not define separate APIs literally called GetSystem/GetStation/GetService; they use this generic service-name plus bind-parameter contract. Existing bound-object Host routes and the established session-change/reconnect/logoff coverage in earlier handoffs remain unchanged by this correction.
+
+Local verification: the dependency-inclusive `Eve.Host.Tests` build succeeded before the latest-main merge with 0 warnings and 0 errors; the focused Host test passed 2/2 with 0 skipped. After fetching and merging `origin/main`, `Eve.Host` and `Eve.Host.Tests` each built with `--no-restore -p:BuildProjectReferences=false -p:UseSharedCompilation=false -m:1`, both with 0 warnings and 0 errors. A second dependency-inclusive rebuild was canceled during unrelated `Eve.Events` compilation; the changed projects then passed their isolated builds. No PostgreSQL database or graphical V24 client was used. Focused Actions and push-CI results will be recorded after dispatch.
+
+
+## Station-view contract: DeleteSubfolder notifications (2026-10-26)
+
+### Contract and implementation
+
+V24.01 processes access-group bookmark notifications in arrival order (eve/client/script/ui/shared/bookmarks/bookmarkSvc.py:232-271). Its DeleteSubfolder path removes returned bookmark IDs before removing the subfolder (bookmarkSvc.py:578-597). EveJS emits subfolderRemoved before bookmarksRemoved (server/src/services/accessGroupBookmarkMgrService.js:617-643); eve.rs now sends the same order and omits bookmarksRemoved when the folder contained no bookmarks. The existing Host test registers the production refusal-wrapped service in ServiceRegistry and dispatches all 17 methods through PacketDispatcher; the new wire-contract test covers both notification cases.
+
+### Verification
+
+- Local Core and Host test-project builds passed with 0 warnings and 0 errors.
+- Focused tests passed: DeleteSubfolder notification order (1 passed, 0 skipped) and the registered bookmark dispatcher refusal/wire test (1 passed, 0 skipped). Neither connects to PostgreSQL.
+- Pushed to main as `05bbdb97` and integrated with origin/main at `1f4240ec`. Focused Actions run `40307247045` passed (no failed tests/jobs and no skips); push-triggered `ci.yml` run `40307213955` is queued. No graphical client session was run.
+
+
 ## Dogma bound module activation and Destiny notifications (2026-10-26)
 
 The prior contract and scene handoffs already cover ballpark add processing, gate/warp transition order, and damage-state forwarding. The remaining Host-level gap found here was a bound dogma activation exercised from both client location contexts. Production registration already supplies the active `SpaceSessions` implementation to `DogmaIMService` (`dotnet/src/Eve.Host/Rpc/InventoryRpc.cs:80-84`).
@@ -64,3 +88,16 @@ The EveJS v0.12.9 `dogmaIM.MachoBindObject` delegates the client's bind argument
 For damage state, EveJS's Destiny action is `OnDamageStateChange(entityID, damageState)` (`server/src/space/destiny/stream/actions.js:321-324`). V24 `Park.OnDamageStateChange` accepts those two values, caches the damage state and scatters the event (`eve/client/script/remote/michelle.py:1535-1541`). The whole-client scan found direct consumers in `shipAlert.py:148`, `droneDamageTracker.py:98`, `destroy_counter.py:69`, `destroy_target.py:56,74`, `healthwidgets.py:100`, `spaceMgr.py:410`, and `shiphealthnotification.py:46` (forwarded by `audioService.py:479-480`). Attribute-level `OnDamageStateChanged` is separately scattered by `clientDogmaLocation.py:336`, with nodegraph and hangar consumers at `nodegraph/client/events/ship.py:10-14` and `eve/client/script/ui/view/hangarView.py:800`. The existing Rust health/destiny tests and the Host damage-forwarding regression cover this payload; the latter is a `[PgFact]` and was not run locally.
 
 Local verification for this addition: `Eve.Host.Tests` build succeeded with zero warnings and errors; `Module_activation_uses_the_registered_bound_host_route_for_docked_and_in_space_client_contexts` passed (1 passed, 0 skipped). No database or graphical client was used. Focused GitHub Actions verification follows the code push.
+
+
+## Station-view contract: Market ask rows (2026-10-26)
+
+### Contract and implementation
+
+Whole-client V24 evidence shows two consumers of station/system ask values: quote.py:94-101 reads GetStationAsks values through ask.typeID and uses ask.stationID when buying (quote.py:253-282); marketbase.py:649-667 converts both maps by sequence into BestByOrder, whose field order is defined at marketutil/__init__.py:8-11. carbon/common/script/sys/row.py:23-36 implements util.Row with attribute and numeric access. EveJS v0.12.9 returns raw four-value arrays from server/src/services/market/marketProxyService.js:334-341, which satisfy sequence unpacking but not quote.py's attribute consumer. Station and system asks now use util.Row (header and line); region-best values remain named KeyVals. The compatibility difference is recorded in docs/reference/compat/DEVIATIONS.md.
+
+### Verification
+
+- Market and Host test projects built with 0 warnings and 0 errors. MarketStructureWireTests verified named fields, sequence values, and MarshalCodec round-trip (1 passed, 0 skipped).
+- MarketRpcTests, ProtocolTests, and MarketHostTests now assert the populated util.Row shape; they were compiled but not executed because those scenarios require PostgreSQL, which this job forbids using.
+- No graphical V24 client session was run. GitHub Actions verification is pending.

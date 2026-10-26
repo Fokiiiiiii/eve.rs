@@ -20,11 +20,11 @@ public sealed record BookmarkFolder(long FolderId, long OwnerId, string Name, st
 
 public sealed record BookmarkSubfolder(long SubfolderId, long FolderId, string Name, long CreatorId, long CreatedMs);
 
-public sealed record Bookmark(long BookmarkId, long FolderId, long? SubfolderId, long ItemId, int TypeId, long LocationId,
-    string Memo, string Note, long CreatorId, long CreatedMs, long? ExpiryMs);
+public sealed record Bookmark(long BookmarkId, long FolderId, long? SubfolderId, long? ItemId, int TypeId, long LocationId,
+    string Memo, string Note, long CreatorId, long CreatedMs, long? ExpiryMs, double? X = null, double? Y = null, double? Z = null);
 
 /// <summary>The place a static bookmark points at: a station, a solar system (its own location).</summary>
-public sealed record BookmarkTarget(long ItemId, int TypeId, long LocationId);
+public sealed record BookmarkTarget(long? ItemId, int TypeId, long LocationId, double? X = null, double? Y = null, double? Z = null);
 
 /// <summary>A folder with what the client shows of it: the character's access level to it, its active state.</summary>
 public sealed record FolderView(BookmarkFolder Folder, int AccessLevel, bool IsActive);
@@ -363,10 +363,12 @@ public sealed partial class BookmarkStore
             if (await CountAsync(connection, tx, $"SELECT count(*) FROM {_schema}.bookmarks WHERE folder_id=$1", token, folderId) >= CapacityOf(folder))
                 throw new BookmarkError("FolderCapacityExceeded", "This folder is full.");
             await RequireSubfolderInAsync(connection, tx, folderId, subfolderId, token);
+            if ((target.X is null) != (target.Y is null) || (target.X is null) != (target.Z is null))
+                throw new ArgumentException("Bookmark coordinates must be all present or all absent.", nameof(target));
             var now = _nowMs();
             var bookmark = new Bookmark(await NextIdAsync(connection, tx, token), folderId, subfolderId, target.ItemId, target.TypeId, target.LocationId,
                 BookmarkRules.Name(memo, BookmarkRules.MaxBookmarkNameLength, "Location"), BookmarkRules.Description(note),
-                characterId, now, BookmarkRules.ExpiryMs(expiryMode, now));
+                characterId, now, BookmarkRules.ExpiryMs(expiryMode, now), target.X, target.Y, target.Z);
             await InsertBookmarkAsync(connection, tx, bookmark, token);
             return bookmark;
         }, token);

@@ -72,8 +72,10 @@ public partial class HostServerTests
 
         Assert.IsType<PyLong>(await Call(9, "subscriptionMgr", "GetSubscriptionTime"));
         Assert.IsType<PyLong>(await Call(10, "subscriptionMgr", "GetSubscriptionTime"));
-        Assert.Equal(new PyInt(1), await Call(11, "subscriptionMgr", "GetCloneGrade"));
+        var subscriptionCloneGrade = await Call(11, "subscriptionMgr", "GetCloneGrade");
+        Assert.Equal(new PyInt(1), subscriptionCloneGrade);
         Assert.Equal(new PyInt(1), await Call(12, "subscriptionMgr", "GetCloneGrade"));
-        Assert.Same(PyNone.Instance, await Call(13, "pingService", "Ping"));
+        Assert.Equal(subscriptionCloneGrade, await Call(13, "loginRewardFacilities", "get_my_clone_grade"));
+        Assert.Same(PyNone.Instance, await Call(14, "pingService", "Ping"));
     }
 }

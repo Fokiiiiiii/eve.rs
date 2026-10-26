@@ -5,7 +5,7 @@
 Cross-system headless walk coverage and remaining integration gaps are tracked in [WALKS.md](WALKS.md).
 RPC malformed-argument fuzz coverage and its execution record are tracked in [RPC_FUZZING.md](RPC_FUZZING.md).
 
-Built from the sections below, as of 2026-10-23. **Status** is what the area does today. **Project rule** is the rule it is built under (the client, the SDE, CCP or the EVE University wiki, or an owner decision). **Cut or open** lists what is not built; the section named holds the evidence. Every cut or open item in this file has a row in the table or a line in its section, and a cut that changes what the client sees also has an entry in `docs/reference/compat/DEVIATIONS.md`.
+Built from the sections below, as of 2026-10-26. **Status** is what the area does today. **Project rule** is the rule it is built under (the client, the SDE, CCP or the EVE University wiki, or an owner decision). **Cut or open** lists what is not built; the section named holds the evidence. Every cut or open item in this file has a row in the table or a line in its section, and a cut that changes what the client sees also has an entry in `docs/reference/compat/DEVIATIONS.md`.
 
 | Area (sections) | Status | Project rule | Cut or open |
 |---|---|---|---|
@@ -2779,3 +2779,10 @@ Security review follow-up: `invbroker.FitFitting` accepts the client's Python se
 Security review follow-up: `repairSvc.GetRepairQuotes` and `RepairItemsInStation` now accept only list, tuple, or V24 Python-set item IDs, require positive integers, refuse raw batches above 500 before database work, and cost 10 per-session weighted units. Focused service tests cover oversized lists and malformed IDs; dispatcher regressions cover the weighted budget. The complete RPC ownership inventory remains open.
 
 Security review follow-up: `officeManager.GetMyCorporationsOffices` now consumes 10 weighted per-session units because it enumerates every office for the current corporation; the existing office budget dispatcher test covers it.
+
+
+## 2026-10-26 client-facing Host reply checks
+
+- `wormholeMgr.GetWormholePolarization` now has a registered-Host assertion for the timer `FILETIME` and duration list and the absent-state `None` result. The full V24.01 client flow is `spacecomponents/client/components/jumpPolarization.py:18-37,39-43`; the controller consumes both timer fields at `eve/client/script/spacecomponents/jumppolarizationcontroller.py:21-30`. `Wormhole_polarization_returns_client_timer_fields_through_registered_host` passed in selected Actions run 990; the main gate run 1128 completed successfully; its status output listed `Eve.Universe.Tests.ClientStaticDataTests.The_export_and_the_embedded_copies_give_the_same_answers` as skipped, which is recorded separately and not counted as a pass.
+- `warStatisticMgr.GetKillMail` now has a registered-Host assertion for the client `KeyVal` fields and `None` on a wrong hash or missing record. Whole-client callers are `notifications/client/controls/notificationEntry.py:215-221`, `notifications/client/notificationCenter.py:297-302`, `eve/client/script/ui/shared/killReportUtil.py:38-42`, `eve/client/script/ui/shared/neocom/corporation/war/warKillEntry.py:131-133`, and `eve/client/script/ui/shared/fittingScreen/ghostControllerMixin.py:212-217`. Report consumers read `victimShipTypeID` and `killBlob` at `eve/client/script/ui/shared/killReport.py:149-184` and `eve/common/script/util/eveCommonUtils.py:140-286`. `Killmail_notifications_receive_the_client_keyval_through_registered_host` passed in selected Actions run 992.
+- These are registered-Host socket checks, not native graphical-client runs. See `service-audit/CLIENT_VERIFIED.md` batches 29–30 for the full field and EveJS comparison.

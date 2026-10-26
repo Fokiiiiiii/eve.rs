@@ -93,7 +93,6 @@ public partial class HostServerTests
         var systems = new SolarSystemCatalog([]);
         registry.Register(new ShipcasterRpcService("shipcasterTravelMgr", systems));
         registry.Register(new ShipcasterRpcService("starterShipcasterTravelMgr", systems));
-        registry.Register(new VoidSpaceMgrService());
 
         var config = GlobalConfig.Build(Options);
         registry.Register(new MachoNetService(new Info(registry, config), now));

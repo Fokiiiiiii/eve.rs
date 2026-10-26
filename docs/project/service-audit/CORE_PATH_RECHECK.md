@@ -161,3 +161,13 @@ The whole-client agent-dialogue `DoAction` call sequence, offer/accept/decline/q
 ### Work remaining
 
 Connect Beyonce to the access-checked persistent bookmark read, implement bookmark AlignTo through the existing sim movement path, and add a registered-Host assertion for the client-consumed no-reply/state-transition contract. Finish the caller/consumer and EveJS comparison for the remaining rows. This checkpoint is documentation only; no tests were run.
+
+
+## 2026-10-26 client-facing Host reply checks
+
+| Client path | Full-client evidence | Host check | Result |
+|---|---|---|---|
+| Wormhole polarization timer | `spacecomponents/client/components/jumpPolarization.py:18-37,39-43` requests the state when the component enters space, clears on `None`, otherwise stores end FILETIME and duration; `eve/client/script/spacecomponents/jumppolarizationcontroller.py:21-30` uses both for the countdown. | `Wormhole_polarization_returns_client_timer_fields_through_registered_host` asserts both fields and absent-state `None`; batch 29 compares the EveJS handler. | MATCHES; selected Actions run 990 passed and gate 1128 completed successfully; its status output listed `Eve.Universe.Tests.ClientStaticDataTests.The_export_and_the_embedded_copies_give_the_same_answers` as skipped. |
+| Killmail notification and report | Whole-client RPC callers are at `notifications/client/controls/notificationEntry.py:215-221`, `notifications/client/notificationCenter.py:297-302`, `killReportUtil.py:38-42`, `warKillEntry.py:131-133`, and `ghostControllerMixin.py:212-217`. The report reads `victimShipTypeID` and `killBlob` at `killReport.py:149-184` and `eveCommonUtils.py:140-286`. | `Killmail_notifications_receive_the_client_keyval_through_registered_host` asserts those fields plus wrong-hash and absent-record `None`; batch 30 compares EveJS. | MATCHES; selected Actions run 992 passed. |
+
+These Host socket checks verify the consumed server reply contracts. They do not close graphical-client acceptance or unrelated core-path rows.

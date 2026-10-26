@@ -1,28 +1,32 @@
 # CI Fix Handoff
 
-## Current state
+The current status below is authoritative. Dated entries that follow are historical checkpoints from their stated time.
 
-- The original failures on main were the New Eden Store catalog availability assertion and the live fitting walk. The Store test now provides the settlement callback required to report offers as purchasable; its purchase path remains untouched by the catalog read. The focused Release test passed on `eve_p4` with `EVE_MARKET_SEED=skip`.
-- The fitting failure was `SessionRpcBudgetExceeded` during the inventory `List` after a module move. Tracing counted 132 weighted units for setup plus six inventory/Dogma re-reads against the old 120-unit default. The default is now 160, and `DispatchGoldenTests.The_fitting_inventory_rereads_fit_the_default_session_budget` protects that sequence.
-- On `eve_p4`, the skip-free live fitting regression passed both race variants. The full fast live suite passed; its eight slow cases and one skill-training-speed case were skipped by suite conditions. The focused dispatcher suite passed 147/147. After merging, `Eve.Services.Core.Tests` passed 862/862 and `Eve.Services.Tests` passed 208/208.
-- Runs 519, 520, and 522 also exposed an alliance RPC budget assertion using `allianceRegistry` for a route served by `corpRegistry`; commit `f2384b0f` corrected the test target. The pre-merge Release suite passed 205/205, and the post-merge count is 208/208 above.
-- The pinned SDE build 3396210 is loaded in `eve_p4`; the local JSONL copy is `.cache/sde/eve-online-static-data-3396210-jsonl`.
+## Current status (2026-10-26)
 
-## CI status at this handoff
+- Latest main gate: run 1131 (Actions 40371054260) on `b213ee17` completed successfully; `ci-status.py` reported no failed tests or jobs. Its successful-run output does not provide a skip count. This run verifies the positional-list fixture correction.
+- Previous green gate: run 1128 (Actions 40366086777) on `e4dd35c0`; its status output listed `Eve.Universe.Tests.ClientStaticDataTests.The_export_and_the_embedded_copies_give_the_same_answers` as skipped. The wormhole polarization Host regression is included.
+- Run 1130 (Actions 40369355715) on `80de3fb2` failed `Eve.Services.Tests.DispatchGoldenTests.Every_recorded_step_gets_the_recorded_response_and_leaves_the_recorded_state` for fixture case `packets:arguments`. The old expected row treated a list-valued positional sequence as one argument.
+- Main commit `b213ee17` updates that golden fixture to follow V24.01 positional dispatch. Run 1131 (Actions 40371054260) and selected Agent run 993 (Actions 40371091379) completed successfully; `ci-status.py` reported no failed tests or jobs. Its successful-run output does not provide a skip count. The previous selected runs 990 and 992 passed the wormhole polarization and killmail notification Host tests.
+- The client evidence for the fixture correction is `/home/user/eve-logic/carbon/common/script/net/ServiceCallGPCS.py:119,128-134`; EveJS v0.12.9 preserves array arguments at `/home/user/evejs-v0.12.9/server/src/common/pyPacket.js:210-214`. This was a stale fixture, not a server compatibility deviation.
+- The native graphical client was not used for these checks. No PostgreSQL database was used by the documentation refresh.
+- Documentation reconciliation commit `28963fe1` changed only Markdown; `.github/workflows/ci.yml:12-16` excludes `docs/**` and `**/*.md`, so no push-triggered main gate was created. The latest code-bearing commit remains `b213ee17`, verified by run 1131.
 
-- Run 529 passed all jobs, including the required CI gate, on `37b521d0`.
-- Run 531 passed all jobs, including the required CI gate and Windows job, on `e3053512`.
-- Run 533 for `7db4c9ed` had passed E2E, Rust, build, and all .NET shards; its Windows job was still running at the last status check.
-- Run 539 for `d5b946b4` was active at the last status check. The checked-out `origin/main` tip is now `38decf14`; no workflow for that tip was listed in the latest `ci-status.py` output.
+## Required pre-push checks
 
-## Continue
+- For a handler or test change, run the focused test and the entire test-project shard containing it before pushing. If an E2E test changed, run that E2E test as well. Run the Rust and Python checks for files changed in those languages.
+- After `git fetch origin main` and `git merge origin/main`, rerun the touched tests before pushing.
+- Group related work and make no more than one push per service group. Do not push a handler or test whose required local checks have not passed.
+- Check the push-triggered main CI with `python3 tools/dev/ci-status.py failures <sha>`. Inspect any red job and fix its root cause promptly. Record skipped tests separately; a skipped test is not a pass.
+- Keep this handoff current after each push. Docs-only pushes do not require a test dispatch; record the applicable path-filter behavior and the current main gate state.
 
-Check the newest `origin/main` workflow with `python3 tools/dev/ci-status.py status`. If any job turns red, inspect its step tail and retrieve the full job log through GitHub REST without forwarding the Authorization header across the log redirect. Reproduce only on `eve_p4`, through `tools/dev/db-lock.sh`, and add a focused regression for each root fix.
+## Status commands
 
-## Commands
-
-Use lane `eve_p4` only and run database work through `tools/dev/db-lock.sh`. The live port is 26103. For .NET, set `MSBUILDDISABLENODEREUSE=1` and pass `-p:UseSharedCompilation=false`.
-
+```sh
+python3 tools/dev/ci-status.py status
+python3 tools/dev/ci-status.py failures <sha>
+python3 tools/dev/ci-status.py wait <run-id>
+```
 
 ## 2026-10-23 dependency-bump gate investigation
 

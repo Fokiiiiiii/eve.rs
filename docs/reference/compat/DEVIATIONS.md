@@ -1,9 +1,5 @@
 # Deviations from the reference server
 
-## Client positional arguments versus EveJS list handling (2026-10-26)
-
-The V24.01 client passes `packet.payload[2]` directly as service positional arguments (`carbon/common/script/net/ServiceCallGPCS.py:66-139`), so both tuple and list sequences are flattened as positional arguments. The object-call path separately removes `machoVersion` from kwargs (`carbon/common/script/net/ObjectCallGPCS.py:129-134`). eve.rs follows this client contract. The prior `packets:arguments` golden row modeled a list as one nested argument, which conflicts with the wire callsite; it now records the flattened result. `HostInputHardeningTests.Positional_arguments_accept_tuple_or_list_and_ignore_macho_version` and `DispatchGoldenTests.Every_recorded_step_gets_the_recorded_response_and_leaves_the_recorded_state` check both forms.
-
 ## Host SKINR catalog data source (2026-10-23)
 
 The V24.01 pinned SDE build 3396210 has no `skinr*` authority tables, while the official CCP `missionPinned` build 3405148 contains `skinrComponentPointValues`, `skinrComponents`, `skinrSlotConfigurations`, `skinrSlots` and `skinrTierThresholds` (`sde/lock.json`). Host startup reads those tables for `ShipSkinrCatalog`, so the catalog now reads them, with that build’s `groups` and `types`, from `sde_mission`. Other Host data reads remain on the client-pinned `sde` schema. This keeps the SSO Host startup path available without changing the pinned source used for general game data.
@@ -5862,3 +5858,13 @@ The V24.01 client declares the owner single-key fetcher and position single/batc
 ## QuickQuery alias-only mode (2026-10-25)
 
 V24.01 `searchOld.__Search` sets `onlyAltName=True` for corporation/alliance searches when `exact == -1`, then primes owner rows with the returned IDs (`eve/client/script/ui/util/searchOld.py:30-44`). `searchUtil.GetResultsList` forwards that flag as a named kwarg to `search.QuickQuery` and returns the result directly (`eve/client/script/ui/util/searchUtil.py:296-300`); the whole-client graph found 30 callers of this ID-list helper. EveJS 261018.1 `Handle_QuickQuery` reads `exact` and `hideNPC`, emits a deduplicated flat ID list, and does not read `onlyAltName` (`server/src/services/_other/searchService.js:479-500`). eve.rs selects the alternate-name field for this mode and still returns the client ID-list shape (`dotnet/src/Eve.Services.Core/SearchQueryService.cs:53-72,81-87`). The real Host packet regression supplies ticker text with `onlyAltName=True`, excludes an NPC result, includes duplicate group IDs, and carries `machoVersion=1` (`dotnet/tests/Eve.Host.Tests/SearchQuickQueryHostWireTests.cs:11-42`).
+
+
+## PLEX Vault balance scope (2026-10-26)
+
+The V24.01 `VgsClient.get_plex_account_balance` call sends only `PLX` and returns the numeric reply (`vgs/client/vgsClient.py:28-30`). eve.rs resolves the authenticated account's characters and aggregates their PLEX balances in `PersistenceNewEdenStoreRuntime.GetPlexBalanceAsync`; CCP documents the PLEX Vault as shared across characters on one account ([CCP PLEX Vault](https://support.eveonline.com/hc/en-us/articles/115003168285-PLEX-Vault)). EveJS 261018.1 `vaultManagerService.js:20-31` reads the current session character's wallet projection instead. The account-level aggregation follows the documented game rule; this is an intentional difference from EveJS.
+
+
+## Fast-checkout testing configuration sequence container (2026-10-26)
+
+EveJS 261018.1 returns the three testing configuration values as a JavaScript array, which its store marshal converts to a PyList (`server/src/services/newEdenStore/FastCheckoutService.js:147-154`; `storeMarshal.js:73-107`). eve.rs emits a PyTuple from `FastCheckoutService.GetTestingConfiguration`. V24.01 destructures the reply into exactly the China-funnel bool, fake-offer URL, and shell-execution bool (`fastcheckout/client/fastCheckoutClientService.py:75,93-104`) and does not inspect its container type. The Host tuple preserves the consumed values and order.

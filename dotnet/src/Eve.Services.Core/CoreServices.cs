@@ -83,6 +83,7 @@ public static class CoreServices
             new SolarSystemInterferenceMgrService(gameRpcCallbacks.ReadInterferenceTableAsync, nowUnixMs),
             new SurveyService(gameRpcCallbacks.ReadActiveSurveyIdAsync, gameRpcCallbacks.RecordSurveyEventAsync),
             new WarStatisticMgrService(gameRpcCallbacks.ReadKillmailAsync, nowUnixMs),
+            new VoidSpaceMgrService(),
             new BannedWordsService(),
             new CacheService(),
             new ActivityMgrService(),
@@ -114,5 +115,5 @@ public static class CoreServices
     public static IService CreateLookupService(LookupSearchSources sources) => new LookupSvcService(sources);
 
     /// <summary>The names of the services <see cref="Create"/> returns.</summary>
-    public static IReadOnlyList<string> Names => [.. Generated.Eve_Services_CoreServiceCatalog.Names, "ProjectDiscovery", "overviewPresetMgr"];
+    public static IReadOnlyList<string> Names => [.. Generated.Eve_Services_CoreServiceCatalog.Names, "ProjectDiscovery", "overviewPresetMgr", "voidSpaceMgr"];
 }

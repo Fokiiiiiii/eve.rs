@@ -4,7 +4,7 @@
 - `CallRequest.Decode` treats Python list positional arguments like tuples. `PacketDispatcher` answers an unreadable CALL_REQ with wrapped `exceptions.UserError("UnMachoDestination")`.
 - `HostServer` disconnects the affected session with `InvalidPacket` after marshal or dispatch failures. Frame reading already rejects truncated and over-limit frames.
 - Added dispatcher tests for malformed CALL_REQ replies and valid tuple/list arguments with `machoVersion`; added host tests for malformed marshal packets, truncated frames and oversized frames. The unknown-service integration assertion remains in `HostServerTests`; the session-open test asserts the initial notification is first.
-- The first push's CI found the old `packets:arguments` golden row expected a list to stay nested as one argument. The client wire callsite passes that list as the positional sequence, so the fixture now records the flattened reply and `DEVIATIONS.md` documents the intentional EveJS-recording difference.
+- Commit `b213ee17` corrects the old `packets:arguments` golden row. The previous row treated the list as one nested argument, unlike V24.01's positional sequence (`ServiceCallGPCS.py:119,128-134`) and EveJS v0.12.9's array handling (`server/src/common/pyPacket.js:210-214`). This was a stale fixture, not a client-visible deviation.
 
 ## Client and reference evidence
 - V24.01 service dispatch passes `packet.payload[2]` as the positional sequence and optional `payload[3]` as kwargs: `/home/user/eve-logic/carbon/common/script/net/ServiceCallGPCS.py:66-139`. The object-call path strips `machoVersion` from kwargs: `/home/user/eve-logic/carbon/common/script/net/ObjectCallGPCS.py:129-134`.
@@ -16,6 +16,7 @@
 
 ## Verification
 - Focused Host tests after merge: 6 passed, 0 failed, 0 skipped.
-- Full `Eve.Host.Tests` without PostgreSQL: 476 passed, 101 failed, 227 skipped (804 total); the database-backed tests could not connect because this task forbids database use.
-- First push `ed7fc33e`: focused Agent Actions passed; push-triggered CI failed only `Eve.Services.Tests.DispatchGoldenTests` for the list-typed argument response. The fixture correction then passed the full `Eve.Services.Tests` project: 261 passed, 0 failed, 0 skipped.
-- The fixture/deviation correction is local and awaits its merge check and push. No graphical client session was used.
+- Full `Eve.Host.Tests` without PostgreSQL: 476 passed, 101 failed, 227 skipped (804 total); database-backed tests could not connect because this task forbids database use. These failures are not passes.
+- Full `Eve.Services.Tests` after merge: 261 passed, 0 failed, 0 skipped.
+- Focused Agent run 993 (Actions 40371091379) passed the corrected golden case. Push CI run 1131 (Actions 40371054260) completed successfully on `b213ee17`; `ci-status.py` reported no failed tests or jobs and did not provide a successful-run skip count.
+- No graphical client session was used.

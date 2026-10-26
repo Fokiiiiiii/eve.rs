@@ -31,7 +31,7 @@
 | IMPLEMENTED-UNTESTED | 98 → 76 | 805 → 794 | 470 → 470 |
 | HOLLOW | 0 → 0 | 10 → 10 | 0 → 0 |
 
-- Local `python3 tools/spec-extract/test_service_audit_receiver_tracing.py`: 2 tests passed; `git diff --check` passed. Push CI for commit `39a524b1` passed in Actions run `40264121707` with no failed tests or jobs. The `ci-status.py` summary did not report a skipped-test count.
+- Local `python3 tools/spec-extract/test_service_audit_receiver_tracing.py`: 2 tests passed; `git diff --check` passed. Push CI for commit `39a524b1` passed in Actions run `40264121707` with no failed tests or jobs. Its Python client job passed the service-audit extraction step; pytest reported 229 skipped live-client tests that require a configured live host and/or database. The subsequent origin/main integration push `470c0538` had no separate `ci.yml` run reported by `ci-status.py failures`.
 
 - Remaining P1 normal-play review order, with client call and reply-use evidence:
   1. `contractProxy`: contract acceptance at `contracts.py:422-430` consumes the returned contract to update in-progress state; `CollectMyPageInfo` at `contracts.py:728+` consumes and caches page data used to render contract limits. This service remains the first P1 review target.

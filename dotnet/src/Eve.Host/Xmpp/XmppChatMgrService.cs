@@ -20,7 +20,8 @@ public sealed partial class XmppChatMgrService(XmppChatHub hub)
     [Method("GetHelpChannel")]
     public PyValue GetHelpChannel(ServiceCall call)
     {
-        var language = call.Arg(0) is PyStr { Value.Length: <= 16 } text
+        var languageValue = call.Session.Get("languageID") ?? call.Arg(0);
+        var language = languageValue is PyStr { Value.Length: <= 32 } text
             ? text.Value.Split('-', '_')[0].ToLowerInvariant()
             : "en";
         var room = language switch

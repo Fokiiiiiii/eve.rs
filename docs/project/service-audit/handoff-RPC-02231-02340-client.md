@@ -1,26 +1,19 @@
 # Handoff — client wire verification batch 7
 
-## Scope and status
+## Status: 10/30 observations match, 19 need Host wire tests, 1 behavior mismatch
 
-This batch covers 30 implemented-untested observations, RPC-02231 through RPC-02340. Seven rows are documented in `CLIENT_VERIFIED.md`:
+The verified matches in `CLIENT_VERIFIED.md` are RPC-02233–02237 (rewards), RPC-02275–02277 (shared settings), and RPC-02331–02332 (ship stance). Registered Host tests cover the reward list shapes, shared-setting KeyVal plus subsequent lookup, and stance response/notification.
 
-- RPC-02233–02234, `rewardMgr.GetDelayedRewardsByGroupIDs`: MATCHES.
-- RPC-02235–02237, `rewardMgr.GetRewardLPLogs`: MATCHES.
-- RPC-02275–02277, `sharedSettingsMgr.StoreSettingLinkAndGetID`: MATCHES.
+NO-TEST rows are RPC-02231, RPC-02305–02324, and RPC-02334–02340. Direct service tests exist for some mutations, but there is no successful registered-Host reply assertion. Do not treat the no-character/null-dependency skill Host test as success coverage.
 
-Registered Host tests cover the empty LP log response and the shared-setting KeyVal plus its subsequent read. Existing Host coverage checks the non-empty delayed reward row. No database or graphical client was used.
+RPC-02232 is a MISMATCH: `RepairItemsInStructure` rejects the call while EveJS runs structure repair. The client ignores its return at `base_repairshop.py:68-71`; the server behavior and state transition differ. No fix has been made.
 
-## Remaining rows
+## Verification and next steps
 
-- RPC-02231–02232: repair service
-- RPC-02305–02324: ship cosmetics
-- RPC-02331–02332: ship stance
-- RPC-02334–02340: skill handler
+- Focused reward Actions run 40296391366 for 05564516 passed (1 test, no skips).
+- Push CI run 40296376456 failed on a merged wars-info Host assertion: a wire-decoded string was expected as PyStr but is PyBytes. The assertion now uses `JsSemantics.StringValue` in commit 915cb727, pushed in c19c223e.
+- Follow-up Actions run 40298615792 for c19c223e was cancelled before tests began because setup provisioned PostgreSQL, which this task explicitly forbids. It is not a test result.
+- Push CI for c19c223e was queued at last check; inspect it with `python3 tools/dev/ci-status.py failures c19c223e`.
+- Local Host test could not compile because NuGet assets are absent; restore stalled at package-source resolution. No local pass is claimed.
 
-`RepairItemsInStructure` is a behavior gap: the eve.rs Host method rejects the call while EveJS executes its structure repair runtime. The client ignores the return at `base_repairshop.py:64-71`; the mismatch affects state and notifications. No fix has been made yet.
-
-## Verification state
-
-For commit 05564516, the focused Host Actions run 40296391366 passed (one focused test, no skips). Push CI run 40296376456 failed in an unrelated merged wars-info test because a wire-decoded string was asserted as PyStr instead of PyBytes. The assertion now uses `JsSemantics.StringValue`; this correction is in the working tree and awaits a focused Actions rerun plus push-CI verification.
-
-The local focused test could not run because NuGet restore stalled at package-source resolution; no local pass is claimed. Continue the remaining rows with whole-tree eve-logic evidence, Host behavior, and EveJS comparison. Update this handoff after every push.
+No PostgreSQL database or graphical client was used locally. Continue with the repair behavior gap and meaningful DB-free registered-Host tests for the NO-TEST rows. Update this handoff after each push.

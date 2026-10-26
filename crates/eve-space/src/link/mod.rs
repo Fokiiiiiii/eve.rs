@@ -37,7 +37,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 81;
+pub const PROTOCOL_VERSION: u16 = 82;
 
 /// A battlefield's capture point the host puts in space (protocol 77): a ball the pilots of its system see. Its factions (the attacker and the
 /// occupier, 0 for none) and its next point time (a FILETIME, 0 for none) are the dynamic slim fields the client reads from it.
@@ -900,6 +900,12 @@ pub enum Message {
         id_type: String,
         args: Vec<u8>,
     },
+    ServiceNotify {
+        session_id: u64,
+        service: String,
+        method: String,
+        args: Vec<u8>,
+    },
     /// The ship docked: the host moves the character in and keeps what the ship has taken.
     Docked {
         session_id: u64,
@@ -1489,6 +1495,7 @@ impl Message {
             Self::ModuleOffline { .. } => kind::MODULE_OFFLINE,
             Self::RackOverheat { .. } => kind::RACK_OVERHEAT,
             Self::Notify { .. } => kind::NOTIFY,
+            Self::ServiceNotify { .. } => kind::SERVICE_NOTIFY,
             Self::Docked { .. } => kind::DOCKED,
             Self::Arrived { .. } => kind::ARRIVED,
             Self::Refused { .. } => kind::REFUSED,

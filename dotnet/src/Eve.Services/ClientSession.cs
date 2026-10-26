@@ -222,6 +222,12 @@ public sealed class ClientSession
             Send(ClientNotification.Build(UserId ?? 0, NodeId, name, idType, args, ++_notificationSequence));
     }
 
+    public void SendServiceNotification(string service, string method, IReadOnlyList<PyValue> args)
+    {
+        lock (_gate)
+            Send(ClientNotification.BuildService(UserId ?? 0, NodeId, service, method, args, ++_notificationSequence));
+    }
+
     public event Action<ClientSession, IReadOnlyList<string>>? AttributesChanged;
 
     /// <summary>Raised once, when the connection of this session has ended: modules release what the session held.</summary>

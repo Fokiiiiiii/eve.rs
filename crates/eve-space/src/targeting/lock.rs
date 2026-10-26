@@ -191,11 +191,17 @@ impl Scene {
         recipients.into_iter().map(|s| Self::update(s, vec![action.clone()])).collect()
     }
 
-    /// A lock that was going is given up because it cannot be had (the client is not told: its own request lane fails with the service
-    /// notification the host does not carry yet).
-    pub(super) fn cancel_pending(&mut self, session: SessionId, target: i64) {
-        if let Some(pilot) = self.pilots.get_mut(&session) {
-            pilot.targeting.pending.retain(|p| p.target != target);
-        }
+    /// The client clears explicit cancels locally; only server-driven cancellation needs this service notification.
+    pub(super) fn cancel_pending(
+        &mut self,
+        session: SessionId,
+        target: i64,
+        notify_self: bool,
+    ) -> Option<Out> {
+        let pilot = self.pilots.get_mut(&session)?;
+        let before = pilot.targeting.pending.len();
+        pilot.targeting.pending.retain(|p| p.target != target);
+        (pilot.targeting.pending.len() != before && notify_self)
+            .then(|| fail_lock_notification(session, target))
     }
 }

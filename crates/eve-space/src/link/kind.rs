@@ -162,6 +162,8 @@ pub const ENSURE_ABYSSAL_ENVIRONMENT_OBJECT_REPLY: u8 = 121;
 pub const ABYSSAL_FIELD_MEMBERSHIP: u8 = 122;
 pub const REFRESH_ABYSSAL_NPC: u8 = 123;
 pub const REFRESH_ABYSSAL_NPC_REPLY: u8 = 124;
+/// A notification that calls a method on a client-side service (protocol 82).
+pub const SERVICE_NOTIFY: u8 = 125;
 
 /// The host puts an acceleration gate of a dungeon room in space (protocol 75).
 pub const PLACE_ACCELERATION_GATE: u8 = 94;

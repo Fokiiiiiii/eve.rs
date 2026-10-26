@@ -95,7 +95,7 @@ public class MarketRpcTests
     }
 
     [PgFact]
-    public async Task Station_and_system_ask_rows_match_the_client_tuple_contract()
+    public async Task Station_and_system_ask_rows_match_the_client_attribute_and_sequence_contract()
     {
         await using var r = await TradeRig.Create();
         var actor = await r.Actor("Ask Reader");
@@ -103,12 +103,15 @@ public class MarketRpcTests
         await r.Book.SeedNpcAsync([new("ask", Tritanium, false, 10, 100, 32767, MarketLocation.From(r.Station), r.Now)]);
         foreach (var asks in new[] { await seat.Proxy.GetStationAsks(Call(seat.Session, "GetStationAsks", 1)), await seat.Proxy.GetSystemAsks(Call(seat.Session, "GetSystemAsks", 2)) })
         {
-            var row = Assert.IsType<PyTuple>(Assert.Single(Assert.IsType<PyDict>(Received(asks)).Entries).Value);
-            Assert.Equal(4, row.Items.Count);
-            Assert.Equal(10, Num(row.Items[0]));
-            Assert.Equal(100, Num(row.Items[1]));
-            Assert.Equal(Tritanium, Num(row.Items[2]));
-            Assert.Equal(r.Station.Id, Num(row.Items[3]));
+            var row = Assert.IsType<PyObject>(Assert.Single(Assert.IsType<PyDict>(Received(asks)).Entries).Value);
+            Assert.Equal("util.Row", Eve.Macho.JsSemantics.PlainText(row.Name));
+            var fields = Assert.IsType<PyDict>(row.Args);
+            PyValue Field(string name) => fields.Entries.Single(entry => Eve.Macho.JsSemantics.PlainText(entry.Key) == name).Value;
+            var line = Assert.IsType<PyTuple>(Field("line"));
+            Assert.Equal(10, Num(line.Items[0]));
+            Assert.Equal(100, Num(line.Items[1]));
+            Assert.Equal(Tritanium, Num(line.Items[2]));
+            Assert.Equal(r.Station.Id, Num(line.Items[3]));
         }
     }
 

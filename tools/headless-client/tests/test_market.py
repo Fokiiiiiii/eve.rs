@@ -48,6 +48,13 @@ def _number(described):
     """A number as the describe form gives it (a long is wrapped)."""
     return described["$long"] if isinstance(described, dict) else described
 
+def _best_ask_fields(row):
+    assert isinstance(row, tuple) and len(row) == 2 and row[0] == "util.Row", row
+    fields = row[1]
+    assert fields["header"] == ("price", "volRemaining", "typeID", "stationID"), row
+    assert isinstance(fields["line"], tuple) and len(fields["line"]) == 4, row
+    return dict(zip(fields["header"], fields["line"]))
+
 def _label_and_arguments(error: p.MachoError):
     """The client's UserError label and its dict of arguments, from the wrapped exception object (eveexceptions.UserError)."""
     payload = describe(error.payload)["$objectex"]["$tuple"]
@@ -61,12 +68,12 @@ def test_a_docked_character_reads_the_market_as_the_client_does():
         station_id = client.session.session_init.get("stationid")
         assert isinstance(station_id, int), "a character that selected its station is docked: the session says where"
 
-        # Station/system range asks are (price, volRemaining, typeID, stationID) tuples for MarketBase conversion.
+        # Station/system asks are util.Row values for quote.py attribute reads and MarketBase sequence conversion.
         asks = _payload(m.plain(client.call("marketProxy", "GetStationAsks")))
         assert isinstance(asks, dict)
         for type_id, row in asks.items():
-            assert isinstance(row, tuple) and len(row) == 4, f"ask row for {type_id} is {row!r}"
-            assert row[2] == type_id and row[3] == station_id
+            fields = _best_ask_fields(row)
+            assert fields["typeID"] == type_id and fields["stationID"] == station_id
 
         # the own-order lists and the escrow of a character that trades nothing yet are empty, not errors (proxy 6469, 6652)
         assert m.plain(client.call("marketProxy", "GetCharOrders")) is not None
@@ -216,9 +223,8 @@ def test_docked_corporation_members_trade_at_an_eligible_upwell_structure():
         ask = next(row for row in _own_orders(seller) if _field(row, "typeID") == TRITANIUM)
         ask_id = _field(ask, "orderID")
         assert _field(ask, "volRemaining") == 2 and _number(_field(ask, "stationID")) == structure_id, ask
-        summary = _payload(m.plain(buyer.call("marketProxy", "GetStationAsks")))[TRITANIUM]
-        assert isinstance(summary, tuple) and len(summary) == 4, summary
-        assert summary == (50, 2, TRITANIUM, structure_id)
+        summary = _best_ask_fields(_payload(m.plain(buyer.call("marketProxy", "GetStationAsks")))[TRITANIUM])
+        assert summary == {"price": 50, "volRemaining": 2, "typeID": TRITANIUM, "stationID": structure_id}
         assert all(_field(row, "orderID") != bid_id for row in _own_orders(buyer))
 
         order_books = _payload(m.plain(buyer.call("marketProxy", "GetOrders", TRITANIUM)))
@@ -364,12 +370,11 @@ def test_a_seller_and_a_buyer_trade_through_the_market():
         ask_id = _field(ask, "orderID")
         assert _field(ask, "volRemaining") == 40 and _field(ask, "price") == 50.0, ask
 
-        # the book shows the ask to a buyer at the station (GetStationAsks, the KeyVal rows of M1)
+        # the book shows the ask as the named util.Row consumed by MarketQuote.BuyStationAsk.
         asks = _payload(m.plain(buyer.call("marketProxy", "GetStationAsks")))
         assert isinstance(asks, dict), f"{type(asks).__name__}: {str(asks)[:700]}"
-        best = asks[TRITANIUM]
-        assert isinstance(best, tuple) and len(best) == 4, best
-        assert best == (50, 40, TRITANIUM, station_id), best
+        best = _best_ask_fields(asks[TRITANIUM])
+        assert best == {"price": 50, "volRemaining": 40, "typeID": TRITANIUM, "stationID": station_id}, best
 
         # match: the immediate buy takes 15 at the ask price; only the remaining 25 units stay on the book.
         assert buyer.call("marketProxy", "PlaceBuyOrder", station_id, TRITANIUM, 50.0, 15, -1, 1, 0, False, None) is None

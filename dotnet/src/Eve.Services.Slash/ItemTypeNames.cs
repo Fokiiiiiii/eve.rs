@@ -12,6 +12,8 @@ public sealed class ItemTypeNames(SdeReader sde)
     private readonly SemaphoreSlim _gate = new(1, 1);
     private List<ItemTypeEntry>? _types;
 
+    internal ItemTypeNames(IReadOnlyList<ItemTypeEntry> types) : this((SdeReader)null!) => _types = [.. types];
+
     private async Task<List<ItemTypeEntry>> TypesAsync(CancellationToken cancellationToken)
     {
         if (_types is { } known)

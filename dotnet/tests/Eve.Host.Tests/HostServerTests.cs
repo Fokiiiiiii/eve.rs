@@ -581,7 +581,7 @@ public partial class HostServerTests : IAsyncLifetime
         // the reference's notification omits None-valued keys: inDetention is not sent (the client reads an absent attribute as None)
         Assert.False(initial.ContainsKey("inDetention"));
         Assert.Equal(
-            ["languageID", "countryCode", "userid", "userType", "role", "address"],
+            ["userid", "userType", "role", "address", "languageID", "countryCode"],
             ((PyDict)payload[2]).Entries.Select(e => T(e.Key)!));
         // the client's address: type 2 (client), its client id
         var destination = (PyTuple)((PyObject)state[2]).Args;
@@ -643,6 +643,60 @@ public partial class HostServerTests : IAsyncLifetime
         var reply = Assert.IsType<Send>(await front.ReceiveAsync());
         var time = Assert.IsType<PyLong>(Result(MarshalCodec.Decode(reply.Payload)));
         Assert.Equal(Py.FileTimeFromUnixMs(FixedNowMs), time.Value);
+    }
+
+    [Fact]
+    public async Task Scan_manager_host_wire_binds_and_returns_the_registered_system_snapshot()
+    {
+        const long systemId = 30_000_142;
+        const long characterId = 90_000_001;
+        var sessions = new CharacterSessions();
+        var provider = new SignalTrackerRegistrationProvider(sessions);
+        var site = System.Text.Json.Nodes.JsonNode.Parse(
+            """{"siteID":601,"targetID":"anomaly-601","solarSystemID":30000142,"position":[1,2,3],"difficulty":2,"dungeonID":91}""")!.AsObject();
+        var scanner = new IncursionAnomalyService(
+            "scanMgr",
+            _ => ValueTask.FromResult<IReadOnlyList<System.Text.Json.Nodes.JsonObject>>([]),
+            (_, _) => ValueTask.FromResult<IReadOnlyList<System.Text.Json.Nodes.JsonObject>>([site]),
+            nowUnixMs: () => FixedNowMs,
+            signalTrackerRegister: provider.RegisterAsync);
+        Start(
+            configure: registry => registry.Register(scanner),
+            sessionOpened: session =>
+            {
+                session.CharacterId = characterId;
+                session.Set("solarsystemid2", new PyInt(systemId));
+                sessions.Enter(characterId, session);
+            });
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.Call(open, 1, "scanMgr", "GetSystemScanMgr"))));
+        var bindReply = Assert.IsType<Send>(await front.ReceiveAsync());
+        var bound = Assert.IsType<PySubStruct>(Result(MarshalCodec.Decode(bindReply.Payload)));
+        var boundRef = Assert.IsType<PyTuple>(Assert.IsType<PySubStream>(bound.Value).Decoded);
+        var objectId = T(boundRef.Items[0])!;
+        Assert.StartsWith("N=", objectId);
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.BoundCall(open, 2, objectId, "GetFullState", new PyTuple([]), PyNone.Instance))));
+        var stateReply = Assert.IsType<Send>(await front.ReceiveAsync());
+        var state = Assert.IsType<PyList>(Result(MarshalCodec.Decode(stateReply.Payload)));
+        Assert.Equal(4, state.Items.Count);
+        Assert.Single(Assert.IsType<PyDict>(state.Items[0]).Entries);
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.Call(open, 3, "scanMgr", "SignalTrackerRegister"))));
+        var registerReply = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(PyNone.Instance, Result(MarshalCodec.Decode(registerReply.Payload)));
+        var notification = Assert.IsType<Send>(await front.ReceiveAsync());
+        var notificationPacket = Assert.IsType<MachoPacket>(
+            MachoPacket.Decode(MarshalCodec.Decode(notification.Payload)));
+        Assert.Equal(MachoMessage.Notification, notificationPacket.Type);
+        Assert.Equal("OnSignalTrackerFullState", notificationPacket.Dest.BroadcastId);
     }
 
     [Fact]

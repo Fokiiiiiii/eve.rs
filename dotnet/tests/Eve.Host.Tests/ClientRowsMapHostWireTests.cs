@@ -59,7 +59,7 @@ public partial class HostServerTests
             new[] { "stationID", "solarSystemID", "operationID", "stationTypeID", "ownerID", "serviceMask", "constellationID", "regionID" },
             Assert.IsType<PyList>(fields["header"]).Items.Select(value => JsSemantics.StringValue(value)!).ToArray());
         Assert.Equal(new PyToken("util.Row"), fields["RowClass"]);
-        var line = Assert.IsType<PyList>(
+        var line = Assert.IsType<PyTuple>(
             Assert.Single(Assert.IsType<PyList>(fields["lines"]).Items)).Items;
         Assert.Equal(8, line.Count);
         Assert.Equal(new PyInt(60_000_001), line[0]);

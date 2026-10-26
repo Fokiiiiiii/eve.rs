@@ -126,7 +126,8 @@ public sealed class InsuranceRpcHostWireTests : IAsyncLifetime
             seed.Parameters.AddWithValue("doc", NpgsqlTypes.NpgsqlDbType.Jsonb, typePrices.ToJsonString());
             await seed.ExecuteNonQueryAsync();
         }
-        _host = await HostComposition.BuildAsync(Settings());        var insurance = _host.Registry.Lookup("insuranceSvc") ?? throw new InvalidOperationException("insuranceSvc is not registered");
+        _host = await HostComposition.BuildAsync(Settings());
+        var insurance = _host.Registry.Lookup("insuranceSvc") ?? throw new InvalidOperationException("insuranceSvc is not registered");
         foreach (var method in new[] { "GetContractForShip", "GetContracts", "GetInsurancePrice", "GetInsurancePrices", "InsureShip", "UnInsureShip" })
             Assert.True(insurance.HasMethod(method), method);
 

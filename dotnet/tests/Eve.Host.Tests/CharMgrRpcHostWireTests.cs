@@ -135,5 +135,8 @@ public partial class HostServerTests
         Assert.Equal(PyNone.Instance, await CallOverHost(front, open, 6, "charMgr", "UnblockOwners",
             Py.Tuple(new PyList([new PyInt(9_000_002)]))));
         Assert.Empty(personal.BlockedSenders);
+
+        Assert.Same(PyNone.Instance, await CallOverHost(front, open, 7, "charMgr", "GetCharacterDescription",
+            Py.Tuple(new PyInt(characterId + 1))));
     }
 }

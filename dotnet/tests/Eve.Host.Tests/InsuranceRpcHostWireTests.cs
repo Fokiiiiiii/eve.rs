@@ -126,7 +126,8 @@ public sealed class InsuranceRpcHostWireTests : IAsyncLifetime
             seed.Parameters.AddWithValue("doc", NpgsqlTypes.NpgsqlDbType.Jsonb, typePrices.ToJsonString());
             await seed.ExecuteNonQueryAsync();
         }
-        _host = await HostComposition.BuildAsync(Settings());        var insurance = _host.Registry.Lookup("insuranceSvc") ?? throw new InvalidOperationException("insuranceSvc is not registered");
+        _host = await HostComposition.BuildAsync(Settings());
+        var insurance = _host.Registry.Lookup("insuranceSvc") ?? throw new InvalidOperationException("insuranceSvc is not registered");
         foreach (var method in new[] { "GetContractForShip", "GetContracts", "GetInsurancePrice", "GetInsurancePrices", "InsureShip", "UnInsureShip" })
             Assert.True(insurance.HasMethod(method), method);
 
@@ -160,6 +161,7 @@ public sealed class InsuranceRpcHostWireTests : IAsyncLifetime
         var prices = Assert.IsType<PyDict>(await insurance.CallAsync(
             Call(session, "GetInsurancePrices", 2, new PyList([new PyInt(rifterTypeId)]))));
         Assert.Equal(Cents(price), Cents(prices.Entries.Single().Value));
+        Assert.Equal(new PyInt(1_000_000), price);
         Assert.Equal(fullInsurancePriceCents, Cents(price));
         Assert.Same(PyNone.Instance, await insurance.CallAsync(Call(session, "GetContractForShip", 3, new PyLong(shipId))));
         Assert.Empty(Assert.IsType<PyList>(await insurance.CallAsync(Call(session, "GetContracts", 4))).Items);

@@ -33,3 +33,11 @@ Added `Map_personal_and_industry_replies_follow_registered_host_routes_with_clie
 - No database or graphical-client session was used. The test verifies wire routing and shapes, not live database queries or visit history accumulation across a character's travel.
 - After merging `origin/main` at `d5414e3f`, the same focused test passed again on the merged tree (1 passed, 0 failed, 0 skipped).
 - After the subsequent upstream merge `473b4da9`, the focused test was rebuilt and passed again (1 passed, 0 failed, 0 skipped).
+
+## Push-gate follow-up
+
+The push-triggered `ci.yml` run `40244510313` for `ba1cc8ee49d2fea67c25d52b5646b7cc765e1319` failed only in `InsuranceRpcHostWireTests.Insurance_rpc_purchase_lookup_list_and_cancellation_follow_the_persisted_host_state`: its fixture expected `PyReal(1_000_000)`, while the service returned `PyInt(1_000_000)`.
+
+This was a test expectation error. `dotnet/src/Eve.Services/Py.cs:27-28` maps integral numeric values to `PyInt`, matching EveJS `server/src/network/tcp/utils/marshal.js:160-175`, which encodes integer-valued JavaScript numbers as integers. The V24.01 insurance UI consumes the result numerically: `eve/client/script/ui/station/insurance/base_insurance.py:172-186` compares and uses it to calculate quote rows. The test now expects `PyInt(1_000_000)`; production behavior is unchanged.
+
+The updated `Eve.Host.Tests` project build passed with 0 warnings and 0 errors. The database-backed insurance test was not exercised locally; no database was used. The corrected database-backed insurance test passed in focused Actions run `40249225940` (PostgreSQL 18 service). Push-triggered `ci.yml` run `40249214500` for `c3e7fc7d0f4f35740dde155f4b4bd6e7b3a01514` succeeded with no failed tests or jobs.

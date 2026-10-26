@@ -138,3 +138,13 @@ No source code changed and no tests were run. No PostgreSQL database was used.
 ### Remaining requested scope
 
 Agent/mission offer, acceptance and completion; contract search, acceptance and courier; office rental; reprocessing; jetcan state; structure guest access; and the complete client caller/consumer matrix have not yet been reconciled against Host registration, EveJS behavior and wire assertions. This checkpoint records only the traced rows and does not close the core-path re-check.
+
+## 2026-10-26 agent mission tracker re-check
+
+| Row | V24.01 client calls and consumed contract | eve.rs Host/state/tests | EveJS 261018.1 | Result |
+|---|---|---|---|---|
+| Mission tracker updates | `missions/client/missionObjectivesTracker.py:48,51-75` binds `missionTrackerMgr`, reads the 10-field journal mission rows, and filters active accepted missions. It calls `UpdateAllMissions(agentList)` at `:216-220`, then `:142-159` consumes each notification row's `agentID` and nullable `info`; the info list's type ID is read at index 1, cached, and passed to `ActiveAgentMission.update_objective`. `:272-321` also consumes `GetMissionInfoItems`, `GetAllMissionObjectives`, and `IsInActiveDungeonID`. | `MissionTrackerMgrService` routes these four methods and emits `OnMissionsUpdated` as `[{info, agentID}]` (`dotnet/src/Eve.Services.Core/LoginInitializationRpcServices.cs:398-451`). `AgentMissionService.ReadMissionInfoItemsAsync` projects the accepted mission row; service tests assert its 10-field list and the tracker reader path (`dotnet/tests/Eve.Services.Core.Tests/AgentMissionServiceTests.cs:225-306`). A registered-Host wire assertion for this notification was not located in the scoped search. | `server/src/services/agent/missionTrackerMgrService.js:63-93` builds the same `{info, agentID}` rows for update notifications and returns mission info rows from the agent mission runtime. | The traced service contract matches the client's consumed notification keys and nullable list flow. Host dispatch/notification wire coverage remains open; dialogue accept/complete and the rest of the mission callers are not covered by this row. |
+
+### Remaining agent-path scope
+
+The whole-client agent-dialogue `DoAction` call sequence, offer/accept/decline/quit/complete results and notifications, and all `agentMgr` callers have not yet been reconciled against the Host callbacks and EveJS runtime. This tracker row does not close the agent/mission path.

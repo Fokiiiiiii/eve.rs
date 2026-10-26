@@ -43,3 +43,39 @@ EveJS v0.12.9 handlers are in `server/src/services/character/charService.js`: Ge
 ## Continuation
 
 Complete the six remaining methods with Host tests for valid/error inputs, persistent effects and client follow-up state. The user explicitly disallowed PostgreSQL for this job; no database-backed path was exercised. Reconcile run `40094011027` and check for CI for the merged push `8a4a51db754d`.
+
+
+## P0 client verification batch 6 (2026-10-26)
+
+- Reviewed all 29 rows RPC-01131–RPC-01159 against the whole V24.01 client tree. The client callsites, reply consumers, and Host handlers are tabulated in `docs/project/service-audit/CLIENT_VERIFIED.md` under batch 6.
+- EveJS 261018.1 handler locations were checked for all 12 distinct methods in `server/src/services/character/charService.js` (deletion delegates to `characterDeletionRuntime`). The inspected Host reply types agree with client consumption. No discrepancy was found in the owner-log report: it lists no charUnboundMgr calls or failures.
+- MATCHES: GetCharacterLockType, GetCohortsForUser, GetQAStarterSystemIDs, ToggleValidation, ValidateNameEx. NO-TEST: GetCharacterInfo, GetNumCharacters, GetValidRandomName, PrepareCharacterForDelete, SelectCharacterID, UpdateCharacterBloodline, UpdateCharacterGender. Existing service-level tests do not substitute for Host wire coverage.
+- No PostgreSQL database was used. Attempts to extend the existing stateless Host test with extra calls hit its per-session RPC budget (ErrorResponse); those assertions were removed, leaving that test source unchanged. No local test result is claimed for this batch.
+- The audit updater help exposes only client-root, repo-root, and queue-dir options; it has no status_evidence option, so the CSV was left unchanged. The 03-allsvc-batch queue was not regenerated.
+- Next: add focused real-Host tests for the seven methods still marked NO-TEST, then run the focused Host checks on Actions. This batch is not complete.
+
+
+### Verification probe detail
+
+A temporary Host test tried to exercise GetNumCharacters/GetCharacterInfo with null character-store dependencies. The Host returned ErrorResponse, and the temporary test was removed; no live store or database was substituted. This result does not establish a service mismatch because the probe lacked the character store needed for an authenticated Host session. The documented NO-TEST verdicts remain open.
+
+
+## Actions update after push 6f2b9285
+
+- Selected Host run `40260450720` passed for `Char_unbound_mgr_stateless_reads_and_validation_toggle_are_registered_on_the_host` (0 failed tests/jobs). This is existing stateless Host coverage; it does not close the seven NO-TEST methods.
+- `python3 tools/dev/ci-status.py failures 6f2b9285` reported no `ci.yml` run for the pushed SHA at the follow-up check.
+- Local temporary probes with null character-store dependencies returned ErrorResponse for account-backed reads; those test additions were removed. No database or graphical client was used.
+
+
+## Latest push
+
+- The handoff update was pushed with merge SHA `143facac` after merging the current `origin/main` changes.
+- `python3 tools/dev/ci-status.py failures 143facac` reported no `ci.yml` run for that SHA.
+- The selected Host run remains `40260450720` on `6f2b9285`, passed. Batch 6 remains incomplete until the seven NO-TEST methods have representative real-Host coverage.
+
+
+## Final status after push 7cd0624c
+
+- The selected Host run `40260450720` passed on `6f2b9285`; no failed tests or jobs.
+- `python3 tools/dev/ci-status.py failures 7cd0624c` reported no `ci.yml` run for this SHA.
+- Client tracing, the EveJS comparison, and the batch 6 verdict table are recorded in `docs/project/service-audit/CLIENT_VERIFIED.md`. Seventeen of the 29 rows remain NO-TEST across seven methods because representative real-Host coverage is absent. The requested database-backed cases were not exercised; no database was used.

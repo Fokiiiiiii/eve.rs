@@ -54,9 +54,6 @@ impl Scene {
         if pilot.docking.is_some() {
             return refused("DOCKING");
         }
-        if pilot.flight.as_ref().is_some_and(|flight| !flight.is_coasting()) {
-            return refused("IN_WARP");
-        }
         // a stargate, or a wormhole end: the far end is the destination (a wormhole's far end is not a gate of the system it leads to)
         let Some((gate, destination_system, leads_to, far_end)) =
             system.body(gate_id).and_then(|b| match (b.kind, &b.detail) {

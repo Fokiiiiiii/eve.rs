@@ -17,7 +17,8 @@ public partial class HostServerTests
         var sqId = WireField(key, "sqID");
         var settingTypeId = WireField(key, "settingTypeID");
 
-        Assert.IsType<PyStr>(hash);
+        Assert.IsType<PyBytes>(hash);
+        Assert.False(string.IsNullOrEmpty(JsSemantics.StringValue(hash)));
         Assert.True(WireInteger(sqId) > 0);
         Assert.Equal(2, WireInteger(settingTypeId));
         Assert.Equal(new PyStr("preset"), await HostRpcAsync(

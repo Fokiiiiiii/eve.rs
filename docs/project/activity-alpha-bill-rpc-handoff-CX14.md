@@ -30,6 +30,6 @@
 - Local billMgr Host test: 1 passed, 0 failed, 0 skipped.
 - Activity Actions run 40264834187 for revision 60a532ea: passed, 1 passed, 0 failed, 0 skipped.
 - billMgr Actions run 40266992468 for revision 1921e8ef: passed, 1 passed, 0 failed, 0 skipped.
-- Alpha Actions run 40268456043 for revision 390e91a7 and push-triggered ci.yml run 40268448381 are being checked.
+- Alpha Actions run 40268456043 for revision 390e91a7: passed, 1 passed, 0 failed, 0 skipped. Push-triggered ci.yml run 40268448381 for 390e91a7 is still in progress.
 - No database connection was used.
 - Real graphical-client verification has not been performed.

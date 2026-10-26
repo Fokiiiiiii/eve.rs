@@ -51,6 +51,13 @@ BOUND_ATTRIBUTE_CALL = re.compile(
     r"([A-Za-z_][A-Za-z0-9_]*)\s*\("
 )
 MONIKER_CONSTRUCTOR = re.compile(r"\bMoniker\s*\(")
+INVENTORY_CONTAINER_SERVICES = {
+    "containerGlobal": "charMgr",
+    "containerHangar": "invbroker",
+    "containerCorpMarket": "invbroker",
+    "containerCapsuleerDeliveries": "invbroker",
+    "containerStructure": "invbroker",
+}
 NOTIFY_DECLARATION = re.compile(r"\b__notifyevents__\s*(?:=|\+=)\s*([\[(])")
 SERVER_NOTIFY = re.compile(r"\bSendNotification\s*\(")
 STRING_LITERAL = re.compile(r"(?i)(?:u|r|ur|ru)?(['\"])(.*?)(?<!\\)\1", re.S)
@@ -530,6 +537,28 @@ def source_calls(path: pathlib.Path, source: str, module_getters: dict[str, set[
             if raw_args is not None:
                 add(match.start(), service, match.group(2), split_arguments(raw_args), "Moniker", "bound-object-call")
 
+    # GetInventory returns different monikers by container; resolve Add from the container argument.
+    for match in re.finditer(r"\bGetInventory\s*\(", source):
+        raw_inventory_args = argument_text(source, match.end() - 1)
+        if raw_inventory_args is None:
+            continue
+        inventory_args = split_arguments(raw_inventory_args)
+        if not inventory_args:
+            continue
+        container = re.fullmatch(r"(?:[A-Za-z_][A-Za-z0-9_]*\.)*(container[A-Za-z0-9_]+)", inventory_args[0].strip())
+        service = INVENTORY_CONTAINER_SERVICES.get(container.group(1)) if container is not None else None
+        if service is None:
+            continue
+        inventory_end = end_of_call(source, match.end() - 1)
+        if inventory_end is None:
+            continue
+        member = direct_member_call(source, inventory_end)
+        if member is None or member[0] != "Add":
+            continue
+        method_args = argument_text(source, member[1])
+        if method_args is not None:
+            add(match.start(), service, "Add", split_arguments(method_args), "invCache.GetInventory", "bound-object-call")
+
     helper_names = {name.rsplit(".", 1)[-1] for name in module_getters}
     helper_names.update(name for _, name in getter_services)
     if helper_names:
@@ -540,6 +569,8 @@ def source_calls(path: pathlib.Path, source: str, module_getters: dict[str, set[
         )
         for match in helper_pattern.finditer(source):
             getter = match.group(1)
+            if getter == "GetInventory":
+                continue
             getter_end = end_of_call(source, match.end() - 1)
             if getter_end is None:
                 continue

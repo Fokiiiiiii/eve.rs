@@ -1,29 +1,16 @@
 # Service audit handoff
 
+The current snapshot below is authoritative. Dated sections that follow preserve the status at the time of each audit and do not replace the current snapshot.
+
 ## Current snapshot
 
-- Client source: /home/user/eve-logic, commit 1dbb5711a072a146e1d228365668ac05655eefe1.
-- Host source used for the latest CSV generation: origin/main ec27cb3462ebc3ff5bd2b9acb34c5e82221afdbe plus this task's changes.
-- P0 implementation/test push: e6310b34c165b815bedc0cbb636129324fde78d2.
-- Follow-up test correction and verification push: f381e8d738d827bb1295fba61a3ec5a2dc93908d; its focused Actions and push CI runs passed.
-- Latest integrated origin/main: 2c5f62eb; upstream changes since the follow-up push are documentation-only.
-- Prior P0 implementation/test push: 21f75f92. Latest main synchronization push: 22c62010. Focused Actions run 40219719160 passed for Search_quick_query_returns_client_id_list_through_host_with_transport_kwargs; push CI run 40219660982 passed.
-- Regenerate both CSVs and the P0/P1 work queue with:
-  python3 tools/spec-extract/run_service_audit_current.py --queue-dir /tmp/service-audit-cx6-final
-- The service-audit Python regression tests run in the `ci.yml` Python job.
-- Latest generation (2026-10-26): 4,014 client rows, 2,186 RPC rows, 1,419 active Host routes, and 20 queue files. Coverage: CLIENT-DEAD 3, HOLLOW 10, IMPLEMENTED-TESTED 1,369, IMPLEMENTED-UNTESTED 522, MISSING 282, with no REJECTS-VALID-INPUT rows.
-- Coverage by priority and status:
-
-| Status | P0 | P1 | P2 |
-|---|---:|---:|---:|
-| CLIENT-DEAD | 3 | 0 | 0 |
-| HOLLOW | 0 | 10 | 0 |
-| IMPLEMENTED-TESTED | 199 | 958 | 212 |
-| IMPLEMENTED-UNTESTED | 15 | 220 | 287 |
-| MISSING | 0 | 118 | 164 |
-| REJECTS-VALID-INPUT | 0 | 0 | 0 |
-- The audit now classifies client-local calls separately; later RPC row IDs can shift when those calls are reclassified. Compare target methods by service/method and client source path.
-- The Host route scanner resolves string constants referenced by HasMethod comparisons and inspects the full Host Composition directory, including partial AgentRpc and MissionComposition files. This includes SearchQueryService.Query, whose route compares against QueryMethod, and AgentMissionService, which is returned from AgentRpcServices and registered through the Host characterServices list.
+- Latest code-bearing main commit checked: `b213ee17` (2026-10-26); the V24.01 client tree: `/home/user/eve-logic` commit `1dbb5711a072a146e1d228365668ac05655eefe1`.
+- Current audit totals: 4,014 client rows, 2,186 RPC rows, 1,419 active Host routes, and 20 queue files. The six rows checked in batches 29–30 move coverage to IMPLEMENTED-TESTED 1,375 and IMPLEMENTED-UNTESTED 516; other totals are CLIENT-DEAD 3, HOLLOW 10, MISSING 282, REJECTS-VALID-INPUT 0.
+- Regenerate both CSVs and the P0/P1 work queue with `python3 tools/spec-extract/run_service_audit_current.py --queue-dir /tmp/service-audit-current`.
+- Batch 29 checks RPC-02842–02843: the sole V24.01 caller is `spacecomponents/client/components/jumpPolarization.py:18-37`; its controller consumes the returned end time and duration at `eve/client/script/spacecomponents/jumppolarizationcontroller.py:21-30`. The registered Host test is `Wormhole_polarization_returns_client_timer_fields_through_registered_host`.
+- Batch 30 checks RPC-02814–02817: whole-client callers and report consumers are recorded at the file:line locations in `CLIENT_VERIFIED.md`. The registered Host test is `Killmail_notifications_receive_the_client_keyval_through_registered_host`.
+- Selected Actions runs 990 and 992 passed those two focused tests. Main gate run 1128 on `e4dd35c0` completed successfully; its status output listed `Eve.Universe.Tests.ClientStaticDataTests.The_export_and_the_embedded_copies_give_the_same_answers` as skipped. Run 1130 on `80de3fb2` failed `Eve.Services.Tests.DispatchGoldenTests.Every_recorded_step_gets_the_recorded_response_and_leaves_the_recorded_state` for `packets:arguments`. Run 1131 for `b213ee17` and selected Agent run 993 completed successfully; `ci-status.py` reported no failed tests or jobs. Its successful-run output does not provide a skip count.
+- Host project test output recorded in batch 30 was 477 passed, 327 failed and 2 skipped. The failed cases needed PostgreSQL, which this task did not use; these results are not a pass. No graphical-client run is claimed.
 
 ## Service-audit receiver tracing correction (2026-10-26)
 

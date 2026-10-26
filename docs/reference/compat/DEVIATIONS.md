@@ -1,9 +1,5 @@
 # Deviations from the reference server
 
-## Client positional arguments versus EveJS list handling (2026-10-26)
-
-The V24.01 client passes `packet.payload[2]` directly as service positional arguments (`carbon/common/script/net/ServiceCallGPCS.py:66-139`), so both tuple and list sequences are flattened as positional arguments. The object-call path separately removes `machoVersion` from kwargs (`carbon/common/script/net/ObjectCallGPCS.py:129-134`). eve.rs follows this client contract. The prior `packets:arguments` golden row modeled a list as one nested argument, which conflicts with the wire callsite; it now records the flattened result. `HostInputHardeningTests.Positional_arguments_accept_tuple_or_list_and_ignore_macho_version` and `DispatchGoldenTests.Every_recorded_step_gets_the_recorded_response_and_leaves_the_recorded_state` check both forms.
-
 ## Host SKINR catalog data source (2026-10-23)
 
 The V24.01 pinned SDE build 3396210 has no `skinr*` authority tables, while the official CCP `missionPinned` build 3405148 contains `skinrComponentPointValues`, `skinrComponents`, `skinrSlotConfigurations`, `skinrSlots` and `skinrTierThresholds` (`sde/lock.json`). Host startup reads those tables for `ShipSkinrCatalog`, so the catalog now reads them, with that build’s `groups` and `types`, from `sde_mission`. Other Host data reads remain on the client-pinned `sde` schema. This keeps the SSO Host startup path available without changing the pinned source used for general game data.

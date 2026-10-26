@@ -2494,7 +2494,7 @@ public class SpaceServiceTests
         rig.BeyonceCallAsync(session, "CmdStargateJump", oid, new PyInt((int)Gate), new PyInt((int)NextGate), new PyLong(ship));
 
     [PgFact]
-    public async Task A_jump_is_given_to_the_simulation_the_client_is_told_the_queue_and_the_answer_is_the_object_and_the_time()
+    public async Task A_jump_is_given_to_the_simulation_the_client_is_told_the_queue_and_returns_none()
     {
         var (rig, character, session) = await DockedAsync();
         await using var _ = rig;

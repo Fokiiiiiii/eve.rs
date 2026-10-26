@@ -113,3 +113,6 @@ No local PostgreSQL database or graphical EVE client was used. The Actions-selec
 
 
 Batch 7 follow-up update: origin/main advanced during correction and supplied explicit `util.Row` assertions for the failing service test. The merged assertion needed a typed string array and materialized PyValue list; the final `Eve.Services.CharacterInfo.Tests` build passed with zero warnings/errors. Focused Actions and push CI reruns for this follow-up are pending.
+
+
+Batch 7 Actions correction update: push CI 40261450475 failed compilation with xUnit2031 in the merged `CharMgrClientReadHostWireTests`, where two filtered sequences were passed to `Assert.Single`. Both now use its predicate overload. Local `Eve.Host.Tests` build passed with zero warnings/errors after the correction; focused and push-CI reruns are pending.

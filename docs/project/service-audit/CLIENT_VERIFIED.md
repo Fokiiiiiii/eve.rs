@@ -598,3 +598,10 @@ The new test exercises real Host dispatch and the subsequent GetStoredSharedSett
 | RPC-02338 | skillHandler.CheckInjectionConstraints | `skillsvc.py:981-982` ignores a successful return; `skillInjectorWindow.py:160-168` uses only UserError to disable the action or show an error. | Host validates and returns None on success in `SkillHandlerService.Injection.cs:112-174`; EveJS returns null or raises the constraint error at `skillMgrService.js:653-662`. No successful registered Host wire test. | NO-TEST |
 | RPC-02339 | skillHandler.CombineSkillInjector | `skillsvc.py:1013-1016` discards the return after the client’s minimum-quantity check; menu wrapper also discards it (`menuFunctions.py:503-505`). | Host performs injector transformation at `SkillHandlerService.Injection.cs:324`; EveJS returns null at `skillMgrService.js:694-702`. Service mutation tests exist, but no successful registered Host wire test. | NO-TEST |
 | RPC-02340 | skillHandler.ExtractSkills | `skillsvc.py:969-973` discards the return; whole-tree extractor controller calls the wrapper at `skillExtractorController.py:584-585`. | Host extracts skills at `SkillHandlerService.Injection.cs:176-322`; EveJS returns null at `skillMgrService.js:674-682`. Service mutation tests exist, but no successful registered Host wire test. | NO-TEST |
+
+
+### Batch 17 execution update (2026-10-26)
+
+- Commit `28d29e3a` was pushed in merge commit `662e4174`. Selected Actions run `40303458475` failed in the Host test project build because the incoming `SharedSettingsHostWireTests.cs` used `JsSemantics` without importing `Eve.Macho`; no requested test ran. The compile error was fixed in `6693eab6`.
+- After fetching and merging the newer `origin/main`, commit `3f0f3ca0` was pushed. The source now imports `Eve.Macho`; the upstream correction comparing the `GetStoredSharedSetting` result with `PyStr` is retained. Selected Actions run `40304219303` is in progress. The local Host test project build is still in progress; no local database was used.
+- The LPSvc exchange/transfer mismatch and remaining populated-row wire test gaps above remain open.

@@ -53,3 +53,13 @@ push-triggered CI run 40459345159 で見つかった wire assertion の根因を
 - Host registry inventory assertion は現行 1445 method に合わせた。件数 assertion のみの変更。
 
 **ローカル確認（merge origin/main 後）:** Core / Space / Host test projects の `dotnet build` は全て成功、Core の `Client_read_Rpcs_return_stored_events_details_and_responses` は 1/1 成功、変更した headless test の `py_compile` は成功。PostgreSQL を必要とする Space / Host tests は no-DB 条件のためローカルでは実行していない。push-triggered CI で全 project shard と E2E を確認する。
+
+
+## CI追跡（2026-10-27、revision 984abaf4 / run 40462669677）
+
+push-triggered CI run 40462669677 は2件の失敗を報告した。
+
+- .NET other tests shard: 907 passed / 1 failed。calendar notification wire byte assertion の期待値が8 fieldsを1つの tuple に包んでいた。server は `payload.Items.ToArray()` を通知 args として渡し（`CalendarMgrService.cs:229-242,294-303`）、`ClientNotification.Build` が args を1つの通知 tuple にする（`SessionChanges.cs:62-78`）。期待値を8個の直接 args に修正し、wire bytes の厳密比較を維持した。
+- End-to-end job: `test_personal_calendar_event_notifies_an_online_invitee_after_commit` が余分な tuple 層の参照で `KeyError('$tuple')` になった。headless decoder は notification body を `(0, (1, args))` として出し、`_notification_event` はその body を `args` に保存する（`tools/headless-client/evecli/observe.py:25-81`）。よって event payload は `created[0]["args"]["$tuple"][1]["$tuple"][1]["$tuple"]` にある。test の参照をこの leaf tuple に合わせた。marshal `describe` は tuple を `{"$tuple": ...}` に表す（`tools/headless-client/evecli/describe.py:12-47`）。
+
+**修正後ローカル確認:** 対象 Core test は 1/1 成功。headless test の `py_compile` 成功。DB を使う E2E はローカルで実行していない。push CI の全 Core shard と E2E は修正前の revision に対する実行であり、修正後の確認は次の push-triggered CI で行う。

@@ -80,10 +80,10 @@ public class CalendarMgrServiceTests
         var packet = Assert.Single(inviteeSink.Packets);
         Assert.Equal(
             MarshalCodec.Encode(ClientNotification.Build(invitee.UserId ?? 0, invitee.NodeId, "OnNewCalendarEvent", "clientID",
-            [new PyTuple([
+            [
                 new PyLong(created.Value), new PyLong(CharacterId), new PyLong(start), new PyInt(60),
                 new PyStr("Fleet form-up"), new PyInt(0), PyNone.Instance, PyBool.True,
-            ])], 0)),
+            ], 0)),
             MarshalCodec.Encode(packet));
     }
 

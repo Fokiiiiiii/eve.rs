@@ -4539,11 +4539,8 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
   the occupier's enemy (`FwFactions.OccupationEnemyOf`), and its points and LP pool reset (the wiki: a capture removes the upgrades). A contested or
   unoccupied system is refused. Tests: `FwCaptureTests` (2). The trigger is the destruction of the infrastructure hub (wiki: 25 million HP), which
   has no combat path in eve.rs yet, so no capture happens in a running server. Status: open (trigger).
-- **Served: the character and corporation statistics** (`GetStats_Character`, `GetStats_Corp`: the six client keys, from the daily rows of migration 0002).
-  **Not served:** `GetStats_FactionInfo`, `GetStats_Militia`, `GetStats_Alliance`, `GetStats_CorpPilots`, `GetStats_TopAndAllKillsAndVPs` (they need
-  the alliance grouping and the faction member counts, which eve.rs does not store yet) and the rank overview methods. A client call to them fails
-  until they are built. The rows are filled by the producers `FwService.RecordActivityAsync` and `AddVictoryPointsAsync`, which no combat event
-  calls yet (below). Status: partly open.
+- **Served: facWarMgr statistics and rank overview RPCs.** `GetStats_Character`, `GetStats_Corp`, `GetStats_FactionInfo`, `GetStats_Militia`, `GetStats_Alliance`, and `GetStats_TopAndAllKillsAndVPs` are routed through Host; faction member counts use the corporation and character stores, while activity windows use the persisted daily rows from migration 0002. The Host returns the client keys and grouping shapes. Those rows still depend on activity producers reaching `FwService.RecordActivityAsync` and `AddVictoryPointsAsync`; until then activity totals only reflect rows actually recorded. The rank overview and rank info methods return the enlisted faction and rank.
+  **Not routed:** `GetStats_CorpPilots` has no caller outside its `facWarSvc.py` wrapper; the dashboard derives those counts from `GetStats_FactionInfo` (`statisticsController.py:69-90`).
 - **Applied: the NPC station war-faction modifier** (`npsStationTaxModifier.py`). The client extract holds one station (60015187) with 0.1 for
   500010 and 500011 (`FwRules.NpcStationTaxModifier`). The NPC station facility tax of an industry job is multiplied by it for the pilot's war faction
   (direct enlistment, else the corporation's; `IndustryComposition.ResolveIndustryFacilityAsync`). The client snapshot has no caller of its own, so the

@@ -120,9 +120,11 @@ public sealed class FacWarMgrRpcTests
 
         // The rank is the whole part of the standing toward the militia: 4.7 is rank 4, and 12 is capped at 9.
         fixture.Standing = 4.7;
-        Assert.Equal(Py.KeyVal(("currentRank", new PyInt(4))), await service.CallAsync(Call("GetMyCharacterRankInfo", session)));
+        Assert.Equal(Py.KeyVal(("characterID", new PyInt(Character)), ("factionID", new PyInt(Amarr)), ("warFactionID", new PyInt(Amarr)), ("currentRank", new PyInt(4))),
+            await service.CallAsync(Call("GetMyCharacterRankInfo", session)));
         fixture.Standing = 12;
-        Assert.Equal(Py.KeyVal(("currentRank", new PyInt(9))), await service.CallAsync(Call("GetCharacterRankInfo", session, new PyInt(Character))));
+        Assert.Equal(Py.KeyVal(("characterID", new PyInt(Character)), ("factionID", new PyInt(Amarr)), ("warFactionID", new PyInt(Amarr)), ("currentRank", new PyInt(9))),
+            await service.CallAsync(Call("GetCharacterRankInfo", session, new PyInt(Character))));
         Assert.Same(PyNone.Instance, await service.CallAsync(Call("GetMyCharacterRankInfo", Pilot(factionId: 0))));
     }
 

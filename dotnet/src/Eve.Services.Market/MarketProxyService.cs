@@ -4,13 +4,21 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Market;
 using Eve.Wallet;
+using Npgsql;
 
 namespace Eve.Services.Market;
 
 [Service("marketProxy")]
 public sealed partial class MarketProxyService(MarketStore store,MarketTrading trading,MarketTopology topology,
-    PgCharacterStore characters,Eve.Corporations.CorporationStore corporations,WalletTransactions wallets,MarketCatalog catalog,Func<long> now,MarketExpiryWorker expiry,CharacterSessions? characterSessions=null)
+    PgCharacterStore characters,Eve.Corporations.CorporationStore corporations,WalletTransactions wallets,MarketCatalog catalog,Func<long> now,MarketExpiryWorker expiry,CharacterSessions? characterSessions=null) : IServiceExceptionMapper
 {
+    private const string MarketUnavailableMessage = "Market is currently offline, elysian says sorry!";
+
+    public MachoError? MapException(Exception exception) =>
+        exception is NpgsqlException ? MarketUnavailable().Error : null;
+
+    private static MachoWrappedException MarketUnavailable() =>
+        MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr(MarketUnavailableMessage)));
     private static long Integer(PyValue v,long fallback = 0) => v switch
     {
         PyInt n => n.Value,
@@ -153,7 +161,12 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
     private static long FileTimeToUnixMs(PyValue value) => (Integer(value) - 116444736000000000L) / 10_000;
 
     [Method("StartupCheck")]
-    public PyValue StartupCheck(ServiceCall call) => PyNone.Instance;
+    public async ValueTask<PyValue> StartupCheck(ServiceCall call)
+    {
+        if (!await store.IsReadyAsync(call.Cancellation))
+            throw MarketUnavailable();
+        return PyNone.Instance;
+    }
 
     [Method("GetMarketGroups")]
     public PyValue GetMarketGroups(ServiceCall call) => Py.Rowset(

@@ -1,3 +1,4 @@
+using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 
@@ -42,8 +43,13 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
         if (!HasMethod(call.Method)) return PyNone.Instance;
         call.Cancellation.ThrowIfCancellationRequested();
 
-        var expectedArgs = call.Method == "fix_task_id" ? 1 : 0;
-        if (call.Kwargs is not PyNone || call.Args.Count != expectedArgs)
+        var validArguments = call.Method switch
+        {
+            "fix_task_id" => call.Kwargs is PyNone && call.Args.Count == 1,
+            "get_player_statistics" => HasValidStatisticsArguments(call),
+            _ => call.Kwargs is PyNone && call.Args.Count == 0,
+        };
+        if (!validArguments)
             throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_ARGUMENTS_INVALID");
         if (call.Method == "fix_task_id" && call.Arg(0) is not (PyInt or PyLong))
             throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TASK_ID_INVALID");
@@ -58,8 +64,9 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
                 var taskId = PositiveIntegralTaskId(call.Arg(0));
                 if (taskId < 0)
                     throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TASK_ID_INVALID");
-                if (characterId > 0 && _callbacks.FixTaskIdAsync is { } fixTaskId)
-                    await fixTaskId(characterId, taskId == 0 ? null : taskId, call.Cancellation);
+                if (characterId <= 0 || _callbacks.FixTaskIdAsync is not { } fixTaskId)
+                    throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TASK_FIX_UNAVAILABLE");
+                await fixTaskId(characterId, taskId == 0 ? null : taskId, call.Cancellation);
                 return PyNone.Instance;
 
             case "get_player_analysis_kredits":
@@ -107,6 +114,17 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
                 return PyNone.Instance;
         }
     }
+
+    private static bool HasValidStatisticsArguments(ServiceCall call) =>
+        call.Args.Count switch
+        {
+            0 when call.Kwargs is PyNone => true,
+            0 when call.Kwargs is PyDict { Entries.Count: 1 } kwargs =>
+                JsSemantics.StringValue(kwargs.Entries[0].Key) == "get_history" &&
+                kwargs.Entries[0].Value is PyBool,
+            1 when call.Kwargs is PyNone => call.Arg(0) is PyBool,
+            _ => false,
+        };
 
     private async ValueTask<ProjectDiscoveryPlayerState> ReadStateAsync(long characterId, CancellationToken cancellationToken)
     {

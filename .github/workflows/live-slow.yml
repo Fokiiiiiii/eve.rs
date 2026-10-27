@@ -188,6 +188,8 @@ jobs:
         env:
           EVE_RUN: tools/headless-client/.venv/bin/python -m pytest -q tools/headless-client/tests/${{ matrix.test_file }} -rs
           EVE_LIVE_SLOW: "1"
+          EVE_START_STATION: ${{ matrix.test_file == 'test_abyssal.py' && '60003760' || matrix.test_file == 'test_zarzakh_jump.py' && '60004723' || matrix.test_file == 'test_belt_rats.py' && '60005332' || '60015249' }}
+          EVE_BELT_RAT_CHANCE: ${{ matrix.test_file == 'test_belt_rats.py' && '1' || '' }}
           EVE_XMPP_ENABLED: ${{ matrix.test_file == 'test_walk_xmpp_live.py' && 'true' || 'false' }}
           EVE_XMPP_PORT: "5222"
           EVE_LIVE_XMPP_PORT: ${{ matrix.test_file == 'test_walk_xmpp_live.py' && '5222' || '' }}

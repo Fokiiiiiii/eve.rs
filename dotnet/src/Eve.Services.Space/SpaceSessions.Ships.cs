@@ -163,8 +163,11 @@ public sealed partial class SpaceSessions
     /// <summary>Boards another ship from the current station hangar and updates the active session ship.</summary>
     /// <summary>Leaves a docked ship, activates the character's capsule, and keeps the ship in the hangar.</summary>
     /// <summary>Boards a ship already in the character's station hangar.</summary>
-    public ValueTask<PyValue> EjectAsync(ClientSession session, CancellationToken cancellationToken) =>
-        EjectPhysicalShipAsync(session, ShipIdOf(session) ?? 0, false, cancellationToken);
+    public async ValueTask<PyValue> EjectAsync(ClientSession session, CancellationToken cancellationToken)
+    {
+        var result = await EjectPhysicalShipAsync(session, ShipIdOf(session) ?? 0, false, cancellationToken);
+        return result is PyTuple ? None : result;
+    }
 
     private async ValueTask<PyValue> EjectPhysicalShipAsync(ClientSession session, long expectedSessionShipId, bool exitStructure, CancellationToken cancellationToken)
     {
@@ -212,7 +215,7 @@ public sealed partial class SpaceSessions
             return None;
 
         var simulationFailed = false;
-        await _transitions.ExecuteAsync(
+        var transition = await _transitions.ExecuteAsync(
             token => _ships.EjectAsync(pilot.CharacterId, pilot.ShipId, token),
             result => result is not null,
             async (result, token) =>
@@ -293,7 +296,9 @@ public sealed partial class SpaceSessions
             cancellationToken,
             id);
 
-        return None;
+        return transition is not null && !simulationFailed
+            ? Py.Tuple(new PyDict([]), new PyDict([]), new PyDict([]), new PyDict([]))
+            : None;
     }
 
     public async ValueTask<PyValue> BoardAsync(ClientSession session, long shipId, long currentShipId, CancellationToken cancellationToken)

@@ -2287,8 +2287,8 @@ public class SpaceServiceTests
         const double z = 7_750_000;
         var systemId = (int)session.GetInt("solarsystemid")!.Value;
         rig.Beyonce.BookmarkTargetForCharacter = (characterId, requestedId, _) =>
-            Task.FromResult<WarpCoordinates?>(requestedId == bookmarkId
-                ? new WarpCoordinates(systemId, x, y, z)
+            Task.FromResult<BookmarkWarpTarget?>(requestedId == bookmarkId
+                ? new BookmarkWarpTarget(systemId, null, x, y, z)
                 : null);
 
         var answer = await rig.BeyonceCallWithAsync(

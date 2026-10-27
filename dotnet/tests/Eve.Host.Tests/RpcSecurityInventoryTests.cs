@@ -88,7 +88,10 @@ public sealed class RpcSecurityInventoryTests : IAsyncLifetime
                 .Order(StringComparer.Ordinal)
                 .ToArray();
             Assert.True(missingServices.Length == 0, $"RPC methods were not enumerated for: {string.Join(", ", missingServices)}");
-            Assert.Equal(1424, rows.Length);
+            var mailMethodCount = rows.Count(row => row.StartsWith("mailMgr.", StringComparison.Ordinal));
+            // HostComposition omits database-backed providers when the test has no EVE_PG_URL.
+            Assert.Equal(mailMethodCount == 0 ? 241 : 1442, rows.Length);
+            if (mailMethodCount != 0) Assert.Equal(28, mailMethodCount);
             Console.WriteLine($"RPC_INVENTORY_COUNT={rows.Length}");
             foreach (var row in rows) Console.WriteLine($"RPC_INVENTORY={row}");
         }

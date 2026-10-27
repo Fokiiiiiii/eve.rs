@@ -120,8 +120,14 @@ sealed class PersistenceInsuranceWriteModel(
             wallets.AnnounceCommitted(new WalletBalanceChange(ownerId, 1000, balance));
             return Result(Eve.Services.Core.InsuranceMutationStatus.Applied, ownerId, command.PremiumCents);
         }
-        catch (Exception error) when (error is Eve.Wallet.InsufficientFundsException or
-                                      Eve.Wallet.WalletNotFoundException or
+        catch (Eve.Wallet.InsufficientFundsException error)
+        {
+            if (error.AvailableBalance is not { } balance)
+                throw new InvalidOperationException("Insurance wallet debits must report the locked balance.", error);
+            return Result(Eve.Services.Core.InsuranceMutationStatus.InsufficientFunds,
+                error.OwnerId, command.PremiumCents, balance);
+        }
+        catch (Exception error) when (error is Eve.Wallet.WalletNotFoundException or
                                       Eve.Wallet.MoneyLimitException or
                                       Eve.Wallet.WalletOperationConflictException)
         {
@@ -372,8 +378,9 @@ sealed class PersistenceInsuranceWriteModel(
     }
 
     private static Eve.Services.Core.InsuranceMutationResult Result(
-        Eve.Services.Core.InsuranceMutationStatus status, long ownerId = 0, long amountCents = 0) =>
-        new(status, ownerId, amountCents);
+        Eve.Services.Core.InsuranceMutationStatus status, long ownerId = 0, long amountCents = 0,
+        decimal availableBalanceIsk = 0m) =>
+        new(status, ownerId, amountCents, availableBalanceIsk);
 
     private static bool CanInsureForCorporation(Eve.Services.Core.InsuranceActorSnapshot actor) =>
         actor.CorporationId > 0 &&

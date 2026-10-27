@@ -5242,9 +5242,9 @@ Fleet invite and member-movement RPCs reject role values outside the signed 32-b
 `contractProxy.CompleteContract` applies the shared checked Int32 parser to both V24 integer wire types. A status outside Int32 range returns `ConContractNotAvailable` before contract state is read or mutated; valid status values retain the existing transition behavior. `ContractProxyServiceTests.Complete_contract_refuses_status_that_overflows_int32` verifies the writer is not invoked. `PacketDispatcher` charges all `contractProxy` methods 10 per-session work units because every operation reads or mutates persisted contract state; `DispatchGoldenTests.Contract_operations_use_the_named_per_session_budget` verifies list calls are refused at the configured limit.
 
 
-## Insurance price batch bound (2026-10-20)
+## Insurance price batches (2026-10-20)
 
-`insurance.GetInsurancePrices` accepts at most 500 raw type IDs per request and returns `InsuranceBulkLimitExceeded` before reading price data for a larger batch. The V24 client primes the service with the set of missing ship type IDs; normal client batches retain their existing results. `InsuranceServiceTests.Insurance_price_batch_refuses_more_than_500_type_ids_before_the_read_model` covers the refusal.
+`insurance.GetInsurancePrices` accepts the distinct positive type IDs supplied by the V24 client without a service-level item-count cap. It returns one ISK price per requested type ID, with zero for unknown types; duplicate and invalid IDs are removed. This matches the client call shape and EveJS behavior. The Host wire regression is recorded in `docs/project/service-audit/DEEPCHECK_insurance.md`.
 
 ## Ship self-destruct countdown (2026-10-20)
 

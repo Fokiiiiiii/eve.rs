@@ -276,6 +276,8 @@ def test_a_pilot_loads_and_fires_a_gun_as_it_did_in_the_reference():
         watch(only, 1.0)
 
         stopped = lambda seen: any(e["name"] == "OnGodmaShipEffect" and effect_of(e)[3] == 0 for e in seen)  # noqa: E731
+        fire_label = "the pilot fires the railgun until the iron is spent"
+        recorded_fire = of_the_gun(steps[fire_label]["events"], roles["gun"], int(race["shipID"]))
 
         def space_step(label: str, call, seconds: float, until=None) -> None:
             raw, error = outcome(call)
@@ -294,7 +296,8 @@ def test_a_pilot_loads_and_fires_a_gun_as_it_did_in_the_reference():
                 elif number(a["weapon"]) != number(b["weapon"]) or number(b["target"]) != mapping.get(number(a["target"]), number(a["target"])):
                     problems.append(f"{label}: shot {index} of {number(b['weapon'])} at {number(b['target'])}")
 
-        space_step("the pilot fires the railgun until the iron is spent", lambda: who.call_bound(dogma[0], "Activate", gun, "projectileFired", rat, 1000), 20.0, until=stopped)
+        # Wait for the final Destiny action as well as module shutdown before comparing the complete client stream.
+        space_step(fire_label, lambda: who.call_bound(dogma[0], "Activate", gun, "projectileFired", rat, 1000), 20.0, until=lambda seen: stopped(seen) and len(of_the_gun(seen, gun, ship)) >= len(recorded_fire))
         space_step("the pilot fires the railgun with nothing in it", lambda: who.call_bound(dogma[0], "Activate", gun, "projectileFired", rat, 1000), 2.0)
     assert problems == [], "\n".join(problems)
 

@@ -14,7 +14,7 @@ namespace Eve.Services.Core;
 /// per notification) or <c>OnSharedBookmarksFolderDeleted</c>.
 /// </summary>
 [Service("accessGroupBookmarkMgr")]
-public sealed partial class AccessGroupBookmarkMgrService(BookmarkStore store, Func<long, BookmarkTarget?> resolveStaticTarget,
+public sealed partial class AccessGroupBookmarkMgrService(BookmarkStore store, Func<long, CancellationToken, ValueTask<BookmarkTarget?>> resolveStaticTarget,
     Func<Affiliation, CancellationToken, ValueTask<AccessLists>> listsOf, CharacterSessions? sessions, SharedFolderNotifier? notifier = null)
 {
     private const string DefaultFolderName = "My Locations";
@@ -33,6 +33,17 @@ public sealed partial class AccessGroupBookmarkMgrService(BookmarkStore store, F
             new PyList([.. active.Bookmarks.Select(BookmarkPayload)]),
             new PyList([.. active.Subfolders.Select(SubfolderPayload)]),
         ]);
+    }
+
+    /// <summary>Resolves a bookmark the caller can see in an active folder, expiring it through the same read path as the client.</summary>
+    public async Task<Bookmark?> ResolveActiveBookmarkAsync(ServiceCall call, long bookmarkId)
+    {
+        var character = Character(call);
+        var active = await store.ActiveAsync(character, await Lists(call), call.Cancellation);
+        if (notifier is not null && active.Expired is { Count: > 0 } expired &&
+            await notifier.PlanRemovalsAsync(expired, character, call.Cancellation) is { } send)
+            call.Session.AfterResponse(send);
+        return active.Bookmarks.FirstOrDefault(bookmark => bookmark.BookmarkId == bookmarkId);
     }
 
     /// <summary>A personal folder, or a shared one on the access lists given (the admin list is required).</summary>
@@ -104,14 +115,15 @@ public sealed partial class AccessGroupBookmarkMgrService(BookmarkStore store, F
         return OpenedPayload(opened);
     }
 
-    /// <summary>Bookmarks a station or a solar system: the bookmark's place is the static data's (<see cref="resolveStaticTarget"/>).</summary>
+    /// <summary>Bookmarks a static place from the client's SDE or the persisted structure directory.</summary>
     [Method("BookmarkStaticLocation")]
     public async ValueTask<PyValue> BookmarkStaticLocation(ServiceCall call)
     {
         var itemId = Integral(call.Arg(0)) ?? 0;
-        var target = resolveStaticTarget(itemId) ?? throw new BookmarkError("BookmarkNotAvailable");
+        var subfolderId = StaticLocationSubfolderId(call);
+        var target = await resolveStaticTarget(itemId, call.Cancellation) ?? throw new BookmarkError("BookmarkNotAvailable");
         return await CreateBookmarkAsync(call, target, Integral(call.Arg(1)) ?? 0, Text(call.Arg(2)), Text(call.Arg(3)),
-            (int)(Integral(call.Arg(4)) ?? 0), Integral(call.Arg(5)));
+            (int)(Integral(call.Arg(4)) ?? 0), subfolderId);
     }
 
     /// <summary>Persists the coordinates of a live cosmic signature through the same access checks and notifications as a static bookmark.</summary>
@@ -294,6 +306,9 @@ public sealed partial class AccessGroupBookmarkMgrService(BookmarkStore store, F
         new PyList([new PyList([.. bookmarks.Select(BookmarkPayload)]), InventoryWire.Id(fromFolder), InventoryWire.Id(toFolder)]);
 
     internal static PyList Ids(IEnumerable<long> ids) => new([.. ids.Select(id => InventoryWire.Id(id))]);
+
+    internal static long? StaticLocationSubfolderId(ServiceCall call) =>
+        OptionalPositive(call.Kwarg("subfolderID") ?? call.Arg(5));
 
     private static long? OptionalPositive(PyValue value)
     {

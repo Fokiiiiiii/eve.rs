@@ -332,7 +332,7 @@ public sealed class CorporationOfficeTests
     private static readonly CorporationOfficeStation Station = new(60000001, 1529, 1000125, 30000142, 0.9, 24);
 
     [PgFact]
-    public async Task Rent_quote_charges_once_and_creates_the_next_30_day_bill()
+    public async Task RentOffice_uses_current_price_for_stale_quote_and_charges_once()
     {
         await using var rig = await Rig.CreateAsync();
         var (actor, corporation) = await CreateCorporationAsync(rig);
@@ -346,24 +346,31 @@ public sealed class CorporationOfficeTests
         Assert.IsType<Eve.Marshal.PySubStruct>(bound.Items[0]);
         Assert.Equal(await service.GetMyCorporationsOffices(Call("GetMyCorporationsOffices", actor, corporation.Id)), bound.Items[1]);
         var before = (await rig.Wallets.GetAsync(corporation.Id))!.Isk;
-        var call = Call("RentOffice", actor, corporation.Id, new Eve.Marshal.PyReal((double)quote));
+        var currentPrice = quote + 1m;
+        await using (var update = rig.Source.CreateCommand($"UPDATE {rig.CorporationSchema}.office_station_prices SET price_isk=$2 WHERE station_id=$1"))
+        {
+            update.Parameters.Add(new Npgsql.NpgsqlParameter { Value = Station.Id });
+            update.Parameters.Add(new Npgsql.NpgsqlParameter { Value = currentPrice });
+            await update.ExecuteNonQueryAsync();
+        }
+        var call = Call("RentOffice", actor, corporation.Id, new Eve.Marshal.PyLong((long)quote));
 
         await service.RentOffice(call);
         await service.RentOffice(call);
 
         var offices = await rig.OfficeStore.ForCorporationAsync(corporation.Id);
         var office = Assert.Single(offices);
-        Assert.Equal(quote, office.RentIsk);
+        Assert.Equal(currentPrice, office.RentIsk);
         Assert.Equal(CorporationOfficeStore.OfficeFolderTypeId, (await rig.Items.GetAsync(office.OfficeFolderId))!.TypeId);
         Assert.Equal(rig.Now + CorporationOfficeStore.RentalCycleMs, office.ExpiresAtMs);
-        Assert.Equal(before - quote, (await rig.Wallets.GetAsync(corporation.Id))!.Isk);
+        Assert.Equal(before - currentPrice, (await rig.Wallets.GetAsync(corporation.Id))!.Isk);
 
         await using var bill = rig.Source.CreateCommand(
             $"SELECT amount_isk,due_at_ms,status FROM {rig.CorporationSchema}.office_rent_bills WHERE corporation_id=$1");
         bill.Parameters.Add(new Npgsql.NpgsqlParameter { Value = corporation.Id });
         await using var reader = await bill.ExecuteReaderAsync();
         Assert.True(await reader.ReadAsync());
-        Assert.Equal(quote, reader.GetDecimal(0));
+        Assert.Equal(currentPrice, reader.GetDecimal(0));
         Assert.Equal(rig.Now + CorporationOfficeStore.RentalCycleMs, reader.GetInt64(1));
         Assert.Equal((short)0, reader.GetInt16(2));
         Assert.False(await reader.ReadAsync());
@@ -379,12 +386,35 @@ public sealed class CorporationOfficeTests
         var quote = await QuoteAsync(service, actor, corporation.Id);
         var before = (await rig.Wallets.GetAsync(corporation.Id))!.Isk;
 
-        var error = await Assert.ThrowsAsync<CorporationError>(async () =>
+        var error = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(async () =>
         {
             await service.RentOffice(Call("RentOffice", actor, corporation.Id, new Eve.Marshal.PyReal((double)quote)));
         });
 
-        Assert.Equal("CORPORATION_ACCESS_DENIED", error.Code);
+        Assert.True(error.Error.IsUserError);
+        Assert.Equal("CrpAccessDenied", error.Error.UserErrorMessage);
+        Assert.Empty(await rig.OfficeStore.ForCorporationAsync(corporation.Id));
+        Assert.Equal(before, (await rig.Wallets.GetAsync(corporation.Id))!.Isk);
+    }
+
+    [PgFact]
+    public async Task Office_rent_insufficient_balance_is_a_NotEnoughMoney_user_error()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (actor, corporation) = await CreateCorporationAsync(rig);
+        await SetOfficeRoleAsync(rig, actor, CorporationRoles.RentOffice);
+        var service = CreateService(rig);
+        var quote = await QuoteAsync(service, actor, corporation.Id);
+        var before = (await rig.Wallets.GetAsync(corporation.Id))!.Isk;
+
+        var error = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(async () =>
+        {
+            await service.RentOffice(
+                Call("RentOffice", actor, corporation.Id, new Eve.Marshal.PyLong((long)quote)));
+        });
+
+        Assert.True(error.Error.IsUserError);
+        Assert.Equal("NotEnoughMoney", error.Error.UserErrorMessage);
         Assert.Empty(await rig.OfficeStore.ForCorporationAsync(corporation.Id));
         Assert.Equal(before, (await rig.Wallets.GetAsync(corporation.Id))!.Isk);
     }
@@ -449,7 +479,7 @@ public sealed class CorporationOfficeTests
     }
 
     [PgFact]
-    public async Task Impound_release_costs_half_the_current_rent_and_moves_assets_to_division_one()
+    public async Task Impound_release_uses_current_fee_when_client_quote_is_stale()
     {
         await using var rig = await Rig.CreateAsync();
         var (actor, corporation) = await CreateCorporationAsync(rig);
@@ -459,14 +489,21 @@ public sealed class CorporationOfficeTests
             MidpointRounding.AwayFromZero);
         var quote = await service.GetImpoundReleasePrice(Call("GetImpoundReleasePrice", actor, corporation.Id));
         Assert.Equal(expectedFee, (decimal)Assert.IsType<Eve.Marshal.PyReal>(quote).Value);
+        var currentFee = expectedFee + 1m;
+        await using (var update = rig.Source.CreateCommand($"UPDATE {rig.CorporationSchema}.office_station_prices SET price_isk=$2 WHERE station_id=$1"))
+        {
+            update.Parameters.Add(new Npgsql.NpgsqlParameter { Value = Station.Id });
+            update.Parameters.Add(new Npgsql.NpgsqlParameter { Value = currentFee * 2m });
+            await update.ExecuteNonQueryAsync();
+        }
         var before = (await rig.Wallets.GetAsync(corporation.Id))!.Isk;
         var ownerBefore = (await rig.Wallets.GetAsync(Station.OwnerId))?.Isk ?? 0m;
 
         await service.GetItemsFromImpound(Call("GetItemsFromImpound", actor, corporation.Id,
             new Eve.Marshal.PyReal((double)expectedFee)));
 
-        Assert.Equal(before - expectedFee, (await rig.Wallets.GetAsync(corporation.Id))!.Isk);
-        Assert.Equal(ownerBefore + expectedFee, (await rig.Wallets.GetAsync(Station.OwnerId))!.Isk);
+        Assert.Equal(before - currentFee, (await rig.Wallets.GetAsync(corporation.Id))!.Isk);
+        Assert.Equal(ownerBefore + currentFee, (await rig.Wallets.GetAsync(Station.OwnerId))!.Isk);
         Assert.Equal(Eve.Inventory.ItemFlags.CorpSAG1, (await rig.Items.GetAsync(itemId))!.Flag);
     }
 
@@ -628,8 +665,9 @@ public sealed class CorporationOfficeTests
             return ((Eve.Marshal.PyTuple)await ((Eve.Services.IService)service).CallAsync(call)).Items[1];
         }
         var stranger = await rig.CharacterAsync("Remote Stranger");
-        var denied = await Assert.ThrowsAsync<CorporationError>(() => Remote("UnrentOffice", stranger));
-        Assert.Equal("CORPORATION_ACCESS_DENIED", denied.Code);
+        var denied = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => Remote("UnrentOffice", stranger));
+        Assert.True(denied.Error.IsUserError);
+        Assert.Equal("CrpAccessDenied", denied.Error.UserErrorMessage);
         Assert.Single(await rig.OfficeStore.ForCorporationAsync(corporation.Id));
         Assert.Equal(Eve.Marshal.PyNone.Instance, await Remote("UnrentOffice", actor));
         Assert.Empty(await rig.OfficeStore.ForCorporationAsync(corporation.Id));
@@ -768,10 +806,11 @@ public sealed class CorporationOfficeTests
         var (actor, corporation) = await CreateCorporationAsync(rig);
         var service = CreateService(rig);
 
-        var error = await Assert.ThrowsAsync<CorporationError>(() => service.GetPriceQuote(
+        var error = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => service.GetPriceQuote(
             Call("GetPriceQuote", actor, corporation.Id, new Eve.Marshal.PyLong(corporation.Id + 1))).AsTask());
 
-        Assert.Equal("CORPORATION_ACCESS_DENIED", error.Code);
+        Assert.True(error.Error.IsUserError);
+        Assert.Equal("CrpAccessDenied", error.Error.UserErrorMessage);
     }
 
     private static async Task<(long Actor, Corporation Corporation)> CreateCorporationAsync(Rig rig)

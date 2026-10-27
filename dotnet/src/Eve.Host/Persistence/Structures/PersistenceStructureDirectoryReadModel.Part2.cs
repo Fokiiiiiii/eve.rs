@@ -63,28 +63,46 @@ public sealed partial class PersistenceStructureDirectoryReadModel
     }
 
     private static PyValue BasicStructureInfoPayload(long structureId, PyValue fullInfo)
-{
-    var fields = fullInfo is PyObject { Name: PyStr { Value: "util.KeyVal" }, Args: PyDict keyVal }
-        ? keyVal.Entries
-        : Array.Empty<KeyValuePair<PyValue, PyValue>>();
-    PyValue Read(string name) => fields.FirstOrDefault(entry => entry.Key is PyStr key && key.Value == name).Value
-        ?? PyNone.Instance;
-    return Py.KeyVal(
-        ("structureID", new PyLong(structureId)),
-        ("typeID", Read("typeID")),
-        ("solarSystemID", Read("solarSystemID")),
-        ("ownerID", Read("ownerID")));
-}
+    {
+        var fields = fullInfo is PyObject { Name: PyStr { Value: "util.KeyVal" }, Args: PyDict keyVal }
+            ? keyVal.Entries
+            : Array.Empty<KeyValuePair<PyValue, PyValue>>();
+        PyValue Read(string name) => fields.FirstOrDefault(entry => entry.Key is PyStr key && key.Value == name).Value
+            ?? PyNone.Instance;
+        return Py.KeyVal(
+            ("typeID", Read("typeID")),
+            ("structureID", new PyLong(structureId)),
+            ("upkeepState", Read("upkeepState")),
+            ("wars", Read("wars")),
+            ("ownerID", Read("ownerID")),
+            ("solarSystemID", Read("solarSystemID")),
+            ("itemName", Read("itemName")),
+            ("inSpace", Read("inSpace")));
+    }
 
-private static PyValue StructureInfoPayload(long structureId, JsonObject structure)
+    private static PyValue StructureInfoPayload(
+        long structureId,
+        JsonObject structure,
+        Eve.Sde.SdeRow? typeRow,
+        PyDict? accessibleServices = null)
     {
         var ownerCorporationId = Positive(Integer(structure["ownerCorpID"] ?? structure["corporationID"]));
         var ownerId = Positive(Integer(structure["ownerID"], ownerCorporationId));
-        var allianceId = Math.Max(0, Integer(structure["allianceID"]));
+        var allianceId = Positive(Integer(structure["allianceID"]));
+        var typeId = Positive(Integer(structure["typeID"]));
+        var systemId = Positive(Integer(structure["solarSystemID"]));
+        var profileId = Positive(Integer(structure["profileID"], 1));
+        if (profileId == 0)
+            profileId = 1;
+        var itemName = Text(structure["itemName"] ?? structure["name"]);
+        if (itemName.Length == 0 && typeRow is not null && typeRow.Doc.TryGetProperty("name", out var typeName))
+            itemName = Eve.Sde.SdeReader.English(typeName);
+        if (itemName.Length == 0)
+            itemName = $"Structure {structureId}";
+
         var services = structure["services"] as JsonObject ??
             structure["serviceStates"] as JsonObject ?? new JsonObject();
         var serviceEntries = new List<KeyValuePair<PyValue, PyValue>>();
-
         foreach (var (key, value) in services)
         {
             if (!long.TryParse(key, System.Globalization.NumberStyles.None,
@@ -93,20 +111,133 @@ private static PyValue StructureInfoPayload(long structureId, JsonObject structu
                 continue;
             var state = Integer(value, long.MinValue);
             if (state != long.MinValue)
-                serviceEntries.Add(new KeyValuePair<PyValue, PyValue>(new PyLong(serviceId), new PyInt(state)));
+                serviceEntries.Add(new KeyValuePair<PyValue, PyValue>(InventoryWire.Id(serviceId), new PyInt(state)));
         }
 
+        var position = structure["position"] as JsonObject;
+        var stateEndsAt = Positive(Integer(structure["stateEndsAt"]));
+        var nextReinforceApply = Positive(Integer(structure["nextReinforceApply"]));
+        var fuelExpiresAt = Positive(Integer(structure["fuelExpiresAt"]));
+        var unanchoring = Positive(Integer(structure["unanchoring"]));
         return Py.KeyVal(
-            ("structureID", new PyLong(structureId)),
-            ("itemID", new PyLong(structureId)),
-            ("typeID", new PyInt(Positive(Integer(structure["typeID"])))),
-            ("solarSystemID", new PyInt(Positive(Integer(structure["solarSystemID"])))),
-            ("ownerID", ownerId > 0 ? new PyLong(ownerId) : PyNone.Instance),
-            ("corporationID", new PyLong(ownerCorporationId)),
-            ("ownerCorpID", new PyLong(ownerCorporationId)),
-            ("allianceID", new PyLong(allianceId)),
-            ("services", new PyDict(serviceEntries)));
+            ("itemID", InventoryWire.Id(structureId)),
+            ("structureID", InventoryWire.Id(structureId)),
+            ("itemName", new PyStr(itemName)),
+            ("solarSystemID", InventoryWire.Id(systemId)),
+            ("locationID", InventoryWire.Id(systemId)),
+            ("ownerID", ownerId > 0 ? InventoryWire.Id(ownerId) : PyNone.Instance),
+            ("allianceID", allianceId > 0 ? InventoryWire.Id(allianceId) : PyNone.Instance),
+            ("typeID", InventoryWire.Id(typeId)),
+            ("groupID", InventoryWire.Id(SdeInteger(typeRow, "groupID"))),
+            ("categoryID", InventoryWire.Id(SdeInteger(typeRow, "categoryID"))),
+            ("position", Py.KeyVal(
+                ("x", new PyReal(JsonDouble(position?["x"]))),
+                ("y", new PyReal(JsonDouble(position?["y"]))),
+                ("z", new PyReal(JsonDouble(position?["z"]))))),
+            ("inSpace", PyBool.True),
+            ("profileID", new PyInt((int)profileId)),
+            ("services", accessibleServices ?? new PyDict(serviceEntries)),
+            ("fuelExpires", fuelExpiresAt > 0 ? new PyLong(Py.FileTimeFromUnixMs(fuelExpiresAt)) : PyNone.Instance),
+            ("upkeepState", new PyInt((int)Positive(Integer(structure["upkeepState"], 1)))),
+            ("state", new PyInt((int)Integer(structure["state"]))),
+            ("timerEnd", stateEndsAt > 0 ? new PyLong(Py.FileTimeFromUnixMs(stateEndsAt)) : PyNone.Instance),
+            ("reinforce_weekday", new PyInt((int)Integer(structure["reinforceWeekday"]))),
+            ("reinforce_hour", new PyInt((int)Integer(structure["reinforceHour"]))),
+            ("next_reinforce_weekday", nextReinforceApply > 0 ? new PyInt((int)Integer(structure["nextReinforceWeekday"])) : PyNone.Instance),
+            ("next_reinforce_hour", nextReinforceApply > 0 ? new PyInt((int)Integer(structure["nextReinforceHour"])) : PyNone.Instance),
+            ("next_reinforce_apply", nextReinforceApply > 0 ? new PyLong(Py.FileTimeFromUnixMs(nextReinforceApply)) : PyNone.Instance),
+            ("unanchoring", unanchoring > 0 ? new PyLong(unanchoring) : PyNone.Instance),
+            ("liquidOzoneQty", new PyInt((int)Positive(Integer(structure["liquidOzoneQty"])))),
+            ("wars", StructureWars(structure["wars"])),
+            ("corporationID", InventoryWire.Id(ownerCorporationId)),
+            ("ownerCorpID", InventoryWire.Id(ownerCorporationId)));
     }
+
+    private static double JsonDouble(JsonNode? value) =>
+        double.TryParse(value?.ToString(), System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var number) && double.IsFinite(number)
+            ? number
+            : 0;
+
+    private static PyList StructureWars(JsonNode? value) =>
+        new(value is JsonArray wars
+            ? wars.Select(war => Positive(Integer(war)))
+                .Where(warId => warId > 0)
+                .Select(warId => (PyValue)InventoryWire.Id(warId))
+                .ToArray()
+            : []);
+
+    private static PyDict CharacterDirectoryServices(
+        JsonObject structure,
+        long ownerCorporationId,
+        (long CharacterId, Eve.Relations.Affiliation Affiliation) access,
+        JsonObject profileState,
+        JsonObject accessGroupState)
+    {
+        var serviceStates = structure["serviceStates"] as JsonObject;
+        if (serviceStates is null)
+            return new PyDict([]);
+        var entries = new List<KeyValuePair<PyValue, PyValue>>();
+        foreach (var (key, node) in serviceStates)
+        {
+            if (!long.TryParse(key, System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture, out var serviceId) ||
+                serviceId <= 0 || serviceId > 9_007_199_254_740_991L ||
+                Integer(node, long.MinValue) != 1 ||
+                SettingIdForService(serviceId) is not { } settingId ||
+                !ProfileSettingAllows(
+                    structure,
+                    ownerCorporationId,
+                    access,
+                    profileState,
+                    accessGroupState,
+                    settingId))
+                continue;
+            entries.Add(new KeyValuePair<PyValue, PyValue>(
+                InventoryWire.Id(serviceId),
+                new PyInt(1)));
+        }
+        return new PyDict(entries);
+    }
+
+    private static PyValue NpcStationDirectoryPayload(Eve.Universe.Station station, IReadOnlyList<int> stationServiceIds)
+    {
+        var services = new HashSet<int?>();
+        foreach (var stationServiceId in stationServiceIds)
+            services.Add(StructureServiceForStationService(stationServiceId));
+        if (station.Security >= 0.45)
+            services.Add(8); // structuresCommon.GetStationServices adds repair facilities in high security.
+
+        var serviceEntries = services.Select(service => new KeyValuePair<PyValue, PyValue>(
+            service is { } serviceId ? new PyInt(serviceId) : PyNone.Instance,
+            PyNone.Instance)).ToArray();
+        return Py.KeyVal(
+            ("typeID", InventoryWire.Id(station.TypeId)),
+            ("structureID", InventoryWire.Id(station.Id)),
+            ("wars", new PyList([])),
+            ("services", new PyDict(serviceEntries)),
+            ("ownerID", InventoryWire.Id(station.OwnerId)),
+            ("solarSystemID", InventoryWire.Id(station.SolarSystemId)));
+    }
+
+    private static int? StructureServiceForStationService(int serviceId) => serviceId switch
+    {
+        1 or 2 or 3 => 7,
+        5 or 6 => 4,
+        7 => 5,
+        10 or 11 or 12 => 6,
+        13 => 8,
+        14 or 15 => 20,
+        17 => 2,
+        21 => 9,
+        22 => 1,
+        23 => 3,
+        24 => 10,
+        25 => 11,
+        26 => 12,
+        27 => 13,
+        _ => null,
+    };
 
     private static (
         bool ProfileResolved,

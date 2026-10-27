@@ -40,7 +40,7 @@ internal sealed partial class CharacterServicesComposition
     /// <summary>Stations, trade, development indices and eject.</summary>
     private IReadOnlyList<IService> StationRpc() =>
     [
-            new StationService(stations, characters, online, now, sovereigntyReadModel.ReadAllianceSystemsAsync, officeManager: officeManager, seedObserverGuestLedger: stationGuestLedger.SeedObserverGuestLedger, characterSessions: characterSessions, allAllianceSystems: sovereigntyReadModel.ReadAllAllianceSystemsAsync),
+            new StationService(stations, characters, online, now, sovereigntyReadModel.ReadAllianceSystemsAsync, officeManager: officeManager, seedObserverGuestLedger: stationGuestLedger.SeedObserverGuestLedger, characterSessions: characterSessions, allAllianceSystems: sovereigntyReadModel.ReadAllAllianceSystemsAsync, solarSystems: solarSystems),
             new Eve.Services.Station.TradeMgrService(characterSessions, tradeAuthority, itemTypes, stations, now),
             new Eve.Services.Station.ReprocessingService(source, items, itemTypes, stations, new Eve.Services.Station.SdeReprocessingData(sde, adjustedPrices), foundations.Relations, skills, economyWallets, wallets, characters, dogma, now),
             new Eve.Services.Station.RepairService(source, items, itemTypes, stations, dogma, modules, adjustedPrices, economyWallets, wallets, now),

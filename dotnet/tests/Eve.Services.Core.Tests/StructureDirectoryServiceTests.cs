@@ -832,7 +832,7 @@ public sealed class StructureDirectoryServiceTests
             return ValueTask.FromResult(DockingSnapshotsResult);
         }
 
-        public ValueTask<PyDict> GetMyCharacterStructuresAsync(long characterId, CancellationToken cancellationToken)
+        public ValueTask<PyDict> GetMyCharacterStructuresAsync(long characterId, long regionId, CancellationToken cancellationToken)
         {
             CharacterStructuresCharacterId = characterId;
             return ValueTask.FromResult(CharacterStructuresResult);

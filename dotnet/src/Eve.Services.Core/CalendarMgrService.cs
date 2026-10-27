@@ -52,8 +52,11 @@ public sealed partial class CalendarMgrService
     {
         var eventId = CalendarWire.LongArg(call, 0);
         var ownerId = CalendarWire.LongArg(call, 1);
-        var calendarEvent = await Store.GetEventAsync(eventId, ownerId, call.Cancellation);
-        if (calendarEvent is null || !await CanViewEventAsync(calendarEvent, call)) throw EventNotFound();
+        var calendarEvent = await Store.GetEventByIdAsync(eventId, call.Cancellation);
+        if (calendarEvent is null) throw EventNotFound();
+        if (calendarEvent.OwnerId != ownerId) throw ClientNotify("Calendar event owner mismatch.");
+        if (!await CanViewEventAsync(calendarEvent, call))
+            throw ClientNotify("You do not have access to those calendar responses.");
         var rows = await Store.GetResponsesToEventAsync(eventId, ownerId, call.Cancellation);
         if (_audience is not null && calendarEvent.Tag is CalendarTags.Corporation or CalendarTags.Alliance)
         {
@@ -79,7 +82,7 @@ public sealed partial class CalendarMgrService
         var ownerId = CalendarWire.OwnerIdForCreate(call, tag);
         if (!personal && (_canManageGroupEvent is null ||
             !await _canManageGroupEvent(characterId, ownerId, tag, call.Cancellation)))
-            throw EventNotFound();
+            throw ClientNotify(CalendarWire.GroupCreateDenied(tag));
         var dateTimeIndex = 0;
         var durationIndex = 1;
         var titleIndex = 2;
@@ -111,15 +114,25 @@ public sealed partial class CalendarMgrService
         var eventId = CalendarWire.LongArg(call, 0);
         var oldEventDateTime = CalendarWire.LongArg(call, 1);
         var calendarEvent = await Store.GetEventByIdAsync(eventId, call.Cancellation);
-        if (calendarEvent is null || calendarEvent.Tag != expectedTag || !await CanManageAsync(calendarEvent, call))
-            throw EventNotFound();
+        if (calendarEvent is null) throw EventNotFound();
+        if (calendarEvent.IsDeleted)
+            throw ClientNotify("That calendar event has been deleted.");
+        if (calendarEvent.Tag != expectedTag || !await CanManageAsync(calendarEvent, call))
+            throw ClientNotify("You do not have permission to edit that calendar event.");
+        if (calendarEvent.EventDateTime != oldEventDateTime)
+            throw ClientNotify("The calendar event changed before it could be edited.");
 
         var input = CalendarWire.ReadInput(
             call, 2, 3, 4, 5, 6, calendarEvent.OwnerId, calendarEvent.CreatorId, expectedTag);
         CalendarWire.Validate(input, 0);
         if (!await Store.EditEventAsync(eventId, calendarEvent.OwnerId, oldEventDateTime, input, call.Cancellation))
-            throw EventNotFound();
-        var updated = await Store.GetEventAsync(eventId, calendarEvent.OwnerId, call.Cancellation);
+        {
+            var latest = await Store.GetEventByIdAsync(eventId, call.Cancellation);
+            if (latest is null) throw EventNotFound();
+            if (latest.IsDeleted) throw ClientNotify("That calendar event has been deleted.");
+            throw ClientNotify("The calendar event changed before it could be edited.");
+        }
+        var updated = await Store.GetEventByIdAsync(eventId, call.Cancellation);
         if (updated is not null)
             await NotifyEditAsync(updated, oldEventDateTime, call);
         return PyNone.Instance;
@@ -130,8 +143,11 @@ public sealed partial class CalendarMgrService
     {
         var eventId = CalendarWire.LongArg(call, 0);
         var ownerId = CalendarWire.LongArg(call, 1);
-        var calendarEvent = await Store.GetEventAsync(eventId, ownerId, call.Cancellation);
-        if (calendarEvent is null || !await CanManageAsync(calendarEvent, call)) throw EventNotFound();
+        var calendarEvent = await Store.GetEventByIdAsync(eventId, call.Cancellation);
+        if (calendarEvent is null) throw EventNotFound();
+        if (calendarEvent.OwnerId != ownerId) throw ClientNotify("Calendar event owner mismatch.");
+        if (!await CanManageAsync(calendarEvent, call))
+            throw ClientNotify("You do not have permission to delete that calendar event.");
         var recipients = await ListViewerCharacterIdsAsync(calendarEvent, call.Cancellation);
         var modified = CalendarWire.NowFileTime();
         if (!await Store.DeleteEventAsync(eventId, ownerId, modified, call.Cancellation))
@@ -147,7 +163,11 @@ public sealed partial class CalendarMgrService
         var add = CalendarWire.CharacterIds(call.Arg(1));
         var remove = CalendarWire.CharacterIds(call.Arg(2));
         var calendarEvent = await Store.GetEventByIdAsync(eventId, call.Cancellation);
-        if (calendarEvent is null || !await CanManageAsync(calendarEvent, call)) throw EventNotFound();
+        if (calendarEvent is null) throw EventNotFound();
+        if (!await CanManageAsync(calendarEvent, call))
+            throw ClientNotify("You do not have permission to update event participants.");
+        if (calendarEvent.Tag != CalendarTags.Personal)
+            throw ClientNotify("Only personal events support invitee updates.");
         add = add.Where(id => id != calendarEvent.CreatorId).ToArray();
         remove = remove.Where(id => id != calendarEvent.CreatorId).ToArray();
         if (add.Count > 50 || remove.Count > 50) throw CalendarWire.TooManyInvitees();
@@ -189,13 +209,20 @@ public sealed partial class CalendarMgrService
         var ownerId = CalendarWire.LongArg(call, 1);
         var response = checked((short)CalendarWire.IntArg(call, 2));
         var characterId = CalendarWire.CharacterId(call);
-        var calendarEvent = await Store.GetEventAsync(eventId, ownerId, call.Cancellation);
-        if (calendarEvent is null || calendarEvent.IsDeleted ||
-            response is < CalendarResponseStates.Declined or > CalendarResponseStates.Maybe ||
+        var calendarEvent = await Store.GetEventByIdAsync(eventId, call.Cancellation);
+        if (calendarEvent is null) throw EventNotFound();
+        if (calendarEvent.OwnerId != ownerId) throw ClientNotify("Calendar event owner mismatch.");
+        if (!await CanViewEventAsync(calendarEvent, call))
+            throw ClientNotify("You do not have access to that calendar event.");
+        if (calendarEvent.Tag == CalendarTags.Personal &&
             !await CalendarWire.CanRespondAsync(Store, calendarEvent, call, characterId))
-            throw EventNotFound();
+            throw ClientNotify("You are not invited to that calendar event.");
+        if (response is < CalendarResponseStates.Declined or > CalendarResponseStates.Maybe)
+            throw ClientNotify("Invalid calendar response.");
         if (!await Store.SendResponseAsync(eventId, ownerId, characterId, response, call.Cancellation))
-            throw EventNotFound();
+            throw ClientNotify(calendarEvent.Tag == CalendarTags.Personal
+                ? "You are not invited to that calendar event."
+                : "You do not have access to that calendar event.");
         await NotifyResponseAsync(calendarEvent, response, call);
         return PyNone.Instance;
     }
@@ -273,7 +300,7 @@ public sealed partial class CalendarMgrService
         {
             var session = _sessions.Of(characterId);
             if (session is not null && !ReferenceEquals(session, excludedSession))
-                session.SendNotification(notification, "clientID", payload);
+                session.SendNotification(notification, "clientID", payload.Items.ToArray());
         }
     }
 
@@ -296,8 +323,11 @@ public sealed partial class CalendarMgrService
             await _canManageGroupEvent(actorId, calendarEvent.OwnerId, calendarEvent.Tag, call.Cancellation);
     }
 
+    internal static MachoWrappedException ClientNotify(string notify) =>
+        MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(notify)));
+
     internal static MachoWrappedException EventNotFound() =>
-        MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Calendar event not found.")));
+        ClientNotify("Calendar event not found.");
 }
 
 /// <summary>Calendar month and event reads, addressed separately by the client's ProxySvc.</summary>
@@ -341,14 +371,17 @@ public sealed partial class CalendarProxyService
     {
         var eventId = CalendarWire.LongArg(call, 0);
         var ownerId = CalendarWire.LongArg(call, 1);
-        var calendarEvent = await Store.GetEventAsync(eventId, ownerId, call.Cancellation);
+        var calendarEvent = await Store.GetEventByIdAsync(eventId, call.Cancellation);
+        if (calendarEvent is null) throw CalendarMgrService.EventNotFound();
+        if (calendarEvent.OwnerId != ownerId)
+            throw CalendarMgrService.ClientNotify("Calendar event owner mismatch.");
         var characterId = CalendarWire.CharacterId(call);
         var groups = await ReadCurrentGroupsAsync(characterId, call.Cancellation);
-        var canView = calendarEvent is not null && (calendarEvent.Tag == CalendarTags.Personal
+        var canView = calendarEvent.Tag == CalendarTags.Personal
             ? await CalendarWire.CanViewAsync(Store, calendarEvent, call)
-            : CalendarWire.CanViewFromGroups(calendarEvent, groups.CorporationId, groups.AllianceId));
-        if (!canView || calendarEvent is null)
-            throw CalendarMgrService.EventNotFound();
+            : CalendarWire.CanViewFromGroups(calendarEvent, groups.CorporationId, groups.AllianceId);
+        if (!canView)
+            throw CalendarMgrService.ClientNotify("You do not have access to that calendar event.");
         return CalendarWire.EventDetails(calendarEvent);
     }
 
@@ -414,7 +447,7 @@ internal static class CalendarWire
         long ownerId, long creatorId, short tag) =>
         new(ownerId, creatorId, tag, LongArg(call, dateIndex),
             NullableInt(call.Arg(durationIndex)),
-            StringValue(call.Arg(titleIndex)),
+            StringValue(call.Arg(titleIndex)).Trim(),
             StringValue(call.Arg(textIndex)),
             IntArg(call, importanceIndex));
 
@@ -425,7 +458,7 @@ internal static class CalendarWire
         if (input.Title.Length > 40)
             throw MachoErrors.ThrowUserError("CalendarTitleTooLong");
         if (input.Text.Length > 500)
-            throw MachoErrors.ThrowUserError("CalendarDescriptionTooLong");
+            throw CalendarMgrService.ClientNotify("Calendar event description is too long.");
         if (input.Duration is < 0)
             throw MachoErrors.ThrowUserError("CalendarInvalidDuration");
         if (inviteeCount > 50)
@@ -438,12 +471,12 @@ internal static class CalendarWire
         }
         catch (ArgumentOutOfRangeException)
         {
-            throw MachoErrors.ThrowUserError("CalendarCannotPlanThePast2");
+            throw MachoErrors.ThrowUserError("CalendarCannotPlanThePast");
         }
 
         var now = DateTime.UtcNow;
         if (eventTime <= now)
-            throw MachoErrors.ThrowUserError("CalendarCannotPlanThePast2");
+            throw MachoErrors.ThrowUserError("CalendarCannotPlanThePast");
         var monthDistance = (eventTime.Year - now.Year) * 12 + eventTime.Month - now.Month;
         if (monthDistance > 12)
             throw MachoErrors.ThrowUserError("CalendarTooFarIntoFuture", ("numMonths", new PyInt(12)));
@@ -451,16 +484,24 @@ internal static class CalendarWire
 
 
     public static MachoWrappedException TooManyInvitees() =>
-        MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Too many calendar invitees (maximum 50).")));
+        CalendarMgrService.ClientNotify("Too many invitees selected for that event.");
+
+    public static string GroupCreateDenied(short tag) => tag switch
+    {
+        CalendarTags.Corporation => "You do not have permission to create corporation calendar events.",
+        CalendarTags.Alliance => "You do not have permission to create alliance calendar events.",
+        _ => "You do not have permission to create that calendar event.",
+    };
 
     public static long OwnerIdForCreate(ServiceCall call, short tag)
     {
         var characterId = CharacterId(call);
         if (tag == CalendarTags.Personal) return characterId;
 
+        var permissionError = GroupCreateDenied(tag);
         var role = call.Session.GetInt("corprole") ?? 0;
         if ((role & ChatManagerRole) != ChatManagerRole)
-            throw CalendarMgrService.EventNotFound();
+            throw CalendarMgrService.ClientNotify(permissionError);
 
         var ownerId = tag switch
         {
@@ -468,7 +509,7 @@ internal static class CalendarWire
             CalendarTags.Alliance => SessionId(call, "allianceid", "allianceID"),
             _ => 0,
         };
-        return ownerId > 0 ? ownerId : throw CalendarMgrService.EventNotFound();
+        return ownerId > 0 ? ownerId : throw CalendarMgrService.ClientNotify(permissionError);
     }
 
     public static bool CanManage(CalendarEvent calendarEvent, ServiceCall call)
@@ -548,21 +589,23 @@ internal static class CalendarWire
         ("isDeleted", value.IsDeleted ? PyBool.True : PyBool.False),
         ("autoEventType", value.AutoEventType is { } autoEventType ? new PyInt(autoEventType) : PyNone.Instance));
 
-    public static PyDict EventDetails(CalendarEvent value) => KeyVal(
-        ("eventID", new PyLong(value.EventId)),
-        ("ownerID", new PyLong(value.OwnerId)),
-        ("creatorID", new PyLong(value.CreatorId)),
-        ("eventText", new PyStr(value.Text)));
+    public static PyValue EventDetails(CalendarEvent value) => KeyValObject(
+        ("eventText", new PyStr(value.Text)),
+        ("creatorID", new PyLong(value.CreatorId)));
 
-    public static PyDict ResponseForCharacter(CalendarResponse value) => KeyVal(
+    public static PyValue ResponseForCharacter(CalendarResponse value) => KeyValObject(
         ("eventID", new PyLong(value.EventId)),
         ("status", new PyInt(value.Status)));
 
-    public static PyDict ResponseForEvent(CalendarResponse value) => KeyVal(
+    public static PyValue ResponseForEvent(CalendarResponse value) => KeyValObject(
         ("characterID", new PyLong(value.CharacterId)),
         ("status", new PyInt(value.Status)));
 
     private static PyDict KeyVal(params (string Name, PyValue Value)[] fields) =>
         new(fields.Select(field =>
             new KeyValuePair<PyValue, PyValue>(new PyStr(field.Name), field.Value)).ToArray());
+
+    private static PyValue KeyValObject(params (string Name, PyValue Value)[] fields) =>
+        Py.KeyVal(fields.Select(field =>
+            new KeyValuePair<PyValue, PyValue>(new PyStr(field.Name), field.Value)));
 }

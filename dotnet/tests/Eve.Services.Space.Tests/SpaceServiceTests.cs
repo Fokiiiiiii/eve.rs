@@ -291,6 +291,7 @@ public class SpaceServiceTests
         var (rig, character, session) = await DockedAsync(localTimers: timers);
         await using var _ = rig;
         await InSpaceAsync(rig, session);
+        await Rig.UntilAsync(() => timers.Count == 0);
         rig.Space.LifecycleBlockers = (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<string>>([]);
         var shipId = character.ShipId;
         var systemId = (int)session.GetInt("solarsystemid")!.Value;
@@ -298,7 +299,7 @@ public class SpaceServiceTests
 
         var ejected = await rig.ShipCallAsync(session, "Eject", oid);
 
-        Assert.IsType<PyTuple>(ejected);
+        Assert.IsType<PyNone>(ejected);
         var capsuleId = (await rig.Characters.GetAsync(character.CharacterId))!.ShipId!.Value;
         Assert.NotEqual(shipId, capsuleId);
         Assert.Equal(capsuleId, session.GetInt("shipid"));
@@ -2287,8 +2288,8 @@ public class SpaceServiceTests
         const double z = 7_750_000;
         var systemId = (int)session.GetInt("solarsystemid")!.Value;
         rig.Beyonce.BookmarkTargetForCharacter = (characterId, requestedId, _) =>
-            Task.FromResult<WarpCoordinates?>(requestedId == bookmarkId
-                ? new WarpCoordinates(systemId, x, y, z)
+            Task.FromResult<BookmarkWarpTarget?>(requestedId == bookmarkId
+                ? new BookmarkWarpTarget(systemId, null, x, y, z)
                 : null);
 
         var answer = await rig.BeyonceCallWithAsync(
@@ -2493,8 +2494,16 @@ public class SpaceServiceTests
     private static Task<PyValue> JumpAsync(Rig rig, ClientSession session, string oid, long ship) =>
         rig.BeyonceCallAsync(session, "CmdStargateJump", oid, new PyInt((int)Gate), new PyInt((int)NextGate), new PyLong(ship));
 
+    private static void AssertBoundJumpResult(PyValue value, string oid)
+    {
+        var result = Assert.IsType<PyTuple>(value);
+        Assert.Equal(2, result.Items.Count);
+        Assert.Equal(oid, Assert.IsType<PyStr>(result.Items[0]).Value);
+        Assert.Equal(Py.FileTimeFromUnixMs(Rig.ClockMs + 10_000), Assert.IsType<PyLong>(result.Items[1]).Value);
+    }
+
     [PgFact]
-    public async Task A_jump_is_given_to_the_simulation_the_client_is_told_the_queue_and_returns_none()
+    public async Task A_jump_is_given_to_the_simulation_the_client_is_told_the_queue_and_returns_the_bound_object_and_cooldown()
     {
         var (rig, character, session) = await DockedAsync();
         await using var _ = rig;
@@ -2503,7 +2512,8 @@ public class SpaceServiceTests
         Events.Of(session);
         var before = rig.Sim.Heard.Count;
 
-        Assert.Equal(PyNone.Instance, await JumpAsync(rig, session, oid, character.ShipId));
+        var result = await JumpAsync(rig, session, oid, character.ShipId);
+        AssertBoundJumpResult(result, oid);
         Assert.Equal(
             [Describe(new SimCommand((ulong)session.SessionId, SimCommands.Jump, [Gate, NextGate]))],
             rig.Sim.Heard.Skip(before).OfType<SimCommand>().Select(Describe));
@@ -2547,7 +2557,7 @@ public class SpaceServiceTests
         rig.Space.GateRules = new Eve.Services.Space.Gates.GateRules(
             new Dictionary<long, int> { [Gate] = 579 }, new Dictionary<int, IReadOnlySet<int>> { [579] = new HashSet<int> { 25 } },
             new Dictionary<long, long>(), new Dictionary<long, int>(), new Dictionary<int, Eve.Universe.AlignmentToll>());
-        Assert.Equal(PyNone.Instance, await JumpAsync(rig, session, oid, character.ShipId));
+        AssertBoundJumpResult(await JumpAsync(rig, session, oid, character.ShipId), oid);
         Assert.Contains(rig.Sim.Heard, m => m is SimCommand { Code: SimCommands.Jump });
     }
 
@@ -2580,7 +2590,7 @@ public class SpaceServiceTests
 
         // a paid jump is charged once and taken
         payable = true;
-        Assert.Equal(PyNone.Instance, await JumpAsync(rig, session, oid, character.ShipId));
+        AssertBoundJumpResult(await JumpAsync(rig, session, oid, character.ShipId), oid);
         Assert.Single(charges);
         Assert.Equal((character.CharacterId, 10_000m), (charges[0].Character, charges[0].Amount));
         Assert.StartsWith("gate-toll:", charges[0].Key);
@@ -2614,7 +2624,7 @@ public class SpaceServiceTests
         Assert.Empty(inspections);
 
         rig.Sim.JumpAnswer = new CommandReply(true, 0, null, null, NextSystem, 0);
-        Assert.Equal(PyNone.Instance, await JumpAsync(rig, session, oid, character.ShipId));
+        AssertBoundJumpResult(await JumpAsync(rig, session, oid, character.ShipId), oid);
         Assert.Equal([(character.CharacterId, character.ShipId, NextSystem)], inspections);
     }
 
@@ -2930,7 +2940,7 @@ public class SpaceServiceTests
     }
 
     [PgFact]
-    public async Task A_dock_is_answered_with_the_time_it_was_accepted_and_with_nothing_when_it_was_not()
+    public async Task A_dock_returns_nothing_for_an_accepted_command_and_when_it_is_refused()
     {
         var (rig, _, session) = await DockedAsync();
         await using var _ = rig;
@@ -2938,7 +2948,7 @@ public class SpaceServiceTests
         var oid = await rig.BindBeyonceAsync(session);
 
         var answer = await rig.BeyonceCallAsync(session, "CmdDock", oid, new PyInt((int)Rig.Station), new PyLong(session.GetInt("shipid")!.Value));
-        Assert.Equal(new PyLong(134351527136350000), answer);
+        Assert.Equal(new PyLong(rig.Sim.DockAnswer.At), answer);
         Assert.Equal(Describe(new SimCommand((ulong)session.SessionId, SimCommands.Dock, [Rig.Station])), Describe(rig.Sim.Heard.Last()));
 
         rig.Sim.DockAnswer = new CommandReply(false, 0, "STATION_NOT_FOUND");
@@ -3440,8 +3450,7 @@ public class SpaceServiceTests
 
             Assert.Equal(PyNone.Instance, await FleetObjectCallAsync(fleet, fleetId, inviteeSession, "LeaveFleet", []));
             Assert.Null(inviteeSession.GetInt("fleetid"));
-            Assert.Equal(new PyLong(inviteeId),
-                Assert.Single(Events.Of(inviteeSession), item => item.Name == "OnFleetLeave").Args[0]);
+            Assert.DoesNotContain(Events.Of(inviteeSession), item => item.Name == "OnFleetLeave");
             Assert.Equal(new PyLong(inviteeId),
                 Assert.Single(Events.Of(leaderSession), item => item.Name == "OnFleetLeave").Args[0]);
         }

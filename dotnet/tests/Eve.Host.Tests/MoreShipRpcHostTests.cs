@@ -13,12 +13,18 @@ public partial class HostServerTests
     private sealed class WireContainers : ISpaceContainers
     {
         public List<long> LaunchedItems { get; } = [];
+        public List<long> JettisonRequests { get; } = [];
+        public IReadOnlyList<long> JettisonedItems { get; set; } = [];
         public bool IsInSpace(ClientSession session) => true;
         public int? SolarSystemOf(ClientSession session) => 31_000_005;
         public Task<Item?> OpenAsync(ClientSession session, long containerId, CancellationToken cancellationToken) => Task.FromResult<Item?>(null);
         public Task<long?> MoveAsync(ClientSession session, long itemId, long sourceId, long destinationId, long? quantity, CancellationToken cancellationToken) => Task.FromResult<long?>(null);
         public Task<bool?> MoveAllAsync(ClientSession session, IReadOnlyList<long> itemIds, long sourceId, long destinationId, CancellationToken cancellationToken) => Task.FromResult<bool?>(null);
-        public Task<IReadOnlyList<long>> JettisonAsync(ClientSession session, IReadOnlyList<long> itemIds, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<long>>([]);
+        public Task<IReadOnlyList<long>> JettisonAsync(ClientSession session, IReadOnlyList<long> itemIds, CancellationToken cancellationToken)
+        {
+            JettisonRequests.AddRange(itemIds);
+            return Task.FromResult(JettisonedItems);
+        }
         public Task<long?> LaunchFromShipAsync(ClientSession session, long itemId, CancellationToken cancellationToken)
         {
             LaunchedItems.Add(itemId);
@@ -81,5 +87,34 @@ public partial class HostServerTests
             PyBool.False)));
         Assert.Equal(new PyList([new PyLong(9501)]), launched.Entries[0].Value);
         Assert.Equal([new DroneRequest(6001, 2), new DroneRequest(6002, 1)], drones.Requests);
+    }
+
+    [Fact]
+    public async Task Ship_jettison_returns_the_two_client_tuples_through_host_wire()
+    {
+        var containers = new WireContainers { JettisonedItems = [5001] };
+        Start(
+            configure: registry => registry.Register(new ShipService(null!, () => FixedNowMs, containers)),
+            sessionOpened: session => session.Set("stationid", new PyInt(600)));
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        _ = await front.ReceiveAsync();
+
+        var kwargs = new PyDict([
+            new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1)),
+        ]);
+        var boundArgs = Py.Tuple(
+            Py.Tuple(new PyInt(600), new PyInt(15)),
+            Py.Tuple(new PyStr("Jettison"), Py.Tuple(new PyList([new PyInt(5001), new PyLong(5002)])), kwargs));
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.CallWithKwargs(open, 1, "ship", "MachoBindObject", boundArgs, kwargs))));
+        var reply = Assert.IsType<PyTuple>(Result(MarshalCodec.Decode(
+            Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
+        var jettisoned = Assert.IsType<PyTuple>(reply.Items[1]);
+
+        Assert.Equal([5001L, 5002L], containers.JettisonRequests);
+        Assert.Equal(new PyInt(5001), Assert.Single(Assert.IsType<PyTuple>(jettisoned.Items[0]).Items));
+        Assert.Empty(Assert.IsType<PyTuple>(jettisoned.Items[1]).Items);
     }
 }

@@ -132,7 +132,7 @@ public sealed partial class ShipService(
         }
         var asked = (call.Arg(0) switch { PyTuple t => t.Items, PyList l => l.Items, _ => [] }).Select(IdOf).OfType<long>().ToList();
         var jettisoned = await containers.JettisonAsync(call.Session, asked, call.Cancellation);
-        return Py.Tuple(Py.Tuple([.. jettisoned.Select(InventoryWire.Id)]), Py.Tuple());
+        return Py.Tuple(new PyTuple([.. jettisoned.Select(InventoryWire.Id)]), new PyTuple([]));
     }
 
     /// <summary>
@@ -247,6 +247,10 @@ public sealed partial class ShipService(
 
     /// <summary><c>Eject()</c> leaves the piloted hull in space and continues in a capsule.</summary>
     [Method("Eject")]
-    public ValueTask<PyValue> Eject(ServiceCall call) =>
-        _binding.Owns(call) ? space.EjectAsync(call.Session, call.Cancellation) : ValueTask.FromResult<PyValue>(None);
+    public async ValueTask<PyValue> Eject(ServiceCall call)
+    {
+        if (!_binding.Owns(call)) return None;
+        var result = await space.EjectAsync(call.Session, call.Cancellation);
+        return result is PyTuple ? None : result;
+    }
 }

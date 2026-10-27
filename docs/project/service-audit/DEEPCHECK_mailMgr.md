@@ -15,8 +15,8 @@
 
 | RPC | eve-logic caller / 引数 | client の応答・Host の状態と通知 |
 |---|---|---|
-| `SyncMail` | `mailSvc.py:156`; `firstID,lastID`、最初の同期では `None` | `newMail,oldMail,mailStatus` を返す。client は header/status を取り込み、続いて GetMailHeaders / body fetch を行う（133-234）。mailbox snapshot 読み取りのみ。 |
-| `GetMailHeaders` | `mailSvc.py:192`; ID list | header row の list。client が未取得 header を mailbox に加える（192-234）。snapshot 読み取りのみ。 |
+| `SyncMail` | `mailSvc.py:156`; `firstID,lastID`、最初の同期では `None` | `newMail,oldMail,mailStatus` を返す。応答件数の独自上限を設けず、mailStatus は mailbox 全件を返す。client は全 status を取り込み、続いて不足 header / body を取得する（`mailSvc.py:203-234`）。EveJS も全 mailbox entry を返す（`mailState.js:2081-2121`）。 |
+| `GetMailHeaders` | `mailSvc.py:192`; ID list | header row の list。`toCharacterIDs` は comma-separated string または `None`、`toCorpOrAllianceID` は scalar ID または `None`。client は corp/alliance ID を単一 recipient として読む（`mailSvc.py:638-674`、特に 641-643）；EveJS も scalar を作る（`mailMgrService.js:129-138`）。 |
 | `GetBody` | `mailSvc.py:511`; message ID, bool | compressed bytes または `None`。client は `None` を空本文として扱い、bytes を zlib 展開する（493-523）。read flag が変わる場合は status flush 後に別 session へ OnMailUpdatedByExternal。 |
 | `GetLabels` | `mailSvc.py:677`; 引数なし | label ID→KeyVal dict。client は static labels と合わせて表示する（676-710）。snapshot 読み取りのみ。 |
 | `MarkAsRead` | `mailSvc.py:338`; ID list | `None`; read bit を保持しつつ立て、flush 後 OnMailUpdatedByExternal(ids, true, None)。 |
@@ -49,7 +49,8 @@
 - 実 route: `CharacterServiceList.cs:62` が `MailRpc()` を登録し、`MailRpc.cs:138-152` が `mailMgr` と durable callbacks を構成する。全28名は `MailService.cs:40-62` に登録。
 - 永続化/通知: `MailRpc.cs:164-201` が mutation gate、`MailboxMutation.Apply`、mailbox write、orphan remove、flush の順に実行。通知の payload は `MailService.cs:633-701` で組み立てる。
 - Wire coverage: `MailRpcHostWireTests.cs:122-251` で追加8 RPC、`252-335` で SendMail、`336-387` で GM poke を Host socket 経由で呼び、machoVersion kwargs、list/tuple、int/long、None、PyWString、通知 args、後続 read を確認。`HostServerTests.cs:4457-4699` は通常送信と GM poke の durable write/flush、OnMailSent、本文上限を確認。
-- Local check: merge 後の `Eve.Services.Core.Tests` focused 4件成功、`Eve.Host.Tests` mailMgr focused 5件成功。Host project 全 shard は 838件中 510 passed / 101 failed / 227 skipped。失敗のうち確認できたものには、PostgreSQL fixture 設定がなく `PgConnection.ForTest` が接続前に失敗するものと、mailMgr 外の assertion failures がある。全失敗の根因は個別に調査していない。DB は使用していない。
+- Local check: Core focused test 1/1 passed; full `Eve.Services.Core.Tests` 842 passed / 8 failed / 57 skipped. Host focused mailMgr tests 5/5 and registry snapshot 1/1 passed; full `Eve.Host.Tests` 511 passed / 100 failed / 227 skipped. Failures include tests that require `EVE_PG_URL`; other failures are outside mailMgr and were not individually investigated. No local database was used.
+- CI: mail focused run `40445026610` for `4bd4590` had 82 passed / 2 failed because existing assertions expected a recipient array and a SyncMail 5,000-entry rejection; both were corrected against client/EveJS shapes. Push CI run `40446392725` for `b2062b1c` exposed and fixed the agent-mission fallback assertion and stale Host inventory snapshot (1,424 expected vs 1,442 actual). For commit `661e12cc`, push CI `40449317563` completed successfully with no failed jobs, and focused agent-test `40449329238` passed. Host inventory confirmed 1,442 total methods, including 28 mailMgr methods.
 - GUI の V24.01 client では確認していない。PostgreSQL を使うテストは実行していない（この作業では DB を使わない）。
 
 ## EveJS 比較

@@ -37,6 +37,7 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Eve.Services.Space.Tests" />
+    <InternalsVisibleTo Include="Eve.Host.Tests" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Beacons/Data/*.json" LogicalName="%(Filename)%(Extension)" />

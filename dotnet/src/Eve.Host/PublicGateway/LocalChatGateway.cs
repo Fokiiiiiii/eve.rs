@@ -115,13 +115,7 @@ internal sealed class LocalChatGateway
             }
 
             if (joined && IsDelayed(channel.Value.Id))
-            {
-                var join = new ProtoWriter();
-                join.Message(1, EncodeCharacter(session));
-                WriteChannel(join, channel.Value, 3);
-                PublishToChannel(channel.Value, JoinNotice, join.ToArray());
-                PublishMembershipList(channel.Value);
-            }
+                PublishMembershipList(channel.Value, characterId);
         }
 
         var notice = new ProtoWriter();
@@ -205,7 +199,7 @@ internal sealed class LocalChatGateway
             notice.Message(1, EncodeCharacter(session));
             notice.Message(2, EncodeIdentifier(systemId));
             PublishToSystem(systemId, JoinNotice, notice.ToArray(), characterId);
-            PublishMembershipList(systemId);
+            PublishMembershipList(new ChannelAddress(ChannelKind.Local, systemId), characterId);
         }
     }
 
@@ -233,13 +227,16 @@ internal sealed class LocalChatGateway
 
     private void PublishMembershipList(long systemId) => PublishMembershipList(new ChannelAddress(ChannelKind.Local, systemId));
 
-    private void PublishMembershipList(ChannelAddress channel)
+    private void PublishMembershipList(ChannelAddress channel, long? recipientCharacterId = null)
     {
         var notice = new ProtoWriter();
         foreach (var member in VisibleMembers(channel))
             notice.Message(1, EncodeCharacter(member));
         WriteChannel(notice, channel, 3);
-        PublishToChannel(channel, MembershipNotice, notice.ToArray());
+        if (recipientCharacterId is { } characterId)
+            _notices.Publish(MembershipNotice, notice.ToArray(), character: characterId);
+        else
+            PublishToChannel(channel, MembershipNotice, notice.ToArray());
     }
 
     private void PublishToSystem(long systemId, string type, byte[] payload, long? exceptCharacter = null)

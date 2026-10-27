@@ -53,7 +53,7 @@ public static class BookmarkRules
     public const int AccessNone = 0;
 
     public const int ExpiryNone = 0;
-    public const int Expiry4Hours = 1;
+    public const int Expiry4Hours = 1; // The V24 client label; EVE University gives this option a three-hour duration.
     public const int Expiry2Days = 2;
     public const int Expiry24Hours = 3;
 
@@ -64,7 +64,7 @@ public static class BookmarkRules
     /// <summary>The expiry an expiry mode gives a bookmark made at <paramref name="nowMs"/>, or null for none (the reference's <c>translateExpiryToFiletime</c>).</summary>
     public static long? ExpiryMs(int mode, long nowMs) => mode switch
     {
-        Expiry4Hours => nowMs + 4L * 3_600_000,
+        Expiry4Hours => nowMs + 3L * 3_600_000,
         Expiry24Hours => nowMs + 24L * 3_600_000,
         Expiry2Days => nowMs + 48L * 3_600_000,
         _ => null,

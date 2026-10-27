@@ -1,5 +1,9 @@
 # Deviations from the reference server
 
+## allianceRegistry bulletin edit keyword arguments (2026-10-27)
+
+V24.01 `base_corporation.py:960` creates an alliance bulletin with positional title/body arguments, then edits it at `base_corporation.py:969` with `bulletinID` and `editDateTime` keyword arguments. EveJS 261018.1 `server/src/services/corporation/allianceRegistryRuntime.js:954-985` reads those two values only from positional arguments, so an edit can be treated as a new bulletin. eve.rs now prefers the client keyword values and keeps the positional form as a fallback in `AllianceRegistryService.BulletinEditArguments`. `AllianceRegistryHostWireTests.Add_bulletin_keeps_client_keyword_arguments_and_positional_defaults` covers keyword, positional, None and int/long forms.
+
 ## Host SKINR catalog data source (2026-10-23)
 
 The V24.01 pinned SDE build 3396210 has no `skinr*` authority tables, while the official CCP `missionPinned` build 3405148 contains `skinrComponentPointValues`, `skinrComponents`, `skinrSlotConfigurations`, `skinrSlots` and `skinrTierThresholds` (`sde/lock.json`). Host startup reads those tables for `ShipSkinrCatalog`, so the catalog now reads them, with that build’s `groups` and `types`, from `sde_mission`. Other Host data reads remain on the client-pinned `sde` schema. This keeps the SSO Host startup path available without changing the pinned source used for general game data.
@@ -497,8 +501,7 @@ Decisions: ADR 0015 and its three amendments.
 ## Module rules (track B, 2026-10-09)
 
 Decisions taken where the sources left a choice (EveJS is the trusted reference; CCP docs and the SDE settle the numbers):
-- Module rules are enforced in the simulation from the rules the host sends with each effect (`ModuleRules`, flag 32). The host works them out from the type's
-  attributes once, in the effect wrapper (`ShipEffect`), so no handler repeats them. Early deactivation (906), the core requirement (3265), the group limit (763)
+- Module rules are enforced in the simulation from the rules the host sends with each effect (`ModuleRules`, flag 32). The host works them out from the type's  attributes once, in the effect wrapper (`ShipEffect`), so no handler repeats them. Early deactivation (906), the core requirement (3265), the group limit (763)
   and the reactivation delay (669) are the four rules sent. Disallow activate on warp (1245) stays on the host (`ModuleRestrictions.CheckWarp`), as on main.
 - Locks from running modules (warp 104, docking 2354, activation block 1349) are read from the running effect's `on_changes`, which the host already sends,
   so they need no wire change. The Networked Sensor Array's block of the capital micro jump drives comes through its modifier (5700, skill 83464).
@@ -998,7 +1001,6 @@ Source order: the SDE for numbers, the EVE University wiki for rules (as written
 
 - **Scoop of a deployed mobile object: the wiki as written, which is silent for the disruptor.** The Mobile Depot page: "A Mobile Depot can only be accessed or scooped up by its owner"; it "can be scooped back to your ship's cargohold at any time"; its contents appear in space in a cargo container when it is scooped. The Mobile Cynosural Inhibitor page: "unlike the other mobile structures, this one cannot be reclaimed", so it is not scooped. The Mobile Warp Disruptor page and the mobile structures page give no retrieval rule for it, and EVE.js has none, so no scoop is built for it. The depot's rule is the depot's, not the disruptor's, and is not extended to it.- **Fleet test isolation (fix).** `SpaceServiceTests` built `FleetStore` on the shared default schema `fleet` (18 sites), so rows of earlier runs collided on `fleet_members_character_id_key`; two raw statements also named `fleet.fleet_members`. Each test now uses its rig's own fleet schema (`Rig.FleetSchema`). Leaked rows removed from the dev database: fleets 2349 and 2350 with their members (characters 140000001 and 140000002, job 2) and their wing, squad, invitation and join-request rows (none). These were left by fleet tests that wrote to the shared schema and did not disband.
 - **Result:** the Space suite (554 tests) passes twice in a row after the fix.
-
 ## Track A6: the capital jump drive (2026-10-10)
 
 Sources, in the order of the scanner rule: numbers from the SDE (pinned build 3396210, `sde.typeDogma` for the hulls, `sde.dogmaAttributes`, `sde.groups`, `sde.types`); mechanics from the EVE University wiki, implemented as written (Jump drive: https://wiki.eveuniversity.org/Jump_drive; Jump fatigue: https://wiki.eveuniversity.org/Jump_fatigue; Capital ships: https://wiki.eveuniversity.org/Capital_ships; fetched 2026-10-10); EveJS v0.12.9 has no capital jump (a search of `server/src` finds only the fighter's micro jump), so it contributes nothing here; the client's callsites in eve-logic decide the wire shapes.
@@ -1497,8 +1499,7 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
   would enter the full system.
 - **`SelectCharacterID` refuses a full system before any change.** The cap is checked again at selection, because the answer on  the screen can be stale. Known gap: the check and the session's entry are not one atomic step, so two selections into the
   same system that check at the same moment can both pass.
-- **`multiLoginBlocker.Login` checks the computer.** The reference answers True unless `EVE_ENFORCE_ALPHA_MULTILOGIN` is set
-  (`multiLoginBlockerService.js:87-90`, off by default). eve.rs enforces the Alpha rule without a switch: a session is refused when
+- **`multiLoginBlocker.Login` checks the computer.** The reference answers True unless `EVE_ENFORCE_ALPHA_MULTILOGIN` is set  (`multiLoginBlockerService.js:87-90`, off by default). eve.rs enforces the Alpha rule without a switch: a session is refused when
   another account on the same computer hash is logged in and either account is Alpha. Reason: the clone grades here are real
   (`SubscriptionMgrService` reads each account's stored Omega end time), so the rule can apply, and the brief requires real behaviour
   where the constant True was. The computer hash exists only on the SSO path (see "Single sign-on login"), so the client calls
@@ -1997,8 +1998,7 @@ Faction lists: `eve/common/lib/appConst.py:618-632`.
   `CustomInfo` "This loyalty point operation is not available on this server yet." Status: open (TODO section 43).
 - **Not added: `GetLPsForCharacter`, `GetLPExchangeRates`, `GetLPForCharacterCorp`.** The reference answers them
   (`lpService.js:83-91`, `:111`), but no V24.01 caller exists in eve-logic (a search of the client tree finds none). A method
-  without a caller cannot be checked against the client, so it is not added (the same rule as slice B3).
-- **No source credits loyalty points yet.** The store's `ApplyAsync` is ready for the first credit (missions, factional
+  without a caller cannot be checked against the client, so it is not added (the same rule as slice B3).- **No source credits loyalty points yet.** The store's `ApplyAsync` is ready for the first credit (missions, factional
   warfare, insurgency). Until then every balance is empty; the tests credit through the store.
 - **LPStoreMgr status at this point (historical, superseded by A9 below):** the offer and purchase methods had not yet been implemented.
 
@@ -2497,8 +2497,7 @@ client's use of mission data: eve-logic `evemissions/client/data.py`, `eve/clien
   (59 agents). `GetPlausibleMissionIDs` answers the arc steps of that agent, and an empty list for every other agent.
   The official data has no mission-to-agent pool for basic, storyline, research, factional-warfare, heraldry, career,
   tutorial or event agents, and no level to choose among missions (reason text: `MissionDataGaps.BasicPools`). The EveJS
-  routing rules used `missionKind`, `missionFlavor`, `missionLevel` and template fields that the build does not have,
-  so they are not reproduced. Status: open, the reason is printed at startup; mission offers (Mi2) need the pools.
+  routing rules used `missionKind`, `missionFlavor`, `missionLevel` and template fields that the build does not have,  so they are not reproduced. Status: open, the reason is printed at startup; mission offers (Mi2) need the pools.
 - **Disabled missions: none.** `GetDisabledMissions` answers an empty list. The reference's one entry (mission 4743, a
   template of its own content policy) is not carried: it is not a CCP fact. Status: decided (`MissionDataGaps.DisabledMissions`).
 - **Epic arc journal text: no IDs.** The reference answers `GetMessagesForEpicArcMissions` with localization message
@@ -2767,7 +2766,7 @@ The V24.01 medals UI requests corporation medal lists for `session.corpid`, show
 
 ## Calendar mutation notifications
 
-Client calls are in eve-logic `eve/client/script/ui/services/eveCalendarsvc.py`; EveJS behavior is in `server/src/services/calendar/calendarMgrService.js` and `calendarNotifications.js`. The Host publishes notification packets after the PostgreSQL mutation returns successfully and before the RPC reply. Personal event creation notifies online invitees and other viewers, excluding the calling session; corporation and alliance creation notify online members. Edits notify current viewers, deletion notifies the viewer set captured before the soft delete, participant changes notify only actual additions/removals, and an event response notifies other viewers while excluding the responding session. The four packet payload shapes and order are covered by `CalendarMgrServiceTests`; the headless live invite walk confirms a second character receives `OnNewCalendarEvent` after the event can be read back. For corporation and alliance reads, the Host resolves current persisted corporation and alliance IDs before listing events, reading details, or fetching responses, so cached group IDs cannot retain access after a pilot leaves. Mutations also recheck the actor’s persisted membership, Chat Manager role, and active alliance affiliation on each call so a role or affiliation change after login cannot authorize a stale session. `CalendarMgrServiceTests.Group_calendar_mutations_refuse_a_revoked_persisted_manager_role` covers the refusal.
+Client calls are in eve-logic `eve/client/script/ui/services/eveCalendarsvc.py`; EveJS behavior is in `server/src/services/calendar/calendarMgrService.js` and `calendarNotifications.js`. The Host publishes notification packets after the PostgreSQL mutation returns successfully and before the RPC reply. Personal event creation notifies online invitees and other viewers, excluding the calling session; corporation and alliance creation notify online members. Edits notify current viewers, deletion notifies the viewer set captured before the soft delete, participant changes notify only actual additions/removals, and an event response notifies other viewers while excluding the responding session. The four packet payload shapes and order are covered by `CalendarMgrServiceTests`; the headless live invite walk confirms a second character receives `OnNewCalendarEvent` after the event can be read back. For corporation and alliance reads, the Host resolves current persisted corporation and alliance IDs before listing events, reading details, or fetching responses, so cached group IDs cannot retain access after a pilot leaves. The Host also returns the corporation and alliance month lists in the second and third `GetEventList` tuple slots. EveJS 261018 currently returns `null` for those slots, while the V24.01 client iterates all returned slots and skips `None` rows (`eve/client/script/ui/services/eveCalendarsvc.py:238-241`). Host populates them from persisted events, so both group calendars appear through the client’s existing loop. Mutations also recheck the actor’s persisted membership, Chat Manager role, and active alliance affiliation on each call so a role or affiliation change after login cannot authorize a stale session. `CalendarMgrServiceTests.Group_calendar_mutations_refuse_a_revoked_persisted_manager_role` covers the refusal.
 
 ## Project Discovery availability
 
@@ -2997,8 +2996,7 @@ Focused PostgreSQL verification: Station 28/28, selected Space docking/undocking
 
 ## Mission execution X3 step 2: client texts and held-mission views (2026-10-11)
 
-- **Texts are IDs.** The server sends the localization IDs of a mission's title and briefing (`nameID`, `messages.mission.briefing`) from the client's own export; the client shows the text from its localization. The official SDE gives English text only, not IDs, so the client export is the source of the IDs. Status: decided.
-- **Loader.** The mission text IDs and the content templates come from the V24.01 client's `native/missions.jsonl.gz`, read at each start from the embedded copy `dotnet/src/Eve.Services.Core/Data/client-missions.jsonl.gz` (build 3396210; localization IDs only, no text) into the schema `client_sde` (table `mission_messages`), replacing the earlier load. `EVE_CLIENT_SDE_DIR`, when it is set and holds the file, is read instead. Status: decided.
+- **Texts are IDs.** The server sends the localization IDs of a mission's title and briefing (`nameID`, `messages.mission.briefing`) from the client's own export; the client shows the text from its localization. The official SDE gives English text only, not IDs, so the client export is the source of the IDs. Status: decided.- **Loader.** The mission text IDs and the content templates come from the V24.01 client's `native/missions.jsonl.gz`, read at each start from the embedded copy `dotnet/src/Eve.Services.Core/Data/client-missions.jsonl.gz` (build 3396210; localization IDs only, no text) into the schema `client_sde` (table `mission_messages`), replacing the earlier load. `EVE_CLIENT_SDE_DIR`, when it is set and holds the file, is read instead. Status: decided.
 - **Views.** `GetMissionBriefingInfo` and `GetMissionObjectiveInfo` answer the held mission (offered, accepted or completed) with EveJS's keys; the objective carries the kill dungeon and the ISK reward. Fetch and courier objectives are not built (empty lists), and the dungeon location and enemy owner are shortcuts (the faction, and no location). A character with no held mission gets None, as in EveJS. Status: shortcut for the listed parts; the rest OPEN.
 
 ## Owner decisions recorded 2026-10-19
@@ -3497,8 +3495,7 @@ Landmarks (not done, with evidence). The SDE landmarks (45) and the client landm
   (`beyonce.MachoBindObject`), as the Pochven walk does. A smartbomb left repeating (repeat 1000) keeps its effect active into the next
   session (`EffectAlreadyActive2`); the walk asks it to stop (`dogmaIM.Deactivate`) at the end of each fight. A talk step completes when the
   pilot talks to any next agent of it (arc 55).
-- **Not covered.** The EVE.js comparison of these walks (no reference run was made). The graphical client. The smartbomb's 250 km reach rule
-  (X6): a seeded pilot is placed at the system's origin. The bonus window, Negotiation, and the dungeon contents (generic sites, owner decision
+- **Not covered.** The EVE.js comparison of these walks (no reference run was made). The graphical client. The smartbomb's 250 km reach rule  (X6): a seeded pilot is placed at the system's origin. The bonus window, Negotiation, and the dungeon contents (generic sites, owner decision
   2). The intermittent failure of arc 52 (above) is not diagnosed.
 
 Arc on and off list (default offers; the generic sites need `EVE_MISSION_INCLUDE_GENERIC_ARCS=1`). Every kill step of the 21 arcs is a generic
@@ -3997,8 +3994,7 @@ Full status, formulas and sources: `docs/project/INDUSTRY_STATUS.md`. Decisions 
   `researchFactor`, as EveJS applies them.
 - **Reactions**: refused at NPC stations (no station service runs them). Structure reactions are not checked against
   the structure reaction service (cut).
-- **Delivery**: completed jobs wait in Ready until the owner delivers (`CompleteJob`), per the EVE wiki's Deliver
-  button. The durable scheduler is not used for delivery.
+- **Delivery**: completed jobs wait in Ready until the owner delivers (`CompleteJob`), per the EVE wiki's Deliver  button. The durable scheduler is not used for delivery.
 - **Distance rule** (`FACILITY_DISTANCE`): enforced: jumps from the installer's system over the SDE stargates against 5 jumps per distance-skill level (max 25). Basis: the client's job error and DISTANCE_PER_LEVEL.
 - **Invention skill probability**: 1/30 per level, 1/40 for skills on SDE type list 799 (applied).
 - **Duration skills**: Industry, Advanced Industry, required-skill (1982), Science (452), Metallurgy (468), Reactions
@@ -4497,8 +4493,7 @@ Sources: EveJS `services/skills/trading/skillTradingAuthority.js` and `skillTrad
 
 ## Factional warfare: state, rules and decisions (2026-10-17)
 
-Sources: eve-logic `eve/common/script/util/facwarCommon.py`, `eve/common/lib/appConst.py` (1047-1059, 316), `marketutil/brokerFee.py`,
-`marketutil/skilllimits.py`, `eve/client/script/ui/services/facWarSvc.py`, `eve/client/script/ui/shared/factionalWarfare/infrastructureHub.py`,
+Sources: eve-logic `eve/common/script/util/facwarCommon.py`, `eve/common/lib/appConst.py` (1047-1059, 316), `marketutil/brokerFee.py`,`marketutil/skilllimits.py`, `eve/client/script/ui/services/facWarSvc.py`, `eve/client/script/ui/shared/factionalWarfare/infrastructureHub.py`,
 `eve/client/script/ui/services/fwWarzoneSvc.py`, `industry/npsStationTaxModifier.py`; SDE build 3396210 (`factions.militiaCorporationID`,
 `mapSolarSystems.factionID`); client extract `native/warzonespositiondata` (warzone 1: 103 systems, warzone 2: 149) and
 `native/npcstationtaxmodifier`; EVE University wiki "Faction warfare" (`https://wiki.eveuniversity.org/Faction_warfare`), whose upgrade and
@@ -4786,10 +4781,16 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
   and a manager deletes the sub-folder with all its contents.
 - **Choice: the user's bulk delete and move skip what it may not touch.** `DeleteBookmarks` and the move answer the ids that went; a bookmark
   the user did not make is left alone (the reference's answer for this case is not read here). The copy needs view on the source and use on the target.
-- **Expiry.** The client's own option set is the wire contract and the one used here (`bookmarkConst.py`: none, 4 hours, 2 days, 24 hours,
-  with the client's labels `ExpireNever`, `ExpireIn4Hours`, `ExpireIn2Days`, `ExpireIn24Hours`). The wiki's "In 3 Hours" is not offered by the
-  client and is not used. An expired bookmark is removed at its time: by a one-minute timer (`bookmarks.expiry`, LocalTimers) and by any read,
-  and the characters that have its folder active hear of it (`bookmarksRemoved`).
+- **Expiry.** The V24 wire values remain none, 1, 2, and 3, and the client labels them none, 4 hours, 2 days, and 24 hours
+  (`bookmarkConst.py:16-19`). EVE University's [Bookmarks guide](https://wiki.eveuniversity.org/Bookmarks) lists “In 3 Hours” for the short option, so mode 1 expires after 3 hours even though the V24
+  UI still labels it 4 hours. The 24-hour mode remains accepted because the client sends it, although the wiki lists no such option. An expired
+  bookmark is removed at its time: by a one-minute timer (`bookmarks.expiry`, LocalTimers) and by any read, and active viewers hear
+  `bookmarksRemoved`.
+- **Live bookmark position.** EveJS `bookmarkTargetResolver.js:46-79` uses the pilot-perceived warp position when a bookmark targets the pilot's
+  own ship mid-warp. The client call in `bookmarkSvc.py:611-616` sends the target item ID and bookmark fields, not a client-projected coordinate. The guide says
+  coordinate bookmarks use the ship's position at click, including during warp. eve.rs resolves that live item with `SpaceSessions.PositionOfAsync` (`SpaceSessions.Movement.cs:132-137,184-204`), the authoritative simulation
+  query; this can differ from EveJS's client-perceived position during the pilot's own warp. The current simulation API exposes no pilot-perceived
+  warp coordinate, so the server position is used.
 - **Access changes.** After an owner group change (a list deleted, a member added, removed or changed), each connected character whose
   folders use the list is told, after the response: `OnSharedBookmarksFoldersAccessLost` (a list of folder ids it can no longer view) and
   `OnSharedBookmarksFoldersAccessChanged` (a dict from folder id to its new level). V24.01 `bookmarkSvc.py` removes each lost id from
@@ -4991,8 +4992,7 @@ V24.01 `BracketMgr.OnSlimItemChange` replaces the slim item and clears its cache
 - **Ship types only (G18).** Other categories the reference spawns (asteroids, drones, containers, sentry guns, beacons) are not served; the reply says `is not a ship type`. shortcut: upgrade when those entities are made by the host.
 - **Names (G18).** A name that is several types takes the one ship of that name; a name that is several ships says to use the typeID.
 - **`/unspawn` (G18).** `/unspawn <itemID>` takes out one ship the host made in the pilot's system; `range=<metres> only=categoryShip` takes those within the range (their place from the simulation). Drones, wrecks and containers are not tracked here: those filters answer `Nothing to unspawn.`
-- **`/nuke` (G18).** Every NPC ship the host made in the pilot's system goes out of space: the hulls above, belt rats, `/npc` ships and dungeon NPCs. shortcut: the mission runtime is not told; a mission waiting on a removed NPC keeps waiting.
-- **How a ship goes (G18).** The simulation's `Leave` with the docked reason, as an NPC leaves: the ships go with no wreck, no loot and no destroy. The client sees them removed from the ballpark. The simulation's own `remove_npc` is not exposed as a message, so a Rust change was not made.
+- **`/nuke` (G18).** Every NPC ship the host made in the pilot's system goes out of space: the hulls above, belt rats, `/npc` ships and dungeon NPCs. shortcut: the mission runtime is not told; a mission waiting on a removed NPC keeps waiting.- **How a ship goes (G18).** The simulation's `Leave` with the docked reason, as an NPC leaves: the ships go with no wreck, no loot and no destroy. The client sees them removed from the ballpark. The simulation's own `remove_npc` is not exposed as a message, so a Rust change was not made.
 - **Registry (G18).** The NPC sessions are kept with their ship IDs and dropped when the system's scene is forgotten (`ForgetNpcsOf`).
 
 ## GM tools, slice G19: `/load me`, `/unload me` (2026-10-18)
@@ -5095,7 +5095,7 @@ Q-16 adopts the June 16 checkpoint per item for build 3396210. CCP’s [Version 
 
 ## Space movement slice S1 (2026-10-19)
 
-An out-of-range station dock command starts an approach and returns `DockingApproach`; when it reaches range, the scene stops the ship and waits for the client's second `CmdDock` before accepting the dock. This follows EveJS v0.12.9 `Handle_CmdDock` (`server/src/services/ship/beyonceService.js:4133-4194`), which starts `followBall` and returns `DockingApproach` when out of range, then calls `acceptDocking` only when the command is repeated in range. The V24.01 caller makes that second request in `eve/client/script/ui/services/menuSvcExtras/movementFunctions.py:505-516`. EveJS 261018.1 differs: its tick calls `completeArrivedDockingApproaches` to accept the dock on arrival (`server/src/space/runtime/spaceRuntime/docking.js:173-217`). `crates/eve-space/src/scene/tests.rs::a_dock_request_from_out_of_range_stops_in_range_until_asked_again` covers approach, arrival, the second request and completion. The warp selected-range calculation is covered by `a_range_within_the_jump_range_changes_nothing_and_one_beyond_it_sets_the_sphere_that_far_out`. The Rust sim polls at 4 Hz for due work; the sim link holds `DoDestinyUpdate` until the next whole-second boundary and queues later notifications behind it to preserve their order, while command replies remain immediate; this matches EveJS `server/src/network/tickAlignedSends.js`. Unit tests cover the boundary delay, notification ordering and immediate replies; `crates/eve-sim/tests/link.rs::a_ship_is_sent_out_bound_told_to_dock_and_reported_docked` exercises the wire ordering. No graphical-client timing run has been recorded.
+An out-of-range station dock command starts an approach and returns `DockingApproach`; when it reaches range, the scene stops the ship and waits for the client's second `CmdDock` before accepting the dock. This follows EveJS v0.12.9 `Handle_CmdDock` (`server/src/services/ship/beyonceService.js:4133-4194`), which starts `followBall` and returns `DockingApproach` when out of range, then calls `acceptDocking` only when the command is repeated in range. The V24.01 caller makes that second request in `eve/client/script/ui/services/menuSvcExtras/movementFunctions.py:505-516`. EveJS 261018.1 differs: its tick calls `completeArrivedDockingApproaches` to accept the dock on arrival (`server/src/space/runtime/spaceRuntime/docking.js:173-217`). `crates/eve-space/src/scene/tests.rs::a_dock_request_from_out_of_range_stops_in_range_until_asked_again` covers approach, arrival, the second request and completion. The warp selected-range calculation is covered by `a_range_within_the_jump_range_changes_nothing_and_one_beyond_it_sets_the_sphere_that_far_out`. The Rust sim polls at 4 Hz for due work; the sim link holds `DoDestinyUpdate` until the next whole-second boundary and queues later notifications behind it to preserve their order, while command replies remain immediate; this matches EveJS `server/src/network/tickAlignedSends.js`. Unit tests cover the boundary delay, notification ordering and immediate replies; `crates/eve-sim/tests/link.rs::a_ship_is_sent_out_bound_told_to_dock_and_reported_docked` exercises the wire ordering. No graphical-client timing run has been recorded. An accepted in-range `CmdDock` returns the simulator's accepted FILETIME as a `PyLong`: the captured undock scenario records `$long` (`oracle/fixtures/scenarios/undock.json:1`), and EveJS v0.12.9 returns `acceptedAtFileTime` (`server/src/services/ship/beyonceService.js:4194`). `SpaceSessions.Movement.cs:25-59` produces that reply and `BeyonceService.CmdDock` forwards it. EveJS 261018.1 returns null; the recorded call shape takes priority. V24's `RealDock` invokes `PerformSessionChange` but does not consume its result (`eve/client/script/ui/services/menuSvcExtras/movementFunctions.py:503-518`, `carbon/common/script/sys/sessions.py:418-500`).
 
 - **Advanced Contracting capacity.** The creation path uses the V24 `NUM_CONTRACTS_BY_ADVSKILL` table alongside `NUM_CONTRACTS_BY_SKILL`; no per-level increment is inferred. See the contracts creation record above.
 
@@ -5236,9 +5236,9 @@ Fleet invite and member-movement RPCs reject role values outside the signed 32-b
 `contractProxy.CompleteContract` applies the shared checked Int32 parser to both V24 integer wire types. A status outside Int32 range returns `ConContractNotAvailable` before contract state is read or mutated; valid status values retain the existing transition behavior. `ContractProxyServiceTests.Complete_contract_refuses_status_that_overflows_int32` verifies the writer is not invoked. `PacketDispatcher` charges all `contractProxy` methods 10 per-session work units because every operation reads or mutates persisted contract state; `DispatchGoldenTests.Contract_operations_use_the_named_per_session_budget` verifies list calls are refused at the configured limit.
 
 
-## Insurance price batch bound (2026-10-20)
+## Insurance price batches (2026-10-20)
 
-`insurance.GetInsurancePrices` accepts at most 500 raw type IDs per request and returns `InsuranceBulkLimitExceeded` before reading price data for a larger batch. The V24 client primes the service with the set of missing ship type IDs; normal client batches retain their existing results. `InsuranceServiceTests.Insurance_price_batch_refuses_more_than_500_type_ids_before_the_read_model` covers the refusal.
+`insurance.GetInsurancePrices` accepts the distinct positive type IDs supplied by the V24 client without a service-level item-count cap. It returns one ISK price per requested type ID, with zero for unknown types; duplicate and invalid IDs are removed. This matches the client call shape and EveJS behavior. The Host wire regression is recorded in `docs/project/service-audit/DEEPCHECK_insurance.md`.
 
 ## Ship self-destruct countdown (2026-10-20)
 
@@ -5258,9 +5258,9 @@ The insurance RPCs accept positive integer ship IDs. Fractional or malformed val
 
 ## Structure docking access batch bound (2026-10-20)
 
-`CheckMyDockingAccessToStructures` refuses more than 500 raw structure IDs before invoking the access-list callback. Both this RPC and `GetMyDockableStructures` consume 10 units from the per-session expensive-RPC budget, returning `SessionRpcBudgetExceeded` when the session budget is exhausted. Regressions cover the batch refusal and repeated-query budget refusal.
+`CheckMyDockingAccessToStructures` refuses more than 500 raw structure IDs before reading access-list snapshots. `StructureDirectoryServiceTests.Docking_access_refuses_more_than_500_structure_ids_before_the_callback` covers this limit; the Host wire regression also checks the client-recognized `GenericStopSpamming` response.
 
-`structureDirectory.CheckMyDockingAccessToStructures` accepts up to 500 structure IDs. Larger lists return `StructureBulkLimitExceeded` before access-list snapshots are read. Normal structure-access results retain the existing per-list ACL evaluation and order. `StructureDirectoryServiceTests.Docking_access_refuses_more_than_500_structure_ids_before_the_callback` verifies no callback work on refusal.
+`structureDirectory.CheckMyDockingAccessToStructures` accepts up to 500 structure IDs. Larger lists return the client-recognized `GenericStopSpamming` user error before access-list snapshots are read; `parameter_types/controllers/matchertypes/parameter_location.py:169` and `jobboard/client/features/freelance_projects/job.py:634` handle that code. Normal structure-access results retain per-list ACL evaluation and requested order. `StructureDirectoryServiceTests.Docking_access_refuses_more_than_500_structure_ids_before_the_callback` verifies no callback work on refusal.
 
 
 ## Ansiblex jump RPC audit (2026-10-20)
@@ -5321,9 +5321,9 @@ V24.01 `fleetCompositionWnd.py` indexes `skills` and `skillIDs` at positions 0 t
 `allianceRegistry.UpdateApplication` now enforces the V24.01 alliance application editor maximum of 1,000 UTF-16 code units before reading application rows. The client uses `maxLength=1000` in `eve/client/script/ui/shared/neocom/Alliances/all_ui_applications.py`; the server refuses larger response text with `ALLIANCE_APPLICATION_TEXT_TOO_LONG`. `Alliance_application_response_text_limit_matches_the_client_utf16_maximum` covers refusal without a stored change and acceptance at the client boundary.
 
 ## Structure info owner projection (2026-10-21)
-`structureDirectory.GetStructureInfo` accepts a structure ID and returns a basic public projection to other callers; services and corporation/alliance ownership fields are returned only when the caller's current persisted corporation owns the structure. EveJS 261018.1 likewise selects `buildBasicStructureInfoPayload` for non-owner corporations. eve.rs currently returns the available public type, structure ID, solar system, and owner fields because the persistence projection does not provide the remaining public fields used by EveJS. `HostServerTests.Structure_directory_host_reads_deployed_rows_and_docking_profiles` checks full owner data and the reduced foreign view.
+`structureDirectory.GetStructureInfo` accepts a structure ID and returns EveJS's basic public fields (`typeID`, `structureID`, `upkeepState`, `wars`, `ownerID`, `solarSystemID`, `itemName`, `inSpace`) to non-owners. A member of the owning corporation receives the full directory row, including SDE-derived group/category IDs and currently accessible online services from persisted profile/access-group state. EveJS 261018.1 makes the same public/owner split; eve.rs supplies fields used across the client, including `market/quote.py:326-331`, `structureBrowser/reinforcementTimeWnd.py:62-64,162-165`, and `sensorsuite/overlay/structures.py:83`. The Host wire regression covers both projections and row fields.
 ## Character structure directory docking visibility (2026-10-21)
-`structureDirectory.GetMyCharacterStructures` previously returned every deployed structure owned by the character's corporation. It now uses persisted docking access snapshots and includes only structures the current character can dock at, matching EveJS 261018.1 `listDockableStructuresForCharacter`; NPC station rows remain outside this Host structure projection. `HostServerTests.Structure_directory_host_reads_deployed_rows_and_docking_profiles` verifies inclusion for an allowed profile and exclusion for a blocked profile.
+`structureDirectory.GetMyCharacterStructures` returns persisted Upwell structures only when the character can dock there, matching EveJS 261018.1 `listDockableStructuresForCharacter`, and appends NPC stations in the session region from the pinned SDE. Station operation services use the V24 station-service mapping, and high-security stations also expose the repair service from `structuresCommon.GetStationServices`. The Host wire regression checks the dockable structure and NPC service map.
 ## Corporation structure directory role check (2026-10-21)
 `structureDirectory.GetMyCorporationStructures` and its `GetCorporationStructures` alias now check current persisted corporation membership and require Station Manager or Brand Manager authority before reading the private corporation structure directory, matching EveJS 261018.1. eve.rs recalculates the role from persisted member and title data for each request; the cached login role does not authorize the read. Unauthorized callers receive the existing `CrpAccessDenied` response. `HostServerTests.Corporation_structure_directory_requires_persisted_manager_access` checks denial before storage access and successful access when persisted authority is present even if the session role is zero.
 ## Fleet invitation fanout bounds (2026-10-21)
@@ -5492,7 +5492,6 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 `allianceRegistry.GetDaysInAlliance` also consumes 10 weighted per-session units because it reads the full alliance member collection to resolve one corporation. The response and public lookup behavior are unchanged. `DispatchGoldenTests.Alliance_expensive_methods_use_a_named_per_session_budget` covers the call budget.
 
 `corpRegistry.GetRecruitmentAd` consumes 10 weighted per-session units because its public response includes the selected corporation member count, and both `GetRecruitmentAdsByCorpID` and `GetRecruitmentAdsForCorporation` consume 10 units because they return complete corporation ad lists. Both responses remain unchanged. `DispatchGoldenTests.Corporation_registry_reads_use_a_named_per_session_budget` verifies the named refusal for both calls.
-
 `ownerGroupManager` reads and mutations consume 10 weighted per-session units to bound repeated access-group enumeration and notification fanout. `DispatchGoldenTests.Owner_group_reads_and_mutations_use_a_named_per_session_budget` checks every registered service method. Responses and authorization remain unchanged.
 
 `corpRegistry.GetCorporation` consumes 10 weighted per-session units because its profile response includes a full corporation member count. The client response is unchanged. `DispatchGoldenTests.Corporation_registry_reads_use_a_named_per_session_budget` verifies the named refusal.
@@ -5866,3 +5865,14 @@ The sole V24.01 caller of `agentMgr.GetPlausibleMissionIDs` is the mission-selec
 
 V24 invokes `fix_task_id` only through the development popup (`projectdiscovery/client/projects/covid/ui/devpopup.py:44-45`), whose return is ignored. EveJS sets a session task override for its later `get_new_task` handler (`server/src/services/character/projectDiscoveryService.js:272-277,290-296`). The whole V24 ProjectDiscovery client has no `get_new_task` call, and eve.rs has no such Host route or production task-fix writer (`dotnet/src/Eve.Services.Core/CoreServices.cs:96`). When the writer is absent, eve.rs now returns `PROJECT_DISCOVERY_TASK_FIX_UNAVAILABLE` instead of reporting a successful None result. This development hook remains unavailable until an authoritative task provider and its following client flow exist; no task payload is fabricated.
 
+## station GetSolarSystem resolves the requested solar system (2026-10-27)
+
+V24.01 calls `GetSolarSystem(systemID)` from `eve/devtools/script/insider.py:347` and immediately reads the returned `.factionID`. The eve.rs handler now reads that requested ID from the pinned-SDE-backed `SolarSystemCatalog` and returns its system record, including a nullable `factionID`, even when the caller is not docked.
+
+EveJS `src/server/src/services/station/stationService.js:218` ignores the argument and derives its response from `getStationRecord(session)` (station data lookup at `src/server/src/services/_shared/stationStaticData.js:223`). That can select a different system or return no record when the client explicitly asks about a system while in space. The client callsite and official SDE data take priority here. A real Host wire regression covers a requested system and an unknown ID in `StationSolarSystemHostWireTests.cs`. The no-argument call preserves EveJS's session-station fallback: a docked session receives its full 17-field record, and an undocked session receives `None`.
+
+## TrashImpoundedOffice does not emit a second office-rental notification (2026-10-27)
+
+V24.01 reaches `TrashImpoundedOffice` through the officeManager Moniker (`eve/client/script/ui/services/corporation/officeManager.py:155-156`). Its asset action invalidates `GetAssetInventoryForLocation`, calls that Moniker, and scatters `OnReloadCorpAssets` (`eve/client/script/ui/shared/neocom/corporation/corp_ui_accounts.py:410-413`). EveJS 261018.1 removes its impounded runtime office and calls `notifyOfficeRentalChange` for each removed office (`src/server/src/services/corporation/officeManagerService.js:631-650`).
+
+eve.rs marks the rental inactive and emits `OnOfficeRentalChange` during `UnrentOffice`; `CorporationOfficeStore.ForCorporationAsync` and `CorporationsAtStationAsync` expose active rentals only. `TrashImpoundedOffice` then deletes only the impounded inventory rows and emits no second office event. This is an intentional difference: rental state and office caches changed on Unrent, while the V24 trash action reloads the asset inventory itself. The Host audit records both transitions in `docs/project/service-audit/DEEPCHECK_station.md`.

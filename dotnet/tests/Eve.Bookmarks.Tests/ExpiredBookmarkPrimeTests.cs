@@ -33,7 +33,7 @@ public sealed class ExpiredBookmarkPrimeTests
             (who, _) => ValueTask.FromResult(lists.GetValueOrDefault(who.CharacterId) ?? AccessLists.Empty), sessions);
         IService service = new BookmarkRefusals(new AccessGroupBookmarkMgrService(
             rig.Store,
-            id => id == Station.ItemId ? Station : null,
+            (id, _) => ValueTask.FromResult<BookmarkTarget?>(id == Station.ItemId ? Station : null),
             (who, _) => ValueTask.FromResult(lists.GetValueOrDefault(who.CharacterId) ?? AccessLists.Empty),
             sessions,
             notifier));

@@ -95,7 +95,7 @@ public sealed class AccessGroupBookmarkMgrTests
     }
 
     private static AccessGroupBookmarkMgrService CreateService(Rig rig, Func<long, BookmarkTarget?> resolve) =>
-        new(rig.Store, resolve, (_, _) => ValueTask.FromResult(AccessLists.Empty), null);
+        new(rig.Store, (id, _) => ValueTask.FromResult(resolve(id)), (_, _) => ValueTask.FromResult(AccessLists.Empty), null);
 
     private static IService Service(Rig rig, Func<long, BookmarkTarget?> resolve) =>
         new BookmarkRefusals(CreateService(rig, resolve));

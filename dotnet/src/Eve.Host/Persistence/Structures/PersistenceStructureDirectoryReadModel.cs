@@ -42,7 +42,8 @@ public sealed partial class PersistenceStructureDirectoryReadModel(
     Func<long, string, CancellationToken, Task>? setDescriptionAsync,
     Func<long, CancellationToken, ValueTask<bool>>? cynoJammedAsync = null,
     Func<long, long, CancellationToken, Task<bool>>? stationManagerOfAsync = null,
-    Func<long, long, CancellationToken, Task<bool>>? corporationStructureDirectoryAccessAsync = null) :
+    Func<long, long, CancellationToken, Task<bool>>? corporationStructureDirectoryAccessAsync = null,
+    Eve.Universe.StationCatalog? stationCatalog = null) :
     Eve.Services.Core.IStructureDirectoryReadCallbacks,
     Eve.Services.Core.IStructureSettingsReadCallbacks
 {
@@ -124,16 +125,9 @@ public sealed partial class PersistenceStructureDirectoryReadModel(
 
     public async ValueTask<PyValue> GetNearbyJumpBridgesAsync(ServiceCall call)
     {
-        var access = await ReadAccessContextAsync(call, call.Cancellation);
-        if (access.CharacterId <= 0)
-            return new PyList([]);
-
         var structures = await readTable("structures", call.Cancellation);
-        var profiles = await readTable("structureProfiles", call.Cancellation);
-        var groups = await readTable("accessGroups", call.Cancellation);
         var currentSystem = call.Session.GetInt("solarsystemid2") ?? call.Session.GetInt("solarsystemid") ?? 0;
         return new PyList(ReadBridges(structures)
-            .Where(bridge => IsJumpBridgeServiceOnline(bridge) && CanUseJumpBridge(bridge, access, profiles, groups))
             .Select(bridge => NearbyBridgePayload(bridge, currentSystem))
             .ToArray());
     }
@@ -161,10 +155,11 @@ public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureIn
         if (structures[key] is not JsonObject structure || !IsPersistentlyDeployedStructure(structure, structureId))
             return null;
 
+        var typeRows = await ReadStructureTypeRowsAsync([structure], cancellationToken);
         return new Eve.Services.Core.PersistedStructureInfo(
             structureId,
             true,
-            StructureInfoPayload(structureId, structure),
+            StructureInfoPayload(structureId, structure, typeRows.GetValueOrDefault(Positive(Integer(structure["typeID"])))),
             Text(structure["itemName"] ?? structure["name"]));
     }
 
@@ -177,40 +172,67 @@ public async ValueTask<IReadOnlyDictionary<long, Eve.Services.Core.PersistedStru
         return new Dictionary<long, Eve.Services.Core.PersistedStructureInfo>();
 
     var structures = await readTable("structures", cancellationToken);
+    var rows = requested
+        .Select(id => (Id: id, Row: structures[id.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject))
+        .Where(entry => entry.Row is not null && IsPersistentlyDeployedStructure(entry.Row, entry.Id))
+        .Select(entry => (entry.Id, Row: entry.Row!))
+        .ToArray();
+    var typeRows = await ReadStructureTypeRowsAsync(rows.Select(entry => entry.Row), cancellationToken);
     var result = new Dictionary<long, Eve.Services.Core.PersistedStructureInfo>();
-    foreach (var structureId in requested)
+    foreach (var (id, row) in rows)
     {
-        var key = structureId.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        if (structures[key] is not JsonObject structure || !IsPersistentlyDeployedStructure(structure, structureId))
-            continue;
-        result[structureId] = new Eve.Services.Core.PersistedStructureInfo(
-            structureId,
+        result[id] = new Eve.Services.Core.PersistedStructureInfo(
+            id,
             true,
-            StructureInfoPayload(structureId, structure),
-            Text(structure["itemName"] ?? structure["name"]));
+            StructureInfoPayload(id, row, typeRows.GetValueOrDefault(Positive(Integer(row["typeID"])))),
+            Text(row["itemName"] ?? row["name"]));
     }
     return result;
 }
 
     public async ValueTask<Eve.Services.Core.PersistedStructureInfo?> GetStructureInfoForCharacterAsync(
-    long characterId,
-    long structureId,
-    CancellationToken cancellationToken)
-{
-    var persisted = await GetStructureInfoAsync(structureId, cancellationToken);
-    if (persisted is not { PersistentlyDeployed: true } || characterId <= 0)
-        return persisted is null ? null : persisted with { Info = BasicStructureInfoPayload(structureId, persisted.Info) };
+        long characterId,
+        long structureId,
+        CancellationToken cancellationToken)
+    {
+        if (structureId <= 0)
+            return null;
+        var structures = await readTable("structures", cancellationToken);
+        var key = structureId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (structures[key] is not JsonObject structure || !IsPersistentlyDeployedStructure(structure, structureId))
+            return null;
 
-    var affiliation = await affiliationOf(characterId, cancellationToken);
-    var state = await readTable("structures", cancellationToken);
-    var key = structureId.ToString(System.Globalization.CultureInfo.InvariantCulture);
-    var ownerCorporationId = state[key] is JsonObject row
-        ? Positive(Integer(row["ownerCorpID"] ?? row["corporationID"]))
-        : 0;
-    return affiliation.Corporation == ownerCorporationId
-        ? persisted
-        : persisted with { Info = BasicStructureInfoPayload(structureId, persisted.Info) };
-}
+        var typeRows = await ReadStructureTypeRowsAsync([structure], cancellationToken);
+        var typeRow = typeRows.GetValueOrDefault(Positive(Integer(structure["typeID"])));
+        var info = StructureInfoPayload(structureId, structure, typeRow);
+        if (characterId <= 0)
+            info = BasicStructureInfoPayload(structureId, info);
+        else
+        {
+            var affiliation = await affiliationOf(characterId, cancellationToken);
+            var ownerCorporationId = Positive(Integer(structure["ownerCorpID"] ?? structure["corporationID"]));
+            if (affiliation.Corporation == ownerCorporationId)
+            {
+                var profiles = await readTable("structureProfiles", cancellationToken);
+                var accessGroups = await readTable("accessGroups", cancellationToken);
+                var services = CharacterDirectoryServices(
+                    structure,
+                    ownerCorporationId,
+                    (characterId, affiliation),
+                    profiles,
+                    accessGroups);
+                info = StructureInfoPayload(structureId, structure, typeRow, services);
+            }
+            else
+                info = BasicStructureInfoPayload(structureId, info);
+        }
+
+        return new Eve.Services.Core.PersistedStructureInfo(
+            structureId,
+            true,
+            info,
+            Text(structure["itemName"] ?? structure["name"]));
+    }
 
 public async ValueTask<IReadOnlyList<Eve.Services.Core.StructureDockingAccessSnapshot>> GetDockingAccessSnapshotsAsync(
         long characterId,
@@ -258,6 +280,7 @@ public async ValueTask<IReadOnlyList<Eve.Services.Core.StructureDockingAccessSna
 
     public async ValueTask<PyDict> GetMyCharacterStructuresAsync(
         long characterId,
+        long regionId,
         CancellationToken cancellationToken)
     {
         if (characterId <= 0)
@@ -269,23 +292,54 @@ public async ValueTask<IReadOnlyList<Eve.Services.Core.StructureDockingAccessSna
             return new PyDict([]);
 
         var state = await readTable("structures", cancellationToken);
-        var candidateIds = state
+        var candidateRows = state
             .Where(entry => entry.Value is JsonObject structure &&
                 long.TryParse(entry.Key, System.Globalization.NumberStyles.Integer,
                     System.Globalization.CultureInfo.InvariantCulture, out var structureId) &&
-                IsPersistentlyDeployedStructure(structure, structureId) &&
-                Positive(Integer(structure["ownerCorpID"] ?? structure["corporationID"])) == corporationId)
-            .Select(entry => long.Parse(entry.Key, System.Globalization.CultureInfo.InvariantCulture))
-            .OrderBy(id => id)
+                IsPersistentlyDeployedStructure(structure, structureId))
+            .Select(entry => (Id: long.Parse(entry.Key, System.Globalization.CultureInfo.InvariantCulture), Row: (JsonObject)entry.Value!))
+            .OrderBy(entry => entry.Id)
             .ToArray();
         var snapshots = await GetDockingAccessSnapshotsAsync(
-            characterId, corporationId, allianceId, candidateIds, cancellationToken);
+            characterId, corporationId, allianceId, candidateRows.Select(entry => entry.Id).ToArray(), cancellationToken);
         var dockableIds = snapshots
             .Where(snapshot => Eve.Services.Core.StructureDirectoryService.CanDock(
                 snapshot, snapshot.StructureId, characterId, corporationId, allianceId))
             .Select(snapshot => snapshot.StructureId)
             .ToHashSet();
-        return await ReadStructuresForCorporationAsync(corporationId, cancellationToken, dockableIds);
+
+        var profiles = await readTable("structureProfiles", cancellationToken);
+        var accessGroups = await readTable("accessGroups", cancellationToken);
+        var access = (characterId, affiliation);
+        var entries = new List<KeyValuePair<PyValue, PyValue>>();
+        foreach (var (structureId, structure) in candidateRows)
+        {
+            if (!dockableIds.Contains(structureId))
+                continue;
+            var ownerCorporationId = Positive(Integer(structure["ownerCorpID"] ?? structure["corporationID"]));
+            var services = CharacterDirectoryServices(structure, ownerCorporationId, access, profiles, accessGroups);
+            entries.Add(new KeyValuePair<PyValue, PyValue>(
+                InventoryWire.Id(structureId),
+                Py.KeyVal(
+                    ("typeID", InventoryWire.Id(Positive(Integer(structure["typeID"])))),
+                    ("structureID", InventoryWire.Id(structureId)),
+                    ("wars", StructureWars(structure["wars"])),
+                    ("services", services),
+                    ("ownerID", InventoryWire.Id(Positive(Integer(structure["ownerID"], ownerCorporationId)))),
+                    ("solarSystemID", InventoryWire.Id(Positive(Integer(structure["solarSystemID"])))))));
+        }
+
+        if (regionId > 0 && stationCatalog is not null)
+        {
+            foreach (var station in stationCatalog.All.Where(station => station.RegionId == regionId).OrderBy(station => station.Id))
+            {
+                entries.Add(new KeyValuePair<PyValue, PyValue>(
+                    InventoryWire.Id(station.Id),
+                    NpcStationDirectoryPayload(station, stationCatalog.ServicesOf(station.Id))));
+            }
+        }
+
+        return new PyDict(entries);
     }
 
     public async ValueTask<PyDict> GetMyCorporationStructuresAsync(
@@ -318,24 +372,40 @@ public async ValueTask<IReadOnlyList<Eve.Services.Core.StructureDockingAccessSna
         IReadOnlySet<long>? structureIds = null)
     {
         var state = await readTable("structures", cancellationToken);
-        var entries = new List<KeyValuePair<PyValue, PyValue>>();
-        foreach (var (key, node) in state)
-        {
-            if (node is not JsonObject structure ||
-                !long.TryParse(key, System.Globalization.NumberStyles.Integer,
-                    System.Globalization.CultureInfo.InvariantCulture, out var structureId) ||
-                !IsPersistentlyDeployedStructure(structure, structureId) ||
-                (structureIds is not null && !structureIds.Contains(structureId)) ||
-                Positive(Integer(structure["ownerCorpID"] ?? structure["corporationID"])) != corporationId)
-                continue;
+        var rows = state
+            .Where(entry => entry.Value is JsonObject structure &&
+                long.TryParse(entry.Key, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var structureId) &&
+                IsPersistentlyDeployedStructure(structure, structureId) &&
+                (structureIds is null || structureIds.Contains(structureId)) &&
+                Positive(Integer(structure["ownerCorpID"] ?? structure["corporationID"])) == corporationId)
+            .Select(entry => (Id: long.Parse(entry.Key, System.Globalization.CultureInfo.InvariantCulture), Row: (JsonObject)entry.Value!))
+            .OrderBy(entry => entry.Id)
+            .ToArray();
+        var typeRows = await ReadStructureTypeRowsAsync(rows.Select(entry => entry.Row), cancellationToken);
+        return new PyDict(rows.Select(entry => new KeyValuePair<PyValue, PyValue>(
+            new PyLong(entry.Id),
+            StructureInfoPayload(
+                entry.Id,
+                entry.Row,
+                typeRows.GetValueOrDefault(Positive(Integer(entry.Row["typeID"])))))).ToArray());
+    }
 
-            entries.Add(new KeyValuePair<PyValue, PyValue>(
-                new PyLong(structureId),
-                StructureInfoPayload(structureId, structure)));
-        }
-
-        entries.Sort(static (left, right) => ((PyLong)left.Key).Value.CompareTo(((PyLong)right.Key).Value));
-        return new PyDict(entries);
+    private async ValueTask<IReadOnlyDictionary<long, Eve.Sde.SdeRow>> ReadStructureTypeRowsAsync(
+        IEnumerable<JsonObject> structures,
+        CancellationToken cancellationToken)
+    {
+        if (sde is null)
+            return new Dictionary<long, Eve.Sde.SdeRow>();
+        var typeIds = structures
+            .Select(structure => Positive(Integer(structure["typeID"])))
+            .Where(typeId => typeId > 0)
+            .Distinct()
+            .ToArray();
+        if (typeIds.Length == 0)
+            return new Dictionary<long, Eve.Sde.SdeRow>();
+        return (await sde.ReadAsync("types", typeIds, cancellationToken))
+            .ToDictionary(row => row.Key);
     }
 
 
@@ -562,6 +632,9 @@ public async ValueTask<bool> IsValidWarHQAsync(
                 continue;
             structures.Add((structureId, structure));
         }
+
+        if (structures.Count == 0)
+            return new PyList([]);
 
         var typeRows = await sde.ReadAsync(
             "types", structures.Select(entry => (long)Positive(Integer(entry.Row["typeID"]))).Distinct(), cancellationToken);
@@ -831,9 +904,9 @@ public async ValueTask<bool> IsValidWarHQAsync(
         return value.ToString().Length > 0;
     }
 
-    private static long SdeInteger(Eve.Sde.SdeRow row, string field)
+    private static long SdeInteger(Eve.Sde.SdeRow? row, string field)
     {
-        if (!row.Doc.TryGetProperty(field, out var value))
+        if (row is null || !row.Doc.TryGetProperty(field, out var value))
             return 0;
         if (value.TryGetInt64(out var integer))
             return integer;

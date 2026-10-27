@@ -39,13 +39,13 @@ public sealed class MailServiceTests
     }
 
 [Fact]
-    public async Task Headers_preserve_corporation_or_alliance_recipient_arrays()
+    public async Task Headers_encode_corporation_or_alliance_recipient_as_a_scalar()
     {
         var data = JsonNode.Parse("""
             {
               "messages": {
                 "43": { "messageID":43, "senderID":90000002, "toCharacterIDs":[],
-                  "toCorpOrAllianceID":[98000001,98000002], "title":"Alliance",
+                  "toCorpOrAllianceID":98000002, "title":"Alliance",
                   "sentDate":"134100000000000001", "body":"Body" }
               },
               "mailboxes": { "90000001": { "statuses": { "43": { "statusMask":0, "labelMask":0 } } } }
@@ -55,13 +55,11 @@ public sealed class MailServiceTests
         var result = Assert.IsType<PyList>(await Service(data).CallAsync(
             Request("GetMailHeaders", new PyList([new PyInt(43)]))));
         var header = Assert.Single(result.Items);
-        var recipients = Assert.IsType<PyList>(Field(header, "toCorpOrAllianceID"));
-
-        Assert.Equal(new PyValue[] { new PyInt(98000001), new PyInt(98000002) }, recipients.Items);
+        Assert.Equal(new PyInt(98000002), Assert.IsType<PyInt>(Field(header, "toCorpOrAllianceID")));
     }
 
     [Fact]
-    public async Task Sync_mail_refuses_mailboxes_above_the_response_entry_limit()
+    public async Task Sync_returns_all_mailbox_entries_above_the_old_response_limit()
     {
         var messages = new JsonObject();
         var statuses = new JsonObject();
@@ -87,10 +85,11 @@ public sealed class MailServiceTests
             },
         };
 
-        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() =>
-            Service(data).CallAsync(Request("SyncMail")).AsTask());
+        var result = await Service(data).CallAsync(Request("SyncMail"));
 
-        Assert.Equal("MAIL_SYNC_LIMIT_EXCEEDED", MailInfo(refusal));
+        Assert.Equal(5_001, Assert.IsType<PyList>(Field(result, "newMail")).Items.Count);
+        Assert.Empty(Assert.IsType<PyList>(Field(result, "oldMail")).Items);
+        Assert.Equal(5_001, Assert.IsType<PyList>(Field(result, "mailStatus")).Items.Count);
     }
 
     [Fact]

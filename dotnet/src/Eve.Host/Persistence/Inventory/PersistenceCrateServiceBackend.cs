@@ -6,6 +6,7 @@ using Eve.Inventory;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Core;
+using Eve.Services.Space;
 using Eve.Skills;
 using Npgsql;
 
@@ -167,6 +168,28 @@ public sealed class PersistenceCrateServiceBackend(
         return ids?.Single();
     }
 
+    internal static async ValueTask<ShipFittingInfo?> ShipFittingInfoFromStoreAsync(
+        GameStoreCache cache, long fittingId, CancellationToken cancellationToken)
+    {
+        if (fittingId <= 0 || fittingId > int.MaxValue) return null;
+        await cache.LoadAsync(FittingsTable, cancellationToken);
+        return cache.Read(FittingsTable, "/").Data is JsonObject root
+            ? ShipFittingInfoFromRoot(root, fittingId)
+            : null;
+    }
+
+    internal static ShipFittingInfo? ShipFittingInfoFromRoot(JsonObject root, long fittingId)
+    {
+        if (fittingId <= 0 || fittingId > int.MaxValue ||
+            FindFitting(root, (int)fittingId) is not { } fitting)
+            return null;
+        return new ShipFittingInfo(
+            fitting.NameLabel ?? fitting.Name,
+            fitting.Icon ?? "res:/UI/Texture/classes/Fitting/tabFittings.png",
+            fitting.ShipTypeId,
+            fitting.Insurance ?? PyNone.Instance);
+    }
+
     private static SavedFitting? FindFitting(JsonObject root, int fittingId)
     {
         if (root["owners"] is not JsonObject owners) return null;
@@ -183,9 +206,15 @@ public sealed class PersistenceCrateServiceBackend(
             if (ReadInt(fitting["fittingID"], fittingId) != fittingId || ReadInt(fitting["shipTypeID"]) <= 0 ||
                 name.Length == 0 || fitData is null || fitData.Count == 0)
                 continue;
+            var nameLabel = FirstText(fitting, "nameLabel", "labelPath", "localizationLabel");
+            var icon = FirstText(fitting, "icon", "iconPath", "texturePath");
+            var insurance = FirstText(fitting, "insurance", "insuranceType", "insuranceTypeName");
             return new SavedFitting(
                 ReadInt(fitting["shipTypeID"]), name[..Math.Min(50, name.Length)],
-                Text(fitting["description"])[..Math.Min(500, Text(fitting["description"]).Length)], fitData);
+                Text(fitting["description"])[..Math.Min(500, Text(fitting["description"]).Length)], fitData,
+                nameLabel.Length == 0 ? null : nameLabel,
+                icon.Length == 0 ? null : icon,
+                insurance.Length == 0 ? PyNone.Instance : new PyStr(insurance));
         }
         return null;
     }
@@ -221,9 +250,19 @@ public sealed class PersistenceCrateServiceBackend(
         ? text
         : node?.ToString() ?? string.Empty;
 
+    private static string FirstText(JsonObject value, string first, string second, string third)
+    {
+        var text = Text(value[first]).Trim();
+        if (text.Length > 0) return text;
+        text = Text(value[second]).Trim();
+        return text.Length > 0 ? text : Text(value[third]).Trim();
+    }
+
     private sealed record SavedFitItem(int TypeId, int FlagId, int Quantity);
 
-    private sealed record SavedFitting(int ShipTypeId, string Name, string Description, IReadOnlyList<SavedFitItem> FitData)
+    private sealed record SavedFitting(
+        int ShipTypeId, string Name, string Description, IReadOnlyList<SavedFitItem> FitData,
+        string? NameLabel = null, string? Icon = null, PyValue? Insurance = null)
     {
         public JsonArray ToJsonArray() => new([.. FitData.Select(item => (JsonNode?)new JsonArray(item.TypeId, item.FlagId, item.Quantity))]);
     }

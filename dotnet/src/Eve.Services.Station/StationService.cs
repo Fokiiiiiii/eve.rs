@@ -7,7 +7,7 @@ namespace Eve.Services.Station;
 public sealed record StationGuest(long CharacterId, long CorporationId, long AllianceId, long WarFactionId);
 
 [Service("stationSvc", Aliases = ["station"])]
-public sealed partial class StationService(StationCatalog stations, PgCharacterStore characters, OnlineCharacters online, Func<long> nowUnixMs, Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? sovereigntySystemsForAlliance = null, Eve.Services.Corporations.OfficeManagerService? officeManager = null, SeedObserverGuestLedgerCallback? seedObserverGuestLedger = null, CharacterSessions? characterSessions = null, Func<CancellationToken, ValueTask<IReadOnlyList<(long SolarSystemId, long AllianceId)>>>? allAllianceSystems = null, Func<long, CancellationToken, ValueTask<IReadOnlyList<StationGuest>>>? getStationGuests = null)
+public sealed partial class StationService(StationCatalog stations, PgCharacterStore characters, OnlineCharacters online, Func<long> nowUnixMs, Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? sovereigntySystemsForAlliance = null, Eve.Services.Corporations.OfficeManagerService? officeManager = null, SeedObserverGuestLedgerCallback? seedObserverGuestLedger = null, CharacterSessions? characterSessions = null, Func<CancellationToken, ValueTask<IReadOnlyList<(long SolarSystemId, long AllianceId)>>>? allAllianceSystems = null, Func<long, CancellationToken, ValueTask<IReadOnlyList<StationGuest>>>? getStationGuests = null, SolarSystemCatalog? solarSystems = null)
 {
     /// <summary>The station services (repair, reprocessing, market, ...) every NPC station offers, as the client's bit mask.</summary>
     public const long AllServicesMask = 1_143_312;
@@ -91,7 +91,7 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
     [Method("GetStationItemBits")]
     public PyValue GetStationItemBits(ServiceCall call) =>
         StationOf(call.Session) is { } s
-            ? Py.Tuple(new PyInt(s.OwnerId), new PyInt(s.Id), new PyInt(s.OperationId), new PyInt(s.TypeId))
+            ? new PyList([new PyInt(s.OwnerId), new PyInt(s.Id), new PyInt(s.OperationId), new PyInt(s.TypeId)])
             : None;
 
     /// <summary>Who is docked here: <c>[(characterID, corporationID, allianceID, warFactionID)]</c> for every character in the game at this station.</summary>
@@ -107,11 +107,11 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
             var snapshot = await readGuests(stationId, call.Cancellation);
             seedObserverGuestLedger?.Invoke(call.Session, stationId,
                 snapshot.Select(guest => guest.CharacterId).Where(id => id > 0).ToHashSet());
-            return new PyList([.. snapshot.Select(guest => (PyValue)Py.Tuple(
+            return new PyList([.. snapshot.Select(guest => (PyValue)new PyList([
                 new PyInt(guest.CharacterId),
                 new PyInt(guest.CorporationId),
                 new PyInt(guest.AllianceId),
-                new PyInt(guest.WarFactionId)))]);
+                new PyInt(guest.WarFactionId)]))]);
         }
 
         var guestSessions = characterSessions?.InStation(stationId) ?? [];
@@ -132,40 +132,31 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
             stationId,
             guests.Select(character => character.Id).Where(characterId => characterId > 0).ToHashSet());
         return new PyList([.. guests
-            .Select(character => Py.Tuple(
+            .Select(character => (PyValue)new PyList([
                 new PyInt(character.Id),
                 new PyInt(character.CorporationId),
                 new PyInt(character.AllianceId ?? 0),
-                new PyInt(Math.Max(0, sessionsByCharacter.GetValueOrDefault(character.Id)?.GetInt("warfactionid") ?? 0))))]);
+                new PyInt(Math.Max(0, sessionsByCharacter.GetValueOrDefault(character.Id)?.GetInt("warfactionid") ?? 0))]))]);
     }
 
-    /// <summary>
-    /// The solar system of the session's station. The reference answers with the station it is docked at whichever system is asked
-    /// for, and so does this.
-    /// </summary>
+    /// <summary>The caller supplies the system whose faction it needs, including when not docked.</summary>
     [Method("GetSolarSystem")]
-    public PyValue GetSolarSystem(ServiceCall call) => StationOf(call.Session) is { } s
-        ? Py.KeyVal(
-            ("solarSystemID", new PyInt(s.SolarSystemId)),
-            ("solarSystemName", new PyStr(s.SolarSystemName)),
-            ("constellationID", new PyInt(s.ConstellationId)),
-            ("constellationName", new PyStr(s.ConstellationName)),
-            ("regionID", new PyInt(s.RegionId)),
-            ("regionName", new PyStr(s.RegionName)),
-            ("security", Py.Number(s.Security)),
-            ("factionID", s.FactionId is { } faction ? new PyInt(faction) : None),
-            ("factionName", new PyStr(s.FactionName)),
-            ("stationID", new PyInt(s.Id)),
-            ("stationName", new PyStr(s.Name)),
-            ("ownerID", new PyInt(s.OwnerId)),
-            ("ownerName", new PyStr(s.OwnerName)),
-            ("corporationID", new PyInt(s.OwnerId)),
-            ("corporationName", new PyStr(s.OwnerName)),
-            ("orbitID", new PyInt(s.OrbitId)),
-            ("stationTypeID", new PyInt(s.TypeId)))
-        : None;
+    public PyValue GetSolarSystem(ServiceCall call)
+    {
+        var requestedId = IdOf(call.Arg(0));
+        if (requestedId is not > 0 || requestedId > int.MaxValue) return None;
+        var system = solarSystems?.Get((int)requestedId.Value);
+        return system is null
+            ? None
+            : Py.KeyVal(
+                ("solarSystemID", new PyInt(system.Id)),
+                ("solarSystemName", new PyStr(system.Name)),
+                ("constellationID", new PyInt(system.ConstellationId)),
+                ("regionID", new PyInt(system.RegionId)),
+                ("security", Py.Number(system.Security)),
+                ("factionID", system.FactionId > 0 ? new PyInt(system.FactionId) : None));
+    }
 
-    /// <summary>All alliance-held systems for the star map.</summary>
     [Method("GetAllianceSystems")]
     public async ValueTask<PyValue> GetAllianceSystems(ServiceCall call)
     {

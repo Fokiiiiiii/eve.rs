@@ -5872,3 +5872,14 @@ The sole V24.01 caller of `agentMgr.GetPlausibleMissionIDs` is the mission-selec
 
 V24 invokes `fix_task_id` only through the development popup (`projectdiscovery/client/projects/covid/ui/devpopup.py:44-45`), whose return is ignored. EveJS sets a session task override for its later `get_new_task` handler (`server/src/services/character/projectDiscoveryService.js:272-277,290-296`). The whole V24 ProjectDiscovery client has no `get_new_task` call, and eve.rs has no such Host route or production task-fix writer (`dotnet/src/Eve.Services.Core/CoreServices.cs:96`). When the writer is absent, eve.rs now returns `PROJECT_DISCOVERY_TASK_FIX_UNAVAILABLE` instead of reporting a successful None result. This development hook remains unavailable until an authoritative task provider and its following client flow exist; no task payload is fabricated.
 
+## station GetSolarSystem resolves the requested solar system (2026-10-27)
+
+V24.01 calls `GetSolarSystem(systemID)` from `eve/devtools/script/insider.py:347` and immediately reads the returned `.factionID`. The eve.rs handler now reads that requested ID from the pinned-SDE-backed `SolarSystemCatalog` and returns its system record, including a nullable `factionID`, even when the caller is not docked.
+
+EveJS `src/server/src/services/station/stationService.js:218` ignores the argument and derives its response from `getStationRecord(session)` (station data lookup at `src/server/src/services/_shared/stationStaticData.js:223`). That can select a different system or return no record when the client explicitly asks about a system while in space. The client callsite and official SDE data take priority here. A real Host wire regression covers a requested system and an unknown ID in `StationSolarSystemHostWireTests.cs`.
+
+## TrashImpoundedOffice does not emit a second office-rental notification (2026-10-27)
+
+V24.01 reaches `TrashImpoundedOffice` through the officeManager Moniker (`eve/client/script/ui/services/corporation/officeManager.py:155-156`). Its asset action invalidates `GetAssetInventoryForLocation`, calls that Moniker, and scatters `OnReloadCorpAssets` (`eve/client/script/ui/shared/neocom/corporation/corp_ui_accounts.py:410-413`). EveJS 261018.1 removes its impounded runtime office and calls `notifyOfficeRentalChange` for each removed office (`src/server/src/services/corporation/officeManagerService.js:631-650`).
+
+eve.rs marks the rental inactive and emits `OnOfficeRentalChange` during `UnrentOffice`; `CorporationOfficeStore.ForCorporationAsync` and `CorporationsAtStationAsync` expose active rentals only. `TrashImpoundedOffice` then deletes only the impounded inventory rows and emits no second office event. This is an intentional difference: rental state and office caches changed on Unrent, while the V24 trash action reloads the asset inventory itself. The Host audit records both transitions in `docs/project/service-audit/DEEPCHECK_station.md`.

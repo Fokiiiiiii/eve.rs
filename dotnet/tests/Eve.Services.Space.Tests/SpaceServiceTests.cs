@@ -291,6 +291,7 @@ public class SpaceServiceTests
         var (rig, character, session) = await DockedAsync(localTimers: timers);
         await using var _ = rig;
         await InSpaceAsync(rig, session);
+        await Rig.UntilAsync(() => timers.Count == 0);
         rig.Space.LifecycleBlockers = (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<string>>([]);
         var shipId = character.ShipId;
         var systemId = (int)session.GetInt("solarsystemid")!.Value;

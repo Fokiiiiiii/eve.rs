@@ -325,12 +325,13 @@ public sealed class ContractProxyServiceTests
     }
 
     [Fact]
-    public async Task Create_contract_passes_client_terms_fees_and_skill_limits_to_the_writer()
+    public async Task Create_contract_uses_session_corporation_when_current_organization_excludes_it()
     {
         var writer = new RecordingWriteModel();
         var skillLevels = new Dictionary<int, int> { [25235] = 3, [73912] = 2, [16622] = 4, [3446] = 1 };
         var service = new ContractProxyService(new RecordingReadModel(), writer,
-            (characterId, typeId, ct) => ValueTask.FromResult(skillLevels.GetValueOrDefault(typeId)));
+            (characterId, typeId, ct) => ValueTask.FromResult(skillLevels.GetValueOrDefault(typeId)),
+            readCurrentOrganizationIds: (_, _) => ValueTask.FromResult((0L, 0L)));
         var session = new ClientSession { CharacterId = 42 };
         session.Set("stationid", new PyInt(3001));
         session.Set("corpid", new PyInt(84));

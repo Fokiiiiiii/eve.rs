@@ -223,12 +223,7 @@ public sealed partial class FleetManagerService(
     private static IReadOnlyList<long> Ids(PyValue value)
     {
         var values = Sequence(value);
-        var pythonSet = value is PyObjectEx
-        {
-            Kind: ObjectExKind.Ex1,
-            Header: PyTuple { Items.Count: >= 2 } header
-        } && header.Items[0] is PyToken { Value: "__builtin__.set" or "builtins.set" } &&
-             header.Items[1] is PyList { Items.Count: > 0 } arguments && arguments.Items[0] is PyList;
+        var pythonSet = PythonSetItems(value) is not null;
         if (value is not (PyList or PyTuple) && !pythonSet)
             throw MachoErrors.ThrowUserError("FleetError");
         if (values.Count > MaxWatchlistInputIds)
@@ -245,15 +240,8 @@ public sealed partial class FleetManagerService(
 
     private static IReadOnlyList<PyValue> Sequence(PyValue value)
     {
-        if (value is PyObjectEx { Kind: ObjectExKind.Ex1, Header: PyTuple header } &&
-            header.Items.Count >= 2 &&
-            header.Items[0] is PyToken typeName &&
-            typeName.Value is "__builtin__.set" or "builtins.set" &&
-            header.Items[1] is PyList { Items.Count: > 0 } arguments &&
-            arguments.Items[0] is PyList items)
-        {
+        if (PythonSetItems(value) is { } items)
             return items.Items;
-        }
 
         return value switch
         {
@@ -261,6 +249,22 @@ public sealed partial class FleetManagerService(
             PyTuple tuple => tuple.Items,
             _ => []
         };
+    }
+
+    private static PyList? PythonSetItems(PyValue value)
+    {
+        if (value is PyObject { Name: var name, Args: PyTuple { Items.Count: > 0 } args } &&
+            Text(name) is ("set" or "__builtin__.set" or "builtins.set") &&
+            args.Items[0] is PyList objectItems)
+            return objectItems;
+        if (value is PyObjectEx
+            {
+                Kind: ObjectExKind.Ex1,
+                Header: PyTuple { Items.Count: >= 2 } header
+            } && header.Items[0] is PyToken { Value: "__builtin__.set" or "builtins.set" } &&
+            header.Items[1] is PyList { Items.Count: > 0 } arguments && arguments.Items[0] is PyList items)
+            return items;
+        return null;
     }
 
     private static void SetWatchlist(ClientSession session, string key, IReadOnlyList<long> ids) =>

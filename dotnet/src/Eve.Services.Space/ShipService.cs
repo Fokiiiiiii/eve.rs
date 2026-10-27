@@ -247,6 +247,10 @@ public sealed partial class ShipService(
 
     /// <summary><c>Eject()</c> leaves the piloted hull in space and continues in a capsule.</summary>
     [Method("Eject")]
-    public ValueTask<PyValue> Eject(ServiceCall call) =>
-        _binding.Owns(call) ? space.EjectAsync(call.Session, call.Cancellation) : ValueTask.FromResult<PyValue>(None);
+    public async ValueTask<PyValue> Eject(ServiceCall call)
+    {
+        if (!_binding.Owns(call)) return None;
+        var result = await space.EjectAsync(call.Session, call.Cancellation);
+        return result is PyTuple ? None : result;
+    }
 }

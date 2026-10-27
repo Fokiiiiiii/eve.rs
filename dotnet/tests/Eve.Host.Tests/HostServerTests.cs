@@ -4602,8 +4602,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             System.Globalization.CultureInfo.InvariantCulture)]!["unrelated"]!.GetValue<string>());
         var savedMessage = committed["mail"]["messages"]!["12"]!;
         Assert.Equal("Body", savedMessage["body"]!.GetValue<string>());
-        Assert.Empty(savedMessage["toCorpOrAllianceID"]!.AsArray());
-        Assert.Equal(0, committed["mail"]["mailboxes"]![senderId.ToString(
+        Assert.Null(savedMessage["toCorpOrAllianceID"]);
+        Assert.Equal(1, committed["mail"]["mailboxes"]![senderId.ToString(
             System.Globalization.CultureInfo.InvariantCulture)]!["statuses"]!["12"]!["statusMask"]!.GetValue<int>());
         Assert.Equal(2, committed["mail"]["mailboxes"]![senderId.ToString(
             System.Globalization.CultureInfo.InvariantCulture)]!["statuses"]!["12"]!["labelMask"]!.GetValue<int>());

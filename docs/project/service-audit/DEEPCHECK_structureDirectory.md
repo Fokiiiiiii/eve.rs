@@ -121,7 +121,8 @@ A POS cyno-beacon source is still absent from both beacon methods because the Ho
 
 - Passed: `Eve.Host.Tests.HostServerTests.Structure_directory_all_client_methods_keep_wire_shapes_and_errors` (1 passed, 0 failed, 0 skipped).
 - Passed: `Eve.Services.Core.Tests.StructureDirectoryServiceTests.Docking_access_refuses_more_than_500_structure_ids_before_the_callback` (1 passed, 0 failed, 0 skipped).
-- Full `Eve.Host.Tests` project shard: 528 passed, 101 failed, 227 skipped, without a database URL. The failing set includes database-dependent tests; the skipped count is reported separately. The full shard is not a passing result.
+- Full `Eve.Host.Tests` project shard: 529 passed, 100 failed, 227 skipped, without a database URL. The failing set includes database-dependent tests; the skipped count is reported separately. The full shard is not a passing result.
+- The first push-triggered `ci.yml` run failed on the registry inventory total and the mail adapter regression test. The inventory now includes the added directory alias; the mail assertions now follow the client’s null recipient and sender read-bit semantics (`eve/client/script/ui/services/mail/mailSvc.py:1128-1134`). Both focused tests pass locally; a CI rerun is pending.
 - No real graphical client run was performed.
 
 ## Appendix A: whole-client `GetStructureInfo` callers

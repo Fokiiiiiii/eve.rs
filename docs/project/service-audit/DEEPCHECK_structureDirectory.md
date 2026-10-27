@@ -121,7 +121,7 @@ A POS cyno-beacon source is still absent from both beacon methods because the Ho
 
 - Passed: `Eve.Host.Tests.HostServerTests.Structure_directory_all_client_methods_keep_wire_shapes_and_errors` (1 passed, 0 failed, 0 skipped).
 - Passed: `Eve.Services.Core.Tests.StructureDirectoryServiceTests.Docking_access_refuses_more_than_500_structure_ids_before_the_callback` (1 passed, 0 failed, 0 skipped).
-- Full `Eve.Host.Tests` project shard: 526 passed, 101 failed, 227 skipped, without a database URL. Failures include tests that require `EVE_PG_URL` and an unrelated `DailyGoalTests` assertion; the skipped count is reported separately. This full shard is not a passing result.
+- Full `Eve.Host.Tests` project shard: 528 passed, 101 failed, 227 skipped, without a database URL. The failing set includes database-dependent tests; the skipped count is reported separately. The full shard is not a passing result.
 - No real graphical client run was performed.
 
 ## Appendix A: whole-client `GetStructureInfo` callers

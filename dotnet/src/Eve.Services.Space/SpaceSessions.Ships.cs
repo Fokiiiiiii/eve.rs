@@ -212,7 +212,7 @@ public sealed partial class SpaceSessions
             return None;
 
         var simulationFailed = false;
-        var transition = await _transitions.ExecuteAsync(
+        await _transitions.ExecuteAsync(
             token => _ships.EjectAsync(pilot.CharacterId, pilot.ShipId, token),
             result => result is not null,
             async (result, token) =>
@@ -293,9 +293,7 @@ public sealed partial class SpaceSessions
             cancellationToken,
             id);
 
-        return transition is not null && !simulationFailed
-            ? Py.Tuple(new PyDict([]), new PyDict([]), new PyDict([]), new PyDict([]))
-            : None;
+        return None;
     }
 
     public async ValueTask<PyValue> BoardAsync(ClientSession session, long shipId, long currentShipId, CancellationToken cancellationToken)

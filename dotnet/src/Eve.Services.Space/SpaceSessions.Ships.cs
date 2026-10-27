@@ -166,7 +166,7 @@ public sealed partial class SpaceSessions
     public async ValueTask<PyValue> EjectAsync(ClientSession session, CancellationToken cancellationToken)
     {
         var result = await EjectPhysicalShipAsync(session, ShipIdOf(session) ?? 0, false, cancellationToken);
-        return result is PyTuple ? None : result;
+        return result;
     }
 
     private async ValueTask<PyValue> EjectPhysicalShipAsync(ClientSession session, long expectedSessionShipId, bool exitStructure, CancellationToken cancellationToken)

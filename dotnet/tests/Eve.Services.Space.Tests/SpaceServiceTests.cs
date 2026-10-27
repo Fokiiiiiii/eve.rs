@@ -381,7 +381,7 @@ public class SpaceServiceTests
         var lost = new TaskCompletionSource<ShipLoss>(TaskCreationOptions.RunContinuationsAsynchronously);
         rig.Space.ShipLost += loss => lost.TrySetResult(loss);
 
-        Assert.IsType<PyNone>(await rig.Space.EjectAsync(session, CancellationToken.None));
+        Assert.IsType<PyTuple>(await rig.Space.EjectAsync(session, CancellationToken.None));
         var capsuleId = (await rig.Characters.GetAsync(character.CharacterId))!.ShipId!.Value;
 
         rig.Sim.Report(new SimDestroyed(
@@ -431,7 +431,7 @@ public class SpaceServiceTests
 
         var lost = new TaskCompletionSource<ShipLoss>(TaskCreationOptions.RunContinuationsAsynchronously);
         rig.Space.ShipLost += loss => lost.TrySetResult(loss);
-        Assert.IsType<PyNone>(await rig.Space.EjectAsync(session, CancellationToken.None));
+        Assert.IsType<PyTuple>(await rig.Space.EjectAsync(session, CancellationToken.None));
         var capsuleId = (await rig.Characters.GetAsync(character.CharacterId))!.ShipId!.Value;
 
         var heard = rig.Sim.Heard.ToArray();

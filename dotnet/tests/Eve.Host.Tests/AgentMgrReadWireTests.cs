@@ -1,4 +1,6 @@
 using System.Text.Json.Nodes;
+using Eve.Agents;
+using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
@@ -8,6 +10,18 @@ namespace Eve.Host.Tests;
 
 public partial class HostServerTests
 {
+    private static PyValue Get(PyDict dictionary, PyValue key) =>
+        dictionary.Entries.Single(entry =>
+            entry.Key == key ||
+            TextKey(entry.Key) is { } actual && actual == TextKey(key)).Value;
+
+    private static string? TextKey(PyValue value) => value switch
+    {
+        PyStr text => text.Value,
+        PyBytes bytes => System.Text.Encoding.UTF8.GetString(bytes.Value.Span),
+        _ => null,
+    };
+
     private const long AgentRpcPilot = 90_000_041;
     private const long AgentRpcFirstAgent = 7_004;
     private const long AgentRpcSecondAgent = 7_005;
@@ -88,6 +102,20 @@ public partial class HostServerTests
         var missionMessages = JsonNode.Parse("""
             { "start": { "430001": "UI/Agent/EpicArc/Start" } }
             """)!.AsObject();
+        var missionContentId = 93031L;
+        var missionTime = DateTimeOffset.FromFileTime(acceptedAt);
+        var heldMission = new HeldMissionView(
+            new MissionStatic(
+                missionContentId, "Courier Assignment", true, 60, null, null, null, null,
+                new MissionStaticCourier(34, 3, false),
+                new MissionStaticReward(29, 1500, null, 0, null),
+                null, 0, [], new Dictionary<string, string>(), 123456),
+            new AgentMissionRecord(
+                AgentRpcPilot, AgentRpcFirstAgent, AgentMissionState.Accepted,
+                new AgentMissionContent(missionContentId, 123456, "Courier Assignment", "courier", true),
+                missionTime, missionTime, missionTime, null, null, null),
+            987654,
+            Courier: new CourierObjectiveView(34, 3, 0.1, true, 60_000_001, 60_000_002, 1_000_036));
         var service = new AgentMissionService(
             (characterId, _) => ValueTask.FromResult<JsonObject?>(
                 characterId == AgentRpcPilot ? state : null),
@@ -107,6 +135,8 @@ public partial class HostServerTests
                     [agent, agent with { AgentId = AgentRpcSecondAgent, MissionKind = "encounter" }]),
                 ReadDisabledMissions: _ => ValueTask.FromResult<IReadOnlyList<long>>([5101, 5102]),
                 ReadEpicArcMessages: _ => ValueTask.FromResult<JsonObject?>(missionMessages),
+                ReadHeldMission: (characterId, agentId, _) => ValueTask.FromResult<HeldMissionView?>(
+                    characterId == AgentRpcPilot && agentId == AgentRpcFirstAgent ? heldMission : null),
                 ReadSolarSystemOfAgent: (agentId, _) => ValueTask.FromResult<long?>(
                     agentId == AgentRpcFirstAgent ? 30_000_165 : null)));
 
@@ -128,6 +158,17 @@ public partial class HostServerTests
         {
             await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
                 Packets.CallWithKwargs(open, callId, "agentMgr", method, args, machoVersion))));
+            var send = Assert.IsType<Send>(await front.ReceiveAsync());
+            var decoded = MarshalCodec.Decode(send.Payload);
+            var packet = Assert.IsType<MachoPacket>(MachoPacket.Decode(decoded));
+            Assert.Equal(MachoMessage.CallRsp, packet.Type);
+            return Result(decoded)!;
+        }
+
+        async Task<PyValue> BoundCallAsync(long callId, string oid, string method, PyTuple args, PyDict? kwargs = null)
+        {
+            await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+                Packets.BoundCall(open, callId, oid, method, args, kwargs ?? machoVersion))));
             var send = Assert.IsType<Send>(await front.ReceiveAsync());
             var decoded = MarshalCodec.Decode(send.Payload);
             var packet = Assert.IsType<MachoPacket>(MachoPacket.Decode(decoded));
@@ -167,7 +208,7 @@ public partial class HostServerTests
             await CallAsync(3, "GetDisabledMissions", new PyTuple([])));
         var messages = Assert.IsType<PyDict>(
             await CallAsync(4, "GetMessagesForEpicArcMissions", new PyTuple([])));
-        var starts = Assert.IsType<PyDict>(Get(messages, new PyStr("start")));
+        var starts = Assert.IsType<PyDict>(Get(messages, new PyBytes("start"u8.ToArray())));
         Assert.Equal("UI/Agent/EpicArc/Start", T(Get(starts, new PyInt(430001))));
 
         var arcStatus = Assert.IsType<PyDict>(
@@ -175,9 +216,9 @@ public partial class HostServerTests
         var arcMissions = Assert.IsType<PyDict>(Get(arcStatus, new PyInt(1200)));
         var arcMission = Assert.IsType<PyObject>(Get(arcMissions, new PyInt(430001)));
         var arcMissionFields = Assert.IsType<PyDict>(arcMission.Args);
-        Assert.Equal(Py.FileTimeLong(acceptedAt), Get(arcMissionFields, new PyStr("acceptedDate")));
-        Assert.Equal(PyNone.Instance, Get(arcMissionFields, new PyStr("completedDate")));
-        Assert.Equal(new PyInt(123456), Get(arcMissionFields, new PyStr("nameID")));
+        Assert.Equal(Py.FileTimeLong(acceptedAt), Get(arcMissionFields, new PyBytes("acceptedDate"u8.ToArray())));
+        Assert.Equal(PyNone.Instance, Get(arcMissionFields, new PyBytes("completedDate"u8.ToArray())));
+        Assert.Equal(new PyInt(123456), Get(arcMissionFields, new PyBytes("nameID"u8.ToArray())));
 
         var journal = Assert.IsType<PyTuple>(
             await CallAsync(6, "GetMyJournalDetails", new PyTuple([])));
@@ -186,21 +227,16 @@ public partial class HostServerTests
         var firstMission = Assert.IsType<PyTuple>(allMissions.Items[0]);
         var missionBookmarks = Assert.IsType<PyList>(firstMission.Items[6]);
         var returnedBookmark = Assert.IsType<PyObject>(Assert.Single(missionBookmarks.Items));
-        Assert.Equal(new PyInt(600001), Get(Assert.IsType<PyDict>(returnedBookmark.Args), new PyStr("itemID")));
+        Assert.Equal(new PyInt(600001), Get(Assert.IsType<PyDict>(returnedBookmark.Args), new PyBytes("itemID"u8.ToArray())));
         var research = Assert.IsType<PyList>(journal.Items[1]);
         Assert.Equal(2, research.Items.Count);
         Assert.Equal(new PyInt(AgentRpcFirstAgent), Assert.IsType<PyTuple>(research.Items[0]).Items[0]);
 
         var binding = Assert.IsType<PyTuple>(await CallAsync(
-            7, "MachoBindObject", new PyTuple([new PyTuple([new PyInt(AgentRpcFirstAgent)])])));
+            7, "MachoBindObject", new PyTuple([new PyTuple([new PyLong(AgentRpcFirstAgent)])])));
         var oid = BoundObjects.ExtractName(Assert.IsType<PySubStruct>(binding.Items[0]))!;
-        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
-            Packets.BoundCall(open, 8, oid, "GetMyJournalDetails", new PyTuple([]), machoVersion))));
-        var boundResponse = Assert.IsType<Send>(await front.ReceiveAsync());
-        var boundPayload = MarshalCodec.Decode(boundResponse.Payload);
-        Assert.Equal(MachoMessage.CallRsp,
-            Assert.IsType<MachoPacket>(MachoPacket.Decode(boundPayload)).Type);
-        var boundJournal = Assert.IsType<PyTuple>(Result(boundPayload));
+        var boundJournal = Assert.IsType<PyTuple>(
+            await BoundCallAsync(8, oid, "GetMyJournalDetails", new PyTuple([])));
         var boundMissions = Assert.IsType<PyList>(boundJournal.Items[0]);
         var onlyAgentMission = Assert.IsType<PyTuple>(Assert.Single(boundMissions.Items));
         Assert.Equal(new PyInt(AgentRpcFirstAgent), onlyAgentMission.Items[4]);
@@ -209,9 +245,99 @@ public partial class HostServerTests
 
         Assert.Equal(new PyInt(30_000_165),
             await CallAsync(9, "GetSolarSystemOfAgent", new PyTuple([new PyInt(AgentRpcFirstAgent)])));
+
+        var missionInfo = Assert.IsType<PyDict>(
+            await BoundCallAsync(10, oid, "GetMissionJournalInfo", new PyTuple([])));
+        Assert.Equal(new PyInt(missionContentId), Get(missionInfo, new PyBytes("contentID"u8.ToArray())));
+        Assert.Equal(new PyInt(123456), Get(missionInfo, new PyBytes("missionNameID"u8.ToArray())));
+        Assert.Equal(new PyInt((int)AgentMissionState.Accepted), Get(missionInfo, new PyBytes("missionState"u8.ToArray())));
+        Assert.IsType<PyList>(Get(missionInfo, new PyBytes("bookmarks"u8.ToArray())));
+        var objectives = Assert.IsType<PyDict>(Get(missionInfo, new PyBytes("objectives"u8.ToArray())));
+        Assert.Equal(new PyInt(missionContentId), Get(objectives, new PyBytes("contentID"u8.ToArray())));
+        var objective = Assert.IsType<PyTuple>(
+            Assert.Single(Assert.IsType<PyList>(Get(objectives, new PyBytes("objectives"u8.ToArray()))).Items));
+        Assert.Equal(new PyBytes("transport"u8.ToArray()), objective.Items[0]);
+        var transport = Assert.IsType<PyTuple>(objective.Items[1]);
+        Assert.Equal(PyBool.True,
+            Get(Assert.IsType<PyDict>(transport.Items[4]), new PyBytes("hasCargo"u8.ToArray())));
+
+        var objectiveInfo = Assert.IsType<PyDict>(
+            await BoundCallAsync(15, oid, "GetMissionObjectiveInfo", new PyTuple([])));
+        Assert.Equal(new PyInt(missionContentId), Get(objectiveInfo, new PyBytes("contentID"u8.ToArray())));
+        Assert.IsType<PyList>(Get(objectiveInfo, new PyBytes("objectives"u8.ToArray())));
+        var objectiveKwargs = new PyDict([
+            new KeyValuePair<PyValue, PyValue>(new PyStr("charID"), new PyLong(AgentRpcPilot)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("ignoreLocateCheck"), PyBool.True),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1)),
+        ]);
+        Assert.Equal(objectiveInfo, await BoundCallAsync(16, oid, "GetMissionObjectiveInfo",
+            new PyTuple([]), objectiveKwargs));
+
+        Assert.Equal(missionInfo, await BoundCallAsync(11, oid, "GetMissionJournalInfo",
+            new PyTuple([PyNone.Instance, PyNone.Instance])));
+        Assert.Equal(missionInfo, await BoundCallAsync(12, oid, "GetMissionJournalInfo",
+            new PyTuple([new PyInt(AgentRpcPilot), new PyLong(missionContentId)])));
+
+        var noMissionBinding = Assert.IsType<PyTuple>(await CallAsync(
+            13, "MachoBindObject", new PyTuple([new PyTuple([new PyInt(AgentRpcSecondAgent)])])));
+        var noMissionOid = BoundObjects.ExtractName(Assert.IsType<PySubStruct>(noMissionBinding.Items[0]))!;
+        Assert.Equal(PyNone.Instance,
+            await BoundCallAsync(14, noMissionOid, "GetMissionJournalInfo", new PyTuple([])));
     }
-    private static PyValue Get(PyDict dict, PyValue key) =>
-        Assert.Single(dict.Entries, pair => pair.Key == key ||
-            (pair.Key is PyBytes && key is PyStr && T(pair.Key) == T(key)) ||
-            (pair.Key is PyStr && key is PyBytes && T(pair.Key) == T(key))).Value;
+
+    [Fact]
+    public void Courier_mission_hasCargo_counts_only_active_ship_cargo_or_dropoff_hangar()
+    {
+        const int typeId = 34;
+        const long required = 3;
+        const long ownerId = 90_000_041;
+        const long activeShipId = 500_001;
+        const long otherShipId = 500_002;
+        const long pickupStationId = 60_000_001;
+        const long dropoffStationId = 60_000_002;
+
+        Item Stack(long id, long locationId, int flag, long quantity, int stackTypeId = typeId) =>
+            new(id, stackTypeId, ownerId, locationId, flag, quantity, false, null);
+
+        Assert.False(Eve.Host.CharacterServicesComposition.HasCourierCargo(
+            [
+                Stack(1, pickupStationId, ItemFlags.Hangar, required),
+                Stack(2, otherShipId, ItemFlags.Cargo, required),
+            ],
+            typeId,
+            required,
+            activeShipId,
+            dropoffStationId));
+
+        Assert.False(Eve.Host.CharacterServicesComposition.HasCourierCargo(
+            [Stack(3, activeShipId, ItemFlags.Cargo, required - 1)],
+            typeId,
+            required,
+            activeShipId,
+            dropoffStationId));
+
+        Assert.True(Eve.Host.CharacterServicesComposition.HasCourierCargo(
+            [
+                Stack(4, activeShipId, ItemFlags.Cargo, 1),
+                Stack(5, activeShipId, ItemFlags.Cargo, required - 1),
+            ],
+            typeId,
+            required,
+            activeShipId,
+            dropoffStationId));
+
+        Assert.True(Eve.Host.CharacterServicesComposition.HasCourierCargo(
+            [Stack(6, dropoffStationId, ItemFlags.Hangar, required)],
+            typeId,
+            required,
+            activeShipId,
+            dropoffStationId));
+
+        Assert.False(Eve.Host.CharacterServicesComposition.HasCourierCargo(
+            [Stack(7, activeShipId, ItemFlags.Cargo, required, typeId + 1)],
+            typeId,
+            required,
+            activeShipId,
+            dropoffStationId));
+    }
 }

@@ -139,7 +139,7 @@ public static class MissionViews
 
             Field("importantStandings", new PyInt(view.Record.Content.Important ? 1 : 0)),
             Field("missionExtra", PyNone.Instance),
-            Field("contentID", PyNone.Instance),
+            Field("contentID", IdOrNone(view.Record.Content.MissionId)),
             Field("agentGift", new PyList([])),
             Field("normalRewards", new PyList(rewards)),
             Field("bonusRewards", new PyList([])),
@@ -153,7 +153,7 @@ public static class MissionViews
     public static PyDict JournalInfo(HeldMissionView view) => new(
     [
         Field("missionNameID", IdOrNone(view.Mission.NameId)),
-        Field("contentID", PyNone.Instance),
+        Field("contentID", IdOrNone(view.Record.Content.MissionId)),
         Field("briefingTextID", IdOrNone(view.BriefingMessageId)),
         Field("missionImage", PyNone.Instance),
         Field("expirationTime", view.Record.ExpiresAt is { } expires ? new PyLong(expires.ToFileTime()) : PyNone.Instance),

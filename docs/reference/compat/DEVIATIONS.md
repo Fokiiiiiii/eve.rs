@@ -5865,7 +5865,7 @@ V24 invokes `fix_task_id` only through the development popup (`projectdiscovery/
 
 V24.01 calls `GetSolarSystem(systemID)` from `eve/devtools/script/insider.py:347` and immediately reads the returned `.factionID`. The eve.rs handler now reads that requested ID from the pinned-SDE-backed `SolarSystemCatalog` and returns its system record, including a nullable `factionID`, even when the caller is not docked.
 
-EveJS `src/server/src/services/station/stationService.js:218` ignores the argument and derives its response from `getStationRecord(session)` (station data lookup at `src/server/src/services/_shared/stationStaticData.js:223`). That can select a different system or return no record when the client explicitly asks about a system while in space. The client callsite and official SDE data take priority here. A real Host wire regression covers a requested system and an unknown ID in `StationSolarSystemHostWireTests.cs`.
+EveJS `src/server/src/services/station/stationService.js:218` ignores the argument and derives its response from `getStationRecord(session)` (station data lookup at `src/server/src/services/_shared/stationStaticData.js:223`). That can select a different system or return no record when the client explicitly asks about a system while in space. The client callsite and official SDE data take priority here. A real Host wire regression covers a requested system and an unknown ID in `StationSolarSystemHostWireTests.cs`. The no-argument call preserves EveJS's session-station fallback: a docked session receives its full 17-field record, and an undocked session receives `None`.
 
 ## TrashImpoundedOffice does not emit a second office-rental notification (2026-10-27)
 

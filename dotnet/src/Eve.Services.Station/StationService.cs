@@ -91,7 +91,7 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
     [Method("GetStationItemBits")]
     public PyValue GetStationItemBits(ServiceCall call) =>
         StationOf(call.Session) is { } s
-            ? new PyList([new PyInt(s.OwnerId), new PyInt(s.Id), new PyInt(s.OperationId), new PyInt(s.TypeId)])
+            ? Py.Tuple(new PyInt(s.OwnerId), new PyInt(s.Id), new PyInt(s.OperationId), new PyInt(s.TypeId))
             : None;
 
     /// <summary>Who is docked here: <c>[(characterID, corporationID, allianceID, warFactionID)]</c> for every character in the game at this station.</summary>
@@ -107,11 +107,11 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
             var snapshot = await readGuests(stationId, call.Cancellation);
             seedObserverGuestLedger?.Invoke(call.Session, stationId,
                 snapshot.Select(guest => guest.CharacterId).Where(id => id > 0).ToHashSet());
-            return new PyList([.. snapshot.Select(guest => (PyValue)new PyList([
+            return new PyList([.. snapshot.Select(guest => (PyValue)Py.Tuple(
                 new PyInt(guest.CharacterId),
                 new PyInt(guest.CorporationId),
                 new PyInt(guest.AllianceId),
-                new PyInt(guest.WarFactionId)]))]);
+                new PyInt(guest.WarFactionId)))]);
         }
 
         var guestSessions = characterSessions?.InStation(stationId) ?? [];
@@ -132,29 +132,53 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
             stationId,
             guests.Select(character => character.Id).Where(characterId => characterId > 0).ToHashSet());
         return new PyList([.. guests
-            .Select(character => (PyValue)new PyList([
+            .Select(character => (PyValue)Py.Tuple(
                 new PyInt(character.Id),
                 new PyInt(character.CorporationId),
                 new PyInt(character.AllianceId ?? 0),
-                new PyInt(Math.Max(0, sessionsByCharacter.GetValueOrDefault(character.Id)?.GetInt("warfactionid") ?? 0))]))]);
+                new PyInt(Math.Max(0, sessionsByCharacter.GetValueOrDefault(character.Id)?.GetInt("warfactionid") ?? 0))))]);
     }
 
-    /// <summary>The caller supplies the system whose faction it needs, including when not docked.</summary>
+    /// <summary>Returns the requested SDE system, or the current station record when no system ID is supplied.</summary>
     [Method("GetSolarSystem")]
     public PyValue GetSolarSystem(ServiceCall call)
     {
-        var requestedId = IdOf(call.Arg(0));
-        if (requestedId is not > 0 || requestedId > int.MaxValue) return None;
-        var system = solarSystems?.Get((int)requestedId.Value);
-        return system is null
-            ? None
-            : Py.KeyVal(
-                ("solarSystemID", new PyInt(system.Id)),
-                ("solarSystemName", new PyStr(system.Name)),
-                ("constellationID", new PyInt(system.ConstellationId)),
-                ("regionID", new PyInt(system.RegionId)),
-                ("security", Py.Number(system.Security)),
-                ("factionID", system.FactionId > 0 ? new PyInt(system.FactionId) : None));
+        if (IdOf(call.Arg(0)) is { } requestedId)
+        {
+            if (requestedId is not > 0 || requestedId > int.MaxValue)
+                return None;
+            var system = solarSystems?.Get((int)requestedId);
+            return system is null
+                ? None
+                : Py.KeyVal(
+                    ("solarSystemID", new PyInt(system.Id)),
+                    ("solarSystemName", new PyStr(system.Name)),
+                    ("constellationID", new PyInt(system.ConstellationId)),
+                    ("regionID", new PyInt(system.RegionId)),
+                    ("security", Py.Number(system.Security)),
+                    ("factionID", system.FactionId > 0 ? new PyInt(system.FactionId) : None));
+        }
+
+        return StationOf(call.Session) is { } s
+            ? Py.KeyVal(
+                ("solarSystemID", new PyInt(s.SolarSystemId)),
+                ("solarSystemName", new PyStr(s.SolarSystemName)),
+                ("constellationID", new PyInt(s.ConstellationId)),
+                ("constellationName", new PyStr(s.ConstellationName)),
+                ("regionID", new PyInt(s.RegionId)),
+                ("regionName", new PyStr(s.RegionName)),
+                ("security", Py.Number(s.Security)),
+                ("factionID", s.FactionId is { } faction ? new PyInt(faction) : None),
+                ("factionName", new PyStr(s.FactionName)),
+                ("stationID", new PyInt(s.Id)),
+                ("stationName", new PyStr(s.Name)),
+                ("ownerID", new PyInt(s.OwnerId)),
+                ("ownerName", new PyStr(s.OwnerName)),
+                ("corporationID", new PyInt(s.OwnerId)),
+                ("corporationName", new PyStr(s.OwnerName)),
+                ("orbitID", new PyInt(s.OrbitId)),
+                ("stationTypeID", new PyInt(s.TypeId)))
+            : None;
     }
 
     [Method("GetAllianceSystems")]

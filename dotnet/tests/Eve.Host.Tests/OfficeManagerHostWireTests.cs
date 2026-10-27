@@ -64,7 +64,7 @@ public partial class HostServerTests
         Assert.Same(PyNone.Instance, longBind.Items[1]);
         var boundReference = Assert.IsType<PyTuple>(
             Assert.IsType<PySubStream>(Assert.IsType<PySubStruct>(longBind.Items[0]).Value).Decoded);
-        var boundObjectId = Assert.IsType<PyStr>(boundReference.Items[0]).Value;
+        var boundObjectId = Encoding.UTF8.GetString(Assert.IsType<PyBytes>(boundReference.Items[0]).Value.Span);
         Assert.Same(PyNone.Instance,
             await OfficeBoundRpcAsync(front, open, 5, boundObjectId, "PrimeOfficeItem"));
     }
@@ -97,7 +97,7 @@ public partial class HostServerTests
 
         var boundReference = Assert.IsType<PyTuple>(
             Assert.IsType<PySubStream>(Assert.IsType<PySubStruct>(bind.Items[0]).Value).Decoded);
-        var boundObjectId = Assert.IsType<PyStr>(boundReference.Items[0]).Value;
+        var boundObjectId = Encoding.UTF8.GetString(Assert.IsType<PyBytes>(boundReference.Items[0]).Value.Span);
         Assert.Equal(new PyLong(100_113),
             await OfficeBoundRpcAsync(front, open, 2, boundObjectId, "GetPriceQuote", new PyLong(corporationId)));
     }

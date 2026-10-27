@@ -79,7 +79,10 @@ public sealed class StargateJumpWireTests
         Assert.Equal(Character, Events.Number(Assert.Single(Assert.IsType<PyTuple>(notification.Args[2]).Items)));
         Assert.Equal(180, Events.Number(notification.Args[4]));
 
-        Assert.Equal(PyNone.Instance, CallResult(Assert.Single(packets, packet => MessageType(packet) == MachoMessage.CallRsp)));
+        var jumpResult = Assert.IsType<PyTuple>(CallResult(Assert.Single(packets, packet => MessageType(packet) == MachoMessage.CallRsp)));
+        Assert.Equal(2, jumpResult.Items.Count);
+        Assert.Equal(oid, Assert.IsType<PyStr>(jumpResult.Items[0]).Value);
+        Assert.Equal(Py.FileTimeFromUnixMs(UnixMs + 10_000), Assert.IsType<PyLong>(jumpResult.Items[1]).Value);
 
         var commands = sim.Heard.OfType<SimCommand>().ToArray();
         Assert.Equal(2, commands.Length);

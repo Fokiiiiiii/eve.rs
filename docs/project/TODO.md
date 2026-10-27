@@ -1059,7 +1059,7 @@ Done in slice D (DEVIATIONS.md, "Station entry, account requests and the live su
 Open after slice D:
 | Status | Item | Owner / where |
 |---|---|---|
-| OPEN | Reports: `ingamereport.*` (eight methods) and `eveguard_report.heartbeat_*` are answered and not kept (the reference keeps them in memory, lost at restart) | a support / report store (later slice) |
+| OPEN | Reports: `ingamereport.*` (eight methods) are answered and not retained; `eveguard_report.heartbeat_*` retains up to 1,024 process-local events. Neither has durable storage; the reference also loses its in-memory history at restart | a support / report store (later slice) |
 | OPEN | Votes and reports: `CastUpvote`, `CastDownvote`, `ReportBot`, `ReportISKSpammer` answer False; nothing is recorded | a feedback and report store (later slice) |
 | DONE (CH-8) | Re-sculpt: `userSvc.ActivateCharacterReSculpt` consumes a re-sculpt certificate (SDE 34132 or 89956) of the account's character in the transaction that sets the recustomization state (3 for 34132, 1 for 89956; migration 0011 `characters.paperdoll_state`); a save ends the state; `charMgr.GetPaperdollState` answers it. Tests: `CharacterReSculptHostTests` (passed, eve_p4), `CharacterStore` state test in the Host test, live `tools/headless-client/tests/test_resculpt_live.py` (1 passed). Not checked: the client's own save call with a doll payload (the live test does not save). |
 | OPEN | Redeeming codes (`kiringMgr.ActivateRedeemingCode`) answer False: no code store | the store slice (S3) |

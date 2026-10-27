@@ -796,7 +796,7 @@ public sealed class CorporationOfficeTests
     {
         var result = await service.GetPriceQuote(Call("GetPriceQuote", actor, corporationId,
             new Eve.Marshal.PyLong(corporationId)));
-        return decimal.Round((decimal)Assert.IsType<Eve.Marshal.PyReal>(result).Value, 2);
+        return decimal.Round((decimal)Assert.IsType<Eve.Marshal.PyLong>(result).Value, 2);
     }
 
     [PgFact]

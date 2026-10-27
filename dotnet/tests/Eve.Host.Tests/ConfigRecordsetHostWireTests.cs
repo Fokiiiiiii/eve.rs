@@ -1,3 +1,4 @@
+using Eve.Characters;
 using Eve.Corporations;
 using Eve.Host;
 using Eve.Macho;
@@ -18,6 +19,8 @@ public partial class HostServerTests
         const long stationId = 60_000_142;
         const long agentId = 3_008_416;
         const long allianceId = 3_000_842;
+        const long characterId = 3_000_843;
+        const long structureId = 1_100_000_142_000;
 
         var solarSystems = new SolarSystemCatalog([
             new SolarSystemInfo(systemId, "Test System", 20_000_001, 10_000_001, 0.5, X: 4, Y: 5, Z: 6),
@@ -32,9 +35,17 @@ public partial class HostServerTests
         var corporation = new Corporation(ownerId, "Test Corporation", "TST", agentId, agentId, null,
             stationId, systemId, 0m, 0m, "", "", 100, false, false, 0, default);
         var alliance = new Alliance(allianceId, "Test Alliance", "TAL", "", "", null, ownerId, agentId, 0, false);
+        var character = new Character(characterId, 7, "Test Character", 1, 1, 1, 1, 1, 1373,
+            ownerId, null, allianceId, stationId, stationId, systemId, 20_000_001, 10_000_001, null,
+            DateTimeOffset.UnixEpoch, null, null);
+        var ownerIds = ids.Append(characterId).Append(ownerId).Append(allianceId).ToArray();
         var service = new ConfigService(
             null!, null!, stations, solarSystems,
             agentOwners: agentOwners,
+            readCharacters: (requested, _) => Task.FromResult<IReadOnlyList<Character>>(
+                requested.Contains(characterId) ? [character] : []),
+            readStructureNames: (requested, _) => Task.FromResult<IReadOnlyDictionary<long, string>>(
+                requested.Contains(structureId) ? new Dictionary<long, string> { [structureId] = "Test Structure" } : new Dictionary<long, string>()),
             readCorporations: (requested, _) => Task.FromResult<IReadOnlyList<Corporation>>(
                 requested.Contains(ownerId) ? [corporation] : []),
             readAlliances: (requested, _) => Task.FromResult<IReadOnlyList<Alliance>>(
@@ -89,9 +100,21 @@ public partial class HostServerTests
         Assert.Equal(new PyInt((int)(agentId % 2)), owner.Items[3]);
         Assert.Same(PyNone.Instance, owner.Items[4]);
         var multiOwners = Rowset(await Call(2, "GetMultiOwnersEx",
-                new PyList(ids.Select(id => (PyValue)new PyLong(id)).ToArray())),
+                new PyList(ownerIds.Select(id => (PyValue)new PyLong(id)).ToArray())),
             "ownerID", "ownerName", "typeID", "gender", "ownerNameID");
-        Assert.Equal(ids.Length, Assert.IsType<PyTuple>(multiOwners.Items[1]).Items.Count);
+        var ownerRows = Assert.IsType<PyTuple>(multiOwners.Items[1]).Items.Select(value => Assert.IsType<PyTuple>(value)).ToArray();
+        Assert.Equal(ownerIds.Length, ownerRows.Length);
+        var characterRow = Assert.Single(ownerRows, row => row.Items[0] == new PyInt(characterId));
+        Assert.Equal("Test Character", WireText(characterRow.Items[1]));
+        Assert.Equal(new PyInt(1373), characterRow.Items[2]);
+        Assert.Equal(new PyInt(1), characterRow.Items[3]);
+        Assert.Same(PyNone.Instance, characterRow.Items[4]);
+        var corporationRow = Assert.Single(ownerRows, row => row.Items[0] == new PyInt(ownerId));
+        Assert.Equal("Test Corporation", WireText(corporationRow.Items[1]));
+        Assert.Equal(new PyInt(2), corporationRow.Items[2]);
+        var allianceOwnerRow = Assert.Single(ownerRows, row => row.Items[0] == new PyInt(allianceId));
+        Assert.Equal("Test Alliance", WireText(allianceOwnerRow.Items[1]));
+        Assert.Equal(new PyInt(16159), allianceOwnerRow.Items[2]);
 
         var tickers = Rowset(await Call(3, "GetMultiCorpTickerNamesEx", new PyList([new PyLong(ownerId)])),
             "corporationID", "tickerName", "shape1", "shape2", "shape3", "color1", "color2", "color3");
@@ -107,16 +130,21 @@ public partial class HostServerTests
         Assert.Equal("TAL", WireText(allianceRow.Items[1]));
 
         var locations = Rowset(await Call(5, "GetMultiLocationsEx",
-                new PyList([new PyInt(0), new PyLong(systemId), new PyLong(stationId), new PyLong(9_999_999)])),
+                new PyList([new PyInt(0), new PyLong(systemId), new PyLong(stationId), new PyLong(structureId), new PyLong(9_999_999)])),
             "locationID", "locationName", "solarSystemID", "x", "y", "z", "locationNameID");
         var locationRows = Assert.IsType<PyTuple>(locations.Items[1]).Items.Select(value => Assert.IsType<PyTuple>(value)).ToArray();
-        Assert.Equal(3, locationRows.Length);
+        Assert.Equal(4, locationRows.Length);
         Assert.Equal("(none)", WireText(locationRows[0].Items[1]));
         Assert.Same(PyNone.Instance, locationRows[0].Items[2]);
         Assert.Equal(new PyInt(systemId), locationRows[1].Items[2]);
         Assert.Equal("Test Station", WireText(locationRows[2].Items[1]));
         Assert.Equal(11d, Assert.IsType<PyReal>(locationRows[2].Items[3]).Value);
         Assert.Same(PyNone.Instance, locationRows[2].Items[6]);
+        Assert.Equal(new PyLong(structureId), locationRows[3].Items[0]);
+        Assert.Equal("Test Structure", WireText(locationRows[3].Items[1]));
+        Assert.Same(PyNone.Instance, locationRows[3].Items[2]);
+        Assert.All(locationRows[3].Items.Skip(3).Take(3), value => Assert.Equal(0d, Assert.IsType<PyReal>(value).Value));
+        Assert.Equal($"Structure {structureId}", WireText(locationRows[3].Items[6]));
         Rowset(await Call(6, "GetLocationsEx", new PyLong(stationId)),
             "locationID", "locationName", "solarSystemID", "x", "y", "z", "locationNameID");
         Rowset(await Call(7, "GetLocationsLocal", new PyList([new PyLong(systemId), new PyLong(stationId)])),
@@ -133,7 +161,7 @@ public partial class HostServerTests
             "itemID", "x", "y", "z", "yaw", "pitch", "roll");
         Assert.Equal(2, Assert.IsType<PyTuple>(positions.Items[1]).Items.Count);
 
-        var stationsByOwner = Assert.IsType<PyList>(await Call(10, "GetStationSolarSystemsByOwner", new PyLong(ownerId)));
+        var stationsByOwner = Assert.IsType<PyList>(await Call(10, "GetStationSolarSystemsByOwner", new PyInt(ownerId)));
         var stationSystems = Assert.IsType<PyObject>(Assert.Single(stationsByOwner.Items));
         Assert.Equal("util.KeyVal", WireText(stationSystems.Name));
         var stationFields = Assert.IsType<PyDict>(stationSystems.Args).Entries
@@ -148,6 +176,8 @@ public partial class HostServerTests
         var allianceAlias = Rowset(await Call(12, "GetAllianceShortNamesEx", new PyLong(allianceId)),
             "allianceID", "shortName");
         Assert.Equal("TAL", WireText(Assert.IsType<PyTuple>(Assert.Single(Assert.IsType<PyTuple>(allianceAlias.Items[1]).Items)).Items[1]));
+        var stationsByLongOwner = Assert.IsType<PyList>(await Call(13, "GetStationSolarSystemsByOwner", new PyLong(ownerId)));
+        Assert.Single(stationsByLongOwner.Items);
     }
 
     [Fact]

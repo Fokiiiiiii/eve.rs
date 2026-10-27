@@ -59,7 +59,7 @@ public partial class HostServerTests
             await HostRpcAsync(front, open, 9, "stationSvc", "GetSystemsForAlliance", new PyInt(allianceId)));
         Assert.Single(requestedAllianceWithInt.Items);
 
-        var stationBits = Assert.IsType<PyList>(
+        var stationBits = Assert.IsType<PyTuple>(
             await HostRpcAsync(front, open, 4, "stationSvc", "GetStationItemBits"));
         Assert.Equal([new PyInt(ownerId), new PyInt(stationId), new PyInt(7), new PyInt(1531)], stationBits.Items);
 

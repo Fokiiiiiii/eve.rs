@@ -4786,10 +4786,16 @@ as reference. The client's `bookmarkSvc.py` (`OnSharedBookmarksFolderUpdated`, `
   and a manager deletes the sub-folder with all its contents.
 - **Choice: the user's bulk delete and move skip what it may not touch.** `DeleteBookmarks` and the move answer the ids that went; a bookmark
   the user did not make is left alone (the reference's answer for this case is not read here). The copy needs view on the source and use on the target.
-- **Expiry.** The client's own option set is the wire contract and the one used here (`bookmarkConst.py`: none, 4 hours, 2 days, 24 hours,
-  with the client's labels `ExpireNever`, `ExpireIn4Hours`, `ExpireIn2Days`, `ExpireIn24Hours`). The wiki's "In 3 Hours" is not offered by the
-  client and is not used. An expired bookmark is removed at its time: by a one-minute timer (`bookmarks.expiry`, LocalTimers) and by any read,
-  and the characters that have its folder active hear of it (`bookmarksRemoved`).
+- **Expiry.** The V24 wire values remain none, 1, 2, and 3, and the client labels them none, 4 hours, 2 days, and 24 hours
+  (`bookmarkConst.py:16-19`). EVE University's [Bookmarks guide](https://wiki.eveuniversity.org/Bookmarks) lists “In 3 Hours” for the short option, so mode 1 expires after 3 hours even though the V24
+  UI still labels it 4 hours. The 24-hour mode remains accepted because the client sends it, although the wiki lists no such option. An expired
+  bookmark is removed at its time: by a one-minute timer (`bookmarks.expiry`, LocalTimers) and by any read, and active viewers hear
+  `bookmarksRemoved`.
+- **Live bookmark position.** EveJS `bookmarkTargetResolver.js:46-79` uses the pilot-perceived warp position when a bookmark targets the pilot's
+  own ship mid-warp. The client call in `bookmarkSvc.py:611-616` sends the target item ID and bookmark fields, not a client-projected coordinate. The guide says
+  coordinate bookmarks use the ship's position at click, including during warp. eve.rs resolves that live item with `SpaceSessions.PositionOfAsync` (`SpaceSessions.Movement.cs:132-137,184-204`), the authoritative simulation
+  query; this can differ from EveJS's client-perceived position during the pilot's own warp. The current simulation API exposes no pilot-perceived
+  warp coordinate, so the server position is used.
 - **Access changes.** After an owner group change (a list deleted, a member added, removed or changed), each connected character whose
   folders use the list is told, after the response: `OnSharedBookmarksFoldersAccessLost` (a list of folder ids it can no longer view) and
   `OnSharedBookmarksFoldersAccessChanged` (a dict from folder id to its new level). V24.01 `bookmarkSvc.py` removes each lost id from
@@ -5236,9 +5242,9 @@ Fleet invite and member-movement RPCs reject role values outside the signed 32-b
 `contractProxy.CompleteContract` applies the shared checked Int32 parser to both V24 integer wire types. A status outside Int32 range returns `ConContractNotAvailable` before contract state is read or mutated; valid status values retain the existing transition behavior. `ContractProxyServiceTests.Complete_contract_refuses_status_that_overflows_int32` verifies the writer is not invoked. `PacketDispatcher` charges all `contractProxy` methods 10 per-session work units because every operation reads or mutates persisted contract state; `DispatchGoldenTests.Contract_operations_use_the_named_per_session_budget` verifies list calls are refused at the configured limit.
 
 
-## Insurance price batch bound (2026-10-20)
+## Insurance price batches (2026-10-20)
 
-`insurance.GetInsurancePrices` accepts at most 500 raw type IDs per request and returns `InsuranceBulkLimitExceeded` before reading price data for a larger batch. The V24 client primes the service with the set of missing ship type IDs; normal client batches retain their existing results. `InsuranceServiceTests.Insurance_price_batch_refuses_more_than_500_type_ids_before_the_read_model` covers the refusal.
+`insurance.GetInsurancePrices` accepts the distinct positive type IDs supplied by the V24 client without a service-level item-count cap. It returns one ISK price per requested type ID, with zero for unknown types; duplicate and invalid IDs are removed. This matches the client call shape and EveJS behavior. The Host wire regression is recorded in `docs/project/service-audit/DEEPCHECK_insurance.md`.
 
 ## Ship self-destruct countdown (2026-10-20)
 

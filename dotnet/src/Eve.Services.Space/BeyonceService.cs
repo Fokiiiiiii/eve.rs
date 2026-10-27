@@ -40,6 +40,12 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
     /// <summary>The access checked bookmark store writer from the host composition.</summary>
     public Func<ServiceCall, ScanBookmarkTarget, long, string?, string?, int, long?, ValueTask<PyValue>>? SaveBookmarkScanResult { get; set; }
 
+    /// <summary>Resolves a live ballpark target to the coordinates saved by the bookmark writer.</summary>
+    public Func<ServiceCall, long, CancellationToken, Task<ScanBookmarkTarget?>>? ResolveBookmarkLocationTarget { get; set; }
+
+    /// <summary>The live can/wreck rights owner used by the entity service and this bound client command.</summary>
+    public Eve.Services.Ships.ISpaceContainers? SpaceContainers { get; set; }
+
     private static WarpCoordinates? Coordinates(PyValue value)
     {
         if (value is PyObject objectValue)
@@ -112,6 +118,33 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
         return Py.Tuple(bound, result);
     }
 
+    [Method("BookmarkLocation")]
+    public async ValueTask<PyValue> BookmarkLocation(ServiceCall call)
+    {
+        var itemId = BookmarkInteger(call.Arg(0));
+        var folderId = BookmarkInteger(call.Arg(1));
+        var expiry = BookmarkInteger(call.Arg(4));
+        var name = BookmarkText(call.Arg(2));
+        var note = BookmarkText(call.Arg(3));
+        if (call.Session.CharacterId is not > 0 || itemId is not > 0 || folderId is not > 0
+            || expiry is null or < int.MinValue or > int.MaxValue || name is null || note is null)
+        {
+            throw Eve.Services.MachoErrors.ThrowUserError("BookmarkNotAvailable");
+        }
+
+        var resolve = ResolveBookmarkLocationTarget ?? throw new InvalidOperationException("Live bookmark target resolution is not configured.");
+        var target = await resolve(call, itemId.Value, call.Cancellation);
+        var solarSystemId = call.Session.GetInt("solarsystemid") ?? 0;
+        if (target is not { } resolved || solarSystemId <= 0 || resolved.SolarSystemId != solarSystemId
+            || !double.IsFinite(resolved.X) || !double.IsFinite(resolved.Y) || !double.IsFinite(resolved.Z))
+        {
+            throw Eve.Services.MachoErrors.ThrowUserError("BookmarkNotAvailable");
+        }
+
+        var save = SaveBookmarkScanResult ?? throw new InvalidOperationException("Bookmark storage is not configured.");
+        return await save(call, resolved, folderId.Value, name, note, (int)expiry.Value, BookmarkSubfolderId(call));
+    }
+
     [Method("BookmarkScanResult")]
     public async ValueTask<PyValue> BookmarkScanResult(ServiceCall call)
     {
@@ -145,12 +178,7 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
             throw Eve.Services.MachoErrors.ThrowUserError("BookmarkNotAvailable");
         }
 
-        var subfolderValue = call.Kwarg("subfolderID");
-        var subfolderId = subfolderValue is null or PyNone ? null : BookmarkInteger(subfolderValue);
-        if (subfolderValue is not null and not PyNone && subfolderId is not > 0)
-        {
-            throw Eve.Services.MachoErrors.ThrowUserError("BookmarkSubfolderNoLongerThere");
-        }
+        var subfolderId = BookmarkSubfolderId(call);
         return await save(call, new ScanBookmarkTarget(locationId.Value, site.Position[0], site.Position[1], site.Position[2]),
             folderId.Value, name, note, (int)expiryValue.Value, subfolderId);
     }
@@ -162,13 +190,23 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
         _ => null,
     };
 
-    private static string? BookmarkText(PyValue value) => value switch
+    private static long? BookmarkSubfolderId(ServiceCall call)
     {
-        PyStr text => text.Value,
-        PyWString text => text.Value,
-        PyNone => "",
-        _ => null,
-    };
+        var value = call.Kwarg("subfolderID");
+        if (value is null or PyNone)
+        {
+            return null;
+        }
+        var id = BookmarkInteger(value);
+        if (id is not > 0)
+        {
+            throw Eve.Services.MachoErrors.ThrowUserError("BookmarkSubfolderNoLongerThere");
+        }
+        return id;
+    }
+
+    private static string? BookmarkText(PyValue value) =>
+        value is PyNone ? "" : Eve.Macho.JsSemantics.StringValue(value);
 
     private static (long? Id, string? Code) ScanSiteId(PyValue value)
     {
@@ -760,6 +798,17 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
         _binding.Owns(call) && space.Bridges is { } bridges && Number(call.Arg(1)) is { } bridgeShip && Number(call.Arg(2)) is { } beacon && Number(call.Arg(3)) is { } system
             ? await bridges.JumpThroughAsync(call.Session, (long)bridgeShip, (long)beacon, (int)system, call.BoundObjectId, call.Cancellation)
             : None;
+
+    /// <summary>The client abandons loot rights for one or more wrecks; their contents stay in place.</summary>
+    [Method("CmdAbandonLoot")]
+    public async ValueTask<PyValue> CmdAbandonLoot(ServiceCall call)
+    {
+        if (!_binding.Owns(call))
+            return None;
+        var containers = SpaceContainers ?? throw new InvalidOperationException("Space container custody is not configured.");
+        await containers.AbandonLootAsync(call.Session, SpaceDrones.IdsOf(call.Arg(0)), call.Cancellation);
+        return None;
+    }
 
     /// <summary>
     /// <c>CmdDock(stationID, shipID)</c>: dock at a station. The client learns of the session change separately.

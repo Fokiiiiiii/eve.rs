@@ -41,6 +41,9 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
     /// <summary>Resolves a live ballpark target to the coordinates saved by the bookmark writer.</summary>
     public Func<ServiceCall, long, CancellationToken, Task<ScanBookmarkTarget?>>? ResolveBookmarkLocationTarget { get; set; }
 
+    /// <summary>The live can/wreck rights owner used by the entity service and this bound client command.</summary>
+    public Eve.Services.Ships.ISpaceContainers? SpaceContainers { get; set; }
+
     private static WarpCoordinates? Coordinates(PyValue value)
     {
         if (value is PyObject objectValue)
@@ -751,6 +754,17 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
         _binding.Owns(call) && space.Bridges is { } bridges && Number(call.Arg(1)) is { } bridgeShip && Number(call.Arg(2)) is { } beacon && Number(call.Arg(3)) is { } system
             ? await bridges.JumpThroughAsync(call.Session, (long)bridgeShip, (long)beacon, (int)system, call.BoundObjectId, call.Cancellation)
             : None;
+
+    /// <summary>The client abandons loot rights for one or more wrecks; their contents stay in place.</summary>
+    [Method("CmdAbandonLoot")]
+    public async ValueTask<PyValue> CmdAbandonLoot(ServiceCall call)
+    {
+        if (!_binding.Owns(call))
+            return None;
+        var containers = SpaceContainers ?? throw new InvalidOperationException("Space container custody is not configured.");
+        await containers.AbandonLootAsync(call.Session, SpaceDrones.IdsOf(call.Arg(0)), call.Cancellation);
+        return None;
+    }
 
     /// <summary>
     /// <c>CmdDock(stationID, shipID)</c>: dock at a station. The answer is the time the docking was accepted; the docking itself is done a few

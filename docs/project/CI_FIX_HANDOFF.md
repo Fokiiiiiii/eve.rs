@@ -4,12 +4,12 @@ The current status below is authoritative. Dated entries that follow are histori
 
 ## Current status (2026-10-27)
 
-- The newest push-triggered CI run is 1174 on `c9387a3d`. The end-to-end character creation tests and `Eve.Services.Station.Tests` fail because station guest rows contain an inner list where the EveJS capture contains a tuple.
-- The V24.01 client flow was checked across the client. `eve/client/script/ui/station/base.py:98-108` calls `station.GetGuests`, unpacks four values per row, and builds the guest map; lines 110-113 use the map for `IsGuest`. `eve/client/script/ui/shared/dockedUI/guests.py:94-95,177-183` builds the docked guest view and consumes join/leave notifications; `eve/client/script/ui/shared/dockedUI/controllers/stationController.py:46-47` forwards the service call. EveJS v0.12.9 `server/src/services/station/stationService.js:134-154` returns its guest tuples in a list, and `server/src/services/_shared/guestLists.js:18-37` creates the four-field rows.
-- The worktree fix keeps the outer `PyList` and emits inner `PyTuple` rows from both `GetGuests` data paths. It adds a focused regression test for the Host snapshot provider.
-- Local checks after merging `30f5c47d`: the Station test project build passed with 0 warnings and 0 errors; the focused test passed (1); the full project passed 47, skipped 26, failed 0. The skipped database tests require `EVE_PG_URL`; no PostgreSQL database was used.
-- The latest extended Nightly run is run 10 on `d017125c`. Failing jobs include skill-training timeout, ammo and reload timing, agent reward totals, belt-rat targeting, death and heal event ordering, and abyssal fixture setup. These need checking against Nightly on current main after the station fix.
-- The station fix is ready for its main push. Record the push-triggered CI and Nightly results here after they finish.
+- Station guest row fix was pushed to `main` as signed commit `65674a79ed7ac12a5a9b51a317f0b2f23d87ef4c` with author and committer `Fokiiiiiii <contact@foki.sh>`.
+- Required CI run 1175 (Actions 40550700109, SHA `65674a79`) is in progress: end-to-end, .NET build, Rust, Python, Windows and format jobs have started. The previous run 1174 on `c9387a3d` failed the headless character-creation guest shape checks and `Eve.Services.Station.Tests` because inner guest rows were lists instead of tuples.
+- The V24.01 flow was traced across the client. `eve/client/script/ui/station/base.py:98-108` calls `station.GetGuests`, unpacks four values per row, and builds the guest map; lines 110-113 use the map for `IsGuest`. `eve/client/script/ui/shared/dockedUI/guests.py:94-95,177-183` builds the docked guest view and consumes join/leave notifications; `eve/client/script/ui/shared/dockedUI/controllers/stationController.py:46-47` forwards the call. EveJS v0.12.9 `server/src/services/station/stationService.js:134-154` returns guest tuples inside a list, and `server/src/services/_shared/guestLists.js:18-37` constructs the four-field rows.
+- The fix keeps the outer `PyList` and emits inner `PyTuple` rows in both `GetGuests` data paths. A focused regression test covers the Host snapshot provider.
+- Local checks after merging `30f5c47d`: Station test project build passed with 0 warnings and 0 errors; focused test passed (1); full project passed 47, skipped 26, failed 0. The PostgreSQL-dependent tests skipped because `EVE_PG_URL` was unset; no database was used.
+- The latest extended Nightly run is run 10 on `d017125c`; its failures cover skill-training timeout, ammo/reload timing, agent reward totals, belt-rat targeting, death/heal notification order, and abyssal fixture setup. Check these on a Nightly run against current main after run 1175 completes.
 
 ## Historical checkpoint (2026-10-26)
 

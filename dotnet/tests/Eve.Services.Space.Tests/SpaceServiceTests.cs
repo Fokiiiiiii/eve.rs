@@ -298,7 +298,7 @@ public class SpaceServiceTests
 
         var ejected = await rig.ShipCallAsync(session, "Eject", oid);
 
-        Assert.IsType<PyTuple>(ejected);
+        Assert.IsType<PyNone>(ejected);
         var capsuleId = (await rig.Characters.GetAsync(character.CharacterId))!.ShipId!.Value;
         Assert.NotEqual(shipId, capsuleId);
         Assert.Equal(capsuleId, session.GetInt("shipid"));

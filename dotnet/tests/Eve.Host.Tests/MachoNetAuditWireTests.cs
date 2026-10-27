@@ -264,30 +264,34 @@ public sealed class MachoNetAuditWireTests : IAsyncLifetime
         var published = ConfigOf(Assert.IsType<ClusterConfig>(messages[configIndex]));
         Assert.Equal("1", Text(published["new_mission_giver_enabled"]));
 
-        await front.SendAsync(new Packet(admin.SessionId, MarshalCodec.Encode(Packets.Call(
+        await front.SendAsync(new Packet(admin.SessionId, MarshalCodec.Encode(Packets.CallWithKwargs(
             admin,
             3,
             "machoNet",
             "SetGlobalConfigValue",
-            new PyStr("wide_value"),
-            new PyLong(7),
-            new PyLong(0),
-            new PyInt(1),
-            new PyLong(0)))));
+            Py.Tuple(
+                new PyStr("wide_value"),
+                new PyLong(7),
+                new PyLong(0),
+                new PyInt(1),
+                new PyLong(0)),
+            Py.Dict(("machoVersion", new PyInt(1)))))));
         var wideConfig = Assert.IsType<ClusterConfig>(await front.ReceiveAsync());
         Assert.Equal(new PyLong(7), ConfigOf(wideConfig)["wide_value"]);
         Assert.Equal(PyNone.Instance, Result(Assert.IsType<Send>(await front.ReceiveAsync()).Payload));
 
-        await front.SendAsync(new Packet(admin.SessionId, MarshalCodec.Encode(Packets.Call(
+        await front.SendAsync(new Packet(admin.SessionId, MarshalCodec.Encode(Packets.CallWithKwargs(
             admin,
             4,
             "machoNet",
             "SetGlobalConfigValue",
-            new PyStr("wide_value"),
-            PyNone.Instance,
-            new PyLong(1),
-            new PyLong(0),
-            new PyLong(1)))));
+            Py.Tuple(
+                new PyStr("wide_value"),
+                PyNone.Instance,
+                new PyLong(1),
+                new PyLong(0),
+                new PyLong(1)),
+            Py.Dict(("machoVersion", new PyInt(1)))))));
         var removalMessages = new List<HostMessage>();
         for (var index = 0; index < 4; index++)
         {
@@ -306,13 +310,13 @@ public sealed class MachoNetAuditWireTests : IAsyncLifetime
         Assert.Equal(PyNone.Instance, Result(Assert.IsType<Send>(removalMessages.Single(message =>
             message is Send send && IsCallResponse(send))).Payload));
 
-        await front.SendAsync(new Packet(admin.SessionId, MarshalCodec.Encode(Packets.Call(
+        await front.SendAsync(new Packet(admin.SessionId, MarshalCodec.Encode(Packets.CallWithKwargs(
             admin,
             5,
             "machoNet",
             "SetGlobalConfigValue",
-            new PyStr("bugReporting_BugReportServer"),
-            new PyStr("http://elsewhere/")))));
+            Py.Tuple(new PyStr("bugReporting_BugReportServer"), new PyStr("http://elsewhere/")),
+            Py.Dict(("machoVersion", new PyInt(1)))))));
         var protectedRefusal = Assert.IsType<Send>(await front.ReceiveAsync());
         var protectedError = Error(protectedRefusal.Payload);
         Assert.Equal("exceptions.RuntimeError", protectedError.ClassName);
@@ -323,13 +327,13 @@ public sealed class MachoNetAuditWireTests : IAsyncLifetime
             Text(protectedError.Args.Items[1]));
 
         _persistence.FailWrites = true;
-        await front.SendAsync(new Packet(admin.SessionId, MarshalCodec.Encode(Packets.Call(
+        await front.SendAsync(new Packet(admin.SessionId, MarshalCodec.Encode(Packets.CallWithKwargs(
             admin,
             6,
             "machoNet",
             "SetGlobalConfigValue",
-            new PyStr("write_failure"),
-            new PyStr("1")))));
+            Py.Tuple(new PyStr("write_failure"), new PyStr("1")),
+            Py.Dict(("machoVersion", new PyInt(1)))))));
         var failedWrite = Error(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
         Assert.Equal("exceptions.RuntimeError", failedWrite.ClassName);
         Assert.Single(failedWrite.Args.Items);

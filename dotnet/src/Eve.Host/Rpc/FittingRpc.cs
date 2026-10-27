@@ -10,14 +10,16 @@ namespace Eve.Host;
 
 internal sealed partial class CharacterServicesComposition
 {
-    /// <summary>
-
-    /// no insurance). A fitting that is not saved gets the reference's default, which the ship service gives.
-    /// </summary>
-    private async ValueTask<ShipFittingInfo?> ShipFittingInfoOf(long fittingId, CancellationToken cancellationToken) =>
-        await savedFittings.FindAsync(fittingId, cancellationToken) is { } fitting
+    /// <summary>Resolves crate reward metadata from GameStore and retains saved fittings as a fallback.</summary>
+    private async ValueTask<ShipFittingInfo?> ShipFittingInfoOf(long fittingId, CancellationToken cancellationToken)
+    {
+        var crateFitting = await PersistenceCrateServiceBackend.ShipFittingInfoFromStoreAsync(
+            mailCache, fittingId, cancellationToken);
+        if (crateFitting is not null) return crateFitting;
+        return await savedFittings.FindAsync(fittingId, cancellationToken) is { } fitting
             ? new ShipFittingInfo(fitting.Draft.Name, "res:/UI/Texture/classes/Fitting/tabFittings.png", fitting.Draft.ShipTypeId, PyNone.Instance)
             : null;
+    }
 
     /// <summary>The saved fittings of characters, corporations and alliances (fitting persistence, track S1).</summary>
     private IReadOnlyList<IService> FittingRpc()

@@ -57,7 +57,7 @@ public sealed class AbyssalSpaceSessionsTests
         var shipBinding = await rig.BindShipInSpaceAsync(session);
         var result = await rig.ShipCallAsync(session, "Jettison", shipBinding,
             new Eve.Marshal.PyList([new Eve.Marshal.PyLong(cargo.Id)]));
-        Assert.Empty(((Eve.Marshal.PyTuple)((Eve.Marshal.PyTuple)result).Items[0]).Items);
+        Assert.Empty(Assert.IsType<Eve.Marshal.PyList>(Assert.IsType<Eve.Marshal.PyTuple>(result).Items[0]).Items);
         Assert.True(failedCan > 0);
         Assert.Null(await rig.Items.GetAsync(failedCan));
         var retained = (await rig.Items.GetAsync(cargo.Id))!;
@@ -67,7 +67,7 @@ public sealed class AbyssalSpaceSessionsTests
         rig.Sim.PlaceContainerHandler = null;
         var retry = await rig.ShipCallAsync(session, "Jettison", shipBinding,
             new Eve.Marshal.PyList([new Eve.Marshal.PyLong(cargo.Id)]));
-        Assert.Single(((Eve.Marshal.PyTuple)((Eve.Marshal.PyTuple)retry).Items[0]).Items);
+        Assert.Single(Assert.IsType<Eve.Marshal.PyList>(Assert.IsType<Eve.Marshal.PyTuple>(retry).Items[0]).Items);
         var accepted = rig.Sim.Heard.OfType<SimPlaceContainer>().Last();
         Assert.Equal(second, accepted.ExpectedScene);
         var acceptedCan = (await rig.Items.GetAsync(accepted.ContainerId))!;

@@ -1,6 +1,6 @@
 # Market status
 
-Updated 2026-10-23. This status follows the V24.01 call sites, current Host wiring, pinned SDE and EVE University market rules.
+Updated 2026-10-27. This status follows the V24.01 call sites, current Host wiring, pinned SDE and EVE University market rules.
 
 ## Built
 
@@ -13,9 +13,12 @@ Updated 2026-10-23. This status follows the V24.01 call sites, current Host wiri
 
 ## Open
 
-- The market ask row's client decoding remains unresolved. V24 has both named-field and tuple consumers; server-side marshal tests do not establish how the native client restores the named row.
 - Native graphical-client acceptance remains open. The NPC headless walk does not verify the structure market through the graphical client.
-- CI must verify the latest structure-market rollback, combined broker-minimum, and duration-zero buy regressions. The local machine was not used for PostgreSQL tests.
+- CI still needs to verify the latest structure-market rollback, combined broker-minimum, and duration-zero buy regressions. Do not count the duration-zero database scenarios as passing until their Actions run succeeds.
+
+## Wire evidence
+
+The best ask row shape is resolved from the V24.01 client source. `marketutil/__init__.py:7-10` passes each row to `BestByOrder(*order)`, while `carbon/common/script/sys/row.py:23-36,69-70` supports named attribute reads, integer indexing and sequence length on `util.Row`. The client uses both paths: `eve/client/script/ui/shared/market/quote.py:95-100` reads `ask.typeID`, and `eve/client/script/ui/shared/market/marketbase.py:653` converts the best-order rows to tuples. `MarketWire.BestByOrderRow` emits `util.Row` with matching `header` and `line` values in `dotnet/src/Eve.Services.Market/MarketWire.cs:25-30`.
 
 ## Regression evidence
 

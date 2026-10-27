@@ -276,6 +276,12 @@ public sealed class PacketDispatcher
                     $"method={call.Method} error={ex.GetType().Name}");
             }
             session.DropAfterResponse();
+            if (service is IServiceExceptionMapper mapper && mapper.MapException(ex) is { } mappedError)
+            {
+                OnProblem?.Invoke($"{service.Name}.{call.Method}: {ex.GetType().Name}: {ex.Message}", ex);
+                SendError(packet, mappedError, session, service.Name);
+                return true;
+            }
             if (StrictRpc)
             {
                 OnProblem?.Invoke($"{service.Name}.{call.Method}: {ex.Message}", ex);

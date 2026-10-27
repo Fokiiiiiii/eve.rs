@@ -13,12 +13,21 @@ public sealed record Station(
 public sealed class StationCatalog
 {
     private readonly Dictionary<long, Station> _stations;
+    private readonly IReadOnlyDictionary<long, IReadOnlyList<int>> _stationServices;
 
-    public StationCatalog(IEnumerable<Station> stations) => _stations = stations.ToDictionary(s => s.Id);
+    public StationCatalog(
+        IEnumerable<Station> stations,
+        IReadOnlyDictionary<long, IReadOnlyList<int>>? stationServices = null)
+    {
+        _stations = stations.ToDictionary(s => s.Id);
+        _stationServices = stationServices ?? new Dictionary<long, IReadOnlyList<int>>();
+    }
 
     public int Count => _stations.Count;
 
     public Station? Get(long id) => _stations.GetValueOrDefault(id);
+
+    public IReadOnlyList<int> ServicesOf(long id) => _stationServices.GetValueOrDefault(id) ?? [];
 
     /// <summary>The stations of a solar system (EVE.js getStationsForSystem).</summary>
     public IEnumerable<Station> InSystem(int solarSystemId) => _stations.Values.Where(station => station.SolarSystemId == solarSystemId);
@@ -68,9 +77,12 @@ public sealed class StationCatalog
                 r => r.Key,
                 r => (Name: SdeReader.English(r.Doc.GetProperty("name")), Faction: r.Doc.TryGetProperty("factionID", out var f) && f.ValueKind == JsonValueKind.Number ? f.GetInt64() : (long?)null));
         var operations = (await sde.ReadAsync("stationOperations", cancellationToken: cancellationToken))
-            .ToDictionary(r => (int)r.Key, r => r.Doc.TryGetProperty("operationName", out var n) ? SdeReader.English(n) : "");
+            .ToDictionary(r => (int)r.Key, r => (
+                Name: r.Doc.TryGetProperty("operationName", out var n) ? SdeReader.English(n) : "",
+                Services: StationServiceIds(r.Doc)));
 
         var list = new List<Station>(stations.Count);
+        var servicesByStationId = new Dictionary<long, IReadOnlyList<int>>();
         foreach (var row in stations)
         {
             var doc = row.Doc;
@@ -85,16 +97,32 @@ public sealed class StationCatalog
             var useOperation = doc.TryGetProperty("useOperationName", out var use) && use.ValueKind == JsonValueKind.True;
             int? moon = doc.TryGetProperty("orbitIndex", out var index) && index.ValueKind == JsonValueKind.Number ? index.GetInt32() : null;
             var celestial = doc.TryGetProperty("celestialIndex", out var c) && c.ValueKind == JsonValueKind.Number ? c.GetInt32() : 0;
+            var operationData = operations.GetValueOrDefault(
+                operation, (Name: "", Services: (IReadOnlyList<int>)Array.Empty<int>()));
             list.Add(new Station(
                 row.Key, doc.GetProperty("typeID").GetInt32(),
-                NameOf(place.Name, celestial, moon, corporation.Name, useOperation ? operations.GetValueOrDefault(operation) : null),
+                NameOf(place.Name, celestial, moon, corporation.Name, useOperation ? operationData.Name : null),
                 owner, corporation.Name, corporation.Faction, corporation.Faction is { } faction ? factions.GetValueOrDefault(faction, "") : "", operation,
                 doc.TryGetProperty("orbitID", out var orbit) && orbit.ValueKind == JsonValueKind.Number ? orbit.GetInt64() : 0,
                 system, place.Name, place.Constellation, constellationName, place.Region, regionName, place.Security,
                 Number(doc, "reprocessingStationsTake"), (int)Number(doc, "reprocessingHangarFlag"),
                 PositionAxis(doc, "x"), PositionAxis(doc, "y"), PositionAxis(doc, "z")));
+            servicesByStationId[row.Key] = operationData.Services;
         }
-        return new StationCatalog(list);
+        return new StationCatalog(list, servicesByStationId);
+    }
+
+    private static IReadOnlyList<int> StationServiceIds(JsonElement operation)
+    {
+        if (!operation.TryGetProperty("services", out var services) || services.ValueKind != JsonValueKind.Array)
+            return Array.Empty<int>();
+        var result = new List<int>();
+        foreach (var service in services.EnumerateArray())
+        {
+            if (service.TryGetInt32(out var serviceId) && serviceId > 0)
+                result.Add(serviceId);
+        }
+        return result;
     }
 
     private static double Number(JsonElement doc, string name) => doc.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetDouble() : 0d;

@@ -106,7 +106,9 @@ internal sealed partial class CharacterServicesComposition
                     () => sovereigntyWriteGate).SetStateAsync),
                 spaceSessions is null ? null : new EntityCommands(new ItemTypeNames(sde), spaceSessions),
                 spaceSessions is null ? null : new EssCommands(new ShipTypeNames(sde), dogma, ships, (session, token) => EssMgr.AttemptLinkToMainBank(new ServiceCall { Method = "AttemptLinkToMainBank", Args = [], Session = session, Cancellation = token }))),
-            .. spaceSessions is null ? [] : new IService[] { new ShipService(spaceSessions, now, spaceContainers, spaceDrones, getShipFittingInfo: ShipFittingInfoOf, ships: ships,
+            .. spaceSessions is null
+                ? new IService[] { new ShipFittingInfoOnlyService(new ShipService(null!, now, getShipFittingInfo: ShipFittingInfoOf)) }
+                : new IService[] { new ShipService(spaceSessions, now, spaceContainers, spaceDrones, getShipFittingInfo: ShipFittingInfoOf, ships: ships,
                 rowOf: item => new Eve.Services.ItemRow(item.Id, item.TypeId, item.OwnerId, item.LocationId, item.Flag, item.Singleton ? -1 : item.Quantity,
                     dogma.Type(item.TypeId)?.GroupId ?? 0, dogma.Type(item.TypeId)?.CategoryId ?? 0)), new BeyonceService(spaceSessions, now, fleetStore, FleetSessionForCharacter) { CynoJammerOnlineSimTimeForSystem = CynoJammerOnlineSimTimeAsync, InitiateBeaconLink = AnalysisBeaconLink, LaunchTargetForCharacter = LaunchWarpTargetForCharacterAsync }, new StructureTravelRpcService("structureCynoBeaconMgr", new StructureBeaconTravel(StructureBeaconAsync, CynoJammedAsync, structureDirectoryReadModel.CharacterHasServiceAsync, JumpToStructureBeaconAsync, BridgeToStructureBeaconAsync, GroupJumpToStructureBeaconAsync).TravelAsync), new ShipcasterRpcService("shipCasterLandingPadMgr", solarSystems), new ShipcasterRpcService("shipCasterLauncherMgr", solarSystems), new ShipcasterRpcService("shipcasterTravelMgr", solarSystems), new ShipcasterRpcService("starterShipcasterTravelMgr", solarSystems), new EntityService(spaceDrones!, now, spaceContainers) },
     ];

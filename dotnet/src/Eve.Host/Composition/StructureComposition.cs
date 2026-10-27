@@ -329,7 +329,8 @@ internal sealed partial class CharacterServicesComposition
                     corporation, member, null, await corporations.TitlesAsync(corporationId, token));
                 return (roles.CorpRole & (Eve.Corporations.CorporationRoles.StationManager |
                     Eve.Corporations.CorporationRoles.BrandManager)) != 0;
-            });
+            },
+            stationCatalog: stations);
         marketTrading.StructureDirectory = new PersistenceMarketStructureDirectory(
             structureStore,structureDirectoryReadModel,marketTopology,rules,refineryTypeIds);
         if (spaceSessions is not null)

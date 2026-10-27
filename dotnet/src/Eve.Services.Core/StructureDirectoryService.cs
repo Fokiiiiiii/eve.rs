@@ -76,7 +76,7 @@ public interface IStructureDirectoryReadCallbacks
     /// Returns a PyDict keyed by structure ID. Each value is the structure-info map consumed by the client,
     /// including its services collection. Return only deployed rows loaded from persistent state.
     /// </summary>
-    ValueTask<PyDict> GetMyCharacterStructuresAsync(long characterId, CancellationToken cancellationToken);
+    ValueTask<PyDict> GetMyCharacterStructuresAsync(long characterId, long regionId, CancellationToken cancellationToken);
 
     /// <summary>
     /// Returns the same structure-ID keyed map for the authenticated character's current corporation,
@@ -131,6 +131,7 @@ public sealed class StructureDirectoryService(IStructureDirectoryReadCallbacks r
         "GetValidWarHQs" or
         "SetStructureDescription" or
         "GetStructureInfo" or
+        "GetStructureInfo_" or
         "CheckMyDockingAccessToStructures" or
         "GetMyDockableStructures" or
         "GetMyCharacterStructures" or
@@ -179,6 +180,7 @@ public sealed class StructureDirectoryService(IStructureDirectoryReadCallbacks r
                 return PyNone.Instance;
             }
             case "GetStructureInfo":
+            case "GetStructureInfo_":
             {
                 var structureId = PositiveId(call.Arg(0));
                 if (structureId <= 0)
@@ -198,7 +200,7 @@ public sealed class StructureDirectoryService(IStructureDirectoryReadCallbacks r
                 var requestedInput = call.Arg(0);
                 if ((requestedInput is PyList requestedList && requestedList.Items.Count > 500) ||
                     (requestedInput is PyTuple requestedTuple && requestedTuple.Items.Count > 500))
-                    throw Eve.Services.MachoErrors.ThrowUserError("StructureBulkLimitExceeded");
+                    throw Eve.Services.MachoErrors.ThrowUserError("GenericStopSpamming");
                 var requested = PositiveIds(requestedInput);
                 if (characterId <= 0 || requested.Count == 0)
                     return new PyList([]);
@@ -233,7 +235,8 @@ public sealed class StructureDirectoryService(IStructureDirectoryReadCallbacks r
             {
                 var characterId = call.Session?.CharacterId ?? 0;
                 return characterId > 0
-                    ? await _read.GetMyCharacterStructuresAsync(characterId, call.Cancellation)
+                    ? await _read.GetMyCharacterStructuresAsync(
+                        characterId, call.Session?.GetInt("regionid") ?? 0, call.Cancellation)
                     : new PyDict([]);
             }
             case "GetMyCorporationStructures":

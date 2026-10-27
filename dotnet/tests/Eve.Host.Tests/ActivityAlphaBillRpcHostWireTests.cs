@@ -112,6 +112,31 @@ public partial class HostServerTests
         }
     }
 
+    [Fact]
+    public async Task Char_pay_bill_returns_none_through_the_registered_host_route()
+    {
+        const long characterId = 90_000_201;
+        const long billId = 7_001;
+        (long BillId, long CharacterId)? payment = null;
+        var service = new Eve.Services.Corporations.BillMgrService(
+            null!, null!, null!, _ => null, () => 0,
+            new Eve.Services.Corporations.BillMgrRpcCallbacks(
+                PayCharacterBillAsync: (paidBillId, paidCharacterId, _) =>
+                {
+                    payment = (paidBillId, paidCharacterId);
+                    return ValueTask.FromResult(true);
+                }));
+
+        StartComposed(
+            registry => registry.Register(service),
+            session => session.CharacterId = characterId);
+        var (front, open) = await OpenFrontAsync();
+
+        Assert.Same(PyNone.Instance, await HostRpcAsync(
+            front, open, 1, "billMgr", "CharPayBill", new PyInt(billId)));
+        Assert.Equal((billId, characterId), payment);
+    }
+
     private void StartComposed(Action<ServiceRegistry> configure, Action<ClientSession>? sessionOpened = null)
     {
         var registry = new ServiceRegistry();

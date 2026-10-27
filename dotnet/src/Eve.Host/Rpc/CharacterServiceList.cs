@@ -87,6 +87,11 @@ internal sealed partial class CharacterServicesComposition
             var beyonce = SingleRegisteredService<BeyonceService>(services);
             beyonce.ScanSites = scanBookmarkSites;
             beyonce.SpaceContainers = spaceContainers;
+            beyonce.BookmarkTargetForCharacter = async (call, bookmarkId, cancellationToken) =>
+            {
+                var bookmark = await bookmarkMgr.ResolveActiveBookmarkAsync(call, bookmarkId);
+                return bookmark is null ? null : new BookmarkWarpTarget(bookmark.LocationId, bookmark.ItemId, bookmark.X, bookmark.Y, bookmark.Z);
+            };
             beyonce.ResolveBookmarkLocationTarget = async (call, itemId, cancellationToken) =>
             {
                 var solarSystemId = call.Session.GetInt("solarsystemid") ?? 0;

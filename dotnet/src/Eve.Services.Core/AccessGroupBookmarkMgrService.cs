@@ -35,6 +35,17 @@ public sealed partial class AccessGroupBookmarkMgrService(BookmarkStore store, F
         ]);
     }
 
+    /// <summary>Resolves a bookmark the caller can see in an active folder, expiring it through the same read path as the client.</summary>
+    public async Task<Bookmark?> ResolveActiveBookmarkAsync(ServiceCall call, long bookmarkId)
+    {
+        var character = Character(call);
+        var active = await store.ActiveAsync(character, await Lists(call), call.Cancellation);
+        if (notifier is not null && active.Expired is { Count: > 0 } expired &&
+            await notifier.PlanRemovalsAsync(expired, character, call.Cancellation) is { } send)
+            call.Session.AfterResponse(send);
+        return active.Bookmarks.FirstOrDefault(bookmark => bookmark.BookmarkId == bookmarkId);
+    }
+
     /// <summary>A personal folder, or a shared one on the access lists given (the admin list is required).</summary>
     [Method("AddFolder")]
     public async ValueTask<PyValue> AddFolder(ServiceCall call)

@@ -4,7 +4,10 @@ using System.Security.Cryptography;
 namespace Eve.Identity;
 
 /// <summary>What the front knows about a login attempt.</summary>
-public sealed record LoginAttempt(string UserName, ReadOnlyMemory<byte> PasswordHash, string Language, string Address);
+public sealed record LoginAttempt(string UserName, ReadOnlyMemory<byte> PasswordHash, string Language, string Address)
+{
+    public const int PasswordHashLength = 20;
+}
 
 public abstract record LoginResult;
 

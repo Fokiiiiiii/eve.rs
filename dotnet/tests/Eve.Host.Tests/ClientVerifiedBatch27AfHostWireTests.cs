@@ -23,7 +23,7 @@ public partial class HostServerTests
             await HostRpcAsync(front, open, 2, "browserLockdownSvc", "IsBrowserInLockdown"));
         Assert.Equal("d751713988987e9331980363e24189ce",
             WireText(await HostRpcAsync(front, open, 3, "browserLockdownSvc", "GetFlaggedSitesHash")));
-        Assert.Empty(Assert.IsType<PyList>(
+        Assert.Empty(Assert.IsType<PyTuple>(
             await HostRpcAsync(front, open, 4, "browserLockdownSvc", "GetFlaggedSitesList")).Items);
     }
 

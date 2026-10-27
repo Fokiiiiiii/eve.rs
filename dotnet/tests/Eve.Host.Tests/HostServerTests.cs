@@ -40,6 +40,9 @@ public partial class HostServerTests : IAsyncLifetime
 
     public Task InitializeAsync() => Task.CompletedTask;
 
+    private static byte[] PasswordHash(byte value) =>
+        Enumerable.Repeat(value, LoginAttempt.PasswordHashLength).ToArray();
+
     private void Start(AccountOptions? identity = null, int maxPending = 10_000, Action<ServiceRegistry>? configure = null, IAccountDirectory? accounts = null, bool strictRpc = false, Action<string, Exception?>? onProblem = null, Action<ClientSession>? sessionOpened = null, long maxOutboundBytes = 8 * 1024 * 1024, long maxPendingBytes = 16 * 1024 * 1024, int maxConnections = 1_024, ISsoTokenVerifier? ssoTokenVerifier = null, GameRpcCallbacks? gameRpcCallbacks = null)
     {
         var registry = new ServiceRegistry();
@@ -479,11 +482,31 @@ public partial class HostServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Malformed_password_hash_sizes_are_refused_before_reaching_accounts()
+    {
+        var accountCalls = 0;
+        Start(accounts: new FixedAccounts(_ =>
+        {
+            accountCalls++;
+            return new LoggedIn(1, 0, "GB");
+        }));
+        var front = await Handshaken(await ConnectAsync());
+
+        foreach (var length in new[] { 0, LoginAttempt.PasswordHashLength - 1, LoginAttempt.PasswordHashLength + 1, 1_048_576 })
+        {
+            var reply = await front.AuthenticateAsync("pilot", new byte[length], (uint)(length + 1));
+            Assert.Equal(new Rejected(LoginRefused.BadCredentials), reply.Outcome);
+        }
+
+        Assert.Equal(0, accountCalls);
+    }
+
+    [Fact]
     public async Task Logins_create_accounts_on_first_use_and_then_need_the_same_password_hash()
     {
         Start();
         var front = await Handshaken(await ConnectAsync());
-        byte[] hash = [1, 2, 3];
+        byte[] hash = PasswordHash(1);
 
         var first = await front.AuthenticateAsync("pilot", hash, 1);
         var created = Assert.IsType<Accepted>(first.Outcome);
@@ -491,8 +514,8 @@ public partial class HostServerTests : IAsyncLifetime
         Assert.Equal("GB", created.CountryCode);
 
         Assert.Equal(created, Assert.IsType<Accepted>((await front.AuthenticateAsync("pilot", hash, 2)).Outcome));
-        Assert.Equal("LoginAuthFailed", Assert.IsType<Rejected>((await front.AuthenticateAsync("pilot", [9, 9, 9], 3)).Outcome).Reason);
-        Assert.Equal(2u, Assert.IsType<Accepted>((await front.AuthenticateAsync("other", [4], 4)).Outcome).UserId);
+        Assert.Equal("LoginAuthFailed", Assert.IsType<Rejected>((await front.AuthenticateAsync("pilot", PasswordHash(9), 3)).Outcome).Reason);
+        Assert.Equal(2u, Assert.IsType<Accepted>((await front.AuthenticateAsync("other", PasswordHash(4), 4)).Outcome).UserId);
     }
 
     private sealed class FixedAccounts(Func<LoginAttempt, LoginResult> answer) : IAccountDirectory
@@ -515,9 +538,9 @@ public partial class HostServerTests : IAsyncLifetime
             _ => new LoginRefused(LoginRefused.BadCredentials),
         }));
         var front = await Handshaken(await ConnectAsync());
-        Assert.Equal(new Accepted(7, 0xF00D, "JP"), (await front.AuthenticateAsync("gm", [1], 1)).Outcome);
-        Assert.Equal(new Rejected("ACCOUNTBANNED"), (await front.AuthenticateAsync("banned", [1], 2)).Outcome);
-        Assert.Equal(new Rejected("LoginAuthFailed"), (await front.AuthenticateAsync("anyone", [1], 3)).Outcome);
+        Assert.Equal(new Accepted(7, 0xF00D, "JP"), (await front.AuthenticateAsync("gm", PasswordHash(1), 1)).Outcome);
+        Assert.Equal(new Rejected("ACCOUNTBANNED"), (await front.AuthenticateAsync("banned", PasswordHash(1), 2)).Outcome);
+        Assert.Equal(new Rejected("LoginAuthFailed"), (await front.AuthenticateAsync("anyone", PasswordHash(1), 3)).Outcome);
     }
 
     [Fact]
@@ -525,8 +548,8 @@ public partial class HostServerTests : IAsyncLifetime
     {
         Start(accounts: new BrokenAccounts());
         var front = await Handshaken(await ConnectAsync());
-        Assert.Equal(new Rejected("Unavailable"), (await front.AuthenticateAsync("pilot", [1], 1)).Outcome);
-        Assert.Equal(new Rejected("Unavailable"), (await front.AuthenticateAsync("pilot", [1], 2)).Outcome); // still answering
+        Assert.Equal(new Rejected("Unavailable"), (await front.AuthenticateAsync("pilot", PasswordHash(1), 1)).Outcome);
+        Assert.Equal(new Rejected("Unavailable"), (await front.AuthenticateAsync("pilot", PasswordHash(1), 2)).Outcome); // still answering
         Assert.Contains(_log, line => line == "account authentication failed due to a host error");
         Assert.DoesNotContain(_log, line => line.Contains("pilot", StringComparison.Ordinal));
         Assert.DoesNotContain(_log, line => line.Contains("database is down", StringComparison.Ordinal));
@@ -544,14 +567,14 @@ public partial class HostServerTests : IAsyncLifetime
         var front = await Handshaken(await ConnectAsync());
 
         for (var attempt = 0; attempt < 10; attempt++)
-            Assert.Equal(new Rejected(LoginRefused.BadCredentials), (await front.AuthenticateAsync("pilot", [1], (uint)(attempt + 1))).Outcome);
-        Assert.Equal(new Rejected(LoginRefused.BadCredentials), (await front.AuthenticateAsync("pilot", [1], 11u)).Outcome);
+            Assert.Equal(new Rejected(LoginRefused.BadCredentials), (await front.AuthenticateAsync("pilot", PasswordHash(1), (uint)(attempt + 1))).Outcome);
+        Assert.Equal(new Rejected(LoginRefused.BadCredentials), (await front.AuthenticateAsync("pilot", PasswordHash(1), 11u)).Outcome);
         Assert.Equal(10, calls);
 
         for (var attempt = 0; attempt < 40; attempt++)
-            Assert.Equal(new Rejected(LoginRefused.BadCredentials), (await front.AuthenticateAsync($"pilot{attempt}", [1], (uint)(attempt + 12))).Outcome);
+            Assert.Equal(new Rejected(LoginRefused.BadCredentials), (await front.AuthenticateAsync($"pilot{attempt}", PasswordHash(1), (uint)(attempt + 12))).Outcome);
         Assert.Equal(50, calls);
-        Assert.Equal(new Rejected(LoginRefused.BadCredentials), (await front.AuthenticateAsync("another-pilot", [1], 99u)).Outcome);
+        Assert.Equal(new Rejected(LoginRefused.BadCredentials), (await front.AuthenticateAsync("another-pilot", PasswordHash(1), 99u)).Outcome);
         Assert.Equal(50, calls);
     }
 
@@ -560,7 +583,7 @@ public partial class HostServerTests : IAsyncLifetime
     {
         Start();
         var front = await Handshaken(await ConnectAsync());
-        var reply = await front.AuthenticateAsync("pilot", [1], corr: 4_000_000_001);
+        var reply = await front.AuthenticateAsync("pilot", PasswordHash(1), corr: 4_000_000_001);
         Assert.Equal(4_000_000_001u, reply.Corr);
     }
 
@@ -569,8 +592,8 @@ public partial class HostServerTests : IAsyncLifetime
     {
         Start(new AccountOptions { AutoCreate = true, SkipPasswordCheck = true });
         var open = await Handshaken(await ConnectAsync());
-        Assert.IsType<Accepted>((await open.AuthenticateAsync("pilot", [1], 1)).Outcome);
-        Assert.IsType<Accepted>((await open.AuthenticateAsync("pilot", [2], 2)).Outcome);
+        Assert.IsType<Accepted>((await open.AuthenticateAsync("pilot", PasswordHash(1), 1)).Outcome);
+        Assert.IsType<Accepted>((await open.AuthenticateAsync("pilot", PasswordHash(2), 2)).Outcome);
     }
 
     [Fact]
@@ -578,7 +601,7 @@ public partial class HostServerTests : IAsyncLifetime
     {
         Start(new AccountOptions());
         var front = await Handshaken(await ConnectAsync());
-        Assert.Equal("LoginAuthFailed", Assert.IsType<Rejected>((await front.AuthenticateAsync("nobody", [1], 1)).Outcome).Reason);
+        Assert.Equal("LoginAuthFailed", Assert.IsType<Rejected>((await front.AuthenticateAsync("nobody", PasswordHash(1), 1)).Outcome).Reason);
     }
 
     [Fact]
@@ -2301,7 +2324,7 @@ public partial class HostServerTests : IAsyncLifetime
         Assert.Null(await garbage.ReceiveOrEndAsync());
 
         var good = await Handshaken(await ConnectAsync());
-        Assert.IsType<Accepted>((await good.AuthenticateAsync("pilot", [1], 1)).Outcome);
+        Assert.IsType<Accepted>((await good.AuthenticateAsync("pilot", PasswordHash(1), 1)).Outcome);
     }
 
     [Fact]
@@ -2402,7 +2425,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         Start();
         var a = await Handshaken(await ConnectAsync());
         var b = await Handshaken(await ConnectAsync());
-        var (ra, rb) = (await a.AuthenticateAsync("a", [1], 1), await b.AuthenticateAsync("b", [2], 1));
+        var (ra, rb) = (await a.AuthenticateAsync("a", PasswordHash(1), 1), await b.AuthenticateAsync("b", PasswordHash(2), 1));
         Assert.NotEqual(Assert.IsType<Accepted>(ra.Outcome).UserId, Assert.IsType<Accepted>(rb.Outcome).UserId);
         Assert.Equal(2, _server.ConnectedFronts);
     }
@@ -2417,7 +2440,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
 
         Assert.Null(await second.ReceiveOrEndAsync());
         Assert.Equal(1, _server.ConnectedFronts);
-        await first.AuthenticateAsync("bounded", [1], 1);
+        await first.AuthenticateAsync("bounded", PasswordHash(1), 1);
         Assert.Equal(1, _server.ConnectedFronts);
     }
 

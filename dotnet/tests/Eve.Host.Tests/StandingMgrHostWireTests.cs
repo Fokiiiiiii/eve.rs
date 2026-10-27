@@ -1,3 +1,4 @@
+using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services.Corporations;
 using Eve.ReadSide;
@@ -63,7 +64,7 @@ public partial class HostServerTests
         Assert.Equal([new PyInt(fromId), new PyReal(2.5)], characterLine.Items);
 
         var transactions = Assert.IsType<PyList>(await HostRpcAsync(front, open, 3, "standingMgr",
-            "GetStandingTransactions", new PyLong(fromId), new PyLong(characterId)));
+            "GetStandingTransactions", new PyInt(fromId), new PyLong(characterId)));
         var transaction = Assert.Single(transactions.Items);
         Assert.Equal(new PyInt(12), WireField(transaction, "eventTypeID"));
         Assert.Equal(new PyLong(Eve.Services.Py.FileTimeFromUnixMs(FixedNowMs)), WireField(transaction, "eventDateTime"));
@@ -72,13 +73,94 @@ public partial class HostServerTests
         Assert.Equal(new PyInt(characterId), WireField(transaction, "toID"));
         Assert.Equal("Standing adjusted", Assert.IsType<PyWString>(WireField(transaction, "msg")).Value);
         Assert.Same(PyNone.Instance, WireField(transaction, "int_1"));
+
+        var invalid = Assert.IsType<PyList>(await HostRpcAsync(front, open, 4, "standingMgr",
+            "GetStandingTransactions", PyNone.Instance, new PyLong(characterId)));
+        Assert.Empty(invalid.Items);
+
+        var noComposition = Assert.IsType<PyObject>(await HostRpcAsync(front, open, 5, "standingMgr",
+            "GetStandingCompositions", PyNone.Instance, new PyLong(980001)));
+        Assert.Equal("carbon.common.script.net.objectCaching.CachedMethodCallResult", WireText(noComposition.Name));
+        var noCompositionPayload = Assert.IsType<PySubStream>(
+            Assert.IsType<PyTuple>(noComposition.Args).Items[1]).Decoded!;
+        var noCompositionRowset = Assert.IsType<PyObject>(noCompositionPayload);
+        Assert.Equal("carbon.common.script.sys.crowset.CRowset", WireText(noCompositionRowset.Name));
+        Assert.Empty(Assert.IsType<PyList>(WireField(noCompositionRowset, "lines")).Items);
+    }
+
+    [Fact]
+    public async Task Standing_corporation_rows_use_the_host_route_and_ignore_macho_version_keyword()
+    {
+        const long characterId = 900001;
+        const long corporationId = 980001;
+        var reads = new TestReadSide(characterId);
+        var service = new StandingMgrService(reads, null!, () => FixedNowMs);
+        Start(
+            configure: registry =>
+            {
+                registry.Register(service);
+                registry.RegisterAlias("standing2", "standingMgr");
+            },
+            sessionOpened: session =>
+            {
+                session.CharacterId = characterId;
+                session.Set("charid", new PyLong(characterId));
+                session.Set("corpid", new PyLong(corporationId));
+            });
+        var (front, open) = await OpenFrontAsync();
+        var kwargs = new PyDict([
+            new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1)),
+        ]);
+
+        await front.SendAsync(new Packet(open.SessionId,
+            MarshalCodec.Encode(Packets.CallWithKwargs(
+                open, 1, "standingMgr", "GetCorpStandings", new PyTuple([]), kwargs))));
+        var raw = MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
+        var corporation = Assert.IsType<PyObject>(Result(raw));
+
+        Assert.Equal("eve.common.script.sys.rowset.Rowset", WireText(corporation.Name));
+        Assert.Equal(["fromID", "standing"], Header(corporation));
+        var line = Assert.IsType<PyList>(Assert.Single(Assert.IsType<PyList>(WireField(corporation, "lines")).Items));
+        Assert.Equal([new PyInt(500001), new PyReal(1.5)], line.Items);
+        Assert.Equal("standing.corporation", reads.LastQuery);
+        Assert.Equal(corporationId, Assert.IsType<long>(Assert.Single(reads.LastArgs!)));
+
+        var aliasRows = Assert.IsType<PyObject>(await HostRpcAsync(
+            front, open, 2, "standing2", "GetCorpStandings"));
+        Assert.Equal("eve.common.script.sys.rowset.Rowset", WireText(aliasRows.Name));
+    }
+
+    [Fact]
+    public async Task Standing_history_above_512_rows_returns_through_host_dispatch()
+    {
+        const long fromId = 500001;
+        const long characterId = 900001;
+        var reads = new TestReadSide(characterId, transactionRows: 513);
+        var service = new StandingMgrService(reads, null!, () => FixedNowMs);
+        Start(
+            configure: registry => registry.Register(service),
+            sessionOpened: session =>
+            {
+                session.CharacterId = characterId;
+                session.Set("charid", new PyLong(characterId));
+            });
+        var (front, open) = await OpenFrontAsync();
+
+        var transactions = Assert.IsType<PyList>(await HostRpcAsync(front, open, 1, "standingMgr",
+            "GetStandingTransactions", new PyInt(fromId), new PyLong(characterId)));
+
+        Assert.Equal(513, transactions.Items.Count);
+        Assert.Null(reads.LimitFor("standing.transactions"));
     }
 
     private static string[] Header(PyObject rowset) =>
         Assert.IsType<PyList>(WireField(rowset, "header")).Items.Select(WireText).ToArray();
 
-    private sealed class TestReadSide(long characterId) : IRowsetReadSide
+    private sealed class TestReadSide(long characterId, int transactionRows = 1) : IRowsetReadSide
     {
+        public string? LastQuery { get; private set; }
+        public object?[]? LastArgs { get; private set; }
+        public int? LimitFor(string name) => _queries[name].Limit;
         private readonly Dictionary<string, RowsetQuery> _queries = new(StringComparer.Ordinal);
 
         public void Register(RowsetQuery query) => _queries.Add(query.Name, query);
@@ -89,10 +171,21 @@ public partial class HostServerTests
             {
                 "standing.npcNpc" => [[500001L, characterId, -2.5d]],
                 "standing.character" => [[500001L, 2.5d]],
-                "standing.transactions" => [[FixedNowMs, 1.5d, 2.25d,
-                    "{\"eventTypeID\":12,\"modification\":0.75,\"msg\":\"Standing adjusted\"}"]],
+                "standing.corporation" => [[500001L, 1.5d]],
+                "standing.transactions" => Enumerable.Range(0, transactionRows)
+                    .Select(offset => new object?[]
+                    {
+                        FixedNowMs - offset, 1.5d, 2.25d,
+                        "{\"eventTypeID\":12,\"modification\":0.75,\"msg\":\"Standing adjusted\"}",
+                    }).ToArray(),
                 _ => throw new KeyNotFoundException(name),
             };
+            LastQuery = name;
+            LastArgs = args;
+            if (_queries[name].Limit is int limit)
+            {
+                rows = rows.Take(limit).ToArray();
+            }
             return Task.FromResult(RowSet.FromRows(_queries[name], rows));
         }
     }

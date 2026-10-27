@@ -213,5 +213,5 @@ All 30 rows RPC-00984–01972 are documented in `CLIENT_VERIFIED.md`. Whole-tree
 
 ## facWarMgr latest pre-push checks (2026-10-27)
 
-- After integrating the latest `origin/main` (merge resolution commit `1a1700de`), the whole local `Eve.Host.Tests` shard, with PostgreSQL environment variables removed, reported 542 passed, 100 failed and 227 skipped (869 total). The shard is not green; failures include DB-URL-required persistence fixtures and other unrelated cases. No database connection was used.
+- After integrating the latest `origin/main` (integration merge `a068fefa`, including the latest MachoNet Host tests), the whole local `Eve.Host.Tests` shard, with PostgreSQL environment variables removed, reported 545 passed, 100 failed and 227 skipped (872 total). The shard is not green; failures include DB-URL-required persistence fixtures and other unrelated cases. No database connection was used.
 - After the same main sync and again after the full shard, the three focused facWarMgr Host tests passed (3 passed, 0 failed, 0 skipped). The FactionWarfare test project build passed before this sync. The graphical client was not launched. Selected Actions and push-CI results are pending after push.

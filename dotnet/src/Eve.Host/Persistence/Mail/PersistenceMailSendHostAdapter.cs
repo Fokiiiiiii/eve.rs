@@ -42,7 +42,8 @@ public sealed class PersistenceMailSendHostAdapter(
     Func<string, CancellationToken, Task<JsonObject>> readPersistedTableAsync,
     Func<Eve.Services.Core.MailSendRequest, Eve.Services.ClientSession, CancellationToken, Task<PersistenceMailSendRecipients?>> resolveRecipientsAsync,
     Func<long> nowUnixMs,
-    Action<long, Eve.Marshal.PyValue[]> sendNotification)
+    Action<long, Eve.Marshal.PyValue[]> sendNotification,
+    Action<long, Eve.Marshal.PyValue[], Eve.Services.ClientSession>? sendMailSentNotification = null)
 {
     private readonly SemaphoreSlim _sendGate = new(1, 1);
 
@@ -67,7 +68,7 @@ public sealed class PersistenceMailSendHostAdapter(
     {
         if (request.CharacterId <= 0 || request.SenderCharacterId != Eve.Services.Core.GmChatPokeMailRequest.SystemSenderId ||
             request.SaveSenderCopy || request.Title != "GM chat request" ||
-            request.Body != $"A GM would like to speak with you.<br><br>Requested channel: {request.ChannelName}" ||
+            request.Body != Eve.Services.Core.GmChatPokeMailRequest.BuildBody(request.ChannelName) ||
             !Eve.Services.GameMasterRoles.Has(session, Eve.Services.GameMasterRoles.Gml))
             return Task.FromResult<long?>(null);
 
@@ -107,7 +108,8 @@ public sealed class PersistenceMailSendHostAdapter(
                 ["senderName"] = recipients.SenderName,
                 ["toCharacterIDs"] = LongArray(directRecipients),
                 ["toListID"] = OptionalLong(request.MailingListId),
-                ["toCorpOrAllianceID"] = corpOrAllianceIds is null ? null : LongArray(corpOrAllianceIds),
+                ["toCorpOrAllianceID"] = OptionalLong(
+                    corpOrAllianceIds is { Length: > 0 } ? corpOrAllianceIds[0] : null),
                 ["title"] = request.Title,
                 ["subject"] = request.Title,
                 ["body"] = request.Body,
@@ -137,7 +139,7 @@ public sealed class PersistenceMailSendHostAdapter(
                 var senderDirectlyIncluded = directRecipients.Contains(request.SenderCharacterId);
                 var senderRead = !senderDirectlyIncluded &&
                     request.MailingListId is null &&
-                    request.CorporationOrAllianceRecipientIds is null;
+                    request.CorporationOrAllianceRecipientIds is not { Count: > 0 };
                 statuses[(request.SenderCharacterId, messageId)] = new JsonObject
                 {
                     ["statusMask"] = senderRead ? 1 : 0,
@@ -188,6 +190,18 @@ public sealed class PersistenceMailSendHostAdapter(
                 }
                 return true;
             }, cancellationToken);
+
+            foreach (var recipientId in recipients.CharacterIds.Distinct())
+                if (statuses.TryGetValue((recipientId, messageId), out var recipientStatus))
+                    sendMailSentNotification?.Invoke(recipientId,
+                        Eve.Services.Core.MailSentNotification.Build(
+                            request, messageId, sentFiletime, Number(recipientStatus["statusMask"])), session);
+            if (request.SaveSenderCopy && request.SenderCharacterId > 0 &&
+                !recipients.CharacterIds.Contains(request.SenderCharacterId) &&
+                statuses.TryGetValue((request.SenderCharacterId, messageId), out var senderStatus))
+                sendMailSentNotification?.Invoke(request.SenderCharacterId,
+                    Eve.Services.Core.MailSentNotification.Build(
+                        request, messageId, sentFiletime, Number(senderStatus["statusMask"])), session);
 
             var notifications = readCacheTable("notifications");
             var notificationBoxes = notifications["boxes"] as JsonObject ?? new JsonObject();

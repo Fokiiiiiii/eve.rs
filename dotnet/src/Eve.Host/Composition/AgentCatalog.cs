@@ -80,7 +80,8 @@ public static class AgentCatalog
                     isInSpace && inSpace is { } spaceDungeon ? AgentSdeOptionalInteger(spaceDungeon, "dungeonID") : null,
                     isInSpace && inSpace is { } spaceSpawn ? AgentSdeOptionalInteger(spaceSpawn, "spawnPointID") : null,
                     isInSpace && inSpace is { } spaceType ? AgentSdeOptionalInteger(spaceType, "typeID") : null,
-                    AgentSdeOptionalInteger(row.Doc, "locationID"));
+                    AgentSdeOptionalInteger(row.Doc, "locationID"),
+                    row.Doc.TryGetProperty("name", out var ownerName) ? AgentSdeText(ownerName, "en") : "");
             })
             .OrderBy(agent => agent.AgentId)
             .ToArray();

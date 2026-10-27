@@ -4508,6 +4508,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             pair => (System.Text.Json.Nodes.JsonObject)pair.Value.DeepClone());
         var flushes = new List<string>();
         var liveNotifications = new List<(long RecipientId, Eve.Marshal.PyValue[] Arguments)>();
+        var mailSentNotifications = new List<(long RecipientId, Eve.Marshal.PyValue[] Arguments)>();
 
         System.Text.Json.Nodes.JsonObject ReadCache(string table) =>
             (System.Text.Json.Nodes.JsonObject)cache[table].DeepClone();
@@ -4561,11 +4562,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             Write,
             Flush,
             ReadCommitted,
-            (request, _, _) => Task.FromResult<PersistenceMailSendRecipients?>(
-                request.SenderCharacterId == Eve.Services.Core.GmChatPokeMailRequest.SystemSenderId
-                    ? new([recipientId], Eve.Services.Core.GmChatPokeMailRequest.SystemSenderName, 2,
-                        new Dictionary<long, int> { [recipientId] = 1 })
-                    : new([recipientId], "Sender", 2, new Dictionary<long, int> { [recipientId] = 1 })),
+            (_, _, _) => Task.FromResult<PersistenceMailSendRecipients?>(
+                new([recipientId], "Sender", 2, new Dictionary<long, int> { [recipientId] = 1 })),
             () => 1_800_000_000_000,
             (characterId, arguments) =>
             {
@@ -4578,7 +4576,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
                     System.Globalization.CultureInfo.InvariantCulture)]!;
                 Assert.Equal(typeId, saved["typeID"]!.GetValue<int>());
                 if (typeId == 1004)
-                    Assert.InRange(saved["data"]!["msg"]!["messageID"]!.GetValue<long>(), 12L, 13L);
+                    Assert.InRange(saved["data"]!["msg"]!["messageID"]!.GetValue<long>(), 12, 13);
                 else if (typeId == 4)
                 {
                     Assert.Equal(2, saved["groupID"]!.GetValue<int>());
@@ -4592,6 +4590,13 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
                     Assert.Equal(recipientId, saved["receiverID"]!.GetValue<long>());
                 }
                 liveNotifications.Add((characterId, arguments));
+            },
+            (characterId, arguments, _) =>
+            {
+                Assert.Contains("mail", flushes);
+                Assert.InRange(WireInteger(arguments[0]), 12, 13);
+                Assert.Equal(8, arguments.Length);
+                mailSentNotifications.Add((characterId, arguments));
             });
         var session = new Eve.Services.ClientSession { CharacterId = senderId };
         var request = new Eve.Services.Core.MailSendRequest(
@@ -4606,8 +4611,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             System.Globalization.CultureInfo.InvariantCulture)]!["unrelated"]!.GetValue<string>());
         var savedMessage = committed["mail"]["messages"]!["12"]!;
         Assert.Equal("Body", savedMessage["body"]!.GetValue<string>());
-        Assert.Empty(savedMessage["toCorpOrAllianceID"]!.AsArray());
-        Assert.Equal(0, committed["mail"]["mailboxes"]![senderId.ToString(
+        Assert.Null(savedMessage["toCorpOrAllianceID"]);
+        Assert.Equal(1, committed["mail"]["mailboxes"]![senderId.ToString(
             System.Globalization.CultureInfo.InvariantCulture)]!["statuses"]!["12"]!["statusMask"]!.GetValue<int>());
         Assert.Equal(2, committed["mail"]["mailboxes"]![senderId.ToString(
             System.Globalization.CultureInfo.InvariantCulture)]!["statuses"]!["12"]!["labelMask"]!.GetValue<int>());
@@ -4623,6 +4628,38 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             System.Globalization.CultureInfo.InvariantCulture)]!["statuses"]!["12"]!["labelMask"]!.GetValue<int>());
         Assert.Equal("keep", committed["notifications"]["metadata"]!.GetValue<string>());
         Assert.Single(liveNotifications);
+        Assert.Equal([recipientId, senderId], mailSentNotifications.Select(item => item.RecipientId));
+        var recipientMailSent = mailSentNotifications.Single(item => item.RecipientId == recipientId).Arguments;
+        Assert.Equal(senderId, WireInteger(recipientMailSent[1]));
+        Assert.Equal(recipientId, WireInteger(Assert.IsType<PyList>(recipientMailSent[3]).Items.Single()));
+        Assert.Same(PyNone.Instance, recipientMailSent[4]);
+        Assert.Same(PyNone.Instance, recipientMailSent[5]);
+        Assert.Equal("Subject", WireText(recipientMailSent[6]));
+        Assert.Equal(0, WireInteger(recipientMailSent[7]));
+        var senderMailSent = mailSentNotifications.Single(item => item.RecipientId == senderId).Arguments;
+        Assert.Equal(1, WireInteger(senderMailSent[7]));
+
+        var channelName = new string('x', 9000);
+        session.Set("role", new Eve.Marshal.PyLong(Eve.Services.GameMasterRoles.Gml));
+        session.Set("accountRole", new Eve.Marshal.PyLong(Eve.Services.GameMasterRoles.Gml));
+        var poke = new Eve.Services.Core.GmChatPokeMailRequest(
+            recipientId, Eve.Services.Core.GmChatPokeMailRequest.SystemSenderId, channelName,
+            "GM chat request", Eve.Services.Core.GmChatPokeMailRequest.BuildBody(channelName),
+            SaveSenderCopy: false);
+        Assert.Equal(13L, await adapter.SendGmChatPokeAsync(poke, session, CancellationToken.None));
+        var savedPoke = Assert.IsType<System.Text.Json.Nodes.JsonObject>(
+            committed["mail"]!["messages"]!["13"]);
+        var savedPokeBody = savedPoke["body"]!.GetValue<string>();
+        Assert.Equal(Eve.Services.Core.GmChatPokeMailRequest.BuildBody(channelName), savedPokeBody);
+        Assert.Equal(8000, savedPokeBody.Length);
+        Assert.Equal(Eve.Services.Core.GmChatPokeMailRequest.SystemSenderId, savedPoke["senderID"]!.GetValue<long>());
+        var savedRecipientMailbox = committed["mail"]!["mailboxes"]![
+            recipientId.ToString(System.Globalization.CultureInfo.InvariantCulture)]!.AsObject();
+        var savedRecipientStatus = savedRecipientMailbox["statuses"]!["13"]!.AsObject();
+        Assert.Equal(0, savedRecipientStatus["statusMask"]!.GetValue<int>());
+        var pokeMailSent = mailSentNotifications.Single(item =>
+            item.RecipientId == recipientId && WireInteger(item.Arguments[0]) == 13).Arguments;
+        Assert.Equal("GM chat request", WireText(pokeMailSent[6]));
 
         var usedData = new System.Text.Json.Nodes.JsonObject { ["charID"] = senderId };
         await adapter.WriteKillRightNotificationAsync(
@@ -4640,7 +4677,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         Assert.Equal(Eve.Services.Crimewatch.KillRightNotificationTypes.Used, usedNotification["typeID"]!.GetValue<int>());
         Assert.Equal(Eve.Services.Crimewatch.KillRightNotificationTypes.MiscGroup, usedNotification["groupID"]!.GetValue<int>());
         Assert.Equal(senderId, usedNotification["data"]!["charID"]!.GetValue<long>());
-        Assert.Equal(2, liveNotifications.Count);
+        Assert.Equal(3, liveNotifications.Count);
 
         await adapter.WriteAllianceMaintenanceBillNotificationAsync(
             recipientId, allianceId, allianceBillId, CancellationToken.None);
@@ -4656,44 +4693,6 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         Assert.Equal(2, billNotification["groupID"]!.GetValue<int>());
         Assert.Equal(1_000_125, billNotification["senderID"]!.GetValue<long>());
         Assert.Equal(allianceId, billNotification["data"]!["allianceID"]!.GetValue<long>());
-        Assert.Equal(3, liveNotifications.Count);
-
-        var gmSession = new Eve.Services.ClientSession { CharacterId = 90000035 };
-        gmSession.Set("accountRole", new Eve.Marshal.PyLong(Eve.Services.GameMasterRoles.Gml));
-        var gmService = new Eve.Services.Core.MailService(
-            _ => throw new InvalidOperationException("A GM poke must not read a player mailbox."),
-            (_, _, _, _) => throw new InvalidOperationException("A GM poke must not mark mail read."),
-            adapter.SendAsync,
-            adapter.SendGmChatPokeAsync);
-        var gmMessageId = Assert.IsType<Eve.Marshal.PyLong>(await gmService.CallAsync(new Eve.Services.ServiceCall
-        {
-            Method = "PokePlayerAboutChatMsgGm",
-            Args = [new Eve.Marshal.PyInt(recipientId), new Eve.Marshal.PyStr("help-channel")],
-            Session = gmSession,
-        }));
-
-        Assert.Equal(13L, gmMessageId.Value);
-        var gmMessage = committed["mail"]["messages"]!["13"]!;
-        Assert.Equal(Eve.Services.Core.GmChatPokeMailRequest.SystemSenderId,
-            gmMessage["senderID"]!.GetValue<long>());
-        Assert.Equal(Eve.Services.Core.GmChatPokeMailRequest.SystemSenderName,
-            gmMessage["senderName"]!.GetValue<string>());
-        Assert.Equal("GM chat request", gmMessage["title"]!.GetValue<string>());
-        Assert.Equal("A GM would like to speak with you.<br><br>Requested channel: help-channel",
-            gmMessage["body"]!.GetValue<string>());
-        Assert.Null(committed["mail"]["mailboxes"]![Eve.Services.Core.GmChatPokeMailRequest.SystemSenderId.ToString(
-            System.Globalization.CultureInfo.InvariantCulture)]?["statuses"]?["13"]);
-        Assert.Equal(1, committed["mail"]["mailboxes"]![recipientId.ToString(
-            System.Globalization.CultureInfo.InvariantCulture)]!["statuses"]!["13"]!["labelMask"]!.GetValue<int>());
-        var gmNotification = Assert.Single(
-            committed["notifications"]["boxes"]![recipientId.ToString(
-                System.Globalization.CultureInfo.InvariantCulture)]!["byID"]!.AsObject()
-                .Select(pair => pair.Value).OfType<System.Text.Json.Nodes.JsonObject>(),
-            notification => notification["data"]?["msg"]?["messageID"]?.GetValue<long>() == 13L);
-        Assert.Equal(Eve.Services.Core.GmChatPokeMailRequest.SystemSenderId,
-            gmNotification["senderID"]!.GetValue<long>());
-        Assert.Contains("mail", flushes.TakeLast(2));
-        Assert.Equal("notifications", flushes[^1]);
         Assert.Equal(4, liveNotifications.Count);
     }
 

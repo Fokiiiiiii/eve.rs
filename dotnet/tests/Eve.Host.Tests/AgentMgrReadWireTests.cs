@@ -20,6 +20,7 @@ public partial class HostServerTests
         var state = JsonNode.Parse("""
             {
               "completedCareerAgentIDs": { "7004": true, "7005": false },
+              "declineTimersByAgentID": { "7004": "133801234567890123" },
               "epicArcProgress": {
                 "missionStatusByArcID": {
                   "1200": {
@@ -43,6 +44,8 @@ public partial class HostServerTests
                   "expiresAtFileTime": "133801234567890123",
                   "objectiveMode": "transport",
                   "contentID": "courier-12",
+                  "missionPosition": { "x": 10, "y": 20, "z": 30 },
+                  "missionSystemID": 30000142,
                   "bookmarkIDsByRole": { "destination": 99001 },
                   "remoteCompletable": false,
                   "clientMissionRecord": { "remoteOfferable": true }
@@ -88,6 +91,11 @@ public partial class HostServerTests
         var missionMessages = JsonNode.Parse("""
             { "start": { "430001": "UI/Agent/EpicArc/Start" } }
             """)!.AsObject();
+        AgentMissionTravelTarget? travelTarget = null;
+        var travelWasWarp = false;
+        var travelRange = 0d;
+        var warpedAgentId = 0L;
+        var restrictionsGateId = -1L;
         var service = new AgentMissionService(
             (characterId, _) => ValueTask.FromResult<JsonObject?>(
                 characterId == AgentRpcPilot ? state : null),
@@ -108,7 +116,38 @@ public partial class HostServerTests
                 ReadDisabledMissions: _ => ValueTask.FromResult<IReadOnlyList<long>>([5101, 5102]),
                 ReadEpicArcMessages: _ => ValueTask.FromResult<JsonObject?>(missionMessages),
                 ReadSolarSystemOfAgent: (agentId, _) => ValueTask.FromResult<long?>(
-                    agentId == AgentRpcFirstAgent ? 30_000_165 : null)));
+                    agentId == AgentRpcFirstAgent ? 30_000_165 : null),
+                ReadDungeonShipRestrictions: (_, gateId, _) =>
+                {
+                    restrictionsGateId = gateId ?? 0;
+                    return ValueTask.FromResult<PyValue?>(Py.KeyVal([
+                        new KeyValuePair<PyValue, PyValue>(new PyStr("allowedShipTypes"), new PyList([new PyInt(587)])),
+                        new KeyValuePair<PyValue, PyValue>(new PyStr("restrictedShipTypes"), new PyList([new PyInt(588)])),
+                        new KeyValuePair<PyValue, PyValue>(new PyStr("nonDefaultShipRestrictions"), PyBool.True),
+                    ]));
+                },
+                ReadInfoServiceDetails: (_, agentId, _) => ValueTask.FromResult<PyValue?>(
+                    agentId == AgentRpcFirstAgent
+                        ? Py.KeyVal([
+                            new KeyValuePair<PyValue, PyValue>(new PyStr("agentID"), new PyInt(agentId)),
+                            new KeyValuePair<PyValue, PyValue>(new PyStr("stationID"), new PyInt(60_000_001)),
+                            new KeyValuePair<PyValue, PyValue>(new PyStr("level"), new PyInt(3)),
+                            new KeyValuePair<PyValue, PyValue>(new PyStr("services"), new PyList([])),
+                            new KeyValuePair<PyValue, PyValue>(new PyStr("incompatible"), PyNone.Instance),
+                        ])
+                        : null),
+                TravelToLocation: (_, target, warp, range, _) =>
+                {
+                    travelTarget = target;
+                    travelWasWarp = warp;
+                    travelRange = range;
+                    return ValueTask.CompletedTask;
+                },
+                WarpToAgentInSpace: (_, agentId, _) =>
+                {
+                    warpedAgentId = agentId;
+                    return ValueTask.CompletedTask;
+                }));
 
         var machoVersion = new PyDict([
             new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1)),
@@ -128,6 +167,17 @@ public partial class HostServerTests
         {
             await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
                 Packets.CallWithKwargs(open, callId, "agentMgr", method, args, machoVersion))));
+            var send = Assert.IsType<Send>(await front.ReceiveAsync());
+            var decoded = MarshalCodec.Decode(send.Payload);
+            var packet = Assert.IsType<MachoPacket>(MachoPacket.Decode(decoded));
+            Assert.Equal(MachoMessage.CallRsp, packet.Type);
+            return Result(decoded)!;
+        }
+
+        async Task<PyValue> BoundCallAsync(long callId, string oid, string method, PyValue args)
+        {
+            await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+                Packets.BoundCall(open, callId, oid, method, args, machoVersion))));
             var send = Assert.IsType<Send>(await front.ReceiveAsync());
             var decoded = MarshalCodec.Decode(send.Payload);
             var packet = Assert.IsType<MachoPacket>(MachoPacket.Decode(decoded));
@@ -209,6 +259,59 @@ public partial class HostServerTests
 
         Assert.Equal(new PyInt(30_000_165),
             await CallAsync(9, "GetSolarSystemOfAgent", new PyTuple([new PyInt(AgentRpcFirstAgent)])));
+
+        Assert.Equal(new PyLong(acceptedAt),
+            await BoundCallAsync(10, oid, "GetReplayTimestamp", new PyTuple([])));
+        var keywords = Assert.IsType<PyDict>(await BoundCallAsync(
+            20, oid, "GetMissionKeywords", new PyTuple([new PyStr("courier-12")])));
+        Assert.Equal("Unknown Agent", T(Get(keywords, new PyStr("agentName"))));
+        Assert.Equal("courier-12", T(Get(keywords, new PyStr("missionName"))));
+        Assert.Equal("courier", T(Get(keywords, new PyStr("missionTypeLabel"))));
+        var entryPoint = Assert.IsType<PyList>(
+            await BoundCallAsync(11, oid, "GetEntryPoint", new PyTuple([])));
+        Assert.Equal(new PyList([new PyReal(10), new PyReal(20), new PyReal(30)]), entryPoint);
+        Assert.Equal(PyBool.False,
+            await BoundCallAsync(12, oid, "IsCheatingWithAgent", new PyTuple([])));
+        Assert.Equal(PyBool.False,
+            await BoundCallAsync(13, oid, "ShouldAlwaysAllowReplay", new PyTuple([])));
+        var staticBlob = Assert.IsType<PyBytes>(
+            await CallAsync(14, "GetStaticBlob", new PyTuple([])));
+        Assert.Empty(staticBlob.Value.ToArray());
+
+        var details = Assert.IsType<PyObject>(await BoundCallAsync(15, oid, "GetInfoServiceDetails", new PyTuple([])));
+        Assert.Equal(new PyInt(AgentRpcFirstAgent), Get(Assert.IsType<PyDict>(details.Args), new PyStr("agentID")));
+        var restrictions = Assert.IsType<PyObject>(await BoundCallAsync(
+            16, oid, "GetDungeonShipRestrictions", new PyTuple([new PyInt(7004), PyNone.Instance])));
+        Assert.Equal(0, restrictionsGateId);
+        Assert.Equal(PyBool.True, Get(Assert.IsType<PyDict>(restrictions.Args), new PyStr("nonDefaultShipRestrictions")));
+
+        Assert.Equal(PyNone.Instance, await BoundCallAsync(17, oid, "GotoLocation", new PyTuple([
+            new PyStr("objective.destination"), new PyInt(0), new PyLong(AgentRpcFirstAgent),
+        ])));
+        Assert.NotNull(travelTarget);
+        Assert.Equal(600_001, travelTarget!.ItemId);
+        Assert.Equal(30_000_142, travelTarget.SolarSystemId);
+        Assert.False(travelWasWarp);
+        Assert.Equal(0, travelRange);
+
+        Assert.Equal(PyNone.Instance, await BoundCallAsync(18, oid, "WarpToLocation", new PyTuple([
+            new PyStr("objective.destination"), new PyInt(0), new PyReal(1_000.5), PyBool.False,
+            new PyLong(AgentRpcFirstAgent),
+        ])));
+        Assert.True(travelWasWarp);
+        Assert.Equal(1_000.5, travelRange);
+
+        Assert.Equal(PyNone.Instance, await BoundCallAsync(19, oid, "WarpToAgentInSpace", new PyTuple([])));
+        Assert.Equal(AgentRpcFirstAgent, warpedAgentId);
+
+        var nestedBinding = Assert.IsType<PyTuple>(await CallAsync(21, "MachoBindObject", new PyTuple([
+            new PyTuple([new PyInt(AgentRpcFirstAgent)]),
+            new PyTuple([new PyStr("GetAgentLocationWrap"), new PyTuple([]), machoVersion]),
+        ])));
+        Assert.IsType<PySubStruct>(nestedBinding.Items[0]);
+        Assert.IsType<PyDict>(nestedBinding.Items[1]);
+        Assert.Equal(new PyInt(MachoMessage.ProxyNodeId),
+            await CallAsync(22, "MachoResolveObject", new PyTuple([new PyInt(AgentRpcFirstAgent)])));
     }
     private static PyValue Get(PyDict dict, PyValue key) =>
         Assert.Single(dict.Entries, pair => pair.Key == key ||

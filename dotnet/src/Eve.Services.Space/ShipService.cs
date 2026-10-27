@@ -132,7 +132,7 @@ public sealed partial class ShipService(
         }
         var asked = (call.Arg(0) switch { PyTuple t => t.Items, PyList l => l.Items, _ => [] }).Select(IdOf).OfType<long>().ToList();
         var jettisoned = await containers.JettisonAsync(call.Session, asked, call.Cancellation);
-        return Py.Tuple(Py.Tuple([.. jettisoned.Select(InventoryWire.Id)]), Py.Tuple());
+        return Py.Tuple(new PyList([.. jettisoned.Select(InventoryWire.Id)]), new PyList([]));
     }
 
     /// <summary>

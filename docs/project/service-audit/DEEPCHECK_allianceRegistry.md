@@ -90,9 +90,11 @@ Host service の role refusal は `CrpAccessDenied` UserError (reason = `[101, U
 
 ## ローカル検証結果
 
-- `Eve.Services.Corporations` と `Eve.Host.Tests` を `UseSharedCompilation=false` で build: いずれも成功、警告0、エラー0。
-- AddBulletin 引数テスト 1件と Host route tests 2件: 成功、失敗0、skip0。Host route の2件は登録済み `allianceRegistry` 経由で UserError と RuntimeError の wire envelope を確認。
-- Host.Tests 全体: 868件中 成功539 / 失敗102 / skip227。task は PostgreSQL 不使用を指定しているため `EVE_PG_URL` を外して実行した。出力で確認した失敗原因には DB URL 不在による `PgConnection` の NullReference と、station RPC tests が PyList を期待して PyTuple を受けた型 assertion がある。全102件の原因調査・解消はこの task の範囲外で、project shard は green ではない。GUI client は起動していない。
+- `Eve.Services.Corporations`, `Eve.Services.Station`, `Eve.Host.Tests`, `Eve.Corporations.Tests` の build は成功し、警告0・エラー0。
+- merge 後の combined AllianceRegistry / station Host wire tests は5件 pass、失敗0、skip0。office group は task 制約により `EVE_PG_URL` を外して実行し、15件全て skip。DB-backed quote behavior 自体はこの machine では実行していない。
+- commit `f973755b` の Agent Test run 40538884363 は3件 pass。main CI run 1172 (`40538868054`) は station の PyList/PyTuple assertion 2件と CorporationOfficeTests の PyReal/PyLong assertion で失敗した。whole-client / EveJS evidence を照合し、GetStationItemBits assertion を PyTuple、GetGuests の nested rows を PyList、office quote helper の期待値を PyLong に直した。
+- 修正後の Host.Tests 全体は 541 pass / 100 fail / 227 skip。Corporations.Tests 全体は 19 pass / 2 fail / 135 skip。どちらも `EVE_PG_URL` なしで実行したため green ではなく、PostgreSQL は一切使っていない。残る Host failures には URL 不在の PgConnection NullReference と別系統の compatibility RPC assertion がある。Corporations の2 failures は Standing/Wars protocol test。GUI client は起動していない。
+
 
 ## 確認したテストと、この作業で扱わない確認
 

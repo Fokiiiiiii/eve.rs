@@ -1,4 +1,8 @@
 using Eve.Bookmarks;
+using Eve.Marshal;
+using Eve.Macho;
+using Eve.Services.Core;
+using Eve.Universe;
 using static Eve.Host.HostConfiguration;
 
 namespace Eve.Host;
@@ -28,16 +32,57 @@ internal sealed partial class CharacterServicesComposition
         });
     }
 
-    /// <summary>
-    /// The place a static bookmark points at, from the static data: a station (its type and its solar system) or a solar system (its
-    /// own location). Other ids are not places the store can bookmark here (structures, celestials), so they are refused.
-    /// </summary>
-    private BookmarkTarget? StaticBookmarkTarget(long itemId)
+    private ValueTask<BookmarkTarget?> StaticBookmarkTarget(long itemId, CancellationToken token) =>
+        ResolveStaticBookmarkTargetAsync(stations, solarSystems, structureDirectoryReadModel.GetStructureInfoAsync, itemId, token);
+
+    internal static async ValueTask<BookmarkTarget?> ResolveStaticBookmarkTargetAsync(
+        StationCatalog stations,
+        SolarSystemCatalog solarSystems,
+        Func<long, CancellationToken, ValueTask<PersistedStructureInfo?>> readStructure,
+        long itemId,
+        CancellationToken token)
     {
+        if (itemId <= 0)
+            return null;
         if (stations.Get(itemId) is { } station)
             return new BookmarkTarget(station.Id, station.TypeId, station.SolarSystemId);
-        if (itemId is > 0 and <= int.MaxValue && solarSystems.Get((int)itemId) is { } system)
+        if (itemId <= int.MaxValue && solarSystems.Get((int)itemId) is { } system)
             return new BookmarkTarget(system.Id, 5, system.Id);
-        return null;
+
+        if (solarSystems.Systems.Any(system => system.ConstellationId == itemId))
+            return new BookmarkTarget(itemId, 4, itemId);
+        if (solarSystems.Systems.Any(system => system.RegionId == itemId))
+            return new BookmarkTarget(itemId, 3, itemId);
+
+        if (await readStructure(itemId, token) is not { PersistentlyDeployed: true } structure)
+            return null;
+        var typeId = StructureNumber(structure.Info, "typeID");
+        var solarSystemId = StructureNumber(structure.Info, "solarSystemID");
+        return typeId is > 0 and <= int.MaxValue && solarSystemId > 0
+            ? new BookmarkTarget(itemId, (int)typeId, solarSystemId)
+            : null;
+    }
+
+    private static long StructureNumber(PyValue info, string name)
+    {
+        IEnumerable<KeyValuePair<PyValue, PyValue>> entries = info switch
+        {
+            PyDict dict => dict.Entries,
+            PyObject { Args: PyDict args } => args.Entries,
+            PyObjectEx objectEx => objectEx.Dict,
+            _ => [],
+        };
+        foreach (var (key, value) in entries)
+        {
+            if (JsSemantics.StringValue(key) != name)
+                continue;
+            return value switch
+            {
+                PyInt number => number.Value,
+                PyLong number => number.Value,
+                _ => 0,
+            };
+        }
+        return 0;
     }
 }

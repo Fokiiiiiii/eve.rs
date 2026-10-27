@@ -199,7 +199,7 @@ public sealed class SharedFolderNotificationTests
     }
 
     private static IService Service(Rig rig, CharacterSessions sessions, Dictionary<long, AccessLists> lists) =>
-        new BookmarkRefusals(new AccessGroupBookmarkMgrService(rig.Store, id => id == Station.ItemId ? Station : null,
+        new BookmarkRefusals(new AccessGroupBookmarkMgrService(rig.Store, (id, _) => ValueTask.FromResult<BookmarkTarget?>(id == Station.ItemId ? Station : null),
             (who, _) => ValueTask.FromResult(lists.TryGetValue(who.CharacterId, out var found) ? found : AccessLists.Empty), sessions));
 
     private static ClientSession Connect(CharacterSessions sessions, long characterId, Sink sink)

@@ -86,6 +86,16 @@ internal sealed partial class CharacterServicesComposition
         {
             var beyonce = SingleRegisteredService<BeyonceService>(services);
             beyonce.ScanSites = scanBookmarkSites;
+            beyonce.ResolveBookmarkLocationTarget = async (call, itemId, cancellationToken) =>
+            {
+                var solarSystemId = call.Session.GetInt("solarsystemid") ?? 0;
+                if (solarSystemId <= 0 || !spaceSessions.IsInSpace(call.Session)
+                    || await spaceSessions.PositionOfAsync(call.Session, itemId, cancellationToken) is not { } target
+                    || target.SolarSystemId != solarSystemId
+                    || !double.IsFinite(target.X) || !double.IsFinite(target.Y) || !double.IsFinite(target.Z))
+                    return null;
+                return new Eve.Services.Space.ScanBookmarkTarget(solarSystemId, target.X, target.Y, target.Z);
+            };
             beyonce.SaveBookmarkScanResult = (call, target, folderId, memo, note, expiryMode, subfolderId) =>
                 Eve.Services.Core.BookmarkRefusals.WithRefusals(() => bookmarkMgr.CreateScanBookmarkAsync(call,
                     new BookmarkTarget(null, 5, target.SolarSystemId, target.X, target.Y, target.Z),

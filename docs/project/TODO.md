@@ -953,7 +953,7 @@ also missing from EVE.js (its advertisement is `standing2`), so the gap is on th
 | `shipKillCounter` | RemoteSvc at `eve/client/script/ui/shared/info/shipInfoPanels/panelOverview.py:276` | real client service name |
 | `solarsystemInterferenceMgr` | RemoteSvc at `eve/client/script/ui/services/solarsystemInterferenceSvc.py:41` | real client service name |
 | `sovMgr` | RemoteSvc at `eve/client/script/ui/services/sovSvc.py:80` | real client service name |
-| `standingMgr` | RemoteSvc at `eve/client/script/ui/shared/neocom/corporation/corp_dlg_edit_member.py:139` | real client service name |
+| `standingMgr` | `RemoteSvc('standingMgr')` at `eve/client/script/ui/services/standingsvc.py:113`; calls its five methods at lines 114, 119, 126, 177 and 282 | real client service name; full Host wire audit: `docs/project/service-audit/DEEPCHECK_standing.md` |
 | `structureAssetSafety` | RemoteSvc at `eve/client/script/ui/shared/assets/assetSafetySvc.py:26` | real client service name |
 | `structureSettings` | RemoteSvc at `eve/client/script/ui/services/marketsvc.py:239` | real client service name |
 | `taleMgr` | RemoteSvc at `taleclient/tale_service.py:129` | real client service name |

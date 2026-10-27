@@ -133,7 +133,6 @@ public sealed partial class StandingMgrService
         {
             Where = "kind = 'standing' AND subject = $1 AND object = $2",
             OrderBy = "at_ms DESC, id DESC",
-            Limit = 512,
         });
         reads.Register(new Eve.ReadSide.RowsetQuery(
             CompositionQuery,

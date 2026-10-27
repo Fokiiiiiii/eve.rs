@@ -177,7 +177,7 @@ public sealed class MarketHostTests : IAsyncLifetime
         Assert.Equal(2, insurancePrices.Entries.Count);
         var insureFailure = await Assert.ThrowsAsync<MachoWrappedException>(() =>
             insurance.CallAsync(Call(session, "InsureShip", 35, new PyLong(1), new PyInt(0), PyBool.False)).AsTask());
-        Assert.Equal("InsureShipFailed", insureFailure.Error.UserErrorMessage);
+        Assert.Equal("InsCouldNotFindItem", insureFailure.Error.UserErrorMessage);
         var uninsureFailure = await Assert.ThrowsAsync<MachoWrappedException>(() =>
             insurance.CallAsync(Call(session, "UnInsureShip", 36, new PyLong(1))).AsTask());
         Assert.Equal("UnInsureShipFailed", uninsureFailure.Error.UserErrorMessage);

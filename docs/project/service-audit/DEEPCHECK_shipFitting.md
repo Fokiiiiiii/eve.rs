@@ -39,3 +39,15 @@
 **制約付き:** PostgreSQL 接続変数を外して Host test project を実行した結果は 520 passed / 100 failed / 227 skipped。ログで見た失敗は DB lane の `EVE_PG_URL` 欠落で開始時に止まっており、DB は接続していない。skip と failure は pass に数えない。
 
 **未実施:** 実クライアント GUI、DB-backed persistence test、EveJS runtime の直接実行。これらはこの job の no-DB 条件および対象 method 用 EveJS test entry 不在のため確認できていない。
+
+
+## CI追跡（2026-10-27）
+
+push-triggered CI の revision `5c72356e` で見つかった別機能の assertion mismatch も修正した。実装は変更せず、client/EveJS の契約に沿う期待値へそろえた。
+
+- Jettison の戻り値は外側が tuple、2つの内側値は list。client は `invItemFunctions.py:56-73` で両者を set として扱い、EveJS の `server/src/services/ship/shipService.js:1523-1554` は両方を list と説明している。Space と Abyssal の失敗テストを修正。
+- `CmdDock` は None を返す。client の `movementFunctions.py:503-518` は `PerformSessionChange` の値を使わず、EveJS の `server/src/services/ship/beyonceService.js:4232-4303` も成功時に null を返す。Space service test の成功期待値を修正。
+- insurance test は存在しない item ID と premium 0 を渡す。Host の `InsuranceService.cs:428-463,544-558` と EveJS の `server/src/insurance/insuranceRuntime.js:1087-1120` に合わせ、`InsCouldNotFindItem` を期待する。
+- calendar 招待上限は `CustomNotify`。client の `eveCalendarsvc.py:196-203` は RPC 結果を使わず、EveJS の `server/src/services/calendar/calendarRuntime.js:475-489,695-710` も作成・更新の両方で同じ error を返す。
+
+変更した Space / Core / Host test projects は compile-check 済み。Core の `Calendar_validates_client_title_limits_and_reports_unknown_events` は 1/1 成功。no-DB 条件により PostgreSQL を使う Host / Space tests はこの worktree では実行せず、push-triggered CI で確認する。

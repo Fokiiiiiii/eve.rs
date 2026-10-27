@@ -171,7 +171,7 @@ public class CalendarMgrServiceTests
             .Select(id => (PyValue)new PyInt(id)).ToArray());
         var inviteLimit = await Assert.ThrowsAsync<MachoWrappedException>(() => manager.CallAsync(Request(
             "UpdateEventParticipants", Session(), new PyLong(created.Value), overLimit, new PyList([]))).AsTask());
-        Assert.Equal("CustomInfo", inviteLimit.Error.UserErrorMessage);
+        Assert.Equal("CustomNotify", inviteLimit.Error.UserErrorMessage);
         Assert.Equal(CalendarResponseStates.Undecided, ResponseStatus(store, created.Value, OtherCharacterId));
 
         var nextAttendee = 90_000_004L;
@@ -252,7 +252,7 @@ public class CalendarMgrServiceTests
         var inviteLimit = await Assert.ThrowsAsync<MachoWrappedException>(() => manager.CallAsync(Request(
             "CreatePersonalEvent", Session(), new PyLong(FutureFileTime()), new PyInt(60),
             new PyStr("Fleet"), new PyStr(""), new PyInt(0), tooManyInvitees)).AsTask());
-        Assert.Equal("CustomInfo", inviteLimit.Error.UserErrorMessage);
+        Assert.Equal("CustomNotify", inviteLimit.Error.UserErrorMessage);
 
         var missing = await Assert.ThrowsAsync<MachoWrappedException>(() => proxy.CallAsync(Request(
             "GetEventDetails", Session(), new PyLong(123), new PyLong(456))).AsTask());

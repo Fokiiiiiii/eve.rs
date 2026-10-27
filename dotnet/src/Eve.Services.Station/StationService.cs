@@ -107,12 +107,11 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
             var snapshot = await readGuests(stationId, call.Cancellation);
             seedObserverGuestLedger?.Invoke(call.Session, stationId,
                 snapshot.Select(guest => guest.CharacterId).Where(id => id > 0).ToHashSet());
-            return new PyList([.. snapshot.Select(guest => (PyValue)new PyList([
+            return new PyList([.. snapshot.Select(guest => (PyValue)Py.Tuple(
                 new PyInt(guest.CharacterId),
                 new PyInt(guest.CorporationId),
                 new PyInt(guest.AllianceId),
-                new PyInt(guest.WarFactionId),
-            ]))]);
+                new PyInt(guest.WarFactionId)))]);
         }
 
         var guestSessions = characterSessions?.InStation(stationId) ?? [];
@@ -133,12 +132,11 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
             stationId,
             guests.Select(character => character.Id).Where(characterId => characterId > 0).ToHashSet());
         return new PyList([.. guests
-            .Select(character => (PyValue)new PyList([
+            .Select(character => (PyValue)Py.Tuple(
                 new PyInt(character.Id),
                 new PyInt(character.CorporationId),
                 new PyInt(character.AllianceId ?? 0),
-                new PyInt(Math.Max(0, sessionsByCharacter.GetValueOrDefault(character.Id)?.GetInt("warfactionid") ?? 0)),
-            ]))]);
+                new PyInt(Math.Max(0, sessionsByCharacter.GetValueOrDefault(character.Id)?.GetInt("warfactionid") ?? 0))))]);
     }
 
 

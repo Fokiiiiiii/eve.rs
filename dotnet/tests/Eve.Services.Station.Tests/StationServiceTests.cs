@@ -311,6 +311,25 @@ public class StationServiceTests
     }
 
     [Fact]
+    public async Task Station_guest_snapshots_return_reference_tuple_rows()
+    {
+        var service = new StationService(
+            Data.Stations,
+            new PgCharacterStore(NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest("Host=localhost")), "characters"),
+            new OnlineCharacters(),
+            () => Data.ClockMs,
+            getStationGuests: (_, _) => ValueTask.FromResult<IReadOnlyList<StationGuest>>(
+                [new StationGuest(90_000_001, 1_000_006, 0, 0)]));
+        var (session, _) = Data.Session(60015249);
+
+        var guests = Assert.IsType<PyList>(await Data.CallAsync(service, session, "GetGuests"));
+        var guest = Assert.IsType<PyTuple>(Assert.Single(guests.Items));
+        Assert.Equal(
+            [new PyInt(90_000_001), new PyInt(1_000_006), new PyInt(0), new PyInt(0)],
+            guest.Items);
+    }
+
+    [Fact]
     public async Task A_session_that_is_not_docked_has_no_guests()
     {
         var (session, _) = Data.Session(null);

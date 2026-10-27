@@ -2,7 +2,16 @@
 
 The current status below is authoritative. Dated entries that follow are historical checkpoints from their stated time.
 
-## Current status (2026-10-26)
+## Current status (2026-10-27)
+
+- The newest push-triggered CI run is 1174 on `c9387a3d`. The end-to-end character creation tests and `Eve.Services.Station.Tests` fail because station guest rows contain an inner list where the EveJS capture contains a tuple.
+- The V24.01 client flow was checked across the client. `eve/client/script/ui/station/base.py:98-108` calls `station.GetGuests`, unpacks four values per row, and builds the guest map; lines 110-113 use the map for `IsGuest`. `eve/client/script/ui/shared/dockedUI/guests.py:94-95,177-183` builds the docked guest view and consumes join/leave notifications; `eve/client/script/ui/shared/dockedUI/controllers/stationController.py:46-47` forwards the service call. EveJS v0.12.9 `server/src/services/station/stationService.js:134-154` returns its guest tuples in a list, and `server/src/services/_shared/guestLists.js:18-37` creates the four-field rows.
+- The worktree fix keeps the outer `PyList` and emits inner `PyTuple` rows from both `GetGuests` data paths. It adds a focused regression test for the Host snapshot provider.
+- Local checks after merging `30f5c47d`: the Station test project build passed with 0 warnings and 0 errors; the focused test passed (1); the full project passed 47, skipped 26, failed 0. The skipped database tests require `EVE_PG_URL`; no PostgreSQL database was used.
+- The latest extended Nightly run is run 10 on `d017125c`. Failing jobs include skill-training timeout, ammo and reload timing, agent reward totals, belt-rat targeting, death and heal event ordering, and abyssal fixture setup. These need checking against Nightly on current main after the station fix.
+- The station fix is ready for its main push. Record the push-triggered CI and Nightly results here after they finish.
+
+## Historical checkpoint (2026-10-26)
 
 - Latest main gate: run 1131 (Actions 40371054260) on `b213ee17` completed successfully; `ci-status.py` reported no failed tests or jobs. Its successful-run output does not provide a skip count. This run verifies the positional-list fixture correction.
 - Previous green gate: run 1128 (Actions 40366086777) on `e4dd35c0`; its status output listed `Eve.Universe.Tests.ClientStaticDataTests.The_export_and_the_embedded_copies_give_the_same_answers` as skipped. The wormhole polarization Host regression is included.

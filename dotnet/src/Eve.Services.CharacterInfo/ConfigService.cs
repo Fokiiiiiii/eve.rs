@@ -22,7 +22,8 @@ public sealed partial class ConfigService(
     IReadOnlyDictionary<long, AgentOwnerInfo>? agentOwners = null,
     Func<IReadOnlyList<long>, CancellationToken, Task<IReadOnlyDictionary<long, string>>>? readStructureNames = null,
     Func<IReadOnlyList<long>, CancellationToken, Task<IReadOnlyList<Corporation>>>? readCorporations = null,
-    Func<IReadOnlyList<long>, CancellationToken, Task<IReadOnlyList<Alliance>>>? readAlliances = null)
+    Func<IReadOnlyList<long>, CancellationToken, Task<IReadOnlyList<Alliance>>>? readAlliances = null,
+    Func<IReadOnlyList<long>, CancellationToken, Task<IReadOnlyList<Character>>>? readCharacters = null)
 {
     private static readonly string[] OwnerColumns = ["ownerID", "ownerName", "typeID", "gender", "ownerNameID"];
     private static readonly string[] CorporationColumns =
@@ -33,8 +34,6 @@ public sealed partial class ConfigService(
     private const long CorporationTypeId = 2;
     private const long AllianceTypeId = 16159;
     private const long CharacterTypeId = 1373;
-    private const int MaximumRequestedIds = 500;
-    private const int MaximumCachedOwnerIds = 10_000;
 
     [Method("GetStationSolarSystemsByOwner")]
     public PyValue GetStationSolarSystemsByOwner(ServiceCall call)
@@ -97,19 +96,25 @@ public sealed partial class ConfigService(
     [Method("GetMultiOwnersEx")]
     public async ValueTask<PyValue> GetMultiOwnersEx(ServiceCall call)
     {
-        var ids = RequestedIds(call.Arg(0), maximumCount: MaximumCachedOwnerIds);
+        var ids = RequestedIds(call.Arg(0));
         var nonAgentIds = agentOwners is null ? ids : ids.Where(id => !agentOwners.ContainsKey(id)).ToArray();
         var corporationById = nonAgentIds.Length == 0
             ? new Dictionary<long, Corporation>()
-            : (await corporations.GetManyAsync(nonAgentIds, call.Cancellation)).ToDictionary(c => c.Id);
+            : (await (readCorporations is null
+                ? corporations.GetManyAsync(nonAgentIds, call.Cancellation)
+                : readCorporations(nonAgentIds, call.Cancellation))).ToDictionary(c => c.Id);
         var allianceById = nonAgentIds.Length == 0
             ? new Dictionary<long, Alliance>()
-            : (await corporations.AlliancesByIdsAsync(nonAgentIds, call.Cancellation))
+            : (await (readAlliances is null
+                ? corporations.AlliancesByIdsAsync(nonAgentIds, call.Cancellation)
+                : readAlliances(nonAgentIds, call.Cancellation)))
                 .Where(alliance => !alliance.Deleted)
                 .ToDictionary(alliance => alliance.Id);
         var characterById = nonAgentIds.Length == 0
             ? null
-            : (await characters.GetManyAsync(nonAgentIds, call.Cancellation)).ToDictionary(character => character.Id);
+            : (await (readCharacters is null
+                ? characters.GetManyAsync(nonAgentIds, call.Cancellation)
+                : readCharacters(nonAgentIds, call.Cancellation))).ToDictionary(character => character.Id);
         var rows = new List<PyTuple>(ids.Length);
         foreach (var id in ids)
         {
@@ -258,8 +263,7 @@ public sealed partial class ConfigService(
 
     private static long[] RequestedIds(
         PyValue value,
-        bool includeZero = false,
-        int maximumCount = MaximumRequestedIds)
+        bool includeZero = false)
     {
         var items = value switch
         {
@@ -267,9 +271,6 @@ public sealed partial class ConfigService(
             PyTuple tuple => tuple.Items,
             _ => throw MachoErrors.ThrowUserError("CONFIG_IDENTIFIER_LIST_INVALID"),
         };
-        if (items.Count > maximumCount)
-            throw MachoErrors.ThrowUserError("CONFIG_BULK_LIMIT_EXCEEDED");
-
         var ids = new long[items.Count];
         for (var index = 0; index < items.Count; index++)
         {

@@ -224,6 +224,21 @@ public sealed class LoginSupportRpcTests
         Assert.Same(eveguard, Assert.Single(services, service => service.Name == "eveguard_report"));
     }
 
+    [Fact]
+    public async Task Eveguard_heartbeat_history_retains_only_the_latest_1024_events()
+    {
+        var service = new EveguardReportService();
+        var session = new ClientSession();
+
+        for (var index = 0; index < 1025; index++)
+            Assert.Same(PyNone.Instance, await ((IService)service).CallAsync(Call("heartbeat_started", session)));
+
+        var events = service.Events;
+        Assert.Equal(1024, events.Count);
+        Assert.Equal(2, events[0].EventId);
+        Assert.Equal(1025, events[^1].EventId);
+    }
+
     private static ServiceCall Call(string method, ClientSession session, params PyValue[] args) => new()
     {
         Method = method,

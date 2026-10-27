@@ -23,7 +23,7 @@ public sealed class ConfigServicePgFactAttribute : FactAttribute
 public sealed class ConfigServiceTests
 {
     [Fact]
-    public async Task Config_bulk_lookups_refuse_wrong_shapes_invalid_ids_and_oversized_raw_lists()
+    public async Task Config_bulk_lookups_refuse_wrong_shapes_and_invalid_ids()
     {
         var service = new ConfigService(null!, null!, null!, null!);
         var session = new ClientSession();
@@ -44,12 +44,6 @@ public sealed class ConfigServiceTests
         await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.GetMultiOwnersEx(new ServiceCall
         {
             Method = "GetMultiOwnersEx", Args = [new PyList([new PyInt(-1)])], Session = session,
-        }));
-        await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.GetMultiCorpTickerNamesEx(new ServiceCall
-        {
-            Method = "GetMultiCorpTickerNamesEx",
-            Args = [new PyList(Enumerable.Repeat<PyValue>(new PyInt(1), 10_001).ToArray())],
-            Session = session,
         }));
     }
 
@@ -248,18 +242,6 @@ public sealed class ConfigServiceTests
         var systemRow = rows[2];
         Assert.Equal(solarSystems.Get(30002780)!.Name, Text(systemRow[1]));
         Assert.Equal(0d, Assert.IsType<PyReal>(systemRow[3]).Value);
-    }
-
-    [Fact]
-    public async Task Batched_config_lookups_refuse_more_than_10_000_raw_ids()
-    {
-        var service = new ConfigService(null!, null!, null!, null!);
-        var requested = Enumerable.Range(1, 10_001).Select(id => (long)id).ToArray();
-
-        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
-            await service.GetMultiOwnersEx(Call("GetMultiOwnersEx", requested, new ClientSession())));
-
-        Assert.Equal("CONFIG_BULK_LIMIT_EXCEEDED", error.Error.UserErrorMessage);
     }
 
     [Fact]

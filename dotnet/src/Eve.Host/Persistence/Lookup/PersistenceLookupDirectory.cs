@@ -30,14 +30,20 @@ public sealed class PersistenceLookupDirectory(
     {
         var npcFactionIds = await _npcFactionIds.Value.WaitAsync(cancellationToken);
         var rows = await corporations.AllAsync(cancellationToken);
-        return rows.Select(corporation => new Eve.Services.Core.LookupCorporation(
+        return rows.Select(corporation => MapCorporation(corporation, npcFactionIds.GetValueOrDefault(corporation.Id))).ToArray();
+    }
+
+    internal static Eve.Services.Core.LookupCorporation MapCorporation(
+        Eve.Corporations.Corporation corporation,
+        long? factionId) =>
+        new(
             corporation.Id,
             corporation.Name,
             corporation.Ticker,
-            npcFactionIds.GetValueOrDefault(corporation.Id),
+            factionId,
             corporation.IsNpc,
-            WarPermit: corporation.IsNpc ? 0 : null)).ToArray();
-    }
+            AllowWar: JsonNullableTruthy(corporation.Settings, "allowWar"),
+            WarPermit: corporation.IsNpc ? 0 : null);
 
     public async ValueTask<IReadOnlyList<Eve.Services.Core.LookupAlliance>> AlliancesAsync(CancellationToken cancellationToken)
     {
@@ -167,6 +173,24 @@ public sealed class PersistenceLookupDirectory(
         }
 
         return grouped.ToDictionary(pair => pair.Key, pair => (IReadOnlyList<Eve.Services.Core.LookupLocation>)pair.Value.Values.ToArray());
+    }
+
+    private static bool? JsonNullableTruthy(System.Text.Json.JsonElement settings, string property)
+    {
+        if (settings.ValueKind != System.Text.Json.JsonValueKind.Object ||
+            !settings.TryGetProperty(property, out var value) ||
+            value.ValueKind == System.Text.Json.JsonValueKind.Null)
+        {
+            return null;
+        }
+
+        return value.ValueKind switch
+        {
+            System.Text.Json.JsonValueKind.False => false,
+            System.Text.Json.JsonValueKind.Number => value.GetDouble() != 0,
+            System.Text.Json.JsonValueKind.String => !string.IsNullOrEmpty(value.GetString()),
+            _ => true,
+        };
     }
 
     private static int Integer(System.Text.Json.JsonElement row, string property) =>

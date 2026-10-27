@@ -1008,12 +1008,14 @@ def test_personal_calendar_event_notifies_an_online_invitee_after_commit():
             "calendarMgr", "CreatePersonalEvent", event_time, 60, "Calendar integration", "Invite notification", 0, [invitee_id]
         ))
         assert event_id > 0
-        event = m.plain(creator.call("calendarProxy", "GetEventDetails", event_id, creator_id))
-        assert event["eventText"] == "Invite notification"
+        event_name, event_args = m.plain(creator.call("calendarProxy", "GetEventDetails", event_id, creator_id))
+        assert event_name == "util.KeyVal"
+        assert event_args["eventText"] == "Invite notification"
+        assert event_args["creatorID"] == creator_id
         received = notifications_of(invitee)
         created = [notice for notice in received if notice["name"] == "OnNewCalendarEvent"]
         assert len(created) == 1, received
-        event_payload = created[0]["args"]["$tuple"][1]["$tuple"][1]["$tuple"][0]["$tuple"]
+        event_payload = created[0]["args"]["$tuple"][1]["$tuple"][1]["$tuple"]
         assert event_payload[0] == {"$long": event_id}
         assert event_payload[4] == "Calendar integration"
     finally:

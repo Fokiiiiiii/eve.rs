@@ -27,7 +27,7 @@ public sealed class ProjectDiscoveryServiceTests
     }
 
     [Fact]
-    public async Task Unavailable_backend_uses_the_reference_default_wire_shapes()
+    public async Task Unavailable_backend_uses_reference_read_shapes_and_refuses_unwired_task_fixes()
     {
         var service = CoreServices.Create(new NoAccounts(), () => 0)
             .Single(candidate => candidate.Name == "ProjectDiscovery");
@@ -44,7 +44,9 @@ public sealed class ProjectDiscoveryServiceTests
         Assert.Equal(new PyInt(0), await service.CallAsync(Request("get_player_analysis_kredits", session)));
         Assert.Equal(PyBool.False, await service.CallAsync(Request("get_tutorial_completion_status", session)));
         Assert.Equal(PyBool.True, await service.CallAsync(Request("is_enabled", session)));
-        Assert.Equal(PyNone.Instance, await service.CallAsync(Request("fix_task_id", session, new PyLong(42))));
+        var unavailable = await Assert.ThrowsAsync<MachoWrappedException>(
+            () => service.CallAsync(Request("fix_task_id", session, new PyLong(42))).AsTask());
+        Assert.Equal("PROJECT_DISCOVERY_TASK_FIX_UNAVAILABLE", unavailable.Error.UserErrorMessage);
         Assert.Equal(
             new PyDict(
             [

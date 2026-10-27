@@ -17,6 +17,12 @@ public interface IService
     bool HasMethod(string method);
 }
 
+/// <summary>Maps a service failure to a client-visible Macho error when the service knows its meaning.</summary>
+public interface IServiceExceptionMapper
+{
+    MachoError? MapException(Exception exception);
+}
+
 /// <summary>Implemented by services that clean up when the client releases one of their bound objects.</summary>
 public interface IBoundObjectReleaseHandler
 {

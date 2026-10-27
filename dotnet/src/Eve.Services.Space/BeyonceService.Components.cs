@@ -10,8 +10,8 @@ public sealed partial class BeyonceService
     public Func<ClientSession, long, Task>? InitiateBeaconLink { get; set; }
 
     /// <summary>
-    /// <c>CallComponentFromClient(itemID, componentName, methodName)</c> (eve-logic <c>remoteBallpark.CallComponentFromClient</c>, used by the link of a CRAB): the link is
-    /// served. Any other component is not, as EVE.js does, and the answer is None, which the client expects.
+    /// <c>CallComponentFromClient(itemID, componentName, methodName)</c> (eve-logic <c>remoteBallpark.CallComponentFromClient</c>): the host currently serves
+    /// the link of a CRAB; component calls without a host provider return None.
     /// </summary>
     [Method("CallComponentFromClient")]
     public async ValueTask<PyValue> CallComponentFromClient(ServiceCall call)

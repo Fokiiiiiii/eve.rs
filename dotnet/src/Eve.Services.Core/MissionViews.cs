@@ -163,10 +163,18 @@ public static class MissionViews
         Field("iconID", view.Courier is not null ? new PyInt(16) : PyNone.Instance),
     ]);
 
+    public static PyDict Keywords(AgentMissionAgentData agent, string missionName) => new(
+    [
+        Field("agentName", new PyStr(agent.AgentName is { Length: > 0 } name ? name : "Unknown Agent")),
+        Field("missionName", new PyStr(missionName)),
+        Field("missionTypeLabel", new PyStr(agent.MissionTypeLabel)),
+    ]);
+
     public static PyDict Keywords(AgentMissionAgentData agent, HeldMissionView view)
     {
         var fields = new List<KeyValuePair<PyValue, PyValue>>
         {
+            Field("agentName", new PyStr(agent.AgentName is { Length: > 0 } name ? name : "Unknown Agent")),
             Field("missionName", new PyStr(view.Record.Content.Title.Length > 0 ? view.Record.Content.Title : view.Mission.NameEn)),
             Field("missionTypeLabel", new PyStr(agent.MissionTypeLabel)),
         };

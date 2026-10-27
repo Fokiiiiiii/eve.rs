@@ -162,7 +162,9 @@ internal sealed partial class CharacterServicesComposition
     ];
 }
 
-    private async Task MutateMailboxAsync(MailboxMutationRequest request, CancellationToken cancellationToken)
+    private async Task<MailboxMutationResult> MutateMailboxAsync(
+        MailboxMutationRequest request,
+        CancellationToken cancellationToken)
     {
         await mailSendWriter.MutationGate.WaitAsync(cancellationToken);
         try
@@ -171,50 +173,33 @@ internal sealed partial class CharacterServicesComposition
             var mailbox = (state["mailboxes"] as JsonObject)?[
                 request.CharacterId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject;
             var messages = state["messages"] as JsonObject;
-            if (mailbox?["statuses"] is not JsonObject statuses || messages is null)
-                return;
+            if (mailbox is null || messages is null)
+                return MailboxMutationResult.Empty;
 
-            var changed = MailboxMutation.Apply(mailbox, messages, request).Changed;
-            if (changed.Count == 0)
-                return;
-            foreach (var entry in changed)
+            var result = MailboxMutation.Apply(state, request);
+            if (result.Changed.Count == 0 && result.RemovedStatuses.Count == 0 && !result.LabelsChanged)
+                return result;
+
+            var write = mailCache.Write(
+                "mail",
+                $"/mailboxes/{request.CharacterId}",
+                mailbox);
+            if (!write.Success)
+                throw new InvalidOperationException($"Could not update mailbox {request.CharacterId}: {write.ErrorMsg}");
+            foreach (var id in result.PrunedMessages)
             {
-                var status = statuses[entry.Id.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject
-                    ?? throw new InvalidOperationException($"Updated mail {entry.Id} lost its status row.");
-                var write = mailCache.Write("mail", $"/mailboxes/{request.CharacterId}/statuses/{entry.Id}", status);
-                if (!write.Success)
-                    throw new InvalidOperationException($"Could not update mail {entry.Id}: {write.ErrorMsg}");
+                var remove = mailCache.Remove(
+                    "mail",
+                    $"/messages/{id.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+                if (!remove.Success)
+                    throw new InvalidOperationException($"Could not delete orphaned mail {id}: {remove.ErrorMsg}");
             }
             await mailCache.FlushTableAsync("mail", cancellationToken);
 
             var recipientSession = characterSessions.Of(request.CharacterId);
-            if (recipientSession is null || ReferenceEquals(recipientSession, request.Session))
-                return;
-            var messageIds = new PyList([.. changed.Select(entry => (PyValue)new PyInt(entry.Id))]);
-            if (request.Method is "MoveToTrash" or "MoveAllToTrash" or "MoveToTrashByLabel" or "MoveToTrashByList")
-            {
-                recipientSession.SendNotification("OnMailTrashed", "clientID", new PyTuple([messageIds]));
-            }
-            else if (request.Method is "MoveFromTrash" or "MoveAllFromTrash")
-            {
-                recipientSession.SendNotification("OnMailRestored", "clientID", new PyTuple([messageIds]));
-            }
-            else if (request.Method is "RemoveLabels" or "ReplaceLabels")
-            {
-                foreach (var group in changed.GroupBy(entry => entry.LabelMask))
-                    recipientSession.SendNotification("OnMailUpdatedByExternal", "clientID",
-                        new PyTuple([
-                            new PyList([.. group.Select(entry => (PyValue)new PyInt(entry.Id))]),
-                            PyNone.Instance,
-                            new PyInt(checked((int)group.Key))
-                        ]));
-            }
-            else
-            {
-                var isRead = request.Method is "MarkAsRead" or "MarkAsReadByLabel" or "MarkAsReadByList";
-                recipientSession.SendNotification("OnMailUpdatedByExternal", "clientID",
-                    new PyTuple([messageIds, PyValue.Of(isRead), PyNone.Instance]));
-            }
+            if (recipientSession is not null && !ReferenceEquals(recipientSession, request.Session))
+                MailboxMutationNotifications.Publish(request, result, recipientSession);
+            return result;
         }
         finally
         {

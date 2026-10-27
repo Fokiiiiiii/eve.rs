@@ -34,20 +34,28 @@ public sealed class MailService(
     private readonly MailboxMutationCallback? _mutateMailbox = mutateMailbox;
 
     private const int MaxCharacterRecipients = 50;
-    private const int MaxMailboxMessageIds = 500;
-    private const int MaxMailboxSyncEntries = 5_000;
     private const int MaxSubjectCharacters = 150;
     private const int MaxBodyCharacters = 8000;
-    private const int MaxGmChatChannelCharacters = 256;
 
     public string Name => "mailMgr";
 
     public bool HasMethod(string method) => method is
-        "SyncMail" or "GetMailHeaders" or "GetBody" or "GetLabels" or "MarkAsRead" or
-        "MarkAsUnread" or "MarkAsReadByLabel" or "MarkAsReadByList" or
-        "MarkAsUnreadByLabel" or "MarkAsUnreadByList" or "MoveFromTrash" or "MoveToTrash" or
-        "MoveAllFromTrash" or "MoveAllToTrash" or "MoveToTrashByLabel" or "MoveToTrashByList" or
-        "RemoveLabels" or "ReplaceLabels" or "SendMail" or "PokePlayerAboutChatMsgGm";
+        "SyncMail" or "GetMailHeaders" or "GetBody" or "GetLabels" or
+        "MarkAsRead" or "MarkAsUnread" or "MarkAllAsRead" or "MarkAllAsUnread" or
+        "MarkAsReadByLabel" or "MarkAsReadByList" or "MarkAsUnreadByLabel" or "MarkAsUnreadByList" or
+        "MoveFromTrash" or "MoveToTrash" or "MoveAllFromTrash" or "MoveAllToTrash" or
+        "MoveToTrashByLabel" or "MoveToTrashByList" or "EmptyTrash" or "DeleteMail" or
+        "RemoveLabels" or "ReplaceLabels" or "AssignLabels" or
+        "CreateLabel" or "EditLabel" or "DeleteLabel" or
+        "SendMail" or "PokePlayerAboutChatMsgGm";
+
+    private static bool IsMailboxMutation(string method) => method is
+        "MarkAsRead" or "MarkAsUnread" or "MarkAllAsRead" or "MarkAllAsUnread" or
+        "MarkAsReadByLabel" or "MarkAsReadByList" or "MarkAsUnreadByLabel" or "MarkAsUnreadByList" or
+        "MoveFromTrash" or "MoveToTrash" or "MoveAllFromTrash" or "MoveAllToTrash" or
+        "MoveToTrashByLabel" or "MoveToTrashByList" or "EmptyTrash" or "DeleteMail" or
+        "AssignLabels" or "RemoveLabels" or "ReplaceLabels" or
+        "CreateLabel" or "EditLabel" or "DeleteLabel";
 
     public async ValueTask<PyValue> CallAsync(ServiceCall call)
     {
@@ -55,24 +63,16 @@ public sealed class MailService(
             return PyNone.Instance;
         call.Cancellation.ThrowIfCancellationRequested();
 
-        if (call.Method == "MarkAsRead" && _mutateMailbox is not null)
+        if (IsMailboxMutation(call.Method) && (call.Method != "MarkAsRead" || _mutateMailbox is not null))
         {
-            await MutateMailboxAsync(call);
-            return PyNone.Instance;
-        }
-        if (call.Method is "MarkAsUnread" or "MarkAsReadByLabel" or "MarkAsReadByList" or
-            "MarkAsUnreadByLabel" or "MarkAsUnreadByList" or "MoveFromTrash" or "MoveToTrash" or
-            "MoveAllFromTrash" or "MoveAllToTrash" or "MoveToTrashByLabel" or "MoveToTrashByList" or
-            "RemoveLabels" or "ReplaceLabels")
-        {
-            await MutateMailboxAsync(call);
-            return PyNone.Instance;
+            var result = await MutateMailboxAsync(call);
+            return call.Method == "CreateLabel" && result.CreatedLabelId is > 0 and var labelId
+                ? new PyInt(labelId)
+                : PyNone.Instance;
         }
         if (call.Method == "MarkAsRead")
         {
             var requestedIds = Items(call.Arg(0));
-            if (requestedIds.Count > MaxMailboxMessageIds)
-                throw MailLimitRefusal("MAIL_BULK_LIMIT_EXCEEDED");
             var requestingCharacterId = call.Session.CharacterId.GetValueOrDefault();
             if (requestingCharacterId > 0)
                 foreach (var id in requestedIds.Select(PositiveId).Where(id => id > 0).Distinct())
@@ -97,8 +97,6 @@ public sealed class MailService(
             case "GetMailHeaders":
             {
                 var requestedIds = Items(call.Arg(0));
-                if (requestedIds.Count > MaxMailboxMessageIds)
-                    throw MailLimitRefusal("MAIL_BULK_LIMIT_EXCEEDED");
                 var headers = new List<PyValue>();
                 foreach (var id in requestedIds.Select(PositiveId).Where(id => id > 0).Distinct())
                     if (Entry(messages, statuses, id) is { } entry)
@@ -133,38 +131,16 @@ public sealed class MailService(
         }
     }
 
-private async Task MutateMailboxAsync(ServiceCall call)
+    private async Task<MailboxMutationResult> MutateMailboxAsync(ServiceCall call)
     {
         var characterId = call.Session.CharacterId.GetValueOrDefault();
         if (characterId <= 0)
-            return;
+            return MailboxMutationResult.Empty;
         var callback = _mutateMailbox ??
             throw new InvalidOperationException("mailMgr mailbox changes require an atomic persistence callback.");
-        if (call.Method is "MarkAsRead" or "MarkAsUnread" or "MoveFromTrash" or "MoveToTrash" or "RemoveLabels" or "ReplaceLabels")
-        {
-            var ids = Items(call.Arg(0));
-            if (ids.Count > MaxMailboxMessageIds)
-                throw MailLimitRefusal("MAIL_BULK_LIMIT_EXCEEDED");
-            if (ids.Any(id => PositiveId(id) <= 0))
-                throw MailLimitRefusal("MAIL_MESSAGE_ID_INVALID");
-        }
-        if (call.Method is "MarkAsReadByLabel" or "MarkAsUnreadByLabel" or "MoveToTrashByLabel")
-        {
-            if (PositiveId(call.Arg(0)) <= 0)
-                throw MailLimitRefusal("MAIL_LABEL_ID_INVALID");
-        }
-        if (call.Method is "MarkAsReadByList" or "MarkAsUnreadByList" or "MoveToTrashByList")
-        {
-            if (PositiveId(call.Arg(0)) <= 0)
-                throw MailLimitRefusal("MAIL_LIST_ID_INVALID");
-        }
-        if (call.Method is "RemoveLabels" or "ReplaceLabels")
-        {
-            var labels = NonNegativeId(call.Arg(1));
-            if (labels < 0)
-                throw MailLimitRefusal("MAIL_LABEL_ID_INVALID");
-        }
-        await callback(new MailboxMutationRequest(characterId, call.Method, call.Args, call.Session), call.Cancellation);
+        return await callback(
+            new MailboxMutationRequest(characterId, call.Method, call.Args, call.Session),
+            call.Cancellation);
     }
 
     private static long NonNegativeId(PyValue value) => value switch
@@ -184,8 +160,8 @@ private async Task MutateMailboxAsync(ServiceCall call)
         if (_sendMail is null)
             throw new InvalidOperationException("mailMgr.SendMail requires a durable persistence callback.");
 
-        var title = BoundedText(call.Arg(3), MaxSubjectCharacters, "MAIL_SUBJECT_LIMIT_EXCEEDED");
-        var body = BoundedText(call.Arg(4), MaxBodyCharacters, "MAIL_BODY_LIMIT_EXCEEDED");
+        var title = NormalizeMailText(call.Arg(3), MaxSubjectCharacters);
+        var body = NormalizeMailText(call.Arg(4), MaxBodyCharacters);
         var request = new MailSendRequest(
             characterId,
             RecipientIds(call.Arg(0)),
@@ -208,15 +184,13 @@ private async Task MutateMailboxAsync(ServiceCall call)
         if (characterId <= 0 || _pokePlayerAboutChatMsgGm is null)
             return PyNone.Instance;
 
-        var channelName = call.Arg(1) is PyNone
-            ? "Unknown Channel"
-            : BoundedText(call.Arg(1), MaxGmChatChannelCharacters, "MAIL_CHANNEL_LIMIT_EXCEEDED");
+        var channelName = JsSemantics.StringValue(call.Arg(1)) ?? "Unknown Channel";
         var request = new GmChatPokeMailRequest(
             characterId,
             GmChatPokeMailRequest.SystemSenderId,
             channelName,
             "GM chat request",
-            $"A GM would like to speak with you.<br><br>Requested channel: {channelName}",
+            GmChatPokeMailRequest.BuildBody(channelName),
             SaveSenderCopy: false);
         var messageId = await _pokePlayerAboutChatMsgGm(request, call.Session, call.Cancellation);
         return messageId is > 0 ? new PyLong(messageId.Value) : PyNone.Instance;
@@ -249,23 +223,20 @@ private async Task MutateMailboxAsync(ServiceCall call)
         return ids.Distinct().ToArray();
     }
 
-private static IReadOnlyList<long>? OptionalRecipientIds(PyValue value) =>
-        value is PyNone ? null : RecipientIds(value);
+private static IReadOnlyList<long>? OptionalRecipientIds(PyValue value)
+    {
+        var ids = RecipientIds(value);
+        return ids.Count == 0 ? null : ids;
+    }
 
     private static long? OptionalPositiveId(PyValue value) =>
         PositiveId(value) is > 0 and var id ? id : null;
 
-    private static string StringArgument(PyValue value) => value switch
-    {
-        PyStr text => text.Value,
-        PyBytes bytes => Encoding.UTF8.GetString(bytes.Value.Span),
-        _ => string.Empty,
-    };
+    private static string StringArgument(PyValue value) =>
+        JsSemantics.StringValue(value) ?? string.Empty;
 
     private static PyValue SyncMail(JsonObject? messages, JsonObject? statuses, PyValue first, PyValue last)
     {
-        if (statuses?.Count > MaxMailboxSyncEntries)
-            throw MailLimitRefusal("MAIL_SYNC_LIMIT_EXCEEDED");
         var entries = new List<(JsonObject Message, JsonObject Status)>();
         if (statuses is not null && messages is not null)
             foreach (var (key, status) in statuses)
@@ -335,18 +306,18 @@ private static IReadOnlyList<long>? OptionalRecipientIds(PyValue value) =>
     private static PyValue OptionalId(JsonNode? value) =>
         value is null ? PyNone.Instance : new PyInt(Math.Max(0, Integer(value)));
 
-private static PyValue OptionalIds(JsonNode? value) => value is JsonArray ids
-        ? new PyList([.. ids.Select(Integer).Where(id => id > 0).Select(id => (PyValue)new PyInt(id))])
-        : OptionalId(value);
-
-    private static string BoundedText(PyValue value, int maximumCharacters, string refusalCode)
+    private static PyValue OptionalIds(JsonNode? value)
     {
-        var text = StringArgument(value);
-        var characters = 0;
-        foreach (var _ in text.EnumerateRunes())
-            if (++characters > maximumCharacters)
-                throw MailLimitRefusal(refusalCode);
-        return text;
+        if (value is not JsonArray ids)
+            return OptionalId(value);
+        var id = ids.Select(Integer).FirstOrDefault(candidate => candidate > 0);
+        return id > 0 ? new PyInt(id) : PyNone.Instance;
+    }
+
+    private static string NormalizeMailText(PyValue value, int maximumCharacters)
+    {
+        var text = StringArgument(value).Trim();
+        return text.Length > maximumCharacters ? text[..maximumCharacters] : text;
     }
 
     private static MachoWrappedException MailLimitRefusal(string refusalCode) =>
@@ -387,74 +358,139 @@ private static PyValue OptionalIds(JsonNode? value) => value is JsonArray ids
         value is JsonValue scalar && scalar.TryGetValue<string>(out var text) ? text : value?.ToJsonString() ?? "";
 }
 
+public static class MailSentNotification
+{
+    public static PyValue[] Build(
+        MailSendRequest request,
+        long messageId,
+        long sentFiletime,
+        long statusMask)
+    {
+        var organizationId = request.CorporationOrAllianceRecipientIds?.FirstOrDefault();
+        return
+        [
+            new PyLong(messageId),
+            new PyLong(request.SenderCharacterId),
+            new PyLong(sentFiletime),
+            new PyList([.. request.CharacterRecipientIds.Select(id => (PyValue)new PyLong(id))]),
+            request.MailingListId is { } listId ? new PyLong(listId) : PyNone.Instance,
+            organizationId is > 0 ? new PyLong(organizationId.Value) : PyNone.Instance,
+            new PyStr(request.Title),
+            new PyLong(Math.Max(0, statusMask)),
+        ];
+    }
+}
+
 public sealed record MailboxMutationRequest(
     long CharacterId,
     string Method,
     IReadOnlyList<PyValue> Arguments,
     ClientSession Session);
 
-public delegate Task MailboxMutationCallback(
+public delegate Task<MailboxMutationResult> MailboxMutationCallback(
     MailboxMutationRequest request,
     CancellationToken cancellationToken);
 
 public sealed record MailboxMutationResult(
-    IReadOnlyList<(long Id, long StatusMask, long LabelMask)> Changed);
+    IReadOnlyList<(long Id, long StatusMask, long LabelMask)> Changed,
+    IReadOnlyList<long> RemovedStatuses,
+    IReadOnlyList<long> PrunedMessages,
+    long? CreatedLabelId = null,
+    string? CreatedLabelName = null,
+    long? CreatedLabelColor = null,
+    bool LabelsChanged = false)
+{
+    public static MailboxMutationResult Empty { get; } = new([], [], []);
+}
 
 public static class MailboxMutation
 {
-    public static MailboxMutationResult Apply(
-        JsonObject mailbox,
-        JsonObject messages,
-        MailboxMutationRequest request)
+    private const long MailStatusRead = 1;
+    private const long MailStatusTrashed = 8;
+    private const long MailSystemLabelMask = 15;
+    private const long FirstCustomLabelMask = 16;
+    private const int MaxCustomLabels = 25;
+    private const int MaxLabelSize = 40;
+
+    public static MailboxMutationResult Apply(JsonObject state, MailboxMutationRequest request)
     {
-        var statuses = mailbox["statuses"] as JsonObject;
-        if (statuses is null)
-            return new MailboxMutationResult([]);
+        var mailbox = (state["mailboxes"] as JsonObject)?[
+            request.CharacterId.ToString(CultureInfo.InvariantCulture)] as JsonObject;
+        var messages = state["messages"] as JsonObject;
+        if (mailbox is null || messages is null || mailbox["statuses"] is not JsonObject statuses)
+            return MailboxMutationResult.Empty;
+
         var arguments = request.Arguments;
         var requestedIds = arguments.Count > 0 ? Ids(arguments[0]).ToHashSet() : [];
         var selector = arguments.Count > 0 ? Integer(arguments[0]) : 0;
         var labelMask = arguments.Count > 1 ? Integer(arguments[1]) : 0;
+
+        if (request.Method == "CreateLabel")
+            return CreateLabel(mailbox, arguments);
+        if (request.Method == "EditLabel")
+            return EditLabel(mailbox, arguments);
+        if (request.Method == "DeleteLabel")
+            return DeleteLabel(mailbox, statuses, arguments);
+
         var changed = new List<(long Id, long StatusMask, long LabelMask)>();
+        var removed = new List<long>();
         foreach (var (key, node) in statuses.ToArray())
         {
             if (node is not JsonObject status ||
                 !long.TryParse(key, NumberStyles.None, CultureInfo.InvariantCulture, out var id) ||
-                id <= 0 || messages[key] is not JsonObject message)
+                id <= 0)
                 continue;
+
             var statusMask = Integer(status["statusMask"]);
+            if (request.Method == "DeleteMail" && requestedIds.Contains(id)
+                || request.Method == "EmptyTrash" && (statusMask & MailStatusTrashed) != 0)
+            {
+                statuses.Remove(key);
+                removed.Add(id);
+                continue;
+            }
+            if (messages[key] is not JsonObject message)
+                continue;
+
             var currentLabels = Integer(status["labelMask"]);
             var selected = request.Method switch
             {
                 "MarkAsRead" or "MarkAsUnread" or "MoveFromTrash" or "MoveToTrash" =>
                     requestedIds.Contains(id),
-                "MoveAllToTrash" or "MoveAllFromTrash" => true,
+                "MarkAllAsRead" or "MarkAllAsUnread" or "MoveAllToTrash" or "MoveAllFromTrash" => true,
                 "MarkAsReadByLabel" or "MarkAsUnreadByLabel" or "MoveToTrashByLabel" =>
                     (currentLabels & selector) == selector,
                 "MarkAsReadByList" or "MarkAsUnreadByList" or "MoveToTrashByList" =>
                     Integer(message["toListID"]) == selector,
-                "RemoveLabels" or "ReplaceLabels" => requestedIds.Contains(id),
+                "AssignLabels" or "RemoveLabels" or "ReplaceLabels" => requestedIds.Contains(id),
                 _ => false,
             };
             if (!selected)
                 continue;
-            if (request.Method is "MarkAsReadByLabel" or "MarkAsUnreadByLabel" or
+            if (request.Method is "MarkAllAsRead" or "MarkAllAsUnread" or
+                "MarkAsReadByLabel" or "MarkAsUnreadByLabel" or
                 "MarkAsReadByList" or "MarkAsUnreadByList")
             {
-                if ((statusMask & 8) != 0)
+                if ((statusMask & MailStatusTrashed) != 0)
                     continue;
             }
+
             var nextStatus = request.Method switch
             {
-                "MarkAsRead" or "MarkAsReadByLabel" or "MarkAsReadByList" => statusMask | 1,
-                "MarkAsUnread" or "MarkAsUnreadByLabel" or "MarkAsUnreadByList" => statusMask & ~1L,
-                "MoveToTrash" or "MoveAllToTrash" or "MoveToTrashByLabel" or "MoveToTrashByList" => statusMask | 8,
-                "MoveFromTrash" or "MoveAllFromTrash" => statusMask & ~8L,
+                "MarkAsRead" or "MarkAllAsRead" or "MarkAsReadByLabel" or "MarkAsReadByList" =>
+                    statusMask | MailStatusRead,
+                "MarkAsUnread" or "MarkAllAsUnread" or "MarkAsUnreadByLabel" or "MarkAsUnreadByList" =>
+                    statusMask & ~MailStatusRead,
+                "MoveToTrash" or "MoveAllToTrash" or "MoveToTrashByLabel" or "MoveToTrashByList" =>
+                    statusMask | MailStatusTrashed,
+                "MoveFromTrash" or "MoveAllFromTrash" => statusMask & ~MailStatusTrashed,
                 _ => statusMask,
             };
             var nextLabels = request.Method switch
             {
+                "AssignLabels" => currentLabels | labelMask,
                 "RemoveLabels" => currentLabels & ~labelMask,
-                "ReplaceLabels" => labelMask,
+                "ReplaceLabels" => (currentLabels & MailSystemLabelMask) | labelMask,
                 _ => currentLabels,
             };
             if (nextStatus == statusMask && nextLabels == currentLabels)
@@ -463,8 +499,132 @@ public static class MailboxMutation
             status["labelMask"] = nextLabels;
             changed.Add((id, nextStatus, nextLabels));
         }
-        return new MailboxMutationResult(changed);
+
+        var pruned = new List<long>();
+        foreach (var id in removed)
+        {
+            var key = id.ToString(CultureInfo.InvariantCulture);
+            var stillReferenced = (state["mailboxes"] as JsonObject)?.Any(pair =>
+                pair.Value is JsonObject other
+                && other["statuses"] is JsonObject otherStatuses
+                && otherStatuses.ContainsKey(key)) == true;
+            if (!stillReferenced && messages.Remove(key))
+                pruned.Add(id);
+        }
+        return new MailboxMutationResult(changed, removed, pruned);
     }
+
+    private static MailboxMutationResult CreateLabel(JsonObject mailbox, IReadOnlyList<PyValue> arguments)
+    {
+        var name = NormalizeLabelName(arguments.Count > 0 ? StringValue(arguments[0]) : "");
+        if (name.Length == 0)
+            return MailboxMutationResult.Empty;
+        var labels = mailbox["labels"] as JsonObject;
+        if (labels is null)
+            mailbox["labels"] = labels = new JsonObject();
+        var ownLabelCount = labels.Select(pair => ParseId(pair.Key))
+            .Count(id => id > 0 && (id & MailSystemLabelMask) == 0);
+        if (ownLabelCount >= MaxCustomLabels)
+            return MailboxMutationResult.Empty;
+
+        var meta = mailbox["_meta"] as JsonObject;
+        if (meta is null)
+            mailbox["_meta"] = meta = new JsonObject();
+        var candidate = Math.Max(FirstCustomLabelMask, meta["nextLabelMask"] is null
+            ? FirstCustomLabelMask
+            : Math.Max(0, Integer(meta["nextLabelMask"])));
+        while (labels.ContainsKey(candidate.ToString(CultureInfo.InvariantCulture)))
+        {
+            if (candidate > long.MaxValue / 2)
+                return MailboxMutationResult.Empty;
+            candidate *= 2;
+        }
+        if (candidate > long.MaxValue / 2)
+            return MailboxMutationResult.Empty;
+        meta["nextLabelMask"] = candidate * 2;
+        var color = Math.Max(0, arguments.Count > 1 ? Integer(arguments[1]) : 0);
+        labels[candidate.ToString(CultureInfo.InvariantCulture)] = new JsonObject
+        {
+            ["labelID"] = candidate,
+            ["name"] = name,
+            ["color"] = color,
+        };
+        return new MailboxMutationResult([], [], [], candidate, name, color, LabelsChanged: true);
+    }
+
+    private static MailboxMutationResult EditLabel(JsonObject mailbox, IReadOnlyList<PyValue> arguments)
+    {
+        var id = arguments.Count > 0 ? Integer(arguments[0]) : 0;
+        if (id <= 0)
+            return MailboxMutationResult.Empty;
+        var labels = mailbox["labels"] as JsonObject;
+        var key = id.ToString(CultureInfo.InvariantCulture);
+        var label = labels?[key] as JsonObject;
+        var hasName = arguments.Count > 1 && arguments[1] is not PyNone;
+        var hasColor = arguments.Count > 2 && arguments[2] is not PyNone;
+        if (label is null)
+        {
+            if (id is not (1 or 2 or 4 or 8) || !hasColor)
+                return MailboxMutationResult.Empty;
+            if (labels is null)
+                mailbox["labels"] = labels = new JsonObject();
+            label = new JsonObject { ["labelID"] = id, ["name"] = "", ["color"] = 0 };
+            labels[key] = label;
+        }
+        if (hasName)
+        {
+            var name = NormalizeLabelName(StringValue(arguments[1]));
+            if (name.Length > 0)
+                label["name"] = name;
+        }
+        if (hasColor)
+            label["color"] = Math.Max(0, Integer(arguments[2]));
+        return new MailboxMutationResult([], [], [], LabelsChanged: true);
+    }
+
+    private static MailboxMutationResult DeleteLabel(
+        JsonObject mailbox,
+        JsonObject statuses,
+        IReadOnlyList<PyValue> arguments)
+    {
+        var id = arguments.Count > 0 ? Integer(arguments[0]) : 0;
+        if (id < FirstCustomLabelMask || (id & MailSystemLabelMask) != 0)
+            return MailboxMutationResult.Empty;
+        var labels = mailbox["labels"] as JsonObject;
+        var key = id.ToString(CultureInfo.InvariantCulture);
+        if (labels?.Remove(key) != true)
+            return MailboxMutationResult.Empty;
+
+        var changed = new List<(long Id, long StatusMask, long LabelMask)>();
+        foreach (var (statusKey, node) in statuses)
+        {
+            if (node is not JsonObject status ||
+                !long.TryParse(statusKey, NumberStyles.None, CultureInfo.InvariantCulture, out var messageId)
+                || messageId <= 0)
+                continue;
+            var statusMask = Integer(status["statusMask"]);
+            var previousLabels = Integer(status["labelMask"]);
+            var nextLabels = previousLabels & ~id;
+            if (nextLabels == previousLabels)
+                continue;
+            status["labelMask"] = nextLabels;
+            changed.Add((messageId, statusMask, nextLabels));
+        }
+        return new MailboxMutationResult(changed, [], [], LabelsChanged: true);
+    }
+
+    private static string NormalizeLabelName(string value)
+    {
+        var name = value.Trim();
+        return name.Length > MaxLabelSize ? name[..MaxLabelSize] : name;
+    }
+
+    private static string StringValue(PyValue value) => value switch
+    {
+        PyStr text => text.Value,
+        PyBytes bytes => Encoding.UTF8.GetString(bytes.Value.Span),
+        _ => "",
+    };
 
     private static IReadOnlyList<long> Ids(PyValue value) => value switch
     {
@@ -473,18 +633,83 @@ public static class MailboxMutation
         _ => [],
     };
 
+    private static long ParseId(string value) =>
+        long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var id) ? id : 0;
+
     private static long Integer(PyValue value) => value switch
     {
         PyInt integer => integer.Value,
         PyLong integer => integer.Value,
-        PyReal real when double.IsFinite(real.Value) && real.Value >= long.MinValue && real.Value < long.MaxValue
-            && real.Value == Math.Truncate(real.Value) => (long)real.Value,
+        PyReal real when double.IsFinite(real.Value) && real.Value >= long.MinValue
+            && real.Value < long.MaxValue && real.Value == Math.Truncate(real.Value) => (long)real.Value,
         _ => 0,
     };
 
     private static long Integer(JsonNode? value) =>
         long.TryParse(value?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var number)
             ? number : 0;
+}
+
+public static class MailboxMutationNotifications
+{
+    public static void Publish(
+        MailboxMutationRequest request,
+        MailboxMutationResult result,
+        ClientSession recipientSession)
+    {
+        if (result.CreatedLabelId is { } labelId)
+        {
+            recipientSession.SendNotification(
+                "OnLabelsCreatedByExternal",
+                "clientID",
+                Py.KeyVal(
+                    ("labelID", new PyInt(labelId)),
+                    ("name", new PyStr(result.CreatedLabelName ?? "")),
+                    ("color", new PyInt(result.CreatedLabelColor ?? 0))));
+            return;
+        }
+        if (result.RemovedStatuses.Count > 0)
+        {
+            recipientSession.SendNotification(
+                "OnMailDeleted",
+                "clientID",
+                new PyList([.. result.RemovedStatuses.Select(id => (PyValue)new PyInt(id))]));
+            return;
+        }
+        if (result.Changed.Count == 0 || request.Method is "EditLabel" or "DeleteLabel")
+            return;
+
+        var messageIds = new PyList([.. result.Changed.Select(entry => (PyValue)new PyInt(entry.Id))]);
+        if (request.Method is "MoveToTrash" or "MoveAllToTrash" or "MoveToTrashByLabel" or "MoveToTrashByList")
+        {
+            recipientSession.SendNotification("OnMailTrashed", "clientID", messageIds);
+        }
+        else if (request.Method is "MoveFromTrash" or "MoveAllFromTrash")
+        {
+            recipientSession.SendNotification("OnMailRestored", "clientID", messageIds);
+        }
+        else if (request.Method is "AssignLabels" or "RemoveLabels" or "ReplaceLabels")
+        {
+            foreach (var group in result.Changed.GroupBy(entry => entry.LabelMask))
+                recipientSession.SendNotification(
+                    "OnMailUpdatedByExternal",
+                    "clientID",
+                    new PyList([.. group.Select(entry => (PyValue)new PyInt(entry.Id))]),
+                    PyNone.Instance,
+                    new PyInt(checked((int)group.Key)));
+        }
+        else
+        {
+            var isRead = request.Method is
+                "MarkAsRead" or "MarkAllAsRead" or "MarkAsReadByLabel" or "MarkAsReadByList";
+            recipientSession.SendNotification(
+                "OnMailUpdatedByExternal",
+                "clientID",
+                messageIds,
+                PyValue.Of(isRead),
+                PyNone.Instance);
+        }
+    }
 }
 
 public sealed record MailSendRequest(
@@ -508,6 +733,12 @@ public sealed record GmChatPokeMailRequest(
 {
     public const long SystemSenderId = 140000004;
     public const string SystemSenderName = "GM ELYSIAN";
+
+    public static string BuildBody(string channelName)
+    {
+        var body = $"A GM would like to speak with you.<br><br>Requested channel: {channelName}".Trim();
+        return body.Length > 8000 ? body[..8000] : body;
+    }
 }
 
 public delegate Task<long?> GmChatPokeMailCallback(

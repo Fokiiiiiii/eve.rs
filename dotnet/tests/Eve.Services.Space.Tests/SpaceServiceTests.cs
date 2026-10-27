@@ -2287,8 +2287,8 @@ public class SpaceServiceTests
         const double z = 7_750_000;
         var systemId = (int)session.GetInt("solarsystemid")!.Value;
         rig.Beyonce.BookmarkTargetForCharacter = (characterId, requestedId, _) =>
-            Task.FromResult<WarpCoordinates?>(requestedId == bookmarkId
-                ? new WarpCoordinates(systemId, x, y, z)
+            Task.FromResult<BookmarkWarpTarget?>(requestedId == bookmarkId
+                ? new BookmarkWarpTarget(systemId, null, x, y, z)
                 : null);
 
         var answer = await rig.BeyonceCallWithAsync(
@@ -2930,7 +2930,7 @@ public class SpaceServiceTests
     }
 
     [PgFact]
-    public async Task A_dock_is_answered_with_the_time_it_was_accepted_and_with_nothing_when_it_was_not()
+    public async Task A_dock_returns_nothing_for_an_accepted_command_and_when_it_is_refused()
     {
         var (rig, _, session) = await DockedAsync();
         await using var _ = rig;
@@ -2938,7 +2938,7 @@ public class SpaceServiceTests
         var oid = await rig.BindBeyonceAsync(session);
 
         var answer = await rig.BeyonceCallAsync(session, "CmdDock", oid, new PyInt((int)Rig.Station), new PyLong(session.GetInt("shipid")!.Value));
-        Assert.Equal(new PyLong(134351527136350000), answer);
+        Assert.Equal(new PyLong(rig.Sim.DockAnswer.At), answer);
         Assert.Equal(Describe(new SimCommand((ulong)session.SessionId, SimCommands.Dock, [Rig.Station])), Describe(rig.Sim.Heard.Last()));
 
         rig.Sim.DockAnswer = new CommandReply(false, 0, "STATION_NOT_FOUND");

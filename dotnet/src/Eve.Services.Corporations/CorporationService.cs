@@ -6,15 +6,22 @@ using Eve.Marshal;
 namespace Eve.Services.Corporations;
 
 [Service("corporationSvc")]
-public sealed partial class CorporationService(CorporationStore store,PgCharacterStore characters,CharacterSessions? characterSessions = null)
+public sealed partial class CorporationService(
+    CorporationStore store,
+    PgCharacterStore characters,
+    CharacterSessions? characterSessions = null,
+    Func<long, CancellationToken, ValueTask<IReadOnlyList<Employment>>>? readEmploymentHistory = null)
 {
     [Method("GetEmploymentRecord")]
     public async ValueTask<PyValue> GetEmploymentRecord(ServiceCall call)
     {
         var id = call.Arg(0) is PyInt n && n.Value > 0 ? n.Value : call.Session.CharacterId ?? 0;
-        var history = await store.EmploymentAsync(id,call.Cancellation);
-        if (history.Count == 0 && await characters.GetAsync(id,call.Cancellation) is { } c)
-            history = [new Employment(0,id,c.CorporationId,c.CreatedAt.ToUnixTimeMilliseconds(),null,false)];
+        var history = readEmploymentHistory is { } read
+            ? await read(id, call.Cancellation)
+            : await store.EmploymentAsync(id, call.Cancellation);
+        if (readEmploymentHistory is null && history.Count == 0 &&
+            await characters.GetAsync(id, call.Cancellation) is { } c)
+            history = [new Employment(0, id, c.CorporationId, c.CreatedAt.ToUnixTimeMilliseconds(), null, false)];
         return Py.Rowset(["corporationID","startDate","deleted"],
             history.Select(e => (PyValue)Py.List(new PyInt(e.CorporationId),CorporationWire.Time(e.StartedMs),new PyInt(e.Deleted ? 1 : 0))));
     }

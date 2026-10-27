@@ -379,6 +379,13 @@ private readonly LoginAttemptLimiter _loginAttemptLimiter;
             Post(new AuthReply(request.Corr, new Rejected(LoginRefused.BadCredentials)));
             return;
         }
+        if (request.CredentialKind == AuthCredentialKind.Password &&
+            request.PasswordHash.Length != LoginAttempt.PasswordHashLength)
+        {
+            _loginAttemptLimiter.RecordFailure(accountName, request.Address);
+            Post(new AuthReply(request.Corr, new Rejected(LoginRefused.BadCredentials)));
+            return;
+        }
 
         AuthOutcome outcome;
         try

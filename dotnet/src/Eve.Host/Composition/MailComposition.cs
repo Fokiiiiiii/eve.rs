@@ -266,7 +266,18 @@ internal sealed partial class CharacterServicesComposition
             (table, cancellationToken) => mailStore.LoadTableAsync(table, createIfMissing: false, cancellationToken),
             ResolveMailSendRecipientsAsync,
             now,
-            (characterId, args) => characterSessions.Of(characterId)?.SendNotification("OnNotificationReceived", "clientID", args));
+            (characterId, args) => characterSessions.Of(characterId)?.SendNotification("OnNotificationReceived", "clientID", args),
+            (characterId, args, requestingSession) =>
+            {
+                var recipientSession = characterSessions.Of(characterId);
+                if (recipientSession is null)
+                    return;
+                if (ReferenceEquals(recipientSession, requestingSession))
+                    requestingSession.AfterResponse(() =>
+                        requestingSession.SendNotification("OnMailSent", "clientID", args));
+                else
+                    recipientSession.SendNotification("OnMailSent", "clientID", args);
+            });
         SubscribeMoonOwnerNotifications();
         if (allianceMaintenanceBillWorker is { } maintenanceWorker)
         {

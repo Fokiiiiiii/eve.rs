@@ -413,7 +413,7 @@ public sealed class AgentMissionServiceTests
 
         var keywords = Assert.IsType<PyDict>(await service.CallAsync(new ServiceCall
         {
-            Method = "GetMissionKeywords", Args = [new PyInt(missionId)], Session = session, BoundObjectId = oid,
+            Method = "GetMissionKeywords", Args = [new PyInt(content.NameId)], Session = session, BoundObjectId = oid,
         }));
         Assert.Equal(new PyStr("Courier Job"), DictField(keywords, "missionName"));
         Assert.Equal(new PyInt(6000032), DictField(keywords, "objectiveDestinationID"));
@@ -436,10 +436,13 @@ public sealed class AgentMissionServiceTests
         {
             Method = "GetMissionJournalInfo", Args = [], Session = session, BoundObjectId = oid,
         }));
-        Assert.Empty(Assert.IsType<PyDict>(await service.CallAsync(new ServiceCall
+        var fallbackKeywords = Assert.IsType<PyDict>(await service.CallAsync(new ServiceCall
         {
-            Method = "GetMissionKeywords", Args = [new PyInt(missionId)], Session = session, BoundObjectId = oid,
-        })).Entries);
+            Method = "GetMissionKeywords", Args = [new PyInt(content.NameId)], Session = session, BoundObjectId = oid,
+        }));
+        Assert.Equal(new PyStr("Unknown Agent"), DictField(fallbackKeywords, "agentName"));
+        Assert.Equal(new PyStr("93031"), DictField(fallbackKeywords, "missionName"));
+        Assert.Equal(new PyStr(agent.MissionTypeLabel), DictField(fallbackKeywords, "missionTypeLabel"));
         Assert.Empty(Assert.IsType<PyDict>(await service.CallAsync(new ServiceCall
         {
             Method = "GetStandingGainsForMission", Args = [new PyInt(999999)], Session = session, BoundObjectId = oid,

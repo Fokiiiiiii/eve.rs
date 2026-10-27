@@ -45,6 +45,13 @@ public sealed partial class MarketStore
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source,string schema = DefaultSchema,CancellationToken token = default) =>
         Migrations.ApplyAsync(source,schema,MigrationSet(),token);
 
+    public async Task<bool> IsReadyAsync(CancellationToken token = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var command = new NpgsqlCommand("SELECT to_regclass($1) IS NOT NULL", connection);
+        command.Parameters.Add(new() { Value = $"{_schema}.orders" });
+        return await command.ExecuteScalarAsync(token) is true;
+    }
 
     public async Task<bool> HasSeedV4Async(long sdeBuild,CancellationToken token = default)
     {

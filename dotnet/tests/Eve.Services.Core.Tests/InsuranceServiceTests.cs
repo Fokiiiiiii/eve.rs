@@ -26,17 +26,17 @@ public sealed class InsuranceServiceTests
     }
 
     [Fact]
-    public async Task Insurance_price_batch_refuses_more_than_500_type_ids_before_the_read_model()
+    public async Task Insurance_price_batch_reads_more_than_500_type_ids()
     {
         var model = new FakeInsuranceReadModel();
         var service = Create(model);
         var values = new PyList([.. Enumerable.Range(1, 501).Select(id => (PyValue)new PyInt(id))]);
 
-        var error = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(async () =>
-            await service.CallAsync(Call(new ClientSession(), "GetInsurancePrices", values)));
+        var prices = Assert.IsType<PyDict>(await service.CallAsync(
+            Call(new ClientSession(), "GetInsurancePrices", values)));
 
-        Assert.NotNull(error);
-        Assert.Empty(model.LastPriceRequest);
+        Assert.Equal(501, prices.Entries.Count);
+        Assert.Equal(Enumerable.Range(1, 501).Select(id => (long)id), model.LastPriceRequest);
     }
 
     [Fact]
@@ -78,7 +78,7 @@ public sealed class InsuranceServiceTests
 
         var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
             service.CallAsync(Call(session, "InsureShip", new PyReal(123.75), new PyReal(356_011.65), PyBool.False)).AsTask());
-        Assert.Equal("InsureShipFailed", error.Error.UserErrorMessage);
+        Assert.Equal("InsCouldNotFindItem", error.Error.UserErrorMessage);
         Assert.Null(writer.Purchase);
     }
 
@@ -282,16 +282,16 @@ public sealed class InsuranceServiceTests
 
         var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.CallAsync(call));
 
-        Assert.Equal("InsureShipFailed", error.Error.UserErrorMessage);
+        Assert.Equal("InsCouldNotFindItem", error.Error.UserErrorMessage);
         Assert.Null(writer.Purchase);
     }
 
     [Theory]
-    [InlineData(100, 0, false)]
-    [InlineData(100, 300, true)]
-    [InlineData(0, 300, false)]
+    [InlineData(100, 0, false, "InsCouldNotFindItem")]
+    [InlineData(100, 300, true, "CrpAccessDenied")]
+    [InlineData(0, 300, false, "InsCouldNotFindItem")]
     public async Task InsureShip_voidOld_keyword_does_not_bypass_actor_authority(
-        long characterId, long stationId, bool isCorporation)
+        long characterId, long stationId, bool isCorporation, string expectedUserError)
     {
         var writer = new FakeInsuranceWriteModel();
         IService service = Create(new FakeInsuranceReadModel(), writer);
@@ -309,7 +309,7 @@ public sealed class InsuranceServiceTests
 
         var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.CallAsync(call));
 
-        Assert.Equal("InsureShipFailed", error.Error.UserErrorMessage);
+        Assert.Equal(expectedUserError, error.Error.UserErrorMessage);
         Assert.Null(writer.Purchase);
     }
 
@@ -367,7 +367,7 @@ public sealed class InsuranceServiceTests
 
         var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.CallAsync(call));
 
-        Assert.Equal("InsureShipFailed", error.Error.UserErrorMessage);
+        Assert.Equal("InsCouldNotFindItem", error.Error.UserErrorMessage);
         Assert.True(writer.Purchase!.ReplaceExisting);
     }
 
@@ -385,8 +385,9 @@ public sealed class InsuranceServiceTests
             ("stationid", new PyInt(300)),
             ("solarsystemid2", new PyInt(400)));
 
-        await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(Call(
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(Call(
             session, "InsureShip", new PyInt(500), new PyReal(356_011.65), PyBool.True)).AsTask());
+        Assert.Equal("CrpAccessDenied", error.Error.UserErrorMessage);
         Assert.Null(writer.Purchase);
     }
 
@@ -406,8 +407,9 @@ public sealed class InsuranceServiceTests
             ("stationid", new PyInt(300)),
             ("solarsystemid2", new PyInt(400)));
 
-        await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(Call(
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(Call(
             session, "UnInsureShip", new PyInt(500))).AsTask());
+        Assert.Equal("InsCouldNotFindItem", error.Error.UserErrorMessage);
         Assert.Null(writer.Cancellation);
     }
 

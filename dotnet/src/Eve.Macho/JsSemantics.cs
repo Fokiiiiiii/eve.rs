@@ -34,6 +34,7 @@ public static class JsSemantics
     public static double NumberValue(PyValue value) => value switch
     {
         PyInt number => number.Value,
+        PyLong number => number.Value,
         PyReal number => number.Value,
         _ => 0,
     };

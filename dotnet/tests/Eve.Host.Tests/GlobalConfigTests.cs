@@ -215,7 +215,10 @@ public class GlobalConfigWireTests : IAsyncLifetime
 
         // An administrator's write: both sessions hear it, the front gets the new configuration, and the call answers None.
         await front.SendAsync(new Packet(admin.SessionId, MarshalCodec.Encode(
-            Packets.Call(admin, 2, "machoNet", "SetGlobalConfigValue", new PyStr("new_mission_giver_enabled"), new PyStr("1")))));
+            Packets.CallWithKwargs(admin, 2, "machoNet", "SetGlobalConfigValue", new PyTuple([]), new PyDict([
+                new KeyValuePair<PyValue, PyValue>(new PyStr("key"), new PyStr("new_mission_giver_enabled")),
+                new KeyValuePair<PyValue, PyValue>(new PyStr("value"), new PyStr("1")),
+            ])))));
         var heard = new List<Send>();
         ClusterConfig? published = null;
         var answer = (Send?)null;

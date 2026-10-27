@@ -56,8 +56,19 @@ public partial class HostServerTests
                 open, batchCount + 1, "config", "GetMultiOwnersEx",
                 new PyTuple([new PyInt(1)]), kwargs))));
         var malformedResponse = Assert.IsType<Send>(await front.ReceiveAsync());
-        var errorState = Assert.IsType<PyTuple>(Assert.IsType<PyObject>(
-            MarshalCodec.Decode(malformedResponse.Payload)).Args).Items;
-        Assert.Equal((int)MachoMessage.ErrorResponse, Assert.IsType<PyInt>(errorState[0]).Value);
+        var errorPacket = MachoPacket.Decode(MarshalCodec.Decode(malformedResponse.Payload));
+        Assert.NotNull(errorPacket);
+        Assert.Equal(MachoMessage.ErrorResponse, errorPacket!.Type);
+
+        var errorState = Assert.IsType<PyTuple>(errorPacket.Payload).Items;
+        Assert.Equal((int)MachoErrorType.WrappedException, Assert.IsType<PyInt>(errorState[1]).Value);
+        var wrapped = Assert.IsType<PyTuple>(errorState[2]).Items;
+        var userError = Assert.IsType<PyObjectEx>(Assert.IsType<PySubStream>(wrapped[0]).Decoded);
+        var header = Assert.IsType<PyTuple>(userError.Header).Items;
+        Assert.Equal(MachoErrors.UserErrorClass, Assert.IsType<PyToken>(header[0]).Value);
+        var userErrorArgs = Assert.IsType<PyTuple>(header[1]).Items;
+        Assert.Equal(
+            "CONFIG_IDENTIFIER_LIST_INVALID",
+            System.Text.Encoding.UTF8.GetString(Assert.IsType<PyBytes>(userErrorArgs[0]).Value.Span));
     }
 }

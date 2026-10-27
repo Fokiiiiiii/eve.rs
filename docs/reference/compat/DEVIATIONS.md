@@ -1587,11 +1587,7 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
   `resolvePaperDollState`). The client reads the state at station entry to ask about a recustomization
   (`gameui.py:785-808`), so the value now comes from `characters.AppearanceAsync`. States 1 (re-sculpting) and 3 (full
   recustomizing) need the re-sculpt token and are not reported. Tests: `The_paperdoll_state_follows_the_stored_appearance_of_the_character`.
-- **In-game reports and EveGuard heartbeats are not kept.** `ingamereport.*` (eight report methods) and
-  `eveguard_report.heartbeat_*` answer None and keep nothing. The reference keeps both in an in-memory list that is lost at
-  restart (`ingamereportService.js:61-80`, `eveguardReportService.js:15-31`; the list is read only
-  by the reference's tests). The client ignores the answers (`eve/client/script/ui/shared/zhReport/reportSvc.py`,
-  `serenity/eveguard/client/eveguard_service.py:96-131`). Status: open (a report store; TODO section 41).
+- **In-game reports are not kept; EveGuard heartbeats retain bounded process-local history.** `ingamereport.*` (eight report methods) are answered without retaining reports. `eveguard_report.heartbeat_*` records the event type, character/account IDs and timestamp, answers None, and retains at most 1,024 events until restart. EveJS keeps these heartbeat events in an unbounded in-memory list (`eveguardReportService.js:18-31,38-44`); the eve.rs cap bounds process memory. All three V24.01 callers ignore the reply (`eve-logic/serenity/eveguard/client/eveguard_service.py:95,112,130`). Status: open (durable report storage; TODO section 41).
 - **Kiring identity and purchase calls fail closed without their providers.** V24.01 passes the authentication result to the Kiring gateway (`eve-logic/kiring/client/apigateway.py:256`), while EveJS returns a synthetic local account and token (`/home/user/evejs-v0.12.9/server/src/services/newEdenStore/kiringMgrService.js:124-134`). eve.rs does not run that provider, so `PerformKiringServerSideAuthenticationFromCode` and `GetSAuthAid` now return `KIRING_AUTH_UNAVAILABLE`; `PlaceKiringOrder` returns `KIRING_PURCHASE_UNAVAILABLE` instead of a fabricated order ID. Focused refusal and dispatch-budget regressions cover these routes.
 - **Anti-cheat and region settings answer the state that exists.** `kiringMgr.ShouldKickCheater` is False and
   `GetEveGuardServerAddress` is None: no EveGuard server runs, so nothing is kicked. `IsMonochromeStyleEnabled` is False

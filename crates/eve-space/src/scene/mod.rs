@@ -255,6 +255,8 @@ pub enum Out {
     },
     /// A notification for the player's client; the host numbers it and sends it.
     Notify { session: SessionId, name: &'static str, id_type: &'static str, args: Vec<Value> },
+    /// Call a client-side service instead of broadcasting a named event.
+    ServiceNotify { session: SessionId, service: &'static str, method: &'static str, args: Vec<Value> },
     /// A command was accepted, after the update it made (a `Dock` is answered with the time it was accepted at).
     Accepted { session: SessionId, command: u8, at: i64 },
 
@@ -421,6 +423,7 @@ impl Out {
     pub fn session(&self) -> SessionId {
         match self {
             Out::Notify { session, .. }
+            | Out::ServiceNotify { session, .. }
             | Out::Accepted { session, .. }
             | Out::Approaching { session, .. }
             | Out::Jumping { session, .. }

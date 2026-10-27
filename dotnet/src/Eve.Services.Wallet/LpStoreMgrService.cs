@@ -8,7 +8,9 @@ namespace Eve.Services.Wallet;
 public sealed class LpStoreMgrService(
     LpStoreOfferCache offers,
     LpStorePurchases purchases,
-    Func<long, long, CancellationToken, ValueTask<bool>> isDirector) : IService
+    Func<long, long, CancellationToken, ValueTask<bool>> isDirector,
+    Func<long, CancellationToken, Task<IReadOnlyList<LpStoreOffer>>>? readOffers = null,
+    Func<LpStorePurchaseRequest, CancellationToken, Task<LpStorePurchaseReceipt>>? takePurchase = null) : IService
 {
 
     private static readonly Dictionary<string, string> Messages = new()
@@ -49,7 +51,9 @@ public sealed class LpStoreMgrService(
     {
         var corporationId = Positive(call.Args.Count > 0 ? call.Args[0] : null);
         if (corporationId == 0) return new PyList([]);
-        var rows = await offers.GetAsync(corporationId, call.Cancellation);
+        var rows = readOffers is null
+            ? await offers.GetAsync(corporationId, call.Cancellation)
+            : await readOffers(corporationId, call.Cancellation);
         return new PyList([.. rows.Select(Row)]);
     }
 
@@ -85,7 +89,9 @@ public sealed class LpStoreMgrService(
         LpStorePurchaseReceipt receipt;
         try
         {
-            receipt = await purchases.TakeAsync(request, call.Cancellation);
+            receipt = takePurchase is null
+                ? await purchases.TakeAsync(request, call.Cancellation)
+                : await takePurchase(request, call.Cancellation);
         }
         catch (LpStorePurchaseRefusedException refusal)
         {

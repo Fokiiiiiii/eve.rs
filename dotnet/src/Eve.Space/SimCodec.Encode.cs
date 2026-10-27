@@ -1119,6 +1119,13 @@ private static void WriteStructureDamageCorrelation(
                 w.Text(m.IdType);
                 w.Bytes(m.Args.Span);
                 break;
+            case SimServiceNotify m:
+                w.U8(Kind.ServiceNotify);
+                w.U64(m.SessionId);
+                w.Text(m.Service);
+                w.Text(m.Method);
+                w.Bytes(m.Args.Span);
+                break;
             case SimDocked m:
                 w.U8(Kind.Docked);
                 w.U64(m.SessionId);

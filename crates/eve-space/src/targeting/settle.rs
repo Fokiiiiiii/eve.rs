@@ -21,11 +21,11 @@ impl Scene {
             due.sort_by_key(|p| (p.complete_at, p.sequence));
             for pending in due {
                 let Some(subject) = self.subject(pending.target, now) else {
-                    self.cancel_pending(session, pending.target);
+                    out.extend(self.cancel_pending(session, pending.target, true));
                     continue;
                 };
                 if self.check_lock(session, &subject, false).is_err() {
-                    self.cancel_pending(session, pending.target);
+                    out.extend(self.cancel_pending(session, pending.target, true));
                     continue;
                 }
                 if pending.complete_at <= now {

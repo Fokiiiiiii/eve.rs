@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text;
 using Eve.Macho;
 using Eve.Marshal;
 
@@ -11,6 +12,7 @@ public sealed partial class BannedWordsService
     private const int MaximumWordBytes = 4096;
     private const int MaximumTotalWordBytes = 16384;
     private const int MaximumErrorMessageBytes = 128;
+    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
     public Func<ServiceCall, ValueTask<PyValue?>>? RpcHandler { get; set; }
 
@@ -39,10 +41,7 @@ public sealed partial class BannedWordsService
     {
         if (call.Args.Count != 1 || call.Kwargs is not PyNone)
             throw MachoErrors.ThrowUserError("BANNED_WORDS_ARGUMENTS_INVALID");
-        if (call.Arg(0) is not PyStr and not PyWString)
-            throw MachoErrors.ThrowUserError("BANNED_WORDS_REGEX_TYPE_INVALID");
-        var type = Text(call.Arg(0));
-        if (type is not ("blocked" or "intercepted"))
+        if (!TryText(call.Arg(0), out var type) || type is not ("blocked" or "intercepted"))
             throw MachoErrors.ThrowUserError("BANNED_WORDS_REGEX_TYPE_INVALID");
     }
 
@@ -53,27 +52,47 @@ public sealed partial class BannedWordsService
         var totalBytes = 0;
         foreach (var value in call.Args)
         {
-            if (value is not PyStr and not PyWString)
+            if (!TryText(value, out var text))
                 throw MachoErrors.ThrowUserError("BANNED_WORDS_TEXT_INVALID");
-            var length = System.Text.Encoding.UTF8.GetByteCount(Text(value));
+            var length = Encoding.UTF8.GetByteCount(text);
             if (length > MaximumWordBytes || (totalBytes = checked(totalBytes + length)) > MaximumTotalWordBytes)
                 throw MachoErrors.ThrowUserError("BANNED_WORDS_TEXT_TOO_LONG");
         }
 
         if (call.Kwargs is PyNone) return;
         if (call.Kwargs is not PyDict kwargs || kwargs.Entries.Count > 1 ||
-            kwargs.Entries.Any(pair => pair.Key is not PyStr { Value: "err_message" } ||
-                pair.Value is not PyStr and not PyWString ||
-                System.Text.Encoding.UTF8.GetByteCount(Text(pair.Value)) > MaximumErrorMessageBytes))
+            kwargs.Entries.Any(pair => !TryText(pair.Key, out var key) || key != "err_message" ||
+                !TryText(pair.Value, out var message) ||
+                Encoding.UTF8.GetByteCount(message) > MaximumErrorMessageBytes))
             throw MachoErrors.ThrowUserError("BANNED_WORDS_ARGUMENTS_INVALID");
     }
 
-    private static string Text(PyValue value) => value switch
+    private static bool TryText(PyValue value, out string text)
     {
-        PyStr text => text.Value,
-        PyWString text => text.Value,
-        _ => string.Empty,
-    };
+        switch (value)
+        {
+            case PyStr str:
+                text = str.Value;
+                return true;
+            case PyWString wide:
+                text = wide.Value;
+                return true;
+            case PyBytes bytes:
+                try
+                {
+                    text = StrictUtf8.GetString(bytes.Value.Span);
+                    return true;
+                }
+                catch (DecoderFallbackException)
+                {
+                    text = "";
+                    return false;
+                }
+            default:
+                text = "";
+                return false;
+        }
+    }
 }
 
 [Service("cache")]

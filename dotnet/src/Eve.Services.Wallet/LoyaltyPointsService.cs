@@ -12,7 +12,8 @@ namespace Eve.Services.Wallet;
 /// </summary>
 public sealed class LoyaltyPointsService(
     LoyaltyPointStore store,
-    Func<long, CancellationToken, Task<long?>>? corporationOfCharacter = null) : IService
+    Func<long, CancellationToken, Task<long?>>? corporationOfCharacter = null,
+    Func<LoyaltyHolder, CancellationToken, Task<IReadOnlyList<LoyaltyPointBalance>>>? readBalances = null) : IService
 {
     private static readonly string[] BalanceColumns = ["issuerCorpID", "loyaltyPoints"];
 
@@ -55,7 +56,9 @@ public sealed class LoyaltyPointsService(
 
     private async ValueTask<PyValue> BalanceRowsAsync(LoyaltyHolder holder, CancellationToken cancellationToken)
     {
-        var balances = await store.ReadAsync(holder, cancellationToken);
+        var balances = readBalances is null
+            ? await store.ReadAsync(holder, cancellationToken)
+            : await readBalances(holder, cancellationToken);
         return Py.Rowset(BalanceColumns, balances.Select(balance => new PyTuple(
         [
             new PyInt(balance.IssuerCorpId),

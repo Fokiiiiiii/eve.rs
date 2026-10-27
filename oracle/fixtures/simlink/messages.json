@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 75,
-   "hex": "03000000014b00"
+   "version": 82,
+   "hex": "03000000015200"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 75,
+   "version": 82,
    "pollHz": 4,
-   "hex": "07000000024b0004000000"
+   "hex": "0700000002520004000000"
   },
   {
    "name": "ensure private Abyssal room scene",
@@ -1225,6 +1225,15 @@
    "idType": "clientID",
    "args": "7e0000000004010100",
    "hex": "33000000094f2c3859955c060011004f6e53657454696d6544696c6174696f6e0800636c69656e744944090000007e0000000004010100"
+  },
+  {
+   "name": "target lock failed service notification",
+   "kind": "ServiceNotify",
+   "sessionId": "1790646377000015",
+   "service": "target",
+   "method": "FailLockTarget",
+   "args": "7e00000000250367b4089b15090000",
+   "hex": "340000007d4f2c3859955c060006007461726765740e004661696c4c6f636b5461726765740f0000007e00000000250367b4089b15090000"
   },
   {
    "name": "notification without arguments",

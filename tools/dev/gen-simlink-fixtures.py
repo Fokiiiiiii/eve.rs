@@ -31,7 +31,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "RemoveAbyssalParticipant": 110, "RemoveAbyssalParticipantReply": 111, "GetAbyssalParticipantPose": 112, "GetAbyssalParticipantPoseReply": 113,
          "EnsureAbyssalSceneObject": 114, "EnsureAbyssalSceneObjectReply": 115, "EnsureAbyssalRewardCache": 116, "EnsureAbyssalRewardCacheReply": 117,
          "EnsureAbyssalLootContainer": 118, "EnsureAbyssalLootContainerReply": 119, "EnsureAbyssalEnvironmentObject": 120, "EnsureAbyssalEnvironmentObjectReply": 121,
-         "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124}
+         "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124, "ServiceNotify": 125}
 
 def slim_value(v):  # a dynamic slim-item field value (protocol 76): a tag (0 none, 1 int, 2 real, 3 bool, 4 text, 5 tuple), then its payload
     tag = v["tag"]
@@ -499,6 +499,8 @@ def build(m):
         return frame(k, u64(m["sessionId"]) + i64(m["moduleId"]) + bytes([m["reason"]]))
     if k == "HelloAck":
         return frame(k, struct.pack("<HI", m["version"], m["pollHz"]))
+    if k == "ServiceNotify":
+        return frame(k, u64(m["sessionId"]) + s(m["service"]) + s(m["method"]) + b(bytes.fromhex(m["args"])))
     if k == "Enter":
         return frame(k, u64(m["sessionId"]) + scene_key(m) + bytes([m["how"]]) + i64(m["stationId"])
                        + ship(m["ship"])
@@ -739,8 +741,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 75},
-    {"name": "hello ack", "kind": "HelloAck", "version": 75, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 82},
+    {"name": "hello ack", "kind": "HelloAck", "version": 82, "pollHz": 4},
     {"name": "ensure private Abyssal room scene", "kind": "EnsureAbyssalScene", "requestId": "41",
      "spec": {"scene": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 1},
               "environment": {"globalModifiers": [{"attributeId": 37, "operation": 1, "value": 1.25}],
@@ -868,6 +870,8 @@ valid = [
  "ship": dict(IBIS, droneDamageMultiplier=0.0)},
     {"name": "notification", "kind": "Notify", "sessionId": "1790646377000015", "notification": "OnSetTimeDilation",
      "idType": "clientID", "args": "7e0000000004010100"},
+    {"name": "target lock failed service notification", "kind": "ServiceNotify", "sessionId": "1790646377000015",
+     "service": "target", "method": "FailLockTarget", "args": "7e00000000250367b4089b15090000"},
     {"name": "notification without arguments", "kind": "Notify", "sessionId": "1", "notification": "DoDestinyUpdate",
      "idType": "clientID", "args": ""},
     {"name": "heal command", "kind": "Command", "sessionId": "1790646377000015", "command": 18, "args": []},

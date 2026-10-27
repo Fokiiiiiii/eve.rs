@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Eve.Marshal;
@@ -133,6 +134,7 @@ public sealed class AchievementTrackerMgrService(
 {
     private const int MaxStateEntries = 5_000;
     private const int MaxEventNameBytes = 256;
+    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
     public AchievementTrackerMgrService(Func<ServiceCall, ValueTask<PyValue?>> stateHandler)
         : this(rpcHandler: (call, _) => stateHandler(call))
@@ -221,10 +223,19 @@ public sealed class AchievementTrackerMgrService(
         foreach (var (key, value) in eventCounts.Entries)
         {
             var count = value switch { PyInt i => i.Value, PyLong l => l.Value, _ => -1 };
-            if (key is not PyStr name || string.IsNullOrWhiteSpace(name.Value)
-                || System.Text.Encoding.UTF8.GetByteCount(name.Value) > MaxEventNameBytes || count < 0)
+            var name = EventName(key);
+            if (string.IsNullOrWhiteSpace(name)
+                || Encoding.UTF8.GetByteCount(name) > MaxEventNameBytes || count < 0)
                 throw MachoErrors.ThrowUserError("ACHIEVEMENT_STATE_INVALID");
         }
+    }
+
+    private static string? EventName(PyValue key)
+    {
+        if (key is PyStr text) return text.Value;
+        if (key is not PyBytes bytes) return null;
+        try { return StrictUtf8.GetString(bytes.Value.Span); }
+        catch (DecoderFallbackException) { return null; }
     }
 }
 

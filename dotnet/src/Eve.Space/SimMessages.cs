@@ -341,6 +341,9 @@ public sealed record SimShipChanged(ulong SessionId, SimShip Ship) : SimMessage;
 /// <summary>A notification the simulation has for a player's client: the host numbers it and sends it. The arguments are a marshalled tuple.</summary>
 public sealed record SimNotify(ulong SessionId, string Name, string IdType, ReadOnlyMemory<byte> Args) : SimMessage;
 
+/// <summary>A notification that calls a method on a client-side service.</summary>
+public sealed record SimServiceNotify(ulong SessionId, string Service, string Method, ReadOnlyMemory<byte> Args) : SimMessage;
+
 /// <summary>The ship has arrived and the docking is done in space: the host moves the character and keeps what the ship has taken.</summary>
 public sealed record SimDocked(ulong SessionId, long StationId, SimCondition? Condition = null) : SimMessage;
 

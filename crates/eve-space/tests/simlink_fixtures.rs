@@ -1164,6 +1164,12 @@ fn message_of(case: &Value) -> Message {
             id_type: text(case, "idType"),
             args: hex(case["args"].as_str().unwrap()),
         },
+        "ServiceNotify" => Message::ServiceNotify {
+            session_id: session_id(),
+            service: text(case, "service"),
+            method: text(case, "method"),
+            args: hex(case["args"].as_str().unwrap()),
+        },
         "Docked" => Message::Docked {
             session_id: session_id(),
             station_id: wide(case, "stationId"),

@@ -55,6 +55,7 @@ public static class CoreServices
         return
         [
             new PingService(),
+            new AlertService(),
             new BrowserLockdownService(),
             new PosMgrService(readControlTowerRows, unanchorControlTower),
             new KiringMgrService(),

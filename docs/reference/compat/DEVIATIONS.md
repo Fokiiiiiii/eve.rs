@@ -497,7 +497,6 @@ Decisions: ADR 0015 and its three amendments.
 ## Module rules (track B, 2026-10-09)
 
 Decisions taken where the sources left a choice (EveJS is the trusted reference; CCP docs and the SDE settle the numbers):
-
 - Module rules are enforced in the simulation from the rules the host sends with each effect (`ModuleRules`, flag 32). The host works them out from the type's
   attributes once, in the effect wrapper (`ShipEffect`), so no handler repeats them. Early deactivation (906), the core requirement (3265), the group limit (763)
   and the reactivation delay (669) are the four rules sent. Disallow activate on warp (1245) stays on the host (`ModuleRestrictions.CheckWarp`), as on main.
@@ -997,8 +996,7 @@ Source order: the SDE for numbers, the EVE University wiki for rules (as written
 
 ## Track A5 (scoop rules and fleet test isolation, 2026-10-10)
 
-- **Scoop of a deployed mobile object: the wiki as written, which is silent for the disruptor.** The Mobile Depot page: "A Mobile Depot can only be accessed or scooped up by its owner"; it "can be scooped back to your ship's cargohold at any time"; its contents appear in space in a cargo container when it is scooped. The Mobile Cynosural Inhibitor page: "unlike the other mobile structures, this one cannot be reclaimed", so it is not scooped. The Mobile Warp Disruptor page and the mobile structures page give no retrieval rule for it, and EVE.js has none, so no scoop is built for it. The depot's rule is the depot's, not the disruptor's, and is not extended to it.
-- **Fleet test isolation (fix).** `SpaceServiceTests` built `FleetStore` on the shared default schema `fleet` (18 sites), so rows of earlier runs collided on `fleet_members_character_id_key`; two raw statements also named `fleet.fleet_members`. Each test now uses its rig's own fleet schema (`Rig.FleetSchema`). Leaked rows removed from the dev database: fleets 2349 and 2350 with their members (characters 140000001 and 140000002, job 2) and their wing, squad, invitation and join-request rows (none). These were left by fleet tests that wrote to the shared schema and did not disband.
+- **Scoop of a deployed mobile object: the wiki as written, which is silent for the disruptor.** The Mobile Depot page: "A Mobile Depot can only be accessed or scooped up by its owner"; it "can be scooped back to your ship's cargohold at any time"; its contents appear in space in a cargo container when it is scooped. The Mobile Cynosural Inhibitor page: "unlike the other mobile structures, this one cannot be reclaimed", so it is not scooped. The Mobile Warp Disruptor page and the mobile structures page give no retrieval rule for it, and EVE.js has none, so no scoop is built for it. The depot's rule is the depot's, not the disruptor's, and is not extended to it.- **Fleet test isolation (fix).** `SpaceServiceTests` built `FleetStore` on the shared default schema `fleet` (18 sites), so rows of earlier runs collided on `fleet_members_character_id_key`; two raw statements also named `fleet.fleet_members`. Each test now uses its rig's own fleet schema (`Rig.FleetSchema`). Leaked rows removed from the dev database: fleets 2349 and 2350 with their members (characters 140000001 and 140000002, job 2) and their wing, squad, invitation and join-request rows (none). These were left by fleet tests that wrote to the shared schema and did not disband.
 - **Result:** the Space suite (554 tests) passes twice in a row after the fix.
 
 ## Track A6: the capital jump drive (2026-10-10)
@@ -1497,8 +1495,7 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
 - **A single alternative is saved at once.** The client loads a single entry without calling `MoveCharacterToNewSystem`
   (`characterSelection.py:751-758`), so `GetCharacterLoadSlot` saves that system on the character. Reason: otherwise the pilot
   would enter the full system.
-- **`SelectCharacterID` refuses a full system before any change.** The cap is checked again at selection, because the answer on
-  the screen can be stale. Known gap: the check and the session's entry are not one atomic step, so two selections into the
+- **`SelectCharacterID` refuses a full system before any change.** The cap is checked again at selection, because the answer on  the screen can be stale. Known gap: the check and the session's entry are not one atomic step, so two selections into the
   same system that check at the same moment can both pass.
 - **`multiLoginBlocker.Login` checks the computer.** The reference answers True unless `EVE_ENFORCE_ALPHA_MULTILOGIN` is set
   (`multiLoginBlockerService.js:87-90`, off by default). eve.rs enforces the Alpha rule without a switch: a session is refused when
@@ -1997,8 +1994,7 @@ Faction lists: `eve/common/lib/appConst.py:618-632`.
 - **Notifications follow committed changes only.** `OnLPChange("set", issuer, before, after)` goes to the character's
   session (`clientID`), `OnCorpLPChange(reason, issuer)` to every session of the corporation (`clientID`, each session).
   The change type is the reference's default `"set"` (`lpWalletState.js:348`); the client ignores it
-  (`loyaltyPointsWalletSvc.py:59`, parameter `_changeType`). Status: tested (`LoyaltyPointsServiceTests`).
-- **`ExchangeConcordLP` and the two transfers are refused, not answered.** The reference's `ExchangeConcordLP` is a stub that
+  (`loyaltyPointsWalletSvc.py:59`, parameter `_changeType`). Status: tested (`LoyaltyPointsServiceTests`).- **`ExchangeConcordLP` and the two transfers are refused, not answered.** The reference's `ExchangeConcordLP` is a stub that
   returns an empty dictionary (`lpService.js:166-168`), so an answer would be a fake success. The transfers (the donation
   panels) follow rules eve.rs does not have yet: the destination corporation check, the Evermark exception, the director role
   and the membership age (`lpWalletState.js:116-135`, `:136-236`, `:610-740`). Each is refused with
@@ -2497,8 +2493,7 @@ client's use of mission data: eve-logic `evemissions/client/data.py`, `eve/clien
   the official table may hold arcs the wiki does not list (for example arcs that are not epic arcs in the game).
   Status: open, a question for the owner. Test: `MissionStaticCatalogTests`, the real-data test in `missions.rs`.
 - **The EveJS authority source is removed from the Host.** `EVEJS_GAMESTORE_DATA_DIR`, `EVEJS_SERVER_ROOT`,
-  `EVEJS_PRODUCTION_MISSION_POLICY_PATH` and the Windows launcher discovery are no longer read.
-  `EveJsMissionAuthorityDataSource` and `AgentMissionStaticAuthority` are deleted; `MissionStaticCatalog` replaces them
+  `EVEJS_PRODUCTION_MISSION_POLICY_PATH` and the Windows launcher discovery are no longer read.  `EveJsMissionAuthorityDataSource` and `AgentMissionStaticAuthority` are deleted; `MissionStaticCatalog` replaces them
   (`dotnet/src/Eve.Services.Core/MissionStaticCatalog.cs`). Before, a missing EveJS directory returned empty lists
   without a message (`AgentMissionService.cs:180-182`, `216-218`); now the Host prints the catalog state at startup.
   Status: decided.
@@ -2998,7 +2993,6 @@ Focused PostgreSQL verification: Station 28/28, selected Space docking/undocking
 
 - **Failure branch.** A failed or quit step with a failMissionID to another step of its arc restarts the run at that step: completions before the failure no longer count. A failMissionID equal to the step itself (arc 29) only retries it. The failure is read from the journal (to-state Failed or Quit). Status: decided; the pilot-course restarts are covered by the rule, not by live play.
 - **Basic re-offer.** A completed basic kill mission is offered again after 4 hours (EveJS REPLAY_DELAY_MS, `missionRuntimeState.js:26`). The client's replay rule was not read; the value is a shortcut to upgrade when it is. Status: shortcut.
-
 ## Mission execution X3 step 4: rewards (2026-10-11)
 
 - **LP.** The official mission records contain no base LP reward (`fixedLpRewardAlpha` and `fixedLpRewardOmega` are zero). Q-21 adopts the configurable approximate reward tables from EveJS 261018.1; turn-in pays the configured mission-kind/level amount with system security and division skill factors. The value is not represented as CCP static data.
@@ -3497,8 +3491,7 @@ Landmarks (not done, with evidence). The SDE landmarks (45) and the client landm
   Arc 55 (Smash and Grab): 15 of 15, on two runs (its path ends at the terminal step 15066). Arc 52 (Syndication): 19 of 19 in three of its four
   full runs; the failed run stopped at step 14819 (dungeon 3884 not cleared in 900 s; the dungeon was abandoned; the cause is not found, and the
   next runs passed). Arc 48 (Right to Rule): 18 of 19 on two runs; step 14864 cannot start: the pilot never gets an instance of its dungeon
-  3957 (the sweep asks every 10 s for the whole run, and the owner's other dungeons do exist as instances; the refusal is not logged by the
-  host). Not walked: arc 132 (its four kill sites are missing, so the server never offers those steps), arc 40 and arc 53 and the twelve Pilot
+  3957 (the sweep asks every 10 s for the whole run, and the owner's other dungeons do exist as instances; the refusal is not logged by the  host). Not walked: arc 132 (its four kill sites are missing, so the server never offers those steps), arc 40 and arc 53 and the twelve Pilot
   Certification arcs (courier steps, above).
 - **Fixed on the way (server).** A fetch step stays accepted after its dungeon completes (the objective is handed in later). The sweep started
   a new dungeon for it while the pilot stayed in the system; when the pilot then left, that second dungeon was abandoned and failed the
@@ -3998,7 +3991,6 @@ the mission, agent, market, trade, LP store, repair, reprocessing, bookmark, blu
 ## Industry slice I1: job rules, NPC stations and cost index (2026-10-13)
 
 Full status, formulas and sources: `docs/project/INDUSTRY_STATUS.md`. Decisions and cuts recorded here:
-
 - **System cost index**: a project rule. `EVE_INDUSTRY_COST_INDEX` (fraction, default 0) applies to every system and
   activity, and the map cost RPC uses the same rule. Basis: the pinned SDE and the client data carry no live indices;
   the ESI `/industry/systems/` activity keys were not confirmed. Next step: an ESI loader like the adjusted prices.
@@ -4497,7 +4489,6 @@ Sources: EveJS `services/skills/trading/skillTradingAuthority.js` and `skillTrad
 - **Skill plan namespace (CH-21).** Limits and refusals are EveJS `skillPlanState.js`: 10 plans, 150 skill entries, 5 milestones, names 50 and descriptions 1000 characters, levels 0 to 5; a missing plan is 404, a refused write 400 (the client's SkillPlansErrorBadRequest, requestsMessenger.py). Plans do not train skills. `GetSharedRequest` answers an empty message: no plan is shared (EveJS `findSharedPersonalPlan` finds none). Not done: EveJS `canonicalizeSkillRequirements` (it adds the prerequisite skills of each requirement); eve.rs stores the requirements as sent. Open.
 
 - **Character titles (CH-22).** The title definitions are the SDE's (`characterTitles`, 43 keys, the ids EveJS `titles.json` also has). An owned title is granted by a reward (EveJS `grantTitle` through the achievement reward claim); eve.rs has no reward claim through the gateway yet, so the store is granted by the reward path when it lands (`CharacterTitleStore.GrantAsync`). Equipping needs an owned SDE title; otherwise 409 (EveJS `equipTitle`, the reference's status). Open: the definition CDN checkpoint (`definition.api.GetLatestRequest`, EveJS serves `latest.chti` from its data, which is not committed here), the title notices (`GrantedNotice`, `RevokedNotice`, `SetNotice`, which need the public notices channel), and the showcase namespace (`eve_public.achievement.showcase.api`, not built).
-
 ## Character phase S9 (2026-10-17): pod death session, gateway identity, notices, canonical plans
 
 - **Pod-death session transition (checked 2026-10-19).** `tools/headless-client/tests/test_death.py` passed with `EVE_LIVE_SLOW=1` on eve_p3/port 26112 against `oracle/fixtures/scenarios/death.json`. The victim's station transition includes `stationid2` through `CharacterSessionRelocation.Docked`; the previously recorded session and watcher notification differences no longer reproduce.
@@ -4998,7 +4989,6 @@ V24.01 `BracketMgr.OnSlimItemChange` replaces the slim item and clears its cache
 
 - **Bare command names (G17).** The client sends the same commands with and without the slash (the Insider's `heal <id> 0`, `unspawn <id>`, `warpto <id>`, the destroyable-items helper). `SlashService` matched the slashed name only, so the bare form answered `Unknown command`. The dispatcher now takes the name with or without the slash; the reply texts are unchanged.
 - **`/warpto <itemID>` (G17).** EVE.js has no `warpto` command. The client's warp-to rule (a pilot in space warps to an item) is kept: a docked caller is told to undock. The item is what the simulation knows in the caller's system (`PositionOf`: a celestial or a pilot's ship); NPCs, wrecks and containers are not answered by it and say `Item not found in your solar system`. The pilot is put 2 500 m off the item facing it (the same place as `/tele`, DEVIATIONS G8), by the relocation of G14, so it is not an in-scene warp.
-
 ## GM tools, slice G18: `/spawn`, `/spawnn`, `/unspawn`, `/nuke` (2026-10-18)
 
 - **Hulls (G18).** `/spawn <ship>` and `/spawnn <amount> <deviation> <ship>` bring bare hulls (nobody flies them, no loadout) into space around the pilot's ship, placed as `/deathtest` places its hulls (3 km off, no two within 1.5 km): the deviation is the outer radius of that placement, not a normal distribution. Amount 1 to 50. The reply lists the item IDs. The hulls are the simulation's `Hull` spawn (`SpaceSessions.SpawnHullsAsync`), each with the simulation session it is known by.
@@ -5499,7 +5489,6 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 
 `corpRegistry.GetCorporateContacts` and its `GetContactList` alias return the current corporation’s complete contact list; `GetBulletins` and `GetBulletinEntries` return the complete bulletin list. Each call costs 10 weighted per-session units to bound repeated full-list reads. The corporation scope and response shapes stay unchanged. `DispatchGoldenTests.Corporation_registry_reads_use_a_named_per_session_budget` covers all four RPC names.
 
-
 ## Corporation bulletin text bounds (2026-10-23)
 
 `corpRegistry.AddBulletin` and `UpdateBulletin` enforce the V24.01 editor limits of 100 UTF-16 code units for titles and 4,000 for bodies before persistence. Larger text returns `CORPORATION_BULLETIN_LIMIT_EXCEEDED`; accepted response shapes and role checks are unchanged. `CorporationProtocolTests.Corp_registry_contacts_labels_and_bulletins_persist_and_enforce_roles` checks refusals before storage, both exact boundaries, and persisted values.
@@ -5868,3 +5857,10 @@ The V24.01 `VgsClient.get_plex_account_balance` call sends only `PLX` and return
 ## Fast-checkout testing configuration sequence container (2026-10-26)
 
 EveJS 261018.1 returns the three testing configuration values as a JavaScript array, which its store marshal converts to a PyList (`server/src/services/newEdenStore/FastCheckoutService.js:147-154`; `storeMarshal.js:73-107`). eve.rs emits a PyTuple from `FastCheckoutService.GetTestingConfiguration`. V24.01 destructures the reply into exactly the China-funnel bool, fake-offer URL, and shell-execution bool (`fastcheckout/client/fastCheckoutClientService.py:75,93-104`) and does not inspect its container type. The Host tuple preserves the consumed values and order.
+
+
+## Client QA-only Abyssal and agent RPCs (2026-10-26)
+
+The V24.01 client reaches `abyssal_content_manager.generate_abyss_npc_spawn_report` only from the developer tool `eve/devtools/script/abyssal_npc_spawn_tool.py:76-109`. That tool renders the report's average point totals, NPC count, unsupported tags, spawn rows and NPC rows; it displays an error if the RPC raises. EveJS v0.12.9 returns an empty synthetic report when no report provider exists (`server/src/abyssal/transport/abyssalContentManagerService.js:981-1020)). eve.rs requires the staff role and a configured report callback, and raises `ABYSSAL_SPAWN_REPORT_UNAVAILABLE` when that provider is absent (`dotnet/src/Eve.Services.Core/UnportedFeatureRpcServices.cs:13-37); the production Core factory passes the nullable `GameRpcCallbacks.AbyssalSpawnReportAsync` field at `CoreServices.cs:14,61`, with no production assignment found). The V24 client therefore shows an error where EveJS displays a fabricated empty report. Keep this RPC client-local until an authoritative spawn report provider exists; do not present either empty report as live authored content.
+
+The sole V24.01 caller of `agentMgr.GetPlausibleMissionIDs` is the mission-selection helper in the QA module `evemissions/client/qa_tools.py:95-107`. It consumes IDs to fetch local mission names and open a QA selection list before issuing an agent-offer slash command. EveJS v0.12.9 delegates to its mission runtime (`server/src/services/agent/agentMgrService.js:880-886)); eve.rs has no `agentMgr` RPC route or authoritative plausible-ID source. Keep the two coverage rows client-local and unsupported rather than returning a made-up mission list.

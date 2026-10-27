@@ -19,7 +19,7 @@ public sealed partial class BrowserLockdownService
     public PyValue GetFlaggedSitesHash(ServiceCall call) => FixedResponse(call, new PyStr(EmptyFlaggedSitesHash));
 
     [Method("GetFlaggedSitesList")]
-    public PyValue GetFlaggedSitesList(ServiceCall call) => FixedResponse(call, new PyTuple([]));
+    public PyValue GetFlaggedSitesList(ServiceCall call) => FixedResponse(call, new PyList([]));
 
     private static PyValue FixedResponse(ServiceCall call, PyValue value)
     {

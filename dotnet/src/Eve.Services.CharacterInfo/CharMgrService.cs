@@ -11,7 +11,7 @@ namespace Eve.Services.CharacterInfo;
 /// </summary>
 public sealed record CharMgrContact(long ContactId, bool InWatchlist, long RelationshipId, long LabelMask);
 
-public sealed record CharMgrContactLabel(string Name, long Color);
+public sealed record CharMgrContactLabel(string Name, long? Color);
 
 public sealed record CharMgrOwnerNote(long NoteId, string Label, string Note);
 
@@ -597,7 +597,6 @@ public sealed partial class CharMgrService(
             _ => throw MachoErrors.ThrowUserError("CHARMGR_CONTACT_ID_INVALID"),
         }).ToHashSet();
     }
-
     private static string? OptionalText(PyValue? value)
     {
         if (value is null or PyNone)
@@ -666,7 +665,7 @@ public sealed partial class CharMgrService(
                 Py.KeyVal(
                     ("labelID", new PyInt(label.Key)),
                     ("name", new PyStr(label.Value.Name)),
-                    ("color", new PyInt(label.Value.Color)))))
+                    ("color", Nullable(label.Value.Color)))))
             .ToArray();
         return new PyDict(entries);
     }
@@ -678,7 +677,7 @@ public sealed partial class CharMgrService(
         if (rawName.Length > 40)
             throw MachoErrors.ThrowUserError("CHARMGR_CONTACT_LABEL_NAME_LIMIT_EXCEEDED");
         var name = rawName.Trim();
-        var color = call.Args.Count > 1 ? NormalizeInteger(call.Arg(1)) : 0;
+        var color = call.Args.Count > 1 && call.Arg(1) is not PyNone ? NormalizeInteger(call.Arg(1)) : (long?)null;
         long labelId = 0;
         var updated = await UpdatePersonalDataAsync(call, data =>
         {
@@ -740,14 +739,13 @@ public sealed partial class CharMgrService(
         var color = hasColor ? NormalizeInteger(call.Arg(2)) : 0;
         await UpdatePersonalDataAsync(call, data =>
         {
-            var old = data.Labels.GetValueOrDefault(labelId) ?? new CharMgrContactLabel("", 0);
+            var old = data.Labels.GetValueOrDefault(labelId) ?? new CharMgrContactLabel("", null);
             var labels = new Dictionary<long, CharMgrContactLabel>(data.Labels);
             labels[labelId] = new CharMgrContactLabel(hasName ? name : old.Name, hasColor ? color : old.Color);
             return data with { Labels = labels };
         });
         return None;
     }
-
     [Method("AssignLabels")]
     public async ValueTask<PyValue> AssignLabels(ServiceCall call)
     {
@@ -977,7 +975,7 @@ public sealed partial class CharMgrService(
         var noteText = OptionalText(call.Args.Count > 1 ? call.Arg(1) : new PyStr("")) ?? "";
         if (label.Length > 82)
             throw MachoErrors.ThrowUserError("CHARMGR_NOTE_LABEL_LIMIT_EXCEEDED");
-        if (noteText.Length > 3900)
+        if (noteText.Length > 6000)
             throw MachoErrors.ThrowUserError("CHARMGR_NOTE_LIMIT_EXCEEDED");
         var noteId = 0L;
         await UpdatePersonalDataAsync(call, data =>
@@ -1050,7 +1048,7 @@ public sealed partial class CharMgrService(
         var noteText = call.Args.Count > 2 ? OptionalText(call.Arg(2)) : null;
         if (label is { Length: > 82 })
             throw MachoErrors.ThrowUserError("CHARMGR_NOTE_LABEL_LIMIT_EXCEEDED");
-        if (noteText is { Length: > 3900 })
+        if (noteText is { Length: > 6000 })
             throw MachoErrors.ThrowUserError("CHARMGR_NOTE_LIMIT_EXCEEDED");
         await UpdatePersonalDataAsync(call, data =>
         {

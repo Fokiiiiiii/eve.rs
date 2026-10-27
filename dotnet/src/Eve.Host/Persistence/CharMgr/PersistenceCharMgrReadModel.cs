@@ -214,7 +214,7 @@ public sealed class PersistenceCharMgrReadModel(
             WritePath("characters", path, new JsonObject
             {
                 ["name"] = label.Name,
-                ["color"] = label.Color,
+                ["color"] = label.Color is { } color ? JsonValue.Create(color) : null,
             });
         }
     }
@@ -437,7 +437,7 @@ public sealed class PersistenceCharMgrReadModel(
 
             labels[labelId] = new CharMgrContactLabel(
                 Text(entry.Row["name"]),
-                Number(entry.Row["color"]));
+                entry.Row["color"] is null ? null : Number(entry.Row["color"]));
         }
 
         return labels;

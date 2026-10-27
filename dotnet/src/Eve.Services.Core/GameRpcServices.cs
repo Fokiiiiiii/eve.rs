@@ -365,7 +365,7 @@ public sealed partial class ContractProxyService(
         var writer = writeModel ?? throw new InvalidOperationException("contract writer is not wired");
         var characterId = call.Session.CharacterId
             ?? throw new InvalidOperationException("contract completion requires a character session");
-        var (corporationId, _) = await ReadCurrentOrganizationIdsAsync(call);
+        var (corporationId, allianceId) = await ReadCurrentOrganizationIdsAsync(call);
         var contractId = call.Arg(0) switch
         {
             PyInt value => value.Value,
@@ -382,7 +382,7 @@ public sealed partial class ContractProxyService(
             var currentStationId = call.Session.GetInt("stationid") ?? call.Session.GetInt("stationid2") ?? 0;
             var isCorpManager = await HasContractManagerRoleAsync(call, characterId, corporationId);
             return await writer.CompleteContractAsync(contractId, status, characterId, corporationId,
-                currentStationId, isCorpManager, call.Cancellation) ? PyBool.True : PyBool.False;
+                allianceId, currentStationId, isCorpManager, call.Cancellation) ? PyBool.True : PyBool.False;
         }
         catch (ContractUserErrorException error)
         {
@@ -397,8 +397,7 @@ public sealed partial class ContractProxyService(
         var characterId = call.Session.CharacterId
             ?? throw new InvalidOperationException("contract deletion requires a character session");
         var (corporationId, _) = await ReadCurrentOrganizationIdsAsync(call);
-        var contractId = call.Arg(0) switch
-        {
+        var contractId = call.Arg(0) switch        {
             PyInt value => value.Value,
             PyLong value => value.Value,
             _ => throw MachoErrors.ThrowUserError("ConContractNotFound"),
@@ -494,8 +493,15 @@ public sealed partial class ContractProxyService(
         var contractId = ContractLong(call.Arg(0));
         var forCorporation = ContractSearchBool(call.Arg(1));
         var hasRole = await HasContractManagerRoleAsync(call, characterId, corporationId);
-        return await writer.DismissNotificationAsync(contractId, characterId, corporationId,
-            forCorporation, hasRole, call.Cancellation) ? PyBool.True : PyBool.False;
+        try
+        {
+            return await writer.DismissNotificationAsync(contractId, characterId, corporationId,
+                forCorporation, hasRole, call.Cancellation) ? PyBool.True : PyBool.False;
+        }
+        catch (ContractUserErrorException error)
+        {
+            throw MachoErrors.ThrowUserError(error.Message, error.Values.ToArray());
+        }
     }
 
     [Method("DeleteContractNotification")]
@@ -508,9 +514,16 @@ public sealed partial class ContractProxyService(
         var contractId = ContractLong(call.Arg(0));
         var forCorporation = ContractSearchBool(call.Arg(1));
         var hasRole = await HasContractManagerRoleAsync(call, characterId, corporationId);
-        await writer.DismissNotificationAsync(contractId, characterId, corporationId,
-            forCorporation, hasRole, call.Cancellation);
-        return PyNone.Instance;
+        try
+        {
+            await writer.DismissNotificationAsync(contractId, characterId, corporationId,
+                forCorporation, hasRole, call.Cancellation);
+            return PyNone.Instance;
+        }
+        catch (ContractUserErrorException error)
+        {
+            throw MachoErrors.ThrowUserError(error.Message, error.Values.ToArray());
+        }
     }
 
     [Method("FinishAuction")]
@@ -783,7 +796,6 @@ public sealed partial class ContractProxyService(
         _ => throw MachoErrors.ThrowUserError("ConContractNotAvailable"),
     };
 
-
     private static int ContractInt(PyValue value)
     {
         var integer = ContractLong(value);
@@ -833,7 +845,7 @@ public sealed partial class ContractProxyService(
                 ("title", new PyStr(contract.Title)),
                 ("description", new PyStr(contract.Description)),
                 ("status", new PyInt(contract.Status)),
-                ("crateID", new PyInt(contract.StartStationId)),
+                ("crateID", new PyLong(9_300_000_000L + contract.ContractId)),
                 ("volume", Eve.Services.Py.Number(entry.Volume)),
                 ("startStationDivision", new PyInt(entry.StartStationDivision)),
                 ("issuerWalletKey", entry.IssuerWalletKey is { } issuerWalletKey ? new PyInt(issuerWalletKey) : PyNone.Instance),
@@ -1183,8 +1195,7 @@ public sealed partial class SharedSettingsMgrService(
 
     private static (string Hash, long SqId, int SettingTypeId)? ParseSettingKey(PyValue value)
     {
-        if (value is PyObject { Args: PyDict objectArgs })
-        {
+        if (value is PyObject { Args: PyDict objectArgs })        {
             var hash = Text(Field(objectArgs, "hashvalue"));
             var sqId = Integer(Field(objectArgs, "sqID"));
             var settingTypeId = SettingType(Field(objectArgs, "settingTypeID"));
@@ -1585,19 +1596,17 @@ public sealed partial class WarStatisticMgrService(
         return Text(value);
     }
 
-    private static long PositiveInteger(PyValue value) => value switch
+    private static long PositiveInteger(PyValue? value) => value switch
     {
-        PyInt integer when integer.Value > 0 => integer.Value,
-        PyLong integer when integer.Value > 0 => integer.Value,
-        PyStr text when long.TryParse(text.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number) && number > 0 => number,
+        PyInt number when number.Value > 0 => number.Value,
+        PyLong number when number.Value > 0 => number.Value,
         _ => 0,
     };
 
-    private static long PositiveInteger(JsonNode? value)
-    {
-        var number = Long(value, 0);
-        return number > 0 ? number : 0;
-    }
+    private static long PositiveInteger(JsonNode? value) =>
+        long.TryParse(Text(value), NumberStyles.Integer, CultureInfo.InvariantCulture, out var number) && number > 0
+            ? number
+            : 0;
 
     private static PyValue NullablePositive(JsonNode? value)
     {
@@ -1605,28 +1614,25 @@ public sealed partial class WarStatisticMgrService(
         return number > 0 ? Py.Number(number) : PyNone.Instance;
     }
 
-    private static PyValue NullableNumber(JsonNode? value) =>
-        value is null || !double.TryParse(value.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var number) || !double.IsFinite(number)
-            ? PyNone.Instance
-            : Py.Number(number);
+    private static double Number(JsonNode? value, double fallback)
+    {
+        if (value is JsonObject wrapper && wrapper["value"] is { } wrapped)
+            return Number(wrapped, fallback);
+        return double.TryParse(value?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var number) &&
+            double.IsFinite(number) ? number : fallback;
+    }
 
-    private static double Number(JsonNode? value, double fallback) =>
-        double.TryParse(value?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var number) && double.IsFinite(number)
-            ? number : fallback;
+    private static PyValue NullableNumber(JsonNode? value)
+    {
+        var number = Number(value, double.NaN);
+        return double.IsFinite(number) ? Py.Number(number) : PyNone.Instance;
+    }
 
     private static long Long(JsonNode? value, long fallback) =>
-        long.TryParse(value?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var number) ? number : fallback;
+        long.TryParse(Text(value), NumberStyles.Integer, CultureInfo.InvariantCulture, out var number) ? number : fallback;
 
-    private static string Text(PyValue value) => value switch
-    {
-        var text when Eve.Macho.JsSemantics.StringValue(text) is not null => Eve.Macho.JsSemantics.StringValue(text)!,
-        PyBytes bytes => Encoding.UTF8.GetString(bytes.Value.Span),
-        PyInt integer => integer.Value.ToString(CultureInfo.InvariantCulture),
-        PyLong integer => integer.Value.ToString(CultureInfo.InvariantCulture),
-        _ => string.Empty,
-    };
+    private static string Text(PyValue? value) => value is PyStr text ? text.Value : "";
 
-    private static string Text(JsonNode? value) => value is JsonValue json && json.TryGetValue<string>(out var text)
-        ? text ?? string.Empty
-        : value?.ToString() ?? string.Empty;
+    private static string Text(JsonNode? value) =>
+        value is JsonObject wrapper && wrapper["value"] is { } wrapped ? Text(wrapped) : value?.ToString() ?? "";
 }

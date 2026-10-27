@@ -75,7 +75,10 @@ public sealed partial class HostServerTests
         var reply = Assert.IsType<Send>(await front.ReceiveAsync());
         var response = Assert.IsType<PyObject>(Result(MarshalCodec.Decode(reply.Payload)));
 
-        Assert.Empty(Assert.IsType<PyList>(Field(response, "contracts")).Items);
+        var contractResults = Assert.IsType<PyList>(Field(response, "contracts"));
+        var searchEntry = Assert.IsType<PyObject>(Assert.Single(contractResults.Items));
+        var searchContract = Assert.IsType<PyObject>(Field(searchEntry, "contract"));
+        Assert.Equal(new PyLong(9_300_005_002L), Field(searchContract, "crateID"));
         Assert.Equal(17, Assert.IsType<PyInt>(Field(response, "numFound")).Value);
         Assert.Equal(5_000_000L, Assert.IsType<PyLong>(Field(response, "searchTime")).Value);
         Assert.Equal(1000, Assert.IsType<PyInt>(Field(response, "maxResults")).Value);
@@ -142,7 +145,13 @@ public sealed partial class HostServerTests
             CancellationToken cancellationToken)
         {
             Query = query;
-            return ValueTask.FromResult(new ContractSearchResult([], 17, 5_000_000));
+            var contract = new ContractReadSnapshot(
+                5002, 1, 0, 0, 200, 300, false, 0, 0, 1, 2, 0, 0, 0, 3001, 3002,
+                100m, 0m, 0m, "Audit contract", "", [], []);
+            var entry = new ContractSearchEntry(
+                contract, 30_000_001, 20_000_001, 10_000_001, 30_000_002, 20_000_002, 10_000_002,
+                "Solar System", "End System", 4, 1000, null, 12.5, [34], [5], [6]);
+            return ValueTask.FromResult(new ContractSearchResult([entry], 17, 5_000_000));
         }
 
         public ValueTask<ContractReadBundle> GetMyCurrentContractListAsync(long characterId, long corporationId,

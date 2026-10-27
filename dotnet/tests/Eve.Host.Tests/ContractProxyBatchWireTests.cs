@@ -28,9 +28,30 @@ public partial class HostServerTests
 
         async Task<PyValue> Rpc(uint id, string method, params PyValue[] args)
         {
+            // These client calls send application kwargs in addition to the transport version.
+            var extraKwargs = method switch
+            {
+                "CreateContract" => new (string Name, PyValue Value)[] { ("confirm", PyNone.Instance) },
+                "GetContractListForOwner" => new (string Name, PyValue Value)[]
+                {
+                    ("num", new PyInt(100)), ("startContractID", PyNone.Instance)
+                },
+                _ => Array.Empty<(string Name, PyValue Value)>(),
+            };
+            return await RpcWithKwargs(id, method, args, extraKwargs);
+        }
+
+        async Task<PyValue> RpcWithKwargs(uint id, string method, PyValue[] args,
+            params (string Name, PyValue Value)[] extraKwargs)
+        {
+            var entries = new List<KeyValuePair<PyValue, PyValue>>
+            {
+                new(new PyStr("machoVersion"), new PyInt(1))
+            };
+            entries.AddRange(extraKwargs.Select(entry =>
+                new KeyValuePair<PyValue, PyValue>(new PyStr(entry.Name), entry.Value)));
             await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
-                Packets.CallWithKwargs(open, id, "contractProxy", method, new PyTuple(args),
-                    Eve.Services.Py.Dict(("machoVersion", new PyInt(1)))))));
+                Packets.CallWithKwargs(open, id, "contractProxy", method, new PyTuple(args), new PyDict(entries)))));
             // The client link can carry notifications before a pending RPC response.
             while (true)
             {
@@ -134,6 +155,7 @@ public partial class HostServerTests
         var ownerContracts = Fields(Assert.IsType<PyObject>(await Rpc(6, "GetContractListForOwner",
             new PyInt(42), new PyInt(0), new PyInt(1), new PyInt(0))));
         Assert.Equal(2, Assert.IsType<PyList>(ownerContracts["contracts"]).Items.Count);
+        Assert.Contains((42L, 0, 1, 0L, 100, (long?)null), reads.OwnerRequests);
 
         var current = Fields(Assert.IsType<PyObject>(await Rpc(7, "GetMyCurrentContractList", PyBool.False, PyBool.False)));
         Assert.Single(Assert.IsType<PyList>(current["contracts"]).Items);
@@ -150,11 +172,11 @@ public partial class HostServerTests
         var accepted = Fields(Assert.IsType<PyObject>(await Rpc(9, "AcceptContract", new PyInt(5003), PyBool.False)));
         Assert.Equal(new PyInt(5003), accepted["contractID"]);
         Assert.Same(PyBool.True, await Rpc(10, "CompleteContract", new PyInt(5001), new PyInt(4)));
-        Assert.Equal((5001L, 4L, 42L, 84L, 3001L, true), writer.LastComplete);
+        Assert.Equal((5001L, 4L, 42L, 84L, 126L, 3001L, true), writer.LastComplete);
         Assert.Same(PyBool.True, await Rpc(21, "CompleteContract", new PyInt(5001), new PyInt(7)));
-        Assert.Equal((5001L, 7L, 42L, 84L, 3001L, true), writer.LastComplete);
+        Assert.Equal((5001L, 7L, 42L, 84L, 126L, 3001L, true), writer.LastComplete);
         Assert.Same(PyBool.True, await Rpc(22, "CompleteContract", new PyInt(5001), new PyInt(6)));
-        Assert.Equal((5001L, 6L, 42L, 84L, 3001L, true), writer.LastComplete);
+        Assert.Equal((5001L, 6L, 42L, 84L, 126L, 3001L, true), writer.LastComplete);
         Assert.Same(PyBool.True, await Rpc(11, "DeleteContract", new PyInt(6001)));
         Assert.Equal((6001L, 42L, 84L, true), writer.LastDelete);
         Assert.Equal((5003L, 42L, 84L, false, 1000, 3001L), writer.LastAccept);
@@ -201,6 +223,41 @@ public partial class HostServerTests
         Assert.Empty(writer.Expired);
     }
 
+    [Fact]
+    public async Task Contract_notification_dismissal_domain_errors_remain_user_errors_over_host_wire()
+    {
+        var writer = new RecordingContractWriter { ThrowOnDismissal = true };
+        StartContractHost(writer);
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        _ = await front.ReceiveAsync();
+
+        async Task AssertUserError(uint id, string method, long contractId, bool forCorporation)
+        {
+            await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+                Packets.CallWithKwargs(open, id, "contractProxy", method,
+                    new PyTuple([new PyInt(contractId), forCorporation ? PyBool.True : PyBool.False]),
+                    Eve.Services.Py.Dict(("machoVersion", new PyInt(1)))))));
+            var reply = Assert.IsType<Send>(await front.ReceiveAsync());
+            var response = Assert.IsType<PyObject>(MarshalCodec.Decode(reply.Payload));
+            var state = Assert.IsType<PyTuple>(response.Args);
+            Assert.Equal(new PyInt(MachoMessage.ErrorResponse), state.Items[0]);
+            var callError = Assert.IsType<PyTuple>(state.Items[4]);
+            var wrapped = Assert.IsType<PyTuple>(callError.Items[2]);
+            var payload = Assert.IsType<PyObjectEx>(Assert.IsType<PySubStream>(wrapped.Items[0]).Decoded);
+            var header = Assert.IsType<PyTuple>(payload.Header);
+            Assert.Equal(new PyToken(MachoErrors.UserErrorClass), header.Items[0]);
+            var errorArgs = Assert.IsType<PyTuple>(header.Items[1]);
+            Assert.Equal("ConContractNotAvailable", System.Text.Encoding.UTF8.GetString(
+                Assert.IsType<PyBytes>(errorArgs.Items[0]).Value.Span));
+        }
+
+        await AssertUserError(1, "DeleteNotification", 5004, false);
+        await AssertUserError(2, "DeleteContractNotification", 5005, true);
+        Assert.Equal(2, writer.Dismissed.Count);
+    }
+
     private void StartContractHost(RecordingContractWriter writer, IContractReadModel? readModel = null,
         IContractInventoryReader? inventory = null, bool staff = true)
     {
@@ -229,6 +286,7 @@ public partial class HostServerTests
                 {
                     session.Set("charid", new PyInt(42));
                     session.Set("corpid", new PyInt(84));
+                    session.Set("allianceid", new PyInt(126));
                     session.Set("stationid", new PyInt(3001));
                     session.Set("corprole", new PyLong(72_057_594_037_927_936));
                     if (staff) session.Set("accountRole", new PyLong(GameMasterRoles.Gml));
@@ -250,14 +308,21 @@ public partial class HostServerTests
         public (long ItemId, long Quantity, long CharacterId, long CorporationId, long StationId, bool ForCorporation, int Flag) LastSplit { get; private set; }
         public CreateItemExchangeRequest? CreatedRequest { get; private set; }
         public (long ContractId, long CharacterId, long CorporationId, bool HasRole) LastDelete { get; private set; }
-        public (long ContractId, long Status, long CharacterId, long CorporationId, long StationId, bool HasRole) LastComplete { get; private set; }
+        public (long ContractId, long Status, long CharacterId, long CorporationId, long AllianceId, long StationId, bool HasRole) LastComplete { get; private set; }
         public (long ContractId, long CharacterId, long CorporationId, bool ForCorp, int WalletKey, long StationId) LastAccept { get; private set; }
         public List<(long ContractId, long CharacterId, long CorporationId, bool ForCorporation)> Dismissed { get; } = [];
         public List<long> Finished { get; } = [];
         public List<long> Expired { get; } = [];
+        public bool ThrowOnDismissal { get; set; }
+        public ContractUserErrorException? NextCreateError { get; set; }
+        public ContractUserErrorException? NextBidError { get; set; }
 
         public ValueTask<CreatedContract> CreateContractAsync(CreateItemExchangeRequest request, CancellationToken cancellationToken)
         {
+            var error = NextCreateError;
+            NextCreateError = null;
+            if (error is not null)
+                return ValueTask.FromException<CreatedContract>(error);
             CreatedRequest = request;
             return ValueTask.FromResult(new CreatedContract(6001, request.Items.Select(item => item.ItemId).ToArray()));
         }
@@ -276,9 +341,9 @@ public partial class HostServerTests
             ValueTask.FromException<AcceptedContract>(new NotSupportedException());
 
         public ValueTask<bool> CompleteContractAsync(long contractId, int targetStatus, long characterId, long corporationId,
-            long currentStationId, bool hasCorpContractManager, CancellationToken cancellationToken)
+            long allianceId, long currentStationId, bool hasCorpContractManager, CancellationToken cancellationToken)
         {
-            LastComplete = (contractId, targetStatus, characterId, corporationId, currentStationId, hasCorpContractManager);
+            LastComplete = (contractId, targetStatus, characterId, corporationId, allianceId, currentStationId, hasCorpContractManager);
             return ValueTask.FromResult(true);
         }
 
@@ -294,7 +359,9 @@ public partial class HostServerTests
             bool bidForCorporation, int bidderWalletKey, decimal amount, CancellationToken cancellationToken)
         {
             LastBid = (contractId, characterId, corporationId, bidForCorporation, bidderWalletKey, amount);
-            return ValueTask.FromResult(true);
+            var error = NextBidError;
+            NextBidError = null;
+            return error is null ? ValueTask.FromResult(true) : ValueTask.FromException<bool>(error);
         }
 
         public ValueTask<bool> SplitStackAsync(long itemId, long quantity, long characterId, long corporationId,
@@ -308,7 +375,9 @@ public partial class HostServerTests
             bool forCorporation, bool hasCorpContractManager, CancellationToken cancellationToken)
         {
             Dismissed.Add((contractId, characterId, corporationId, forCorporation));
-            return ValueTask.FromResult(true);
+            return ThrowOnDismissal
+                ? ValueTask.FromException<bool>(new ContractUserErrorException("ConContractNotAvailable"))
+                : ValueTask.FromResult(true);
         }
 
         public ValueTask<bool> FinishAuctionAsync(long contractId, CancellationToken cancellationToken)
@@ -357,6 +426,7 @@ public partial class HostServerTests
     private sealed class RecordingContractReadModel : IContractReadModel
     {
         public List<long> OwnerIds { get; } = [];
+        public List<(long OwnerId, int Status, int ContractType, long IssuedBy, int PageSize, long? StartContractId)> OwnerRequests { get; } = [];
 
         public ValueTask<ContractDetailRead?> GetContractAsync(long contractId, CancellationToken cancellationToken)
         {
@@ -404,6 +474,7 @@ public partial class HostServerTests
             int pageSize, long? startContractId, long nowFileTime, CancellationToken cancellationToken)
         {
             OwnerIds.Add(ownerId);
+            OwnerRequests.Add((ownerId, status, contractType, issuedBy, pageSize, startContractId));
             if (status == 0 && contractType == 0 && ownerId == characterId)
             {
                 var rows = startContractId is null

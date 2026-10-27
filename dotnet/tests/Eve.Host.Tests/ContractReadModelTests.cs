@@ -487,7 +487,7 @@ public sealed class ContractReadModelTests
             var accepted = await writer.AcceptContractAsync(created.ContractId, 300, 301, 0, false, 1000, 600, CancellationToken.None);
             Assert.Equal((short)1, accepted.Status);
             Assert.Equal(40000m, await wallets.AccountBalanceAsync(new WalletAccount(300), CancellationToken.None));
-            Assert.True(await writer.CompleteContractAsync(created.ContractId, 5, 300, 301, 600, false, CancellationToken.None));
+            Assert.True(await writer.CompleteContractAsync(created.ContractId, 7, 300, 301, 0, 600, false, CancellationToken.None));
 
             Assert.Equal(60000m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
             Assert.Equal(40000m, await wallets.AccountBalanceAsync(new WalletAccount(300), CancellationToken.None));
@@ -522,7 +522,7 @@ public sealed class ContractReadModelTests
                 await itemStore.MoveToOwnerAsync(connection, transaction, successWrapId, 300, 700, ItemFlags.Hangar, CancellationToken.None);
                 await transaction.CommitAsync();
             }
-            Assert.True(await writer.CompleteContractAsync(successContract.ContractId, 4, 300, 301, 700, false, CancellationToken.None));
+            Assert.True(await writer.CompleteContractAsync(successContract.ContractId, 4, 300, 301, 0, 700, false, CancellationToken.None));
             Assert.Equal(55000m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
             Assert.Equal(45000m, await wallets.AccountBalanceAsync(new WalletAccount(300), CancellationToken.None));
             var deliveredItem = await itemStore.GetAsync(successContract.EscrowItemIds.Single(), CancellationToken.None);

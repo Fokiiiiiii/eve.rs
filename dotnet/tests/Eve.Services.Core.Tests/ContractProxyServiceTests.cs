@@ -294,6 +294,7 @@ public sealed class ContractProxyServiceTests
         var service = new ContractProxyService(new RecordingReadModel(), writer);
         var session = new ClientSession { CharacterId = 42 };
         session.Set("corpid", new PyInt(84));
+        session.Set("allianceid", new PyInt(126));
         session.Set("stationid", new PyInt(3002));
         session.Set("corprole", new PyLong(72057594037927936L));
 
@@ -303,7 +304,7 @@ public sealed class ContractProxyServiceTests
         });
 
         Assert.Same(PyBool.True, response);
-        Assert.Equal((900L, 4, 42L, 84L, 3002L, true), writer.LastComplete);
+        Assert.Equal((900L, 4, 42L, 84L, 126L, 3002L, true), writer.LastComplete);
     }
 
     [Fact]
@@ -529,7 +530,7 @@ public sealed class ContractProxyServiceTests
 
         public (long ContractId, long CharacterId, long CorporationId, long AllianceId, bool ForCorporation, int WalletKey, long StationId) LastAccept { get; private set; }
 
-        public (long ContractId, int Status, long CharacterId, long CorporationId, long StationId, bool IsManager) LastComplete { get; private set; }
+        public (long ContractId, int Status, long CharacterId, long CorporationId, long AllianceId, long StationId, bool IsManager) LastComplete { get; private set; }
 
         public (long ContractId, long CharacterId, long CorporationId, bool IsManager) LastDelete { get; private set; }
 
@@ -553,9 +554,9 @@ public sealed class ContractProxyServiceTests
             AcceptContractAsync(contractId, characterId, corporationId, allianceId, acceptForCorporation, acceptorWalletKey, 3001, cancellationToken);
 
         public ValueTask<bool> CompleteContractAsync(long contractId, int targetStatus, long characterId, long corporationId,
-            long currentStationId, bool hasCorpContractManager, CancellationToken cancellationToken)
+            long allianceId, long currentStationId, bool hasCorpContractManager, CancellationToken cancellationToken)
         {
-            LastComplete = (contractId, targetStatus, characterId, corporationId, currentStationId, hasCorpContractManager);
+            LastComplete = (contractId, targetStatus, characterId, corporationId, allianceId, currentStationId, hasCorpContractManager);
             return ValueTask.FromResult(true);
         }
 

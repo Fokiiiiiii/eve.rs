@@ -101,10 +101,11 @@ public sealed class PgBountyStoreTests
     }
 
     [Fact]
-    public void The_corporation_tax_is_none_below_the_minimum_and_otherwise_the_rate_to_the_cent()
+    public void The_corporation_tax_is_none_at_or_below_the_minimum_and_otherwise_the_rate_to_the_cent()
     {
         Assert.Equal(0m, NpcBounty.CorporationTaxOf(99_999.99m, 0.1m));
-        Assert.Equal(10_000m, NpcBounty.CorporationTaxOf(100_000m, 0.1m));
+        Assert.Equal(0m, NpcBounty.CorporationTaxOf(100_000m, 0.1m));
+        Assert.Equal(10_000.01m, NpcBounty.CorporationTaxOf(100_000.05m, 0.1m));
         Assert.Equal(7_500.08m, NpcBounty.CorporationTaxOf(100_001.05m, 0.075m));
         Assert.Equal(0m, NpcBounty.CorporationTaxOf(500_000m, 0m));
     }

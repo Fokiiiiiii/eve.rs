@@ -40,6 +40,9 @@ public partial class HostServerTests : IAsyncLifetime
 
     public Task InitializeAsync() => Task.CompletedTask;
 
+    private static byte[] PasswordHash(byte value) =>
+        Enumerable.Repeat(value, LoginAttempt.PasswordHashLength).ToArray();
+
     private void Start(AccountOptions? identity = null, int maxPending = 10_000, Action<ServiceRegistry>? configure = null, IAccountDirectory? accounts = null, bool strictRpc = false, Action<string, Exception?>? onProblem = null, Action<ClientSession>? sessionOpened = null, long maxOutboundBytes = 8 * 1024 * 1024, long maxPendingBytes = 16 * 1024 * 1024, int maxConnections = 1_024, ISsoTokenVerifier? ssoTokenVerifier = null, GameRpcCallbacks? gameRpcCallbacks = null)
     {
         var registry = new ServiceRegistry();
@@ -479,11 +482,31 @@ public partial class HostServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Malformed_password_hash_sizes_are_refused_before_reaching_accounts()
+    {
+        var accountCalls = 0;
+        Start(accounts: new FixedAccounts(_ =>
+        {
+            accountCalls++;
+            return new LoggedIn(1, 0, "GB");
+        }));
+        var front = await Handshaken(await ConnectAsync());
+
+        foreach (var length in new[] { 0, LoginAttempt.PasswordHashLength - 1, LoginAttempt.PasswordHashLength + 1, 1_048_576 })
+        {
+            var reply = await front.AuthenticateAsync("pilot", new byte[length], (uint)(length + 1));
+            Assert.Equal(new Rejected(LoginRefused.BadCredentials), reply.Outcome);
+        }
+
+        Assert.Equal(0, accountCalls);
+    }
+
+    [Fact]
     public async Task Logins_create_accounts_on_first_use_and_then_need_the_same_password_hash()
     {
         Start();
         var front = await Handshaken(await ConnectAsync());
-        byte[] hash = [1, 2, 3];
+        byte[] hash = PasswordHash(1);
 
         var first = await front.AuthenticateAsync("pilot", hash, 1);
         var created = Assert.IsType<Accepted>(first.Outcome);
@@ -491,8 +514,8 @@ public partial class HostServerTests : IAsyncLifetime
         Assert.Equal("GB", created.CountryCode);
 
         Assert.Equal(created, Assert.IsType<Accepted>((await front.AuthenticateAsync("pilot", hash, 2)).Outcome));
-        Assert.Equal("LoginAuthFailed", Assert.IsType<Rejected>((await front.AuthenticateAsync("pilot", [9, 9, 9], 3)).Outcome).Reason);
-        Assert.Equal(2u, Assert.IsType<Accepted>((await front.AuthenticateAsync("other", [4], 4)).Outcome).UserId);
+        Assert.Equal("LoginAuthFailed", Assert.IsType<Rejected>((await front.AuthenticateAsync("pilot", PasswordHash(9), 3)).Outcome).Reason);
+        Assert.Equal(2u, Assert.IsType<Accepted>((await front.AuthenticateAsync("other", PasswordHash(4), 4)).Outcome).UserId);
     }
 
     private sealed class FixedAccounts(Func<LoginAttempt, LoginResult> answer) : IAccountDirectory
@@ -515,9 +538,9 @@ public partial class HostServerTests : IAsyncLifetime
             _ => new LoginRefused(LoginRefused.BadCredentials),
         }));
         var front = await Handshaken(await ConnectAsync());
-        Assert.Equal(new Accepted(7, 0xF00D, "JP"), (await front.AuthenticateAsync("gm", [1], 1)).Outcome);
-        Assert.Equal(new Rejected("ACCOUNTBANNED"), (await front.AuthenticateAsync("banned", [1], 2)).Outcome);
-        Assert.Equal(new Rejected("LoginAuthFailed"), (await front.AuthenticateAsync("anyone", [1], 3)).Outcome);
+        Assert.Equal(new Accepted(7, 0xF00D, "JP"), (await front.AuthenticateAsync("gm", PasswordHash(1), 1)).Outcome);
+        Assert.Equal(new Rejected("ACCOUNTBANNED"), (await front.AuthenticateAsync("banned", PasswordHash(1), 2)).Outcome);
+        Assert.Equal(new Rejected("LoginAuthFailed"), (await front.AuthenticateAsync("anyone", PasswordHash(1), 3)).Outcome);
     }
 
     [Fact]
@@ -525,8 +548,8 @@ public partial class HostServerTests : IAsyncLifetime
     {
         Start(accounts: new BrokenAccounts());
         var front = await Handshaken(await ConnectAsync());
-        Assert.Equal(new Rejected("Unavailable"), (await front.AuthenticateAsync("pilot", [1], 1)).Outcome);
-        Assert.Equal(new Rejected("Unavailable"), (await front.AuthenticateAsync("pilot", [1], 2)).Outcome); // still answering
+        Assert.Equal(new Rejected("Unavailable"), (await front.AuthenticateAsync("pilot", PasswordHash(1), 1)).Outcome);
+        Assert.Equal(new Rejected("Unavailable"), (await front.AuthenticateAsync("pilot", PasswordHash(1), 2)).Outcome); // still answering
         Assert.Contains(_log, line => line == "account authentication failed due to a host error");
         Assert.DoesNotContain(_log, line => line.Contains("pilot", StringComparison.Ordinal));
         Assert.DoesNotContain(_log, line => line.Contains("database is down", StringComparison.Ordinal));
@@ -544,14 +567,14 @@ public partial class HostServerTests : IAsyncLifetime
         var front = await Handshaken(await ConnectAsync());
 
         for (var attempt = 0; attempt < 10; attempt++)
-            Assert.Equal(new Rejected(LoginRefused.BadCredentials), (await front.AuthenticateAsync("pilot", [1], (uint)(attempt + 1))).Outcome);
-        Assert.Equal(new Rejected(LoginRefused.BadCredentials), (await front.AuthenticateAsync("pilot", [1], 11u)).Outcome);
+            Assert.Equal(new Rejected(LoginRefused.BadCredentials), (await front.AuthenticateAsync("pilot", PasswordHash(1), (uint)(attempt + 1))).Outcome);
+        Assert.Equal(new Rejected(LoginRefused.BadCredentials), (await front.AuthenticateAsync("pilot", PasswordHash(1), 11u)).Outcome);
         Assert.Equal(10, calls);
 
         for (var attempt = 0; attempt < 40; attempt++)
-            Assert.Equal(new Rejected(LoginRefused.BadCredentials), (await front.AuthenticateAsync($"pilot{attempt}", [1], (uint)(attempt + 12))).Outcome);
+            Assert.Equal(new Rejected(LoginRefused.BadCredentials), (await front.AuthenticateAsync($"pilot{attempt}", PasswordHash(1), (uint)(attempt + 12))).Outcome);
         Assert.Equal(50, calls);
-        Assert.Equal(new Rejected(LoginRefused.BadCredentials), (await front.AuthenticateAsync("another-pilot", [1], 99u)).Outcome);
+        Assert.Equal(new Rejected(LoginRefused.BadCredentials), (await front.AuthenticateAsync("another-pilot", PasswordHash(1), 99u)).Outcome);
         Assert.Equal(50, calls);
     }
 
@@ -560,7 +583,7 @@ public partial class HostServerTests : IAsyncLifetime
     {
         Start();
         var front = await Handshaken(await ConnectAsync());
-        var reply = await front.AuthenticateAsync("pilot", [1], corr: 4_000_000_001);
+        var reply = await front.AuthenticateAsync("pilot", PasswordHash(1), corr: 4_000_000_001);
         Assert.Equal(4_000_000_001u, reply.Corr);
     }
 
@@ -569,8 +592,8 @@ public partial class HostServerTests : IAsyncLifetime
     {
         Start(new AccountOptions { AutoCreate = true, SkipPasswordCheck = true });
         var open = await Handshaken(await ConnectAsync());
-        Assert.IsType<Accepted>((await open.AuthenticateAsync("pilot", [1], 1)).Outcome);
-        Assert.IsType<Accepted>((await open.AuthenticateAsync("pilot", [2], 2)).Outcome);
+        Assert.IsType<Accepted>((await open.AuthenticateAsync("pilot", PasswordHash(1), 1)).Outcome);
+        Assert.IsType<Accepted>((await open.AuthenticateAsync("pilot", PasswordHash(2), 2)).Outcome);
     }
 
     [Fact]
@@ -578,7 +601,7 @@ public partial class HostServerTests : IAsyncLifetime
     {
         Start(new AccountOptions());
         var front = await Handshaken(await ConnectAsync());
-        Assert.Equal("LoginAuthFailed", Assert.IsType<Rejected>((await front.AuthenticateAsync("nobody", [1], 1)).Outcome).Reason);
+        Assert.Equal("LoginAuthFailed", Assert.IsType<Rejected>((await front.AuthenticateAsync("nobody", PasswordHash(1), 1)).Outcome).Reason);
     }
 
     [Fact]
@@ -2301,7 +2324,7 @@ public partial class HostServerTests : IAsyncLifetime
         Assert.Null(await garbage.ReceiveOrEndAsync());
 
         var good = await Handshaken(await ConnectAsync());
-        Assert.IsType<Accepted>((await good.AuthenticateAsync("pilot", [1], 1)).Outcome);
+        Assert.IsType<Accepted>((await good.AuthenticateAsync("pilot", PasswordHash(1), 1)).Outcome);
     }
 
     [Fact]
@@ -2402,7 +2425,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         Start();
         var a = await Handshaken(await ConnectAsync());
         var b = await Handshaken(await ConnectAsync());
-        var (ra, rb) = (await a.AuthenticateAsync("a", [1], 1), await b.AuthenticateAsync("b", [2], 1));
+        var (ra, rb) = (await a.AuthenticateAsync("a", PasswordHash(1), 1), await b.AuthenticateAsync("b", PasswordHash(2), 1));
         Assert.NotEqual(Assert.IsType<Accepted>(ra.Outcome).UserId, Assert.IsType<Accepted>(rb.Outcome).UserId);
         Assert.Equal(2, _server.ConnectedFronts);
     }
@@ -2417,7 +2440,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
 
         Assert.Null(await second.ReceiveOrEndAsync());
         Assert.Equal(1, _server.ConnectedFronts);
-        await first.AuthenticateAsync("bounded", [1], 1);
+        await first.AuthenticateAsync("bounded", PasswordHash(1), 1);
         Assert.Equal(1, _server.ConnectedFronts);
     }
 
@@ -4485,6 +4508,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             pair => (System.Text.Json.Nodes.JsonObject)pair.Value.DeepClone());
         var flushes = new List<string>();
         var liveNotifications = new List<(long RecipientId, Eve.Marshal.PyValue[] Arguments)>();
+        var mailSentNotifications = new List<(long RecipientId, Eve.Marshal.PyValue[] Arguments)>();
 
         System.Text.Json.Nodes.JsonObject ReadCache(string table) =>
             (System.Text.Json.Nodes.JsonObject)cache[table].DeepClone();
@@ -4538,11 +4562,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             Write,
             Flush,
             ReadCommitted,
-            (request, _, _) => Task.FromResult<PersistenceMailSendRecipients?>(
-                request.SenderCharacterId == Eve.Services.Core.GmChatPokeMailRequest.SystemSenderId
-                    ? new([recipientId], Eve.Services.Core.GmChatPokeMailRequest.SystemSenderName, 2,
-                        new Dictionary<long, int> { [recipientId] = 1 })
-                    : new([recipientId], "Sender", 2, new Dictionary<long, int> { [recipientId] = 1 })),
+            (_, _, _) => Task.FromResult<PersistenceMailSendRecipients?>(
+                new([recipientId], "Sender", 2, new Dictionary<long, int> { [recipientId] = 1 })),
             () => 1_800_000_000_000,
             (characterId, arguments) =>
             {
@@ -4555,7 +4576,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
                     System.Globalization.CultureInfo.InvariantCulture)]!;
                 Assert.Equal(typeId, saved["typeID"]!.GetValue<int>());
                 if (typeId == 1004)
-                    Assert.InRange(saved["data"]!["msg"]!["messageID"]!.GetValue<long>(), 12L, 13L);
+                    Assert.InRange(saved["data"]!["msg"]!["messageID"]!.GetValue<long>(), 12, 13);
                 else if (typeId == 4)
                 {
                     Assert.Equal(2, saved["groupID"]!.GetValue<int>());
@@ -4569,6 +4590,13 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
                     Assert.Equal(recipientId, saved["receiverID"]!.GetValue<long>());
                 }
                 liveNotifications.Add((characterId, arguments));
+            },
+            (characterId, arguments, _) =>
+            {
+                Assert.Contains("mail", flushes);
+                Assert.InRange(WireInteger(arguments[0]), 12, 13);
+                Assert.Equal(8, arguments.Length);
+                mailSentNotifications.Add((characterId, arguments));
             });
         var session = new Eve.Services.ClientSession { CharacterId = senderId };
         var request = new Eve.Services.Core.MailSendRequest(
@@ -4583,8 +4611,8 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             System.Globalization.CultureInfo.InvariantCulture)]!["unrelated"]!.GetValue<string>());
         var savedMessage = committed["mail"]["messages"]!["12"]!;
         Assert.Equal("Body", savedMessage["body"]!.GetValue<string>());
-        Assert.Empty(savedMessage["toCorpOrAllianceID"]!.AsArray());
-        Assert.Equal(0, committed["mail"]["mailboxes"]![senderId.ToString(
+        Assert.Null(savedMessage["toCorpOrAllianceID"]);
+        Assert.Equal(1, committed["mail"]["mailboxes"]![senderId.ToString(
             System.Globalization.CultureInfo.InvariantCulture)]!["statuses"]!["12"]!["statusMask"]!.GetValue<int>());
         Assert.Equal(2, committed["mail"]["mailboxes"]![senderId.ToString(
             System.Globalization.CultureInfo.InvariantCulture)]!["statuses"]!["12"]!["labelMask"]!.GetValue<int>());
@@ -4600,6 +4628,38 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             System.Globalization.CultureInfo.InvariantCulture)]!["statuses"]!["12"]!["labelMask"]!.GetValue<int>());
         Assert.Equal("keep", committed["notifications"]["metadata"]!.GetValue<string>());
         Assert.Single(liveNotifications);
+        Assert.Equal([recipientId, senderId], mailSentNotifications.Select(item => item.RecipientId));
+        var recipientMailSent = mailSentNotifications.Single(item => item.RecipientId == recipientId).Arguments;
+        Assert.Equal(senderId, WireInteger(recipientMailSent[1]));
+        Assert.Equal(recipientId, WireInteger(Assert.IsType<PyList>(recipientMailSent[3]).Items.Single()));
+        Assert.Same(PyNone.Instance, recipientMailSent[4]);
+        Assert.Same(PyNone.Instance, recipientMailSent[5]);
+        Assert.Equal("Subject", WireText(recipientMailSent[6]));
+        Assert.Equal(0, WireInteger(recipientMailSent[7]));
+        var senderMailSent = mailSentNotifications.Single(item => item.RecipientId == senderId).Arguments;
+        Assert.Equal(1, WireInteger(senderMailSent[7]));
+
+        var channelName = new string('x', 9000);
+        session.Set("role", new Eve.Marshal.PyLong(Eve.Services.GameMasterRoles.Gml));
+        session.Set("accountRole", new Eve.Marshal.PyLong(Eve.Services.GameMasterRoles.Gml));
+        var poke = new Eve.Services.Core.GmChatPokeMailRequest(
+            recipientId, Eve.Services.Core.GmChatPokeMailRequest.SystemSenderId, channelName,
+            "GM chat request", Eve.Services.Core.GmChatPokeMailRequest.BuildBody(channelName),
+            SaveSenderCopy: false);
+        Assert.Equal(13L, await adapter.SendGmChatPokeAsync(poke, session, CancellationToken.None));
+        var savedPoke = Assert.IsType<System.Text.Json.Nodes.JsonObject>(
+            committed["mail"]!["messages"]!["13"]);
+        var savedPokeBody = savedPoke["body"]!.GetValue<string>();
+        Assert.Equal(Eve.Services.Core.GmChatPokeMailRequest.BuildBody(channelName), savedPokeBody);
+        Assert.Equal(8000, savedPokeBody.Length);
+        Assert.Equal(Eve.Services.Core.GmChatPokeMailRequest.SystemSenderId, savedPoke["senderID"]!.GetValue<long>());
+        var savedRecipientMailbox = committed["mail"]!["mailboxes"]![
+            recipientId.ToString(System.Globalization.CultureInfo.InvariantCulture)]!.AsObject();
+        var savedRecipientStatus = savedRecipientMailbox["statuses"]!["13"]!.AsObject();
+        Assert.Equal(0, savedRecipientStatus["statusMask"]!.GetValue<int>());
+        var pokeMailSent = mailSentNotifications.Single(item =>
+            item.RecipientId == recipientId && WireInteger(item.Arguments[0]) == 13).Arguments;
+        Assert.Equal("GM chat request", WireText(pokeMailSent[6]));
 
         var usedData = new System.Text.Json.Nodes.JsonObject { ["charID"] = senderId };
         await adapter.WriteKillRightNotificationAsync(
@@ -4617,7 +4677,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         Assert.Equal(Eve.Services.Crimewatch.KillRightNotificationTypes.Used, usedNotification["typeID"]!.GetValue<int>());
         Assert.Equal(Eve.Services.Crimewatch.KillRightNotificationTypes.MiscGroup, usedNotification["groupID"]!.GetValue<int>());
         Assert.Equal(senderId, usedNotification["data"]!["charID"]!.GetValue<long>());
-        Assert.Equal(2, liveNotifications.Count);
+        Assert.Equal(3, liveNotifications.Count);
 
         await adapter.WriteAllianceMaintenanceBillNotificationAsync(
             recipientId, allianceId, allianceBillId, CancellationToken.None);
@@ -4633,44 +4693,6 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         Assert.Equal(2, billNotification["groupID"]!.GetValue<int>());
         Assert.Equal(1_000_125, billNotification["senderID"]!.GetValue<long>());
         Assert.Equal(allianceId, billNotification["data"]!["allianceID"]!.GetValue<long>());
-        Assert.Equal(3, liveNotifications.Count);
-
-        var gmSession = new Eve.Services.ClientSession { CharacterId = 90000035 };
-        gmSession.Set("accountRole", new Eve.Marshal.PyLong(Eve.Services.GameMasterRoles.Gml));
-        var gmService = new Eve.Services.Core.MailService(
-            _ => throw new InvalidOperationException("A GM poke must not read a player mailbox."),
-            (_, _, _, _) => throw new InvalidOperationException("A GM poke must not mark mail read."),
-            adapter.SendAsync,
-            adapter.SendGmChatPokeAsync);
-        var gmMessageId = Assert.IsType<Eve.Marshal.PyLong>(await gmService.CallAsync(new Eve.Services.ServiceCall
-        {
-            Method = "PokePlayerAboutChatMsgGm",
-            Args = [new Eve.Marshal.PyInt(recipientId), new Eve.Marshal.PyStr("help-channel")],
-            Session = gmSession,
-        }));
-
-        Assert.Equal(13L, gmMessageId.Value);
-        var gmMessage = committed["mail"]["messages"]!["13"]!;
-        Assert.Equal(Eve.Services.Core.GmChatPokeMailRequest.SystemSenderId,
-            gmMessage["senderID"]!.GetValue<long>());
-        Assert.Equal(Eve.Services.Core.GmChatPokeMailRequest.SystemSenderName,
-            gmMessage["senderName"]!.GetValue<string>());
-        Assert.Equal("GM chat request", gmMessage["title"]!.GetValue<string>());
-        Assert.Equal("A GM would like to speak with you.<br><br>Requested channel: help-channel",
-            gmMessage["body"]!.GetValue<string>());
-        Assert.Null(committed["mail"]["mailboxes"]![Eve.Services.Core.GmChatPokeMailRequest.SystemSenderId.ToString(
-            System.Globalization.CultureInfo.InvariantCulture)]?["statuses"]?["13"]);
-        Assert.Equal(1, committed["mail"]["mailboxes"]![recipientId.ToString(
-            System.Globalization.CultureInfo.InvariantCulture)]!["statuses"]!["13"]!["labelMask"]!.GetValue<int>());
-        var gmNotification = Assert.Single(
-            committed["notifications"]["boxes"]![recipientId.ToString(
-                System.Globalization.CultureInfo.InvariantCulture)]!["byID"]!.AsObject()
-                .Select(pair => pair.Value).OfType<System.Text.Json.Nodes.JsonObject>(),
-            notification => notification["data"]?["msg"]?["messageID"]?.GetValue<long>() == 13L);
-        Assert.Equal(Eve.Services.Core.GmChatPokeMailRequest.SystemSenderId,
-            gmNotification["senderID"]!.GetValue<long>());
-        Assert.Contains("mail", flushes.TakeLast(2));
-        Assert.Equal("notifications", flushes[^1]);
         Assert.Equal(4, liveNotifications.Count);
     }
 

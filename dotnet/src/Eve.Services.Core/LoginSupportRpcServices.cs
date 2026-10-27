@@ -163,8 +163,21 @@ public sealed partial class InfoGatheringMgrService(
 public sealed partial class EveguardReportService(
     Func<string, ServiceCall, CancellationToken, ValueTask>? recordHeartbeat = null)
 {
-    private readonly Func<string, ServiceCall, CancellationToken, ValueTask> _recordHeartbeat =
-        recordHeartbeat ?? IgnoreHeartbeat;
+    // shortcut: retain only the latest 1,024 events in process memory; use durable telemetry if history must survive restarts.
+    private const int MaximumRetainedEvents = 1024;
+    private readonly object _eventsGate = new();
+    private readonly Queue<EveguardHeartbeatEvent> _events = new();
+    private long _nextEventId;
+    private readonly Func<string, ServiceCall, CancellationToken, ValueTask>? _recordHeartbeat = recordHeartbeat;
+
+    public IReadOnlyList<EveguardHeartbeatEvent> Events
+    {
+        get
+        {
+            lock (_eventsGate)
+                return _events.ToArray();
+        }
+    }
 
     [Method("heartbeat_started")]
     public ValueTask<PyValue> HeartbeatStarted(ServiceCall call) => RecordAsync("started", call);
@@ -174,10 +187,21 @@ public sealed partial class EveguardReportService(
 
     private async ValueTask<PyValue> RecordAsync(string eventType, ServiceCall call)
     {
-        await _recordHeartbeat(eventType, call, call.Cancellation).ConfigureAwait(false);
+        call.Cancellation.ThrowIfCancellationRequested();
+        var entry = new EveguardHeartbeatEvent(
+            Interlocked.Increment(ref _nextEventId), eventType,
+            call.Session.CharacterId ?? 0, call.Session.UserId ?? 0, DateTimeOffset.UtcNow);
+        lock (_eventsGate)
+        {
+            _events.Enqueue(entry);
+            while (_events.Count > MaximumRetainedEvents)
+                _events.Dequeue();
+        }
+        if (_recordHeartbeat is { } record)
+            await record(eventType, call, call.Cancellation).ConfigureAwait(false);
         return PyNone.Instance;
     }
-
-    private static ValueTask IgnoreHeartbeat(string _, ServiceCall __, CancellationToken ___) =>
-        ValueTask.CompletedTask;
 }
+
+public sealed record EveguardHeartbeatEvent(
+    long EventId, string EventType, long CharacterId, long AccountId, DateTimeOffset RecordedAt);

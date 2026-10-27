@@ -55,7 +55,7 @@ public sealed class AgentCatalogHostWireTests
             await front.SendAsync(new Hello(HostCodec.ProtocolVersion, 0xFFAA));
             Assert.Equal(new HelloAck(HostCodec.ProtocolVersion), await front.ReceiveAsync());
             Assert.IsType<ClusterConfig>(await front.ReceiveAsync());
-            var accepted = Assert.IsType<Accepted>((await front.AuthenticateAsync("agent-catalog-wire", [1], 1)).Outcome);
+            var accepted = Assert.IsType<Accepted>((await front.AuthenticateAsync("agent-catalog-wire", new byte[20], 1)).Outcome);
             var session = new SessionOpen(1_790_646_377_000UL * 15, (accepted.UserId * 1_000_000UL) + 0xFFAA,
                 accepted.UserId, accepted.Role, "127.0.0.1", "EN", accepted.CountryCode);
             await front.SendAsync(session);

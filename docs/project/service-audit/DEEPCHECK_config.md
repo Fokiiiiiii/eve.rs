@@ -57,4 +57,6 @@
 
 push: `91d58f74`。`agent-test.yml` run `40436727191` はsuccess。push起動 `ci.yml` run `40436696095` は失敗し、`Eve.Services.CharacterInfo.Tests.Config_bulk_lookups_refuse_wrong_shapes_invalid_ids_and_oversized_raw_lists` と `Batched_config_lookups_refuse_more_than_10_000_raw_ids` が廃止済み上限を期待していた。上限に依存するassertionを削除し、入力形と不正IDのUserError検査を残した。
 
+follow-up push: `33107b26`。旧上限期待のservice testsを修正。post-push `agent-test.yml` run `40438403079` はsuccess、push起動 `ci.yml` run `40438388490` もsuccess。両runとも失敗なし。
+
 確認範囲はheadless Host wire tests。GUI V24.01 client、実DBの永続値、DB再起動後の読取は今回確認対象外。

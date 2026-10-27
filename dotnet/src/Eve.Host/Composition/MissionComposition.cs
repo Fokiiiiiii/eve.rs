@@ -191,6 +191,7 @@ internal sealed partial class CharacterServicesComposition
         {
             Console.Error.WriteLine($"eve-host: missions: {agentMissionStatic.UnavailableReason}");
         }
+        PersistenceAgentResearch? researchPort = null;
         agentMissionRpcCallbacks = new AgentMissionRpcCallbacks(
             ReadAgents: _ => ValueTask.FromResult<IReadOnlyList<AgentMissionAgentData>>(agentMissionAgentRows),
             ReadDisabledMissions: _ => ValueTask.FromResult(agentMissionStatic.DisabledMissionIds),
@@ -218,9 +219,85 @@ internal sealed partial class CharacterServicesComposition
             {
                 await agentMissionStore.RemoveOfferAsync(
                     characterId, agentId, DateTimeOffset.UtcNow, ct);
-            });
+            },
+            ReadDungeonShipRestrictions: ReadDungeonShipRestrictionsAsync,
+            ReadInfoServiceDetails: async (characterId, agentId, ct) =>
+            {
+                if (!agentMissionAgentById.TryGetValue(agentId, out var agent)) return null;
+                var mission = await agentMissionService.ReadMissionRecordAsync(characterId, agentId, ct);
+                var factionId = npcFactions.GetValueOrDefault(agent.CorporationId);
+                var standings = new Eve.Services.Core.AgentStandings(
+                    await foundations.Relations.ValueAsync(Eve.Relations.RelationKinds.Standing.Name, factionId, characterId, 0, cancellationToken: ct),
+                    await foundations.Relations.ValueAsync(Eve.Relations.RelationKinds.Standing.Name, agent.CorporationId, characterId, 0, cancellationToken: ct),
+                    await foundations.Relations.ValueAsync(Eve.Relations.RelationKinds.Standing.Name, agentId, characterId, 0, cancellationToken: ct));
+                var skillIds = new[]
+                {
+                    Eve.Services.Core.AgentAccessRule.BonusSkill(standings.Faction, factionId),
+                    Eve.Services.Core.AgentAccessRule.BonusSkill(standings.Corporation, factionId),
+                    Eve.Services.Core.AgentAccessRule.BonusSkill(standings.Character, factionId),
+                }.OfType<int>().Distinct().ToArray();
+                var trained = new Dictionary<int, int>();
+                if (skillIds.Length > 0)
+                {
+                    await using var connection = await source.OpenConnectionAsync(ct);
+                    await using var transaction = await connection.BeginTransactionAsync(ct);
+                    foreach (var skillId in skillIds)
+                        trained[skillId] = await skills.LevelAsync(connection, transaction, characterId, skillId, ct);
+                    await transaction.CommitAsync(ct);
+                }
+                var canUse = Eve.Services.Core.AgentAccessRule.CanUse(
+                    agent.Level, agent.AgentTypeId, standings, factionId, skillId => trained.GetValueOrDefault(skillId));
+                static KeyValuePair<PyValue, PyValue> Field(string name, PyValue value) => new(new PyStr(name), value);
+                var services = new List<PyValue>
+                {
+                    Py.KeyVal([Field("agentServiceType", new PyStr("mission")),
+                        Field("available", canUse && mission is null ? PyBool.True : PyBool.False)]),
+                };
+                if (agent.IsLocatorAgent)
+                {
+                    services.Add(Py.KeyVal([
+                        Field("agentServiceType", new PyStr("locate")),
+                        Field("frequency", new PyLong(3_000_000_000)),
+                        Field("delays", new PyList([
+                            new PyTuple([new PyInt(0), new PyInt(0), new PyInt(0)]),
+                            new PyTuple([new PyInt(1), new PyInt(60), new PyInt(5_000)]),
+                            new PyTuple([new PyInt(2), new PyInt(120), new PyInt(15_000)]),
+                            new PyTuple([new PyInt(3), new PyInt(240), new PyInt(35_000)]),
+                        ])),
+                        Field("callbackID", PyNone.Instance),
+                        Field("lastUsed", PyNone.Instance),
+                    ]));
+                }
+                var fields = researchPort?.FieldsFor(agentId) ?? [];
+                if (fields.Count > 0)
+                {
+                    var project = await researchPort!.Projects.ReadAsync(characterId, agentId, ct);
+                    var now = DateTimeOffset.UtcNow;
+                    services.Add(Py.KeyVal([
+                        Field("agentServiceType", new PyStr("research")),
+                        Field("skills", new PyList([.. fields.Select(field => (PyValue)new PyTuple([
+                            new PyInt(field.SkillTypeId),
+                            Py.KeyVal([Field("effectiveSkillLevel", new PyInt(agent.Level))]),
+                        ]))])),
+                        Field("researchData", project is null ? PyNone.Instance : Py.KeyVal([
+                            Field("skillTypeID", new PyInt(project.SkillTypeId)),
+                            Field("points", new PyReal(Eve.Agents.ResearchProjectStore.AccruedPoints(project, now))),
+                            Field("pointsPerDay", new PyReal(project.PointsPerDay)),
+                        ])),
+                    ]));
+                }
+                return Py.KeyVal([
+                    Field("agentID", new PyInt(agent.AgentId)),
+                    Field("stationID", agent.StationId is > 0 and var stationId ? new PyInt(stationId) : PyNone.Instance),
+                    Field("level", new PyInt(agent.Level)),
+                    Field("services", new PyList(services)),
+                    Field("incompatible", PyNone.Instance),
+                ]);
+            },
+            TravelToLocation: TravelToAgentLocationAsync,
+            WarpToAgentInSpace: WarpToAgentInSpaceAsync);
 
-        var researchPort = new PersistenceAgentResearch(source, agentResearchProjects, economyWallets, items, itemTypes, characterSessions,
+        researchPort = new PersistenceAgentResearch(source, agentResearchProjects, economyWallets, items, itemTypes, characterSessions,
             await PersistenceAgentResearch.LoadFieldsAsync(sde, CancellationToken.None), () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
 
         var locatorPort = new PersistenceAgentLocator(source, agentLocates, characters, characterSessions, solarSystems, economyWallets,
@@ -304,6 +381,137 @@ internal sealed partial class CharacterServicesComposition
                 },
                 async (characterId, agentId, token) => { if (missionDungeons is { } dungeons) await dungeons.OnQuitAsync(characterId, agentId, token); }));
         await AttachMissionDungeonsAsync();
+    }
+
+    private async ValueTask<Eve.Marshal.PyValue?> ReadDungeonShipRestrictionsAsync(
+        long dungeonId, long? gateId, CancellationToken cancellationToken)
+    {
+        var dungeonRows = await sde.ReadAsync("dungeons", [dungeonId], cancellationToken);
+        if (dungeonRows.Count == 0) return null;
+        var dungeon = dungeonRows[0];
+        if (dungeon.Doc.ValueKind != System.Text.Json.JsonValueKind.Object ||
+            !dungeon.Doc.TryGetProperty("connections", out var connections) ||
+            connections.ValueKind != System.Text.Json.JsonValueKind.Array || connections.GetArrayLength() == 0)
+            return null;
+
+        static int Int(System.Text.Json.JsonElement row, string name) =>
+            row.TryGetProperty(name, out var value) && value.ValueKind == System.Text.Json.JsonValueKind.Number &&
+            value.TryGetInt32(out var number) ? number : 0;
+        static HashSet<int> Ids(System.Text.Json.JsonElement row, string name) =>
+            row.TryGetProperty(name, out var values) && values.ValueKind == System.Text.Json.JsonValueKind.Array
+                ? values.EnumerateArray().Where(value => value.TryGetInt32(out _)).Select(value => value.GetInt32()).ToHashSet()
+                : [];
+        static bool Includes(System.Text.Json.JsonElement list, string name, int id) => Ids(list, name).Contains(id);
+
+        var selected = connections.EnumerateArray()
+            .Where(row => gateId is null || Int(row, "fromObjectID") == gateId.Value)
+            .ToArray();
+        var listIds = selected.Select(row => Int(row, "allowedShipsList")).Where(id => id > 0).Distinct().Select(id => (long)id).ToArray();
+        var typeLists = (await sde.ReadAsync("typeLists", listIds, cancellationToken)).ToDictionary(row => (int)row.Key);
+        var groupRows = await sde.ReadAsync("groups", cancellationToken: cancellationToken);
+        var categoryByGroup = groupRows.ToDictionary(row => checked((int)row.Key), row => Int(row.Doc, "categoryID"));
+        var ships = (await sde.ReadAsync("types", cancellationToken: cancellationToken))
+            .Where(row => categoryByGroup.GetValueOrDefault(Int(row.Doc, "groupID")) == SavedFittingRules.CategoryShip &&
+                row.Doc.TryGetProperty("published", out var published) && published.ValueKind == System.Text.Json.JsonValueKind.True)
+            .OrderBy(row => row.Key)
+            .ToArray();
+        var shipsById = ships.ToDictionary(row => checked((int)row.Key));
+        var whitelist = shipsById.Keys.ToHashSet();
+        var nonDefault = false;
+        foreach (var connection in selected)
+        {
+            var allowedList = Int(connection, "allowedShipsList");
+            var races = Ids(connection, "allowedShipRaces");
+            if (allowedList <= 0 && races.Count == 0) continue;
+            nonDefault = true;
+            System.Text.Json.JsonElement list = default;
+            if (allowedList > 0)
+            {
+                if (!typeLists.TryGetValue(allowedList, out var typeListRow))
+                {
+                    whitelist.Clear();
+                    continue;
+                }
+                list = typeListRow.Doc;
+            }
+            whitelist.RemoveWhere(typeId =>
+            {
+                var ship = shipsById[typeId];
+                var groupId = Int(ship.Doc, "groupID");
+                var raceId = Int(ship.Doc, "raceID");
+                if (races.Count > 0 && !races.Contains(raceId)) return true;
+                if (allowedList <= 0) return false;
+                var included = Includes(list, "includedTypeIDs", typeId) ||
+                    Includes(list, "includedGroupIDs", groupId) ||
+                    Includes(list, "includedCategoryIDs", SavedFittingRules.CategoryShip);
+                var excluded = Includes(list, "excludedTypeIDs", typeId) ||
+                    Includes(list, "excludedGroupIDs", groupId) ||
+                    Includes(list, "excludedCategoryIDs", SavedFittingRules.CategoryShip);
+                return !included || excluded;
+            });
+        }
+
+        if (!nonDefault)
+        {
+            var barredNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "Capsule", "Titan", "Dreadnought", "Freighter", "Carrier", "Supercarrier",
+                "Capital Industrial Ship", "Jump Freighter", "Force Auxiliary", "Lancer Dreadnought", "Command Carrier",
+            };
+            var barredGroups = groupRows
+                .Where(row => row.Doc.TryGetProperty("name", out var name) &&
+                    barredNames.Contains(SdeReader.English(name)))
+                .Select(row => checked((int)row.Key)).ToHashSet();
+            whitelist.RemoveWhere(typeId => barredGroups.Contains(Int(shipsById[typeId].Doc, "groupID")));
+        }
+
+        static KeyValuePair<Eve.Marshal.PyValue, Eve.Marshal.PyValue> Field(string name, Eve.Marshal.PyValue value) =>
+            new(new Eve.Marshal.PyStr(name), value);
+        var allowed = ships.Where(row => whitelist.Contains(checked((int)row.Key))).Select(row => (Eve.Marshal.PyValue)new Eve.Marshal.PyInt(row.Key));
+        var restricted = ships.Where(row => !whitelist.Contains(checked((int)row.Key))).Select(row => (Eve.Marshal.PyValue)new Eve.Marshal.PyInt(row.Key));
+        return Py.KeyVal([
+            Field("allowedShipTypes", new Eve.Marshal.PyList([.. allowed])),
+            Field("restrictedShipTypes", new Eve.Marshal.PyList([.. restricted])),
+            Field("nonDefaultShipRestrictions", nonDefault ? Eve.Marshal.PyBool.True : Eve.Marshal.PyBool.False),
+        ]);
+    }
+
+    private async ValueTask TravelToAgentLocationAsync(
+        ClientSession session, AgentMissionTravelTarget target, bool warp, double range, CancellationToken cancellationToken)
+    {
+        if (spaceSessions is null) throw new InvalidOperationException("agentMgr travel needs the space runtime");
+        var currentSystem = session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid") ?? 0;
+        if (target.SolarSystemId <= 0 || target.SolarSystemId != currentSystem) return;
+        if (target.ItemId is > 0 and var itemId)
+        {
+            if (warp) await spaceSessions.WarpAsync(session, itemId, range, cancellationToken);
+            else spaceSessions.Command(session, SimCommands.FollowBall, itemId, 0);
+            return;
+        }
+        if (target.X is not { } x || target.Y is not { } y || target.Z is not { } z) return;
+        if (warp)
+        {
+            await spaceSessions.WarpToPointAsync(session, x, y, z, range, cancellationToken);
+            return;
+        }
+        var shipId = spaceSessions.ShipIdOf(session);
+        if (shipId is not > 0 || await spaceSessions.PositionOfAsync(session, shipId.Value, cancellationToken) is not { } position ||
+            position.SolarSystemId != currentSystem) return;
+        var dx = x - position.X;
+        var dy = y - position.Y;
+        var dz = z - position.Z;
+        var length = Math.Sqrt(dx * dx + dy * dy + dz * dz);
+        if (length > 0 && double.IsFinite(length))
+            spaceSessions.Command(session, SimCommands.GotoDirection, dx / length, dy / length, dz / length);
+    }
+
+    private async ValueTask WarpToAgentInSpaceAsync(ClientSession session, long agentId, CancellationToken cancellationToken)
+    {
+        if (spaceSessions is null || !agentMissionAgentById.TryGetValue(agentId, out var agent) ||
+            !agent.IsInSpace || agent.SolarSystemId is not { } systemId || systemId <= 0 ||
+            solarSystems.Get(checked((int)systemId)) is not { } system) return;
+        var point = Eve.Services.Core.InSpaceAgentPlacement.Position(agentId, system.X, system.Y, system.Z);
+        await spaceSessions.WarpToPointAsync(session, point[0], point[1], point[2], 0, cancellationToken);
     }
 
     /// <summary>

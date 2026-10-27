@@ -28,7 +28,10 @@ public sealed record AgentMissionAgentData(
     long? DungeonId,
     long? SpawnPointId,
     long? TypeId,
-    long? BaseLocationId = null);
+    long? BaseLocationId = null,
+    string? AgentName = null);
+
+public sealed record AgentMissionTravelTarget(long SolarSystemId, long? ItemId, double? X, double? Y, double? Z);
 
 public sealed record AgentMissionRpcCallbacks(
     Func<CancellationToken, ValueTask<IReadOnlyList<AgentMissionAgentData>>>? ReadAgents = null,
@@ -38,7 +41,11 @@ public sealed record AgentMissionRpcCallbacks(
     Func<long, CancellationToken, ValueTask<long?>>? ReadSolarSystemOfAgent = null,
     Func<long, long, CancellationToken, ValueTask<HeldMissionView?>>? ReadHeldMission = null,
     Func<long, long, long, CancellationToken, ValueTask<IReadOnlyDictionary<long, double>>>? ReadStandingGainsForMission = null,
-    Func<long, long, CancellationToken, ValueTask>? RemoveOfferFromJournal = null);
+    Func<long, long, CancellationToken, ValueTask>? RemoveOfferFromJournal = null,
+    Func<long, long?, CancellationToken, ValueTask<PyValue?>>? ReadDungeonShipRestrictions = null,
+    Func<long, long, CancellationToken, ValueTask<PyValue?>>? ReadInfoServiceDetails = null,
+    Func<ClientSession, AgentMissionTravelTarget, bool, double, CancellationToken, ValueTask>? TravelToLocation = null,
+    Func<ClientSession, long, CancellationToken, ValueTask>? WarpToAgentInSpace = null);
 
 // Readers return persisted character mission state, character-owned bookmark records,
 // and the character's already-resolved seven-field research rows. They never write.
@@ -84,7 +91,17 @@ public sealed class AgentMissionService(
         "GetMessagesForEpicArcMissions" or
         "GetMyEpicArcStatus" or
         "GetPlausibleMissionIDs" or
-        "GetSolarSystemOfAgent";
+        "GetSolarSystemOfAgent" or
+        "GetDungeonShipRestrictions" or
+        "GetEntryPoint" or
+        "GetInfoServiceDetails" or
+        "GetReplayTimestamp" or
+        "GotoLocation" or
+        "IsCheatingWithAgent" or
+        "ShouldAlwaysAllowReplay" or
+        "WarpToAgentInSpace" or
+        "WarpToLocation" or
+        "GetStaticBlob";
 
     public void OnBoundObjectReleased(string oid, ClientSession? session) => _agentByBoundObject.TryRemove(oid, out _);
 
@@ -105,6 +122,16 @@ public sealed class AgentMissionService(
         "GetMyEpicArcStatus" => ReadMyEpicArcStatusAsync(call),
         "GetPlausibleMissionIDs" => ReadPlausibleMissionIdsAsync(call),
         "GetSolarSystemOfAgent" => ReadSolarSystemOfAgentAsync(call),
+        "GetDungeonShipRestrictions" => ReadDungeonShipRestrictionsAsync(call),
+        "GetEntryPoint" => ReadEntryPointAsync(call),
+        "GetInfoServiceDetails" => ReadInfoServiceDetailsAsync(call),
+        "GetReplayTimestamp" => ReadReplayTimestampAsync(call),
+        "GotoLocation" => TravelToLocationAsync(call, warp: false),
+        "IsCheatingWithAgent" => ValueTask.FromResult<PyValue>(PyBool.False),
+        "ShouldAlwaysAllowReplay" => ValueTask.FromResult<PyValue>(PyBool.False),
+        "WarpToAgentInSpace" => WarpToAgentInSpaceAsync(call),
+        "WarpToLocation" => TravelToLocationAsync(call, warp: true),
+        "GetStaticBlob" => ValueTask.FromResult<PyValue>(new PyStr("")),
         "GetAgentLocationWrap" => ReadAgentLocationWrapAsync(call),
         "GetMissionBriefingInfo" => ReadMissionBriefingInfoAsync(call),
         "GetMissionObjectiveInfo" => ReadHeldMissionAsync(call, MissionViews.Objective),
@@ -168,17 +195,160 @@ public sealed class AgentMissionService(
         call.Cancellation.ThrowIfCancellationRequested();
         var characterId = Positive(call.Session.Get("charid"));
         var agentId = BoundAgentId(call);
-        if (characterId == 0 || agentId == 0 || rpcCallbacks?.ReadHeldMission is not { } readHeld)
-            return new PyDict([]);
-        var mission = await readHeld(characterId, agentId, call.Cancellation);
-        call.Cancellation.ThrowIfCancellationRequested();
-        if (mission is null) return new PyDict([]);
+        if (characterId == 0 || agentId == 0) return new PyDict([]);
         var agent = rpcCallbacks?.ReadAgents is { } readAgents
             ? (await readAgents(call.Cancellation)).FirstOrDefault(item => item.AgentId == agentId)
             : null;
         call.Cancellation.ThrowIfCancellationRequested();
-        return agent is null ? new PyDict([]) : MissionViews.Keywords(agent, mission);
+        if (agent is null) return new PyDict([]);
+        var mission = rpcCallbacks?.ReadHeldMission is { } readHeld
+            ? await readHeld(characterId, agentId, call.Cancellation)
+            : null;
+        call.Cancellation.ThrowIfCancellationRequested();
+        if (mission is not null) return MissionViews.Keywords(agent, mission);
+        var missionName = MissionContentName(call.Args.Count > 0 ? call.Arg(0) : null);
+        return MissionViews.Keywords(agent, missionName);
     }
+
+    private async ValueTask<PyValue> ReadDungeonShipRestrictionsAsync(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var dungeonId = Positive(call.Args.Count > 0 ? call.Arg(0) : null);
+        if (dungeonId == 0 || rpcCallbacks?.ReadDungeonShipRestrictions is not { } readRestrictions)
+            return PyNone.Instance;
+        var gateId = Positive(call.Args.Count > 1 ? call.Arg(1) : null);
+        return await readRestrictions(dungeonId, gateId > 0 ? gateId : null, call.Cancellation)
+            ?? PyNone.Instance;
+    }
+
+    private async ValueTask<PyValue> ReadEntryPointAsync(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var target = await ResolveMissionLocationTargetAsync(call, "dungeon", 0);
+        return target is { X: { } x, Y: { } y, Z: { } z }
+            ? new PyList([new PyReal(x), new PyReal(y), new PyReal(z)])
+            : PyNone.Instance;
+    }
+
+    private async ValueTask<PyValue> ReadInfoServiceDetailsAsync(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var characterId = Positive(call.Session.Get("charid"));
+        var agentId = BoundAgentId(call);
+        if (characterId == 0 || agentId == 0 || rpcCallbacks?.ReadInfoServiceDetails is not { } readDetails)
+            return PyNone.Instance;
+        return await readDetails(characterId, agentId, call.Cancellation) ?? PyNone.Instance;
+    }
+
+    private async ValueTask<PyValue> ReadReplayTimestampAsync(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var characterId = Positive(call.Session.Get("charid"));
+        var agentId = BoundAgentId(call);
+        if (characterId == 0 || agentId == 0) return PyNone.Instance;
+        var state = await readMissionState(characterId, call.Cancellation);
+        call.Cancellation.ThrowIfCancellationRequested();
+        var ticks = Integer(state?["declineTimersByAgentID"]?[agentId.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
+        return ticks > 0 ? new PyLong(ticks) : PyNone.Instance;
+    }
+
+    private async ValueTask<PyValue> TravelToLocationAsync(ServiceCall call, bool warp)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var role = call.Args.Count > 0 ? (JsSemantics.StringValue(call.Arg(0)) ?? "").Trim().ToLowerInvariant() : "";
+        role = role switch
+        {
+            "objective.source" => "source",
+            "objective.destination" => "destination",
+            "objective" or "dungeon" or "agenthomebase" => role,
+            _ => "",
+        };
+        var agentId = BoundAgentId(call);
+        var referringIndex = warp ? 4 : 2;
+        var referringAgentId = Positive(call.Args.Count > referringIndex ? call.Arg(referringIndex) : null);
+        var target = role.Length == 0 ? null : await ResolveMissionLocationTargetAsync(call, role, referringAgentId);
+        if (target is null) return PyNone.Instance;
+        if (rpcCallbacks?.TravelToLocation is not { } travel)
+            throw new InvalidOperationException("agentMgr travel is not wired to the space runtime");
+        var range = warp && call.Args.Count > 2 ? Number(call.Arg(2)) : 0d;
+        await travel(call.Session, target, warp, double.IsFinite(range) ? range : 0d, call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    private async ValueTask<PyValue> WarpToAgentInSpaceAsync(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var agentId = Positive(call.Args.Count > 0 ? call.Arg(0) : null);
+        if (agentId == 0) agentId = BoundAgentId(call);
+        if (agentId == 0) return PyNone.Instance;
+        if (rpcCallbacks?.WarpToAgentInSpace is not { } warp)
+            throw new InvalidOperationException("agentMgr agent warp is not wired to the space runtime");
+        await warp(call.Session, agentId, call.Cancellation);
+        return PyNone.Instance;
+    }
+
+    private async ValueTask<AgentMissionTravelTarget?> ResolveMissionLocationTargetAsync(
+        ServiceCall call, string role, long referringAgentId)
+    {
+        var characterId = Positive(call.Session.Get("charid"));
+        var boundAgentId = BoundAgentId(call);
+        if (characterId == 0 || boundAgentId == 0) return null;
+        var agentId = referringAgentId > 0 ? referringAgentId : boundAgentId;
+        var state = await readMissionState(characterId, call.Cancellation);
+        call.Cancellation.ThrowIfCancellationRequested();
+        var mission = state?["missionsByAgentID"]?[agentId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject;
+
+        if (mission?["bookmarkIDsByRole"] is JsonObject roleBookmarks &&
+            Positive(roleBookmarks[role]) is > 0 and var bookmarkId)
+        {
+            var rows = await readBookmarks(characterId, [bookmarkId], call.Cancellation);
+            call.Cancellation.ThrowIfCancellationRequested();
+            if (rows.TryGetValue(bookmarkId, out var bookmark) &&
+                string.Equals(Text(bookmark["metadata"]?["role"]), role, StringComparison.OrdinalIgnoreCase) &&
+                Positive(bookmark["metadata"]?["agentID"]) == agentId)
+            {
+                if (TravelTarget(bookmark, bookmark["metadata"] as JsonObject) is { } bookmarkTarget)
+                    return bookmarkTarget;
+            }
+        }
+
+        if (role == "dungeon")
+        {
+            var point = mission?["missionPosition"] as JsonObject;
+            return TravelPoint(point, Positive(mission?["missionSystemID"]));
+        }
+        if (role == "source" && mission?["pickupLocation"] is JsonObject pickup)
+            return TravelTarget(pickup, null);
+        if (role is "destination" or "objective" && mission?["dropoffLocation"] is JsonObject dropoff)
+            return TravelTarget(dropoff, null);
+        if (role is "agenthomebase" or "objective")
+        {
+            var agent = rpcCallbacks?.ReadAgents is { } readAgents
+                ? (await readAgents(call.Cancellation)).FirstOrDefault(item => item.AgentId == agentId)
+                : null;
+            call.Cancellation.ThrowIfCancellationRequested();
+            if (agent is not null && agent.StationId is > 0 and var stationId)
+                return new AgentMissionTravelTarget(agent.SolarSystemId ?? 0, stationId, null, null, null);
+        }
+        return null;
+    }
+
+    private static AgentMissionTravelTarget? TravelTarget(JsonObject location, JsonObject? metadata)
+    {
+        var itemId = Positive(location["itemID"]);
+        if (itemId == 0) itemId = Positive(location["locationID"]);
+        var systemId = Positive(metadata?["solarsystemID"]);
+        if (systemId == 0) systemId = Positive(location["solarsystemID"]);
+        if (TryNumber(location["x"], out var x) && TryNumber(location["y"], out var y) && TryNumber(location["z"], out var z))
+            return new AgentMissionTravelTarget(systemId, itemId > 0 ? itemId : null, x, y, z);
+        return itemId > 0 ? new AgentMissionTravelTarget(systemId, itemId, null, null, null) : null;
+    }
+
+    private static AgentMissionTravelTarget? TravelPoint(JsonObject? point, long systemId) =>
+        point is not null && TryNumber(point["x"], out var x) && TryNumber(point["y"], out var y) &&
+        TryNumber(point["z"], out var z)
+            ? new AgentMissionTravelTarget(systemId, null, x, y, z)
+            : null;
 
     private async ValueTask<PyValue> ReadStandingGainsForMissionAsync(ServiceCall call)
     {
@@ -860,6 +1030,28 @@ public sealed class AgentMissionService(
     }
 
     private static double Number(JsonNode? value) => TryNumber(value, out var number) ? number : 0;
+
+    private static string MissionContentName(PyValue? value)
+    {
+        if (value is PyInt integer) return integer.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (value is PyLong longInteger) return longInteger.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (value is PyReal real && double.IsFinite(real.Value))
+            return ((long)Math.Truncate(real.Value)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var text = (JsSemantics.StringValue(value ?? PyNone.Instance) ?? "").Trim();
+        if (text.Length == 0) return "Placeholder Mission";
+        return long.TryParse(text, System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out var number)
+            ? number.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            : text;
+    }
+
+    private static double Number(PyValue? value) => value switch
+    {
+        PyInt integer => integer.Value,
+        PyLong integer => integer.Value,
+        PyReal real => real.Value,
+        _ => 0,
+    };
 
     private static bool IsTrue(JsonNode? value) =>
         value is JsonValue json && json.GetValueKind() == JsonValueKind.True;

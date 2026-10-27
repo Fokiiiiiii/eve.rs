@@ -53,3 +53,4 @@ Verified locally:
 - LocalChatGatewayTests: 8 passed, 0 failed, 0 skipped.
 - The whole Eve.Host.Tests shard was also run earlier with EVE_PG_URL removed: 534 passed, 104 failed, 227 skipped (865 total). Two of those failures were stale LocalChat type-name/frame assertions; the full LocalChatGatewayTests class passed after they were corrected. The whole shard has not been repeated after that correction, so its remaining result is unresolved.
 - No graphical V24.01 client session was exercised. Fleet and corporation Host tests drive the production notification publisher/adapter through Host wire probes with before/after snapshots; they do not exercise PostgreSQL-backed writes or restart behavior.
+- Pushed in main tip 7505fb9f; the implementation commit is d7f64014. Selected agent-test run 40505887538 passed with no failed tests or jobs. Push-triggered ci.yml run 40505868630 was queued at the latest check.

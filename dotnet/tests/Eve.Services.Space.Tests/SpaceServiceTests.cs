@@ -291,6 +291,7 @@ public class SpaceServiceTests
         var (rig, character, session) = await DockedAsync(localTimers: timers);
         await using var _ = rig;
         await InSpaceAsync(rig, session);
+        await Rig.UntilAsync(() => timers.Count == 0);
         rig.Space.LifecycleBlockers = (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<string>>([]);
         var shipId = character.ShipId;
         var systemId = (int)session.GetInt("solarsystemid")!.Value;
@@ -380,7 +381,7 @@ public class SpaceServiceTests
         var lost = new TaskCompletionSource<ShipLoss>(TaskCreationOptions.RunContinuationsAsynchronously);
         rig.Space.ShipLost += loss => lost.TrySetResult(loss);
 
-        Assert.IsType<PyTuple>(await rig.Space.EjectAsync(session, CancellationToken.None));
+        Assert.IsType<PyNone>(await rig.Space.EjectAsync(session, CancellationToken.None));
         var capsuleId = (await rig.Characters.GetAsync(character.CharacterId))!.ShipId!.Value;
 
         rig.Sim.Report(new SimDestroyed(
@@ -430,7 +431,7 @@ public class SpaceServiceTests
 
         var lost = new TaskCompletionSource<ShipLoss>(TaskCreationOptions.RunContinuationsAsynchronously);
         rig.Space.ShipLost += loss => lost.TrySetResult(loss);
-        Assert.IsType<PyTuple>(await rig.Space.EjectAsync(session, CancellationToken.None));
+        Assert.IsType<PyNone>(await rig.Space.EjectAsync(session, CancellationToken.None));
         var capsuleId = (await rig.Characters.GetAsync(character.CharacterId))!.ShipId!.Value;
 
         var heard = rig.Sim.Heard.ToArray();

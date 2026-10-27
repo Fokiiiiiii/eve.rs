@@ -1130,6 +1130,9 @@ private static double RelationshipValue(PyValue value)
         return bulletin is null ? PyNone.Instance : AllianceBulletinRow(AllianceBulletinDescriptor, bulletin);
     }
 
+    internal static (PyValue BulletinId,PyValue EditDateTime) BulletinEditArguments(ServiceCall call) =>
+        (call.Kwarg("bulletinID") ?? call.Arg(2),call.Kwarg("editDateTime") ?? call.Arg(3));
+
     [Method("AddBulletin")]
     public async ValueTask<PyValue> AddBulletin(ServiceCall call)
     {
@@ -1139,8 +1142,9 @@ private static double RelationshipValue(PyValue value)
         if (title.Length > 100 || body.Length > 4000)
             throw new CorporationError("ALLIANCE_BULLETIN_LIMIT_EXCEEDED");
         var nowFiletime = Number(CorporationWire.Time(now()));
-        var editFiletime = Number(call.Arg(3));
-        var bulletinId = call.Arg(2) is PyNone ? 0 : PositiveIntegerId(call.Arg(2));
+        var (bulletinIdArgument,editDateTimeArgument) = BulletinEditArguments(call);
+        var editFiletime = Number(editDateTimeArgument);
+        var bulletinId = bulletinIdArgument is PyNone ? 0 : PositiveIntegerId(bulletinIdArgument);
         var id = await store.AddAllianceBulletinAsync(alliance, actor, title, body,
             bulletinId > 0 ? bulletinId : null, nowFiletime,
             editFiletime > 0 ? editFiletime : nowFiletime, call.Cancellation);

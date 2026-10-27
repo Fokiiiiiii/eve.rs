@@ -62,7 +62,7 @@ public class SpaceContainerTests
         var (_, answer) = await JettisonAsync(flying, flying.Stack);
 
         // (the ids that went into a can, the ids launched as cans of their own)
-        var (jettisoned, launched) = Assert.IsType<PyTuple>(answer).Items switch { [PyTuple a, PyTuple b] => (a, b), var other => throw new InvalidOperationException(string.Join(",", other)) };
+        var (jettisoned, launched) = Assert.IsType<PyTuple>(answer).Items switch { [PyList a, PyList b] => (a, b), var other => throw new InvalidOperationException(string.Join(",", other)) };
         Assert.Equal([Events.Number(InventoryWire.Id(flying.Stack))], jettisoned.Items.Select(Events.Number));
         Assert.Empty(launched.Items);
         // the scene is asked for a can ahead of the ship, then told something is in it

@@ -79,12 +79,12 @@ public class CalendarMgrServiceTests
         Assert.Empty(creatorSink.Packets);
         var packet = Assert.Single(inviteeSink.Packets);
         Assert.Equal(
-            ClientNotification.Build(invitee.UserId ?? 0, invitee.NodeId, "OnNewCalendarEvent", "clientID",
+            MarshalCodec.Encode(ClientNotification.Build(invitee.UserId ?? 0, invitee.NodeId, "OnNewCalendarEvent", "clientID",
             [new PyTuple([
                 new PyLong(created.Value), new PyLong(CharacterId), new PyLong(start), new PyInt(60),
                 new PyStr("Fleet form-up"), new PyInt(0), PyNone.Instance, PyBool.True,
-            ])], 0),
-            packet);
+            ])], 0)),
+            MarshalCodec.Encode(packet));
     }
 
     [Fact]
@@ -365,19 +365,16 @@ public class CalendarMgrServiceTests
         new(id, owner, owner, tag, dateTime, 60, title, $"{title} details", 0,
             DateTime.UtcNow.ToFileTimeUtc(), false, null);
 
-    private static PyDict Details(CalendarEvent value) => new(
-    [
-        Pair("eventID", new PyLong(value.EventId)),
-        Pair("ownerID", new PyLong(value.OwnerId)),
-        Pair("creatorID", new PyLong(value.CreatorId)),
-        Pair("eventText", new PyStr(value.Text)),
-    ]);
+    private static PyValue Details(CalendarEvent value) => KeyVal(
+        ("eventText", new PyStr(value.Text)),
+        ("creatorID", new PyLong(value.CreatorId)));
 
-    private static PyDict ResponseRow(long characterId, short status) => new(
-    [
-        Pair("characterID", new PyLong(characterId)),
-        Pair("status", new PyInt(status)),
-    ]);
+    private static PyValue ResponseRow(long characterId, short status) => KeyVal(
+        ("characterID", new PyLong(characterId)),
+        ("status", new PyInt(status)));
+
+    private static PyValue KeyVal(params (string Name, PyValue Value)[] fields) =>
+        Py.KeyVal(fields.Select(field => Pair(field.Name, field.Value)));
 
     private static KeyValuePair<PyValue, PyValue> Pair(string key, PyValue value) =>
         new(new PyStr(key), value);
@@ -387,7 +384,7 @@ public class CalendarMgrServiceTests
 
     private static short ReadStatus(PyValue value)
     {
-        var row = Assert.IsType<PyDict>(value);
+        var row = Assert.IsType<PyDict>(Assert.IsType<PyObject>(value).Args);
         var status = Assert.IsType<PyInt>(row.Entries.Single(pair =>
             Assert.IsType<PyStr>(pair.Key).Value == "status").Value);
         return checked((short)status.Value);

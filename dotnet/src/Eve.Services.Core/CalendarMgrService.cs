@@ -590,10 +590,8 @@ internal static class CalendarWire
         ("autoEventType", value.AutoEventType is { } autoEventType ? new PyInt(autoEventType) : PyNone.Instance));
 
     public static PyValue EventDetails(CalendarEvent value) => KeyValObject(
-        ("eventID", new PyLong(value.EventId)),
-        ("ownerID", new PyLong(value.OwnerId)),
-        ("creatorID", new PyLong(value.CreatorId)),
-        ("eventText", new PyStr(value.Text)));
+        ("eventText", new PyStr(value.Text)),
+        ("creatorID", new PyLong(value.CreatorId)));
 
     public static PyValue ResponseForCharacter(CalendarResponse value) => KeyValObject(
         ("eventID", new PyLong(value.EventId)),

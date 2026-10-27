@@ -41,13 +41,15 @@
 **未実施:** 実クライアント GUI、DB-backed persistence test、EveJS runtime の直接実行。これらはこの job の no-DB 条件および対象 method 用 EveJS test entry 不在のため確認できていない。
 
 
-## CI追跡（2026-10-27）
+## CI追跡（2026-10-27、revision 89e93098 / run 40459345159）
 
-push-triggered CI の revision `5c72356e` で見つかった別機能の assertion mismatch も修正した。実装は変更せず、client/EveJS の契約に沿う期待値へそろえた。
+push-triggered CI run 40459345159 で見つかった wire assertion の根因を修正した。
 
-- Jettison の戻り値は外側が tuple、2つの内側値は list。client は `invItemFunctions.py:56-73` で両者を set として扱い、EveJS の `server/src/services/ship/shipService.js:1523-1554` は両方を list と説明している。Space と Abyssal の失敗テストを修正。
-- `CmdDock` は None を返す。client の `movementFunctions.py:503-518` は `PerformSessionChange` の値を使わず、EveJS の `server/src/services/ship/beyonceService.js:4232-4303` も成功時に null を返す。Space service test の成功期待値を修正。
-- insurance test は存在しない item ID と premium 0 を渡す。Host の `InsuranceService.cs:428-463,544-558` と EveJS の `server/src/insurance/insuranceRuntime.js:1087-1120` に合わせ、`InsCouldNotFindItem` を期待する。
-- calendar 招待上限は `CustomNotify`。client の `eveCalendarsvc.py:196-203` は RPC 結果を使わず、EveJS の `server/src/services/calendar/calendarRuntime.js:475-489,695-710` も作成・更新の両方で同じ error を返す。
+- Jettison は外側が tuple、内側2値が list。client の `invItemFunctions.py:56-73` は各値を set として扱い、EveJS の `server/src/services/ship/shipService.js:1523-1554` は両方を list として作るため、Space test を `PyList` に合わせた。
+- 受理された `CmdDock` は simulation の accepted FILETIME を `PyLong` で返す。実記録 `oracle/fixtures/scenarios/undock.json:1` と EveJS v0.12.9 `server/src/services/ship/beyonceService.js:4194` が long を示し、既存の `SpaceSessions.Movement.cs:25-59` も `PyLong(reply.At)` を返していたが `BeyonceService.CmdDock` が捨てていたため転送する。EveJS 261018.1 の null とはこの記録を根拠に異なる。V24 client の `movementFunctions.py:503-518` は戻り値を消費しない。
+- insurance の未知 item は `InsureShip` と `UnInsureShip` の双方で `InsCouldNotFindItem`。client の `base_insurance.py:395-403,519-552`、Host `InsuranceService.cs:428-463,478-501,544-558`、EveJS `insuranceRuntime.js:1087-1120,1256-1265` に合わせた。
+- calendar 招待上限は `CustomNotify`。client `eveCalendarsvc.py:196-203` と EveJS `calendarRuntime.js:475-489,695-710` がこの error を使う。
+- `GetEventDetails` は `util.KeyVal` の `eventText` / `creatorID` を返す。V24 UI は `eveCalendar.py:1107-1113` で両属性を読み、notification formatter は `notifications/common/formatters/calendar.py:22-32` で `eventText` を読む。EveJS `calendarPayloads.js:49-54` も `buildKeyVal` を使う。headless helper `marshal.py:1144-1173` は Object を `(name, args)` にするため、E2E assertion をその形に修正した。
+- Host registry inventory assertion は現行 1445 method に合わせた。件数 assertion のみの変更。
 
-変更した Space / Core / Host test projects は compile-check 済み。Core の `Calendar_validates_client_title_limits_and_reports_unknown_events` は 1/1 成功。no-DB 条件により PostgreSQL を使う Host / Space tests はこの worktree では実行せず、push-triggered CI で確認する。
+**ローカル確認（merge origin/main 後）:** Core / Space / Host test projects の `dotnet build` は全て成功、Core の `Client_read_Rpcs_return_stored_events_details_and_responses` は 1/1 成功、変更した headless test の `py_compile` は成功。PostgreSQL を必要とする Space / Host tests は no-DB 条件のためローカルでは実行していない。push-triggered CI で全 project shard と E2E を確認する。

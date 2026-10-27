@@ -818,7 +818,7 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
     {
         if (_binding.Owns(call) && Number(call.Arg(0)) is { } station)
         {
-            _ = await space.DockAsync(call.Session, (long)station, call.Cancellation);
+            return await space.DockAsync(call.Session, (long)station, call.Cancellation);
         }
         return None;
     }

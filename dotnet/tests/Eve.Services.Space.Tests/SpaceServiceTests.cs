@@ -2938,7 +2938,7 @@ public class SpaceServiceTests
         var oid = await rig.BindBeyonceAsync(session);
 
         var answer = await rig.BeyonceCallAsync(session, "CmdDock", oid, new PyInt((int)Rig.Station), new PyLong(session.GetInt("shipid")!.Value));
-        Assert.Same(PyNone.Instance, answer);
+        Assert.Equal(new PyLong(rig.Sim.DockAnswer.At), answer);
         Assert.Equal(Describe(new SimCommand((ulong)session.SessionId, SimCommands.Dock, [Rig.Station])), Describe(rig.Sim.Heard.Last()));
 
         rig.Sim.DockAnswer = new CommandReply(false, 0, "STATION_NOT_FOUND");

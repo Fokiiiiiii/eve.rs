@@ -180,7 +180,7 @@ public sealed class MarketHostTests : IAsyncLifetime
         Assert.Equal("InsCouldNotFindItem", insureFailure.Error.UserErrorMessage);
         var uninsureFailure = await Assert.ThrowsAsync<MachoWrappedException>(() =>
             insurance.CallAsync(Call(session, "UnInsureShip", 36, new PyLong(1))).AsTask());
-        Assert.Equal("UnInsureShipFailed", uninsureFailure.Error.UserErrorMessage);
+        Assert.Equal("InsCouldNotFindItem", uninsureFailure.Error.UserErrorMessage);
 
         // the multi-buy fills the ask at its limit: no order is created (the answer is the rowset of created orders, empty), the wallet charged, and the fill in the transaction tab
         var bought = await market.CallAsync(Call(session, "BuyMultipleItems", 1, new PyInt(station.Id),

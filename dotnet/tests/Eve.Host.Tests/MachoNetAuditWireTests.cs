@@ -17,6 +17,7 @@ public sealed class MachoNetAuditWireTests : IAsyncLifetime
 
     private readonly CancellationTokenSource _cancel = new();
     private readonly ConnectedSessions _connected = new();
+    private readonly CharacterSessions _characters = new();
     private readonly List<TestFront> _fronts = [];
     private readonly TestGlobalConfigPersistence _persistence = new();
     private GlobalConfigStore _config = null!;
@@ -29,10 +30,15 @@ public sealed class MachoNetAuditWireTests : IAsyncLifetime
         _config = await GlobalConfigStore.OpenAsync(
             GlobalConfig.Build(new ClusterOptions()),
             _persistence);
+        var dockedCharacter = new ClientSession();
+        dockedCharacter.Set("solarsystemid2", new PyInt(30_000_123));
+        dockedCharacter.Set("stationid", new PyInt(60_000_123));
+        _characters.Enter(42, dockedCharacter);
+
         Func<long> now = () => FixedNowMs;
         var registry = new ServiceRegistry();
         registry.Register(new MachoNetService(
-            new Info(registry, _config.Current),
+            new HostMachoNetInfo(registry, _config.Current, _characters),
             now,
             GlobalConfigWrites.Create(_config, _connected, () => _server.PublishClusterConfig())));
         _server = new HostServer(
@@ -80,19 +86,6 @@ public sealed class MachoNetAuditWireTests : IAsyncLifetime
             _rows[key] = value;
             return Task.CompletedTask;
         }
-    }
-
-    private sealed class Info(ServiceRegistry registry, Func<PyDict> config) : IMachoNetInfo
-    {
-        public IReadOnlyList<KeyValuePair<string, string?>> Services() =>
-            [.. registry.ServiceNames.Select(name => new KeyValuePair<string, string?>(name, ServiceLocations.Of(name)))];
-
-        public PyDict GlobalConfig() => config();
-
-        public int UserCount() => 0;
-
-        public PyValue ClusterGameStatisticsForClient() =>
-            Py.Tuple(new PyDict([]), new PyDict([]), new PyInt(1));
     }
 
     private static SessionOpen Open(ulong sessionId, uint userId, ulong role) =>
@@ -181,7 +174,7 @@ public sealed class MachoNetAuditWireTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task GetClusterGameStatisticsForClient_returns_the_host_tuple_not_the_client_fallback()
+    public async Task GetClusterGameStatisticsForClient_returns_real_host_counts_not_the_client_fallback()
     {
         var (front, _) = await ConnectAsync();
         var caller = Open(1, 42, PlayerRole);
@@ -198,7 +191,13 @@ public sealed class MachoNetAuditWireTests : IAsyncLifetime
             Py.Dict(("machoVersion", new PyInt(1)))))));
 
         var reply = Assert.IsType<Send>(await front.ReceiveAsync());
-        Assert.Equal(Py.Tuple(new PyDict([]), new PyDict([]), new PyInt(1)), Result(reply.Payload));
+        var expectedSystems = new PyDict([
+            new KeyValuePair<PyValue, PyValue>(new PyInt(123), new PyInt(1)),
+        ]);
+        var expectedStations = new PyDict([
+            new KeyValuePair<PyValue, PyValue>(new PyInt(123), new PyInt(1)),
+        ]);
+        Assert.Equal(Py.Tuple(expectedSystems, expectedStations, new PyInt(1)), Result(reply.Payload));
     }
 
     [Fact]

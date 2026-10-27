@@ -3441,8 +3441,7 @@ public class SpaceServiceTests
 
             Assert.Equal(PyNone.Instance, await FleetObjectCallAsync(fleet, fleetId, inviteeSession, "LeaveFleet", []));
             Assert.Null(inviteeSession.GetInt("fleetid"));
-            Assert.Equal(new PyLong(inviteeId),
-                Assert.Single(Events.Of(inviteeSession), item => item.Name == "OnFleetLeave").Args[0]);
+            Assert.DoesNotContain(Events.Of(inviteeSession), item => item.Name == "OnFleetLeave");
             Assert.Equal(new PyLong(inviteeId),
                 Assert.Single(Events.Of(leaderSession), item => item.Name == "OnFleetLeave").Args[0]);
         }

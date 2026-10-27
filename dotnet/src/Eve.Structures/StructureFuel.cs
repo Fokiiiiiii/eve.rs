@@ -12,6 +12,8 @@ public static class StructureServiceIds
     public const int Medical = 6;
     /// <summary>The JUMP_CLONE service (EVE.js STRUCTURE_SERVICE_ID.JUMP_CLONE): a clone bay that also needs the character to be able to dock (EVE.js characterHasStructureCloneService).</summary>
     public const int JumpClone = 10;
+    /// <summary>The Upwell loyalty point store service (EVE.js STRUCTURE_SERVICE_ID.LOYALTY_STORE).</summary>
+    public const int LoyaltyStore = 11;
     public const int Reprocessing = 4;
     public const int CynoBeacon = 16;
     public const int CynoJammer = 17;

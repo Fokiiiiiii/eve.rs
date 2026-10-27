@@ -4,6 +4,8 @@ The current snapshot below is authoritative. Dated sections that follow preserve
 
 ## Current snapshot
 
+- LPStore/LPSvc deep check is recorded in `DEEPCHECK_lpstore.md` (2026-10-27). The local `LPStoreMgr` structure route now checks persisted loyalty-store service access and uses `structureid` for purchases; three focused Host wire tests passed. The full `Eve.Host.Tests` shard with `EVE_PG_URL` unset finished 540 passed, 100 failed, and 227 skipped; DB-dependent cases and SDE-fixture setup failures keep the shard red. No PostgreSQL database was used, and this change was not pushed because the owner CI rule requires a green full shard.
+- The audit also confirms that `LPSvc` transfer and CONCORD exchange calls still return the existing `CustomInfo` refusal. EveJS 261018.1 implements transfers; this remains an open compatibility gap. The report records client callsites and the exact response.
 - Latest code-bearing main commit checked: `b213ee17` (2026-10-26); the V24.01 client tree: `/home/user/eve-logic` commit `1dbb5711a072a146e1d228365668ac05655eefe1`.
 - Current audit totals: 4,014 client rows, 2,186 RPC rows, 1,419 active Host routes, and 20 queue files. The six rows checked in batches 29–30 move coverage to IMPLEMENTED-TESTED 1,375 and IMPLEMENTED-UNTESTED 516; other totals are CLIENT-DEAD 3, HOLLOW 10, MISSING 282, REJECTS-VALID-INPUT 0.
 - Regenerate both CSVs and the P0/P1 work queue with `python3 tools/spec-extract/run_service_audit_current.py --queue-dir /tmp/service-audit-current`.

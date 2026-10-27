@@ -43,6 +43,7 @@ public sealed partial class PersistenceStructureDirectoryReadModel
         JumpBridgeServiceId => JumpBridgeAccessSettingId,
         3 => 20,
         Eve.Structures.StructureServiceIds.Market => 4,
+        Eve.Structures.StructureServiceIds.LoyaltyStore => 19,
         Eve.Structures.StructureServiceIds.Medical => 23,
         // MOON_MINING is admitted by the control setting (EVE.js structureServiceAuthority.js SERVICE_ACCESS_SETTING_BY_ID)
         14 => 17,

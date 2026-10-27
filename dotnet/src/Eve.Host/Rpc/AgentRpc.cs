@@ -80,7 +80,9 @@ internal sealed partial class CharacterServicesComposition
             agentMissionService,
             new LoyaltyPointsService(loyaltyPoints, async (characterId, token) =>
                 (await characters.GetAsync(characterId, token))?.CorporationId),
-            new Eve.Services.Wallet.LpStoreMgrService(lpStoreCache, lpStorePurchases, IsCorporationDirectorAsync),
+            new Eve.Services.Wallet.LpStoreMgrService(lpStoreCache, lpStorePurchases, IsCorporationDirectorAsync,
+                hasLoyaltyStoreService: (characterId, structureId, token) => structureDirectoryReadModel.CharacterHasServiceAsync(
+                    characterId, structureId, Eve.Structures.StructureServiceIds.LoyaltyStore, token)),
             allianceRegistry,
             publicQaSlashService = new SlashService(new ShipHealthCommands(ships, dogma, now, spaceSessions), spaceSessions is null ? null : new DeathTestCommands(spaceSessions, new ShipTypeNames(sde)), spaceSessions is null ? null : new SuicideCommands(spaceSessions), spaceSessions is null ? null : new NpcCommands(spaceSessions), new ItemCommands(new ItemTypeNames(sde), ships, dogma, now, spaceSessions), new SkillCommands(skillCatalog, skills, source, dogmaSync, now), new IskCommands(economyWallets, source, now, wallets, loyaltyPoints),
                 new LoyaltyCommands(loyaltyPoints, new HostStandingDirectory(dogma, corporations, agentMissionAgentById, characters), now),

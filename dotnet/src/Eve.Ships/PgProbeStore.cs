@@ -113,6 +113,23 @@ public sealed class PgProbeStore
         return list;
     }
 
+    /// <summary>The records for a character in a system, including probes whose expiry has passed but have not been swept.</summary>
+    public async Task<IReadOnlyList<ScanProbeRecord>> CharacterInSystemAsync(long characterId, int solarSystemId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(
+            $"SELECT {Columns} FROM {_schema}.scan_probes WHERE character_id = $1 AND solar_system_id = $2 ORDER BY probe_id", connection);
+        command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        command.Parameters.Add(new NpgsqlParameter { Value = solarSystemId });
+        var list = new List<ScanProbeRecord>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            list.Add(Read(reader));
+        }
+        return list;
+    }
+
     /// <summary>What is due to go by <paramref name="nowMs"/>.</summary>
     public async Task<IReadOnlyList<ScanProbeRecord>> DueAsync(long nowMs, CancellationToken cancellationToken = default)
     {

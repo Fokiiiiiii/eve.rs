@@ -24,6 +24,7 @@ public sealed class IncursionAnomalyService : IService
 
     /// <summary>The probe scan's answers on the scan manager (<c>RequestScans</c>, <c>SetActivityState</c>): given the method's name and the call.</summary>
     private readonly Func<string, ServiceCall, ValueTask<PyValue>>? _probeScans;
+    private readonly Func<long, CancellationToken, ValueTask<PyDict>>? _readSignatures;
 
     public IncursionAnomalyService(
         string serviceName,
@@ -33,10 +34,12 @@ public sealed class IncursionAnomalyService : IService
         Func<long>? nowUnixMs = null,
         Func<ServiceCall, PyValue, ValueTask<PyValue>>? signalTrackerRegister = null,
         Func<ClientSession, long, CancellationToken, ValueTask>? recallProbe = null,
-        Func<string, ServiceCall, ValueTask<PyValue>>? probeScans = null)
+        Func<string, ServiceCall, ValueTask<PyValue>>? probeScans = null,
+        Func<long, CancellationToken, ValueTask<PyDict>>? readSignatures = null)
     {
         _recallProbe = recallProbe;
         _probeScans = probeScans;
+        _readSignatures = readSignatures;
         if (serviceName is not (MapName or TaleManagerName or ScanManagerName))
             throw new ArgumentOutOfRangeException(nameof(serviceName), serviceName, "Unsupported incursion/anomaly service.");
         ArgumentNullException.ThrowIfNull(readIncursions);
@@ -75,6 +78,8 @@ public sealed class IncursionAnomalyService : IService
             (ScanManagerName, "GetSystemScanMgr") => GetSystemScanMgr(call),
             (ScanManagerName, "SignalTrackerRegister") => await SignalTrackerRegisterAsync(call),
             (ScanManagerName, "DestroyProbe") => await DestroyProbeAsync(call),
+            (ScanManagerName, "GetScanTargetID" or "QAOverrideProbeExpiry" or "QAScanSites") =>
+                _probeScans is null ? PyNone.Instance : await _probeScans(call.Method, call),
             (ScanManagerName, "RequestScans" or "SetActivityState" or "RecoverProbes" or "ReconnectToLostProbes" or "ConeScan") =>
                 _probeScans is null ? PyNone.Instance : await _probeScans(call.Method, call),
             _ => PyNone.Instance,
@@ -85,7 +90,7 @@ public sealed class IncursionAnomalyService : IService
     {
         MapName => method is "GetIncursionGlobalReport" or "GetSystemsInIncursions",
         TaleManagerName => method is "GetGlobalWorldEventTales" or "get_active_tales_by_template",
-        ScanManagerName => method is "GetFullState" or "GetSystemScanMgr" or "SignalTrackerRegister" or "DestroyProbe" or "RequestScans" or "SetActivityState" or "RecoverProbes" or "ReconnectToLostProbes" or "ConeScan",
+        ScanManagerName => method is "GetFullState" or "GetSystemScanMgr" or "SignalTrackerRegister" or "GetScanTargetID" or "DestroyProbe" or "RequestScans" or "SetActivityState" or "RecoverProbes" or "ReconnectToLostProbes" or "QAOverrideProbeExpiry" or "QAScanSites" or "ConeScan",
         _ => false,
     };
 
@@ -136,11 +141,13 @@ public sealed class IncursionAnomalyService : IService
         return new PyList([]);
     }
 
-    private async ValueTask<PyValue> GetFullStateAsync(ServiceCall call)
+    private ValueTask<PyValue> GetFullStateAsync(ServiceCall call) =>
+        ReadFullStateForSystemAsync(ResolveSystemId(call.Session), call.Cancellation);
+
+    public async ValueTask<PyValue> ReadFullStateForSystemAsync(long systemId, CancellationToken cancellationToken)
     {
-        var systemId = ResolveSystemId(call.Session);
         var sites = systemId > 0
-            ? await _readAnomalies(systemId, call.Cancellation)
+            ? await _readAnomalies(systemId, cancellationToken)
             : Array.Empty<JsonObject>();
 
         var anomalies = new List<KeyValuePair<PyValue, PyValue>>();
@@ -160,9 +167,13 @@ public sealed class IncursionAnomalyService : IService
             anomalies.Add(new(Py.Number(siteId), BuildAnomalyInfo(site, systemId, overlayId)));
         }
 
+        var signatures = systemId > 0 && _readSignatures is { } readSignatures
+            ? await readSignatures(systemId, cancellationToken)
+            : new PyDict([]);
+
         return new PyList([
             new PyDict(anomalies),
-            new PyDict([]),
+            signatures,
             new PyDict([]),
             new PyDict([]),
         ]);

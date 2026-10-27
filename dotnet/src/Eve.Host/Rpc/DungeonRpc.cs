@@ -65,17 +65,31 @@ internal sealed partial class CharacterServicesComposition
             incursionAnomalyReadModel.ReadIncursionsAsync,
             incursionAnomalyReadModel.ReadAnomaliesAsync,
             nowUnixMs: now),
-        new Eve.Services.Core.IncursionAnomalyService(
+        ScanMgrRpc(),
+    ];
+
+    private IService ScanMgrRpc()
+    {
+        var service = new Eve.Services.Core.IncursionAnomalyService(
             "scanMgr",
             incursionAnomalyReadModel.ReadIncursionsAsync,
             incursionAnomalyReadModel.ReadAnomaliesAsync,
             nowUnixMs: now,
-            recallProbe: (session, probeId, token) => spaceSessions is null ? ValueTask.CompletedTask : new ValueTask(spaceSessions.RecallAsync(session, probeId, token)),
+            recallProbe: (session, probeId, token) => spaceSessions is null
+                ? ValueTask.CompletedTask
+                : new ValueTask(spaceSessions.RecallAsync(session, probeId, token)),
             probeScans: (method, call) => method == "ConeScan"
                 ? (spaceSessions?.DirectionalScans is { } sweeps
                     ? new ValueTask<PyValue>(sweeps.ConeScanAsync(call.Session, call.Arg(0), call.Arg(1), call.Arg(2), call.Arg(3), call.Arg(4), call.Cancellation))
                     : ValueTask.FromResult<PyValue>(PyNone.Instance))
-                : spaceSessions?.ProbeScans is { } scans ? scans.HandleAsync(method, call) : ValueTask.FromResult<PyValue>(PyNone.Instance),
-            signalTrackerRegister: signalTrackerRegistrationProvider.RegisterAsync),
-    ];
+                : spaceSessions?.ProbeScans is { } scans
+                    ? scans.HandleAsync(method, call)
+                    : ValueTask.FromResult<PyValue>(PyNone.Instance),
+            signalTrackerRegister: signalTrackerRegistrationProvider.RegisterAsync,
+            readSignatures: (systemId, token) => spaceSessions?.ProbeScans is { } scans
+                ? scans.ReadSignalTrackerSignaturesAsync(systemId, token)
+                : ValueTask.FromResult(new PyDict([])));
+        signalTrackerRegistrationProvider.ReadFullState = service.ReadFullStateForSystemAsync;
+        return service;
+    }
 }

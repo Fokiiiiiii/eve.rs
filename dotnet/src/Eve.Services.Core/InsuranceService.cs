@@ -1,7 +1,9 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using Eve.Marshal;
+using Eve.Macho;
 using Eve.Services;
 
 namespace Eve.Services.Core;
@@ -138,6 +140,7 @@ public enum InsuranceMutationStatus
     NoActiveContract,
     NotAuthorized,
     InvalidRequest,
+    InsufficientFunds,
     NotEligible
 }
 
@@ -166,7 +169,8 @@ public sealed record InsuranceInvalidationRequest(
 public sealed record InsuranceMutationResult(
     InsuranceMutationStatus Status,
     long RelatedOwnerId = 0,
-    long AmountCents = 0);
+    long AmountCents = 0,
+    decimal AvailableBalanceIsk = 0m);
 
 /// <summary>
 /// Host callbacks must perform each mutation in one database transaction. Purchase debits the
@@ -257,7 +261,7 @@ public interface IInsuranceReadModel
 
 /// <summary>Read-only insurance price and contract RPCs matching the EVE client wire contract.</summary>
 [Service("insuranceSvc")]
-public sealed partial class InsuranceService
+public sealed partial class InsuranceService : IBoundObjectReleaseHandler
 {
     public const long CorporationAccountantRole = 256;
     public const long CorporationJuniorAccountantRole = 4_503_599_627_370_496;
@@ -268,6 +272,7 @@ private readonly IInsuranceWriteModel? _writeModel;
     private readonly IInsuranceReadModel _readModel;
     private readonly Func<long> _nowUnixMs;
     private readonly Func<long, long, CancellationToken, ValueTask<bool>>? _hasCorporationInsuranceRole;
+    private readonly ConcurrentDictionary<string, long> _boundSessions = new(StringComparer.Ordinal);
 
     public InsuranceService(
         IInsuranceReadModel readModel,
@@ -281,11 +286,65 @@ private readonly IInsuranceWriteModel? _writeModel;
         _hasCorporationInsuranceRole = hasCorporationInsuranceRole;
     }
 
-    private const int MaximumInsurancePriceTypeIds = 500;
+    public void OnBoundObjectReleased(string oid, ClientSession? session) => _boundSessions.TryRemove(oid, out _);
+
+    [Method("MachoResolveObject")]
+    public PyValue MachoResolveObject(ServiceCall call) => new PyInt(Eve.Macho.MachoMessage.ProxyNodeId);
+
+    [Method("MachoBindObject")]
+    public async ValueTask<PyValue> MachoBindObject(ServiceCall call)
+    {
+        var oid = $"N={Eve.Macho.MachoMessage.ProxyNodeId}:{BoundObjectIds.Next()}";
+        _boundSessions[oid] = call.Session.SessionId;
+        call.Session.Closed += () => _boundSessions.TryRemove(oid, out _);
+
+        var bound = new PySubStruct(new PySubStream(Py.Tuple(
+            new PyStr(oid), new PyLong(Py.FileTimeFromUnixMs(_nowUnixMs())))));
+        PyValue nestedResult = PyNone.Instance;
+        if (call.Arg(1) is PyTuple { Items.Count: > 0 } nested &&
+            JsSemantics.StringValue(nested.Items[0]) is { } method)
+        {
+            IReadOnlyList<PyValue> args = nested.Items.Count > 1
+                ? nested.Items[1] switch
+                {
+                    PyTuple tuple => tuple.Items,
+                    PyList list => list.Items,
+                    var value => [value],
+                }
+                : [];
+            var previousBoundObjectId = call.Session.CurrentBoundObjectId;
+            call.Session.CurrentBoundObjectId = oid;
+            try
+            {
+                nestedResult = await ((IService)this).CallAsync(new ServiceCall
+                {
+                    Method = method,
+                    Args = args,
+                    Kwargs = nested.Items.Count > 2 ? nested.Items[2] : PyNone.Instance,
+                    Session = call.Session,
+                    CallId = call.CallId,
+                    BoundObjectId = oid,
+                    BoundObjectParameters = call.Arg(0),
+                    Cancellation = call.Cancellation,
+                });
+            }
+            catch
+            {
+                _boundSessions.TryRemove(oid, out _);
+                throw;
+            }
+            finally
+            {
+                call.Session.CurrentBoundObjectId = previousBoundObjectId;
+            }
+        }
+        return Py.Tuple(bound, nestedResult);
+    }
 
     [Method("GetInsurancePrice")]
     public async ValueTask<PyValue> GetInsurancePrice(ServiceCall call)
     {
+        EnsureBoundObject(call);
         var typeId = PositiveId(call.Arg(0));
         if (typeId == 0)
         {
@@ -299,6 +358,7 @@ private readonly IInsuranceWriteModel? _writeModel;
     [Method("GetInsurancePrices")]
     public async ValueTask<PyValue> GetInsurancePrices(ServiceCall call)
     {
+        EnsureBoundObject(call);
         var typeIds = ReadTypeIds(call.Arg(0));
         if (typeIds.Length == 0)
         {
@@ -315,6 +375,7 @@ private readonly IInsuranceWriteModel? _writeModel;
     [Method("GetContracts")]
     public async ValueTask<PyValue> GetContracts(ServiceCall call)
     {
+        EnsureBoundObject(call);
         var isCorporation = IntegerValue(call.Arg(0)) > 0;
         var ownerKind = isCorporation ? InsuranceOwnerKind.Corporation : InsuranceOwnerKind.Character;
         var ownerId = SessionOwnerId(call.Session, ownerKind);
@@ -340,6 +401,7 @@ private readonly IInsuranceWriteModel? _writeModel;
     [Method("GetContractForShip")]
     public async ValueTask<PyValue> GetContractForShip(ServiceCall call)
     {
+        EnsureBoundObject(call);
         var shipId = PositiveId(call.Arg(0));
         if (shipId == 0)
         {
@@ -366,11 +428,12 @@ private readonly IInsuranceWriteModel? _writeModel;
     [Method("InsureShip")]
     public async ValueTask<PyValue> InsureShip(ServiceCall call)
     {
+        EnsureBoundObject(call);
         var shipId = PositiveId(call.Arg(0));
         if (shipId == 0 || !TryIskAmountCents(call.Arg(1), out var premiumCents) ||
             !TryBoolean(call.Arg(2), out var isCorporation))
         {
-            throw Eve.Services.MachoErrors.ThrowUserError("InsureShipFailed");
+            throw Eve.Services.MachoErrors.ThrowUserError("InsCouldNotFindItem");
         }
 
         var replaceValue = call.Kwarg("voidOld") ?? call.Arg(3);
@@ -378,14 +441,18 @@ private readonly IInsuranceWriteModel? _writeModel;
         if (replaceValue is not null && replaceValue is not PyNone &&
             !TryBoolean(replaceValue, out replaceExisting))
         {
-            throw Eve.Services.MachoErrors.ThrowUserError("InsureShipFailed");
+            throw Eve.Services.MachoErrors.ThrowUserError("InsCouldNotFindItem");
         }
 
         var actor = Actor(call.Session);
-        if (!actor.IsDocked || actor.CharacterId <= 0 ||
-            (isCorporation && (actor.CorporationId <= 0 || !await CanUseCorporationInsuranceAsync(call.Session, call.Cancellation))))
+        if (!actor.IsDocked || actor.CharacterId <= 0)
         {
-            throw Eve.Services.MachoErrors.ThrowUserError("InsureShipFailed");
+            throw Eve.Services.MachoErrors.ThrowUserError("InsCouldNotFindItem");
+        }
+        if (isCorporation && (actor.CorporationId <= 0 ||
+            !await CanUseCorporationInsuranceAsync(call.Session, call.Cancellation)))
+        {
+            throw Eve.Services.MachoErrors.ThrowUserError("CrpAccessDenied");
         }
 
         var nowUnixMs = _nowUnixMs();
@@ -401,32 +468,38 @@ private readonly IInsuranceWriteModel? _writeModel;
                 nowFileTime,
                 endFileTime),
             call.Cancellation);
+        if (result.Status == InsuranceMutationStatus.Applied)
+        {
+            call.Session.AfterResponse(() =>
+                call.Session.SendNotification("OnShipInsured", "clientID"));
+        }
         return PurchaseResult(result);
     }
 
     [Method("UnInsureShip")]
     public async ValueTask<PyValue> UnInsureShip(ServiceCall call)
     {
+        EnsureBoundObject(call);
         var shipId = PositiveId(call.Arg(0));
         var actor = Actor(call.Session);
         if (shipId == 0 || !actor.IsDocked || actor.CharacterId <= 0)
         {
-            throw Eve.Services.MachoErrors.ThrowUserError("UnInsureShipFailed");
+            throw Eve.Services.MachoErrors.ThrowUserError("InsCouldNotFindItem");
         }
         var existing = NormalizeContract(await _readModel.GetContractForShipAsync(shipId, call.Cancellation));
         if (existing is { OwnerKind: InsuranceOwnerKind.Corporation } &&
             (existing.OwnerId != actor.CorporationId ||
                 !await CanUseCorporationInsuranceAsync(call.Session, call.Cancellation)))
         {
-            throw Eve.Services.MachoErrors.ThrowUserError("UnInsureShipFailed");
+            throw Eve.Services.MachoErrors.ThrowUserError("InsCouldNotFindItem");
         }
 
-        var result = await WriteModel("UnInsureShipFailed").UnInsureShipAsync(
+        var result = await WriteModel("InsCouldNotFindItem").UnInsureShipAsync(
             new InsuranceCancellationCommand(actor, shipId, Py.FileTimeFromUnixMs(_nowUnixMs())),
             call.Cancellation);
-        return result.Status is InsuranceMutationStatus.Applied or InsuranceMutationStatus.AlreadyApplied
+        return result.Status == InsuranceMutationStatus.Applied
             ? PyNone.Instance
-            : throw Eve.Services.MachoErrors.ThrowUserError("UnInsureShipFailed");
+            : throw Eve.Services.MachoErrors.ThrowUserError("InsCouldNotFindItem");
     }
 
     /// <summary>Called by the authoritative ship-loss path; not exposed as a client RPC.</summary>
@@ -460,7 +533,16 @@ private readonly IInsuranceWriteModel? _writeModel;
         return WriteModel().InvalidateShipAsync(request, cancellationToken);
     }
 
-    private IInsuranceWriteModel WriteModel(string errorName = "InsureShipFailed") =>
+    private void EnsureBoundObject(ServiceCall call)
+    {
+        if (call.BoundObjectId is { } oid &&
+            (!_boundSessions.TryGetValue(oid, out var sessionId) || sessionId != call.Session.SessionId))
+        {
+            throw Eve.Services.MachoErrors.ThrowUserError("UnMachoDestination");
+        }
+    }
+
+    private IInsuranceWriteModel WriteModel(string errorName = "InsCouldNotFindItem") =>
         _writeModel ?? throw Eve.Services.MachoErrors.ThrowUserError(errorName);
 
     private static PyValue PurchaseResult(InsuranceMutationResult result) =>
@@ -470,7 +552,11 @@ private readonly IInsuranceWriteModel? _writeModel;
             InsuranceMutationStatus.AlreadyInsured => throw Eve.Services.MachoErrors.ThrowUserError(
                 "InsureShipFailedSingleContract",
                 ("ownerName", Py.Number(result.RelatedOwnerId))),
-            _ => throw Eve.Services.MachoErrors.ThrowUserError("InsureShipFailed")
+            InsuranceMutationStatus.InsufficientFunds => throw Eve.Services.MachoErrors.ThrowUserError(
+                "NotEnoughMoney",
+                ("amount", Py.Number(result.AmountCents / 100d)),
+                ("balance", Py.Number((double)result.AvailableBalanceIsk))),
+            _ => throw Eve.Services.MachoErrors.ThrowUserError("InsCouldNotFindItem")
         };
 
     private static InsuranceActorSnapshot Actor(ClientSession session)
@@ -623,16 +709,8 @@ private readonly IInsuranceWriteModel? _writeModel;
             cancellationToken);
     }
 
-    private static long[] ReadTypeIds(PyValue value)
-    {
-        var values = Values(value).Take(MaximumInsurancePriceTypeIds + 1).ToArray();
-        if (values.Length > MaximumInsurancePriceTypeIds)
-        {
-            throw Eve.Services.MachoErrors.ThrowUserError("InsuranceBulkLimitExceeded");
-        }
-
-        return [.. values.Select(PositiveId).Where(id => id > 0).Distinct().OrderBy(id => id)];
-    }
+    private static long[] ReadTypeIds(PyValue value) =>
+        [.. Values(value).Select(PositiveId).Where(id => id > 0).Distinct().OrderBy(id => id)];
 
     private static IEnumerable<PyValue> Values(PyValue value)
     {

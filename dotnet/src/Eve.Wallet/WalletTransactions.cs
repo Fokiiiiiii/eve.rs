@@ -2,7 +2,20 @@ using Npgsql;
 
 namespace Eve.Wallet;
 
-public sealed class InsufficientFundsException(long ownerId) : Exception($"wallet {ownerId} has insufficient funds");
+public sealed class InsufficientFundsException : Exception
+{
+    public long OwnerId { get; }
+    public decimal? AvailableBalance { get; }
+
+    public InsufficientFundsException(long ownerId) : this(ownerId, null) { }
+
+    public InsufficientFundsException(long ownerId, decimal? availableBalance)
+        : base($"wallet {ownerId} has insufficient funds")
+    {
+        OwnerId = ownerId;
+        AvailableBalance = availableBalance;
+    }
+}
 public sealed class WalletNotFoundException(long ownerId) : Exception($"wallet {ownerId} does not exist");
 public sealed class WalletOperationConflictException(string key) : Exception($"wallet operation {key} has different terms");
 
@@ -133,7 +146,7 @@ public sealed partial class WalletTransactions
         }
         if (isk + delta < 0)
         {
-            throw new InsufficientFundsException(owner);
+            throw new InsufficientFundsException(owner, isk);
         }
         if (delta > WalletLimits.MaximumIsk - isk) throw new MoneyLimitException();
         return await ApplyAsync(connection, transaction, owner, counterparty, delta, refTypeId, reason, timeMs, operationKey, cancellationToken, referenceId, referenceType);

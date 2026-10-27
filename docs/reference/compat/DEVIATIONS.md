@@ -1,5 +1,9 @@
 # Deviations from the reference server
 
+## allianceRegistry bulletin edit keyword arguments (2026-10-27)
+
+V24.01 `base_corporation.py:960` creates an alliance bulletin with positional title/body arguments, then edits it at `base_corporation.py:969` with `bulletinID` and `editDateTime` keyword arguments. EveJS 261018.1 `server/src/services/corporation/allianceRegistryRuntime.js:954-985` reads those two values only from positional arguments, so an edit can be treated as a new bulletin. eve.rs now prefers the client keyword values and keeps the positional form as a fallback in `AllianceRegistryService.BulletinEditArguments`. `AllianceRegistryHostWireTests.Add_bulletin_keeps_client_keyword_arguments_and_positional_defaults` covers keyword, positional, None and int/long forms.
+
 ## Host SKINR catalog data source (2026-10-23)
 
 The V24.01 pinned SDE build 3396210 has no `skinr*` authority tables, while the official CCP `missionPinned` build 3405148 contains `skinrComponentPointValues`, `skinrComponents`, `skinrSlotConfigurations`, `skinrSlots` and `skinrTierThresholds` (`sde/lock.json`). Host startup reads those tables for `ShipSkinrCatalog`, so the catalog now reads them, with that build’s `groups` and `types`, from `sde_mission`. Other Host data reads remain on the client-pinned `sde` schema. This keeps the SSO Host startup path available without changing the pinned source used for general game data.

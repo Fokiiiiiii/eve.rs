@@ -1608,14 +1608,7 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
   `ReloadFSDPickle` change only in-process state. `communityTrackMgr` keeps its instances in memory (the community track
   state is not persisted). Status: open, each with its owner in TODO section 41.
 - **Loyalty point store (historical status, superseded by A9 below).** At this point `LPStoreMgr` answered no offers and refused every take. The current ESI-backed offer and purchase behavior is recorded in Agents slices AG-2/A9 and AG-3/A9.
-- **Map reads without a data source.** `map.GetSolarSystemVisits`, `GetHistory`, `GetConstellationLPData`,
-  `GetAllRoamingWeatherSystems`, `GetMyExtraMapInfo`, `GetMyExtraMapInfoAgents`, `GetDeadspaceAgentsMap`,
-  `GetDeadspaceComplexMap` and `GetFacWarZoneInfo` answer the reference's empty shape (a rowset, a dict, None, or the
-  faction id asked for with no upgrade levels): eve.rs has no visit, statistics, loyalty, weather, deadspace or
-  factional-warfare state. The per-system edencom and triglavian lists (`GetEdencomFortressSystems`,
-  `GetEdencomMinorVictorySystems`, `GetTriglavianMinorVictorySystems`) are the reference's constant lists; the SDE does
-  not carry them and no state produces them. `map.GetBeaconCount` answers an empty dictionary, although the cynosural
-  beacons of track A9 exist: the count belongs to the ships track (the other agent). Status: each open (TODO section 41).
+- **Map read state (2026-10-27).** `GetHistory` and `GetSolarSystemVisits` read saved killmail, jump, and visit telemetry; `GetBeaconCount` derives active fleet counts from persisted deployed-beacon records and current fleet membership; `GetMyExtraMapInfo` reads online corporation member locations; sovereignty and faction-war data use their existing providers. The client-visible rowsets and dictionary are checked through Host wire tests. The GameStore/PostgreSQL persistence and restart path was not exercised in this audit. `GetConstellationLPData`, `GetAllRoamingWeatherSystems`, `GetMyExtraMapInfoAgents`, and both deadspace maps retain EveJS-compatible fallback shapes. The EDENCOM and Triglavian system lists match the reference's constant-list behavior, but their authoritative data source remains unresolved. See `docs/project/TODO.md` section 41 and `docs/project/service-audit/DEEPCHECK_map.md`.
 - **Report row types (slice 2, 2026-10-12).** `lastUpdated` is a long (a FILETIME), as EVE.js's answer has it; the field was a real. The key sets of `GetIncursionGlobalReport` and `GetSystemsInIncursions` equal EVE.js's in the live walk (`test_incursion_walk.py`). Status: verified against EVE.js.
 - **Incursions and anomalies come from the content state.** `map.GetIncursionGlobalReport`, `map.GetSystemsInIncursions`,
   `taleMgr.*` and `scanMgr.*` read the content instances of kind `incursion` and `anomaly` (`PersistenceIncursionAnomalyReadModel`).

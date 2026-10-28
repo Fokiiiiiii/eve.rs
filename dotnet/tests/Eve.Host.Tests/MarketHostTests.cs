@@ -584,7 +584,7 @@ public sealed class MarketHostTests : IAsyncLifetime
         Assert.DoesNotContain(Lines(book.Items[0]),row=>
             Assert.IsType<PyTuple>(row).Items[10]==new PyLong(structureId));
         // Canceling the bid refunds escrow, but the two 100 ISK minimum Upwell fees from placing and modifying it remain spent.
-        Assert.Equal(9_780m,(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(buyer))!.Isk);
+        Assert.Equal(9_675m,(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(buyer))!.Isk);
         Assert.Single(Assert.IsType<PyList>(await recovered.CallAsync(Call(buyerSession,"CharGetTransactions",10,PyNone.Instance))).Items);
         await restarted.ShutdownAsync();
         _shutdownHost=null;

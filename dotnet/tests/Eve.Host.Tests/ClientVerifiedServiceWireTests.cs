@@ -51,19 +51,27 @@ public partial class HostServerTests
             },
         };
         var markCalls = new List<(long CharacterId, long MessageId)>();
+        var sessions = new List<ClientSession>();
         var mail = new MailService(
             _ => Task.FromResult((JsonObject)state.DeepClone()),
-            (ownerId, id, _, cancellationToken) =>
+            (ownerId, id, requestingSession, cancellationToken) =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 markCalls.Add((ownerId, id));
-                var status = (JsonObject)state["mailboxes"]![characterId.ToString()]!["statuses"]![id.ToString()]!;
-                status["statusMask"] = status["statusMask"]!.GetValue<int>() | 1;
+                var mutation = new MailboxMutationRequest(
+                    ownerId, "MarkAsRead", [new PyList([new PyInt(id)])], requestingSession);
+                var result = MailboxMutation.Apply(state, mutation);
+                var recipient = sessions.Single(session => !ReferenceEquals(session, requestingSession));
+                MailboxMutationNotifications.Publish(mutation, result, recipient);
                 return Task.CompletedTask;
             });
-        Start(configure: registry => registry.Register(mail),
-            sessionOpened: session => session.Set("charid", new PyInt(characterId)));
+        Start(configure: registry => registry.Register(mail), sessionOpened: session =>
+        {
+            session.Set("charid", new PyInt(characterId));
+            sessions.Add(session);
+        });
         var (front, open) = await OpenFrontAsync();
+        var (otherFront, _) = await OpenFrontAsync();
         long callId = 1;
 
         async Task<PyValue> Call(string method, params PyValue[] args)
@@ -99,12 +107,16 @@ public partial class HostServerTests
 
         var compressed = Assert.IsType<PyBuffer>(await Call(
             "GetBody", new PyLong(messageId), PyBool.True));
+        var readNotice = ReadMailNotification(await otherFront.ReceiveAsync());
+        Assert.Equal("OnMailUpdatedByExternal", readNotice.Name);
+        Assert.Equal(messageId, WireInteger(Assert.Single(Assert.IsType<PyList>(readNotice.Args[0]).Items)));
+        Assert.Same(PyBool.True, readNotice.Args[1]);
         using var input = new MemoryStream(compressed.Value.ToArray());
         using var decompressor = new ZLibStream(input, CompressionMode.Decompress);
         using var reader = new StreamReader(decompressor, Encoding.UTF8);
         Assert.Equal(bodyText, await reader.ReadToEndAsync());
         Assert.Equal([(characterId, messageId)], markCalls);
-        Assert.Equal(1, state["mailboxes"]![characterId.ToString()]!["statuses"]![messageId.ToString()]!["statusMask"]!.GetValue<int>());
+        Assert.Equal(1, state["mailboxes"]![characterId.ToString()]!["statuses"]![messageId.ToString()]!["statusMask"]!.GetValue<long>());
 
         Assert.Same(PyNone.Instance, await Call("GetBody", new PyLong(999), PyBool.True));
         Assert.Single(markCalls);

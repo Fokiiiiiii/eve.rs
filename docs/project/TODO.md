@@ -1084,6 +1084,7 @@ Done in M1 (DEVIATIONS.md, "Market slice M1"):
 - Client labels for MktBrokersFeeUnexpected2 and MktInvalidMinVolumeCannotExceedQuantity; other refusals are sentences, not codes (G6).
 - The fabricated immediate-fill notification is removed (G8); the cache invalidation that replaces it is M4.
 - Tests: `MarketRpcTests` (9), `ProtocolTests` (updated), `MarketHostTests` (the real composition, restart), live `test_market.py`.
+- The Host restart regression keeps a live personal buy order visible through `GetCharOrders` with the same ID and remaining volume. V24.01 reads this list through `marketsvc.py:388` and `personalMarketOrders.py:22-23`, which calculates open volume in `personalMarketOrders.py:32-49`.
 
 Open after M1:
 | Status | Item | Owner / where |

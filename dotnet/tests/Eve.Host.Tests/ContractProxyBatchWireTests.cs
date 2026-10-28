@@ -266,7 +266,7 @@ public partial class HostServerTests
         foreach (var service in CoreServices.Create(
             new NoAccounts(), now, contractReadModel: readModel, contractWriteModel: writer,
             contractSkillLevel: (_, _, _) => ValueTask.FromResult(0), contractInventoryReader: inventory,
-            readCurrentCalendarGroups: (_, _) => ValueTask.FromResult((84L, 0L))))
+            readCurrentCalendarGroups: (_, _) => ValueTask.FromResult((84L, 126L))))
             registry.Register(service);
 
         var config = GlobalConfig.Build(Options);

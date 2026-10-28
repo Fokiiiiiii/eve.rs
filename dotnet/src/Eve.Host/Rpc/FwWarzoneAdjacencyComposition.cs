@@ -51,7 +51,8 @@ internal sealed partial class CharacterServicesComposition
             if (_fwWarzoneNeighbors is { } loaded)
                 return loaded;
 
-            var gates = await sde.ReadAsync("mapStargates", cancellationToken: cancellationToken);
+            var systems = FwWarzones.Ids.SelectMany(FwWarzones.SystemsOf).Distinct().ToArray();
+            var gates = await sde.ReadByFieldAsync("mapStargates", "solarSystemID", systems, cancellationToken);
             var neighbors = new Dictionary<long, HashSet<long>>();
             foreach (var gate in gates)
             {

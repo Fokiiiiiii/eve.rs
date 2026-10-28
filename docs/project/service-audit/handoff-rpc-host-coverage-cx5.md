@@ -1,5 +1,12 @@
 # RPC Host coverage handoff — CX5
 
+# CX5 rescue disposition (2026-10-28)
+
+- Reviewed the pending `GetPublicWarInfo` collection change against V24.01 `eve/client/script/ui/structure/structureIcon.py:26,44-60` and EveJS v0.12.9 `server/src/services/corporation/warsInfoMgrService.js:211-215`. The client passes a collection and consumes each returned row's `againstID` and `declaredByID`; EveJS accepts one numeric ID. The proposed eve.rs collection behavior matched the client, but its PostgreSQL-backed Host regression could not be validated here.
+- Corporations build passed with 0 warnings/errors. Host.Tests build passed with 0 warnings/errors. The focused Host regression was skipped because `EVE_PG_URL` was absent. The full Host.Tests shard reported 603 passed, 100 failed and 229 skipped; failures were database-backed fixtures requiring `EVE_PG_URL`. No PostgreSQL database was used and no graphical-client run occurred.
+- Per the passing-test gate, dropped the untested handler/test work and unrelated interrupted audit/test changes. Reset the worktree to the fetched `origin/main`; this note is the only retained change. The client collection lookup still needs a tested fix on a configured CI lane.
+
+
 ## Latest T–Z P2 service audit (2026-10-28)
 
 - The origin/main coverage snapshot had 23 unrecorded P2 IMPLEMENTED-UNTESTED rows for XmppChatMgr, tourneyMgr and userSvc. Client callsites, consumers and EveJS comparisons for each row are now recorded in `CLIENT_VERIFIED.md`; the CSV has 21 IMPLEMENTED-TESTED rows and two REJECTS-VALID-INPUT rows.

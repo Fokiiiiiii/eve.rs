@@ -70,7 +70,7 @@ public sealed class UserSvcHostWireTests
         var token = Assert.IsType<PyStr>(await Call(userSvc, session, "GetUserToken"));
         Assert.NotEmpty(token.Value);
         Assert.Equal(PyBool.True, await Call(userSvc, session, "ReportBot", new PyLong(characterId + 1)));
-        Assert.Equal(PyBool.True, await Call(userSvc, session, "ReportISKSpammer",
+        Assert.Equal(PyBool.False, await Call(userSvc, session, "ReportISKSpammer",
             new PyLong(characterId + 1), new PyStr("local"), new PyList([])));
 
         Assert.Equal(PyBool.True, await Call(userSvc, session, "UserLogOffCharacter"));

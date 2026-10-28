@@ -23,13 +23,14 @@ public sealed class EventLogHostTests
             {
                 var registered = host.Registry.Lookup("eventLog");
                 Assert.NotNull(registered);
-                Assert.True(registered!.HasMethod("LogClientStats"));
+                Assert.True(registered!.HasMethod("LogClientEvent"));
+                Assert.True(registered.HasMethod("LogClientStats"));
                 Assert.True(registered.HasMethod("LogPlayerRequestedDisconnect"));
                 var session = new ClientSession { SessionId = 42 };
                 session.Set("charid", new PyLong(9_001));
                 var shutdownStats = new PyValue[]
                 {
-                    new PyLong(42), new PyInt(30_100_041),
+                    new PyLong(42), PyNone.Instance,
                     new PyList([new PyList([new PyStr("shutdown")])]),
                 };
                 var shutdownKwargs = new PyDict([

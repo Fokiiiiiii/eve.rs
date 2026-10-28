@@ -527,7 +527,7 @@ public sealed partial class TourneyMgrService(TourneyQueryCallback? query = null
 {
     [Method("GetTourneySetup")]
     public ValueTask<PyValue> GetTourneySetup(ServiceCall call) =>
-        QueryAsync(call, TourneyQuery.GetTourneySetup, null, Py.Tuple(new PyList([]), new PyList([]), new PyList([])));
+        QueryAsync(call, TourneyQuery.GetTourneySetup, null, Py.Tuple(new PyDict([]), new PyDict([]), new PyList([])));
 
     [Method("QueryShipList")]
     public ValueTask<PyValue> QueryShipList(ServiceCall call) =>
@@ -536,7 +536,7 @@ public sealed partial class TourneyMgrService(TourneyQueryCallback? query = null
 
     [Method("GetPotentialMatches")]
     public ValueTask<PyValue> GetPotentialMatches(ServiceCall call) =>
-        QueryAsync(call, TourneyQuery.GetPotentialMatches, Positive(call.Arg(0)), new PyList([]));
+        QueryAsync(call, TourneyQuery.GetPotentialMatches, Positive(call.Arg(0)), new PyDict([]));
 
     [Method("GetAllCurrentSeriesMatchDetails")]
     public ValueTask<PyValue> GetAllCurrentSeriesMatchDetails(ServiceCall call) =>

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Eve.Crimewatch;
 using Eve.Marshal;
+using Eve.Services;
 
 namespace Eve.Services.Crimewatch;
 
@@ -112,10 +113,14 @@ public sealed class SecurityStatusPenalties(
 
     private void Tell(long character, double previous, double next, long nowMs)
     {
-        if (sessions.Of(character) is not { } session)
-        {
+        if (sessions.Of(character) is { } session)
+            Tell(session, previous, next, nowMs);
+    }
+
+    public static void Tell(ClientSession session, double previous, double next, long nowMs)
+    {
+        if (session.CharacterId is not { } character)
             return;
-        }
         if (session.GetInt("shipid") is { } ship and > 0)
         {
             var when = new PyLong(Py.FileTimeFromUnixMs(nowMs));

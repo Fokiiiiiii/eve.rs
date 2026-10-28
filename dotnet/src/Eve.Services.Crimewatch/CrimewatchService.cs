@@ -86,6 +86,14 @@ public sealed partial class CrimewatchService(
         _ => null,
     };
 
+    private static double? Numeric(PyValue value) => value switch
+    {
+        PyInt integer => integer.Value,
+        PyLong integer => integer.Value,
+        PyReal real when double.IsFinite(real.Value) => real.Value,
+        _ => null,
+    };
+
     /// <summary>
     /// <c>GetClientStates()</c>: <c>((weapons, pvp, npc, criminal, disapproval), engagements, (criminals, suspects), safetyLevel)</c>. Each timer is <c>(state, expiry)</c>, idle with no
     /// expiry while it does not run; the engagements are a dictionary of the other character to the FILETIME when it ends; the flagged are two sets of the character ids flagged in the

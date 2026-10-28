@@ -505,10 +505,19 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
             ("massTokenID", Integer(row["massTokenID"]) > 0 ? new PyLong(Integer(row["massTokenID"])) : PyNone.Instance),
             ("typeID", new PyInt(checked((int)Integer(row["typeID"])))),
             ("quantity", new PyLong(Integer(row["quantity"]))),
+            ("blueprintRuns", new PyInt(checked((int)Integer(row["blueprintRuns"])))),
+            ("blueprintMaterialLevel", new PyInt(checked((int)Integer(row["blueprintMaterialLevel"])))),
+            ("blueprintProductivityLevel", new PyInt(checked((int)Integer(row["blueprintProductivityLevel"])))),
+            ("label", new PyStr(String(row["label"]))),
             ("stationID", Integer(row["stationID"]) > 0 ? new PyLong(Integer(row["stationID"])) : PyNone.Instance),
             ("expireDateTime", Integer(row["expireDateTime"]) > 0 ? new PyLong(Integer(row["expireDateTime"])) : PyNone.Instance),
             ("dateTime", new PyLong(Integer(row["dateTime"]))),
+            ("availableDateTime", new PyLong(Integer(row["availableDateTime"], Integer(row["dateTime"])))),
             ("description", new PyStr(String(row["description"]))),
+            ("soulbound", row["soulbound"] is JsonValue soulbound && soulbound.TryGetValue<bool>(out var isSoulbound) && isSoulbound
+                ? PyBool.True : PyBool.False),
+            ("available", row["available"] is JsonValue available && available.TryGetValue<bool>(out var isAvailable)
+                ? isAvailable ? PyBool.True : PyBool.False : PyBool.True),
             ("isAutoInject", row["isAutoInject"] is JsonValue autoInject && autoInject.TryGetValue<bool>(out var enabled) && enabled
                 ? PyBool.True : PyBool.False));
 

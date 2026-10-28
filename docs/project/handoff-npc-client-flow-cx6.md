@@ -6,4 +6,4 @@ V24.01 evidence: Michelle buffers destiny state at `eve/client/script/remote/mic
 
 EveJS v0.12.9 activates NPC hostile modules in `server/src/space/npc/npcBehaviorLoop.js:1275-1302`, emits `OnTarget` from `server/src/space/runtime/scene/targeting.js:212-227`, and creates native NPC wrecks in `server/src/space/npc/nativeNpcWreckService.js:858-917`. Recorded EveJS weapon and module walks remain the cross-server checks for player activation and capacitor behavior; the NPC AI walk is EveRS-specific.
 
-Local validation: `python3 -m py_compile tools/headless-client/tests/test_npc.py` passed. The live NPC flow was not exercised locally and this task used no PostgreSQL database. Actions verification and graphical-client acceptance remain open.
+Local validation: `python3 -m py_compile tools/headless-client/tests/test_npc.py` passed. Push-triggered Actions run 40788557085 completed successfully with no failed jobs. The live NPC flow was not exercised locally and this task used no local PostgreSQL database; graphical-client acceptance remains open.

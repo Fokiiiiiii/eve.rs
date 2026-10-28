@@ -166,7 +166,7 @@ public sealed class ShipCosmeticsMgrRpcService : IService
 
     private async ValueTask<PyValue> ApplySkinToShipAsync(ServiceCall call)
     {
-        if (_store is null || _items is null) return PyNone.Instance;
+        if (_store is null || _items is null) Notify("SKIN application is unavailable.");
         var shipId = Positive(call.Arg(0));
         var skinId = call.Arg(1) is PyNone ? 0 : Positive(call.Arg(1));
         var characterId = call.Session.CharacterId ?? 0;
@@ -180,7 +180,7 @@ public sealed class ShipCosmeticsMgrRpcService : IService
         if (skinId > 0)
         {
             var skin = _catalog?.Skins.GetValueOrDefault(skinId);
-            if (_catalog is { Skins.Count: > 0 } && skin is null) Notify("That SKIN could not be found.");
+            if (skin is null) Notify("That SKIN could not be found.");
             if (EffectiveLicense(characterId > 0 ? characterId : item!.OwnerId, skinId) is null) Notify("That SKIN is not licensed on this character.");
             if (skin is { ShipTypeIds.Count: > 0 } && !skin.ShipTypeIds.Contains(item!.TypeId)) Notify("That SKIN is not valid for this ship type.");
         }
@@ -208,7 +208,8 @@ public sealed class ShipCosmeticsMgrRpcService : IService
         var itemIds = ItemIds(call.Arg(0));
         if (characterId <= 0) Notify("You need an active character to activate a SKIN license.");
         if (itemIds.Count == 0) return PyNone.Instance;
-        if (_store is null || _items is null || _source is null || _catalog is null) return PyNone.Instance;
+        if (_store is null || _items is null || _source is null || _catalog is null)
+            Notify("SKIN license activation is unavailable.");
         var plan = new List<(Item Item, SkinLicenseDefinition License, JsonObject? Previous)>();
         var skinsPlanned = new HashSet<int>();
         foreach (var itemId in itemIds)

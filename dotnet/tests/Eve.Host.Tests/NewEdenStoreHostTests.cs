@@ -117,7 +117,7 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
         items.Where(item => item.TypeId == typeId).Sum(item => item.Quantity);
 
     [PgFact]
-    public async Task A_certificate_bought_for_plx_is_granted_into_the_hangar_at_no_charge_and_a_replay_grants_nothing()
+    public async Task Certificate_purchase_without_checkout_returns_none_and_grants_nothing()
     {
         await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var host = await BuildHostAsync();
@@ -128,9 +128,9 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
         var session = new ClientSession(new Sink()) { SessionId = 401, UserId = 1, CharacterId = pilot };
         var items = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
         var before = Quantity(await items.OwnedByAsync(pilot), CertificateTypeId);
-        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(async () => await store.CallAsync(Call(session, "buy_offer", 7,
-            [new PyStr("pilot_resculpt_certificate"), new PyStr("PLX"), new PyInt(1)])));
-        Assert.Equal("STORE_CHECKOUT_UNAVAILABLE", refusal.Error.UserErrorMessage);
+        var result = await store.CallAsync(Call(session, "buy_offer", 7,
+            [new PyStr("pilot_resculpt_certificate"), new PyStr("PLX"), new PyInt(1)]));
+        Assert.Same(PyNone.Instance, result);
         Assert.Equal(before, Quantity(await items.OwnedByAsync(pilot), CertificateTypeId));
         Assert.Equal(0, await PlexBalanceAsync(vault, session, 2));
     }
@@ -460,7 +460,7 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
     }
 
     [PgFact]
-    public async Task Store_purchases_in_other_currencies_are_granted_free_and_quantity_and_currency_are_validated()
+    public async Task Store_checkout_without_settlement_returns_none_without_granting_currency_offers()
     {
         await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var host = await BuildHostAsync();
@@ -472,16 +472,16 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
         var items = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
         foreach (var (currency, quantity, callId) in new[] { ("AUR", 2, 31L), ("XYZ", 1, 32L), ("PLX", 101, 33L), ("PLX", 0, 34L) })
         {
-            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(async () => await store.CallAsync(
-                Call(session, "buy_offer", callId, [new PyStr("pilot_resculpt_certificate"), new PyStr(currency), new PyInt(quantity)])));
-            Assert.Equal("STORE_CHECKOUT_UNAVAILABLE", refusal.Error.UserErrorMessage);
+            var result = await store.CallAsync(
+                Call(session, "buy_offer", callId, [new PyStr("pilot_resculpt_certificate"), new PyStr(currency), new PyInt(quantity)]));
+            Assert.Same(PyNone.Instance, result);
         }
         Assert.Equal(0, Quantity(await items.OwnedByAsync(pilot), CertificateTypeId));
         Assert.Equal(0, await PlexBalanceAsync(vault, session, 35));
     }
 
     [PgFact]
-    public async Task A_real_money_bundle_is_granted_in_full_at_no_charge()
+    public async Task Real_money_store_offers_are_not_granted_without_checkout_settlement()
     {
         await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var host = await BuildHostAsync();
@@ -491,9 +491,9 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
         var pilot = await CreatePilotAsync(source, station, "Bundle Pilot");
         var session = new ClientSession(new Sink()) { SessionId = 404, UserId = 1, CharacterId = pilot };
         var items = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
-        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(async () => await store.CallAsync(
-            Call(session, "buy_offer", 43, [new PyStr("cash_plex_1000_gallente"), new PyStr("USD"), new PyInt(2)], Py.Dict(("store_id", new PyInt(9))))));
-        Assert.Equal("STORE_CHECKOUT_UNAVAILABLE", refusal.Error.UserErrorMessage);
+        var result = await store.CallAsync(
+            Call(session, "buy_offer", 43, [new PyStr("cash_plex_1000_gallente"), new PyStr("USD"), new PyInt(2)], Py.Dict(("store_id", new PyInt(9)))));
+        Assert.Same(PyNone.Instance, result);
         Assert.Equal(0, await PlexBalanceAsync(vault, session, 44));
         Assert.Equal(0, Quantity(await items.OwnedByAsync(pilot), CrateTypeId));
     }

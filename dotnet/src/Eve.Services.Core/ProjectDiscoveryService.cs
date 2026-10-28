@@ -61,12 +61,10 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
                 return PyBool.True;
 
             case "fix_task_id":
-                var taskId = PositiveIntegralTaskId(call.Arg(0));
-                if (taskId < 0)
-                    throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TASK_ID_INVALID");
+                var taskId = FixedTaskId(call.Arg(0));
                 if (characterId <= 0 || _callbacks.FixTaskIdAsync is not { } fixTaskId)
                     throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TASK_FIX_UNAVAILABLE");
-                await fixTaskId(characterId, taskId == 0 ? null : taskId, call.Cancellation);
+                await fixTaskId(characterId, taskId, call.Cancellation);
                 return PyNone.Instance;
 
             case "get_player_analysis_kredits":
@@ -143,10 +141,10 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
     private static double NonNegativeInteger(double value) =>
         double.IsFinite(value) ? Math.Max(0, Math.Truncate(value)) : 0;
 
-    private static double PositiveIntegralTaskId(PyValue value) => value switch
+    private static double? FixedTaskId(PyValue value) => value switch
     {
-        PyInt integer when integer.Value >= 0 => integer.Value,
-        PyLong integer when integer.Value >= 0 => integer.Value,
-        _ => -1,
+        PyInt integer when integer.Value > 0 => integer.Value,
+        PyLong integer when integer.Value > 0 => integer.Value,
+        _ => null,
     };
 }

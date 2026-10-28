@@ -1,5 +1,12 @@
 # RPC Host coverage handoff — CX5
 
+## ProjectDiscovery P2 rows (RPC-00679/00680)
+
+- Whole-tree V24.01 search found one `fix_task_id` call: the COVID TaskID icon opens the dev popup (`projectdiscovery/client/projects/covid/ui/taskid.py:33-40`); `Confirm` converts the value to `int` and calls `ProjectDiscovery.fix_task_id` without consuming a result (`projectdiscovery/client/projects/covid/ui/devpopup.py:25,41-45`). The adjacent `get_new_task` consumer is at `projectdiscovery/client/projects/covid/gameplaymodes/covidproject.py:225-235`.
+- EveJS stores positive IDs and clears nonpositive IDs (`server/src/services/character/projectDiscoveryService.js:292-294`); the next COVID task reads that state (`:274-275`). eve.rs now maps zero and negative integer input to a clear in the injected callback, matching EveJS.
+- Production Host composition supplies only `ReadProjectDiscoveryState`, not `FixTaskIdAsync` (`dotnet/src/Eve.Services.Core/CoreServices.cs:95`). The registered route therefore returns `PROJECT_DISCOVERY_TASK_FIX_UNAVAILABLE` for a valid ID instead of reporting a false success. A real-socket Host test records this for both duplicate coverage rows. The underlying dev feature remains unavailable until a state writer and the matching task retrieval path are wired.
+- Verified locally: Eve.Services.Core and Eve.Host.Tests builds succeeded with zero warnings/errors; the focused service test and the registered-Host wire test each passed (1/1). No database or graphical-client run was used. No Actions run yet.
+
 # CX5 rescue disposition (2026-10-28)
 
 - Reviewed the pending `GetPublicWarInfo` collection change against V24.01 `eve/client/script/ui/structure/structureIcon.py:26,44-60` and EveJS v0.12.9 `server/src/services/corporation/warsInfoMgrService.js:211-215`. The client passes a collection and consumes each returned row's `againstID` and `declaredByID`; EveJS accepts one numeric ID. The proposed eve.rs collection behavior matched the client, but its PostgreSQL-backed Host regression could not be validated here.

@@ -4,6 +4,11 @@ The current snapshot below is authoritative. Dated sections that follow preserve
 
 ## Current snapshot
 
+- Service deep-check slice 2, group 1/5 (positions 2, 8, 14, 20, 26, 32 in the missing-service ordering) is documented in DEEPCHECK_ProjectDiscovery.md, DEEPCHECK_dungeonInstanceCacheMgr.md, DEEPCHECK_billMgr.md, DEEPCHECK_accessGroupBookmarkMgr.md, DEEPCHECK_seasonManager.md, and DEEPCHECK_fwCharacterEnlistmentMgr.md. This group is documentation-only; no tests were run because no code changed. No PostgreSQL database or graphical client was used.
+- Whole-client checks record two open implementation gaps: ProjectDiscovery has no live task/classification provider or persisted tutorial writer, and production billMgr has no personal-bill payment callback. The existing fake-callback CharPayBill wire test does not establish production payment. No synthetic success behavior was added. The stale Project Discovery task-override statement in DEVIATIONS.md now cites the actual Covid and Exoplanets get_new_task callers. Slice 2 has 21 selected services remaining; continue in groups of at most six.
+- This group uses fetched main snapshot 2179a527 and V24.01 eve-logic commit 1dbb5711a072a146e1d228365668ac05655eefe1.
+
+
 - `filterSvc` deep check is recorded in `DEEPCHECK_filterSvc.md` (2026-10-28). The client has no remote `filterSvc`; local `ItemFilterSvc` persists through `charMgr` and shares through `sharedSettingsMgr`. Its focused Host wire tests passed 2/2; the full `Eve.Host.Tests` shard with `EVE_PG_URL` unset finished 580 passed, 102 failed, and 228 skipped because database-backed tests require their configured lane. No PostgreSQL database or graphical client was used.
 - This worktree merged fetched `origin/main` at `1555b5bf` on 2026-10-28. Earlier cx6 service-audit commits were retained, and the conflicting audit evidence was combined without discarding either side. The V24.01 client source remains `/home/user/eve-logic` at `1dbb5711a072a146e1d228365668ac05655eefe1`.
 - `CLIENT_VERIFIED.md` is the task ledger for Host wire evidence and compatibility mismatches. This task is working through the remaining rows assigned from the fetched main snapshot; duplicated ledger rows stay separate even when they share a service method and test.

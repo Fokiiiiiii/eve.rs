@@ -249,11 +249,6 @@ internal sealed partial class CharacterServicesComposition
         _ => 0,
     };
 
-    /// <summary>
-    /// The corporation roles that see corporation blueprints and jobs (the client's CanSeeCorpBlueprints, blueprintSvc.py:165):
-    /// Factory Manager (1024), Rent Factory Slot (1125899906842624) and Rent Research Slot (2251799813685248), appConst.py.
-    /// </summary>
-    private const long IndustryJobViewRoles = 1024L | 1125899906842624L | 2251799813685248L;
 
     private const int FactoryServiceId = 14;
     private const int LaboratoryServiceId = 15;
@@ -639,20 +634,7 @@ internal sealed partial class CharacterServicesComposition
                 if (change is null)
                     return Task.CompletedTask;
 
-                // CanSeeCorpBlueprints: Factory Manager, Rent Factory Slot or Rent Research Slot).
-                var recipients = new List<Eve.Services.ClientSession>();
-                foreach (var characterId in new[] { change.OwnerId, change.InstallerId }.Distinct())
-                    if (characterSessions.Of(characterId) is { } owned)
-                        recipients.Add(owned);
-                foreach (var member in characterSessions.OfCorporation(change.OwnerId))
-                    if (((member.GetInt("corprole") ?? 0) & IndustryJobViewRoles) != 0)
-                        recipients.Add(member);
-                foreach (var session in recipients.Distinct())
-                    session.SendNotification(
-                        "OnIndustryJob", "charid",
-                        new PyInt(change.JobId), new PyInt(change.OwnerId), new PyInt(change.BlueprintId),
-                        new PyInt(change.InstallerId), new PyInt(change.Status),
-                        change.SuccessfulRuns is { } runs ? new PyInt(runs) : PyNone.Instance);
+                IndustryJobClientNotifications.Send(characterSessions, change);
                 return Task.CompletedTask;
             });
         return Task.CompletedTask;

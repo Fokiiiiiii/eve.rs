@@ -83,7 +83,7 @@ The Host also exposes `GetSafetyLevel()`, but a whole-client search found no mon
 
 ## Bound lifecycle methods and test evidence
 
-`MachoResolveObject` returns the configured proxy node ID (`CrimewatchService.cs:44-45`); `MachoBindObject` returns the bound-object descriptor plus nested-call result (`:58-78`). The Host wire regression now exercises resolve, bind, `machoVersion` envelope kwargs, positional float args, int/long acceptance, `None` rejection and tag tier boundaries in `dotnet/tests/Eve.Host.Tests/CrimewatchHostWireTests.cs`.
+`MachoResolveObject` returns the configured proxy node ID (`CrimewatchService.cs:44-45`); `MachoBindObject` returns the bound-object descriptor plus nested-call result (`:58-78`). EveJS implements both lifecycle methods on its same `crimewatch` service (`evejs-261018.1/src/server/src/services/security/crimewatchService.js:16-122`). The Host wire regression exercises resolve, bind, `machoVersion` envelope kwargs, positional float args, int/long acceptance, `None` rejection and tag tier boundaries in `dotnet/tests/Eve.Host.Tests/CrimewatchHostWireTests.cs`.
 
 **Checked:** `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false` succeeded with no warnings/errors. The focused `Crimewatch_apply_tags_is_bound_and_preserves_the_client_argument_order` test passed (1 passed, 0 skipped). No PostgreSQL connection was opened.
 

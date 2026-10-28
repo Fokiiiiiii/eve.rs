@@ -755,7 +755,7 @@ public class SpaceServiceTests
 
         var (oid, answer) = await UndockAsync(rig, session);
 
-        Assert.Equal(["OnItemsChanged", "OnMachoObjectDisconnect", "OnMachoObjectDisconnect", "$sessionchange", "OnInvulunOnUndockingUpdated"], Sequence.Of(session));
+        Assert.Equal(["OnItemsChanged", "OnMachoObjectDisconnect", "OnMachoObjectDisconnect", "$sessionchange", "OnInvulunOnUndockingUpdated"], Sequence.Of(session, clear: false));
         Assert.Equal(["stationid", "locationid", "solarsystemid"], Sequence.LastChange(session).Select(change => change.Name));
         var tuple = Assert.IsType<PyTuple>(answer);
         Assert.Equal(oid, JsSemantics.StringValue(tuple.Items[0]));
@@ -778,7 +778,7 @@ public class SpaceServiceTests
         Assert.Equal((system, 0), (ship.LocationId, ship.Flag));
         // the session: the corrected active ship, then the three location attributes
         Assert.Equal(
-            [("shipid", InventoryWire.Id(character.ShipId + 1), InventoryWire.Id(character.ShipId)), ("stationid", new PyInt(Rig.Station), PyNone.Instance), ("locationid", new PyInt(Rig.Station), new PyInt(system)), ("solarsystemid", PyNone.Instance, new PyInt(system))],
+            [("shipid", new PyLong(character.ShipId + 1), InventoryWire.Id(character.ShipId)), ("stationid", new PyInt(Rig.Station), PyNone.Instance), ("locationid", new PyInt(Rig.Station), new PyInt(system)), ("solarsystemid", PyNone.Instance, new PyInt(system))],
             Sequence.LastChange(session));
         Assert.Equal(character.ShipId, session.GetInt("shipid"));
         Assert.Null(session.GetInt("stationid"));

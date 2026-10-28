@@ -38,6 +38,9 @@ FIRST_BALL_ID = 10**12  # #16: the reference's customs offices and props have id
 def keyval(described) -> dict:
     return {k: v for k, v in described["args"]["$dict"]}
 
+def number(described):
+    return described["$long"] if isinstance(described, dict) else described
+
 def args_of(event: dict) -> dict:
     """What an event carries, as a `$tuple`: the body is `(0, (1, arguments))`."""
     body = event["args"]["$tuple"]

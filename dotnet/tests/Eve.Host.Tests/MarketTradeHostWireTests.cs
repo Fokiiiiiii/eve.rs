@@ -147,6 +147,9 @@ public sealed class MarketTradeHostWireTests : IAsyncLifetime
             new PyReal((double)bid.Price), new PyInt(bid.Range), new PyInt(bid.VolumeRemaining),
             new PyLong(Py.FileTimeFromUnixMs(bid.IssuedMs)))));
         Assert.Equal(1235m, Assert.Single(await marketStore.OwnOrdersAsync(actor, actor, false)).Order.Price);
+        Assert.IsType<PyNone>(await market.CallAsync(Call(session, "CancelCharOrder", 31,
+            new PyLong(bid.Id), new PyInt(station.RegionId))));
+        Assert.DoesNotContain(await marketStore.OwnOrdersAsync(actor, actor, false), owned => owned.Order.Id == bid.Id);
 
         // PLEX sell returns the boolean consumed by sellMulti.py; the dedicated modify RPC updates the same persisted order.
         long plexItem;

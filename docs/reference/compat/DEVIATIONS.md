@@ -1,5 +1,9 @@
 # Deviations from the reference server
 
+## Undock publishes the active ship ID (2026-10-28)
+
+V24.01 `eve/common/script/sys/eveCfg.py:1510-1511` reads `session.shipid` for the active ship. `eve/client/script/ui/shared/dockedUI/undockingSvc.py:64-91,121-138` uses it while preparing and issuing an undock, and `carbon/common/script/net/SessionChangeGPCS.py:77-110` applies session-change notifications. The server must therefore notify the client when an undock corrects a stale active ship ID. eve.rs adds the corrected `shipid` first in the undock SessionChange, before station and solar-system attributes. This differs from the recorded reference event, which omits `shipid`. The registered service regression checks the exact change tuple; the headless comparison checks the new ID equals the active ship ID and compares the remaining attributes and order to the reference.
+
 ## Shared settings persistence failure reply (2026-10-28)
 
 The V24.01 filter-link caller at `eve/client/script/ui/shared/inventory/filterSvc.py:448-450` and the generic shared-settings loader at `sharedSettings/util.py:23-27` convert a missing key or payload to `UserError('ItemFilterLoadingError')`. EveJS 261018.1 returns the generated key after its repository write call without checking whether that call succeeded (`src/server/src/services/settings/sharedSettingsMgrService.js:188-191,263-276`). eve.rs returns `None` when the Host persistence callback declines the new shared setting; the client therefore displays its existing loading error instead of receiving a link that cannot be loaded. `FilterServiceDeepCheckHostWireTests.Shared_settings_mgr_filter_links_round_trip_over_the_registered_host_route` covers the declined write and `None` reply.

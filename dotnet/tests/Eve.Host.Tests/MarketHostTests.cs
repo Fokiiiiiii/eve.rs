@@ -564,8 +564,9 @@ public sealed class MarketHostTests : IAsyncLifetime
         var cancelledBids=Assert.IsType<PyObject>(Received(await market.CallAsync(Call(buyerSession,"GetCharOrders",25))));
         Assert.Empty(Lines(cancelledBids));
 
+        // A changed quote avoids the intentional five-second Q14 duplicate-placement refusal.
         await market.CallAsync(Call(buyerSession,"PlaceBuyOrder",26,new PyLong(structureId),new PyInt(Tritanium),
-            new PyReal(5),new PyInt(1),new PyInt(-1),new PyInt(1),new PyInt(90),PyBool.False,PyNone.Instance));
+            new PyReal(6),new PyInt(1),new PyInt(-1),new PyInt(1),new PyInt(90),PyBool.False,PyNone.Instance));
         var openBidRows=Assert.IsType<PyObject>(Received(await market.CallAsync(Call(buyerSession,"GetCharOrders",27))));
         var openBid=Assert.IsType<PyTuple>(Assert.Single(Lines(openBidRows)));
         var openBidId=Assert.IsType<PyLong>(openBid.Items[0]).Value;

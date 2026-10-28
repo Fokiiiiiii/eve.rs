@@ -33,7 +33,7 @@ Packages marked GATE cannot start until the owner decides. Each decision is reco
 
 - **GATE-A, public protobuf gateway (`eve_public.*`).** TODO rows 24 and 856 record owner decision 4: the gateway is not built. eve.rs has 0 public gateway RPC paths; EveJS has 6 (`docs/project/service-response-audit/host-protobuf.md`, counters). Skill plans (CH-21) and titles (CH-22) travel only through it. TODO row 58 records client errors and timeouts on the gateway at startup. Decide: build a minimal transport (CH-20) or keep CH-21 and CH-22 blocked.
 - **GATE-B, re-sculpt mechanics.** EveJS does not model it (see the stub above). The item that is consumed, the state that is set and when it ends come from the wiki and the SDE. The owner confirms the rule before CH-8 starts.
-- **GATE-C, votes and reports.** `CastUpvote`, `CastDownvote`, `ReportBot`, `ReportISKSpammer` answer `False` in eve.rs (`UserSvcCompatibility.cs`) and `true` in EveJS (`userService.js` 1104-1127). The client does not read the answer (DEVIATIONS). Decide: a feedback store, or a constant `true`. CH-10 implements the choice.
+- **GATE-C, votes and reports (decided).** `CastUpvote`, `CastDownvote` and `ReportBot` answer `True` without retaining state, matching EveJS. `ReportISKSpammer` returns `False` when no Host report handler is configured; production currently has no sink. V24.01 callers ignore these replies (`customersatisficationcont.py:37,44,89`, `infoContentBase.py:1689`, `chat_service.py:202`, `devFunctions.py:69`). See DEVIATIONS and CH-10.
 - **GATE-D, player bounty payout.** Which kill claims a placed bounty, and when the payout is due. Source: EVE University wiki (Bounties), then EveJS `services/bounty/playerBountyState.js`. Needed for CH-18 only.
 - **GATE-E, faction-warfare rank.** The client reads rank from `facwar` (`fwwarzone/client/dashboard/progression.py:74`), which EveJS serves from `services/faction/facWarMgrService.js`. eve.rs has no faction rank state. Decide whether rank is in this phase (CH-R1, blocked) or in the faction phase.
 - **Blocked, outside the phase:** the `charMgr.GetSettingsInfo` signature. The client verifies it with CCP's key (DEVIATIONS, "Character selection and entry"), which eve.rs does not have.
@@ -64,7 +64,7 @@ Verdicts: **Missing** (no working handler), **Stub** (answers a constant or an e
 | 18 | Achievement tracker fixture | Stub at the edges | Read is real when a record exists (`ProgressRpc.cs:43-46`, `ReadAchievementState`). Without a record it returns `GoldenEventCounts` and `GoldenCompleted` (`LoginInitializationRpcServices.cs:226-229`). `UpdateClientAchievmentsAndCounters` is a no-op (`:220-221`). CH-9. |
 | 19 | `SelectCharacterID` population check atomicity | Documented, not re-checked | DEVIATIONS, slice C, "Known gap". The code was not re-read: not checked. CH-7. |
 | 20 | Skills mutations and corporation kick/leave flow | Not checked | TODO row 2117 itself calls it a verification item, not a confirmed missing RPC. CH-3 checks the skill part. Corporation part is outside this phase. |
-| 21 | `userSvc.CastUpvote` and others answer `False` | Stub | `UserSvcCompatibility.cs:91-104`. Client does not read the answer. GATE-C, CH-10. |
+| 21 | `userSvc` playtime, votes and reports | Compatibility replies | `UserSvcCompatibility.cs:121-151`; votes and `ReportBot` answer `True` without state, `ReportISKSpammer` fails closed without a handler, playtime is `0`. Client replies are ignored; GATE-C decision recorded in DEVIATIONS. CH-10. |
 | 22 | `milestoneMgr` | Stub | Host builds `new MilestoneMgrService()` with no handler (`ProgressRpc.cs:50`), so `ProcessCharacterLogon` and `ClaimRewards` answer None. Client: `milestones/client/milestoneSvc.py:22` and `:34`. CH-5. |
 | 23 | `expertSystemMgr` | Stub | `GetMyExpertSystems` returns an empty dict (`GameRpcServices.cs:69-75`). `ConsumeExpertSystem` and `RemoveMyExpertSystem` are not in eve.rs. Client: `expertSystems/client/service.py`, `skills/client/skillController.py`, `menucheckers/itemCheckers.py`. CH-17. |
 | 24 | Player bounties (`bountyProxy`) | Stub | `BountyProxyKillRightService` is built without `bountyRpcHandler` (`CrimewatchRpc.cs:57-60`). `AddToBounty` refuses ("Bounty service is not wired on this server."). `GetBounties` gives 0 per target (`BountyRows`, `BountyProxyKillRightService.cs:85-105`). Top lists are empty. Client: `eve/client/script/ui/shared/bountySvc.py`. CH-13, CH-18. |
@@ -185,11 +185,11 @@ Wave 1 runs about 14 packages across three lanes. Packages in one wave may run a
 - **Acceptance:** a new character gets empty dicts. An update persists and is read back after a restart. A completed achievement is not counted again on a retry. Tests must not assert the golden fixture. Live: the tracker call shows the update.
 
 #### CH-10 userSvc constant answers (playtime, votes, reports)
-- **Depends on:** GATE-C. **Wave 1 once decided, lane eve_p2.**
-- **Scope:** `GetSessionPlaytimeMinutes` answers `0` (`UserSvcCompatibility.cs`, `OverrideUserCallAsync(call, new PyInt(0))`). Its source is the session or character store; find the client callers first. Votes and reports follow GATE-C: a feedback store with duplicate handling, or the constant `true` the reference uses.
-- **Files:** `dotnet/src/Eve.Services.Core/UserSvcCompatibility.cs` (90-130).
-- **Sources:** eve-logic callers of `CastUpvote`, `ReportBot`, `ReportISKSpammer` (`customersatisficationcont.py`, `menuUtil.py`, `characterInfoWindow.py`); callers of `GetSessionPlaytimeMinutes` (not found by search: check); EveJS `services/user/userService.js` 1104-1127.
-- **Acceptance:** each method answers in the client's shape. If GATE-C chooses a store, a record exists and a repeated vote is handled. `GetSessionPlaytimeMinutes` equals the stored minutes. Live: call each through the headless client.
+- **Depends on:** GATE-C is decided. **Complete; lane eve_p2.**
+- **Scope:** `GetSessionPlaytimeMinutes` answers numeric `0`, matching EveJS and the client's exception fallback. `CastUpvote`, `CastDownvote` and `ReportBot` answer `True` without stored state. `ReportISKSpammer` answers `False` unless a report handler is configured; production has no report sink, recorded in DEVIATIONS.
+- **Files:** `dotnet/src/Eve.Services.Core/UserSvcCompatibility.cs` (121-151); production registration and token/logoff callbacks in `dotnet/src/Eve.Host/Rpc/RewardRpc.cs` (69-95).
+- **Sources:** whole-client callsites: `regionalui/utils.py:12`, `customersatisficationcont.py:37,44,89`, `infoContentBase.py:1689`, `chat/client/chat_service.py:202`, `devFunctions.py:69`. EveJS `src/server/src/services/user/userService.js:1104-1141`.
+- **Acceptance:** compatibility replies, including the configured/unconfigured spam-report case, are covered by the Host TCP wire test. No graphical-client test was performed.
 
 #### CH-11 Implant and booster modifiers in pilot dogma
 - **Depends on:** none. **Wave 1, lane eve_p4.**

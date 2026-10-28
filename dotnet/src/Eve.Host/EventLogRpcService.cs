@@ -18,7 +18,12 @@ public sealed partial class EventLogRpcService(Action<string>? log = null)
             throw MachoErrors.ThrowUserError("CLIENT_STATS_ARGUMENTS_INVALID");
         if (ReadNonNegativeId(call.Arg(0)) != call.Session.SessionId)
             throw MachoErrors.ThrowUserError("CLIENT_STATS_SESSION_INVALID");
-        if (ReadNonNegativeId(call.Arg(1)) is null)
+
+        var isShutdown = call.Kwargs is PyDict candidate &&
+            candidate.Entries.Count == 1 &&
+            Eve.Macho.JsSemantics.StringValue(candidate.Entries[0].Key) == "isShutdown" &&
+            candidate.Entries[0].Value is PyBool shutdown && shutdown.Value;
+        if (ReadNonNegativeId(call.Arg(1)) is null && !(isShutdown && call.Arg(1) is PyNone))
             throw MachoErrors.ThrowUserError("CLIENT_STATS_LOCATION_INVALID");
 
         var rows = ReadCollectionCount(call.Arg(2));
@@ -41,7 +46,7 @@ public sealed partial class EventLogRpcService(Action<string>? log = null)
                 throw MachoErrors.ThrowUserError("CLIENT_STATS_SHUTDOWN_FLAG_INVALID");
         }
 
-        var locationId = ReadNonNegativeId(call.Arg(1))!.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var locationId = ReadNonNegativeId(call.Arg(1))?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "";
         _log($"LogClientStats location={locationId} rows={rows}");
         return ValueTask.FromResult<PyValue>(PyNone.Instance);
     }

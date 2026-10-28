@@ -1,5 +1,16 @@
 # RPC Host coverage handoff — CX5
 
+## Latest T–Z P2 service audit (2026-10-28)
+
+- The origin/main coverage snapshot had 23 unrecorded P2 IMPLEMENTED-UNTESTED rows for XmppChatMgr, tourneyMgr and userSvc. Client callsites, consumers and EveJS comparisons for each row are now recorded in `CLIENT_VERIFIED.md`; the CSV has 21 IMPLEMENTED-TESTED rows and two REJECTS-VALID-INPUT rows.
+- Tourney fallback shapes now match the client and EveJS: `GetTourneySetup` returns `(dict, dict, list)`; `GetPotentialMatches` returns a dict. A real Host wire regression covers both.
+- XMPP string arguments now use `JsSemantics.StringValue`, which accepts the Python 2 PyBytes wire shape. The real Host wire check confirms byte-string replies, resync names, private-room results and an authorized MOTD change. The no-store cases for channel creation/invitation/ownership fail closed; PostgreSQL-backed success branches were outside this run.
+- `userSvc.ReportISKSpammer` no longer returns True without processing the report; it returns False when no user RPC handler is configured. The V24.01 client ignores this result, while EveJS logs the report and returns True. The difference is recorded in `DEVIATIONS.md`.
+- Focused Host wire tests passed 3/3; the focused Tourney service class passed 9/9. Builds succeeded with zero warnings/errors for Eve.Services.Core, Eve.Host, Eve.Services.Core.Tests and Eve.Host.Tests.
+- Full Host.Tests with `EVE_PG_URL` unset reported 556 passed, 100 failed and 227 skipped. Full Eve.Services.Core.Tests reported 842 passed, 9 failed and 57 skipped. The failed cases require the unavailable database configuration or fail in DB-only fixtures. No PostgreSQL connection or graphical-client run occurred. No push was made because the required full Host.Tests shard did not pass.
+- Earlier local G–M commits `f9f5a313`, `74a6d531` and `3beefbfa` remain unpushed; unrelated headless-client work in the working tree was left untouched.
+
+
 ## Scope and decision
 
 This batch adds one real-socket Host regression covering the listed lookup, machoNet, and moonExtractions reads. No production endpoint was added: the 15 rows named `machoNet.get` are Python dictionary lookups on the result of the existing RPC `machoNet.GetGlobalConfig()`, not remote method calls. Every listed callsite performs its `.get(key, fallback)` locally after the remote call.

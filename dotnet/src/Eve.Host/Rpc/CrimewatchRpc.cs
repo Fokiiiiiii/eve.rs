@@ -100,7 +100,6 @@ internal sealed partial class CharacterServicesComposition
         return new(kind, kind == Eve.Crimewatch.BountyOwnerKind.Corporation ? targetId : 0, kind == Eve.Crimewatch.BountyOwnerKind.Alliance ? targetId : 0);
     }
 
-    /// <summary>Crimewatch: the service, kill rights and the bounty proxy (kill rights and the player bounties).</summary>
     private IReadOnlyList<IService> CrimewatchRpc() =>
     [
             // security status is the character's relation of that kind (Eve.Relations); crimewatch only asks for it

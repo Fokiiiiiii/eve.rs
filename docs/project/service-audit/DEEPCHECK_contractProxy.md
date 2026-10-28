@@ -1,6 +1,6 @@
 # contractProxy 深掘り監査
 
-確認日: 2026-10-27  
+確認日: 2026-10-27
 対象: V24.01 eve-logic client、eve.rs の Host / Core、EveJS 261018.1 source
 
 ## 調査結論

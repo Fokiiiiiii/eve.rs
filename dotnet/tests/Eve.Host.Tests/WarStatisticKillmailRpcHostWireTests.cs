@@ -46,19 +46,20 @@ public partial class HostServerTests
         await front.SendAsync(open);
         _ = await front.ReceiveAsync();
 
-        async Task<PyValue> Call(long callId, long id, string hash)
+        async Task<PyValue> Call(long callId, long id, PyValue hash)
         {
             await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.CallWithKwargs(
                 open,
                 callId,
                 "warStatisticMgr",
                 "GetKillMail",
-                new PyTuple([new PyLong(id), new PyStr(hash)]),
+                new PyTuple([new PyLong(id), hash]),
                 new PyDict([new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1))])))));
             return Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload))!;
         }
 
-        var killmail = Assert.IsType<PyObject>(await Call(1, killId, expectedHash));
+        var killmail = Assert.IsType<PyObject>(await Call(1, killId,
+            new PyBytes(Encoding.UTF8.GetBytes(expectedHash))));
         var fields = WarKeyValFields(killmail);
         Assert.Equal(new PyInt(killId), fields["killID"]);
         Assert.Equal(new PyLong(killTime), fields["killTime"]);
@@ -66,7 +67,9 @@ public partial class HostServerTests
         Assert.Equal(killBlob, Encoding.UTF8.GetString(Assert.IsType<PyBytes>(fields["killBlob"]).Value.Span));
         Assert.Equal(killId, loadedKillId);
 
-        Assert.Equal(PyNone.Instance, await Call(2, killId, "wrong-hash"));
-        Assert.Equal(PyNone.Instance, await Call(3, killId + 1, expectedHash));
+        Assert.IsType<PyObject>(await Call(2, killId, new PyWString(expectedHash)));
+        Assert.Equal(PyNone.Instance, await Call(3, killId,
+            new PyBytes(Encoding.UTF8.GetBytes("wrong-hash"))));
+        Assert.Equal(PyNone.Instance, await Call(4, killId + 1, new PyWString(expectedHash)));
     }
 }

@@ -191,6 +191,43 @@ public class CharMgrTests
 {
     private static PyValue Id(long value) => new PyInt(value);
 
+    [Fact]
+    public async Task Owner_notes_accept_the_client_limit_and_refuse_longer_text()
+    {
+        var data = CharMgrPersonalData.Empty;
+        var character = new Character(1, 1, "Test", 0, 0, 0, 0, 0, 0, 0, null, null, 0, 0,
+            0, 0, 0, null, DateTimeOffset.UnixEpoch, null, null);
+        var service = new CharMgrService(
+            null!, null!, null!, null!, null!, null!, null!,
+            readPersonalData: (_, _) => ValueTask.FromResult<CharMgrPersonalData?>(data),
+            updatePersonalData: (_, update, _) =>
+            {
+                data = update(data);
+                return ValueTask.FromResult<CharMgrPersonalData?>(data);
+            },
+            readCharacterById: (_, _) => ValueTask.FromResult<Character?>(character));
+        var session = new ClientSession();
+        session.Set("charid", new PyInt(1));
+        ServiceCall Call(string method, params PyValue[] args) => new()
+        {
+            Method = method,
+            Args = args,
+            Session = session,
+        };
+
+        var maxText = new string('x', 3900);
+        var noteId = Assert.IsType<PyInt>(await service.AddOwnerNote(Call("AddOwnerNote", new PyStr("Note"), new PyWString(maxText))));
+        Assert.Equal(1, noteId.Value);
+        Assert.Equal(PyNone.Instance, await service.EditOwnerNote(Call("EditOwnerNote", noteId, PyNone.Instance, new PyWString(maxText))));
+        Assert.Equal(maxText, data.OwnerNotes.Single().Note);
+
+        await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
+            service.AddOwnerNote(Call("AddOwnerNote", new PyStr("Long"), new PyWString(maxText + "x"))).AsTask());
+        await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
+            service.EditOwnerNote(Call("EditOwnerNote", noteId, PyNone.Instance, new PyWString(maxText + "x"))).AsTask());
+        Assert.Equal(maxText, data.OwnerNotes.Single().Note);
+    }
+
     private static Dictionary<string, PyValue> Fields(PyValue keyVal) =>
         ((PyDict)((PyObject)keyVal).Args).Entries.ToDictionary(e => JsSemantics.StringValue(e.Key)!, e => e.Value);
 
@@ -973,10 +1010,12 @@ public class CharMgrTests
             Assert.IsType<PyTuple>(editErrorHeader.Items[1]).Items[0]);
         Assert.Equal("old", store[characterId].OwnerNotes.Single(note => note.NoteId == 2).Note);
 
-        Assert.Equal(Id(5), await Rig.CallAsync(service, session, "AddOwnerNote", new PyStr("Status"), new PyStr("ready")));
-        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "EditOwnerNote", Id(5), new PyStr("Updated")));
+        var maxOwnerNoteText = new string('x', 3900);
+        Assert.Equal(Id(5), await Rig.CallAsync(service, session, "AddOwnerNote", new PyStr("Status"), new PyWString(maxOwnerNoteText)));
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "EditOwnerNote", Id(5),
+            new PyStr("Updated"), new PyWString(maxOwnerNoteText)));
         Assert.Equal(
-            new PyList([Py.KeyVal(("noteID", Id(5)), ("label", new PyStr("Updated")), ("note", new PyStr("ready")))]),
+            new PyList([Py.KeyVal(("noteID", Id(5)), ("label", new PyStr("Updated")), ("note", new PyStr(maxOwnerNoteText)))]),
             await Rig.CallAsync(service, session, "GetOwnerNote", Id(5)));
         Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "RemoveOwnerNote", Id(5)));
         Assert.Equal(PyNone.Instance, await Rig.CallAsync(service, session, "SetNote", Id(4002), new PyStr("saved")));

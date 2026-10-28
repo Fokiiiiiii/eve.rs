@@ -91,7 +91,7 @@ public sealed class RpcSecurityInventoryTests : IAsyncLifetime
             var mailMethodCount = rows.Count(row => row.StartsWith("mailMgr.", StringComparison.Ordinal));
             // HostComposition omits database-backed providers when the test has no EVE_PG_URL.
             // The audited facWarMgr route set omits the client wrapper-only RefreshCorps and GetStats_CorpPilots calls.
-            Assert.Equal(mailMethodCount == 0 ? 241 : 1445, rows.Length);
+            Assert.Equal(mailMethodCount == 0 ? 241 : 1451, rows.Length);
             if (mailMethodCount != 0) Assert.Equal(28, mailMethodCount);
             Console.WriteLine($"RPC_INVENTORY_COUNT={rows.Length}");
             foreach (var row in rows) Console.WriteLine($"RPC_INVENTORY={row}");

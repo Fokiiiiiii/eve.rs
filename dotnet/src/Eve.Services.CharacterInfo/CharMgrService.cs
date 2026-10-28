@@ -978,7 +978,7 @@ public sealed partial class CharMgrService(
         var noteText = OptionalText(call.Args.Count > 1 ? call.Arg(1) : new PyStr("")) ?? "";
         if (label.Length > 82)
             throw MachoErrors.ThrowUserError("CHARMGR_NOTE_LABEL_LIMIT_EXCEEDED");
-        if (noteText.Length > 6000)
+        if (noteText.Length > 3900)
             throw MachoErrors.ThrowUserError("CHARMGR_NOTE_LIMIT_EXCEEDED");
         var noteId = 0L;
         await UpdatePersonalDataAsync(call, data =>
@@ -1051,7 +1051,7 @@ public sealed partial class CharMgrService(
         var noteText = call.Args.Count > 2 ? OptionalText(call.Arg(2)) : null;
         if (label is { Length: > 82 })
             throw MachoErrors.ThrowUserError("CHARMGR_NOTE_LABEL_LIMIT_EXCEEDED");
-        if (noteText is { Length: > 6000 })
+        if (noteText is { Length: > 3900 })
             throw MachoErrors.ThrowUserError("CHARMGR_NOTE_LIMIT_EXCEEDED");
         await UpdatePersonalDataAsync(call, data =>
         {

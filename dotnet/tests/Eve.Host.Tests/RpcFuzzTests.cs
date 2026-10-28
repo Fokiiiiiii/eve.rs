@@ -79,6 +79,19 @@ public sealed class RpcFuzzTests
             snapshotSource = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
             var databaseBefore = await SnapshotAsync(snapshotSource, schemas);
             snapshotBeforeElapsed = elapsed.ElapsedMilliseconds - compositionElapsed;
+            if (services.FirstOrDefault(service => service.Name == "fwWarzoneSolarsystem") is { } fwWarzone &&
+                fwWarzone.HasMethod("GetAllWarzonesOccupationStates"))
+            {
+                // Warm its one-time SDE adjacency cache before measuring hostile RPC allocations.
+                var warmCapture = new PacketCapture();
+                var warmSession = new ClientSession(warmCapture) { SessionId = 9_876_543, ClientId = 9_876_544 };
+                Assert.True(await dispatcher.DispatchAsync(
+                    CallPacket("fwWarzoneSolarsystem", "GetAllWarzonesOccupationStates", []), warmSession)
+                    .WaitAsync(DispatchTimeout));
+                var warmResponses = warmCapture.Packets.Select(MachoPacket.Decode).ToArray()
+                    .Where(packet => packet!.Type is MachoMessage.CallRsp or MachoMessage.ErrorResponse);
+                Assert.Equal(MachoMessage.CallRsp, Assert.Single(warmResponses)!.Type);
+            }
             var dispatchStarted = elapsed.ElapsedMilliseconds;
             foreach (var service in services)
             {

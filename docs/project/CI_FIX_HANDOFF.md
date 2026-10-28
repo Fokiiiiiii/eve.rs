@@ -981,3 +981,7 @@ Commit 0af395db updates the market E2E assertions to check the client-consumed u
 ## Follow-up push de67439b status
 
 Commit de67439b records the successful run 1118 result. It changed only this Markdown handoff, and `.github/workflows/ci.yml` ignores `docs/**` and `**/*.md` on push, so no main CI run was created. This documentation-only push does not count toward the three-run streak.
+
+## Push a0c5911f status
+
+Commit a0c5911f includes the undock session notification fix from ea26859f plus the origin/main merge. The stale ship ID is corrected in the same SessionChange packet as the location updates. In the whole V24.01 client, `eve/common/script/sys/eveCfg.py:1510-1511` reads `session.shipid` for the active ship, and `eve/client/script/ui/shared/dockedUI/undockingSvc.py:64-91,121-138` reads it before initiating undock; `carbon/common/script/net/SessionChangeGPCS.py:77-110` consumes session change notifications. Agent run 1068 failed the DB-backed regression because the expected new ship ID was PyLong while `InventoryWire.Id` emits PyInt; the test now pins the observed PyInt wire type. Push-triggered main CI run 40764363744 remained in progress when this handoff was updated. No local PostgreSQL tests were run.

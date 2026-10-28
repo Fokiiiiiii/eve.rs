@@ -168,6 +168,14 @@ public partial class HostServerTests
         Assert.IsType<PyInt>(queueAndFree.Items[1]);
         Assert.IsType<PyDict>(Result(await Call("skillHandler", "GetSkills")));
         Assert.IsType<PyDict>(Result(await Call("skillHandler", "GetAllSkills")));
+        var mySkillInfo = Assert.IsType<PyObject>(Result(await Call("skillHandler", "GetMySkillInfo")));
+        var mySkillFields = Assert.IsType<PyDict>(mySkillInfo.Args).Entries
+            .ToDictionary(entry => Assert.IsType<PyStr>(entry.Key).Value, entry => entry.Value);
+        Assert.Equal(new[] { "freeSkillPoints", "queue", "skillPoints", "skills" }, mySkillFields.Keys.Order());
+        Assert.IsType<PyDict>(mySkillFields["skills"]);
+        Assert.IsType<PyInt>(mySkillFields["skillPoints"]);
+        Assert.IsType<PyInt>(mySkillFields["freeSkillPoints"]);
+        Assert.IsType<PyList>(mySkillFields["queue"]);
         Assert.Equal(new PyInt(1_000_000), Result(await Call("skillHandler", "GetDiminishedSpFromInjectors",
             new PyInt(largeInjector), new PyInt(2), new PyInt(0))));
 

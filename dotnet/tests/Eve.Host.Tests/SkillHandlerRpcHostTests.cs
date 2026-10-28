@@ -51,6 +51,7 @@ public partial class HostServerTests
         Assert.IsType<PyList>(await Call(3, "GetSkillHistory"));
         Assert.IsType<PyNone>(await Call(4, "GetSkillPoints"));
         var queueAndFree = Assert.IsType<PyTuple>(await Call(5, "GetSkillQueueAndFreePoints"));
+        Assert.Equal(2, queueAndFree.Items.Count);
         Assert.IsType<PyList>(queueAndFree.Items[0]);
         Assert.Equal(new PyInt(0), queueAndFree.Items[1]);
         Assert.IsType<PyNone>(await Call(6, "GetSkills"));

@@ -137,9 +137,11 @@ public sealed class IndustryJobsServiceTests
         var pending = await pendingService.CallAsync(Call("GetJob", [new PyInt(42002)], corporationId: 2002, corporationRole: 1024));
 
         Assert.Equal(new PyInt(0), Field(denied, "jobID"));
+        Assert.Equal(new PyInt(0), Field(denied, "ownerID"));
         Assert.Equal(new PyInt(0), Field(denied, "status"));
         Assert.Equal(new PyInt(2002), Field(allowed, "ownerID"));
         Assert.Equal(new PyInt(0), Field(pending, "jobID"));
+        Assert.Equal(new PyInt(0), Field(pending, "ownerID"));
         Assert.Equal(new PyInt(0), Field(pending, "status"));
         Assert.Equal([42001L], JobIds(await service.CallAsync(Call("GetJobsByOwner", [new PyInt(2002)], corporationId: 2002, corporationRole: 1024))));
     }

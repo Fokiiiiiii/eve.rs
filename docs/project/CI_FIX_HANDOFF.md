@@ -981,3 +981,13 @@ Commit 0af395db updates the market E2E assertions to check the client-consumed u
 ## Follow-up push de67439b status
 
 Commit de67439b records the successful run 1118 result. It changed only this Markdown handoff, and `.github/workflows/ci.yml` ignores `docs/**` and `**/*.md` on push, so no main CI run was created. This documentation-only push does not count toward the three-run streak.
+
+## Push a0c5911f status
+
+Commit a0c5911f includes the undock session notification fix from ea26859f plus the origin/main merge. The stale ship ID is corrected in the same SessionChange packet as the location updates. In the whole V24.01 client, `eve/common/script/sys/eveCfg.py:1510-1511` reads `session.shipid` for the active ship, and `eve/client/script/ui/shared/dockedUI/undockingSvc.py:64-91,121-138` reads it before initiating undock; `carbon/common/script/net/SessionChangeGPCS.py:77-110` consumes session change notifications. Agent run 1068 failed the DB-backed regression because the expected new ship ID was PyLong while `InventoryWire.Id` emits PyInt; the test now pins the observed PyInt wire type. Push-triggered main CI run 40764363744 remained in progress when this handoff was updated. No local PostgreSQL tests were run.
+
+## Follow-up for a0c5911f and afa34ec1
+
+Main CI run 1204 for a0c5911f failed the headless live comparison because the intentional undock `shipid` addition differed from the recorded reference event. The headless comparator now requires `shipid` to be first and equal the active ship ID, then strictly compares all remaining attributes with the reference. This is documented in `docs/reference/compat/DEVIATIONS.md`. The same run failed `MarketHostTests.The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart`: its second identical order was within the deliberate five-second Q14 duplicate-placement window (`MarketProxyService.cs:151-156`). The recovery scenario now uses a changed quote, leaving Q14 behavior intact.
+
+Commit ec2eeb05 carries those follow-up fixes, pushed with upstream merges as afa34ec1. Agent run 1071 (40766880387) passed the undock DB regression in 5m42s with no skipped tests. Main CI run 40766869316 was still in progress at handoff update. Local `Eve.Host.Tests` build passed with zero warnings/errors, and the undock SessionChange no-DB focused check passed; PostgreSQL tests were not run locally.

@@ -90,6 +90,10 @@ public sealed class ProjectDiscoveryServiceTests
         await service.CallAsync(Request("fix_task_id", session, new PyLong(42)));
         Assert.Equal(98000001, fixedCharacter);
         Assert.Equal(42, fixedTaskId);
+        await service.CallAsync(Request("fix_task_id", session, new PyLong(-42)));
+        Assert.Null(fixedTaskId);
+        await service.CallAsync(Request("fix_task_id", session, new PyInt(0)));
+        Assert.Null(fixedTaskId);
     }
 
     [Fact]

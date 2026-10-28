@@ -21,16 +21,23 @@ from evecli import packet
 from tests import dbseed
 from tests import test_login_to_character as base
 from tests.test_death import DEATH, _names
+from tests.test_module import CAPACITOR, changes_of
 from tests.test_others import hold_still, watch
 from tests.test_target import plain_race
 from tests.test_weapon import shots_of, slims_in
-from tests.test_undock import STATION, SYSTEM, arrive
+from tests.test_undock import STATION, SYSTEM, arrive, args_of, number
 
 pytestmark = [
     pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server"),
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SLOW") != "1", reason="a minute: set EVE_LIVE_SLOW=1"),
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SERVER", "eve.rs") == "reference", reason="the reference's NPCs are its own"),
 ]
+
+def _target_update_is(event: dict, what: str, item: int) -> bool:
+    if event["name"] != "OnTarget":
+        return False
+    args = args_of(event)["$tuple"]
+    return len(args) > 1 and args[0] == what and number(args[1]) == item
 
 def test_a_spawned_rat_locks_the_pilot_and_shoots_it():
     race = plain_race(DEATH["races"][0], "victim")
@@ -52,6 +59,30 @@ def test_a_spawned_rat_locks_the_pilot_and_shoots_it():
         assert text.startswith("Spawned 1 hull from Blood Visionary: 1x Blood Visionary."), text
 
         seen = watch({"events": who}, 60.0, until=lambda s: any(e["name"] == "OnDamageMessage" for e in s["events"]))["events"]
+        rat = next((item for item, _ in slims_in(seen) if item != ship_id), 0)
+        assert rat, "the rat did not come into space"
+        flow = seen
+        spawn_index = next(
+            i for i, event in enumerate(flow)
+            if event["name"] == "DoDestinyUpdate" and "AddBalls2" in _names(event) and str(rat) in str(event)
+        )
+        lock_index = next(
+            i for i, event in enumerate(flow)
+            if _target_update_is(event, "otheradd", rat)
+        )
+        fx_index = next(
+            i for i, event in enumerate(flow)
+            if event["name"] == "DoDestinyUpdate" and "OnSpecialFX" in _names(event) and str(rat) in str(event)
+        )
+        incoming_index = next(
+            i for i, event in enumerate(flow)
+            if event["name"] == "OnDamageMessage" and "otherPlayerWeapons" in str(event)
+        )
+        assert spawn_index < lock_index < fx_index < incoming_index, [event["name"] for event in flow]
+        assert any(
+            event["name"] == "OnDamageStateChange" and str(ship_id) in str(event)
+            for event in flow
+        ), "the client's ship damage state did not change after the rat hit it"
         names = [e["name"] for e in seen]
         actions = set().union(*(_names(e) for e in seen if e["name"] == "DoDestinyUpdate"))
         # the ball comes into space, the rat orbits the pilot, locks it and shoots it
@@ -87,7 +118,11 @@ def test_a_pilot_who_shoots_a_rat_dead_is_told_of_its_bounty():
         rat = rats[0]
 
         who.call_bound(dogma[0], "AddTarget", rat)
-        watch({"events": who}, 20.0, until=lambda seen: rat in [t if not isinstance(t, dict) else t["$long"] for t in map(lambda x: getattr(x, "value", x), who.call_bound(dogma[0], "GetTargets"))])
+        locked = watch({"events": who}, 20.0, until=lambda seen: rat in [t if not isinstance(t, dict) else t["$long"] for t in map(lambda x: getattr(x, "value", x), who.call_bound(dogma[0], "GetTargets"))])["events"]
+        assert any(
+            _target_update_is(event, "add", rat)
+            for event in locked
+        ), "the client did not receive the pilot's completed target lock"
         # a rat circles its target at ten kilometres (the client's own default for a fighting NPC) and the gun reaches seven: the pilot goes to the rat
         who.call_bound(ballpark[0], "CmdOrbit", rat, 2000)
         watch({"events": who}, 8.0)
@@ -106,17 +141,47 @@ def test_a_pilot_who_shoots_a_rat_dead_is_told_of_its_bounty():
         names = [e["name"] for e in seen]
         counts = {n: names.count(n) for n in set(names)}
         hits = [str(shot.get("damage")) for shot in shots_of(seen)]
+        assert hits, "the client did not receive a player weapon damage message"
         assert "OnBountyAddedToPayout" in names, (counts, hits[:12], sorted(set().union(*(_names(e) for e in seen if e["name"] == "DoDestinyUpdate"))))
         actions = set().union(*(_names(e) for e in seen if e["name"] == "DoDestinyUpdate"))
         assert "RemoveBalls" in actions, sorted(actions)
+        activation_index = next(
+            i for i, event in enumerate(seen)
+            if event["name"] == "OnGodmaShipEffect" and number(args_of(event)["$tuple"][0]) == gun and args_of(event)["$tuple"][3]
+        )
+        shot_index = next(
+            i for i, event in enumerate(seen)
+            if event["name"] == "OnDamageMessage"
+            and {key: value for key, value in args_of(event)["$tuple"][0]["$dict"]}.get("attackType") == "me"
+        )
+        removal_index = next(
+            i for i, event in enumerate(seen)
+            if event["name"] == "DoDestinyUpdate" and "RemoveBalls" in _names(event)
+        )
+        assert activation_index < shot_index < removal_index, [event["name"] for event in seen]
+        capacitor_updates = [
+            (i, item, new, old)
+            for i, event in enumerate(seen) if event["name"] == "OnModuleAttributeChanges"
+            for item, attribute, new, old in changes_of(event)
+            if number(item) == ship_id and attribute == CAPACITOR and new != old
+        ]
+        assert capacitor_updates, "the client did not receive the pilot ship's capacitor changes while its gun fired"
+        assert (
+            activation_index < capacitor_updates[0][0] < shot_index < removal_index
+        ), [event["name"] for event in seen]
 
         # the wreck the host made comes into space where the rat was (a little after the bounty: it is an item first), the pilot opens it, and what it holds is what its slim item says
         # it holds (`isEmpty`); what a table gives is a draw, so what is in it is not said here (the unit tests roll known numbers)
         wrecks = [item for event in seen for item, _ in slims_in([event]) if item not in (ship_id, rat)]
         if not wrecks:
-            wrecks = [item for event in watch({"events": who}, 6.0)["events"] for item, _ in slims_in([event]) if item not in (ship_id, rat)]
+            late = watch({"events": who}, 6.0)["events"]
+            seen.extend(late)
+            wrecks = [item for event in late for item, _ in slims_in([event]) if item not in (ship_id, rat)]
         assert wrecks, "the wreck of the rat did not come into space"
         wreck = wrecks[0]
+        bounty_index = next(i for i, event in enumerate(seen) if event["name"] == "OnBountyAddedToPayout")
+        wreck_index = next(i for i, event in enumerate(seen) if any(item == wreck for item, _ in slims_in([event])))
+        assert removal_index < bounty_index < wreck_index, [event["name"] for event in seen]
         # the pilot is where the fight was: it goes to the wreck, and may open it within two and a half kilometres of its surface (`TargetTooFar` before that)
         who.call_bound(ballpark[0], "CmdOrbit", wreck, 500)
         opened = None

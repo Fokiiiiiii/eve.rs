@@ -223,3 +223,8 @@ All 30 rows RPC-00984–01972 are documented in `CLIENT_VERIFIED.md`. Whole-tree
   ```
   Before code push, run `git fetch origin main && git merge origin/main`, rerun the touched tests and full `Eve.Host.Tests` shard, inspect `ci-status.py failures <sha>`, then push `HEAD:main`.
 
+
+
+### 2026-10-28: `planetMgr.GetPin` rows
+
+Corrected RPC-02136 and RPC-02137 as `CLIENT-LOCAL` in `EVE_RS_COVERAGE.csv` and recorded the whole-client evidence in `CLIENT_VERIFIED.md`. The V24 callsites are local `BasePlanet.GetPin` lookups, not remote `planetMgr` calls. This documentation-only increment is complete; other N-S rows remain to be checked.

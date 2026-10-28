@@ -39,17 +39,21 @@ public sealed class RedeemUserSvcCompatibilityTests
         Assert.Equal(new PyStr("capsuleer"), await Call(service, session, "GetUserName"));
         Assert.Equal(new PyStr("issued-token"), await Call(service, session, "GetUserToken"));
 
-        // Without a Multiple Character Training store the account has no extra queues, and no activation grants one.
+        // Without an MCT store, queue reads are empty and activation returns the client-facing user error.
         Assert.Empty(Assert.IsType<PyDict>(await Call(service, session, "GetMultiCharactersTrainingSlots")).Entries);
         Assert.Empty(Assert.IsType<PyList>(await Call(service, session, "GetUpdatedMultiCharacterTraining")).Items);
-        Assert.Empty(Assert.IsType<PyList>(await Call(service, session, "ActivateSoulboundMultiTraining")).Items);
-        await Assert.ThrowsAsync<MachoWrappedException>(() => Call(service, session, "ActivateMultiTraining"));
+        var soulboundRefusal = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            Call(service, session, "ActivateSoulboundMultiTraining"));
+        Assert.Equal(MachoErrors.UserErrorClass, soulboundRefusal.Error.ClassName);
+        var regularRefusal = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            Call(service, session, "ActivateMultiTraining"));
+        Assert.Equal(MachoErrors.UserErrorClass, regularRefusal.Error.ClassName);
         Assert.Empty(Assert.IsType<PyDict>(await Call(service, session, "GetMultiCharactersTrainingSlots")).Entries);
 
         Assert.Same(PyBool.True, await Call(service, session, "CastUpvote"));
         Assert.Same(PyBool.True, await Call(service, session, "CastDownvote", new PyStr("feedback")));
         Assert.Same(PyBool.True, await Call(service, session, "ReportBot", new PyInt(90000004)));
-        Assert.Same(PyBool.True, await Call(service, session, "ReportISKSpammer", new PyInt(90000004)));
+        Assert.Same(PyBool.False, await Call(service, session, "ReportISKSpammer", new PyInt(90000004)));
         Assert.Same(PyBool.False, await Call(service, session, "CreateRedeemTokenQA"));
     }
 

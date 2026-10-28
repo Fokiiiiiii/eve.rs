@@ -65,6 +65,7 @@ public static class SecurityStatusEventTypeIds
     {
         "aggression" => IllegalAggression,
         "npc_bounty_recovery" or "npc-kill-security-status-recovery" => KillPirateNpc,
+        "hand_in_tags" => HandInTags,
         _ => null,
     };
 }

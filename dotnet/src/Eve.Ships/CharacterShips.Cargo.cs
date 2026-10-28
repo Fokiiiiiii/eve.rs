@@ -602,14 +602,15 @@ private sealed record ShipHoldRule(
     /// <c>StackAll</c>: the stacks of one type in a place (a hangar, a ship's hold) become one, the oldest, and the others are gone. What is not stackable (an assembled
     /// item) and what sits in a slot is left alone. Answers what changed, in the order the client is told: the stack that grew, then the stack that went.
     /// </summary>
-    public async Task<IReadOnlyList<ItemChanged>> StackAllAsync(long characterId, long containerId, int? flag, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<ItemChanged>> StackAllAsync(long characterId, long containerId, int? flag, CancellationToken cancellationToken = default, long? ownerId = null)
     {
+        var stackOwnerId = ownerId ?? characterId;
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await LockAsync(connection, transaction, characterId, cancellationToken);
 
         var stacks = (await items.InContainerAsync(containerId, cancellationToken))
-            .Where(i => i.OwnerId == characterId && !i.Singleton && !Slots.IsSlotFlag(i.Flag) && (flag is null || i.Flag == flag))
+            .Where(i => i.OwnerId == stackOwnerId && !i.Singleton && !Slots.IsSlotFlag(i.Flag) && (flag is null || i.Flag == flag))
             .GroupBy(i => (i.TypeId, i.Flag));
         var changes = new List<ItemChanged>();
         foreach (var group in stacks)
@@ -620,7 +621,7 @@ private sealed record ShipHoldRule(
                 // read again under the row locks: a stack that moved or went since the list was read is left as it is
                 if (await items.LockAndGetAsync(connection, transaction, survivor.Id, cancellationToken) is not { } kept
                     || await items.LockAndGetAsync(connection, transaction, other.Id, cancellationToken) is not { } gone
-                    || !Stackable(kept, containerId, group.Key.Flag, characterId) || !Stackable(gone, containerId, group.Key.Flag, characterId) || kept.TypeId != gone.TypeId)
+                    || !Stackable(kept, containerId, group.Key.Flag, stackOwnerId) || !Stackable(gone, containerId, group.Key.Flag, stackOwnerId) || kept.TypeId != gone.TypeId)
                 {
                     continue;
                 }
@@ -636,6 +637,6 @@ private sealed record ShipHoldRule(
         return changes;
     }
 
-    private static bool Stackable(Item item, long containerId, int flag, long characterId) =>
-        !item.Singleton && item.LocationId == containerId && item.Flag == flag && item.OwnerId == characterId;
+    private static bool Stackable(Item item, long containerId, int flag, long ownerId) =>
+        !item.Singleton && item.LocationId == containerId && item.Flag == flag && item.OwnerId == ownerId;
 }

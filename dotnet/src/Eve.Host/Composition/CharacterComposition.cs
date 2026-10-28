@@ -273,6 +273,8 @@ internal sealed partial class CharacterServicesComposition
         characterEntryHooks = new List<ICharacterEntryHook>();
         if (spaceSessions is not null)
             characterEntryHooks.Add(spaceSessions);
+        mapTelemetry = new MapTelemetry(mailCache, now, message => Console.Error.WriteLine($"eve-host: {message}"));
+        characterEntryHooks.Add(mapTelemetry);
         characterEntryHooks.Add(new SkillsLoginHook(training, skillCatalog, characterSessions, announcer, now));
         characterEntryHooks.Add(MilestoneManager);
         characterEntryHooks.Add(corporationLogin);

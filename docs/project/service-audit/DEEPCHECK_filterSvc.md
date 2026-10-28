@@ -1,0 +1,47 @@
+# Deep check: client inventory filter service
+
+Client build checked: V24.01 build 3396210. This is a source and Host-wire audit; the graphical client was not launched.
+
+## Finding
+
+There is no remote client service named `filterSvc`. The file `eve/client/script/ui/shared/inventory/filterSvc.py` defines `ItemFilterSvc` with `__guid__ = 'svc.itemFilter'` (line 62). Whole-client searches found no `RemoteSvc`, `ConnectToRemoteService`, or bound/moniker call for either `filterSvc` or `itemFilter`. The only external calls use the local `sm.GetService('itemFilter')` service. eve.rs has no `filterSvc` or `itemFilter` Host registration. Adding a remote stub would not match the client.
+
+The real remote dependencies are `charMgr` for saved per-character filters and `sharedSettingsMgr` for share links.
+
+## Every external call to local `itemFilter`
+
+| Method | All client call sites | Client shape and effect |
+| --- | --- | --- |
+| `FilterItems` | `eve/client/script/ui/shared/container.py:615`; `eve/client/script/ui/shared/fittingScreen/invPanel.py:332-334` | Positional `(items, filter)`; returns a lazy filtered iterator. |
+| `ApplyTempFilter` | `container.py:618`; `fittingScreen/invPanel.py:337` | Positional `items`; returns the same items when no temporary filter exists, otherwise the filtered iterator. |
+| `SetTempFilter` | `filterSvc.py:402,406` | Positional filter tuple or `None`; stores local UI state and scatters `OnInvTempFilterChanged` at `filterSvc.py:304-307`. |
+| `SaveFilter` | `filterSvc.py:426,428` | Positional `(name, resultType, conditions)`; the edit path also passes local Python keyword `suppressWarn=True`. Empty names raise `UserError('SaveFilterNoName')` (`filterSvc.py:255-257`); long names are truncated to 100 characters. |
+| `RemoveFilter` | `filterSvc.py:425`; `invFilters.py:238` | Positional name; the edit path passes local keyword `suppressWarn=True`. Removes only an existing filter. |
+| `CreateFilter` | `eve/client/script/ui/shared/inventory/invFilters.py:70` | No arguments; opens the local filter editor. |
+| `GetFilters` | `invFilters.py:129` | No arguments; returns the local filter list sorted by lower-case name. |
+| `EditFilter` | `invFilters.py:243` | Positional name; opens the local editor only if the filter exists. |
+| `LoadSharedFilter` | `sharedSettings/client/link.py:17` | Positional setting-key tuple from the shared-link URL; confirms with the user, loads data, then opens the local editor (`filterSvc.py:314-323`). |
+
+The other methods in `ItemFilterSvc` are class internals or service lifecycle/event methods. `SaveFilter` calls `PersistFilters` twice after a successful first write (`filterSvc.py:255-272`); each `PersistFilters` saves the settings and then scatters `OnInvFiltersChanged` (`filterSvc.py:244-247`). That duplicate local save/event is client behavior. Neither event is sent by eve.rs. The Host methods below send no notifications.
+
+## Remote methods reached by those client calls
+
+| Host RPC | Whole-client call sites and wire arguments | Host route, response, state, errors, events |
+| --- | --- | --- |
+| `sharedSettingsMgr.StoreSettingLinkAndGetID` | Item filter link: `filterSvc.py:372-383,448-450`, positional `(2, {'filter': (name, allOrAny, criterias)})`. Fleet broadcast sharing is a second caller: `eve/client/script/ui/control/eveEditPlainText.py:169`, positional `(3, entry.data)`. | Registered by `CoreServices.Create` at `dotnet/src/Eve.Services.Core/CoreServices.cs:79`; service and method are `GameRpcServices.cs:1056,1066-1116`. Valid type IDs are 2 and 3. It returns `util.KeyVal` with `hashvalue` string, `sqID` integer/long, and `settingTypeID` integer. It persists and deduplicates the payload through the shared-settings callback; production reads and flushes the GameStore `sharedSettings` root (`dotnet/src/Eve.Host/Composition/CharacterComposition.cs:226-235`). Unsupported types, None, blank strings, empty mappings, and a rejected persistence callback return `None`. The client converts a None key to `UserError('ItemFilterLoadingError')` at `sharedSettings/util.py:23-27` (same error on the filter-link path at `filterSvc.py:449-450`). No Host notification follows. |
+| `sharedSettingsMgr.GetStoredSharedSetting` | `sharedSettings/util.py:9-20`; used by item filters and fleet broadcasts. The key tuple `(hashvalue, sqID, settingTypeID)` is produced by `sharedSettings/client/link.py:31-39` and passed as one positional method argument. | Registered on the same service. It accepts the client tuple and PyInt/PyLong numeric fields. It returns the stored payload as a Python 2 `str` (encoded by eve.rs as `PyBytes` on the Host wire) and returns `None` for a malformed or missing key (`GameRpcServices.cs:1119-1148,1230-1287`). The client runs `yaml.safe_load` and reconstructs the mapping at `sharedSettings/util.py:16-20`; a None response raises `UserError('ItemFilterLoadingError')`. No Host notification follows. |
+| `charMgr.GetCharacterSettings` | `characterSettingsSvc.py:21-42` connects with `session.ConnectToRemoteService('charMgr')` and calls this with no method arguments. | Production registers the attributed `charMgr` service through `dotnet/src/Eve.Host/Rpc/CharacterRpc.cs:73-85`; the Host routes the decoded service/method and positional args through `dotnet/src/Eve.Services/PacketDispatcher.cs:90-122,211-224`. It returns a `PyDict` keyed by setting-name strings (`CharMgrService.cs:357-364`); the client only indexes the mapping and catches missing-key `KeyError` (`characterSettingsSvc.py:31-42`). EveJS returns a `utillib.KeyVal` (`src/server/src/services/character/charMgrService.js:105-115,846-850`); the different outer container is not read by the client as an attribute. Settings are read from the character GameStore row by `PersistenceCharMgrReadModel.ReadAsync` (`PersistenceCharMgrReadModel.cs:104-124`). Missing keys become client `None`; no notification follows. |
+| `charMgr.SaveCharacterSetting` | `characterSettingsSvc.py:44-51`; filter persistence sends positional `('inventoryFilters', yaml.safe_dump(filters))` from `filterSvc.py:244-247`. | Returns `None`, updates the same character-owned settings mapping, and produces no Host notification (`CharMgrService.cs:447-472`). Production writes `characters/{characterID}/characterSettings` through the read model (`PersistenceCharMgrReadModel.cs:309-320`, composed in `CharMgrComposition.cs:39-56`). The client rejects values over 102400 units locally with the stated `RuntimeError` before RPC (`characterSettingsSvc.py:44-48`). Invalid key/value bounds at the Host raise wrapped `UserError('CustomInfo')` with the details in `CharMgrService.cs:448-463`; normal filter YAML stays under the limit. |
+| `charMgr.DeleteCharacterSetting` | `characterSettingsSvc.py:53-58`; the wrapper calls it only when the key exists. The generic `Save(key, None/empty)` path calls Delete and then continues to Save (`characterSettingsSvc.py:44-51`). | Positional key; returns `None`, removes the key from the character settings mapping, and produces no Host notification (`CharMgrService.cs:474-488`). This is not the normal item-filter path: `yaml.safe_dump([])` is a nonempty string, and saved filters use the YAML string branch. |
+
+All remote calls above use positional business arguments. `suppressWarn=True` applies only to the local Python `ItemFilterSvc`, not an RPC keyword. Client remote-call transport adds `machoVersion` in kwargs (`carbon/common/script/net/ServiceCallGPCS.py:667-704)); eve.rs removes that transport-only field before invoking the service (`PacketDispatcher.cs:219,307-317`). The Host wire tests use `CallOverHost`, which sends the same `machoVersion` kwargs (`Rpc01800To02100HostWireTests.cs:10-18`). No bound or moniker settings call was found. `charMgr` has bind handlers for global assets, but the settings wrapper takes the ordinary remote-service path.
+
+## EveJS comparison
+
+EveJS 261018.1 exports the same two `sharedSettingsMgr` methods and returns a KeyVal/string or None (`src/server/src/services/settings/sharedSettingsMgrService.js:263-293`). Its payload string is YAML (`48-66`); eve.rs emits deterministic JSON, which the client consumes through `yaml.safe_load` (`sharedSettings/util.py:16-20`). EveJS also returns a setting key after calling its repository write without checking that write result (`188-191,263-276`). eve.rs returns None when the Host persistence callback declines the write, so the client raises its existing loading error instead of receiving a link that cannot be loaded. This difference is asserted by the Host wire regression test.
+
+EveJS character-setting handlers return None and use the same per-character setting operations (`charMgrService.js:1223-1234`, `characterSettingsState.js:111-143`). Its Get response is a named KeyVal; eve.rs returns a dictionary that satisfies the client’s actual mapping operations. None of these differences changes the item-filter UI-visible values or calls.
+
+## Regression coverage and limits
+
+Added `dotnet/tests/Eve.Host.Tests/FilterServiceDeepCheckHostWireTests.cs`. It sends real packets through Host for filter-link storage/read, broadcast setting type 3, duplicate and concurrent writes, PyInt/PyLong key fields, invalid/empty inputs, declined persistence, and charMgr settings read/save/delete/None. The suite does not use PostgreSQL. The real graphical client and database-backed flush/restart were not exercised here; production callback wiring is checked in source.

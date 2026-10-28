@@ -24,4 +24,4 @@ eve.rs registers the map service as an `IncursionAnomalyService` delegating to `
 - PASS: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false` (0 warnings, 0 errors).
 - PASS: focused Host wire test (1 passed, 0 failed, 0 skipped; no database).
 - Selected GitHub Actions and push-gate results are added after dispatch.
-- The graphical client and production database-backed map read models were not exercised. Existing TODOs for missing telemetry history and Edencom data provenance remain open.
+- The graphical client and production database-backed map read models were not exercised. The later map telemetry change now supplies history and visit data from saved state. The Edencom and Triglavian list source remains open; beacon persistence integration also remains to be checked. See `docs/project/service-audit/DEEPCHECK_map.md`.

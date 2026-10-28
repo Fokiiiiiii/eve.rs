@@ -51,6 +51,14 @@ public sealed class ActivityMgrHostRpcTests
         Assert.Equal(MachoMessage.Notification, packets[0].Type);
         Assert.Equal("OnSystemActivityUpdated", packets[0].Dest.BroadcastId);
         Assert.Equal("None", packets[0].Dest.IdType);
+        var envelope = Assert.IsType<PyTuple>(packets[0].Payload).Items;
+        var notificationParts = Assert.IsType<PyTuple>(envelope[0]).Items;
+        var notification = Assert.IsType<PyTuple>(MarshalCodec.Decode(
+            Assert.IsType<PyBuffer>(notificationParts[1]).Value)).Items;
+        Assert.Equal(new PyInt(0), notification[0]);
+        var eventParts = Assert.IsType<PyTuple>(notification[1]).Items;
+        Assert.Equal(new PyInt(1), eventParts[0]);
+        Assert.Empty(Assert.IsType<PyTuple>(eventParts[1]).Items);
         Assert.Equal(MachoMessage.CallRsp, packets[1].Type);
     }
 

@@ -1716,7 +1716,8 @@ was not built, because the client reads its flags elsewhere (Q1 below).
   `RulesTests.Prices_have_at_most_four_significant_figures...`. Status: decided.
 - **Q14 duplicate placement.** An identical placement (the same request) from the same session within five seconds, after the first succeeded, is
   refused with "An identical order was placed a moment ago, so it was not placed again." (`MARKET_DUPLICATE_PLACEMENT`). The client sends no
-  operation key, so this is a stop-gap: a deliberate repeat within five seconds is refused too. Test: `MarketRpcTests.An_identical_placement_within_five_seconds...`. Status: decided (stop-gap, documented).
+  operation key, so a repeated send is refused within five seconds. A successful cancellation clears the session's recent-placement guard, allowing
+  the player to place the same order again immediately. Test: `MarketRpcTests.An_identical_placement_within_five_seconds...`. Status: decided.
 - **Q15 stale view.** A modification carries the client's `oldPrice` and `issueDate`; if either differs from the stored order, the modification is
   refused with "That order has changed since it was shown. Reload the orders and try again." (`MARKET_ORDER_STALE`) and nothing moves. Source:
   the client sends both (`marketsvc.py:288`). Tests: `ModificationRulesTests.A_modification_on_a_stale_view...`,

@@ -631,5 +631,9 @@ public class MarketRpcTests
         r.Now += 6_000;
         await Place(32);
         Assert.Equal(2, (await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Bids.Count);
+        var cancelled = (await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Bids[0];
+        await seat.Proxy.CancelCharOrder(Call(seat.Session, "CancelCharOrder", 33, new PyLong(cancelled.Id)));
+        await Place(34);
+        Assert.Equal(2, (await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Bids.Count);
     }
 }

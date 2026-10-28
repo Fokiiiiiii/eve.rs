@@ -138,12 +138,12 @@ def compare_add_balls(recorded: dict, ours: dict, where: str) -> list[str]:
     out += differences(base.blank_times(extra_r), base.blank_times(extra_o), f"{where}.slims")
     return out
 
-def compare_event(recorded: dict, ours: dict, where: str, mapping: dict) -> list[str]:
+def compare_event(recorded: dict, ours: dict, where: str, mapping: dict, expected_ship_id: int | None = None) -> list[str]:
     if (recorded["name"], recorded["idType"]) != (ours["name"], ours["idType"]):
         return [f"{where}: {ours['name']} ({ours['idType']}) in place of {recorded['name']} ({recorded['idType']})"]
     name = recorded["name"]
     if name == "$sessionchange":
-        return _session_changes(recorded, ours, where, mapping)
+        return _session_changes(recorded, ours, where, mapping, expected_ship_id)
     if name == "DoDestinyUpdate":
         (actions_r, wait_r), (actions_o, wait_o) = actions_of(recorded), actions_of(ours)
         out = [] if wait_r == wait_o else [f"{where}: wait {wait_o} in place of {wait_r}"]
@@ -153,14 +153,22 @@ def compare_event(recorded: dict, ours: dict, where: str, mapping: dict) -> list
         return [] if shape(args_of(recorded)) == shape(args_of(ours)) else [f"{where}: {shape(args_of(ours))} in place of {shape(args_of(recorded))}"]
     return differences(base.blank_times(ids(args_of(recorded), mapping)), base.blank_times(args_of(ours)), f"{where}.{name}")
 
-def _session_changes(recorded, ours, where, mapping) -> list[str]:
+def _session_changes(recorded, ours, where, mapping, expected_ship_id: int | None = None) -> list[str]:
     names = lambda d: [k for k, _ in d["$tuple"][4]["$tuple"][1]["$tuple"][1]["$dict"]]  # noqa: E731
     changed = lambda d: d["$tuple"][4]["$tuple"][1]["$tuple"][1]  # noqa: E731
     out = []
-    if names(recorded["args"]) != names(ours["args"]):
-        out.append(f"{where}: attributes {names(ours['args'])} in place of {names(recorded['args'])}")
+    expected_names = ["shipid"] + names(recorded["args"]) if expected_ship_id is not None else names(recorded["args"])
+    if expected_names != names(ours["args"]):
+        out.append(f"{where}: attributes {names(ours['args'])} in place of {expected_names}")
     else:
-        out += differences(ids(changed(recorded["args"]), mapping), changed(ours["args"]), f"{where}.changes")
+        recorded_changes = changed(recorded["args"])
+        ours_changes = changed(ours["args"])
+        if expected_ship_id is not None:
+            ship_id = next(value for key, value in ours_changes["$dict"] if key == "shipid")
+            if number(ship_id) != expected_ship_id:
+                out.append(f"{where}: shipid {number(ship_id)} in place of {expected_ship_id}")
+            ours_changes = {"$dict": [(key, value) for key, value in ours_changes["$dict"] if key != "shipid"]}
+        out += differences(ids(recorded_changes, mapping), ours_changes, f"{where}.changes")
     return out
 
 def compare_events_by_source(recorded: list[dict], ours: list[dict], where: str, mapping: dict) -> list[str]:
@@ -176,7 +184,7 @@ def compare_events_by_source(recorded: list[dict], ours: list[dict], where: str,
     return problems
 
 
-def compare_events(recorded: list[dict], ours: list[dict], where: str, mapping: dict) -> list[str]:
+def compare_events(recorded: list[dict], ours: list[dict], where: str, mapping: dict, expected_ship_id: int | None = None) -> list[str]:
     recorded, ours = collapse(recorded), collapse(ours)
     # The simulation and the invulnerability timer publish independently. Keep checking the timer
     # notice and its payload, but do not require it to arrive before or after an unrelated update.
@@ -191,12 +199,12 @@ def compare_events(recorded: list[dict], ours: list[dict], where: str, mapping: 
         return [f"{where}: events {[e['name'] for e in ours]} in place of {[e['name'] for e in recorded]}"]
     out: list[str] = []
     for index, (a, b) in enumerate(zip(recorded, ours)):
-        out += compare_event(a, b, f"{where}: event {index} {a['name']}", mapping)
+        out += compare_event(a, b, f"{where}: event {index} {a['name']}", mapping, expected_ship_id)
     if [(e["name"], e["idType"]) for e in recorded_timer] != [(e["name"], e["idType"]) for e in ours_timer]:
         out.append(f"{where}: timer events {[e['name'] for e in ours_timer]} in place of {[e['name'] for e in recorded_timer]}")
     else:
         for index, (a, b) in enumerate(zip(recorded_timer, ours_timer)):
-            out += compare_event(a, b, f"{where}: timer event {index} {a['name']}", mapping)
+            out += compare_event(a, b, f"{where}: timer event {index} {a['name']}", mapping, expected_ship_id)
     return out
 
 def _is_props(event: dict) -> bool:
@@ -279,5 +287,5 @@ def test_a_ship_undocks_flies_and_docks_as_the_reference_did(race):
             events = wait_quietly(who, seconds, until)
             if "ok" in step:
                 problems += compare_answer(label, step["ok"], answer, where)
-            problems += compare_events(step["events"], events, where, mapping)
+            problems += compare_events(step["events"], events, where, mapping, ship_id if label == "undock" else None)
     assert problems == [], "\n".join(problems[:40])

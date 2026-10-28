@@ -80,7 +80,7 @@ def test_orders_in_space_make_the_updates_the_reference_sent(race):
             events = wait_quietly(who, WAITS.get(label, 1.5))
             if "ok" in step:
                 problems += compare_answer(label, step["ok"], describe(raw), where)
-            problems += compare_events(step["events"], events, where, mapping)
+                problems += compare_events(step["events"], events, where, mapping, ship_id if label == "undock" else None)
     assert problems == [], "\n".join(problems[:40])
 
 def distance_from_surface(events: list, ship_id: int):
@@ -104,7 +104,7 @@ def test_a_dock_from_beyond_the_range_sends_the_ship_to_the_station_and_a_second
         wait_quietly(who, 0.5)
         raw, error = outcome(lambda: who.call_bound(ship[0], "Undock", ship_id, False))
         assert error is None, base.brief(error)
-        problems += compare_events(steps["undock"]["events"], wait_quietly(who, 2.0), "undock", mapping)
+        problems += compare_events(steps["undock"]["events"], wait_quietly(who, 2.0), "undock", mapping, ship_id)
         ballpark = who.call("beyonce", "MachoBindObject", SYSTEM, None)
         problems += compare_events(steps["bind the ballpark"]["events"], wait_quietly(who, 2.5), "bind the ballpark", mapping)
 

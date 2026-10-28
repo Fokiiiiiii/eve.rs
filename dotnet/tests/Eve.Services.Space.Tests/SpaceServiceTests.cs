@@ -777,7 +777,7 @@ public class SpaceServiceTests
         Assert.Equal((system, 0), (ship.LocationId, ship.Flag));
         // the session: the corrected active ship, then the three location attributes
         Assert.Equal(
-            [("shipid", new PyLong(character.ShipId + 1), new PyLong(character.ShipId)), ("stationid", new PyInt(Rig.Station), PyNone.Instance), ("locationid", new PyInt(Rig.Station), new PyInt(system)), ("solarsystemid", PyNone.Instance, new PyInt(system))],
+            [("shipid", InventoryWire.Id(character.ShipId + 1), InventoryWire.Id(character.ShipId)), ("stationid", new PyInt(Rig.Station), PyNone.Instance), ("locationid", new PyInt(Rig.Station), new PyInt(system)), ("solarsystemid", PyNone.Instance, new PyInt(system))],
             Sequence.LastChange(session));
         Assert.Equal(character.ShipId, session.GetInt("shipid"));
         Assert.Null(session.GetInt("stationid"));

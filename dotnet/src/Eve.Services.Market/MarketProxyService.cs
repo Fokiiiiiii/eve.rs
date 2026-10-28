@@ -549,6 +549,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
         try
         {
             var receipt=await trading.CancelAsync(Actor(call),Integer(call.Arg(0)),Key(call,"cancel"),call.Cancellation);
+            _lastPlacement.TryRemove(call.Session.SessionId,out _);
             await Publish(receipt);
             return PyNone.Instance;
         }

@@ -35,11 +35,15 @@ The whole `/home/user/eve-logic/eve/client` tree was searched for every target R
 
 ## EveJS v0.12.9 comparison
 
-Insurance delegates all six operations through `server/src/services/insurance/insuranceService.js`: contracts `:26-35`, price methods `:46-60`, ship lookup `:62-67`, purchase `:69-83`, cancellation `:85-89`. Market proxy handlers cover station/system asks `server/src/services/market/marketProxyService.js:6211-6292`, history and owner rowsets `:6424-6531`, transactions/escrow `:6582-6694`, PLEX history `:6799-6821`, cancellation `:6823-6856`, and multi-buy `:6915-6965`. eve.rs preserves the client-visible return categories and mutations while using its persisted domain stores. No compatibility deviation was introduced.
+Insurance delegates all six operations through `server/src/services/insurance/insuranceService.js`: contracts `:26-35`, price methods `:46-60`, ship lookup `:62-67`, purchase `:69-83`, cancellation `:85-89`. Market proxy handlers cover station/system asks `server/src/services/market/marketProxyService.js:6211-6292`, history and owner rowsets `:6424-6531`, transactions/escrow `:6582-6694`, PLEX history `:6799-6821`, cancellation `:6823-6856`, and multi-buy `:6915-6965`. eve.rs preserves the client-visible return categories and mutations while using its persisted domain stores. The recent-placement guard remains a documented client-compatibility stop-gap in Q14; successful cancellation clears that guard.
 
 ## Checks
 
-- PASS: `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false -p:BuildProjectReferences=false --no-restore` (0 warnings, 0 errors).
-- The first build attempt reported missing NuGet assets; restore completed during the subsequent successful build.
-- Database-backed Host tests were not executed locally, per the no-database instruction. Focused Actions runs 40224752533, 40224967561 and 40225210644 all failed in `actions/setup-dotnet` before test startup: the .NET 10.0.14 runtime and 10.0.403 SDK downloads returned HTTP 409. Push CI run 40224742683 failed at the same setup step; no push CI run was found for 2babe92a at the latest status check. No test cases started. Retry when the distribution endpoint recovers.
-- The graphical V24.01 client was not used.
+- PASS: `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false` (0 warnings, 0 errors).
+- PASS: focused local `Eve.Services.Core.Tests` insurance recontract test (1/1).
+- PASS: focused Agent Test run 40765107337 for the insurance Host replacement test.
+- PASS: `dotnet build dotnet/tests/Eve.Services.Space.Tests/Eve.Services.Space.Tests.csproj -p:UseSharedCompilation=false` and `dotnet build dotnet/tests/Eve.Market.Tests/Eve.Market.Tests.csproj -p:UseSharedCompilation=false` (both 0 warnings, 0 errors).
+- The Space test failure was an assertion expecting `PyLong` for an ID that `InventoryWire.Id` sends as `PyInt` when it fits 32 bits. The Host market restart test exposed that the recent-placement guard survived a successful `CancelCharOrder`; cancelling is an explicit separate client action (`marketsvc.py:280-282`) and should permit a new placement.
+- The headless comparison now asserts the actual undocked ship ID from the run. V24.01 reads `session.shipid` for the active ship and the `InSpace` decision (`eve/common/script/sys/eveCfg.py:1510-1515`); the comparison retains exact attribute order and checks the ID value.
+- Push CI 40765084324 failed in the undock live comparisons, the Space session test and the Host market restart test. These three regressions have been addressed in the pending change; full-shard Actions verification is required after it is pushed.
+- The PostgreSQL-backed tests were not run locally, as this task forbids local database use. The graphical V24.01 client was not used.

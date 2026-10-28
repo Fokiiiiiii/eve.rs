@@ -11,7 +11,7 @@ public partial class HostServerTests
     [Fact]
     public async Task Jump_clone_reads_return_count_and_install_validation_labels_through_host()
     {
-        var service = new JumpCloneService();
+        var service = new JumpCloneService(() => FixedNowMs);
         Start(configure: registry => registry.Register(service));
 
         var front = await Handshaken(await ConnectAsync());

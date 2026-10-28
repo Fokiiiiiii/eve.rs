@@ -55,7 +55,7 @@ public interface IContractWriteModel
         long allianceId, bool acceptForCorporation, int acceptorWalletKey, CancellationToken cancellationToken);
 
     ValueTask<bool> CompleteContractAsync(long contractId, int targetStatus, long characterId, long corporationId,
-        long currentStationId, bool hasCorpContractManager, CancellationToken cancellationToken);
+        long allianceId, long currentStationId, bool hasCorpContractManager, CancellationToken cancellationToken);
 
     ValueTask<bool> DeleteContractAsync(long contractId, long characterId, long corporationId,
         bool hasCorpContractManager, CancellationToken cancellationToken);

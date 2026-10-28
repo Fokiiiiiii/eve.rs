@@ -1,4 +1,5 @@
 using Eve.Dogma;
+using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Space;
@@ -59,6 +60,8 @@ public sealed class SpaceDirectionalScans
     /// </summary>
     public async Task<PyValue> ConeScanAsync(ClientSession session, PyValue angle, PyValue range, PyValue dx, PyValue dy, PyValue dz, CancellationToken cancellationToken)
     {
+        if (_space.IsInAbyssalRun(session))
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Directional scan is unavailable inside Abyssal Deadspace.")));
 
         if (!_space.ScanningAllowedFor(session) || _space.ShipIdOf(session) is not { } shipId || _space.ShipTypeIdOf(session) is not { } shipType
             || await _space.PositionOfAsync(session, shipId, cancellationToken) is not { } ego)

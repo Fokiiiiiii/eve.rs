@@ -18,7 +18,8 @@ public sealed partial class InvBrokerService(
     PgItemStore items, ItemTypeCatalog types, StationCatalog stations, CharacterShips ships, DogmaStatic statics, Func<long> nowUnixMs, ISpaceContainers? space = null, ISpaceDroneBays? droneBays = null, CorporationHangarAccess? corporationHangarAccess = null, IReadOnlyList<Eve.Services.ICharacterEntryHook>? entryHooks = null,
     Func<ClientSession, long, CancellationToken, ValueTask<ControlledStructureInventory?>>? controlledStructureInventory = null,
             Func<IReadOnlyCollection<long>, CancellationToken, Task<IReadOnlyDictionary<long, double>>>? crystalDamage = null,
-            Func<long, CancellationToken, ValueTask<DockableAssetLocation?>>? dockableAssetLocation = null) : IBoundObjectReleaseHandler, IContractInventoryReader
+            Func<long, CancellationToken, ValueTask<DockableAssetLocation?>>? dockableAssetLocation = null,
+            Func<long, long, int?, long, CancellationToken, Task<IReadOnlyList<ItemChanged>>>? stackAll = null) : IBoundObjectReleaseHandler, IContractInventoryReader
 {
     /// <summary>The container the client asks for to get the hangar of the station it is docked at.</summary>
     public const int ContainerHangar = 10004;
@@ -1229,7 +1230,20 @@ public sealed partial class InvBrokerService(
             Kind.Container => CharacterShips.ContainerFlag,
             _ => CharacterShips.CargoFlag,
         };
-        var changes = await ships.StackAllAsync(character, place, flag, call.Cancellation);
+        var ownerId = character;
+        if (context.Kind == Kind.Hangar && flag is { } divisionFlag && ItemFlags.IsCorporationHangar(divisionFlag))
+        {
+            var corporationId = CorporationIdOf(call.Session);
+            if (corporationId <= 0
+                || !await CorporationAccessAsync(character, corporationId, place, divisionFlag,
+                    CorporationHangarOperation.Take, call.Cancellation))
+                throw MachoErrors.ThrowUserError("CrpAccessDenied",
+                    ("reason", Py.Tuple(new PyInt(101), new PyStr("UI/Corporations/AccessRestrictions/InsufficientRoles"))));
+            ownerId = corporationId;
+        }
+        var changes = stackAll is null
+            ? await ships.StackAllAsync(character, place, flag, call.Cancellation, ownerId)
+            : await stackAll(character, place, flag, ownerId, call.Cancellation);
         foreach (var change in changes)
         {
             ShipNotifications.SendItemChange(call.Session, change, item => DogmaRow(item));

@@ -42,7 +42,8 @@ Host wire testsは実Macho HostServer/dispatcher経由で bountyProxy routeへ�
 
 ## 実行した確認と未実施範囲
 
-- focused Host wire: 2 passed、0 skipped。
-- focused Crimewatch service: 1 passed、0 skipped。
-- Host.Tests全体（origin/mainマージ後）: 881件中554 passed、100 failed、227 skipped。失敗はEVE_PG_URLを要求するDB persistence / AssetSafety / ShipCosmetics系で、task指示によりDBは使用していない。skip数も別に記録する。
+- origin/mainマージ後focused Host wire: 2 passed、0 skipped。focused Crimewatch unit: 1 passed、0 skipped。Crimewatch.Tests全体は45件中10 passed、35 skipped、0 failed（PgFact/DB依存はDB URLなしでskip）。
+- RuntimeTests.Bounty_proxy_read_rpcs_match_the_reference_routes_and_sale_access はPgFactのためDB URLなしではskip。PostgreSQLは使っていない。旧テストがprovider未接続時のcombined fake successを期待していたため、そのassertを削除した。BountyProxyKillRightServiceTestsが同じ未接続経路のCustomNotifyを検証する。
+- Host.Tests全体（origin/mainマージ後）: 882件中555 passed、100 failed、227 skipped。失敗はEVE_PG_URLを要求するDB persistence / AssetSafety / ShipCosmetics系で、task指示によりDBは使用していない。
+- 修正を48190335にpush後、focused agent-test run 40682794561 とpush-triggered ci.yml run 40682783308は両方成功し、失敗test/jobなし。
 - 実際の本番CompositionからのPostgreSQL接続・DB transaction/restart検証、および実GUI client確認は実施していない。Host wireはHost socket/dispatcherを通るがテスト用providerを注入している。

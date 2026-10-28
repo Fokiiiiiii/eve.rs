@@ -106,7 +106,9 @@ public partial class HostServerTests
         Assert.Equal(new PyInt(70001), paletteEntry.Items[0]);
         Assert.Equal("Acceleration Gate", Text(paletteEntry.Items[1]));
 
-        var escalation = Assert.IsType<PyObject>(await Call("dungeonExplorationMgr", "GetMyEscalatingPathDetails"));
+        var escalation = Assert.IsType<PyObject>(await CallWithKwargs(
+            "dungeonExplorationMgr", "GetMyEscalatingPathDetails",
+            Py.Dict(("machoVersion", new PyInt(1)))));
         var cached = Assert.IsType<PyTuple>(escalation.Args);
         var rowset = Assert.IsType<PyObject>(Assert.IsType<PySubStream>(cached.Items[1]).Decoded);
         Assert.Equal(

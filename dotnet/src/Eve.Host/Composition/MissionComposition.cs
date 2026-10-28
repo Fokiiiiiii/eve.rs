@@ -684,8 +684,37 @@ internal sealed partial class CharacterServicesComposition
         if (stargateGraph is not { } gates || Eve.Services.Core.MissionCourierRules.Destination(record.Content.MissionId, characterId, pickup, (int)system, level, gates, stations.All) is not { } destination) return null;
         var type = dogma.Type((int)typeId);
         var volume = type is not null && dogma.AttributeId("volume") is { } attribute ? type.Attributes.GetValueOrDefault(attribute, 0) : 0;
-        var held = await HeldQuantityAsync(characterId, (int)typeId, cancellationToken);
-        return new Eve.Services.Core.CourierObjectiveView((int)typeId, courier.ObjectiveQuantity, volume, held >= courier.ObjectiveQuantity, pickup, destination.Id, agent.CorporationId);
+        var activeShipId = FleetSessionForCharacter(characterId)?.GetInt("shipid");
+        var ownedItems = await items.OwnedByAsync(characterId, cancellationToken);
+        var hasCargo = HasCourierCargo(ownedItems, (int)typeId, courier.ObjectiveQuantity, activeShipId, destination.Id);
+        return new Eve.Services.Core.CourierObjectiveView((int)typeId, courier.ObjectiveQuantity, volume, hasCargo, pickup, destination.Id, agent.CorporationId);
+    }
+
+    internal static bool HasCourierCargo(
+        IReadOnlyList<Item> ownedItems,
+        int typeId,
+        long requiredQuantity,
+        long? activeShipId,
+        long dropoffStationId)
+    {
+        if (requiredQuantity <= 0) return false;
+        long shipCargoQuantity = 0;
+        long dropoffHangarQuantity = 0;
+        foreach (var item in ownedItems)
+        {
+            if (item.TypeId != typeId) continue;
+            if (activeShipId is { } shipId && shipId > 0 && item.LocationId == shipId && item.Flag == ItemFlags.Cargo)
+            {
+                shipCargoQuantity += item.Quantity;
+                if (shipCargoQuantity >= requiredQuantity) return true;
+            }
+            if (item.LocationId == dropoffStationId && item.Flag == ItemFlags.Hangar)
+            {
+                dropoffHangarQuantity += item.Quantity;
+                if (dropoffHangarQuantity >= requiredQuantity) return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>

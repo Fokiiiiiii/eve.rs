@@ -206,7 +206,7 @@ public sealed class JumpCloneShipInstallTests
         {
             Store = new FakeStore();
             Space = new FakeSpace(this);
-            Service = new JumpCloneService(Store, new JumpCloneSpaceLink { Space = Space });
+            Service = new JumpCloneService(() => 0, Store, new JumpCloneSpaceLink { Space = Space });
             OfferingSession = new ClientSession(OfferingSink) { CharacterId = Offering };
             TargetSession = new ClientSession(TargetSink) { CharacterId = Target };
             OfferingSession.Set("shipid", new PyLong(Ship));

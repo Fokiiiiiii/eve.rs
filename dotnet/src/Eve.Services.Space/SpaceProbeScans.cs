@@ -95,7 +95,143 @@ public sealed class SpaceProbeScans
         "SetActivityState" => SetActivityStateAsync(call.Session, call.Arg(0), call.Arg(1), call.Cancellation),
         "RecoverProbes" => RecoverProbesAsync(call.Session, call.Arg(0), call.Cancellation),
         "ReconnectToLostProbes" => ReconnectAsync(call.Session, call.Cancellation),
+        "QAOverrideProbeExpiry" => OverrideProbeExpiryAsync(call.Session, call.Arg(0), call.Cancellation),
+        "QAScanSites" => QAScanSitesAsync(call.Session, call.Arg(0), call.Cancellation),
+        "GetScanTargetID" => GetScanTargetIDAsync(call),
         _ => ValueTask.FromResult<PyValue>(PyNone.Instance),
+    };
+
+    public async ValueTask<PyDict> ReadSignalTrackerSignaturesAsync(long solarSystemId, CancellationToken cancellationToken)
+    {
+        if (solarSystemId is <= 0 or > int.MaxValue)
+            return new PyDict([]);
+
+        var sites = await _sites.SitesInAsync((int)solarSystemId, cancellationToken);
+        return new PyDict([.. sites.Where(site => site.IsSignature && site.TargetId > 0).Select(site =>
+            new KeyValuePair<PyValue, PyValue>(
+                new PyLong(site.TargetId),
+                Py.KeyVal(
+                    ("position", new PyList([.. site.Position.Select(value => (PyValue)new PyReal(value))])),
+                    ("targetID", new PyStr(site.Code ?? "")),
+                    ("difficulty", new PyInt(site.Difficulty)),
+                    ("dungeonID", PyNone.Instance),
+                    ("archetypeID", PyNone.Instance),
+                    ("deviation", new PyReal(4 * ProbeScanMath.AuMeters)))))]);
+    }
+
+    private async ValueTask<PyValue> OverrideProbeExpiryAsync(ClientSession session, PyValue duration, CancellationToken cancellationToken)
+    {
+        if (session.CharacterId is not { } character || _space.SolarSystemOf(session) is not { } system)
+            return PyNone.Instance;
+
+        var durationMilliseconds = QaNumber(duration) ?? 0;
+        if (!double.IsFinite(durationMilliseconds) || durationMilliseconds < 0)
+            return PyNone.Instance;
+        var now = _nowUnixMs();
+        var durationSeconds = durationMilliseconds / 1_000;
+        if (durationSeconds > (long.MaxValue - now) / 1_000d)
+            return PyNone.Instance;
+        var expiresAt = now + (long)Math.Truncate(durationSeconds) * 1_000;
+        foreach (var probe in await _store.CharacterInSystemAsync(character, system, cancellationToken))
+            await _store.SaveAsync(probe with { ExpiresAtMs = expiresAt }, cancellationToken);
+        return PyNone.Instance;
+    }
+
+    private async ValueTask<PyValue> QAScanSitesAsync(ClientSession session, PyValue siteIDs, CancellationToken cancellationToken)
+    {
+        if (_space.SolarSystemOf(session) is not { } system)
+            return new PyList([]);
+
+        var sites = (await _sites.SitesInAsync(system, cancellationToken)).Where(site => site.IsSignature).ToArray();
+        var keys = ReadSiteKeys(siteIDs);
+        return new PyList([.. sites
+            .Where(site => keys.Count == 0
+                || keys.Contains(site.TargetId.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                || site.Code is { } code && keys.Contains(code.Trim().ToUpperInvariant()))
+            .Select(site => (PyValue)ResultRow(new ScanResultRow(
+                site.TargetId, site.ScanGroupId, site.GroupId, site.TypeId, site.StrengthAttributeId, site.TargetId, 1,
+                site.Position, 0, true, site.Code, site.DungeonId, site.DungeonNameId, site.ArchetypeId, site.FactionId, site.Difficulty)))]);
+    }
+
+    private async ValueTask<PyValue> GetScanTargetIDAsync(ServiceCall call)
+    {
+        var siteID = QaNumber(call.Arg(0)) ?? 0;
+        if (!double.IsFinite(siteID) || siteID <= 0 || siteID > long.MaxValue)
+            return new PyStr("");
+        var numericSiteID = (long)Math.Truncate(siteID);
+        var targetSeed = call.Kwarg("targetSeedID");
+        var seedNumber = targetSeed is null or PyNone ? siteID : QaNumber(targetSeed) ?? siteID;
+        if (!double.IsFinite(seedNumber) || seedNumber <= 0 || seedNumber > long.MaxValue)
+            return new PyStr("");
+        var seedID = (long)Math.Truncate(seedNumber);
+        var systemId = _space.SolarSystemOf(call.Session) ?? 0;
+        if (systemId > 0)
+        {
+            var sites = await _sites.SitesInAsync(systemId, call.Cancellation);
+            if (sites.FirstOrDefault(site => site.TargetId == numericSiteID) is { } site)
+                return new PyStr(site.Code?.Trim().ToUpperInvariant() ?? "");
+        }
+        return new PyStr(EncodeTargetID(systemId, seedID));
+    }
+
+    private static string EncodeTargetID(long solarSystemId, long seedID)
+    {
+        const string letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        uint state = 0;
+        foreach (var character in $"site:{solarSystemId}:{seedID}")
+            state = unchecked(state * 31 + character);
+        const int letterSpan = 26 * 26 * 26;
+        var value = (int)(state % (letterSpan * 1_000));
+        var letterValue = value / 1_000;
+        var digits = value % 1_000;
+        var code = new char[3];
+        for (var index = 2; index >= 0; index--)
+        {
+            code[index] = letters[letterValue % letters.Length];
+            letterValue /= letters.Length;
+        }
+        return $"{new string(code)}-{digits:000}";
+    }
+
+    private static HashSet<string> ReadSiteKeys(PyValue? value)
+    {
+        var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void Add(PyValue? current)
+        {
+            if (current is PyTuple tuple)
+            {
+                foreach (var item in tuple.Items) Add(item);
+                return;
+            }
+            if (current is PyList list)
+            {
+                foreach (var item in list.Items) Add(item);
+                return;
+            }
+            if (current is null || current is PyNone)
+                return;
+            var text = Eve.Macho.JsSemantics.StringValue(current)?.Trim();
+            if (string.IsNullOrEmpty(text))
+                return;
+            if (double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var numeric)
+                && double.IsFinite(numeric) && numeric > 0)
+                keys.Add(((long)Math.Truncate(numeric)).ToString(System.Globalization.CultureInfo.InvariantCulture));
+            keys.Add(text.ToUpperInvariant());
+        }
+        Add(value);
+        return keys;
+    }
+
+    private static double? QaNumber(PyValue? value) => value switch
+    {
+        PyInt integer => integer.Value,
+        PyLong integer => integer.Value,
+        PyReal real => real.Value,
+        PyBool boolean => boolean.Value ? 1 : 0,
+        PyNone => 0,
+        PyStr text when double.TryParse(text.Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var parsed) => parsed,
+        PyBytes bytes when double.TryParse(Eve.Macho.JsSemantics.StringValue(bytes), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var parsed) => parsed,
+        _ => null,
     };
 
     /// <summary><c>RecoverProbes(probeIDs)</c>: the probes that left, as the list the client counts (see <see cref="SpaceProbes.RecoverAsync"/>).</summary>

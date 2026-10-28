@@ -106,7 +106,10 @@ internal sealed partial class CharacterServicesComposition
             // security status is the character's relation of that kind (Eve.Relations); crimewatch only asks for it
             new Eve.Services.Crimewatch.CrimewatchService(
                 crimewatchStore, crimewatchRuntime, now,
-                securityStatusOf),
+                securityStatusOf)
+            {
+                ApplySecurityTagsAsync = ApplySecurityTagsAsync,
+            },
             new Eve.Services.Crimewatch.KillRightMgrService(
                 crimewatchStore, crimewatchRuntime, economyWallets, wallets, now,
                 message => Console.Error.WriteLine($"eve-host: crimewatch: {message}"))

@@ -99,7 +99,7 @@ public sealed class JumpCloneSpaceLink
 
 /// </summary>
 [Service("jumpCloneSvc")]
-public sealed partial class JumpCloneService(IJumpCloneStore? store = null, JumpCloneSpaceLink? spaceLink = null)
+public sealed partial class JumpCloneService(Func<long> nowUnixMs, IJumpCloneStore? store = null, JumpCloneSpaceLink? spaceLink = null)
 {
     /// <summary>The skills that set the clone limit: Infomorph Psychology, Advanced, Elite (one clone per level each).</summary>
     private static readonly int[] CloneLimitSkills = [24242, 33407, 73910];
@@ -125,7 +125,7 @@ public sealed partial class JumpCloneService(IJumpCloneStore? store = null, Jump
         var oid = $"N={MachoMessage.ProxyNodeId}:{BoundObjectIds.Next()}";
         var bound = new PySubStruct(new PySubStream(Py.Tuple(
             new PyStr(oid),
-            new PyLong(Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())))));
+            new PyLong(Py.FileTimeFromUnixMs(nowUnixMs())))));
         PyValue result = PyNone.Instance;
         if (call.Arg(1) is PyTuple { Items.Count: > 0 } nested && JsSemantics.StringValue(nested.Items[0]) is { } method)
         {
@@ -395,7 +395,7 @@ public sealed partial class JumpCloneService(IJumpCloneStore? store = null, Jump
         var snapshot = await Snapshot(call);
         var target = snapshot.Clones.FirstOrDefault(clone => clone.JumpCloneId == cloneId && (destination == 0 || clone.LocationId == destination))
             ?? throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Jump clone not found")));
-        var now = Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        var now = Py.FileTimeFromUnixMs(nowUnixMs());
         if (target.LocationId != current)
         {
             var level = await Store().SkillLevelAsync(characterId, CloneJumpRules.SynchronizingSkillId, call.Cancellation);
@@ -476,7 +476,6 @@ public sealed partial class JumpCloneService(IJumpCloneStore? store = null, Jump
         return await space.DistanceAsync(offering, ship.ShipId, target, targetShip.ShipId, cancellationToken) is { } distance
             && distance <= ship.MaxOperationalDistance;
     }
-
 
     private static PyList OfferPayload(long offeringCharacterId, long targetCharacterId, long shipId) =>
         new([new PyLong(offeringCharacterId), new PyLong(targetCharacterId), new PyLong(shipId), new PyInt(0)]);

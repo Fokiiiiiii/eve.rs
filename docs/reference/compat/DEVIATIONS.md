@@ -1,5 +1,9 @@
 # Deviations from the reference server
 
+## Shared settings persistence failure reply (2026-10-28)
+
+The V24.01 filter-link caller at `eve/client/script/ui/shared/inventory/filterSvc.py:448-450` and the generic shared-settings loader at `sharedSettings/util.py:23-27` convert a missing key or payload to `UserError('ItemFilterLoadingError')`. EveJS 261018.1 returns the generated key after its repository write call without checking whether that call succeeded (`src/server/src/services/settings/sharedSettingsMgrService.js:188-191,263-276`). eve.rs returns `None` when the Host persistence callback declines the new shared setting; the client therefore displays its existing loading error instead of receiving a link that cannot be loaded. `FilterServiceDeepCheckHostWireTests.Shared_settings_mgr_filter_links_round_trip_over_the_registered_host_route` covers the declined write and `None` reply.
+
 ## allianceRegistry bulletin edit keyword arguments (2026-10-27)
 
 V24.01 `base_corporation.py:960` creates an alliance bulletin with positional title/body arguments, then edits it at `base_corporation.py:969` with `bulletinID` and `editDateTime` keyword arguments. EveJS 261018.1 `server/src/services/corporation/allianceRegistryRuntime.js:954-985` reads those two values only from positional arguments, so an edit can be treated as a new bulletin. eve.rs now prefers the client keyword values and keeps the positional form as a fallback in `AllianceRegistryService.BulletinEditArguments`. `AllianceRegistryHostWireTests.Add_bulletin_keeps_client_keyword_arguments_and_positional_defaults` covers keyword, positional, None and int/long forms.
@@ -1605,14 +1609,7 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
   `ReloadFSDPickle` change only in-process state. `communityTrackMgr` keeps its instances in memory (the community track
   state is not persisted). Status: open, each with its owner in TODO section 41.
 - **Loyalty point store (historical status, superseded by A9 below).** At this point `LPStoreMgr` answered no offers and refused every take. The current ESI-backed offer and purchase behavior is recorded in Agents slices AG-2/A9 and AG-3/A9.
-- **Map reads without a data source.** `map.GetSolarSystemVisits`, `GetHistory`, `GetConstellationLPData`,
-  `GetAllRoamingWeatherSystems`, `GetMyExtraMapInfo`, `GetMyExtraMapInfoAgents`, `GetDeadspaceAgentsMap`,
-  `GetDeadspaceComplexMap` and `GetFacWarZoneInfo` answer the reference's empty shape (a rowset, a dict, None, or the
-  faction id asked for with no upgrade levels): eve.rs has no visit, statistics, loyalty, weather, deadspace or
-  factional-warfare state. The per-system edencom and triglavian lists (`GetEdencomFortressSystems`,
-  `GetEdencomMinorVictorySystems`, `GetTriglavianMinorVictorySystems`) are the reference's constant lists; the SDE does
-  not carry them and no state produces them. `map.GetBeaconCount` answers an empty dictionary, although the cynosural
-  beacons of track A9 exist: the count belongs to the ships track (the other agent). Status: each open (TODO section 41).
+- **Map read state (2026-10-27).** `GetHistory` and `GetSolarSystemVisits` read saved killmail, jump, and visit telemetry; `GetBeaconCount` derives active fleet counts from persisted deployed-beacon records and current fleet membership; `GetMyExtraMapInfo` reads online corporation member locations; sovereignty and faction-war data use their existing providers. The client-visible rowsets and dictionary are checked through Host wire tests. The GameStore/PostgreSQL persistence and restart path was not exercised in this audit. `GetConstellationLPData`, `GetAllRoamingWeatherSystems`, `GetMyExtraMapInfoAgents`, and both deadspace maps retain EveJS-compatible fallback shapes. The EDENCOM and Triglavian system lists match the reference's constant-list behavior, but their authoritative data source remains unresolved. See `docs/project/TODO.md` section 41 and `docs/project/service-audit/DEEPCHECK_map.md`.
 - **Report row types (slice 2, 2026-10-12).** `lastUpdated` is a long (a FILETIME), as EVE.js's answer has it; the field was a real. The key sets of `GetIncursionGlobalReport` and `GetSystemsInIncursions` equal EVE.js's in the live walk (`test_incursion_walk.py`). Status: verified against EVE.js.
 - **Incursions and anomalies come from the content state.** `map.GetIncursionGlobalReport`, `map.GetSystemsInIncursions`,
   `taleMgr.*` and `scanMgr.*` read the content instances of kind `incursion` and `anomaly` (`PersistenceIncursionAnomalyReadModel`).
@@ -5865,6 +5862,20 @@ The sole V24.01 caller of `agentMgr.GetPlausibleMissionIDs` is the mission-selec
 
 V24 invokes `fix_task_id` only through the development popup (`projectdiscovery/client/projects/covid/ui/devpopup.py:44-45`), whose return is ignored. EveJS sets a session task override for its later `get_new_task` handler (`server/src/services/character/projectDiscoveryService.js:272-277,290-296`). The whole V24 ProjectDiscovery client has no `get_new_task` call, and eve.rs has no such Host route or production task-fix writer (`dotnet/src/Eve.Services.Core/CoreServices.cs:96`). When the writer is absent, eve.rs now returns `PROJECT_DISCOVERY_TASK_FIX_UNAVAILABLE` instead of reporting a successful None result. This development hook remains unavailable until an authoritative task provider and its following client flow exist; no task payload is fabricated.
 
+## Stargate jump reply is not consumed by V24.01 (2026-10-27)
+
+All V24.01 call sites ignore the return from `CmdStargateJump`: `eve/client/script/stargate/client/gateJumpSvc.py:118-124`, `eve/client/script/parklife/autopilot.py:357-358`, and `eve/devtools/script/insider.py:630-631`. The gameplay-visible result is the session change and following ballpark/destiny updates; the client consumes those at `eve/client/script/parklife/gameui.py:430-472,604-637` and `eve/client/script/sceneManager.py:211-218,527-530,638-657`.
+
+EveJS v0.12.9 returns `result.data.boundResult || null` from `server/src/services/ship/beyonceService.js:4196-4233`. eve.rs awaits the same jump transition and returns `None` (`dotnet/src/Eve.Services.Space/BeyonceService.cs:717-725`). This reply difference is intentional because the complete V24 client tree has no consumer for it. The headless jump check therefore compares the destiny events, session transition and destination state, and does not require an unused reply shape.
+
+
+## A–F P1 service audit
+
+- **Account CSPA charge:** EveJS v0.12.9 returns `null` from both `GetDefaultContactCost` and `SetContactCost` (`server/src/services/account/accountService.js:784-790`). The V24 client actively persists/uses this value (`eve/client/script/ui/services/accountsvc.py:144-160`), and EVE Mail exposes the setting with a 0 ISK default and 1,000,000 ISK maximum ([EVE University](https://wiki.eveuniversity.org/EVE_Mail)). eve.rs stores a per-character integer or explicit `None`; an absent setting reads as zero. This intentionally replaces the reference stub with the client-visible setting behavior.
+- **Security tags:** EveJS v0.12.9 has no `ApplyTagsForSecStatus` handler. V24 calls it from the Security Office (`eve/client/script/ui/station/securityOfficeWindow.py:122-126`) and consumes status, item, and Dogma updates. eve.rs follows the client tag tiers, its SDE fees, and the security-tag station rules ([EVE University](https://wiki.eveuniversity.org/Security_tags)); there is no success response without the persisted status, fee, and tag mutations.
+- **Faction-war corporation pilots:** `GetStats_CorpPilots` is exported and forwarded by the client wrapper (`eve/client/script/ui/services/facWarSvc.py:21,385-386`), but whole-client call-site and consumer searches found no normal player caller. The row is recorded as client-dead and gets no server route.
+
+- **Faction-war adjacency:** EveJS v0.12.9 currently builds every occupation state with `adjacencyState: 0` (`server/src/services/map/fwWarzoneSolarsystemService.js:76-83`). The V24 client reads `FL`, `SL`, and `BL` (`eve-logic/factionwarfare/const.py:5-12`), and [EVE University faction-warfare guidance](https://wiki.eveuniversity.org/Faction_Warfare) describes the frontline, command, and rearguard relationships. eve.rs derives the client codes from persisted occupiers and pinned SDE stargate adjacency instead of reproducing EveJS's zero placeholder.
 ## station GetSolarSystem resolves the requested solar system (2026-10-27)
 
 V24.01 calls `GetSolarSystem(systemID)` from `eve/devtools/script/insider.py:347` and immediately reads the returned `.factionID`. The eve.rs handler now reads that requested ID from the pinned-SDE-backed `SolarSystemCatalog` and returns its system record, including a nullable `factionID`, even when the caller is not docked.

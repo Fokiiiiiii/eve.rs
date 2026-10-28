@@ -169,8 +169,9 @@ public partial class HostServerTests
         Assert.IsType<PyDict>(Result(await Call("skillHandler", "GetSkills")));
         Assert.IsType<PyDict>(Result(await Call("skillHandler", "GetAllSkills")));
         var mySkillInfo = Assert.IsType<PyObject>(Result(await Call("skillHandler", "GetMySkillInfo")));
-        var mySkillFields = Assert.IsType<PyDict>(mySkillInfo.Args).Entries
-            .ToDictionary(entry => Assert.IsType<PyStr>(entry.Key).Value, entry => entry.Value);
+        var mySkillEntries = Assert.IsType<PyDict>(mySkillInfo.Args).Entries;
+        Assert.All(mySkillEntries, entry => Assert.IsType<PyBytes>(entry.Key));
+        var mySkillFields = mySkillEntries.ToDictionary(entry => JsSemantics.StringValue(entry.Key)!, entry => entry.Value);
         Assert.Equal(new[] { "freeSkillPoints", "queue", "skillPoints", "skills" }, mySkillFields.Keys.Order());
         Assert.IsType<PyDict>(mySkillFields["skills"]);
         Assert.IsType<PyInt>(mySkillFields["skillPoints"]);

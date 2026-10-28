@@ -228,3 +228,8 @@ All 30 rows RPC-00984–01972 are documented in `CLIENT_VERIFIED.md`. Whole-tree
 ### 2026-10-28: `planetMgr.GetPin` rows
 
 Corrected RPC-02136 and RPC-02137 as `CLIENT-LOCAL` in `EVE_RS_COVERAGE.csv` and recorded the whole-client evidence in `CLIENT_VERIFIED.md`. The V24 callsites are local `BasePlanet.GetPin` lookups, not remote `planetMgr` calls. This documentation-only increment is complete; other N-S rows remain to be checked.
+
+
+### 2026-10-28: `scanMgr.GetSystemScanMgr` and `SignalTrackerRegister`
+
+RPC-02222–RPC-02225 are live normal-player calls. The whole-client call/consumer chain and file:line evidence are recorded in `CLIENT_VERIFIED.md`. The production `scanMgr` route is part of `CharacterServiceList` via `DungeonRpc`; the Host wire-test source checks the bound reference, four-map reply, `None` registration reply and subsequent `OnSignalTrackerFullState` notification. Snapshot data comes from the incursion read model. The listener is tied to the active session, so it is not durable gameplay state. Current scope has anomaly rows only; signatures, static sites and structures remain empty in the producer. No test was executed for this docs-only update, and no graphical-client check is recorded.

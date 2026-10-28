@@ -118,7 +118,6 @@ public sealed class ProjectDiscoveryServiceTests
             Request("get_player_state", session, new PyInt(99)),
             Request("fix_task_id", session, new PyStr("42")),
             Request("fix_task_id", session, new PyReal(42.5)),
-            Request("fix_task_id", session, new PyInt(-1)),
             new ServiceCall
             {
                 Method = "get_player_state", Args = [], Kwargs = new PyDict([]), Session = session,
@@ -133,6 +132,25 @@ public sealed class ProjectDiscoveryServiceTests
         }
 
         Assert.Equal(0, callbackCalls);
+    }
+
+    [Fact]
+    public async Task Project_discovery_clears_a_non_positive_task_id_like_the_reference()
+    {
+        var callbackCalls = 0;
+        double? fixedTaskId = double.NaN;
+        var service = new ProjectDiscoveryService(new ProjectDiscoveryRpcCallbacks(
+            FixTaskIdAsync: (_, taskId, _) =>
+            {
+                callbackCalls++;
+                fixedTaskId = taskId;
+                return ValueTask.CompletedTask;
+            }));
+        var session = new ClientSession { CharacterId = 42 };
+
+        Assert.Same(PyNone.Instance, await service.CallAsync(Request("fix_task_id", session, new PyInt(-1))));
+        Assert.Equal(1, callbackCalls);
+        Assert.Null(fixedTaskId);
     }
 
     private static ServiceCall Request(string method, ClientSession session, params PyValue[] args) => new()

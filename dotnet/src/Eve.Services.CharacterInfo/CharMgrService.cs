@@ -56,7 +56,8 @@ public sealed partial class CharMgrService(
     Func<long, CancellationToken, ValueTask<decimal?>>? readBalance = null,
     Func<long, long, CancellationToken, ValueTask<bool>>? canReadPrivateCorporationMemberInfo = null,
     Func<long, long, int, long, string, CancellationToken, ValueTask>? writeContactNotification = null,
-    Func<long, CancellationToken, ValueTask<Character?>>? readCharacterById = null)
+    Func<long, CancellationToken, ValueTask<Character?>>? readCharacterById = null,
+    Func<IReadOnlyList<long>, CancellationToken, Task<IReadOnlyList<Character>>>? readCharactersByIds = null)
 {
     private const int MaxOrganizationInfoCharacterIds = 500;
     private const int MaxBulkContactOwnerIds = 500;
@@ -893,7 +894,9 @@ public sealed partial class CharMgrService(
             return new PyDict([]);
         }
 
-        var characterRows = await characters.GetManyAsync(characterIds, call.Cancellation);
+        var characterRows = readCharactersByIds is null
+            ? await characters.GetManyAsync(characterIds, call.Cancellation)
+            : await readCharactersByIds(characterIds, call.Cancellation);
         var charactersById = characterRows.ToDictionary(character => character.Id);
         var organizationInfo = readOrganizationInfo is null
             ? new Dictionary<long, CharMgrOrganizationInfo>()

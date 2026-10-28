@@ -279,7 +279,7 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
         if (await store.LeaveAsync(fleetId, CharacterId(call.Session), call.Cancellation) is null) return None;
         ClearSession(call.Session);
         var after = await store.SnapshotAsync(fleetId, call.Cancellation);
-        if (before is not null) await PublishMemberChangesAsync(call.Session, fleetId, before, after, call.Cancellation);
+        if (before is not null) await PublishVoluntaryLeaveChangesAsync(call.Session, fleetId, before, after, call.Cancellation);
         return None;
     }
 
@@ -704,11 +704,17 @@ private static readonly System.Collections.Generic.HashSet<string> BroadcastName
         if (FleetId(call) is not { } fleetId ||
             await store.SnapshotAsync(fleetId, call.Cancellation) is not { } snapshot)
             return None;
+        PublishBroadcast(call, snapshot);
+        return None;
+    }
+
+    internal void PublishBroadcast(ServiceCall call, FleetSnapshot snapshot)
+    {
         var senderId = CharacterId(call.Session);
         var sender = snapshot.Members.FirstOrDefault(member => member.CharacterId == senderId);
         var name = Text(call.Arg(0));
         var scope = Number(call.Arg(1));
-        if (sender is null || !BroadcastNames.Contains(name) || scope is not (1 or 2 or 3)) return None;
+        if (sender is null || !BroadcastNames.Contains(name) || scope is not (1 or 2 or 3)) return;
 
         var systemId = call.Session.GetInt("solarsystemid2") ?? call.Session.GetInt("solarsystemid");
         var range = name switch
@@ -738,7 +744,6 @@ private static readonly System.Collections.Generic.HashSet<string> BroadcastName
                 systemId is { } currentSystem ? new PyLong(currentSystem) : PyNone.Instance,
                 WireId(Number(call.Arg(2))), WireId(Number(call.Arg(3))));
         }
-        return None;
     }
 
     [Method("UpdateMemberInfo")]
@@ -870,12 +875,13 @@ private static readonly System.Collections.Generic.HashSet<string> BroadcastName
 
     private static PyValue WireId(long? id) => id is { } value ? new PyLong(value) : PyNone.Instance;
 
-    private async Task PublishMemberChangesAsync(
+    internal async Task PublishMemberChangesAsync(
         ClientSession issuer,
         long fleetId,
         FleetSnapshot before,
         FleetSnapshot? after,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        long? suppressLeaveNotificationForCharacterId = null)
     {
         var oldMembers = before.Members.ToDictionary(member => member.CharacterId);
         var newMembers = after?.Members.ToDictionary(member => member.CharacterId) ?? [];
@@ -921,7 +927,10 @@ private static readonly System.Collections.Generic.HashSet<string> BroadcastName
                     recipient.SendNotification("OnFleetJoin", "fleetid", MemberValue(joined, skillLevels));
                 }
                 else if (change.New is null)
+                {
+                    if (recipientId == suppressLeaveNotificationForCharacterId) continue;
                     recipient.SendNotification("OnFleetLeave", "fleetid", new PyLong(change.CharacterId));
+                }
                 else
                     recipient.SendNotification("OnFleetMemberChanged", "fleetid",
                         new PyLong(change.CharacterId), new PyLong(fleetId),
@@ -944,6 +953,15 @@ private static readonly System.Collections.Generic.HashSet<string> BroadcastName
             LiveSession(change.CharacterId)?.SendNotification("OnFleetMove", "fleetid");
         }
     }
+
+    internal Task PublishVoluntaryLeaveChangesAsync(
+        ClientSession issuer,
+        long fleetId,
+        FleetSnapshot before,
+        FleetSnapshot? after,
+        CancellationToken cancellationToken) =>
+        PublishMemberChangesAsync(issuer, fleetId, before, after, cancellationToken,
+            suppressLeaveNotificationForCharacterId: CharacterId(issuer));
 
     private void PublishJoinRequestChanges(FleetSnapshot before, FleetSnapshot? after)
     {

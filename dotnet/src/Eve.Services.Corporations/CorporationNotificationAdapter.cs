@@ -40,10 +40,10 @@ internal static class CorporationNotificationAdapter
             foreach (var session in sessions.OfCorporation(corporationId))
             {
                 sent.Add(session);
-                Send(session,"OnCorporationMemberChanged","corpid",payload);
+                Send(session,"OnCorporationMemberChanged","corpid",payload.Items.ToArray());
             }
             if (sessions.Of(characterId) is { } member && sent.Add(member))
-                Send(member,"OnCorporationMemberChanged","clientID",payload);
+                Send(member,"OnCorporationMemberChanged","clientID",payload.Items.ToArray());
         });
     }
 

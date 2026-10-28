@@ -185,13 +185,15 @@ public class StationServiceTests
         OnlineCharacters? online = null,
         PgCharacterStore? characters = null,
         Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? sovereigntySystemsForAlliance = null,
-        Func<CancellationToken, ValueTask<IReadOnlyList<(long SolarSystemId, long AllianceId)>>>? allAllianceSystems = null) =>
+        Func<CancellationToken, ValueTask<IReadOnlyList<(long SolarSystemId, long AllianceId)>>>? allAllianceSystems = null,
+        SolarSystemCatalog? solarSystems = null) =>
         new(Data.Stations,
             characters ?? new PgCharacterStore(NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest("Host=localhost")), "characters"),
             online ?? new OnlineCharacters(),
             () => Data.ClockMs,
             sovereigntySystemsForAlliance,
-            allAllianceSystems: allAllianceSystems);
+            allAllianceSystems: allAllianceSystems,
+            solarSystems: solarSystems);
 
     [Fact]
     public async Task An_unknown_station_or_a_bad_id_is_answered_with_none()
@@ -231,21 +233,38 @@ public class StationServiceTests
     }
 
     [Fact]
-    public async Task The_solar_system_answer_is_about_the_session_station_whatever_is_asked_for()
+    public async Task GetSolarSystem_uses_the_requested_SDE_system_or_the_current_station_when_no_ID_is_given()
     {
+        const int requestedSystemId = 30_000_142;
+        const int constellationId = 20_000_001;
+        const int regionId = 10_000_001;
+        const int factionId = 500_001;
+        var service = Make(solarSystems: new SolarSystemCatalog(
+            [new SolarSystemInfo(requestedSystemId, "Jita", constellationId, regionId, 0.9, factionId)]));
         var (session, _) = Data.Session(60015249);
-        var asked = await Data.CallAsync(Make(), session, "GetSolarSystem", new PyInt(30000142));
-        Assert.Equal(await Data.CallAsync(Make(), session, "GetSolarSystem"), asked);
+
+        var requested = await Data.CallAsync(service, session, "GetSolarSystem", new PyInt(requestedSystemId));
+        Assert.Equal(["solarSystemID", "solarSystemName", "constellationID", "regionID", "security", "factionID"], Data.Order(requested));
+        var requestedFields = Data.Fields(requested);
+        Assert.Equal((new PyInt(requestedSystemId), new PyStr("Jita"), new PyInt(constellationId), new PyInt(regionId),
+            new PyReal(0.9), new PyInt(factionId)),
+            (requestedFields["solarSystemID"], requestedFields["solarSystemName"], requestedFields["constellationID"],
+                requestedFields["regionID"], requestedFields["security"], requestedFields["factionID"]));
+
+        var station = await Data.CallAsync(service, session, "GetSolarSystem");
         Assert.Equal(
             ["solarSystemID", "solarSystemName", "constellationID", "constellationName", "regionID", "regionName", "security", "factionID", "factionName", "stationID",
              "stationName", "ownerID", "ownerName", "corporationID", "corporationName", "orbitID", "stationTypeID"],
-            Data.Order(asked));
-        var f = Data.Fields(asked);
-        Assert.Equal((new PyInt(30100032), new PyStr("Manifest"), new PyStr("Manifest District"), new PyStr("Exordium")), (f["solarSystemID"], f["solarSystemName"], f["constellationName"], f["regionName"]));
-        Assert.Equal(new PyInt(1), f["security"]); // a whole number is an integer
-        Assert.Equal((new PyInt(500028), new PyStr("Association for Interdisciplinary Research"), new PyInt(40491241)), (f["factionID"], f["factionName"], f["orbitID"]));
+            Data.Order(station));
+        var stationFields = Data.Fields(station);
+        Assert.Equal((new PyInt(30100032), new PyStr("Manifest"), new PyStr("Manifest District"), new PyStr("Exordium")),
+            (stationFields["solarSystemID"], stationFields["solarSystemName"], stationFields["constellationName"], stationFields["regionName"]));
+        Assert.Equal(new PyInt(1), stationFields["security"]);
+        Assert.Equal((new PyInt(500028), new PyStr("Association for Interdisciplinary Research"), new PyInt(40491241)),
+            (stationFields["factionID"], stationFields["factionName"], stationFields["orbitID"]));
+
         var (nowhere, _) = Data.Session(null);
-        Assert.Equal(PyNone.Instance, await Data.CallAsync(Make(), nowhere, "GetSolarSystem"));
+        Assert.Equal(PyNone.Instance, await Data.CallAsync(service, nowhere, "GetSolarSystem"));
     }
 
     [Fact]
@@ -289,6 +308,25 @@ public class StationServiceTests
         Assert.Equal(new PyInt(allianceId), Data.Fields(requestedSystem)["allianceID"]);
         Assert.Equal(2, requestedSystems.Items.Count);
         Assert.Equal(new PyList([]), await Data.CallAsync(service, session, "GetSystemsForAlliance", new PyInt(0)));
+    }
+
+    [Fact]
+    public async Task Station_guest_snapshots_return_reference_tuple_rows()
+    {
+        var service = new StationService(
+            Data.Stations,
+            new PgCharacterStore(NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest("Host=localhost")), "characters"),
+            new OnlineCharacters(),
+            () => Data.ClockMs,
+            getStationGuests: (_, _) => ValueTask.FromResult<IReadOnlyList<StationGuest>>(
+                [new StationGuest(90_000_001, 1_000_006, 0, 0)]));
+        var (session, _) = Data.Session(60015249);
+
+        var guests = Assert.IsType<PyList>(await Data.CallAsync(service, session, "GetGuests"));
+        var guest = Assert.IsType<PyTuple>(Assert.Single(guests.Items));
+        Assert.Equal(
+            [new PyInt(90_000_001), new PyInt(1_000_006), new PyInt(0), new PyInt(0)],
+            guest.Items);
     }
 
     [Fact]

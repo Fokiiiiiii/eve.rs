@@ -19,10 +19,11 @@ from evecli.describe import describe
 from tests import dbseed
 from tests import test_login_to_character as base
 from tests.test_health import HEALTH
-from tests.test_undock import STATION, arrive, number
+from tests.test_undock import STATION, SYSTEM, arrive, number
 
 BLUEPRINT = 681  # Clone Grade Beta Blueprint (category 9): the blueprint the vote locks
 ELSEWHERE = 30000142  # Jita: no lock there
+ACCOUNTANT_ROLE = 256  # V24.01 appConst.corpRoleAccountant
 pytestmark = [
     pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server"),
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SERVER", "eve.rs") == "reference", reason="seeding needs the database: eve.rs only"),
@@ -57,7 +58,11 @@ def test_a_corporation_locked_blueprint_is_listed_where_it_is_locked_and_not_els
     race = HEALTH["races"][0]
     run = uuid.uuid4().hex[:10]
     with base.connect(f"walk-locks-{run}") as who:
-        character, _, _, _ = arrive(who, race, run)
+        def prepare_corporation(character):
+            corporation = dbseed.found_corporation(STATION, SYSTEM, character, run)
+            dbseed.join_corporation(character, corporation, ACCOUNTANT_ROLE)
+
+        character, _, _, _ = arrive(who, race, run, before_select=prepare_corporation)
         corporation = dbseed.corporation_of(character)
         blueprint = dbseed.new_item(BLUEPRINT, owner=character, location=STATION, singleton=True, quantity=-1)
         dbseed.lock_item(blueprint, corporation=corporation, type_id=BLUEPRINT, location=STATION)

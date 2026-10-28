@@ -142,6 +142,35 @@ fn enter() -> Message {
     }))
 }
 
+#[tokio::test(start_paused = true)]
+async fn a_destiny_update_is_sent_without_waiting_for_a_second_boundary() {
+    let mut host = start();
+    host.hello().await;
+    host.send(enter()).await;
+    assert_eq!(host.recv().await, Message::EnterReply { session_id: SESSION, outcome: Ok(()) });
+
+    host.send(Message::Bind { session_id: SESSION }).await;
+    for expected in ["OnSetTimeDilation", "DoSimClockRebase"] {
+        assert!(matches!(
+            host.recv().await,
+            Message::Notify { name, .. } if name == expected
+        ));
+    }
+
+    let next = tokio::select! {
+        biased;
+        message = host.recv() => Some(message),
+        _ = tokio::time::sleep(Duration::ZERO) => None,
+    };
+
+    drop(host.stream);
+    assert!(host.served.await.unwrap().is_ok());
+    assert!(matches!(
+        next,
+        Some(Message::Notify { name, .. }) if name == "DoDestinyUpdate"
+    ));
+}
+
 #[tokio::test]
 async fn a_ship_is_sent_out_bound_told_to_dock_and_reported_docked() {
     let mut host = start();
@@ -166,8 +195,8 @@ async fn a_ship_is_sent_out_bound_told_to_dock_and_reported_docked() {
     assert!(
         matches!(host.recv().await, Message::Notify { name, id_type, .. } if name == "OnDockingAccepted" && id_type == "charid")
     );
-    assert_eq!(host.recv().await, Message::Accepted { session_id: SESSION, command: 4, at: NOON });
     assert!(matches!(host.recv().await, Message::Notify { name, .. } if name == "DoDestinyUpdate"));
+    assert_eq!(host.recv().await, Message::Accepted { session_id: SESSION, command: 4, at: NOON });
 
     // the ship is docked once four seconds have gone by, which the simulation notices at its next poll
     host.clock.store(NOON + 5 * SECOND, Ordering::SeqCst);

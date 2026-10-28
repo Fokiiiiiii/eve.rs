@@ -1,5 +1,9 @@
 # Deviations from the reference server
 
+## allianceRegistry bulletin edit keyword arguments (2026-10-27)
+
+V24.01 `base_corporation.py:960` creates an alliance bulletin with positional title/body arguments, then edits it at `base_corporation.py:969` with `bulletinID` and `editDateTime` keyword arguments. EveJS 261018.1 `server/src/services/corporation/allianceRegistryRuntime.js:954-985` reads those two values only from positional arguments, so an edit can be treated as a new bulletin. eve.rs now prefers the client keyword values and keeps the positional form as a fallback in `AllianceRegistryService.BulletinEditArguments`. `AllianceRegistryHostWireTests.Add_bulletin_keeps_client_keyword_arguments_and_positional_defaults` covers keyword, positional, None and int/long forms.
+
 ## Host SKINR catalog data source (2026-10-23)
 
 The V24.01 pinned SDE build 3396210 has no `skinr*` authority tables, while the official CCP `missionPinned` build 3405148 contains `skinrComponentPointValues`, `skinrComponents`, `skinrSlotConfigurations`, `skinrSlots` and `skinrTierThresholds` (`sde/lock.json`). Host startup reads those tables for `ShipSkinrCatalog`, so the catalog now reads them, with that build’s `groups` and `types`, from `sde_mission`. Other Host data reads remain on the client-pinned `sde` schema. This keeps the SSO Host startup path available without changing the pinned source used for general game data.
@@ -497,8 +501,7 @@ Decisions: ADR 0015 and its three amendments.
 ## Module rules (track B, 2026-10-09)
 
 Decisions taken where the sources left a choice (EveJS is the trusted reference; CCP docs and the SDE settle the numbers):
-- Module rules are enforced in the simulation from the rules the host sends with each effect (`ModuleRules`, flag 32). The host works them out from the type's
-  attributes once, in the effect wrapper (`ShipEffect`), so no handler repeats them. Early deactivation (906), the core requirement (3265), the group limit (763)
+- Module rules are enforced in the simulation from the rules the host sends with each effect (`ModuleRules`, flag 32). The host works them out from the type's  attributes once, in the effect wrapper (`ShipEffect`), so no handler repeats them. Early deactivation (906), the core requirement (3265), the group limit (763)
   and the reactivation delay (669) are the four rules sent. Disallow activate on warp (1245) stays on the host (`ModuleRestrictions.CheckWarp`), as on main.
 - Locks from running modules (warp 104, docking 2354, activation block 1349) are read from the running effect's `on_changes`, which the host already sends,
   so they need no wire change. The Networked Sensor Array's block of the capital micro jump drives comes through its modifier (5700, skill 83464).
@@ -998,7 +1001,6 @@ Source order: the SDE for numbers, the EVE University wiki for rules (as written
 
 - **Scoop of a deployed mobile object: the wiki as written, which is silent for the disruptor.** The Mobile Depot page: "A Mobile Depot can only be accessed or scooped up by its owner"; it "can be scooped back to your ship's cargohold at any time"; its contents appear in space in a cargo container when it is scooped. The Mobile Cynosural Inhibitor page: "unlike the other mobile structures, this one cannot be reclaimed", so it is not scooped. The Mobile Warp Disruptor page and the mobile structures page give no retrieval rule for it, and EVE.js has none, so no scoop is built for it. The depot's rule is the depot's, not the disruptor's, and is not extended to it.- **Fleet test isolation (fix).** `SpaceServiceTests` built `FleetStore` on the shared default schema `fleet` (18 sites), so rows of earlier runs collided on `fleet_members_character_id_key`; two raw statements also named `fleet.fleet_members`. Each test now uses its rig's own fleet schema (`Rig.FleetSchema`). Leaked rows removed from the dev database: fleets 2349 and 2350 with their members (characters 140000001 and 140000002, job 2) and their wing, squad, invitation and join-request rows (none). These were left by fleet tests that wrote to the shared schema and did not disband.
 - **Result:** the Space suite (554 tests) passes twice in a row after the fix.
-
 ## Track A6: the capital jump drive (2026-10-10)
 
 Sources, in the order of the scanner rule: numbers from the SDE (pinned build 3396210, `sde.typeDogma` for the hulls, `sde.dogmaAttributes`, `sde.groups`, `sde.types`); mechanics from the EVE University wiki, implemented as written (Jump drive: https://wiki.eveuniversity.org/Jump_drive; Jump fatigue: https://wiki.eveuniversity.org/Jump_fatigue; Capital ships: https://wiki.eveuniversity.org/Capital_ships; fetched 2026-10-10); EveJS v0.12.9 has no capital jump (a search of `server/src` finds only the fighter's micro jump), so it contributes nothing here; the client's callsites in eve-logic decide the wire shapes.
@@ -1497,8 +1499,7 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
   would enter the full system.
 - **`SelectCharacterID` refuses a full system before any change.** The cap is checked again at selection, because the answer on  the screen can be stale. Known gap: the check and the session's entry are not one atomic step, so two selections into the
   same system that check at the same moment can both pass.
-- **`multiLoginBlocker.Login` checks the computer.** The reference answers True unless `EVE_ENFORCE_ALPHA_MULTILOGIN` is set
-  (`multiLoginBlockerService.js:87-90`, off by default). eve.rs enforces the Alpha rule without a switch: a session is refused when
+- **`multiLoginBlocker.Login` checks the computer.** The reference answers True unless `EVE_ENFORCE_ALPHA_MULTILOGIN` is set  (`multiLoginBlockerService.js:87-90`, off by default). eve.rs enforces the Alpha rule without a switch: a session is refused when
   another account on the same computer hash is logged in and either account is Alpha. Reason: the clone grades here are real
   (`SubscriptionMgrService` reads each account's stored Omega end time), so the rule can apply, and the brief requires real behaviour
   where the constant True was. The computer hash exists only on the SSO path (see "Single sign-on login"), so the client calls
@@ -1990,8 +1991,7 @@ Faction lists: `eve/common/lib/appConst.py:618-632`.
   `CustomInfo` "This loyalty point operation is not available on this server yet." Status: open (TODO section 43).
 - **Not added: `GetLPsForCharacter`, `GetLPExchangeRates`, `GetLPForCharacterCorp`.** The reference answers them
   (`lpService.js:83-91`, `:111`), but no V24.01 caller exists in eve-logic (a search of the client tree finds none). A method
-  without a caller cannot be checked against the client, so it is not added (the same rule as slice B3).
-- **No source credits loyalty points yet.** The store's `ApplyAsync` is ready for the first credit (missions, factional
+  without a caller cannot be checked against the client, so it is not added (the same rule as slice B3).- **No source credits loyalty points yet.** The store's `ApplyAsync` is ready for the first credit (missions, factional
   warfare, insurgency). Until then every balance is empty; the tests credit through the store.
 - **LPStoreMgr status at this point (historical, superseded by A9 below):** the offer and purchase methods had not yet been implemented.
 
@@ -2490,8 +2490,7 @@ client's use of mission data: eve-logic `evemissions/client/data.py`, `eve/clien
   (59 agents). `GetPlausibleMissionIDs` answers the arc steps of that agent, and an empty list for every other agent.
   The official data has no mission-to-agent pool for basic, storyline, research, factional-warfare, heraldry, career,
   tutorial or event agents, and no level to choose among missions (reason text: `MissionDataGaps.BasicPools`). The EveJS
-  routing rules used `missionKind`, `missionFlavor`, `missionLevel` and template fields that the build does not have,
-  so they are not reproduced. Status: open, the reason is printed at startup; mission offers (Mi2) need the pools.
+  routing rules used `missionKind`, `missionFlavor`, `missionLevel` and template fields that the build does not have,  so they are not reproduced. Status: open, the reason is printed at startup; mission offers (Mi2) need the pools.
 - **Disabled missions: none.** `GetDisabledMissions` answers an empty list. The reference's one entry (mission 4743, a
   template of its own content policy) is not carried: it is not a CCP fact. Status: decided (`MissionDataGaps.DisabledMissions`).
 - **Epic arc journal text: no IDs.** The reference answers `GetMessagesForEpicArcMissions` with localization message
@@ -2990,8 +2989,7 @@ Focused PostgreSQL verification: Station 28/28, selected Space docking/undocking
 
 ## Mission execution X3 step 2: client texts and held-mission views (2026-10-11)
 
-- **Texts are IDs.** The server sends the localization IDs of a mission's title and briefing (`nameID`, `messages.mission.briefing`) from the client's own export; the client shows the text from its localization. The official SDE gives English text only, not IDs, so the client export is the source of the IDs. Status: decided.
-- **Loader.** The mission text IDs and the content templates come from the V24.01 client's `native/missions.jsonl.gz`, read at each start from the embedded copy `dotnet/src/Eve.Services.Core/Data/client-missions.jsonl.gz` (build 3396210; localization IDs only, no text) into the schema `client_sde` (table `mission_messages`), replacing the earlier load. `EVE_CLIENT_SDE_DIR`, when it is set and holds the file, is read instead. Status: decided.
+- **Texts are IDs.** The server sends the localization IDs of a mission's title and briefing (`nameID`, `messages.mission.briefing`) from the client's own export; the client shows the text from its localization. The official SDE gives English text only, not IDs, so the client export is the source of the IDs. Status: decided.- **Loader.** The mission text IDs and the content templates come from the V24.01 client's `native/missions.jsonl.gz`, read at each start from the embedded copy `dotnet/src/Eve.Services.Core/Data/client-missions.jsonl.gz` (build 3396210; localization IDs only, no text) into the schema `client_sde` (table `mission_messages`), replacing the earlier load. `EVE_CLIENT_SDE_DIR`, when it is set and holds the file, is read instead. Status: decided.
 - **Views.** `GetMissionBriefingInfo` and `GetMissionObjectiveInfo` answer the held mission (offered, accepted or completed) with EveJS's keys; the objective carries the kill dungeon and the ISK reward. Fetch and courier objectives are not built (empty lists), and the dungeon location and enemy owner are shortcuts (the faction, and no location). A character with no held mission gets None, as in EveJS. Status: shortcut for the listed parts; the rest OPEN.
 
 ## Owner decisions recorded 2026-10-19
@@ -3490,8 +3488,7 @@ Landmarks (not done, with evidence). The SDE landmarks (45) and the client landm
   (`beyonce.MachoBindObject`), as the Pochven walk does. A smartbomb left repeating (repeat 1000) keeps its effect active into the next
   session (`EffectAlreadyActive2`); the walk asks it to stop (`dogmaIM.Deactivate`) at the end of each fight. A talk step completes when the
   pilot talks to any next agent of it (arc 55).
-- **Not covered.** The EVE.js comparison of these walks (no reference run was made). The graphical client. The smartbomb's 250 km reach rule
-  (X6): a seeded pilot is placed at the system's origin. The bonus window, Negotiation, and the dungeon contents (generic sites, owner decision
+- **Not covered.** The EVE.js comparison of these walks (no reference run was made). The graphical client. The smartbomb's 250 km reach rule  (X6): a seeded pilot is placed at the system's origin. The bonus window, Negotiation, and the dungeon contents (generic sites, owner decision
   2). The intermittent failure of arc 52 (above) is not diagnosed.
 
 Arc on and off list (default offers; the generic sites need `EVE_MISSION_INCLUDE_GENERIC_ARCS=1`). Every kill step of the 21 arcs is a generic
@@ -3990,8 +3987,7 @@ Full status, formulas and sources: `docs/project/INDUSTRY_STATUS.md`. Decisions 
   `researchFactor`, as EveJS applies them.
 - **Reactions**: refused at NPC stations (no station service runs them). Structure reactions are not checked against
   the structure reaction service (cut).
-- **Delivery**: completed jobs wait in Ready until the owner delivers (`CompleteJob`), per the EVE wiki's Deliver
-  button. The durable scheduler is not used for delivery.
+- **Delivery**: completed jobs wait in Ready until the owner delivers (`CompleteJob`), per the EVE wiki's Deliver  button. The durable scheduler is not used for delivery.
 - **Distance rule** (`FACILITY_DISTANCE`): enforced: jumps from the installer's system over the SDE stargates against 5 jumps per distance-skill level (max 25). Basis: the client's job error and DISTANCE_PER_LEVEL.
 - **Invention skill probability**: 1/30 per level, 1/40 for skills on SDE type list 799 (applied).
 - **Duration skills**: Industry, Advanced Industry, required-skill (1982), Science (452), Metallurgy (468), Reactions
@@ -4490,8 +4486,7 @@ Sources: EveJS `services/skills/trading/skillTradingAuthority.js` and `skillTrad
 
 ## Factional warfare: state, rules and decisions (2026-10-17)
 
-Sources: eve-logic `eve/common/script/util/facwarCommon.py`, `eve/common/lib/appConst.py` (1047-1059, 316), `marketutil/brokerFee.py`,
-`marketutil/skilllimits.py`, `eve/client/script/ui/services/facWarSvc.py`, `eve/client/script/ui/shared/factionalWarfare/infrastructureHub.py`,
+Sources: eve-logic `eve/common/script/util/facwarCommon.py`, `eve/common/lib/appConst.py` (1047-1059, 316), `marketutil/brokerFee.py`,`marketutil/skilllimits.py`, `eve/client/script/ui/services/facWarSvc.py`, `eve/client/script/ui/shared/factionalWarfare/infrastructureHub.py`,
 `eve/client/script/ui/services/fwWarzoneSvc.py`, `industry/npsStationTaxModifier.py`; SDE build 3396210 (`factions.militiaCorporationID`,
 `mapSolarSystems.factionID`); client extract `native/warzonespositiondata` (warzone 1: 103 systems, warzone 2: 149) and
 `native/npcstationtaxmodifier`; EVE University wiki "Faction warfare" (`https://wiki.eveuniversity.org/Faction_warfare`), whose upgrade and
@@ -4541,11 +4536,8 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
   the occupier's enemy (`FwFactions.OccupationEnemyOf`), and its points and LP pool reset (the wiki: a capture removes the upgrades). A contested or
   unoccupied system is refused. Tests: `FwCaptureTests` (2). The trigger is the destruction of the infrastructure hub (wiki: 25 million HP), which
   has no combat path in eve.rs yet, so no capture happens in a running server. Status: open (trigger).
-- **Served: the character and corporation statistics** (`GetStats_Character`, `GetStats_Corp`: the six client keys, from the daily rows of migration 0002).
-  **Not served:** `GetStats_FactionInfo`, `GetStats_Militia`, `GetStats_Alliance`, `GetStats_CorpPilots`, `GetStats_TopAndAllKillsAndVPs` (they need
-  the alliance grouping and the faction member counts, which eve.rs does not store yet) and the rank overview methods. A client call to them fails
-  until they are built. The rows are filled by the producers `FwService.RecordActivityAsync` and `AddVictoryPointsAsync`, which no combat event
-  calls yet (below). Status: partly open.
+- **Served: facWarMgr statistics and rank overview RPCs.** `GetStats_Character`, `GetStats_Corp`, `GetStats_FactionInfo`, `GetStats_Militia`, `GetStats_Alliance`, and `GetStats_TopAndAllKillsAndVPs` are routed through Host; faction member counts use the corporation and character stores, while activity windows use the persisted daily rows from migration 0002. The Host returns the client keys and grouping shapes. Those rows still depend on activity producers reaching `FwService.RecordActivityAsync` and `AddVictoryPointsAsync`; until then activity totals only reflect rows actually recorded. The rank overview and rank info methods return the enlisted faction and rank.
+  **Not routed:** `GetStats_CorpPilots` has no caller outside its `facWarSvc.py` wrapper; the dashboard derives those counts from `GetStats_FactionInfo` (`statisticsController.py:69-90`).
 - **Applied: the NPC station war-faction modifier** (`npsStationTaxModifier.py`). The client extract holds one station (60015187) with 0.1 for
   500010 and 500011 (`FwRules.NpcStationTaxModifier`). The NPC station facility tax of an industry job is multiplied by it for the pilot's war faction
   (direct enlistment, else the corporation's; `IndustryComposition.ResolveIndustryFacilityAsync`). The client snapshot has no caller of its own, so the
@@ -4990,8 +4982,7 @@ V24.01 `BracketMgr.OnSlimItemChange` replaces the slim item and clears its cache
 - **Ship types only (G18).** Other categories the reference spawns (asteroids, drones, containers, sentry guns, beacons) are not served; the reply says `is not a ship type`. shortcut: upgrade when those entities are made by the host.
 - **Names (G18).** A name that is several types takes the one ship of that name; a name that is several ships says to use the typeID.
 - **`/unspawn` (G18).** `/unspawn <itemID>` takes out one ship the host made in the pilot's system; `range=<metres> only=categoryShip` takes those within the range (their place from the simulation). Drones, wrecks and containers are not tracked here: those filters answer `Nothing to unspawn.`
-- **`/nuke` (G18).** Every NPC ship the host made in the pilot's system goes out of space: the hulls above, belt rats, `/npc` ships and dungeon NPCs. shortcut: the mission runtime is not told; a mission waiting on a removed NPC keeps waiting.
-- **How a ship goes (G18).** The simulation's `Leave` with the docked reason, as an NPC leaves: the ships go with no wreck, no loot and no destroy. The client sees them removed from the ballpark. The simulation's own `remove_npc` is not exposed as a message, so a Rust change was not made.
+- **`/nuke` (G18).** Every NPC ship the host made in the pilot's system goes out of space: the hulls above, belt rats, `/npc` ships and dungeon NPCs. shortcut: the mission runtime is not told; a mission waiting on a removed NPC keeps waiting.- **How a ship goes (G18).** The simulation's `Leave` with the docked reason, as an NPC leaves: the ships go with no wreck, no loot and no destroy. The client sees them removed from the ballpark. The simulation's own `remove_npc` is not exposed as a message, so a Rust change was not made.
 - **Registry (G18).** The NPC sessions are kept with their ship IDs and dropped when the system's scene is forgotten (`ForgetNpcsOf`).
 
 ## GM tools, slice G19: `/load me`, `/unload me` (2026-10-18)
@@ -5141,6 +5132,9 @@ The V24 client exposes faction contraband legality through `eve/client/script/ui
 EveJS 261018.1 `server/src/services/corporation/corporationTax.js:28-35, 89-106, 116-125` defines the per-payout ISK minimum and tax split, excludes NPC corporations as recipients, and encodes the tax row in the journal description. `server/src/space/runtime/bountyRuntime.js:944-1021` locks the tax split, records the corporation tax ref in the normal NPC bounty description, credits the member's net, then credits the player corporation. The V24 client `eve/client/script/ui/shared/neocom/wallet/transactionsUtil.py:49-76` derives the corporation tax transaction from that description and restores the gross bounty amount in the displayed entry.
 
 eve.rs performs the member net and player corporation tax wallet/journal mutations in one PostgreSQL transaction, preserving the bounty payout's idempotency and rollback behavior. NPC corporations still tax the member but receive no credit. `PgBountyStoreTests` covers the same-transaction payout, NPC corporation sink, tax minimum and rounding; `PlayerBountyHostTests` covers the Host payout flow. The focused Host suite passed four tests. In the NPC suite, 169 tests passed and one SDE query timed out at the default connection timeout; that test passed by itself with a longer timeout. Mission ISK reward tax now uses the same atomic member/corporation split, with EveJS corporation journal ref type 59885. Mission LP now uses configurable approximate values and an atomic taxed LP split; its focused Host suite passed 11 tests. Incursion LP remains open. FW battlefield rewards already call the shared taxed LP settlement; a focused Host integration check remains open. No graphical-client payout walk was run.
+
+CCP states that corporation tax applies to payouts that surpass 100,000 ISK and sets NPC corporation tax at 11% ([CCP support](https://support.eveonline.com/hc/en-us/articles/203209582-Corporation-Wallet-and-Corporation-Taxes)); EVE University likewise specifies mission-reward tax over 100,000 ISK ([Tax](https://wiki.eveuniversity.org/Tax)). V24.01 defines `appConst.minCorporationTaxAmount = 100000` (`appConst.py:965`) and derives the tax journal row from the payout description (`eve/client/script/ui/shared/neocom/wallet/transactionsUtil.py:23-76`). EveJS v0.12.9 `missionRewardSettlementState.js:141-143` uses `>=`; eve.rs applies the authoritative strict threshold, leaving an exactly 100,000 ISK reward untaxed. Arc 29 mission 14117 has an SDE reward of 100,000 ISK; the former eve.rs result was 89,000 ISK.
+
 ## Localization read telemetry (2026-10-20)
 
 The V24.01 client calls `localizationServer.GetAllTextChanges` during initial character-session localization setup (`carbon/client/script/localization/localizationClient.py:31`), and EveJS 261018.1 returns the configured change maps without a role check. eve.rs preserves that public response and keeps only the latest 1,024 local telemetry events; EveJS event history is unbounded. `CompatibilityRpcServicesTests.Localization_server_returns_configured_maps_and_bounds_public_read_events` verifies ordinary-session response shape and the history bound.
@@ -5491,7 +5485,6 @@ The fleetObject Init RPC costs 10 weighted per-session units because it updates 
 `allianceRegistry.GetDaysInAlliance` also consumes 10 weighted per-session units because it reads the full alliance member collection to resolve one corporation. The response and public lookup behavior are unchanged. `DispatchGoldenTests.Alliance_expensive_methods_use_a_named_per_session_budget` covers the call budget.
 
 `corpRegistry.GetRecruitmentAd` consumes 10 weighted per-session units because its public response includes the selected corporation member count, and both `GetRecruitmentAdsByCorpID` and `GetRecruitmentAdsForCorporation` consume 10 units because they return complete corporation ad lists. Both responses remain unchanged. `DispatchGoldenTests.Corporation_registry_reads_use_a_named_per_session_budget` verifies the named refusal for both calls.
-
 `ownerGroupManager` reads and mutations consume 10 weighted per-session units to bound repeated access-group enumeration and notification fanout. `DispatchGoldenTests.Owner_group_reads_and_mutations_use_a_named_per_session_budget` checks every registered service method. Responses and authorization remain unchanged.
 
 `corpRegistry.GetCorporation` consumes 10 weighted per-session units because its profile response includes a full corporation member count. The client response is unchanged. `DispatchGoldenTests.Corporation_registry_reads_use_a_named_per_session_budget` verifies the named refusal.
@@ -5879,3 +5872,27 @@ EveJS v0.12.9 returns `result.data.boundResult || null` from `server/src/service
 - **Faction-war corporation pilots:** `GetStats_CorpPilots` is exported and forwarded by the client wrapper (`eve/client/script/ui/services/facWarSvc.py:21,385-386`), but whole-client call-site and consumer searches found no normal player caller. The row is recorded as client-dead and gets no server route.
 
 - **Faction-war adjacency:** EveJS v0.12.9 currently builds every occupation state with `adjacencyState: 0` (`server/src/services/map/fwWarzoneSolarsystemService.js:76-83`). The V24 client reads `FL`, `SL`, and `BL` (`eve-logic/factionwarfare/const.py:5-12`), and [EVE University faction-warfare guidance](https://wiki.eveuniversity.org/Faction_Warfare) describes the frontline, command, and rearguard relationships. eve.rs derives the client codes from persisted occupiers and pinned SDE stargate adjacency instead of reproducing EveJS's zero placeholder.
+## station GetSolarSystem resolves the requested solar system (2026-10-27)
+
+V24.01 calls `GetSolarSystem(systemID)` from `eve/devtools/script/insider.py:347` and immediately reads the returned `.factionID`. The eve.rs handler now reads that requested ID from the pinned-SDE-backed `SolarSystemCatalog` and returns its system record, including a nullable `factionID`, even when the caller is not docked.
+
+EveJS `src/server/src/services/station/stationService.js:218` ignores the argument and derives its response from `getStationRecord(session)` (station data lookup at `src/server/src/services/_shared/stationStaticData.js:223`). That can select a different system or return no record when the client explicitly asks about a system while in space. The client callsite and official SDE data take priority here. A real Host wire regression covers a requested system and an unknown ID in `StationSolarSystemHostWireTests.cs`. The no-argument call preserves EveJS's session-station fallback: a docked session receives its full 17-field record, and an undocked session receives `None`.
+
+## TrashImpoundedOffice does not emit a second office-rental notification (2026-10-27)
+
+V24.01 reaches `TrashImpoundedOffice` through the officeManager Moniker (`eve/client/script/ui/services/corporation/officeManager.py:155-156`). Its asset action invalidates `GetAssetInventoryForLocation`, calls that Moniker, and scatters `OnReloadCorpAssets` (`eve/client/script/ui/shared/neocom/corporation/corp_ui_accounts.py:410-413`). EveJS 261018.1 removes its impounded runtime office and calls `notifyOfficeRentalChange` for each removed office (`src/server/src/services/corporation/officeManagerService.js:631-650`).
+
+eve.rs marks the rental inactive and emits `OnOfficeRentalChange` during `UnrentOffice`; `CorporationOfficeStore.ForCorporationAsync` and `CorporationsAtStationAsync` expose active rentals only. `TrashImpoundedOffice` then deletes only the impounded inventory rows and emits no second office event. This is an intentional difference: rental state and office caches changed on Unrent, while the V24 trash action reloads the asset inventory itself. The Host audit records both transitions in `docs/project/service-audit/DEEPCHECK_station.md`.
+
+
+## V24.01 no-argument `charUnboundMgr.GetCharacterInfo`
+
+The client call in `eve/client/script/ui/shared/neocom/petitionWindow.py:58` has no arguments. It iterates the reply and reads `characterID` and `characterName` on every row (`petitionWindow.py:62-63`). Host returns the account's character rows from `CharUnboundMgrService.cs:80-97`, as asserted by `P0CharacterClientWireTests.Char_unbound_character_info_and_random_name_replies_match_the_creation_clients`.
+
+EveJS v0.12.9 routes `GetCharacterInfo` to `Handle_GetCharacterToSelect` (`server/src/services/character/charService.js:1515-1518`); its request ID resolver defaults to zero and the single-character selection path returns no account list (`charService.js:276-284,983-1076`). The Host list reply is an intentional V24.01 compatibility difference because the petition UI iterates account rows.
+
+## V24.01 `populationCap.MoveCharacterToNewSystem`
+
+`eve/client/script/ui/login/charSelection/characterSelection.py:748-762` obtains a map from `GetCharacterLoadSlot`, chooses a key only when multiple systems are offered, calls `MoveCharacterToNewSystem(charID, selectedSolarSystemID, slotKey)`, then enters the character without reading a reply. Host validates the offered system and echoed key and saves the chosen solar system (`PopulationCapService.cs:76-115`); `P0CharacterClientWireTests.Population_cap_move_returns_none_and_saves_the_offered_system_over_host_wire` checks that transition and the None reply.
+
+EveJS v0.12.9 implements only `GetCharacterLoadSlot` in this service (`server/src/services/populationCap/populationCapService.js:178-189`); a whole-project search found no `MoveCharacterToNewSystem` handler. Host supports the V24.01 client call as an intentional difference.

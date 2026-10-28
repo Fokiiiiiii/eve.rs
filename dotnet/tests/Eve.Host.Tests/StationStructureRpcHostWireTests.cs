@@ -55,25 +55,35 @@ public partial class HostServerTests
         var requestedSystem = Assert.IsType<PyObject>(Assert.Single(requestedAllianceSystems.Items));
         Assert.Equal(new PyInt(systemId), WireField(requestedSystem, "solarSystemID"));
         Assert.Equal(new PyInt(allianceId), WireField(requestedSystem, "allianceID"));
+        var requestedAllianceWithInt = Assert.IsType<PyList>(
+            await HostRpcAsync(front, open, 9, "stationSvc", "GetSystemsForAlliance", new PyInt(allianceId)));
+        Assert.Single(requestedAllianceWithInt.Items);
 
         var stationBits = Assert.IsType<PyTuple>(
             await HostRpcAsync(front, open, 4, "stationSvc", "GetStationItemBits"));
         Assert.Equal([new PyInt(ownerId), new PyInt(stationId), new PyInt(7), new PyInt(1531)], stationBits.Items);
 
         var ownedStations = Assert.IsType<PyList>(
-            await HostRpcAsync(front, open, 5, "stationSvc", "GetStationsForOwner", new PyLong(ownerId)));
+            await HostRpcAsync(front, open, 5, "stationSvc", "GetStationsForOwner", new PyInt(ownerId)));
         var ownedStation = Assert.Single(ownedStations.Items);
         Assert.Equal(new PyInt(stationId), WireField(ownedStation, "stationID"));
         Assert.Equal("Test Station", WireText(WireField(ownedStation, "stationName")));
         Assert.Equal(new PyInt(systemId), WireField(ownedStation, "solarSystemID"));
+        var ownedStationsWithLongOwner = Assert.IsType<PyList>(
+            await HostRpcAsync(front, open, 8, "stationSvc", "GetStationsForOwner", new PyLong(ownerId)));
+        Assert.Single(ownedStationsWithLongOwner.Items);
 
         var stationResult = Assert.IsType<PyObject>(
-            await HostRpcAsync(front, open, 6, "stationSvc", "GetStation", new PyLong(stationId)));
+            await HostRpcAsync(front, open, 6, "stationSvc", "GetStation", new PyInt(stationId)));
         Assert.Equal("carbon.common.script.net.objectCaching.CachedMethodCallResult", WireText(stationResult.Name));
         var stationRecord = Assert.IsType<PySubStream>(
             Assert.IsType<PyTuple>(stationResult.Args).Items[1]).Decoded!;
         Assert.Equal("Test Station", WireText(WireField(stationRecord, "stationName")));
         Assert.Equal(new PyInt(systemId), WireField(stationRecord, "solarSystemID"));
+        var stationResultWithLongId = Assert.IsType<PyObject>(
+            await HostRpcAsync(front, open, 10, "stationSvc", "GetStation", new PyLong(stationId)));
+        Assert.Equal("carbon.common.script.net.objectCaching.CachedMethodCallResult",
+            WireText(stationResultWithLongId.Name));
 
         Assert.Same(PyNone.Instance,
             await HostRpcAsync(front, open, 7, "stationSvc", "GetStation", new PyLong(1)));

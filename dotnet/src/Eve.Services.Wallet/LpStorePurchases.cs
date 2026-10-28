@@ -46,8 +46,8 @@ public sealed class LpStorePurchaseRefusedException(string code) : Exception(cod
 
 /// <summary>
 /// The loyalty store purchase (<c>TakeOfferForCharacter</c> and <c>TakeOfferForCorporation</c>), settled in one PostgreSQL
-/// transaction: the loyalty points, the ISK, the required items of the character's hangar at the station, and the granted item
-/// in that hangar. A refusal rolls the transaction back, so a purchase that is refused changes nothing. The purchase row and the
+/// transaction: the loyalty points, the ISK, the required items in the character's hangar at an authorized station or structure,
+/// and the granted item in that hangar. A refusal rolls the transaction back, so a purchase that is refused changes nothing. The purchase row and the
 /// journal rows share one id (the purchase id), so each committed purchase is journalled once. Announcements go out after the
 /// commit only. No standing condition is checked because the offer source supplies none.
 /// </summary>

@@ -62,7 +62,7 @@ public class SpaceContainerTests
         var (_, answer) = await JettisonAsync(flying, flying.Stack);
 
         // (the ids that went into a can, the ids launched as cans of their own)
-        var (jettisoned, launched) = Assert.IsType<PyTuple>(answer).Items switch { [PyList a, PyList b] => (a, b), var other => throw new InvalidOperationException(string.Join(",", other)) };
+        var (jettisoned, launched) = Assert.IsType<PyTuple>(answer).Items switch { [PyTuple a, PyTuple b] => (a, b), var other => throw new InvalidOperationException(string.Join(",", other)) };
         Assert.Equal([Events.Number(InventoryWire.Id(flying.Stack))], jettisoned.Items.Select(Events.Number));
         Assert.Empty(launched.Items);
         // the scene is asked for a can ahead of the ship, then told something is in it
@@ -100,7 +100,7 @@ public class SpaceContainerTests
         Assert.Equal("2 minutes and 5 seconds", JsSemantics.StringValue(values["eta"]));
         rig.Now += 125_000;
         // the three minutes are up: a can is made (the pyerite is in the station, not the hold: nothing goes, and the can that was made for it goes again)
-        Assert.Empty(Assert.IsType<PyList>(Assert.IsType<PyTuple>((await JettisonAsync(flying, other.Id)).Answer).Items[0]).Items);
+        Assert.Empty(Assert.IsType<PyTuple>(Assert.IsType<PyTuple>((await JettisonAsync(flying, other.Id)).Answer).Items[0]).Items);
     }
 
     [PgFact]
@@ -112,13 +112,13 @@ public class SpaceContainerTests
 
         var (_, answer) = await JettisonAsync(flying, flying.Stack);
 
-        Assert.Empty(Assert.IsType<PyList>(Assert.IsType<PyTuple>(answer).Items[0]).Items);
+        Assert.Empty(Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(answer).Items[0]).Items);
         var system = flying.Session.GetInt("solarsystemid")!.Value;
         Assert.DoesNotContain(await rig.Items.InContainerAsync(system), i => i.TypeId == 23);
         Assert.Equal(flying.Character.ShipId, (await rig.Items.GetAsync(flying.Stack))!.LocationId);
         // the pilot is not made to wait for a can it did not get
         rig.Sim.PlaceContainerAnswer = null;
-        Assert.Single(Assert.IsType<PyList>(Assert.IsType<PyTuple>((await JettisonAsync(flying, flying.Stack)).Answer).Items[0]).Items);
+        Assert.Single(Assert.IsType<PyTuple>(Assert.IsType<PyTuple>((await JettisonAsync(flying, flying.Stack)).Answer).Items[0]).Items);
     }
 
     [PgFact]
@@ -130,7 +130,7 @@ public class SpaceContainerTests
 
         var (_, answer) = await JettisonAsync(flying, fitted, 12345);
 
-        Assert.Empty(Assert.IsType<PyList>(Assert.IsType<PyTuple>(answer).Items[0]).Items);
+        Assert.Empty(Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(answer).Items[0]).Items);
         Assert.Equal(flying.Character.ShipId, (await rig.Items.GetAsync(fitted))!.LocationId);
         Assert.DoesNotContain(await rig.Items.InContainerAsync(flying.Session.GetInt("solarsystemid")!.Value), i => i.TypeId == 23);
     }

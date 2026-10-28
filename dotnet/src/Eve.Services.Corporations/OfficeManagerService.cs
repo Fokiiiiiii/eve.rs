@@ -17,7 +17,9 @@ public sealed partial class OfficeManagerService(
     Func<long> now,
     IStructureOffices? structures = null,
     CharacterSessions? characterSessions = null,
-    Eve.Inventory.ItemTypeCatalog? itemTypes = null)
+    Eve.Inventory.ItemTypeCatalog? itemTypes = null,
+    Func<ServiceCall, ValueTask<long>>? readCurrentCorporationId = null,
+    Func<long, CancellationToken, ValueTask<IReadOnlyList<CorporationOffice>>>? readCorporationOffices = null)
 {
     private const long RentOfficeRole = CorporationRoles.RentOffice;
     // The SDE inventory flag for the station's Impounded location.
@@ -77,10 +79,23 @@ public sealed partial class OfficeManagerService(
     [Method("GetMyCorporationsOffices")]
     public async ValueTask<PyValue> GetMyCorporationsOffices(ServiceCall call)
     {
-        var corporationId = await CurrentCorporationIdAsync(call);
+        var corporationId = readCurrentCorporationId is { } readCorporation
+            ? await readCorporation(call)
+            : await CurrentCorporationIdAsync(call);
         if (corporationId <= 0) return new PyList([]);
-        var offices = await store.ForCorporationAsync(corporationId, call.Cancellation);
-        return new PyList([.. offices.Select(OfficeRow)]);
+        var offices = readCorporationOffices is { } readOffices
+            ? await readOffices(corporationId, call.Cancellation)
+            : await store.ForCorporationAsync(corporationId, call.Cancellation);
+        var rows = new List<PyValue>(offices.Count);
+        foreach (var office in offices)
+        {
+            int? stationTypeId = readStation(office.StationId)?.TypeId;
+            stationTypeId ??= (await StructureAtAsync(office.StationId, call.Cancellation))?.TypeId;
+            if (stationTypeId is not { } typeId)
+                throw new CorporationError("OFFICE_STATION_NOT_FOUND");
+            rows.Add(OfficeRow(office, typeId));
+        }
+        return new PyList(rows);
     }
 
     [Method("GetPriceQuote")]
@@ -89,12 +104,12 @@ public sealed partial class OfficeManagerService(
         var corporationId = Integral(call.Arg(0)) ?? 0;
         var sessionCorporationId = SessionCorporationId(call.Session);
         if (corporationId <= 0 || corporationId != sessionCorporationId)
-            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+            throw ClientError("CrpAccessDenied");
         if (await StructureSiteAsync(call) is { } site)
-            return new PyReal((double)await structures!.RentForAsync(call.Session.CharacterId ?? 0, site.StructureId, call.Cancellation));
+            return OfficePriceValue(await structures!.RentForAsync(call.Session.CharacterId ?? 0, site.StructureId, call.Cancellation));
         var station = LocalStation(call);
         var price = await QuoteAsync(station, call.Cancellation);
-        return new PyReal((double)price);
+        return OfficePriceValue(price);
     }
 
     [Method("RentOffice")]
@@ -106,47 +121,53 @@ public sealed partial class OfficeManagerService(
         var station = LocalStation(call);
         var authority = await RequireAuthorityAsync(actor, corporationId, station.Id, call.Cancellation);
         if ((authority.Roles.AtAll & RentOfficeRole) == 0)
-            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+            throw ClientError("CrpAccessDenied");
 
-        var submittedQuote = Money(call.Arg(0)) ?? throw new CorporationError("OFFICE_PRICE_REQUIRED");
-        if (submittedQuote < CorporationOfficeStore.MinimumRentIsk)
-            throw new CorporationError("OFFICE_PRICE_INVALID");
         var notificationType = await OfficeNotificationTypeAsync(call.Cancellation);
         var existingItems = await items.InLocationAsync(station.Id, corporationId, call.Cancellation);
         var atStation = now();
-        var changedOffice = await store.WriteAsync<CorporationOffice?>(async (connection, transaction) =>
+        CorporationOffice? changedOffice;
+        decimal rentPrice = 0m;
+        try
         {
-            await store.LockStationAsync(connection, transaction, station.Id, call.Cancellation);
-            if (await store.GetAsync(connection, transaction, corporationId, station.Id, forUpdate: true,
-                cancellationToken: call.Cancellation) is not null)
-                return null;
+            changedOffice = await store.WriteAsync<CorporationOffice?>(async (connection, transaction) =>
+            {
+                await store.LockStationAsync(connection, transaction, station.Id, call.Cancellation);
+                if (await store.GetAsync(connection, transaction, corporationId, station.Id, forUpdate: true,
+                    cancellationToken: call.Cancellation) is not null)
+                    return null;
 
-            var occupied = await store.CountAtStationAsync(connection, transaction, station.Id, call.Cancellation);
-            if (occupied >= station.OfficeCapacity) throw new CorporationError("OFFICE_SLOTS_FULL");
-            var price = await store.PriceQuoteAsync(connection, transaction, station, occupied, atStation, call.Cancellation);
-            if (submittedQuote != price) throw new CorporationError("OFFICE_PRICE_CHANGED");
+                var occupied = await store.CountAtStationAsync(connection, transaction, station.Id, call.Cancellation);
+                if (occupied >= station.OfficeCapacity) throw new CorporationError("OFFICE_SLOTS_FULL");
+                // The client quote is display-only; settle at the server's current price.
+                rentPrice = await store.PriceQuoteAsync(connection, transaction, station, occupied, atStation, call.Cancellation);
 
-            var officeFolderId = await items.CreateAsync(connection, transaction,
-                new Eve.Inventory.NewItem(CorporationOfficeStore.OfficeFolderTypeId, corporationId, station.Id,
-                    Eve.Inventory.ItemFlags.Hangar, Singleton: true), call.Cancellation);
-            var office = await store.RentAsync(connection, transaction, corporationId, officeFolderId, station, price, atStation,
-                call.Cancellation, creditorId: station.OwnerId);
-            await wallets.AdjustAsync(connection, transaction, new Eve.Wallet.WalletAccount(corporationId), -price,
-                station.OwnerId, OfficeRentReferenceType, "Corporation office rental", atStation,
-                $"office-rent:{office.OfficeId}:charge", "office_rental_fee", call.Cancellation);
+                var officeFolderId = await items.CreateAsync(connection, transaction,
+                    new Eve.Inventory.NewItem(CorporationOfficeStore.OfficeFolderTypeId, corporationId, station.Id,
+                        Eve.Inventory.ItemFlags.Hangar, Singleton: true), call.Cancellation);
+                var office = await store.RentAsync(connection, transaction, corporationId, officeFolderId, station, rentPrice, atStation,
+                    call.Cancellation, creditorId: station.OwnerId);
+                await wallets.AdjustAsync(connection, transaction, new Eve.Wallet.WalletAccount(corporationId), -rentPrice,
+                    station.OwnerId, OfficeRentReferenceType, "Corporation office rental", atStation,
+                    $"office-rent:{office.OfficeId}:charge", "office_rental_fee", call.Cancellation);
 
-            await wallets.EnsureAsync(connection, transaction, station.OwnerId, call.Cancellation);
-            await wallets.AdjustAsync(connection, transaction, new Eve.Wallet.WalletAccount(station.OwnerId), price,
-                corporationId, OfficeRentReferenceType, "Corporation office rental", atStation,
-                $"office-rent:{office.OfficeId}:credit", "office_rental_fee", call.Cancellation);
-            if (structures is not null)
-                await structures.ScheduleRentDueAsync(connection, transaction, office.OfficeId, office.ExpiresAtMs, call.Cancellation);
+                await wallets.EnsureAsync(connection, transaction, station.OwnerId, call.Cancellation);
+                await wallets.AdjustAsync(connection, transaction, new Eve.Wallet.WalletAccount(station.OwnerId), rentPrice,
+                    corporationId, OfficeRentReferenceType, "Corporation office rental", atStation,
+                    $"office-rent:{office.OfficeId}:credit", "office_rental_fee", call.Cancellation);
+                if (structures is not null)
+                    await structures.ScheduleRentDueAsync(connection, transaction, office.OfficeId, office.ExpiresAtMs, call.Cancellation);
 
-            foreach (var item in existingItems.Where(item => item.Flag == ImpoundedFlag))
-                await MoveIfCurrentAsync(connection, transaction, item, corporationId, station.Id,
-                    ImpoundedFlag, Eve.Inventory.ItemFlags.CorpSAG1, call.Cancellation);
-            return office;
-        }, call.Cancellation);
+                foreach (var item in existingItems.Where(item => item.Flag == ImpoundedFlag))
+                    await MoveIfCurrentAsync(connection, transaction, item, corporationId, station.Id,
+                        ImpoundedFlag, Eve.Inventory.ItemFlags.CorpSAG1, call.Cancellation);
+                return office;
+            }, call.Cancellation);
+        }
+        catch (Eve.Wallet.InsufficientFundsException error)
+        {
+            throw NotEnoughMoney(rentPrice, error.AvailableBalance);
+        }
         if (changedOffice is not null && characterSessions is { } sessions && notificationType is { } type)
             CorporationOfficeNotifications.Rented(sessions, corporationId, station.Id, changedOffice.OfficeFolderId, type);
         return PyNone.Instance;
@@ -161,7 +182,7 @@ public sealed partial class OfficeManagerService(
         var station = BoundStation(call);
         var authority = await RequireAuthorityAsync(actor, corporationId, station.Id, call.Cancellation);
         if (!IsCeoOrDirector(actor, authority))
-            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+            throw ClientError("CrpAccessDenied");
 
         var notificationType = await OfficeNotificationTypeAsync(call.Cancellation);
         var atStation = now();
@@ -190,35 +211,42 @@ public sealed partial class OfficeManagerService(
         var corporationId = SessionCorporationId(call.Session);
         var station = LocalStation(call);
         var authority = await RequireAuthorityAsync(actor, corporationId, station.Id, call.Cancellation);
-        if (!IsCeoOrDirector(actor, authority)) throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        if (!IsCeoOrDirector(actor, authority)) throw ClientError("CrpAccessDenied");
 
         var impounded = (await items.InLocationAsync(station.Id, corporationId, call.Cancellation))
             .Where(item => item.Flag == ImpoundedFlag).ToArray();
         if (impounded.Length == 0) return PyNone.Instance;
-        var quotedFee = Money(call.Arg(0)) ?? throw new CorporationError("IMPOUND_PRICE_REQUIRED");
         var atStation = now();
-        await store.WriteAsync(async (connection, transaction) =>
+        decimal fee = 0m;
+        try
         {
-            await store.LockStationAsync(connection, transaction, station.Id, call.Cancellation);
-            var occupied = await store.CountAtStationAsync(connection, transaction, station.Id, call.Cancellation);
-            var rent = await store.PriceQuoteAsync(connection, transaction, station, occupied, atStation, call.Cancellation);
-            var fee = decimal.Round(rent / 2m, 2, MidpointRounding.AwayFromZero);
-            if (quotedFee != fee) throw new CorporationError("IMPOUND_PRICE_CHANGED");
+            await store.WriteAsync(async (connection, transaction) =>
+            {
+                await store.LockStationAsync(connection, transaction, station.Id, call.Cancellation);
+                var occupied = await store.CountAtStationAsync(connection, transaction, station.Id, call.Cancellation);
+                var rent = await store.PriceQuoteAsync(connection, transaction, station, occupied, atStation, call.Cancellation);
+                // The client quote is display-only; settle at the server's current release fee.
+                fee = decimal.Round(rent / 2m, 2, MidpointRounding.AwayFromZero);
 
-            await wallets.AdjustAsync(connection, transaction, new Eve.Wallet.WalletAccount(corporationId), -fee,
-                station.OwnerId, ImpoundReleaseReferenceType, "Corporation impound release", atStation,
-                $"office-impound-release:{corporationId}:{station.Id}:{atStation}",
-                "office_impound_release", call.Cancellation);
-            await wallets.EnsureAsync(connection, transaction, station.OwnerId, call.Cancellation);
-            await wallets.AdjustAsync(connection, transaction, new Eve.Wallet.WalletAccount(station.OwnerId), fee,
-                corporationId, ImpoundReleaseReferenceType, "Corporation impound release", atStation,
-                $"office-impound-release:{corporationId}:{station.Id}:{atStation}:credit",
-                "office_impound_release", call.Cancellation);
-            foreach (var item in impounded)
-                await MoveIfCurrentAsync(connection, transaction, item, corporationId, station.Id,
-                    ImpoundedFlag, Eve.Inventory.ItemFlags.CorpSAG1, call.Cancellation);
-            return 0;
-        }, call.Cancellation);
+                await wallets.AdjustAsync(connection, transaction, new Eve.Wallet.WalletAccount(corporationId), -fee,
+                    station.OwnerId, ImpoundReleaseReferenceType, "Corporation impound release", atStation,
+                    $"office-impound-release:{corporationId}:{station.Id}:{atStation}",
+                    "office_impound_release", call.Cancellation);
+                await wallets.EnsureAsync(connection, transaction, station.OwnerId, call.Cancellation);
+                await wallets.AdjustAsync(connection, transaction, new Eve.Wallet.WalletAccount(station.OwnerId), fee,
+                    corporationId, ImpoundReleaseReferenceType, "Corporation impound release", atStation,
+                    $"office-impound-release:{corporationId}:{station.Id}:{atStation}:credit",
+                    "office_impound_release", call.Cancellation);
+                foreach (var item in impounded)
+                    await MoveIfCurrentAsync(connection, transaction, item, corporationId, station.Id,
+                        ImpoundedFlag, Eve.Inventory.ItemFlags.CorpSAG1, call.Cancellation);
+                return 0;
+            }, call.Cancellation);
+        }
+        catch (Eve.Wallet.InsufficientFundsException error)
+        {
+            throw NotEnoughMoney(fee, error.AvailableBalance);
+        }
         return PyNone.Instance;
     }
 
@@ -294,7 +322,7 @@ public sealed partial class OfficeManagerService(
         var corporationId = SessionCorporationId(call.Session);
         var station = BoundStation(call);
         var authority = await RequireAuthorityAsync(actor, corporationId, station.Id, call.Cancellation);
-        if (!IsCeoOrDirector(actor, authority)) throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        if (!IsCeoOrDirector(actor, authority)) throw ClientError("CrpAccessDenied");
         var impounded = (await items.InLocationAsync(station.Id, corporationId, call.Cancellation))
             .Where(item => item.Flag == ImpoundedFlag).ToArray();
         await store.WriteAsync(async (connection, transaction) =>
@@ -350,7 +378,7 @@ public sealed partial class OfficeManagerService(
     private async Task<(Corporation Corporation, SessionRoles Roles)> RequireAuthorityAsync(long actor,
         long corporationId, long stationId, CancellationToken token)
     {
-        if (corporationId <= 0) throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        if (corporationId <= 0) throw ClientError("CrpAccessDenied");
         var character = await characters.GetAsync(actor, token) ??
             throw new CorporationError("CHARACTER_NOT_FOUND");
         var corporation = await corporations.GetAsync(corporationId, token) ??
@@ -358,7 +386,7 @@ public sealed partial class OfficeManagerService(
         var member = await corporations.MemberAsync(actor, token);
         if (corporation.IsNpc || character.CorporationId != corporationId ||
             member is null || member.CorporationId != corporationId)
-            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+            throw ClientError("CrpAccessDenied");
         var titles = await corporations.TitlesAsync(corporationId, token);
         return (corporation, CorporationRoles.Session(corporation, member, stationId, titles));
     }
@@ -366,6 +394,13 @@ public sealed partial class OfficeManagerService(
     private static bool IsCeoOrDirector(long actor, (Corporation Corporation, SessionRoles Roles) authority) =>
         (!authority.Corporation.CeoRolesSuspended && authority.Corporation.CeoId == actor) ||
         (authority.Roles.AtAll & CorporationRoles.Director) != 0;
+
+    private static MachoWrappedException ClientError(string message) => new(MachoErrors.UserError(message));
+
+    private static MachoWrappedException NotEnoughMoney(decimal amount, decimal? balance) =>
+        MachoErrors.ThrowUserError("NotEnoughMoney",
+            ("amount", new PyReal((double)amount)),
+            ("balance", new PyReal((double)(balance ?? 0m))));
 
     private async Task MoveIfCurrentAsync(Npgsql.NpgsqlConnection connection, Npgsql.NpgsqlTransaction transaction,
         Eve.Inventory.Item snapshot, long corporationId, long stationId, int expectedFlag, int destinationFlag,
@@ -409,37 +444,45 @@ public sealed partial class OfficeManagerService(
     {
         var authority = await RequireAuthorityAsync(actor, corporationId, site.StructureId, call.Cancellation);
         if ((authority.Roles.AtAll & RentOfficeRole) == 0)
-            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+            throw ClientError("CrpAccessDenied");
         if (!await structures!.MayRentAsync(actor, site.StructureId, call.Cancellation))
-            throw new CorporationError("StructureCorpOfficesDenied");
+            throw ClientError("StructureCorpOfficesDenied");
         var rent = await structures.RentForAsync(actor, site.StructureId, call.Cancellation);
         var notificationType = await OfficeNotificationTypeAsync(call.Cancellation);
         var atStructure = now();
         var structureStation = new CorporationOfficeStation(site.StructureId, site.TypeId, site.OwnerCorporationId, site.SolarSystemId, 0);
-        var changedOffice = await store.WriteAsync<CorporationOffice?>(async (connection, transaction) =>
+        CorporationOffice? changedOffice;
+        try
         {
-            await store.LockStationAsync(connection, transaction, site.StructureId, call.Cancellation);
-            if (await store.GetAsync(connection, transaction, corporationId, site.StructureId, forUpdate: true,
-                cancellationToken: call.Cancellation) is not null)
-                return null;
-
-            var officeFolderId = await items.CreateAsync(connection, transaction,
-                new Eve.Inventory.NewItem(CorporationOfficeStore.OfficeFolderTypeId, corporationId, site.StructureId,
-                    Eve.Inventory.ItemFlags.Hangar, Singleton: true), call.Cancellation);
-            var office = await store.RentAsync(connection, transaction, corporationId, officeFolderId, structureStation, rent, atStructure,
-                call.Cancellation, creditorId: site.OwnerCorporationId);
-            if (rent > 0)
+            changedOffice = await store.WriteAsync<CorporationOffice?>(async (connection, transaction) =>
             {
-                await wallets.AdjustAsync(connection, transaction, new Eve.Wallet.WalletAccount(corporationId), -rent,
-                    site.OwnerCorporationId, OfficeRentReferenceType, "Corporation office rental", atStructure,
-                    $"office-rent:{office.OfficeId}:charge", "office_rental_fee", call.Cancellation);
-                await wallets.AdjustAsync(connection, transaction, new Eve.Wallet.WalletAccount(site.OwnerCorporationId), rent,
-                    corporationId, OfficeRentReferenceType, "Corporation office rental", atStructure,
-                    $"office-rent:{office.OfficeId}:credit", "office_rental_fee", call.Cancellation);
-            }
-            await structures.ScheduleRentDueAsync(connection, transaction, office.OfficeId, office.ExpiresAtMs, call.Cancellation);
-            return office;
-        }, call.Cancellation);
+                await store.LockStationAsync(connection, transaction, site.StructureId, call.Cancellation);
+                if (await store.GetAsync(connection, transaction, corporationId, site.StructureId, forUpdate: true,
+                    cancellationToken: call.Cancellation) is not null)
+                    return null;
+
+                var officeFolderId = await items.CreateAsync(connection, transaction,
+                    new Eve.Inventory.NewItem(CorporationOfficeStore.OfficeFolderTypeId, corporationId, site.StructureId,
+                        Eve.Inventory.ItemFlags.Hangar, Singleton: true), call.Cancellation);
+                var office = await store.RentAsync(connection, transaction, corporationId, officeFolderId, structureStation, rent, atStructure,
+                    call.Cancellation, creditorId: site.OwnerCorporationId);
+                if (rent > 0)
+                {
+                    await wallets.AdjustAsync(connection, transaction, new Eve.Wallet.WalletAccount(corporationId), -rent,
+                        site.OwnerCorporationId, OfficeRentReferenceType, "Corporation office rental", atStructure,
+                        $"office-rent:{office.OfficeId}:charge", "office_rental_fee", call.Cancellation);
+                    await wallets.AdjustAsync(connection, transaction, new Eve.Wallet.WalletAccount(site.OwnerCorporationId), rent,
+                        corporationId, OfficeRentReferenceType, "Corporation office rental", atStructure,
+                        $"office-rent:{office.OfficeId}:credit", "office_rental_fee", call.Cancellation);
+                }
+                await structures.ScheduleRentDueAsync(connection, transaction, office.OfficeId, office.ExpiresAtMs, call.Cancellation);
+                return office;
+            }, call.Cancellation);
+        }
+        catch (Eve.Wallet.InsufficientFundsException error)
+        {
+            throw NotEnoughMoney(rent, error.AvailableBalance);
+        }
         if (changedOffice is not null && characterSessions is { } sessions && notificationType is { } type)
             CorporationOfficeNotifications.Rented(sessions, corporationId, site.StructureId, changedOffice.OfficeFolderId, type);
         return PyNone.Instance;
@@ -453,7 +496,7 @@ public sealed partial class OfficeManagerService(
     {
         var authority = await RequireAuthorityAsync(actor, corporationId, site.StructureId, call.Cancellation);
         if (!IsCeoOrDirector(actor, authority))
-            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+            throw ClientError("CrpAccessDenied");
         var atStructure = now();
         var changedOffice = await store.WriteAsync<CorporationOffice?>(async (connection, transaction) =>
         {
@@ -514,10 +557,17 @@ public sealed partial class OfficeManagerService(
         _ => null,
     };
 
-    private static PyValue OfficeRow(CorporationOffice office) => Py.KeyVal(
+    private static PyValue OfficePriceValue(decimal price) =>
+        price == decimal.Truncate(price) && Math.Abs(price) <= 9_007_199_254_740_991m
+            ? new PyLong((long)price)
+            : new PyReal((double)price);
+
+    private static PyValue OfficeRow(CorporationOffice office, int stationTypeId) => Py.KeyVal(
         ("officeID", new PyLong(office.OfficeId)),
         ("stationID", new PyLong(office.StationId)),
         ("solarSystemID", new PyLong(office.SolarSystemId)),
+        ("solarsystemID", new PyLong(office.SolarSystemId)),
+        ("stationTypeID", new PyInt(stationTypeId)),
         ("corporationID", new PyLong(office.CorporationId)),
         ("ownerID", new PyLong(office.CorporationId)),
         ("itemID", new PyLong(office.OfficeFolderId)),

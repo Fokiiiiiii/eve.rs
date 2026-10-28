@@ -163,8 +163,11 @@ public sealed partial class SpaceSessions
     /// <summary>Boards another ship from the current station hangar and updates the active session ship.</summary>
     /// <summary>Leaves a docked ship, activates the character's capsule, and keeps the ship in the hangar.</summary>
     /// <summary>Boards a ship already in the character's station hangar.</summary>
-    public ValueTask<PyValue> EjectAsync(ClientSession session, CancellationToken cancellationToken) =>
-        EjectPhysicalShipAsync(session, ShipIdOf(session) ?? 0, false, cancellationToken);
+    public async ValueTask<PyValue> EjectAsync(ClientSession session, CancellationToken cancellationToken)
+    {
+        var result = await EjectPhysicalShipAsync(session, ShipIdOf(session) ?? 0, false, cancellationToken);
+        return result;
+    }
 
     private async ValueTask<PyValue> EjectPhysicalShipAsync(ClientSession session, long expectedSessionShipId, bool exitStructure, CancellationToken cancellationToken)
     {

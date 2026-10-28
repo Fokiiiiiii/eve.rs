@@ -288,14 +288,14 @@ public sealed class StructureOfficeTests : IAsyncLifetime
 
         // the structure binds (it is not an NPC station); the owner's member is quoted the owner's rent, a group member the group's rent
         Assert.IsType<PyTuple>(await offices.CallAsync(Call(PilotAtStructure(member, Corporation), "MachoBindObject", 1, new PyInt(StructureId))));
-        Assert.Equal(new PyReal(OwnerRent), await offices.CallAsync(Call(PilotAtStructure(member, Corporation), "GetPriceQuote", 2, new PyInt(Corporation))));
-        Assert.Equal(new PyReal(OutsiderRent), await offices.CallAsync(Call(PilotAtStructure(outsider, Outsider), "GetPriceQuote", 3, new PyInt(Outsider))));
+        Assert.Equal(new PyLong(OwnerRent), await offices.CallAsync(Call(PilotAtStructure(member, Corporation), "GetPriceQuote", 2, new PyInt(Corporation))));
+        Assert.Equal(new PyLong(OutsiderRent), await offices.CallAsync(Call(PilotAtStructure(outsider, Outsider), "GetPriceQuote", 3, new PyInt(Outsider))));
         await host.ShutdownAsync();
 
         // a restart keeps the profile rent; the office service stays online in the structures schema
         var restarted = await HostComposition.BuildAsync(Settings());
         var again = restarted.Registry.Lookup("officeManager") ?? throw new InvalidOperationException("officeManager is not registered after the restart");
-        Assert.Equal(new PyReal(OutsiderRent), await again.CallAsync(Call(PilotAtStructure(outsider, Outsider), "GetPriceQuote", 4, new PyInt(Outsider))));
+        Assert.Equal(new PyLong(OutsiderRent), await again.CallAsync(Call(PilotAtStructure(outsider, Outsider), "GetPriceQuote", 4, new PyInt(Outsider))));
         await restarted.ShutdownAsync();
 
         var legacy = (await new StructureStore(source, Schema("EVE_STRUCTURES_SCHEMA")).ReadLegacyTableAsync())[StructureId.ToString()]!.AsObject();

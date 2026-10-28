@@ -216,7 +216,7 @@ def compare_answer(label: str, recorded: dict, ours: dict, where: str) -> list[s
     # the objects and the times are per run: the shape is what the client reads
     return [] if shape(recorded) == shape(ours) else [f"{where}: answer {shape(ours)} in place of {shape(recorded)}"]
 
-def arrive(who, race: dict, run: str) -> tuple[int, int, list, dict]:
+def arrive(who, race: dict, run: str, before_select=None) -> tuple[int, int, list, dict]:
     """A character like the recorded one is created and chosen and stands in its station with its ship: `(character id, ship id, the
     fitted modules' ids, the mapping from the recording's ids to this run's)`."""
     recorded_run = re.search(r"(\d{6,})$", race["create"]["call"][2][0]).group(1)
@@ -224,6 +224,8 @@ def arrive(who, race: dict, run: str) -> tuple[int, int, list, dict]:
     kind, made = base.attempt(who, service, method, *args)
     assert kind == "ok", base.brief(made)
     character = int(made)
+    if before_select is not None:
+        before_select(character)
     assert base.attempt(who, "charUnboundMgr", "SelectCharacterID", character, None, False) == ("ok", None)
     manager = who.call("invbroker", "MachoBindObject", (STATION, 15), None)[0]
     hangar = who.call_bound(manager, "GetInventory", 10004)

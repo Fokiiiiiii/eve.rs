@@ -5,8 +5,8 @@ using Eve.Services;
 namespace Eve.Services.Core;
 
 /// <summary>
-/// The character-side reads and writes of facWarMgr, supplied by the host: the character's state (direct enlistment and cooldown), the standing
-/// of a subject toward a faction or militia corporation (the relation store's <c>standing</c>), the saved character state, and the clock.
+/// The character-side reads and writes of facWarMgr, supplied by the host: the character's direct enlistment, effective war faction, and cooldown;
+/// the standing of a subject toward a faction or militia corporation; the saved character state; and the clock.
 /// </summary>
 public sealed record FacWarMgrCallbacks(
     Func<long, CancellationToken, ValueTask<FwCharacterWarfareState?>> ReadCharacterAsync,
@@ -16,7 +16,8 @@ public sealed record FacWarMgrCallbacks(
     Func<long, IReadOnlyList<long>, CancellationToken, ValueTask<FwFactionMembers>>? FactionMembersAsync = null,
     Func<CancellationToken, ValueTask<IReadOnlyList<(long CorporationId, long AllianceId)>>>? AffiliationsAsync = null,
     Func<long, long, CancellationToken, ValueTask<bool>>? CanActAsCorporationDirectorAsync = null,
-    Func<long, long, CancellationToken, ValueTask<bool>>? CanActAsAllianceExecutorDirectorAsync = null);
+    Func<long, long, CancellationToken, ValueTask<bool>>? CanActAsAllianceExecutorDirectorAsync = null,
+    Func<long, CancellationToken, ValueTask<long>>? ReadWarFactionAsync = null);
 
 /// <summary>The members of a war faction: all of them, those of its militia corporation, and the largest enlisted corporation's members.</summary>
 public sealed record FwFactionMembers(long Total, long Militia, long Top);
@@ -42,11 +43,11 @@ public sealed class FacWarMgrService(FwService factionWarfare, FacWarMgrCallback
 
     private static readonly HashSet<string> Methods =
     [
-        "CheckForRankChange", "DonateLPsToSolarSystem", "GetAllianceWarFactionID", "GetCharacterRankInfo", "GetControlBunkerIDInSystem",
-        "GetCorpFactionalWarStatus", "GetCorporationWarFactionID", "GetFactionCorporations", "GetFactionMilitiaCorporation", "GetMyCharacterRankInfo",
+        "CheckForRankChange", "DonateLPsToSolarSystem", "GetAllianceWarFactionID", "GetCharacterRankInfo",
+        "GetControlBunkerIDInSystem", "GetCorpFactionalWarStatus", "GetCorporationWarFactionID", "GetFactionCorporations", "GetFactionMilitiaCorporation", "GetMyCharacterRankInfo",
         "GetSolarSystemLPs", "GetSolarSystemLPsEx", "GetStats_Character", "GetStats_Corp", "JoinFactionAsAlliance", "JoinFactionAsCharacter", "JoinFactionAsCorporation",
         "GetStats_FactionInfo", "GetStats_Militia", "GetStats_Alliance", "GetStats_TopAndAllKillsAndVPs", "GetMyCharacterRankOverview", "GetCharacterRankOverview",
-        "LeaveFactionAsAlliance", "LeaveFactionAsCorporation", "RefreshCorps", "WithdrawJoinFactionAsAlliance", "WithdrawJoinFactionAsCorporation",
+        "LeaveFactionAsAlliance", "LeaveFactionAsCorporation", "WithdrawJoinFactionAsAlliance", "WithdrawJoinFactionAsCorporation",
         "WithdrawLeaveFactionAsAlliance", "WithdrawLeaveFactionAsCorporation",
     ];
 
@@ -121,11 +122,11 @@ public sealed class FacWarMgrService(FwService factionWarfare, FacWarMgrCallback
             case "JoinFactionAsCharacter":
                 return await JoinAsCharacterAsync(session, characterId, warFactionId, Id(call, 0), now, cancellation);
             case "GetMyCharacterRankInfo":
-                return await RankInfoAsync(characterId, warFactionId, cancellation);
+                return await RankInfoAsync(characterId, await WarFactionOfAsync(characterId, cancellation, warFactionId), cancellation);
             case "GetCharacterRankInfo":
             {
-                var state = await callbacks.ReadCharacterAsync(Id(call, 0), cancellation);
-                return await RankInfoAsync(Id(call, 0), state?.DirectFactionId ?? 0, cancellation);
+                var targetId = Id(call, 0);
+                return await RankInfoAsync(targetId, await WarFactionOfAsync(targetId, cancellation), cancellation);
             }
             case "GetStats_Character":
                 return StatsPayload(await factionWarfare.PilotStatsAsync(characterId, now, cancellation));
@@ -140,9 +141,12 @@ public sealed class FacWarMgrService(FwService factionWarfare, FacWarMgrCallback
             case "GetStats_TopAndAllKillsAndVPs":
                 return await TopAndAllAsync(now, cancellation);
             case "GetMyCharacterRankOverview":
-                return await RankOverviewAsync(characterId, cancellation);
+                return await RankOverviewAsync(characterId, await WarFactionOfAsync(characterId, cancellation, warFactionId), cancellation);
             case "GetCharacterRankOverview":
-                return await RankOverviewAsync(Id(call, 0), cancellation);
+            {
+                var targetId = Id(call, 0);
+                return await RankOverviewAsync(targetId, await WarFactionOfAsync(targetId, cancellation), cancellation);
+            }
             case "CheckForRankChange":
             {
                 if (characterId <= 0 || !FwFactions.IsOccupier(warFactionId))
@@ -156,8 +160,7 @@ public sealed class FacWarMgrService(FwService factionWarfare, FacWarMgrCallback
             case "DonateLPsToSolarSystem":
                 return await DonateAsync(session, characterId, corporationId, warFactionId, call, now, cancellation);
             case "GetControlBunkerIDInSystem":
-                return PyNone.Instance;
-            case "RefreshCorps":
+                // shortcut: FW hub item IDs are not stored by Host; replace this when space-object state owns those IDs.
                 return PyNone.Instance;
             default:
                 return PyNone.Instance;
@@ -260,19 +263,17 @@ public sealed class FacWarMgrService(FwService factionWarfare, FacWarMgrCallback
         return new PyTuple([top, all]);
     }
 
-    /// <summary>The factions a character holds a rank in (the rank from its standing with the militia corporation), as util.KeyVal entries.</summary>
-    private async ValueTask<PyValue> RankOverviewAsync(long characterId, CancellationToken cancellation)
+    /// <summary>The enlisted faction's rank from its militia standing, as one util.KeyVal entry.</summary>
+    private async ValueTask<PyValue> RankOverviewAsync(long characterId, long factionId, CancellationToken cancellation)
     {
         var ranks = new List<PyValue>();
-        if (characterId <= 0)
+        if (characterId <= 0 || !FwFactions.IsOccupier(factionId))
             return new PyList(ranks);
-        foreach (var faction in FwFactions.Occupiers)
-        {
-            var standing = await callbacks.ReadStandingAsync(characterId, FwFactions.MilitiaCorporationOf(faction), cancellation);
-            var rank = FwRules.RankOf(standing);
-            if (rank > 0)
-                ranks.Add(Py.KeyVal(("factionID", new PyInt(faction)), ("currentRank", new PyInt(rank))));
-        }
+        var standing = await callbacks.ReadStandingAsync(characterId, FwFactions.MilitiaCorporationOf(factionId), cancellation);
+        var rank = FwRules.RankOf(standing);
+        if (rank > 0)
+            ranks.Add(Py.KeyVal(("characterID", new PyInt(characterId)), ("factionID", new PyInt(factionId)),
+                ("warFactionID", new PyInt(factionId)), ("currentRank", new PyInt(rank))));
         return new PyList(ranks);
     }
 
@@ -295,14 +296,28 @@ public sealed class FacWarMgrService(FwService factionWarfare, FacWarMgrCallback
         var state = await callbacks.ReadCharacterAsync(characterId, cancellation);
         if (state?.DirectFactionId is > 0)
             throw Notice("UI/FactionWarfare/AlreadyInMilitia");
-        if (state is not null && state.DirectEnlistmentCooldownFileTime > DateTimeOffset.UtcNow.ToFileTime())
+        if (state is not null && state.DirectEnlistmentCooldownFileTime > UnixMsToFileTime(now))
             throw Notice("UI/FactionWarfare/CooldownActive");
         var standing = await callbacks.ReadStandingAsync(characterId, factionId, cancellation);
         if (!FwRules.MeetsEnlistmentStanding(standing))
             throw Notice("UI/FactionWarfare/StandingTooLow");
-        if (await callbacks.SaveCharacterAsync(characterId, factionId, 0, cancellation))
-            session.Change(("warfactionid", new PyInt(factionId)));
+        if (!await callbacks.SaveCharacterAsync(characterId, factionId, 0, cancellation))
+            throw new InvalidOperationException("the character faction state was not saved");
+        session.Change(("warfactionid", new PyInt(factionId)));
         return PyNone.Instance;
+    }
+
+    private async ValueTask<long> WarFactionOfAsync(long characterId, CancellationToken cancellation, long fallbackFactionId = 0)
+    {
+        if (characterId <= 0)
+            return fallbackFactionId;
+        if (callbacks.ReadWarFactionAsync is { } readWarFaction)
+        {
+            var factionId = await readWarFaction(characterId, cancellation);
+            return FwFactions.IsOccupier(factionId) ? factionId : fallbackFactionId;
+        }
+        var state = await callbacks.ReadCharacterAsync(characterId, cancellation);
+        return state?.DirectFactionId is > 0 ? state.DirectFactionId.Value : fallbackFactionId;
     }
 
     private async ValueTask<PyValue> RankInfoAsync(long characterId, long factionId, CancellationToken cancellation)
@@ -310,7 +325,11 @@ public sealed class FacWarMgrService(FwService factionWarfare, FacWarMgrCallback
         if (characterId <= 0 || !FwFactions.IsOccupier(factionId))
             return PyNone.Instance;
         var standing = await callbacks.ReadStandingAsync(characterId, FwFactions.MilitiaCorporationOf(factionId), cancellation);
-        return Py.KeyVal(("currentRank", new PyInt(FwRules.RankOf(standing))));
+        return Py.KeyVal(
+            ("characterID", new PyInt(characterId)),
+            ("factionID", new PyInt(factionId)),
+            ("warFactionID", new PyInt(factionId)),
+            ("currentRank", new PyInt(FwRules.RankOf(standing))));
     }
 
     private async ValueTask<PyValue> DonateAsync(ClientSession session, long characterId, long corporationId, long warFactionId, ServiceCall call, long now,

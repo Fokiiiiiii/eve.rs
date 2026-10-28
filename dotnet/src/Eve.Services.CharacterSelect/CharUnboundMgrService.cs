@@ -31,7 +31,13 @@ public sealed partial class CharUnboundMgrService(
     Func<long, CancellationToken, Task<double>>? securityStatusOf = null,
     SystemPopulation? population = null,
     ICharacterDeletionPurge? deletionPurge = null,
-    Func<DateTimeOffset>? clock = null)
+    Func<DateTimeOffset>? clock = null,
+    Func<int, CancellationToken, Task<IReadOnlyList<Character>>>? readCharactersForAccount = null,
+    Func<long, CancellationToken, Task<Character?>>? readCharacterById = null,
+    Func<string, CancellationToken, Task<bool>>? isCharacterNameTaken = null,
+    Func<long, int, CancellationToken, Task>? writeCharacterGender = null,
+    Func<long, int, int, int, CancellationToken, Task>? writeCharacterBloodline = null,
+    Func<CreationRequest, CancellationToken, Task<CreationOutcome>>? createCharacter = null)
 {
     /// <summary>What every session's role gets on top of the account's (the client shows staff roles and the base bits alike).</summary>
     public const long SessionBaseRole = 0x6000000080000000;
@@ -79,7 +85,9 @@ public sealed partial class CharUnboundMgrService(
         var account = AccountOf(call);
         if (characterId <= 0)
         {
-            var list = account is { } accountId ? await characters.ForAccountAsync(accountId, Token(call)) : [];
+            var list = account is { } accountId
+                ? await (readCharactersForAccount?.Invoke(accountId, Token(call)) ?? characters.ForAccountAsync(accountId, Token(call)))
+                : [];
             return new PyList([.. list.Select(SelectRow)]);
         }
         if (account is not { } owner)
@@ -87,7 +95,9 @@ public sealed partial class CharUnboundMgrService(
             return None;
         }
 
-        var character = await characters.GetAsync(characterId, Token(call));
+        var character = readCharacterById is null
+            ? await characters.GetAsync(characterId, Token(call))
+            : await readCharacterById(characterId, Token(call));
         if (character is null || character.AccountId != owner)
         {
             return None;
@@ -176,7 +186,8 @@ public sealed partial class CharUnboundMgrService(
         {
             name = RandomNames.Generate(race, random);
         }
-        while (++attempts < 20 && await characters.NameTakenAsync(name, Token(call)));
+        while (++attempts < 20 &&
+            await (isCharacterNameTaken?.Invoke(name, Token(call)) ?? characters.NameTakenAsync(name, Token(call))));
         return new PyStr(name);
     }
 
@@ -198,7 +209,9 @@ public sealed partial class CharUnboundMgrService(
     public async ValueTask<PyValue> UpdateCharacterGender(ServiceCall call)
     {
         var characterId = Long(call.Arg(0));
-        var character = await characters.GetAsync(characterId, Token(call));
+        var character = readCharacterById is null
+            ? await characters.GetAsync(characterId, Token(call))
+            : await readCharacterById(characterId, Token(call));
         if (character is null)
         {
             return None;
@@ -213,7 +226,9 @@ public sealed partial class CharUnboundMgrService(
             throw Info("That gender is invalid.");
         var requestedGender = requestedGenderValue is PyNone ? 1 : IntOrDefault(requestedGenderValue, 1);
         var gender = requestedGender is >= 0 and <= 2 ? requestedGender : 1;
-        await characters.SetGenderAsync(characterId, gender, Token(call));
+        await (writeCharacterGender is null
+            ? characters.SetGenderAsync(characterId, gender, Token(call))
+            : writeCharacterGender(characterId, gender, Token(call)));
         if (IsCurrentCharacter(call, characterId))
         {
             call.Session.Set("genderID", new PyInt(gender));
@@ -226,7 +241,9 @@ public sealed partial class CharUnboundMgrService(
     public async ValueTask<PyValue> UpdateCharacterBloodline(ServiceCall call)
     {
         var characterId = Long(call.Arg(0));
-        var character = await characters.GetAsync(characterId, Token(call));
+        var character = readCharacterById is null
+            ? await characters.GetAsync(characterId, Token(call))
+            : await readCharacterById(characterId, Token(call));
         if (character is null)
         {
             return None;
@@ -246,7 +263,9 @@ public sealed partial class CharUnboundMgrService(
             throw Info("That bloodline is invalid.");
         var raceId = bloodline.RaceId;
         var typeId = CreationCatalog.CharacterTypeId(bloodlineId, character.TypeId);
-        await characters.SetBloodlineAsync(characterId, bloodlineId, raceId, typeId, Token(call));
+        await (writeCharacterBloodline is null
+            ? characters.SetBloodlineAsync(characterId, bloodlineId, raceId, typeId, Token(call))
+            : writeCharacterBloodline(characterId, bloodlineId, raceId, typeId, Token(call)));
         if (IsCurrentCharacter(call, characterId))
         {
             call.Session.Set("bloodlineID", new PyInt(bloodlineId));
@@ -285,7 +304,7 @@ public sealed partial class CharUnboundMgrService(
             schoolId,
             Appearance(call.Arg(5)),
             Appearance(call.Arg(6)));
-        var outcome = await creation.CreateAsync(request, Token(call));
+        var outcome = await (createCharacter?.Invoke(request, Token(call)) ?? creation.CreateAsync(request, Token(call)));
         if (outcome is Created newCharacter && sendWelcomeMailAsync is not null)
             await sendWelcomeMailAsync(newCharacter.CharacterId, Token(call));
         return outcome switch

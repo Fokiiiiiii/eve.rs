@@ -90,7 +90,7 @@ public partial class HostServerTests
     }
 
     [Fact]
-    public async Task Ship_jettison_returns_the_two_client_lists_through_host_wire()
+    public async Task Ship_jettison_returns_the_two_client_tuples_through_host_wire()
     {
         var containers = new WireContainers { JettisonedItems = [5001] };
         Start(
@@ -114,7 +114,7 @@ public partial class HostServerTests
         var jettisoned = Assert.IsType<PyTuple>(reply.Items[1]);
 
         Assert.Equal([5001L, 5002L], containers.JettisonRequests);
-        Assert.Equal(new PyInt(5001), Assert.Single(Assert.IsType<PyList>(jettisoned.Items[0]).Items));
-        Assert.Empty(Assert.IsType<PyList>(jettisoned.Items[1]).Items);
+        Assert.Equal(new PyInt(5001), Assert.Single(Assert.IsType<PyTuple>(jettisoned.Items[0]).Items));
+        Assert.Empty(Assert.IsType<PyTuple>(jettisoned.Items[1]).Items);
     }
 }

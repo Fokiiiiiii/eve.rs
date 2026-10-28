@@ -712,7 +712,10 @@ public sealed partial class ContractProxyService(
     {
         var characterId = call.Session.CharacterId ?? call.Session.GetInt("charid") ?? 0;
         if (characterId > 0 && readCurrentOrganizationIds is not null)
-            return await readCurrentOrganizationIds(characterId, call.Cancellation);
+        {
+            var (corporationId, allianceId) = await readCurrentOrganizationIds(characterId, call.Cancellation);
+            return (corporationId > 0 ? corporationId : (call.Session.GetInt("corpid") ?? 0), allianceId);
+        }
         return (call.Session.GetInt("corpid") ?? 0, call.Session.GetInt("allianceid") ?? 0);
     }
 

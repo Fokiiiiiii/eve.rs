@@ -140,7 +140,7 @@ public partial class HostServerTests
                 },
                 ["102"] = new JsonObject
                 {
-                    ["messageID"] = 102, ["senderID"] = 20, ["toCharacterIDs"] = new JsonArray(characterId),
+                    ["messageID"] = 102, ["senderID"] = 20, ["toCharacterIDs"] = new JsonArray(characterId, 90000002),
                     ["toListID"] = null, ["toCorpOrAllianceID"] = null, ["title"] = "Keep", ["sentDate"] = 0,
                     ["body"] = "Body",
                 },
@@ -153,6 +153,14 @@ public partial class HostServerTests
                     {
                         ["100"] = new JsonObject { ["statusMask"] = 8, ["labelMask"] = 0 },
                         ["101"] = new JsonObject { ["statusMask"] = 8, ["labelMask"] = 0 },
+                        ["102"] = new JsonObject { ["statusMask"] = 0, ["labelMask"] = 0 },
+                    },
+                    ["labels"] = new JsonObject(),
+                },
+                ["90000002"] = new JsonObject
+                {
+                    ["statuses"] = new JsonObject
+                    {
                         ["102"] = new JsonObject { ["statusMask"] = 0, ["labelMask"] = 0 },
                     },
                     ["labels"] = new JsonObject(),
@@ -242,7 +250,8 @@ public partial class HostServerTests
         var deletedNotice = ReadMailNotification(await otherFront.ReceiveAsync());
         Assert.Equal("OnMailDeleted", deletedNotice.Name);
         Assert.Equal([102L], Assert.IsType<PyList>(deletedNotice.Args[0]).Items.Select(WireInteger));
-        Assert.False(((JsonObject)state["messages"]!).ContainsKey("102"));
+        Assert.True(((JsonObject)state["messages"]!).ContainsKey("102"));
+        Assert.True(((JsonObject)state["mailboxes"]!["90000002"]!["statuses"]!).ContainsKey("102"));
         var headersAfterDelete = Assert.IsType<PyList>(await HostRpcAsync(front, open, callId++, "mailMgr",
             "GetMailHeaders", new PyList([new PyLong(100), new PyLong(101), new PyLong(102)])));
         Assert.Empty(headersAfterDelete.Items);

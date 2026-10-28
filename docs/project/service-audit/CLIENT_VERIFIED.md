@@ -351,7 +351,7 @@ EveJS comparison: search returns a group-ID keyed dictionary of lists for `Query
 - The audit-current generator has no status-evidence update option; the CSV was left unchanged as instructed.
 - Graph/source comparison checked current handlers against EveJS v0.12.9-compatible behavior. The full graphical client was not launched for this batch.
 
-- Actions run 40260608955 stopped at compile on the updated private-info test's PyList header construction; the header now materializes to an array. The affected CharacterInfo test project builds locally with 0 warnings/errors; the selected Actions tests need a rerun.
+- Actions run 40260608955 previously stopped at compile on the private-info test's PyList header; the header now materializes to an array. Focused Actions run 40660703835 on origin/main passed the selected character-creation-date, CharUnbound, population-cap and stargate wire tests with no failed tests or jobs. The separate private-info test was outside that filter; ci-status.py did not report skipped-test totals.
 
 
 - Actions run 40261514261 failed during compilation on xUnit2031 in `CharMgrClientReadHostWireTests.cs`; the label assertions now use `Assert.Single(collection, predicate)`. The focused Actions rerun is pending. Local Host project build succeeded (0 warnings/errors), and `Char_mgr_client_read_shapes_match_the_registered_host_wire_contract` passed locally (1 passed, 0 skipped); the valid-session recent-kill wire check also passed locally (1 passed, 0 skipped).

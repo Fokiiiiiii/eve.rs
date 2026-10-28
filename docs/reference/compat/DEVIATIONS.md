@@ -5889,3 +5889,8 @@ EveJS v0.12.9 routes `GetCharacterInfo` to `Handle_GetCharacterToSelect` (`serve
 `eve/client/script/ui/login/charSelection/characterSelection.py:748-762` obtains a map from `GetCharacterLoadSlot`, chooses a key only when multiple systems are offered, calls `MoveCharacterToNewSystem(charID, selectedSolarSystemID, slotKey)`, then enters the character without reading a reply. Host validates the offered system and echoed key and saves the chosen solar system (`PopulationCapService.cs:76-115`); `P0CharacterClientWireTests.Population_cap_move_returns_none_and_saves_the_offered_system_over_host_wire` checks that transition and the None reply.
 
 EveJS v0.12.9 implements only `GetCharacterLoadSlot` in this service (`server/src/services/populationCap/populationCapService.js:178-189`); a whole-project search found no `MoveCharacterToNewSystem` handler. Host supports the V24.01 client call as an intentional difference.
+
+
+## stationSvc.GetSolarSystem requested-system lookup
+
+RPC-02576 accepts a system ID. V24.01's direct remote caller passes that ID and consumes `factionID` (`eve/devtools/script/insider.py:347-361`). eve.rs resolves the requested system from its SDE catalog and returns its faction ID (`dotnet/src/Eve.Services.Station/StationService.cs:127-147`); EveJS v0.12.9 ignores `args` and returns the session's docked station record (`server/src/services/station/stationService.js:217-239`). Resolving the requested ID is intentional because using the session station would not answer the system requested by the client. The Host packet-loop regression is `StationSolarSystemHostWireTests.Station_GetSolarSystem_uses_the_requested_SDE_system_without_a_docked_station`.

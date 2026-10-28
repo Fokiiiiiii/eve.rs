@@ -411,3 +411,11 @@ Filter service CI repair (2026-10-28): push e1c203cd completed its focused Agent
 - Push CI run 40736692994 exposed two stale assertions in `UnportedFeatureRpcServicesTests.Direct_service_rows_are_registered_with_reference_fallbacks`: current-series details were expected as `PyList` and tournament details as `PyNone`. V24.01 reads series details by seriesID and reads the five tournament fields at `eve/devtools/script/tournamentRefereeTools.py:576-600`; EveJS v0.12.9 returns an empty dict and its five-field defaults at `tourneyMgrService.js:96-120`. The test now asserts the dict shapes and values; no production behavior or assertion strictness was weakened.
 - Core.Tests build passed. The focused fallback test passed 1/1. The full Core.Tests shard with `EVE_PG_URL` unset reported 844 passed, 8 failed, 57 skipped; the failures are PostgreSQL-backed MiningLedger fixtures that assert the absent URL at `MiningLedgerServiceTests.cs:206-209` before opening a connection.
 - Re-ran the required Host.Tests shard without a database URL: 604 passed, 100 failed, 228 skipped. Failures are database-configured fixtures; no PostgreSQL connection was made.
+
+
+## 2026-10-28: final rescue push verification
+
+- Commit `05fcbab08dbbd18501dac99742741409e94e46cc` was pushed to main. Agent Test run 40736734037 succeeded. Push CI run 40736692994 found and reported the stale tournament fallback assertions documented above.
+- Fixed those assertions in `f39d09464e324b35c04f2d087c0152ba4f41a660` and pushed after fetching/merging main and rerunning the focused Core and Host tests. Agent Test run 40739771164 succeeded with no failed tests or jobs. Push CI run 40739749823 completed successfully as run 1195 with no failed tests or jobs.
+- The final local verification still includes the no-database Host shard result (604 passed, 100 failed, 228 skipped) and the Core shard result (844 passed, 8 failed, 57 skipped); their failures require the unavailable database lane as detailed above. No PostgreSQL database or graphical client was used.
+- At this point `f39d0946` is on main. The interrupted GameStore work remains preserved in its named local stash for a database-enabled task.

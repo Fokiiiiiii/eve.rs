@@ -405,7 +405,16 @@ public sealed class CorporationOfficeTests
         await SetOfficeRoleAsync(rig, actor, CorporationRoles.RentOffice);
         var service = CreateService(rig);
         var quote = await QuoteAsync(service, actor, corporation.Id);
+        var available = (await rig.Wallets.GetAsync(corporation.Id))!.Isk;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Transactions.TransferAsync(connection, transaction, corporation.Id, actor, available,
+                1, "Return office test funding", rig.Now, $"office-test-insufficient:{corporation.Id}");
+            await transaction.CommitAsync();
+        }
         var before = (await rig.Wallets.GetAsync(corporation.Id))!.Isk;
+        Assert.Equal(0m, before);
 
         var error = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(async () =>
         {

@@ -151,7 +151,7 @@ public partial class HostServerTests
         var (front, open) = await OpenFrontAsync();
 
         var guests = Assert.IsType<PyList>(await HostRpcAsync(front, open, 1, "station", "GetGuests"));
-        var guest = Assert.IsType<PyList>(Assert.Single(guests.Items));
+        var guest = Assert.IsType<PyTuple>(Assert.Single(guests.Items));
         Assert.Equal(
             [new PyInt(characterId), new PyInt(corporationId), new PyInt(allianceId), new PyInt(warFactionId)],
             guest.Items);

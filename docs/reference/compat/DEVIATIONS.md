@@ -5889,3 +5889,8 @@ EveJS v0.12.9 routes `GetCharacterInfo` to `Handle_GetCharacterToSelect` (`serve
 `eve/client/script/ui/login/charSelection/characterSelection.py:748-762` obtains a map from `GetCharacterLoadSlot`, chooses a key only when multiple systems are offered, calls `MoveCharacterToNewSystem(charID, selectedSolarSystemID, slotKey)`, then enters the character without reading a reply. Host validates the offered system and echoed key and saves the chosen solar system (`PopulationCapService.cs:76-115`); `P0CharacterClientWireTests.Population_cap_move_returns_none_and_saves_the_offered_system_over_host_wire` checks that transition and the None reply.
 
 EveJS v0.12.9 implements only `GetCharacterLoadSlot` in this service (`server/src/services/populationCap/populationCapService.js:178-189`); a whole-project search found no `MoveCharacterToNewSystem` handler. Host supports the V24.01 client call as an intentional difference.
+
+
+## bountyProxy GM methods without a server implementation
+
+`bountySvc.py:231,240` exposes the two GM calls, and `svc_slash.py:1529-1536` is their caller. EveJS 261018.1 records and acknowledges both without side effects (`server/src/services/bounty/bountyProxyService.js:630-640`). Host now returns `CustomNotify` for both (`BountyProxyKillRightService.cs:46,273-276`) because the corresponding server mutations are not implemented; this avoids a false success. For `GMClearBountyCache`, the client invalidates its local bountyProxy cache before the RPC (`bountySvc.py:236-240`), so the cache is cleared even though the slash command now surfaces the Host error. Details: `docs/project/service-audit/DEEPCHECK_bountyProxy.md`.

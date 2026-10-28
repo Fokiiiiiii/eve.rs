@@ -44,5 +44,5 @@ Host wire testsは実Macho HostServer/dispatcher経由で bountyProxy routeへ�
 
 - focused Host wire: 2 passed、0 skipped。
 - focused Crimewatch service: 1 passed、0 skipped。
-- Host.Tests全体: 879件中552 passed、100 failed、227 skipped。失敗はEVE_PG_URLを要求するDB persistence / AssetSafety / ShipCosmetics系で、task指示によりDBは使用していない。skip数も別に記録する。
+- Host.Tests全体（origin/mainマージ後）: 881件中554 passed、100 failed、227 skipped。失敗はEVE_PG_URLを要求するDB persistence / AssetSafety / ShipCosmetics系で、task指示によりDBは使用していない。skip数も別に記録する。
 - 実際の本番CompositionからのPostgreSQL接続・DB transaction/restart検証、および実GUI client確認は実施していない。Host wireはHost socket/dispatcherを通るがテスト用providerを注入している。

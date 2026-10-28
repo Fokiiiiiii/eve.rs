@@ -768,16 +768,18 @@ public class SpaceServiceTests
         var (rig, character, session) = await DockedAsync();
         await using var _ = rig;
         var system = (await rig.Characters.GetAsync(character.CharacterId))!.SolarSystemId;
+        session.Set("shipid", new PyLong(character.ShipId + 1));
 
         await UndockAsync(rig, session);
 
         // the item
         var ship = (await rig.Items.GetAsync(character.ShipId))!;
         Assert.Equal((system, 0), (ship.LocationId, ship.Flag));
-        // the session: three attributes, in this order, and nothing else
+        // the session: the corrected active ship, then the three location attributes
         Assert.Equal(
-            [("stationid", new PyInt(Rig.Station), PyNone.Instance), ("locationid", new PyInt(Rig.Station), new PyInt(system)), ("solarsystemid", PyNone.Instance, new PyInt(system))],
+            [("shipid", new PyLong(character.ShipId + 1), new PyLong(character.ShipId)), ("stationid", new PyInt(Rig.Station), PyNone.Instance), ("locationid", new PyInt(Rig.Station), new PyInt(system)), ("solarsystemid", PyNone.Instance, new PyInt(system))],
             Sequence.LastChange(session));
+        Assert.Equal(character.ShipId, session.GetInt("shipid"));
         Assert.Null(session.GetInt("stationid"));
         Assert.Null(session.GetInt("stationid2")); // the reference clears the server value on undock (characterState: session.stationid2 = null)
         Assert.Equal(system, session.GetInt("solarsystemid"));

@@ -63,6 +63,21 @@ public sealed class FacWarMgrRpcTests
 
     private static long FileTimeOf(long unixMs) => unixMs * 10_000 + 116_444_736_000_000_000L;
 
+    [Fact]
+    public async Task My_character_rank_info_uses_saved_enlistment_when_session_faction_is_stale()
+    {
+        var service = new FacWarMgrService(null!, new FacWarMgrCallbacks(
+            ReadCharacterAsync: (_, _) => ValueTask.FromResult<FwCharacterWarfareState?>(new(Amarr, 0)),
+            SaveCharacterAsync: (_, _, _, _) => ValueTask.FromResult(true),
+            ReadStandingAsync: (_, _, _) => ValueTask.FromResult(4.7)));
+
+        Assert.Equal(
+            Py.KeyVal(
+                ("characterID", new PyInt(Character)), ("factionID", new PyInt(Amarr)),
+                ("warFactionID", new PyInt(Amarr)), ("currentRank", new PyInt(4))),
+            await service.CallAsync(Call("GetMyCharacterRankInfo", Pilot(factionId: 0))));
+    }
+
     [PgFact]
     public async Task Alliance_leave_refuses_a_stale_session_director_role()
     {
@@ -125,7 +140,9 @@ public sealed class FacWarMgrRpcTests
         fixture.Standing = 12;
         Assert.Equal(Py.KeyVal(("characterID", new PyInt(Character)), ("factionID", new PyInt(Amarr)), ("warFactionID", new PyInt(Amarr)), ("currentRank", new PyInt(9))),
             await service.CallAsync(Call("GetCharacterRankInfo", session, new PyInt(Character))));
-        Assert.Same(PyNone.Instance, await service.CallAsync(Call("GetMyCharacterRankInfo", Pilot(factionId: 0))));
+        var otherCharacter = Pilot(factionId: 0);
+        otherCharacter.Set("charid", new PyInt(Character + 1));
+        Assert.Same(PyNone.Instance, await service.CallAsync(Call("GetMyCharacterRankInfo", otherCharacter)));
     }
 
     [PgFact]

@@ -245,9 +245,9 @@ Corrected RPC-02136 and RPC-02137 as `CLIENT-LOCAL` in `EVE_RS_COVERAGE.csv` and
 ### 2026-10-28: G-M P1 service rows
 
 - Reviewed all 13 in-scope MISSING rows from the current coverage list. Whole-tree V24.01 client evidence and file:line references are in `CLIENT_VERIFIED.md`.
-- RPC-01564 is developer-tool-only (slash command at `svc_slash.py:623`); RPC-01585–RPC-01588 have no reachable player path because no client calls `ConnectJob`; RPC-01739 has no UI caller. These six rows are classified `CLIENT-DEAD`.
+- RPC-01564 is developer-tool-only (slash command at `eve/devtools/script/svc_slash.py:623`); RPC-01585–RPC-01588 have no reachable player path because no client calls `ConnectJob`; RPC-01739 has no UI caller. These six rows are classified `CLIENT-DEAD`.
 - The seven player-facing `mailMgr` mutations already have an active Host implementation, persistence and notification path. `CharacterServiceList.cs` includes MailRpc; `MailRpc.cs` applies and persists mailbox state before sending notifications. The focused Host wire test `MailRpcHostWireTests.Mail_mgr_added_methods_mutate_state_return_client_values_and_notify_over_host_wire` passed 1/1 with 0 skipped and checks PyNone/PyInt replies, state updates, notification fields and subsequent reads. The graphical client was not launched; EveJS source was inspected but not executed.
-- Local verification used the focused `Eve.Host.Tests` filter only. No database was used and the full Host test project was not run under the no-database local test rule. Changes are documentation-only; merge with the latest `origin/main`, rerun the focused test, then push this audit batch once. Selected Actions and push CI can be checked after the push.
+- Local verification used the focused `Eve.Host.Tests` filter only. No database was used and the full Host test project was not run under the no-database local test rule. Changes are documentation-only; the latest `origin/main` is merged and the focused Host wire test was rerun afterward (1 passed, 0 failed, 0 skipped). Push this audit batch once; selected Actions and push CI remain to be checked after the push.
 
 ### 2026-10-28: `scanMgr.GetSystemScanMgr` and `SignalTrackerRegister`
 

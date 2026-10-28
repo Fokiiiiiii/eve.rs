@@ -756,6 +756,7 @@ public class SpaceServiceTests
         var (oid, answer) = await UndockAsync(rig, session);
 
         Assert.Equal(["OnItemsChanged", "OnMachoObjectDisconnect", "OnMachoObjectDisconnect", "$sessionchange", "OnInvulunOnUndockingUpdated"], Sequence.Of(session));
+        Assert.Equal(["stationid", "locationid", "solarsystemid"], Sequence.LastChange(session).Select(change => change.Name));
         var tuple = Assert.IsType<PyTuple>(answer);
         Assert.Equal(oid, JsSemantics.StringValue(tuple.Items[0]));
         Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(Rig.ClockMs + 10_000)), tuple.Items[1]);

@@ -80,7 +80,7 @@ def test_orders_in_space_make_the_updates_the_reference_sent(race):
             events = wait_quietly(who, WAITS.get(label, 1.5))
             if "ok" in step:
                 problems += compare_answer(label, step["ok"], describe(raw), where)
-            problems += compare_events(step["events"], events, where, mapping, ship_id if label == "undock" else None)
+            problems += compare_events(step["events"], events, where, mapping)
     assert problems == [], "\n".join(problems[:40])
 
 def distance_from_surface(events: list, ship_id: int):

@@ -141,7 +141,10 @@ public sealed partial class SpaceSessions
 
                 // server value is cleared (characterState: session.stationid2 = null); a later docking announces it from nothing (a pod's death does)
                 session.Set("stationid2", None);
-                session.Change(("shipid", InventoryWire.Id(moved.Ship.Id)), (placeKey, None), ("locationid", new PyInt(systemId)), ("solarsystemid", new PyInt(systemId)));
+                var shipId = session.GetInt("shipid") == moved.Ship.Id
+                    ? session.Get("shipid") ?? InventoryWire.Id(moved.Ship.Id)
+                    : InventoryWire.Id(moved.Ship.Id);
+                session.Change(("shipid", shipId), (placeKey, None), ("locationid", new PyInt(systemId)), ("solarsystemid", new PyInt(systemId)));
                 DockedLocationChanged?.Invoke(session, previousStationId, previousStructureId);
                 session.SendNotification("OnInvulunOnUndockingUpdated", "shipid", InventoryWire.Id(pilot!.ShipId),
                     new PyLong(pilot.InvulnerableUntil), new PyLong(UndockInvulnerabilityTicks));

@@ -37,6 +37,12 @@ The reply supplies the checkbox's `checked` value (`activitiesSvc.py:174-175`, `
 
 The client sends the checkbox's Python boolean positionally and reverts the checkbox if the result is false (`window.py:67-68`, `activitiesSvc.py:177-183`). Host normalizes `PyBool`, `PyInt`, `PyLong`, and `None`: zero becomes 0; nonzero booleans/integers become 1; `None` or a missing argument uses default 1. Host persists before returning `PyBool.True`; an unavailable character store returns `PyBool.False`. EveJS uses the same 0/1 normalization and returns true (`src/server/src/services/activity/activityMgrService.js:55-57,137-145`). There is no server notification or method-specific `UserError`; cancellation and persistence exceptions propagate.
 
+## Error response boundary
+
+None of the four methods raises a method-specific `UserError`. If a getter cannot load character state, `ActivityMgrService` throws `InvalidOperationException("The activity state is unavailable for this character.")`; mutation methods return `PyBool.False` when the state owner reports the character unavailable. A configured GameStore write failure throws `InvalidOperationException("Could not write CharMgr data at {table}{path}: {error}")`, or `InvalidOperationException("CharMgr GameStore writer is not configured.")` when its writer is absent (`PersistenceCharMgrReadModel.cs:340-343`).
+
+The Host dispatcher turns other handler exceptions into a wrapped `ErrorResponse` with `exceptions.RuntimeError` and message `Unhandled error <8-hex-id> in activityMgr.<method>`; it keeps the original exception text in the Host log (`dotnet/src/Eve.Services/PacketDispatcher.cs:260-297`, `MachoErrors.cs:90-111`). `OperationCanceledException` is excluded from that conversion. The client raises `MachoWrappedException` for wrapped-exception responses (`carbon/common/script/net/machoNet.py:3663-3664`). The DB-free real-dispatcher wire test asserts this RuntimeError class and message shape for a getter whose store has no state (`ActivityMgrArgumentHostRpcTests.cs:53-87`).
+
 ## State and EveJS comparison
 
 Host stores seen IDs and popup state under namespaced keys in `CharMgrPersonalData.CharacterSettings` (`dotnet/src/Eve.Host/CharacterSettingsActivityMgrStateStore.cs:6-53`). `PersistenceCharMgrReadModel` reads that field from the character GameStore row (`dotnet/src/Eve.Host/Persistence/CharMgr/PersistenceCharMgrReadModel.cs:123`) and writes changes to `/{characterID}/characterSettings` (`PersistenceCharMgrReadModel.cs:309-320`). Its `UpdateAsync` serializes read-modify-write updates with an instance semaphore (`PersistenceCharMgrReadModel.cs:138-148`); other character settings are preserved. State survives service recreation.
@@ -45,10 +51,10 @@ EveJS 261018 holds the equivalent state in a process-local `Map` keyed by charac
 
 ## Checks
 
-- `ActivityMgrArgumentHostRpcTests` (`dotnet/tests/Eve.Host.Tests/ActivityMgrArgumentHostRpcTests.cs:10-49`) covers packet-dispatch wire args, `machoVersion`, `PyLong`, `PyBool`, `None`, reply values, and notification-before-reply. `ActivityMgrHostRpcTests.cs:50-55` also checks destination type and order; `ActivityMgrServiceTests.cs:23` asserts empty notification args.
+- `ActivityMgrArgumentHostRpcTests` (`dotnet/tests/Eve.Host.Tests/ActivityMgrArgumentHostRpcTests.cs:10-49,53-87`) covers packet-dispatch wire args, `machoVersion`, `PyLong`, `PyBool`, `None`, reply values, notification-before-reply, and the wrapped RuntimeError path. `ActivityMgrHostRpcTests.cs:50-55` also checks destination type and order; `ActivityMgrServiceTests.cs:23` asserts empty notification args.
 - `CharacterSettingsActivityMgrStateStoreTests` verifies restart persistence and duplicate retry idempotence (`dotnet/tests/Eve.Host.Tests/CharacterSettingsActivityMgrStateStoreTests.cs:10-39`), 32 concurrent seen updates (`CharacterSettingsActivityMgrStateStoreTests.cs:42-76`), and missing-store behavior (`CharacterSettingsActivityMgrStateStoreTests.cs:79-94`). The concurrent case exercises the serialized update contract at `PersistenceCharMgrReadModel.cs:138-148`.
 - `ActivityMgrComposedHostWireTests` (`dotnet/tests/Eve.Host.Tests/ActivityMgrComposedHostWireTests.cs:12-60`) covers the composed Host TCP path. The existing combined Host wire test is at `ActivityAlphaBillRpcHostWireTests.cs:16-87`.
 - `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore -p:UseSharedCompilation=false`: passed, 0 warnings and 0 errors.
-- Focused `Eve.Host.Tests` filter for `ActivityMgrArgumentHostRpcTests` and `CharacterSettingsActivityMgrStateStoreTests`: 4 passed, 0 failed, 0 skipped.
+- Focused `Eve.Host.Tests` filter for `ActivityMgrArgumentHostRpcTests` and `CharacterSettingsActivityMgrStateStoreTests`: 5 passed, 0 failed, 0 skipped.
 - Focused `Eve.Services.Core.Tests` activity tests: 2 passed, 0 skipped.
 - The composed TCP fixture and full `Eve.Host.Tests` shard were excluded because they require PostgreSQL, which this job forbids. No graphical V24.01 client session was used.

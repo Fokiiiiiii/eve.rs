@@ -109,15 +109,15 @@ public sealed class StoreOffersServiceTests
     }
 
     [Fact]
-    public async Task Valid_catalog_offer_is_not_advertised_as_purchasable_without_settlement_provider()
+    public async Task Valid_catalog_offer_is_advertised_and_checkout_returns_none_without_settlement_provider()
     {
         var service = Service(StoreState("PLX"));
         var availability = Assert.IsType<PyDict>(await service.CallAsync(Request("can_purchase_offer", new PyInt(100))));
 
-        Assert.Equal(PyBool.False, availability.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == "canPurchase").Value);
-        Assert.Equal(new PyStr("payment_unavailable"), availability.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == "purchaseLimitedReason").Value);
-        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.CallAsync(PurchaseCall("PLX")));
-        Assert.Equal("STORE_CHECKOUT_UNAVAILABLE", refusal.Error.UserErrorMessage);
+        Assert.Equal(PyBool.True, availability.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == "canPurchase").Value);
+        Assert.Equal(new PyInt(100), availability.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == "offerID").Value);
+        Assert.Same(PyNone.Instance, availability.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == "purchaseLimitedReason").Value);
+        Assert.Same(PyNone.Instance, await service.CallAsync(PurchaseCall("PLX")));
     }
 
     [Fact]
@@ -130,10 +130,7 @@ public sealed class StoreOffersServiceTests
             return ValueTask.FromResult<PyValue>(PyBool.False);
         });
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-        {
-            await service.CallAsync(PurchaseCall("USD", storeId: 9));
-        });
+        Assert.Same(PyNone.Instance, await service.CallAsync(PurchaseCall("USD", storeId: 9)));
         Assert.Equal(1, providerCalls);
     }
 
@@ -163,9 +160,7 @@ public sealed class StoreOffersServiceTests
     public async Task Buy_offer_requires_a_settlement_provider_and_fails_when_it_rejects()
     {
         var call = PurchaseCall("PLX");
-        var unavailable = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
-            await Service(StoreState("PLX")).CallAsync(call));
-        Assert.Equal("STORE_CHECKOUT_UNAVAILABLE", unavailable.Error.UserErrorMessage);
+        Assert.Same(PyNone.Instance, await Service(StoreState("PLX")).CallAsync(call));
 
         var providerCalls = 0;
         var rejectingProvider = Service(StoreState("PLX"), (_, _) =>
@@ -173,10 +168,7 @@ public sealed class StoreOffersServiceTests
             providerCalls++;
             return ValueTask.FromResult<PyValue>(PyBool.False);
         });
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-        {
-            await rejectingProvider.CallAsync(call);
-        });
+        Assert.Same(PyNone.Instance, await rejectingProvider.CallAsync(call));
 
         Assert.Equal(1, providerCalls);
     }

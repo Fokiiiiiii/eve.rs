@@ -389,14 +389,57 @@ public sealed class PersistenceContractWriteModel(
     }
 
     public async ValueTask<bool> CompleteContractAsync(long contractId, int targetStatus, long characterId, long corporationId,
-        long currentStationId, bool hasCorpContractManager, CancellationToken cancellationToken)
+        long allianceId, long currentStationId, bool hasCorpContractManager, CancellationToken cancellationToken)
     {
-        if (contractId <= 0 || characterId <= 0 || corporationId <= 0 || targetStatus is not (4 or 5))
+        if (contractId <= 0 || characterId <= 0 || corporationId <= 0 || allianceId < 0 || targetStatus is not (4 or 6 or 7))
             throw new ContractUserErrorException("ConContractNotAvailable");
         var nowMs = nowUnixMs();
         var nowFileTime = Eve.Services.Py.FileTimeFromUnixMs(nowMs);
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        if (targetStatus == 6)
+        {
+            long expiredIssuerId, expiredIssuerCorporationId, assigneeId, expired;
+            short expiredStatus;
+            await using (var command = new NpgsqlCommand($"""
+                SELECT status, issuer_id, issuer_corporation_id, assignee_id, date_expired_filetime
+                FROM {_schema}.contract_records WHERE contract_id = $1 FOR UPDATE
+                """, connection, transaction))
+            {
+                command.Parameters.AddWithValue(contractId);
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+                if (!await reader.ReadAsync(cancellationToken)) throw new ContractUserErrorException("ConContractNotFound");
+                expiredStatus = reader.GetInt16(0);
+                expiredIssuerId = reader.GetInt64(1);
+                expiredIssuerCorporationId = reader.GetInt64(2);
+                assigneeId = reader.GetInt64(3);
+                expired = reader.GetInt64(4);
+            }
+            var assignedToActor = assigneeId == characterId ||
+                hasCorpContractManager && assigneeId == corporationId ||
+                hasCorpContractManager && allianceId > 0 && assigneeId == allianceId &&
+                    expiredIssuerCorporationId == corporationId;
+            if (expiredStatus != 0 || expired < nowFileTime || !assignedToActor)
+                throw new ContractUserErrorException("ConContractNotAvailable");
+            await using (var command = new NpgsqlCommand($"""
+                UPDATE {_schema}.contract_records SET status = 6, date_completed_filetime = $2
+                WHERE contract_id = $1 AND status = 0
+                """, connection, transaction))
+            {
+                command.Parameters.AddWithValue(contractId);
+                command.Parameters.AddWithValue(nowFileTime);
+                if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
+                    throw new ContractUserErrorException("ConContractNotAvailable");
+            }
+            await PublishNotificationAsync(connection, transaction, expiredIssuerId, 0, 0,
+                "OnContractRejected", contractId, cancellationToken);
+            if (characterId != expiredIssuerId)
+                await PublishNotificationAsync(connection, transaction, characterId, 0, 0,
+                    "OnContractRejected", contractId, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            events?.Wake();
+            return true;
+        }
         short type, status;
         long issuerId, issuerCorporationId, acceptorId, startStationId, endStationId, acceptedAt, wrapItemId;
         bool isCorporationIssued, acceptorIsCorporation;

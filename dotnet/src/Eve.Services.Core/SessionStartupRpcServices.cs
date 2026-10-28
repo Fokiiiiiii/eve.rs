@@ -179,13 +179,16 @@ public sealed partial class SeasonManagerService(ProcessSeasonClientEventCallbac
     public async ValueTask<PyValue> ProcessClientEvent(ServiceCall call)
     {
         call.Cancellation.ThrowIfCancellationRequested();
-        if (processEvent is { } callback)
-            await callback(new SeasonClientEvent(
-                    call.Arg(0),
-                    call.Arg(1),
-                    call.Kwarg("amount") ?? new PyInt(0)),
-                call.Session,
-                call.Cancellation);
+        if (processEvent is not { } callback)
+            throw MachoErrors.ThrowUserError(
+                "CustomInfo", ("info", new PyStr("Season progression is unavailable.")));
+
+        await callback(new SeasonClientEvent(
+                call.Arg(0),
+                call.Kwarg("extra_data") ?? PyNone.Instance,
+                call.Kwarg("amount") ?? new PyInt(0)),
+            call.Session,
+            call.Cancellation);
         return PyNone.Instance;
     }
 }

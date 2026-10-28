@@ -100,14 +100,14 @@ public partial class HostServerTests
         const long characterId = 90000001;
         (double Target, double Current)? applied = null;
         Eve.Services.ClientSession? connectedSession = null;
-        await using var dataSource = NpgsqlDataSource.Create("Host=127.0.0.1;Database=eve;Username=postgres;Timeout=1;Command Timeout=1");
-        var service = new CrimewatchService(
-            new PgCrimewatchStore(dataSource), null!, () => 1_800_000_000_000,
-            applySecurityTags: (_, target, current) =>
+        var service = new CrimewatchService(null!, null!, () => 1_800_000_000_000)
+        {
+            ApplySecurityTagsAsync = (_, target, current, _) =>
             {
                 applied = (target, current);
-                return Task.CompletedTask;
-            });
+                return ValueTask.CompletedTask;
+            },
+        };
         Start(strictRpc: true,
             configure: registry => registry.Register(service),
             sessionOpened: session =>
@@ -140,32 +140,29 @@ public partial class HostServerTests
         var reply = MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
         Assert.Equal(MachoMessage.CallRsp, Assert.IsType<MachoPacket>(MachoPacket.Decode(reply)).Type);
         Assert.Equal(PyNone.Instance, Result(reply));
-        Assert.True(applied.HasValue);
-        Assert.Equal(-4.5, applied.Value.Target);
-        Assert.Equal(-5.0, applied.Value.Current);
+        Assert.Equal((-4.5, -5.0), applied);
 
         await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
             Packets.BoundCall(open, 4, oid, "ApplyTagsForSecStatus",
                 new PyTuple([new PyInt(-4), new PyLong(-5)]), kwargs))));
         var numericReply = MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
         Assert.Equal(PyNone.Instance, Result(numericReply));
-        Assert.True(applied.HasValue);
-        Assert.Equal((-4.0, -5.0), (applied.Value.Target, applied.Value.Current));
+        Assert.Equal((-4.0, -5.0), applied);
         var invalidStatus = await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyTagsForSecStatus(new Eve.Services.ServiceCall
         {
             Method = "ApplyTagsForSecStatus",
             Args = [PyNone.Instance, new PyReal(-5)],
             Session = connectedSession!,
         }).AsTask());
-        Assert.Equal("ApplyTagsForSecStatus requires two numeric status values.", invalidStatus.Message);
+        Assert.Equal("Security tag exchange requires finite target and current security statuses.", invalidStatus.Message);
 
         Assert.Equal(Eve.Crimewatch.SecurityStatusEventTypeIds.HandInTags,
             Eve.Crimewatch.SecurityStatusEventTypeIds.FromHistoryReason("hand_in_tags"));
 
         var crossing = SecurityTagRequirements.Calculate(-8.25, -7.0);
-        Assert.Equal(1, crossing[33138]);
-        Assert.Equal(2, crossing[33139]);
-        Assert.Equal(1, SecurityTagRequirements.Calculate(-0.1, 0)[33141]);
+        Assert.Equal(1, crossing.Single(requirement => requirement.TypeId == 33138).Quantity);
+        Assert.Equal(2, crossing.Single(requirement => requirement.TypeId == 33139).Quantity);
+        Assert.Equal(1, SecurityTagRequirements.Calculate(-0.1, 0).Single(requirement => requirement.TypeId == 33141).Quantity);
         Assert.Throws<ArgumentOutOfRangeException>(() => SecurityTagRequirements.Calculate(0, 1));
     }
 }

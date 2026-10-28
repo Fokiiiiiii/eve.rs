@@ -191,8 +191,8 @@ public sealed class SessionStartupRpcServicesTests
         var result = await service.CallAsync(new ServiceCall
         {
             Method = "process_client_event",
-            Args = [new PyStr("mission_completed"), extra],
-            Kwargs = Py.Dict(("amount", new PyReal(3.5))),
+            Args = [new PyStr("mission_completed")],
+            Kwargs = Py.Dict(("extra_data", extra), ("amount", new PyReal(3.5))),
             Session = session,
         });
 
@@ -202,12 +202,14 @@ public sealed class SessionStartupRpcServicesTests
         Assert.Equal(new PyReal(3.5), observed.Amount);
         Assert.True(service.HasMethod("process_client_event"));
         IService emptySeason = new SeasonManagerService();
-        Assert.Same(PyNone.Instance, await emptySeason.CallAsync(new ServiceCall
+        var unavailable = await Assert.ThrowsAsync<MachoWrappedException>(() => emptySeason.CallAsync(new ServiceCall
         {
             Method = "process_client_event",
-            Args = [],
+            Args = [new PyStr("mission_completed")],
+            Kwargs = Py.Dict(("extra_data", extra)),
             Session = session,
-        }));
+        }).AsTask());
+        Assert.Equal("CustomInfo", unavailable.Error.UserErrorMessage);
     }
 
     private static ServiceCall Call(

@@ -21,7 +21,7 @@ public partial class HostServerTests
             ]);
         var service = new CharUnboundMgrService(
             null!, null!, null!, null!, null!, null!, catalog, null!, [],
-            new Random(1));
+            new Random(1), isCharacterNameTaken: (_, _) => Task.FromResult(false));
 
         var machoVersion = new PyDict([
             new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1)),
@@ -34,10 +34,10 @@ public partial class HostServerTests
         await front.SendAsync(open);
         _ = await front.ReceiveAsync();
 
-        async Task<PyValue> CallAsync(long callId, string method)
+        async Task<PyValue> CallAsync(long callId, string method, PyValue? args = null)
         {
             await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
-                Packets.CallWithKwargs(open, callId, "charUnboundMgr", method, new PyTuple([]), machoVersion))));
+                Packets.CallWithKwargs(open, callId, "charUnboundMgr", method, args ?? new PyTuple([]), machoVersion))));
             var send = Assert.IsType<Send>(await front.ReceiveAsync());
             var decoded = MarshalCodec.Decode(send.Payload);
             var packet = Assert.IsType<MachoPacket>(MachoPacket.Decode(decoded));
@@ -49,5 +49,7 @@ public partial class HostServerTests
         Assert.Equal(new PyList([new PyInt(30002775)]), await CallAsync(2, "GetQAStarterSystemIDs"));
         Assert.Equal(PyBool.False, await CallAsync(3, "ToggleValidation"));
         Assert.Equal(PyBool.True, await CallAsync(4, "ToggleValidation"));
+        var name = Assert.IsType<PyBytes>(await CallAsync(5, "GetValidRandomName", Py.Tuple(new PyInt(1))));
+        Assert.NotEmpty(System.Text.Encoding.UTF8.GetString(name.Value.Span));
     }
 }

@@ -45,7 +45,7 @@ public sealed class BountyProxyKillRightServiceTests
     }
 
     [Fact]
-    public async Task Unwired_bounty_proxy_exposes_all_reference_methods_and_empty_shapes()
+    public async Task Unwired_bounty_proxy_rejects_calls_instead_of_returning_empty_successes()
     {
         var service = new BountyProxyKillRightService();
         var session = new ClientSession { CharacterId = 11 };
@@ -68,41 +68,31 @@ public sealed class BountyProxyKillRightServiceTests
         Assert.All(methods, method => Assert.True(service.HasMethod(method), method));
         Assert.False(service.HasMethod("GetKillRights"));
 
-        var bounties = Assert.IsType<PyList>(await service.CallAsync(Call("GetBounties", new PyList([new PyInt(22)]))));
-        var bountyEntry = Assert.IsType<PyTuple>(Assert.Single(bounties.Items));
-        Assert.Equal(new PyInt(22), bountyEntry.Items[0]);
-        var bounty = Assert.IsType<PyObject>(bountyEntry.Items[1]);
-        var bountyFields = Assert.IsType<PyDict>(bounty.Args);
-        Assert.Equal([new PyStr("targetID"), new PyStr("bounty")], bountyFields.Entries.Select(entry => entry.Key));
-        Assert.Equal(new PyInt(22), bountyFields.Entries[0].Value);
-        Assert.Equal(new PyInt(0), bountyFields.Entries[1].Value);
-
-        Assert.Empty(Assert.IsType<PyList>(await service.CallAsync(Call("GetMyBounties"))).Items);
-        Assert.Empty(Assert.IsType<PyList>(await service.CallAsync(Call("GetMyKillRights"))).Items);
-        Assert.Empty(Assert.IsType<PyList>(await service.CallAsync(Call("GetKillRightsOnCharacters", new PyList([new PyInt(22)])))).Items);
-
-        var combined = Assert.IsType<PyTuple>(await service.CallAsync(Call(
-            "GetBountiesAndKillRights",
-            new PyList([new PyInt(22)]),
-            new PyList([new PyInt(22)]))));
-        Assert.Single(Assert.IsType<PyList>(combined.Items[0]).Items);
-        Assert.Empty(Assert.IsType<PyList>(combined.Items[1]).Items);
-
-        foreach (var method in new[]
+        async Task AssertCustomNotify(string method, params PyValue[] args)
         {
-            "GetTopPilotBounties", "GetTopCorpBounties", "GetTopAllianceBounties",
-            "GetTopPilotBountyHunters", "GetTopCorporationBountyHunters", "GetTopAllianceBountyHunters",
-        })
-        {
-            var ranked = Assert.IsType<PyTuple>(await service.CallAsync(Call(method)));
-            Assert.Empty(Assert.IsType<PyList>(ranked.Items[0]).Items);
-            Assert.IsType<PyLong>(ranked.Items[1]);
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(Call(method, args)).AsTask());
+            Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
         }
 
-        foreach (var method in new[] { "SearchCharBounties", "SearchCorpBounties", "SearchAllianceBounties" })
-            Assert.Empty(Assert.IsType<PyList>(await service.CallAsync(Call(method, new PyInt(22)))).Items);
-        foreach (var method in new[] { "GMReimburseBounties", "GMClearBountyCache" })
-            Assert.Same(PyNone.Instance, await service.CallAsync(Call(method)));
-        await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.CallAsync(Call("AddToBounty", new PyInt(22), new PyInt(1))));
+        await AssertCustomNotify("AddToBounty", new PyInt(90_000_001), new PyLong(1_000_000));
+        await AssertCustomNotify("GetBounties", new PyList([new PyLong(90_000_001)]));
+        await AssertCustomNotify("GetBountiesAndKillRights",
+            new PyList([new PyInt(90_000_001)]), new PyList([new PyLong(90_000_001)]));
+        await AssertCustomNotify("GetMyBounties");
+        await AssertCustomNotify("GetMyKillRights");
+        await AssertCustomNotify("GetKillRightsOnCharacters", new PyList([new PyLong(90_000_001)]));
+        await AssertCustomNotify("SellKillRight", new PyLong(1), new PyReal(10), PyNone.Instance);
+        await AssertCustomNotify("CancelSellKillRight", new PyLong(1), new PyInt(90_000_001));
+        await AssertCustomNotify("GetTopPilotBounties", new PyInt(0));
+        await AssertCustomNotify("GetTopCorpBounties", new PyInt(0));
+        await AssertCustomNotify("GetTopAllianceBounties", new PyInt(0));
+        await AssertCustomNotify("GetTopPilotBountyHunters", new PyInt(0));
+        await AssertCustomNotify("GetTopCorporationBountyHunters", new PyInt(0));
+        await AssertCustomNotify("GetTopAllianceBountyHunters", new PyInt(0));
+        await AssertCustomNotify("SearchCharBounties", new PyLong(90_000_001));
+        await AssertCustomNotify("SearchCorpBounties", new PyLong(98_000_001));
+        await AssertCustomNotify("SearchAllianceBounties", new PyLong(99_000_001));
+        await AssertCustomNotify("GMReimburseBounties");
+        await AssertCustomNotify("GMClearBountyCache");
     }
 }

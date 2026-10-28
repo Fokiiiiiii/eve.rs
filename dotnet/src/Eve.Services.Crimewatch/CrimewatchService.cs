@@ -14,8 +14,7 @@ namespace Eve.Services.Crimewatch;
 [Service("crimewatch")]
 public sealed partial class CrimewatchService(
     PgCrimewatchStore store, CrimewatchRuntime runtime, Func<long> nowUnixMs,
-    Func<long, CancellationToken, Task<double>>? securityStatusOf = null,
-    Func<ServiceCall, double, double, Task>? applySecurityTags = null) : IBoundObjectReleaseHandler
+    Func<long, CancellationToken, Task<double>>? securityStatusOf = null) : IBoundObjectReleaseHandler
 {
     private readonly ConcurrentDictionary<long, string> _boundOfSession = new();
 
@@ -215,20 +214,6 @@ public sealed partial class CrimewatchService(
                 Py.Dict(("header", SecurityStatusTransactionDescriptor.Header))),
             rows,
             []);
-    }
-
-    /// <summary>Exchanges personal hangar tags and ISK for security status at an eligible station.</summary>
-    [Method("ApplyTagsForSecStatus")]
-    public async ValueTask<PyValue> ApplyTagsForSecStatus(ServiceCall call)
-    {
-        var targetStatus = Numeric(call.Arg(0));
-        var currentStatus = Numeric(call.Arg(1));
-        if (targetStatus is not { } target || currentStatus is not { } current)
-            throw new ArgumentException("ApplyTagsForSecStatus requires two numeric status values.");
-        if (applySecurityTags is null)
-            throw new InvalidOperationException("The Host has not configured security tag exchange.");
-        await applySecurityTags(call, target, current);
-        return None;
     }
 
     /// <summary><c>GetKillRights(toIDs)</c>: the caller's active kill rights against the requested characters.</summary>

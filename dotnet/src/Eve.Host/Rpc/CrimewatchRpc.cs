@@ -100,122 +100,15 @@ internal sealed partial class CharacterServicesComposition
         return new(kind, kind == Eve.Crimewatch.BountyOwnerKind.Corporation ? targetId : 0, kind == Eve.Crimewatch.BountyOwnerKind.Alliance ? targetId : 0);
     }
 
-    /// <summary>Crimewatch: the service, kill rights and the bounty proxy (kill rights and the player bounties).</summary>
-    private async Task ApplyTagsForSecStatusAsync(ServiceCall call, double targetStatus, double reportedCurrentStatus)
-    {
-        if (call.Session.CharacterId is not { } characterId || characterId <= 0)
-            throw new InvalidOperationException("Security tag exchange requires an authenticated character.");
-        if (call.Session.GetInt("stationid") is not { } stationId ||
-            stations.Get(stationId) is not { } station ||
-            station.OwnerId is not (1000125 or 1000137) ||
-            station.Security <= 0 || station.Security >= 0.45)
-            throw new InvalidOperationException("Security tag exchange is only available in eligible low-security stations.");
-
-        var requirements = Eve.Services.Crimewatch.SecurityTagRequirements.Calculate(reportedCurrentStatus, targetStatus);
-        var typeIds = requirements.Keys.Order().ToArray();
-        await dogma.EnsureTypesAsync(typeIds, call.Cancellation);
-        var feeAttribute = dogma.AttributeId("securityProcessingFee")
-            ?? throw new InvalidOperationException("The SDE has no securityProcessingFee attribute.");
-        var fees = 0m;
-        foreach (var (typeId, quantity) in requirements)
-        {
-            var type = dogma.Type(typeId)
-                ?? throw new InvalidOperationException($"The SDE has no security tag type {typeId}.");
-            var feePerTag = type.Attributes.GetValueOrDefault(feeAttribute);
-            if (!double.IsFinite(feePerTag) || feePerTag < 0)
-                throw new InvalidOperationException($"The SDE has an invalid security tag fee for type {typeId}.");
-            fees = checked(fees + checked((decimal)feePerTag * quantity));
-        }
-        if (decimal.Round(fees, 2) != fees)
-            throw new InvalidOperationException("The SDE security tag fees are not whole ISK cents.");
-
-        var timestamp = now();
-        var operationKey = $"security-tag-hand-in:{call.Session.SessionId}:{call.CallId}";
-        var itemChanges = new List<Eve.Ships.ItemChanged>();
-        decimal balance = 0;
-        double previousStatus;
-        double nextStatus;
-        await using (var connection = await source.OpenConnectionAsync(call.Cancellation))
-        await using (var transaction = await connection.BeginTransactionAsync(call.Cancellation))
-        {
-            await economyWallets.LockAsync(connection, transaction, [characterId], call.Cancellation);
-            var relation = await foundations.Relations.GetAsync(
-                Eve.Relations.RelationKinds.SecurityStatus.Name,
-                characterId,
-                Eve.Relations.RelationStore.World,
-                connection,
-                transaction,
-                call.Cancellation,
-                forUpdate: true);
-            previousStatus = relation?.Value ?? 0d;
-            if (reportedCurrentStatus != previousStatus)
-                throw new InvalidOperationException("Security status changed before the tag exchange.");
-
-            requirements = Eve.Services.Crimewatch.SecurityTagRequirements.Calculate(previousStatus, targetStatus);
-            var tags = await items.LockInLocationAsync(
-                connection, transaction, stationId, characterId, Eve.Inventory.ItemFlags.Hangar, typeIds, call.Cancellation);
-            var counts = tags.GroupBy(item => item.TypeId).ToDictionary(group => group.Key, group => group.Sum(item => item.Quantity));
-            foreach (var (typeId, quantity) in requirements)
-                if (counts.GetValueOrDefault(typeId) < quantity)
-                    throw new InvalidOperationException($"Not enough security tags of type {typeId}.");
-
-            var toConsume = requirements.ToDictionary(entry => entry.Key, entry => entry.Value);
-            foreach (var item in tags)
-            {
-                var remaining = toConsume.GetValueOrDefault(item.TypeId);
-                if (remaining <= 0) continue;
-                var consumed = Math.Min(item.Quantity, remaining);
-                var afterQuantity = item.Quantity - consumed;
-                if (afterQuantity == 0)
-                    await items.DeleteAsync(connection, transaction, item.Id, call.Cancellation);
-                else
-                    await items.SetQuantityAsync(connection, transaction, item.Id, afterQuantity, call.Cancellation);
-                itemChanges.Add(new Eve.Ships.ItemChanged(
-                    item with { Quantity = afterQuantity }, item.LocationId, item.Flag, item.Quantity));
-                toConsume[item.TypeId] = remaining - consumed;
-            }
-
-            nextStatus = previousStatus + requirements.Values.Sum() * 0.5;
-            var attrs = new Dictionary<string, object?>
-            {
-                ["eventTypeID"] = Eve.Crimewatch.SecurityStatusEventTypeIds.HandInTags,
-                ["locationID"] = stationId,
-                ["modification"] = nextStatus - previousStatus,
-            };
-            await foundations.Relations.SetAsync(
-                connection, transaction,
-                Eve.Relations.RelationKinds.SecurityStatus.Name,
-                characterId, Eve.Relations.RelationStore.World, nextStatus,
-                "hand_in_tags", attrs, cancellationToken: call.Cancellation);
-            if (fees > 0)
-                balance = await economyWallets.AdjustAsync(
-                    connection, transaction, characterId, -fees, 1000125, 117, "security_tag_hand_in",
-                    timestamp, operationKey, call.Cancellation);
-            await transaction.CommitAsync(call.Cancellation);
-        }
-
-        Eve.Services.ItemRow Row(Eve.Inventory.Item item)
-        {
-            var type = dogma.Type(item.TypeId)
-                ?? throw new InvalidOperationException($"The SDE has no security tag type {item.TypeId}.");
-            return new Eve.Services.ItemRow(
-                item.Id, item.TypeId, item.OwnerId, item.LocationId, item.Flag,
-                item.Singleton ? -1 : item.Quantity, type.GroupId, type.CategoryId);
-        }
-
-        foreach (var change in itemChanges)
-            Eve.Services.Ships.ShipNotifications.SendItemChange(call.Session, change, Row);
-        if (fees > 0)
-            economyWallets.AnnounceCommitted(new WalletBalanceChange(characterId, 1000, balance));
-        Eve.Services.Crimewatch.SecurityStatusPenalties.Tell(call.Session, previousStatus, nextStatus, timestamp);
-    }
-
     private IReadOnlyList<IService> CrimewatchRpc() =>
     [
             // security status is the character's relation of that kind (Eve.Relations); crimewatch only asks for it
             new Eve.Services.Crimewatch.CrimewatchService(
                 crimewatchStore, crimewatchRuntime, now,
-                securityStatusOf, ApplyTagsForSecStatusAsync),
+                securityStatusOf)
+            {
+                ApplySecurityTagsAsync = ApplySecurityTagsAsync,
+            },
             new Eve.Services.Crimewatch.KillRightMgrService(
                 crimewatchStore, crimewatchRuntime, economyWallets, wallets, now,
                 message => Console.Error.WriteLine($"eve-host: crimewatch: {message}"))

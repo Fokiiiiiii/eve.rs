@@ -1,8 +1,8 @@
 namespace Eve.Services.Station;
 
 /// <summary>
-/// The repair rules of the station repair shop (EVE.js <c>repairRuntime.js</c>): the health of an item in HP, the cost of one unit of damage,
-/// the payment, and what a payment repairs. Damage is repaired in the order structure, armor, shield.
+/// Shared repair rules for station and structure shops (EVE.js <c>repairRuntime.js</c>): item health, price per damage unit, payment, and repaired health.
+/// Damage is repaired in the order structure, armor, shield; a zero-priced target is repaired in full without a wallet charge.
 /// </summary>
 public static class RepairRules
 {
@@ -64,8 +64,8 @@ public static class RepairRules
 
     /// <summary>
     /// The steps of a repair of <paramref name="targets"/> with a payment, in the order given: each target is charged the part of the payment it
-    /// can take, up to its full cost, and repairs what that buys. A repair with a fitted module is paid in full (<see cref="InvalidOperationException"/>
-    /// with the reference's <c>MODULE_PARTIAL_REPAIR</c> when the payment is short).
+    /// can take, up to its full cost, and repairs what that buys. Zero-cost targets repair fully without charge. A repair with a fitted module is paid
+    /// in full (<see cref="InvalidOperationException"/> with the reference's <c>MODULE_PARTIAL_REPAIR</c> when the payment is short).
     /// </summary>
     public static IReadOnlyList<Step> Plan(IReadOnlyList<Target> targets, double payment)
     {
@@ -78,6 +78,12 @@ public static class RepairRules
         foreach (var target in targets)
         {
             if (!(target.Damage > 0)) continue;
+            if (!(target.UnitCost > 0))
+            {
+                // Structure quotes use zero unit cost for a real free repair.
+                steps.Add(new Step(target.ItemId, target.Damage, 0));
+                continue;
+            }
             var full = target.FullCost;
             var charge = Math.Min(remaining, full);
             if (!(charge > 0)) continue;

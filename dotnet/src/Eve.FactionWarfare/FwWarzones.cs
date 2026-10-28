@@ -34,10 +34,37 @@ public static class FwWarzones
     public static long WarzoneOf(long solarSystemId) => Map.Value.WarzoneBySystem.GetValueOrDefault(solarSystemId, 0);
 
     /// <summary>
-    /// The occupier a system starts with, from its SDE faction: the faction when it is one of the warzone's two factions, else 0 (unoccupied).
+    /// The occupier a system starts with, from its SDE faction: the faction when it is one of the warzone's two, else 0 (unoccupied).
     /// </summary>
     public static long InitialOccupier(long warzoneId, long systemFactionId) =>
         FactionsOf(warzoneId).Contains(systemFactionId) ? systemFactionId : 0;
+
+    /// <summary>Classifies occupied systems from stargate neighbors and the current occupier of each system.</summary>
+    public static IReadOnlyDictionary<long, string> AdjacencyStates(
+        long warzoneId,
+        IReadOnlyDictionary<long, long> occupierBySystem,
+        IReadOnlyDictionary<long, IReadOnlyCollection<long>> neighborsBySystem)
+    {
+        var factions = FactionsOf(warzoneId);
+        if (factions.Count != 2)
+            return new Dictionary<long, string>();
+
+        bool HasEnemyNeighbor(long systemId, long occupierId) =>
+            (neighborsBySystem.GetValueOrDefault(systemId) ?? Array.Empty<long>())
+                .Any(neighbor => occupierBySystem.TryGetValue(neighbor, out var neighborOccupier) &&
+                    neighborOccupier != occupierId && factions.Contains(neighborOccupier));
+
+        var frontlines = occupierBySystem
+            .Where(entry => factions.Contains(entry.Value) && HasEnemyNeighbor(entry.Key, entry.Value))
+            .Select(entry => entry.Key)
+            .ToHashSet();
+        return occupierBySystem
+            .Where(entry => factions.Contains(entry.Value))
+            .ToDictionary(
+                entry => entry.Key,
+                entry => frontlines.Contains(entry.Key) ? "FL"
+                    : (neighborsBySystem.GetValueOrDefault(entry.Key) ?? Array.Empty<long>()).Any(frontlines.Contains) ? "SL" : "BL");
+    }
 
     private static (IReadOnlyDictionary<long, long[]> Systems, IReadOnlyDictionary<long, long> WarzoneBySystem) Load()
     {

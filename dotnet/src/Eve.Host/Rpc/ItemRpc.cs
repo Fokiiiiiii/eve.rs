@@ -73,6 +73,9 @@ internal sealed partial class CharacterServicesComposition
                     sovWriteOperations.SaveWorkforceConfigurationAsync),
                 new Eve.Services.Core.SovSkyhookWriteOperations(
                     sovWriteOperations.DestroySkyhooksAsync,
-                    sovWriteOperations.AcquireSkyhooksAsync)),
+                    sovWriteOperations.AcquireSkyhooksAsync))
+                .Where(service => service.Name != "fwWarzoneSolarsystem"),
+            new FwWarzoneSolarsystemHostService(
+                FactionWarfareSnapshotAsync, ReadFwWarzoneNeighborsAsync, ReadFwWarzoneHeadquartersAsync),
     ];
 }

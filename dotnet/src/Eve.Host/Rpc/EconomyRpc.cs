@@ -40,7 +40,38 @@ internal sealed partial class CharacterServicesComposition
     /// <summary>Account and market proxy.</summary>
     private IReadOnlyList<IService> EconomyRpc() =>
     [
-            new AccountService(wallets, corporations, economyWallets),
+            new AccountService(wallets, corporations, economyWallets)
+            {
+                ReadContactCost = ReadContactCostAsync,
+                WriteContactCost = WriteContactCostAsync,
+            },
             new Eve.Services.Market.MarketProxyService(market, marketTrading, marketTopology, characters, corporations, economyWallets, marketCatalog, now, marketExpiry, characterSessions),
     ];
+
+    private ValueTask<int?> ReadContactCostAsync(long characterId, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var read = mailCache.Read("characters", $"/{characterId}/characterSettings/cspaCharge");
+        if (!read.Success)
+        {
+            if (read.ErrorMsg == "ENTRY_NOT_FOUND")
+                return ValueTask.FromResult<int?>(0);
+            throw new InvalidOperationException($"Could not read character CSPA charge: {read.ErrorMsg}.");
+        }
+        if (read.Data is null)
+            return ValueTask.FromResult<int?>(null);
+        if (read.Data is not JsonValue json || !json.TryGetValue<int>(out var cost) || cost is < 0 or > 1_000_000)
+            throw new InvalidOperationException("The persisted character CSPA charge is invalid.");
+        return ValueTask.FromResult<int?>(cost);
+    }
+
+    private ValueTask WriteContactCostAsync(long characterId, int? cost, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var write = mailCache.Write("characters", $"/{characterId}/characterSettings/cspaCharge",
+            cost is { } amount ? JsonValue.Create(amount) : null);
+        if (!write.Success)
+            throw new InvalidOperationException($"Could not persist character CSPA charge: {write.ErrorMsg}.");
+        return ValueTask.CompletedTask;
+    }
 }

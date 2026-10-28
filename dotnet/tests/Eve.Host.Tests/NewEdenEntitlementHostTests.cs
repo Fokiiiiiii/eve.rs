@@ -270,8 +270,10 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
         var alphaPilot = await CreatePilotAsync(source, station, "Alpha Pilot", alpha);
         var alphaSession = Enter(host, new Packets(), alpha, alphaPilot, 545);
         var alphaToken = await QaCertificateAsync(userSvc, alphaSession, 46, quantity: 1);
-        await Assert.ThrowsAsync<InvalidOperationException>(async () => await userSvc.CallAsync(Call(alphaSession, "ActivateSoulboundMultiTraining", 47,
-            [new PyLong(alphaPilot), new PyList([Py.Tuple(new PyLong(alphaToken), PyNone.Instance)])])));
+        var alphaActivationRefusal = await Assert.ThrowsAsync<MachoWrappedException>(async () => await userSvc.CallAsync(
+            Call(alphaSession, "ActivateSoulboundMultiTraining", 47,
+                [new PyLong(alphaPilot), new PyList([Py.Tuple(new PyLong(alphaToken), PyNone.Instance)])])));
+        Assert.Equal(MachoErrors.UserErrorClass, alphaActivationRefusal.Error.ClassName);
         Assert.Single(Assert.IsType<PyObjectEx>(await userSvc.CallAsync(Call(alphaSession, "GetRedeemTokens", 48, []))).List);
         Assert.Empty(await QueuesAsync(host, alphaSession, 49));
     }

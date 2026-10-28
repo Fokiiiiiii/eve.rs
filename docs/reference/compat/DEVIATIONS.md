@@ -5876,3 +5876,16 @@ EveJS `src/server/src/services/station/stationService.js:218` ignores the argume
 V24.01 reaches `TrashImpoundedOffice` through the officeManager Moniker (`eve/client/script/ui/services/corporation/officeManager.py:155-156`). Its asset action invalidates `GetAssetInventoryForLocation`, calls that Moniker, and scatters `OnReloadCorpAssets` (`eve/client/script/ui/shared/neocom/corporation/corp_ui_accounts.py:410-413`). EveJS 261018.1 removes its impounded runtime office and calls `notifyOfficeRentalChange` for each removed office (`src/server/src/services/corporation/officeManagerService.js:631-650`).
 
 eve.rs marks the rental inactive and emits `OnOfficeRentalChange` during `UnrentOffice`; `CorporationOfficeStore.ForCorporationAsync` and `CorporationsAtStationAsync` expose active rentals only. `TrashImpoundedOffice` then deletes only the impounded inventory rows and emits no second office event. This is an intentional difference: rental state and office caches changed on Unrent, while the V24 trash action reloads the asset inventory itself. The Host audit records both transitions in `docs/project/service-audit/DEEPCHECK_station.md`.
+
+
+## V24.01 no-argument `charUnboundMgr.GetCharacterInfo`
+
+The client call in `eve/client/script/ui/shared/neocom/petitionWindow.py:58` has no arguments. It iterates the reply and reads `characterID` and `characterName` on every row (`petitionWindow.py:62-63`). Host returns the account's character rows from `CharUnboundMgrService.cs:80-97`, as asserted by `P0CharacterClientWireTests.Char_unbound_character_info_and_random_name_replies_match_the_creation_clients`.
+
+EveJS v0.12.9 routes `GetCharacterInfo` to `Handle_GetCharacterToSelect` (`server/src/services/character/charService.js:1515-1518`); its request ID resolver defaults to zero and the single-character selection path returns no account list (`charService.js:276-284,983-1076`). The Host list reply is an intentional V24.01 compatibility difference because the petition UI iterates account rows.
+
+## V24.01 `populationCap.MoveCharacterToNewSystem`
+
+`eve/client/script/ui/login/charSelection/characterSelection.py:748-762` obtains a map from `GetCharacterLoadSlot`, chooses a key only when multiple systems are offered, calls `MoveCharacterToNewSystem(charID, selectedSolarSystemID, slotKey)`, then enters the character without reading a reply. Host validates the offered system and echoed key and saves the chosen solar system (`PopulationCapService.cs:76-115`); `P0CharacterClientWireTests.Population_cap_move_returns_none_and_saves_the_offered_system_over_host_wire` checks that transition and the None reply.
+
+EveJS v0.12.9 implements only `GetCharacterLoadSlot` in this service (`server/src/services/populationCap/populationCapService.js:178-189`); a whole-project search found no `MoveCharacterToNewSystem` handler. Host supports the V24.01 client call as an intentional difference.

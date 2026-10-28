@@ -10,7 +10,8 @@ public sealed class LpStoreMgrService(
     LpStorePurchases purchases,
     Func<long, long, CancellationToken, ValueTask<bool>> isDirector,
     Func<long, CancellationToken, Task<IReadOnlyList<LpStoreOffer>>>? readOffers = null,
-    Func<LpStorePurchaseRequest, CancellationToken, Task<LpStorePurchaseReceipt>>? takePurchase = null) : IService
+    Func<LpStorePurchaseRequest, CancellationToken, Task<LpStorePurchaseReceipt>>? takePurchase = null,
+    Func<long, long, CancellationToken, ValueTask<bool>>? hasLoyaltyStoreService = null) : IService
 {
 
     private static readonly Dictionary<string, string> Messages = new()
@@ -25,6 +26,7 @@ public sealed class LpStoreMgrService(
         ["INVALID_CHARACTER"] = "Character data is unavailable for this purchase.",
         ["INVALID_QUANTITY"] = "That offer quantity is not valid.",
         ["INVALID_STORE"] = "That LP store is not available.",
+        ["LOYALTY_STORE_UNAVAILABLE"] = "That loyalty store service is not available.",
         ["ITEM_GRANT_FAILED"] = "LP store purchase delivery failed.",
         ["OFFER_NOT_FOUND"] = "That offer is no longer available.",
         ["REQ_ITEMS_UNSUPPORTED"] = "That offer requires unsupported extra items.",
@@ -49,6 +51,7 @@ public sealed class LpStoreMgrService(
 
     private async ValueTask<PyValue> OffersAsync(ServiceCall call)
     {
+        await RequireStructureLoyaltyStoreAccessAsync(call);
         var corporationId = Positive(call.Args.Count > 0 ? call.Args[0] : null);
         if (corporationId == 0) return new PyList([]);
         var rows = readOffers is null
@@ -59,15 +62,17 @@ public sealed class LpStoreMgrService(
 
     private async ValueTask<PyValue> TakeForCharacterAsync(ServiceCall call)
     {
+        await RequireStructureLoyaltyStoreAccessAsync(call);
         var characterId = call.Session.CharacterId ?? 0;
         var request = new LpStorePurchaseRequest(characterId, PayerCorporationId: 0, AccountKey: (int)DefaultAccountKey,
             StoreCorporationId: Positive(Arg(call, 0)), OfferId: Positive(Arg(call, 1)), NumberOfOffers: Quantity(call),
-            LocationId: StationOf(call));
+            LocationId: LocationOf(call));
         return await TakeAsync(call, request);
     }
 
     private async ValueTask<PyValue> TakeForCorporationAsync(ServiceCall call)
     {
+        await RequireStructureLoyaltyStoreAccessAsync(call);
         var storeCorporationId = Positive(Arg(call, 0));
         if (storeCorporationId == 0) throw Refusal("INVALID_STORE");
         var characterId = call.Session.CharacterId ?? 0;
@@ -80,7 +85,7 @@ public sealed class LpStoreMgrService(
             throw Refusal("ACCESS_DENIED");
         var accountKey = call.Session.GetInt("corpAccountKey") ?? call.Session.GetInt("corpaccountkey") ?? DefaultAccountKey;
         var request = new LpStorePurchaseRequest(characterId, corporationId, (int)accountKey, storeCorporationId,
-            Positive(Arg(call, 1)), Quantity(call), StationOf(call));
+            Positive(Arg(call, 1)), Quantity(call), LocationOf(call));
         return await TakeAsync(call, request);
     }
 
@@ -111,8 +116,27 @@ public sealed class LpStoreMgrService(
 
     private static long Quantity(ServiceCall call) => call.Args.Count > 2 ? Positive(call.Args[2]) : 1;
 
-    /// <summary>The station the client is docked in; zero while in space or in a structure (not served, see the class summary).</summary>
-    private static long StationOf(ServiceCall call) => call.Session.GetInt("stationid") ?? call.Session.GetInt("stationID") ?? 0;
+    private async ValueTask RequireStructureLoyaltyStoreAccessAsync(ServiceCall call)
+    {
+        var structureId = StructureOf(call.Session);
+        if (structureId <= 0) return;
+
+        var characterId = call.Session.CharacterId ?? Positive(call.Session.Get("charid"));
+        if (characterId <= 0 || hasLoyaltyStoreService is null ||
+            !await hasLoyaltyStoreService(characterId, structureId, call.Cancellation))
+            throw Refusal("LOYALTY_STORE_UNAVAILABLE");
+    }
+
+    private static long StructureOf(ClientSession session) =>
+        Positive(session.Get("structureid") ?? session.Get("structureID"));
+
+    private static long LocationOf(ServiceCall call)
+    {
+        var structureId = StructureOf(call.Session);
+        return structureId > 0
+            ? structureId
+            : Positive(call.Session.Get("stationid") ?? call.Session.Get("stationID"));
+    }
 
     private static PyValue Row(LpStoreOffer offer) => Py.KeyVal(
         ("typeID", new PyInt(offer.TypeId)),

@@ -17,7 +17,11 @@ namespace Eve.Services.CharacterSelect;
 /// full the selection is refused.
 /// </summary>
 [Service("populationCap")]
-public sealed partial class PopulationCapService(PgCharacterStore characters, SystemPopulation population)
+public sealed partial class PopulationCapService(
+    PgCharacterStore characters,
+    SystemPopulation population,
+    Func<long, CancellationToken, Task<Character?>>? readCharacterById = null,
+    Func<long, int, int, int, CancellationToken, Task>? writeCharacterSolarSystem = null)
 {
     /// <summary>The system a character loads into when none is on record (the reference's preselection).</summary>
     private const int DefaultLoadSystemId = 30000142;
@@ -112,7 +116,9 @@ public sealed partial class PopulationCapService(PgCharacterStore characters, Sy
     {
         var system = population.Get(solarSystemId)
             ?? throw Info("That solar system is unknown.");
-        await characters.SetSolarSystemAsync(character.Id, system.Id, system.ConstellationId, system.RegionId, cancellationToken);
+        await (writeCharacterSolarSystem is null
+            ? characters.SetSolarSystemAsync(character.Id, system.Id, system.ConstellationId, system.RegionId, cancellationToken)
+            : writeCharacterSolarSystem(character.Id, system.Id, system.ConstellationId, system.RegionId, cancellationToken));
     }
 
     private static MachoWrappedException Full() =>
@@ -140,7 +146,9 @@ public sealed partial class PopulationCapService(PgCharacterStore characters, Sy
             || (requestedCharacterId ?? boundCharacterId) is not { } characterId)
             return null;
 
-        var character = await characters.GetAsync(characterId, call.Cancellation);
+        var character = readCharacterById is null
+            ? await characters.GetAsync(characterId, call.Cancellation)
+            : await readCharacterById(characterId, call.Cancellation);
         return character is null || character.AccountId != userId ? null : character;
     }
 

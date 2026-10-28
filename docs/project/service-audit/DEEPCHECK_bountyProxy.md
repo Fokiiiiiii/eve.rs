@@ -42,8 +42,8 @@ Host wire testsは実Macho HostServer/dispatcher経由で bountyProxy routeへ�
 
 ## 実行した確認と未実施範囲
 
-- マージ後focused Host wire: 2 passed、0 skipped。マージ後focused Crimewatch unit: 1 passed、0 skipped。
-- RuntimeTests.Bounty_proxy_read_rpcs_match_the_reference_routes_and_sale_access はPgFactのためDB URLなしでは1 skipped。PostgreSQLは使っていない。旧テストがprovider未接続時のcombined fake successを期待していたため、そのassertを削除した。BountyProxyKillRightServiceTestsが同じ未接続経路のCustomNotifyを検証する。
+- origin/mainマージ後focused Host wire: 2 passed、0 skipped。focused Crimewatch unit: 1 passed、0 skipped。Crimewatch.Tests全体は45件中10 passed、35 skipped、0 failed（PgFact/DB依存はDB URLなしでskip）。
+- RuntimeTests.Bounty_proxy_read_rpcs_match_the_reference_routes_and_sale_access はPgFactのためDB URLなしではskip。PostgreSQLは使っていない。旧テストがprovider未接続時のcombined fake successを期待していたため、そのassertを削除した。BountyProxyKillRightServiceTestsが同じ未接続経路のCustomNotifyを検証する。
 - Host.Tests全体（origin/mainマージ後）: 882件中555 passed、100 failed、227 skipped。失敗はEVE_PG_URLを要求するDB persistence / AssetSafety / ShipCosmetics系で、task指示によりDBは使用していない。
 - b92772a1のGitHub agent-test focused runは成功。push-triggered ci.ymlは上記旧RuntimeTests assertionで失敗し、根因を修正した。修正後のActions結果は次のpush後に確認する。
 - 実際の本番CompositionからのPostgreSQL接続・DB transaction/restart検証、および実GUI client確認は実施していない。Host wireはHost socket/dispatcherを通るがテスト用providerを注入している。

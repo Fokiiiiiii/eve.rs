@@ -1,5 +1,9 @@
 # Deviations from the reference server
 
+## Shared settings persistence failure reply (2026-10-28)
+
+The V24.01 filter-link caller at `eve/client/script/ui/shared/inventory/filterSvc.py:448-450` and the generic shared-settings loader at `sharedSettings/util.py:23-27` convert a missing key or payload to `UserError('ItemFilterLoadingError')`. EveJS 261018.1 returns the generated key after its repository write call without checking whether that call succeeded (`src/server/src/services/settings/sharedSettingsMgrService.js:188-191,263-276`). eve.rs returns `None` when the Host persistence callback declines the new shared setting; the client therefore displays its existing loading error instead of receiving a link that cannot be loaded. `FilterServiceDeepCheckHostWireTests.Shared_settings_mgr_filter_links_round_trip_over_the_registered_host_route` covers the declined write and `None` reply.
+
 ## allianceRegistry bulletin edit keyword arguments (2026-10-27)
 
 V24.01 `base_corporation.py:960` creates an alliance bulletin with positional title/body arguments, then edits it at `base_corporation.py:969` with `bulletinID` and `editDateTime` keyword arguments. EveJS 261018.1 `server/src/services/corporation/allianceRegistryRuntime.js:954-985` reads those two values only from positional arguments, so an edit can be treated as a new bulletin. eve.rs now prefers the client keyword values and keeps the positional form as a fallback in `AllianceRegistryService.BulletinEditArguments`. `AllianceRegistryHostWireTests.Add_bulletin_keeps_client_keyword_arguments_and_positional_defaults` covers keyword, positional, None and int/long forms.

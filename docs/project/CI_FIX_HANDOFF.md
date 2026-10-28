@@ -12,7 +12,10 @@ The current status below is authoritative. Dated entries that follow are histori
 - Local no-database checks before the code push: inventory focused test passed 1/1; contract and killmail focused tests passed 2/2; UserSvc focused test passed 1/1. Focused RPC fuzz, NewEden alpha MCT and CharacterInfo note tests skipped because they require the database lane; no database was used. Full Core had 844 passed, 57 skipped and 8 failures from MiningLedger fixtures requiring `EVE_PG_URL`; full CharacterInfo had 41 passed, 38 skipped and 0 failed; full Host had 602 passed, 228 skipped and 100 failures with `EVE_PG_URL` unset. These skips and failures are not passes. Local builds of changed .NET projects passed. No graphical client was used.
 - No PostgreSQL database was used. Continue checking code-bearing main pushes with `python3 tools/dev/ci-status.py status` and `failures <sha>` until three consecutive full required gates are green. Record skips separately and update this section after each push.
 
-## Current status (2026-10-28, commit 4d038697)
+## Current status (2026-10-28, commit b80f59fd)
+
+- The Host wire assertion correction is pushed as `b80f59fd`. Run 1199 confirmed the failure was `PyStr` expected versus `PyBytes` received in `Skill_manager_reads_and_injector_mutations_use_the_composed_host_routes`. Push CI run 1202 (`40761316631`) and selected Agent run 1064 (`40761345613`) are checking this correction.
+- Run 1199 measured the four Host shards at 8.0, 6.3, 4.9 (the failing shard) and 6.2 minutes; all 32 Space shards passed in 2.1–4.0 minutes. This confirms the `--split-methods` balancing reduced the prior 12.1-minute Host shard.
 
 - Selected Agent run 1061 found that the registered Host test correctly receives `PyBytes` dictionary keys; the test had assumed `PyStr`. The regression now asserts the wire key type and decodes its text for the four field-name assertions.
 - CI run 1199 is still checking commit `4d038697`; Host shard 3 has failed and its log is being inspected. Run 1199 has all 32 Space shards complete so far, each between 2.1 and 4.0 minutes, with no Space failures observed.

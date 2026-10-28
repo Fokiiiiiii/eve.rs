@@ -26,13 +26,14 @@ public partial class HostServerTests
             new PyStr("flightControls"),
             new PyList([new PyInt(3), new PyInt(4)]),
             new PyStr("Counter"),
-            new PyInt(30_100_041),
-            new PyStr("Rifter"),
+            new PyLong(30_100_041),
+            PyNone.Instance,
         ]);
         await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
             Packets.CallWithKwargs(open, 1, "eventLog", "LogClientEvent", args, kwargs))));
 
         var reply = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.CallRsp, Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(reply.Payload))).Type);
         Assert.IsType<PyNone>(Result(MarshalCodec.Decode(reply.Payload)));
         Assert.Equal(["LogClientEvent category=flightControls event=Counter"], records);
     }

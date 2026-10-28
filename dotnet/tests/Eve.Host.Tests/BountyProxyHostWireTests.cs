@@ -12,12 +12,12 @@ public partial class HostServerTests
     [Fact]
     public async Task Bounty_proxy_client_reads_use_the_registered_host_route_and_wire_shapes()
     {
-        const long characterId = 90000003;
-        const long targetId = 90000004;
+        const long characterId = 90_000_003;
+        const long targetId = 90_000_004;
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var service = new BountyProxyKillRightService(
             readKillRights: (_, _) => Task.FromResult<IReadOnlyList<KillRight>>(
-                [new KillRight(17, characterId, targetId, 30000142, now, now + 60_000, 250m, null)]),
+                [new KillRight(17, characterId, targetId, 30_000_142, now, now + 60_000, 250m, null)]),
             nowUnixMs: () => now,
             bountyRpcHandler: call => ValueTask.FromResult<PyValue?>(call.Method switch
             {
@@ -26,13 +26,13 @@ public partial class HostServerTests
                     Py.Tuple(InventoryWire.Id(targetId),
                         Py.KeyVal(("targetID", InventoryWire.Id(targetId)), ("bounty", new PyInt(150))))
                 ]),
+                "GetMyBounties" => new PyList([]),
                 "GetTopPilotBountyHunters" or "GetTopCorporationBountyHunters" or "GetTopAllianceBountyHunters" =>
                     Py.Tuple(new PyList([
                         Py.KeyVal(("bountyHunterID", InventoryWire.Id(characterId)),
                             ("bountiesClaimed", new PyInt(150)), ("numberOfKills", new PyInt(1)),
                             ("rowNumber", new PyInt(1)))
                     ]), Py.FileTimeLong(Py.FileTimeFromUnixMs(now))),
-                "GMReimburseBounties" or "GMClearBountyCache" => PyNone.Instance,
                 _ => null,
             }));
         Start(strictRpc: true,
@@ -41,8 +41,8 @@ public partial class HostServerTests
             {
                 session.CharacterId = characterId;
                 session.Set("charid", new PyLong(characterId));
-                session.Set("corpid", new PyLong(98000003));
-                session.Set("allianceid", new PyLong(99000003));
+                session.Set("corpid", new PyLong(98_000_003));
+                session.Set("allianceid", new PyLong(99_000_003));
             });
 
         var front = await Handshaken(await ConnectAsync());
@@ -83,9 +83,9 @@ public partial class HostServerTests
 
         var killRights = Assert.IsType<PyList>((await Call("GetMyKillRights")).Result);
         Assert.Equal(new PyLong(17), Field(Assert.Single(killRights.Items), "killRightID"));
-        var forCharacters = Assert.IsType<PyList>(
-            (await Call("GetKillRightsOnCharacters", new PyList([new PyLong(targetId)]))).Result);
-        Assert.Empty(forCharacters.Items);
+
+        var forCharacters = await Call("GetKillRightsOnCharacters", new PyList([new PyLong(targetId)]));
+        Assert.Equal(MachoMessage.ErrorResponse, forCharacters.Type);
 
         foreach (var method in new[]
         {
@@ -100,14 +100,12 @@ public partial class HostServerTests
         foreach (var method in new[] { "GMReimburseBounties", "GMClearBountyCache" })
         {
             var result = await Call(method);
-            Assert.Equal(MachoMessage.CallRsp, result.Type);
-            Assert.Same(PyNone.Instance, result.Result);
+            Assert.Equal(MachoMessage.ErrorResponse, result.Type);
         }
 
         var sellWithoutStore = await Call("SellKillRight", new PyLong(17), new PyReal(250), PyNone.Instance);
         Assert.Equal(MachoMessage.ErrorResponse, sellWithoutStore.Type);
-        var cancel = await Call("CancelSellKillRight", new PyLong(17), new PyLong(targetId));
-        Assert.Equal(MachoMessage.CallRsp, cancel.Type);
-        Assert.Same(PyNone.Instance, cancel.Result);
+        var cancelWithoutStore = await Call("CancelSellKillRight", new PyLong(17), new PyLong(targetId));
+        Assert.Equal(MachoMessage.ErrorResponse, cancelWithoutStore.Type);
     }
 }

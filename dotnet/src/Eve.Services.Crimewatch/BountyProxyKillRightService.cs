@@ -35,40 +35,28 @@ public sealed class BountyProxyKillRightService(
     public ValueTask<PyValue> CallAsync(ServiceCall call) => call.Method switch
     {
         "AddToBounty" => AddToBountyAsync(call),
-        "GetBounties" => BountyResponseAsync(call, BountyRows(call.Arg(0), call.Session)),
+        "GetBounties" or "GetMyBounties" or
+        "GetTopPilotBounties" or "GetTopCorpBounties" or "GetTopAllianceBounties" or
+        "GetTopPilotBountyHunters" or "GetTopCorporationBountyHunters" or "GetTopAllianceBountyHunters" or
+        "SearchCharBounties" or "SearchCorpBounties" or "SearchAllianceBounties" => BountyResponseAsync(call),
         "GetBountiesAndKillRights" => GetBountiesAndKillRightsAsync(call),
-        "GetMyBounties" => BountyResponseAsync(call, new PyList([])),
         "GetMyKillRights" => GetMyKillRightsAsync(call),
         "GetKillRightsOnCharacters" => ReadAvailableKillRightsAsync(call, call.Arg(0)),
         "SellKillRight" => SellKillRightAsync(call),
         "CancelSellKillRight" => CancelSellKillRightAsync(call),
-        "GetTopPilotBounties" or "GetTopCorpBounties" or "GetTopAllianceBounties" or
-        "GetTopPilotBountyHunters" or "GetTopCorporationBountyHunters" or "GetTopAllianceBountyHunters" =>
-            BountyResponseAsync(call, EmptyRankedResult()),
-        "SearchCharBounties" or "SearchCorpBounties" or "SearchAllianceBounties" =>
-            BountyResponseAsync(call, new PyList([])),
-        "GMReimburseBounties" or "GMClearBountyCache" =>
-            BountyResponseAsync(call, PyNone.Instance),
+        "GMReimburseBounties" or "GMClearBountyCache" => UnsupportedGmBountyOperation(),
         _ => ValueTask.FromResult<PyValue>(PyNone.Instance),
     };
 
-    private async ValueTask<PyValue> BountyResponseAsync(ServiceCall call, PyValue fallback)
-    {
-        if (bountyRpcHandler is null)
-            return fallback;
-        return await bountyRpcHandler(call).ConfigureAwait(false) ?? fallback;
-    }
-
-    private async ValueTask<PyValue> AddToBountyAsync(ServiceCall call)
+    private async ValueTask<PyValue> BountyResponseAsync(ServiceCall call)
     {
         if (bountyRpcHandler is null ||
             await bountyRpcHandler(call).ConfigureAwait(false) is not { } result)
-        {
-            throw Eve.Services.MachoErrors.ThrowUserError(
-                "CustomNotify", ("notify", new PyStr("Bounty service is not wired on this server.")));
-        }
+            throw ServiceNotWired("Bounty");
         return result;
     }
+
+    private ValueTask<PyValue> AddToBountyAsync(ServiceCall call) => BountyResponseAsync(call);
 
     private async ValueTask<PyValue> GetBountiesAndKillRightsAsync(ServiceCall call)
     {
@@ -80,44 +68,20 @@ public sealed class BountyProxyKillRightService(
             CallId = call.CallId,
             Cancellation = call.Cancellation,
         };
-        var bountyRows = await BountyResponseAsync(bountyCall, BountyRows(call.Arg(0), call.Session)).ConfigureAwait(false);
+        var bountyRows = await BountyResponseAsync(bountyCall).ConfigureAwait(false);
         var killRights = await ReadAvailableKillRightsAsync(call, call.Arg(1)).ConfigureAwait(false);
         return Py.Tuple(bountyRows, killRights);
     }
-
-    private static PyValue BountyRows(PyValue requested, ClientSession session)
-    {
-        var ids = Ids(requested);
-        if (ids.Length == 0)
-        {
-            ids =
-            [
-                0,
-                session.CharacterId ?? 0,
-                session.GetInt("corpid") ?? 0,
-                session.GetInt("allianceid") ?? 0,
-            ];
-            ids = ids.Distinct().OrderBy(id => id).ToArray();
-        }
-
-        return new PyList([.. ids.Select(targetId => (PyValue)new PyTuple(
-        [
-            InventoryWire.Id(targetId),
-            Py.KeyVal(
-                ("targetID", InventoryWire.Id(targetId)),
-                ("bounty", new PyInt(0))),
-        ]))]);
-    }
-
-    private PyValue EmptyRankedResult() =>
-        Py.Tuple(new PyList([]), Py.FileTimeLong(Py.FileTimeFromUnixMs(NowUnixMs)));
 
     private async ValueTask<PyValue> GetKillRightsAsync(ServiceCall call)
     {
         call.Cancellation.ThrowIfCancellationRequested();
         var ownerCharacterId = call.Session.CharacterId ?? 0;
-        if (ownerCharacterId <= 0 || (store is null && readKillRights is null))
+        if (ownerCharacterId <= 0)
             return new PyList([]);
+        if (store is null && readKillRights is null)
+            throw ServiceNotWired("Kill-right");
+
         var requestedTargets = Ids(call.Arg(0)).ToHashSet();
         if (requestedTargets.Count == 0)
             return new PyList([]);
@@ -138,13 +102,13 @@ public sealed class BountyProxyKillRightService(
         var characterId = call.Session.CharacterId ?? 0;
         if (characterId <= 0)
             return new PyList([]);
+        if (store is null && readKillRights is null)
+            throw ServiceNotWired("Kill-right");
 
         var now = NowUnixMs;
         var rights = store is not null
             ? await store.KillRightsForCharacterAsync(characterId, now, call.Cancellation)
-            : readKillRights is not null
-                ? await readKillRights(characterId, call.Cancellation)
-                : [];
+            : await readKillRights!(characterId, call.Cancellation);
         return new PyList([.. rights
             .Where(right => right.ExpiresAtUnixMs > now)
             .Select(Payload)]);
@@ -155,8 +119,10 @@ public sealed class BountyProxyKillRightService(
         call.Cancellation.ThrowIfCancellationRequested();
         var characterId = call.Session.CharacterId ?? 0;
         var targetIds = Ids(targetsValue);
-        if (characterId <= 0 || targetIds.Length == 0 || store is null)
+        if (characterId <= 0 || targetIds.Length == 0)
             return new PyList([]);
+        if (store is null)
+            throw ServiceNotWired("Kill-right");
 
         var organization = resolveOrganization is null
             ? (CorporationId: 0L, AllianceId: 0L)
@@ -170,7 +136,9 @@ public sealed class BountyProxyKillRightService(
     private async ValueTask<PyValue> SellKillRightAsync(ServiceCall call)
     {
         var killRightId = Positive(call.Arg(0));
-        if (store is null || call.Session.CharacterId is not { } ownerCharacterId
+        if (store is null)
+            throw ServiceNotWired("Kill-right");
+        if (call.Session.CharacterId is not { } ownerCharacterId
             || ownerCharacterId <= 0 || killRightId <= 0)
             throw Eve.Services.MachoErrors.ThrowUserError("NoValidKillRight");
 
@@ -213,7 +181,9 @@ public sealed class BountyProxyKillRightService(
     private async ValueTask<PyValue> CancelSellKillRightAsync(ServiceCall call)
     {
         var killRightId = Positive(call.Arg(0));
-        if (store is null || call.Session.CharacterId is not { } ownerCharacterId
+        if (store is null)
+            throw ServiceNotWired("Kill-right");
+        if (call.Session.CharacterId is not { } ownerCharacterId
             || ownerCharacterId <= 0 || killRightId <= 0)
             return PyNone.Instance;
 
@@ -296,4 +266,12 @@ public sealed class BountyProxyKillRightService(
             return amount;
         return null;
     }
+
+    private static Exception ServiceNotWired(string service) =>
+        Eve.Services.MachoErrors.ThrowUserError(
+            "CustomNotify", ("notify", new PyStr($"{service} service is not wired on this server.")));
+
+    private static ValueTask<PyValue> UnsupportedGmBountyOperation() =>
+        throw Eve.Services.MachoErrors.ThrowUserError(
+            "CustomNotify", ("notify", new PyStr("GM bounty operations are not supported on this server.")));
 }

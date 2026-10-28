@@ -1634,7 +1634,12 @@ public sealed partial class WarStatisticMgrService(
     private static long Long(JsonNode? value, long fallback) =>
         long.TryParse(Text(value), NumberStyles.Integer, CultureInfo.InvariantCulture, out var number) ? number : fallback;
 
-    private static string Text(PyValue? value) => value is PyStr text ? text.Value : "";
+    private static string Text(PyValue? value) => value switch
+    {
+        PyStr text => text.Value,
+        PyBytes bytes => Encoding.UTF8.GetString(bytes.Value.Span),
+        _ => "",
+    };
 
     private static string Text(JsonNode? value) =>
         value is JsonObject wrapper && wrapper["value"] is { } wrapped ? Text(wrapped) : value?.ToString() ?? "";

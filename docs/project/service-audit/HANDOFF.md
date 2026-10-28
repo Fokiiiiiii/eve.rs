@@ -403,3 +403,11 @@ Filter service CI repair (2026-10-28): push e1c203cd completed its focused Agent
 - Focused post-merge results: tourneyMgr/kiringMgr/filterSvc Host packet-loop tests 4 passed, 0 failed, 0 skipped; CharacterInfo owner-note limit test 1 passed; Core userSvc tests 4 passed.
 - An exploratory wider Host filter passed 2 tests and skipped 6 database-backed entitlement/RPC-fuzz tests. The required full `Eve.Host.Tests` shard was run with `EVE_PG_URL` unset: 604 passed, 100 failed, 228 skipped (932 total). Failures include fixtures that assert the missing database URL before opening a connection; skipped tests are reported separately. No PostgreSQL connection was made.
 - The real V24.01 graphical client was not launched. Database-backed runtime paths were not exercised. The interrupted GameStore shutdown-flush implementation and restart test are saved in the local stash `cx7 deferred GameStore shutdown flush awaiting database lane` and are excluded from this service-audit push.
+
+
+## 2026-10-28: CI correction after 05fcbab0
+
+- Agent Test run 40736734037 for 05fcbab08dbbd18501dac99742741409e94e46cc succeeded with no failed tests or jobs.
+- Push CI run 40736692994 exposed two stale assertions in `UnportedFeatureRpcServicesTests.Direct_service_rows_are_registered_with_reference_fallbacks`: current-series details were expected as `PyList` and tournament details as `PyNone`. V24.01 reads series details by seriesID and reads the five tournament fields at `eve/devtools/script/tournamentRefereeTools.py:576-600`; EveJS v0.12.9 returns an empty dict and its five-field defaults at `tourneyMgrService.js:96-120`. The test now asserts the dict shapes and values; no production behavior or assertion strictness was weakened.
+- Core.Tests build passed. The focused fallback test passed 1/1. The full Core.Tests shard with `EVE_PG_URL` unset reported 844 passed, 8 failed, 57 skipped; the failures are PostgreSQL-backed MiningLedger fixtures that assert the absent URL at `MiningLedgerServiceTests.cs:206-209` before opening a connection.
+- Re-ran the required Host.Tests shard without a database URL: 604 passed, 100 failed, 228 skipped. Failures are database-configured fixtures; no PostgreSQL connection was made.

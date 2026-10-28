@@ -113,8 +113,13 @@ public sealed class UnportedFeatureRpcServicesTests
         var shipList = Assert.IsType<PyDict>(await tourney.CallAsync(Call("QueryShipList", args: [new PyInt(9)])));
         Assert.Empty(Assert.IsType<PyList>(Field(shipList, "allowedShipList")).Items);
         Assert.Empty(Assert.IsType<PyDict>(await tourney.CallAsync(Call("GetPotentialMatches", args: [new PyInt(9)]))).Entries);
-        Assert.Empty(Assert.IsType<PyList>(await tourney.CallAsync(Call("GetAllCurrentSeriesMatchDetails", args: [new PyInt(9)]))).Items);
-        Assert.Same(PyNone.Instance, await tourney.CallAsync(Call("QueryTournamentDetails", args: [new PyInt(9)])));
+        Assert.Empty(Assert.IsType<PyDict>(await tourney.CallAsync(Call("GetAllCurrentSeriesMatchDetails", args: [new PyInt(9)]))).Entries);
+        var details = Assert.IsType<PyDict>(await tourney.CallAsync(Call("QueryTournamentDetails", args: [new PyInt(9)])));
+        Assert.Empty(Assert.IsType<PyList>(Field(details, "allowedShipList")).Items);
+        Assert.Equal(new PyInt(0), Field(details, "maximumPointsMatch"));
+        Assert.Equal(new PyInt(600), Field(details, "matchLength"));
+        Assert.Equal(new PyInt(300), Field(details, "overtimeLength"));
+        Assert.Same(PyNone.Instance, Field(details, "externalRulesetID"));
     }
 
     [Fact]

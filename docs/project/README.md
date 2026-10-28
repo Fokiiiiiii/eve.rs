@@ -7,7 +7,7 @@ This is the current project summary. The dated migration log, old service backlo
 
 ## RPC inventory
 
-[The service manifest](../reference/spec/services.tsv) has 654 rows, including 484 unique service/method pairs across 129 services. The read-only source audit found a handler for **484/484** pairs through a declared route, alias, or manual dispatch. True missing routes: **0**.
+[The service manifest](../reference/spec/services.tsv) has 654 rows, including 484 unique service/method pairs across 170 services. The current source audit finds active Host routes for **442/484** pairs through a declared route, alias, or manual dispatch; **42** pairs have no active route. Of the 484 pairs, 402 are IMPLEMENTED-TESTED, 35 IMPLEMENTED-UNTESTED, and 5 HOLLOW.
 
 A route count does not prove wire-shape parity or a connected runtime provider. The checked routes and open provider/behavior work are separated in [TODO.md](TODO.md).
 

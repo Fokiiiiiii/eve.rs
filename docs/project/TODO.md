@@ -1078,7 +1078,7 @@ Design and decisions: scratchpad `work/market-design.md` (sections 4.3 and 5) an
 DEVIATIONS.md ("Market slice M1" and the M2/M3 sections when written).
 
 Done in M1 (DEVIATIONS.md, "Market slice M1"):
-- The five missing marketProxy RPCs: BuyMultipleItems, PlacePlexSellOrder, ModifyPlexCharOrder, CharGetTransactions, CorpGetTransactions.
+- Added the five previously missing marketProxy RPCs: BuyMultipleItems, PlacePlexSellOrder, ModifyPlexCharOrder, CharGetTransactions, CorpGetTransactions.
   All 27 client-called methods are registered (`MarketHostTests`).
 - The order's division in keyID (G1); station/system ask summaries as four-value tuples for V24 range conversion, with regional best orders remaining named KeyVals (Q13, G10).
 - Client labels for MktBrokersFeeUnexpected2 and MktInvalidMinVolumeCannotExceedQuantity; other refusals are sentences, not codes (G6).

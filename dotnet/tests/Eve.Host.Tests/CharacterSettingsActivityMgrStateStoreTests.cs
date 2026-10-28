@@ -8,7 +8,7 @@ namespace Eve.Host.Tests;
 public sealed class CharacterSettingsActivityMgrStateStoreTests
 {
     [Fact]
-    public async Task Activity_state_survives_service_recreation_in_character_settings()
+    public async Task Activity_state_survives_service_recreation_and_retries_are_idempotent()
     {
         CharMgrPersonalData? personalData = CharMgrPersonalData.Empty;
 
@@ -27,6 +27,8 @@ public sealed class CharacterSettingsActivityMgrStateStoreTests
         var first = new ActivityMgrService(new CharacterSettingsActivityMgrStateStore(ReadAsync, UpdateAsync));
         var session = new ClientSession { CharacterId = 1001 };
         Assert.Equal(PyBool.True, await Call(first, session, "ActivitySeen", new PyLong(4_294_967_297)));
+        Assert.Equal(PyBool.True, await Call(first, session, "ActivitySeen", new PyLong(4_294_967_297)));
+        Assert.Equal(PyBool.True, await Call(first, session, "SetActivitiesPopState", PyBool.False));
         Assert.Equal(PyBool.True, await Call(first, session, "SetActivitiesPopState", PyBool.False));
 
         var afterRestart = new ActivityMgrService(new CharacterSettingsActivityMgrStateStore(ReadAsync, UpdateAsync));
@@ -35,6 +37,43 @@ public sealed class CharacterSettingsActivityMgrStateStoreTests
         Assert.Equal(new PyInt(0), await Call(afterRestart, session, "GetActivitiesPopState"));
         Assert.Contains("eve.rs.activityMgr.seenActivityIDs", personalData!.CharacterSettings.Keys);
         Assert.Contains("eve.rs.activityMgr.popState", personalData.CharacterSettings.Keys);
+    }
+
+    [Fact]
+    public async Task Concurrent_seen_updates_preserve_every_activity_id()
+    {
+        CharMgrPersonalData? personalData = CharMgrPersonalData.Empty;
+        using var updateGate = new SemaphoreSlim(1, 1);
+
+        ValueTask<CharMgrPersonalData?> ReadAsync(long characterId, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<CharMgrPersonalData?>(personalData);
+
+        async ValueTask<CharMgrPersonalData?> UpdateAsync(
+            long characterId,
+            Func<CharMgrPersonalData, CharMgrPersonalData> update,
+            CancellationToken cancellationToken)
+        {
+            await updateGate.WaitAsync(cancellationToken);
+            try
+            {
+                await Task.Yield();
+                personalData = update(personalData ?? CharMgrPersonalData.Empty);
+                return personalData;
+            }
+            finally
+            {
+                updateGate.Release();
+            }
+        }
+
+        var service = new ActivityMgrService(new CharacterSettingsActivityMgrStateStore(ReadAsync, UpdateAsync));
+        var session = new ClientSession { CharacterId = 1002 };
+        var replies = await Task.WhenAll(Enumerable.Range(1, 32)
+            .Select(id => Call(service, session, "ActivitySeen", new PyInt(id)).AsTask()));
+        Assert.All(replies, reply => Assert.Equal(PyBool.True, reply));
+
+        var badges = Assert.IsType<PyList>(await Call(service, session, "GetActivityBadgeStatuses"));
+        Assert.Equal(Enumerable.Range(1, 32).Select(id => (PyValue)new PyInt(id)), badges.Items);
     }
 
     [Fact]

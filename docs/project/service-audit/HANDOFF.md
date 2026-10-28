@@ -1,3 +1,11 @@
+# Pending local progress — 2026-10-28
+
+- On branch industry-progress-20261028 based on origin/main, the industry job notification fan-out was extracted into IndustryJobClientNotifications and covered by IndustryJobNotificationWireTests. The test verifies six OnIndustryJob positional arguments, None for successfulRuns, installer and authorized corporation recipients, and role filtering. Whole-client consumers in /home/user/eve-logic are /home/user/eve-logic/eve/client/script/industry/industrySvc.py:291-301, blueprintSvc.py:37-40, ui/shared/industry/industryWnd.py:439-449, browserBlueprints.py:169-181, and browserJobs.py:111-116. EveJS v0.12.9 shape is /home/user/evejs-v0.12.9/server/src/services/industry/industryNotifications.js:24-39.
+- Focused Host wire test passed (1/1, no skips). Full Eve.Host.Tests with EVE_PG_URL unset: 605 passed, 100 failed, 228 skipped. Failures include fixtures that require the assigned PostgreSQL lane; no database was used. This does not meet the pre-push full-shard gate, so the change is not pushed.
+- Foreign commits and dirty work from the original cx8 worktree were preserved locally on backup/cx8-foreign-wip-20261028 and backup/cx8-foreign-wip-20261028-stash (commits 90e77972 and b0174eee). Do not merge those branches into the industry change without reviewing them.
+
+---
+
 # Service audit handoff
 
 The current snapshot below is authoritative. Dated sections that follow preserve the status at the time of each audit and do not replace the current snapshot.
@@ -77,7 +85,6 @@ Coverage statuses match current Host source registrations and known behavior gap
 - station.clear is local guest-cache state: StationSvc initializes self.guests at eve/client/script/ui/station/base.py:56, clears it at :101, calls station.GetGuests at :102, builds a charID map at :103-108, then reads it in IsGuest at :110-113. EveJS 261018.1 returns guest tuples and seeds its observer ledger at server/src/services/station/stationService.js:135-156.
 
 ### EveJS comparison and intentional differences
-
 - EveJS 261018.1 has GetMultiOwnersEx but no GetOwnersEx/GetPositionEx/GetPositionsEx in the inspected config service. eve.rs supplies client-declared recordsets from authoritative rowset builders.
 - EveJS QuickQuery returns deduplicated flat IDs and handles exact/hideNPC, but ignores onlyAltName at server/src/services/_other/searchService.js:479-500. eve.rs honors alternate/ticker names requested by the client. Both differences are recorded in docs/reference/compat/DEVIATIONS.md:5833-5838.
 
@@ -156,7 +163,6 @@ Three database-free real-Host wire tests were added for monochrome bools, the em
 The audit-current generator was run without a queue directory. It refreshed the coverage CSV broadly; the queue files were not regenerated. Its static route detector currently reports the dynamically bound `invbroker.Add` rows as MISSING even though `ServiceAuditP0HostWireTests.Invbroker_add_accepts_client_kwargs_through_registered_host_route` exercises the real bound Host route; the client verification table cites that route and test. This is a generator detection gap, not a wire-shape discrepancy.
 
 No local PostgreSQL database or graphical EVE client was used. The Actions-selected test job provisions its own test database; the three new Host tests do not open a database connection.
-
 
 Batch 7 follow-up update: origin/main advanced during correction and supplied explicit `util.Row` assertions for the failing service test. The merged assertion needed a typed string array and materialized PyValue list; the final `Eve.Services.CharacterInfo.Tests` build passed with zero warnings/errors. Focused Actions and push CI reruns for this follow-up are pending.
 
@@ -237,7 +243,6 @@ The last Faction Warfare wire test passed after switching HQ lookup to pinned SD
 - For the commit containing this handoff update, post-push selected Agent Test and push-triggered CI checks remain to be read from Actions by this commit's SHA. The results must be recorded in the next service-audit handoff update.
 
 ## facWarMgr deep check (2026-10-27)
-
 - Added `docs/project/service-audit/DEEPCHECK_facWarMgr.md` with method-by-method whole-tree V24.01 callers and consumers, Host registration and wire behavior, EveJS 261018.1 comparison, state ownership, errors, notifications, tests, and known gaps. The exact client service is `facWarMgr` in `eve/client/script/ui/services/facWarSvc.py:47-50`; its complete remote call list and each consumer are cited in the deep-check document. The additional UI RPC `GetControlBunkerIDInSystem` is cited at `factionWarfareSystemInfoContainer.py:53-56`. `GetCharacterEnrolledFaction` is only a server-local helper at `evestations/specialStationRules.py:67,82`, not a client RPC. No alternate bound/moniker client service was found.
 - Compared all client methods to the production Host route and EveJS 261018.1. Fixed character enlistment to fail if persistence returns false, so it cannot report success or notify before saved state exists. Removed unused `RefreshCorps` and `GetStats_CorpPilots` from the wire route. `GetControlBunkerIDInSystem` remains `None` because eve.rs has no authoritative in-space control-hub item ID; the UI omits the absent row. EveJS 261018.1 implements four rank calls in `server/src/services/faction/facWarMgrService.js:158-210`; per-method differences and evidence are in the deep-check and `DEVIATIONS.md`.
 - Whole-client evidence includes `facWarSvc.py:90-143,195-287,305-386,452-469`, dashboard consumers in `fwWarzoneDashboard.py:190,199,343,350` and `fwwarzone/client/dashboard/statisticsController.py:54-90`, rank consumers in `infosvc.py:511-527,1149,2195-2202`, `progression.py:73`, and donation retry handling in `infrastructureHub.py:165-183`. The deep-check document records every direct caller, reply use, and relevant local/server-only call with file:line citations.
@@ -317,7 +322,6 @@ This documentation-only correction did not execute tests. A focused control Host
 ### 2026-10-28: shipcaster travel route review
 
 Whole-tree `/home/user/eve-logic` evidence for RPC-02317 and RPC-02569 is in `CLIENT_VERIFIED.md` under the P1 shipcaster section. Both are normal menu actions (`menusvc.py:1750-1756,3069-3075`; `movementFunctions.py:381-385,601-616`) and call `PerformSessionChange('jump', ...)` from `shipcasterSvc.py:17-20,34-37`. Production Host registers both travel services at `AgentRpc.cs:112`; without a travel backend, the services return a `CustomNotify` error, matching EveJS v0.12.9 (`shipcasterTravelMgrService.js:12-16,23-33`; `starterShipcasterTravelMgrService.js:12-16,31-37`). The focused packet-loop test `Movement_rpcs_use_registered_host_routes_with_client_wire_shapes` passed 1/1 with 0 failures and 0 skips. It asserts the error envelopes; it does not exercise a successful jump. Both rows remain MISSING because neither implementation provides the client-visible transition. No DB or graphical client was used.
-
 ### 2026-10-28: post-push CI for `f3361ad6`
 
 - Agent Test run 40654393759 passed the focused Host registry and faction-war regression tests. The task's mail Host wire test had also passed in run 40650792854.
@@ -397,7 +401,6 @@ Filter service CI repair (2026-10-28): push e1c203cd completed its focused Agent
 
 
 ## 2026-10-28: cx7 rescue merge verification
-
 - Fetched `origin/main` at `6d20f7e4556b9636a4bb9587a6155d639c8d40b9` and merged it into the three-commit local audit history. Kept the current upstream audit classifications in 17 overlapping CSV conflict blocks; retained the non-overlapping local audit changes. RPC-02615/02616 were set to IMPLEMENTED-TESTED based on the client caller, Host registration/backend, and packet-loop test cited above.
 - `Eve.Host.Tests` build passed with 0 warnings/errors. `Eve.Services.CharacterInfo.Tests` and `Eve.Services.Core.Tests` builds also passed with 0 warnings/errors.
 - Focused post-merge results: tourneyMgr/kiringMgr/filterSvc Host packet-loop tests 4 passed, 0 failed, 0 skipped; CharacterInfo owner-note limit test 1 passed; Core userSvc tests 4 passed.

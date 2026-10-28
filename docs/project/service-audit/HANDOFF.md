@@ -238,3 +238,12 @@ RPC-02222–RPC-02225 are live normal-player calls. The whole-client call/consum
 ### 2026-10-28: `sovMgr` sovereignty and skyhook rows
 
 RPC-02548–RPC-02560 are normal-player UI paths, not dead wrappers. Whole-client call and consumer evidence is in `CLIENT_VERIFIED.md`. Production registration is `CharacterServiceList -> ItemRpc -> SovFwService.Create`; reads come from the saved sovereignty table and writes use the authorized persistence operations. The Host wire tests cover the read ObjectEx/list/bool shapes, fuel group round-trip and skyhook ID lists; a separate Host writer test covers authorized persistence and read-back. No new test execution or graphical-client check is recorded for this docs-only update. Remaining N-S work is POS, ship and shipcaster gaps plus the other structure rows.
+
+
+### 2026-10-28: structure P1 route reconciliation
+
+Updated all 32 RPC-02615–RPC-02688 structure P1 inventory rows from MISSING to IMPLEMENTED-TESTED after checking their normal V24 callsites and downstream consumers across the whole /home/user/eve-logic tree. Per-row call/consumer, Host, wire-test and EveJS v0.12.9 evidence is in CLIENT_VERIFIED.md under Batch 30.
+
+Production registration is StructureRpc.cs:66-78. StructureComposition.cs:420-482 wires the persisted delivery, control, deployment, hangar, docking and vulnerability backends; StructureNotifications.cs:52 and StructureNotificationsTests.cs:148-239 cover hangar notifications and order. Host wire-test sources cover the client return shapes. The existing undock Host test exercises the default keyword value; the true ignoreContraband path is covered by StructureUndockingTests.cs:79-119 at the movement layer.
+
+This documentation-only correction did not execute tests. A focused control Host test passed in the earlier Batch 28 run recorded above. The graphical V24.01 client was not exercised. Remaining P1 MISSING rows in the N-S range are POS (18 IDs), ship (3 IDs), and shipcaster travel (2 IDs); these still need whole-client review and implementation or evidence-based classification.

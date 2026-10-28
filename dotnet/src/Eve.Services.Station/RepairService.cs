@@ -7,18 +7,18 @@ using Eve.Market;
 using Eve.Marshal;
 using Eve.Universe;
 using Eve.Wallet;
+using Eve.Structures;
 using Npgsql;
 
 namespace Eve.Services.Station;
 
 /// <summary>
-/// The repair shop of an NPC station (<c>repairSvc</c>): the client binds it for the station it is docked in, asks for the quote of its
-/// damaged items (ships, modules, drones, containers and tools), and repairs what it pays for. The damage is the module state store's; the cost
-/// is <see cref="RepairRules"/> on the adjusted price; the charge and the repair are one PostgreSQL transaction, the notices follow the commit.
+/// The repair shop of NPC stations and cored Upwell structures (<c>repairSvc</c>). Stations charge the selected amount; structure quotes are free
+/// as sent by the V24 client. Damage comes from the module state store and the repair is committed before item notices are sent.
 /// </summary>
 [Service("repairSvc")]
 public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore items, ItemTypeCatalog types, StationCatalog stations, DogmaStatic statics,
-    PgModuleStateStore conditions, AdjustedPriceCache prices, WalletTransactions wallets, PgWalletStore balances, Func<long> nowUnixMs) : IBoundObjectReleaseHandler
+    PgModuleStateStore conditions, AdjustedPriceCache prices, WalletTransactions wallets, PgWalletStore balances, Func<long> nowUnixMs, StructureStore? structures = null) : IBoundObjectReleaseHandler
 {
     /// <summary>The ESI wallet ref type <c>repair_bill</c> (CCP eve-glue, <c>JournalRefTypeEnumV2</c>).</summary>
     public const int RepairBillRefType = 15;
@@ -33,19 +33,26 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
     private static readonly HashSet<int> RepairableGroups = [12, 332, 340, 448, 649];
     private static readonly HashSet<int> RepairableCategories = [6, 7, 18, 22, 23, 66];
 
-    private readonly ConcurrentDictionary<string, long> _bound = new(StringComparer.Ordinal);
+    private sealed record RepairFacility(long Id, bool IsStructure, long OwnerCorporationId);
+
+    private readonly ConcurrentDictionary<string, RepairFacility> _bound = new(StringComparer.Ordinal);
 
     public void OnBoundObjectReleased(string oid, ClientSession? session) => _bound.TryRemove(oid, out _);
 
-    /// <summary><c>MachoBindObject((stationID, systemID, groupID), (method, args, kwargs))</c>: binds the repair shop of the station the caller is docked in.</summary>
+    /// <summary><c>MachoBindObject((locationID, systemID, groupID), (method, args, kwargs))</c>: binds the repair shop where the caller is docked.</summary>
     [Method("MachoBindObject")]
     public async ValueTask<PyValue> MachoBindObject(ServiceCall call)
     {
         var parameters = call.Arg(0) switch { PyTuple t when t.Items.Count > 0 => t.Items[0], PyList l when l.Items.Count > 0 => l.Items[0], var other => other };
-        if (IdOf(parameters) is not { } stationId || call.Session.DockedLocationId != stationId || stations.Get(stationId) is null)
-            throw Notify("The repair shop is available in the NPC station you are docked in.");
+        if (IdOf(parameters) is not { } facilityId || call.Session.DockedLocationId != facilityId)
+            throw Notify("The repair shop is available in the station or cored Upwell structure you are docked in.");
+        var station = stations.Get(facilityId);
+        var structure = station is null && structures is not null ? await structures.GetAsync(facilityId, call.Cancellation).ConfigureAwait(false) : null;
+        var isStructure = structure is not null && structure.Snapshot.CoreInstalled && structure.Snapshot.DestroyedMs == 0;
+        if (!isStructure && station is null)
+            throw Notify("The repair shop is available in the station or cored Upwell structure you are docked in.");
         var oid = $"N={MachoMessage.ProxyNodeId}:{BoundObjectIds.Next()}";
-        _bound[oid] = stationId;
+        _bound[oid] = new RepairFacility(facilityId, isStructure, structure?.OwnerCorporationId ?? station!.OwnerId);
         var bound = new PySubStruct(new PySubStream(Py.Tuple(new PyStr(oid), new PyLong(Py.FileTimeFromUnixMs(nowUnixMs())))));
         PyValue result = PyNone.Instance;
         if (call.Arg(1) is PyTuple { Items.Count: > 0 } nested && Eve.Macho.JsSemantics.StringValue(nested.Items[0]) is { } method)
@@ -71,7 +78,7 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
     [Method("GetRepairQuotes")]
     public async ValueTask<PyValue> GetRepairQuotes(ServiceCall call)
     {
-        var station = BoundStation(call);
+        var facility = await BoundRepairFacilityAsync(call).ConfigureAwait(false);
         var character = CharacterOf(call.Session);
         var entries = new List<KeyValuePair<PyValue, PyValue>>();
         await using var connection = await source.OpenConnectionAsync(call.Cancellation).ConfigureAwait(false);
@@ -79,11 +86,11 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
         foreach (var id in ItemIdsOf(call.Arg(0)))
         {
             if (await items.LockAndGetAsync(connection, transaction, id, call.Cancellation).ConfigureAwait(false) is not { } item
-                || !await AccessibleAsync(connection, transaction, item, character, station, call.Cancellation).ConfigureAwait(false))
+                || !await AccessibleAsync(connection, transaction, item, character, facility.Id, call.Cancellation).ConfigureAwait(false))
                 continue;
             var rows = new List<PyValue>();
             foreach (var quoted in await QuoteGroupAsync(connection, transaction, item, character, call.Cancellation).ConfigureAwait(false))
-                rows.Add(QuoteValue(quoted));
+                rows.Add(QuoteValue(facility.IsStructure ? quoted with { UnitCost = 0 } : quoted));
             if (rows.Count > 0)
                 entries.Add(new(new PyLong(id), new PyList(rows)));
         }
@@ -95,11 +102,16 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
     /// payment is None). The charge and the repair are one transaction; a fitted module is paid in full.
     /// </summary>
     [Method("RepairItemsInStation")]
-    public async ValueTask<PyValue> RepairItemsInStation(ServiceCall call)
+    public ValueTask<PyValue> RepairItemsInStation(ServiceCall call) => RepairItemsAsync(call, isStructure: false);
+
+    private async ValueTask<PyValue> RepairItemsAsync(ServiceCall call, bool isStructure)
     {
-        var station = BoundStation(call);
+        var facility = await BoundRepairFacilityAsync(call).ConfigureAwait(false);
+        if (facility.IsStructure != isStructure)
+            throw Notify(isStructure ? "Repair is not available in this structure." : "Repair is not available in this station.");
+        var facilityId = facility.Id;
         var character = CharacterOf(call.Session);
-        var payment = NumberOrNull(call.Arg(1));
+        var payment = isStructure ? null : NumberOrNull(call.Arg(1));
         var now = nowUnixMs();
         var operation = $"repair:{Guid.NewGuid():N}";
 
@@ -109,11 +121,12 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
         foreach (var id in ItemIdsOf(call.Arg(0)))
         {
             if (await items.LockAndGetAsync(connection, transaction, id, call.Cancellation).ConfigureAwait(false) is not { } item
-                || !await AccessibleAsync(connection, transaction, item, character, station, call.Cancellation).ConfigureAwait(false))
+                || !await AccessibleAsync(connection, transaction, item, character, facilityId, call.Cancellation).ConfigureAwait(false))
                 continue;
             var quoted = await QuoteRowAsync(connection, transaction, item, call.Cancellation).ConfigureAwait(false);
+            if (isStructure) quoted = quoted with { UnitCost = 0 };
             if (!(quoted.Health.Damage > 0)) continue;
-            if (!(quoted.UnitCost > 0)) throw Notify("No repair price is known for that item.");
+            if (!isStructure && !(quoted.UnitCost > 0)) throw Notify("No repair price is known for that item.");
             targets.Add(new Damaged(quoted));
         }
         if (targets.Count == 0)
@@ -136,7 +149,7 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
         {
             try
             {
-                await wallets.AdjustAsync(connection, transaction, character, -(decimal)charged, stations.Get(station)!.OwnerId, RepairBillRefType,
+                await wallets.AdjustAsync(connection, transaction, character, -(decimal)charged, facility.OwnerCorporationId, RepairBillRefType,
                     "Repair", now, operation + ":bill", call.Cancellation).ConfigureAwait(false);
             }
             catch (InsufficientFundsException)
@@ -173,15 +186,25 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
         return PyNone.Instance;
     }
 
-    /// <summary>The repair in structures is not offered by this repair shop (the structure rules are not built).</summary>
+    /// <summary>The client sends no payment for structure repairs; the V24 repair quote is free.</summary>
     [Method("RepairItemsInStructure")]
-    public PyValue RepairItemsInStructure(ServiceCall call) => throw Notify("Repair in structures is not available.");
+    public ValueTask<PyValue> RepairItemsInStructure(ServiceCall call) => RepairItemsAsync(call, isStructure: true);
 
-    private long BoundStation(ServiceCall call)
+    private async Task<RepairFacility> BoundRepairFacilityAsync(ServiceCall call)
     {
-        if (call.BoundObjectId is not { } oid || !_bound.TryGetValue(oid, out var station) || call.Session.DockedLocationId != station)
+        if (call.BoundObjectId is not { } oid || !_bound.TryGetValue(oid, out var facility) || call.Session.DockedLocationId != facility.Id)
             throw Notify("The repair shop is not available from here.");
-        return station;
+        if (facility.IsStructure)
+        {
+            var structure = structures is null ? null : await structures.GetAsync(facility.Id, call.Cancellation).ConfigureAwait(false);
+            if (structure is null || !structure.Snapshot.CoreInstalled || structure.Snapshot.DestroyedMs != 0)
+                throw Notify("The repair shop is not available in this structure.");
+        }
+        else if (stations.Get(facility.Id) is null)
+        {
+            throw Notify("The repair shop is not available from here.");
+        }
+        return facility;
     }
 
     /// <summary>What one item is quoted with: the item, its health, the cost of one unit of damage, and its condition as the store keeps it.</summary>
@@ -241,10 +264,10 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
     private static bool IsFittedFlag(int flag) => flag is >= 11 and <= 34 or >= 92 and <= 98 or >= 125 and <= 131;
 
     /// <summary>
-    /// An item the caller can repair here: its own, singleton, of a repairable kind, and in this station (through its containers, if any).
+    /// An item the caller can repair here: their own singleton of a repairable kind, inside this facility (through its containers, if any).
     /// Anything else is skipped, as the reference skips it.
     /// </summary>
-    private async Task<bool> AccessibleAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Item item, long character, long station, CancellationToken cancellationToken)
+    private async Task<bool> AccessibleAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Item item, long character, long facility, CancellationToken cancellationToken)
     {
         if (item.OwnerId != character || !item.Singleton) return false;
         var type = await types.GetAsync(item.TypeId, cancellationToken).ConfigureAwait(false);
@@ -252,7 +275,7 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
         var current = item;
         for (var depth = 0; depth < 8; depth++)
         {
-            if (current.LocationId == station) return true;
+            if (current.LocationId == facility) return true;
             var parent = await items.LockAndGetAsync(connection, transaction, current.LocationId, cancellationToken).ConfigureAwait(false);
             if (parent is null) return false;
             current = parent;

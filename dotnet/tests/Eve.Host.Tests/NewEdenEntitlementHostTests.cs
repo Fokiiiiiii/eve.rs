@@ -169,7 +169,7 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
     };
 
     [PgFact]
-    public async Task An_omega_offer_extends_the_end_time_announces_the_grade_and_a_replayed_purchase_extends_nothing()
+    public async Task Omega_offer_checkout_without_settlement_keeps_the_subscription_end_unchanged()
     {
         await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var host = await HostComposition.BuildAsync(Settings());
@@ -180,14 +180,14 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
         var pilot = await CreatePilotAsync(source, station, "Omega Pilot", accountId);
         var session = Enter(host, new Packets(), accountId, pilot, 501);
         var before = await StoredEndAsync(accounts, accountId);
-        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await BuyAsync(host, session, 99, "omega_30_days", "PLX", 1));
-        Assert.Equal("STORE_CHECKOUT_UNAVAILABLE", error.Error.UserErrorMessage);
+        var result = await BuyAsync(host, session, 99, "omega_30_days", "PLX", 1);
+        Assert.Same(PyNone.Instance, result);
         Assert.Equal(before, await StoredEndAsync(accounts, accountId));
         Assert.Equal(0, await PlexBalanceAsync(host, session, 100));
     }
 
     [PgFact]
-    public async Task An_omega_purchase_never_shortens_and_stops_at_the_2100_floor()
+    public async Task Omega_offer_checkout_without_settlement_keeps_the_2100_floor_unchanged()
     {
         await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var host = await HostComposition.BuildAsync(Settings());
@@ -198,14 +198,14 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
         var pilot = await CreatePilotAsync(source, station, "Floor Pilot", accountId);
         var session = Enter(host, new Packets(), accountId, pilot, 511);
         var before = await StoredEndAsync(accounts, accountId);
-        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await BuyAsync(host, session, 99, "cash_omega_90_days", "USD", 1, storeId: 9));
-        Assert.Equal("STORE_CHECKOUT_UNAVAILABLE", error.Error.UserErrorMessage);
+        var result = await BuyAsync(host, session, 99, "cash_omega_90_days", "USD", 1, storeId: 9);
+        Assert.Same(PyNone.Instance, result);
         Assert.Equal(before, await StoredEndAsync(accounts, accountId));
         Assert.Equal(0, await PlexBalanceAsync(host, session, 100));
     }
 
     [PgFact]
-    public async Task A_multiple_character_training_offer_opens_a_free_slot_extends_the_one_that_ends_first_and_notifies_the_account()
+    public async Task Multiple_character_training_offer_without_settlement_keeps_account_unchanged()
     {
         await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var host = await HostComposition.BuildAsync(Settings());
@@ -216,14 +216,14 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
         var pilot = await CreatePilotAsync(source, station, "Training Pilot", accountId);
         var session = Enter(host, new Packets(), accountId, pilot, 521);
         var before = await StoredEndAsync(accounts, accountId);
-        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await BuyAsync(host, session, 99, "mct_slot_30_days", "PLX", 1));
-        Assert.Equal("STORE_CHECKOUT_UNAVAILABLE", error.Error.UserErrorMessage);
+        var result = await BuyAsync(host, session, 99, "mct_slot_30_days", "PLX", 1);
+        Assert.Same(PyNone.Instance, result);
         Assert.Equal(before, await StoredEndAsync(accounts, accountId));
         Assert.Equal(0, await PlexBalanceAsync(host, session, 100));
     }
 
     [PgFact]
-    public async Task A_six_certificate_offer_adds_six_units_of_30_days_across_the_queues()
+    public async Task Six_certificate_offer_without_settlement_keeps_subscription_unchanged()
     {
         await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var host = await HostComposition.BuildAsync(Settings());
@@ -234,8 +234,8 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
         var pilot = await CreatePilotAsync(source, station, "Six Pilot", accountId);
         var session = Enter(host, new Packets(), accountId, pilot, 531);
         var before = await StoredEndAsync(accounts, accountId);
-        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await BuyAsync(host, session, 99, "cash_mct_6", "USD", 1, storeId: 9));
-        Assert.Equal("STORE_CHECKOUT_UNAVAILABLE", error.Error.UserErrorMessage);
+        var result = await BuyAsync(host, session, 99, "cash_mct_6", "USD", 1, storeId: 9);
+        Assert.Same(PyNone.Instance, result);
         Assert.Equal(before, await StoredEndAsync(accounts, accountId));
         Assert.Equal(0, await PlexBalanceAsync(host, session, 100));
     }

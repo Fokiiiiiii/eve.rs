@@ -34,5 +34,21 @@ public partial class HostServerTests
         var matches = Assert.IsType<PyDict>(
             await HostRpcAsync(front, open, 2, "tourneyMgr", "GetPotentialMatches", new PyInt(42_001)));
         Assert.Empty(matches.Entries);
+
+        var series = Assert.IsType<PyDict>(
+            await HostRpcAsync(front, open, 3, "tourneyMgr", "GetAllCurrentSeriesMatchDetails", new PyInt(42_001)));
+        Assert.Empty(series.Entries);
+
+        var details = Assert.IsType<PyDict>(
+            await HostRpcAsync(front, open, 4, "tourneyMgr", "QueryTournamentDetails", new PyInt(42_001)));
+        Assert.Equal(new PyList([]), Assert.IsType<PyList>(TourneyDictField(details, "allowedShipList")));
+        Assert.Equal(new PyInt(0), TourneyDictField(details, "maximumPointsMatch"));
+        Assert.Equal(new PyInt(600), TourneyDictField(details, "matchLength"));
+        Assert.Equal(new PyInt(300), TourneyDictField(details, "overtimeLength"));
+        Assert.Same(PyNone.Instance, TourneyDictField(details, "externalRulesetID"));
     }
+
+    private static PyValue TourneyDictField(PyDict dictionary, string key) =>
+        dictionary.Entries.Single(entry => WireText(entry.Key) == key).Value;
+
 }

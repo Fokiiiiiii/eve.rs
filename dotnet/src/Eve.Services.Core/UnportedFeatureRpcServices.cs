@@ -540,11 +540,16 @@ public sealed partial class TourneyMgrService(TourneyQueryCallback? query = null
 
     [Method("GetAllCurrentSeriesMatchDetails")]
     public ValueTask<PyValue> GetAllCurrentSeriesMatchDetails(ServiceCall call) =>
-        QueryAsync(call, TourneyQuery.GetAllCurrentSeriesMatchDetails, Positive(call.Arg(0)), new PyList([]));
+        QueryAsync(call, TourneyQuery.GetAllCurrentSeriesMatchDetails, Positive(call.Arg(0)), new PyDict([]));
 
     [Method("QueryTournamentDetails")]
     public ValueTask<PyValue> QueryTournamentDetails(ServiceCall call) =>
-        QueryAsync(call, TourneyQuery.QueryTournamentDetails, Positive(call.Arg(0)), PyNone.Instance);
+        QueryAsync(call, TourneyQuery.QueryTournamentDetails, Positive(call.Arg(0)), Py.Dict(
+            ("allowedShipList", new PyList([])),
+            ("maximumPointsMatch", new PyInt(0)),
+            ("matchLength", new PyInt(600)),
+            ("overtimeLength", new PyInt(300)),
+            ("externalRulesetID", PyNone.Instance)));
 
     private ValueTask<PyValue> QueryAsync(ServiceCall call, TourneyQuery queryType, long? tournamentId, PyValue fallback)
     {

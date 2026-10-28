@@ -5894,3 +5894,7 @@ EveJS v0.12.9 implements only `GetCharacterLoadSlot` in this service (`server/sr
 ## bountyProxy GM methods without a server implementation
 
 `bountySvc.py:231,240` exposes the two GM calls, and `svc_slash.py:1529-1536` is their caller. EveJS 261018.1 records and acknowledges both without side effects (`server/src/services/bounty/bountyProxyService.js:630-640`). Host now returns `CustomNotify` for both (`BountyProxyKillRightService.cs:46,273-276`) because the corresponding server mutations are not implemented; this avoids a false success. For `GMClearBountyCache`, the client invalidates its local bountyProxy cache before the RPC (`bountySvc.py:236-240`), so the cache is cleared even though the slash command now surfaces the Host error. Details: `docs/project/service-audit/DEEPCHECK_bountyProxy.md`.
+
+## stationSvc.GetSolarSystem requested-system lookup
+
+RPC-02576 accepts a system ID. V24.01's direct remote caller passes that ID and consumes `factionID` (`eve/devtools/script/insider.py:347-361`). eve.rs resolves the requested system from its SDE catalog and returns its faction ID (`dotnet/src/Eve.Services.Station/StationService.cs:127-147`); EveJS v0.12.9 ignores `args` and returns the session's docked station record (`server/src/services/station/stationService.js:217-239`). Resolving the requested ID is intentional because using the session station would not answer the system requested by the client. The Host packet-loop regression is `StationSolarSystemHostWireTests.Station_GetSolarSystem_uses_the_requested_SDE_system_without_a_docked_station`.

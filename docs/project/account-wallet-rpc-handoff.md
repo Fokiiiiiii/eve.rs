@@ -29,7 +29,7 @@ EveJS comparison: `/home/user/evejs-v0.12.9/server/src/services/account/accountS
 
 The focused regression and its result are complete.
 
-The preceding run records are historical. The current `cx8` worktree was reset to `origin/main`; the prior branch commits are preserved on `backup/cx8-foreign-wip`.
+The preceding run records are historical. This increment's incoming uncommitted changes were preserved on `backup/cx8-foreign-wip-1028a` before continuing from `origin/main`.
 
 ## Wallet persistence re-read
 

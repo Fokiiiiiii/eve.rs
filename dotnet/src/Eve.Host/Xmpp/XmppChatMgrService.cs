@@ -1,3 +1,4 @@
+using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 
@@ -39,8 +40,8 @@ public sealed partial class XmppChatMgrService(XmppChatHub hub)
     [Method("SetMotd")]
     public async Task<PyValue> SetMotd(ServiceCall call)
     {
-        var room = call.Arg(0) is PyStr roomName ? roomName.Value : "";
-        var motd = call.Arg(1) is PyStr text ? text.Value : "";
+        var room = JsSemantics.StringValue(call.Arg(0)) ?? "";
+        var motd = JsSemantics.StringValue(call.Arg(1)) ?? "";
         return await hub.SetCorporationMotdAsync(call.Session, room, motd, call.Cancellation).ConfigureAwait(false)
             ? PyBool.True
             : PyBool.False;
@@ -49,7 +50,7 @@ public sealed partial class XmppChatMgrService(XmppChatHub hub)
     [Method("CreatePlayerOwnedChannel")]
     public async Task<PyValue> CreatePlayerOwnedChannel(ServiceCall call)
     {
-        var name = call.Arg(0) is PyStr displayName ? displayName.Value : "";
+        var name = JsSemantics.StringValue(call.Arg(0)) ?? "";
         var room = await hub.CreatePlayerChannelAsync(call.Session, name, call.Cancellation).ConfigureAwait(false);
         return room is null ? PyNone.Instance : new PyStr(room);
     }
@@ -57,9 +58,9 @@ public sealed partial class XmppChatMgrService(XmppChatHub hub)
     [Method("AddCharacterToChannel")]
     public async Task<PyValue> AddCharacterToChannel(ServiceCall call)
     {
-        var room = call.Arg(0) is PyStr roomName ? roomName.Value.Split('@')[0].Trim() : "";
+        var room = (JsSemantics.StringValue(call.Arg(0)) ?? "").Split('@')[0].Trim();
         var characterId = PositiveId(call.Arg(1));
-        var reason = call.Arg(2) is PyStr text ? text.Value : "";
+        var reason = JsSemantics.StringValue(call.Arg(2)) ?? "";
         return await hub.AddCharacterToChannelAsync(call.Session, room, characterId, reason, call.Cancellation).ConfigureAwait(false)
             ? PyBool.True
             : PyBool.False;
@@ -68,7 +69,7 @@ public sealed partial class XmppChatMgrService(XmppChatHub hub)
     [Method("GrantChannelOwnership")]
     public async Task<PyValue> GrantChannelOwnership(ServiceCall call)
     {
-        var room = call.Arg(0) is PyStr roomName ? roomName.Value.Split('@')[0].Trim() : "";
+        var room = (JsSemantics.StringValue(call.Arg(0)) ?? "").Split('@')[0].Trim();
         return await hub.GrantPlayerChannelOwnershipAsync(call.Session, room, call.Cancellation).ConfigureAwait(false)
             ? PyBool.True
             : PyBool.False;

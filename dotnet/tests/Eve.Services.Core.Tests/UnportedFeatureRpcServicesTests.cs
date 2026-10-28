@@ -107,10 +107,12 @@ public sealed class UnportedFeatureRpcServicesTests
         var tourney = (IService)new TourneyMgrService();
         var setup = Assert.IsType<PyTuple>(await tourney.CallAsync(Call("GetTourneySetup")));
         Assert.Equal(3, setup.Items.Count);
-        Assert.All(setup.Items, item => Assert.Empty(Assert.IsType<PyList>(item).Items));
+        Assert.Empty(Assert.IsType<PyDict>(setup.Items[0]).Entries);
+        Assert.Empty(Assert.IsType<PyDict>(setup.Items[1]).Entries);
+        Assert.Empty(Assert.IsType<PyList>(setup.Items[2]).Items);
         var shipList = Assert.IsType<PyDict>(await tourney.CallAsync(Call("QueryShipList", args: [new PyInt(9)])));
         Assert.Empty(Assert.IsType<PyList>(Field(shipList, "allowedShipList")).Items);
-        Assert.Empty(Assert.IsType<PyList>(await tourney.CallAsync(Call("GetPotentialMatches", args: [new PyInt(9)]))).Items);
+        Assert.Empty(Assert.IsType<PyDict>(await tourney.CallAsync(Call("GetPotentialMatches", args: [new PyInt(9)]))).Entries);
         Assert.Empty(Assert.IsType<PyList>(await tourney.CallAsync(Call("GetAllCurrentSeriesMatchDetails", args: [new PyInt(9)]))).Items);
         Assert.Same(PyNone.Instance, await tourney.CallAsync(Call("QueryTournamentDetails", args: [new PyInt(9)])));
     }

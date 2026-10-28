@@ -128,7 +128,7 @@ public sealed partial class RedeemService
 
     [Method("ReportISKSpammer")]
     public async ValueTask<PyValue> ReportISKSpammer(ServiceCall call) =>
-        await OverrideUserCallAsync(call, PyBool.True);
+        await OverrideUserCallAsync(call, PyBool.False);
 
     /// <summary>
     /// The character logs off in the host (<c>CharacterLogoff</c>). Without that callback no session can be logged off, so the

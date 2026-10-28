@@ -8,16 +8,18 @@ namespace Eve.Host.Tests;
 public partial class HostServerTests
 {
     [Fact]
-    public async Task User_service_activation_and_feedback_rpcs_are_dispatched_through_host_wire()
+    public async Task User_service_compatibility_replies_are_dispatched_through_host_wire()
     {
         var training = new WireMultipleTraining();
         var service = new RedeemService(new WireRedeemCallbacks(), multipleTraining: training)
         {
             ActivateReSculpt = (userId, itemId, _) => ValueTask.FromResult(userId == 7 && itemId == 99),
         };
+        ClientSession? openedSession = null;
         Start(configure: registry => registry.Register(service), strictRpc: true,
             sessionOpened: session =>
             {
+                openedSession = session;
                 session.UserId = 7;
                 session.CharacterId = 42;
             });
@@ -78,6 +80,28 @@ public partial class HostServerTests
         Assert.Equal(PyBool.True, await Call("ReverseRedeem", [new PyLong(456)]));
         Assert.Equal(PyBool.True, await Call("TrashRedeemTokens", [tokens]));
         Assert.Equal(PyBool.True, await Call("ReportBot", [new PyLong(43)]));
+        Assert.Equal(new PyLong(132_000_000_000_000_000L), await Call("GetCreateDate", []));
+        Assert.Equal(new PyInt(0), await Call("GetSessionPlaytimeMinutes", []));
+        Assert.Equal("user-7", System.Text.Encoding.ASCII.GetString(
+            Assert.IsType<PyBytes>(await Call("GetUserName", [new PyLong(7)])).Value.Span));
+        Assert.Equal(PyBool.False, await Call("ReportISKSpammer",
+            [new PyLong(43), new PyStr("local"), new PyList([])]));
+
+        openedSession!.Set("accountRole", new PyLong(GameMasterRoles.Qa));
+        Assert.Equal(PyBool.False, await Call("CreateRedeemTokenQA", [],
+            ("userID", new PyLong(7)),
+            ("typeID", new PyInt(34)),
+            ("quantity", new PyInt(1)),
+            ("blueprintRuns", new PyInt(0)),
+            ("blueprintMaterialLevel", new PyInt(0)),
+            ("blueprintProductivityLevel", new PyInt(0)),
+            ("expiry", PyNone.Instance),
+            ("label", new PyStr("wire test")),
+            ("description", new PyStr("wire test")),
+            ("addedByContext", new PyInt(1)),
+            ("addedByExtra", PyNone.Instance),
+            ("available", PyBool.True),
+            ("soulbound", PyBool.False)));
 
         Assert.Equal(7L, training.ItemActivation.UserId);
         Assert.Equal(123L, training.ItemActivation.ItemId);

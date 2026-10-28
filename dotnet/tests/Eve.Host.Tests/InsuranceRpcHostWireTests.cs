@@ -187,10 +187,24 @@ public sealed class InsuranceRpcHostWireTests : IAsyncLifetime
                 new PyReal(quote.PremiumCents / 100d), PyBool.False)).AsTask());
         Assert.Equal("InsureShipFailedSingleContract", duplicate.Error.UserErrorMessage);
 
-        Assert.Same(PyNone.Instance, await insurance.CallAsync(Call(session, "UnInsureShip", 9, new PyLong(shipId))));
-        Assert.Same(PyNone.Instance, await insurance.CallAsync(Call(session, "GetContractForShip", 10, new PyLong(shipId))));
-        Assert.Empty(Assert.IsType<PyList>(await insurance.CallAsync(Call(session, "GetContracts", 11))).Items);
-        Assert.Equal(1_000_000m - quote.PremiumCents / 100m,
+        Assert.Same(PyNone.Instance, await insurance.CallAsync(new ServiceCall
+        {
+            Session = session,
+            Method = "InsureShip",
+            Args = [new PyLong(shipId), new PyReal(quote.PremiumCents / 100d), PyBool.False],
+            Kwargs = new PyDict([new(new PyStr("voidOld"), PyBool.True)]),
+            CallId = new PyInt(9),
+        }));
+        var replacement = Assert.IsType<PyObject>(await insurance.CallAsync(Call(session, "GetContractForShip", 10, new PyLong(shipId))));
+        Assert.NotEqual(Field(contract, "contractID"), Field(replacement, "contractID"));
+        var replacementContracts = Assert.IsType<PyList>(await insurance.CallAsync(Call(session, "GetContracts", 11)));
+        Assert.Single(replacementContracts.Items);
+        var walletAfterReplacement = (await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).GetAsync(characterId))!.Isk;
+
+        Assert.Same(PyNone.Instance, await insurance.CallAsync(Call(session, "UnInsureShip", 12, new PyLong(shipId))));
+        Assert.Same(PyNone.Instance, await insurance.CallAsync(Call(session, "GetContractForShip", 13, new PyLong(shipId))));
+        Assert.Empty(Assert.IsType<PyList>(await insurance.CallAsync(Call(session, "GetContracts", 14))).Items);
+        Assert.Equal(walletAfterReplacement,
             (await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).GetAsync(characterId))!.Isk);
     }
 }

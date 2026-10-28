@@ -1,4 +1,3 @@
-using System.Net;
 using System.Net.Sockets;
 using Eve.Characters;
 using Eve.Bookmarks;
@@ -108,7 +107,9 @@ internal sealed partial class CharacterServicesComposition
                     folderId, memo, note, expiryMode, subfolderId));
         }
         services = [.. services, bookmarkService];
-        services = [.. services, new ActivityMgrService()];
+        services = [.. services, new ActivityMgrService(new CharacterSettingsActivityMgrStateStore(
+            charMgrReadModel.ReadAsync,
+            charMgrReadModel.UpdateAsync))];
         return Task.CompletedTask;
     }
 }

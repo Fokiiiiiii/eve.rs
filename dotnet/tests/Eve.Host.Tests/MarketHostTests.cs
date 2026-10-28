@@ -564,11 +564,21 @@ public sealed class MarketHostTests : IAsyncLifetime
         var cancelledBids=Assert.IsType<PyObject>(Received(await market.CallAsync(Call(buyerSession,"GetCharOrders",25))));
         Assert.Empty(Lines(cancelledBids));
 
+        await market.CallAsync(Call(buyerSession,"PlaceBuyOrder",26,new PyLong(structureId),new PyInt(Tritanium),
+            new PyReal(5),new PyInt(1),new PyInt(-1),new PyInt(1),new PyInt(90),PyBool.False,PyNone.Instance));
+        var openBidRows=Assert.IsType<PyObject>(Received(await market.CallAsync(Call(buyerSession,"GetCharOrders",27))));
+        var openBid=Assert.IsType<PyTuple>(Assert.Single(Lines(openBidRows)));
+        var openBidId=Assert.IsType<PyLong>(openBid.Items[0]).Value;
+
         await host.ShutdownAsync();
         _shutdownHost=null;
         var restarted=await HostComposition.BuildAsync(Settings());
         _shutdownHost=()=>restarted.ShutdownAsync();
         var recovered=restarted.Registry.Lookup("marketProxy") ?? throw new InvalidOperationException("marketProxy is not registered after restart");
+        var recoveredOrderRows=Assert.IsType<PyObject>(Received(await recovered.CallAsync(Call(buyerSession,"GetCharOrders",28))));
+        var recoveredOrder=Assert.IsType<PyTuple>(Assert.Single(Lines(recoveredOrderRows)));
+        Assert.Equal(openBidId,Assert.IsType<PyLong>(recoveredOrder.Items[0]).Value);
+        Assert.Equal(new PyInt(1),recoveredOrder.Items[9]);
         book=Assert.IsType<PyTuple>(Received(await recovered.CallAsync(Call(buyerSession,"GetOrders",16,new PyInt(Tritanium)))));
         Assert.DoesNotContain(Lines(book.Items[0]),row=>
             Assert.IsType<PyTuple>(row).Items[10]==new PyLong(structureId));

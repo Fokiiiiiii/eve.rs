@@ -70,9 +70,9 @@ public static class NpcBounty
     /// <summary>The journal entry type a bucket is paid under.</summary>
     public static int RefType(int kills) => kills > 1 ? PrizesRefType : PrizeRefType;
 
-    /// <summary>The corporation's ISK tax of a payout: none below <see cref="MinimumCorporationTax"/>, else the rate of the amount to the cent.</summary>
+    /// <summary>The corporation's ISK tax of a payout: none at or below <see cref="MinimumCorporationTax"/>, else the rate of the amount to the cent.</summary>
     public static decimal CorporationTaxOf(decimal amount, decimal taxRate) =>
-        amount >= MinimumCorporationTax && taxRate > 0 ? Money(amount * Math.Min(1m, taxRate)) : 0m;
+        amount > MinimumCorporationTax && taxRate > 0 ? Money(amount * Math.Min(1m, taxRate)) : 0m;
 
     /// <summary>
     /// The description of a paid bucket with the corporation's tax line appended (<c>buildCorporationTaxDescription</c>): a top-level

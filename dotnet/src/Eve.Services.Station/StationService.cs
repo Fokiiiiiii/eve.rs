@@ -139,6 +139,7 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
                 new PyInt(Math.Max(0, sessionsByCharacter.GetValueOrDefault(character.Id)?.GetInt("warfactionid") ?? 0))))]);
     }
 
+
     /// <summary>Returns the requested SDE system, or the current station record when no system ID is supplied.</summary>
     [Method("GetSolarSystem")]
     public PyValue GetSolarSystem(ServiceCall call)

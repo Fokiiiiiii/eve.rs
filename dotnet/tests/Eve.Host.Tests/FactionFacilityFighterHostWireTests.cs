@@ -61,6 +61,16 @@ public partial class HostServerTests
             var packet = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(response.Payload)));
             Assert.Equal(MachoMessage.ErrorResponse, packet.Type);
         }
+        async Task DirectorRefused(string method, PyValue[] args)
+        {
+            var response = await Exchange("facWarMgr", method, args);
+            var packet = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(response.Payload)));
+            Assert.Equal(MachoMessage.ErrorResponse, packet.Type);
+            var wire = System.Text.Encoding.ASCII.GetString(response.Payload.Span);
+            Assert.Contains("eveexceptions.UserError", wire);
+            Assert.Contains("CustomInfo", wire);
+            Assert.Contains("UI/FactionWarfare/DirectorRequired", wire);
+        }
 
         // These fallback collection shapes and errors are consumed directly by facilitySvc.
         Assert.Equal(new PyList([]), await Call("facilityManager", "GetFacilities"));
@@ -84,9 +94,10 @@ public partial class HostServerTests
             ("WithdrawLeaveFactionAsAlliance", [new PyInt(500_001)]),
             ("WithdrawLeaveFactionAsCorporation", [new PyInt(500_001)]),
         })
-            await Refused("facWarMgr", method, args);
+            await DirectorRefused(method, args);
 
-        Assert.Same(PyNone.Instance, await Call("facWarMgr", "RefreshCorps"));
+        Assert.False(facWar.HasMethod("RefreshCorps"));
+        Assert.False(facWar.HasMethod("GetStats_CorpPilots"));
 
         // Exercise the normal multi-fighter batch and point-target activation transport shapes.
         var fighterIds = new PyList([new PyInt(90_001), new PyInt(90_002), new PyInt(90_003)]);

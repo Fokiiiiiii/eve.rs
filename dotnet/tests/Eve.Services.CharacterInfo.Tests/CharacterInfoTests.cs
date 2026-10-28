@@ -952,7 +952,7 @@ public class CharMgrTests
         Assert.Equal(PyNone.Instance,await Rig.CallAsync(service,session,"EditLabel",contactLabelId,new PyWString(contactLabelName),Id(6)));
 
         var ownerNoteRefusal = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
-            Rig.CallAsync(service, session, "AddOwnerNote", new PyStr("Long"), new PyWString(new string('x', 3901))));
+            Rig.CallAsync(service, session, "AddOwnerNote", new PyStr("Long"), new PyWString(new string('x', 6001))));
         Assert.Equal(MachoErrors.UserErrorClass, ownerNoteRefusal.Error.ClassName);
         var ownerErrorHeader = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(ownerNoteRefusal.Error.Payload).Header);
         Assert.Equal(new PyStr("CHARMGR_NOTE_LIMIT_EXCEEDED"),
@@ -966,7 +966,7 @@ public class CharMgrTests
             Assert.IsType<PyTuple>(labelErrorHeader.Items[1]).Items[0]);
 
         var editRefusal = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
-            Rig.CallAsync(service, session, "EditOwnerNote", Id(2), PyNone.Instance, new PyWString(new string('x', 3901))));
+            Rig.CallAsync(service, session, "EditOwnerNote", Id(2), PyNone.Instance, new PyWString(new string('x', 6001))));
         Assert.Equal(MachoErrors.UserErrorClass, editRefusal.Error.ClassName);
         var editErrorHeader = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(editRefusal.Error.Payload).Header);
         Assert.Equal(new PyStr("CHARMGR_NOTE_LIMIT_EXCEEDED"),

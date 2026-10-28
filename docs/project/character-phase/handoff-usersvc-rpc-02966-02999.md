@@ -39,3 +39,7 @@ The userSvc focused regression passed on pushed SHA `50cac5ce` in Actions run `4
 The corrected RPC inventory test passed in Actions run `40194435324` on SHA `14fd06d5`. The push-triggered CI on descendant SHA `54f56fe0` passed all jobs in run `40195015477`.
 
 Push CI run `40196410619` on SHA `21f001cbbc1c` found a duplicate `Value(PyDict, string)` helper across partial `HostServerTests` files. The duplicate was removed from `DynamicResourceCacheMgrHostTests.cs`; focused Host regression `Dynamic_resource_cache_reads_are_returned_through_host_wire` passed in Actions run `40197253258` on SHA `ae28824a`. Push CI run `40197245182` on SHA `ae28824a` completed successfully with no failed tests or jobs.
+
+## Whole-service userSvc deep check (2026-10-28)
+
+The broader V24.01 audit covers all 20 player RPC methods plus the proxy-only ProcessEVESessionCreated event, and records every client caller, consumed reply, Host error/state/notification path, and EveJS comparison in docs/project/service-audit/DEEPCHECK_userSvc.md. It adds real TCP Host regressions for redeem rowset omissions, MCT CustomInfo and new-slot None handling, and generic exception responses. Focused Host tests passed (3/3). The full Host shard ran with EVE_PG_URL unset: 561 passed, 100 tests failed in database-required setup, 227 skipped. PostgreSQL and the graphical client were not used.

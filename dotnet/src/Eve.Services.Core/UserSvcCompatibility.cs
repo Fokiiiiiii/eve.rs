@@ -54,10 +54,18 @@ public sealed partial class RedeemService
     {
         call.Cancellation.ThrowIfCancellationRequested();
         var requestedTraining = call.Args.Count > 2 ? call.Arg(2) : call.Kwarg("trainingID") ?? PyNone.Instance;
-        var slots = _multipleTraining is null
-            ? []
-            : await _multipleTraining.ActivateCertificatesAsync(AuthenticatedUserId(call), call.Arg(1), TrainingSlotArgument(requestedTraining), call.Cancellation);
-        return new PyList([.. slots.Select(slot => (PyValue)Py.Tuple(new PyInt(slot.Slot), Py.FileTimeLong(slot.EndsAt)))]);
+        if (_multipleTraining is null)
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Multiple Character Training is not available on this server.")));
+        try
+        {
+            var slots = await _multipleTraining.ActivateCertificatesAsync(
+                AuthenticatedUserId(call), call.Arg(1), TrainingSlotArgument(requestedTraining), call.Cancellation);
+            return new PyList([.. slots.Select(slot => (PyValue)Py.Tuple(new PyInt(slot.Slot), Py.FileTimeLong(slot.EndsAt)))]);
+        }
+        catch (InvalidOperationException error)
+        {
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr(error.Message)));
+        }
     }
 
     /// <summary>
@@ -224,11 +232,21 @@ internal static class UserSvcCompatibility
     public static PyValue RedeemTokenRowset(PyValue value)
     {
         if (value is not PyList rows) return value;
+        var now = DateTime.UtcNow.ToFileTimeUtc();
         var packedRows = rows.Items
             .Where(item => item is PyDict or PyObject { Args: PyDict } or PyObjectEx { Dict.Count: > 0 })
+            .Where(item => IsAvailableRedeemToken(item, now))
             .Select(item => (PyValue)new PyPackedRow(Descriptor, RedeemTokenValues(item)))
             .ToArray();
         return new PyObjectEx(ObjectExKind.Ex2, RowsetHeader, packedRows, []);
+    }
+
+    private static bool IsAvailableRedeemToken(PyValue token, long now)
+    {
+        var available = Field(token, "available");
+        if (available is not null && available is not PyNone && !Boolean(available)) return false;
+        var expiresAt = Integer(Field(token, "expireDateTime"));
+        return expiresAt <= 0 || expiresAt > now;
     }
 
     private static IReadOnlyList<PyValue> RedeemTokenValues(PyValue token)

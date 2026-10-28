@@ -46,7 +46,11 @@ public partial class HostServerTests
                 return ValueTask.FromResult<CharMgrPersonalData?>(personal);
             },
             readCharacterById: (id, _) =>
-                ValueTask.FromResult<Character?>(id == characterId ? character : null));
+                ValueTask.FromResult<Character?>(id == characterId ? character : null),
+            readOrganizationInfo: (rows, _) => ValueTask.FromResult<IReadOnlyDictionary<long, CharMgrOrganizationInfo>>(
+                rows.ToDictionary(row => row.Id, _ => new CharMgrOrganizationInfo(1_000_002, 1_000_003, 1_000_004))),
+            readCharactersByIds: (ids, _) => Task.FromResult<IReadOnlyList<Character>>(
+                ids.Contains(characterId) ? [character] : []));
 
         Start(
             configure: registry => registry.Register(service),
@@ -112,9 +116,16 @@ public partial class HostServerTests
         Assert.Empty(Assert.IsType<PyList>(
             PersonalWireField(PersonalWireField(contacts, "addresses"), "lines")).Items);
 
-        Assert.Empty(Assert.IsType<PyDict>(await CallOverHost(
+        var organizationInfo = Assert.IsType<PyDict>(await CallOverHost(
             front, open, 12, "charMgr", "GetOrganizationInfoForCharacters",
-            Py.Tuple(new PyList([])))).Entries);
+            Py.Tuple(new PyList([new PyLong(characterId)]))));
+        var organization = Assert.Single(organizationInfo.Entries);
+        Assert.Equal(new PyInt(characterId), organization.Key);
+        var organizationRow = Assert.IsType<PyObject>(organization.Value);
+        Assert.Equal("util.KeyVal", T(organizationRow.Name));
+        Assert.Equal(new PyInt(1_000_002), PersonalWireField(organizationRow, "corporationID"));
+        Assert.Equal(new PyInt(1_000_003), PersonalWireField(organizationRow, "allianceID"));
+        Assert.Equal(new PyInt(1_000_004), PersonalWireField(organizationRow, "warFactionID"));
     }
 
     [Fact]

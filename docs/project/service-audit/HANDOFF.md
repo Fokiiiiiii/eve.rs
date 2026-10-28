@@ -233,3 +233,8 @@ Corrected RPC-02136 and RPC-02137 as `CLIENT-LOCAL` in `EVE_RS_COVERAGE.csv` and
 ### 2026-10-28: `scanMgr.GetSystemScanMgr` and `SignalTrackerRegister`
 
 RPC-02222–RPC-02225 are live normal-player calls. The whole-client call/consumer chain and file:line evidence are recorded in `CLIENT_VERIFIED.md`. The production `scanMgr` route is part of `CharacterServiceList` via `DungeonRpc`; the Host wire-test source checks the bound reference, four-map reply, `None` registration reply and subsequent `OnSignalTrackerFullState` notification. Snapshot data comes from the incursion read model. The listener is tied to the active session, so it is not durable gameplay state. Current scope has anomaly rows only; signatures, static sites and structures remain empty in the producer. No test was executed for this docs-only update, and no graphical-client check is recorded.
+
+
+### 2026-10-28: `sovMgr` sovereignty and skyhook rows
+
+RPC-02548–RPC-02560 are normal-player UI paths, not dead wrappers. Whole-client call and consumer evidence is in `CLIENT_VERIFIED.md`. Production registration is `CharacterServiceList -> ItemRpc -> SovFwService.Create`; reads come from the saved sovereignty table and writes use the authorized persistence operations. The Host wire tests cover the read ObjectEx/list/bool shapes, fuel group round-trip and skyhook ID lists; a separate Host writer test covers authorized persistence and read-back. No new test execution or graphical-client check is recorded for this docs-only update. Remaining N-S work is POS, ship and shipcaster gaps plus the other structure rows.

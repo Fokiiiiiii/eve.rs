@@ -139,7 +139,16 @@ internal sealed partial class CharacterServicesComposition
                 CanActAsCorporationDirectorAsync: async (characterId, corporationId, cancellationToken) =>
                     await corporations.HasRoleAsync(characterId, corporationId, Eve.Corporations.CorporationRoles.Director, cancellationToken),
                 CanActAsAllianceExecutorDirectorAsync: async (characterId, allianceId, cancellationToken) =>
-                    await corporations.CanActAsAllianceExecutorDirectorAsync(characterId, allianceId, cancellationToken))),
+                    await corporations.CanActAsAllianceExecutorDirectorAsync(characterId, allianceId, cancellationToken),
+                ReadWarFactionAsync: async (characterId, cancellationToken) =>
+                {
+                    var character = await characters.GetAsync(characterId, cancellationToken);
+                    if (character is null)
+                        return 0;
+                    var corporationFaction = Eve.Services.Corporations.CorporationWire.FactionId(
+                        await corporations.GetAsync(character.CorporationId, cancellationToken));
+                    return character.DirectFactionId ?? corporationFaction ?? 0;
+                })),
             new Eve.Services.Core.InsurgencySolarsystemService(new Eve.Services.Core.InsurgencySolarsystemRpcCallbacks(ReadInsurgencyCampaignsAsync)),
             new Eve.Services.Core.AlertService(),
             new Eve.Services.Core.FighterMgrService { Provider = FighterProvider() },

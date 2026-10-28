@@ -79,10 +79,15 @@ def test_a_spawned_rat_locks_the_pilot_and_shoots_it():
             if event["name"] == "OnDamageMessage" and "otherPlayerWeapons" in str(event)
         )
         assert spawn_index < lock_index < fx_index < incoming_index, [event["name"] for event in flow]
-        assert any(
-            event["name"] == "OnDamageStateChange" and str(ship_id) in str(event)
-            for event in flow
-        ), "the client's ship damage state did not change after the rat hit it"
+        damage_state_index = next(
+            (
+                i for i, event in enumerate(flow)
+                if event["name"] == "OnDamageStateChange" and str(ship_id) in str(event)
+            ),
+            None,
+        )
+        assert damage_state_index is not None, "the client's ship damage state did not change after the rat hit it"
+        assert incoming_index < damage_state_index, [event["name"] for event in flow]
         names = [e["name"] for e in seen]
         actions = set().union(*(_names(e) for e in seen if e["name"] == "DoDestinyUpdate"))
         # the ball comes into space, the rat orbits the pilot, locks it and shoots it

@@ -55,7 +55,10 @@ public partial class HostServerTests
                 "GetKillMail",
                 new PyTuple([new PyLong(id), new PyStr(hash)]),
                 new PyDict([new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1))])))));
-            return Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload))!;
+            var response = MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
+            var responsePacket = Assert.IsType<MachoPacket>(MachoPacket.Decode(response));
+            Assert.Equal(callId, (long)JsSemantics.NumberValue(responsePacket.CallId));
+            return Result(response)!;
         }
 
         var killmail = Assert.IsType<PyObject>(await Call(1, killId, expectedHash));
@@ -67,6 +70,8 @@ public partial class HostServerTests
         Assert.Equal(killId, loadedKillId);
 
         Assert.Equal(PyNone.Instance, await Call(2, killId, "wrong-hash"));
-        Assert.Equal(PyNone.Instance, await Call(3, killId + 1, expectedHash));
+        var missingKillmail = await Call(3, killId + 1, expectedHash);
+        Assert.Equal(killId + 1, loadedKillId);
+        Assert.Equal(PyNone.Instance, missingKillmail);
     }
 }

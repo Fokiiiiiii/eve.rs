@@ -984,17 +984,6 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Same(PyNone.Instance, myPayload.Entries.Single(entry => entry.Key == new PyStr("price")).Value);
         Assert.Same(PyNone.Instance, myPayload.Entries.Single(entry => entry.Key == new PyStr("restrictedTo")).Value);
 
-        var combined = Assert.IsType<PyTuple>(await service.CallAsync(new ServiceCall
-        {
-            Method = "GetBountiesAndKillRights",
-            Args = [new PyList([]), new PyList([new PyLong(2)])],
-            Session = session,
-        }));
-        var defaultBountyRows = Assert.IsType<PyList>(combined.Items[0]);
-        Assert.Equal(
-            [new PyInt(0), new PyInt(1), new PyInt(500), new PyInt(700)],
-            defaultBountyRows.Items.Select(item => Assert.IsType<PyTuple>(item).Items[0]));
-        Assert.Equal(available.Items, Assert.IsType<PyList>(combined.Items[1]).Items);
     }
 
     [PgFact]

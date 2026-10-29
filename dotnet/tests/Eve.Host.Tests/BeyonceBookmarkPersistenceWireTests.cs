@@ -95,7 +95,8 @@ public partial class HostServerTests
             await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
                 Packets.CallWithKwargs(open, 1, "beyonce", "MachoBindObject", boundArgs, transportKwargs))));
 
-            Assert.Same(PyNone.Instance, Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
+            var response = Assert.IsType<PyTuple>(Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
+            Assert.Same(PyNone.Instance, response.Items[1]);
             var command = Assert.Single(recorder.Commands);
             Assert.Equal(SimCommands.AlignTo, command.Command);
             Assert.Equal((double)targetItemId, Assert.Single(command.Args));

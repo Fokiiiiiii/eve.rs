@@ -89,7 +89,7 @@ def test_a_spawned_rat_locks_the_pilot_and_shoots_it():
             None,
         )
         assert damage_state_index is not None, "the client's ship damage state did not update after the rat hit it"
-        assert incoming_index < damage_state_index, [event["name"] for event in flow]
+        assert lock_index < damage_state_index < incoming_index, [event["name"] for event in flow]
         names = [e["name"] for e in seen]
         actions = set().union(*(_names(e) for e in seen if e["name"] == "DoDestinyUpdate"))
         # the ball comes into space, the rat orbits the pilot, locks it and shoots it
@@ -175,7 +175,7 @@ def test_a_pilot_who_shoots_a_rat_dead_is_told_of_its_bounty():
         capacitor_updates = [update for update in capacitor_updates if update[0] > activation_index]
         assert capacitor_updates, "the client did not receive the pilot ship's capacitor changes after its gun activated"
         assert (
-            activation_index < capacitor_updates[0][0] < shot_index < removal_index
+            activation_index < shot_index < capacitor_updates[0][0] < removal_index
         ), [event["name"] for event in seen]
 
         # the wreck the host made comes into space where the rat was (a little after the bounty: it is an item first), the pilot opens it, and what it holds is what its slim item says

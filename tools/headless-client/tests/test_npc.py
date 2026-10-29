@@ -168,7 +168,7 @@ def test_a_pilot_who_shoots_a_rat_dead_is_told_of_its_bounty():
             (i, item, new, old)
             for i, event in enumerate(seen) if event["name"] == "OnModuleAttributeChanges"
             for item, attribute, new, old in changes_of(event)
-            if number(item) == ship_id and attribute == CAPACITOR and new != old
+            if i > activation_index and number(item) == ship_id and attribute == CAPACITOR and new != old
         ]
         assert capacitor_updates, "the client did not receive the pilot ship's capacitor changes while its gun fired"
         assert (

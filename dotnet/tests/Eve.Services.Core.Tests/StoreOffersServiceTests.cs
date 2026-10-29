@@ -109,15 +109,16 @@ public sealed class StoreOffersServiceTests
     }
 
     [Fact]
-    public async Task Valid_catalog_offer_is_advertised_and_checkout_returns_none_without_settlement_provider()
+    public async Task Offer_without_settlement_is_hidden_and_checkout_fails_explicitly()
     {
         var service = Service(StoreState("PLX"));
         var availability = Assert.IsType<PyDict>(await service.CallAsync(Request("can_purchase_offer", new PyInt(100))));
 
-        Assert.Equal(PyBool.True, availability.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == "canPurchase").Value);
-        Assert.Equal(new PyInt(100), availability.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == "offerID").Value);
-        Assert.Same(PyNone.Instance, availability.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == "purchaseLimitedReason").Value);
-        Assert.Same(PyNone.Instance, await service.CallAsync(PurchaseCall("PLX")));
+        Assert.Equal(PyBool.False, availability.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == "canPurchase").Value);
+        Assert.Same(PyNone.Instance, availability.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == "offerID").Value);
+        Assert.Equal(new PyStr("payment_unavailable"), availability.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == "purchaseLimitedReason").Value);
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.CallAsync(PurchaseCall("PLX")));
+        Assert.Equal("STORE_CHECKOUT_UNAVAILABLE", error.Error.UserErrorMessage);
     }
 
     [Fact]
@@ -157,10 +158,12 @@ public sealed class StoreOffersServiceTests
     }
 
     [Fact]
-    public async Task Buy_offer_requires_a_settlement_provider_and_fails_when_it_rejects()
+    public async Task Buy_offer_fails_without_a_settlement_provider_and_returns_none_when_rejected()
     {
         var call = PurchaseCall("PLX");
-        Assert.Same(PyNone.Instance, await Service(StoreState("PLX")).CallAsync(call));
+        var unavailable = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await Service(StoreState("PLX")).CallAsync(call));
+        Assert.Equal("STORE_CHECKOUT_UNAVAILABLE", unavailable.Error.UserErrorMessage);
 
         var providerCalls = 0;
         var rejectingProvider = Service(StoreState("PLX"), (_, _) =>

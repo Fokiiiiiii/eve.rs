@@ -2,8 +2,9 @@
 
     EVE_LIVE_HOST=host:port pytest tests/test_user_votes_live.py
 
-A new account enters a new character, then casts an upvote and a downvote and files a bot report and an ISK spam report. Each
-answers true, as the reference does; the client reads no answer. The playtime read answers 0 (no stored source; see DEVIATIONS).
+A new account enters a new character, then casts an upvote and a downvote and files a bot report and an ISK spam report. Votes and
+bot reports answer true. An ISK spam report answers false because the Host has no report sink; the V24.01 caller ignores that reply.
+The playtime read answers 0 (no stored source; see DEVIATIONS).
 Skipped unless EVE_LIVE_HOST is set.
 """
 
@@ -27,12 +28,12 @@ def enter_new_character(client, run: str) -> int:
     client.call("charUnboundMgr", "SelectCharacterID", charID=character_id, secondChoiceID=None, skipTutorial=False)
     return character_id
 
-def test_votes_and_reports_answer_true_and_playtime_answers_zero():
+def test_votes_and_reports_follow_host_capabilities_and_playtime_answers_zero():
     run = uuid.uuid4().hex[:10]
     with connect(f"votes-{run}") as client:
         enter_new_character(client, run)
         assert m.plain(client.call("userSvc", "CastUpvote")) is True
         assert m.plain(client.call("userSvc", "CastDownvote", "feedback")) is True
         assert m.plain(client.call("userSvc", "ReportBot", 90000004)) is True
-        assert m.plain(client.call("userSvc", "ReportISKSpammer", 90000004)) is True
+        assert m.plain(client.call("userSvc", "ReportISKSpammer", 90000004)) is False
         assert m.plain(client.call("userSvc", "GetSessionPlaytimeMinutes")) == 0

@@ -56,7 +56,8 @@ jobs:
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: eve
-          POSTGRES_INITDB_ARGS: "-c max_connections=400 -c shared_buffers=512MB -c fsync=off -c full_page_writes=off -c synchronous_commit=off"
+          # Keep the SDE import checkpoint out of the fast-training RPC walk.
+          POSTGRES_INITDB_ARGS: "-c max_connections=400 -c shared_buffers=512MB -c fsync=off -c full_page_writes=off -c synchronous_commit=off -c checkpoint_timeout=30min -c max_wal_size=4GB"
         ports:
           - 5432:5432
         options: >-

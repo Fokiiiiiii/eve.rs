@@ -289,6 +289,44 @@ private bool CanAccessRoom(ClientSession? session, long characterId, string room
     internal static string LocalRoomInfoXml(string room) =>
         $"<identity category='conference' type='text' name='{XmppXml.Escape(room)}'/><feature var='{DiscoItemsNamespace}'/><feature var='{DiscoInfoNamespace}'/><feature var='{MucNamespace}'/><feature var='muc_temporary'/><feature var='muc_open'/>";
 
+    internal bool TryGetLocalRoomAdminItemsXml(XmppLink link, string room, string queryAttribute, string queryValue, out string xml)
+    {
+        xml = "";
+        if (!ValidRoomName(room) || !CanAccessRoom(SessionOf(link.CharacterId), link.CharacterId, room))
+            return false;
+        var actorIsOwner = PlayerChannels?.Get(room)?.OwnerCharacterId == link.CharacterId;
+        var actorIsStaff = (link.AccountRole & (Eve.Services.GameMasterRoles.ChatAdministrator | Eve.Services.GameMasterRoles.Gml)) != 0;
+        if (!actorIsOwner && !actorIsStaff)
+            return false;
+        if (queryAttribute is not ("affiliation" or "role")
+            || queryAttribute == "affiliation" && queryValue is not ("owner" or "admin" or "member")
+            || queryAttribute == "role" && queryValue is not ("moderator" or "participant"))
+            return false;
+
+        var ownerId = PlayerChannels?.Get(room)?.OwnerCharacterId;
+        lock (_gate)
+        {
+            xml = string.Concat(_occupants
+                .Where(pair => pair.Key.Room == room
+                    && (pair.Value.Link.AccountRole & Eve.Services.GameMasterRoles.ChtInvisible) == 0)
+                .Select(pair =>
+                {
+                    var occupant = pair.Value;
+                    var owner = ownerId == occupant.Link.CharacterId;
+                    var staff = (occupant.Link.AccountRole & (Eve.Services.GameMasterRoles.ChatAdministrator | Eve.Services.GameMasterRoles.Gml)) != 0;
+                    var affiliation = owner ? "owner" : staff ? "admin" : "member";
+                    var role = owner || staff ? "moderator" : "participant";
+                    var actual = queryAttribute == "affiliation" ? affiliation : role;
+                    if (actual != queryValue)
+                        return "";
+                    var jid = $"{occupant.Link.CharacterId.ToString(System.Globalization.CultureInfo.InvariantCulture)}@{occupant.Link.Domain}";
+                    return $"<item jid='{XmppXml.Escape(jid)}' affiliation='{affiliation}' role='{role}'/>";
+                })
+                .ToArray());
+        }
+        return true;
+    }
+
     private string RoomJid(string room, string nickname) => $"{room}@{ConferenceDomain}/{nickname}";
 
     private string Presence(string room, XmppOccupant occupant, string to, bool selfPresence)

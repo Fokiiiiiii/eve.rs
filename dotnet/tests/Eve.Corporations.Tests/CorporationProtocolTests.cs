@@ -156,6 +156,55 @@ public sealed class WarsInfoMgrServiceTests
         Assert.Equal(created.WarId,Number(war.Values[0]));
     }
 
+    [Eve.Corporations.Tests.PgFact]
+    public async Task Mutual_war_invites_and_blocking_are_read_from_persisted_relations_after_restart()
+    {
+        await using var rig = await WarRig.CreateAsync();
+        var initial = new Eve.Services.Corporations.MutualWarInviteRuntimeState(
+            rig.Source, rig.Relations, null, () => rig.Now, (_, _, _) => Task.FromResult(true));
+        var rpc = new MutualWarInviteMgrService(
+            initial.ReadPendingInvitesAsync,
+            initial.ReadInvitesBlockedAsync,
+            initial.SendInviteByPlayerAsync,
+            initial.WithdrawInviteByPlayerAsync,
+            initial.RespondToInviteByPlayerAsync,
+            initial.SetInvitesBlockedByPlayerAsync);
+        var sender = new Eve.Services.ClientSession { CharacterId = 101 };
+        sender.Set("corpid", new Eve.Marshal.PyLong(1001));
+        var recipient = new Eve.Services.ClientSession { CharacterId = 201 };
+        recipient.Set("corpid", new Eve.Marshal.PyLong(2001));
+        var blocked = new Eve.Services.ClientSession { CharacterId = 202 };
+        blocked.Set("corpid", new Eve.Marshal.PyLong(2002));
+
+        Assert.IsType<Eve.Marshal.PyNone>(await rpc.SendInviteByPlayer(Call("SendInviteByPlayer", sender, new Eve.Marshal.PyInt(2001))));
+        Assert.IsType<Eve.Marshal.PyNone>(await rpc.SetInvitesBlockedByPlayer(Call("SetInvitesBlockedByPlayer", blocked, Eve.Marshal.PyBool.True)));
+
+        var (_, _, relations) = rig.Reopen();
+        var afterRestart = new Eve.Services.Corporations.MutualWarInviteRuntimeState(
+            rig.Source, relations, null, () => rig.Now, (_, _, _) => Task.FromResult(true));
+        var restartedRpc = new MutualWarInviteMgrService(
+            afterRestart.ReadPendingInvitesAsync,
+            afterRestart.ReadInvitesBlockedAsync,
+            afterRestart.SendInviteByPlayerAsync,
+            afterRestart.WithdrawInviteByPlayerAsync,
+            afterRestart.RespondToInviteByPlayerAsync,
+            afterRestart.SetInvitesBlockedByPlayerAsync);
+
+        var outgoing = Assert.IsType<Eve.Marshal.PyList>(await restartedRpc.GetPendingInvitesForSession(
+            Call("GetPendingInvitesForSession", sender)));
+        var incoming = Assert.IsType<Eve.Marshal.PyList>(await restartedRpc.GetPendingInvitesForSession(
+            Call("GetPendingInvitesForSession", recipient)));
+        Assert.Single(outgoing.Items);
+        Assert.Single(incoming.Items);
+        var invite = Assert.Single(outgoing.Items);
+        var fields = KeyValFields(invite);
+        Assert.Equal(new Eve.Marshal.PyInt(1001), fields["fromOwnerID"]);
+        Assert.Equal(new Eve.Marshal.PyInt(2001), fields["toOwnerID"]);
+        Assert.Equal(new Eve.Marshal.PyLong(Eve.Services.Py.FileTimeFromUnixMs(rig.Now)), fields["sentDate"]);
+        Assert.Equal(new Eve.Marshal.PyInt(1), await restartedRpc.IsCorpInvitesBlockedPlayer(
+            Call("IsCorpInvitesBlockedPlayer", blocked)));
+    }
+
     private static Eve.Services.ServiceCall Call(string method, params Eve.Marshal.PyValue[] args) =>
         Call(method, args, new Eve.Services.ClientSession());
 
@@ -235,6 +284,14 @@ public sealed class WarsInfoMgrServiceTests
             await using var transaction = await connection.BeginTransactionAsync();
             await Relations.SetAsync(connection, transaction, kind, subject, obj, 0, "wars read test", attrs);
             await transaction.CommitAsync();
+        }
+
+        public (Eve.Scheduler.DurableScheduler Scheduler, Eve.Events.EventBus Bus, Eve.Relations.RelationStore Relations) Reopen()
+        {
+            var scheduler = new Eve.Scheduler.DurableScheduler(
+                Source, () => Now, new Eve.Scheduler.SchedulerOptions { Concurrency = 1 }, _schemas[0]);
+            var bus = new Eve.Events.EventBus(Source, scheduler, null, _schemas[1]);
+            return (scheduler, bus, new Eve.Relations.RelationStore(Source, scheduler, bus, _schemas[2]));
         }
 
         public async ValueTask DisposeAsync()

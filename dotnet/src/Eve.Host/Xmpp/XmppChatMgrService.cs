@@ -42,7 +42,7 @@ public sealed partial class XmppChatMgrService(XmppChatHub hub)
     {
         var room = JsSemantics.StringValue(call.Arg(0)) ?? "";
         var motd = JsSemantics.StringValue(call.Arg(1)) ?? "";
-        return await hub.SetCorporationMotdAsync(call.Session, room, motd, call.Cancellation).ConfigureAwait(false)
+        return await hub.SetOrganizationMotdAsync(call.Session, room, motd, call.Cancellation).ConfigureAwait(false)
             ? PyBool.True
             : PyBool.False;
     }

@@ -38,3 +38,11 @@ XmppChatMgrHostWireTests.csのclient wire testはcoverage内で実装済みのch
 
 ## 引数型
 全RPCはアプリ引数をpositionalで送る。GetHelpChannelだけlanguageIDを任意の1 positional argとして使い、session.languageIDがあればHostはそちらを優先する。AddCharacterToChannelはchannel string, character integer, reason string。SetMotdはroom/motdの2 strings。GMMuteのduration_secondsはinteger seconds。IDはPyInt/PyLongを許容する。machoVersion=1はtransport kwargs。
+
+## MOTD JID と muc#owner 実装引き継ぎ (2026-10-29)
+
+V24.01全体の利用確認: `xmppchatsvc.py:1190-1192` は `GetFullRoomName` で `room@conference.<host>` を作る。`SetMotd` は corp/alliance category のどちらも同じフルJIDを `XmppChatMgr.SetMotd` に渡す (`1474-1485`)。`ConfigureChannel` は muc#owner SET のIQ `result` をboolで返し (`1492-1506`)、`xmppchannelsettings.py:217-259` は失敗時にRuntimeError/UserErrorを上げる。`GetChannelConfig` は muc#owner GET のresult stanzaを返し (`1625-1634`)、設定画面は `xmppchannelsettings.py:279-323` でroomname/password/default accessをフォームへ反映する。`DeleteChannel` は `<destroy/>` をSETし、成功時だけ保存済みchannel一覧を消して `OnChannelDeleted` をscatterする (`xmppchatsvc.py:1205-1228`); 呼び出し可能なmenu項目はplayer-room owner限定 (`xmppchannelfield.py:89-123`)。
+
+eve.rsはSetMotdのfull JIDから有効なconference domainを検証してroom IDを抽出し、corp/allianceの現在のsession IDとdirector roleを確認してpersist後にsubjectを配信する。player-owned muc#owner GET/SETは既存`XmppPlayerChannelStore`の設定値を使い、owner-only destroy後にroom内occupantへunavailable presenceを順に送る。room-configに設定したpassword、members-only、members-by-defaultは再起動後も保持し、join/message権限に反映する。player-room configフォームを `XmppPlayerChannelStore` の既存tableへ加えた追加列は `ADD COLUMN IF NOT EXISTS` で既存schemaにも適用する。
+
+比較: EveJS 261028.1 `server/src/services/chat/xmppStubServer.js:3053-3160` はowner IQ GETでconfig formを返し、SETをchannel adminに限定し、destroy時にchannelを削除してroom memberを退室させる。`server/src/services/chat/xmppChatMgrService.js:337-378` のSetMotdは `corp_` のみを正規化するが、V24.01 client callsiteはalliance roomも渡すため、Hostはclient観測形状に合わせてalliance roomも実装する。Host regressionは`XmppChatMgrHostWireTests.Xmpp_chat_mgr_calls_keep_client_wire_shapes_through_host_dispatch`, `XmppOrganizationRoomTests.Corporation_motd_is_authorized_broadcast_and_returned_on_join`, and `XmppOrganizationRoomTests.Player_room_owner_iq_configures_persists_and_destroys_with_member_presence`。前2件とXMPP非DB選択テスト30件はローカルpass。PostgreSQL設定保存/再open/destructionテストはActionsへ、GUI clientでの操作確認は引き続き未実施。

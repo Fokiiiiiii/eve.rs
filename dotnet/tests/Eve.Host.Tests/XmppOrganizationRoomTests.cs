@@ -38,15 +38,98 @@ public sealed class XmppOrganizationRoomTests
 
         var later = Connect(hub, 88, "later-token", laterOutput);
         later.OnStanza(Parse("<presence to='corp_100@conference.chat.example/Director'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+        director.OnStanza(Parse("<presence to='alliance_200@conference.chat.example/Director'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+        later.OnStanza(Parse("<presence to='alliance_200@conference.chat.example/Later'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
         Assert.Contains(laterOutput, item => item.Contains("<subject>Ops schedule</subject>", StringComparison.Ordinal));
 
         var memberService = new XmppChatMgrService(hub);
-        var denied = await memberService.SetMotd(new ServiceCall { Method = "SetMotd", Args = [new PyStr("corp_100"), new PyStr("Denied")], Session = memberSession });
+        var denied = await memberService.SetMotd(new ServiceCall { Method = "SetMotd", Args = [new PyStr("corp_100@conference.chat.example"), new PyStr("Denied")], Session = memberSession });
         Assert.Same(PyBool.False, denied);
         var directorService = new XmppChatMgrService(hub);
-        var accepted = await directorService.SetMotd(new ServiceCall { Method = "SetMotd", Args = [new PyStr("corp_100"), new PyStr("New notice")], Session = directorSession });
+        var accepted = await directorService.SetMotd(new ServiceCall { Method = "SetMotd", Args = [new PyStr("corp_100@conference.chat.example"), new PyStr("New notice")], Session = directorSession });
         Assert.Same(PyBool.True, accepted);
         Assert.Contains(memberOutput, item => item.Contains("<subject>New notice</subject>", StringComparison.Ordinal));
+
+        var allianceDenied = await memberService.SetMotd(new ServiceCall { Method = "SetMotd", Args = [new PyStr("alliance_201@conference.chat.example"), new PyStr("Denied")], Session = memberSession });
+        Assert.Same(PyBool.False, allianceDenied);
+        var allianceAccepted = await directorService.SetMotd(new ServiceCall { Method = "SetMotd", Args = [new PyStr("alliance_200@conference.chat.example"), new PyStr("Alliance notice")], Session = directorSession });
+        Assert.Same(PyBool.True, allianceAccepted);
+        Assert.Contains(directorOutput, item => item.Contains("<subject>Alliance notice</subject>", StringComparison.Ordinal));
+        Assert.Contains(laterOutput, item => item.Contains("<subject>Alliance notice</subject>", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Player_room_owner_iq_configures_persists_and_destroys_with_member_presence()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")
+            ?? throw new InvalidOperationException("EVE_PG_URL is required for the MUC owner persistence regression");
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
+        var schema = "xmpp_owner_iq_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            var store = await XmppPlayerChannelStore.OpenAsync(source, schema);
+            var channel = Assert.IsType<XmppPlayerChannel>(await store.CreateAsync(42, "Pilot room"));
+            Assert.True(await store.InviteAsync(channel.RoomName, 77));
+            var sessions = new ConnectedSessions();
+            var ownerSession = Character(42, "owner-token", 100, 200, 300);
+            var memberSession = Character(77, "member-token", 100, 200, 301);
+            var guestSession = Character(88, "guest-token", 100, 200, 302);
+            sessions.Add(ownerSession);
+            sessions.Add(memberSession);
+            sessions.Add(guestSession);
+            var hub = new XmppChatHub(sessions, new XmppChatSettings("chat.example", "127.0.0.1"), motdStore: null, playerChannelStore: store);
+            var ownerOutput = new List<string>();
+            var memberOutput = new List<string>();
+            var guestOutput = new List<string>();
+            var owner = Connect(hub, 42, "owner-token", ownerOutput);
+            var member = Connect(hub, 77, "member-token", memberOutput);
+            var guest = Connect(hub, 88, "guest-token", guestOutput);
+            owner.OnStanza(Parse($"<presence to='{channel.RoomName}@conference.chat.example/Owner'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+            member.OnStanza(Parse($"<presence to='{channel.RoomName}@conference.chat.example/Member'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+
+            await member.OnStanzaAsync(Parse($"<iq type='set' id='member-destroy' to='{channel.RoomName}@conference.chat.example'><query xmlns='http://jabber.org/protocol/muc#owner'><destroy/></query></iq>"), default);
+            Assert.Contains(memberOutput, item => item.Contains("id='member-destroy'", StringComparison.Ordinal) && item.Contains("not-allowed", StringComparison.Ordinal));
+            Assert.NotNull(store.Get(channel.RoomName));
+
+            owner.OnStanza(Parse($"<iq type='get' id='config' to='{channel.RoomName}@conference.chat.example'><query xmlns='http://jabber.org/protocol/muc#owner'/></iq>"));
+            Assert.Contains(ownerOutput, item => item.Contains("id='config'", StringComparison.Ordinal)
+                && item.Contains("muc#roomconfig_roomname", StringComparison.Ordinal)
+                && item.Contains("members_by_default", StringComparison.Ordinal));
+
+            await owner.OnStanzaAsync(Parse($"<iq type='set' id='configure' to='{channel.RoomName}@conference.chat.example'><query xmlns='http://jabber.org/protocol/muc#owner'><x xmlns='jabber:x:data' type='submit'><field var='FORM_TYPE'><value>http://jabber.org/protocol/muc#roomconfig</value></field><field var='muc#roomconfig_roomname'><value>Saved room</value></field><field var='muc#roomconfig_roomdesc'><value>Room description</value></field><field var='muc#roomconfig_passwordprotectedroom'><value>1</value></field><field var='muc#roomconfig_roomsecret'><value>opensesame</value></field><field var='muc#roomconfig_membersonly'><value>0</value></field><field var='members_by_default'><value>0</value></field></x></query></iq>"), default);
+            Assert.Contains(ownerOutput, item => item.Contains("type='result' id='configure'", StringComparison.Ordinal));
+            Assert.Contains(memberOutput, item => item.Contains("role='visitor'", StringComparison.Ordinal));
+            Assert.Equal("Saved room", store.Get(channel.RoomName)?.DisplayName);
+            Assert.Equal("Room description", store.Get(channel.RoomName)?.Description);
+            Assert.True(store.Get(channel.RoomName)?.PasswordRequired);
+
+            guest.OnStanza(Parse($"<presence to='{channel.RoomName}@conference.chat.example/Guest'><x xmlns='http://jabber.org/protocol/muc'><password>wrong</password></x></presence>"));
+            Assert.Contains(guestOutput, item => item.Contains("not-authorized", StringComparison.Ordinal));
+            guest.OnStanza(Parse($"<presence to='{channel.RoomName}@conference.chat.example/Guest'><x xmlns='http://jabber.org/protocol/muc'><password>opensesame</password></x></presence>"));
+            await guest.OnStanzaAsync(Parse($"<message type='groupchat' to='{channel.RoomName}@conference.chat.example'><body>visitor cannot speak</body></message>"), default);
+            Assert.DoesNotContain(ownerOutput, item => item.Contains("visitor cannot speak", StringComparison.Ordinal));
+            await member.OnStanzaAsync(Parse($"<message type='groupchat' to='{channel.RoomName}@conference.chat.example'><body>member can speak</body></message>"), default);
+            Assert.Contains(ownerOutput, item => item.Contains("member can speak", StringComparison.Ordinal));
+
+            var reopened = await XmppPlayerChannelStore.OpenAsync(source, schema);
+            var persisted = reopened.Get(channel.RoomName);
+            Assert.Equal("Saved room", persisted?.DisplayName);
+            Assert.Equal("Room description", persisted?.Description);
+            Assert.Equal("opensesame", persisted?.Password);
+            Assert.False(persisted?.MembersOnly);
+            Assert.False(persisted?.MembersByDefault);
+
+            await owner.OnStanzaAsync(Parse($"<iq type='set' id='destroy' to='{channel.RoomName}@conference.chat.example'><query xmlns='http://jabber.org/protocol/muc#owner'><destroy/></query></iq>"), default);
+            Assert.Contains(ownerOutput, item => item.Contains("type='result' id='destroy'", StringComparison.Ordinal));
+            Assert.Contains(memberOutput, item => item.Contains("type='unavailable'", StringComparison.Ordinal));
+            Assert.Contains(guestOutput, item => item.Contains("type='unavailable'", StringComparison.Ordinal));
+            Assert.Null((await XmppPlayerChannelStore.OpenAsync(source, schema)).Get(channel.RoomName));
+        }
+        finally
+        {
+            await using var command = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await command.ExecuteNonQueryAsync();
+        }
     }
 
     [Fact]
@@ -68,24 +151,35 @@ public sealed class XmppOrganizationRoomTests
             var result = await service.SetMotd(new ServiceCall
             {
                 Method = "SetMotd",
-                Args = [new PyStr("corp_100"), new PyStr("Persisted notice")],
+                Args = [new PyStr("corp_100@conference.chat.example"), new PyStr("Persisted notice")],
                 Session = directorSession,
             });
             Assert.Same(PyBool.True, result);
+            var allianceResult = await service.SetMotd(new ServiceCall
+            {
+                Method = "SetMotd",
+                Args = [new PyStr("alliance_200@conference.chat.example"), new PyStr("Persisted alliance notice")],
+                Session = directorSession,
+            });
+            Assert.Same(PyBool.True, allianceResult);
 
             var firstOutput = new List<string>();
             var firstClient = Connect(firstHub, 42, "director-token", firstOutput);
             firstClient.OnStanza(Parse("<presence to='corp_100@conference.chat.example/Director'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+            firstClient.OnStanza(Parse("<presence to='alliance_200@conference.chat.example/Director'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
             await firstClient.OnStanzaAsync(Parse("<message to='corp_100@conference.chat.example/Director' type='groupchat'><subject>Subject notice</subject></message>"), default);
             Assert.Contains(firstOutput, item => item.Contains("<subject>Subject notice</subject>", StringComparison.Ordinal));
+            Assert.Contains(firstOutput, item => item.Contains("<subject>Persisted alliance notice</subject>", StringComparison.Ordinal));
 
             var restartedStore = await XmppMotdStore.OpenAsync(source, schema);
             var restartedHub = new XmppChatHub(sessions, new XmppChatSettings("chat.example", "127.0.0.1"), motdStore: restartedStore);
             var output = new List<string>();
             var client = Connect(restartedHub, 42, "director-token", output);
             client.OnStanza(Parse("<presence to='corp_100@conference.chat.example/Director'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+            client.OnStanza(Parse("<presence to='alliance_200@conference.chat.example/Director'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
 
             Assert.Contains(output, item => item.Contains("<subject>Subject notice</subject>", StringComparison.Ordinal));
+            Assert.Contains(output, item => item.Contains("<subject>Persisted alliance notice</subject>", StringComparison.Ordinal));
         }
         finally
         {

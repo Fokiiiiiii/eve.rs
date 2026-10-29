@@ -1068,11 +1068,6 @@ public sealed partial class InvBrokerService(
         if (ContextOf(call) is not { } context || call.Session.CharacterId is not { } character)
             return None;
         var flag = FlagOf(call);
-        if (context.Kind == Kind.Hangar && stations.Get(context.ItemId) is not null)
-            return new PyObject(new PyStr("util.KeyVal"), new PyDict([
-                new(new PyStr("capacity"), new PyReal(9_000_000_000_000_000d)),
-                new(new PyStr("used"), new PyReal(0)),
-            ]));
         if (context.Kind is Kind.Structure or Kind.Hangar)
         {
             if (await ControlledStructureAsync(call.Session, context.ItemId, call.Cancellation) is { } controlled)

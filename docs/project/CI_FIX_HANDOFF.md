@@ -2,13 +2,13 @@
 
 The current status below is authoritative. Dated entries that follow are historical checkpoints from their stated time.
 
-## Current status (2026-10-29, a5072e08)
+## Current status (2026-10-29, ca62b8f8)
 
-- `a5072e08` corrected the Beyonce wire test to require the outer `(bound, nestedResult)` tuple and updated the market settlement expectation. Its push-triggered CI run `40831344589` is still in progress.
+- `origin/main` is `ca62b8f8`, which includes `a5072e08`'s corrected Beyonce tuple assertion and `fa27ded3`'s market settlement expectation. CI run `40831344589` for `a5072e08` completed with the Host shard green, including the Beyonce test; the station low-funds assertion and unrelated skill-starting-data checks failed.
 - V24.01 `menusvc.py:1498-1499, 2777-2804` routes bookmark alignment through `_AlignTo`; `menusvc.py:2789` calls `CmdAlignTo` and ignores its nested result. eve.rs `BeyonceService.MachoBindObject` returns the bound handle and nested result as a two-item `PyTuple`, while `CmdAlignTo` returns `PyNone`.
-- The local `RepairService.cs` patch removes the station-only `CustomNotify` branch and returns `NotEnoughMoney` with the attempted charge and available balance, matching EveJS v0.12.9 `repairRuntime.js:635-643`. V24.01 `base_repairshop.py:64-71` calls the station or structure RPC directly and does not replace the returned refusal. This repair patch is not pushed yet.
-- Local Station.Tests and Host.Tests builds passed with zero warnings and errors. The focused repair test skipped because `EVE_PG_URL` was unset; an adjacent non-database Beyonce Host test passed. No PostgreSQL database was used.
-- Next: fetch and merge `origin/main`, repeat local checks, push the repair fix, verify the focused and full Actions shards, then obtain three consecutive green `ci.yml` runs.
+- Repair fix `e78dcb6a` removes the station-only `CustomNotify` branch and returns `NotEnoughMoney` with the attempted charge and available balance, matching EveJS v0.12.9 `repairRuntime.js:635-643`. V24.01 `base_repairshop.py:64-71` calls the station or structure RPC directly and does not replace the returned refusal. The commit is local and ready to push.
+- Station.Tests and Host.Tests builds passed with zero warnings and errors. After merging `ca62b8f8`, Station.Tests rebuilt successfully and its focused repair test skipped because `EVE_PG_URL` was unset. The adjacent non-database Beyonce Host test passed. No PostgreSQL database was used.
+- Next: push `e78dcb6a`, verify its focused and full Actions shards, resolve any remaining CI failures necessary for the three consecutive green `ci.yml` runs, and update this note with each result.
 
 ## Historical status (2026-10-29, df9121cc)
 

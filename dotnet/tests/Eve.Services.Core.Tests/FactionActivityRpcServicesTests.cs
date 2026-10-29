@@ -115,7 +115,7 @@ public sealed class FactionActivityRpcServicesTests
     public async Task Enlistment_reads_corporation_policy_persists_direct_membership_and_changes_session()
     {
         var fileTime = 133000000000000000L;
-        FwCharacterWarfareState? character = new(500001, 0);
+        FwCharacterWarfareState? character = new(null, 0);
         long savedActor = 0;
         long savedCorporation = 0;
         IReadOnlyList<long> savedAllowedFactions = [];
@@ -142,7 +142,7 @@ public sealed class FactionActivityRpcServicesTests
         session.Set("charid", new PyInt(42));
         session.Set("corpid", new PyInt(99));
 
-        Assert.Equal(new PyList([new PyInt(500001), new PyInt(500001), new PyInt(500002)]),
+        Assert.Equal(new PyList([new PyInt(500002), PyNone.Instance, new PyInt(500002)]),
             await service.CallAsync(Call(service, "GetMyEnlistment", session)));
         Assert.Equal(new PyLong(0), await service.CallAsync(Call(service, "GetMyDirectEnlistmentCooldownTimestamp", session)));
         Assert.Equal(new PyList([new PyInt(500001), new PyInt(500002)]),

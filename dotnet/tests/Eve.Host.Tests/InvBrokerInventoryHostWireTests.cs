@@ -19,7 +19,7 @@ namespace Eve.Host.Tests;
 public partial class HostServerTests
 {
     [Fact]
-    public async Task Invbroker_structure_hangar_and_station_capacity_are_registered_with_client_wire_shapes()
+    public async Task Invbroker_structure_inventory_capacity_and_contents_keep_client_wire_shapes()
     {
         const long characterId = 90000001;
         const long stationId = 60000001;

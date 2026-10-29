@@ -767,8 +767,14 @@ public sealed partial class InvBrokerService(
     [Method("GetContainerContents")]
     public async ValueTask<PyValue> GetContainerContents(ServiceCall call)
     {
-        if (IdOf(call.Arg(0)) is not { } itemId
-            || await ContainerContentsContextAsync(call.Session, itemId, call.Cancellation) is not { } context)
+        var context = ContextOf(call);
+        if (context is null)
+        {
+            if (IdOf(call.Arg(0)) is not { } itemId)
+                return InventoryWire.Rowset([]);
+            context = await ContainerContentsContextAsync(call.Session, itemId, call.Cancellation);
+        }
+        if (context is null)
             return InventoryWire.Rowset([]);
         return InventoryWire.Rowset(await ContentsAsync(context, call.Session, call.Cancellation));
     }

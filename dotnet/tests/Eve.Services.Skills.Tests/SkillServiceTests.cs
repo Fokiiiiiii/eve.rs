@@ -36,7 +36,11 @@ internal sealed class Rig : IAsyncDisposable
 
     public static readonly SkillCatalog Catalog = new(
         [new SkillType(3300, "Gunnery", 255, "Gunnery", true, 1), new SkillType(3301, "Small Hybrid Turret", 255, "Gunnery", true, 1), new SkillType(3315, "Repair Systems", 1210, "Armor", false, 4)],
-        new Dictionary<int, IReadOnlyList<StartingSkill>>());
+        new Dictionary<int, IReadOnlyList<StartingSkill>>(),
+        alphaMaxLevelsByRace: new Dictionary<int, IReadOnlyDictionary<int, int>>
+        {
+            [1] = new Dictionary<int, int> { [3300] = 5, [3301] = 1, [3315] = 5 },
+        });
 
     private readonly string _schema = $"sks_{Guid.NewGuid():N}"[..20];
 
@@ -876,7 +880,8 @@ public class SkillHandlerTests
         Assert.Equal(new PyList([]), await Ask("GetSkillQueue"));
         Assert.Equal(new PyList([]), await Ask("GetMySkillQueue"));
         Assert.Equal(new PyTuple([new PyList([]), new PyInt(0)]), await Ask("GetSkillQueueAndFreePoints"));
-        Assert.Equal(new PyDict(new[] { 164, 165, 166, 167, 168 }.Select(id => new KeyValuePair<PyValue, PyValue>(new PyInt(id), new PyInt(20))).ToList()), await Ask("GetAttributes"));
+        Assert.Equal(new PyDict(new[] { (164, 19), (165, 20), (166, 20), (167, 20), (168, 20) }
+            .Select(attribute => new KeyValuePair<PyValue, PyValue>(new PyInt(attribute.Item1), new PyInt(attribute.Item2))).ToList()), await Ask("GetAttributes"));
         Assert.Equal(new PyList([]), await Ask("GetCharacterAttributeModifiers"));
         Assert.Equal(new PyDict([]), await Ask("GetBoosters"));
         Assert.Equal(new PyDict([]), await Ask("GetImplants"));
@@ -884,7 +889,7 @@ public class SkillHandlerTests
         Assert.Equal(new PyDict([]), await Ask("GetFreeSkillPointsAppliedToQueue"));
         Assert.Equal(new PyDict([]), await Ask("GetFreeSkillPointsAppliedToSkills"));
         var respec = ((PyDict)((PyObject)await Ask("GetRespecInfo")).Args).Entries.ToDictionary(e => JsSemantics.StringValue(e.Key)!, e => e.Value);
-        Assert.Equal((new PyInt(3), PyNone.Instance, PyNone.Instance), ((PyValue)respec["freeRespecs"], respec["lastRespecDate"], respec["nextTimedRespec"]));
+        Assert.Equal((new PyInt(2), PyNone.Instance, PyNone.Instance), ((PyValue)respec["freeRespecs"], respec["lastRespecDate"], respec["nextTimedRespec"]));
     }
 
     [PgFact]
@@ -907,7 +912,7 @@ public class SkillHandlerTests
         var respec = ((PyDict)((PyObject)await Rig.CallAsync(rig.Handler, session, "GetRespecInfo")).Args)
             .Entries.ToDictionary(e => JsSemantics.StringValue(e.Key)!, e => e.Value);
         var now = Py.FileTimeFromUnixMs(Rig.ClockMs);
-        Assert.Equal(new PyInt(3), respec["freeRespecs"]);
+        Assert.Equal(new PyInt(2), respec["freeRespecs"]);
         Assert.Equal(new PyLong(now), respec["lastRespecDate"]);
         Assert.Equal(new PyLong(now + 365L * 24 * 60 * 60 * 10_000_000), respec["nextTimedRespec"]);
         Assert.Contains(sink.Sent, packet =>
@@ -938,7 +943,7 @@ public class SkillHandlerTests
         var second = ((PyDict)((PyObject)await Rig.CallAsync(rig.Handler, session, "GetRespecInfo")).Args)
             .Entries.ToDictionary(e => JsSemantics.StringValue(e.Key)!, e => e.Value);
 
-        Assert.Equal(new PyInt(2), second["freeRespecs"]);
+        Assert.Equal(new PyInt(1), second["freeRespecs"]);
         Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(Rig.ClockMs + 3_600_000L)), second["lastRespecDate"]);
         Assert.Equal(first["nextTimedRespec"], second["nextTimedRespec"]);
     }
@@ -962,7 +967,7 @@ public class SkillHandlerTests
             Rig.CallAsync(rig.Handler, session, "RespecCharacter", attributes));
         var respec = ((PyDict)((PyObject)await Rig.CallAsync(rig.Handler, session, "GetRespecInfo")).Args)
             .Entries.ToDictionary(e => JsSemantics.StringValue(e.Key)!, e => e.Value);
-        Assert.Equal(new PyInt(3), respec["freeRespecs"]);
+        Assert.Equal(new PyInt(2), respec["freeRespecs"]);
         Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(Rig.ClockMs)), respec["lastRespecDate"]);
     }
 
@@ -984,7 +989,7 @@ public class SkillHandlerTests
             () => Rig.CallAsync(rig.Handler, session, "RespecCharacter", invalid));
         var respec = ((PyDict)((PyObject)await Rig.CallAsync(rig.Handler, session, "GetRespecInfo")).Args)
             .Entries.ToDictionary(e => JsSemantics.StringValue(e.Key)!, e => e.Value);
-        Assert.Equal(new PyInt(3), respec["freeRespecs"]);
+        Assert.Equal(new PyInt(2), respec["freeRespecs"]);
         Assert.Equal(PyNone.Instance, respec["lastRespecDate"]);
         Assert.Equal(PyNone.Instance, respec["nextTimedRespec"]);
     }

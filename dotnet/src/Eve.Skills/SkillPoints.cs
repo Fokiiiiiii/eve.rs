@@ -7,7 +7,7 @@ public static class SkillPoints
 
     /// <summary>
     /// The points a skill of <paramref name="rank"/> has when trained to <paramref name="level"/>:
-    /// <c>250 * rank * sqrt(32)^(level - 1)</c>, rounded (level 4 of a rank 1 skill is 45,255). Level 0 has none.
+    /// <c>250 * rank * 2^(2.5 * (level - 1))</c>, rounded up as in the client. Level 0 has none.
     /// </summary>
     public static long At(int rank, int level)
     {
@@ -15,13 +15,13 @@ public static class SkillPoints
         {
             throw new ArgumentOutOfRangeException(nameof(level), level, "a skill has levels 0 to 5");
         }
-        return level == 0 ? 0 : (long)Math.Round(250d * rank * Math.Pow(Math.Sqrt(32d), level - 1), MidpointRounding.AwayFromZero);
+        return ForTraining(rank, level);
     }
 
     /// <summary>
     /// The points at which training counts <paramref name="level"/> of a skill of <paramref name="rank"/> reached: <c>250 * rank * 2^(2.5 * (level - 1))</c>
-    /// rounded up, so level II of a rank 1 skill is 1,415 (the reference's queue and the game's tables do this; the skills a character starts with
-    /// come from <see cref="At"/>). A level outside 0 to 5 counts as the nearest.
+    /// rounded up, so level II of a rank 1 skill is 1,415. Stored skill points, queue thresholds and level detection all use this same rule. A level
+    /// outside 0 to 5 counts as the nearest.
     /// </summary>
     public static long ForTraining(int rank, int level)
     {

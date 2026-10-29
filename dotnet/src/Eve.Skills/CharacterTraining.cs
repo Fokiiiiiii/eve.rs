@@ -6,8 +6,8 @@ namespace Eve.Skills;
 /// <summary>What sets how fast characters train: the server's speed, what an account's subscription makes of it, and the character's attributes.</summary>
 public sealed class TrainingSettings
 {
-    /// <summary>The value of each of the five learning attributes a character has when nothing has changed them.</summary>
-    public const double BaseAttribute = 20;
+    /// <summary>The value of a learning attribute a new character has before implants or boosters.</summary>
+    public static double BaseAttribute(int attributeId) => attributeId == 164 ? 19 : 20;
 
     /// <summary>The server's multiplier on every character's points a minute (1 is the game's own speed).</summary>
     public double Speed { get; init; } = 1;
@@ -16,7 +16,7 @@ public sealed class TrainingSettings
     public Func<long, bool> HasOmega { get; init; } = _ => true;
 
     /// <summary>The value of a learning attribute of a character (charisma, intelligence, memory, perception, willpower).</summary>
-    public Func<long, int, double> Attribute { get; init; } = (_, _) => BaseAttribute;
+    public Func<long, int, double> Attribute { get; init; } = (_, attributeId) => BaseAttribute(attributeId);
 
     /// <summary>How many extra training queues an account has running (Multiple Character Training): each lets one more of its characters train.</summary>
     public Func<long, int> AdditionalTrainingSlots { get; init; } = _ => 0;
@@ -424,7 +424,7 @@ public sealed class CharacterTraining(
     /// already running keeps its start. A running skill that gives way (or is paused) keeps the points it had gained.
     /// </summary>
     public async Task<SaveOutcome> SaveQueueAsync(
-        long characterId, long accountId, IReadOnlyList<QueueEntry> entries, bool activate, IReadOnlyList<long> accountCharacters, CancellationToken cancellationToken = default)
+        long characterId, long accountId, IReadOnlyList<QueueEntry> entries, bool activate, IReadOnlyList<long> accountCharacters, CancellationToken cancellationToken = default, bool isAlphaClone = false, int raceId = 0)
     {
         await SettleAsync(characterId, accountId, cancellationToken);
 
@@ -454,7 +454,12 @@ public sealed class CharacterTraining(
             state = previous with { ActiveStart = now };
         }
 
-        if (Training.Validate(entries, owned, catalog, rate, now) is { } error)
+        var freeSkillPoints = isAlphaClone ? await skills.FreeSkillPointsAsync(connection, transaction, characterId, cancellationToken) : 0;
+        var pointsAlreadyTrainedInCurrentLine = previous.Running && requestedActive && entries.Count > 0 && Same(previous.Entries[0], entries[0])
+            && Training.Project(previous, owned, catalog, rate, now).Entries.FirstOrDefault() is { } currentLine
+                ? Training.PointsAt(currentLine.StartPoints, currentLine.DestinationPoints, currentLine.Start ?? now, now, currentLine.PointsPerMinute) - currentLine.StartPoints
+                : 0;
+        if (Training.Validate(entries, owned, catalog, rate, now, freeSkillPoints, isAlphaClone && requestedActive, raceId, pointsAlreadyTrainedInCurrentLine) is { } error)
         {
             return new QueueRefused(error);
         }
@@ -612,7 +617,7 @@ public sealed class CharacterTraining(
     /// Puts a skill at the head of the queue and runs it: the level after the one trained (or <paramref name="level"/> when given). Null when the
     /// type is not a skill.
     /// </summary>
-    public async Task<SaveOutcome?> StartAsync(long characterId, long accountId, int typeId, int level, IReadOnlyList<long> accountCharacters, CancellationToken cancellationToken = default)
+    public async Task<SaveOutcome?> StartAsync(long characterId, long accountId, int typeId, int level, IReadOnlyList<long> accountCharacters, CancellationToken cancellationToken = default, bool isAlphaClone = false, int raceId = 0)
     {
         if (catalog.Get(typeId) is null)
         {
@@ -624,6 +629,6 @@ public sealed class CharacterTraining(
             : Math.Clamp((view.Skills.FirstOrDefault(s => s.TypeId == typeId)?.Level ?? 0) + 1, 1, SkillPoints.MaxLevel);
         var next = new List<QueueEntry> { new(typeId, target) };
         next.AddRange(view.Queue.Where(line => line.TypeId != typeId || line.ToLevel != target).Select(line => new QueueEntry(line.TypeId, line.ToLevel)));
-        return await SaveQueueAsync(characterId, accountId, next, activate: true, accountCharacters, cancellationToken);
+        return await SaveQueueAsync(characterId, accountId, next, activate: true, accountCharacters, cancellationToken, isAlphaClone, raceId);
     }
 }

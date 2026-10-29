@@ -15,7 +15,7 @@ public sealed record CharacterNeuralRemap(
     public const int TotalRemapPoints = 99;
     public const long TimedRemapIntervalFileTime = 365L * 24 * 60 * 60 * 10_000_000;
 
-    public static CharacterNeuralRemap Default { get; } = new(20, 20, 20, 20, 20, 3, null, null);
+    public static CharacterNeuralRemap Default { get; } = new(19, 20, 20, 20, 20, 2, null, null);
 
     public double Attribute(int id) => id switch
     {
@@ -783,7 +783,7 @@ public sealed class PgSkillStore
     }
 
     public double LearningAttribute(long characterId, int attributeId) =>
-        _neuralRemaps.TryGetValue(characterId, out var remap) ? remap.Attribute(attributeId) : 20;
+        _neuralRemaps.TryGetValue(characterId, out var remap) ? remap.Attribute(attributeId) : CharacterNeuralRemap.Default.Attribute(attributeId);
 
     internal void CacheNeuralRemap(long characterId, CharacterNeuralRemap remap) => _neuralRemaps[characterId] = remap;
 

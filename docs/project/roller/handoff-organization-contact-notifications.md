@@ -117,7 +117,7 @@ The push-triggered `ci.yml` run for `6e67ff91` exposed an inherited Host regress
 
 - The merged `ci.yml` run `40793571756` failed the Host shard on `NewEdenStoreHostTests.Certificate_purchase_without_checkout_returns_none_and_grants_nothing`; other completed CI jobs shown in the run had passed. `Eve.Corporations.Tests` Actions run `40793581263` passed the full shard, and the exact alliance persistence test run `40795100716` passed.
 - After merging the newest `origin/main`, `Eve.Services.Core.Tests` built with 0 warnings and 0 errors; database-free `Offer_without_settlement_is_hidden_and_checkout_returns_none` passed 1/1.
-- The unavailable-checkout response fix is committed locally as `9d83eda0` and awaits push-triggered CI verification.
+- The unavailable-checkout response fix and handoff are pushed on `e2bd98c7`. The full Core/Host run (`40796912153`), focused Host regression (`40796913631`), and push-triggered `ci.yml` run (`40796895077`) are queued as of 2026-10-29. The local Core build passed with 0 warnings and 0 errors; the focused database-free regression passed 1/1.
 
 
 

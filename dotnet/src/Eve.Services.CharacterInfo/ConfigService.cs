@@ -230,7 +230,7 @@ public sealed partial class ConfigService(
         {
             if (id == 0)
             {
-                rows.Add(LocationRow(0, "(none)", null, nameId: "(none)"));
+                rows.Add(LocationRow(0, "(none)", null));
             }
             else if (stations.Get(id) is { } station)
             {
@@ -242,7 +242,7 @@ public sealed partial class ConfigService(
             }
             else if (structureNames.TryGetValue(id, out var structureName) && !string.IsNullOrWhiteSpace(structureName))
             {
-                rows.Add(LocationRow(id, structureName, null, nameId: $"Structure {id}"));
+                rows.Add(LocationRow(id, structureName, null));
             }
             else if (items is not null && dogma is not null && call.Session.CharacterId is { } characterId
                 && await items.GetAsync(id, call.Cancellation) is { } item && item.OwnerId == characterId)

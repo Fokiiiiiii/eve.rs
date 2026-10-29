@@ -109,7 +109,8 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
         if (Binding.PlaceOf(call.Arg(0)) is not { } place || call.Session.GetInt("solarsystemid") != place
             || space is not null && !space.IsInSpace(call.Session))
         {
-            return None;
+            var (refusedBound, _) = _binding.Bind(call.Session);
+            return Py.Tuple(refusedBound, None);
         }
         var (bound, oid) = _binding.Bind(call.Session);
         var result = await Binding.NestedAsync(this, call, oid);

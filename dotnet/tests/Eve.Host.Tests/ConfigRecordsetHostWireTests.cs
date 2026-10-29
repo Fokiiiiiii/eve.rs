@@ -144,7 +144,7 @@ public partial class HostServerTests
         Assert.Equal("Test Structure", WireText(locationRows[3].Items[1]));
         Assert.Same(PyNone.Instance, locationRows[3].Items[2]);
         Assert.All(locationRows[3].Items.Skip(3).Take(3), value => Assert.Equal(0d, Assert.IsType<PyReal>(value).Value));
-        Assert.Equal($"Structure {structureId}", WireText(locationRows[3].Items[6]));
+        Assert.Same(PyNone.Instance, locationRows[3].Items[6]);
         Rowset(await Call(6, "GetLocationsEx", new PyLong(stationId)),
             "locationID", "locationName", "solarSystemID", "x", "y", "z", "locationNameID");
         Rowset(await Call(7, "GetLocationsLocal", new PyList([new PyLong(systemId), new PyLong(stationId)])),

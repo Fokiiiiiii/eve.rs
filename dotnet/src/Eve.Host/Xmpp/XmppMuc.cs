@@ -25,6 +25,20 @@ public sealed partial class XmppChatHub
     internal bool IsConferenceDomain(string? domain) =>
         string.Equals(domain, ConferenceDomain, StringComparison.OrdinalIgnoreCase);
 
+    internal bool TryNormalizeRoomAddress(string address, out string room)
+    {
+        room = address.Trim();
+        var at = room.IndexOf('@');
+        if (at < 0) return ValidRoomName(room);
+        if (at == 0 || room.IndexOf('@', at + 1) >= 0 || room.Contains('/') || !IsConferenceDomain(room[(at + 1)..]))
+        {
+            room = "";
+            return false;
+        }
+        room = room[..at];
+        return ValidRoomName(room);
+    }
+
     private static bool IsPublicHelpChannel(string room) => room is
         "system_263238_263259" or "system_263238_263262" or "system_263238_263267"
         or "system_263238_263301" or "system_263238_263302" or "system_263238_504075"
@@ -58,12 +72,14 @@ private bool CanAccessRoom(ClientSession? session, long characterId, string room
         && (StaticAccessChannels(session).Contains(room, StringComparer.Ordinal)
             || IsPublicHelpChannel(room) || HasPrivateRoomAccess(session, room) || PlayerChannels?.CanJoin(room, characterId) == true);
 
-    internal bool TryJoinRoom(XmppLink link, string room, string nickname, out IReadOnlyList<XmppOccupant> occupants)
+    internal bool TryJoinRoom(XmppLink link, string room, string nickname, string password, out IReadOnlyList<XmppOccupant> occupants)
     {
         occupants = [];
         var session = SessionOf(link.CharacterId);
+        var channel = PlayerChannels?.Get(room);
         var canJoin = CanAccessRoom(session, link.CharacterId, room);
-        if (!ValidRoomName(room) || !ValidNickname(nickname) || !canJoin)
+        if (!ValidRoomName(room) || !ValidNickname(nickname) || !canJoin
+            || channel is { PasswordRequired: true } && !string.Equals(channel.Password, password, StringComparison.Ordinal))
             return false;
 
         PruneRoomMembers(room);
@@ -150,6 +166,8 @@ private bool CanAccessRoom(ClientSession? session, long characterId, string room
         var session = SessionOf(link.CharacterId);
         if (!CanAccessRoom(session, link.CharacterId, room))
             return false;
+        if (PlayerChannels?.Get(room) is { MembersByDefault: false } channel && !channel.Allows(link.CharacterId))
+            return false;
 
         XmppOccupant sender;
         XmppOccupant[] recipients;
@@ -211,14 +229,13 @@ private bool CanAccessRoom(ClientSession? session, long characterId, string room
             if (!_occupants.TryGetValue((room, link.CharacterId), out var occupant) || !ReferenceEquals(occupant.Link, link))
                 return false;
         }
-        return await SetCorporationMotdAsync(session, room, motd, cancellationToken).ConfigureAwait(false);
+        return await SetOrganizationMotdAsync(session, room, motd, cancellationToken).ConfigureAwait(false);
     }
 
-    internal bool SetCorporationMotd(ClientSession session, string room, string motd)
+    internal bool SetOrganizationMotd(ClientSession session, string address, string motd)
     {
-        if (session.GetInt("corpid") is not { } corporationId || corporationId <= 0
-            || room != $"corp_{corporationId}"
-            || !IsCorporationDirector(session)
+        if (!TryNormalizeRoomAddress(address, out var room)
+            || !CanSetOrganizationMotd(session, room)
             || Encoding.UTF8.GetByteCount(motd) > 1024
             || motd.Any(character => char.IsControl(character) && character is not '\n' and not '\t')
             || session.CharacterId is not { } characterId
@@ -236,11 +253,10 @@ private bool CanAccessRoom(ClientSession? session, long characterId, string room
         return true;
     }
 
-    internal async ValueTask<bool> SetCorporationMotdAsync(ClientSession session, string room, string motd, CancellationToken cancellationToken)
+    internal async ValueTask<bool> SetOrganizationMotdAsync(ClientSession session, string address, string motd, CancellationToken cancellationToken)
     {
-        if (session.GetInt("corpid") is not { } corporationId || corporationId <= 0
-            || room != $"corp_{corporationId}"
-            || !IsCorporationDirector(session)
+        if (!TryNormalizeRoomAddress(address, out var room)
+            || !CanSetOrganizationMotd(session, room)
             || Encoding.UTF8.GetByteCount(motd) > 1024
             || motd.Any(character => char.IsControl(character) && character is not '\n' and not '\t')
             || session.CharacterId is not { } characterId
@@ -249,7 +265,16 @@ private bool CanAccessRoom(ClientSession? session, long characterId, string room
 
         if (_motdStore is not null)
             await _motdStore.SetAsync(room, motd, cancellationToken).ConfigureAwait(false);
-        return SetCorporationMotd(session, room, motd);
+        return SetOrganizationMotd(session, room, motd);
+    }
+
+    private static bool CanSetOrganizationMotd(ClientSession session, string room)
+    {
+        if (session.GetInt("corpid") is { } corporationId && corporationId > 0 && room == $"corp_{corporationId}")
+            return IsCorporationDirector(session);
+        if (session.GetInt("allianceid") is { } allianceId && allianceId > 0 && room == $"alliance_{allianceId}")
+            return IsCorporationDirector(session);
+        return false;
     }
 
     private static bool IsCorporationDirector(ClientSession session) =>
@@ -324,7 +349,7 @@ private bool CanAccessRoom(ClientSession? session, long characterId, string room
                     var owner = ownerId == occupant.Link.CharacterId;
                     var staff = (occupant.Link.AccountRole & (Eve.Services.GameMasterRoles.ChatAdministrator | Eve.Services.GameMasterRoles.Gml)) != 0;
                     var affiliation = owner ? "owner" : staff ? "admin" : "member";
-                    var role = owner || staff ? "moderator" : "participant";
+                    var role = owner || staff ? "moderator" : playerChannel is { MembersByDefault: false } && !playerChannel.Allows(occupant.Link.CharacterId) ? "visitor" : "participant";
                     var actual = queryAttribute == "affiliation" ? affiliation : role;
                     if (actual != queryValue)
                         return "";
@@ -333,6 +358,92 @@ private bool CanAccessRoom(ClientSession? session, long characterId, string room
                 })
                 .ToArray());
         }
+        return true;
+    }
+
+    internal bool TryGetPlayerRoomConfigXml(XmppLink link, string room, out string xml)
+    {
+        xml = "";
+        var session = SessionOf(link.CharacterId);
+        var channel = PlayerChannels?.Get(room);
+        var staff = (link.AccountRole & (Eve.Services.GameMasterRoles.ChatAdministrator | Eve.Services.GameMasterRoles.Gml)) != 0;
+        if (session is null || !ReferenceEquals(SessionOf(link.CharacterId), session) || channel is null
+            || channel.OwnerCharacterId != link.CharacterId && !staff)
+            return false;
+
+        static string Field(string name, string value, bool boolean = false) =>
+            $"<field var='{name}'{(boolean ? " type='boolean'" : " type='text-single'")}><value>{XmppXml.Escape(value)}</value></field>";
+        xml = "<query xmlns='http://jabber.org/protocol/muc#owner'><x xmlns='jabber:x:data' type='form'>"
+            + "<field var='FORM_TYPE' type='hidden'><value>http://jabber.org/protocol/muc#roomconfig</value></field>"
+            + Field("muc#roomconfig_roomname", channel.DisplayName)
+            + Field("muc#roomconfig_roomdesc", channel.Description)
+            + Field("muc#roomconfig_passwordprotectedroom", channel.PasswordRequired ? "1" : "0", true)
+            + Field("muc#roomconfig_roomsecret", channel.Password)
+            + Field("muc#roomconfig_membersonly", channel.MembersOnly ? "1" : "0", true)
+            + Field("members_by_default", channel.MembersByDefault ? "1" : "0", true)
+            + Field("muc#roomconfig_persistentroom", "1", true)
+            + "</x></query>";
+        return true;
+    }
+
+    internal async ValueTask<bool> ConfigurePlayerRoomAsync(XmppLink link, string room, XmppElement query, CancellationToken cancellationToken)
+    {
+        var session = SessionOf(link.CharacterId);
+        var channel = PlayerChannels?.Get(room);
+        var staff = (link.AccountRole & (Eve.Services.GameMasterRoles.ChatAdministrator | Eve.Services.GameMasterRoles.Gml)) != 0;
+        if (session is null || !ReferenceEquals(SessionOf(link.CharacterId), session) || channel is null
+            || channel.OwnerCharacterId != link.CharacterId && !staff || PlayerChannels is null)
+            return false;
+
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal);
+        var form = query.Child("x");
+        if (form is null || form.Attribute("xmlns") != "jabber:x:data" || form.Attribute("type") != "submit")
+            return false;
+        foreach (var field in form.Children.Where(child => child.Name == "field"))
+        {
+            if (field.Attribute("var") is not { } name || field.Children.Count(child => child.Name == "value") != 1
+                || !fields.TryAdd(name, field.Child("value")!.Text))
+                return false;
+        }
+        if (fields.GetValueOrDefault("FORM_TYPE") != "http://jabber.org/protocol/muc#roomconfig")
+            return false;
+
+        static bool ReadBool(Dictionary<string, string> values, string key, bool current, out bool value)
+        {
+            value = current;
+            if (!values.TryGetValue(key, out var text)) return true;
+            if (text is "1" || string.Equals(text, "true", StringComparison.OrdinalIgnoreCase)) { value = true; return true; }
+            if (text is "0" || string.Equals(text, "false", StringComparison.OrdinalIgnoreCase)) { value = false; return true; }
+            return false;
+        }
+        if (!ReadBool(fields, "muc#roomconfig_passwordprotectedroom", channel.PasswordRequired, out var passwordRequired)
+            || !ReadBool(fields, "muc#roomconfig_membersonly", channel.MembersOnly, out var membersOnly)
+            || !ReadBool(fields, "members_by_default", channel.MembersByDefault, out var membersByDefault))
+            return false;
+        var displayName = fields.GetValueOrDefault("muc#roomconfig_roomname", channel.DisplayName);
+        var description = fields.GetValueOrDefault("muc#roomconfig_roomdesc", channel.Description);
+        var password = passwordRequired ? fields.GetValueOrDefault("muc#roomconfig_roomsecret", channel.Password) : "";
+        if (!await PlayerChannels.ConfigureAsync(room, displayName, description, password, passwordRequired, membersOnly, membersByDefault, cancellationToken).ConfigureAwait(false))
+            return false;
+
+        PruneRoomMembers(room);
+        XmppOccupant[] occupants;
+        lock (_gate)
+            occupants = _occupants.Where(pair => pair.Key.Room == room).Select(pair => pair.Value).ToArray();
+        foreach (var recipient in occupants)
+            foreach (var occupant in occupants)
+                recipient.Link.Send(Presence(room, occupant, recipient.Link.Jid, ReferenceEquals(occupant.Link, recipient.Link)));
+        return true;
+    }
+
+    internal async ValueTask<bool> DestroyPlayerRoomAsync(XmppLink link, string room, CancellationToken cancellationToken)
+    {
+        var session = SessionOf(link.CharacterId);
+        var channel = PlayerChannels?.Get(room);
+        if (session is null || !ReferenceEquals(SessionOf(link.CharacterId), session) || channel?.OwnerCharacterId != link.CharacterId
+            || PlayerChannels is null || !await PlayerChannels.DeleteAsync(room, cancellationToken).ConfigureAwait(false))
+            return false;
+        PruneRoomMembers(room);
         return true;
     }
 
@@ -371,7 +482,8 @@ private bool CanAccessRoom(ClientSession? session, long characterId, string room
         var staff = (occupant.Link.AccountRole & (Eve.Services.GameMasterRoles.ChatAdministrator | Eve.Services.GameMasterRoles.Gml)) != 0;
         var owner = PlayerChannels?.Get(room)?.OwnerCharacterId == occupant.Link.CharacterId;
         var affiliation = owner ? "owner" : staff ? "admin" : "member";
-        var role = owner || staff ? "moderator" : "participant";
+        var channel = PlayerChannels?.Get(room);
+        var role = owner || staff ? "moderator" : channel is { MembersByDefault: false } && !channel.Allows(occupant.Link.CharacterId) ? "visitor" : "participant";
         var self = selfPresence ? "<status code='110'/>" : "";
         return $"<presence from='{XmppXml.Escape(from)}' to='{XmppXml.Escape(to)}'><x xmlns='{MucUserNamespace}'><item affiliation='{affiliation}' role='{role}'/>{self}</x></presence>";
     }

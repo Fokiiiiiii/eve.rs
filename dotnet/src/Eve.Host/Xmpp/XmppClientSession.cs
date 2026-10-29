@@ -88,7 +88,8 @@ internal sealed class XmppClientSession(XmppChatHub hub, Action<string> send, Ac
             return;
         }
 
-        if (!hub.TryJoinRoom(link, room, nickname, out _))
+        var password = stanza.Child("x")?.Child("password")?.Text ?? "";
+        if (!hub.TryJoinRoom(link, room, nickname, password, out _))
             StanzaError(stanza, "auth", "not-authorized");
     }
 
@@ -262,6 +263,33 @@ internal sealed class XmppClientSession(XmppChatHub hub, Action<string> send, Ac
                     return;
                 }
             }
+        }
+        if ((type is "get" or "set") && child?.Name == "query" && child.Attribute("xmlns") == "http://jabber.org/protocol/muc#owner"
+            && _phase == Phase.Bound && _link is { } ownerLink)
+        {
+            var to = iq.Attribute("to") ?? "";
+            var at = to.IndexOf('@');
+            if (at > 0 && !to.Contains('/') && hub.IsConferenceDomain(to[(at + 1)..]) && hub.TryNormalizeRoomAddress(to, out var room))
+            {
+                if (type == "get" && hub.TryGetPlayerRoomConfigXml(ownerLink, room, out var config))
+                {
+                    send($"<iq type='result' id='{XmppXml.Escape(id)}' from='{XmppXml.Escape(to)}' to='{XmppXml.Escape(ownerLink.Jid)}'>{config}</iq>");
+                    return;
+                }
+                if (type == "set")
+                {
+                    var changed = child.Child("destroy") is not null
+                        ? await hub.DestroyPlayerRoomAsync(ownerLink, room, cancellationToken).ConfigureAwait(false)
+                        : await hub.ConfigurePlayerRoomAsync(ownerLink, room, child, cancellationToken).ConfigureAwait(false);
+                    if (changed)
+                    {
+                        send($"<iq type='result' id='{XmppXml.Escape(id)}' from='{XmppXml.Escape(to)}' to='{XmppXml.Escape(ownerLink.Jid)}'/>");
+                        return;
+                    }
+                }
+            }
+            Error(iq, "auth", "not-allowed");
+            return;
         }
         if (type == "get" && child?.Name == "query" && _phase == Phase.Bound && _link is { } bound)
         {

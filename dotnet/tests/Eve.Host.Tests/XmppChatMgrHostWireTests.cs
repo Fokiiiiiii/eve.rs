@@ -52,6 +52,12 @@ public partial class HostServerTests
             await HostRpcAsync(front, open, 7, "XmppChatMgr", "GrantChannelOwnership", new PyStr("player_42")));
         Assert.Equal(PyBool.True,
             await HostRpcAsync(front, open, 8, "XmppChatMgr", "SetMotd",
-                new PyStr("corp_100"), new PyStr("A new MOTD")));
+                new PyStr("corp_100@conference.chat.example"), new PyStr("A new MOTD")));
+        Assert.Equal(PyBool.True,
+            await HostRpcAsync(front, open, 9, "XmppChatMgr", "SetMotd",
+                new PyStr("alliance_99@conference.chat.example"), new PyStr("Alliance notice")));
+        Assert.Equal(PyBool.False,
+            await HostRpcAsync(front, open, 10, "XmppChatMgr", "SetMotd",
+                new PyStr("alliance_99@conference.other.example"), new PyStr("Wrong host")));
     }
 }

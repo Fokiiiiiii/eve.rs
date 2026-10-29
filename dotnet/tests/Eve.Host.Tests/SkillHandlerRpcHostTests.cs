@@ -93,7 +93,8 @@ public partial class HostServerTests
         await using var rig = await CharacterHostTests.CharacterHostRig.CreateAsync();
         var character = await rig.CreateCharacterAsync();
         var catalog = await SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
-        var trainingSkill = catalog.Skills.First(skill => skill.Published && skill.Rank == 1 && !skill.Needs.Any());
+        var trainingSkill = catalog.Skills.First(skill => skill.Published && skill.Rank == 1 && !skill.Needs.Any()
+            && catalog.AlphaMaxLevel(1, skill.TypeId) >= 1);
         long capsule;
         await using (var connection = await rig.Source.OpenConnectionAsync())
         await using (var transaction = await connection.BeginTransactionAsync())
@@ -218,7 +219,7 @@ public partial class HostServerTests
         await using (var connection = await rig.Source.OpenConnectionAsync())
         await using (var transaction = await connection.BeginTransactionAsync())
         {
-            await skills.GrantFreeSkillPointsAsync(connection, transaction, character, 4_501_000);
+            await skills.GrantFreeSkillPointsAsync(connection, transaction, character, 4_000_000);
             injectorId = await items.CreateAsync(connection, transaction,
                 new Eve.Inventory.NewItem(largeInjector, character, rig.Station, 4, 2, Singleton: false));
             await transaction.CommitAsync();
@@ -228,7 +229,7 @@ public partial class HostServerTests
             new PyLong(injectorId), new PyInt(2))));
         Assert.Equal(["OnItemChange", "OnFreeSkillPointsChanged"], notifications);
         notifications.Clear();
-        Assert.Equal(5_401_000, await skills.FreeSkillPointsAsync(character));
+        Assert.Equal(4_900_000, await skills.FreeSkillPointsAsync(character));
         Assert.Null(await items.GetAsync(injectorId));
 
         long splitInjectorId;

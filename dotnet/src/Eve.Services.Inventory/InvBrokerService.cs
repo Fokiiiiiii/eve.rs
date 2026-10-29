@@ -767,8 +767,14 @@ public sealed partial class InvBrokerService(
     [Method("GetContainerContents")]
     public async ValueTask<PyValue> GetContainerContents(ServiceCall call)
     {
-        if (IdOf(call.Arg(0)) is not { } itemId
-            || await ContainerContentsContextAsync(call.Session, itemId, call.Cancellation) is not { } context)
+        var context = ContextOf(call);
+        if (context is null)
+        {
+            if (IdOf(call.Arg(0)) is not { } itemId)
+                return InventoryWire.Rowset([]);
+            context = await ContainerContentsContextAsync(call.Session, itemId, call.Cancellation);
+        }
+        if (context is null)
             return InventoryWire.Rowset([]);
         return InventoryWire.Rowset(await ContentsAsync(context, call.Session, call.Cancellation));
     }
@@ -1063,11 +1069,6 @@ public sealed partial class InvBrokerService(
         if (ContextOf(call) is not { } context || call.Session.CharacterId is not { } character)
             return None;
         var flag = FlagOf(call);
-        if (context.Kind == Kind.Hangar && stations.Get(context.ItemId) is not null)
-            return new PyObject(new PyStr("util.KeyVal"), new PyDict([
-                new(new PyStr("capacity"), new PyReal(9_000_000_000_000_000d)),
-                new(new PyStr("used"), new PyReal(0)),
-            ]));
         if (context.Kind is Kind.Structure or Kind.Hangar)
         {
             if (await ControlledStructureAsync(call.Session, context.ItemId, call.Cancellation) is { } controlled)

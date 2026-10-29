@@ -261,6 +261,10 @@ private readonly TransitionRuntime _transitions;
     /// <summary>Marks a module of a pilot as running, as an activation the simulation accepted does (the work-cycle host tests need a running module).</summary>
     internal void StartModuleForTest(ulong session, long moduleId) => _pilots[session].ActiveModules[moduleId] = ItemState.Active;
 
+    /// <summary>Adds the authoritative pilot state needed by host tests that exercise an in-space command.</summary>
+    internal void EnterPilotForTest(ClientSession session, long characterId, long shipId, int typeId, int solarSystemId) =>
+        _pilots[(ulong)session.SessionId] = new Pilot(session, characterId, shipId, typeId, solarSystemId, 0);
+
 internal void StartStructureDamageModuleForTest(ulong session, long moduleId, string effectName, SimEffect effect)
     {
         var pilot = _pilots[session];

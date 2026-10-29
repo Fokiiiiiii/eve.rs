@@ -32,6 +32,7 @@ public partial class HostServerTests
         const long characterId = 90_000_013;
         const int systemId = 31_000_007;
         const long targetItemId = 50_000_123;
+        const long shipId = 80_000_013;
         var schema = "beyonce_bookmark_" + Guid.NewGuid().ToString("N")[..8];
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
@@ -73,6 +74,8 @@ public partial class HostServerTests
                     session.Set("charid", new PyLong(characterId));
                     session.Set("solarsystemid", new PyLong(systemId));
                     session.Set("solarsystemid2", new PyLong(systemId));
+                    session.Set("locationid", new PyInt(systemId));
+                    space.EnterPilotForTest(session, characterId, shipId, 587, systemId);
                 });
 
             var front = await Handshaken(await ConnectAsync());

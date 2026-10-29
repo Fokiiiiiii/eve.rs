@@ -229,7 +229,7 @@ public sealed class RepairStructureHostWireTests : IAsyncLifetime
         Assert.Equal(0, (await wallet.GetAsync(character))!.Isk);
         Assert.Equal(persistedOwnerBalance, (await wallet.GetAsync(ownerCorporationId))!.Isk);
         var unchanged = await modules.ShipConditionAsync(shipId);
-        Assert.Equal(quotedDamage, unchanged.Damage, 6);
+        Assert.Equal(new ShipCondition(0.5, 1, 0.5, 0.2, false), unchanged);
         Assert.Empty(lowFundsSink.Packets);
     }
 }

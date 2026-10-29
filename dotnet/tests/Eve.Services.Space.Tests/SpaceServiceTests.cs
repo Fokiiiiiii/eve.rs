@@ -1023,7 +1023,9 @@ public class SpaceServiceTests
         await using var _ = rig;
         var system = session.GetInt("solarsystemid2")!.Value;
 
-        Assert.Equal(Py.Tuple(PyNone.Instance, PyNone.Instance), await rig.BeyonceCallAsync(session, "MachoBindObject", null, Py.Tuple(new PyInt(system), new PyInt(5)), PyNone.Instance));
+        var dockedBind = Assert.IsType<PyTuple>(await rig.BeyonceCallAsync(session, "MachoBindObject", null, Py.Tuple(new PyInt(system), new PyInt(5)), PyNone.Instance));
+        Assert.StartsWith("N=65450:", Rig.OidOf(dockedBind.Items[0]));
+        Assert.Equal(PyNone.Instance, dockedBind.Items[1]);
 
         await InSpaceAsync(rig, session);
         var answer = (PyTuple)await rig.BeyonceCallAsync(session, "MachoBindObject", null, Py.Tuple(new PyInt(system), new PyInt(5)), PyNone.Instance);
@@ -1034,7 +1036,9 @@ public class SpaceServiceTests
         session.RunAfterResponse();
         Assert.Equal(new SimBind((ulong)session.SessionId), rig.Sim.Heard.Last());
         // not the ballpark of another system
-        Assert.Equal(Py.Tuple(PyNone.Instance, PyNone.Instance), await rig.BeyonceCallAsync(session, "MachoBindObject", null, Py.Tuple(new PyInt(30000142), new PyInt(5)), PyNone.Instance));
+        var wrongSystemBind = Assert.IsType<PyTuple>(await rig.BeyonceCallAsync(session, "MachoBindObject", null, Py.Tuple(new PyInt(30000142), new PyInt(5)), PyNone.Instance));
+        Assert.StartsWith("N=65450:", Rig.OidOf(wrongSystemBind.Items[0]));
+        Assert.Equal(PyNone.Instance, wrongSystemBind.Items[1]);
     }
 
     [PgFact]

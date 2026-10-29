@@ -46,8 +46,8 @@ public partial class HostServerTests
         {
             var notice = ReadCorporationNotification(Assert.IsType<Send>(await front.ReceiveAsync()));
             Assert.Equal(("OnOrganizationContactsUpdated", "corpid"), (notice.Name, notice.IdType));
-            Assert.Equal(corporation.Id, Number(notice.Args[1]));
-            var row = Assert.IsType<PyTuple>(Assert.Single(Assert.IsType<PyList>(notice.Args[2]).Items));
+            Assert.Equal(corporation.Id, Number(notice.Args[0]));
+            var row = Assert.IsType<PyTuple>(Assert.Single(Assert.IsType<PyList>(notice.Args[1]).Items));
             Assert.Equal(3, row.Items.Count);
             Assert.Equal(90_300_001, Number(row.Items[0]));
             Assert.Equal(0, Number(row.Items[1]));
@@ -127,8 +127,8 @@ public partial class HostServerTests
         {
             var notice = ReadCorporationNotification(Assert.IsType<Send>(await front.ReceiveAsync()));
             Assert.Equal(("OnOrganizationContactsUpdated", "allianceid"), (notice.Name, notice.IdType));
-            Assert.Equal(alliance.Id, Number(notice.Args[1]));
-            var row = Assert.IsType<PyTuple>(Assert.Single(Assert.IsType<PyList>(notice.Args[2]).Items));
+            Assert.Equal(alliance.Id, Number(notice.Args[0]));
+            var row = Assert.IsType<PyTuple>(Assert.Single(Assert.IsType<PyList>(notice.Args[1]).Items));
             Assert.Equal(3, row.Items.Count);
             Assert.Equal(90_400_001, Number(row.Items[0]));
             Assert.Equal(0, Number(row.Items[1]));
@@ -236,7 +236,7 @@ public partial class HostServerTests
         Assert.IsType<PyBytes>(note);
         Assert.Equal("client note", T(note));
 
-        Assert.Equal(PyNone.Instance, await CallOverHost(front, open, 15, "charMgr", "SaveCharacterSetting",
+        Assert.Equal(PyNone.Instance, await CallOverHostAfterQueuedNotifications(front, open, 15, "charMgr", "SaveCharacterSetting",
             Py.Tuple(new PyStr("windowState"), new PyStr("open"))));
         Assert.Equal(PyNone.Instance, await CallOverHost(front, open, 16, "charMgr", "DeleteCharacterSetting",
             Py.Tuple(new PyStr("windowState"))));
@@ -256,6 +256,23 @@ public partial class HostServerTests
         }));
         Assert.Equal("S:Folders", T(PersonalWireField(Assert.Single(persistedFolders.Items), "label")));
         Assert.Equal("2::F::0::Projects|", T(PersonalWireField(Assert.Single(persistedFolders.Items), "note")));
+    }
+
+    private async Task<PyValue?> CallOverHostAfterQueuedNotifications(
+        TestFront front, SessionOpen open, uint callId, string service, string method, PyValue args)
+    {
+        await front.SendAsync(new Packet(open.SessionId,
+            MarshalCodec.Encode(Packets.CallWithKwargs(open, callId, service, method, args, ClientKwargs()))));
+        while (true)
+        {
+            var send = Assert.IsType<Send>(await front.ReceiveAsync());
+            var decoded = MarshalCodec.Decode(send.Payload);
+            var packet = Assert.IsType<MachoPacket>(MachoPacket.Decode(decoded));
+            if (packet.Type == MachoMessage.Notification)
+                continue;
+            Assert.Equal(MachoMessage.CallRsp, packet.Type);
+            return Result(decoded);
+        }
     }
 
     [PgFact]

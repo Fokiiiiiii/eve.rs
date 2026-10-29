@@ -219,17 +219,17 @@ public partial class HostServerTests
         await using (var connection = await rig.Source.OpenConnectionAsync())
         await using (var transaction = await connection.BeginTransactionAsync())
         {
-            await skills.GrantFreeSkillPointsAsync(connection, transaction, character, 4_000_000);
+            await skills.GrantFreeSkillPointsAsync(connection, transaction, character, 3_999_000);
             injectorId = await items.CreateAsync(connection, transaction,
                 new Eve.Inventory.NewItem(largeInjector, character, rig.Station, 4, 2, Singleton: false));
             await transaction.CommitAsync();
         }
 
-        Assert.Equal(new PyInt(900_000), Result(await Call("skillHandler", "InjectSkillpoints",
+        Assert.Equal(new PyInt(1_000_000), Result(await Call("skillHandler", "InjectSkillpoints",
             new PyLong(injectorId), new PyInt(2))));
         Assert.Equal(["OnItemChange", "OnFreeSkillPointsChanged"], notifications);
         notifications.Clear();
-        Assert.Equal(4_900_000, await skills.FreeSkillPointsAsync(character));
+        Assert.Equal(4_999_000, await skills.FreeSkillPointsAsync(character));
         Assert.Null(await items.GetAsync(injectorId));
 
         long splitInjectorId;

@@ -30,6 +30,29 @@ public class TradingTests
     }
 
     [PgFact]
+    public async Task A_partially_filled_immediate_order_keeps_its_requested_volume()
+    {
+        await using var r=await TradeRig.Create();
+        var seller=await r.Actor("Seller One");
+        var buyer=await r.Actor("Buyer One");
+        var item=await r.Stock(seller,40);
+        await r.Trading.PlaceAsync(r.Sell(seller,item,10,40,90),"partial-ask");
+
+        var receipt=await r.Trading.PlaceAsync(r.Buy(buyer,10,100,90),"partial-buy");
+
+        Assert.Equal(40,receipt.FilledQuantity);
+        var opened=Assert.Single(receipt.ChangedOrders).Order.Order;
+        Assert.Equal(60,opened.VolumeRemaining);
+        Assert.Equal(100,opened.VolumeEntered);
+        await using var command=r.Source.CreateCommand($"SELECT vol_entered,vol_remaining FROM {r.MarketSchema}.orders WHERE id=$1");
+        command.Parameters.Add(new NpgsqlParameter { Value=receipt.OrderId!.Value });
+        await using var row=await command.ExecuteReaderAsync();
+        Assert.True(await row.ReadAsync());
+        Assert.Equal(100,row.GetInt64(0));
+        Assert.Equal(60,row.GetInt64(1));
+    }
+
+    [PgFact]
     public async Task Bid_escrow_pays_the_seller_and_delivers_to_the_acting_buyer()
     {
         await using var r=await TradeRig.Create();

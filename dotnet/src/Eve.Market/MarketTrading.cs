@@ -401,8 +401,9 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
             await using (var insert = Command(c,tx,$"""
                 INSERT INTO {Schema}.orders(type_id,bid,price,vol_remaining,vol_entered,min_volume,range_value,station_id,solar_system_id,constellation_id,region_id,
                     issued_ms,duration_days,actor_id,wallet_owner_id,account_key,escrow_isk,source_owner_id,source_location_id,source_flag)
-                VALUES($1,$2,$3,$4,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING id
-                """,request.TypeId,request.Buying,request.Price,remaining,request.Buying ? request.MinimumVolume : 1L,
+                VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING id
+                """,request.TypeId,request.Buying,request.Price,remaining,request.Quantity,
+                request.Buying ? request.MinimumVolume : 1L,
                 request.Buying ? request.Range : -1,station.Id,station.SolarSystemId,station.ConstellationId,station.RegionId,time,duration,
                 actor.Id,account.OwnerId,account.AccountKey,request.Buying ? value : 0m,
                 stock?.OwnerId ?? actor.Id,stock?.LocationId ?? station.Id,stock?.Flag ?? ItemFlags.Hangar))
@@ -430,7 +431,7 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
         }
         if (opened is { } openedId)
         {
-            var openedRow=new MarketOrder(openedId,request.TypeId,request.Buying,request.Price,remaining,remaining,
+            var openedRow=new MarketOrder(openedId,request.TypeId,request.Buying,request.Price,remaining,request.Quantity,
                 request.Buying ? request.MinimumVolume : 1L,request.Buying ? request.Range : -1,location,time,duration);
             var openedEscrow=request.Buying ? checked(request.Price*remaining) : 0m;
             var created=new MarketOwnedOrder(openedRow,actor.Id,account.OwnerId,account.AccountKey,openedEscrow,0,time);
@@ -784,7 +785,7 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
                 await close.ExecuteNonQueryAsync(token);
             await CancelExpiryAsync(c,tx,orderId,token);
             var state=expired ? 2 : 3;
-            var reason=expired ? "Expired" : "Cancelled";
+            var reason=expired ? "Expiry" : "Cancelled";
             var closedOrder=new MarketOwnedOrder(order.Row,order.Actor,order.Wallet.OwnerId,order.Wallet.AccountKey,0m,state,nowMs);
             var recipients=await NoticeRecipientsAsync(c,tx,order.Wallet.OwnerId,order.Actor,station.Id,[actorId],token);
             var result=new MarketReceipt(operationKey,orderId,0,0m,movedIds,[order.Wallet])

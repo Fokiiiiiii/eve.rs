@@ -65,7 +65,7 @@ public interface IJumpCloneStore
     /// the origin (replacing the clone there), the character is in the target's station, the cooldown starts at
     /// <paramref name="nowFileTime"/> and the fee is debited. Nothing changes on a refusal.
     /// </summary>
-    ValueTask<CloneJumpResult> JumpAsync(long characterId, long targetCloneId, long originLocationId, decimal fee, long nowFileTime, CancellationToken cancellationToken);
+    ValueTask<CloneJumpResult> JumpAsync(long characterId, long targetCloneId, long originLocationId, string originLocationKind, decimal fee, long ownerCorporationId, long nowFileTime, CancellationToken cancellationToken);
 }
 
 /// <summary>The space side of the clone installs, supplied by the Host: the pilot's active ship, the distance of two ships, the online sessions and the structures' clone bays.</summary>
@@ -277,13 +277,7 @@ public sealed partial class JumpCloneService(Func<long> nowUnixMs, IJumpCloneSto
     [Method("GetPriceForClone")]
     public async ValueTask<PyValue> GetPriceForClone(ServiceCall call)
     {
-        var fee = JumpCloneInstallFee;
-        var structure = DockedLocation(call.Session);
-        if (call.Session.CharacterId is { } characterId && structure > 0 && !IsStationDock(call.Session)
-            && await StructureBay(characterId, structure, call.Cancellation) is { } bay)
-        {
-            fee = bay.Fee;
-        }
+        var (fee, _) = await CloneJumpFee(call);
         return new PyReal((double)fee);
     }
 
@@ -376,12 +370,10 @@ public sealed partial class JumpCloneService(Func<long> nowUnixMs, IJumpCloneSto
     }
 
 
-    private const decimal JumpCloneActivationFee = 900000m;
-
     /// <summary>
 
     /// <c>performCloneJump</c>, <c>buildCloneJumpState</c>). The cooldown is checked when the clone is not where the character is, a
-    /// clone at the current place is replaced unless the client confirmed it, and the activation fee is charged once.
+    /// clone at the current place is replaced unless the client confirmed it, and the current clone-bay fee is charged once.
     /// </summary>
     [Method("CloneJump")]
     public async ValueTask<PyValue> CloneJump(ServiceCall call)
@@ -405,7 +397,9 @@ public sealed partial class JumpCloneService(Func<long> nowUnixMs, IJumpCloneSto
         if (!confirmed && snapshot.Clones.Any(clone => clone.LocationId == current && clone.JumpCloneId != target.JumpCloneId))
             throw MachoErrors.ThrowUserError("JumpCheckWillLoseExistingClone", ("locationID", new PyLong(current)));
 
-        var result = await Store().JumpAsync(characterId, target.JumpCloneId, current, JumpCloneActivationFee, now, call.Cancellation);
+        var (fee, ownerCorporationId) = await CloneJumpFee(call);
+        var originLocationKind = IsStationDock(call.Session) ? "station" : "structure";
+        var result = await Store().JumpAsync(characterId, target.JumpCloneId, current, originLocationKind, fee, ownerCorporationId, now, call.Cancellation);
         switch (result.Refusal)
         {
             case null:
@@ -414,7 +408,7 @@ public sealed partial class JumpCloneService(Func<long> nowUnixMs, IJumpCloneSto
                 throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("You must leave your ship before jumping clones")));
             case "INSUFFICIENT_FUNDS":
                 var balance = await Store().IskBalanceAsync(characterId, call.Cancellation);
-                throw MachoErrors.ThrowUserError("NotEnoughMoney", ("amount", new PyReal((double)JumpCloneActivationFee)), ("balance", new PyReal((double)balance)));
+                throw MachoErrors.ThrowUserError("NotEnoughMoney", ("amount", new PyReal((double)fee)), ("balance", new PyReal((double)balance)));
             default:
                 throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Jump clone not found")));
         }
@@ -459,6 +453,15 @@ public sealed partial class JumpCloneService(Func<long> nowUnixMs, IJumpCloneSto
     {
         var balance = await Store().IskBalanceAsync(characterId, cancellationToken);
         return MachoErrors.ThrowUserError("NotEnoughMoney", ("amount", new PyReal((double)JumpCloneInstallFee)), ("balance", new PyReal((double)balance)));
+    }
+
+    private async ValueTask<(decimal Fee, long OwnerCorporationId)> CloneJumpFee(ServiceCall call)
+    {
+        var location = DockedLocation(call.Session);
+        if (!IsStationDock(call.Session) && call.Session.CharacterId is { } characterId
+            && await StructureBay(characterId, location, call.Cancellation) is { } bay)
+            return (bay.Fee, bay.OwnerCorporationId);
+        return (JumpCloneInstallFee, 0);
     }
 
     private IJumpCloneStore Store() => store ?? throw new InvalidOperationException("the jump clones are not wired on this server");

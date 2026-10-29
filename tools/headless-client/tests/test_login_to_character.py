@@ -615,7 +615,8 @@ def test_a_new_character_has_the_skills_the_reference_gives(race):
                 if method == "GetSkillPoints" and expected == recorded_total:
                     expected = client_total
                 if method == "MachoBindObject":
-                    bound_call = described.get("$tuple") if isinstance(described, dict) else None
+                    bound_args = described[1] if isinstance(described, list) and len(described) > 1 else None
+                    bound_call = bound_args.get("$tuple") if isinstance(bound_args, dict) else None
                     if bound_call and bound_call[0] == "GetSkillPoints" and expected["$tuple"][1] == recorded_total:
                         expected["$tuple"][1] = client_total
                 if method == "GetAttributes":

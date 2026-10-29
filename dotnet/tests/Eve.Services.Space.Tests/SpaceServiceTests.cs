@@ -1023,7 +1023,7 @@ public class SpaceServiceTests
         await using var _ = rig;
         var system = session.GetInt("solarsystemid2")!.Value;
 
-        Assert.Equal(PyNone.Instance, await rig.BeyonceCallAsync(session, "MachoBindObject", null, Py.Tuple(new PyInt(system), new PyInt(5)), PyNone.Instance));
+        Assert.Equal(Py.Tuple(PyNone.Instance, PyNone.Instance), await rig.BeyonceCallAsync(session, "MachoBindObject", null, Py.Tuple(new PyInt(system), new PyInt(5)), PyNone.Instance));
 
         await InSpaceAsync(rig, session);
         var answer = (PyTuple)await rig.BeyonceCallAsync(session, "MachoBindObject", null, Py.Tuple(new PyInt(system), new PyInt(5)), PyNone.Instance);
@@ -1034,7 +1034,7 @@ public class SpaceServiceTests
         session.RunAfterResponse();
         Assert.Equal(new SimBind((ulong)session.SessionId), rig.Sim.Heard.Last());
         // not the ballpark of another system
-        Assert.Equal(PyNone.Instance, await rig.BeyonceCallAsync(session, "MachoBindObject", null, Py.Tuple(new PyInt(30000142), new PyInt(5)), PyNone.Instance));
+        Assert.Equal(Py.Tuple(PyNone.Instance, PyNone.Instance), await rig.BeyonceCallAsync(session, "MachoBindObject", null, Py.Tuple(new PyInt(30000142), new PyInt(5)), PyNone.Instance));
     }
 
     [PgFact]

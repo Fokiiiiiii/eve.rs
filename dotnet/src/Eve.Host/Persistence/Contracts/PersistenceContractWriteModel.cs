@@ -400,9 +400,10 @@ public sealed class PersistenceContractWriteModel(
         if (targetStatus == 6)
         {
             long expiredIssuerId, expiredIssuerCorporationId, assigneeId, expired;
+            bool expiredIsCorporationIssued;
             short expiredStatus;
             await using (var command = new NpgsqlCommand($"""
-                SELECT status, issuer_id, issuer_corporation_id, assignee_id, date_expired_filetime
+                SELECT status, issuer_id, issuer_corporation_id, assignee_id, date_expired_filetime, is_corporation_issued
                 FROM {_schema}.contract_records WHERE contract_id = $1 FOR UPDATE
                 """, connection, transaction))
             {
@@ -414,6 +415,7 @@ public sealed class PersistenceContractWriteModel(
                 expiredIssuerCorporationId = reader.GetInt64(2);
                 assigneeId = reader.GetInt64(3);
                 expired = reader.GetInt64(4);
+                expiredIsCorporationIssued = reader.GetBoolean(5);
             }
             var assignedToActor = assigneeId == characterId ||
                 hasCorpContractManager && assigneeId == corporationId ||
@@ -431,7 +433,9 @@ public sealed class PersistenceContractWriteModel(
                 if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
                     throw new ContractUserErrorException("ConContractNotAvailable");
             }
-            await PublishNotificationAsync(connection, transaction, expiredIssuerId, 0, 0,
+            await PublishNotificationAsync(connection, transaction,
+                expiredIsCorporationIssued ? 0 : expiredIssuerId,
+                expiredIsCorporationIssued ? expiredIssuerCorporationId : 0, 0,
                 "OnContractRejected", contractId, cancellationToken);
             if (characterId != expiredIssuerId)
                 await PublishNotificationAsync(connection, transaction, characterId, 0, 0,
@@ -475,7 +479,7 @@ public sealed class PersistenceContractWriteModel(
         var actorIsIssuer = isCorporationIssued ? corporationId == issuerCorporationId && hasCorpContractManager : characterId == issuerId;
         var deadline = checked(acceptedAt + (long)numDays * TimeSpan.TicksPerDay);
         if (targetStatus == 4 && !actorIsAcceptor) throw new ContractUserErrorException("ConContractNotAvailable");
-        if (targetStatus == 5 && !actorIsAcceptor && !(actorIsIssuer && nowFileTime > deadline))
+        if (targetStatus == 7 && !actorIsAcceptor && !(actorIsIssuer && nowFileTime > deadline))
             throw new ContractUserErrorException("ConContractNotAvailable");
         var wrap = await items.LockAndGetAsync(connection, transaction, wrapItemId, cancellationToken);
         if (wrap is null || wrap.TypeId != 3468 || wrap.OwnerId != acceptorId)
@@ -539,9 +543,10 @@ public sealed class PersistenceContractWriteModel(
             command.Parameters.AddWithValue(contractId); command.Parameters.AddWithValue((short)targetStatus); command.Parameters.AddWithValue(nowFileTime);
             if (await command.ExecuteNonQueryAsync(cancellationToken) != 1) throw new ContractUserErrorException("ConContractNotAvailable");
         }
+        var notifyIssuer = targetStatus == 4 || actorIsAcceptor;
         await PublishNotificationAsync(connection, transaction,
-            targetStatus == 4 ? (isCorporationIssued ? 0 : issuerId) : (actorIsAcceptor ? (isCorporationIssued ? 0 : issuerId) : acceptorIsCorporation ? 0 : acceptorId),
-            targetStatus == 4 || !actorIsAcceptor && acceptorIsCorporation ? (targetStatus == 4 ? issuerCorporationId : acceptorId) : 0,
+            notifyIssuer ? (isCorporationIssued ? 0 : issuerId) : (acceptorIsCorporation ? 0 : acceptorId),
+            notifyIssuer ? (isCorporationIssued ? issuerCorporationId : 0) : (acceptorIsCorporation ? acceptorId : 0),
             0, targetStatus == 4 ? "OnContractCompleted" : "OnContractFailed", contractId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         events?.Wake();

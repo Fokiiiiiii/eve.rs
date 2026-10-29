@@ -30,6 +30,8 @@ public sealed record ContractCreationInfo(
             PyDict dict => dict,
             _ => throw new ArgumentException("contract info must be a KeyVal or ContractStruct", nameof(value)),
         };
+        if (Flag(fields, "multiContract"))
+            throw new ArgumentException("multiContract creation is not supported", nameof(value));
         return new ContractCreationInfo(
             ContractType: checked((int)Integer(fields, "contractType")),
             IsPrivate: Flag(fields, "isPrivate"),
@@ -75,7 +77,8 @@ public sealed record ContractCreationInfo(
     {
         foreach (var (key, value) in fields.Entries)
         {
-            if (key is PyStr text && text.Value == name)
+            if (key is PyStr text && text.Value == name ||
+                key is PyBytes bytes && System.Text.Encoding.UTF8.GetString(bytes.Value.Span) == name)
             {
                 return value;
             }

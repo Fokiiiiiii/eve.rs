@@ -20,7 +20,8 @@ public partial class HostServerTests
         var writer = new RecordingContractWriter();
         var reads = new RecordingContractReadModel();
         var inventory = new RecordingContractInventoryReader();
-        StartContractHost(writer, reads, inventory);
+        StartContractHost(writer, reads, inventory,
+            isCharacterInCurrentCorporation: (characterId, _, _) => ValueTask.FromResult(characterId == 43));
         var front = await Handshaken(await ConnectAsync());
         var open = Open();
         await front.SendAsync(open);
@@ -138,6 +139,33 @@ public partial class HostServerTests
         Assert.Equal((42L, 3001L, 1440, 1000m, "wire contract", (short)1), writer.CreatedRequest is { } request
             ? (request.IssuerCharacterId, request.StartStationId, request.ExpiryMinutes, request.Price, request.Title, request.ContractType)
             : default);
+
+        var internalAssignment = Assert.IsType<PyList>(await Rpc(31, "CreateContract", new PyObject(new PyStr("contracts.contractStruct.ContractStruct"), new PyTuple([
+            new PyInt(1), PyBool.True, new PyInt(43), new PyInt(1440), new PyInt(0),
+            new PyInt(3001), new PyInt(0), new PyInt(1000), new PyInt(0), new PyInt(0),
+            new PyStr("internal assignment"), new PyStr(""), new PyList([]),
+            new PyInt(4), new PyList([]), PyBool.False, PyBool.False]))));
+        Assert.Equal([new PyInt(6001)], internalAssignment.Items);
+        Assert.Equal(500, writer.CreatedRequest?.OutstandingLimit);
+        var externalAssignment = Assert.IsType<PyList>(await Rpc(34, "CreateContract", new PyObject(new PyStr("contracts.contractStruct.ContractStruct"), new PyTuple([
+            new PyInt(1), PyBool.True, new PyInt(44), new PyInt(1440), new PyInt(0),
+            new PyInt(3001), new PyInt(0), new PyInt(1000), new PyInt(0), new PyInt(0),
+            new PyStr("external assignment"), new PyStr(""), new PyList([]),
+            new PyInt(4), new PyList([]), PyBool.False, PyBool.False]))));
+        Assert.Equal([new PyInt(6001)], externalAssignment.Items);
+        Assert.Equal(28, writer.CreatedRequest?.OutstandingLimit);
+
+        var typeFilter = new PyDict([
+            new KeyValuePair<PyValue, PyValue>(new PyInt(34), PyNone.Instance),
+            new KeyValuePair<PyValue, PyValue>(new PyLong(35), PyNone.Instance),
+        ]);
+        _ = await RpcWithKwargs(32, "SearchContracts", [], ("searchHint", new PyInt(0)), ("itemTypes", typeFilter));
+        Assert.Equal(0, reads.LastSearchQuery?.SearchHint);
+        _ = await RpcWithKwargs(35, "SearchContracts", [], ("searchHint", new PyInt(1)), ("itemTypes", typeFilter));
+        Assert.Equal(1, reads.LastSearchQuery?.SearchHint);
+        Assert.Equal([34, 35], reads.LastSearchQuery?.ItemTypeIds);
+        _ = await RpcWithKwargs(33, "SearchContracts", [], ("searchHint", new PyInt(2)), ("itemTypes", typeFilter));
+        Assert.Equal(2, reads.LastSearchQuery?.SearchHint);
 
         var login = Fields(Assert.IsType<PyObject>(await Rpc(3, "GetLoginInfo")));
         Assert.Equal(new[] { "assignedToMe", "inProgress", "needsAttention" }, login.Keys.Order().ToArray());
@@ -258,15 +286,61 @@ public partial class HostServerTests
         Assert.Equal(2, writer.Dismissed.Count);
     }
 
+    [Fact]
+    public async Task Contract_missing_detail_and_keyval_multicontract_return_client_user_errors()
+    {
+        var writer = new RecordingContractWriter();
+        StartContractHost(writer, new RecordingContractReadModel());
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        _ = await front.ReceiveAsync();
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.CallWithKwargs(open, 1, "contractProxy", "GetContract",
+                new PyTuple([new PyInt(9999)]), Eve.Services.Py.Dict(("machoVersion", new PyInt(1)))))));
+        var missing = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal("ConContractNotFound", UserErrorKey(missing));
+
+        var contractInfo = new PyObject(new PyStr("util.KeyVal"), new PyDict([
+            new KeyValuePair<PyValue, PyValue>(new PyStr("contractType"), new PyInt(1)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("minutesExpire"), new PyInt(1440)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("startStationID"), new PyInt(3001)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("multiContract"), PyBool.True),
+        ]));
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.CallWithKwargs(open, 2, "contractProxy", "CreateContract",
+                new PyTuple([contractInfo]),
+                Eve.Services.Py.Dict(("machoVersion", new PyInt(1)), ("confirm", PyNone.Instance))))));
+        var multi = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal("CustomInfo", UserErrorKey(multi));
+        Assert.Null(writer.CreatedRequest);
+
+        var tupleInfo = new PyObject(new PyStr("contracts.contractStruct.ContractStruct"), new PyTuple([
+            new PyInt(1), PyBool.False, new PyInt(0), new PyInt(1440), new PyInt(0),
+            new PyInt(3001), new PyInt(0), new PyInt(0), new PyInt(0), new PyInt(0),
+            new PyStr("multi contract"), new PyStr(""), new PyList([]),
+            new PyInt(4), new PyList([]), PyBool.False, PyBool.True]));
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.CallWithKwargs(open, 3, "contractProxy", "CreateContract",
+                new PyTuple([tupleInfo]),
+                Eve.Services.Py.Dict(("machoVersion", new PyInt(1)), ("confirm", PyNone.Instance))))));
+        var tupleMulti = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal("CustomInfo", UserErrorKey(tupleMulti));
+        Assert.Null(writer.CreatedRequest);
+    }
+
     private void StartContractHost(RecordingContractWriter writer, IContractReadModel? readModel = null,
-        IContractInventoryReader? inventory = null, bool staff = true)
+        IContractInventoryReader? inventory = null, bool staff = true,
+        Func<long, long, CancellationToken, ValueTask<bool>>? isCharacterInCurrentCorporation = null)
     {
         var registry = new ServiceRegistry();
         Func<long> now = () => FixedNowMs;
         foreach (var service in CoreServices.Create(
             new NoAccounts(), now, contractReadModel: readModel, contractWriteModel: writer,
             contractSkillLevel: (_, _, _) => ValueTask.FromResult(0), contractInventoryReader: inventory,
-            readCurrentCalendarGroups: (_, _) => ValueTask.FromResult((84L, 126L))))
+            readCurrentCalendarGroups: (_, _) => ValueTask.FromResult((84L, 126L)),
+            isCharacterInCurrentCorporation: isCharacterInCurrentCorporation))
             registry.Register(service);
 
         var config = GlobalConfig.Build(Options);
@@ -427,9 +501,12 @@ public partial class HostServerTests
     {
         public List<long> OwnerIds { get; } = [];
         public List<(long OwnerId, int Status, int ContractType, long IssuedBy, int PageSize, long? StartContractId)> OwnerRequests { get; } = [];
+        public ContractSearchQuery? LastSearchQuery { get; private set; }
 
         public ValueTask<ContractDetailRead?> GetContractAsync(long contractId, CancellationToken cancellationToken)
         {
+            if (contractId == 9999)
+                return ValueTask.FromResult<ContractDetailRead?>(null);
             var contract = Contract(contractId, 42, 84, false) with
             {
                 Type = 2,
@@ -489,8 +566,11 @@ public partial class HostServerTests
         }
 
         public ValueTask<ContractSearchResult> SearchContractsAsync(
-            ContractSearchQuery query, long nowFileTime, CancellationToken cancellationToken) =>
-            ValueTask.FromResult(new ContractSearchResult([], 0, 0));
+            ContractSearchQuery query, long nowFileTime, CancellationToken cancellationToken)
+        {
+            LastSearchQuery = query;
+            return ValueTask.FromResult(new ContractSearchResult([], 0, 0));
+        }
 
         public ValueTask<ContractReadBundle> GetMyCurrentContractListAsync(
             long characterId, long corporationId, bool isAccepted, bool forCorporation,

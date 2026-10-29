@@ -77,7 +77,8 @@ public sealed partial class ContractProxyService(
     Func<long, int, CancellationToken, ValueTask<int>>? readSkillLevel = null,
     Func<long, long, CancellationToken, ValueTask<decimal>>? readBrokerFeeAdjustment = null,
     Func<long, long, CancellationToken, ValueTask<bool>>? hasContractManagerRole = null,
-    Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? readCurrentOrganizationIds = null)
+    Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? readCurrentOrganizationIds = null,
+    Func<long, long, CancellationToken, ValueTask<bool>>? isCharacterInCurrentCorporation = null)
 {
     public IContractInventoryReader? Inventory { get; set; }
 
@@ -154,14 +155,16 @@ public sealed partial class ContractProxyService(
             throw MachoErrors.ThrowUserError("ConNotInStation");
 
         var availability = AvailabilityOf(info, corporationId, allianceId);
+        var assignedCharacterIsInIssuerCorporation = info.AssignedToId > 0 && isCharacterInCurrentCorporation is not null &&
+            await isCharacterInCurrentCorporation(info.AssignedToId, corporationId, call.Cancellation);
         var contracting = await skillLevel(issuerId, ContractingSkill, call.Cancellation);
         var advanced = await skillLevel(issuerId, AdvancedContractingSkill, call.Cancellation);
         var corporationContracting = info.ForCorp ? await skillLevel(issuerId, CorporationContractingSkill, call.Cancellation) : 0;
         var accounting = await skillLevel(issuerId, AccountingSkill, call.Cancellation);
         var brokerRelations = await skillLevel(issuerId, BrokerRelationsSkill, call.Cancellation);
 
-        // Corporation-assigned contracts count against the shared corporation maximum (the client's innerCorp rule).
-        var limit = availability == 2 ? ContractCreationLimits.MaxNumContracts
+        // The client gives the shared 500-contract allowance to assignments inside the issuer's corporation.
+        var limit = availability == 2 || assignedCharacterIsInIssuerCorporation ? ContractCreationLimits.MaxNumContracts
             : info.ForCorp ? ContractCreationLimits.Corporation(corporationContracting)
             : ContractCreationLimits.Personal(contracting, advanced);
         var brokerFeeAdjustment = readBrokerFeeAdjustment is null
@@ -425,7 +428,7 @@ public sealed partial class ContractProxyService(
         var sortByValue = call.Kwarg("sortBy");
         var sortDirection = ContractSearchOptionalInt(call.Kwarg("sortDir"));
         var searchHint = ContractInt(call.Kwarg("searchHint") ?? PyNone.Instance);
-        if (searchHint != 0)
+        if (searchHint is < 0 or > 2)
             throw MachoErrors.ThrowUserError("ConContractNotAvailable");
 
         var query = new ContractSearchQuery(
@@ -470,8 +473,9 @@ public sealed partial class ContractProxyService(
     {
         var store = readModel ?? throw new InvalidOperationException("contract read model is not wired");
         var contractId = ContractLong(call.Arg(0));
-        var contract = await store.GetContractAsync(contractId, call.Cancellation);
-        return contract is null ? PyNone.Instance : BuildContractDetail(contract);
+        var contract = await store.GetContractAsync(contractId, call.Cancellation)
+            ?? throw MachoErrors.ThrowUserError("ConContractNotFound");
+        return BuildContractDetail(contract);
     }
 
     [Method("GetCourierContractFromItemID")]
@@ -775,6 +779,7 @@ public sealed partial class ContractProxyService(
         {
             PyList list => list.Items,
             PyTuple tuple => tuple.Items,
+            PyDict dictionary => dictionary.Entries.Select(entry => entry.Key).ToArray(),
             PyObjectEx { Kind: ObjectExKind.Ex1, Header: PyTuple { Items: [PyToken { Value: "__builtin__.set" }, PyTuple { Items: [PyList list] }] } } => list.Items,
             _ => [],
         };

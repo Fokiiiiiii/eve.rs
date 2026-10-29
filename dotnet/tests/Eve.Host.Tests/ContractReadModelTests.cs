@@ -450,14 +450,20 @@ public sealed class ContractReadModelTests
         var contractsSchema = $"contract_courier_{suffix}";
         var inventorySchema = $"contract_courier_items_{suffix}";
         var walletSchema = $"contract_courier_wallet_{suffix}";
+        var schedulerSchema = $"contract_courier_scheduler_{suffix}";
+        var eventsSchema = $"contract_courier_events_{suffix}";
         await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(connectionString));
         await PersistenceContractReadModel.MigrateAsync(source, contractsSchema);
         await PgItemStore.MigrateAsync(source, inventorySchema);
         await PgWalletStore.MigrateAsync(source, walletSchema);
+        await Eve.Scheduler.DurableScheduler.MigrateAsync(source, schedulerSchema);
+        await Eve.Events.EventBus.MigrateAsync(source, eventsSchema);
         try
         {
             var itemStore = new PgItemStore(source, inventorySchema);
             var wallets = new WalletTransactions(source, walletSchema);
+            var scheduler = new Eve.Scheduler.DurableScheduler(source, () => 1_800_000_000_000, schema: schedulerSchema);
+            var events = new Eve.Events.EventBus(source, scheduler, schema: eventsSchema);
             await using (var connection = await source.OpenConnectionAsync())
             await using (var transaction = await connection.BeginTransactionAsync())
             {
@@ -475,7 +481,8 @@ public sealed class ContractReadModelTests
                     new NewItem(34, 100, 600, ItemFlags.Hangar, Quantity: 2), CancellationToken.None);
                 await transaction.CommitAsync();
             }
-            var writer = new PersistenceContractWriteModel(source, itemStore, wallets, () => 1_800_000_000_000, contractsSchema);
+            var writer = new PersistenceContractWriteModel(source, itemStore, wallets, () => 1_800_000_000_000,
+                contractsSchema, events: events);
             var created = await writer.CreateContractAsync(new Eve.Services.Core.CreateItemExchangeRequest(
                 IssuerCharacterId: 100, IssuerCorporationId: 200, IsCorporationIssued: false, StartStationId: 600,
                 StartStationDivision: ItemFlags.Hangar, Availability: 0, AssigneeId: 0, ExpiryMinutes: 1440,
@@ -487,7 +494,29 @@ public sealed class ContractReadModelTests
             var accepted = await writer.AcceptContractAsync(created.ContractId, 300, 301, 0, false, 1000, 600, CancellationToken.None);
             Assert.Equal((short)1, accepted.Status);
             Assert.Equal(40000m, await wallets.AccountBalanceAsync(new WalletAccount(300), CancellationToken.None));
-            Assert.True(await writer.CompleteContractAsync(created.ContractId, 7, 300, 301, 0, 600, false, CancellationToken.None));
+            var unauthorizedFailure = await Assert.ThrowsAsync<ContractUserErrorException>(() =>
+                writer.CompleteContractAsync(created.ContractId, 7, 999, 998, 0, 600, false, CancellationToken.None).AsTask());
+            Assert.Equal("ConContractNotAvailable", unauthorizedFailure.Message);
+            var prematureIssuerFailure = await Assert.ThrowsAsync<ContractUserErrorException>(() =>
+                writer.CompleteContractAsync(created.ContractId, 7, 100, 200, 0, 600, false, CancellationToken.None).AsTask());
+            Assert.Equal("ConContractNotAvailable", prematureIssuerFailure.Message);
+            await using (var age = source.CreateCommand($"UPDATE {contractsSchema}.contract_records SET date_accepted_filetime=$2 WHERE contract_id=$1"))
+            {
+                age.Parameters.AddWithValue(created.ContractId);
+                age.Parameters.AddWithValue(Eve.Services.Py.FileTimeFromUnixMs(1_800_000_000_000) - 8L * TimeSpan.TicksPerDay);
+                await age.ExecuteNonQueryAsync();
+            }
+            Assert.True(await writer.CompleteContractAsync(created.ContractId, 7, 100, 200, 0, 600, false, CancellationToken.None));
+            await using (var notice = source.CreateCommand($"""
+                SELECT (payload->>'characterId') || ':' || (payload->>'corporationId')
+                FROM {eventsSchema}.outbox
+                WHERE topic = $1 AND payload->>'name' = 'OnContractFailed' AND (payload->>'contractId')::bigint = $2
+                """))
+            {
+                notice.Parameters.AddWithValue(Eve.Host.Persistence.ContractNotifications.Topic);
+                notice.Parameters.AddWithValue(created.ContractId);
+                Assert.Equal("300:0", await notice.ExecuteScalarAsync());
+            }
 
             Assert.Equal(60000m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
             Assert.Equal(40000m, await wallets.AccountBalanceAsync(new WalletAccount(300), CancellationToken.None));
@@ -528,10 +557,56 @@ public sealed class ContractReadModelTests
             var deliveredItem = await itemStore.GetAsync(successContract.EscrowItemIds.Single(), CancellationToken.None);
             Assert.NotNull(deliveredItem);
             Assert.Equal((100L, 700L, ItemFlags.Hangar), (deliveredItem.OwnerId, deliveredItem.LocationId, deliveredItem.Flag));
+
+            await using (var notice = source.CreateCommand($"""
+                SELECT (payload->>'characterId') || ':' || (payload->>'corporationId')
+                FROM {eventsSchema}.outbox
+                WHERE topic = $1 AND payload->>'name' = 'OnContractCompleted' AND (payload->>'contractId')::bigint = $2
+                """))
+            {
+                notice.Parameters.AddWithValue(Eve.Host.Persistence.ContractNotifications.Topic);
+                notice.Parameters.AddWithValue(successContract.ContractId);
+                Assert.Equal("100:0", await notice.ExecuteScalarAsync());
+            }
+
+            long rejectedCorpContractId;
+            var nowFileTime = Eve.Services.Py.FileTimeFromUnixMs(1_800_000_000_000);
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await using var insert = new NpgsqlCommand($"""
+                    INSERT INTO {contractsSchema}.contract_records
+                        (issuer_id, issuer_corporation_id, is_corporation_issued, assignee_id, contract_type,
+                         status, start_station_id, date_expired_filetime, created_at_filetime)
+                    VALUES (100, 200, true, 300, 1, 0, 600, $1, $2)
+                    RETURNING contract_id
+                    """, connection, transaction);
+                insert.Parameters.AddWithValue(nowFileTime + TimeSpan.TicksPerDay);
+                insert.Parameters.AddWithValue(nowFileTime);
+                rejectedCorpContractId = (long)(await insert.ExecuteScalarAsync() ?? 0L);
+                await transaction.CommitAsync();
+            }
+            Assert.True(await writer.CompleteContractAsync(rejectedCorpContractId, 6, 300, 301, 0, 600, false, CancellationToken.None));
+            await using (var notices = source.CreateCommand($"""
+                SELECT (payload->>'characterId') || ':' || (payload->>'corporationId')
+                FROM {eventsSchema}.outbox
+                WHERE topic = $1 AND payload->>'name' = 'OnContractRejected' AND (payload->>'contractId')::bigint = $2
+                ORDER BY id
+                """))
+            {
+                notices.Parameters.AddWithValue(Eve.Host.Persistence.ContractNotifications.Topic);
+                notices.Parameters.AddWithValue(rejectedCorpContractId);
+                await using var reader = await notices.ExecuteReaderAsync();
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal("0:200", reader.GetString(0));
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal("300:0", reader.GetString(0));
+                Assert.False(await reader.ReadAsync());
+            }
         }
         finally
         {
-            foreach (var schema in new[] { contractsSchema, inventorySchema, walletSchema })
+            foreach (var schema in new[] { contractsSchema, inventorySchema, walletSchema, schedulerSchema, eventsSchema })
             {
                 await using var cleanup = source.CreateCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
                 await cleanup.ExecuteNonQueryAsync();

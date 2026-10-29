@@ -39,7 +39,8 @@ public static class CoreServices
         PyValue? localizationTextChanges = null,
         Func<long, long, short, CancellationToken, ValueTask<bool>>? canManageCalendarGroupEvent = null,
         Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? readCurrentCalendarGroups = null,
-        IContractInventoryReader? contractInventoryReader = null)
+        IContractInventoryReader? contractInventoryReader = null,
+        Func<long, long, CancellationToken, ValueTask<bool>>? isCharacterInCurrentCorporation = null)
     {
         gameRpcCallbacks ??= new GameRpcCallbacks();
         var licenses = new OmegaLicenses(accounts, nowUnixMs);
@@ -74,7 +75,7 @@ public static class CoreServices
             new RaffleMgrService(gameRpcCallbacks.SeedRafflesAsync),
             new RaffleProxyService(),
             new ContractProxyService(contractReadModel, contractWriteModel, contractSkillLevel, contractBrokerFeeAdjustment,
-                hasContractManagerRole, readCurrentCalendarGroups) { Inventory = contractInventoryReader },
+                hasContractManagerRole, readCurrentCalendarGroups, isCharacterInCurrentCorporation) { Inventory = contractInventoryReader },
             new JumpCloneService(nowUnixMs, gameRpcCallbacks.JumpClones, gameRpcCallbacks.JumpCloneSpace),
             new ServiceGatewayMgrService(gameRpcCallbacks.SetHijackMode, gameRpcCallbacks.IsHijackModeEnabled),
             new SharedSettingsMgrService(gameRpcCallbacks.ReadSharedSettings, gameRpcCallbacks.WriteSharedSettingsAsync, nowUnixMs),

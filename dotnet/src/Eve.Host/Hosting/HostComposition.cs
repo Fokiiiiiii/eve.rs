@@ -80,6 +80,7 @@ internal static class HostComposition
         Func<long, long, CancellationToken, ValueTask<bool>>? hasContractManagerRole = null;
         Func<long, long, short, CancellationToken, ValueTask<bool>>? canManageCalendarGroupEvent = null;
         Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? readCurrentCalendarGroups = null;
+        Func<long, long, CancellationToken, ValueTask<bool>>? isCharacterInCurrentCorporation = null;
         NpgsqlDataSource? dataSource = null; // owned by the runtime: shut down with it, so its pooled connections return to the server
         Eve.Host.Persistence.PgAccruedTimeStore? accruedTimeStore = null;
         Eve.Host.Xmpp.XmppMotdStore? xmppMotdStore = null;
@@ -96,6 +97,20 @@ internal static class HostComposition
             var contractItems = new PgItemStore(source, Env("EVE_INVENTORY_SCHEMA", PgItemStore.DefaultSchema));
             var contractWallets = new WalletTransactions(source, Env("EVE_WALLET_SCHEMA", PgWalletStore.DefaultSchema));
             var contractSkills = new PgSkillStore(source, Env("EVE_SKILLS_SCHEMA", PgSkillStore.DefaultSchema));
+            var contractCharacters = new Eve.Characters.PgCharacterStore(source,
+                Env("EVE_CHARACTERS_SCHEMA", Eve.Characters.PgCharacterStore.DefaultSchema));
+            var contractWalletStore = new PgWalletStore(source, Env("EVE_WALLET_SCHEMA", PgWalletStore.DefaultSchema));
+            var contractCorporations = new Eve.Corporations.CorporationStore(source, contractCharacters,
+                contractWalletStore, contractWallets, contractSkills, () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                Env("EVE_CORPORATIONS_SCHEMA", Eve.Corporations.CorporationStore.DefaultSchema));
+            async ValueTask<bool> IsCharacterInCurrentCorporationAsync(long characterId, long corporationId, CancellationToken ct)
+            {
+                if (characterId <= 0 || corporationId <= 0 ||
+                    (await contractCharacters.GetAsync(characterId, ct))?.CorporationId != corporationId)
+                    return false;
+                return await contractCorporations.GetAsync(corporationId, ct) is { IsNpc: false };
+            }
+            isCharacterInCurrentCorporation = IsCharacterInCurrentCorporationAsync;
             async Task<int> ReadContractSkillAsync(long characterId, int typeId, CancellationToken ct)
             {
                 await using var connection = await source.OpenConnectionAsync(ct);
@@ -252,6 +267,7 @@ internal static class HostComposition
                 ? CharacterServicesComposition.SingleRegisteredService<InvBrokerService>(characterServices)
                 : null,
             contractSkillLevel: contractSkillLevel,
+            isCharacterInCurrentCorporation: isCharacterInCurrentCorporation,
             calendarSessions: characterSessions,
             canManageCalendarGroupEvent: canManageCalendarGroupEvent,
             readCurrentCalendarGroups: readCurrentCalendarGroups,

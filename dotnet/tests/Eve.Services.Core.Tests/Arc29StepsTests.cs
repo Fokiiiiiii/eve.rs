@@ -59,14 +59,14 @@ public class Arc29StepsTests
     {
         public bool InTar { get; set; }
         public List<(long Character, int System, long Dungeon)> Starts { get; } = [];
-        public List<(long Character, long Amount, string Key)> Credits { get; } = [];
+        public List<(long Character, decimal Amount, string Key)> Credits { get; } = [];
         public bool IsPilotInSystem(long characterId, int solarSystemId) => solarSystemId == ArnonSystem || (solarSystemId == TarSystem && InTar);
         public Task<string?> StartDungeonAsync(long characterId, int solarSystemId, long dungeonId, CancellationToken cancellationToken)
         {
             Starts.Add((characterId, solarSystemId, dungeonId));
             return Task.FromResult<string?>(null);
         }
-        public Task CreditIskAsync(long characterId, long amount, long counterpartyId, int refTypeId, string reason, string operationKey, CancellationToken cancellationToken)
+        public Task CreditIskAsync(long characterId, decimal amount, long counterpartyId, int refTypeId, string reason, string operationKey, CancellationToken cancellationToken)
         {
             Credits.Add((characterId, amount, operationKey));
             return Task.CompletedTask;

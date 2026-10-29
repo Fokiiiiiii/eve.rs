@@ -5,6 +5,15 @@ namespace Eve.Services.Core.Tests;
 public sealed class ApproximateMissionRewardRulesTests
 {
     [Fact]
+    public void Mission_isk_uses_the_negotiation_bonus_and_cent_rounding()
+    {
+        Assert.Equal(100_000m, ApproximateMissionRewardRules.NegotiatedIskReward(100_000m, 0));
+        Assert.Equal(110_000m, ApproximateMissionRewardRules.NegotiatedIskReward(100_000m, 2));
+        Assert.Equal(105.01m, ApproximateMissionRewardRules.NegotiatedIskReward(100.01m, 1));
+        Assert.Equal(125_000m, ApproximateMissionRewardRules.NegotiatedIskReward(100_000m, 5));
+    }
+
+    [Fact]
     public void Mission_lp_uses_configured_security_division_and_security_connections_factors()
     {
         Assert.Equal(1_625.472m, ApproximateMissionRewardRules.LoyaltyPoints(1_000m, 0.5m, 0.2m, 2));

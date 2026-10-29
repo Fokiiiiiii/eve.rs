@@ -33,7 +33,7 @@ public class MissionDungeonRuntimeTests
         public bool InSystem { get; set; } = true;
         public string? StartRefusal { get; set; }
         public List<(long Character, int System, long Dungeon)> Starts { get; } = [];
-        public List<(long Character, long Amount, long Counterparty, int RefType, string Key)> Credits { get; } = [];
+        public List<(long Character, decimal Amount, long Counterparty, int RefType, string Key)> Credits { get; } = [];
 
         public bool IsPilotInSystem(long characterId, int solarSystemId) => InSystem;
 
@@ -43,7 +43,7 @@ public class MissionDungeonRuntimeTests
             return Task.FromResult(StartRefusal);
         }
 
-        public Task CreditIskAsync(long characterId, long amount, long counterpartyId, int refTypeId, string reason, string operationKey, CancellationToken cancellationToken)
+        public Task CreditIskAsync(long characterId, decimal amount, long counterpartyId, int refTypeId, string reason, string operationKey, CancellationToken cancellationToken)
         {
             Credits.Add((characterId, amount, counterpartyId, refTypeId, operationKey));
             return Task.CompletedTask;
@@ -137,7 +137,7 @@ public class MissionDungeonRuntimeTests
 
         await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.3509", 77, default);
         var credit = Assert.Single(host.Credits);
-        Assert.Equal((Pilot, 100000L, Corporation, 33), (credit.Character, credit.Amount, credit.Counterparty, credit.RefType));
+        Assert.Equal((Pilot, 100000m, Corporation, 33), (credit.Character, credit.Amount, credit.Counterparty, credit.RefType));
         Assert.Equal("agent-mission:" + Pilot + ":9101:dungeon:77", credit.Key);
         Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Agent))!.State);
 
@@ -165,7 +165,8 @@ public class MissionDungeonRuntimeTests
             [new SdeRow(9104, JsonDocument.Parse(BonusKillMission).RootElement.Clone())], []);
         var completedAt = Start.AddMinutes(4);
         var runtime = new MissionDungeonRuntime(store, catalog, host,
-            _ => new MissionAgentPlace(System, Corporation), () => completedAt);
+            _ => new MissionAgentPlace(System, Corporation), () => completedAt,
+            negotiationLevelOf: (_, _) => Task.FromResult(1));
         await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9104, 1238, "Bonus Kill Step", "", false), Start, "offer:bonus");
         await store.AcceptAsync(Pilot, Agent, Start, "accept:bonus");
         await store.OfferAsync(Pilot + 1, Agent, new AgentMissionContent(9104, 1238, "Bonus Kill Step", "", false), Start, "offer:late");
@@ -176,7 +177,7 @@ public class MissionDungeonRuntimeTests
         completedAt = Start.AddMinutes(5);
         await runtime.OnDungeonOutcomeAsync("completed", Pilot + 1, "dungeon.3509", 80, default);
 
-        Assert.Equal(new[] { 100000L, 40000L, 100000L }, host.Credits.Select(credit => credit.Amount));
+        Assert.Equal(new[] { 105000m, 42000m, 105000m }, host.Credits.Select(credit => credit.Amount));
         Assert.Equal(new[] { 33, 34, 33 }, host.Credits.Select(credit => credit.RefType));
         Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Agent))!.State);
         Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot + 1, Agent))!.State);
@@ -202,7 +203,7 @@ public class MissionDungeonRuntimeTests
         await store.AcceptAsync(Pilot, Agent, Start, "accept:1");
         Assert.True(await runtime.GmCompleteAsync(Pilot, Agent));
         var credit = Assert.Single(host.Credits);
-        Assert.Equal((Pilot, 100000L, Corporation, 33), (credit.Character, credit.Amount, credit.Counterparty, credit.RefType));
+        Assert.Equal((Pilot, 100000m, Corporation, 33), (credit.Character, credit.Amount, credit.Counterparty, credit.RefType));
         Assert.Equal("agent-mission:" + Pilot + ":9101:gm:9101", credit.Key);
         Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Agent))!.State);
 
@@ -241,7 +242,7 @@ public class MissionDungeonRuntimeTests
 
         await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.3509", 78, default);
         var credit = Assert.Single(host.Credits);
-        Assert.Equal((Pilot, 920_000L, Corporation), (credit.Character, credit.Amount, credit.Counterparty));
+        Assert.Equal((Pilot, 920_000m, Corporation), (credit.Character, credit.Amount, credit.Counterparty));
 
         Assert.Equal(new[] { (Pilot, Agent, 0.031), (Pilot, Corporation, 0.062) }, host.Standings.Select(s => (s.Character, s.Faction, s.Delta)));
         Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Agent))!.State);
@@ -394,7 +395,7 @@ public class MissionDungeonRuntimeTests
         Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Agent))!.State);
         Assert.Equal((Pilot, Datacore, 1L), Assert.Single(host.Consumed));
         Assert.Equal(0, host.Held.GetValueOrDefault(Datacore));
-        Assert.Equal(100000L, Assert.Single(host.Credits).Amount);
+        Assert.Equal(100000m, Assert.Single(host.Credits).Amount);
     }
 
     [AgentsPgFact]
@@ -478,7 +479,7 @@ public class MissionDungeonRuntimeTests
 
         Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Agent))!.State);
         Assert.Equal((Pilot, Datacore, 2L), Assert.Single(host.Consumed));
-        Assert.Equal(100000L, Assert.Single(host.Credits).Amount);
+        Assert.Equal(100000m, Assert.Single(host.Credits).Amount);
     }
 
     [AgentsPgFact]
@@ -600,7 +601,7 @@ public class MissionDungeonRuntimeTests
         await runtime.OnConversationAsync(Pilot, Agent, together: true);
         Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Agent))!.State);
         Assert.Equal((Pilot, Datacore, 3L), Assert.Single(host.Consumed));
-        Assert.Equal(100000L, Assert.Single(host.Credits).Amount);
+        Assert.Equal(100000m, Assert.Single(host.Credits).Amount);
     }
 
     [AgentsPgFact]

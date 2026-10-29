@@ -89,7 +89,7 @@ public sealed class JumpCloneSettlementHostWireTests : IAsyncLifetime
         await using var transaction = await connection.BeginTransactionAsync();
         var characters = new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA"));
         var character = await characters.InsertAsync(connection, transaction,
-            new NewCharacter(1, $"Clone Fee {corporationId}", 0, 1, 1, 1, 11, 1376, corporationId, null,
+            new NewCharacter(1, $"Clone Fee {corporationId} {Guid.NewGuid():N}", 0, 1, 1, 1, 11, 1376, corporationId, null,
                 station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId, null, null));
         await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).OpenAsync(connection, transaction, character, balance, 0);
         var capsule = await new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA")).CreateAsync(connection, transaction,
@@ -133,13 +133,20 @@ public sealed class JumpCloneSettlementHostWireTests : IAsyncLifetime
         const long structureId = 9_000_000_000_000_101;
         var character = await CharacterAsync(source, station, ownerCorporationId, 5_000_000m);
         var cloneId = await CloneAtAsync(source, character, targetStation.Id);
+        var profilesService = host.Registry.Lookup("structureProfiles") ?? throw new InvalidOperationException("structureProfiles is not registered");
+        var profileSession = new ClientSession(new Sink()) { CharacterId = character, SessionId = 904 };
+        profileSession.Set("corpid", new PyLong(ownerCorporationId));
+        profileSession.Set("corprole", new PyLong(2048));
+        var profiles = Assert.IsType<PyList>(await profilesService.CallAsync(Call(profileSession, "GetProfiles")));
+        var defaultProfile = Assert.IsType<PyObjectEx>(Assert.Single(profiles.Items));
+        var profileId = Assert.IsType<PyInt>(defaultProfile.Dict.Single(entry => Assert.IsType<PyStr>(entry.Key).Value == "profileID").Value).Value;
 
         var structures = new StructureStore(source, Schema("EVE_STRUCTURES_SCHEMA"));
         await using (var connection = await source.OpenConnectionAsync())
         await using (var transaction = await connection.BeginTransactionAsync())
         {
             Assert.True(await structures.CreateAsync(connection, transaction,
-                new NewStructure(structureId, 35832, station.SolarSystemId, 1, 2, 3, 0, ownerCorporationId, 0, "Clone Fee Structure", "")));
+                new NewStructure(structureId, 35832, station.SolarSystemId, 1, 2, 3, 0, ownerCorporationId, 0, "Clone Fee Structure", "", profileId)));
             await structures.SaveAsync(connection, transaction, new StructureSnapshot
             {
                 StructureId = structureId,

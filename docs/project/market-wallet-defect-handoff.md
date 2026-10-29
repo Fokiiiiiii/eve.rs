@@ -12,8 +12,10 @@ V24.01 clients register `OnOwnOrdersChanged` in `marketsvc.py:83-84`, `marketHis
 
 V24.01 `personalTransactionsPanel.py:9-11` and `corp/corpTransactionsPanel.py:11-15` pass the selected year and month to `accountsvc.py:107-128`; `transactionOverviewController.py:114-117` uses the no-month recent-history path. EveJS `server/src/services/account/accountService.js:881-915` forwards the month to the character or corporate journal filter; `server/src/services/account/walletState.js:471-492` and `server/src/services/corporation/corpWalletState.js:1159-1171` filter the requested month.
 
-The Host wallet SQL range query and the regression that requests a month containing 125 rows are in the follow-up wallet commit.
+`AccountService.GetTransactions` now passes the requested month's UTC start and exclusive next-month boundary to `WalletTransactions.JournalForAccountAsync` (`dotnet/src/Eve.Services.Wallet/AccountService.cs:88-111`, `dotnet/src/Eve.Wallet/WalletTransactions.cs:219-255`). The month path omits the unrelated recent-row cap. `TransactionHistoryTests.A_month_query_returns_every_journal_row_in_that_month` drives the account service over 125 rows in January plus a February row and expects all 125 January entries.
 
 ## Checks
 
 Market and wallet service test projects build locally. Two database-free tests pass: the market immediate-fill notification shape and the wallet account-change notification shape. Database-backed regressions are reserved for the GitHub Actions checks.
+
+The first Market Actions run (40865820146, commit `6515ab76`) reported 144 passed and one failed: the new volume test selected both the filled maker and created remainder. The assertion now selects the `Created` order. The corrected database regression is included in the next push for Actions rerun.

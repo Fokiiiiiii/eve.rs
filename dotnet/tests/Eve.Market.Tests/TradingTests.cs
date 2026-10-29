@@ -41,7 +41,7 @@ public class TradingTests
         var receipt=await r.Trading.PlaceAsync(r.Buy(buyer,10,100,90),"partial-buy");
 
         Assert.Equal(40,receipt.FilledQuantity);
-        var opened=Assert.Single(receipt.ChangedOrders).Order.Order;
+        var opened=Assert.Single(receipt.ChangedOrders,change => change.Reason=="Created").Order.Order;
         Assert.Equal(60,opened.VolumeRemaining);
         Assert.Equal(100,opened.VolumeEntered);
         await using var command=r.Source.CreateCommand($"SELECT vol_entered,vol_remaining FROM {r.MarketSchema}.orders WHERE id=$1");

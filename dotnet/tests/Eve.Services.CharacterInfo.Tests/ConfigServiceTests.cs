@@ -146,7 +146,7 @@ public sealed class ConfigServiceTests
         Assert.Equal(0d, Assert.IsType<PyReal>(row[3]).Value);
         Assert.Equal(0d, Assert.IsType<PyReal>(row[4]).Value);
         Assert.Equal(0d, Assert.IsType<PyReal>(row[5]).Value);
-        Assert.Equal($"Structure {structureId}", Text(row[6]));
+        Assert.Same(PyNone.Instance, row[6]);
         Assert.Equal(1, reads);
     }
 

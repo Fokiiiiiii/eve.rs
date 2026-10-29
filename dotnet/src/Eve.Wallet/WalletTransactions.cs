@@ -218,19 +218,41 @@ public sealed partial class WalletTransactions
         reader.GetInt64(7), reader.GetString(8),reader.GetInt32(9),reader.IsDBNull(10) ? null : reader.GetInt64(10),reader.IsDBNull(11) ? null : reader.GetInt32(11));
 
     public async Task<IReadOnlyList<JournalEntry>> JournalForAccountAsync(long ownerId, int accountKey,
-        long? beforeId = null, int limit = 1000, CancellationToken cancellationToken = default)
+        long? beforeId = null, int? limit = 1000, CancellationToken cancellationToken = default,
+        long? fromTimeMs = null, long? untilTimeMs = null)
     {
         if (accountKey is < 1000 or > 1006)
             throw new ArgumentOutOfRangeException(nameof(accountKey));
         if (limit is < 1 or > 1000)
             throw new ArgumentOutOfRangeException(nameof(limit));
+        if (fromTimeMs is { } from && untilTimeMs is { } until && from >= until)
+            throw new ArgumentOutOfRangeException(nameof(untilTimeMs));
 
+        var parameters = new List<NpgsqlParameter>
+        {
+            new() { Value = ownerId },
+            new() { Value = accountKey },
+            new() { Value = beforeId ?? long.MaxValue },
+        };
+        var timeRange = "";
+        var nextParameter = 4;
+        if (fromTimeMs is { } start)
+        {
+            timeRange += $" AND time_ms >= ${nextParameter++}";
+            parameters.Add(new NpgsqlParameter { Value = start });
+        }
+        if (untilTimeMs is { } end)
+        {
+            timeRange += $" AND time_ms < ${nextParameter++}";
+            parameters.Add(new NpgsqlParameter { Value = end });
+        }
+        var limitClause = limit is null ? "" : $" LIMIT ${nextParameter}";
+        if (limit is { } rowLimit)
+            parameters.Add(new NpgsqlParameter { Value = rowLimit });
         await using var command = _source.CreateCommand(
-            $"SELECT id, owner_id, counterparty_id, ref_type_id, amount, balance, reason, time_ms, operation_key, account_key, reference_id, reference_type FROM {_schema}.journal WHERE owner_id = $1 AND account_key = $2 AND id < $3 ORDER BY id DESC LIMIT $4");
-        command.Parameters.Add(new NpgsqlParameter { Value = ownerId });
-        command.Parameters.Add(new NpgsqlParameter { Value = accountKey });
-        command.Parameters.Add(new NpgsqlParameter { Value = beforeId ?? long.MaxValue });
-        command.Parameters.Add(new NpgsqlParameter { Value = limit });
+            $"SELECT id, owner_id, counterparty_id, ref_type_id, amount, balance, reason, time_ms, operation_key, account_key, reference_id, reference_type FROM {_schema}.journal WHERE owner_id = $1 AND account_key = $2 AND id < $3{timeRange} ORDER BY id DESC{limitClause}");
+        foreach (var parameter in parameters)
+            command.Parameters.Add(parameter);
         var entries = new List<JournalEntry>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))

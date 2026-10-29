@@ -8,6 +8,35 @@ namespace Eve.Host.Tests;
 public partial class HostServerTests
 {
     [Fact]
+    public async Task Mailing_list_owner_is_also_an_operator_in_the_registered_host_wire_reply()
+    {
+        const long characterId = 90_000_001;
+        const long listId = 500_000_001;
+        var state = new System.Text.Json.Nodes.JsonObject
+        {
+            [listId.ToString()] = new System.Text.Json.Nodes.JsonObject
+            {
+                ["listID"] = listId,
+                ["name"] = "fleetops",
+                ["displayName"] = "Fleet Ops",
+                ["ownerID"] = characterId,
+                ["members"] = new System.Text.Json.Nodes.JsonObject { [characterId.ToString()] = 0 },
+            },
+        };
+        var service = new MailingListService(_ => ValueTask.FromResult<System.Text.Json.Nodes.JsonObject?>(state));
+        Start(strictRpc: true, configure: registry => registry.Register(service),
+            sessionOpened: session => session.Set("charid", new PyLong(characterId)));
+        var (front, open) = await OpenFrontAsync();
+
+        var joined = Assert.IsType<PyDict>(await HostRpcAsync(front, open, 1, "mailingListsMgr", "GetJoinedLists"));
+        var owner = Assert.IsType<PyObject>(joined.Entries.Single(entry => entry.Key == new PyInt(listId)).Value);
+        var fields = Assert.IsType<PyDict>(owner.Args);
+
+        Assert.Contains(fields.Entries, entry => T(entry.Key) == "isOperator" && entry.Value == PyBool.True);
+        Assert.Contains(fields.Entries, entry => T(entry.Key) == "isOwner" && entry.Value == PyBool.True);
+    }
+
+    [Fact]
     public async Task Mailing_list_manager_mutations_are_forwarded_through_registered_host_wire()
     {
         var received = new List<MailingListMutation>();

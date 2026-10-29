@@ -212,7 +212,7 @@ public sealed class MailingListService : IService
         var role = MemberAccess(record, characterId);
         return Py.KeyVal(
             ("id", new PyInt(id)), ("name", new PyStr(name)), ("displayName", new PyStr(displayName)),
-            ("isMuted", PyValue.Of(role == 0)), ("isOperator", PyValue.Of(role == 2)),
+            ("isMuted", PyValue.Of(role == 0)), ("isOperator", PyValue.Of(role is 2 or 3)),
             ("isOwner", PyValue.Of(role == 3)));
     }
 

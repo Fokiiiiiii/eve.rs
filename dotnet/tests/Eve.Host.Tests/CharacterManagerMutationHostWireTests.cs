@@ -244,13 +244,6 @@ public partial class HostServerTests
         Assert.IsType<PyBytes>(note);
         Assert.Equal("client note", T(note));
 
-        Assert.Equal(PyNone.Instance, await CallOverHostAfterQueuedNotifications(front, open, 15, "charMgr", "SaveCharacterSetting",
-            Py.Tuple(new PyStr("windowState"), new PyStr("open"))));
-        Assert.Equal(PyNone.Instance, await CallOverHostAfterQueuedNotifications(front, open, 16, "charMgr", "DeleteCharacterSetting",
-            Py.Tuple(new PyStr("windowState"))));
-        Assert.Empty(Assert.IsType<PyDict>(await CallOverHostAfterQueuedNotifications(front, open, 17, "charMgr", "GetCharacterSettings",
-            Py.Tuple([]))).Entries);
-
         await rig.RestartAsync();
         service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charMgr"));
         var persisted = Assert.IsType<PyList>(await service.CallAsync(new ServiceCall

@@ -19,7 +19,7 @@ from tests import test_undock as undock
 from tests.abyssal_fixture import (
     MIN_DISTANCE_FROM_DISALLOWED_OBJECTS_METERS,
     PLACEMENT_TYPELIST_CATEGORY_IDS, PLACEMENT_TYPELIST_GROUP_IDS,
-    ball_separation, prepare_rs_entry, surface_distance,
+    ball_separation, grant_boarding_skills, prepare_rs_entry, surface_distance,
 )
 
 LIVE = base.LIVE
@@ -151,6 +151,7 @@ def _run_abyssal_scenario(
             ship_id = _item_id(
                 client.call_bound(hangar, "List"), ship_type_id
             )
+            grant_boarding_skills(client)
             ship_service = client.call(
                 "ship", "MachoBindObject", (undock.STATION, 15), None
             )[0]
@@ -445,8 +446,6 @@ def _inventory_for(client, scope, item_id):
 
 def _prepare_combat_modules(client, ship_id, station_id):
     """Equip this disposable pilot before deployment using existing setup commands."""
-    reply = m.plain(client.call("slash", "SlashCmd", "/giveskill me all 5"))
-    assert "not found" not in str(reply).lower() and "Unknown command" not in str(reply), reply
     # SDE339: five medium railguns, tank/cap support, and three medium capacitor rigs.
     fitted_types = (
         [12344] * 5

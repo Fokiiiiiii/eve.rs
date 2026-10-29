@@ -28,6 +28,7 @@ from tests.test_undock import STATION, SYSTEM, arrive, outcome
 from tests.test_weapon import slims_in
 
 pytestmark = [
+    pytest.mark.timeout(1800),
     pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server"),
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SLOW") != "1", reason="four minutes of link: set EVE_LIVE_SLOW=1"),
     pytest.mark.skipif("EVE_INVENTORY_SCHEMA" not in os.environ or "EVE_PSQL_URL" not in os.environ or "EVE_SKILLS_SCHEMA" not in os.environ,

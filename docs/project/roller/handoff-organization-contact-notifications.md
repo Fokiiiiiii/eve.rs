@@ -111,6 +111,15 @@ The inherited mission journal serializer was also corrected: `expirationTime` no
 - The database-backed focused regression is scheduled on Actions after push. No PostgreSQL or graphical-client checks were run locally.
 
 
+## Push-CI Store checkout refusal follow-up (2026-10-29)
+
+The push-triggered `ci.yml` run for `6e67ff91` exposed an inherited Host regression in `Certificate_purchase_without_checkout_returns_none_and_grants_nothing`. With no settlement provider configured, `StoreOffersService` threw `STORE_CHECKOUT_UNAVAILABLE` while the registered Host test and EveJS return `None` for a rejected purchase. The V24.01 VGS caller (`vgs/client/vgsClient.py:60–64`) treats a falsey reply as `PurchaseFailedError`; returning `None` preserves the failure and prevents any grant. The service and database-free regression now match that behavior.
+
+- The merged `ci.yml` run `40793571756` failed the Host shard on `NewEdenStoreHostTests.Certificate_purchase_without_checkout_returns_none_and_grants_nothing`; other completed CI jobs shown in the run had passed. `Eve.Corporations.Tests` Actions run `40793581263` passed the full shard, and the exact alliance persistence test run `40795100716` passed.
+- After merging the newest `origin/main`, `Eve.Services.Core.Tests` built with 0 warnings and 0 errors; database-free `Offer_without_settlement_is_hidden_and_checkout_returns_none` passed 1/1.
+- The unavailable-checkout response fix is committed locally as `9d83eda0` and awaits push-triggered CI verification.
+
+
 
 ## Focused mission expiry verification (2026-10-24)
 

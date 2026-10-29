@@ -109,7 +109,7 @@ public sealed class StoreOffersServiceTests
     }
 
     [Fact]
-    public async Task Offer_without_settlement_is_hidden_and_checkout_fails_explicitly()
+    public async Task Offer_without_settlement_is_hidden_and_checkout_returns_none()
     {
         var service = Service(StoreState("PLX"));
         var availability = Assert.IsType<PyDict>(await service.CallAsync(Request("can_purchase_offer", new PyInt(100))));
@@ -117,8 +117,7 @@ public sealed class StoreOffersServiceTests
         Assert.Equal(PyBool.False, availability.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == "canPurchase").Value);
         Assert.Same(PyNone.Instance, availability.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == "offerID").Value);
         Assert.Equal(new PyStr("payment_unavailable"), availability.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == "purchaseLimitedReason").Value);
-        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.CallAsync(PurchaseCall("PLX")));
-        Assert.Equal("STORE_CHECKOUT_UNAVAILABLE", error.Error.UserErrorMessage);
+        Assert.Same(PyNone.Instance, await service.CallAsync(PurchaseCall("PLX")));
     }
 
     [Fact]

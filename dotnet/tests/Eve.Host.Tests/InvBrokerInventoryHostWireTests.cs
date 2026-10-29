@@ -66,17 +66,33 @@ public partial class HostServerTests
         var structureReply = Assert.IsType<Send>(await front.ReceiveAsync());
         Assert.Equal(MachoMessage.CallRsp,
             Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(structureReply.Payload))).Type);
-        Assert.IsType<PySubStruct>(Result(MarshalCodec.Decode(structureReply.Payload)));
+        var structureBound = Assert.IsType<PySubStruct>(Result(MarshalCodec.Decode(structureReply.Payload)));
+        var structureBoundData = Assert.IsType<PyTuple>(Assert.IsType<PySubStream>(structureBound.Value).Decoded);
+        var structureObjectId = Encoding.UTF8.GetString(Assert.IsType<PyBytes>(structureBoundData.Items[0]).Value.Span);
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.BoundCall(
+            open, 2, structureObjectId, "List", new PyTuple([]), MachoVersion()))));
+        var structureListReply = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.CallRsp,
+            Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(structureListReply.Payload))).Type);
+        Assert.Empty(Assert.IsType<PyList>(Result(MarshalCodec.Decode(structureListReply.Payload))).Items);
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.BoundCall(
+            open, 3, structureObjectId, "GetCapacity", new PyTuple([]), MachoVersion()))));
+        var structureCapacityReply = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.CallRsp,
+            Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(structureCapacityReply.Payload))).Type);
+        Assert.IsType<PyObject>(Result(MarshalCodec.Decode(structureCapacityReply.Payload)));
 
         await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.CallWithKwargs(
-            open, 2, "invbroker", "GetInventory", new PyTuple([new PyInt(InvBrokerService.ContainerHangar)]), MachoVersion()))));
+            open, 4, "invbroker", "GetInventory", new PyTuple([new PyInt(InvBrokerService.ContainerHangar)]), MachoVersion()))));
         var stationBindReply = Assert.IsType<Send>(await front.ReceiveAsync());
         var stationBound = Assert.IsType<PySubStruct>(Result(MarshalCodec.Decode(stationBindReply.Payload)));
         var boundData = Assert.IsType<PyTuple>(Assert.IsType<PySubStream>(stationBound.Value).Decoded);
         var objectId = Encoding.UTF8.GetString(Assert.IsType<PyBytes>(boundData.Items[0]).Value.Span);
 
         await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.BoundCall(
-            open, 3, objectId, "GetCapacity", new PyTuple([]), MachoVersion()))));
+            open, 5, objectId, "GetCapacity", new PyTuple([]), MachoVersion()))));
         var capacityReply = Assert.IsType<Send>(await front.ReceiveAsync());
         var capacity = Assert.IsType<PyObject>(Result(MarshalCodec.Decode(capacityReply.Payload)));
         Assert.Equal("util.KeyVal", Encoding.UTF8.GetString(Assert.IsType<PyBytes>(capacity.Name).Value.Span));
@@ -87,7 +103,7 @@ public partial class HostServerTests
             && pair.Value == new PyReal(0));
 
         await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.CallWithKwargs(
-            open, 4, "invbroker", "GetContainerContents", new PyTuple([new PyInt(structureId), new PyInt(structureId)]), MachoVersion()))));
+            open, 6, "invbroker", "GetContainerContents", new PyTuple([new PyInt(structureId), new PyInt(structureId)]), MachoVersion()))));
         var contentsReply = Assert.IsType<Send>(await front.ReceiveAsync());
         Assert.Equal(structureId, resolvedStructureId);
         var rowset = Assert.IsType<PyObject>(Result(MarshalCodec.Decode(contentsReply.Payload)));

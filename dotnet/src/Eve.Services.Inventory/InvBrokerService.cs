@@ -1053,9 +1053,8 @@ public sealed partial class InvBrokerService(
     }
 
     /// <summary>
-    /// <c>GetCapacity(flag)</c>: how big the inventory is and how much is in it. A ship's hold is the ship's own capacity (dogma's); asked of a ship with no flag it is the
-    /// cargo hold. A hangar holds a million cubic metres whatever is in it; asked for the cargo hold it answers what the reference does for an inventory that is no
-    /// ship (5,000).
+    /// <c>GetCapacity(flag)</c>: how big the inventory is and how much is in it. Station hangars report the client's effectively unlimited capacity and zero used;
+    /// ship holds and structure inventories report their actual capacity and contents.
     /// </summary>
     [Method("GetCapacity")]
     public async ValueTask<PyValue> GetCapacity(ServiceCall call)

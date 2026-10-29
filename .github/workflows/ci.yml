@@ -191,10 +191,12 @@ jobs:
           - { name: "space tests 30/32", artifact: "space-30", only: "Eve.Services.Space.Tests", index: 29, count: 32 }
           - { name: "space tests 31/32", artifact: "space-31", only: "Eve.Services.Space.Tests", index: 30, count: 32 }
           - { name: "space tests 32/32", artifact: "space-32", only: "Eve.Services.Space.Tests", index: 31, count: 32 }
-          - { name: "host tests 1/4", artifact: "host-1", only: "Eve.Host.Tests", index: 0, count: 4 }
-          - { name: "host tests 2/4", artifact: "host-2", only: "Eve.Host.Tests", index: 1, count: 4 }
-          - { name: "host tests 3/4", artifact: "host-3", only: "Eve.Host.Tests", index: 2, count: 4 }
-          - { name: "host tests 4/4", artifact: "host-4", only: "Eve.Host.Tests", index: 3, count: 4 }
+          - { name: "host tests 1/6", artifact: "host-1", only: "Eve.Host.Tests", index: 0, count: 6 }
+          - { name: "host tests 2/6", artifact: "host-2", only: "Eve.Host.Tests", index: 1, count: 6 }
+          - { name: "host tests 3/6", artifact: "host-3", only: "Eve.Host.Tests", index: 2, count: 6 }
+          - { name: "host tests 4/6", artifact: "host-4", only: "Eve.Host.Tests", index: 3, count: 6 }
+          - { name: "host tests 5/6", artifact: "host-5", only: "Eve.Host.Tests", index: 4, count: 6 }
+          - { name: "host tests 6/6", artifact: "host-6", only: "Eve.Host.Tests", index: 5, count: 6 }
           - { name: "other tests 1/3", artifact: "other-1", only: "", index: 0, count: 3 }
           - { name: "other tests 2/3", artifact: "other-2", only: "", index: 1, count: 3 }
           - { name: "other tests 3/3", artifact: "other-3", only: "", index: 2, count: 3 }

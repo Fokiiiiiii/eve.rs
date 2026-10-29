@@ -8,7 +8,38 @@ namespace Eve.Host.Tests;
 
 public sealed class XmppLocalRoomTests
 {
-[Fact]
+    [Fact]
+    public void Muc_admin_member_queries_return_live_members_and_server_roles()
+    {
+        const long systemId = 30_000_142;
+        var sessions = new ConnectedSessions();
+        sessions.Add(Character(42, "pilot-token", systemId));
+        var administratorSession = Character(43, "admin-token", systemId);
+        administratorSession.Set("accountRole", new PyLong(Eve.Services.GameMasterRoles.ChatAdministrator));
+        sessions.Add(administratorSession);
+        var hub = new XmppChatHub(sessions, new XmppChatSettings("chat.example", "127.0.0.1"));
+        var pilotOutput = new List<string>();
+        var pilot = Connect(hub, 42, "pilot-token", pilotOutput);
+        var adminOutput = new List<string>();
+        var administrator = Connect(hub, 43, "admin-token", adminOutput);
+        const string room = "local_30000142@conference.chat.example";
+
+        pilot.OnStanza(Parse($"<presence to='{room}/Pilot'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+        administrator.OnStanza(Parse($"<presence to='{room}/Admin'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+        administrator.OnStanza(Parse("<iq id='members' type='get' to='local_30000142@conference.chat.example'><query xmlns='http://jabber.org/protocol/muc#admin'><item affiliation='member'/></query></iq>"));
+        administrator.OnStanza(Parse("<iq id='admins' type='get' to='local_30000142@conference.chat.example'><query xmlns='http://jabber.org/protocol/muc#admin'><item affiliation='admin'/></query></iq>"));
+
+        Assert.Contains(adminOutput, item => item.Contains("id='members'", StringComparison.Ordinal)
+            && item.Contains("jid='42@chat.example' affiliation='member' role='participant'", StringComparison.Ordinal));
+        Assert.Contains(adminOutput, item => item.Contains("id='admins'", StringComparison.Ordinal)
+            && item.Contains("jid='43@chat.example' affiliation='admin' role='moderator'", StringComparison.Ordinal));
+        pilot.OnStanza(Parse("<iq id='denied' type='get' to='local_30000142@conference.chat.example'><query xmlns='http://jabber.org/protocol/muc#admin'><item affiliation='admin'/></query></iq>"));
+        Assert.Contains(pilotOutput, item => item.Contains("id='denied'", StringComparison.Ordinal)
+            && item.Contains("type='error'", StringComparison.Ordinal)
+            && item.Contains("feature-not-implemented", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Public_help_rooms_accept_group_messages()
     {
         var sessions = new ConnectedSessions();

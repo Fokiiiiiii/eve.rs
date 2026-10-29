@@ -204,8 +204,8 @@ def test_a_pilot_who_shoots_a_rat_dead_is_told_of_its_bounty():
         rows = [row.fields() for row in who.call_bound(opened, "List")]
         assert all(int(row["locationID"]) == wreck for row in rows), rows
         shown_empty = re.search(r'\["isEmpty", (True|False|true|false|1|0)\]', str([e for e in seen if wreck in [i for i, _ in slims_in([e])]]).replace("'", '"'))
-        if shown_empty is not None:
-            assert (shown_empty.group(1).lower() in ("true", "1")) == (not rows), (shown_empty.group(1), rows)
+        assert shown_empty is not None, "the client did not receive the wreck's isEmpty state"
+        assert (shown_empty.group(1).lower() in ("true", "1")) == (not rows), (shown_empty.group(1), rows)
 
 def test_a_rat_that_launches_missiles_shows_the_pilot_each_missile_and_the_missiles_hurt_it():
     """A hull with `missileLaunchingForEntity` (the Guristas Invader: Scourge Rockets) launches missiles of its own: the pilot is shown each as a ball with a launch, and

@@ -287,7 +287,7 @@ public sealed partial class ConfigService(
         return ids.Distinct().ToArray();
     }
 
-    private static PyTuple LocationRow(long id, string name, int? solarSystemId, double x = 0, double y = 0, double z = 0, string? nameId = null) =>
+    private static PyTuple LocationRow(long id, string name, int? solarSystemId, double x = 0, double y = 0, double z = 0, int? nameId = null) =>
         Row(
             PyValue.Of(id),
             PyValue.Of(name),
@@ -295,7 +295,7 @@ public sealed partial class ConfigService(
             PyValue.Of(x),
             PyValue.Of(y),
             PyValue.Of(z),
-            PyValue.Of(nameId));
+            nameId is { } messageId ? new PyInt(messageId) : PyNone.Instance);
 
     private static PyTuple LocationRow(Station station) =>
         LocationRow(station.Id, station.Name, station.SolarSystemId, station.X, station.Y, station.Z);

@@ -12,3 +12,11 @@ The initial worktree was five commits ahead and one behind `origin/main`, with 1
 - **Audit-only files**: the charUnboundMgr, fighterMgr, moonExtractions and slash notes had no corresponding new implementation in this batch; the slash audit records the still-missing `/reportdesync` tuple contract at `svc_console.py:59-79`. These notes and the dependent CORE_PATH_RECHECK/DEVIATIONS edits were dropped to keep the handoff consistent with the code left on main.
 
 No PostgreSQL database was used. GUI-client flows were not exercised.
+
+## Confirmed config / Beyonce audit continuation (2026-10-29)
+
+- `ConfigService.LocationRow` now constrains `locationNameID` to `int?` and writes `PyInt` or None. `ServiceAuditP0HostWireTests.Config_location_name_id_uses_the_client_integer_column_through_host_wire` exercises the registered config service over TCP and checks the structure display label and null ID column.
+- `BeyonceService.MachoBindObject` already returned `(boundObject, None)` on refusal in this checkout. `ServiceAuditP0HostWireTests.Beyonce_macho_bind_refusal_keeps_the_bound_object_and_result_tuple_through_host_wire` locks that response to V24.01 `carbon/common/script/net/moniker.py:140-144`.
+- The extra warp subjects were cross-checked against the full client call sites and EveJS 261028.1. `moonMiningPoint`, `operationDungeon`, `externalDungeon`, and `epinstance` have authoritative dynamic destinations in EveJS but no resolver wired into the current Beyonce Host path; `mercenaryDen` reaches EveJS's unsupported-subject refusal. These limits and the GM-only `CmdTurboDock` shortcut are documented in `docs/reference/compat/DEVIATIONS.md` and `DEEPCHECK_beyonce.md`.
+- Local compile checks passed for `Eve.Services.CharacterInfo` and `Eve.Host.Tests` with 0 warnings and 0 errors. The two focused registered-Host TCP tests passed (2 passed, 0 skipped). A local no-database Host shard run reported 615 passed, 100 failed at PostgreSQL-lane guards, and 233 skipped; it did not connect to PostgreSQL. The focused client path was not exercised with the graphical client.
+- After the required `origin/main` fast-forward, the touched Host.Tests project rebuilt successfully and the two focused TCP tests passed again (2 passed, 0 skipped). Push gate review and GitHub Actions verification are next.

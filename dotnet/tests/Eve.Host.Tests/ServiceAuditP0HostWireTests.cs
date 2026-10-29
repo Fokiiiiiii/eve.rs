@@ -13,6 +13,65 @@ namespace Eve.Host.Tests;
 public partial class HostServerTests
 {
     [Fact]
+    public async Task Config_location_name_id_uses_the_client_integer_column_through_host_wire()
+    {
+        const long structureId = 1_000_000_000_001;
+        var service = new Eve.Services.CharacterInfo.ConfigService(
+            null!, null!, new Eve.Universe.StationCatalog([]), new Eve.Universe.SolarSystemCatalog([]),
+            readStructureNames: (ids, _) => Task.FromResult<IReadOnlyDictionary<long, string>>(
+                new Dictionary<long, string> { [structureId] = "Stored Fortizar" }));
+        Start(configure: registry => registry.Register(service));
+
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        _ = await front.ReceiveAsync();
+
+        var transportKwargs = new PyDict([
+            new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1)),
+        ]);
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.CallWithKwargs(open, 1, "config", "GetMultiLocationsEx",
+                Py.Tuple(new PyList([new PyLong(structureId)])), transportKwargs))));
+
+        var response = Assert.IsType<PyTuple>(Result(MarshalCodec.Decode(
+            Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
+        var rows = Assert.IsType<PyTuple>(response.Items[1]);
+        var row = Assert.IsType<PyTuple>(Assert.Single(rows.Items));
+        Assert.Equal(new PyLong(structureId), row.Items[0]);
+        Assert.Equal("Stored Fortizar", System.Text.Encoding.UTF8.GetString(
+            Assert.IsType<PyBytes>(row.Items[1]).Value.Span));
+        Assert.Same(PyNone.Instance, row.Items[6]);
+    }
+
+    [Fact]
+    public async Task Beyonce_macho_bind_refusal_keeps_the_bound_object_and_result_tuple_through_host_wire()
+    {
+        var service = new BeyonceService(null!, () => FixedNowMs);
+        Start(
+            configure: registry => registry.Register(service),
+            sessionOpened: session => session.Set("solarsystemid", new PyLong(31_000_005)));
+
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        _ = await front.ReceiveAsync();
+
+        var transportKwargs = new PyDict([
+            new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1)),
+        ]);
+        var nested = Py.Tuple(new PyStr("GetFormations"), Py.Tuple([]), new PyDict([]));
+        var bindArgs = Py.Tuple(Py.Tuple(new PyLong(31_000_006), new PyInt(6)), nested);
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.CallWithKwargs(open, 1, "beyonce", "MachoBindObject", bindArgs, transportKwargs))));
+
+        var response = Assert.IsType<PyTuple>(Result(MarshalCodec.Decode(
+            Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
+        Assert.IsType<PySubStruct>(response.Items[0]);
+        Assert.Same(PyNone.Instance, response.Items[1]);
+    }
+
+    [Fact]
     public async Task Beyonce_bookmark_scan_result_resolves_signature_and_returns_client_tuple_through_bound_rpc()
     {
         const long systemId = 31_000_005;

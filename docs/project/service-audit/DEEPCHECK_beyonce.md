@@ -6,6 +6,13 @@
 
 監査は未完了。Bound route と既存 Host wire tests、クライアント呼び出しを照合し、Bookmark の読み取り経路、CmdAlignTo の bookmarkID、CmdDock の返却値を修正した。一方、Warp subject と component RPC に実装欠落が残るため、完了扱いにはしない。
 
+## 追加確認 (2026-10-29)
+
+- `MachoBindObject` の拒否時も `(boundObject, None)` を返す。V24.01 `carbon/common/script/net/moniker.py:140-144` は返値を `self.boundObject, retval` に展開する。追加した Host TCP wire test は同一 system でない bind が bound object と None の2要素tupleを返すことを検証する。
+- `CmdWarpToStuff` の有効subjectには moon mining point、operation dungeon、external dungeon、epinstance、mercenary den もある。呼び出し元は `movementFunctions.py:461-489`、`michelle.py:739-741`、`transmissionMgr.py:141-143`、`mercDenWnd.py:323` から `statefulButtonLocationController.py:147-151` を通る。EveJS 261028.1 は moonIDを現systemのmoon mining beaconへ対応させ (`beyonceService.js:3527-3550`)、operation siteをcharacter spawnpointとinstance visibilityで確認し (`:3566-3582`)、dungeon instanceをmaterializeして確認する (`:3583-3601`)。`mercenaryDen` はEveJSでもunsupported-subject fallbackへ入る (`:3819-3823`)。現Beyonce Host pathには前4種を authoritative runtime state から解決する配線がなく、通常のball IDとして扱ってwarp成功を返すと別のentityへ飛ばすため拒否を維持し、互換差として記録した。
+- `CmdTurboDock` の唯一の提示経路は `movementFunctions.py:506-518` のControl+Shift+Altかつ `session.role & ROLE_GML` 条件内であり、通常のdock pathは `CmdDock`。EveJS 261028.1 は `CmdDock` handler (`server/src/services/ship/beyonceService.js:4209-4217`) のみで、turbo handlerはない。GM専用shortcutを通常dockへ化けさせたりvalidationを迂回したりする根拠がないため、このcallはサポート外として `DEVIATIONS.md` に記録。
+- `GetMultiLocationsEx` の `locationNameID` は `int?` に狭め、値があるときは `PyInt`、それ以外は `None` を返す。クライアントdescriptorは `eveCfg.py:604-620` の `DBTYPE_I4`; consumers `eveui/dragdata.py:75-78` と `eveui/autocomplete/location/suggestion.py:55-60` は値があれば localization lookup、なければ `locationName` を表示する。追加した Host TCP wire test は保存済み構造物名が `locationName` にあり、列7がNoneであることを確認する。
+
 ## Route と共通契約
 
 - AgentRpc.cs:108-110 は spaceSessions がある時 BeyonceService を実サービス列へ登録する。CharacterServiceList.cs:73-90 は同じ instance に bookmark/scan provider を配線する。

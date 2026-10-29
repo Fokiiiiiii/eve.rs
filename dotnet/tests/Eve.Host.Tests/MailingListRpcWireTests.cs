@@ -8,7 +8,7 @@ namespace Eve.Host.Tests;
 public partial class HostServerTests
 {
     [Fact]
-    public async Task Mailing_list_owner_is_also_an_operator_in_the_registered_host_wire_reply()
+    public async Task Mailing_list_owner_is_reported_separately_from_operator_in_the_registered_host_wire_reply()
     {
         const long characterId = 90_000_001;
         const long listId = 500_000_001;
@@ -20,7 +20,7 @@ public partial class HostServerTests
                 ["name"] = "fleetops",
                 ["displayName"] = "Fleet Ops",
                 ["ownerID"] = characterId,
-                ["members"] = new System.Text.Json.Nodes.JsonObject { [characterId.ToString()] = 0 },
+                ["members"] = new System.Text.Json.Nodes.JsonObject { [characterId.ToString()] = 3 },
             },
         };
         var service = new MailingListService(_ => ValueTask.FromResult<System.Text.Json.Nodes.JsonObject?>(state));
@@ -32,8 +32,9 @@ public partial class HostServerTests
         var owner = Assert.IsType<PyObject>(joined.Entries.Single(entry => entry.Key == new PyInt(listId)).Value);
         var fields = Assert.IsType<PyDict>(owner.Args);
 
-        Assert.Contains(fields.Entries, entry => T(entry.Key) == "isOperator" && entry.Value == PyBool.True);
+        Assert.Contains(fields.Entries, entry => T(entry.Key) == "isOperator" && entry.Value == PyBool.False);
         Assert.Contains(fields.Entries, entry => T(entry.Key) == "isOwner" && entry.Value == PyBool.True);
+        Assert.Contains(fields.Entries, entry => T(entry.Key) == "isMuted" && entry.Value == PyBool.False);
     }
 
     [Fact]

@@ -44,7 +44,7 @@ internal sealed partial class CharacterServicesComposition
             ("name", new Eve.Marshal.PyStr(MailingListJsonText(list["name"]))),
             ("displayName", new Eve.Marshal.PyStr(MailingListJsonText(list["displayName"]))),
             ("isMuted", role == 0 ? Eve.Marshal.PyBool.True : Eve.Marshal.PyBool.False),
-            ("isOperator", role == 2 || role == 3 ? Eve.Marshal.PyBool.True : Eve.Marshal.PyBool.False),
+            ("isOperator", role == 2 ? Eve.Marshal.PyBool.True : Eve.Marshal.PyBool.False),
             ("isOwner", MailingListJsonLong(list["ownerID"]) == characterId ? Eve.Marshal.PyBool.True : Eve.Marshal.PyBool.False),
         ]);
 

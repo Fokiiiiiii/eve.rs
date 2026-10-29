@@ -90,7 +90,8 @@ internal sealed class HostJumpCloneStore(PgJumpCloneStore clones, NpgsqlDataSour
     public async ValueTask<decimal> IskBalanceAsync(long characterId, CancellationToken cancellationToken) =>
         (await walletStore.GetAsync(characterId, cancellationToken))?.Isk ?? 0m;
 
-    public async ValueTask<CloneJumpResult> JumpAsync(long characterId, long targetCloneId, long originLocationId, decimal fee, long nowFileTime,
+    public async ValueTask<CloneJumpResult> JumpAsync(long characterId, long targetCloneId, long originLocationId, string originLocationKind,
+        decimal fee, long ownerCorporationId, long nowFileTime,
         CancellationToken cancellationToken)
     {
         // the zero balances are opened on their own, so that a refused jump keeps them
@@ -98,6 +99,8 @@ internal sealed class HostJumpCloneStore(PgJumpCloneStore clones, NpgsqlDataSour
         await using (var setupTransaction = await setup.BeginTransactionAsync(cancellationToken))
         {
             await wallet.EnsureAsync(setup, setupTransaction, characterId, cancellationToken);
+            if (fee > 0 && ownerCorporationId > 0)
+                await wallet.EnsureAsync(setup, setupTransaction, ownerCorporationId, cancellationToken);
             await setupTransaction.CommitAsync(cancellationToken);
         }
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
@@ -115,14 +118,22 @@ internal sealed class HostJumpCloneStore(PgJumpCloneStore clones, NpgsqlDataSour
         await statics.EnsureTypesAsync(body.Select(item => item.TypeId).ToArray(), cancellationToken);
         var bodyImplants = body.Select(item => (PilotAugmentations.SlotOf(statics.Type(item.TypeId)), item.TypeId)).ToList();
 
-        var target = await clones.JumpAsync(connection, transaction, characterId, targetCloneId, originLocationId, bodyImplants, nowFileTime, cancellationToken);
+        var target = await clones.JumpAsync(connection, transaction, characterId, targetCloneId, originLocationId, originLocationKind, bodyImplants, nowFileTime, cancellationToken);
         if (target is null || target.LocationKind != "station" || stations.Get(target.LocationId) is not { } station)
             return new CloneJumpResult("CLONE_NOT_FOUND");
         try
         {
-            // shortcut: the fee goes to no counterparty (0), as the installation fee does; the NPC station's owner is not credited.
-            await wallet.AdjustAsync(connection, transaction, characterId, -fee, 0, JumpCloneActivationReference,
-                "jump clone activation", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), $"jump-clone-activation:{targetCloneId}", cancellationToken);
+            if (fee > 0)
+            {
+                var operationKey = $"jump-clone-activation:{characterId}:{nowFileTime}";
+                if (ownerCorporationId > 0)
+                    await wallet.TransferAsync(connection, transaction, new WalletAccount(characterId), new WalletAccount(ownerCorporationId, CorporationWalletKey),
+                        fee, JumpCloneActivationReference, "jump clone activation", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), operationKey,
+                        "jump-clone-activation", cancellationToken, target.LocationId);
+                else
+                    await wallet.AdjustAsync(connection, transaction, characterId, -fee, 0, JumpCloneActivationReference,
+                        "jump clone activation", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), operationKey, cancellationToken);
+            }
         }
         catch (InsufficientFundsException)
         {

@@ -188,6 +188,11 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
         var injectorTypeId = catalog.ItemTypeId("Large Skill Injector");
         if (extractorTypeId is null || injectorTypeId is null)
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Skill extraction is unavailable.")));
+        await dogmaStatic.EnsureTypesAsync([extractorTypeId.Value, injectorTypeId.Value], call.Cancellation);
+        var extractorType = dogmaStatic.Type(extractorTypeId.Value);
+        var injectorType = dogmaStatic.Type(injectorTypeId.Value);
+        if (extractorType is null || injectorType is null)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Skill extraction is unavailable.")));
 
         Eve.Inventory.Item? extractor = null;
         var extractorArgument = -1;
@@ -306,15 +311,36 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
                 changed.Add(current with { SkillPoints = newPoints, Level = SkillPoints.LevelAt(skillType.Rank, newPoints) });
             }
             await store.GrantAsync(connection, transaction, character, changed, token);
+            Eve.Inventory.Item? extractorAfter = null;
             if (locked.Singleton || locked.Quantity == 1)
                 await items.DeleteAsync(connection, transaction, locked.Id, token);
             else
+            {
                 await items.SetQuantityAsync(connection, transaction, locked.Id, locked.Quantity - 1, token);
-            await items.CreateAsync(connection, transaction,
+                extractorAfter = locked with { Quantity = locked.Quantity - 1 };
+            }
+            var injectorItemId = await items.CreateAsync(connection, transaction,
                 new Eve.Inventory.NewItem(injectorTypeId.Value, character, station, HangarFlag, 1, Singleton: false), token);
-            return changed;
+            return (Before: skills, Changed: changed, ExtractorBefore: locked, ExtractorAfter: extractorAfter, InjectorItemId: injectorItemId);
         }, call.Cancellation);
 
+        await announcer.AnnounceSkillsChangedAsync(call.Session, character, updated.Before, updated.Changed);
+        var extractorBefore = updated.ExtractorBefore;
+        var extractorAfter = updated.ExtractorAfter ?? extractorBefore with { LocationId = 6, Flag = 0, Quantity = 1 };
+        var extractorAfterRow = new ItemRow(extractorAfter.Id, extractorAfter.TypeId, extractorAfter.OwnerId,
+            extractorAfter.LocationId, extractorAfter.Flag, extractorAfter.Singleton ? -1 : extractorAfter.Quantity,
+            extractorType.GroupId, extractorType.CategoryId);
+        var extractorDifferences = updated.ExtractorAfter is not null
+            ? new PyDict([new(new PyInt(9), InventoryWire.Id(extractorBefore.Quantity))])
+            : new PyDict([
+                new(new PyInt(3), InventoryWire.Id(extractorBefore.LocationId)),
+                new(new PyInt(4), new PyInt(extractorBefore.Flag)),
+                new(new PyInt(9), InventoryWire.Id(extractorBefore.Quantity)),
+            ]);
+        call.Session.SendNotification("OnItemChange", "clientID", InventoryWire.PackedRow(extractorAfterRow), extractorDifferences, PyNone.Instance);
+        call.Session.SendNotification("OnItemChange", "clientID",
+            InventoryWire.PackedRow(new ItemRow(updated.InjectorItemId, injectorTypeId.Value, character, station, HangarFlag, 1,
+                injectorType.GroupId, injectorType.CategoryId)), new PyDict([]), PyNone.Instance);
         return PyNone.Instance;
     }
 

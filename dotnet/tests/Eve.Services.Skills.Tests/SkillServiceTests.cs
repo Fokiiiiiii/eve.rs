@@ -634,13 +634,18 @@ public class SkillHandlerTests
         Assert.NotNull(injectorType);
         var capsule = await rig.CreateItemAsync(new Eve.Inventory.NewItem(capsuleType.Value, characterId, station, 4, 1, true));
         var extractor = await rig.CreateItemAsync(new Eve.Inventory.NewItem(extractorType.Value, characterId, station, 4, 1, true));
-        var session = Rig.Session(characterId, userId: 77_002).Session;
+        var (session, sink) = Rig.Session(characterId, userId: 77_002);
         session.Set("stationid", new PyInt(station));
         session.Set("shipid", new PyLong(capsule));
 
         Assert.IsType<PyNone>(await Rig.CallAsync(rig.Handler, session, "ExtractSkills",
             new PyLong(extractor),
             new PyList([Py.Tuple(new PyInt(target.TypeId), new PyLong(long.MaxValue - 5)), Py.Tuple(new PyInt(target.TypeId), new PyLong(10))])));
+        var notifications = Notes.Of(sink);
+        Assert.Equal(["OnServerSkillsChanged", "OnSkillsChanged", "OnItemChange", "OnItemChange"],
+            notifications.Select(note => note.Name));
+        Assert.Contains(Assert.IsType<PyDict>(notifications[0].Args[0]).Entries,
+            entry => Notes.Number(entry.Key) == target.TypeId);
         Assert.Equal(77_002, seenAlphaAccount);
 
         Assert.Null(await rig.ItemStore.GetAsync(extractor));
@@ -1157,9 +1162,33 @@ public class SkillHandlerTests
         Assert.Equal(new PyInt(835), info["freeSkillPoints"]);
         Assert.Equal(new PyDict([]), await Rig.CallAsync(rig.Handler, session, "GetFreeSkillPointsAppliedToSkills", selected));
 
-        Assert.Equal(PyNone.Instance, await Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPoints", new PyInt(3301), new PyInt(836)));
+        var insufficient = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPoints", new PyInt(3301), new PyInt(836)));
+        Assert.True(insufficient.Error.IsUserError);
+        Assert.Equal("CannotApplyFreePointsNotEnoughRemaining", insufficient.Error.UserErrorMessage);
+        var notOwned = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPoints", new PyInt(3315), new PyInt(1)));
+        Assert.True(notOwned.Error.IsUserError);
+        Assert.Equal("CannotApplyFreePointsDoNotHaveSkill", notOwned.Error.UserErrorMessage);
         Assert.Equal(new PyInt(835), await Rig.CallAsync(rig.Handler, session, "GetFreeSkillPoints"));
         Assert.Equal(new PyInt(1_415), await Rig.CallAsync(rig.Handler, session, "GetSkillPoints"));
+    }
+
+    [PgFact]
+    public async Task Free_skill_points_are_capped_before_balance_validation()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var characterId = rig.CharacterId;
+        var levelFivePoints = Eve.Skills.SkillPoints.ForTraining(Rig.Catalog.Get(3315)!.Rank, 5);
+        await rig.GrantAsync(characterId, (3315, 4, levelFivePoints - 200));
+        await rig.GrantFreeSkillPointsAsync(characterId, 500);
+        var (session, _) = Rig.Session(characterId);
+
+        Assert.Equal(new PyInt(300), await Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPoints",
+            new PyInt(3315), new PyInt(1_000_000)));
+        var updated = Assert.Single(await rig.Store.ForCharacterAsync(characterId));
+        Assert.Equal(5, updated.Level);
+        Assert.Equal(levelFivePoints, updated.SkillPoints);
     }
 
     [PgFact]

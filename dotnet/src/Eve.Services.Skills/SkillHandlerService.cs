@@ -594,7 +594,13 @@ public static SkillAugmentationReader CreateAugmentationReader(
     }
     [Method("GetSkillHistory")]
     public async ValueTask<PyValue> GetSkillHistory(ServiceCall call) =>
-        CharacterOf(call) is { } id ? SkillNotifications.History(await training.HistoryAsync(id, call.Cancellation)) : new PyList([]);
+        CharacterOf(call) is { } id
+            ? SkillNotifications.History(await training.HistoryAsync(id,
+                IdOf(call.Arg(0)) is { } asked && asked > 0
+                    ? (int)Math.Clamp(asked, 0L, Eve.Skills.PgTrainingStore.HistoryLimit)
+                    : 50,
+                call.Cancellation))
+            : new PyList([]);
 
     [Method("GetRespecInfo")]
     public async ValueTask<PyValue> GetRespecInfo(ServiceCall call)
@@ -706,14 +712,69 @@ public static SkillAugmentationReader CreateAugmentationReader(
     [Method("ApplyFreeSkillPoints")]
     public async ValueTask<PyValue> ApplyFreeSkillPoints(ServiceCall call)
     {
-        if (CharacterOf(call) is not { } id ||
-            IdOf(call.Arg(0)) is not { } skillTypeId || skillTypeId <= 0 || skillTypeId > int.MaxValue ||
-            IdOf(call.Arg(1)) is not { } pointsToApply || pointsToApply <= 0)
+        if (CharacterOf(call) is not { } id)
         {
             return None;
         }
-        return await training.ApplyFreeSkillPointAmountAsync(id, AccountOf(call), (int)skillTypeId, pointsToApply, call.Cancellation)
-            is { } remaining ? new PyInt(remaining) : None;
+
+        if (IdOf(call.Arg(0)) is not { } skillTypeId || skillTypeId <= 0 || skillTypeId > int.MaxValue ||
+            IdOf(call.Arg(1)) is not { } pointsToApply || pointsToApply <= 0)
+        {
+            return new PyInt(await store.FreeSkillPointsAsync(id, call.Cancellation));
+        }
+
+        var view = await training.ViewAsync(id, AccountOf(call), call.Cancellation);
+        if (view is { State.Running: true } && view.State.Entries.FirstOrDefault()?.TypeId == (int)skillTypeId)
+        {
+            throw MachoErrors.ThrowUserError("CannotApplyFreePointsWhileTrainingSkill");
+        }
+
+        var remaining = await store.FreeSkillPointsAsync(id, call.Cancellation);
+        var skill = (await store.ForCharacterAsync(id, call.Cancellation)).FirstOrDefault(row => row.TypeId == (int)skillTypeId);
+        if (skill is null || catalog.Get((int)skillTypeId) is not { } type)
+        {
+            throw MachoErrors.ThrowUserError("CannotApplyFreePointsDoNotHaveSkill",
+                ("skillName", new PyStr(catalog.Get((int)skillTypeId)?.Name ?? skillTypeId.ToString())));
+        }
+
+        var points = Math.Min(pointsToApply, Math.Max(0L, Eve.Skills.SkillPoints.ForTraining(type.Rank, 5) - skill.SkillPoints));
+        if (points > remaining)
+        {
+            throw MachoErrors.ThrowUserError("CannotApplyFreePointsNotEnoughRemaining",
+                ("pointsRequested", new PyInt(points)), ("pointsRemaining", new PyInt(remaining)));
+        }
+        if (points == 0)
+        {
+            return new PyInt(remaining);
+        }
+
+        if (await training.ApplyFreeSkillPointAmountAsync(id, AccountOf(call), (int)skillTypeId, points, call.Cancellation)
+            is { } updatedRemaining)
+        {
+            return new PyInt(updatedRemaining);
+        }
+
+        // The atomic write can lose a race with another queue or point change after the read above.
+        var latestView = await training.ViewAsync(id, AccountOf(call), call.Cancellation);
+        if (latestView is { State.Running: true } && latestView.State.Entries.FirstOrDefault()?.TypeId == (int)skillTypeId)
+        {
+            throw MachoErrors.ThrowUserError("CannotApplyFreePointsWhileTrainingSkill");
+        }
+        var latestSkill = (await store.ForCharacterAsync(id, call.Cancellation))
+            .FirstOrDefault(row => row.TypeId == (int)skillTypeId);
+        if (latestSkill is null)
+        {
+            throw MachoErrors.ThrowUserError("CannotApplyFreePointsDoNotHaveSkill",
+                ("skillName", new PyStr(type.Name)));
+        }
+        remaining = await store.FreeSkillPointsAsync(id, call.Cancellation);
+        points = Math.Min(pointsToApply, Math.Max(0L, Eve.Skills.SkillPoints.ForTraining(type.Rank, 5) - latestSkill.SkillPoints));
+        if (points == 0)
+        {
+            return new PyInt(remaining);
+        }
+        throw MachoErrors.ThrowUserError("CannotApplyFreePointsNotEnoughRemaining",
+            ("pointsRequested", new PyInt(points)), ("pointsRemaining", new PyInt(remaining)));
     }
 
     private IReadOnlyList<(int SkillTypeId, int TargetLevel)> SkillPointTargets(PyValue value)

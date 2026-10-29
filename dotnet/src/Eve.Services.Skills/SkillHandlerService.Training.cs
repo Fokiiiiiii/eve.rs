@@ -50,7 +50,7 @@ public sealed partial class SkillHandlerService
         {
             return None;
         }
-        var toLevel = IdOf(level) is { } asked and > 0 and <= int.MaxValue ? (int)asked : 0;
+        var toLevel = IdOf(level) is { } asked and >= 1 and <= 5 ? (int)asked : 0;
         var character = await characters.GetAsync(id, call.Cancellation);
         var outcome = await training.StartAsync(id, AccountOf(call), (int)typeId, toLevel, await AccountCharacters(call), call.Cancellation,
             isAlphaClone?.Invoke(AccountOf(call)) == true, character?.RaceId ?? 0);

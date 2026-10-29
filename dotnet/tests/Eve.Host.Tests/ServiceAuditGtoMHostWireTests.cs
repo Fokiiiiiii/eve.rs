@@ -198,7 +198,7 @@ public partial class HostServerTests
             throw new NotSupportedException();
         public ValueTask<decimal> IskBalanceAsync(long characterId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
-        public ValueTask<CloneJumpResult> JumpAsync(long characterId, long targetCloneId, long originLocationId, decimal fee,
-            long nowFileTime, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public ValueTask<CloneJumpResult> JumpAsync(long characterId, long targetCloneId, long originLocationId, string originLocationKind,
+            decimal fee, long ownerCorporationId, long nowFileTime, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 }

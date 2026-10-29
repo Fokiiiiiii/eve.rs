@@ -172,7 +172,8 @@ public sealed class JumpCloneShipInstallTests
 
         public ValueTask<decimal> IskBalanceAsync(long characterId, CancellationToken cancellationToken) => ValueTask.FromResult(Balance);
         // the clone jump is not part of these installs (CloneJumpTests cover it): a jump here is refused
-        public ValueTask<CloneJumpResult> JumpAsync(long characterId, long targetCloneId, long originLocationId, decimal fee, long nowFileTime, CancellationToken cancellationToken) =>
+        public ValueTask<CloneJumpResult> JumpAsync(long characterId, long targetCloneId, long originLocationId, string originLocationKind,
+            decimal fee, long ownerCorporationId, long nowFileTime, CancellationToken cancellationToken) =>
             ValueTask.FromResult(new CloneJumpResult("CLONE_NOT_FOUND"));
     }
 

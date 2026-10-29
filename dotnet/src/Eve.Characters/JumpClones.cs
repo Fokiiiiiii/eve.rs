@@ -110,7 +110,7 @@ public sealed class PgJumpCloneStore
     /// it was, or null when the character has no such clone.
     /// </summary>
     public async Task<InstalledJumpClone?> JumpAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long targetCloneId,
-        long originLocationId, IReadOnlyList<(int Slot, int TypeId)> bodyImplants, long nowFileTime, CancellationToken cancellationToken = default)
+        long originLocationId, string originLocationKind, IReadOnlyList<(int Slot, int TypeId)> bodyImplants, long nowFileTime, CancellationToken cancellationToken = default)
     {
         var clones = await ReadClonesAsync(connection, transaction, characterId, cancellationToken);
         if (clones.FirstOrDefault(clone => clone.JumpCloneId == targetCloneId) is not { } target)
@@ -138,7 +138,7 @@ public sealed class PgJumpCloneStore
                 new() { Value = keepId ? (object)target.JumpCloneId : DBNull.Value },
                 new() { Value = characterId },
                 new() { Value = originLocationId },
-                new() { Value = "station" },
+                new() { Value = originLocationKind },
                 new() { Value = origin?.Name ?? "" },
             },
         })

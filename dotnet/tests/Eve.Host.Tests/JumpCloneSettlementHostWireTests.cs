@@ -95,6 +95,18 @@ public sealed class JumpCloneSettlementHostWireTests : IAsyncLifetime
         var capsule = await new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA")).CreateAsync(connection, transaction,
             new NewItem(CharacterShips.CapsuleTypeId, character, character, ItemFlags.Hangar, 1, Singleton: true));
         await characters.SetShipAsync(connection, transaction, character, capsule);
+        await using (var membership = new NpgsqlCommand($"""
+            INSERT INTO {Schema("EVE_RELATIONS_SCHEMA")}.relations
+                (kind, subject, object, value, attrs, since_ms, until_ms, updated_ms)
+            VALUES ($1, $2, $3, 1, jsonb_build_object(), $4, NULL, $4)
+            """, connection, transaction))
+        {
+            membership.Parameters.AddWithValue(Eve.Relations.RelationKinds.CorporationMember.Name);
+            membership.Parameters.AddWithValue(character);
+            membership.Parameters.AddWithValue(corporationId);
+            membership.Parameters.AddWithValue(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            await membership.ExecuteNonQueryAsync();
+        }
         await transaction.CommitAsync();
         return character;
     }

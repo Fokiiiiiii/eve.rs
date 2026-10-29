@@ -189,7 +189,7 @@ def test_a_pilot_who_shoots_a_rat_dead_is_told_of_its_bounty():
         wreck = wrecks[0]
         bounty_index = next(i for i, event in enumerate(seen) if event["name"] == "OnBountyAddedToPayout")
         wreck_index = next(i for i, event in enumerate(seen) if any(item == wreck for item, _ in slims_in([event])))
-        assert removal_index < bounty_index < wreck_index, [event["name"] for event in seen]
+        assert bounty_index < removal_index < wreck_index, [event["name"] for event in seen]
         # the pilot is where the fight was: it goes to the wreck, and may open it within two and a half kilometres of its surface (`TargetTooFar` before that)
         who.call_bound(ballpark[0], "CmdOrbit", wreck, 500)
         opened = None

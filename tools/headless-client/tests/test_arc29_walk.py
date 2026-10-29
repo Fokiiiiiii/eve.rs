@@ -190,7 +190,7 @@ def reward_total(character: int) -> int:
     return int(float(sql(f"SELECT coalesce(sum(amount), 0) FROM {schema('WALLET')}.journal WHERE owner_id = {character} AND ref_type_id = {REWARD_REF_TYPE}")))
 
 def mission_reward_tax(character: int, gross: int) -> float:
-    if gross < 100_000:
+    if gross <= 100_000:
         return 0
     rate = float(sql(f"SELECT corporation.tax_rate FROM {schema('CORPORATIONS')}.corporations AS corporation "
                      f"JOIN {schema('CHARACTERS')}.characters AS pilot ON pilot.corporation_id = corporation.id "

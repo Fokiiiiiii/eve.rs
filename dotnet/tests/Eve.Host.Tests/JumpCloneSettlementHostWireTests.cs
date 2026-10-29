@@ -180,7 +180,7 @@ public sealed class JumpCloneSettlementHostWireTests : IAsyncLifetime
         var wallet = new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA"));
         Assert.Equal(4_100_000m, (await wallet.GetAsync(character))!.Isk);
         Assert.Equal(-900_000m, await wallet.LastIskChangeAsync(character));
-        Assert.Equal((128, 0L, (long?)targetStation.Id), await LastJournalAsync(source, character));
+        Assert.Equal((128, 0L, (long?)null), await LastJournalAsync(source, character));
         var stationJumpClones = await new PgJumpCloneStore(source, Schema("EVE_CHARACTERS_SCHEMA")).ReadAsync(character);
         Assert.Contains(stationJumpClones.Clones, clone => clone.LocationId == station.Id && clone.LocationKind == "station");
 

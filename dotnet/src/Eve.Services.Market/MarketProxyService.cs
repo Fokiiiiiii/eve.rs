@@ -111,7 +111,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
         "MARKET_ARGUMENT_OUT_OF_RANGE" => "One of the market values is outside the supported range.",
         _ => "The market refused the request.",
     };
-    private readonly MarketNotifier notifier = new(wallets,characterSessions,now);
+    private readonly MarketNotifier notifier = new(wallets,characterSessions);
     private Task Publish(MarketReceipt receipt, MarketRequest? immediateFill = null) => notifier.PublishAsync(receipt, immediateFill);
 
     internal static PyValue OrderNotificationEntry(MarketOwnedOrder owned)

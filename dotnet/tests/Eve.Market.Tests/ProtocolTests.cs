@@ -1,6 +1,7 @@
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Market;
+using Npgsql;
 
 namespace Eve.Market.Tests;
 
@@ -33,6 +34,24 @@ public class ProtocolTests
     {
         public List<PyValue> Packets { get; }=[];
         public void Send(PyValue packet) => Packets.Add(packet);
+    }
+
+    [Fact]
+    public async Task Immediate_market_fill_notifies_cache_change_without_fabricating_an_order()
+    {
+        await using var source=NpgsqlDataSource.Create("Host=localhost;Database=unused;Username=unused");
+        var sink=new RecordingPacketSink();
+        var session=new ClientSession(sink) { CharacterId=101,SessionId=101 };
+        var sessions=new CharacterSessions();
+        sessions.Enter(101,session);
+        var notifier=new MarketNotifier(new Eve.Wallet.WalletTransactions(source),sessions);
+        await notifier.PublishAsync(new MarketReceipt("buy",null,2,20m,[],[]),
+            new MarketRequest(101,34,true,10m,2,44));
+
+        var notification=NotificationArguments(Assert.Single(sink.Packets));
+        Assert.Empty(Assert.IsType<PyList>(notification.Items[0]).Items);
+        Assert.Equal("Filled",Eve.Macho.JsSemantics.PlainText(notification.Items[1]));
+        Assert.Equal(new PyInt(0),notification.Items[2]);
     }
 
     [PgFact]
@@ -69,6 +88,7 @@ public class ProtocolTests
         Assert.Equal(new PyInt(-1),line.Items[14]);
         Assert.Equal(PyNone.Instance,await proxy.PlaceBuyOrder(Call(session,"PlaceBuyOrder",2,new PyInt(r.Station.Id),new PyInt(34),
             new PyReal(10),new PyInt(5),new PyInt(-1),new PyInt(1),new PyInt(0),PyBool.False)));
+        Assert.Empty(Assert.IsType<PyList>(NotificationArguments(Assert.Single(sink.Packets)).Items[0]).Items);
         Assert.Equal(9950m,(await r.WalletStore.GetAsync(actor))!.Isk);
         Assert.Equal(9950m,Assert.Single(events).Balance);
         var oldHistory=Fields(await proxy.GetOldPriceHistory(Call(session,"GetOldPriceHistory",3,new PyInt(34))));
@@ -169,6 +189,7 @@ public class ProtocolTests
             new PyInt(1),new PyInt(0),PyBool.False)));
 
         Assert.Equal(3,sink.Packets.Count);
+        Assert.Empty(Assert.IsType<PyList>(NotificationArguments(sink.Packets[^1]).Items[0]).Items);
         var histories=Assert.IsType<PyDict>(await proxy.GetPlexHistory(Call(session,"GetPlexHistory",25)));
         var pair=Assert.IsType<PyList>(Assert.Single(histories.Entries).Value);
         Assert.Equal(2,pair.Items.Count);

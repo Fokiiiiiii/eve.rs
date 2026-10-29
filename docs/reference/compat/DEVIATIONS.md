@@ -1665,10 +1665,14 @@ observable behaviour of the five RPCs it implements (not its bugs). Design: `mar
   used (`MktCantSellItem2` needs localized jump texts; `MARKET_REMOTE_SKILL_REQUIRED` stays a sentence). Tests: `MarketRpcTests` (fee,
   minimum volume), `MarketHostTests` (the fee label on the wire). Status: done (M1); the full label table is open where the client names
   no label.
-- **No fabricated immediate-fill notification (G8).** A fill that completes an immediate order sends no `OnOwnOrdersChanged`: the previous
-  row (order id 0, a fabricated order) is removed. The client's cache invalidation for the change is M4 (push invalidation). Reason: the
-  client reads each row as a real order. Tests: `ProtocolTests` (counts of notifications), `MarketRpcTests.Buy_multi_fills...` (none
-  sent). Status: done (M1).
+- **Immediate fills notify with no changed-order rows (G8).** An immediate fill sends `OnOwnOrdersChanged` with an empty list so the
+  client's `marketSvc.py:32-35` clears its personal market-transaction cache and `marketsvc.py:113-127` invalidates market reads and
+  refreshes escrow state; the notification does not invent an order with ID 0. Other listeners accept the empty list: `marketHistory.py:61-65`
+  and `orders.py:66-69` refresh their views, `marketbase.py:536-546` has no order to process, and `buyMultiFromBase.py:557-564` acts only
+  for expiry notices. V24 `marketsvc.py:256-268` returns no order object for `BuyStuff`; the selected server behavior keeps its cache signal
+  while reporting no changed orders. EveJS 261028.1 currently sends a synthetic ID-0 row (`marketProxyService.js:5687-5702`), so this is an
+  intentional client-contract deviation. Tests: `ProtocolTests.Immediate_market_fill_notifies_cache_change_without_fabricating_an_order`
+  and `ProtocolTests` immediate buy notification checks. Status: done (M1).
 - **Host registration.** The market service is registered through the real composition (`HostComposition.BuildAsync`, the path eve-host
   runs) in `MarketHostTests`, on scratch schemas, with `EVE_SIM=off` and `EVE_MARKET_SEED=skip`; the test project now sets
   `InvariantGlobalization` false, as the other projects that need ICU. The session's notifications are not asserted there (the

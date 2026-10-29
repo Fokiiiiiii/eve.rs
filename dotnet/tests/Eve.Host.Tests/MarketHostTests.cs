@@ -583,8 +583,8 @@ public sealed class MarketHostTests : IAsyncLifetime
         book=Assert.IsType<PyTuple>(Received(await recovered.CallAsync(Call(buyerSession,"GetOrders",16,new PyInt(Tritanium)))));
         Assert.DoesNotContain(Lines(book.Items[0]),row=>
             Assert.IsType<PyTuple>(row).Items[10]==new PyLong(structureId));
-        // The open six-ISK bid keeps six ISK in escrow after restart.
-        Assert.Equal(9_674m,(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(buyer))!.Isk);
+        // The open six-ISK bid keeps six ISK in escrow after restart; three order actions each applied both structure minima.
+        Assert.Equal(9_599m,(await new PgWalletStore(source,Schema("EVE_WALLET_SCHEMA")).GetAsync(buyer))!.Isk);
         Assert.Single(Assert.IsType<PyList>(await recovered.CallAsync(Call(buyerSession,"CharGetTransactions",10,PyNone.Instance))).Items);
         await restarted.ShutdownAsync();
         _shutdownHost=null;

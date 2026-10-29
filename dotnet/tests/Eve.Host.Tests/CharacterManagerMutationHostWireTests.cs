@@ -50,7 +50,7 @@ public partial class HostServerTests
             var row = Assert.IsType<PyTuple>(Assert.Single(Assert.IsType<PyList>(notice.Args[1]).Items));
             Assert.Equal(3, row.Items.Count);
             Assert.Equal(90_300_001, Number(row.Items[0]));
-            Assert.Equal(0, Number(row.Items[1]));
+            Assert.Same(PyNone.Instance, row.Items[1]);
             Assert.Equal(expectedMask, Number(row.Items[2]));
         }
 
@@ -139,7 +139,7 @@ public partial class HostServerTests
             var row = Assert.IsType<PyTuple>(Assert.Single(Assert.IsType<PyList>(notice.Args[1]).Items));
             Assert.Equal(3, row.Items.Count);
             Assert.Equal(90_400_001, Number(row.Items[0]));
-            Assert.Equal(0, Number(row.Items[1]));
+            Assert.Same(PyNone.Instance, row.Items[1]);
             Assert.Equal(expectedMask, Number(row.Items[2]));
         }
 
@@ -195,20 +195,20 @@ public partial class HostServerTests
         await front.SendAsync(open);
         _ = await front.ReceiveAsync();
 
-        Assert.Equal(PyNone.Instance, await CallOverHost(front, open, 1, "charMgr", "AddContact",
+        Assert.Equal(PyNone.Instance, await CallOverHostAfterQueuedNotifications(front, open, 1, "charMgr", "AddContact",
             Py.Tuple(new PyLong(contactId), new PyInt(-10), PyBool.True, PyBool.False, new PyStr(""))));
-        var contacts = Assert.IsType<PyObject>(await CallOverHost(front, open, 2, "charMgr", "GetContactList", Py.Tuple([])));
+        var contacts = Assert.IsType<PyObject>(await CallOverHostAfterQueuedNotifications(front, open, 2, "charMgr", "GetContactList", Py.Tuple([])));
         var addresses = PersonalWireField(contacts, "addresses");
         Assert.Equal(new PyList([new PyList([
             new PyInt(contactId), new PyInt(1), new PyInt(-10), new PyInt(0)])]),
             PersonalWireField(addresses, "lines"));
 
         var blockedIds = Enumerable.Range(0, 500).Select(id => (PyValue)new PyLong(90_100_000 + id)).ToArray();
-        Assert.Equal(PyNone.Instance, await CallOverHost(front, open, 3, "charMgr", "BlockOwners",
+        Assert.Equal(PyNone.Instance, await CallOverHostAfterQueuedNotifications(front, open, 3, "charMgr", "BlockOwners",
             Py.Tuple(new PyList(blockedIds))));
-        Assert.Equal(PyNone.Instance, await CallOverHost(front, open, 4, "charMgr", "EditContactsRelationshipID",
+        Assert.Equal(PyNone.Instance, await CallOverHostAfterQueuedNotifications(front, open, 4, "charMgr", "EditContactsRelationshipID",
             Py.Tuple(new PyList([new PyLong(contactId)]), new PyInt(10))));
-        contacts = Assert.IsType<PyObject>(await CallOverHost(front, open, 5, "charMgr", "GetContactList", Py.Tuple([])));
+        contacts = Assert.IsType<PyObject>(await CallOverHostAfterQueuedNotifications(front, open, 5, "charMgr", "GetContactList", Py.Tuple([])));
         addresses = PersonalWireField(contacts, "addresses");
         Assert.Equal(new PyList([new PyList([
             new PyInt(contactId), new PyInt(1), new PyInt(10), new PyInt(0)])]),
@@ -217,28 +217,28 @@ public partial class HostServerTests
 
         var deleteIds = Enumerable.Range(1, 500).Select(id => (PyValue)new PyLong(90_200_000 + id)).ToArray();
         deleteIds[0] = new PyLong(contactId);
-        Assert.Equal(PyNone.Instance, await CallOverHost(front, open, 6, "charMgr", "DeleteContacts",
+        Assert.Equal(PyNone.Instance, await CallOverHostAfterQueuedNotifications(front, open, 6, "charMgr", "DeleteContacts",
             Py.Tuple(new PyList(deleteIds))));
-        contacts = Assert.IsType<PyObject>(await CallOverHost(front, open, 7, "charMgr", "GetContactList", Py.Tuple([])));
+        contacts = Assert.IsType<PyObject>(await CallOverHostAfterQueuedNotifications(front, open, 7, "charMgr", "GetContactList", Py.Tuple([])));
         Assert.Empty(Assert.IsType<PyList>(PersonalWireField(PersonalWireField(contacts, "addresses"), "lines")).Items);
 
-        var folderLabels = Assert.IsType<PyObject>(await CallOverHost(front, open, 8, "charMgr", "GetOwnerNoteLabels", Py.Tuple([])));
+        var folderLabels = Assert.IsType<PyObject>(await CallOverHostAfterQueuedNotifications(front, open, 8, "charMgr", "GetOwnerNoteLabels", Py.Tuple([])));
         var virtualFolder = Assert.IsType<PyList>(Assert.Single(Assert.IsType<PyList>(PersonalWireField(folderLabels, "lines")).Items));
         var folderId = virtualFolder.Items[0];
         Assert.Equal("S:Folders", T(virtualFolder.Items[1]));
-        Assert.Equal(PyNone.Instance, await CallOverHost(front, open, 9, "charMgr", "EditOwnerNote",
+        Assert.Equal(PyNone.Instance, await CallOverHostAfterQueuedNotifications(front, open, 9, "charMgr", "EditOwnerNote",
             Py.Tuple(folderId, new PyStr("S:Folders"), new PyStr("2::F::0::Projects|"))));
-        var folderRows = Assert.IsType<PyList>(await CallOverHost(front, open, 10, "charMgr", "GetOwnerNote", Py.Tuple(folderId)));
+        var folderRows = Assert.IsType<PyList>(await CallOverHostAfterQueuedNotifications(front, open, 10, "charMgr", "GetOwnerNote", Py.Tuple(folderId)));
         Assert.Equal("2::F::0::Projects|", T(PersonalWireField(Assert.Single(folderRows.Items), "note")));
 
-        var noteId = Assert.IsType<PyInt>(await CallOverHost(front, open, 11, "charMgr", "AddOwnerNote",
+        var noteId = Assert.IsType<PyInt>(await CallOverHostAfterQueuedNotifications(front, open, 11, "charMgr", "AddOwnerNote",
             Py.Tuple(new PyStr("N:Planner"), new PyStr("<br>"))));
         Assert.True(noteId.Value > 0);
-        Assert.Equal(PyNone.Instance, await CallOverHost(front, open, 12, "charMgr", "EditOwnerNote",
+        Assert.Equal(PyNone.Instance, await CallOverHostAfterQueuedNotifications(front, open, 12, "charMgr", "EditOwnerNote",
             Py.Tuple(noteId, new PyStr("N:Planner renamed"))));
-        Assert.Equal(PyNone.Instance, await CallOverHost(front, open, 13, "charMgr", "EditOwnerNote",
+        Assert.Equal(PyNone.Instance, await CallOverHostAfterQueuedNotifications(front, open, 13, "charMgr", "EditOwnerNote",
             Py.Tuple(noteId, new PyStr("N:Planner"), new PyStr("client note"))));
-        var noteRows = Assert.IsType<PyList>(await CallOverHost(front, open, 14, "charMgr", "GetOwnerNote", Py.Tuple(noteId)));
+        var noteRows = Assert.IsType<PyList>(await CallOverHostAfterQueuedNotifications(front, open, 14, "charMgr", "GetOwnerNote", Py.Tuple(noteId)));
         Assert.Equal("N:Planner", T(PersonalWireField(Assert.Single(noteRows.Items), "label")));
         var note = PersonalWireField(Assert.Single(noteRows.Items), "note");
         Assert.IsType<PyBytes>(note);

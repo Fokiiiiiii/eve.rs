@@ -11,10 +11,13 @@ internal static class CorporationNotificationAdapter
         bool allianceOwner,IReadOnlyList<(long ContactId,long? RelationshipId,long? LabelMask)> updates)
     {
         if (sessions is null || updates.Count == 0) return;
+        static PyValue Number(long value) => value is >= int.MinValue and <= int.MaxValue
+            ? new PyInt(value)
+            : new PyLong(value);
         var rows = new PyList([.. updates.Select(update => (PyValue)Py.Tuple(
             CorporationWire.Id(update.ContactId),
-            update.RelationshipId is { } relationship ? CorporationWire.Id(relationship) : PyNone.Instance,
-            update.LabelMask is { } labelMask ? CorporationWire.Id(labelMask) : PyNone.Instance))]);
+            update.RelationshipId is { } relationship ? Number(relationship) : PyNone.Instance,
+            update.LabelMask is { } labelMask ? Number(labelMask) : PyNone.Instance))]);
         call.Session.AfterResponse(() =>
         {
             foreach (var session in sessions.All())
@@ -35,7 +38,13 @@ internal static class CorporationNotificationAdapter
         var previous = before.ToDictionary(contact => contact.ContactId);
         return after.Where(contact => !previous.TryGetValue(contact.ContactId,out var old) ||
                 old.RelationshipId != contact.RelationshipId || old.LabelMask != contact.LabelMask)
-            .Select(contact => (contact.ContactId,(long?)contact.RelationshipId,(long?)contact.LabelMask))
+            .Select(contact =>
+            {
+                var existed = previous.TryGetValue(contact.ContactId,out var old);
+                return (contact.ContactId,
+                    existed && old is not null && old.RelationshipId == contact.RelationshipId ? null : (long?)contact.RelationshipId,
+                    existed && old is not null && old.LabelMask == contact.LabelMask ? null : (long?)contact.LabelMask);
+            })
             .ToArray();
     }
 
@@ -45,7 +54,13 @@ internal static class CorporationNotificationAdapter
         var previous = before.ToDictionary(contact => contact.ContactId);
         return after.Where(contact => !previous.TryGetValue(contact.ContactId,out var old) ||
                 old.RelationshipId != contact.RelationshipId || old.LabelMask != contact.LabelMask)
-            .Select(contact => (contact.ContactId,(long?)contact.RelationshipId,(long?)contact.LabelMask))
+            .Select(contact =>
+            {
+                var existed = previous.TryGetValue(contact.ContactId,out var old);
+                return (contact.ContactId,
+                    existed && old is not null && old.RelationshipId == contact.RelationshipId ? null : (long?)contact.RelationshipId,
+                    existed && old is not null && old.LabelMask == contact.LabelMask ? null : (long?)contact.LabelMask);
+            })
             .ToArray();
     }
 

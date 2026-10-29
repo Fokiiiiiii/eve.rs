@@ -1,9 +1,12 @@
 using System.Text;
+using Eve.Characters;
 using Eve.Dogma;
+using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Dogma;
+using Eve.Ships;
 using Xunit;
 
 namespace Eve.Host.Tests;
@@ -107,6 +110,187 @@ public partial class HostServerTests
         Assert.Equal((9988400002220L, "targetAttack", 0L, 1), modules.Activations[3]);
     }
 
+    [Fact]
+    public async Task Item_get_info_uses_the_registered_bound_host_route_and_returns_client_item_info()
+    {
+        const long characterId = 42;
+        const long shipId = 9988400002200;
+        var statics = new DogmaStatic([], [], []);
+        var character = new Character(characterId, 1, "Pilot", 0, 1, 1, 1, 1, 1373, 1, null, null,
+            600, 600, 30000142, 20000002, 10000002, shipId, DateTimeOffset.UnixEpoch, null, null);
+        var ship = new Item(shipId, 601, characterId, 600, ItemFlags.Cargo, 1, true, null);
+        var snapshot = new ShipSnapshot
+        {
+            Character = character,
+            Ship = ship,
+            Fitted = [],
+            Skills = [],
+            World = new DogmaWorld(statics, characterId, shipId),
+        };
+        var service = new DogmaIMService(
+            statics, null!, () => FixedNowMs,
+            (_, _, _, _, _, _) => ValueTask.FromResult<bool?>(null),
+            snapshotProvider: (_, _) => ValueTask.FromResult<ShipSnapshot?>(snapshot));
+        Start(
+            configure: registry => registry.Register(service),
+            sessionOpened: session =>
+            {
+                session.Set("charid", new PyInt(characterId));
+                session.Set("stationid", new PyInt(600));
+            });
+
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        _ = await front.ReceiveAsync();
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.CallWithKwargs(
+            open, 1, "dogmaIM", "MachoBindObject",
+            new PyTuple([
+                new PyTuple([new PyLong(600), new PyInt(15)]),
+                new PyTuple([new PyStr("GetRequiredSkillLevels"), new PyTuple([new PyInt(21857)]), PyNone.Instance]),
+            ]),
+            MachoVersion()))));
+        var bindReply = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.CallRsp, Envelope(bindReply).Type);
+        var bindResult = Assert.IsType<PyTuple>(Result(MarshalCodec.Decode(bindReply.Payload)));
+        var bound = Assert.IsType<PySubStruct>(bindResult.Items[0]);
+        var boundTuple = Assert.IsType<PyTuple>(Assert.IsType<PySubStream>(bound.Value).Decoded);
+        var oid = Encoding.UTF8.GetString(Assert.IsType<PyBytes>(boundTuple.Items[0]).Value.Span);
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.BoundCall(
+            open, 2, oid, "ItemGetInfo", new PyTuple([new PyLong(shipId)]), MachoVersion()))));
+        var reply = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.CallRsp, Envelope(reply).Type);
+        var info = Assert.IsType<PyObject>(Result(MarshalCodec.Decode(reply.Payload)));
+        Assert.Equal("util.KeyVal", Encoding.UTF8.GetString(Assert.IsType<PyBytes>(info.Name).Value.Span));
+        var fields = Assert.IsType<PyDict>(info.Args);
+        PyValue Field(string name) => fields.Entries.Single(entry => entry.Key switch
+        {
+            PyStr key => key.Value == name,
+            PyBytes key => Encoding.UTF8.GetString(key.Value.Span) == name,
+            _ => false,
+        }).Value;
+        Assert.Equal(new PyLong(shipId), Field("itemID"));
+        Assert.IsType<PyPackedRow>(Field("invItem"));
+        Assert.IsType<PyDict>(Field("activeEffects"));
+        Assert.IsType<PyLong>(Field("time"));
+        Assert.IsType<PyDict>(Field("attributes"));
+        Assert.IsType<PyLong>(Field("wallclockTime"));
+    }
+
+    [Fact]
+    public async Task Refused_module_offline_does_not_call_ship_store_or_emit_a_false_change()
+    {
+        var modules = new RecordingModules { OfflineAnswer = new ModuleResult(false, "SIM_UNAVAILABLE") };
+        var service = new DogmaIMService(
+            new DogmaStatic([], [], []), null!, () => FixedNowMs,
+            (_, _, _, _, _, _) => ValueTask.FromResult<bool?>(null),
+            space: modules, modules: modules);
+        Start(
+            configure: registry => registry.Register(service),
+            sessionOpened: session =>
+            {
+                session.Set("charid", new PyInt(42));
+                session.Set("stationid", new PyInt(600));
+            });
+
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        _ = await front.ReceiveAsync();
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.CallWithKwargs(
+            open, 1, "dogmaIM", "MachoBindObject",
+            new PyTuple([
+                new PyTuple([new PyLong(600), new PyInt(15)]),
+                new PyTuple([new PyStr("GetRequiredSkillLevels"), new PyTuple([new PyInt(21857)]), PyNone.Instance]),
+            ]),
+            MachoVersion()))));
+        var bindReply = Assert.IsType<Send>(await front.ReceiveAsync());
+        var bindResult = Assert.IsType<PyTuple>(Result(MarshalCodec.Decode(bindReply.Payload)));
+        var bound = Assert.IsType<PySubStruct>(bindResult.Items[0]);
+        var boundTuple = Assert.IsType<PyTuple>(Assert.IsType<PySubStream>(bound.Value).Decoded);
+        var oid = Encoding.UTF8.GetString(Assert.IsType<PyBytes>(boundTuple.Items[0]).Value.Span);
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.BoundCall(
+            open, 2, oid, "TakeModuleOffline",
+            new PyTuple([new PyLong(9988400002220), new PyLong(9988400002220)]), MachoVersion()))));
+        var refused = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.ErrorResponse, Envelope(refused).Type);
+        Assert.Equal([9988400002220L], modules.OfflineRequests);
+        Assert.Empty(modules.Refreshes);
+    }
+
+    [Fact]
+    public async Task Unload_ammo_returns_the_destination_item_ids_after_its_inventory_notice()
+    {
+        const long characterId = 42;
+        const long shipId = 9988400002200;
+        const long moduleId = 9988400002220;
+        const long unloadedItemId = 9988400002230;
+        var location = 600L;
+        var destination = new Item(unloadedItemId, 100, characterId, location, ItemFlags.Hangar, 5, false, null);
+        ShipOutcome outcome = new AmmoChanged(shipId, [new ItemChanged(destination, shipId, 27, 5)]);
+        (long Character, long Ship, IReadOnlyList<long> Modules, long Location, int? Flag, long? Quantity)? requested = null;
+        var service = new DogmaIMService(
+            new DogmaStatic([], [], []), null!, () => FixedNowMs,
+            (_, _, _, _, _, _) => ValueTask.FromResult<bool?>(null),
+            unloadAmmo: (character, ship, modules, destinationLocation, flag, quantity, _) =>
+            {
+                requested = (character, ship, modules, destinationLocation, flag, quantity);
+                return Task.FromResult(outcome);
+            });
+        Start(
+            configure: registry => registry.Register(service),
+            sessionOpened: session =>
+            {
+                session.Set("charid", new PyInt(characterId));
+                session.Set("stationid", new PyInt(location));
+            });
+
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        _ = await front.ReceiveAsync();
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.CallWithKwargs(
+            open, 1, "dogmaIM", "MachoBindObject",
+            new PyTuple([
+                new PyTuple([new PyLong(location), new PyInt(15)]),
+                new PyTuple([new PyStr("GetRequiredSkillLevels"), new PyTuple([new PyInt(21857)]), PyNone.Instance]),
+            ]),
+            MachoVersion()))));
+        var bindReply = Assert.IsType<Send>(await front.ReceiveAsync());
+        var bindResult = Assert.IsType<PyTuple>(Result(MarshalCodec.Decode(bindReply.Payload)));
+        var bound = Assert.IsType<PySubStruct>(bindResult.Items[0]);
+        var boundTuple = Assert.IsType<PyTuple>(Assert.IsType<PySubStream>(bound.Value).Decoded);
+        var oid = Encoding.UTF8.GetString(Assert.IsType<PyBytes>(boundTuple.Items[0]).Value.Span);
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.BoundCall(
+            open, 2, oid, "UnloadAmmo",
+            new PyTuple([new PyLong(shipId), new PyList([new PyLong(moduleId)]), new PyLong(10004), PyNone.Instance]),
+            MachoVersion()))));
+        var notice = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.Notification, Envelope(notice).Type);
+        var reply = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.CallRsp, Envelope(reply).Type);
+        Assert.NotNull(requested);
+        Assert.Equal(characterId, requested.Value.Character);
+        Assert.Equal(shipId, requested.Value.Ship);
+        Assert.Equal([moduleId], requested.Value.Modules);
+        Assert.Equal(location, requested.Value.Location);
+        Assert.Null(requested.Value.Flag);
+        Assert.Null(requested.Value.Quantity);
+        Assert.Equal(new PyList([new PyLong(unloadedItemId)]), Result(MarshalCodec.Decode(reply.Payload)));
+
+        outcome = new NothingHappened();
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.BoundCall(
+            open, 3, oid, "UnloadAmmo",
+            new PyTuple([new PyLong(shipId), new PyList([new PyLong(moduleId)]), new PyLong(10004), PyNone.Instance]),
+            MachoVersion()))));
+        var noUnload = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.CallRsp, Envelope(noUnload).Type);
+        Assert.Equal(PyNone.Instance, Result(MarshalCodec.Decode(noUnload.Payload)));
+    }
+
     private static MachoPacket Envelope(Send reply) =>
         Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(reply.Payload)));
 
@@ -115,6 +299,9 @@ public partial class HostServerTests
         public ModuleResult? Answer { get; set; } = ModuleResult.Done;
         public List<(long ModuleId, string Effect, long Target, int Repeat)> Activations { get; } = [];
         public List<(long ModuleId, string Effect)> Deactivations { get; } = [];
+        public ModuleResult? OfflineAnswer { get; set; } = ModuleResult.Done;
+        public List<long> OfflineRequests { get; } = [];
+        public List<string> Refreshes { get; } = [];
 
         public Task<ModuleResult?> ActivateAsync(ClientSession session, long moduleId, string effectName, long targetId, int repeat, CancellationToken cancellationToken, IReadOnlyList<double>? aim = null, IReadOnlyList<double>? aimEnd = null)
         {
@@ -134,13 +321,20 @@ public partial class HostServerTests
         public Task<ModuleResult?> OverloadAsync(ClientSession session, long moduleId, int effectId, bool active, CancellationToken cancellationToken) =>
             Task.FromResult<ModuleResult?>(ModuleResult.Done);
 
-        public Task<ModuleResult?> OfflineAsync(ClientSession session, long moduleId, CancellationToken cancellationToken) =>
-            Task.FromResult<ModuleResult?>(ModuleResult.Done);
+        public Task<ModuleResult?> OfflineAsync(ClientSession session, long moduleId, CancellationToken cancellationToken)
+        {
+            OfflineRequests.Add(moduleId);
+            return Task.FromResult(OfflineAnswer);
+        }
 
         public Task<ModuleResult?> OverloadRackAsync(ClientSession session, long moduleId, bool active, CancellationToken cancellationToken) =>
             Task.FromResult<ModuleResult?>(ModuleResult.Done);
 
-        public Task RefreshShipAsync(ClientSession session, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task RefreshShipAsync(ClientSession session, CancellationToken cancellationToken)
+        {
+            Refreshes.Add("refresh");
+            return Task.CompletedTask;
+        }
 
         public Task<ModuleRepairStart?> StartRepairAsync(ClientSession session, IReadOnlyList<long> moduleIds, CancellationToken cancellationToken) =>
             Task.FromResult<ModuleRepairStart?>(null);

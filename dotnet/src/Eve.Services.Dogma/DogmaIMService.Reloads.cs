@@ -186,9 +186,10 @@ public sealed partial class DogmaIMService
     });
 
     /// <summary>What the modules hold goes to the hold at once; a gun that runs gives what the simulation took out of its rounds.</summary>
-    private async Task UnloadInSpaceAsync(
+    private async Task<PyValue> UnloadInSpaceAsync(
         ClientSession session, long characterId, long shipId, IReadOnlyList<long> moduleIds, long location, int? flag, long? quantity, CancellationToken cancellationToken)
     {
+        var unloaded = new List<PyValue>();
         foreach (var moduleId in moduleIds.Distinct())
         {
             ShipOutcome outcome;
@@ -204,6 +205,9 @@ public sealed partial class DogmaIMService
                 continue;
             }
             TellAmmo(session, characterId, outcome);
+            if (UnloadedItemIds(outcome, location, flag) is PyList ids)
+                unloaded.AddRange(ids.Items);
         }
+        return unloaded.Count == 0 ? None : new PyList(unloaded);
     }
 }

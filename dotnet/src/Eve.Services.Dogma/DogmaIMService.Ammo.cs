@@ -81,12 +81,25 @@ public sealed partial class DogmaIMService
         var quantity = IdOf(call.Arg(3)) is { } asked and > 0 ? asked : (long?)null;
         if (call.Session.DockedLocationId is null && rounds is not null)
         {
-            await UnloadInSpaceAsync(call.Session, character, shipId, [.. IdsOf(call.Arg(1))], location, flag, quantity, call.Cancellation);
-            return None;
+            return await UnloadInSpaceAsync(call.Session, character, shipId, [.. IdsOf(call.Arg(1))], location, flag, quantity, call.Cancellation);
         }
-        var outcome = await ships.UnloadAmmoAsync(character, shipId, [.. IdsOf(call.Arg(1))], location, flag, quantity, call.Cancellation);
+        var moduleIds = IdsOf(call.Arg(1)).ToArray();
+        var outcome = unloadAmmo is null
+            ? await ships.UnloadAmmoAsync(character, shipId, moduleIds, location, flag, quantity, call.Cancellation)
+            : await unloadAmmo(character, shipId, moduleIds, location, flag, quantity, call.Cancellation);
         TellAmmo(call.Session, character, outcome);
-        return None;
+        return UnloadedItemIds(outcome, location, flag);
+    }
+
+    private static PyValue UnloadedItemIds(ShipOutcome outcome, long location, int? flag)
+    {
+        var ids = outcome is AmmoChanged changed
+            ? changed.Events.OfType<ItemChanged>()
+                .Where(change => change.After.LocationId == location && (flag is null || change.After.Flag == flag))
+                .Select(change => InventoryWire.Id(change.After.Id))
+                .ToArray()
+            : [];
+        return ids.Length == 0 ? None : new PyList(ids);
     }
 
     private static PyValue ChargeKey(long shipId, int flag, int typeId) => Py.Tuple(InventoryWire.Id(shipId), new PyInt(flag), new PyInt(typeId));

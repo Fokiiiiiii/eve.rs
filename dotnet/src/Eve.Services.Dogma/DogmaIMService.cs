@@ -29,9 +29,13 @@ public sealed partial class DogmaIMService(
     Func<ClientSession, CancellationToken, ValueTask>? createNewbieShip = null, ISpaceProbes? probes = null,
     Func<ClientSession, ShipSnapshot, CancellationToken, ValueTask<ShipSnapshot?>>? controlledStructureSnapshot = null,
     PilotAugmentationRpc? augmentations = null,
-    Func<ClientSession, ShipSnapshot, CancellationToken, ValueTask<ShipSnapshot?>>? prepareSpaceDogma = null) : IBoundObjectReleaseHandler
+    Func<ClientSession, ShipSnapshot, CancellationToken, ValueTask<ShipSnapshot?>>? prepareSpaceDogma = null,
+    Func<ClientSession, CancellationToken, ValueTask<ShipSnapshot?>>? snapshotProvider = null,
+    Func<long, long, IReadOnlyList<long>, long, int?, long?, CancellationToken, Task<ShipOutcome>>? unloadAmmo = null) : IBoundObjectReleaseHandler
 {
     private readonly CharacterDogmaSync _sync = sync ?? new CharacterDogmaSync(statics, ships, nowUnixMs);
+
+    private readonly Func<ClientSession, CancellationToken, ValueTask<ShipSnapshot?>>? _snapshotProvider = snapshotProvider;
 
     /// <summary>The waits of this service (a module reloading): the one in-memory timer service of the server.</summary>
     private readonly Eve.Scheduler.LocalTimers _timers = localTimers ?? new(log, delay);
@@ -144,6 +148,8 @@ public sealed partial class DogmaIMService(
 
     private async Task<ShipSnapshot?> ReadSnapshotAsync(ClientSession session, CancellationToken cancellationToken)
     {
+        if (_snapshotProvider is not null)
+            return await _snapshotProvider(session, cancellationToken);
         if (session.CharacterId is not { } character || await ships.LoadAsync(character, cancellationToken) is not { } personal)
             return null;
         if (session.GetInt("structureid") is not { } structureId || structureId <= 0 || session.GetInt("shipid") != structureId)
@@ -233,13 +239,14 @@ public sealed partial class DogmaIMService(
         }
         var shipId = IdOf(call.Arg(0)) ?? 0;
         var moduleId = IdOf(call.Arg(1)) ?? 0;
+        // Refuse before changing the durable ship state so the simulation and the client cannot diverge.
+        if (!online && modules is not null && await modules.OfflineAsync(call.Session, moduleId, call.Cancellation) is { Ok: false } offlineRefusal)
+        {
+            throw ModuleRefusals.Of(offlineRefusal, starting: false);
+        }
         switch (await ships.SetOnlineAsync(character, shipId, moduleId, online, call.Cancellation))
         {
             case ShipChanged changed:
-                if (!online && modules is not null && await modules.OfflineAsync(call.Session, moduleId, call.Cancellation) is { Ok: false } offlineRefusal)
-                {
-                    throw ModuleRefusals.Of(offlineRefusal, starting: false);
-                }
                 // what the module changed (its resonances, its numbers) reaches the simulation of a ship in space; nothing is sent when there is none
                 if (modules is not null)
                 {
@@ -248,9 +255,28 @@ public sealed partial class DogmaIMService(
                 ShipNotifications.Send(call.Session, character, changed, item => DogmaInfo.RowOf(item, statics.Type(item.TypeId)), Py.FileTimeFromUnixMs(nowUnixMs()));
                 return None;
             case ShipRefused refused:
+                if (!online && modules is not null)
+                {
+                    await modules.RefreshShipAsync(call.Session, call.Cancellation);
+                }
                 throw ShipErrors.Of(refused, statics);
             default:
                 return None;
         }
+    }
+
+    /// <summary>Returns one item's authoritative dogma data for the client's inventory refresh.</summary>
+    [Method("ItemGetInfo")]
+    public async ValueTask<PyValue> ItemGetInfo(ServiceCall call)
+    {
+        if (BoundContextOf(call) is null || call.Session.CharacterId is null
+            || await ReadSnapshotAsync(call.Session, call.Cancellation) is not { } snapshot)
+            return None;
+        if (prepareSpaceDogma is not null && await prepareSpaceDogma(call.Session, snapshot, call.Cancellation) is { } prepared)
+            snapshot = prepared;
+        if (health is not null && await health.ConditionAsync(call.Session, call.Cancellation) is { } live)
+            snapshot = snapshot.WithCondition(new ShipCondition(live.Damage, live.Charge, live.ShieldCharge, live.ArmorDamage, snapshot.Condition.Incapacitated));
+        var itemKey = call.Arg(0) is PyNone ? InventoryWire.Id(snapshot.Ship.Id) : call.Arg(0);
+        return _info.ItemInfo(snapshot, itemKey, Py.FileTimeFromUnixMs(nowUnixMs()), call.Session.DockedLocationId is not null);
     }
 }

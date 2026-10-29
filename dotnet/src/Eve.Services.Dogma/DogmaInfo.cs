@@ -192,6 +192,38 @@ public sealed class DogmaInfo(DogmaStatic statics)
     private PyValue CharacterInfo(ShipSnapshot s, IReadOnlyDictionary<int, double> attributes, long now) =>
         DogmaWire.ItemInfo(s.Character.Id, Row(CharacterRow(s), true), new PyDict([]), DogmaWire.Attributes(attributes), now);
 
+    /// <summary>The item data the client asks for after an inventory change: a ship, character, fitted module or loaded charge.</summary>
+    public PyValue ItemInfo(ShipSnapshot s, PyValue itemKey, long fileTime, bool docked)
+    {
+        static long? Id(PyValue value) => value switch { PyInt i => i.Value, PyLong l => l.Value, _ => null };
+        var itemId = Id(itemKey);
+        if (itemId == s.Ship.Id)
+        {
+            return DogmaWire.ItemInfo(s.Ship.Id, Row(RowOf(s.Ship, statics.Type(s.Ship.TypeId)), false), new PyDict([]), DogmaWire.Attributes(ShipAttributes(s)), fileTime, itemKey);
+        }
+        if (itemId == s.Character.Id)
+        {
+            return CharacterInfo(s, CharacterAttributes(s), fileTime);
+        }
+        if (s.Fitted.FirstOrDefault(m => m.Id == itemId) is { } module)
+        {
+            return ModuleInfo(s, module, fileTime);
+        }
+        if (itemId is { } chargeId && docked && s.Charges.FirstOrDefault(c => c.Id == chargeId) is { } chargeItem)
+        {
+            return ChargeInfo(s, chargeItem, itemKey, Row(RowOf(chargeItem, statics.Type(chargeItem.TypeId)), true), fileTime);
+        }
+        if (itemKey is PyTuple { Items.Count: 3 } chargeKey
+            && Id(chargeKey.Items[0]) == s.Ship.Id
+            && Id(chargeKey.Items[1]) is { } flag
+            && Id(chargeKey.Items[2]) is { } typeId
+            && s.Charges.FirstOrDefault(c => c.Flag == flag && c.TypeId == typeId) is { } keyedCharge)
+        {
+            return ChargeInfo(s, keyedCharge, itemKey, PyNone.Instance, fileTime);
+        }
+        return PyNone.Instance;
+    }
+
     /// <summary>The state of everything the client keeps a state for: the ship, the character and each module, and the heat of the slots.</summary>
     private static PyValue ChargeStateRow(long shipId, Eve.Inventory.Item charge) => new PyObject(
         new PyStr("util.Row"),

@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Globalization;
+using System.Text.Json.Nodes;
 using Eve.Dogma;
 using Eve.Fitting;
 using Eve.Inventory;
@@ -13,8 +15,7 @@ using Npgsql;
 namespace Eve.Services.Station;
 
 /// <summary>
-/// The repair shop of NPC stations and cored Upwell structures (<c>repairSvc</c>). Stations charge the selected amount; structure quotes are free
-/// as sent by the V24 client. Damage comes from the module state store and the repair is committed before item notices are sent.
+/// The repair shop of NPC stations and cored Upwell structures (<c>repairSvc</c>). Damage and repair charges are committed before wallet and item notices are sent.
 /// </summary>
 [Service("repairSvc")]
 public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore items, ItemTypeCatalog types, StationCatalog stations, DogmaStatic statics,
@@ -83,14 +84,17 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
         var entries = new List<KeyValuePair<PyValue, PyValue>>();
         await using var connection = await source.OpenConnectionAsync(call.Cancellation).ConfigureAwait(false);
         await using var transaction = await connection.BeginTransactionAsync(call.Cancellation).ConfigureAwait(false);
+        var structureTaxRate = facility.IsStructure
+            ? await StructureTaxRateAsync(connection, transaction, facility.Id, call.Cancellation).ConfigureAwait(false)
+            : 0;
         foreach (var id in ItemIdsOf(call.Arg(0)))
         {
             if (await items.LockAndGetAsync(connection, transaction, id, call.Cancellation).ConfigureAwait(false) is not { } item
                 || !await AccessibleAsync(connection, transaction, item, character, facility.Id, call.Cancellation).ConfigureAwait(false))
                 continue;
             var rows = new List<PyValue>();
-            foreach (var quoted in await QuoteGroupAsync(connection, transaction, item, character, call.Cancellation).ConfigureAwait(false))
-                rows.Add(QuoteValue(facility.IsStructure ? quoted with { UnitCost = 0 } : quoted));
+            foreach (var quoted in await QuoteGroupAsync(connection, transaction, item, character, structureTaxRate, call.Cancellation).ConfigureAwait(false))
+                rows.Add(QuoteValue(quoted));
             if (rows.Count > 0)
                 entries.Add(new(new PyLong(id), new PyList(rows)));
         }
@@ -112,21 +116,24 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
         var facilityId = facility.Id;
         var character = CharacterOf(call.Session);
         var payment = isStructure ? null : NumberOrNull(call.Arg(1));
+        decimal taxCredit = 0;
         var now = nowUnixMs();
         var operation = $"repair:{Guid.NewGuid():N}";
 
         await using var connection = await source.OpenConnectionAsync(call.Cancellation).ConfigureAwait(false);
         await using var transaction = await connection.BeginTransactionAsync(call.Cancellation).ConfigureAwait(false);
+        var structureTaxRate = isStructure
+            ? await StructureTaxRateAsync(connection, transaction, facilityId, call.Cancellation).ConfigureAwait(false)
+            : 0;
         var targets = new List<Damaged>();
         foreach (var id in ItemIdsOf(call.Arg(0)))
         {
             if (await items.LockAndGetAsync(connection, transaction, id, call.Cancellation).ConfigureAwait(false) is not { } item
                 || !await AccessibleAsync(connection, transaction, item, character, facilityId, call.Cancellation).ConfigureAwait(false))
                 continue;
-            var quoted = await QuoteRowAsync(connection, transaction, item, call.Cancellation).ConfigureAwait(false);
-            if (isStructure) quoted = quoted with { UnitCost = 0 };
+            var quoted = await QuoteRowAsync(connection, transaction, item, call.Cancellation, structureTaxRate).ConfigureAwait(false);
             if (!(quoted.Health.Damage > 0)) continue;
-            if (!isStructure && !(quoted.UnitCost > 0)) throw Notify("No repair price is known for that item.");
+            if (!(quoted.UnitCost > 0)) throw Notify("No repair price is known for that item.");
             targets.Add(new Damaged(quoted));
         }
         if (targets.Count == 0)
@@ -152,9 +159,17 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
                 await wallets.AdjustAsync(connection, transaction, character, -(decimal)charged, facility.OwnerCorporationId, RepairBillRefType,
                     "Repair", now, operation + ":bill", call.Cancellation).ConfigureAwait(false);
             }
-            catch (InsufficientFundsException)
+            catch (InsufficientFundsException error)
             {
-                throw Notify($"You need {charged:N2} ISK for the repair.");
+                var availableBalance = error.AvailableBalance ?? 0;
+                throw MachoErrors.ThrowUserError("NotEnoughMoney", ("amount", new PyReal(charged)), ("balance", new PyReal((double)availableBalance)));
+            }
+            if (isStructure && structureTaxRate > 0)
+            {
+                taxCredit = RepairRules.StructureTaxCredit((decimal)charged, structureTaxRate);
+                if (taxCredit > 0)
+                    await wallets.AdjustAsync(connection, transaction, facility.OwnerCorporationId, taxCredit, character, RepairBillRefType,
+                        "Repair", now, operation + ":tax", call.Cancellation).ConfigureAwait(false);
             }
         }
 
@@ -181,12 +196,14 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
         await transaction.CommitAsync(call.Cancellation).ConfigureAwait(false);
         if (charged > 0 && await balances.GetAsync(character, call.Cancellation).ConfigureAwait(false) is { } balance)
             wallets.AnnounceCommitted(new WalletBalanceChange(character, IskAccount, balance.Isk));
+        if (taxCredit > 0 && await balances.GetAsync(facility.OwnerCorporationId, call.Cancellation).ConfigureAwait(false) is { } ownerBalance)
+            wallets.AnnounceCommitted(new WalletBalanceChange(facility.OwnerCorporationId, IskAccount, ownerBalance.Isk));
         foreach (var item in repairedItems)
             await NotifyItemAsync(call.Session, item, call.Cancellation).ConfigureAwait(false);
         return PyNone.Instance;
     }
 
-    /// <summary>The client sends no payment for structure repairs; the V24 repair quote is free.</summary>
+    /// <summary>The client sends only item IDs, so the server settles the quoted amount from the character wallet.</summary>
     [Method("RepairItemsInStructure")]
     public ValueTask<PyValue> RepairItemsInStructure(ServiceCall call) => RepairItemsAsync(call, isStructure: true);
 
@@ -208,14 +225,14 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
     }
 
     /// <summary>What one item is quoted with: the item, its health, the cost of one unit of damage, and its condition as the store keeps it.</summary>
-    private sealed record Quoted(Item Item, int GroupId, int CategoryId, RepairRules.Health Health, double UnitCost, ShipCondition? ShipCondition)
+    private sealed record Quoted(Item Item, int GroupId, int CategoryId, RepairRules.Health Health, double BaseUnitCost, double UnitCost, double StructureTaxRate, ShipCondition? ShipCondition)
     {
         public double Damage => Health.Damage;
     }
 
     private sealed record Damaged(Quoted Row);
 
-    private async Task<Quoted> QuoteRowAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Item item, CancellationToken cancellationToken)
+    private async Task<Quoted> QuoteRowAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Item item, CancellationToken cancellationToken, double structureTaxRate = 0)
     {
         var type = await types.GetAsync(item.TypeId, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"type {item.TypeId} is not in the static data");
@@ -240,13 +257,15 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
             health = new RepairRules.Health(shieldCapacity, armorHp, structureHp, module.ShieldCharge, module.ArmorDamage, module.Damage);
         }
         var price = (await prices.GetAsync([item.TypeId], cancellationToken).ConfigureAwait(false)).GetValueOrDefault(item.TypeId);
-        return new Quoted(item, type.GroupId, type.CategoryId, health, RepairRules.UnitCost(price, health.MaxHealth), ship);
+        var baseUnitCost = RepairRules.UnitCost(price, health.MaxHealth);
+        var unitCost = RepairRules.UnitCostWithStructureTax(baseUnitCost, structureTaxRate);
+        return new Quoted(item, type.GroupId, type.CategoryId, health, baseUnitCost, unitCost, structureTaxRate, ship);
     }
 
     /// <summary>The quote rows of a requested item: the item itself, or for a ship in the hangar the ship with its fitted and repairable drone-bay items.</summary>
-    private async Task<IReadOnlyList<Quoted>> QuoteGroupAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Item item, long character, CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<Quoted>> QuoteGroupAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Item item, long character, double structureTaxRate, CancellationToken cancellationToken)
     {
-        var own = await QuoteRowAsync(connection, transaction, item, cancellationToken).ConfigureAwait(false);
+        var own = await QuoteRowAsync(connection, transaction, item, cancellationToken, structureTaxRate).ConfigureAwait(false);
         var rows = new List<Quoted> { own };
         if (own.CategoryId == CategoryShip && item.Flag == FlagHangar)
         {
@@ -255,7 +274,7 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
                 if (!(IsFittedFlag(inside.Flag) || inside.Flag == FlagDroneBay)) continue;
                 var type = await types.GetAsync(inside.TypeId, cancellationToken).ConfigureAwait(false);
                 if (type is null || !IsRepairableType(type.GroupId, type.CategoryId) || !inside.Singleton) continue;
-                rows.Add(await QuoteRowAsync(connection, transaction, inside, cancellationToken).ConfigureAwait(false));
+                rows.Add(await QuoteRowAsync(connection, transaction, inside, cancellationToken, structureTaxRate).ConfigureAwait(false));
             }
         }
         return rows;
@@ -285,6 +304,21 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
 
     private static bool IsRepairableType(int groupId, int categoryId) => RepairableCategories.Contains(categoryId) || RepairableGroups.Contains(groupId);
 
+    private async Task<double> StructureTaxRateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, CancellationToken cancellationToken)
+    {
+        var settings = await structures!.GetAsync(connection, transaction, structureId, false, cancellationToken).ConfigureAwait(false);
+        var value = settings?.Doc["industryTaxRate"] ?? settings?.Doc["taxRate"];
+        var rate = value switch
+        {
+            JsonValue json when json.TryGetValue<double>(out var number) => number,
+            JsonValue json when json.TryGetValue<decimal>(out var number) => (double)number,
+            JsonValue json when json.TryGetValue<string>(out var text) && double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var number) => number,
+            _ => 0,
+        };
+        if (rate > 1) rate /= 100;
+        return double.IsFinite(rate) ? Math.Clamp(rate, 0, 1) : 0;
+    }
+
     private static PyValue QuoteValue(Quoted quoted) => Py.KeyVal(
         ("itemID", InventoryWire.Id(quoted.Item.Id)),
         ("typeID", new PyInt(quoted.Item.TypeId)),
@@ -293,8 +327,8 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
         ("damage", new PyReal(quoted.Health.Damage)),
         ("maxHealth", new PyReal(quoted.Health.MaxHealth)),
         ("costToRepairOneUnitOfDamage", new PyReal(quoted.UnitCost)),
-        ("structureTaxRate", new PyReal(0)),
-        ("baseCostToRepairOneUnitOfDamage", new PyReal(quoted.UnitCost)));
+        ("structureTaxRate", new PyReal(quoted.StructureTaxRate)),
+        ("baseCostToRepairOneUnitOfDamage", new PyReal(quoted.BaseUnitCost)));
 
     private async Task NotifyItemAsync(ClientSession session, Item item, CancellationToken cancellationToken)
     {

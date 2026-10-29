@@ -2,7 +2,7 @@ namespace Eve.Services.Station;
 
 /// <summary>
 /// Shared repair rules for station and structure shops (EVE.js <c>repairRuntime.js</c>): item health, price per damage unit, payment, and repaired health.
-/// Damage is repaired in the order structure, armor, shield; a zero-priced target is repaired in full without a wallet charge.
+/// Damage is repaired in the order structure, armor, shield; a zero-priced target has no wallet charge.
 /// </summary>
 public static class RepairRules
 {
@@ -39,6 +39,11 @@ public static class RepairRules
     /// <summary>The cost of one unit of damage: a tenth of the base price, spread over the HP of the item (rounded to six decimals).</summary>
     public static double UnitCost(double basePrice, double maxHealth) =>
         basePrice > 0 && maxHealth > 0 ? Round6(basePrice * StationCostMultiplier / maxHealth) : 0;
+
+    public static double UnitCostWithStructureTax(double baseUnitCost, double taxRate) => Round6(baseUnitCost * (1 + taxRate));
+
+    public static decimal StructureTaxCredit(decimal charged, double taxRate) =>
+        decimal.Round(charged * (decimal)taxRate / (1 + (decimal)taxRate), 2, MidpointRounding.AwayFromZero);
 
     /// <summary>
     /// What a repair of <paramref name="health"/> leaves when <paramref name="amount"/> HP are repaired: the structure first, then the armor,
@@ -80,7 +85,7 @@ public static class RepairRules
             if (!(target.Damage > 0)) continue;
             if (!(target.UnitCost > 0))
             {
-                // Structure quotes use zero unit cost for a real free repair.
+                // A zero-priced target has no wallet charge.
                 steps.Add(new Step(target.ItemId, target.Damage, 0));
                 continue;
             }

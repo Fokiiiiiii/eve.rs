@@ -17,6 +17,7 @@ public partial class HostServerTests
         const long now = 133000000000000000L;
         FwCharacterWarfareState state = new(factionId, 0);
         IReadOnlyList<long> allowedFactions = [factionId];
+        var saves = 0;
         var service = new FwCharacterEnlistmentMgrService(new FwCharacterEnlistmentRpcCallbacks(
             ReadCharacterStateAsync: (id, _) => ValueTask.FromResult<FwCharacterWarfareState?>(id == characterId ? state : null),
             ReadCorporationFactionIdAsync: (id, _) => ValueTask.FromResult<long?>(id == corporationId ? corporationFactionId : null),
@@ -31,6 +32,7 @@ public partial class HostServerTests
             SaveCharacterStateAsync: (id, directFactionId, cooldown, _) =>
             {
                 Assert.Equal(characterId, id);
+                saves++;
                 state = new FwCharacterWarfareState(directFactionId, cooldown);
                 return ValueTask.FromResult(true);
             },
@@ -64,6 +66,15 @@ public partial class HostServerTests
             }
         }
 
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.CallWithKwargs(open, 0, "fwCharacterEnlistmentMgr", "CreateMyDirectEnlistment",
+                new PyTuple([new PyInt(corporationFactionId)]), kwargs))));
+        var alreadyEnlisted = Assert.IsType<Send>(await front.ReceiveAsync());
+        AssertWrappedError(alreadyEnlisted, "eveexceptions.UserError", "CustomInfo");
+        Assert.Contains("UI/FactionWarfare/AlreadyInMilitia", System.Text.Encoding.ASCII.GetString(alreadyEnlisted.Payload.Span));
+        Assert.Equal(new FwCharacterWarfareState(factionId, 0), state);
+        Assert.Equal(0, saves);
+
         Assert.Equal(
             new PyList([new PyInt(factionId), new PyInt(factionId), new PyInt(corporationFactionId)]),
             await Call(1, "GetMyEnlistment"));
@@ -75,5 +86,13 @@ public partial class HostServerTests
         Assert.Equal(
             new PyList([new PyInt(corporationFactionId), PyNone.Instance, new PyInt(corporationFactionId)]),
             await Call(6, "GetMyEnlistment"));
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.CallWithKwargs(open, 7, "fwCharacterEnlistmentMgr", "CreateMyDirectEnlistment",
+                new PyTuple([new PyInt(factionId)]), kwargs))));
+        var refusal = Assert.IsType<Send>(await front.ReceiveAsync());
+        AssertWrappedError(refusal, "eveexceptions.UserError", "CustomInfo");
+        Assert.Contains("UI/FactionWarfare/CooldownActive", System.Text.Encoding.ASCII.GetString(refusal.Payload.Span));
+        Assert.Equal(new FwCharacterWarfareState(null, now + TimeSpan.TicksPerDay), state);
+        Assert.Equal(1, saves);
     }
 }

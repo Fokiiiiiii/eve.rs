@@ -146,6 +146,12 @@ public sealed class FwCharacterEnlistmentMgrService(FwCharacterEnlistmentRpcCall
                 var characterId = CharacterId(call.Session).GetValueOrDefault();
                 if (characterId <= 0 || factionId <= 0)
                     return PyNone.Instance;
+                var state = await ReadCharacterStateAsync(characterId, call.Cancellation);
+                if (state?.DirectFactionId is > 0)
+                    throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("UI/FactionWarfare/AlreadyInMilitia")));
+                var now = callbacks?.CurrentFileTime?.Invoke() ?? DateTimeOffset.UtcNow.ToFileTime();
+                if (state is not null && state.DirectEnlistmentCooldownFileTime > now)
+                    throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("UI/FactionWarfare/CooldownActive")));
                 if (await SaveCharacterStateAsync(characterId, factionId, 0, call.Cancellation))
                     call.Session.Change(("warfactionid", new PyInt(factionId)));
                 return PyNone.Instance;

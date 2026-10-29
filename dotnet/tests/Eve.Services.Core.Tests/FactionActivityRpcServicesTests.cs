@@ -166,6 +166,46 @@ public sealed class FactionActivityRpcServicesTests
     }
 
     [Fact]
+    public async Task Direct_enlistment_refuses_an_active_persisted_cooldown_and_allows_its_expiry()
+    {
+        var now = 133000000000000000L;
+        FwCharacterWarfareState? character = new(null, now + 1);
+        var saves = 0;
+        var service = new FwCharacterEnlistmentMgrService(new FwCharacterEnlistmentRpcCallbacks(
+            ReadCharacterStateAsync: (id, _) => ValueTask.FromResult(id == 42 ? character : null),
+            SaveCharacterStateAsync: (id, factionId, cooldown, _) =>
+            {
+                if (id != 42)
+                    return ValueTask.FromResult(false);
+                saves++;
+                character = new FwCharacterWarfareState(factionId, cooldown);
+                return ValueTask.FromResult(true);
+            },
+            CurrentFileTime: () => now));
+        var session = new ClientSession();
+        session.Set("charid", new PyInt(42));
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call(service, "CreateMyDirectEnlistment", session, new PyInt(500001))).AsTask());
+        Assert.Equal("CustomInfo", refusal.Error.UserErrorMessage);
+        var errorPayload = Assert.IsType<PyObjectEx>(refusal.Error.Payload);
+        var errorArgs = Assert.IsType<PyTuple>(errorPayload.Header).Items;
+        var errorValues = Assert.IsType<PyDict>(Assert.IsType<PyTuple>(errorArgs[1]).Items[1]);
+        Assert.Contains(errorValues.Entries, entry =>
+            entry.Key == new PyStr("info") && entry.Value == new PyStr("UI/FactionWarfare/CooldownActive"));
+        Assert.Equal(new FwCharacterWarfareState(null, now + 1), character);
+        Assert.Equal(0, saves);
+        Assert.Null(session.Get("warfactionid"));
+
+        now++;
+        Assert.Same(PyNone.Instance,
+            await service.CallAsync(Call(service, "CreateMyDirectEnlistment", session, new PyInt(500001))));
+        Assert.Equal(new FwCharacterWarfareState(500001, 0), character);
+        Assert.Equal(new PyInt(500001), session.Get("warfactionid"));
+        Assert.Equal(1, saves);
+    }
+
+    [Fact]
     public async Task Victory_point_and_insurgency_responses_match_EveJS_object_and_collection_shapes()
     {
         var points = new FwVictoryPointMgrService(new FwVictoryPointRpcCallbacks(

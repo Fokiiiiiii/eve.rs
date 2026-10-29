@@ -4508,6 +4508,14 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
   enlistment is also checked against the session corporation's director role (the wiki says the alliance executor; the executor is not read).
 - **Applied: character enlistment.** The standing (toward the faction) at least -0.0001, no existing enlistment, the 24-hour cooldown after a
   direct enlistment is removed (wiki: 24 hours; the client's `IsCharacterInFwCooldown` uses the same day). Stored in the Characters store.
+  The direct V24 route `fwCharacterEnlistmentMgr.CreateMyDirectEnlistment` now also refuses an already-active persisted cooldown with the
+  existing `CustomInfo(UI/FactionWarfare/CooldownActive)` reply. The client reads the stored timestamp in `fwEnlistmentSvc.py:119-125`, and
+  `facWarSvc.py:288-303` treats future timestamps as a cooldown; its enlist action calls this RPC at `fwEnlistmentSvc.py:85-94`. EveJS v0.12.9
+  `fwCharacterEnlistmentMgrService.js:108-122` clears the timestamp and enlists without checking it. It also refuses an existing direct
+  enlistment with the client's `AlreadyInMilitia` notice, matching `fwEnlistmentSvc.py:85-94` instead of allowing the RPC to replace it. The wiki rule (Faction Warfare,
+  https://wiki.eveuniversity.org/Faction_Warfare) says retirement blocks enlistment for 24 hours, so this direct route follows the wiki and
+  the other eve.rs enlistment handler rather than allowing a bypass through the client-facing RPC. Focused service coverage checks refusal,
+  unchanged state, and acceptance at the expiry boundary.
 - **Applied: the militia rank.** The rank is the whole part of the standing toward the militia corporation, clamped to 0 to 9 (the client's
   `OnNPCStandingChange` rule). Standing comes from the relation store (`standing`, character to militia corporation).
 - **Applied: system occupation at the start.** Each warzone system whose SDE faction is one of its two factions starts occupied by that faction;

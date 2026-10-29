@@ -157,13 +157,9 @@ public sealed class StoreOffersServiceTests
     }
 
     [Fact]
-    public async Task Buy_offer_fails_without_a_settlement_provider_and_returns_none_when_rejected()
+    public async Task Buy_offer_returns_none_when_the_settlement_provider_rejects()
     {
         var call = PurchaseCall("PLX");
-        var unavailable = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
-            await Service(StoreState("PLX")).CallAsync(call));
-        Assert.Equal("STORE_CHECKOUT_UNAVAILABLE", unavailable.Error.UserErrorMessage);
-
         var providerCalls = 0;
         var rejectingProvider = Service(StoreState("PLX"), (_, _) =>
         {

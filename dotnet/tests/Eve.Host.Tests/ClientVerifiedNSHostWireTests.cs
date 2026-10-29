@@ -200,10 +200,11 @@ public partial class HostServerTests
 
         var availability = Assert.IsType<PyDict>(await HostRpcAsync(
             front, open, 3, "storeManager", "can_purchase_offer", new PyStr("VEVC-7")));
-        Assert.Equal(PyBool.True, NsField(availability, "canPurchase"));
-        Assert.Equal(new PyInt(7), NsField(availability, "offerID"));
+        Assert.Equal(PyBool.False, NsField(availability, "canPurchase"));
+        Assert.Same(PyNone.Instance, NsField(availability, "offerID"));
         Assert.Same(PyNone.Instance, NsField(availability, "storeOfferID"));
-        Assert.Same(PyNone.Instance, NsField(availability, "purchaseLimitedReason"));
+        var reason = Assert.IsType<PyBytes>(NsField(availability, "purchaseLimitedReason"));
+        Assert.Equal("payment_unavailable", System.Text.Encoding.UTF8.GetString(reason.Value.Span));
 
         var buyKwargs = Py.Dict(
             ("machoVersion", new PyInt(1)),

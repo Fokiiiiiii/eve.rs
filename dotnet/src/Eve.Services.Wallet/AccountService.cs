@@ -88,14 +88,25 @@ public sealed partial class AccountService(PgWalletStore wallets, Eve.Corporatio
         var year = Integral(call.Arg(1));
         var month = Integral(call.Arg(2));
         var filterByMonth = year > 0 && month is >= 1 and <= 12;
+        if (filterByMonth && year > 9999)
+            return new PyList([]);
+        long? monthStartMs = null;
+        long? nextMonthStartMs = null;
+        if (filterByMonth)
+        {
+            var monthStart = new DateTimeOffset((int)year, (int)month, 1, 0, 0, 0, TimeSpan.Zero);
+            monthStartMs = monthStart.ToUnixTimeMilliseconds();
+            nextMonthStartMs = year == 9999 && month == 12
+                ? long.MaxValue
+                : monthStart.AddMonths(1).ToUnixTimeMilliseconds();
+        }
         var recentAfter = DateTimeOffset.UtcNow.AddDays(-30).ToUnixTimeMilliseconds();
         var limit = isCorpWallet ? 1000 : 100;
-        var entries = await walletTransactions.JournalForAccountAsync(ownerId, accountKey, limit: limit,
-            cancellationToken: call.Cancellation);
-        var rows = entries.Where(entry => filterByMonth
-                ? DateTimeOffset.FromUnixTimeMilliseconds(entry.TimeMs).UtcDateTime.Year == year &&
-                  DateTimeOffset.FromUnixTimeMilliseconds(entry.TimeMs).UtcDateTime.Month == month
-                : entry.TimeMs >= recentAfter)
+        var entries = await walletTransactions.JournalForAccountAsync(ownerId, accountKey,
+            limit: filterByMonth ? null : limit, cancellationToken: call.Cancellation,
+            fromTimeMs: monthStartMs, untilTimeMs: nextMonthStartMs);
+        var filteredEntries = filterByMonth ? entries : entries.Where(entry => entry.TimeMs >= recentAfter);
+        var rows = filteredEntries
             .Select(WalletTransactionInfo)
             .ToArray();
         return new PyList(rows);

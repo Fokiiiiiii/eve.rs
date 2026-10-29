@@ -59,7 +59,7 @@ internal sealed class XmppClientSession(XmppChatHub hub, Action<string> send, Ac
                 Authenticate(element);
                 break;
             case "iq":
-                OnIq(element);
+                await OnIqAsync(element, cancellationToken).ConfigureAwait(false);
                 break;
             case "presence":
                 OnPresence(element);
@@ -194,7 +194,7 @@ internal sealed class XmppClientSession(XmppChatHub hub, Action<string> send, Ac
         closeWith(null);
     }
 
-    private void OnIq(XmppElement iq)
+    private async ValueTask OnIqAsync(XmppElement iq, CancellationToken cancellationToken)
     {
         var id = iq.Attribute("id") ?? "";
         var type = iq.Attribute("type");
@@ -222,6 +222,27 @@ internal sealed class XmppClientSession(XmppChatHub hub, Action<string> send, Ac
         if (type is "set" && child?.Name == "session" && _phase == Phase.Bound)
         {
             send($"<iq type='result' id='{XmppXml.Escape(id)}'/>");
+            return;
+        }
+        if (type == "set" && child?.Name == "query" && child.Attribute("xmlns") == "http://jabber.org/protocol/muc#admin"
+            && _phase == Phase.Bound && _link is { } adminSetLink)
+        {
+            var to = iq.Attribute("to") ?? "";
+            var at = to.IndexOf('@');
+            var item = child.Child("item");
+            var targetJid = item?.Attribute("jid");
+            var targetAt = targetJid?.IndexOf('@') ?? -1;
+            if (at > 0 && hub.IsConferenceDomain(to[(at + 1)..])
+                && targetAt > 0 && targetJid!.IndexOf('@', targetAt + 1) < 0
+                && string.Equals(targetJid[(targetAt + 1)..], adminSetLink.Domain, StringComparison.OrdinalIgnoreCase)
+                && long.TryParse(targetJid[..targetAt], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var targetCharacterId)
+                && targetCharacterId > 0 && item?.Attribute("affiliation") == "owner"
+                && await hub.SetPlayerRoomOwnerAsync(adminSetLink, to[..at], targetCharacterId, cancellationToken).ConfigureAwait(false))
+            {
+                send($"<iq type='result' id='{XmppXml.Escape(id)}' from='{XmppXml.Escape(to)}' to='{XmppXml.Escape(adminSetLink.Jid)}'/>");
+                return;
+            }
+            Error(iq, "auth", "not-allowed");
             return;
         }
         if (type == "get" && child?.Name == "query" && child.Attribute("xmlns") == "http://jabber.org/protocol/muc#admin"

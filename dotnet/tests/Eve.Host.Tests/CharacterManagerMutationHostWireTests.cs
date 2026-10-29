@@ -65,6 +65,14 @@ public partial class HostServerTests
         Assert.Equal(12, Number(Field(label, "color")));
 
         var contactId = 90_300_001L;
+        Assert.Same(PyNone.Instance, await Call("AddCorporateContact", new PyLong(contactId), new PyInt(0)));
+        var addedNotice = ReadCorporationNotification(Assert.IsType<Send>(await front.ReceiveAsync()));
+        Assert.Equal(("OnOrganizationContactsUpdated", "corpid"), (addedNotice.Name, addedNotice.IdType));
+        Assert.Equal(corporation.Id, Number(addedNotice.Args[0]));
+        var addedRow = Assert.IsType<PyTuple>(Assert.Single(Assert.IsType<PyList>(addedNotice.Args[1]).Items));
+        Assert.Equal(contactId, Number(addedRow.Items[0]));
+        Assert.Equal(0, Number(addedRow.Items[1]));
+        Assert.Same(PyNone.Instance, addedRow.Items[2]);
         Assert.Same(PyNone.Instance, await Call("AssignLabels", new PyList([new PyLong(contactId)]), new PyLong(labelId)));
         await AssertContactUpdate(labelId);
         Assert.Same(PyNone.Instance, await Call("RemoveLabels", new PyList([new PyLong(contactId)]), new PyLong(labelId)));
@@ -121,7 +129,7 @@ public partial class HostServerTests
         _ = await front.ReceiveAsync();
         var callId = 1U;
         async Task<PyValue> Call(string method, params PyValue[] args) =>
-            await CallOverHost(front, open, callId++, "allianceRegistry", method, Py.Tuple(args))
+            await CallOverHostAfterQueuedNotifications(front, open, callId++, "allianceRegistry", method, Py.Tuple(args))
                 ?? throw new Xunit.Sdk.XunitException($"{method} returned no reply value");
         async Task AssertContactUpdate(long expectedMask)
         {
@@ -238,9 +246,9 @@ public partial class HostServerTests
 
         Assert.Equal(PyNone.Instance, await CallOverHostAfterQueuedNotifications(front, open, 15, "charMgr", "SaveCharacterSetting",
             Py.Tuple(new PyStr("windowState"), new PyStr("open"))));
-        Assert.Equal(PyNone.Instance, await CallOverHost(front, open, 16, "charMgr", "DeleteCharacterSetting",
+        Assert.Equal(PyNone.Instance, await CallOverHostAfterQueuedNotifications(front, open, 16, "charMgr", "DeleteCharacterSetting",
             Py.Tuple(new PyStr("windowState"))));
-        Assert.Empty(Assert.IsType<PyDict>(await CallOverHost(front, open, 17, "charMgr", "GetCharacterSettings",
+        Assert.Empty(Assert.IsType<PyDict>(await CallOverHostAfterQueuedNotifications(front, open, 17, "charMgr", "GetCharacterSettings",
             Py.Tuple([]))).Entries);
 
         await rig.RestartAsync();

@@ -230,7 +230,7 @@ public sealed class ConfigServiceTests
             await service.GetMultiLocationsEx(Call("GetMultiLocationsEx", requested, new ClientSession())),
             ["locationID", "locationName", "solarSystemID", "x", "y", "z", "locationNameID"]);
         Assert.Equal([0L, 60000004L, 30002780L], rows.Select(row => (long)Integer(row[0])).ToArray());
-        Assert.Equal("(none)", Text(rows[0][6]));
+        Assert.Equal(PyNone.Instance, rows[0][6]);
         var station = stations.Get(60000004)!;
         var stationRow = rows[1];
         Assert.Equal(station.Name, Text(stationRow[1]));
@@ -380,7 +380,7 @@ public sealed class ConfigServiceTests
             var locationRows = Rows(locationResult,
                 ["locationID", "locationName", "solarSystemID", "x", "y", "z", "locationNameID"]);
             Assert.Equal(requestedLocations.Length, locationRows.Length);
-            Assert.Equal("(none)", Text(locationRows.Single(row => Integer(row[0]) == 0)[6]));
+            Assert.Equal(PyNone.Instance, locationRows.Single(row => Integer(row[0]) == 0)[6]);
             foreach (var (stationId, systemId) in locations)
             {
                 var station = locationRows.Single(row => Integer(row[0]) == stationId);

@@ -17,3 +17,5 @@ V24.01 `personalTransactionsPanel.py:9-11` and `corp/corpTransactionsPanel.py:11
 ## Checks
 
 Market and wallet service test projects build locally. Two database-free tests pass: the market immediate-fill notification shape and the wallet account-change notification shape. Database-backed regressions are reserved for the GitHub Actions checks.
+
+The first Market Actions run (40865820146, commit `6515ab76`) reported 144 passed and one failed: the new volume test selected both the filled maker and created remainder. The assertion now selects the `Created` order. The corrected database regression is included in the next push for Actions rerun.

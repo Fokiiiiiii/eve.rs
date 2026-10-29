@@ -27,7 +27,7 @@ public sealed class DailyGoalTests
         Assert.Equal((At(9, 11), At(9, 11) + DayMs), DailyGoalRecorder.PeriodAt(At(9, 11)));
     }
 
-    [Fact]
+    [PgFact]
     public async Task Ore_and_wrecks_advance_one_goal_each_per_period_and_a_finished_goal_is_not_started_again()
     {
         var connectionString = Environment.GetEnvironmentVariable("EVE_PG_URL");

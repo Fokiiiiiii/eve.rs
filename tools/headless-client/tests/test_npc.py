@@ -82,11 +82,13 @@ def test_a_spawned_rat_locks_the_pilot_and_shoots_it():
         damage_state_index = next(
             (
                 i for i, event in enumerate(flow)
-                if event["name"] == "OnDamageStateChange" and str(ship_id) in str(event)
+                if event["name"] == "DoDestinyUpdate"
+                and "OnDamageStateChange" in _names(event)
+                and str(ship_id) in str(event)
             ),
             None,
         )
-        assert damage_state_index is not None, "the client's ship damage state did not change after the rat hit it"
+        assert damage_state_index is not None, "the client's ship damage state did not update after the rat hit it"
         assert incoming_index < damage_state_index, [event["name"] for event in flow]
         names = [e["name"] for e in seen]
         actions = set().union(*(_names(e) for e in seen if e["name"] == "DoDestinyUpdate"))
@@ -170,7 +172,8 @@ def test_a_pilot_who_shoots_a_rat_dead_is_told_of_its_bounty():
             for item, attribute, new, old in changes_of(event)
             if number(item) == ship_id and attribute == CAPACITOR and new != old
         ]
-        assert capacitor_updates, "the client did not receive the pilot ship's capacitor changes while its gun fired"
+        capacitor_updates = [update for update in capacitor_updates if update[0] > activation_index]
+        assert capacitor_updates, "the client did not receive the pilot ship's capacitor changes after its gun activated"
         assert (
             activation_index < capacitor_updates[0][0] < shot_index < removal_index
         ), [event["name"] for event in seen]

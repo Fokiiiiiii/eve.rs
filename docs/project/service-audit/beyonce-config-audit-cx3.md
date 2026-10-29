@@ -19,6 +19,6 @@ Updated: 2026-10-29
 ## Checks
 
 - `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false` passed with zero warnings and errors.
-- The focused ConfigService run passed 1 test. The Beyonce Host selection passed 10 tests and skipped `Beyonce_align_to_resolves_a_persisted_active_bookmark_through_the_bound_host_wire`; that skip is not counted as a pass. The separate focused Host selection passed 3 tests, including the config recordset wire regression. No selected test failed.
+- After merging `origin/main`, the Host selection passed 11 tests and skipped `Beyonce_align_to_resolves_a_persisted_active_bookmark_through_the_bound_host_wire`; the skip is not counted as a pass. The focused ConfigService run passed 1 test. No selected test failed.
 - Graphical V24.01 client behavior has not been exercised.
 - Graphical V24.01 client behavior has not been exercised.

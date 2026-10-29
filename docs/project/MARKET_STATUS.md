@@ -1,6 +1,6 @@
 # Market status
 
-Updated 2026-10-28. This status follows the V24.01 call sites, current Host wiring, pinned SDE and EVE University market rules.
+Updated 2026-10-29. This status follows the V24.01 call sites, current Host wiring, pinned SDE and EVE University market rules.
 
 ## Built
 
@@ -8,13 +8,13 @@ Updated 2026-10-28. This status follows the V24.01 call sites, current Host wiri
 - Order placement applies duration, range, minimum-volume, visibility and order-count rules. Buy Multiple executes its lines in one serializable transaction; duration-zero requests only fill available sellers and leave unfilled quantity unposted. A duration-zero `PlaceBuyOrder` with no match returns the client refusal.
 - Corporate order reads resolve current persisted corporation membership and require the persisted Accountant role.
 - NPC order import reads captured market snapshots for SDE stations. History and transaction reads follow the client response shape and persisted fills.
-- NPC station broker commission uses Broker skill, factional-warfare upgrades and persisted standings. Seller tax uses Accounting. Upwell broker fees combine the owner rate and 0.5% SCC surcharge under one 100 ISK minimum; the accounting entries remain separate.
+- NPC station broker commission uses Broker skill, factional-warfare upgrades and persisted standings. Seller tax uses Accounting and the V24.01 Zarzakh pirate-faction discount. Upwell broker fees use separate 100 ISK broker and 25 ISK SCC minimums; the accounting entries remain separate and factional-warfare upgrades adjust the structure owner rate.
 - Structure access, per-character visibility, large-structure eligibility, order placement and matching, wallet and item settlement, cancellation, modification and restart persistence have Host coverage.
 
 ## Open
 
 - Native graphical-client acceptance remains open. The NPC headless walk does not verify the structure market through the graphical client.
-- CI still needs to verify the latest structure-market rollback, combined broker-minimum, and duration-zero buy regressions. Do not count the duration-zero database scenarios as passing until their Actions run succeeds.
+- CI still needs to verify the latest structure-market rollback, separate broker/SCC minimums, and duration-zero buy regressions. Do not count the duration-zero database scenarios as passing until their Actions run succeeds.
 
 ## Wire evidence
 
@@ -22,7 +22,7 @@ The best ask row shape is resolved from the V24.01 client source. `marketutil/__
 
 ## Regression evidence
 
-The two-account station headless walk passed on `eve_p3`; it checks transfer, tax, broker fee, wallet journals, partial fill, modification refusal and cancellation. Host tests cover structure market access, fee charging, failed-transaction rollback, item custody, settlement and restart recovery. The focused combined-minimum rule test passes without a database. The new duration-zero buy database scenarios await Actions verification.
+The two-account station headless walk passed on `eve_p3`; it checks transfer, tax, broker fee, wallet journals, partial fill, modification refusal and cancellation. Host tests cover structure market access, fee charging, failed-transaction rollback, item custody, settlement and restart recovery. Focused rule tests cover separate broker/SCC minimums, Zarzakh tax discounts and structure factional-warfare discounts without a database. The new duration-zero buy database scenarios await Actions verification.
 
 `MarketTradeHostWireTests.Registered_market_and_trade_calls_reply_and_update_persisted_state` now also calls the registered `CancelCharOrder` RPC after modifying a resting buy order and verifies the persisted order is removed.
 

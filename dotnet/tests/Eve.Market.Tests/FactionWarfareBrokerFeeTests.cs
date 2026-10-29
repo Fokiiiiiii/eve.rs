@@ -26,4 +26,21 @@ public class FactionWarfareBrokerFeeTests
         Assert.Equal(MarketRules.Context(NoSkills, isStation: true).BrokerCommissionRate,
             MarketRules.Context(NoSkills, isStation: true, factionWarfareUpgradeLevel: 0).BrokerCommissionRate, 12);
     }
+
+    [Theory]
+    [InlineData(0, 0.01)]
+    [InlineData(1, 0.009)]
+    [InlineData(2, 0.008)]
+    [InlineData(5, 0.005)]
+    public void Factional_warfare_upgrade_reduces_the_structure_owner_rate(int level, double commission) =>
+        Assert.Equal(commission, MarketRules.StructureContext(NoSkills, 1.0, factionWarfareUpgradeLevel: level).BrokerCommissionRate, 12);
+
+    [Fact]
+    public void Structure_pirate_sales_tax_uses_the_character_faction_and_current_system()
+    {
+        var context = MarketRules.StructureContext(NoSkills, 1.0, warFaction: 500010, solarSystem: 30100000);
+
+        Assert.Equal(0.0375, context.Limits.TransactionTaxRate, 12);
+        Assert.Equal(37.5, MarketRules.SalesTax(context, 1_000));
+    }
 }

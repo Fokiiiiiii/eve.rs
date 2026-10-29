@@ -70,18 +70,41 @@ public class RulesTests
     }
 
     [Fact]
-    public void Structure_broker_and_scc_components_share_the_100_isk_minimum()
+    public void Structure_broker_and_scc_components_keep_their_own_minimums()
     {
         var context = MarketRules.StructureContext(new MarketSkillLevels(), 1.0);
 
-        var broker = MarketRules.BrokerFee(context, null, 40);
-        var scc = MarketRules.SccSurcharge(context, null, 40);
+        var broker = MarketRules.BrokerFee(context, null, 1_000);
+        var scc = MarketRules.SccSurcharge(context, null, 1_000);
 
-        Assert.Equal(99.8, broker.Amount);
-        Assert.Equal(0.2, scc.Amount);
-        Assert.Equal(100, broker.Amount + scc.Amount);
+        Assert.Equal(100, broker.Amount);
+        Assert.Equal(25, scc.Amount);
+        Assert.Equal(125, broker.Amount + scc.Amount);
         Assert.True(broker.UsingMinimumValue);
-        Assert.False(scc.UsingMinimumValue);
+        Assert.True(scc.UsingMinimumValue);
+    }
+
+    [Theory]
+    [InlineData(500010)]
+    [InlineData(500011)]
+    public void Pirate_faction_sales_tax_discount_uses_the_client_factions_and_current_system(int warFaction)
+    {
+        var skills = new MarketSkillLevels();
+        var pirateSystem = MarketRules.Context(skills, true, warFaction: warFaction, solarSystem: 30100000);
+        var elsewhere = MarketRules.Context(skills, true, warFaction: warFaction, solarSystem: 30000142);
+        var wrongFaction = MarketRules.Context(skills, true, warFaction: 500018, solarSystem: 30100000);
+
+        Assert.Equal(37.5, MarketRules.SalesTax(pirateSystem, 1_000));
+        Assert.Equal(75, MarketRules.SalesTax(elsewhere, 1_000));
+        Assert.Equal(75, MarketRules.SalesTax(wrongFaction, 1_000));
+    }
+
+    [Fact]
+    public void Sales_tax_charge_is_rounded_to_wallet_cents_after_the_client_rate_calculation()
+    {
+        var context = MarketRules.Context(new MarketSkillLevels(), true);
+
+        Assert.Equal(2.51, MarketRules.SalesTax(context, 33.50));
     }
 
     private static void Check(JsonElement expected, FeeInfo actual)

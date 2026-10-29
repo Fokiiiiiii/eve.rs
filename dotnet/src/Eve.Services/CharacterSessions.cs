@@ -35,6 +35,12 @@ public sealed class CharacterSessions
     public IReadOnlyList<ClientSession> InSpace(long solarSystemId) =>
         [.. _byCharacter.Values.Where(s => s.CharacterId is not null && s.DockedLocationId is null && s.GetInt("solarsystemid") == solarSystemId).Distinct()];
 
+    /// <summary>Current character sessions in a solar system, including docked pilots.</summary>
+    public IReadOnlyList<ClientSession> InSolarSystem(long solarSystemId) =>
+        [.. _byCharacter.Values.Where(session =>
+            session.CharacterId is not null &&
+            (session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid")) == solarSystemId).Distinct()];
+
     /// <summary>Current character sessions docked at the specified station.</summary>
     public IReadOnlyList<ClientSession> InStation(long stationId) =>
         stationId > 0

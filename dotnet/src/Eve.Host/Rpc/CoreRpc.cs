@@ -120,7 +120,9 @@ internal sealed partial class CharacterServicesComposition
                 SetAllowedFactionsAsync: async (characterId, corporationId, factions, cancellationToken) =>
                     await corporations.SetFactionWarfareAllowedEnlistmentFactionsAsync(characterId, corporationId, factions, cancellationToken),
                 SaveCharacterStateAsync: async (characterId, factionId, cooldown, cancellationToken) =>
-                    await characters.SetFactionWarfareStateAsync(characterId, factionId, cooldown, cancellationToken))),
+                    await characters.SetFactionWarfareStateAsync(characterId, factionId, cooldown, cancellationToken),
+                ReadStandingAsync: async (characterId, factionId, cancellationToken) =>
+                    await foundations.Relations.ValueAsync("standing", factionId, characterId, 0, cancellationToken: cancellationToken))),
             new Eve.Services.Core.FwVictoryPointMgrService(new Eve.Services.Core.FwVictoryPointRpcCallbacks(VictoryPointStatesAsync)),
             new Eve.Services.Core.FacWarMgrService(factionWarfare, new Eve.Services.Core.FacWarMgrCallbacks(
                 FactionMembersAsync: FactionMembersAsync,
@@ -148,6 +150,11 @@ internal sealed partial class CharacterServicesComposition
                     var corporationFaction = Eve.Services.Corporations.CorporationWire.FactionId(
                         await corporations.GetAsync(character.CorporationId, cancellationToken));
                     return character.DirectFactionId ?? corporationFaction ?? 0;
+                },
+                LeaveCorporationAsync: async (characterId, militiaCorporationId, cancellationToken) =>
+                {
+                    await corporations.LeaveAsync(characterId, militiaCorporationId, cancellationToken);
+                    return true;
                 })),
             new Eve.Services.Core.InsurgencySolarsystemService(new Eve.Services.Core.InsurgencySolarsystemRpcCallbacks(ReadInsurgencyCampaignsAsync)),
             new Eve.Services.Core.AlertService(),

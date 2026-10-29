@@ -17,7 +17,8 @@ public sealed record FacWarMgrCallbacks(
     Func<CancellationToken, ValueTask<IReadOnlyList<(long CorporationId, long AllianceId)>>>? AffiliationsAsync = null,
     Func<long, long, CancellationToken, ValueTask<bool>>? CanActAsCorporationDirectorAsync = null,
     Func<long, long, CancellationToken, ValueTask<bool>>? CanActAsAllianceExecutorDirectorAsync = null,
-    Func<long, CancellationToken, ValueTask<long>>? ReadWarFactionAsync = null);
+    Func<long, CancellationToken, ValueTask<long>>? ReadWarFactionAsync = null,
+    Func<long, long, CancellationToken, ValueTask<bool>>? LeaveCorporationAsync = null);
 
 /// <summary>The members of a war faction: all of them, those of its militia corporation, and the largest enlisted corporation's members.</summary>
 public sealed record FwFactionMembers(long Total, long Militia, long Top);
@@ -301,9 +302,25 @@ public sealed class FacWarMgrService(FwService factionWarfare, FacWarMgrCallback
         var standing = await callbacks.ReadStandingAsync(characterId, factionId, cancellation);
         if (!FwRules.MeetsEnlistmentStanding(standing))
             throw Notice("UI/FactionWarfare/StandingTooLow");
+        var militiaCorporationId = FwFactions.MilitiaCorporationOf(factionId);
         if (!await callbacks.SaveCharacterAsync(characterId, factionId, 0, cancellation))
             throw new InvalidOperationException("the character faction state was not saved");
-        session.Change(("warfactionid", new PyInt(factionId)));
+        if (callbacks.LeaveCorporationAsync is { } leaveCorporation)
+        {
+            try
+            {
+                if (!await leaveCorporation(characterId, militiaCorporationId, cancellation))
+                    throw new InvalidOperationException("the character could not join the faction militia corporation");
+            }
+            catch
+            {
+                await callbacks.SaveCharacterAsync(characterId, state?.DirectFactionId, state?.DirectEnlistmentCooldownFileTime ?? 0, cancellation);
+                throw;
+            }
+        }
+        session.Change(("corpid", new PyInt(militiaCorporationId)), ("allianceid", PyNone.Instance), ("warfactionid", new PyInt(factionId)));
+        session.AfterResponse(() => session.SendNotification("OnEnlistmentStateUpdated", "charid",
+            new PyInt(factionId), new PyInt(factionId), new PyInt(factionId)));
         return PyNone.Instance;
     }
 

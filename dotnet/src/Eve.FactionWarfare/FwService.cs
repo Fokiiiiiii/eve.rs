@@ -45,6 +45,7 @@ public sealed record FwStatus(int Status, long FactionId, long StartMs);
 /// </summary>
 public sealed class FwService
 {
+    public event Action<long, long, long, long>? SolarSystemLpPoolChanged;
     public const int JoiningStatus = 0;
     public const int ActiveStatus = 1;
     public const int LeavingStatus = 2;
@@ -102,6 +103,7 @@ public sealed class FwService
         }
         var pool = await _store.AddLpAsync(connection, transaction, solarSystemId, characterId, corporationId, donorFactionId, hubLp, nowMs, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        SolarSystemLpPoolChanged?.Invoke(solarSystemId, characterId, system.LpPool, pool);
         return new DonateResult(DonateOutcome.Accepted, pool, 0);
     }
 

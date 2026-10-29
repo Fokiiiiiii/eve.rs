@@ -1,5 +1,6 @@
 using Eve.Marshal;
 using Eve.Services;
+using Eve.FactionWarfare;
 
 namespace Eve.Services.Core;
 
@@ -86,7 +87,8 @@ public sealed record FwCharacterEnlistmentRpcCallbacks(
     Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? ReadAllowedFactionsAsync = null,
     Func<long, long, IReadOnlyList<long>, CancellationToken, ValueTask<bool>>? SetAllowedFactionsAsync = null,
     Func<long, long?, long, CancellationToken, ValueTask<bool>>? SaveCharacterStateAsync = null,
-    Func<long>? CurrentFileTime = null);
+    Func<long>? CurrentFileTime = null,
+    Func<long, long, CancellationToken, ValueTask<double>>? ReadStandingAsync = null);
 
 public sealed class FwCharacterEnlistmentMgrService(FwCharacterEnlistmentRpcCallbacks? callbacks = null) : IService
 {
@@ -144,7 +146,7 @@ public sealed class FwCharacterEnlistmentMgrService(FwCharacterEnlistmentRpcCall
             {
                 var factionId = RWManagerService.PositiveInteger(call.Arg(0));
                 var characterId = CharacterId(call.Session).GetValueOrDefault();
-                if (characterId <= 0 || factionId <= 0)
+                if (characterId <= 0 || !FwFactions.IsOccupier(factionId))
                     return PyNone.Instance;
                 var state = await ReadCharacterStateAsync(characterId, call.Cancellation);
                 if (state?.DirectFactionId is > 0)
@@ -152,8 +154,19 @@ public sealed class FwCharacterEnlistmentMgrService(FwCharacterEnlistmentRpcCall
                 var now = callbacks?.CurrentFileTime?.Invoke() ?? DateTimeOffset.UtcNow.ToFileTime();
                 if (state is not null && state.DirectEnlistmentCooldownFileTime > now)
                     throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("UI/FactionWarfare/CooldownActive")));
+                var allowedFactions = await ReadAllowedFactionsAsync(CorporationId(call.Session), call.Cancellation);
+                if (!allowedFactions.Contains(factionId))
+                    return PyNone.Instance;
+                if (callbacks?.ReadStandingAsync is not { } readStanding
+                    || !FwRules.MeetsEnlistmentStanding(await readStanding(characterId, factionId, call.Cancellation)))
+                    throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("UI/FactionWarfare/StandingTooLow")));
                 if (await SaveCharacterStateAsync(characterId, factionId, 0, call.Cancellation))
+                {
                     call.Session.Change(("warfactionid", new PyInt(factionId)));
+                    var corporationFactionId = Positive(await ReadCorporationFactionIdAsync(CorporationId(call.Session), call.Cancellation) ?? 0);
+                    call.Session.AfterResponse(() => call.Session.SendNotification("OnEnlistmentStateUpdated", "charid",
+                        new PyInt(factionId), new PyInt(factionId), Number(corporationFactionId)));
+                }
                 return PyNone.Instance;
             }
             case "RemoveMyDirectEnlistment":
@@ -164,7 +177,12 @@ public sealed class FwCharacterEnlistmentMgrService(FwCharacterEnlistmentRpcCall
                 var corporationFactionId = await ReadCorporationFactionIdAsync(CorporationId(call.Session), call.Cancellation);
                 var cooldown = checked((callbacks?.CurrentFileTime?.Invoke() ?? DateTimeOffset.UtcNow.ToFileTime()) + TimeSpan.TicksPerDay);
                 if (await SaveCharacterStateAsync(characterId, null, cooldown, call.Cancellation))
+                {
                     call.Session.Change(("warfactionid", Number(Positive(corporationFactionId ?? 0))));
+                    var effectiveFactionId = Number(Positive(corporationFactionId ?? 0));
+                    call.Session.AfterResponse(() => call.Session.SendNotification("OnEnlistmentStateUpdated", "charid",
+                        effectiveFactionId, PyNone.Instance, effectiveFactionId));
+                }
                 return PyNone.Instance;
             }
             default:

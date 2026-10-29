@@ -99,6 +99,7 @@ public partial class HostServerTests
         var state = new FwCharacterWarfareState(null, Py.FileTimeFromUnixMs(FixedNowMs + 1_000));
         var saveCalls = 0;
         var saveSucceeds = false;
+        var leaveCalls = 0;
         ClientSession? session = null;
         var service = new FacWarMgrService(new FwService(null!, null!), new FacWarMgrCallbacks(
             ReadCharacterAsync: (_, _) => ValueTask.FromResult<FwCharacterWarfareState?>(state),
@@ -111,12 +112,21 @@ public partial class HostServerTests
                 return ValueTask.FromResult(true);
             },
             ReadStandingAsync: (_, _, _) => ValueTask.FromResult(3.5),
-            NowMs: () => FixedNowMs));
+            NowMs: () => FixedNowMs,
+            LeaveCorporationAsync: (id, militiaCorporationId, _) =>
+            {
+                Assert.Equal(characterId, id);
+                Assert.Equal(1_000_180, militiaCorporationId);
+                leaveCalls++;
+                return ValueTask.FromResult(true);
+            }));
         Start(
             configure: registry => registry.Register(service),
             sessionOpened: opened =>
             {
                 opened.Set("charid", new PyLong(characterId));
+                opened.Set("corpid", new PyInt(99));
+                opened.Set("allianceid", new PyInt(88));
                 session = opened;
             });
 
@@ -155,12 +165,26 @@ public partial class HostServerTests
         Assert.Equal(MachoMessage.SessionChangeNotification, notification.Type);
         Assert.Equal(2, saveCalls);
         Assert.Equal(new FwCharacterWarfareState(factionId, 0), state);
+        Assert.Equal(1, leaveCalls);
         var fields = ((PyDict)((PyTuple)((PyTuple)notification.Payload).Items[1]).Items[1]).Entries;
-        Assert.Equal(["warfactionid"], fields.Select(entry => T(entry.Key)));
+        Assert.Equal(["corpid", "allianceid", "warfactionid"], fields.Select(entry => T(entry.Key)));
+        Assert.Equal(1_000_180, session!.GetInt("corpid"));
+        Assert.Same(PyNone.Instance, session.Get("allianceid"));
         Assert.Equal(factionId, session!.GetInt("warfactionid"));
 
         var reply = Assert.IsType<Send>(await front.ReceiveAsync());
         Assert.Equal(MachoMessage.CallRsp, Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(reply.Payload))).Type);
         Assert.Same(PyNone.Instance, Result(MarshalCodec.Decode(reply.Payload)));
+
+        var enlistment = Assert.IsType<Send>(await front.ReceiveAsync());
+        var enlistmentPacket = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(enlistment.Payload)));
+        Assert.Equal(MachoMessage.Notification, enlistmentPacket.Type);
+        Assert.Equal("OnEnlistmentStateUpdated", enlistmentPacket.Dest.BroadcastId);
+        Assert.Equal("charid", enlistmentPacket.Dest.IdType);
+        var envelope = Assert.IsType<PyTuple>(enlistmentPacket.Payload);
+        var inner = Assert.IsType<PyBuffer>(Assert.IsType<PyTuple>(Assert.Single(envelope.Items)).Items[1]);
+        Assert.Equal(MarshalCodec.Encode(new PyTuple([new PyInt(0),
+            new PyTuple([new PyInt(1), new PyTuple([new PyInt(factionId), new PyInt(factionId), new PyInt(factionId)])])])),
+            inner.Value.ToArray());
     }
 }

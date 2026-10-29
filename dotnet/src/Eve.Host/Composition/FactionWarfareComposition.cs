@@ -174,6 +174,8 @@ internal sealed partial class CharacterServicesComposition
         await FwStore.MigrateAsync(source, schema);
         factionWarfareStore = new FwStore(source, schema);
         factionWarfare = new FwService(factionWarfareStore, loyaltyPoints);
+        var lpPoolNotifications = new SolarSystemLpPoolNotifications(characterSessions);
+        factionWarfare.SolarSystemLpPoolChanged += lpPoolNotifications.OnPoolChanged;
         var systems = new List<FwSystem>();
         foreach (var warzoneId in FwWarzones.Ids)
         {

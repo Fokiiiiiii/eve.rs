@@ -137,7 +137,8 @@ public sealed class FactionActivityRpcServicesTests
                 character = new FwCharacterWarfareState(factionId, cooldown);
                 return ValueTask.FromResult(true);
             },
-            () => fileTime));
+            () => fileTime,
+            (_, _, _) => ValueTask.FromResult(0d)));
         var session = new ClientSession();
         session.Set("charid", new PyInt(42));
         session.Set("corpid", new PyInt(99));
@@ -173,6 +174,8 @@ public sealed class FactionActivityRpcServicesTests
         var saves = 0;
         var service = new FwCharacterEnlistmentMgrService(new FwCharacterEnlistmentRpcCallbacks(
             ReadCharacterStateAsync: (id, _) => ValueTask.FromResult(id == 42 ? character : null),
+            ReadAllowedFactionsAsync: (_, _) => ValueTask.FromResult<IReadOnlyList<long>>([500001]),
+            ReadStandingAsync: (_, _, _) => ValueTask.FromResult(0d),
             SaveCharacterStateAsync: (id, factionId, cooldown, _) =>
             {
                 if (id != 42)
@@ -203,6 +206,33 @@ public sealed class FactionActivityRpcServicesTests
         Assert.Equal(new FwCharacterWarfareState(500001, 0), character);
         Assert.Equal(new PyInt(500001), session.Get("warfactionid"));
         Assert.Equal(1, saves);
+    }
+
+    [Fact]
+    public async Task Direct_enlistment_requires_an_occupier_faction_and_zero_unmodified_standing()
+    {
+        var saves = 0;
+        var service = new FwCharacterEnlistmentMgrService(new FwCharacterEnlistmentRpcCallbacks(
+            ReadCharacterStateAsync: (_, _) => ValueTask.FromResult<FwCharacterWarfareState?>(new(null, 0)),
+            ReadAllowedFactionsAsync: (_, _) => ValueTask.FromResult<IReadOnlyList<long>>([500001]),
+            ReadStandingAsync: (_, _, _) => ValueTask.FromResult(-0.1d),
+            SaveCharacterStateAsync: (_, _, _, _) =>
+            {
+                saves++;
+                return ValueTask.FromResult(true);
+            }));
+        var session = new ClientSession();
+        session.Set("charid", new PyInt(42));
+        session.Set("corpid", new PyInt(99));
+
+        Assert.Same(PyNone.Instance,
+            await service.CallAsync(Call(service, "CreateMyDirectEnlistment", session, new PyInt(1))));
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call(service, "CreateMyDirectEnlistment", session, new PyInt(500001))).AsTask());
+
+        Assert.Equal("CustomInfo", refusal.Error.UserErrorMessage);
+        Assert.Equal(0, saves);
+        Assert.Null(session.Get("warfactionid"));
     }
 
     [Fact]

@@ -102,6 +102,15 @@ Push CI `40043754414` for `35964099` completed. The updated RPC inventory count 
 The inherited mission journal serializer was also corrected: `expirationTime` now uses `PyLong` for the 64-bit FileTime, with an assertion in the existing AgentMission regression. Local `Eve.Services.Core.Tests` build passed with 0 warnings and 0 errors. Actions run `40045225224` reruns that regression; push CI `40045219089` is active. Results are pending. No local PostgreSQL test or graphical-client run was performed.
 
 
+## Alliance contact read shape correction (2026-10-29)
+
+`AllianceRegistryService.GetAllianceContacts` now returns an owner-ID-keyed dictionary of contact KeyVals, matching the corp/alliance contact cache contract. The previous personal-addressbook rowset shape was incompatible with `AddressBookSvc.GetContacts`, which iterates the returned map as owner IDs (`eve/client/script/ui/shared/neocom/addressBook/addressbookService.py:193–250`), then reads contact `relationshipID` and `labelMask` when editing (`:760–807`). EveJS v0.12.9 returns the same ID-keyed mapping (`server/src/services/corporation/allianceRegistryRuntime.js:714–750`).
+
+- `Alliance_social_contacts_labels_and_relationships_persist_with_executor_checks` now asserts the map key and three client-consumed fields, and compares the read after constructing a fresh store/service instance. This is a persistence readback check, not a Host socket restart test.
+- Local `Eve.Corporations.Tests` build passed with 0 warnings and 0 errors. Local focused database-free `Alliance_core_registry_methods_cover_reference_calls` passed 1/1.
+- The database-backed focused regression is scheduled on Actions after push. No PostgreSQL or graphical-client checks were run locally.
+
+
 
 ## Focused mission expiry verification (2026-10-24)
 

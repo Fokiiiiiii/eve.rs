@@ -27,6 +27,14 @@ public sealed record ApproximateMissionRewardConfiguration(
 
 public static class ApproximateMissionRewardRules
 {
+    public const int NegotiationSkillTypeId = 3359;
+
+    public static decimal NegotiatedIskReward(decimal reward, int negotiationLevel)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(negotiationLevel);
+        return decimal.Round(reward * (1m + 0.05m * Math.Min(5, negotiationLevel)), 2, MidpointRounding.AwayFromZero);
+    }
+
     public static int DivisionConnectionsSkillTypeId(string kind) => kind switch
     {
         "encounter" or "security" => 3895,

@@ -555,7 +555,16 @@ internal sealed partial class CharacterServicesComposition
                 var level = await skills.LevelAsync(connection, transaction, characterId, skillTypeId, token);
                 await transaction.CommitAsync(token);
                 return level;
-            }, systemId => solarSystems.Get(systemId) is { } system ? (decimal)system.Security : null);
+            }, systemId => solarSystems.Get(systemId) is { } system ? (decimal)system.Security : null,
+            negotiationLevelOf: async (characterId, token) =>
+            {
+                await using var connection = await source.OpenConnectionAsync(token);
+                await using var transaction = await connection.BeginTransactionAsync(token);
+                var level = await skills.LevelAsync(connection, transaction, characterId,
+                    ApproximateMissionRewardRules.NegotiationSkillTypeId, token);
+                await transaction.CommitAsync(token);
+                return level;
+            });
         var runtime = missionDungeons;
         if (spaceSessions is not null) spaceSessions.PilotDocked = (characterId, stationId, token) => runtime.OnDockedAsync(characterId, stationId, token);
         foundations.Scheduler.Register(MissionDungeonSweepJob, (context, token) => runtime.SweepAsync(token));
@@ -934,7 +943,7 @@ internal sealed partial class CharacterServicesComposition
         (await items.OwnedByAsync(characterId, cancellationToken)).Where(item => item.TypeId == typeId).Sum(item => item.Quantity);
 
     /// <summary>The ISK of a mission reward: one idempotent wallet adjustment, in its own transaction.</summary>
-    private async Task CreditMissionIskAsync(long characterId, long amount, long counterpartyId, int refTypeId, string reason, string operationKey, CancellationToken cancellationToken)
+    private async Task CreditMissionIskAsync(long characterId, decimal amount, long counterpartyId, int refTypeId, string reason, string operationKey, CancellationToken cancellationToken)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -993,7 +1002,7 @@ internal sealed partial class CharacterServicesComposition
 internal sealed class SpaceMissionDungeonHost(
     Func<long, int, bool> isPilotInSystem,
     Func<long, int, long, CancellationToken, Task<string?>> startDungeon,
-    Func<long, long, long, int, string, string, CancellationToken, Task> creditIsk,
+    Func<long, decimal, long, int, string, string, CancellationToken, Task> creditIsk,
     Func<long, long, DateTimeOffset, string, IReadOnlyList<MissionStandingGain>, IReadOnlyList<(int TypeId, long Quantity, string? Tag)>, long, long, CancellationToken, Task<bool>> completeMission,
     Func<long, int, long, long, CancellationToken, Task> grantItem,
     Func<long, int, CancellationToken, Task<long>> heldQuantity,
@@ -1005,7 +1014,7 @@ internal sealed class SpaceMissionDungeonHost(
     public Task<string?> StartDungeonAsync(long characterId, int solarSystemId, long dungeonId, CancellationToken cancellationToken) =>
         startDungeon(characterId, solarSystemId, dungeonId, cancellationToken);
 
-    public Task CreditIskAsync(long characterId, long amount, long counterpartyId, int refTypeId, string reason, string operationKey, CancellationToken cancellationToken) =>
+    public Task CreditIskAsync(long characterId, decimal amount, long counterpartyId, int refTypeId, string reason, string operationKey, CancellationToken cancellationToken) =>
         creditIsk(characterId, amount, counterpartyId, refTypeId, reason, operationKey, cancellationToken);
 
     public Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,

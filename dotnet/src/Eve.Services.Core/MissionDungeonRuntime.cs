@@ -107,7 +107,7 @@ public interface IMissionDungeonHost
     Task<string?> StartDungeonAsync(long characterId, int solarSystemId, long dungeonId, CancellationToken cancellationToken);
 
     /// <summary>Credits ISK once for the operation key (the wallet's idempotent adjustment, with the journal reference type).</summary>
-    Task CreditIskAsync(long characterId, long amount, long counterpartyId, int refTypeId, string reason, string operationKey, CancellationToken cancellationToken);
+    Task CreditIskAsync(long characterId, decimal amount, long counterpartyId, int refTypeId, string reason, string operationKey, CancellationToken cancellationToken);
 
     /// <summary>
 
@@ -163,7 +163,8 @@ public sealed class MissionDungeonRuntime(
     Func<long, bool>? isMining = null,
     Func<long, string, CancellationToken, Task<int>>? divisionConnectionsLevelOf = null,
     Func<int, decimal?>? systemSecurityOf = null,
-    ApproximateMissionRewardConfiguration? missionRewardConfiguration = null)
+    ApproximateMissionRewardConfiguration? missionRewardConfiguration = null,
+    Func<long, CancellationToken, Task<int>>? negotiationLevelOf = null)
 {
     /// <summary>The ISK type ID (EVE item type 29 "ISK" in the SDE reward records).</summary>
     public const long IskTypeId = 29;
@@ -339,7 +340,7 @@ public sealed class MissionDungeonRuntime(
 
     // The ISK base of a basic level 4 or 5 security mission, which the official build does not give (its reward is null): the security scale of
 
-    // are the behaviour reference's numbers. shortcut: no timed bonus (EveJS pays 1.23x in time) and no Negotiation (wiki: 5% per level); upgrade with a sourced rule.
+    // are the behaviour reference's numbers. shortcut: the timed bonus uses the SDE interval without EveJS's 1.23x estimate; revisit if a better base source is recorded.
 
     // shortcut: EveJS's numbers, not a CCP table; EveJS puts the corporation gain above the agent gain, a 2012 forum count the other way round.
     /// <summary>
@@ -364,20 +365,24 @@ public sealed class MissionDungeonRuntime(
         var rewardSettings = missionRewardConfiguration ?? ApproximateMissionRewardConfiguration.Default;
         var basic = mission.Reward is null && level is { } tagged ? rewardSettings.BasicMissionRewardFor(tagged) : null;
         var isk = sdeIsk > 0 ? sdeIsk : basic?.Isk ?? 0;
+        var bonus = mission.Reward;
+        var acceptedAt = record.AcceptedAt;
+        var paysBonus = acceptedAt is { } accepted && bonus?.BonusRewardTypeId == IskTypeId && bonus.BonusRewardQuantity > 0 &&
+            bonus.BonusIntervalMinutes is { } interval && interval > 0 && accepted.AddMinutes(interval) > now();
+        var negotiationLevel = place is not null && (isk > 0 || paysBonus) && negotiationLevelOf is { } readNegotiation
+            ? await readNegotiation(owner, cancellationToken)
+            : 0;
         if (place is not null)
         {
             if (isk > 0)
             {
-                await host.CreditIskAsync(owner, isk, place.CorporationId, AgentMissionRewardRefType,
+                await host.CreditIskAsync(owner, ApproximateMissionRewardRules.NegotiatedIskReward(isk, negotiationLevel), place.CorporationId, AgentMissionRewardRefType,
                     $"Agent mission reward: {mission.NameEn}", $"agent-mission:{owner}:{record.Content.MissionId}:{rewardKey}", cancellationToken);
             }
 
-            var acceptedAt = record.AcceptedAt;
-            var bonus = mission.Reward;
-            if (acceptedAt is { } accepted && bonus?.BonusRewardTypeId == IskTypeId && bonus.BonusRewardQuantity > 0 &&
-                bonus.BonusIntervalMinutes is { } interval && interval > 0 && accepted.AddMinutes(interval) > now())
+            if (paysBonus)
             {
-                await host.CreditIskAsync(owner, bonus.BonusRewardQuantity, place.CorporationId, AgentMissionBonusRefType,
+                await host.CreditIskAsync(owner, ApproximateMissionRewardRules.NegotiatedIskReward(bonus!.BonusRewardQuantity, negotiationLevel), place.CorporationId, AgentMissionBonusRefType,
                     $"Agent mission time bonus: {mission.NameEn}",
                     $"agent-mission:{owner}:{record.Content.MissionId}:{rewardKey}:bonus", cancellationToken);
             }

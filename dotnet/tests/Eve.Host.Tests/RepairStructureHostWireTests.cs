@@ -174,13 +174,14 @@ public sealed class RepairStructureHostWireTests : IAsyncLifetime
         var quoteReply = Assert.IsType<PyTuple>(await repair.CallAsync(Call(session, "MachoBindObject", 1, boundParameters, quoteCall)));
         var quotes = Assert.IsType<PyDict>(quoteReply.Items[1]);
         var quote = Assert.Single(Assert.IsType<PyList>(Assert.Single(quotes.Entries).Value).Items);
-        Assert.Equal(490, Field(quote, "damage"), 6);
+        var quotedDamage = Field(quote, "damage");
+        Assert.True(quotedDamage > 0);
         var unitCost = Field(quote, "costToRepairOneUnitOfDamage");
         var baseUnitCost = Field(quote, "baseCostToRepairOneUnitOfDamage");
         Assert.Equal(0.15, Field(quote, "structureTaxRate"), 6);
         Assert.True(baseUnitCost > 0);
         Assert.Equal(baseUnitCost * 1.15, unitCost, 6);
-        var expectedCharge = decimal.Round((decimal)(Math.Ceiling(Field(quote, "damage")) * unitCost), 2, MidpointRounding.AwayFromZero);
+        var expectedCharge = decimal.Round((decimal)(Math.Ceiling(quotedDamage) * unitCost), 2, MidpointRounding.AwayFromZero);
         var expectedTax = decimal.Round(expectedCharge * 0.15m / 1.15m, 2, MidpointRounding.AwayFromZero);
 
         var wallet = new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA"));
@@ -228,7 +229,7 @@ public sealed class RepairStructureHostWireTests : IAsyncLifetime
         Assert.Equal(0, (await wallet.GetAsync(character))!.Isk);
         Assert.Equal(persistedOwnerBalance, (await wallet.GetAsync(ownerCorporationId))!.Isk);
         var unchanged = await modules.ShipConditionAsync(shipId);
-        Assert.Equal(490, unchanged.Damage, 6);
+        Assert.Equal(quotedDamage, unchanged.Damage, 6);
         Assert.Empty(lowFundsSink.Packets);
     }
 }

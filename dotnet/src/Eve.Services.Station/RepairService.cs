@@ -161,6 +161,8 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
             }
             catch (InsufficientFundsException error)
             {
+                if (!isStructure)
+                    throw Notify("There is not enough ISK to repair those items.");
                 var availableBalance = error.AvailableBalance ?? 0;
                 throw MachoErrors.ThrowUserError("NotEnoughMoney", ("amount", new PyReal(charged)), ("balance", new PyReal((double)availableBalance)));
             }

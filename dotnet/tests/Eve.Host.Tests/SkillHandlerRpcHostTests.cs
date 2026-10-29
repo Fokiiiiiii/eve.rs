@@ -92,6 +92,15 @@ public partial class HostServerTests
     {
         await using var rig = await CharacterHostTests.CharacterHostRig.CreateAsync();
         var character = await rig.CreateCharacterAsync();
+        long capsule;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            capsule = await new Eve.Inventory.PgItemStore(rig.Source, rig.InventorySchema).CreateAsync(connection, transaction,
+                new Eve.Inventory.NewItem(670, character, rig.Station, 4, 1, Singleton: true));
+            await rig.Characters.SetShipAsync(connection, transaction, character, capsule);
+            await transaction.CommitAsync();
+        }
         var skillMgr2 = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillMgr2"));
         var skillHandler = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillHandler"));
         var catalog = await SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
@@ -118,6 +127,7 @@ public partial class HostServerTests
                 session.UserId = 1;
                 session.Set("charid", new PyLong(character));
                 session.Set("stationid", new PyLong(rig.Station));
+                session.Set("shipid", new PyLong(capsule));
             });
 
         var front = await Handshaken(await ConnectAsync());

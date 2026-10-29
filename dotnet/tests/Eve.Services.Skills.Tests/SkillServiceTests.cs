@@ -1339,7 +1339,8 @@ public class SkillHandlerTests
         Assert.Equal(new PyInt(835), await Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPointsToSkills", selected));
         Assert.Empty(Notes.Of(sink));
         Assert.Single(committed);
-        Assert.Equal(PyNone.Instance, await Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPoints", new PyInt(3301), new PyInt(836)));
+        await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(
+            () => Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPoints", new PyInt(3301), new PyInt(836)));
         Assert.Empty(Notes.Of(sink));
         // A partial application changes points even though no level finishes.
         Assert.Equal(new PyInt(735), await Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPoints", new PyInt(3301), new PyInt(100)));
@@ -1377,7 +1378,8 @@ public class SkillHandlerTests
             Assert.Equal(running ? 3301 : 3315, view.Queue[0].TypeId);
             if (running)
             {
-                Assert.Equal(PyNone.Instance, await Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPoints", new PyInt(3301), new PyInt(1)));
+                await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(
+                    () => Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPoints", new PyInt(3301), new PyInt(1)));
                 Assert.Empty(Notes.Of(sink));
                 Assert.Equal(250, (await rig.Store.ForCharacterAsync(character)).Single(s => s.TypeId == 3301).SkillPoints);
             }

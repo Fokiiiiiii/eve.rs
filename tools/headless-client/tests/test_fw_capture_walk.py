@@ -41,6 +41,7 @@ DEFENDERS_LIMIT_S = 900.0  # the smartbomb clears the defenders (the room's wave
 CAPTURE_LIMIT_S = 1200.0  # the capture timer: 300 s of the pilot alone in the complex, ticked every 10 s
 
 pytestmark = [
+    pytest.mark.timeout(3600),
     pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server"),
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SLOW") != "1", reason="several minutes: set EVE_LIVE_SLOW=1"),
     pytest.mark.skipif(any(name not in os.environ for name in ("EVE_FACTIONWARFARE_SCHEMA", "EVE_PSQL_URL", "EVE_SDE_DIR", "EVE_INVENTORY_SCHEMA")),

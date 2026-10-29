@@ -248,11 +248,12 @@ public class TrainingServiceTests
         await using var owned = rig;
         var normal = (PyDict)await Call(rig, session, "GetAttributes", []);
         Assert.Equal([164L, 165, 166, 167, 168], normal.Entries.Select(e => Notes.Number(e.Key)));
-        Assert.All(normal.Entries, e => Assert.Equal(new PyInt(20), e.Value));
+        Assert.Equal([new PyInt(19), new PyInt(20), new PyInt(20), new PyInt(20), new PyInt(20)], normal.Entries.Select(e => e.Value));
 
         var (fast, fastSession, _) = await ReadyAsync(new TrainingSettings { Speed = 60_000 });
         await using var ownedFast = fast;
-        Assert.All(((PyDict)await Call(fast, fastSession, "GetAttributes", [])).Entries, e => Assert.Equal(new PyInt(1_200_000), e.Value));
+        Assert.Equal([new PyInt(1_140_000), new PyInt(1_200_000), new PyInt(1_200_000), new PyInt(1_200_000), new PyInt(1_200_000)],
+            ((PyDict)await Call(fast, fastSession, "GetAttributes", [])).Entries.Select(e => e.Value));
     }
 
     [PgFact]

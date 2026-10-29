@@ -334,6 +334,10 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
                     CREATE INDEX item_locks_location
                         ON item_locks(corporation_id,location_id,item_id);
                 """),
+                new Migration("014_nullable_contact_label_colors", """
+                    ALTER TABLE corporation_contact_labels ALTER COLUMN color DROP NOT NULL;
+                    ALTER TABLE alliance_contact_labels ALTER COLUMN color DROP NOT NULL;
+                """),
     ];
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
         Migrations.ApplyAsync(source, schema, MigrationSet(), cancellationToken);

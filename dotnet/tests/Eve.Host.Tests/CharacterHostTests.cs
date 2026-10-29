@@ -1331,6 +1331,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         public string InventorySchema => _schemas["EVE_INVENTORY_SCHEMA"];
         public string IdentitySchema => _schemas["EVE_IDENTITY_SCHEMA"];
         public string WalletSchema => _schemas["EVE_WALLET_SCHEMA"];
+        public string CorporationsSchema => _schemas["EVE_CORPORATIONS_SCHEMA"];
         public string GameStoreSchema => _schemas["EVE_GAMESTORE_SCHEMA"];
         public string SchedulerSchema => _schemas["EVE_SCHEDULER_SCHEMA"];
         public string StructuresSchema => _schemas["EVE_STRUCTURES_SCHEMA"];

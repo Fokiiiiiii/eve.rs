@@ -150,6 +150,8 @@ All `billMgr` reads, automatic-pay settings calls and bill payments consume 10 u
 
 ## Character note RPC text bounds (2026-10-20)
 
+V24.01 `eve/client/script/ui/shared/neocom/notepad.py:85-140,157-185` loads the virtual `S:Folders` note ID and calls `charMgr.EditOwnerNote` when saving its folder layout. EveJS 261028.1 `server/src/services/character/characterNoteState.js:337-379` ignores edits for missing note IDs. eve.rs materializes the matching virtual folder note on first edit so the client’s saved folder layout survives reload; this is an intentional client-compatibility difference from current EveJS behavior.
+
 `charMgr.AddOwnerNote` and `EditOwnerNote` cap owner-note labels at 82 characters and bodies at the V24.01 notepad counter limit of 3,900 characters; `SetNote` refuses item notes above the client's 5,000-character save slice. Over-limit direct RPC calls receive named refusals before personal data persistence. The focused CharacterInfo regression verifies refusal and unchanged stored note values.
 
 ## Planetary industry input safety (2026-10-20)

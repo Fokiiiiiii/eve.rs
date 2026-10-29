@@ -7,7 +7,7 @@ public sealed partial class CorporationStore
     private const string AllianceColumns = "id,name,short_name,description,url,executor_corporation_id,creator_corporation_id,creator_character_id,created_ms,deleted,suspended,dictatorial";
     private const string AllianceApplicationColumns = "id,alliance_id,corporation_id,text,status,created_ms,updated_ms,archived,due_ms";
     public sealed record AllianceContact(long ContactId,long RelationshipId,long LabelMask);
-    public sealed record AllianceContactLabel(long LabelId,string Name,int Color);
+public sealed record AllianceContactLabel(long LabelId,string Name,int? Color);
 
     private static Alliance ReadAlliance(NpgsqlDataReader r) => new(r.GetInt64(0),r.GetString(1),r.GetString(2),r.GetString(3),r.GetString(4),
         r.IsDBNull(5) ? null : r.GetInt64(5),r.GetInt64(6),r.GetInt64(7),r.GetInt64(8),r.GetBoolean(9),r.GetBoolean(10),r.GetBoolean(11));
@@ -766,7 +766,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
         await using var reader = await command.ExecuteReaderAsync(token);
         var labels = new List<AllianceContactLabel>();
         while (await reader.ReadAsync(token))
-            labels.Add(new AllianceContactLabel(reader.GetInt64(0),reader.GetString(1),reader.GetInt32(2)));
+            labels.Add(new AllianceContactLabel(reader.GetInt64(0),reader.GetString(1),reader.IsDBNull(2) ? null : reader.GetInt32(2)));
         return labels;
     }
 
@@ -823,7 +823,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
         },token);
     }
 
-    public Task<AllianceContactLabel> CreateAllianceContactLabelAsync(long actor,long alliance,string name,int color,CancellationToken token = default)
+    public Task<AllianceContactLabel> CreateAllianceContactLabelAsync(long actor,long alliance,string name,int? color,CancellationToken token = default)
     {
         ValidateAllianceLabel(name,color);
         return WriteAsync(async (connection,tx) =>
@@ -908,7 +908,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
             throw new CorporationError("ALLIANCE_CONTACT_INVALID");
     }
 
-    private static void ValidateAllianceLabel(string name,int color)
+    private static void ValidateAllianceLabel(string name,int? color)
     {
         if (string.IsNullOrWhiteSpace(name) || name.Length > 100 || color is < 0 or > 16777215)
             throw new CorporationError("ALLIANCE_LABEL_INVALID");
@@ -937,7 +937,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
         await using var reader = await command.ExecuteReaderAsync(token);
         var labels = new List<CorporationContactLabel>();
         while (await reader.ReadAsync(token))
-            labels.Add(new CorporationContactLabel(reader.GetInt64(0),reader.GetString(1),reader.GetInt32(2)));
+            labels.Add(new CorporationContactLabel(reader.GetInt64(0),reader.GetString(1),reader.IsDBNull(2) ? null : reader.GetInt32(2)));
         return labels;
     }
 
@@ -1000,7 +1000,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
         },token);
     }
 
-    public Task<CorporationContactLabel> CreateCorporationContactLabelAsync(long corporationId,string name,int color,CancellationToken token = default)
+    public Task<CorporationContactLabel> CreateCorporationContactLabelAsync(long corporationId,string name,int? color,CancellationToken token = default)
     {
         ValidateCorporationContactLabel(name,color);
         return WriteAsync(async (connection,tx) =>
@@ -1262,7 +1262,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
         new(reader.GetInt64(0),reader.GetInt64(1),reader.GetInt64(2),reader.GetInt64(3),
             reader.GetInt64(4),reader.GetInt64(5),reader.GetString(6),reader.GetString(7),reader.GetInt32(8));
 
-    private static void ValidateCorporationContactLabel(string name,int color)
+    private static void ValidateCorporationContactLabel(string name,int? color)
     {
         if (name.Length is < 1 or > 100 || color is < 0 or > 16777215)
             throw new CorporationError("CORPORATION_LABEL_INVALID");

@@ -3,11 +3,175 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Inventory;
+using Eve.Corporations;
+using Eve.Skills;
+using Eve.Wallet;
 
 namespace Eve.Host.Tests;
 
 public partial class HostServerTests
 {
+    [PgFact]
+    public async Task Corporation_contact_labels_preserve_optional_fields_and_notify_after_host_mutations()
+    {
+        await using var rig = await CharacterHostTests.CharacterHostRig.CreateAsync();
+        var characterId = await rig.CreateCharacterAsync();
+        await rig.FundAsync(characterId, 3_000_000_000m);
+        await rig.SetSkillLevelAsync(characterId, 3732, 5);
+        var wallets = new PgWalletStore(rig.Source, rig.WalletSchema);
+        var store = new CorporationStore(rig.Source, rig.Characters, wallets,
+            new WalletTransactions(rig.Source, rig.WalletSchema), new PgSkillStore(rig.Source, rig.SkillsSchema),
+            () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), rig.CorporationsSchema);
+        var corporation = await store.CreateAsync(characterId,
+            new NewCorporation("Contact Labels", "CLBL", "", "", 0), $"host-contact-labels:{Guid.NewGuid():N}");
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("corpRegistry"));
+
+        Start(configure: registry => registry.Register(service), sessionOpened: session =>
+        {
+            session.CharacterId = characterId;
+            session.Set("charid", new PyLong(characterId));
+            session.Set("corpid", new PyLong(corporation.Id));
+            session.Set("corporationID", new PyLong(corporation.Id));
+            rig.Sessions.Enter(characterId, session);
+        });
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        _ = await front.ReceiveAsync();
+        var callId = 1U;
+        async Task<PyValue> Call(string method, params PyValue[] args) =>
+            await CallOverHost(front, open, callId++, "corpRegistry", method, Py.Tuple(args))
+                ?? throw new Xunit.Sdk.XunitException($"{method} returned no reply value");
+        async Task AssertContactUpdate(long expectedMask)
+        {
+            var notice = ReadCorporationNotification(Assert.IsType<Send>(await front.ReceiveAsync()));
+            Assert.Equal(("OnOrganizationContactsUpdated", "corpid"), (notice.Name, notice.IdType));
+            Assert.Equal(corporation.Id, Number(notice.Args[1]));
+            var row = Assert.IsType<PyTuple>(Assert.Single(Assert.IsType<PyList>(notice.Args[2]).Items));
+            Assert.Equal(3, row.Items.Count);
+            Assert.Equal(90_300_001, Number(row.Items[0]));
+            Assert.Equal(0, Number(row.Items[1]));
+            Assert.Equal(expectedMask, Number(row.Items[2]));
+        }
+
+        var labelId = Number(await Call("CreateLabel", new PyStr("Operations"), PyNone.Instance));
+        var labels = Assert.IsType<PyDict>(await Call("GetLabels"));
+        Assert.Same(PyNone.Instance, Field(Assert.IsType<PyObject>(labels.Entries.Single().Value), "color"));
+        Assert.Same(PyNone.Instance, await Call("EditLabel", new PyLong(labelId), PyNone.Instance, new PyInt(12)));
+        Assert.Same(PyNone.Instance, await Call("EditLabel", new PyLong(labelId), new PyWString("Operations Team"), PyNone.Instance));
+        labels = Assert.IsType<PyDict>(await Call("GetLabels"));
+        var label = Assert.IsType<PyObject>(labels.Entries.Single().Value);
+        Assert.Equal("Operations Team", T(Field(label, "name")));
+        Assert.Equal(12, Number(Field(label, "color")));
+
+        var contactId = 90_300_001L;
+        Assert.Same(PyNone.Instance, await Call("AssignLabels", new PyList([new PyLong(contactId)]), new PyLong(labelId)));
+        await AssertContactUpdate(labelId);
+        Assert.Same(PyNone.Instance, await Call("RemoveLabels", new PyList([new PyLong(contactId)]), new PyLong(labelId)));
+        await AssertContactUpdate(0);
+        Assert.Same(PyNone.Instance, await Call("AssignLabels", new PyList([new PyLong(contactId)]), new PyLong(labelId)));
+        await AssertContactUpdate(labelId);
+        Assert.Same(PyNone.Instance, await Call("DeleteLabel", new PyLong(labelId)));
+        await AssertContactUpdate(0);
+
+        await rig.RestartAsync();
+        service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("corpRegistry"));
+        var session = new ClientSession { CharacterId = characterId };
+        Assert.Empty(Assert.IsType<PyDict>(await service.CallAsync(new ServiceCall
+        {
+            Method = "GetLabels", Args = [], Session = session,
+        })).Entries);
+        var contacts = Assert.IsType<PyDict>(await service.CallAsync(new ServiceCall
+        {
+            Method = "GetCorporateContacts", Args = [], Session = session,
+        }));
+        Assert.Equal(0, Number(Field(Assert.IsType<PyObject>(contacts.Entries.Single().Value), "labelMask")));
+    }
+
+    [PgFact]
+    public async Task Alliance_contact_labels_preserve_optional_fields_and_notify_after_host_mutations()
+    {
+        await using var rig = await CharacterHostTests.CharacterHostRig.CreateAsync();
+        var characterId = await rig.CreateCharacterAsync();
+        await rig.FundAsync(characterId, 3_000_000_000m);
+        await rig.SetSkillLevelAsync(characterId, 3732, 5);
+        var wallets = new PgWalletStore(rig.Source, rig.WalletSchema);
+        var store = new CorporationStore(rig.Source, rig.Characters, wallets,
+            new WalletTransactions(rig.Source, rig.WalletSchema), new PgSkillStore(rig.Source, rig.SkillsSchema),
+            () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), rig.CorporationsSchema);
+        var corporation = await store.CreateAsync(characterId,
+            new NewCorporation("Alliance Labels", "ALBL", "", "", 0), $"host-alliance-labels:{Guid.NewGuid():N}");
+        var alliance = await store.CreateAllianceAsync(characterId,
+            new NewAlliance("Label Alliance", "LAL", "", ""), $"host-alliance-labels:{Guid.NewGuid():N}");
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("allianceRegistry"));
+
+        Start(configure: registry => registry.Register(service), sessionOpened: session =>
+        {
+            session.CharacterId = characterId;
+            session.Set("charid", new PyLong(characterId));
+            session.Set("corpid", new PyLong(corporation.Id));
+            session.Set("corporationID", new PyLong(corporation.Id));
+            session.Set("allianceid", new PyLong(alliance.Id));
+            session.Set("allianceID", new PyLong(alliance.Id));
+            rig.Sessions.Enter(characterId, session);
+        });
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        _ = await front.ReceiveAsync();
+        var callId = 1U;
+        async Task<PyValue> Call(string method, params PyValue[] args) =>
+            await CallOverHost(front, open, callId++, "allianceRegistry", method, Py.Tuple(args))
+                ?? throw new Xunit.Sdk.XunitException($"{method} returned no reply value");
+        async Task AssertContactUpdate(long expectedMask)
+        {
+            var notice = ReadCorporationNotification(Assert.IsType<Send>(await front.ReceiveAsync()));
+            Assert.Equal(("OnOrganizationContactsUpdated", "allianceid"), (notice.Name, notice.IdType));
+            Assert.Equal(alliance.Id, Number(notice.Args[1]));
+            var row = Assert.IsType<PyTuple>(Assert.Single(Assert.IsType<PyList>(notice.Args[2]).Items));
+            Assert.Equal(3, row.Items.Count);
+            Assert.Equal(90_400_001, Number(row.Items[0]));
+            Assert.Equal(0, Number(row.Items[1]));
+            Assert.Equal(expectedMask, Number(row.Items[2]));
+        }
+
+        var labelId = Number(await Call("CreateLabel", new PyStr("Operations"), PyNone.Instance));
+        var labels = Assert.IsType<PyDict>(await Call("GetLabels"));
+        Assert.Same(PyNone.Instance, Field(Assert.IsType<PyObject>(labels.Entries.Single().Value), "color"));
+        Assert.Same(PyNone.Instance, await Call("EditLabel", new PyLong(labelId), PyNone.Instance, new PyInt(12)));
+        Assert.Same(PyNone.Instance, await Call("EditLabel", new PyLong(labelId), new PyStr("Operations Team"), PyNone.Instance));
+        labels = Assert.IsType<PyDict>(await Call("GetLabels"));
+        var label = Assert.IsType<PyObject>(labels.Entries.Single().Value);
+        Assert.Equal("Operations Team", T(Field(label, "name")));
+        Assert.Equal(12, Number(Field(label, "color")));
+
+        var contactId = 90_400_001L;
+        Assert.Same(PyNone.Instance, await Call("AddAllianceContact", new PyLong(contactId), new PyInt(0)));
+        _ = ReadCorporationNotification(Assert.IsType<Send>(await front.ReceiveAsync()));
+        var labelMask = 1L << ((int)labelId - 1);
+        Assert.Same(PyNone.Instance, await Call("AssignLabels", new PyList([new PyLong(contactId)]), new PyLong(labelMask)));
+        await AssertContactUpdate(labelMask);
+        Assert.Same(PyNone.Instance, await Call("RemoveLabels", new PyList([new PyLong(contactId)]), new PyLong(labelMask)));
+        await AssertContactUpdate(0);
+        Assert.Same(PyNone.Instance, await Call("AssignLabels", new PyList([new PyLong(contactId)]), new PyLong(labelMask)));
+        await AssertContactUpdate(labelMask);
+        Assert.Same(PyNone.Instance, await Call("DeleteLabel", new PyLong(labelId)));
+        await AssertContactUpdate(0);
+
+        await rig.RestartAsync();
+        service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("allianceRegistry"));
+        var session = new ClientSession { CharacterId = characterId };
+        Assert.Empty(Assert.IsType<PyDict>(await service.CallAsync(new ServiceCall
+        {
+            Method = "GetLabels", Args = [], Session = session,
+        })).Entries);
+        var contacts = Assert.IsType<PyDict>(await service.CallAsync(new ServiceCall
+        {
+            Method = "GetAllianceContacts", Args = [], Session = session,
+        }));
+        Assert.Equal(0, Number(Field(Assert.IsType<PyObject>(contacts.Entries.Single().Value), "labelMask")));
+    }
+
     [PgFact]
     public async Task Character_manager_mutations_persist_through_registered_host_wire()
     {
@@ -50,24 +214,33 @@ public partial class HostServerTests
         contacts = Assert.IsType<PyObject>(await CallOverHost(front, open, 7, "charMgr", "GetContactList", Py.Tuple([])));
         Assert.Empty(Assert.IsType<PyList>(PersonalWireField(PersonalWireField(contacts, "addresses"), "lines")).Items);
 
-        var noteId = Assert.IsType<PyInt>(await CallOverHost(front, open, 8, "charMgr", "AddOwnerNote",
+        var folderLabels = Assert.IsType<PyObject>(await CallOverHost(front, open, 8, "charMgr", "GetOwnerNoteLabels", Py.Tuple([])));
+        var virtualFolder = Assert.IsType<PyList>(Assert.Single(Assert.IsType<PyList>(PersonalWireField(folderLabels, "lines")).Items));
+        var folderId = virtualFolder.Items[0];
+        Assert.Equal("S:Folders", T(virtualFolder.Items[1]));
+        Assert.Equal(PyNone.Instance, await CallOverHost(front, open, 9, "charMgr", "EditOwnerNote",
+            Py.Tuple(folderId, new PyStr("S:Folders"), new PyStr("2::F::0::Projects|"))));
+        var folderRows = Assert.IsType<PyList>(await CallOverHost(front, open, 10, "charMgr", "GetOwnerNote", Py.Tuple(folderId)));
+        Assert.Equal("2::F::0::Projects|", T(PersonalWireField(Assert.Single(folderRows.Items), "note")));
+
+        var noteId = Assert.IsType<PyInt>(await CallOverHost(front, open, 11, "charMgr", "AddOwnerNote",
             Py.Tuple(new PyStr("N:Planner"), new PyStr("<br>"))));
         Assert.True(noteId.Value > 0);
-        Assert.Equal(PyNone.Instance, await CallOverHost(front, open, 9, "charMgr", "EditOwnerNote",
+        Assert.Equal(PyNone.Instance, await CallOverHost(front, open, 12, "charMgr", "EditOwnerNote",
             Py.Tuple(noteId, new PyStr("N:Planner renamed"))));
-        Assert.Equal(PyNone.Instance, await CallOverHost(front, open, 10, "charMgr", "EditOwnerNote",
+        Assert.Equal(PyNone.Instance, await CallOverHost(front, open, 13, "charMgr", "EditOwnerNote",
             Py.Tuple(noteId, new PyStr("N:Planner"), new PyStr("client note"))));
-        var noteRows = Assert.IsType<PyList>(await CallOverHost(front, open, 11, "charMgr", "GetOwnerNote", Py.Tuple(noteId)));
+        var noteRows = Assert.IsType<PyList>(await CallOverHost(front, open, 14, "charMgr", "GetOwnerNote", Py.Tuple(noteId)));
         Assert.Equal("N:Planner", T(PersonalWireField(Assert.Single(noteRows.Items), "label")));
         var note = PersonalWireField(Assert.Single(noteRows.Items), "note");
         Assert.IsType<PyBytes>(note);
         Assert.Equal("client note", T(note));
 
-        Assert.Equal(PyNone.Instance, await CallOverHost(front, open, 12, "charMgr", "SaveCharacterSetting",
+        Assert.Equal(PyNone.Instance, await CallOverHost(front, open, 15, "charMgr", "SaveCharacterSetting",
             Py.Tuple(new PyStr("windowState"), new PyStr("open"))));
-        Assert.Equal(PyNone.Instance, await CallOverHost(front, open, 13, "charMgr", "DeleteCharacterSetting",
+        Assert.Equal(PyNone.Instance, await CallOverHost(front, open, 16, "charMgr", "DeleteCharacterSetting",
             Py.Tuple(new PyStr("windowState"))));
-        Assert.Empty(Assert.IsType<PyDict>(await CallOverHost(front, open, 14, "charMgr", "GetCharacterSettings",
+        Assert.Empty(Assert.IsType<PyDict>(await CallOverHost(front, open, 17, "charMgr", "GetCharacterSettings",
             Py.Tuple([]))).Entries);
 
         await rig.RestartAsync();
@@ -77,6 +250,12 @@ public partial class HostServerTests
             Method = "GetOwnerNote", Args = [noteId], Session = new ClientSession { CharacterId = characterId },
         }));
         Assert.Equal("client note", T(PersonalWireField(Assert.Single(persisted.Items), "note")));
+        var persistedFolders = Assert.IsType<PyList>(await service.CallAsync(new ServiceCall
+        {
+            Method = "GetOwnerNote", Args = [folderId], Session = new ClientSession { CharacterId = characterId },
+        }));
+        Assert.Equal("S:Folders", T(PersonalWireField(Assert.Single(persistedFolders.Items), "label")));
+        Assert.Equal("2::F::0::Projects|", T(PersonalWireField(Assert.Single(persistedFolders.Items), "note")));
     }
 
     [PgFact]

@@ -28,7 +28,7 @@ public sealed record CorporationRecruitmentAd(
     long Id,long CorporationId,long ChannelId,long TypeMask,long LangMask,string Description,string Title,
     long CreateFiletime,long ExpiryFiletime,long HourMask1,long MinSP,long OtherMask,IReadOnlyList<long> Recruiters);
 public sealed record CorporationContact(long ContactId,int RelationshipId,long LabelMask,bool InWatchlist);
-public sealed record CorporationContactLabel(long LabelId,string Name,int Color);
+public sealed record CorporationContactLabel(long LabelId,string Name,int? Color);
 public sealed record CorporationBulletin(long BulletinId,long CorporationId,long CreateCharacterId,long CreateDateTime,
     long EditCharacterId,long EditDateTime,string Title,string Body,int SortOrder);
 

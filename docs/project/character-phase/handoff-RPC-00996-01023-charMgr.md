@@ -1,5 +1,15 @@
 # Character manager RPC coverage handoff (RPC-00996–01023)
 
+## 2026-10-29 contact-label and notepad persistence follow-up
+
+Verified the whole V24.01 client before implementing the related fixes. `notepad.py:85-140` loads note labels including synthetic `S:Folders`, `:149-185` serializes folder settings and calls `EditOwnerNote` for the already listed ID; the server now materializes that virtual note on first edit. `addressbookService.py:1000-1018` sends nullable name/color for edit and create, `base_corporation.py:1013-1029` and `all_cso.py:263-279` forward nullable edit fields and CRUD/assignment calls. The client notification consumer at `addressbookService.py:156-189` reads `(contactID, level, labelMask)`, updates corp/alliance contact caches, and scatters the corresponding standing event. These observations drove nullable color persistence and post-mutation `OnOrganizationContactsUpdated` for corporation and alliance label operations.
+
+Current EveJS 261028.1 still ignores edits when an owner note ID is absent (`server/src/services/character/characterNoteState.js:337-379`, invoked by `charMgrService.js:1211-1219`); the synthetic `S:Folders` edit is intentionally made persistent because V24.01 passes that listed ID through `notepad.py:165-175`. The current EveJS corporation label edit correctly treats `None` fields as omitted (`server/src/services/corporation/corpRegistryRuntime.js:2188-2209`); alliance creation also stores an unset color as null (`allianceRegistryRuntime.js:826-848`).
+
+Implementation: `CharMgrService.EditOwnerNote` materializes only the matching virtual folder note; corp/alliance label colors are nullable through stores and schema migration 014; partial corporation edits preserve the omitted field; both registries publish changed contact tuples after committed label-mask mutations. Registered socket Host wire regressions cover the personal folder save/reload and corporation/alliance create/edit/assign/remove/delete flows, notification payloads, and restart reads.
+
+Local verification: `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors. `Corporation_member_changes_reach_both_sessions_after_the_rpc_reply` passed locally (1 passed, 0 skipped). The new database-backed wire regressions still require Actions verification; no database or graphical client was used locally.
+
 ## Scope and disposition
 
 RPC-00996 and RPC-00997 are inventory-bound calls, not character-manager calls. V24.01 fitting invokes the bound inventory object's `Add` from `eve/client/script/ui/shared/fitting/fittingSlotController.py:237–241`; nodegraph fitting calls it from `nodegraph/client/actions/module.py:74–78`. `CharacterManagerMutationHostWireTests.Bound_inventory_add_uses_registered_host_wire_with_client_arguments_and_transport_metadata` routes the registered production `invbroker.MachoBindObject` and nested `Add` through the socket Host, with client `qty` and `flag`, transport `machoVersion=3396210`, persistent item movement and Host rebuild.

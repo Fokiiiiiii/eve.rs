@@ -29,6 +29,26 @@ internal static class CorporationNotificationAdapter
         });
     }
 
+    public static IReadOnlyList<(long ContactId,long? RelationshipId,long? LabelMask)> ChangedContacts(
+        IReadOnlyList<CorporationContact> before,IReadOnlyList<CorporationContact> after)
+    {
+        var previous = before.ToDictionary(contact => contact.ContactId);
+        return after.Where(contact => !previous.TryGetValue(contact.ContactId,out var old) ||
+                old.RelationshipId != contact.RelationshipId || old.LabelMask != contact.LabelMask)
+            .Select(contact => (contact.ContactId,(long?)contact.RelationshipId,(long?)contact.LabelMask))
+            .ToArray();
+    }
+
+    public static IReadOnlyList<(long ContactId,long? RelationshipId,long? LabelMask)> ChangedContacts(
+        IReadOnlyList<CorporationStore.AllianceContact> before,IReadOnlyList<CorporationStore.AllianceContact> after)
+    {
+        var previous = before.ToDictionary(contact => contact.ContactId);
+        return after.Where(contact => !previous.TryGetValue(contact.ContactId,out var old) ||
+                old.RelationshipId != contact.RelationshipId || old.LabelMask != contact.LabelMask)
+            .Select(contact => (contact.ContactId,(long?)contact.RelationshipId,(long?)contact.LabelMask))
+            .ToArray();
+    }
+
     public static void MemberChanged(CharacterSessions? sessions,ServiceCall call,long corporationId,long characterId,
         Member? before,Member? after)
     {

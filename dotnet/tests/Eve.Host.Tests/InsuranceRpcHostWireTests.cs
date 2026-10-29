@@ -102,7 +102,7 @@ public sealed class InsuranceRpcHostWireTests : IAsyncLifetime
     };
 
     [PgFact]
-    public async Task Insurance_rpc_purchase_lookup_list_and_cancellation_follow_the_persisted_host_state()
+    public async Task Insurance_rpc_purchase_lookup_list_and_cancellation_survive_a_host_restart()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
@@ -182,8 +182,18 @@ public sealed class InsuranceRpcHostWireTests : IAsyncLifetime
         Assert.Equal(Field(contract, "contractID"), Field(listedContract, "contractID"));
         Assert.Equal(Field(contract, "shipID"), Field(listedContract, "shipID"));
 
+        await _host.ShutdownAsync();
+        _host = await HostComposition.BuildAsync(Settings());
+        insurance = _host.Registry.Lookup("insuranceSvc") ?? throw new InvalidOperationException("insuranceSvc is not registered");
+        var persistedContract = Assert.IsType<PyObject>(
+            await insurance.CallAsync(Call(session, "GetContractForShip", 15, new PyLong(shipId))));
+        Assert.Equal(Field(contract, "contractID"), Field(persistedContract, "contractID"));
+        var persistedContracts = Assert.IsType<PyList>(await insurance.CallAsync(Call(session, "GetContracts", 16)));
+        Assert.Equal(Field(contract, "contractID"),
+            Field(Assert.IsType<PyObject>(Assert.Single(persistedContracts.Items)), "contractID"));
+
         var duplicate = await Assert.ThrowsAsync<MachoWrappedException>(() =>
-            insurance.CallAsync(Call(session, "InsureShip", 8, new PyLong(shipId),
+            insurance.CallAsync(Call(session, "InsureShip", 17, new PyLong(shipId),
                 new PyReal(quote.PremiumCents / 100d), PyBool.False)).AsTask());
         Assert.Equal("InsureShipFailedSingleContract", duplicate.Error.UserErrorMessage);
 
@@ -193,17 +203,17 @@ public sealed class InsuranceRpcHostWireTests : IAsyncLifetime
             Method = "InsureShip",
             Args = [new PyLong(shipId), new PyReal(quote.PremiumCents / 100d), PyBool.False],
             Kwargs = new PyDict([new(new PyStr("voidOld"), PyBool.True)]),
-            CallId = new PyInt(9),
+            CallId = new PyInt(18),
         }));
-        var replacement = Assert.IsType<PyObject>(await insurance.CallAsync(Call(session, "GetContractForShip", 10, new PyLong(shipId))));
+        var replacement = Assert.IsType<PyObject>(await insurance.CallAsync(Call(session, "GetContractForShip", 19, new PyLong(shipId))));
         Assert.NotEqual(Field(contract, "contractID"), Field(replacement, "contractID"));
-        var replacementContracts = Assert.IsType<PyList>(await insurance.CallAsync(Call(session, "GetContracts", 11)));
+        var replacementContracts = Assert.IsType<PyList>(await insurance.CallAsync(Call(session, "GetContracts", 20)));
         Assert.Single(replacementContracts.Items);
         var walletAfterReplacement = (await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).GetAsync(characterId))!.Isk;
 
-        Assert.Same(PyNone.Instance, await insurance.CallAsync(Call(session, "UnInsureShip", 12, new PyLong(shipId))));
-        Assert.Same(PyNone.Instance, await insurance.CallAsync(Call(session, "GetContractForShip", 13, new PyLong(shipId))));
-        Assert.Empty(Assert.IsType<PyList>(await insurance.CallAsync(Call(session, "GetContracts", 14))).Items);
+        Assert.Same(PyNone.Instance, await insurance.CallAsync(Call(session, "UnInsureShip", 21, new PyLong(shipId))));
+        Assert.Same(PyNone.Instance, await insurance.CallAsync(Call(session, "GetContractForShip", 22, new PyLong(shipId))));
+        Assert.Empty(Assert.IsType<PyList>(await insurance.CallAsync(Call(session, "GetContracts", 23))).Items);
         Assert.Equal(walletAfterReplacement,
             (await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).GetAsync(characterId))!.Isk);
     }

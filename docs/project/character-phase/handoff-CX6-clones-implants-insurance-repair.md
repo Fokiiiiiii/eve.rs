@@ -34,4 +34,12 @@ Checks actually run:
 - Focused Host wire test `Jump_clone_reads_return_count_and_install_validation_labels_through_host`: passed, 1/1.
 - `git diff --check`: passed.
 
-Not checked: full Host test shard, PostgreSQL-backed tests, graphical-client flow, or broader CI. No database was used. Do not treat this handoff as completion of all requested flows.
+At the time of this pass, the full Host shard, PostgreSQL-backed cases, graphical-client flow, and broader CI had not been checked. Current Host-shard results and the added PostgreSQL restart regression are recorded below. No database was used locally.
+
+## Insurance contract restart regression (2026-10-29)
+
+The Host insurance wire test now shuts down and rebuilds `HostComposition` after an insurance purchase, then checks that both `GetContractForShip` and `GetContracts` return the same persisted contract ID. This exercises the existing PostgreSQL-backed read/write models across a process restart rather than relying on the service instance cache.
+
+Whole-client V24.01 references: `eve/client/script/ui/station/insurance/base_insurance.py:113-143` reads contracts and premium prices; `:145-192` selects insurable items and formats insurance data; `:198-216` submits insurance; `:298-310,327-376` renders the window from the contract/item results; `:390-401,421-428` cancels and submits insurance; `:466-504,519-563` consumes contract and quote fields in the confirmation window. The contract result fields are asserted by `InsuranceRpcHostWireTests`.
+
+Local checks: the Host.Tests project built with 0 warnings/errors; the focused non-database station guest Host wire test passed 1/1, 0 skipped. The broad Host.Tests run without `EVE_PG_URL` reported 610 passed, 230 skipped, and 100 database-backed failures while opening connections or requiring seeded SDE rows; no PostgreSQL database was used. The new PostgreSQL restart case was not run locally; Actions must execute it. No graphical-client flow was run.

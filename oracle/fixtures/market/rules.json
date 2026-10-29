@@ -135,7 +135,7 @@
       "isStation": true,
       "factionStanding": -10,
       "corpStanding": -10,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.034999999999999996,
@@ -391,7 +391,7 @@
       "isStation": true,
       "factionStanding": 0,
       "corpStanding": 0,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.03,
@@ -647,7 +647,7 @@
       "isStation": true,
       "factionStanding": 10,
       "corpStanding": 10,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.025,
@@ -903,7 +903,7 @@
       "isStation": false,
       "factionStanding": -10,
       "corpStanding": -10,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.03,
@@ -1159,7 +1159,7 @@
       "isStation": false,
       "factionStanding": 0,
       "corpStanding": 0,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.03,
@@ -1415,7 +1415,7 @@
       "isStation": false,
       "factionStanding": 10,
       "corpStanding": 10,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.03,
@@ -1671,7 +1671,7 @@
       "isStation": true,
       "factionStanding": -10,
       "corpStanding": -10,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.032,
@@ -1927,7 +1927,7 @@
       "isStation": true,
       "factionStanding": 0,
       "corpStanding": 0,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.027,
@@ -2183,7 +2183,7 @@
       "isStation": true,
       "factionStanding": 10,
       "corpStanding": 10,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.022,
@@ -2439,7 +2439,7 @@
       "isStation": false,
       "factionStanding": -10,
       "corpStanding": -10,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.03,
@@ -2695,7 +2695,7 @@
       "isStation": false,
       "factionStanding": 0,
       "corpStanding": 0,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.03,
@@ -2951,7 +2951,7 @@
       "isStation": false,
       "factionStanding": 10,
       "corpStanding": 10,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.03,
@@ -3207,7 +3207,7 @@
       "isStation": true,
       "factionStanding": -10,
       "corpStanding": -10,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.028999999999999998,
@@ -3463,7 +3463,7 @@
       "isStation": true,
       "factionStanding": 0,
       "corpStanding": 0,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.024,
@@ -3719,7 +3719,7 @@
       "isStation": true,
       "factionStanding": 10,
       "corpStanding": 10,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.019000000000000003,
@@ -3975,7 +3975,7 @@
       "isStation": false,
       "factionStanding": -10,
       "corpStanding": -10,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.03,
@@ -4231,7 +4231,7 @@
       "isStation": false,
       "factionStanding": 0,
       "corpStanding": 0,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.03,
@@ -4487,7 +4487,7 @@
       "isStation": false,
       "factionStanding": 10,
       "corpStanding": 10,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.03,
@@ -4743,7 +4743,7 @@
       "isStation": true,
       "factionStanding": -10,
       "corpStanding": -10,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.025999999999999995,
@@ -4999,7 +4999,7 @@
       "isStation": true,
       "factionStanding": 0,
       "corpStanding": 0,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.020999999999999998,
@@ -5255,7 +5255,7 @@
       "isStation": true,
       "factionStanding": 10,
       "corpStanding": 10,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.016,
@@ -5511,7 +5511,7 @@
       "isStation": false,
       "factionStanding": -10,
       "corpStanding": -10,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.03,
@@ -5767,7 +5767,7 @@
       "isStation": false,
       "factionStanding": 0,
       "corpStanding": 0,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.03,
@@ -6023,7 +6023,7 @@
       "isStation": false,
       "factionStanding": 10,
       "corpStanding": 10,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.03,
@@ -6279,7 +6279,7 @@
       "isStation": true,
       "factionStanding": -10,
       "corpStanding": -10,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.023,
@@ -6535,7 +6535,7 @@
       "isStation": true,
       "factionStanding": 0,
       "corpStanding": 0,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.018,
@@ -6791,7 +6791,7 @@
       "isStation": true,
       "factionStanding": 10,
       "corpStanding": 10,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.013,
@@ -7047,7 +7047,7 @@
       "isStation": false,
       "factionStanding": -10,
       "corpStanding": -10,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.03,
@@ -7303,7 +7303,7 @@
       "isStation": false,
       "factionStanding": 0,
       "corpStanding": 0,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.03,
@@ -7559,7 +7559,7 @@
       "isStation": false,
       "factionStanding": 10,
       "corpStanding": 10,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.03,
@@ -7815,7 +7815,7 @@
       "isStation": true,
       "factionStanding": -10,
       "corpStanding": -10,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.019999999999999997,
@@ -8071,7 +8071,7 @@
       "isStation": true,
       "factionStanding": 0,
       "corpStanding": 0,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.015,
@@ -8327,7 +8327,7 @@
       "isStation": true,
       "factionStanding": 10,
       "corpStanding": 10,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.01,
@@ -8583,7 +8583,7 @@
       "isStation": false,
       "factionStanding": -10,
       "corpStanding": -10,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.03,
@@ -8839,7 +8839,7 @@
       "isStation": false,
       "factionStanding": 0,
       "corpStanding": 0,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.03,
@@ -9095,7 +9095,7 @@
       "isStation": false,
       "factionStanding": 10,
       "corpStanding": 10,
-      "warFaction": 500018,
+      "warFaction": 500010,
       "solarSystem": 30100000,
       "context": {
         "brokerCommissionRate": 0.03,

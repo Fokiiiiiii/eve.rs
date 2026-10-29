@@ -8,10 +8,7 @@ public sealed record MarketSkillLevels(int Trade = 0, int Retail = 0, int Broker
     int Daytrading = 0, int Wholesale = 0, int Margin = 0, int Marketing = 0, int Procurement = 0,
     int Accounting = 0, int Tycoon = 0);
 public sealed record MarketLimits(int Count, double TransactionTaxRate, int SellRange, int BuyRange, int Visibility, int ModifyRange);
-public sealed record MarketContext(double BrokerCommissionRate, double SccSurchargeRate, double ModificationFeeDiscount, MarketLimits Limits)
-{
-    public bool MinimumBrokerFeeIncludesScc { get; init; }
-}
+public sealed record MarketContext(double BrokerCommissionRate, double SccSurchargeRate, double ModificationFeeDiscount, MarketLimits Limits);
 public sealed record FeeInfo(double Amount, double RawPercentage, bool UsingMinimumValue);
 
 public static class MarketRules
@@ -66,7 +63,7 @@ public static class MarketRules
             broker -= factionStanding * 0.0003 + corpStanding * 0.0002;
         var tax = SalesTaxPercent / 100;
         tax *= 1 - Skill(skills.Accounting) * 0.11;
-        tax *= 1 - (solarSystem == 30100000 && warFaction is 500018 or 500019 ? 0.5 : 0);
+        tax *= 1 - (solarSystem == 30100000 && warFaction is 500010 or 500011 ? 0.5 : 0);
         return new MarketContext(broker, isStation ? 0 : 0.5 / 100, 0.5 + ModificationDiscountPerLevel * Skill(skills.Margin),
             new MarketLimits(5 + Skill(skills.Trade) * 4 + Skill(skills.Retail) * 8
                 + Skill(skills.Wholesale) * 16 + Skill(skills.Tycoon) * 32, tax,
@@ -74,13 +71,15 @@ public static class MarketRules
     }
 
 
-    public static MarketContext StructureContext(MarketSkillLevels skills, double? configuredBrokerPercent)
+    public static MarketContext StructureContext(MarketSkillLevels skills, double? configuredBrokerPercent,
+        int factionWarfareUpgradeLevel = 0, int warFaction = 0, int solarSystem = 0)
     {
         var percent = configuredBrokerPercent is { } configured && double.IsFinite(configured)
             ? Math.Clamp(configured, 0, 11.5)
             : 1.0;
-        var context = Context(skills, false);
-        return context with { BrokerCommissionRate = percent / 100.0, MinimumBrokerFeeIncludesScc = true };
+        var context = Context(skills, false, warFaction: warFaction, solarSystem: solarSystem,
+            factionWarfareUpgradeLevel: factionWarfareUpgradeLevel);
+        return context with { BrokerCommissionRate = percent / 100.0 * (1 - 0.1 * factionWarfareUpgradeLevel) };
     }
 
     public static FeeInfo BrokerFee(MarketContext context, double? oldAmount, double newAmount)
@@ -105,12 +104,6 @@ public static class MarketRules
             }
         }
         var total = RoundIsk(fee + modification);
-        if (context.MinimumBrokerFeeIncludesScc)
-        {
-            var scc = SccSurcharge(context, oldAmount, newAmount).Amount;
-            var usesMinimum = RoundIsk(total + scc) <= 100;
-            return new FeeInfo(usesMinimum ? RoundIsk(100 - scc) : total, context.BrokerCommissionRate, usesMinimum);
-        }
         return new FeeInfo(total <= 100 ? 100 : total, context.BrokerCommissionRate, total <= 100);
     }
 
@@ -137,7 +130,7 @@ public static class MarketRules
             }
         }
         var total = RoundIsk(fee + modification);
-        var usesMinimum = !context.MinimumBrokerFeeIncludesScc && total <= 25;
+        var usesMinimum = total <= 25;
         return new FeeInfo(usesMinimum ? 25 : total, rate, usesMinimum);
     }
 

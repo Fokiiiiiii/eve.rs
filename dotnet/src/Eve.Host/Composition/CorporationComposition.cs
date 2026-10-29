@@ -139,6 +139,7 @@ internal sealed partial class CharacterServicesComposition
         marketTrading = new Eve.Market.MarketTrading(source, market, characters, corporations, skills, items, economyWallets, stations, marketTopology, now, new Eve.Services.Market.DurableExpiryJobs(foundations.Scheduler))
         {
             FactionWarfareUpgradeLevel = FactionWarfareUpgradeLevelAsync,
+            WarFactionId = async (characterId, cancellationToken) => await WarFactionOfAsync(characterId, cancellationToken),
             StandingToward = (character, owner, token) => foundations.Relations.StandingTowardAsync(character, owner, token),
         };
         // M3: resting orders expire as durable jobs; the minute sweep and the restart reschedule are started with the market

@@ -81,6 +81,7 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
     }
     /// <summary>Factional warfare upgrade level from the caller's transaction; null means level 0.</summary>
     public Func<NpgsqlConnection,NpgsqlTransaction,long,long,CancellationToken,ValueTask<int>>? FactionWarfareUpgradeLevel { get; init; }
+    public Func<long,CancellationToken,ValueTask<long>>? WarFactionId { get; init; }
     public Func<long,long,CancellationToken,Task<double>>? StandingToward { get; init; }
 
     private async Task<MarketContext> Context(NpgsqlConnection c,NpgsqlTransaction tx,long actor,MarketVenue venue,CancellationToken token)
@@ -89,14 +90,17 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
         int Level(int id) => levels.GetValueOrDefault(id);
         var marketSkills=new MarketSkillLevels(Level(3443),Level(3444),Level(3446),Level(3447),Level(16595),Level(16596),Level(16597),
             Level(16598),Level(16594),Level(16622),Level(18580));
-        if (venue.IsStructure)
-            return MarketRules.StructureContext(marketSkills,venue.BrokerTaxPercent);
+        var character = await characters.GetAsync(actor,token);
+        var currentSolarSystem = character?.SolarSystemId ?? venue.SolarSystemId;
+        var warFaction = WarFactionId is null ? 0 : await WarFactionId(actor,token);
         var upgrade = FactionWarfareUpgradeLevel is null ? 0 : await FactionWarfareUpgradeLevel(c,tx,actor,venue.SolarSystemId,token);
+        if (venue.IsStructure)
+            return MarketRules.StructureContext(marketSkills,venue.BrokerTaxPercent,upgrade,(int)warFaction,currentSolarSystem);
         var factionStanding = StandingToward is null || venue.FactionId is not { } faction
             ? 0 : await StandingToward(actor,faction,token);
         var corpStanding = StandingToward is null ? 0 : await StandingToward(actor,venue.OwnerId,token);
         return MarketRules.Context(marketSkills,true,factionStanding,corpStanding,
-            solarSystem:venue.SolarSystemId,factionWarfareUpgradeLevel:upgrade);
+            warFaction:(int)warFaction,solarSystem:currentSolarSystem,factionWarfareUpgradeLevel:upgrade);
     }
 
     private async Task<MarketVenue> ResolveVenueAsync(long actorId,long locationId,bool requireAccess,CancellationToken token)

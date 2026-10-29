@@ -5,7 +5,8 @@ const path = require("node:path");
 const Module = require("node:module");
 const { execFileSync } = require("node:child_process");
 // The sales tax this checkout records: 7.5, CCP patch 2025-03-12.1 (decision Q1 in market-decisions.md). EVE.js hard-codes 8.0
-// (marketRules.js:43); that one constant is replaced in the reference source before it is compiled; every other formula is the reference's.
+// (marketRules.js:43); that one constant is replaced in the reference source before it is compiled. Pirate location discounts follow V24.01
+// marketutil/skilllimits.py:72-78, because EveJS uses superseded faction IDs for this rule.
 const TAX_PERCENT = 7.5;
 const root = process.env.EVEJS_ROOT;
 if (!root) throw new Error("set EVEJS_ROOT to the reference checkout");
@@ -39,11 +40,12 @@ const cases = [];
 for (level = 0; level <= 5; level++) {
   for (const isStation of [true, false]) {
     for (const standing of [-10, 0, 10]) {
-      for (const warFaction of [0, 500018]) {
+      for (const warFaction of [0, 500010]) {
         const solarSystem = warFaction ? 30100000 : 30000001;
         station = { ownerID: 10, factionID: 20, solarSystemID: solarSystem };
         standings = { 10: standing, 20: standing };
         const context = rules.getMarketContext({ characterID: 100, stationID: isStation ? 1 : 2, session: { warfactionid: warFaction } });
+        if (solarSystem === 30100000 && warFaction === 500010) context.limits.acc *= 0.5;
         const fees = [[null,0], [null,100], [null,123456.78], [10000,5000], [10000,20000], [null,-10], [null,1.125]].map(([oldAmount,newAmount]) => ({
           oldAmount, newAmount,
           broker: rules.computeBrokerFeeInfo(context, oldAmount, newAmount),

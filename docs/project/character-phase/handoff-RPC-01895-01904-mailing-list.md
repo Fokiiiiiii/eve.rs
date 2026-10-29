@@ -79,3 +79,10 @@ The client-side decision points above were searched across the full /home/user/e
   - `Insurance_rpc_purchase_lookup_list_and_cancellation_follow_the_persisted_host_state` still found no 50% quote for the Rifter insurance value.
 - Agent test run `40235241341` for the selected five Host tests failed after starting the project test command; its recorded step output did not include test names or a test summary. The mailing-list test itself passed in run `40230484611` before these unrelated Host-test follow-ups.
 - The code under review is the pushed `f70c174e` state; later `main` merges add unrelated work. This handoff includes that state’s completed Actions results. No real graphical-client walkthrough was done, and no PostgreSQL database was used locally.
+
+
+## Mailing-list role correction (2026-10-29)
+
+- Push CI for `14658cae` exposed one failure: the joined-list Core test expects role 3 to set `isOwner` without setting `isOperator`. Current EveJS `mailState.js:516` sets `isOperator` only for role 2, and the V24.01 menu checks `isOperator` and `isOwner` separately (`evemail.py:541`).
+- Commit `669d8803` aligns both reply builders with that contract. Core and Host focused tests passed locally after the main merge (1 each, 0 failed, 0 skipped); Host and Core test-project builds passed with 0 warnings and 0 errors. Agent run `40941500889` passed both focused tests; push CI run `40941470597` passed all jobs. `python3 tools/dev/ci-status.py failures 669d8803` reported no failed jobs.
+- The local no-database Host.Tests invocation reported 623 passed, 100 database-URL failures, and 233 skipped. No PostgreSQL was used; those database-dependent results are separate from the focused passes. A real graphical-client walkthrough was not done.

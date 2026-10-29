@@ -1671,8 +1671,8 @@ observable behaviour of the five RPCs it implements (not its bugs). Design: `mar
   and `orders.py:66-69` refresh their views, `marketbase.py:536-546` has no order to process, and `buyMultiFromBase.py:557-564` acts only
   for expiry notices. V24 `marketsvc.py:256-268` returns no order object for `BuyStuff`; the selected server behavior keeps its cache signal
   while reporting no changed orders. EveJS 261028.1 currently sends a synthetic ID-0 row (`marketProxyService.js:5687-5702`), so this is an
-  intentional client-contract deviation. Tests: `ProtocolTests.Immediate_market_fill_notifies_cache_change_without_fabricating_an_order`
-  and `ProtocolTests` immediate buy notification checks. Status: done (M1).
+  intentional client-contract deviation. Tests: `ProtocolTests.Immediate_market_fill_notifies_cache_change_without_fabricating_an_order`,
+  `MarketRpcTests.Buy_multi_fills_available_quantity_without_posting_the_rest`, and immediate buy notification checks in `ProtocolTests`. Status: done (M1).
 - **Host registration.** The market service is registered through the real composition (`HostComposition.BuildAsync`, the path eve-host
   runs) in `MarketHostTests`, on scratch schemas, with `EVE_SIM=off` and `EVE_MARKET_SEED=skip`; the test project now sets
   `InvariantGlobalization` false, as the other projects that need ICU. The session's notifications are not asserted there (the

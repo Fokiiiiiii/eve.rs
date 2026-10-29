@@ -844,9 +844,13 @@ def _stop_support_module(client, dogma, module_id, effect, expected_effect_id, m
         cycle_ms / 1000,
         until=lambda events: _support_module_stopped(events, module_id, expected_effect_id),
     )
+    observed_effects = [
+        undock.args_of(event).get("$tuple", [])[:5]
+        for event in stopped if event.get("name") == "OnGodmaShipEffect"
+    ]
     assert _support_module_stopped(stopped, module_id, expected_effect_id), (
         f"{module_name} Deactivate returned success but no inactive OnGodmaShipEffect arrived "
-        f"within its {cycle_ms:g} ms cycle"
+        f"within its {cycle_ms:g} ms cycle; observed effects: {observed_effects!r}"
     )
 
 def test_support_stop_uses_computed_cycle_and_matching_godma_event():

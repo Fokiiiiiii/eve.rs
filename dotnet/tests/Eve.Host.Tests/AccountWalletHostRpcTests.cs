@@ -139,10 +139,12 @@ public sealed class AccountWalletHostRpcTests
             Assert.Equal(new PyReal(28), await Call(9, "GetCashBalance", new PyInt(1), new PyInt(1000)));
             var personalJournal = Assert.IsType<PyList>(await Call(10, "GetTransactions", new PyInt(1000),
                 new PyInt(0), new PyInt(0), PyBool.False));
-            Assert.Equal(2, personalJournal.Items.Count);
+            Assert.Equal(3, personalJournal.Items.Count);
             Assert.Equal(new PyReal(-40.25), Field(personalJournal.Items[0], "amount"));
             Assert.Equal(new PyReal(4_834), Field(personalJournal.Items[0], "balance"));
             Assert.Equal(new PyReal(-125.75), Field(personalJournal.Items[1], "amount"));
+            Assert.Equal(new PyReal(-(double)CorporationStore.CorporationFoundingCost), Field(personalJournal.Items[2], "amount"));
+            Assert.Equal(new PyReal(5_000), Field(personalJournal.Items[2], "balance"));
 
             var corporationJournal = Assert.IsType<PyList>(await Call(11, "GetTransactions", new PyInt(1000),
                 new PyInt(0), new PyInt(0), PyBool.True));

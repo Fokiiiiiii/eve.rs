@@ -1,3 +1,12 @@
+# Inventory broker wire audit — 2026-10-29
+
+- Fixed `GetContainerContents` to resolve the requested item in the current station/structure or space context, enforce ownership/access and location checks, and return that container's direct rows. Whole-client callsites checked in `/home/user/eve-logic`: `ui/shared/inventory/containerContentWindow.py:64-65`, `ui/shared/info/shipInfoWindow.py:250`, `ui/shared/info/panels/panelFitting.py:223`, `environment/fittingSvc.py:149`, `ui/shared/item.py:914,917`, `ui/services/menusvc.py:3367-3368`, and `ui/services/menuSvcExtras/invItemFunctions.py:461-477`. The container window consumes those rows at `containerContentWindow.py:41-61`.
+- Bound `GetInventory(10014)` to the session structure hangar. Client selection is in `eve/client/script/environment/invCache.py:501-531`, where `SetSessionCheck` is called on the returned inventory. For station group 15, `GetCapacity` now sends the `9e15` capacity and `0.0` used values consumed by `invCache.py:1224-1226`; capacity callers include `eve/client/script/environment/invControllers.py:417-426`.
+- Current EveJS comparison: `server/src/services/inventory/invBrokerService.js:11827-11954` resolves requested container contents, `10760-10803` binds structure inventory, and `11956-11977` routes capacity calculation. No deviation recorded.
+- Verified locally: `dotnet build dotnet/src/Eve.Services.Inventory/Eve.Services.Inventory.csproj -p:UseSharedCompilation=false` and `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false` passed with 0 warnings/errors. Focused registered-Host test `Invbroker_structure_hangar_and_station_capacity_are_registered_with_client_wire_shapes` passed 1/1, skipped 0. No database or graphical-client verification was done. Actions verification is pending.
+
+---
+
 # Industry job notifications — 2026-10-28
 
 - Pushed the industry notification wire change to main in commit `9b0c0a28`. `IndustryJobClientNotifications` fans out the six-field `OnIndustryJob` notification; `IndustryJobNotificationWireTests` checks the notification payload, `None` successful-runs value, installer/corporation recipients, and role filtering. Whole-client consumers in `/home/user/eve-logic` are `eve/client/script/industry/industrySvc.py:291-301`, `blueprintSvc.py:37-40`, `ui/shared/industry/industryWnd.py:439-449`, `browserBlueprints.py:169-181`, and `browserJobs.py:111-116`. EveJS v0.12.9 builds the same six fields in `/home/user/evejs-v0.12.9/server/src/services/industry/industryNotifications.js:24-39`.

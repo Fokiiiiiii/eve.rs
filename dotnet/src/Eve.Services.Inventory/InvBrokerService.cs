@@ -23,6 +23,7 @@ public sealed partial class InvBrokerService(
 {
     /// <summary>The container the client asks for to get the hangar of the station it is docked at.</summary>
     public const int ContainerHangar = 10004;
+    public const int ContainerStructure = 10014;
 
     private const int ShipCategory = 6;
 
@@ -228,11 +229,15 @@ public sealed partial class InvBrokerService(
         return visible;
     }
 
-    private async Task<IReadOnlyList<ItemRow>> HangarAsync(ClientSession session, CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<ItemRow>> HangarAsync(ClientSession session, long locationId, CancellationToken cancellationToken)
     {
-        if (StationOf(session) is not { } station || session.CharacterId is not { } character)
+        if (session.CharacterId is not { } character
+            || StationOf(session) != locationId && session.GetInt("structureid") != locationId)
             return [];
-        return await RowsAsync(await StationItemsAsync(session, character, station, cancellationToken), cancellationToken);
+        var contents = stations.Get(locationId) is not null
+            ? await StationItemsAsync(session, character, locationId, cancellationToken)
+            : await items.InLocationAsync(locationId, character, cancellationToken);
+        return await RowsAsync(contents, cancellationToken);
     }
 
     public async ValueTask<IReadOnlyList<ItemRow>> GetContractDockableItemsAsync(
@@ -293,7 +298,7 @@ public sealed partial class InvBrokerService(
                 return [];
         }
         if (context.Kind == Kind.Hangar)
-            return await HangarAsync(session, cancellationToken);
+            return await HangarAsync(session, context.ItemId, cancellationToken);
         if (context.Kind == Kind.Space || session.CharacterId is not { } character)
             return [];
         if (context.Kind == Kind.GlobalAssets)
@@ -333,7 +338,8 @@ public sealed partial class InvBrokerService(
     /// <summary>The station as an item of its own: the "container" the hangar is in.</summary>
     private async Task<ItemRow?> StationRowAsync(ClientSession session, CancellationToken cancellationToken)
     {
-        if (StationOf(session) is not { } id)
+        var locationId = StationOf(session) ?? session.GetInt("structureid");
+        if (locationId is not { } id)
             return null;
         if (stations.Get(id) is { } station &&
             await types.GetAsync(station.TypeId, cancellationToken) is { } type)
@@ -379,12 +385,17 @@ public sealed partial class InvBrokerService(
     [Method("GetInventory")]
     public PyValue GetInventory(ServiceCall call)
     {
+        var container = IdOf(call.Arg(0));
+        if (container == ContainerStructure)
+            return call.Session.GetInt("structureid") is { } structureId and > 0
+                ? Bind(new Context(Kind.Hangar, structureId, 0), call.Session)
+                : None;
+
         if (StationOf(call.Session) is not { } station)
-        {
             return None;
-        }
-        var container = call.Arg(0) is PyNone ? station : IdOf(call.Arg(0));
-        return container == ContainerHangar || container == station ? Bind(new Context(Kind.Hangar, station, 0), call.Session) : None;
+        return container is null || container == ContainerHangar || container == station
+            ? Bind(new Context(Kind.Hangar, station, 0), call.Session)
+            : None;
     }
 
     /// <summary>
@@ -752,15 +763,53 @@ public sealed partial class InvBrokerService(
         return itemIdIndex >= 0 && itemIdIndex < values.Count ? IdOf(values[itemIdIndex]) : null;
     }
 
-    /// <summary>Everything in the inventory as a <c>Rowset</c>.</summary>
+    /// <summary>Everything in the requested container as a <c>Rowset</c>.</summary>
     [Method("GetContainerContents")]
     public async ValueTask<PyValue> GetContainerContents(ServiceCall call)
     {
-        if (ContextOf(call) is not { } context)
-        {
-            return None;
-        }
+        if (IdOf(call.Arg(0)) is not { } itemId
+            || await ContainerContentsContextAsync(call.Session, itemId, call.Cancellation) is not { } context)
+            return InventoryWire.Rowset([]);
         return InventoryWire.Rowset(await ContentsAsync(context, call.Session, call.Cancellation));
+    }
+
+    private async ValueTask<Context?> ContainerContentsContextAsync(
+        ClientSession session, long itemId, CancellationToken cancellationToken)
+    {
+        if (itemId <= 0 || session.CharacterId is not { } character)
+            return null;
+        if (session.GetInt("structureid") == itemId && session.GetInt("shipid") == itemId)
+            return await ControlledStructureAsync(session, itemId, cancellationToken) is not null
+                ? new Context(Kind.Structure, itemId, 0)
+                : null;
+        var dockedLocation = StationOf(session) ?? session.GetInt("structureid");
+        if (dockedLocation is not { } station)
+        {
+            if (space is null || !space.IsInSpace(session) || space.SolarSystemOf(session) is not { } system)
+                return null;
+            if (itemId == system)
+                return new Context(Kind.Space, system, 0);
+            if (session.GetInt("shipid") == itemId)
+                return new Context(Kind.Ship, itemId, 0, CharacterShips.CargoFlag);
+            return await space.OpenAsync(session, itemId, cancellationToken) is { } container
+                ? new Context(Kind.Container, container.Id, 0, CharacterShips.ContainerFlag)
+                : null;
+        }
+        if (itemId == station)
+            return new Context(Kind.Hangar, station, 0);
+        if (await items.GetAsync(itemId, cancellationToken) is not { } item)
+            return null;
+        if (item.LocationId == station
+            && await types.GetAsync(item.TypeId, cancellationToken) is { CategoryId: ShipCategory }
+            && (item.OwnerId == character
+                || await CanAccessCorporationItemAsync(session, item, CorporationHangarOperation.Query, cancellationToken)))
+            return new Context(Kind.Ship, item.Id, 0, CharacterShips.CargoFlag);
+        if ((item.OwnerId == character
+                && await ships.IsOwnedDockedContainerAsync(itemId, character, station, cancellationToken))
+            || (await CanAccessCorporationItemAsync(session, item, CorporationHangarOperation.Query, cancellationToken)
+                && await ships.IsOwnedDockedContainerAsync(itemId, item.OwnerId, station, cancellationToken)))
+            return new Context(Kind.Container, item.Id, 0, CharacterShips.ContainerFlag);
+        return null;
     }
 
     /// <summary>How the client is told the room of a bay: <c>util.KeyVal(capacity, used)</c>.</summary>
@@ -1014,6 +1063,11 @@ public sealed partial class InvBrokerService(
         if (ContextOf(call) is not { } context || call.Session.CharacterId is not { } character)
             return None;
         var flag = FlagOf(call);
+        if (context.Kind == Kind.Hangar && stations.Get(context.ItemId) is not null)
+            return new PyObject(new PyStr("util.KeyVal"), new PyDict([
+                new(new PyStr("capacity"), new PyReal(9_000_000_000_000_000d)),
+                new(new PyStr("used"), new PyReal(0)),
+            ]));
         if (context.Kind is Kind.Structure or Kind.Hangar)
         {
             if (await ControlledStructureAsync(call.Session, context.ItemId, call.Cancellation) is { } controlled)

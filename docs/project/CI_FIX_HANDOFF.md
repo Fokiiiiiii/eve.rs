@@ -2,7 +2,23 @@
 
 The current status below is authoritative. Dated entries that follow are historical checkpoints from their stated time.
 
-## Current status (2026-10-29, runs 1221-1223)
+## Current status (2026-10-29, 3786dea9)
+
+- `3786dea9` pushed the station insufficient-funds fix. Push-triggered `ci.yml` run `40833436694`, focused Station run `40833460734`, and full `Eve.Services.Station.Tests` run `40833482780` are in progress.
+- Previous `ci.yml` run `40831344589` for `a5072e08` completed red: all Host shards passed, including the corrected Beyonce wire test; Station low-funds failed as expected before `3786dea9`. Skill starting points/training-speed checks also failed and remain CI blockers to the three-green-run requirement.
+- V24.01 `menusvc.py:1498-1499, 2777-2804` routes bookmark alignment through `_AlignTo`; `menusvc.py:2789` calls `CmdAlignTo` and ignores its nested result. eve.rs `BeyonceService.MachoBindObject` returns the bound handle and nested result as a two-item `PyTuple`, while `CmdAlignTo` returns `PyNone`.
+- Repair fix `e78dcb6a` removes the station-only `CustomNotify` branch and returns `NotEnoughMoney` with the attempted charge and available balance, matching EveJS v0.12.9 `repairRuntime.js:635-643`. V24.01 `base_repairshop.py:64-71` calls the station or structure RPC directly and does not replace the returned refusal.
+- Station.Tests and Host.Tests builds passed with zero warnings and errors after the latest merge. The focused repair test skipped because `EVE_PG_URL` was unset; the adjacent non-database Beyonce Host test passed. No PostgreSQL database was used.
+- Next: inspect all three runs, resolve blockers required for three consecutive green `ci.yml` runs, then update this note after each push.
+
+## Historical status (2026-10-29, df9121cc)
+
+- Host regression fixes are on main at `df9121cc`. The bookmark alignment test now seeds the active pilot state required by `SpaceSessions.Command` and keeps the client-correct `None` reply plus one recorded AlignTo command. The structure repair refusal assertion compares the full unchanged `ShipCondition`, whose damage value is a fraction rather than the quote's HP amount.
+- V24.01 evidence: `menusvc.py:2789` calls `CmdAlignTo` without consuming its return; `base_repairshop.py:66-68` dispatches station and structure repair RPCs. EveJS maps insufficient repair funds to `NotEnoughMoney` in both paths (`repairRuntime.js:635-643`). Current eve.rs still returns `CustomNotify` for station insufficiency at `RepairService.cs:164`, while the latest station test expects `NotEnoughMoney`; this is the next service fix.
+- After merging 64cc7599, the Host test project built with 0 warnings/errors. The non-database bookmark wire test passed 1/1; the repair service regression skipped because it requires `EVE_PG_URL`. Host shards 3/6 and 4/6 were run without a database lane: 105 passed / 38 skipped / 14 failed, and 98 passed / 37 skipped / 22 failed. Database-backed checks remain for Actions. No PostgreSQL database or graphical client was used.
+- Push CI run 40828607845 for `df9121cc` is queued. The current task still requires a repaired station insufficient-funds path and three consecutive green main CI runs.
+
+## Historical status (2026-10-29, runs 1221-1223)
 
 - The requested failures were reproduced from `python3 tools/dev/ci-status.py failures` for `38160549`, `31bc98af` and `6e67ff91`. The wallet count mismatch is already corrected in the current main tree: corporation founding records the 500 ISK fee as a personal debit, so the journal contains three personal entries. V24.01 fetches and renders personal transactions in `/home/user/eve-logic/eve/client/script/ui/services/accountsvc.py:107-118`, `ui/shared/neocom/wallet/personalTransactionsPanel.py:9-12` and `transactionsPanel.py:125-128`; the client consumes `OnAccountChange` and refreshes balances at `ui/shared/neocom/wallet/walletSvc.py:80-114`.
 - Added a corporation persistence regression for mutual-war invitations: it sends an invite, blocks a second owner, reconstructs Scheduler/EventBus/RelationStore and the RPC provider, then checks outgoing/incoming list rows and the blocked flag. The whole V24.01 client calls these reads at `/home/user/eve-logic/eve/client/script/ui/services/wars/mutualWarInvites.py:16,40`; the invite panel consumes `fromOwnerID`, `toOwnerID`, and `sentDate` and reloads on change at `ui/shared/neocom/corporation/war/warMutalWarInvite.py:63-80,89-105`. Local Corporations.Tests Release build passed with 0 warnings/errors; the database-free route regression passed 1/1 after fetch/merge. Agent run 1110 (`40806019090`) passed the full `Eve.Corporations.Tests` project with no failed tests or jobs. Push CI run 1239 (`40806004412`) is queued; the `failures 57d7b4ea` check also reports queued. No PostgreSQL database or graphical client was used.

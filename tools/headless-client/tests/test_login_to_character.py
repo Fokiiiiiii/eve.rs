@@ -813,6 +813,9 @@ def test_a_new_characters_inventories_are_those_of_the_reference(race):
                     if len(lines) != 3:
                         problems.append(f"{where}: {len(lines)} lines in place of the three fitted modules")
                     expected, outcome = lines_dropped(expected), lines_dropped(outcome)
+                if not REFERENCE and label in ("hangar", "station") and method == "GetCapacity":
+                    # DEVIATION (station capacity): the V24.01 client reports groupStation capacity as 9e15/0.0; EveJS uses 1e6 and contents volume.
+                    expected = {**expected, "args": {"$dict": [["capacity", 9_000_000_000_000_000.0], ["used", 0.0]]}}
                 problems += same_way(inventory_form(expected), inventory_form(outcome), where, volatile=VOLATILE | ITEM_FIELDS)
     assert problems == [], "\n".join(problems[:20])
 

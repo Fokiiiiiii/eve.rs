@@ -224,6 +224,24 @@ internal sealed class XmppClientSession(XmppChatHub hub, Action<string> send, Ac
             send($"<iq type='result' id='{XmppXml.Escape(id)}'/>");
             return;
         }
+        if (type == "get" && child?.Name == "query" && child.Attribute("xmlns") == "http://jabber.org/protocol/muc#admin"
+            && _phase == Phase.Bound && _link is { } adminQueryLink)
+        {
+            var to = iq.Attribute("to") ?? "";
+            var at = to.IndexOf('@');
+            var item = child.Child("item");
+            if (at > 0 && hub.IsConferenceDomain(to[(at + 1)..]) && item is not null)
+            {
+                var queryAttribute = item.Attribute("affiliation") is not null ? "affiliation" : "role";
+                var queryValue = item.Attribute(queryAttribute) ?? "";
+                var room = to[..at];
+                if (hub.TryGetLocalRoomAdminItemsXml(adminQueryLink, room, queryAttribute, queryValue, out var items))
+                {
+                    send($"<iq type='result' id='{XmppXml.Escape(id)}'><query xmlns='http://jabber.org/protocol/muc#admin'>{items}</query></iq>");
+                    return;
+                }
+            }
+        }
         if (type == "get" && child?.Name == "query" && _phase == Phase.Bound && _link is { } bound)
         {
             var to = iq.Attribute("to") ?? "";

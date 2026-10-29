@@ -20,6 +20,11 @@ MIN_DISTANCE_FROM_DISALLOWED_OBJECTS_METERS = 1_000_000
 PLACEMENT_TYPELIST_GROUP_IDS = frozenset((10, 925, 6, 995, 366, 988, 1991))
 PLACEMENT_TYPELIST_CATEGORY_IDS = frozenset((65, 40, 23, 3, 22))
 
+def grant_boarding_skills(client) -> None:
+    """The menu checks ship skills before Board; direct test RPCs must seed them first."""
+    reply = m.plain(client.call("slash", "SlashCmd", "/giveskill me all 5"))
+    assert "not found" not in str(reply).lower() and "Unknown command" not in str(reply), reply
+
 
 def prepare_rs_entry(client, run, ship_type_id, filament_type_id, system_id, planet_id, prepare_combat=None, filament_quantity=1, warp_min_range=100_000_000):
     race = undock.UNDOCK["races"][0]
@@ -49,6 +54,8 @@ def prepare_rs_entry(client, run, ship_type_id, filament_type_id, system_id, pla
     ship_reply = m.plain(client.call("slash", "SlashCmd", f"/giveitem {ship_type_id}"))
     assert "was added to your station hangar" in ship_reply, ship_reply
     ship_id = find_item(ship_type_id)
+    # This fixture calls the bound RPC directly, bypassing the client's missing-skill check in menuFunctions.Board.
+    grant_boarding_skills(client)
     ship_service = client.call("ship", "MachoBindObject", (station_id, 15), None)[0]
     client.call_bound(ship_service, "Board", ship_id, starter_ship_id)
     wait_quietly(client, 1.0)

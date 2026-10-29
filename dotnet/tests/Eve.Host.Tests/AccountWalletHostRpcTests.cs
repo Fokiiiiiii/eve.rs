@@ -79,7 +79,7 @@ public sealed class AccountWalletHostRpcTests
 
             var registry = new ServiceRegistry();
             registry.Register(new AccountService(wallets, corporations, transactions));
-            var dispatcher = new PacketDispatcher(registry);
+            PacketDispatcher dispatcher = new(registry);
             var capture = (PacketCapture)session.Sink!;
             var open = new SessionOpen((ulong)session.SessionId, (ulong)session.ClientId, 910,
                 0, "127.0.0.1", "EN", "GB");
@@ -129,6 +129,30 @@ public sealed class AccountWalletHostRpcTests
             Assert.Equal(4_834m, (await wallets.GetAsync(sender))!.Isk);
             Assert.Equal(5_138m, (await wallets.GetAsync(recipient))!.Isk);
             Assert.Equal(28m, await transactions.AccountBalanceAsync(new WalletAccount(corporation.Id, 1000)));
+
+            var restartedRegistry = new ServiceRegistry();
+            restartedRegistry.Register(new AccountService(
+                new PgWalletStore(source, walletSchema), corporations, new WalletTransactions(source, walletSchema)));
+            dispatcher = new PacketDispatcher(restartedRegistry);
+
+            Assert.Equal(new PyReal(4_834), await Call(8, "GetCashBalance", new PyInt(0)));
+            Assert.Equal(new PyReal(28), await Call(9, "GetCashBalance", new PyInt(1), new PyInt(1000)));
+            var personalJournal = Assert.IsType<PyList>(await Call(10, "GetTransactions", new PyInt(1000),
+                new PyInt(0), new PyInt(0), PyBool.False));
+            Assert.Equal(3, personalJournal.Items.Count);
+            Assert.Equal(new PyReal(-40.25), Field(personalJournal.Items[0], "amount"));
+            Assert.Equal(new PyReal(4_834), Field(personalJournal.Items[0], "balance"));
+            Assert.Equal(new PyReal(-125.75), Field(personalJournal.Items[1], "amount"));
+            Assert.Equal(new PyReal(-(double)CorporationStore.CorporationFoundingCost),
+                Field(personalJournal.Items[2], "amount"));
+            Assert.Equal(new PyReal(5_000), Field(personalJournal.Items[2], "balance"));
+
+            var corporationJournal = Assert.IsType<PyList>(await Call(11, "GetTransactions", new PyInt(1000),
+                new PyInt(0), new PyInt(0), PyBool.True));
+            Assert.Equal(2, corporationJournal.Items.Count);
+            Assert.Equal(new PyReal(-12.25), Field(corporationJournal.Items[0], "amount"));
+            Assert.Equal(new PyReal(28), Field(corporationJournal.Items[0], "balance"));
+            Assert.Equal(new PyReal(40.25), Field(corporationJournal.Items[1], "amount"));
         }
         finally
         {
@@ -146,6 +170,13 @@ public sealed class AccountWalletHostRpcTests
         Assert.Equal(MachoMessage.CallRsp, ((PyInt)state[0]).Value);
         var payload = (PyTuple)state[4];
         return payload.Items[0] is PySubStream { Decoded: { } inner } ? inner : payload.Items[0];
+    }
+
+    private static PyValue Field(PyValue row, string name)
+    {
+        var args = ((PyTuple)((PyObject)row).Args).Items;
+        var fields = Assert.IsType<PyDict>(args[1]);
+        return fields.Entries.Single(entry => ((PyStr)entry.Key).Value == name).Value;
     }
 
     private sealed class PacketCapture : IPacketSink

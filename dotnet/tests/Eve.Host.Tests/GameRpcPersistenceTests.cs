@@ -12,7 +12,7 @@ namespace Eve.Host.Tests;
 
 public sealed class GameRpcPersistenceTests
 {
-    [Fact]
+    [PgFact]
     public async Task Shared_settings_interference_and_killmail_use_existing_game_store_tables()
     {
         var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL");

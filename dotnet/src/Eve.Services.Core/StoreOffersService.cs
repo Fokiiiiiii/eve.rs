@@ -115,7 +115,7 @@ public sealed class StoreOffersService(
         var storeDisabled = (state?["config"] as JsonObject)?["enabled"] is JsonValue enabledValue &&
             enabledValue.TryGetValue<bool>(out var enabled) && !enabled;
         var offer = storeDisabled ? null : FindOffer(store?["offers"] as JsonArray, requestedValue);
-        var canPurchase = offer is not null;
+        var canPurchase = offer is not null && purchaseOffer is not null;
         var offerId = offer is null ? 0 : PositiveId(offer["id"], 0);
         var storeOfferValue = offer?["storeOfferID"];
         var storeOfferId = JsTruthy(storeOfferValue) ? JsString(storeOfferValue) : null;
@@ -124,7 +124,7 @@ public sealed class StoreOffersService(
             ("canPurchase", canPurchase ? PyBool.True : PyBool.False),
             ("offerID", canPurchase ? new PyInt(offerId) : PyNone.Instance),
             ("storeOfferID", canPurchase && storeOfferId is not null ? new PyStr(storeOfferId) : PyNone.Instance),
-            ("purchaseLimitedReason", canPurchase ? PyNone.Instance : new PyStr(storeDisabled ? "store_disabled" : "offer_unavailable")));
+            ("purchaseLimitedReason", canPurchase ? PyNone.Instance : new PyStr(storeDisabled ? "store_disabled" : offer is null ? "offer_unavailable" : "payment_unavailable")));
     }
 
     private static JsonObject? FindOffer(JsonArray? offers, PyValue requestedValue)

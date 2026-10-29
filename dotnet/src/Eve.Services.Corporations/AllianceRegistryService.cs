@@ -869,12 +869,11 @@ private static double RelationshipValue(PyValue value)
     {
         var (_,alliance) = await RequireAllianceMember(call);
         var contacts = await store.AllianceContactsAsync(alliance,call.Cancellation);
-        var addresses = contacts.Select(contact => (PyValue)new PyList([
-            new PyInt(contact.ContactId),new PyInt(0),new PyInt(contact.RelationshipId),new PyInt(contact.LabelMask)
-        ])).ToArray();
-        return Py.KeyVal(
-            ("addresses",Py.Rowset(["contactID","inWatchlist","relationshipID","labelMask"],addresses)),
-            ("blocked",Py.Rowset(["senderID"],Array.Empty<PyValue>())));
+        return new PyDict(contacts.Select(contact => new KeyValuePair<PyValue,PyValue>(
+            new PyInt(contact.ContactId),Py.KeyVal(
+                ("contactID",new PyInt(contact.ContactId)),
+                ("relationshipID",new PyInt(contact.RelationshipId)),
+                ("labelMask",new PyInt(contact.LabelMask))))).ToArray());
     }
 
     [Method("AddAllianceContact")]

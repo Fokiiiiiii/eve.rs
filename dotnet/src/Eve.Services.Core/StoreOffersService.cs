@@ -55,7 +55,7 @@ public sealed class StoreOffersService(
     private async ValueTask<PyValue> PurchaseAsync(ServiceCall call)
     {
         if (purchaseOffer is null)
-            throw MachoErrors.ThrowUserError("STORE_CHECKOUT_UNAVAILABLE");
+            return PyNone.Instance;
         var requestedStoreId = call.Kwarg("store_id");
         var storeId = requestedStoreId is null ? DefaultStoreId : PositiveId(requestedStoreId, 0);
         var state = await readStoreState(call.Cancellation).ConfigureAwait(false);

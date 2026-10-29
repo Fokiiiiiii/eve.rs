@@ -531,8 +531,24 @@ public class AllianceTests
             Assert.Equal(0x654321,edited.Color);
 
             var contacts = await service.CallAsync(Call(executor,"GetAllianceContacts"));
+            var contactEntry = Assert.Single(Assert.IsType<Eve.Marshal.PyDict>(contacts).Entries);
+            Assert.Equal(new Eve.Marshal.PyInt(outsiderCorp.Id),contactEntry.Key);
+            Assert.Equal(Eve.Marshal.MarshalCodec.Encode(Eve.Services.Py.KeyVal(
+                    ("contactID",new Eve.Marshal.PyInt(outsiderCorp.Id)),
+                    ("relationshipID",new Eve.Marshal.PyInt(7)),
+                    ("labelMask",new Eve.Marshal.PyInt(labelMask)))),
+                Eve.Marshal.MarshalCodec.Encode(contactEntry.Value));
             Assert.Equal(Eve.Marshal.MarshalCodec.Encode(contacts),
                 Eve.Marshal.MarshalCodec.Encode(await service.CallAsync(Call(executor,"GetContactList"))));
+            var labels = await service.CallAsync(Call(executor,"GetLabels"));
+            var restartedStore = new CorporationStore(rig.Source,rig.Characters,rig.Wallets,rig.Transactions,rig.Skills,
+                () => rig.Now,corporationSchema);
+            var restartedService = (Eve.Services.IService)new Eve.Services.Corporations.AllianceRegistryService(
+                restartedStore,rig.Characters,() => rig.Now,relations:relations);
+            Assert.Equal(Eve.Marshal.MarshalCodec.Encode(contacts),
+                Eve.Marshal.MarshalCodec.Encode(await restartedService.CallAsync(Call(executor,"GetContactList"))));
+            Assert.Equal(Eve.Marshal.MarshalCodec.Encode(labels),
+                Eve.Marshal.MarshalCodec.Encode(await restartedService.CallAsync(Call(executor,"GetLabels"))));
             await service.CallAsync(Call(executor,"RemoveLabels",
                 new Eve.Marshal.PyList([new Eve.Marshal.PyInt(outsiderCorp.Id)]),new Eve.Marshal.PyInt(labelMask)));
             Assert.Equal(0,Assert.Single(await store.AllianceContactsAsync(alliance.Id)).LabelMask);

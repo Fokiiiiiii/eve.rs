@@ -394,8 +394,8 @@ public sealed class MarketHostTests : IAsyncLifetime
 
         }
 
-        // A 40 ISK Upwell order pays the combined 100 ISK broker minimum.
-        Assert.Equal(9900m, (await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).GetAsync(seller))!.Isk);
+        // A 40 ISK Upwell order pays the 100 ISK broker minimum and 25 ISK SCC minimum surcharge.
+        Assert.Equal(9875m, (await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).GetAsync(seller))!.Isk);
 
         await new MarketStore(source,Schema("EVE_MARKET_SCHEMA")).SeedNpcAsync(
             [new MarketNpcSeed("public-tritanium",Tritanium,false,12,10,MarketRules.RangeRegion,

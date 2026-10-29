@@ -110,9 +110,13 @@ public class TrainingServiceTests
     [PgFact]
     public async Task Alpha_queue_refusals_use_client_errors_and_allow_pausing_a_blocked_queue()
     {
-        var (rig, session, _) = await ReadyAsync(isAlphaClone: _ => true);
+        var rig = await Rig.CreateAsync(isAlphaClone: _ => true);
         await using var owned = rig;
-        await rig.GrantFreeSkillPointsAsync(Character, 4_754_000);
+        var character = rig.CharacterId;
+        await rig.GrantAsync(character, (3300, 4, 45_255), (3301, 1, 250), (3315, 0, 0));
+        var (session, _) = Rig.Session(character);
+        rig.Sessions.Enter(character, session);
+        await rig.GrantFreeSkillPointsAsync(character, 4_754_000);
 
         var sizeError = await Assert.ThrowsAsync<MachoWrappedException>(async () => await Call(rig, session, "SaveNewQueue", [Queue((0, 3300, 5))]));
         Assert.Equal("SkillInQueueOverAlphaSpTrainingSize", sizeError.Error.UserErrorMessage);

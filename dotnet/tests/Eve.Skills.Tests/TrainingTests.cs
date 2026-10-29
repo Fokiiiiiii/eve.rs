@@ -62,7 +62,8 @@ public class TrainingPointsTests
         Assert.Equal(QueueError.RequiresOmegaCloneState,
             Training.Validate([new(3301, 2)], owned, alphaCatalog, Rate, 0, isAlphaClone: true, raceId: 1));
         Assert.Equal(QueueError.OverAlphaSpTrainingSize,
-            Training.Validate([new(3301, 2)], owned, alphaCatalog, Rate, 0, freeSkillPoints: 4_998_600, isAlphaClone: true, raceId: 1));
+            Training.Validate([new(3301, 1)], new Dictionary<int, CharacterSkill> { [3301] = new(3301, 0, 0) },
+                alphaCatalog, Rate, 0, freeSkillPoints: 4_999_800, isAlphaClone: true, raceId: 1));
     }
 }
 

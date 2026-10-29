@@ -84,6 +84,10 @@ Production FW registration is in dotnet/src/Eve.Host/Rpc/CoreRpc.cs and binds ca
 
 Local verification before merge: the Eve.Host.Tests project built with 0 warnings and 0 errors, and the focused Host socket test passed (1 passed, 0 failed, 0 skipped). After merging origin/main, the same focused test passed again with its updated transport dispatcher. No database was used. A graphical-client run was not performed.
 
+### CI follow-up for skill rules push 64cc75992fc3adfe4c8eb7ba802fa73dcc58f08a
+
+Selected Actions run 40827781042 passed all 96 SP-threshold cases but failed the alpha service integration case because it used a fixed character ID instead of the created character row; the service consequently had no persisted race ID. The test now uses `Rig.CharacterId`. Push CI run 40827765713 reported EveJS starter skill-point totals of 384036 while the client-ceiling implementation returns 384047; the starter and login oracle expectations now use 384047, which follows the client formula. That CI run also exposed an outdated structure-market balance expectation (the code charges the 100 ISK broker minimum plus 25 ISK SCC minimum) and a bookmark Host test that did not explicitly activate its personal folder; both tests now state their intended conditions. The pure alpha unit test now requests a level allowed to Alpha when testing the SP cap. After merge, all three touched test projects built; 99 focused skill cases passed and the Host wire test passed 1/1. Database-backed alpha, market and bookmark cases need Actions verification. No database was used locally and no graphical-client run was made.
+
 
 ### GitHub Actions status for 06550ad4ded496f93f9501c47599dfa99334dde6
 

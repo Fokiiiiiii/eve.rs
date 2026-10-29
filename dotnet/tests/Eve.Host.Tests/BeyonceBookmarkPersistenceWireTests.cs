@@ -41,6 +41,7 @@ public partial class HostServerTests
             await BookmarkStore.MigrateAsync(source, schema);
             var store = new BookmarkStore(source, schema, () => FixedNowMs);
             var folder = await store.AddFolderAsync(characterId, true, "Personal", "");
+            await store.SetKnownFolderActiveAsync(characterId, folder.Folder.FolderId, true);
             var saved = await store.CreateBookmarkAsync(characterId, folder.Folder.FolderId,
                 new BookmarkTarget(targetItemId, 4, systemId), "Host wire target", "", BookmarkRules.ExpiryNone, null);
             var bookmarkMgr = new AccessGroupBookmarkMgrService(

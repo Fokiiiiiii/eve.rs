@@ -16,9 +16,9 @@ public class TrainingServiceTests
 
     /// <summary>A rig with a character that has Gunnery IV, Small Hybrid Turret I and Repair Systems untrained, and its session in the game.</summary>
     private static async Task<(Rig Rig, ClientSession Session, Capture Sink)> ReadyAsync(
-        TrainingSettings? settings = null, Eve.Scheduler.LocalTimers? localTimers = null, bool scheduleAnnouncer = false)
+        TrainingSettings? settings = null, Eve.Scheduler.LocalTimers? localTimers = null, bool scheduleAnnouncer = false, Func<long, bool>? isAlphaClone = null)
     {
-        var rig = await Rig.CreateAsync(settings, localTimers: localTimers, scheduleAnnouncer: scheduleAnnouncer);
+        var rig = await Rig.CreateAsync(settings, localTimers: localTimers, scheduleAnnouncer: scheduleAnnouncer, isAlphaClone: isAlphaClone);
         await rig.GrantAsync(Character, (3300, 4, 45255), (3301, 1, 250), (3315, 0, 0));
         var (session, sink) = Rig.Session(Character);
         rig.Sessions.Enter(Character, session);
@@ -105,6 +105,21 @@ public class TrainingServiceTests
         var tooMany = await Assert.ThrowsAsync<MachoWrappedException>(async () => await Call(rig, session, "SaveNewQueue", [many]));
         Assert.Equal("QueueTooManySkills", tooMany.Error.UserErrorMessage);
         Assert.Equal(new PyInt(150), Assert.Single(((PyDict)((PyTuple)((PyTuple)((PyObjectEx)tooMany.Error.Payload).Header).Items[1]).Items[1]).Entries).Value);
+    }
+
+    [PgFact]
+    public async Task Alpha_queue_refusals_use_client_errors_and_allow_pausing_a_blocked_queue()
+    {
+        var (rig, session, _) = await ReadyAsync(isAlphaClone: _ => true);
+        await using var owned = rig;
+        await rig.GrantFreeSkillPointsAsync(Character, 4_754_000);
+
+        var sizeError = await Assert.ThrowsAsync<MachoWrappedException>(async () => await Call(rig, session, "SaveNewQueue", [Queue((0, 3300, 5))]));
+        Assert.Equal("SkillInQueueOverAlphaSpTrainingSize", sizeError.Error.UserErrorMessage);
+
+        Assert.Equal(PyNone.Instance, await Call(rig, session, "SaveNewQueue", [Queue((0, 3300, 5))], Activate(false)));
+        var omegaError = await Assert.ThrowsAsync<MachoWrappedException>(async () => await Call(rig, session, "SaveNewQueue", [Queue((0, 3301, 2))]));
+        Assert.Equal("SkillInQueueRequiresOmegaCloneState", omegaError.Error.UserErrorMessage);
     }
 
     [PgFact]

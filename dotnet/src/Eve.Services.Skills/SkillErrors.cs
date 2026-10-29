@@ -15,6 +15,8 @@ public static class SkillErrors
         QueueError.PreviouslyTrained => MachoErrors.ThrowUserError("QueueCannotTrainPreviouslyTrainedSkills"),
         QueueError.OutOfOrder => MachoErrors.ThrowUserError("QueueCannotPlaceSkillLevelsOutOfOrder"),
         QueueError.BeforeRequirements => MachoErrors.ThrowUserError("QueueCannotPlaceSkillBeforeRequirements"),
+        QueueError.OverAlphaSpTrainingSize => MachoErrors.ThrowUserError("SkillInQueueOverAlphaSpTrainingSize"),
+        QueueError.RequiresOmegaCloneState => MachoErrors.ThrowUserError("SkillInQueueRequiresOmegaCloneState"),
         _ => throw new ArgumentOutOfRangeException(nameof(error), error, "a queue error the client has no message for"),
     };
 

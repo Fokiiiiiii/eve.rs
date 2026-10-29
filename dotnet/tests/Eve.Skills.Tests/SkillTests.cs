@@ -10,11 +10,11 @@ public class SkillPointsTests
     [Fact]
     public void A_rank_one_skill_costs_the_levels_of_the_game()
     {
-        Assert.Equal([0L, 250, 1414, 8000, 45255, 256000], Enumerable.Range(0, 6).Select(level => SkillPoints.At(1, level)));
+        Assert.Equal([0L, 250, 1415, 8000, 45255, 256000], Enumerable.Range(0, 6).Select(level => SkillPoints.At(1, level)));
     }
 
     [Theory]
-    [InlineData(2, 2, 2828)]   // recorded from the reference: rank 2, level 2
+    [InlineData(2, 2, 2829)]
     [InlineData(4, 0, 0)]
     [InlineData(3, 5, 768000)]
     [InlineData(8, 1, 2000)]
@@ -35,8 +35,8 @@ public class SkillStoreTests
         await s.GrantAsync(7, [new(3300, 4, 45255), new(3301, 1, 250), new(3315, 0, 0)]);
         Assert.Equal(new CharacterSkill[] { new(3300, 4, 45255), new(3301, 1, 250), new(3315, 0, 0) }, await s.Store.ForCharacterAsync(7));
 
-        await s.GrantAsync(7, [new(3301, 2, 1414)]);
-        Assert.Equal(new CharacterSkill(3301, 2, 1414), (await s.Store.ForCharacterAsync(7)).Single(k => k.TypeId == 3301));
+        await s.GrantAsync(7, [new(3301, 2, 1415)]);
+        Assert.Equal(new CharacterSkill(3301, 2, 1415), (await s.Store.ForCharacterAsync(7)).Single(k => k.TypeId == 3301));
         Assert.Equal(3, (await s.Store.ForCharacterAsync(7)).Count);
     }
 

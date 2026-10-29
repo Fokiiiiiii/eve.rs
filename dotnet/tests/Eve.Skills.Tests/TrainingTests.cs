@@ -2,15 +2,34 @@ namespace Eve.Skills.Tests;
 
 public class TrainingPointsTests
 {
+    public static IEnumerable<object[]> ClientThresholds =>
+        from rank in Enumerable.Range(1, 16)
+        from level in Enumerable.Range(0, SkillPoints.MaxLevel + 1)
+        select new object[] { rank, level };
+
+    [Theory]
+    [MemberData(nameof(ClientThresholds))]
+    public void Stored_and_training_skill_points_match_the_client_ceiling_for_every_rank_and_level(int rank, int level)
+    {
+        var expected = level == 0 ? 0 : (long)Math.Ceiling(rank * 250d * Math.Pow(2, 2.5 * (level - 1)));
+        Assert.Equal(expected, SkillPoints.At(rank, level));
+        Assert.Equal(expected, SkillPoints.ForTraining(rank, level));
+        Assert.Equal(level, SkillPoints.LevelAt(rank, expected));
+        if (level > 0)
+        {
+            Assert.Equal(level - 1, SkillPoints.LevelAt(rank, expected - 1));
+        }
+    }
+
     [Theory]
     [InlineData(1, 1, 250)]
-    [InlineData(1, 2, 1415)]      // 1414.2 rounded up, as the reference's queue has it (a starting skill has 1414)
+    [InlineData(1, 2, 1415)]
     [InlineData(1, 3, 8000)]
     [InlineData(1, 4, 45255)]
     [InlineData(1, 5, 256000)]
     [InlineData(2, 2, 2829)]
     [InlineData(4, 1, 1000)]
-    [InlineData(5, 2, 7072)]      // recorded from the reference: a rank 5 skill going to level II
+    [InlineData(5, 2, 7072)]
     [InlineData(1, 0, 0)]
     [InlineData(1, 9, 256000)]    // beyond the top counts as the top
     [InlineData(1, -1, 0)]
@@ -26,6 +45,25 @@ public class TrainingPointsTests
     [InlineData(1, 256000, 5)]
     [InlineData(1, 999999, 5)]
     public void The_level_of_some_points_is_the_highest_they_reach(int rank, long points, int level) => Assert.Equal(level, SkillPoints.LevelAt(rank, points));
+
+    [Fact]
+    public void Alpha_queues_refuse_levels_and_skill_points_beyond_the_clone_limits()
+    {
+        var alphaCatalog = new SkillCatalog(
+            [new SkillType(3301, "Small Hybrid Turret", 255, "Gunnery", true, 1, 167, 168)],
+            new Dictionary<int, IReadOnlyList<StartingSkill>>(),
+            alphaMaxLevelsByRace: new Dictionary<int, IReadOnlyDictionary<int, int>>
+            {
+                [1] = new Dictionary<int, int> { [3301] = 1 },
+            });
+        var owned = new Dictionary<int, CharacterSkill> { [3301] = new(3301, 1, 250) };
+        double Rate(SkillType type) => 30;
+
+        Assert.Equal(QueueError.RequiresOmegaCloneState,
+            Training.Validate([new(3301, 2)], owned, alphaCatalog, Rate, 0, isAlphaClone: true, raceId: 1));
+        Assert.Equal(QueueError.OverAlphaSpTrainingSize,
+            Training.Validate([new(3301, 2)], owned, alphaCatalog, Rate, 0, freeSkillPoints: 4_998_600, isAlphaClone: true, raceId: 1));
+    }
 }
 
 public class TrainingMathTests

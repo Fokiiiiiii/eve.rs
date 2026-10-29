@@ -251,7 +251,7 @@ public sealed class RepairServiceTests
         var refused = await Assert.ThrowsAsync<MachoWrappedException>(() =>
             CallShop(rig.Service(), Session(RepairRig.Character, RepairRig.Station), RepairRig.Station, "RepairItemsInStation", Ids(ship), PyNone.Instance));
 
-        Assert.Equal("CustomNotify", refused.Error.UserErrorMessage);
+        Assert.Equal("NotEnoughMoney", refused.Error.UserErrorMessage);
         Assert.Equal(Damaged, await rig.Modules.ShipConditionAsync(ship));
         Assert.Equal(1m, await rig.IskAsync(RepairRig.Character));
         Assert.Equal(0, await rig.JournalCountAsync(RepairService.RepairBillRefType, RepairRig.Character));

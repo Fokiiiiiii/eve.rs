@@ -36,6 +36,8 @@ public enum QueueError
     PreviouslyTrained,
     OutOfOrder,
     BeforeRequirements,
+    OverAlphaSpTrainingSize,
+    RequiresOmegaCloneState,
 }
 
 /// <summary>What the skill history says happened.</summary>
@@ -66,6 +68,8 @@ public static class Training
 
     /// <summary>The lines a queue can have.</summary>
     public const int MaxQueueLength = 150;
+
+    public const long AlphaMaxTrainingSkillPoints = 5_000_000;
 
     /// <summary>The longest a queue may take to run: ten years.</summary>
     public const long MaxQueueTicks = 10L * 365 * 24 * 60 * 60 * TicksPerSecond;
@@ -127,7 +131,7 @@ public static class Training
     /// Whether a queue can be saved, given the skills the character has (as they are now, not as they will be): the first rule it breaks, or null.
     /// The lines are checked in order, each against what the lines before it will have trained.
     /// </summary>
-    public static QueueError? Validate(IReadOnlyList<QueueEntry> entries, IReadOnlyDictionary<int, CharacterSkill> skills, SkillCatalog catalog, Func<SkillType, double> pointsPerMinute, long now)
+    public static QueueError? Validate(IReadOnlyList<QueueEntry> entries, IReadOnlyDictionary<int, CharacterSkill> skills, SkillCatalog catalog, Func<SkillType, double> pointsPerMinute, long now, long freeSkillPoints = 0, bool isAlphaClone = false, int raceId = 0, long pointsAlreadyTrainedInCurrentLine = 0)
     {
         if (entries.Count > MaxQueueLength)
         {
@@ -164,6 +168,18 @@ public static class Training
                 return QueueError.BeforeRequirements;
             }
             levels[entry.TypeId] = entry.ToLevel;
+        }
+        if (isAlphaClone)
+        {
+            if (entries.Any(entry => entry.ToLevel > catalog.AlphaMaxLevel(raceId, entry.TypeId)))
+            {
+                return QueueError.RequiresOmegaCloneState;
+            }
+            var additionalPoints = whole.Entries.Sum(entry => entry.DestinationPoints - entry.StartPoints) - pointsAlreadyTrainedInCurrentLine;
+            if (skills.Values.Sum(skill => skill.SkillPoints) + freeSkillPoints + additionalPoints > AlphaMaxTrainingSkillPoints)
+            {
+                return QueueError.OverAlphaSpTrainingSize;
+            }
         }
         return null;
     }

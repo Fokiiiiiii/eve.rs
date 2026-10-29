@@ -45,21 +45,37 @@ public partial class HostServerTests
     {
         const long pilot = 90_001;
         const long agent = 500;
-        var mission = new JsonObject { ["agentID"] = agent, ["runtimeStatus"] = "accepted", ["objectiveMode"] = "agent" };
+        const long completedAgent = 501;
         var service = new MissionTrackerMgrService(
             readAllMissionObjectives: (_, agentId, _, _) =>
-                ValueTask.FromResult<PyValue?>(MissionTrackerGameStoreProjection.ReadAllObjectives(mission, agentId, false)),
+                ValueTask.FromResult<PyValue?>(MissionTrackerGameStoreProjection.ReadAllObjectives(
+                    new JsonObject
+                    {
+                        ["agentID"] = agentId,
+                        ["runtimeStatus"] = "accepted",
+                        ["objectiveMode"] = agentId == completedAgent ? "encounter" : "agent",
+                        ["objectiveCompleted"] = agentId == completedAgent,
+                    }, agentId, false)),
             isInActiveDungeon: (_, _) => ValueTask.FromResult<bool?>(true));
         Start(configure: registry => registry.Register(service),
             sessionOpened: session => session.Set("charid", new PyInt(pilot)));
 
         var (front, open) = await OpenFrontAsync();
-        var objectives = Assert.IsType<PyList>(await HostRpcAsync(front, open, 1, "missionTrackerMgr",
+        var info = Assert.IsType<PyList>(await HostRpcAsync(front, open, 1, "missionTrackerMgr",
+            "GetMissionInfoItems", new PyInt(agent)));
+        Assert.Equal("TalkToAgent", WireText(info.Items[0]));
+        Assert.Equal(agent, WireInteger(info.Items[1]));
+
+        var completedInfo = Assert.IsType<PyList>(await HostRpcAsync(front, open, 2, "missionTrackerMgr",
+            "GetMissionInfoItems", new PyInt(completedAgent)));
+        Assert.Equal("AllObjectivesComplete", WireText(completedInfo.Items[0]));
+
+        var objectives = Assert.IsType<PyList>(await HostRpcAsync(front, open, 3, "missionTrackerMgr",
             "GetAllMissionObjectives", new PyInt(agent)));
         Assert.Equal(2, objectives.Items.Count);
         Assert.Equal("TalkToAgent", WireText(Assert.IsType<PyTuple>(objectives.Items[0]).Items[0]));
         Assert.Equal(agent, WireInteger(Assert.IsType<PyTuple>(objectives.Items[0]).Items[1]));
-        Assert.Same(PyBool.True, await HostRpcAsync(front, open, 2, "missionTrackerMgr", "IsInActiveDungeonID",
+        Assert.Same(PyBool.True, await HostRpcAsync(front, open, 4, "missionTrackerMgr", "IsInActiveDungeonID",
             new PyInt(agent)));
     }
 }

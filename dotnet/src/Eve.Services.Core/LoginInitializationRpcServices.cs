@@ -461,10 +461,25 @@ public sealed class MissionTrackerMgrService(
         return AsList(info);
     }
 
-    private ValueTask<PyValue?> ReadMissionInfoItemsAsync(long characterId, long agentId, ClientSession session, CancellationToken cancellation) =>
-        readMissionInfoItems is null
-            ? ValueTask.FromResult<PyValue?>(null)
-            : readMissionInfoItems(characterId, agentId, session, cancellation);
+    private async ValueTask<PyValue> ReadMissionInfoItemsAsync(long characterId, long agentId, ClientSession session, CancellationToken cancellation)
+    {
+        if (readAllMissionObjectives is not null)
+        {
+            var objectives = await readAllMissionObjectives(characterId, agentId, session, cancellation);
+            return objectives switch
+            {
+                PyList list when list.Items.Count > 0 => AsList(list.Items[0]),
+                PyTuple tuple when tuple.Items.Count > 0 => AsList(tuple.Items[0]),
+                null => PyNone.Instance,
+                _ => AsList(objectives),
+            };
+        }
+
+        var info = readMissionInfoItems is null
+            ? null
+            : await readMissionInfoItems(characterId, agentId, session, cancellation);
+        return AsList(info);
+    }
 
     private static PyValue AsList(PyValue? value) => value switch
     {

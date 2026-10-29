@@ -698,6 +698,31 @@ public partial class HostServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task MachoNet_server_status_wire_contains_the_login_client_fields()
+    {
+        Start();
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync(); // the initial state
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(open, 1, "machoNet", "GetServerStatus"))));
+        var reply = Assert.IsType<Send>(await front.ReceiveAsync());
+        var answer = Assert.IsType<PyTuple>(Result(MarshalCodec.Decode(reply.Payload)));
+        Assert.Equal(2, answer.Items.Count);
+        var statusMessage = Assert.IsType<PyTuple>(answer.Items[0]);
+        Assert.Equal("/Carbon/MachoNet/ServerStatus/OK", T(statusMessage.Items[0]));
+        Assert.IsType<PyDict>(statusMessage.Items[1]);
+
+        var serverStatus = Assert.IsType<PyDict>(answer.Items[1]).Entries
+            .ToDictionary(entry => T(entry.Key)!, entry => entry.Value);
+        Assert.IsType<PyReal>(serverStatus["boot_version"]);
+        Assert.IsType<PyInt>(serverStatus["boot_build"]);
+        Assert.Equal("eve.rs", T(serverStatus["boot_codename"]));
+        Assert.Equal("V24.01@ccp", T(serverStatus["update_info"]));
+    }
+
+    [Fact]
     public async Task Scan_manager_host_wire_binds_and_returns_the_registered_system_snapshot()
     {
         const long systemId = 30_000_142;

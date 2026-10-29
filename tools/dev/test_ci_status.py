@@ -5,7 +5,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MODULE = Path(__file__).with_name("ci-status.py")
@@ -78,6 +80,19 @@ class WindowsAndPrePushCoverageTests(unittest.TestCase):
         self.assertIn("tools/windows/start-server.ps1", windows)
         self.assertIn("tests/test_login_to_character.py", windows)
         self.assertIn('read_text(encoding="utf-8")', fixture_test)
+
+
+class WorkflowDispatchTests(unittest.TestCase):
+    def test_nightly_dispatch_sends_no_workflow_inputs(self):
+        args = SimpleNamespace(workflow="ci-nightly.yml", ref="main", jobs="all", test_file="all")
+        with patch.object(ci_status, "request", return_value=(204, b"", {})) as request:
+            ci_status.dispatch(args, "token")
+        request.assert_called_once_with(
+            "/actions/workflows/ci-nightly.yml/dispatches",
+            "token",
+            method="POST",
+            body={"ref": "main", "inputs": {}},
+        )
 
 
 class FailureParsingTests(unittest.TestCase):

@@ -297,7 +297,9 @@ def fight(character: int, ship: int, step: Step, bomb: int) -> None:
         assert completed(character, step.mission) == 0, f"mission {step.mission}: a fetch step completed without the turn-in"
     else:
         assert completed(character, step.mission) == 1, f"mission {step.mission}: the kill did not complete"
-        assert reward_total(character) - reward_before == step.reward, (step.mission, step.reward, reward_total(character) - reward_before)
+        paid = reward_total(character) - reward_before
+        expected = step.reward - int(mission_reward_tax(character, step.reward))
+        assert paid == expected, (step.mission, paid, expected)
         for faction, gain in extra_standings_of(step.mission):
             change = standings_of(character).get(faction, 0.0) - standing_before.get(faction, 0.0)
             assert abs(change - gain / 10) < 1e-6, f"mission {step.mission}: the standing toward {faction} moved {change}, expected {gain / 10}"

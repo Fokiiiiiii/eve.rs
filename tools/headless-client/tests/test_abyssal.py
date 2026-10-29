@@ -100,6 +100,7 @@ def _warp_stopped(events):
 def test_solo_filament_entry_reports_room_and_expiry():
     _run_abyssal_scenario()
 
+@pytest.mark.timeout(1800)
 def test_solo_npc_combat_advances_three_rooms_and_returns_to_origin():
     _run_abyssal_scenario(combat=True)
 

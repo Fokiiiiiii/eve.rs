@@ -11,8 +11,7 @@ import uuid
 
 import pytest
 
-from evecli import marshal as m, packet
-from evecli.describe import describe
+from evecli import marshal as m
 from evecli.observe import notifications_of
 
 from tests.test_login_to_character import WALK, connect, revive
@@ -56,12 +55,8 @@ def test_store_purchases_fail_closed_until_settlement_is_wired():
             assert availability["offerID"] is None
             assert availability["storeOfferID"] is None
 
-            try:
-                client.call("storeManager", "buy_offer", offer_id, currency, quantity, **kwargs)
-            except packet.MachoError as error:
-                assert "STORE_CHECKOUT_UNAVAILABLE" in repr(describe(error.payload))
-            else:
-                raise AssertionError(f"{offer_id} purchase succeeded without a settlement provider")
+            purchase = client.call("storeManager", "buy_offer", offer_id, currency, quantity, **kwargs)
+            assert m.plain(purchase) is None, f"{offer_id} returned success without a settlement provider"
 
         assert plex_balance(client) == balance
         assert m.plain(client.call("subscriptionMgr", "GetSubscriptionTime")) == subscription

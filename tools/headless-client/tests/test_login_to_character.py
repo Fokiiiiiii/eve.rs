@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import os
 import re
 import uuid
@@ -522,10 +523,64 @@ def expand(step, shared):
         return step["ok"]
     return json.loads(text.replace('{"$same": "GetSkills"}', json.dumps(shared)))
 
+# Keep EveJS captures raw; compare fresh-character skill replies using the V24.01 client rules in DEVIATIONS.md.
+def _skill_entry_values(described):
+    if not isinstance(described, dict):
+        return None
+    objectex = described.get("$objectex")
+    structure = objectex.get("$tuple") if isinstance(objectex, dict) else None
+    if not isinstance(structure, list) or len(structure) < 2:
+        return None
+    token, values = structure[0], structure[1]
+    if not isinstance(token, dict) or not token.get("$token", "").endswith(".CharacterSkillEntry"):
+        return None
+    if not isinstance(values, dict) or not isinstance(values.get("$tuple"), list) or len(values["$tuple"]) < 4:
+        return None
+    return values["$tuple"]
+
+def _client_skill_oracle(described, recorded_total=None, client_total=None):
+    if isinstance(described, list):
+        return [_client_skill_oracle(value, recorded_total, client_total) for value in described]
+    if not isinstance(described, dict):
+        return described
+    result = {key: _client_skill_oracle(value, recorded_total, client_total) for key, value in described.items()}
+    values = _skill_entry_values(result)
+    if values is not None:
+        level, rank = min(int(values[1]), 5), int(values[3])
+        values[2] = 0 if level <= 0 else math.ceil(250 * rank * 2 ** (2.5 * (level - 1)))
+    if recorded_total is not None and result.get("skillPoints") == recorded_total:
+        result["skillPoints"] = client_total
+    pairs = result.get("$dict")
+    if recorded_total is not None and isinstance(pairs, list):
+        for pair in pairs:
+            if isinstance(pair, list) and len(pair) == 2 and pair[0] == "skillPoints" and pair[1] == recorded_total:
+                pair[1] = client_total
+    return result
+
+def _character_skill_points(described):
+    values = _skill_entry_values(described)
+    if values is not None:
+        return int(values[2])
+    if isinstance(described, list):
+        return sum(_character_skill_points(value) for value in described)
+    if isinstance(described, dict):
+        return sum(_character_skill_points(value) for value in described.values())
+    return 0
+
+def _client_skill_totals(race):
+    recorded_total = next(step["ok"] for step in race["calls"] if step["call"][1] == "GetSkillPoints")
+    all_skills = next(step["ok"] for step in race["calls"] if step["call"][1] == "GetAllSkills")
+    if isinstance(all_skills, dict) and all_skills.get("$same") == "GetSkills":
+        all_skills = next(step["ok"] for step in race["calls"] if step["call"][1] == "GetSkills")
+    client_total = _character_skill_points(_client_skill_oracle(all_skills))
+    return int(recorded_total), client_total
+
 @pytest.mark.parametrize("race", SKILLS["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_a_new_character_has_the_skills_the_reference_gives(race):
     run = uuid.uuid4().hex[:10]
     ids: dict[int, int] = {}
+    if not REFERENCE:
+        recorded_total, client_total = _client_skill_totals(race)
     with connect(f"walk-skills-{run}") as client:
         service, method, *args = [
             x for x in [race["create"]["call"][0], race["create"]["call"][1], *[revive(a, run, ids, RECORDED_SKILLS_RUN) for a in race["create"]["call"][2]]]
@@ -555,6 +610,18 @@ def test_a_new_character_has_the_skills_the_reference_gives(race):
                 problems.append(f"{where}: recorded {'ok' if 'ok' in step else 'error'}, got {kind}: {brief(outcome)}")
                 continue
             expected = expand(step, shared)
+            if not REFERENCE:
+                expected = _client_skill_oracle(expected, recorded_total, client_total)
+                if method == "GetSkillPoints" and expected == recorded_total:
+                    expected = client_total
+                if method == "MachoBindObject":
+                    bound_call = described.get("$tuple") if isinstance(described, dict) else None
+                    if bound_call and bound_call[0] == "GetSkillPoints" and expected["$tuple"][1] == recorded_total:
+                        expected["$tuple"][1] = client_total
+                if method == "GetAttributes":
+                    set_attribute(expected["$dict"], 164, 19)
+                if method == "GetRespecInfo":
+                    set_attribute(expected["args"]["$dict"], "freeRespecs", 2)
             if method == "GetMySkillHandler":
                 # the moniker names the character it is for
                 expected, outcome = blank(expected, "args", "$tuple", 2), blank(outcome, "args", "$tuple", 2)
@@ -816,6 +883,35 @@ def set_attribute(attributes: list, attribute: int, value) -> None:
             return
     raise AssertionError(f"attribute {attribute} is not in the recording")
 
+def _client_character_attributes(described):
+    if isinstance(described, list):
+        result = [_client_character_attributes(value) for value in described]
+        if len(result) == 2 and result[0] == "attributes" and isinstance(result[1], dict):
+            attributes = result[1].get("$dict")
+            if isinstance(attributes, list) and any(pair[0] == 164 for pair in attributes):
+                set_attribute(attributes, 164, 19)
+        return result
+    if not isinstance(described, dict):
+        return described
+    result = {key: _client_character_attributes(value) for key, value in described.items()}
+    attributes = result.get("attributes")
+    if isinstance(attributes, dict):
+        values = attributes.get("$dict")
+        if isinstance(values, list) and any(pair[0] == 164 for pair in values):
+            set_attribute(values, 164, 19)
+    return result
+
+def _client_charisma_events(described, character_id):
+    if isinstance(described, list):
+        result = [_client_charisma_events(value, character_id) for value in described]
+        if (len(result) >= 6 and result[0] == "OnModuleAttributeChange" and result[1] == character_id
+                and result[3] == 164):
+            result[5] = 19
+        return result
+    if isinstance(described, dict):
+        return {key: _client_charisma_events(value, character_id) for key, value in described.items()}
+    return described
+
 @pytest.mark.parametrize("race", DOGMA["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_a_new_characters_dogma_is_that_of_the_reference(race):
     run = uuid.uuid4().hex[:10]
@@ -840,6 +936,10 @@ def test_a_new_characters_dogma_is_that_of_the_reference(race):
     assert len(recorded_ids) == len(given_ids), f"ids {recorded_ids} against {given_ids}"
     expected_info = substitute(expected_info, dict(zip(recorded_ids, given_ids)))
     if not REFERENCE:
+        skills_race = next(skill_race for skill_race in SKILLS["races"] if skill_race["raceID"] == race["raceID"])
+        recorded_total, client_total = _client_skill_totals(skills_race)
+        expected_info = _client_skill_oracle(expected_info, recorded_total, client_total)
+        expected_info = _client_character_attributes(expected_info)
         # DEVIATION (drone limits on the ship): the reference also gives the ship the character's two drone limits, which the client
 
         ship_attributes = pairs(keyval(pairs(keyval(expected_info)["shipInfo"])[0][1])["attributes"])
@@ -856,7 +956,13 @@ def test_a_new_characters_dogma_is_that_of_the_reference(race):
 
     # the events that come with the answer: the character's attributes, then its brain (the client's copy of the character is made from them)
     mapping = dict(zip(recorded_ids, given_ids))
-    expected_events = blank_times(events_form(substitute(race["notifications"], mapping)))
+    expected_events = events_form(substitute(race["notifications"], mapping))
+    if not REFERENCE:
+        skills_race = next(skill_race for skill_race in SKILLS["races"] if skill_race["raceID"] == race["raceID"])
+        recorded_total, client_total = _client_skill_totals(skills_race)
+        expected_events = _client_skill_oracle(expected_events, recorded_total, client_total)
+        expected_events = _client_charisma_events(expected_events, given_ids[0])
+    expected_events = blank_times(expected_events)
     if race["notificationsBeforeAnswer"] != 0:
         problems.append("the recording has events before the answer, which this test does not place")
     problems += differences(

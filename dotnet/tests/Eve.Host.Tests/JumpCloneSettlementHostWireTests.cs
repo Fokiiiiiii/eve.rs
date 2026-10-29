@@ -152,6 +152,9 @@ public sealed class JumpCloneSettlementHostWireTests : IAsyncLifetime
         var profiles = Assert.IsType<PyList>(await profilesService.CallAsync(Call(profileSession, "GetProfiles")));
         var defaultProfile = Assert.IsType<PyObjectEx>(Assert.Single(profiles.Items));
         var profileId = Assert.IsType<PyInt>(defaultProfile.Dict.Single(entry => Assert.IsType<PyStr>(entry.Key).Value == "profileID").Value).Value;
+        const decimal structureFee = 425_000m;
+        await profilesService.CallAsync(Call(profileSession, "SaveProfileSettings",
+            new PyLong(profileId), new PyList([new PyList([new PyInt(23), new PyReal((double)structureFee), new PyInt(0)])])));
 
         var structures = new StructureStore(source, Schema("EVE_STRUCTURES_SCHEMA"));
         await using (var connection = await source.OpenConnectionAsync())
@@ -211,13 +214,13 @@ public sealed class JumpCloneSettlementHostWireTests : IAsyncLifetime
         structureSession.Set("structureid", new PyLong(structureId));
         structureSession.Set("solarsystemid2", new PyInt(station.SolarSystemId));
         var structureQuote = Assert.IsType<PyReal>(await BoundCall(structureSession, structureId, station.SolarSystemId, "GetPriceForClone"));
-        Assert.Equal(stationQuote, structureQuote);
+        Assert.Equal((double)structureFee, structureQuote.Value);
         Assert.Same(PyNone.Instance, await BoundCall(structureSession, structureId, station.SolarSystemId, "CloneJump",
             new PyLong(targetStation.Id), new PyLong(structureCloneId), structureQuote, PyBool.False));
-        Assert.Equal(4_100_000m, (await structureWallet.GetAsync(structureCharacter))!.Isk);
-        Assert.Equal(900_000m, (await structureWallet.GetAsync(ownerCorporationId))!.Isk);
-        Assert.Equal(-900_000m, await structureWallet.LastIskChangeAsync(structureCharacter));
-        Assert.Equal(900_000m, await structureWallet.LastIskChangeAsync(ownerCorporationId));
+        Assert.Equal(5_000_000m - structureFee, (await structureWallet.GetAsync(structureCharacter))!.Isk);
+        Assert.Equal(structureFee, (await structureWallet.GetAsync(ownerCorporationId))!.Isk);
+        Assert.Equal(-structureFee, await structureWallet.LastIskChangeAsync(structureCharacter));
+        Assert.Equal(structureFee, await structureWallet.LastIskChangeAsync(ownerCorporationId));
         Assert.Equal((128, ownerCorporationId, (long?)targetStation.Id), await LastJournalAsync(source, structureCharacter));
         Assert.Equal((128, structureCharacter, (long?)targetStation.Id), await LastJournalAsync(source, ownerCorporationId));
         var structureJumpClones = await new PgJumpCloneStore(source, Schema("EVE_CHARACTERS_SCHEMA")).ReadAsync(structureCharacter);

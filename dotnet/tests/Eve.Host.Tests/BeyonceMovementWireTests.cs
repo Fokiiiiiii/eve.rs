@@ -22,21 +22,39 @@ public partial class HostServerTests
         }
     }
 
+    private class MovementSimulation : DispatchProxy
+    {
+        public List<(ulong SessionId, byte Command, double[] Args)> Commands { get; } = [];
+
+        protected override object? Invoke(MethodInfo? method, object?[]? args)
+        {
+            if (method?.Name == "Command" && args is [ulong sessionId, byte command, double[] values])
+                Commands.Add((sessionId, command, values));
+            return method?.ReturnType == typeof(bool) ? true : null;
+        }
+    }
+
     [Fact]
-    public async Task Beyonce_align_to_resolves_the_client_bookmark_keyword_through_bound_host_wire()
+    public async Task Beyonce_align_to_resolves_and_issues_the_client_bookmark_command_through_bound_host_wire()
     {
         const long characterId = 90_000_011;
         const long systemId = 31_000_005;
         const long bookmarkId = 41_000_001;
+        const long targetItemId = 50_000_122;
+        const long shipId = 80_000_011;
         long? resolvedBookmark = null;
-        var service = new BeyonceService(null!, () => FixedNowMs)
+        var simulation = DispatchProxy.Create<ISimulation, MovementSimulation>();
+        var recorder = (MovementSimulation)(object)simulation;
+        var space = new SpaceSessions(simulation, null!, null!, new StationCatalog([]),
+            new SolarSystemCatalog([new SolarSystemInfo((int)systemId, "Test", 20_000_001, 10_000_001, 0.5)]), () => FixedNowMs);
+        var service = new BeyonceService(space, () => FixedNowMs)
         {
             BookmarkTargetForCharacter = (call, requestedId, _) =>
             {
                 Assert.Equal(characterId, call.Session.CharacterId);
                 Assert.Equal("CmdAlignTo", call.Method);
                 resolvedBookmark = requestedId;
-                return Task.FromResult<BookmarkWarpTarget?>(null);
+                return Task.FromResult<BookmarkWarpTarget?>(new((int)systemId, targetItemId, null, null, null));
             },
         };
         Start(
@@ -44,8 +62,11 @@ public partial class HostServerTests
             sessionOpened: session =>
             {
                 session.CharacterId = characterId;
+                session.Set("charid", new PyLong(characterId));
                 session.Set("solarsystemid", new PyLong(systemId));
                 session.Set("solarsystemid2", new PyLong(systemId));
+                session.Set("locationid", new PyInt(systemId));
+                space.EnterPilotForTest(session, characterId, shipId, 587, (int)systemId);
             });
 
         var front = await Handshaken(await ConnectAsync());
@@ -70,6 +91,9 @@ public partial class HostServerTests
             Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
         Assert.Same(PyNone.Instance, response.Items[1]);
         Assert.Equal(bookmarkId, resolvedBookmark);
+        var command = Assert.Single(recorder.Commands);
+        Assert.Equal(SimCommands.AlignTo, command.Command);
+        Assert.Equal((double)targetItemId, Assert.Single(command.Args));
     }
 
     [Fact]
@@ -124,4 +148,5 @@ public partial class HostServerTests
         Assert.Same(PyNone.Instance, response);
         Assert.Null(resolvedBookmark);
     }
+
 }

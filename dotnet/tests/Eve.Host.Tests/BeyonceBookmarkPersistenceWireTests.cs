@@ -14,18 +14,6 @@ namespace Eve.Host.Tests;
 
 public partial class HostServerTests
 {
-    private class MovementSimulation : DispatchProxy
-    {
-        public List<(ulong SessionId, byte Command, double[] Args)> Commands { get; } = [];
-
-        protected override object? Invoke(MethodInfo? method, object?[]? args)
-        {
-            if (method?.Name == "Command" && args is [ulong sessionId, byte command, double[] values])
-                Commands.Add((sessionId, command, values));
-            return method?.ReturnType == typeof(bool) ? true : null;
-        }
-    }
-
     [PgFact]
     public async Task Beyonce_align_to_resolves_a_persisted_active_bookmark_through_the_bound_host_wire()
     {
@@ -100,6 +88,7 @@ public partial class HostServerTests
             var command = Assert.Single(recorder.Commands);
             Assert.Equal(SimCommands.AlignTo, command.Command);
             Assert.Equal((double)targetItemId, Assert.Single(command.Args));
+
         }
         finally
         {

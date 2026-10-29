@@ -181,6 +181,60 @@ public sealed class XmppOrganizationRoomTests
     }
 
     [Fact]
+    public async Task Player_room_owner_affiliation_transfers_through_muc_admin_and_persists()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")
+            ?? throw new InvalidOperationException("EVE_PG_URL is required for the player channel persistence regression");
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
+        var schema = "xmpp_owner_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            var store = await XmppPlayerChannelStore.OpenAsync(source, schema);
+            var ownerSession = Character(42, "owner-token", 100, 200, 300);
+            var memberSession = Character(77, "member-token", 100, 200, 301);
+            var sessions = new ConnectedSessions();
+            sessions.Add(ownerSession);
+            sessions.Add(memberSession);
+            var channel = Assert.IsType<XmppPlayerChannel>(await store.CreateAsync(42, "Pilot room"));
+            Assert.True(await store.InviteAsync(channel.RoomName, 77));
+            var hub = new XmppChatHub(sessions, new XmppChatSettings("chat.example", "127.0.0.1"),
+                motdStore: null, readBlockedOwners: null, playerChannelStore: store);
+            var ownerOutput = new List<string>();
+            var memberOutput = new List<string>();
+            var owner = Connect(hub, 42, "owner-token", ownerOutput);
+            var member = Connect(hub, 77, "member-token", memberOutput);
+            owner.OnStanza(Parse($"<presence to='{channel.RoomName}@conference.chat.example/Owner'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+            member.OnStanza(Parse($"<presence to='{channel.RoomName}@conference.chat.example/Member'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+
+            await owner.OnStanzaAsync(Parse($"<iq type='set' id='bad-jid' to='{channel.RoomName}@conference.chat.example'><query xmlns='http://jabber.org/protocol/muc#admin'><item jid='77@elsewhere.example' affiliation='owner'/></query></iq>"), default);
+            Assert.Contains(ownerOutput, item => item.Contains("id='bad-jid'", StringComparison.Ordinal)
+                && item.Contains("not-allowed", StringComparison.Ordinal));
+            await member.OnStanzaAsync(Parse($"<iq type='set' id='denied' to='{channel.RoomName}@conference.chat.example'><query xmlns='http://jabber.org/protocol/muc#admin'><item jid='77@chat.example' affiliation='owner'/></query></iq>"), default);
+            Assert.Contains(memberOutput, item => item.Contains("id='denied'", StringComparison.Ordinal)
+                && item.Contains("not-allowed", StringComparison.Ordinal));
+            Assert.Equal(42, store.Get(channel.RoomName)?.OwnerCharacterId);
+
+            await owner.OnStanzaAsync(Parse($"<iq type='set' id='transfer' to='{channel.RoomName}@conference.chat.example'><query xmlns='http://jabber.org/protocol/muc#admin'><item jid='77@chat.example' affiliation='owner'><reason>character</reason></item></query></iq>"), default);
+            Assert.Contains(ownerOutput, item => item.Contains("type='result' id='transfer'", StringComparison.Ordinal));
+            Assert.Contains(memberOutput, item => item.Contains("affiliation='owner'", StringComparison.Ordinal));
+            Assert.Contains(ownerOutput, item => item.Contains("type='unavailable'", StringComparison.Ordinal));
+            member.OnStanza(Parse($"<iq type='get' id='owners' to='{channel.RoomName}@conference.chat.example'><query xmlns='http://jabber.org/protocol/muc#admin'><item affiliation='owner'/></query></iq>"));
+            Assert.Contains(memberOutput, item => item.Contains("id='owners'", StringComparison.Ordinal)
+                && item.Contains("jid='77@chat.example'", StringComparison.Ordinal));
+
+            var reopened = await XmppPlayerChannelStore.OpenAsync(source, schema);
+            Assert.Equal(77, reopened.Get(channel.RoomName)?.OwnerCharacterId);
+            Assert.False(reopened.CanJoin(channel.RoomName, 42));
+            Assert.True(reopened.CanJoin(channel.RoomName, 77));
+        }
+        finally
+        {
+            await using var command = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await command.ExecuteNonQueryAsync();
+        }
+    }
+
+    [Fact]
     public void Groupchat_delivery_respects_the_persisted_block_list_of_each_recipient()
     {
         var sessions = new ConnectedSessions();

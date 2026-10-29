@@ -303,7 +303,16 @@ private bool CanAccessRoom(ClientSession? session, long characterId, string room
             || queryAttribute == "role" && queryValue is not ("moderator" or "participant"))
             return false;
 
-        var ownerId = PlayerChannels?.Get(room)?.OwnerCharacterId;
+        var playerChannel = PlayerChannels?.Get(room);
+        if (queryAttribute == "affiliation" && queryValue == "owner" && playerChannel is not null)
+        {
+            var ownerCharacterId = playerChannel.OwnerCharacterId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var jid = $"{ownerCharacterId}@{link.Domain}";
+            xml = $"<item jid='{XmppXml.Escape(jid)}' nick='{ownerCharacterId}' affiliation='owner'/>";
+            return true;
+        }
+
+        var ownerId = playerChannel?.OwnerCharacterId;
         lock (_gate)
         {
             xml = string.Concat(_occupants
@@ -324,6 +333,33 @@ private bool CanAccessRoom(ClientSession? session, long characterId, string room
                 })
                 .ToArray());
         }
+        return true;
+    }
+
+    internal async ValueTask<bool> SetPlayerRoomOwnerAsync(
+        XmppLink link,
+        string room,
+        long targetCharacterId,
+        CancellationToken cancellationToken)
+    {
+        var session = SessionOf(link.CharacterId);
+        var channel = PlayerChannels?.Get(room);
+        var staff = (link.AccountRole & (Eve.Services.GameMasterRoles.ChatAdministrator | Eve.Services.GameMasterRoles.Gml)) != 0;
+        if (session is null || !ReferenceEquals(SessionOf(link.CharacterId), session)
+            || channel is null || channel.OwnerCharacterId != link.CharacterId && !staff || targetCharacterId <= 0)
+            return false;
+        if (!await PlayerChannels!.SetOwnerAsync(room, targetCharacterId, cancellationToken).ConfigureAwait(false))
+            return false;
+
+        PruneRoomMembers(room);
+        XmppOccupant[] occupants;
+        lock (_gate)
+            occupants = _occupants.Where(pair => pair.Key.Room == room
+                && (pair.Value.Link.AccountRole & Eve.Services.GameMasterRoles.ChtInvisible) == 0)
+                .Select(pair => pair.Value).ToArray();
+        foreach (var recipient in occupants)
+            foreach (var occupant in occupants)
+                recipient.Link.Send(Presence(room, occupant, recipient.Link.Jid, ReferenceEquals(occupant.Link, recipient.Link)));
         return true;
     }
 

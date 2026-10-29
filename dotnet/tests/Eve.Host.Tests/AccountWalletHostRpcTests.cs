@@ -173,8 +173,7 @@ public sealed class AccountWalletHostRpcTests
 
     private static PyValue Field(PyValue row, string name)
     {
-        var args = ((PyTuple)((PyObject)row).Args).Items;
-        var fields = Assert.IsType<PyDict>(args[1]);
+        var fields = Assert.IsType<PyDict>(((PyObject)row).Args);
         return fields.Entries.Single(entry => ((PyStr)entry.Key).Value == name).Value;
     }
 

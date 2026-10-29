@@ -21,8 +21,9 @@ The Host composition wires the effective war faction callback (character enlistm
 - `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false`: passed.
 - Focused Market tests: 21 passed, zero skipped.
 - Local full Host shard without PostgreSQL: 610 passed, 232 skipped, 99 failed. The shard produced failures in DB-backed suites as well as skips; no PostgreSQL connection was attempted. CI shard result is pending.
+- The first Actions run (`40826959041`, commit `57a0ca90`) found a stale Host wallet expectation: a 40 ISK structure order now charges 100 ISK broker plus 25 ISK SCC, leaving 9,875 ISK. `MarketHostTests` now asserts that result. The same run reported bookmark and repair assertion failures; main commit `e8251dbe` updated those tests. A fresh Actions run for this correction is pending.
 - Graphical-client behavior has not been exercised.
 
 ## Follow-up
 
-After the commit, run the complete `Eve.Market.Tests` and `Eve.Host.Tests` Actions shard, record its run and outcome here, then inspect the push-triggered CI result. This note must be updated after every push.
+After pushing this correction, rerun the complete `Eve.Market.Tests` and `Eve.Host.Tests` Actions shard, then inspect the push-triggered CI result and update this note with both outcomes. This note must be updated after every push.

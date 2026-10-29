@@ -189,6 +189,14 @@ def completed(character: int, mission: int) -> int:
 def reward_total(character: int) -> int:
     return int(float(sql(f"SELECT coalesce(sum(amount), 0) FROM {schema('WALLET')}.journal WHERE owner_id = {character} AND ref_type_id = {REWARD_REF_TYPE}")))
 
+def mission_reward_tax(character: int, gross: int) -> float:
+    if gross < 100_000:
+        return 0
+    rate = float(sql(f"SELECT corporation.tax_rate FROM {schema('CORPORATIONS')}.corporations AS corporation "
+                     f"JOIN {schema('CHARACTERS')}.characters AS pilot ON pilot.corporation_id = corporation.id "
+                     f"WHERE pilot.id = {character}"))
+    return round(gross * rate, 2)
+
 def held(character: int, type_id: int) -> int:
     return int(float(sql(f"SELECT coalesce(sum(quantity), 0) FROM {schema('INVENTORY')}.items WHERE owner_id = {character} AND type_id = {type_id}")))
 
@@ -348,7 +356,9 @@ def deliver(character: int, ship: int, step: Step, pickup_check: bool) -> None:
             timed_events(who, 3.0)
     assert completed(character, step.mission) == 1, f"mission {step.mission}: the delivery at {drop} did not complete the courier mission"
     assert held(character, step.objective) == 0, f"mission {step.mission}: the cargo was not taken at the drop-off"
-    assert reward_total(character) - reward_before == step.reward, (step.mission, step.reward, reward_total(character) - reward_before)
+    paid = reward_total(character) - reward_before
+    expected = step.reward - int(mission_reward_tax(character, step.reward))
+    assert paid == expected, (step.mission, paid, expected)
 
 def turn_in(character: int, ship: int, step: Step) -> None:
     """The fetch step's turn-in: the pilot talks to the step's agent with the objective items held; the step completes and the items go."""
@@ -363,7 +373,9 @@ def turn_in(character: int, ship: int, step: Step) -> None:
         raise AssertionError(f"mission {step.mission}: the turn-in did not complete the step; agent said {said[:200]!r}; "
                              f"state {mission_state(character, step.agent)}; held {held(character, step.objective)}; journal {journal!r}")
     assert held(character, step.objective) == 0, f"mission {step.mission}: the objective items were not taken"
-    assert reward_total(character) - reward_before == step.reward, (step.mission, reward_total(character) - reward_before)
+    paid = reward_total(character) - reward_before
+    expected = step.reward - int(mission_reward_tax(character, step.reward))
+    assert paid == expected, (step.mission, paid, expected)
 
 def outcome(call):
     try:

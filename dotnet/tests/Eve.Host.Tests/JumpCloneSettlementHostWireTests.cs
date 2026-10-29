@@ -89,7 +89,7 @@ public sealed class JumpCloneSettlementHostWireTests : IAsyncLifetime
         await using var transaction = await connection.BeginTransactionAsync();
         var characters = new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA"));
         var character = await characters.InsertAsync(connection, transaction,
-            new NewCharacter(1, $"Clone Fee {corporationId}", 0, 1, 1, 1, 11, 1376, corporationId, null,
+            new NewCharacter(1, $"Clone Fee {corporationId} {Guid.NewGuid():N}", 0, 1, 1, 1, 11, 1376, corporationId, null,
                 station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId, null, null));
         await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).OpenAsync(connection, transaction, character, balance, 0);
         var capsule = await new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA")).CreateAsync(connection, transaction,

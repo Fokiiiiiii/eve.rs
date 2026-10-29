@@ -2,16 +2,17 @@
 
 The current status below is authoritative. Dated entries that follow are historical checkpoints from their stated time.
 
-## Current status (2026-10-29, 26107858)
+## Current status (2026-10-29, efa8aff0)
 
 - `3786dea9` pushed the station insufficient-funds fix. Focused Station run `40833460734` and full `Eve.Services.Station.Tests` run `40833482780` passed. Push-triggered `ci.yml` run `40833436694` completed red on the skill oracle values from before `aa199629`.
-- Run `40837554806` for `c9e996a5` passed every job except the headless E2E job. The skill, direct total, attributes, remap and dogma comparisons now match; only the bound `GetSkillPoints` reply still expected the raw EveJS total. The recorded `MachoBindObject` arguments put the method tuple in positional argument 2, so the first comparison fix did not identify that nested call. The current correction reads that argument before adjusting the returned total.
+- Run `40837554806` for `c9e996a5` passed every job except the headless E2E job. The only remaining differences were bound `GetSkillPoints` replies, whose method tuple is in positional argument 2. `efa8aff0` reads that nested call and adjusts the returned total.
+- Push-triggered `ci.yml` run `40839083391` for `efa8aff0` completed green. The headless E2E job passed all races; this is the first green run after the fixture comparison fix. Two more full `ci.yml` runs on main remain for the three-run check.
 - The client decisions remain grounded in `dogma/const.py:233` (attribute 164 is Charisma), `skillsvc.py:141, 223-226, 727-732, 988-989` (all-skills, attributes and skill-point consumers), `characterskills/util.py:39-46` (skill-point ceiling), `skillsvc.py:800-803`, `attributes.py:257-266` and `attributesPanel.py:41-43` (respec use). EVE University `Skills_and_learning` lines 366-373 lists the two bonus remaps and Charisma 19.
 - Earlier `ci.yml` run `40831344589` for `a5072e08` had the station low-funds mismatch and the same skill data failures; all Host shards passed, including the corrected Beyonce wire test.
 - V24.01 `menusvc.py:1498-1499, 2777-2804` routes bookmark alignment through `_AlignTo`; `menusvc.py:2789` calls `CmdAlignTo` and ignores its nested result. eve.rs `BeyonceService.MachoBindObject` returns the bound handle and nested result as a two-item `PyTuple`, while `CmdAlignTo` returns `PyNone`.
 - Repair fix `e78dcb6a` removes the station-only `CustomNotify` branch and returns `NotEnoughMoney` with the attempted charge and available balance, matching EveJS v0.12.9 `repairRuntime.js:635-643`. V24.01 `base_repairshop.py:64-71` calls the station or structure RPC directly and does not replace the returned refusal.
 - Station.Tests and Host.Tests builds passed with zero warnings and errors after the latest merge. The focused repair test skipped because `EVE_PG_URL` was unset; the adjacent non-database Beyonce Host test passed. No PostgreSQL database was used.
-- Next: push the bound-call correction and updated handoff note, inspect its push-triggered run, then dispatch two more `ci.yml` runs only after the baseline is green.
+- Next: dispatch two additional full `ci.yml` runs against main, waiting for each to complete before starting the next.
 
 ## Historical status (2026-10-29, df9121cc)
 

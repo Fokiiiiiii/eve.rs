@@ -98,7 +98,7 @@ public sealed class XmppOrganizationRoomTests
 
             await owner.OnStanzaAsync(Parse($"<iq type='set' id='configure' to='{channel.RoomName}@conference.chat.example'><query xmlns='http://jabber.org/protocol/muc#owner'><x xmlns='jabber:x:data' type='submit'><field var='FORM_TYPE'><value>http://jabber.org/protocol/muc#roomconfig</value></field><field var='muc#roomconfig_roomname'><value>Saved room</value></field><field var='muc#roomconfig_roomdesc'><value>Room description</value></field><field var='muc#roomconfig_passwordprotectedroom'><value>1</value></field><field var='muc#roomconfig_roomsecret'><value>opensesame</value></field><field var='muc#roomconfig_membersonly'><value>0</value></field><field var='members_by_default'><value>0</value></field></x></query></iq>"), default);
             Assert.Contains(ownerOutput, item => item.Contains("type='result' id='configure'", StringComparison.Ordinal));
-            Assert.Contains(memberOutput, item => item.Contains("role='visitor'", StringComparison.Ordinal));
+            Assert.Contains(memberOutput, item => item.Contains("role='participant'", StringComparison.Ordinal));
             Assert.Equal("Saved room", store.Get(channel.RoomName)?.DisplayName);
             Assert.Equal("Room description", store.Get(channel.RoomName)?.Description);
             Assert.True(store.Get(channel.RoomName)?.PasswordRequired);
@@ -106,6 +106,7 @@ public sealed class XmppOrganizationRoomTests
             guest.OnStanza(Parse($"<presence to='{channel.RoomName}@conference.chat.example/Guest'><x xmlns='http://jabber.org/protocol/muc'><password>wrong</password></x></presence>"));
             Assert.Contains(guestOutput, item => item.Contains("not-authorized", StringComparison.Ordinal));
             guest.OnStanza(Parse($"<presence to='{channel.RoomName}@conference.chat.example/Guest'><x xmlns='http://jabber.org/protocol/muc'><password>opensesame</password></x></presence>"));
+            Assert.Contains(ownerOutput, item => item.Contains("role='visitor'", StringComparison.Ordinal));
             await guest.OnStanzaAsync(Parse($"<message type='groupchat' to='{channel.RoomName}@conference.chat.example'><body>visitor cannot speak</body></message>"), default);
             Assert.DoesNotContain(ownerOutput, item => item.Contains("visitor cannot speak", StringComparison.Ordinal));
             await member.OnStanzaAsync(Parse($"<message type='groupchat' to='{channel.RoomName}@conference.chat.example'><body>member can speak</body></message>"), default);

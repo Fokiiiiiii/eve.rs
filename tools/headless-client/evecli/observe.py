@@ -280,6 +280,7 @@ def wait_quietly(client: Client, seconds: float, until=None) -> list:
         if until is not None and until(seen):
             break
         time.sleep(0.25)
+    seen += events_of(client)
     return seen
 
 def timed_events(who: Client, seconds: float, until=None) -> list:

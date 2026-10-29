@@ -10,6 +10,7 @@ import uuid
 import pytest
 
 from evecli import marshal as m
+from evecli import observe
 from evecli import packet
 from evecli.client import filetime_to_unix
 from evecli.describe import describe
@@ -874,6 +875,26 @@ def test_support_stop_uses_computed_cycle_and_matching_godma_event():
     assert not _support_module_stopped([other_effect_inactive], module_id, DOGMA_EFFECT_ID_MODULE_BONUS_AFTERBURNER)
     assert not _support_module_stopped([online_inactive], module_id, DOGMA_EFFECT_ID_MODULE_BONUS_AFTERBURNER)
     assert _support_module_stopped([inactive], module_id, DOGMA_EFFECT_ID_MODULE_BONUS_AFTERBURNER)
+
+def test_wait_quietly_drains_events_that_arrive_during_its_final_sleep(monkeypatch):
+    event = {"name": "OnGodmaShipEffect"}
+    clock = [0.0]
+    pending = []
+
+    def sleep(seconds):
+        clock[0] += seconds
+        pending.append(event)
+
+    def events_of(_client):
+        events = pending[:]
+        pending.clear()
+        return events
+
+    monkeypatch.setattr(observe.time, "time", lambda: clock[0])
+    monkeypatch.setattr(observe.time, "sleep", sleep)
+    monkeypatch.setattr(observe, "events_of", events_of)
+
+    assert observe.wait_quietly(object(), 0.25) == [event]
 
 def test_cache_wreck_wait_observes_spawn_after_empty_snapshots():
     cache_id = 7001

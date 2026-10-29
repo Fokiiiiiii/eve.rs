@@ -28,7 +28,7 @@ public class ExpiryTests
         r.Now = placedAt + Day + Grace;
         await r.Scheduler.RunDueAsync();
         Assert.Equal(escrowed + 50m, (await r.WalletStore.GetAsync(actor))!.Isk);
-        Assert.Equal("Expired", Assert.Single(r.Announcements).ChangedOrderReason);
+        Assert.Equal("Expiry", Assert.Single(r.Announcements).ChangedOrderReason);
         await r.Scheduler.RunDueAsync();
         Assert.Empty(await r.Expiry.SweepAsync());
         Assert.Equal(escrowed + 50m, (await r.WalletStore.GetAsync(actor))!.Isk);
@@ -50,7 +50,7 @@ public class ExpiryTests
         await r.Scheduler.RunDueAsync();
         Assert.Empty(await r.Expiry.SweepAsync());
         Assert.Equal(5, Assert.Single(await r.Items.InLocationAsync(r.Station.Id, seller)).Quantity);
-        Assert.Equal("Expired", Assert.Single(r.Announcements).ChangedOrderReason);
+        Assert.Equal("Expiry", Assert.Single(r.Announcements).ChangedOrderReason);
     }
 
     [PgFact]
@@ -90,7 +90,7 @@ public class ExpiryTests
         r.Now = placedAt + Day + Grace;
         await r.Scheduler.RunDueAsync();
         Assert.Equal(escrowed + 50m, (await r.WalletStore.GetAsync(actor))!.Isk);
-        Assert.Equal("Expired", Assert.Single(r.Announcements).ChangedOrderReason);
+        Assert.Equal("Expiry", Assert.Single(r.Announcements).ChangedOrderReason);
     }
 
     [PgFact]
@@ -127,11 +127,11 @@ public class ExpiryTests
         r.Now = placedAt + Day + Grace;   // the original expiry passes: the renewed order is still open
         await r.Scheduler.RunDueAsync();
         Assert.Equal(escrowed, (await r.WalletStore.GetAsync(actor))!.Isk);
-        Assert.DoesNotContain(r.Announcements, a => a.ChangedOrderReason == "Expired");
+        Assert.DoesNotContain(r.Announcements, a => a.ChangedOrderReason == "Expiry");
         r.Now = modifiedAt + Day + Grace;
         await r.Scheduler.RunDueAsync();
         Assert.Equal(escrowed + 55m, (await r.WalletStore.GetAsync(actor))!.Isk);
-        Assert.Single(r.Announcements, a => a.ChangedOrderReason == "Expired");
+        Assert.Single(r.Announcements, a => a.ChangedOrderReason == "Expiry");
     }
 
     [PgFact]

@@ -198,6 +198,39 @@ public class MarketCoherenceTests
     }
 
     [PgFact]
+    public async Task A_partial_fill_notifies_the_maker_with_the_partial_fill_reason()
+    {
+        await using var r = await TradeRig.Create();
+        var sessions = new CharacterSessions();
+        var seller = await ViewerAsync(r, sessions, await r.Actor("Seller", 10_000m), 225);
+        var buyer = await ViewerAsync(r, sessions, await r.Actor("Buyer"), 226);
+        var orderId = await PlaceSellAsync(r, seller);
+
+        await buyer.Proxy.PlaceBuyOrder(Call(buyer.Session, "PlaceBuyOrder", 5, new PyInt(r.Station.Id), new PyInt(Tritanium), new PyReal(9),
+            new PyInt(2), new PyInt(-1), new PyInt(1), new PyInt(0), PyBool.False, PyNone.Instance));
+
+        AssertNotified(seller, "PartialFill", orderId);
+        Assert.Equal(2, Num(Assert.IsType<PyTuple>(Assert.Single(Asks(await BookAsync(buyer, 2)))).Items[1]));
+    }
+
+    [PgFact]
+    public async Task A_price_change_notifies_the_owner_with_the_modified_reason()
+    {
+        await using var r = await TradeRig.Create();
+        var sessions = new CharacterSessions();
+        var seller = await ViewerAsync(r, sessions, await r.Actor("Seller", 10_000m), 227);
+        var orderId = await PlaceSellAsync(r, seller);
+        var order = Assert.Single((await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Asks);
+        r.Now += MarketRules.ModificationDelayMs;
+
+        await seller.Proxy.ModifyCharOrder(Call(seller.Session, "ModifyCharOrder", 4,
+            new PyLong(orderId), new PyReal(8), PyBool.False, new PyInt(r.Station.Id), new PyInt(r.Station.SolarSystemId),
+            new PyReal(9), new PyInt(-1), new PyInt(4), new PyLong(Py.FileTimeFromUnixMs(order.IssuedMs))));
+
+        AssertNotified(seller, "Modified", orderId);
+    }
+
+    [PgFact]
     public async Task An_expiry_drops_the_region_book_and_the_owner_is_notified_by_the_expiry_job()
     {
         await using var r = await TradeRig.Create();
@@ -214,7 +247,7 @@ public class MarketCoherenceTests
 
         AssertInvalidated(buyer, "GetOrders", "34");
         AssertInvalidated(seller, "GetCharOrders");
-        AssertNotified(seller, "Expired", orderId);
+        AssertNotified(seller, "Expiry", orderId);
         Assert.Empty(Asks(await BookAsync(buyer, 2)));
     }
 

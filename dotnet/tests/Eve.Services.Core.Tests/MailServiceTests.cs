@@ -872,6 +872,28 @@ public sealed class MailServiceTests
         }).AsTask());
     }
 
+    [Fact]
+    public async Task Create_label_initializes_a_mailbox_before_the_character_receives_mail()
+    {
+        var state = new JsonObject();
+        var service = new MailService(
+            _ => Task.FromResult(state),
+            (_, _, _, _) => Task.CompletedTask,
+            mutateMailbox: (request, _) => Task.FromResult(MailboxMutation.Apply(state, request)));
+
+        var result = await service.CallAsync(Request("CreateLabel", new PyStr("Research")));
+
+        Assert.Equal(new PyInt(16), result);
+        var mailbox = Assert.IsType<JsonObject>(state["mailboxes"]!["90000001"]);
+        Assert.Empty(Assert.IsType<JsonObject>(mailbox["statuses"]));
+        var label = Assert.IsType<JsonObject>(mailbox["labels"]!["16"]);
+        Assert.Equal("Research", label["name"]!.GetValue<string>());
+        Assert.Equal(16, label["labelID"]!.GetValue<long>());
+        var labels = Assert.IsType<PyDict>(await service.CallAsync(Request("GetLabels")));
+        var wireLabel = labels.Entries.Single(entry => entry.Key == new PyInt(16)).Value;
+        Assert.Equal(new PyStr("Research"), Field(wireLabel, "name"));
+    }
+
     private static string[] Keys(PyValue row) => Assert.IsType<PyDict>(Assert.IsType<PyObject>(row).Args)
         .Entries.Select(pair => Assert.IsType<PyStr>(pair.Key).Value).ToArray();
 

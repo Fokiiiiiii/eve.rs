@@ -39,3 +39,9 @@ Whole-tree Serena searches across `/home/user/eve-logic/eve/client` found no add
 - Agent-test run [40222925347](https://github.com/Fokiiiiiii/eve.rs/actions/runs/40222925347) passed the focused mail Host wire test for `5bebc604`, with no failed tests or jobs.
 - Push-triggered ci.yml run [40222856558](https://github.com/Fokiiiiiii/eve.rs/actions/runs/40222856558) for `f381e8d738d8` completed successfully with no failed tests or jobs. It includes the corrected SpaceEvents expectation and current Host RPC coverage. `failures 6a9c621` found no push-triggered run for the documentation-only follow-up commit.
 - No local PostgreSQL database or graphical EVE client was used.
+
+## Follow-up: creating a mail label before receiving mail
+
+- V24.01 `mailSvc.py:731-735` sends `CreateLabel` and immediately caches the returned label ID; `evemail.py:1563-1581` calls this path for `mail_labels`. The whole-tree caller search found no other `mailMgr.CreateLabel` caller. `mailSvc.py:710-754` also shows edit/delete cache updates, and `mailSvc.py:457-491` shows the EmptyTrash/DeleteMail cache removal sequence.
+- EveJS 261028.1 `server/src/services/mail/mailState.js:525-555,889-914` creates an empty mailbox before creating its first label. `MailboxMutation.Apply` and `MailRpc.MutateMailboxAsync` now do the same for label operations when no mailbox exists yet, then persist the new mailbox through the existing GameStore write path.
+- Regression checks: `MailServiceTests.Create_label_initializes_a_mailbox_before_the_character_receives_mail` and `HostServerTests.Mail_mgr_added_methods_mutate_state_return_client_values_and_notify_over_host_wire` passed locally. `Eve.Host` built with 0 warnings and 0 errors.

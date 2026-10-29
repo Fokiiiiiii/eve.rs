@@ -170,10 +170,19 @@ internal sealed partial class CharacterServicesComposition
         try
         {
             var state = await ReadGameStoreTableAsync("mail", cancellationToken);
-            var mailbox = (state["mailboxes"] as JsonObject)?[
-                request.CharacterId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject;
+            var labelMutation = request.Method is "CreateLabel" or "EditLabel" or "DeleteLabel";
+            var mailboxes = state["mailboxes"] as JsonObject;
+            var mailboxKey = request.CharacterId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var mailbox = mailboxes?[mailboxKey] as JsonObject;
+            if (mailbox is null && labelMutation)
+            {
+                if (mailboxes is null)
+                    state["mailboxes"] = mailboxes = new JsonObject();
+                mailbox = new JsonObject { ["statuses"] = new JsonObject(), ["labels"] = new JsonObject() };
+                mailboxes[mailboxKey] = mailbox;
+            }
             var messages = state["messages"] as JsonObject;
-            if (mailbox is null || messages is null)
+            if (mailbox is null || messages is null && !labelMutation)
                 return MailboxMutationResult.Empty;
 
             var result = MailboxMutation.Apply(state, request);

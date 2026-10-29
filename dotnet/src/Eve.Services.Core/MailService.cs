@@ -414,11 +414,27 @@ public static class MailboxMutation
 
     public static MailboxMutationResult Apply(JsonObject state, MailboxMutationRequest request)
     {
-        var mailbox = (state["mailboxes"] as JsonObject)?[
-            request.CharacterId.ToString(CultureInfo.InvariantCulture)] as JsonObject;
+        var labelOperation = request.Method is "CreateLabel" or "EditLabel" or "DeleteLabel";
+        var mailboxes = state["mailboxes"] as JsonObject;
+        var mailboxKey = request.CharacterId.ToString(CultureInfo.InvariantCulture);
+        var mailbox = mailboxes?[mailboxKey] as JsonObject;
+        if (mailbox is null && labelOperation)
+        {
+            if (mailboxes is null)
+                state["mailboxes"] = mailboxes = new JsonObject();
+            mailbox = new JsonObject { ["statuses"] = new JsonObject(), ["labels"] = new JsonObject() };
+            mailboxes[mailboxKey] = mailbox;
+        }
         var messages = state["messages"] as JsonObject;
-        if (mailbox is null || messages is null || mailbox["statuses"] is not JsonObject statuses)
+        if (mailbox is null || (!labelOperation && messages is null))
             return MailboxMutationResult.Empty;
+        if (mailbox["statuses"] is not JsonObject statuses)
+        {
+            if (!labelOperation)
+                return MailboxMutationResult.Empty;
+            mailbox["statuses"] = statuses = new JsonObject();
+        }
+        messages ??= new JsonObject();
 
         var arguments = request.Arguments;
         var requestedIds = arguments.Count > 0 ? Ids(arguments[0]).ToHashSet() : [];

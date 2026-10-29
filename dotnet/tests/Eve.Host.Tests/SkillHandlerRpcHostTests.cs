@@ -92,6 +92,8 @@ public partial class HostServerTests
     {
         await using var rig = await CharacterHostTests.CharacterHostRig.CreateAsync();
         var character = await rig.CreateCharacterAsync();
+        var catalog = await SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        var trainingSkill = catalog.Skills.First(skill => skill.Published && skill.Rank == 1 && !skill.Needs.Any());
         long capsule;
         await using (var connection = await rig.Source.OpenConnectionAsync())
         await using (var transaction = await connection.BeginTransactionAsync())
@@ -101,9 +103,9 @@ public partial class HostServerTests
             await rig.Characters.SetShipAsync(connection, transaction, character, capsule);
             await transaction.CommitAsync();
         }
+        await rig.SetSkillLevelAsync(character, trainingSkill.TypeId, 0);
         var skillMgr2 = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillMgr2"));
         var skillHandler = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillHandler"));
-        var catalog = await SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
         var largeInjector = catalog.ItemTypeId("Large Skill Injector")!.Value;
         var smallInjector = catalog.ItemTypeId("Small Skill Injector")!.Value;
         var historyStore = new PgTrainingStore(rig.Source, rig.SkillsSchema);
@@ -245,7 +247,7 @@ public partial class HostServerTests
             item => item.TypeId == smallInjector && item.Quantity == 3);
 
         Assert.Equal(PyNone.Instance, Result(await Call("skillHandler", "CharStartTrainingSkill",
-            new PyLong(SkillWire.ItemId(character, 3300)), new PyLong(character))));
+            new PyLong(SkillWire.ItemId(character, trainingSkill.TypeId)), new PyLong(character))));
         var queue = Assert.IsType<PyList>(Result(await Call("skillHandler", "GetMySkillQueue")));
         var firstLine = Assert.IsType<PyObject>(Assert.Single(queue.Items));
         var fields = Assert.IsType<PyDict>(firstLine.Args).Entries

@@ -20,6 +20,6 @@
 
 ## Checks and remaining work
 
-Local checks passed: Core build; all 34 `InsuranceServiceTests`; Host insurance tests (2 selected); Rust `eve-space` check, format, workspace clippy, all 39 targeting tests and all 28 death tests. The Host test project needed a temporary local update to the existing `WireDrones` fixture because the unrelated dirty `SpaceDrones.cs` adds a `ReconnectAsync` signature that its clean fixture does not implement; that fixture edit was reverted and is not part of this change.
+After merging `origin/main`, local checks passed: Core build; Host test-project build; all 34 `InsuranceServiceTests`; both selected Host insurance tests; Rust `eve-space` check, format, workspace clippy, all 39 targeting tests and all 28 death tests. Before the merge, the unrelated dirty `SpaceDrones.cs` made the Host test project fail against its clean `WireDrones` fixture; that source was preserved in `stash@{0}`, and the clean post-merge Host build passed without a fixture change.
 
 No PostgreSQL was used, as required by the task header. The graphical client was not run. Before pushing, merge `origin/main`, repeat relevant checks, commit only this task's files, and push to `main`. Keep this note current after the push and record the Actions result.

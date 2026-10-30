@@ -223,6 +223,7 @@ public sealed class CorporationAssetInventoryHostWireTests
 
             Assert.Equal(propertyItemId, (await items.GetAsync(propertyItemId))!.Id);
             Assert.Equal(deliveryItemId, (await items.GetAsync(deliveryItemId))!.Id);
+            Assert.Equal(9, capture.Packets.Count);
         }
         finally
         {

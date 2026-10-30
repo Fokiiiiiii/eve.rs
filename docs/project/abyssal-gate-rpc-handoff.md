@@ -38,6 +38,8 @@ The complete-client search found `abyssal_service.py:99` as the only `num_rooms`
 
 `MoveAbyssalRoomGroupAsync` now sends the source `OnExitingDungeon` packet before the destination `OnEnteringDungeonRoom` packet for each recipient. This intentionally differs from EveJS 261028.1's destination payload then tracking sequence (`server/src/abyssal/runtime/abyssalRoomTransferPublication.js:49-168,460-534,638-680`) because the V24.01 environment service's later exit callback otherwise clears the newly installed destination template. The registered Host transition test asserts the two packet names in order. No local PostgreSQL database was used.
 
+Local verification after the `origin/main` merge: Host and Corporations test projects built successfully with 0 warnings and 0 errors; the focused no-database Abyssal notification wire test passed 1/1. The registered Host room-transition test passed in Agent Test run `40988527741` (0 failures, 0 skips). Push-triggered CI run `40988516928` passed all jobs. No graphical client run was performed.
+
 Local checks for the Abyssal change: `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore -m:1 -p:UseSharedCompilation=false` succeeded (0 warnings, 0 errors); the focused `AbyssalGateWireTests` ran 1 passed, 0 failed, 0 skipped. Filtered GitHub Actions run 40086432553 passed on `993a47d4`; push-triggered CI run 40086426904 exposed unrelated upstream Space and Reprocessing test failures. Follow-up diagnosis and checks are tracked below.
 
 

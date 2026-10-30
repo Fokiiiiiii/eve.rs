@@ -1712,6 +1712,29 @@ fn an_effect_is_started_by_a_message_and_stopped_by_the_command_and_each_is_answ
 }
 
 #[test]
+fn activating_a_weapon_bank_master_starts_every_member_on_the_same_cycle() {
+    let mut sim = undocked();
+    let scene = SceneKey::solar_system(SYSTEM);
+    sim.scenes.get_mut(&scene).unwrap().pilots.get_mut(&SESSION).unwrap().ship.spec.modules = vec![
+        crate::ship::ModuleSpec { item_id: 77, type_id: 21_857, flag: 19, bank_master_id: 77 },
+        crate::ship::ModuleSpec { item_id: 78, type_id: 21_857, flag: 20, bank_master_id: 77 },
+    ];
+
+    let started = sim
+        .handle(Message::Activate { session_id: SESSION, effect: Box::new(afterburner(77)) }, NOON + SECOND)
+        .unwrap();
+    let effects = started
+        .iter()
+        .filter(|message| {
+            matches!(
+                message, Message::Notify { name, .. } if name == "OnGodmaShipEffect"
+            )
+        })
+        .count();
+    assert_eq!(effects, 2, "both bank members start together: {started:?}");
+}
+
+#[test]
 fn an_offline_message_stops_a_running_module_immediately_and_idempotently() {
     let mut sim = undocked();
     sim.handle(
@@ -2373,7 +2396,8 @@ fn a_controlled_structure_accepts_a_module_against_its_own_ship_spec() {
     structure_spec.ship_id = structure_id;
     structure_spec.capacitor_capacity = 100.0;
     structure_spec.capacitor_recharge_s = 100.0;
-    structure_spec.modules = vec![crate::ship::ModuleSpec { item_id: 77, type_id: 21857, flag: 27 }];
+    structure_spec.modules =
+        vec![crate::ship::ModuleSpec { item_id: 77, type_id: 21857, flag: 27, bank_master_id: 0 }];
     simulation
         .handle(Message::ShipSpec { session_id: SESSION, ship: Box::new(structure_spec) }, NOON)
         .unwrap();
@@ -2442,7 +2466,8 @@ fn a_controlled_structure_accepts_a_module_against_its_own_ship_spec() {
     structure_spec.ship_id = structure_id;
     structure_spec.capacitor_capacity = 100.0;
     structure_spec.capacitor_recharge_s = 100.0;
-    structure_spec.modules = vec![crate::ship::ModuleSpec { item_id: 77, type_id: 21857, flag: 27 }];
+    structure_spec.modules =
+        vec![crate::ship::ModuleSpec { item_id: 77, type_id: 21857, flag: 27, bank_master_id: 0 }];
     simulation
         .handle(Message::ShipSpec { session_id: SESSION, ship: Box::new(structure_spec) }, NOON + 11 * SECOND)
         .unwrap();
@@ -2547,8 +2572,8 @@ fn a_controlled_structure_uses_real_locks_for_remote_neutralizers() {
     structure_spec.capacitor_capacity = 100.0;
     structure_spec.capacitor_recharge_s = 1.0e9;
     structure_spec.modules = vec![
-        crate::ship::ModuleSpec { item_id: 88, type_id: 21857, flag: 27 },
-        crate::ship::ModuleSpec { item_id: 90, type_id: 35_921, flag: 28 },
+        crate::ship::ModuleSpec { item_id: 88, type_id: 21857, flag: 27, bank_master_id: 0 },
+        crate::ship::ModuleSpec { item_id: 90, type_id: 35_921, flag: 28, bank_master_id: 0 },
     ];
     simulation
         .handle(Message::ShipSpec { session_id: SESSION, ship: Box::new(structure_spec) }, NOON)

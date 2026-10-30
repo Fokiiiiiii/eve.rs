@@ -75,7 +75,7 @@ pub(crate) fn spec() -> ShipSpec {
             armor_pinned: false,
         },
         condition: Condition::FULL,
-        modules: vec![ModuleSpec { item_id: 9_988_400_001_940, type_id: 21857, flag: 19 }],
+        modules: vec![ModuleSpec { item_id: 9_988_400_001_940, type_id: 21857, flag: 19, bank_master_id: 0 }],
     }
 }
 

@@ -163,7 +163,7 @@ public enum EnterHow : byte
 }
 
 /// <summary>A fitted module, as the ship's slim item lists it.</summary>
-public sealed record SimModule(long ItemId, int TypeId, int Flag);
+public sealed record SimModule(long ItemId, int TypeId, int Flag, long BankMasterId = 0);
 
 /// <summary>How the three layers of a ship resist each kind of damage (em, thermal, kinetic, explosive): the share of a hit that gets through.</summary>
 public sealed record SimResonances(IReadOnlyList<double> Shield, IReadOnlyList<double> Armor, IReadOnlyList<double> Structure)

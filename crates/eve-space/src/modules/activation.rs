@@ -155,8 +155,45 @@ impl Scene {
         actions
     }
 
-    /// The host asks for an effect to run. Answered with `Accepted` (code 17) or `Refused`: `ALREADY_ACTIVE`, `NOT_ENOUGH_CAPACITOR`.
+    /// Activating a weapon-bank master starts every fitted member at the same simulation time.
     pub fn activate(&mut self, session: SessionId, effect: Effect, now: i64) -> Vec<Out> {
+        let module_ids = self
+            .pilots
+            .get(&session)
+            .and_then(|pilot| {
+                let master = pilot
+                    .ship
+                    .spec
+                    .modules
+                    .iter()
+                    .find(|module| module.item_id == effect.module_id)?
+                    .bank_master_id;
+                (master > 0).then(|| {
+                    pilot
+                        .ship
+                        .spec
+                        .modules
+                        .iter()
+                        .filter(|module| module.bank_master_id == master)
+                        .map(|module| module.item_id)
+                        .collect::<Vec<_>>()
+                })
+            })
+            .unwrap_or_default();
+        if module_ids.len() < 2 {
+            return self.activate_one(session, effect, now);
+        }
+        let mut out = Vec::new();
+        for module_id in module_ids {
+            let mut member = effect.clone();
+            member.module_id = module_id;
+            out.extend(self.activate_one(session, member, now));
+        }
+        out
+    }
+
+    /// The host asks for an effect to run. Answered with `Accepted` (code 17) or `Refused`: `ALREADY_ACTIVE`, `NOT_ENOUGH_CAPACITOR`.
+    fn activate_one(&mut self, session: SessionId, effect: Effect, now: i64) -> Vec<Out> {
         const CODE: u8 = 17;
         if !self.pilots.contains_key(&session) {
             let Some(structure_id) = self.controlled_structure_id(session) else {
@@ -961,8 +998,38 @@ impl Scene {
             .is_some_and(|action| matches!(action, Action::Strike { .. } | Action::Field { .. }))
     }
 
-    /// The pilot asks for an effect to stop: it does at the end of the cycle it is in. `Refused` (`NOT_ACTIVE`) when it is not running.
+    /// Deactivating a weapon-bank master stops every member at the same cycle boundary.
     pub fn deactivate(&mut self, session: SessionId, module_id: i64, now: i64) -> Vec<Out> {
+        let module_ids = self
+            .pilots
+            .get(&session)
+            .and_then(|pilot| {
+                let master =
+                    pilot.ship.spec.modules.iter().find(|module| module.item_id == module_id)?.bank_master_id;
+                (master > 0).then(|| {
+                    pilot
+                        .ship
+                        .spec
+                        .modules
+                        .iter()
+                        .filter(|module| module.bank_master_id == master)
+                        .map(|module| module.item_id)
+                        .collect::<Vec<_>>()
+                })
+            })
+            .unwrap_or_default();
+        if module_ids.len() < 2 {
+            return self.deactivate_one(session, module_id, now);
+        }
+        let mut out = Vec::new();
+        for module_id in module_ids {
+            out.extend(self.deactivate_one(session, module_id, now));
+        }
+        out
+    }
+
+    /// The pilot asks for an effect to stop: it does at the end of the cycle it is in. `Refused` (`NOT_ACTIVE`) when it is not running.
+    fn deactivate_one(&mut self, session: SessionId, module_id: i64, now: i64) -> Vec<Out> {
         const CODE: u8 = 16;
         if !self.pilots.contains_key(&session) {
             if let Some(structure_id) = self.controlled_structure_id(session)

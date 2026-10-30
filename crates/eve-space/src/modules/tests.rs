@@ -4203,7 +4203,8 @@ fn controlled_structure_point_defense() -> (Scene, i64, i64, i64) {
     structure_spec.ship_id = structure_id;
     structure_spec.capacitor_capacity = 100.0;
     structure_spec.capacitor_recharge_s = 100.0;
-    structure_spec.modules = vec![crate::ship::ModuleSpec { item_id: MODULE, type_id: 35_926, flag: 27 }];
+    structure_spec.modules =
+        vec![crate::ship::ModuleSpec { item_id: MODULE, type_id: 35_926, flag: 27, bank_master_id: 0 }];
     scene.respec(A, structure_spec, now);
     (scene, structure_id, structure_id_2, now)
 }
@@ -4480,7 +4481,8 @@ fn a_controlled_structure_vorton_arc_rechecks_and_authorizes_each_hop() {
     structure_spec.max_target_range = 100_000.0;
     structure_spec.max_locked_targets = 5;
     structure_spec.scan_resolution = 1.0e9;
-    structure_spec.modules = vec![crate::ship::ModuleSpec { item_id: MODULE, type_id: 35_928, flag: 27 }];
+    structure_spec.modules =
+        vec![crate::ship::ModuleSpec { item_id: MODULE, type_id: 35_928, flag: 27, bank_master_id: 0 }];
     scene.respec(A, structure_spec, now);
     let source_position = scene.structure_body(structure_id).unwrap().position;
     {
@@ -4676,7 +4678,8 @@ fn a_controlled_structure_strike_authorizes_each_pulse_with_fresh_candidates() {
     structure_spec.max_locked_targets = 5;
     structure_spec.capacitor_capacity = 100.0;
     structure_spec.capacitor_recharge_s = 100.0;
-    structure_spec.modules = vec![crate::ship::ModuleSpec { item_id: MODULE, type_id: 40_634, flag: 27 }];
+    structure_spec.modules =
+        vec![crate::ship::ModuleSpec { item_id: MODULE, type_id: 40_634, flag: 27, bank_master_id: 0 }];
     scene.respec(A, structure_spec, now);
     let source = scene.structure_body(structure_id).unwrap().position;
     {

@@ -119,7 +119,7 @@ def ship(m):
     body += vitals(m["vitals"]) + condition(m["condition"])
     body += struct.pack("<I", len(m["modules"]))
     for module in m["modules"]:
-        body += i64(module["itemId"]) + struct.pack("<ii", module["typeId"], module["flag"])
+        body += i64(module["itemId"]) + struct.pack("<iiq", module["typeId"], module["flag"], int(module.get("bankMasterId", 0)))
     body += struct.pack("<7d", *m["sensorStrength"], m["ecmResistance"], m["energyWarfareResistance"], m.get("droneDamageMultiplier", 1.0))
     # the stance (protocol 55): a flag, then when there is one the old stance, the switch time (a FILETIME) and the new stance
     stance = m.get("stance")
@@ -818,6 +818,10 @@ valid = [
         "nearbyObjects": [{"itemId": "400000001", "typeId": 23, "centerDistanceMeters": 1000000.0}]}},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
+    {"name": "enter ship with a weapon bank", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
+     "how": 0, "stationId": "60015249", "ship": dict(IBIS, modules=[
+        {"itemId": "9988400001941", "typeId": 900001, "flag": 27, "bankMasterId": "9988400001941"},
+        {"itemId": "9988400001942", "typeId": 900001, "flag": 28, "bankMasterId": "9988400001941"}])},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
      "solarSystemId": 30000142, "how": 1, "stationId": "0", "ship": dict(BARE, name="イビス"),
      "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0]},

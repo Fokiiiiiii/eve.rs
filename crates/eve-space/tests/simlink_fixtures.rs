@@ -272,6 +272,7 @@ fn ship_of(case: &Value) -> ShipSpec {
                 item_id: wide(m, "itemId"),
                 type_id: m["typeId"].as_i64().unwrap() as i32,
                 flag: m["flag"].as_i64().unwrap() as i32,
+                bank_master_id: m["bankMasterId"].as_str().and_then(|id| id.parse().ok()).unwrap_or(0),
             })
             .collect(),
     }

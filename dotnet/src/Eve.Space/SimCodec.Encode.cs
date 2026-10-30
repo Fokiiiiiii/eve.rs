@@ -749,6 +749,7 @@ private static void WriteStructureDamageCorrelation(
             w.I64(module.ItemId);
             w.I32(module.TypeId);
             w.I32(module.Flag);
+            w.I64(module.BankMasterId);
         }
         var sensors = s.Sensors ?? SimSensors.Plain;
         foreach (var number in new[] { sensors.Gravimetric, sensors.Ladar, sensors.Magnetometric, sensors.Radar, sensors.EcmResistance, sensors.EnergyWarfareResistance })

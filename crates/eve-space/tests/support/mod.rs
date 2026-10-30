@@ -193,7 +193,12 @@ pub fn recorded_ship(race: &Value, ball: &[u8], direction: Vec3) -> Ship {
         .iter()
         .map(|m| {
             let m = &m["$tuple"];
-            ModuleSpec { item_id: number(&m[0]), type_id: number(&m[1]) as i32, flag: number(&m[2]) as i32 }
+            ModuleSpec {
+                item_id: number(&m[0]),
+                type_id: number(&m[1]) as i32,
+                flag: number(&m[2]) as i32,
+                bank_master_id: 0,
+            }
         })
         .collect();
     let shield_tau = extra[1]["$tuple"][0]["$tuple"][1].as_f64().unwrap();

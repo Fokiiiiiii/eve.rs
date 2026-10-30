@@ -344,15 +344,15 @@ public static partial class SimCodec
         var vitals = ReadVitals(ref r);
         var condition = ReadCondition(ref r);
         var count = r.U32();
-        // a module takes 16 bytes, so a count the frame cannot hold is refused before anything is allocated for it
-        if (count > r.Remaining / 16)
+        // a module takes 24 bytes, so a count the frame cannot hold is refused before anything is allocated for it
+        if (count > r.Remaining / 24)
         {
             throw new SimLinkException(SimLinkError.Truncated, "the frame ends before the message does");
         }
         var modules = new SimModule[count];
         for (var i = 0; i < modules.Length; i++)
         {
-            modules[i] = new SimModule(r.I64(), r.I32(), r.I32());
+            modules[i] = new SimModule(r.I64(), r.I32(), r.I32(), r.I64());
         }
         var sensors = new SimSensors(r.F64(), r.F64(), r.F64(), r.F64(), r.F64(), r.F64());
         var droneDamageMultiplier = r.F64();

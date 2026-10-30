@@ -1000,7 +1000,7 @@ private static PyValue RowField(PyValue value,string key)
         var emptyKick = Assert.IsType<PyDict>(await CorpRpc("KickOutMembers",new PyList([])));
         Assert.Empty(Assert.IsType<PyList>(emptyKick.Entries.Single(e => e.Key == new PyStr("kicked")).Value).Items);
         Assert.Empty(Assert.IsType<PyList>(emptyKick.Entries.Single(e => e.Key == new PyStr("notKicked")).Value).Items);
-        Assert.Equal(new PyInt(corp.Id),await ManagerRpc("GetCorporationIDForCharacter",new PyLong(long.MaxValue)));
+        Assert.IsType<PyNone>(await ManagerRpc("GetCorporationIDForCharacter",new PyLong(long.MaxValue)));
         Assert.IsType<PyNone>(await CorpRpc("UpdateCorporation",new PyStr("Updated description"),new PyStr("https://corp.example"),
             Py.Number(0.12),new PyInt(1),Py.Number(0.03)));
         var publicInfo = await ManagerRpc("GetPublicInfo",new PyInt(corp.Id));

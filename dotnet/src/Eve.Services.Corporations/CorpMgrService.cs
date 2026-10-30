@@ -32,6 +32,8 @@ public sealed partial class CorpMgrService(
         var id = call.Arg(0) switch { PyInt n => n.Value,PyLong n => n.Value,_ => 0 };
         if (id > 0 && await characters.GetAsync(id,call.Cancellation) is { CorporationId: > 0 } character)
             return new PyInt(character.CorporationId);
+        if (id > 0 && id != call.Session.CharacterId)
+            return PyNone.Instance;
         return new PyInt(call.Session.GetInt("corporationID") ?? call.Session.GetInt("corpid") ?? 1000004);
     }
 }

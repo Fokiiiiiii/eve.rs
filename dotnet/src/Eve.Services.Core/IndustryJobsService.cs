@@ -370,14 +370,15 @@ private async ValueTask<PyValue> MutateAsync(ServiceCall call)
 
     private static PyValue? WireField(PyValue? payload, string name)
     {
-        var dictionary = payload switch
+        var entries = payload switch
         {
-            PyDict direct => direct,
-            PyObject objectValue when objectValue.Args is PyDict args => args,
+            PyDict direct => direct.Entries,
+            PyObject { Args: PyDict args } => args.Entries,
+            PyObjectEx objectEx => objectEx.Dict,
             _ => null,
         };
-        if (dictionary is null) return null;
-        foreach (var (key, value) in dictionary.Entries)
+        if (entries is null) return null;
+        foreach (var (key, value) in entries)
             if (Eve.Macho.JsSemantics.StringValue(key) == name) return value;
         return null;
     }

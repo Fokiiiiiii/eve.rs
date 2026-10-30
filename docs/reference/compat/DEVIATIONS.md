@@ -3276,8 +3276,9 @@ Status: the server side is implemented for NPC stations. The client has not been
 
 Differences and cuts, all listed:
 1. Sources: the caller's items rooted at this station: its hangar, its containers and the cargo of its ships (`RootAtStationAsync`).
-   Corporation hangars are not quoted (their access rules are not built).
-2. Outputs: the sample item's place by default (EVE.js does the same); another place must be the caller's, in this station. Other owners are refused.
+   Corporation hangars are not quoted.
+2. Outputs: the sample item's place by default (EVE.js does the same); another personal place must be rooted at this station. Corporation
+   division output requires an active office at this station and the caller's scoped Hangar Query role; yielded items are owned by the corporation.
 3. Structures: refused with a named notice (`Reprocessing is available in the NPC station you are docked in.`). The structure rigs and
    profiles of `reprocessingRuntime.js` are not built.
 4. Implants: the implants plugged in the character (flags 89 to 98) add their refining yield mutator to the skill multiplier of the
@@ -5708,7 +5709,10 @@ vaultManager.get_account_balance now costs 10 weighted per-session units. The RP
 `charMgr.BlockOwners`, `UnblockOwners`, `DeleteContacts`, and `EditContactsRelationshipID` now require a list/tuple of positive integer owner IDs. Malformed outer values and invalid entries receive named refusals before changing the authenticated character's personal data, instead of being treated as an empty or partially filtered batch. Duplicate IDs remain collapsed; valid response shapes are unchanged. `CharacterInfoTests.Personal_contact_labels_can_be_created_edited_assigned_removed_and_deleted` covers the refusal cases and retained state.
 
 
-Corporation registry batch RPCs `ExecuteActions`, `GetMembersByIds`, `GetMemberIDsByQuery`, `KickOutMembers`, `UpdateMembers`, and `UpdateTitles` now require list/tuple outer values. Malformed batch shapes return `CORPORATION_BULK_ARGUMENT_INVALID` before member reads or mutations instead of being treated as empty batches. Valid list/tuple requests keep the existing response behavior. `CorporationProtocolTests.Corporation_core_and_role_rpcs_preserve_public_fields_and_role_contracts` covers malformed member lookup and action batches.
+Corporation registry batch RPCs `ExecuteActions`, `GetMembersByIds`, `GetMemberIDsByQuery`, `KickOutMembers`, `UpdateMembers`, and `UpdateTitles` now require list/tuple outer values. Malformed batch shapes return `CORPORATION_BULK_ARGUMENT_INVALID` before member reads or mutations instead of being treated as empty batches. `GetMembersByIds` has no arbitrary 500-ID cap: it intersects requested IDs with the caller corporation's persisted membership before loading character rows. `ExecuteActions`, `GetMemberIDsByQuery`, `KickOutMembers`, `UpdateMembers`, and `UpdateTitles` keep their separate limits. `CorporationProtocolTests.Corporation_core_and_role_rpcs_preserve_public_fields_and_role_contracts` covers malformed member lookup and action batches and a 501-ID request.
+
+
+The client groups items by source location in `eve/client/script/ui/reprocessing/ui/itemReprocessor.py:18-46`, calls `Reprocess` once per group at lines 69-70, and extends each two-element RPC result into one flat list. `reprocessing/ui/controller.py:78-81` then unpacks exactly two values. Therefore a single-group reply is compatible, but zero groups issue no RPC and two or more groups flatten into four or more values; a server-only reply change cannot repair those two cases. EveJS 261028.1 likewise returns one `[processed IDs, output-by-type]` pair for a positive `fromLocationID` (`src/server/src/services/station/reprocessingService.js:673-764`).
 
 
 `corpRecProxy` recruitment list/search methods now refuse collections above 5,000 rows with `CORPORATION_RECRUITMENT_AD_LIMIT_EXCEEDED` instead of materializing and returning an unbounded result. The query reads at most one row beyond the supported result ceiling and never returns a partial successful list. `Corporation_recruitment_ad_enumeration_refuses_more_than_5000_rows` covers the store and search RPC.

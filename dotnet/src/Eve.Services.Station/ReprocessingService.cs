@@ -8,6 +8,7 @@ using Eve.Skills;
 using Eve.Universe;
 using Eve.Wallet;
 using Eve.Characters;
+using Eve.Corporations;
 using Eve.Dogma;
 using Npgsql;
 
@@ -94,7 +95,7 @@ public sealed class SdeReprocessingData(SdeReader sde, Eve.Market.AdjustedPriceC
 [Service("reprocessingSvc")]
 public sealed partial class ReprocessingService(NpgsqlDataSource source, PgItemStore items, ItemTypeCatalog types, StationCatalog stations, IReprocessingData data,
     RelationStore relations, PgSkillStore skills, WalletTransactions wallets, PgWalletStore balances, PgCharacterStore characters, DogmaStatic statics,
-    Func<long> nowUnixMs) : IBoundObjectReleaseHandler
+    Func<long> nowUnixMs, CorporationStore? corporations = null, CorporationOfficeStore? offices = null) : IBoundObjectReleaseHandler
 {
     private const int IskAccount = 1000;
     private const int ImplantFirstFlag = 89;
@@ -167,8 +168,8 @@ public sealed partial class ReprocessingService(NpgsqlDataSource source, PgItemS
         var station = BoundStation(call);
         var character = CharacterOf(call.Session);
         var requestedOwner = IdOf(call.Arg(2)) ?? 0;
-        if (requestedOwner != 0 && requestedOwner != character)
-            throw Notify("Reprocessing outputs go to your own items.");
+        if (requestedOwner < 0)
+            throw Notify("Invalid reprocessing output owner.");
         var requestedSourceLocation = IdOf(call.Arg(1)) ?? 0;
         if (requestedSourceLocation < 0) throw Notify("Invalid reprocessing source location.");
         var requestedLocation = IdOf(call.Arg(3));
@@ -203,7 +204,19 @@ public sealed partial class ReprocessingService(NpgsqlDataSource source, PgItemS
         var sample = plan.Lines[0].Item;
         var outputLocation = requestedLocation ?? sample.LocationId;
         var outputFlag = (int)(requestedFlag ?? (requestedLocation is null ? sample.Flag : ItemFlags.Hangar));
-        if (outputLocation != station)
+        var outputOwner = character;
+        if (requestedOwner > 0 && requestedOwner != character)
+        {
+            if (corporations is null || offices is null)
+                throw Notify("You cannot use that corporation hangar.");
+            var office = await offices.GetAsync(connection, transaction, requestedOwner, station, cancellationToken: call.Cancellation).ConfigureAwait(false);
+            if (office is null || office.OfficeId != outputLocation || outputFlag is < 115 or > 121
+                || !await corporations.HasHangarAccessAsync(connection, transaction, character, requestedOwner, station, outputFlag,
+                    take: false, token: call.Cancellation).ConfigureAwait(false))
+                throw Notify("You cannot use that corporation hangar.");
+            outputOwner = requestedOwner;
+        }
+        else if (outputLocation != station)
         {
             if (await items.LockAndGetAsync(connection, transaction, outputLocation, call.Cancellation).ConfigureAwait(false) is not { } place
                 || !await RootAtStationAsync(connection, transaction, place, station, character, call.Cancellation).ConfigureAwait(false))
@@ -253,8 +266,8 @@ public sealed partial class ReprocessingService(NpgsqlDataSource source, PgItemS
             for (var remaining = quantity; remaining > 0;)
             {
                 var stack = Math.Min(remaining, ReprocessingRules.ClientInventoryStackLimit);
-                var id = await items.CreateAsync(connection, transaction, new NewItem(typeId, character, outputLocation, outputFlag, stack), call.Cancellation).ConfigureAwait(false);
-                yielded.Add(new Item(id, typeId, character, outputLocation, outputFlag, stack, false, null));
+                var id = await items.CreateAsync(connection, transaction, new NewItem(typeId, outputOwner, outputLocation, outputFlag, stack), call.Cancellation).ConfigureAwait(false);
+                yielded.Add(new Item(id, typeId, outputOwner, outputLocation, outputFlag, stack, false, null));
                 remaining -= stack;
             }
         }

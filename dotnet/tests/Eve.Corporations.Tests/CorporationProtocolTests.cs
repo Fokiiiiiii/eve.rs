@@ -960,9 +960,10 @@ private static PyValue RowField(PyValue value,string key)
         async Task<PyPackedRow> MemberRow() => Assert.IsType<PyPackedRow>(MarshalCodec.Decode(MarshalCodec.Encode(
             await ((IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now)).CallAsync(Call(memberSession,"GetMember",new PyInt(member))))));
 
-        var tooManyMemberIds = new PyList(Enumerable.Range(1, 501).Select(id => (PyValue)new PyInt(id)).ToArray());
-        var limitError = await Assert.ThrowsAsync<CorporationError>(async () => await CorpRpc("GetMembersByIds", tooManyMemberIds));
-        Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED", limitError.Code);
+        var bulkMemberIds = new PyList(Enumerable.Range(1, 500).Select(id => (PyValue)new PyInt(id))
+            .Append(new PyInt(member)).ToArray());
+        var bulkMemberRows = Assert.IsType<PyList>(await CorpRpc("GetMembersByIds", bulkMemberIds));
+        Assert.Equal((await MemberRow()).Values, Assert.IsType<PyPackedRow>(Assert.Single(bulkMemberRows.Items)).Values);
         var malformedMemberIds = await Assert.ThrowsAsync<CorporationError>(async () =>
             await CorpRpc("GetMembersByIds",new PyStr("not-a-list")));
         Assert.Equal("CORPORATION_BULK_ARGUMENT_INVALID",malformedMemberIds.Code);

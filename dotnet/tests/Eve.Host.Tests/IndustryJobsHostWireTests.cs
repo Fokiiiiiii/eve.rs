@@ -18,8 +18,11 @@ public sealed class IndustryJobsHostWireTests
 
     private sealed class JobOperations(JsonObject table) : IIndustryJobOperations
     {
+        public IndustryJobInstallRequest? LastInstallRequest { get; private set; }
+
         public ValueTask<long> InstallJobAsync(IndustryJobInstallRequest request, CancellationToken cancellationToken)
         {
+            LastInstallRequest = request;
             table["jobs"]!["42004"] = Job(42004);
             return ValueTask.FromResult(42004L);
         }
@@ -110,9 +113,10 @@ public sealed class IndustryJobsHostWireTests
     public async Task Registered_industry_manager_routes_keep_client_shapes_and_accept_transport_kwargs()
     {
         var table = Table();
+        var operations = new JobOperations(table);
         var service = new IndustryJobsService(
             _ => ValueTask.FromResult<JsonObject?>(table),
-            new JobOperations(table),
+            operations,
             () => Now);
         var registry = new ServiceRegistry();
         registry.Register(service);
@@ -153,6 +157,35 @@ public sealed class IndustryJobsHostWireTests
             ("solarSystemID", new PyInt(30)), ("runs", new PyInt(1)));
         Assert.Equal(new PyInt(42004), await Call("InstallJob", install));
 
+        var inputLocation = new PyObjectEx(ObjectExKind.Ex1, new PyStr("industry.job.Location"), [],
+        [
+            new KeyValuePair<PyValue, PyValue>(new PyStr("itemID"), new PyLong(88)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("flagID"), new PyInt(116)),
+        ]);
+        var outputLocation = new PyObject(new PyStr("industry.job.Location"), new PyDict([
+            new KeyValuePair<PyValue, PyValue>(new PyStr("itemID"), new PyLong(89)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("flagID"), new PyInt(117)),
+        ]));
+        Assert.Equal(new PyInt(42004), await Call("InstallJob", Py.KeyVal(
+            ("activityID", new PyInt(1)), ("blueprintID", new PyInt(11)),
+            ("blueprintTypeID", new PyInt(681)), ("facilityID", new PyInt(20)),
+            ("solarSystemID", new PyInt(30)), ("runs", new PyInt(1)),
+            ("inputLocation", inputLocation), ("outputLocation", outputLocation))));
+        Assert.Equal(new IndustryJobLocation(88, 116), operations.LastInstallRequest!.Job.InputLocation);
+        Assert.Equal(new IndustryJobLocation(89, 117), operations.LastInstallRequest.Job.OutputLocation);
+
+        var dictionaryLocation = new PyDict([
+            new KeyValuePair<PyValue, PyValue>(new PyStr("itemID"), new PyLong(98)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("flagID"), new PyInt(118)),
+        ]);
+        Assert.Equal(new PyInt(42004), await Call("InstallJob", Py.KeyVal(
+            ("activityID", new PyInt(1)), ("blueprintID", new PyInt(11)),
+            ("blueprintTypeID", new PyInt(681)), ("facilityID", new PyInt(20)),
+            ("solarSystemID", new PyInt(30)), ("runs", new PyInt(1)),
+            ("inputLocation", dictionaryLocation), ("outputLocation", dictionaryLocation))));
+        Assert.Equal(new IndustryJobLocation(98, 118), operations.LastInstallRequest!.Job.InputLocation);
+        Assert.Equal(new IndustryJobLocation(98, 118), operations.LastInstallRequest.Job.OutputLocation);
+
         Assert.IsType<PyNone>(await Call("CompleteJob", new PyInt(42004), new PyInt(30)));
         Assert.Equal(new PyInt(100), Field(await Call("GetJob", new PyInt(42004)), "status"));
 
@@ -163,5 +196,6 @@ public sealed class IndustryJobsHostWireTests
 
         Assert.IsType<PyNone>(await Call("CancelJob", new PyInt(42002), new PyInt(30)));
         Assert.Equal(new PyInt(101), Field(await Call("GetJob", new PyInt(42002)), "status"));
+
     }
 }

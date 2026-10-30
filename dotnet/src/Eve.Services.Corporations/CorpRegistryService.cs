@@ -378,14 +378,18 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     public async ValueTask<PyValue> GetMembersByIds(ServiceCall call)
     {
         var memberIds = RequiredBatchItems(call.Arg(0));
-        if (memberIds.Count > MaxBulkMemberIds)
-            throw new CorporationError("CORPORATION_BULK_LIMIT_EXCEEDED");
-
+        if (await Current(call) is not { } corporation)
+            return new PyList([]);
+        var requestedIds = memberIds.Select(Number).Where(id => id > 0).ToArray();
+        var members = (await store.MembersByIdsAsync(corporation.Id, requestedIds, call.Cancellation))
+            .ToDictionary(member => member.CharacterId);
+        var charactersById = (await characters.ForCorporationByIdsAsync(corporation.Id, requestedIds, call.Cancellation))
+            .ToDictionary(character => character.Id);
         var rows = new List<PyValue>();
-        foreach (var id in memberIds)
+        foreach (var id in requestedIds.Distinct())
         {
-            var row = await GetMember(new ServiceCall { Method="GetMember",Args=[id],Session=call.Session,Cancellation=call.Cancellation });
-            if (row is not PyNone) rows.Add(row);
+            if (members.TryGetValue(id, out var member) && charactersById.TryGetValue(id, out var character))
+                rows.Add(CorporationWire.Member(member, character.Name));
         }
         return new PyList(rows);
     }

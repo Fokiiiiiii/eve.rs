@@ -437,6 +437,26 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
         return result;
     }
 
+    public async Task<IReadOnlyList<Member>> MembersByIdsAsync(long corporation, IReadOnlyCollection<long> characterIds, CancellationToken token = default)
+    {
+        var result = new List<Member>();
+        if (await GetAsync(corporation, token) is { IsNpc: true })
+        {
+            foreach (var batch in characterIds.Distinct().Chunk(500))
+                result.AddRange((await _characters.ForCorporationByIdsAsync(corporation, batch, token)).Select(NpcMember));
+            return result;
+        }
+        foreach (var batch in characterIds.Distinct().Chunk(500))
+        {
+            await using var command = _source.CreateCommand($"SELECT {MemberColumns} FROM {_schema}.members WHERE corporation_id=$1 AND character_id=ANY($2)");
+            command.Parameters.Add(new NpgsqlParameter { Value = corporation });
+            command.Parameters.Add(new NpgsqlParameter { Value = batch });
+            await using var reader = await command.ExecuteReaderAsync(token);
+            while (await reader.ReadAsync(token)) result.Add(ReadMember(reader));
+        }
+        return result;
+    }
+
     public async Task<IReadOnlyList<Employment>> EmploymentAsync(long character,CancellationToken token = default)
     {
         await using var command = _source.CreateCommand($"SELECT id,character_id,corporation_id,started_ms,ended_ms,deleted FROM {_schema}.employment WHERE character_id=$1 ORDER BY started_ms DESC,id DESC");

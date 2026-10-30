@@ -59,14 +59,21 @@ public partial class HostServerTests
             };
 
             var result = await Call(nextCallId++, method, args);
-            if (method == "GetWings")
-                Assert.IsType<PyDict>(result);
-            else if (method == "MassMoveMembers")
-                Assert.IsType<PyList>(result);
-            else if (method == "MoveMember")
-                Assert.Equal(PyBool.False, result);
-            else
-                Assert.Same(PyNone.Instance, result);
+            switch (method)
+            {
+                case "GetWings":
+                    Assert.IsType<PyDict>(result);
+                    break;
+                case "MoveMember":
+                    Assert.Same(PyBool.False, result);
+                    break;
+                case "MassMoveMembers":
+                    Assert.Empty(Assert.IsType<PyList>(result).Items);
+                    break;
+                default:
+                    Assert.Same(PyNone.Instance, result);
+                    break;
+            }
         }
     }
 

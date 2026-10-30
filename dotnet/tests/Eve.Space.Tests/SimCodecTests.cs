@@ -560,7 +560,8 @@ public class SimCodecTests
                 new SimCredit(Wide(c, "characterId"), Wide(c, "corporationId"), Wide(c, "allianceId"), Wide(c, "warFactionId")), (double)c["distance"]!) { ExpectedScene = c["expectedScene"] is { } expectedScene ? SceneKeyOf(expectedScene) : null },
             "Arrived" => new SimArrived(Session(), Wide(c, "beltId"), VectorOf(c["position"]!)),
             "ContainerPlaced" => new SimContainerPlaced(Session(), Wide(c, "containerId"), VectorOf(c["position"]!), VectorOf(c["direction"]!)),
-            "ChangeWreck" => new SimChangeWreck(Session(), Wide(c, "wreckId"), (bool)c["isEmpty"]!),
+            "ChangeWreck" => new SimChangeWreck(
+                Session(), Wide(c, "wreckId"), c["isEmpty"] is null ? null : (bool)c["isEmpty"]!, c["abandoned"] is null ? null : (bool)c["abandoned"]!),
             "RemoveWreck" => new SimRemoveWreck(Wide(c, "wreckId"), (int)c["effect"]!),
             "Deployed" => new SimDeployed((int)c["solarSystemId"]!, Wide(c, "deployableId"), (string)c["typeName"]!, (int)c["typeId"]!, (int)c["groupId"]!, VectorOf(c["position"]!),
                 (double)c["radius"]!, Wide(c, "ownerId"), (int)c["corporationId"]!, (int)c["allianceId"]!, Wide(c, "shipId"), (double)c["lifetimeMs"]!),

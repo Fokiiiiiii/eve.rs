@@ -23,6 +23,8 @@ EveJS 261028.1 implements the same flow: `src/server/src/services/ship/beyonceSe
 
 ## Checks
 
+Pushed implementation commit `300534155e083e1f4cfd95dc24aebbf9e72b565f`, then CI-fix commit `f01809925b79f532996a3cb13c4093f1482545d1`, to `main`. The first push's Actions run 41022854575 found four failures: the tether policy test still expected protocol 83, the SimCodec fixture decoder did not read nullable `ChangeWreck` fields, and two `LootAllTests` changed only inventory owner while leaving stored wreck rights unchanged. Those fixes are in `f0180992`; push-triggered Actions run 41024771010 completed successfully, including Rust workspace tests, the codec fixture cases, and the PostgreSQL-backed loot tests. Locally, Rust lint and the focused tether test, C# project builds, and 260 codec fixture cases pass. PostgreSQL was not used locally, as instructed; those tests passed on CI.
+
 Passed locally: Rust format check; `eve-space` focused abandonment, sim command and observer-expiry tests; simlink fixture tests (11); `eve-space` cargo check; workspace clippy; .NET builds for `Eve.Space`, `Eve.Services.Space`, `Eve.Services.Inventory`, `Eve.Space.Tests` and `Eve.Host.Tests`; focused sim codec and registered Host abandonment wire tests.
 
 The graphical client was not exercised. PostgreSQL was intentionally not used for this task; persistence restore is verified by code-path inspection, not a database restart test. Existing unrelated cx3 WIP remains preserved in stash `cx3-pre-wreck-loot-wip`.

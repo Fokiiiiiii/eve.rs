@@ -651,6 +651,11 @@ public sealed partial class SpaceSessions
             return ModuleResult.Refusal("REFUSED");
         }
         var type = module is null ? null : _statics.Type(module.TypeId);
+        if (pilot.RunningModules.TryGetValue(moduleId, out var running)
+            && !EffectNameMatches(running.EffectName, effectName))
+        {
+            return ModuleResult.Refusal("MODULE_NOT_ACTIVE", module?.TypeId ?? 0, type?.Name ?? "");
+        }
         var reply = await AskSimAsync(id, () => _sim.CommandAsync(id, SimCommands.Deactivate, [moduleId], cancellationToken), session);
         if (reply.Accepted)
         {
@@ -663,6 +668,9 @@ public sealed partial class SpaceSessions
         }
         return reply.Accepted ? ModuleResult.Done : ModuleResult.Refusal(reply.Reason == "NOT_ACTIVE" ? "MODULE_NOT_ACTIVE" : reply.Reason ?? "REFUSED", module?.TypeId ?? 0, type?.Name ?? "");
     }
+
+    internal static bool EffectNameMatches(string running, string requested) =>
+        string.Equals(running, requested, StringComparison.Ordinal);
 
     /// <summary>
     /// The ship a pilot flies as dogma has it now: the stored module states, with the modules the pilot has started (<see cref="Pilot.ActiveModules"/>) active.

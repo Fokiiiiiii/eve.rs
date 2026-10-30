@@ -89,22 +89,32 @@ public partial class HostServerTests
         Assert.Equal(MachoMessage.ErrorResponse, Envelope(refused).Type);
         Assert.Equal(3, modules.Activations.Count);
 
+        modules.DeactivationAnswer = ModuleResult.Refusal("MODULE_NOT_ACTIVE", 21857, "1MN Civilian Afterburner");
         await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.BoundCall(
             open, 5, dockedOid, "Deactivate",
+            new PyTuple([new PyLong(9988400002220), new PyStr("wrongEffect")]),
+            MachoVersion()))));
+        var wrongEffect = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.ErrorResponse, Envelope(wrongEffect).Type);
+        Assert.Equal((9988400002220L, "wrongEffect"), Assert.Single(modules.Deactivations));
+
+        modules.DeactivationAnswer = ModuleResult.Done;
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.BoundCall(
+            open, 6, dockedOid, "Deactivate",
             new PyTuple([new PyLong(9988400002220), new PyStr("targetAttack")]),
             MachoVersion()))));
         var stopped = Assert.IsType<Send>(await front.ReceiveAsync());
         Assert.Equal(MachoMessage.CallRsp, Envelope(stopped).Type);
         Assert.Equal(new PyInt(1), Result(MarshalCodec.Decode(stopped.Payload)));
-        Assert.Equal((9988400002220L, "targetAttack"), Assert.Single(modules.Deactivations));
+        Assert.Equal((9988400002220L, "targetAttack"), modules.Deactivations[1]);
 
         client!.Set("stationid", PyNone.Instance);
         Assert.Null(client.DockedLocationId);
-        var inSpaceBind = await Bind(6, solarSystemId, groupSolarSystem);
+        var inSpaceBind = await Bind(7, solarSystemId, groupSolarSystem);
         Assert.Equal(MachoMessage.CallRsp, Envelope(inSpaceBind).Type);
         var inSpaceOid = BoundId(inSpaceBind);
         modules.Answer = ModuleResult.Done;
-        var inSpace = await Activate(7, inSpaceOid, PyNone.Instance, new PyInt(1));
+        var inSpace = await Activate(8, inSpaceOid, PyNone.Instance, new PyInt(1));
         Assert.Equal(MachoMessage.CallRsp, Envelope(inSpace).Type);
         Assert.Equal(new PyInt(1), Result(MarshalCodec.Decode(inSpace.Payload)));
         Assert.Equal((9988400002220L, "targetAttack", 0L, 1), modules.Activations[3]);
@@ -297,6 +307,7 @@ public partial class HostServerTests
     private sealed class RecordingModules : ISpaceModules, ISpaceTargeting
     {
         public ModuleResult? Answer { get; set; } = ModuleResult.Done;
+        public ModuleResult? DeactivationAnswer { get; set; } = ModuleResult.Done;
         public List<(long ModuleId, string Effect, long Target, int Repeat)> Activations { get; } = [];
         public List<(long ModuleId, string Effect)> Deactivations { get; } = [];
         public ModuleResult? OfflineAnswer { get; set; } = ModuleResult.Done;
@@ -312,7 +323,7 @@ public partial class HostServerTests
         public Task<ModuleResult?> DeactivateAsync(ClientSession session, long moduleId, string effectName, CancellationToken cancellationToken)
         {
             Deactivations.Add((moduleId, effectName));
-            return Task.FromResult<ModuleResult?>(ModuleResult.Done);
+            return Task.FromResult(DeactivationAnswer);
         }
 
         public Task<TargetingResult?> OrderAsync(ClientSession session, TargetingOrder order, IReadOnlyList<long> targets, CancellationToken cancellationToken) =>

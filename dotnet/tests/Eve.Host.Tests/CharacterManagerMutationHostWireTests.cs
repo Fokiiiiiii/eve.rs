@@ -271,6 +271,8 @@ public partial class HostServerTests
             var packet = Assert.IsType<MachoPacket>(MachoPacket.Decode(decoded));
             if (packet.Type == MachoMessage.Notification)
                 continue;
+            if (packet.Type == MachoMessage.ErrorResponse)
+                throw new Xunit.Sdk.XunitException(System.Text.Encoding.ASCII.GetString(send.Payload.Span));
             Assert.Equal(MachoMessage.CallRsp, packet.Type);
             return Result(decoded);
         }

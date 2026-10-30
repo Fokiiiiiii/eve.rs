@@ -177,9 +177,15 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
         {
             return true;
         }
-        return await _ships.CharacterAsync(characterId, cancellationToken) is { } pilot
-            && await _ships.CharacterAsync(container.OwnerId, cancellationToken) is { } owner && owner.CorporationId == pilot.CorporationId;
+        return rights is { CorporationId: > 0 }
+            && await _ships.CharacterAsync(characterId, cancellationToken) is { } pilot
+            && rights.CorporationId == pilot.CorporationId;
     }
+
+    public Task<bool> MayTakeFromAsync(ClientSession session, Item container, CancellationToken cancellationToken) =>
+        session.CharacterId is { } characterId
+            ? MayTakeFromAsync(characterId, container, cancellationToken)
+            : Task.FromResult(false);
 
     private bool HasAnalysisBeaconLootAccess(Item item, long? characterId)
     {
@@ -243,11 +249,42 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
 
         foreach (var (container, rights) in targets)
         {
-            _abandonedLoot.TryAdd(container.Id, 0);
             var current = await _spaceItems.GetAsync(container.Id, cancellationToken) ?? rights;
+            var saved = false;
             if (current is not null && !IsAbandoned(current))
             {
                 await _spaceItems.SaveAsync(Abandon(current), cancellationToken);
+                saved = true;
+            }
+            var addedToAbandonedCache = _abandonedLoot.TryAdd(container.Id, 0);
+            CommandReply reply;
+            try
+            {
+                reply = await _sim.ChangeWreckAsync((ulong)session.SessionId, container.Id, isEmpty: null, abandoned: true, cancellationToken: cancellationToken);
+            }
+            catch (SimUnavailableException)
+            {
+                if (addedToAbandonedCache)
+                    _abandonedLoot.TryRemove(container.Id, out _);
+                if (saved && current is not null)
+                    await _spaceItems.SaveAsync(current, CancellationToken.None);
+                throw Unavailable();
+            }
+            catch
+            {
+                if (addedToAbandonedCache)
+                    _abandonedLoot.TryRemove(container.Id, out _);
+                if (saved && current is not null)
+                    await _spaceItems.SaveAsync(current, CancellationToken.None);
+                throw;
+            }
+            if (!reply.Accepted)
+            {
+                if (addedToAbandonedCache)
+                    _abandonedLoot.TryRemove(container.Id, out _);
+                if (saved && current is not null)
+                    await _spaceItems.SaveAsync(current, CancellationToken.None);
+                throw MachoErrors.ThrowUserError("FakeItemNotFound");
             }
         }
     }

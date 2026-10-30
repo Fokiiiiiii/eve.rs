@@ -4502,7 +4502,8 @@
    "sessionId": "1790646377000015",
    "wreckId": "9988400002948",
    "isEmpty": false,
-   "hex": "120000001e4f2c3859955c060084b7089b1509000000"
+   "abandoned": null,
+   "hex": "130000001e4f2c3859955c060084b7089b150900000002"
   },
   {
    "name": "wreck with nothing to take",
@@ -4510,7 +4511,17 @@
    "sessionId": "1790646377000015",
    "wreckId": "9988400002417",
    "isEmpty": true,
-   "hex": "120000001e4f2c3859955c060071b5089b1509000001"
+   "abandoned": null,
+   "hex": "130000001e4f2c3859955c060071b5089b150900000102"
+  },
+  {
+   "name": "wreck loot rights abandoned",
+   "kind": "ChangeWreck",
+   "sessionId": "1790646377000015",
+   "wreckId": "9988400002948",
+   "isEmpty": null,
+   "abandoned": true,
+   "hex": "130000001e4f2c3859955c060084b7089b150900000201"
   },
   {
    "name": "can taken out of space with the destruction effect",

@@ -152,6 +152,7 @@ impl Scene {
                     character_id: credit.character_id,
                     corporation_id: credit.corporation_id,
                 },
+                abandoned: false,
                 launcher_id: ship_id,
                 is_empty: true,
                 rights_known: false,

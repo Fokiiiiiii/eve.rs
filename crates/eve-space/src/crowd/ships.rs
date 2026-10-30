@@ -48,6 +48,13 @@ impl Scene {
         sessions
     }
 
+    /// Bound clients that may still hold a wreck in their view, including a pilot waiting for its replacement capsule.
+    pub(crate) fn wreck_view_sessions(&self) -> Vec<SessionId> {
+        let mut sessions = self.view_sessions();
+        sessions.extend(self.widowed.iter().filter(|(_, widow)| widow.bound).map(|(session, _)| *session));
+        sessions
+    }
+
     pub(super) fn sees_ship(&self, observer: SessionId, subject: SessionId) -> bool {
         self.pilots
             .get(&observer)
@@ -87,6 +94,7 @@ impl Scene {
             .or_else(|| {
                 self.controlled_structures.get(&observer).map(|view| view.sees_wrecks.contains(&wreck_id))
             })
+            .or_else(|| self.widowed.get(&observer).map(|widow| widow.sees_wrecks.contains(&wreck_id)))
             .unwrap_or(false)
     }
 
@@ -95,7 +103,8 @@ impl Scene {
             .pilots
             .get_mut(&observer)
             .map(|pilot| &mut pilot.sees_wrecks)
-            .or_else(|| self.controlled_structures.get_mut(&observer).map(|view| &mut view.sees_wrecks));
+            .or_else(|| self.controlled_structures.get_mut(&observer).map(|view| &mut view.sees_wrecks))
+            .or_else(|| self.widowed.get_mut(&observer).map(|widow| &mut widow.sees_wrecks));
         if let Some(seen_set) = seen_set {
             if seen {
                 seen_set.insert(wreck_id);

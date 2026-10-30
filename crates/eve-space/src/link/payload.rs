@@ -688,10 +688,11 @@ impl Message {
                 put_vector(&mut out, position);
                 put_vector(&mut out, direction);
             }
-            Self::ChangeWreck { session_id, wreck_id, is_empty } => {
+            Self::ChangeWreck { session_id, wreck_id, is_empty, abandoned } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.extend_from_slice(&wreck_id.to_le_bytes());
-                out.push(u8::from(*is_empty));
+                out.push(is_empty.map_or(2, u8::from));
+                out.push(abandoned.map_or(2, u8::from));
             }
             Self::RemoveWreck { wreck_id, effect } => {
                 out.extend_from_slice(&wreck_id.to_le_bytes());

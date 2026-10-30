@@ -21,6 +21,9 @@ public interface ISpaceContainers
     /// </summary>
     Task<Item?> OpenAsync(ClientSession session, long containerId, CancellationToken cancellationToken);
 
+    /// <summary>Whether the pilot may take the contents under the space container's loot rights.</summary>
+    Task<bool> MayTakeFromAsync(ClientSession session, Item container, CancellationToken cancellationToken) => Task.FromResult(false);
+
     /// <summary>
     /// Moves goods between the ship in space and a can or wreck (taken out of it into the hold, or put from the hold into it), and tells the pilot's client what changed, in the
     /// reference's order. Answers the id of the item that moved (a stack split off is a new one), or null when nothing was done. Throws the client's error for what is refused.

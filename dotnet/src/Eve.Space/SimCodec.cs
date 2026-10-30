@@ -23,7 +23,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// <summary>The wire uses little-endian integers and length-prefixed text and byte strings.</summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 83;
+    public const ushort ProtocolVersion = 84;
 
     /// <summary>The longest name of a dynamic slim-item field, in bytes (protocol 76).</summary>
     public const int SlimFieldNameMax = 64;
@@ -57,6 +57,14 @@ public static partial class SimCodec
         }
         return ids;
     }
+
+    private static bool? ReadOptionalBool(ref Reader r, string name) => r.U8() switch
+    {
+        0 => false,
+        1 => true,
+        2 => null,
+        _ => throw new SimLinkException(SimLinkError.BadValue, $"bad {name}"),
+    };
 
     private static SimPlaceWreck ReadWreckPlacement(ref Reader r)
     {
@@ -1036,12 +1044,7 @@ public static partial class SimCodec
                 {
                     var session = r.U64();
                     var wreck = r.I64();
-                    message = new SimChangeWreck(session, wreck, r.U8() switch
-                    {
-                        0 => false,
-                        1 => true,
-                        _ => throw new SimLinkException(SimLinkError.BadValue, "bad is_empty"),
-                    });
+                    message = new SimChangeWreck(session, wreck, ReadOptionalBool(ref r, "is_empty"), ReadOptionalBool(ref r, "abandoned"));
                     break;
                 }
             case Kind.RemoveWreck:

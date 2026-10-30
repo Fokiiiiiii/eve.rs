@@ -1569,7 +1569,12 @@ fn a_can_is_put_ahead_of_the_pilot_changed_when_something_is_in_it_measured_and_
 
     let changed = sim
         .handle(
-            Message::ChangeWreck { session_id: SESSION, wreck_id: can, is_empty: false },
+            Message::ChangeWreck {
+                session_id: SESSION,
+                wreck_id: can,
+                is_empty: Some(false),
+                abandoned: Some(true),
+            },
             NOON + 2 * SECOND,
         )
         .unwrap();
@@ -1585,7 +1590,12 @@ fn a_can_is_put_ahead_of_the_pilot_changed_when_something_is_in_it_measured_and_
     );
     let missing = sim
         .handle(
-            Message::ChangeWreck { session_id: SESSION, wreck_id: can + 7, is_empty: true },
+            Message::ChangeWreck {
+                session_id: SESSION,
+                wreck_id: can + 7,
+                is_empty: Some(true),
+                abandoned: None,
+            },
             NOON + 2 * SECOND,
         )
         .unwrap();

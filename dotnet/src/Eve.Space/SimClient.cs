@@ -634,8 +634,8 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     public Task<CommandReply> PlaceContainerAsync(SimPlaceContainer can, CancellationToken cancellationToken = default) =>
         AwaitAsync(_answered, (can.SessionId, SimCommands.PlaceContainer), can, cancellationToken);
 
-    public Task<CommandReply> ChangeWreckAsync(ulong sessionId, long wreckId, bool isEmpty, CancellationToken cancellationToken = default) =>
-        AwaitAsync(_answered, (sessionId, SimCommands.ChangeWreck), new SimChangeWreck(sessionId, wreckId, isEmpty), cancellationToken);
+    public Task<CommandReply> ChangeWreckAsync(ulong sessionId, long wreckId, bool? isEmpty, bool? abandoned = null, CancellationToken cancellationToken = default) =>
+        AwaitAsync(_answered, (sessionId, SimCommands.ChangeWreck), new SimChangeWreck(sessionId, wreckId, isEmpty, abandoned), cancellationToken);
 
     public void RemoveWreck(long wreckId, int effect) => Send(new SimRemoveWreck(wreckId, effect));
 

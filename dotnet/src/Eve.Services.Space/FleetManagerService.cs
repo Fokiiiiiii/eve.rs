@@ -12,12 +12,6 @@ public sealed partial class FleetManagerService(
 {
     private const string WatchlistSessionKey = "fleetWatchlist";
     private const int MaxWatchlistInputIds = 500;
-    private static readonly System.Collections.Generic.HashSet<string> BroadcastNames = new(StringComparer.Ordinal)
-    {
-        "EnemySpotted", "HealArmor", "HealShield", "HealCapacitor", "InPosition", "NeedBackup",
-        "HoldPosition", "Location", "TravelTo", "JumpBeacon", "Target", "RepTarget", "WarpTo",
-        "AlignTo", "JumpTo"
-    };
 
     [Method("ForceLeaveFleet")]
     public async ValueTask<PyValue> ForceLeaveFleet(ServiceCall call)
@@ -102,7 +96,7 @@ public sealed partial class FleetManagerService(
         var (fleetId, snapshot, sender) = context.Value;
         var name = Text(call.Arg(0));
         var scope = Number(call.Arg(1));
-        if (!BroadcastNames.Contains(name) || scope is not (1 or 2 or 3)) return;
+        if (!FleetBroadcasts.Names.Contains(name) || scope is not (1 or 2 or 3)) return;
         var senderSystem = SystemId(call.Session);
         if (senderSystem is null) return;
         var senderIsInSpace = call.Session.GetInt("stationid") is null;

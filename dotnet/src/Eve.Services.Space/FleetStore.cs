@@ -684,6 +684,10 @@ public Task<FleetMemberSnapshot?> JoinAsync(long fleetId, long characterId,
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         if (!await CanManageAsync(connection, transaction, fleetId, issuerId, cancellationToken)) return false;
+        await using (var clearAutoJoin = Command(connection, transaction,
+            $"UPDATE {_schema}.fleets SET auto_join_squad_id = NULL WHERE fleet_id = $1 AND auto_join_squad_id IN (SELECT squad_id FROM {_schema}.fleet_squads WHERE fleet_id = $1 AND wing_id = $2)",
+            fleetId, wingId))
+            await clearAutoJoin.ExecuteNonQueryAsync(cancellationToken);
         await using (var move = Command(connection, transaction,
             $"UPDATE {_schema}.fleet_members SET wing_id = -1, squad_id = -1, role = $1 WHERE fleet_id = $2 AND wing_id = $3 AND role <> $4",
             Member, fleetId, wingId, Leader))
@@ -724,6 +728,10 @@ public Task<FleetMemberSnapshot?> JoinAsync(long fleetId, long characterId,
             if (value is null or DBNull) return false;
             wingId = Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
         }
+        await using (var clearAutoJoin = Command(connection, transaction,
+            $"UPDATE {_schema}.fleets SET auto_join_squad_id = NULL WHERE fleet_id = $1 AND auto_join_squad_id = $2",
+            fleetId, squadId))
+            await clearAutoJoin.ExecuteNonQueryAsync(cancellationToken);
         await using (var move = Command(connection, transaction,
             $"UPDATE {_schema}.fleet_members SET squad_id = -1, role = $1 WHERE fleet_id = $2 AND squad_id = $3 AND role <> $4",
             Member, fleetId, squadId, Leader))
@@ -762,16 +770,17 @@ public Task<FleetMemberSnapshot?> JoinAsync(long fleetId, long characterId,
         return moved;
     }
 
-    public async Task<bool> MassMoveMembersAsync(long fleetId, long issuerId, IEnumerable<long> characterIds, long wingId, long squadId, int role,
+    public async Task<IReadOnlyList<long>> MassMoveMembersAsync(long fleetId, long issuerId, IEnumerable<long> characterIds, long wingId, long squadId, int role,
         CancellationToken cancellationToken = default)
     {
-        if (role == Leader || !IsValidAssignment(role, wingId, squadId)) return false;
+        if (role == Leader || !IsValidAssignment(role, wingId, squadId)) return [];
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        var moved = false;
+        var moved = new List<long>();
         foreach (var characterId in characterIds.Where(id => id > 0).Distinct())
-            moved |= await MoveMemberAsync(connection, transaction, fleetId, issuerId, characterId, wingId, squadId, role, cancellationToken);
-        if (moved) await transaction.CommitAsync(cancellationToken);
+            if (await MoveMemberAsync(connection, transaction, fleetId, issuerId, characterId, wingId, squadId, role, cancellationToken))
+                moved.Add(characterId);
+        if (moved.Count > 0) await transaction.CommitAsync(cancellationToken);
         return moved;
     }
 
@@ -831,8 +840,11 @@ public Task<FleetMemberSnapshot?> JoinAsync(long fleetId, long characterId,
         long fleetId, long issuerId, long characterId, long wingId, long squadId, int role, CancellationToken cancellationToken)
     {
         if (!await CanManageAsync(connection, transaction, fleetId, issuerId, cancellationToken) ||
-            !await PositionExistsAsync(connection, transaction, fleetId, wingId, squadId, cancellationToken) ||
-            await MemberAsync(connection, transaction, fleetId, characterId, cancellationToken) is not { Role: not Leader })
+            !await PositionExistsAsync(connection, transaction, fleetId, wingId, squadId, cancellationToken))
+            return false;
+        var member = await MemberAsync(connection, transaction, fleetId, characterId, cancellationToken);
+        if (member is not { Role: not Leader } ||
+            member.WingId == wingId && member.SquadId == squadId && member.Role == role)
             return false;
         await using var command = Command(connection, transaction,
             $"UPDATE {_schema}.fleet_members SET wing_id = $1, squad_id = $2, role = $3 WHERE fleet_id = $4 AND character_id = $5",

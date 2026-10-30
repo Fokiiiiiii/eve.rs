@@ -312,7 +312,7 @@ public partial class HostServerTests
         FleetSnapshot kickAfter) : IService
     {
         public string Name => "fleetNotificationProbe";
-        public bool HasMethod(string method) => method is "Join" or "Role" or "Kick" or "Broadcast";
+        public bool HasMethod(string method) => method is "Join" or "Role" or "Kick" or "Broadcast" or "Structure" or "MoveResults";
 
         public async ValueTask<PyValue> CallAsync(ServiceCall call)
         {
@@ -333,6 +333,22 @@ public partial class HostServerTests
                 case "Broadcast":
                     fleet.PublishBroadcast(call, before);
                     break;
+                case "Structure":
+                    fleet.NotifyFleetMembers(before, call.Session, "OnFleetWingAdded", new PyLong(101));
+                    fleet.NotifyFleetMembers(before, call.Session, "OnFleetSquadAdded", new PyLong(101), new PyLong(201));
+                    fleet.NotifyFleetMembers(before, call.Session, "OnFleetWingDeleted", new PyLong(101));
+                    fleet.NotifyFleetMembers(before, call.Session, "OnFleetSquadDeleted", new PyLong(201));
+                    fleet.NotifyFleetMembers(before, call.Session, "OnFleetWingNameChanged", new PyLong(101), new PyWString("Wing"));
+                    fleet.NotifyFleetMembers(before, call.Session, "OnFleetSquadNameChanged", new PyLong(201), new PyWString("Squad"));
+                    fleet.NotifyFleetOptionsChanged(before.FleetId, before, before with { AutoJoinSquadId = null }, call.Session);
+                    break;
+                case "MoveResults":
+                    return new PyTuple([
+                        FleetObjectService.MoveMemberResult(true),
+                        FleetObjectService.MoveMemberResult(false),
+                        FleetObjectService.MassMoveMembersResult([900_302, 900_303]),
+                        FleetObjectService.MassMoveMembersResult([])
+                    ]);
                 default:
                     throw new InvalidOperationException(call.Method);
             }
@@ -390,5 +406,138 @@ public partial class HostServerTests
         Assert.Same(PyNone.Instance, await Call(9, "fleetProxy", "UpdateAdvertInfo",
             new PyInt(1), Py.KeyVal()));
         Assert.Same(PyNone.Instance, await Call(10, "fleetProxy", "UpdateAdvertAllowedEntities", Py.KeyVal()));
+    }
+
+    [Fact]
+    public async Task Fleet_broadcast_names_and_member_notifications_keep_client_wire_shapes()
+    {
+        const long fleetId = 900_300;
+        const long leaderId = 900_301;
+        const long memberId = 900_302;
+        const long solarSystemId = 30_000_141;
+        await using var dataSource = new NpgsqlDataSourceBuilder(
+            "Host=127.0.0.1;Port=1;Database=eve;Username=postgres").Build();
+        var connected = new Dictionary<long, ClientSession>();
+        var fleet = new FleetObjectService(new FleetStore(dataSource), () => FixedNowMs,
+            sessionForCharacter: id => connected.GetValueOrDefault(id),
+            sameBubble: (_, _) => true);
+        var snapshot = new FleetSnapshot(fleetId, 201,
+            [
+                new FleetMemberSnapshot(leaderId, FleetStore.NoUnit, FleetStore.NoUnit,
+                    FleetStore.Leader, FleetStore.CreatorJob),
+                new FleetMemberSnapshot(memberId, FleetStore.NoUnit, FleetStore.NoUnit,
+                    FleetStore.Member, 0)
+            ], [], []);
+        var opened = 0;
+        Start(configure: registry =>
+        {
+            registry.Register(fleet);
+            registry.Register(new FleetNotificationProbe(
+                fleet, snapshot, snapshot, snapshot, snapshot, snapshot));
+        }, sessionOpened: session =>
+        {
+            var characterId = Interlocked.Increment(ref opened) == 1 ? leaderId : memberId;
+            session.CharacterId = characterId;
+            session.Set("charid", new PyLong(characterId));
+            session.Set("solarsystemid2", new PyLong(solarSystemId));
+            session.Set("ballparkid", new PyLong(77));
+            connected[characterId] = session;
+        });
+
+        var leaderFront = await Handshaken(await ConnectAsync());
+        var leaderOpen = Open(1_790_646_377_000UL * 15, 46);
+        await leaderFront.SendAsync(leaderOpen);
+        await leaderFront.ReceiveAsync();
+        var memberFront = await Handshaken(await ConnectAsync());
+        var memberOpen = Open(1_790_646_377_000UL * 15 + 1, 47);
+        await memberFront.SendAsync(memberOpen);
+        await memberFront.ReceiveAsync();
+        var kwargs = new PyDict([
+            new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1)),
+        ]);
+        var callId = 1L;
+
+        async Task<((string Name, string IdType, PyValue[] Args)[] Notifications, PyValue? Result)> Call(
+            string method, params PyValue[] args)
+        {
+            await leaderFront.SendAsync(new Packet(leaderOpen.SessionId, MarshalCodec.Encode(
+                Packets.CallWithKwargs(leaderOpen, callId++, "fleetNotificationProbe", method,
+                    new PyTuple(args), kwargs))));
+            var notifications = new List<(string Name, string IdType, PyValue[] Args)>();
+            while (true)
+            {
+                var send = Assert.IsType<Send>(await leaderFront.ReceiveAsync());
+                var decoded = MarshalCodec.Decode(send.Payload);
+                var values = ((PyTuple)((PyObject)decoded).Args).Items;
+                if (Number(values[0]) == MachoMessage.Notification)
+                    notifications.Add(ReadFleetNotification(send));
+                else
+                    return ([.. notifications], Result(decoded));
+            }
+        }
+
+        string[] clientBroadcasts =
+        [
+            "EnemySpotted", "NeedBackup", "HoldPosition", "InPosition", "TravelTo", "JumpBeacon",
+            "Location", "Target", "HealTarget", "HealArmor", "HealShield", "HealCapacitor",
+            "WarpTo", "AlignTo", "JumpTo"
+        ];
+        Assert.Equal(clientBroadcasts.OrderBy(name => name, StringComparer.Ordinal),
+            FleetBroadcasts.Names.OrderBy(name => name, StringComparer.Ordinal));
+        foreach (var name in clientBroadcasts)
+        {
+            var (sent, result) = await Call("Broadcast", new PyStr(name), new PyInt(3),
+                new PyLong(600_001), new PyInt(587));
+            Assert.Same(PyNone.Instance, result);
+            var sentBroadcast = Assert.Single(sent);
+            Assert.Equal(("OnFleetBroadcast", "fleetid"), (sentBroadcast.Name, sentBroadcast.IdType));
+            Assert.Equal(6, sentBroadcast.Args.Length);
+            Assert.Equal(name, T(sentBroadcast.Args[0]));
+            Assert.Equal(3, Number(sentBroadcast.Args[1]));
+            Assert.Equal(leaderId, Number(sentBroadcast.Args[2]));
+            Assert.Equal(solarSystemId, Number(sentBroadcast.Args[3]));
+            Assert.Equal(600_001, Number(sentBroadcast.Args[4]));
+            Assert.Equal(587, Number(sentBroadcast.Args[5]));
+            var receivedBroadcast = ReadFleetNotification(Assert.IsType<Send>(await memberFront.ReceiveAsync()));
+            Assert.Equal(sentBroadcast.Name, receivedBroadcast.Name);
+            Assert.Equal(sentBroadcast.IdType, receivedBroadcast.IdType);
+            Assert.Equal(sentBroadcast.Args, receivedBroadcast.Args);
+        }
+
+        var (topology, topologyResult) = await Call("Structure");
+        Assert.Same(PyNone.Instance, topologyResult);
+        Assert.Equal(new[]
+        {
+            "OnFleetWingAdded", "OnFleetSquadAdded", "OnFleetWingDeleted", "OnFleetSquadDeleted",
+            "OnFleetWingNameChanged", "OnFleetSquadNameChanged", "OnFleetOptionsChanged"
+        }, topology.Select(notification => notification.Name));
+        Assert.All(topology, notification => Assert.Equal("fleetid", notification.IdType));
+        Assert.Equal(new PyValue[] { new PyLong(101) }, topology[0].Args);
+        Assert.Equal(new PyValue[] { new PyLong(101), new PyLong(201) }, topology[1].Args);
+        Assert.Equal(new PyValue[] { new PyLong(101) }, topology[2].Args);
+        Assert.Equal(new PyValue[] { new PyLong(201) }, topology[3].Args);
+        Assert.Equal(new PyValue[] { new PyLong(101), new PyWString("Wing") }, topology[4].Args);
+        Assert.Equal(new PyValue[] { new PyLong(201), new PyWString("Squad") }, topology[5].Args);
+        Assert.Equal(2, topology[6].Args.Length);
+        var oldOptions = Assert.IsType<PyDict>(Assert.IsType<PyObject>(topology[6].Args[0]).Args)
+            .Entries.ToDictionary(entry => T(entry.Key)!, entry => entry.Value);
+        var newOptions = Assert.IsType<PyDict>(Assert.IsType<PyObject>(topology[6].Args[1]).Args)
+            .Entries.ToDictionary(entry => T(entry.Key)!, entry => entry.Value);
+        Assert.Equal(new PyLong(201), oldOptions["autoJoinSquadID"]);
+        Assert.Same(PyNone.Instance, newOptions["autoJoinSquadID"]);
+        Assert.Same(PyBool.False, oldOptions["isFreeMove"]);
+        Assert.Same(PyBool.False, newOptions["isFreeMove"]);
+        var memberNotifications = new List<(string Name, string IdType, PyValue[] Args)>();
+        for (var i = 0; i < topology.Length; i++)
+            memberNotifications.Add(ReadFleetNotification(Assert.IsType<Send>(await memberFront.ReceiveAsync())));
+        Assert.Equal(topology, memberNotifications);
+
+        var (_, moveResult) = await Call("MoveResults");
+        var moveValues = Assert.IsType<PyTuple>(moveResult);
+        Assert.Same(PyBool.True, moveValues.Items[0]);
+        Assert.Same(PyBool.False, moveValues.Items[1]);
+        Assert.Equal(new PyValue[] { new PyLong(900_302), new PyLong(900_303) },
+            Assert.IsType<PyList>(moveValues.Items[2]).Items);
+        Assert.Empty(Assert.IsType<PyList>(moveValues.Items[3]).Items);
     }
 }

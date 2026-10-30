@@ -9,10 +9,14 @@
 - Verification on database eve_p3: Host.Tests build passed; CorporationPublicInfoHostWireTests passed 2/2 with 0 skipped; CorporationProtocolTests passed 51/51 with 0 skipped. The earlier test expectation that unknown character IDs resolve to the caller's corporation was corrected from the client/EveJS evidence.
 - The graphical client was not used. RPC-01244–RPC-01247 remain untested: those info-window callers request NPC character corporations, and the current code does not resolve an NPC corporation from static data.
 
+- RPC-01234–RPC-01241 (`GetAssetInventoryForLocation`) are covered by `CorporationAssetInventoryHostWireTests.Corporation_asset_locations_read_persisted_items_through_registered_host`. The database-backed test dispatches the registered `corpmgr` route and checks office, property, delivery, and impounded item rows, their exact CRowset columns and values, location filtering, and an empty result. Reads publish no notification; the returned `CachedMethodCallResult` remains the expected response.
+- Whole-client evidence: `corp_ui_accounts.py:405-410` reads impounded rows (`typeID`, `stacksize`) before invalidating cache and trashing; `:422-468` reads buckets for the corporation assets UI and consumes `itemID`, `typeID`, `flagID`, and `stacksize`; `:470-496` filters office rows by `flagID`; `corp_ui_votes.py:335,438-446` combines office and impounded rows for vote item selection. Cache invalidation callers are `assetSafetySvc.py:59`, `officeManager.py:121`, and `menuSvcExtras/invItemFunctions.py:293`.
+- Current EveJS 261028.1 `server/src/services/corporation/corpmgrService.js:599-619` returns a cached CRowset of items for the location; the web gateway contract at `server/src/_secondary/express/evejsWebGatewayRuntime.js:1532-1540` records the 11-field row shape and int64 `itemID`/`locationID`. The eve.rs route produces that shape, so the test exposed no handler defect.
+- Verification on database `eve_p3`: `CorporationAssetInventoryHostWireTests` passed 1/1 with 0 skipped; `Corp_mgr_aggression_and_asset_rpcs_use_login_corporation_and_inventory_data` passed 1/1 with 0 skipped. `Eve.Host.Tests` build passed with 0 warnings and 0 errors. Graphical-client verification was not performed.
+
 ## Remaining P1 rows
 
-- RPC-01218–RPC-01241: GetAssetInventory and GetAssetInventoryForLocation (24 rows)
-- RPC-01244–RPC-01247: GetCorporationIDForCharacter in NPC info-window paths (4 rows)
-- RPC-01260–RPC-01261: SearchAssets (2 rows)
+- RPC-01244–RPC-01247: `GetCorporationIDForCharacter` in NPC info-window paths (4 rows)
+- RPC-01260–RPC-01261: `SearchAssets` (2 rows)
 
-Total remaining: 30 rows.
+Total remaining: 6 rows.

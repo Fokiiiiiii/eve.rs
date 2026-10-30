@@ -66,11 +66,19 @@ public sealed class CorporationAssetInventoryHostWireTests
                     new CorporationOfficeStation(stationId, 1531, 1000004, 30000142, 0.8), 1000m, now);
                 await transaction.CommitAsync();
             }
+            long officeItemId;
+            long impoundedItemId;
             long propertyItemId;
             long deliveryItemId;
             await using (var connection = await source.OpenConnectionAsync())
             await using (var transaction = await connection.BeginTransactionAsync())
             {
+                officeItemId = await items.CreateAsync(connection, transaction,
+                    new NewItem(34, corporation.Id, stationId + 1000, ItemFlags.CorpSAG3, 3,
+                        CustomName: "office stack"));
+                impoundedItemId = await items.CreateAsync(connection, transaction,
+                    new NewItem(34, corporation.Id, stationId, CorporationOfficeStore.ImpoundedFlag, 4,
+                        CustomName: "impounded stack"));
                 propertyItemId = await items.CreateAsync(connection, transaction,
                     new NewItem(34, corporation.Id, stationId + 1, ItemFlags.CorpSAG3, 5,
                         CustomName: "corporate stack"));
@@ -145,8 +153,56 @@ public sealed class CorporationAssetInventoryHostWireTests
                 new PyLong(stationId), new PyLong(30000142), new PyInt(1531), new PyInt(1)
             }, deliveryValues);
 
+            Assert.True(await dispatcher.DispatchAsync(ClientCallPacket("GetAssetInventoryForLocation",
+                new PyInt(corporation.Id), new PyLong(stationId), new PyStr("offices")), session));
+            Assert.Equal(new PyStr("carbon.common.script.net.machoNetPacket.CallRsp"),
+                Assert.IsType<PyObject>(capture.Packets[4]).Name);
+            var officeItems = Rowset(Result(capture.Packets[4]));
+            Assert.Equal(new PyValue[]
+            {
+                Py.Tuple(new PyStr("itemID"), new PyInt(0x14)),
+                Py.Tuple(new PyStr("typeID"), new PyInt(0x03)),
+                Py.Tuple(new PyStr("ownerID"), new PyInt(0x03)),
+                Py.Tuple(new PyStr("locationID"), new PyInt(0x14)),
+                Py.Tuple(new PyStr("flagID"), new PyInt(0x02)),
+                Py.Tuple(new PyStr("quantity"), new PyInt(0x03)),
+                Py.Tuple(new PyStr("groupID"), new PyInt(0x03)),
+                Py.Tuple(new PyStr("categoryID"), new PyInt(0x03)),
+                Py.Tuple(new PyStr("customInfo"), new PyInt(0x81)),
+                Py.Tuple(new PyStr("stacksize"), new PyInt(0x03)),
+                Py.Tuple(new PyStr("singleton"), new PyInt(0x03)),
+            }, Descriptor.DescriptorColumns(Field(officeItems, "header")));
+            Assert.Equal(new PyValue[]
+            {
+                new PyLong(officeItemId), new PyInt(34), new PyInt(corporation.Id), new PyLong(stationId + 1000),
+                new PyInt(ItemFlags.CorpSAG3), new PyInt(3), new PyInt(0), new PyInt(0),
+                new PyWString("office stack"), new PyInt(3), new PyInt(0),
+            }, RowValues(Assert.Single(Lines(officeItems))));
+
+            Assert.True(await dispatcher.DispatchAsync(ClientCallPacket("GetAssetInventoryForLocation",
+                new PyInt(corporation.Id), new PyLong(stationId), new PyStr("deliveries")), session));
+            var deliveryItems = Rowset(Result(capture.Packets[5]));
+            Assert.Equal(new PyLong(deliveryItemId), RowValues(Assert.Single(Lines(deliveryItems)))[0]);
+
+            Assert.True(await dispatcher.DispatchAsync(ClientCallPacket("GetAssetInventoryForLocation",
+                new PyInt(corporation.Id), new PyLong(stationId), new PyStr("impounded")), session));
+            var impoundedItems = Rowset(Result(capture.Packets[6]));
+            Assert.Equal(new PyLong(impoundedItemId), RowValues(Assert.Single(Lines(impoundedItems)))[0]);
+
+            Assert.True(await dispatcher.DispatchAsync(ClientCallPacket("GetAssetInventoryForLocation",
+                new PyInt(corporation.Id), new PyLong(stationId + 1), new PyStr("property")), session));
+            var propertyItems = Rowset(Result(capture.Packets[7]));
+            Assert.Equal(new PyLong(propertyItemId), RowValues(Assert.Single(Lines(propertyItems)))[0]);
+
+            Assert.True(await dispatcher.DispatchAsync(ClientCallPacket("GetAssetInventoryForLocation",
+                new PyInt(corporation.Id), new PyLong(stationId), new PyStr("property")), session));
+            var emptyItems = Rowset(Result(capture.Packets[8]));
+            Assert.Empty(Lines(emptyItems));
+
+            Assert.Equal(officeItemId, (await items.GetAsync(officeItemId))!.Id);
             Assert.Equal(propertyItemId, (await items.GetAsync(propertyItemId))!.Id);
             Assert.Equal(deliveryItemId, (await items.GetAsync(deliveryItemId))!.Id);
+            Assert.Equal(9, capture.Packets.Count);
         }
         finally
         {

@@ -25,4 +25,5 @@ The wire and persistence behavior was compared with current EveJS 261028.1 at `/
 - Host DB regression set on `eve_p3` through `tools/dev/db-lock.sh`: 31 passed, 0 failed, 0 skipped (including this test, all CharUnbound Host tests, P0 client wire tests, character deletion, and resculpt host tests).
 - `dotnet build dotnet/tests/Eve.Services.CharacterSelect.Tests/Eve.Services.CharacterSelect.Tests.csproj -p:UseSharedCompilation=false`: passed, 0 warnings/errors.
 - CharacterSelect service regression set on `eve_p3` through `tools/dev/db-lock.sh`: 35 passed, 0 failed, 0 skipped.
-- The other P0 rows targeted by this batch are none. The graphical EVE client was not exercised. Actions verification and the final push SHA are added after push.
+- The other P0 rows targeted by this batch are none. The graphical EVE client was not exercised.
+- Commit `cc279a6c38b98c3304c761a3e08a946954676a80` is on `main`. Selected Actions run `41069412049` passed the focused Host test; push-triggered CI run `41069400625` passed with no failed tests or jobs.

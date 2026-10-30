@@ -24,10 +24,15 @@ public partial class HostServerTests
             () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), rig.CorporationsSchema);
         var corporation = await store.CreateAsync(characterId,
             new NewCorporation("Alliance Create", "ALCR", "", "", 0), $"host-alliance-create:{Guid.NewGuid():N}");
-        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("allianceRegistry"));
+        var allianceRegistry = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("allianceRegistry"));
+        var corpRegistry = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("corpRegistry"));
         ClientSession? actorSession = null;
 
-        Start(configure: registry => registry.Register(service), sessionOpened: session =>
+        Start(configure: registry =>
+        {
+            registry.Register(allianceRegistry);
+            registry.Register(corpRegistry);
+        }, sessionOpened: session =>
         {
             actorSession = session;
             session.CharacterId = characterId;
@@ -41,7 +46,7 @@ public partial class HostServerTests
         _ = await front.ReceiveAsync();
 
         var createResult = await CallOverHostAfterQueuedNotifications(front, open, 1,
-            "allianceRegistry", "CreateAlliance", Py.Tuple(
+            "corpRegistry", "CreateAlliance", Py.Tuple(
                 new PyWString("Host Alliance"), new PyWString("HOST"), new PyWString(""), new PyWString("")));
         Assert.NotNull(createResult);
         var allianceId = Number(createResult);

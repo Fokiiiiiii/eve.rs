@@ -24,3 +24,9 @@ Date: 2026-10-30
 - Label RPC wrappers and notification consumers: `eve/client/script/ui/services/alliances/all_cso.py:274-280`, `eve/client/script/ui/services/corporation/base_corporation.py:1024-1029`, and `eve/client/script/ui/shared/neocom/addressBook/addressbookService.py:156-191`.
 - Bill payment entry points and access checks: `eve/client/script/ui/shared/neocom/wallet/walletSvc.py:124-134`, `eve/client/script/ui/shared/neocom/wallet/panels/corp/corpBillsPayablePanel.py:37,65,93,97,101,110-113`, and `eve/client/script/ui/services/alliances/all_cso.py:192-196`.
 - Relationship notification flow and consumers: `all_cso.py:183-186`, `all_cso_relationships.py:41-70`, and `eve/client/script/ui/shared/info/infosvc.py:152,276-277`. The `setattr(member, columnName[0], ...)` assignment at `all_cso_relationships.py:63-66` is a client bug; it does not change the server's `relationship` payload key requirement.
+
+## CI correction (2026-10-30)
+
+- The push-triggered CI run for `4dc01570` failed only `Alliance_creation_emits_client_complete_fields_through_registered_host`: the test invoked `CreateAlliance` on `allianceRegistry`, which correctly has no such method. V24.01 `eve/client/script/ui/services/corporation/bco_alliance.py:25-26` dispatches it through `corpRegistry`.
+- The registered Host test now registers both actual services from `CharacterHostRig` and invokes `corpRegistry.CreateAlliance`, then continues the alliance notifications and relationship checks through `allianceRegistry`.
+- This correction was compile-checked. The DB-free adapter regression `CorporationClientRpcWireTests.Alliance_creation_notification_sends_all_columns_and_relationship_changes_keep_the_wire_field` passed 1/1. The PostgreSQL-backed Host creation test was not executed locally because this job explicitly excludes PostgreSQL; its Actions result is the required integration check.

@@ -1,33 +1,34 @@
 # voteManager coverage handoff — cx4
 
-## Result
+## Completed coverage
 
-No voteManager coverage row was changed. The 14 entries below remain `IMPLEMENTED-UNTESTED`: this task explicitly forbids PostgreSQL use, while the real `CorporationStore` operations behind these RPCs require PostgreSQL. The existing end-to-end voting tests are `[PgFact]` tests and call service methods directly; they do not exercise a registered Host request. A passing Host-wire test with persistence and notification assertions therefore could not be produced within this constraint.
+The Host wire regression in `dotnet/tests/Eve.Host.Tests/VoteManagerHostTests.cs` sends real RPC calls through `HostServer` to the registered `voteManager` service and a PostgreSQL-backed `CorporationStore`. It checks vote access and CEO eligibility, vote case rows and options, a personal ballot, the sanctioned-action mapping, and persisted ballot state.
 
-The current Host route is `VoteManagerService` registered as `voteManager` in `dotnet/src/Eve.Services.Corporations/CorporationWire.cs`. Existing database coverage in `dotnet/tests/Eve.Corporations.Tests/CorporationProtocolTests.cs:2111-2168` exercises access, CEO eligibility, vote case creation/listing, options, ballot replacement, and ballot reads via direct service calls.
+The focused test passed locally on database `eve_p4` with zero skips:
 
-## Client paths and consumers
+`EVE_PG_URL=$(tools/dev/pg18.sh url eve_p4) tools/dev/db-lock.sh dotnet test dotnet/tests/Eve.Host.Tests --no-build --filter FullyQualifiedName~Vote_manager_rpc_flow_uses_the_host_wire_and_persists_cases_and_ballots`
 
-- `eve/client/script/ui/services/corporation/voting.py:46` binds `sm.RemoteSvc('voteManager')`. The wrappers call `GetVoteCasesByCorporation` (lines 64, 110-118), `GetVoteCase` (120-130), `GetVoteCaseOptions` (132-141), `GetVotes` (143-149), `CanViewVotes` (151-158), `CanRunForCEO` (189-195), `InsertVoteCase` (236), `InsertVote` (239-241), `GetCorpSanctionedActions` (247), and `ActivateSanctionedAction` (263).
-- `eve/client/script/ui/shared/neocom/corporation/corp_ui_votes.py:842-950,983-1012,1024` consumes vote case lists, options, personal ballots, and vote/CEO actions. `eve/client/script/ui/shared/neocom/corporation/corp_ui_votes.py:344-347` also uses open vote cases and options to identify blueprint unlock votes.
-- `eve/client/script/ui/shared/neocom/corporation/corp_ui_sanctionableactions.py:89-95,139-140,157-172,217-218` consumes vote visibility, vote cases, sanctioned actions, and general-vote option text. `eve/client/script/ui/shared/neocom/corporation/corporationWindow.py:307` uses vote visibility to show voting panels.
-- Vote notification consumers: `voting.py:76-87` invalidates case/option/ballot caches for `OnVoteCaseChanged` and ballots for `OnVoteCast`; `voting.py:105-107` clears sanctioned-action cache. `corp_ui_votes.py:771-772,809-819` reloads voting content, `base_corporation_ui.py:60-61,189-200` forwards vote changes, and `corp_ui_sanctionableactions.py:33,81-82` refreshes the sanctioned-action panel.
+The two existing `CorporationProtocolTests` vote regressions also passed on `eve_p4`: `Vote_manager_replaces_ballots_and_uses_live_share_weight` and `Outside_corporation_shareholders_can_read_and_vote_using_the_case_corporation_ledger`.
+
+Coverage rows RPC-02797 through RPC-02807 are now `IMPLEMENTED-TESTED`, linked to that test. It exercises each read RPC by its client argument shape, including explicit corporation/status arguments for case listing.
 
 ## Rows still open
 
-All are P1 and still `IMPLEMENTED-UNTESTED` in `docs/project/service-audit/EVE_RS_COVERAGE.csv`:
+These remain `IMPLEMENTED-UNTESTED` in `docs/project/service-audit/EVE_RS_COVERAGE.csv`:
 
 - RPC-02796 `ActivateSanctionedAction`
-- RPC-02797 `CanRunForCEO`
-- RPC-02798 and RPC-02799 `CanViewVotes`
-- RPC-02800 `GetCorpSanctionedActions`
-- RPC-02801 `GetVoteCase`
-- RPC-02802 and RPC-02803 `GetVoteCaseOptions`
-- RPC-02804 and RPC-02805 `GetVoteCasesByCorporation`
-- RPC-02806 and RPC-02807 `GetVotes`
 - RPC-02808 `InsertVote`
 - RPC-02809 `InsertVoteCase`
 
+The test uses the two insert RPCs to set up and persist a real ballot, but does not assert the notification flow, so those rows are intentionally still open. The Host vote service currently has no vote notification send call; add coverage only after the client notification contract is implemented and asserted. Sanction activation also needs a persisted eligible sanctioned vote and its resulting state transition.
+
+## Whole-client paths
+
+- `eve/client/script/ui/services/corporation/voting.py:46` binds `sm.RemoteSvc('voteManager')`. RPC wrappers: `GetVoteCasesByCorporation` at 64, 110-118; `GetVoteCase` at 122-130; `GetVoteCaseOptions` at 132-142; `GetVotes` at 143-149; `CanViewVotes` at 151-158; `CanRunForCEO` at 189-195; `InsertVoteCase` at 236; `InsertVote` at 239-241; `GetCorpSanctionedActions` at 247; `ActivateSanctionedAction` at 263.
+- `eve/client/script/ui/shared/neocom/corporation/corp_ui_votes.py:342-347` reads open vote cases/options for blueprint unlocks; 793-795 and 1023-1025 gate CEO candidacy; 842-844 and 880-884 list votes; 911-930 reads options and personal ballots and submits votes; 950-984 displays closed cases and results; 1009-1013 submits ballots.
+- `eve/client/script/ui/shared/neocom/corporation/corp_ui_sanctionableactions.py:89-103,139-140,157-180,217-218` uses vote access, cases, options, and sanctioned actions. `corporationWindow.py:307` uses vote access to show the voting panels.
+- Client notification handlers are `voting.py:76-87` (`OnVoteCaseChanged(corporationID, voteCaseID)`, `OnVoteCast(corporationID, voteCaseID)`) and 105-107 (`OnSanctionedActionChanged`). Consumers include `corp_ui_votes.py:771-772,809-819`, `base_corporation_ui.py:60-61,189-200`, and `corp_ui_sanctionableactions.py:33,81-82`.
+
 ## Validation
 
-No tests or builds were run; no PostgreSQL database was used. No CSV status was advanced because no registered Host-wire test passed.
+The focused Host test passed with one test, zero failures, and zero skips; the existing corporation vote regressions passed with two tests, zero failures, and zero skips. A full graphical client run was not performed.

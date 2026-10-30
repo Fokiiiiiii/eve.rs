@@ -1053,6 +1053,18 @@ public class SimCodecTests
     }
 
     [Fact]
+    public void Change_wreck_encodes_abandonment_without_changing_the_empty_state()
+    {
+        var message = new SimChangeWreck(123, 456, null, true);
+
+        var frame = SimCodec.Encode(message);
+        var decoded = Assert.IsType<SimChangeWreck>(SimCodec.Decode(frame.AsMemory(4)));
+
+        Assert.Equal([2, 1], frame[^2..]);
+        Assert.Equal(message, decoded);
+    }
+
+    [Fact]
     public void A_module_count_the_frame_cannot_hold_is_refused_without_allocating_for_it()
     {
         var good = SimCodec.Encode(MessageOf(Case("valid", "enter by undocking")));

@@ -1277,6 +1277,7 @@ impl Sim {
                             character_id: placement.credit.character_id,
                             corporation_id: placement.credit.corporation_id,
                         },
+                        abandoned: placement.credit.character_id == 0 && placement.credit.corporation_id == 0,
                         launcher_id: placement.launcher_id,
                         is_empty: placement.is_empty,
                         rights_known: !placement.is_empty,
@@ -1491,12 +1492,12 @@ impl Sim {
                     }],
                 }
             }
-            Message::ChangeWreck { session_id, wreck_id, is_empty } => {
+            Message::ChangeWreck { session_id, wreck_id, is_empty, abandoned } => {
                 let changed = self
                     .scenes
                     .values_mut()
                     .find(|scene| scene.wreck(wreck_id).is_some())
-                    .map(|scene| scene.change_wreck(wreck_id, is_empty, now));
+                    .map(|scene| scene.change_wreck(wreck_id, is_empty, abandoned, now));
                 // the answer comes after what those who see the wreck are told, so that the host goes on when the clients have been sent it
                 match changed {
                     Some(mut told) => {

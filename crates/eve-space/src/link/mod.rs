@@ -37,7 +37,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 83;
+pub const PROTOCOL_VERSION: u16 = 84;
 
 /// A battlefield's capture point the host puts in space (protocol 77): a ball the pilots of its system see. Its factions (the attacker and the
 /// occupier, 0 for none) and its next point time (a FILETIME, 0 for none) are the dynamic slim fields the client reads from it.
@@ -1137,7 +1137,8 @@ pub enum Message {
     ChangeWreck {
         session_id: u64,
         wreck_id: i64,
-        is_empty: bool,
+        is_empty: Option<bool>,
+        abandoned: Option<bool>,
     },
     /// The host takes a wreck or a can out of space (`effect`: the destruction effect the client plays first, 0 for none).
     RemoveWreck {

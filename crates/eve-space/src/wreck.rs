@@ -66,6 +66,8 @@ pub struct Wreck {
     pub alliance_id: i64,
     pub war_faction_id: i64,
     pub rights: LootRights,
+    /// Whether the loot rights have been released for anyone to take.
+    pub abandoned: bool,
     /// The ship that was destroyed.
     pub launcher_id: i64,
     /// Nothing in it to take.
@@ -187,7 +189,7 @@ impl Wreck {
                 id(self.rights.character_id),
                 id(self.rights.corporation_id),
                 Value::None,
-                Value::Bool(false),
+                Value::Bool(self.abandoned),
             ]),
         );
         entries.extend([
@@ -200,7 +202,7 @@ impl Wreck {
         if self.is_container() {
             // a can has no turn, and says who may take what is in it only once something is (the reference defers the rights of a can that was just
             // jettisoned until its contents moved in: the slim item of its `AddBalls2` has none, the update after has them)
-            if self.rights_known || !self.is_empty {
+            if self.rights_known || !self.is_empty || self.abandoned {
                 entries.push(rights);
             }
             entries.push(("launcherID", id(self.launcher_id)));
@@ -266,6 +268,7 @@ mod tests {
             alliance_id: 0,
             war_faction_id: 500_001,
             rights: LootRights { character_id: 140_000_393, corporation_id: 1_000_006 },
+            abandoned: false,
             launcher_id: 4_200_000_000_000_000,
             is_empty: true,
             rights_known: false,
@@ -311,6 +314,7 @@ mod tests {
             alliance_id: 0,
             war_faction_id: 0,
             rights: LootRights::default(),
+            abandoned: false,
             launcher_id: 0,
             is_empty: true,
             rights_known: false,

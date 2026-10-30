@@ -992,12 +992,17 @@ impl Message {
             kind::CHANGE_WRECK => {
                 let session_id = r.u64()?;
                 let wreck_id = r.i64()?;
-                let is_empty = match r.u8()? {
-                    0 => false,
-                    1 => true,
-                    _ => return Err(DecodeError::BadValue("is_empty")),
+                let read_optional_bool = |r: &mut Reader<'_>| -> Result<Option<bool>, DecodeError> {
+                    match r.u8()? {
+                        0 => Ok(Some(false)),
+                        1 => Ok(Some(true)),
+                        2 => Ok(None),
+                        _ => Err(DecodeError::BadValue("optional bool")),
+                    }
                 };
-                Message::ChangeWreck { session_id, wreck_id, is_empty }
+                let is_empty = read_optional_bool(&mut r)?;
+                let abandoned = read_optional_bool(&mut r)?;
+                Message::ChangeWreck { session_id, wreck_id, is_empty, abandoned }
             }
             kind::REMOVE_WRECK => Message::RemoveWreck { wreck_id: r.i64()?, effect: r.i32()? },
             kind::DEPLOYED => {

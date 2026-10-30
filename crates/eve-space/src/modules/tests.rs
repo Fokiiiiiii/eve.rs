@@ -2872,6 +2872,7 @@ fn tractor_wreck(scene: &Scene, id: i64) -> crate::wreck::Wreck {
         alliance_id: 0,
         war_faction_id: 0,
         rights: crate::wreck::LootRights::default(),
+        abandoned: false,
         launcher_id: 0,
         is_empty: false,
         rights_known: false,

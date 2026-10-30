@@ -1320,7 +1320,8 @@ private static void WriteStructureDamageCorrelation(
                 w.U8(Kind.ChangeWreck);
                 w.U64(m.SessionId);
                 w.I64(m.WreckId);
-                w.U8((byte)(m.IsEmpty ? 1 : 0));
+                w.U8(m.IsEmpty is null ? (byte)2 : (byte)(m.IsEmpty.Value ? 1 : 0));
+                w.U8(m.Abandoned is null ? (byte)2 : (byte)(m.Abandoned.Value ? 1 : 0));
                 break;
             case SimRemoveWreck m:
                 w.U8(Kind.RemoveWreck);

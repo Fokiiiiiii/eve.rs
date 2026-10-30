@@ -179,7 +179,7 @@ public interface ISimulation
     Task<CommandReply> PlaceContainerAsync(SimPlaceContainer can, CancellationToken cancellationToken = default);
 
     /// <summary>Tells the scene that what is in a wreck or a can changed (it has something to take, or nothing) and waits until whoever sees it has been told: accepted, or refused when there is no such wreck.</summary>
-    Task<CommandReply> ChangeWreckAsync(ulong sessionId, long wreckId, bool isEmpty, CancellationToken cancellationToken = default);
+    Task<CommandReply> ChangeWreckAsync(ulong sessionId, long wreckId, bool? isEmpty, bool? abandoned = null, CancellationToken cancellationToken = default);
 
     /// <summary>Takes a wreck or a can out of space, with the destruction effect <paramref name="effect"/> played first when it is not 0.</summary>
     void RemoveWreck(long wreckId, int effect);

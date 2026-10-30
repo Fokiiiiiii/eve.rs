@@ -1387,7 +1387,8 @@ fn message_of(case: &Value) -> Message {
         "ChangeWreck" => Message::ChangeWreck {
             session_id: session_id(),
             wreck_id: wide(case, "wreckId"),
-            is_empty: case["isEmpty"].as_bool().unwrap(),
+            is_empty: case["isEmpty"].as_bool(),
+            abandoned: case["abandoned"].as_bool(),
         },
         "RemoveWreck" => {
             Message::RemoveWreck { wreck_id: wide(case, "wreckId"), effect: number("effect") as i32 }

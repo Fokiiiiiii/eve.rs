@@ -597,7 +597,7 @@ fn what_is_put_in_a_can_is_told_as_its_slim_item_with_the_rights_and_what_is_tak
     let id = 9_988_400_002_948;
     scene.place_container(A, can_for(A, id, 275.0), NOON);
 
-    let filled = scene.change_wreck(id, false, NOON + SECOND);
+    let filled = scene.change_wreck(id, Some(false), None, NOON + SECOND);
     assert_eq!(filled.len(), 1);
     assert_eq!(names(&filled[0]), ["OnSlimItemChange"]);
     let slim = slim_of(&filled[0], "OnSlimItemChange").expect("the slim item");
@@ -629,7 +629,7 @@ fn what_is_put_in_a_can_is_told_as_its_slim_item_with_the_rights_and_what_is_tak
     assert!(scene.pilots[&A].sees_wrecks.is_empty());
     // a can that is not there is nothing to tell
     assert!(scene.remove_wreck(id, 3, NOON + 3 * SECOND).is_empty());
-    assert!(scene.change_wreck(id, true, NOON + 3 * SECOND).is_empty());
+    assert!(scene.change_wreck(id, Some(true), None, NOON + 3 * SECOND).is_empty());
 }
 
 #[test]
@@ -638,14 +638,75 @@ fn a_can_that_was_filled_and_is_emptied_again_keeps_telling_who_may_take_what_is
     let mut scene = watcher();
     let id = 9_988_400_002_948;
     scene.place_container(A, can_for(A, id, 275.0), NOON);
-    let before = scene.change_wreck(id, true, NOON + SECOND);
+    let before = scene.change_wreck(id, Some(true), None, NOON + SECOND);
     let slim = slim_of(&before[0], "OnSlimItemChange").expect("the slim item");
     assert!(!keys(&slim).contains(&"lootRights"), "nothing has been in it yet");
 
-    scene.change_wreck(id, false, NOON + 2 * SECOND);
-    let emptied = scene.change_wreck(id, true, NOON + 3 * SECOND);
+    scene.change_wreck(id, Some(false), None, NOON + 2 * SECOND);
+    let emptied = scene.change_wreck(id, Some(true), None, NOON + 3 * SECOND);
     let slim = slim_of(&emptied[0], "OnSlimItemChange").expect("the slim item");
     assert!(keys(&slim).contains(&"lootRights"), "{:?}", keys(&slim));
+}
+
+#[test]
+fn abandoning_a_wreck_releases_its_rights_and_notifies_every_observer() {
+    let mut scene = watcher();
+    let id = 9_988_400_002_948;
+    scene.place_container(A, can_for(A, id, 275.0), NOON);
+
+    let changed = scene.change_wreck(id, None, Some(true), NOON + SECOND);
+    assert_eq!(changed.len(), 1);
+    assert_eq!(names(&changed[0]), ["OnSlimItemChange"]);
+    let slim = slim_of(&changed[0], "OnSlimItemChange").expect("the slim item");
+    let rights = slim.iter().find(|(key, _)| key == "lootRights").expect("loot rights");
+    assert!(matches!(&rights.1, Value::List(values) if matches!(values.get(3), Some(Value::Bool(true)))));
+    let wreck = scene.wreck(id).expect("the can remains in space");
+    assert!(wreck.abandoned);
+    assert_eq!(wreck.rights, crate::wreck::LootRights::default());
+    assert_eq!((wreck.owner_id, wreck.corporation_id, wreck.alliance_id, wreck.war_faction_id), (0, 0, 0, 0));
+}
+
+#[test]
+fn expiring_a_wreck_removes_it_from_pilot_structure_and_widow_views() {
+    let mut scene = watcher();
+    let id = 9_988_400_002_948;
+    scene.place_container(A, can_for(A, id, 275.0), NOON);
+    scene.wrecks.get_mut(&id).expect("the can").expires_at = NOON;
+
+    let structure_session = 900;
+    let widow_session = 901;
+    scene.controlled_structures.insert(
+        structure_session,
+        crate::scene::ControlledStructureObserver {
+            structure_id: 60_000_001,
+            previous_ship_id: None,
+            needs_initial_ballpark: false,
+            bound: true,
+            sees: Default::default(),
+            sees_wrecks: [id].into_iter().collect(),
+            sees_abyssal_traces: Default::default(),
+            sees_asteroids: Default::default(),
+        },
+    );
+    scene.widowed.insert(
+        widow_session,
+        crate::scene::Widow { bound: true, sees_wrecks: [id].into_iter().collect(), ..Default::default() },
+    );
+    scene.pilots.get_mut(&A).expect("the pilot").sees_wrecks.insert(id);
+
+    let removed = scene.expire_wrecks(NOON);
+    assert_eq!(removed.len(), 3);
+    let sessions: Vec<_> = removed
+        .iter()
+        .map(|out| match out {
+            Out::Notify { session, .. } => *session,
+            other => panic!("unexpected output: {other:?}"),
+        })
+        .collect();
+    assert_eq!(sessions, [A, structure_session, widow_session]);
+    assert!(!scene.pilots[&A].sees_wrecks.contains(&id));
+    assert!(!scene.controlled_structures[&structure_session].sees_wrecks.contains(&id));
+    assert!(!scene.widowed[&widow_session].sees_wrecks.contains(&id));
 }
 
 #[test]

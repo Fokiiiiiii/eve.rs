@@ -723,6 +723,7 @@ fn insert_wreck(scene: &mut Scene, id: i64, group_id: i32, type_id: i32, positio
             alliance_id: 0,
             war_faction_id: 0,
             rights: crate::wreck::LootRights::default(),
+            abandoned: false,
             launcher_id: 1_000_001,
             is_empty: true,
             rights_known: false,

@@ -278,9 +278,9 @@ internal sealed class FakeSim : ISimulation
         return Task.FromResult(answer);
     }
 
-    public Task<CommandReply> ChangeWreckAsync(ulong sessionId, long wreckId, bool isEmpty, CancellationToken cancellationToken = default)
+    public Task<CommandReply> ChangeWreckAsync(ulong sessionId, long wreckId, bool? isEmpty, bool? abandoned = null, CancellationToken cancellationToken = default)
     {
-        Heard.Enqueue(new SimChangeWreck(sessionId, wreckId, isEmpty));
+        Heard.Enqueue(new SimChangeWreck(sessionId, wreckId, isEmpty, abandoned));
         return Task.FromResult(new CommandReply(true, 0, null));
     }
 

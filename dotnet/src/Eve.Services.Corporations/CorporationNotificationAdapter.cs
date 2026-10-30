@@ -126,6 +126,16 @@ public static void ApplicationChanged(CharacterSessions? sessions,ServiceCall ca
         });
     }
 
+    public static void CorporationMedalAdded(CharacterSessions? sessions,ServiceCall call,long corporationId,long medalId)
+    {
+        if (sessions is null) return;
+        call.Session.AfterResponse(() =>
+        {
+            foreach (var session in sessions.OfCorporation(corporationId))
+                Send(session,"OnCorporationMedalAdded","corpid",CorporationWire.Id(medalId));
+        });
+    }
+
     public static void CorporationChanged(CharacterSessions? sessions,ServiceCall call,long corporationId,
         string name,PyValue before,PyValue after)
     {

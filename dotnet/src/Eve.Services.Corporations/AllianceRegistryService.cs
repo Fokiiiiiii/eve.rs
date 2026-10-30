@@ -120,7 +120,9 @@ private static double RelationshipValue(PyValue value)
     [Method("GetAlliance")]
     public async ValueTask<PyValue> GetAlliance(ServiceCall call)
     {
-        if (await store.AllianceAsync(await Id(call),call.Cancellation) is not { } alliance) return PyNone.Instance;
+        var allianceId = await Id(call);
+        if (allianceId <= 0 || await store.AllianceAsync(allianceId,call.Cancellation) is not { } alliance)
+            throw new InvalidOperationException("NoSuchAlliance");
         var counts = await store.AllianceCharacterCountsAsync([alliance.Id],call.Cancellation);
         var prime = await store.AlliancePrimeTimeAsync(alliance.Id,call.Cancellation);
         var sovereignty = readSovSnapshot is null ? null : await readSovSnapshot(alliance.Id,call.Cancellation);
@@ -806,12 +808,12 @@ private static double RelationshipValue(PyValue value)
         var (_,alliance) = await RequireAllianceMember(call);
         var relationStore = relations ?? throw new InvalidOperationException("Alliance relationship RPCs require RelationStore registration.");
         var rows = await relationStore.FromAsync(Eve.Relations.RelationKinds.Standing.Name,alliance,cancellationToken:call.Cancellation);
-        var descriptor = CorporationWire.DescriptorOf(("toID",3),("relationship",3));
+        var descriptor = CorporationWire.DescriptorOf(("toID",3),("relationship",5));
         return new PyObjectEx(ObjectExKind.Ex2,
             Py.Tuple(Py.Tuple(new PyToken("carbon.common.script.sys.crowset.CIndexedRowset")),
                 Py.Dict(("header",descriptor.Header),("idName",new PyStr("toID")),("columnName",new PyStr("toID")))),
             [],[.. rows.Select(row => new KeyValuePair<PyValue,PyValue>(new PyInt(row.Object),
-                new PyPackedRow(descriptor,[new PyInt(row.Object),new PyInt((long)row.Value)])))]);
+                new PyPackedRow(descriptor,[new PyInt(row.Object),Py.Number(row.Value)])))]);
     }
 
     [Method("SetRelationship")]

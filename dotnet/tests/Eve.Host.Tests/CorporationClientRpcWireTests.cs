@@ -10,6 +10,56 @@ namespace Eve.Host.Tests;
 public partial class HostServerTests
 {
     [Fact]
+    public async Task Alliance_creation_notification_sends_all_columns_and_relationship_changes_keep_the_wire_field()
+    {
+        const long characterId = 980_301;
+        var sessions = new CharacterSessions();
+        Start(configure: registry => registry.Register(new AllianceNotificationProbe(sessions)),
+            sessionOpened: session =>
+            {
+                session.CharacterId = characterId;
+                sessions.Enter(characterId, session);
+            });
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        _ = await front.ReceiveAsync();
+
+        async Task<(string Name, string IdType, PyValue[] Args)> CallAndRead(string method)
+        {
+            await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+                Packets.Call(open, method == "Create" ? 1 : 2, "allianceNotificationProbe", method, Py.Tuple([])))));
+            Assert.Same(PyNone.Instance, Result(MarshalCodec.Decode(
+                Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
+            return ReadCorporationNotification(Assert.IsType<Send>(await front.ReceiveAsync()));
+        }
+
+        var created = await CallAndRead("Create");
+        Assert.Equal(("OnAllianceChanged", "ownerid"), (created.Name, created.IdType));
+        var creationPayload = Assert.IsType<PyTuple>(Assert.Single(created.Args)).Items;
+        Assert.Equal(98_000_001, Number(creationPayload[0]));
+        var fields = Assert.IsType<PyDict>(creationPayload[1]);
+        Assert.Equal(18, fields.Entries.Count);
+        foreach (var entry in fields.Entries)
+        {
+            var pair = Assert.IsType<PyList>(entry.Value);
+            Assert.Equal(2, pair.Items.Count);
+            Assert.Same(PyNone.Instance, pair.Items[0]);
+        }
+        Assert.Equal(new PyValue[] { PyNone.Instance, PyNone.Instance },
+            Assert.IsType<PyList>(Assert.Single(fields.Entries, entry => T(entry.Key) == "warFactionID").Value).Items);
+
+        var relationship = await CallAndRead("Relationship");
+        Assert.Equal(("OnAllianceRelationshipChanged", "ownerid"),
+            (relationship.Name, relationship.IdType));
+        var relationshipPayload = Assert.IsType<PyTuple>(Assert.Single(relationship.Args)).Items;
+        var relationshipChanges = Assert.IsType<PyDict>(relationshipPayload[2]);
+        Assert.Equal(new PyValue[] { PyNone.Instance, new PyReal(4.5) },
+            Assert.IsType<PyList>(Assert.Single(relationshipChanges.Entries,
+                entry => T(entry.Key) == "relationship").Value).Items);
+    }
+
+    [Fact]
     public async Task Corporation_member_changes_reach_both_sessions_after_the_rpc_reply()
     {
         const long corporationId = 980_100;
@@ -142,6 +192,37 @@ public partial class HostServerTests
 
             CorporationNotificationAdapter.MemberChanged(
                 sessions, call, corporationId, memberId, before, after);
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
+    private sealed class AllianceNotificationProbe(CharacterSessions sessions) : IService
+    {
+        public string Name => "allianceNotificationProbe";
+        public bool HasMethod(string method) => method is "Create" or "Relationship";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            const long allianceId = 98_000_001;
+            if (call.Method == "Relationship")
+            {
+                CorporationNotificationAdapter.AllianceRelationshipChanged(
+                    sessions, call, allianceId, 98_000_002, null, 4.5, []);
+                return ValueTask.FromResult<PyValue>(PyNone.Instance);
+            }
+
+            var fields = new (string Key, PyValue Value)[]
+            {
+                ("allianceID", new PyInt(allianceId)), ("allianceName", new PyStr("New Alliance")),
+                ("shortName", new PyStr("NEW")), ("executorCorpID", PyNone.Instance),
+                ("creatorCorpID", new PyInt(98_000_003)), ("creatorCharID", new PyInt(98_000_004)),
+                ("warFactionID", PyNone.Instance), ("description", new PyStr("")), ("url", PyNone.Instance),
+                ("startDate", new PyLong(134_273_341_290_000_000)), ("memberCount", new PyInt(1)),
+                ("dictatorial", new PyInt(0)), ("allowWar", new PyInt(0)), ("currentCapital", PyNone.Instance),
+                ("currentPrimeHour", new PyInt(0)), ("newPrimeHour", new PyInt(0)),
+                ("newPrimeHourValidAfter", new PyLong(0)), ("deleted", new PyInt(0)),
+            };
+            CorporationNotificationAdapter.AllianceChanged(sessions, call, allianceId, null, fields);
             return ValueTask.FromResult<PyValue>(PyNone.Instance);
         }
     }

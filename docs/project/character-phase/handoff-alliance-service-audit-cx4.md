@@ -1,0 +1,26 @@
+# Alliance service audit handoff
+
+Date: 2026-10-30
+
+## Changes
+
+- Alliance creation now emits all 18 columns in `OnAllianceChanged`, including `warFactionID: [None, None]`. V24.01 `eve/client/script/ui/services/alliances/all_cso_alliance.py:62-69` discards add notifications whose field count differs from the alliance rowset; `:93` raises `corpUISignals.on_alliance_changed`. Registered Host wire coverage checks the complete field count and the null pair.
+- `AssignLabels` and `RemoveLabels` already publish `OnOrganizationContactsUpdated` after store mutations in the current service. The existing registered Host test `Alliance_contact_labels_preserve_optional_fields_and_notify_after_host_mutations` covers notification tuples, assign/remove mutations and restart persistence. V24.01 `eve/client/script/ui/shared/neocom/addressBook/addressbookService.py:156-191` reads `(contactID, level, labelMask)` and applies mask-only updates.
+- `PayBill` remains executor-only. EveJS 261028.1 `server/src/services/corporation/allianceRegistryRuntime.js:1178-1200` requires the active executor, Accountant and Account Take on the selected wallet division. eve.rs now enforces the selected division's take role inside the transaction. V24.01 `eve/client/script/ui/services/alliances/all_cso.py:192-196` checks Accountant before the RPC and does not check executor status; non-executor accountants may see the call and receive access denied. EVE University describes alliance maintenance responsibility under the executor corporation: https://wiki.eveuniversity.org/Alliances.
+- Relationship results and notifications preserve the floating-point value and `relationship` field key. The registered Host test checks `4.5` in the notification and query row. V24.01 `eve/client/script/ui/services/alliances/all_cso_relationships.py:63-66` mistakenly assigns `columnName[0]` (`'r'`) to the local row; server payload remains correct.
+- `GetAlliance` now errors for a missing ID. V24.01 `eve/client/script/ui/services/alliances/all_cso_alliance.py:47-61` passes the response to `LoadAlliance`, which reads `__header__` and `allianceID`. EveJS 261028.1 `allianceRegistryRuntime.js:530-538` returns `null`; this client-evidenced difference is recorded in `docs/reference/compat/DEVIATIONS.md`. The registered Host database test covers an unknown positive ID; a DB-free Host test also covers the absent-ID case.
+
+## Verification
+
+- `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false` passed after all code edits (0 warnings, 0 errors; this builds the touched service project).
+- `dotnet build dotnet/tests/Eve.Corporations.Tests/Eve.Corporations.Tests.csproj -p:UseSharedCompilation=false` passed after all code edits (0 warnings, 0 errors).
+- Focused tests passed: `CorporationTests.Directors_and_titles_have_the_references_effective_and_grantable_masks` (1/1) and the registered Host checks `CorporationClientRpcWireTests.Alliance_creation_notification_sends_all_columns_and_relationship_changes_keep_the_wire_field` plus `AllianceRegistryHostWireTests.Alliance_registry_missing_alliance_is_an_error_not_a_null_row` (2/2).
+- The alliance creation, relationship, unknown-positive-alliance and contact-label Host flows are PostgreSQL-backed; they were compile-checked only. No PostgreSQL database was used, per task scope. The focused wallet-role test exercises director access, a missing division role, a matching division role and an invalid division.
+- Graphical-client verification was not performed.
+
+## Source evidence across V24.01 client
+
+- Alliance lookup and notification consumers: `eve/client/script/ui/services/alliances/all_cso_alliance.py:40-61,62-95`; `all_cso.py:126-135`; `eve/client/script/ui/shared/neocom/Alliances/all_ui_home.py:51,184-185`. Public alliance info callsites include `eve/client/script/ui/shared/info/infoContentBase.py:690,1466`, `eve/client/script/ui/services/wars/warPermit.py:25`, and the wrapper aliases in `all_cso.py:134-135`.
+- Label RPC wrappers and notification consumers: `eve/client/script/ui/services/alliances/all_cso.py:274-280`, `eve/client/script/ui/services/corporation/base_corporation.py:1024-1029`, and `eve/client/script/ui/shared/neocom/addressBook/addressbookService.py:156-191`.
+- Bill payment entry points and access checks: `eve/client/script/ui/shared/neocom/wallet/walletSvc.py:124-134`, `eve/client/script/ui/shared/neocom/wallet/panels/corp/corpBillsPayablePanel.py:37,65,93,97,101,110-113`, and `eve/client/script/ui/services/alliances/all_cso.py:192-196`.
+- Relationship notification flow and consumers: `all_cso.py:183-186`, `all_cso_relationships.py:41-70`, and `eve/client/script/ui/shared/info/infosvc.py:152,276-277`. The `setattr(member, columnName[0], ...)` assignment at `all_cso_relationships.py:63-66` is a client bug; it does not change the server's `relationship` payload key requirement.

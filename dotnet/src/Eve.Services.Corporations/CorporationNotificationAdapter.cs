@@ -475,7 +475,7 @@ public static void ApplicationChanged(CharacterSessions? sessions,ServiceCall ca
         {
             var oldValue = Value(before,field.Key);
             var newValue = Value(after,field.Key);
-            if (!oldValue.Equals(newValue))
+            if (before is null || !oldValue.Equals(newValue))
                 changes.Add(new(new PyStr(field.Key),new PyList([oldValue,newValue])));
         }
         return new PyDict(changes);

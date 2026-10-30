@@ -1822,6 +1822,12 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
             CorporationRoles.Accountant,token);
         if (payer.Id != payerCorporationId || payer.AllianceId != allianceId)
             throw new CorporationError("ALLIANCE_ACCESS_DENIED");
+        var payerMember = await MemberAsync(connection,transaction,paidByOwnerId,token)
+            ?? throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        var payerRoles = CorporationRoles.Session(payer,payerMember,payerCharacter.StationId,
+            await TitlesAsync(connection,transaction,payer.Id,token));
+        if (!CorporationRoles.CanTakeWalletDivision(payerRoles,accountKey))
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
         var settlement = await SettleAllianceBillAsync(connection,transaction,billId,allianceId,
             payerCorporationId,paidByOwnerId,accountKey,paidAtMs,null,token);
         if (settlement is null) return false;

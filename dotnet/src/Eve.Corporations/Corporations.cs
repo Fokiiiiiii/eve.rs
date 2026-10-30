@@ -69,6 +69,9 @@ public static class CorporationRoles
 
     public static bool IsKnown(long value, long allowed) => value >= 0 && (value & ~allowed) == 0;
     public static long WalletTakeRole(int accountKey) => accountKey is >= 1000 and <= 1006 ? 1L << (27 + accountKey - 1000) : 0;
+    public static bool CanTakeWalletDivision(SessionRoles roles, int accountKey) =>
+        accountKey is >= 1000 and <= 1006 &&
+        (roles.AtAll & (Director | WalletTakeRole(accountKey))) != 0;
     private static long Effective(long direct, long allowed, IEnumerable<long> titles, long? titleAllowed = null)
     {
         if (!IsKnown(direct, allowed)) return 0;

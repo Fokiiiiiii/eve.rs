@@ -39,6 +39,7 @@ public partial class HostServerTests
             session.Set("charid", new PyLong(characterId));
             session.Set("corpid", new PyLong(corporation.Id));
             session.Set("corporationID", new PyLong(corporation.Id));
+            rig.Sessions.Enter(characterId, session);
         });
         var front = await Handshaken(await ConnectAsync());
         var open = Open();

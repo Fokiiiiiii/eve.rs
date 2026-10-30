@@ -1,5 +1,9 @@
 # Deviations from the reference server
 
+## Abyssal room environment notification order (2026-10-30)
+
+During a room transfer, eve.rs sends `OnExitingDungeon` before `OnEnteringDungeonRoom` to each active recipient. V24.01 `eve/client/script/parklife/environmentSvc.py:240-243,253-255` installs room templates on entry and clears them on exit, so the reverse order leaves no destination room template. `dungeonTracking.py:103-116` updates/clears dungeon tracking by dungeon ID; the change is specifically required by the environment service. EveJS 261028.1 currently sends destination transfer payload before its tracking stage sends `OnExitingDungeon` (`server/src/abyssal/runtime/abyssalRoomTransferPublication.js:49-168,460-534,638-680`), so this is an intentional, client-evidenced wire-order deviation. `AbyssalHostFlowTests.Room_gate_retry_after_actual_transfer_and_reconnect_keeps_one_transition_and_rejects_foreign_markers` checks the packet order through the registered Host.
+
 ## Station inventory capacity (2026-10-29)
 
 V24.01 `eve/client/script/environment/invCache.py:1224-1226` returns `Row(['capacity', 'used'], [9000000000000000.0, 0.0])` whenever the inventory item's `groupID` is `groupStation` (15), regardless of the requested flag. `invControllers.py:418-426` forwards inventory capacity to this row, and `container.py:257-262` uses its capacity and used fields for the gauge. EveJS 261028.1 `server/src/services/inventory/invBrokerService.js:10393-10552` instead defaults to 1,000,000 and sums the inventory rows. eve.rs follows the client-visible shape. The registered Host wire test asserts the station response, and `tools/headless-client/tests/test_login_to_character.py` compares hangar and station capacities to the client result rather than EveJS's value.

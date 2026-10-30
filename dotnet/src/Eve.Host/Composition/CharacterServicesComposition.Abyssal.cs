@@ -822,13 +822,17 @@ internal sealed partial class CharacterServicesComposition
 
             var position = await space.PositionOfAsync(session, recipient.ShipId, cancellationToken).ConfigureAwait(false)
                 ?? throw new InvalidOperationException($"Abyssal ship {recipient.ShipId} has no source pose before gate transfer.");
-            if (!abyssalNotifications.SendEnteringDungeonRoom(
+            if (!abyssalNotifications.SendExitingDungeon(
+                    recipient.CharacterId,
+                    sourceDungeonId,
+                    transition.ContentId,
+                    transition.FromLocationId) ||
+                !abyssalNotifications.SendEnteringDungeonRoom(
                     recipient.CharacterId,
                     destinationDungeonId,
                     destinationRoomId,
                     [position.X, position.Y, position.Z],
-                    transition.ContentId) ||
-                !abyssalNotifications.SendExitingDungeon(recipient.CharacterId, sourceDungeonId, transition.ContentId, transition.FromLocationId))
+                    transition.ContentId))
             {
                 throw new InvalidOperationException($"Abyssal gate {transition.GateMarkerId} client handoff could not be sent to character {recipient.CharacterId}.");
             }

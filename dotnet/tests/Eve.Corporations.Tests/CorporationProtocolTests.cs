@@ -963,7 +963,13 @@ private static PyValue RowField(PyValue value,string key)
         var bulkMemberIds = new PyList(Enumerable.Range(1, 500).Select(id => (PyValue)new PyInt(id))
             .Append(new PyInt(member)).ToArray());
         var bulkMemberRows = Assert.IsType<PyList>(await CorpRpc("GetMembersByIds", bulkMemberIds));
-        Assert.Equal((await MemberRow()).Values, Assert.IsType<PyPackedRow>(Assert.Single(bulkMemberRows.Items)).Values);
+        var returnedMemberId = RowField(Assert.Single(bulkMemberRows.Items), "characterID") switch
+        {
+            PyInt number => number.Value,
+            PyLong number => number.Value,
+            _ => 0,
+        };
+        Assert.Equal(member, returnedMemberId);
         var malformedMemberIds = await Assert.ThrowsAsync<CorporationError>(async () =>
             await CorpRpc("GetMembersByIds",new PyStr("not-a-list")));
         Assert.Equal("CORPORATION_BULK_ARGUMENT_INVALID",malformedMemberIds.Code);

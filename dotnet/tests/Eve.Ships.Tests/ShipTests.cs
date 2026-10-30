@@ -18,6 +18,16 @@ public class ShipTests
     });
 
     [Fact]
+    public void Eject_stops_activation_target_and_overload_effects()
+    {
+        Assert.True(CharacterShips.IsStoppedEffectCategory(EffectDef.Activation));
+        Assert.True(CharacterShips.IsStoppedEffectCategory(EffectDef.Target));
+        Assert.True(CharacterShips.IsStoppedEffectCategory(EffectDef.Overload));
+        Assert.False(CharacterShips.IsStoppedEffectCategory(EffectDef.Online));
+        Assert.False(CharacterShips.IsStoppedEffectCategory(EffectDef.Passive));
+    }
+
+    [Fact]
     public void Cargo_capacity_loss_refuses_only_when_used_exceeds_resulting_capacity()
     {
         Assert.Null(CharacterShips.CargoCapacityLossRefusal(99.5, 120, 100, Rig.Cockroach));

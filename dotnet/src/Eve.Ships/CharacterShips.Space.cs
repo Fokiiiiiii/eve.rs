@@ -346,7 +346,7 @@ public Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, ShipTransitionEve
             {
                 foreach (var effectId in type.EffectIds)
                 {
-                    if (statics.Effect(effectId)?.Category is EffectDef.Activation or EffectDef.Overload)
+                    if (statics.Effect(effectId) is { } effect && IsStoppedEffectCategory(effect.Category))
                         events.Add(new EffectChanged(change.ModuleId, effectId, Started: false));
                 }
             }
@@ -394,6 +394,9 @@ public Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, ShipTransitionEve
         return new ShipEjection(ship, capsule, escapeShip, events, ejectedSnapshot,
             [.. moduleChanges.Select(change => change.ModuleId)], hullCollapsed);
     }
+
+    internal static bool IsStoppedEffectCategory(int category) =>
+        category is EffectDef.Activation or EffectDef.Target or EffectDef.Overload;
 
     /// <summary>Boards an unpiloted ship in the same solar system and transfers its hull and contents to the pilot.</summary>
     public async Task<ShipBoarding?> BoardInSpaceAsync(long characterId, int solarSystemId, long currentShipId, long shipId, CancellationToken cancellationToken = default)

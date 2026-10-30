@@ -20,8 +20,8 @@ public sealed partial class CorporationStore
     public async Task<bool> HasHangarAccessAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
         long characterId, long corporationId, long stationId, int divisionFlag, bool take, CancellationToken token = default)
     {
-        var corporation = await GetAsync(connection, transaction, corporationId, false, token);
         var character = await _characters.LockAndGetAsync(connection, transaction, characterId, token);
+        var corporation = await GetAsync(connection, transaction, corporationId, true, token);
         var member = await MemberAsync(connection, transaction, characterId, token);
         if (corporation is null || corporation.IsNpc || corporation.Deleted || character?.CorporationId != corporationId
             || member?.CorporationId != corporationId)

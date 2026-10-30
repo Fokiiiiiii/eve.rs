@@ -209,10 +209,13 @@ public sealed partial class ReprocessingService(NpgsqlDataSource source, PgItemS
         {
             if (corporations is null || offices is null)
                 throw Notify("You cannot use that corporation hangar.");
-            var office = await offices.GetAsync(connection, transaction, requestedOwner, station, cancellationToken: call.Cancellation).ConfigureAwait(false);
-            if (office is null || office.OfficeId != outputLocation || outputFlag is < 115 or > 121
+            if (outputFlag is < 115 or > 121
                 || !await corporations.HasHangarAccessAsync(connection, transaction, character, requestedOwner, station, outputFlag,
                     take: false, token: call.Cancellation).ConfigureAwait(false))
+                throw Notify("You cannot use that corporation hangar.");
+            var office = await offices.GetAsync(connection, transaction, requestedOwner, station, forUpdate: true,
+                cancellationToken: call.Cancellation).ConfigureAwait(false);
+            if (office is null || office.OfficeId != outputLocation)
                 throw Notify("You cannot use that corporation hangar.");
             outputOwner = requestedOwner;
         }

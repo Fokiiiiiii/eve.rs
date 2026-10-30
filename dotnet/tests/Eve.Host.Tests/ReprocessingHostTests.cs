@@ -1,9 +1,12 @@
 using Eve.Characters;
+using Eve.Corporations;
 using Eve.Data;
 using Eve.Host;
 using Eve.Identity;
 using Eve.Inventory;
+using Eve.Macho;
 using Eve.Marshal;
+using Eve.Skills;
 using Eve.Services;
 using Eve.Wallet;
 using Npgsql;
@@ -13,6 +16,12 @@ namespace Eve.Host.Tests;
 [Collection("host-composition")]
 public sealed class ReprocessingHostTests : IAsyncLifetime
 {
+    private sealed class Capture : IPacketSink
+    {
+        public List<PyValue> Packets { get; } = [];
+        public void Send(PyValue packet) => Packets.Add(packet);
+    }
+
     private const int AccountId = 98_000_031;
     private const long StationId = 60_003_760;
     private const int Jita = 30_000_142;
@@ -116,6 +125,85 @@ public sealed class ReprocessingHostTests : IAsyncLifetime
         }
     }
 
+    [PgFact]
+    public async Task Reprocess_persists_corporation_hangar_yields_and_checks_member_role_and_office()
+    {
+        var host = await HostComposition.BuildAsync(Settings());
+        try
+        {
+            await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url));
+            var characters = new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA"));
+            var founder = await InsertPilotAsync(source, characters);
+            var member = await InsertPilotAsync(source, characters);
+            var walletStore = new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA"));
+            var walletTransactions = new WalletTransactions(source, Schema("EVE_WALLET_SCHEMA"));
+            var skills = new PgSkillStore(source, Schema("EVE_SKILLS_SCHEMA"));
+            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await walletStore.OpenAsync(connection, transaction, founder, 5_000_000m, now);
+                await walletStore.OpenAsync(connection, transaction, member, 100_000m, now);
+                await transaction.CommitAsync();
+            }
+
+            var corporations = new CorporationStore(source, characters, walletStore, walletTransactions, skills,
+                () => now, Schema("EVE_CORPORATIONS_SCHEMA"));
+            var corporation = await corporations.CreateAsync(founder,
+                new NewCorporation("Reprocessing Office Test", "ROT", "", "", 0.05m), $"reprocess-office:{founder}");
+            var application = await corporations.ApplyAsync(member, corporation.Id, "");
+            await corporations.RespondAsync(founder, application, 6, "", "");
+
+            var offices = new CorporationOfficeStore(source, Schema("EVE_CORPORATIONS_SCHEMA"));
+            var office = await offices.WriteAsync((connection, transaction) => offices.RentAsync(
+                connection, transaction, corporation.Id, 900_003_760,
+                new CorporationOfficeStation(StationId, 1531, 1_000_001, Jita, 0.9),
+                CorporationOfficeStore.MinimumRentIsk, now));
+            var items = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
+            long founderInput;
+            long memberInput;
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                founderInput = await items.CreateAsync(connection, transaction,
+                    new NewItem(Veldspar, founder, StationId, ItemFlags.Hangar, 100));
+                memberInput = await items.CreateAsync(connection, transaction,
+                    new NewItem(Veldspar, member, StationId, ItemFlags.Hangar, 100));
+                await transaction.CommitAsync();
+            }
+
+            var service = host.Registry.Lookup("reprocessingSvc") ?? throw new InvalidOperationException("reprocessingSvc is not registered");
+            await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.CallAsync(PlantCall(Session(founder), "Reprocess",
+                new PyList([new PyLong(founderInput)]), new PyLong(StationId), new PyLong(corporation.Id),
+                new PyLong(office.OfficeId + 1), new PyInt(115))));
+            Assert.NotNull(await items.GetAsync(founderInput));
+            Assert.Empty(await items.InLocationAsync(office.OfficeId, corporation.Id, default));
+
+            var capture = new Capture();
+            var founderSession = Session(founder, capture);
+            var dispatcher = new PacketDispatcher(host.Registry, () => now);
+            Assert.True(await dispatcher.DispatchAsync(ClientCallPacket(1,
+                new PyList([new PyLong(founderInput)]), new PyLong(StationId), new PyLong(corporation.Id),
+                new PyLong(office.OfficeId), new PyInt(115)), founderSession));
+            var founderResponse = Assert.IsType<PyTuple>(Result(Assert.Single(capture.Packets)));
+            var founderResult = Assert.IsType<PyList>(founderResponse.Items[1]);
+            Assert.Equal(founderInput, Assert.IsType<PyLong>(Assert.Single(Assert.IsType<PyList>(founderResult.Items[0]).Items)).Value);
+            var corporationYields = await items.InLocationAsync(office.OfficeId, corporation.Id, default);
+            Assert.Contains(corporationYields, item => item.TypeId == Tritanium && item.Flag == 115);
+
+            var yieldsBeforeDeniedCall = corporationYields.Count;
+            await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.CallAsync(PlantCall(Session(member), "Reprocess",
+                new PyList([new PyLong(memberInput)]), new PyLong(StationId), new PyLong(corporation.Id),
+                new PyLong(office.OfficeId), new PyInt(115))));
+            Assert.NotNull(await items.GetAsync(memberInput));
+            Assert.Equal(yieldsBeforeDeniedCall, (await items.InLocationAsync(office.OfficeId, corporation.Id, default)).Count);
+        }
+        finally
+        {
+            await host.ShutdownAsync();
+        }
+    }
+
     private static ServiceCall PlantCall(ClientSession session, string method, params PyValue[] args) => new()
     {
         Method = "MachoBindObject",
@@ -139,9 +227,35 @@ public sealed class ReprocessingHostTests : IAsyncLifetime
         return id;
     }
 
-    private static ClientSession Session(long character)
+    private static PyValue ClientCallPacket(int callId, params PyValue[] reprocessArgs)
     {
-        var session = new ClientSession { CharacterId = character };
+        var source = new MachoAddress(AddressKind.Client, CallId: new PyInt(callId), ClientId: new PyInt(1));
+        var destination = new MachoAddress(AddressKind.Node, Service: "reprocessingSvc",
+            CallId: new PyInt(callId), NodeId: new PyInt(MachoMessage.ProxyNodeId));
+        var kwargs = new PyDict([new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1))]);
+        var nested = new PyTuple([new PyStr("Reprocess"), new PyTuple(reprocessArgs), PyNone.Instance]);
+        var body = new PyTuple([PyNone.Instance, new PyStr("MachoBindObject"), new PyTuple([new PyLong(StationId), nested]), kwargs]);
+        var payload = new PyTuple([new PyTuple([PyBool.True, new PySubStream(body)])]);
+        return new PyObject(
+            new PyStr("carbon.common.script.net.machoNetPacket.CallReq"),
+            new PyTuple([
+                new PyInt(MachoMessage.CallReq), source.Encode(), destination.Encode(),
+                new PyInt(7), payload, new PyDict([]),
+                PyNone.Instance, PyNone.Instance, PyNone.Instance, PyNone.Instance,
+                PyNone.Instance, PyNone.Instance, PyNone.Instance, PyNone.Instance,
+            ]));
+    }
+
+    private static PyValue Result(PyValue response)
+    {
+        var packet = Assert.IsType<PyTuple>(Assert.IsType<PyObject>(response).Args).Items;
+        Assert.Equal(MachoMessage.CallRsp, Assert.IsType<PyInt>(packet[0]).Value);
+        return Assert.IsType<PySubStream>(Assert.IsType<PyTuple>(packet[4]).Items[0]).Decoded!;
+    }
+
+    private static ClientSession Session(long character, IPacketSink? sink = null)
+    {
+        var session = sink is null ? new ClientSession { SessionId = 42, CharacterId = character } : new ClientSession(sink) { SessionId = 42, CharacterId = character };
         session.Set("stationid", new PyLong(StationId));
         session.Set("solarsystemid2", new PyLong(Jita));
         return session;

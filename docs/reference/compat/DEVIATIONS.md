@@ -1,5 +1,9 @@
 # Deviations from the reference server
 
+## Insurance payout after CONCORD destruction (2026-10-30)
+
+EVE University Insurance says active coverage is lost on a CONCORD highsec destruction and the ship reverts to the default 40% reimbursement ([Insurance](https://wiki.eveuniversity.org/Insurance), “Losing your insurance”). EveJS 261028.1 `server/src/services/insurance/insuranceRuntime.js:1274-1464` instead voids the contract and skips the payout for CONCORD destruction. eve.rs voids the insured fraction for this loss but pays the 40% base amount, following the gameplay reference. The other listed voiding triggers remain handled by inventory repackaging, owner change, and placing the ship in a corporation hangar.
+
 ## Alliance registry client compatibility (2026-10-30)
 
 `all_cso_alliance.py:47-61` passes an unknown `GetAlliance` result to `LoadAlliance`, which immediately reads `__header__` and `allianceID`. EveJS 261028.1 `server/src/services/corporation/allianceRegistryRuntime.js:530-538` returns `null` for an unknown alliance. eve.rs raises the registry runtime error instead, so the client receives a failure rather than a null row that crashes in `LoadAlliance`. `all_cso_alliance.py:67-69` also rejects an add notification unless it has every alliance column; eve.rs sends all 18 fields on creation, including the unchanged `warFactionID` pair, and the Host wire test pins that payload. The client then raises `corpUISignals.on_alliance_changed` at `:93`.

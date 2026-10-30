@@ -105,7 +105,7 @@ impl Scene {
             brains.forget(session);
         }
         let ship_id = pilot.ship.spec.ship_id;
-        out.extend(self.drop_targeting(ship_id, &pilot.targeting, now));
+        out.extend(self.drop_targeting(ship_id, &pilot.targeting, None, now));
         let logoff_at = matches!(why, Departure::LoggedOff).then_some(pilot.ship.position);
         out.extend(self.release_drones(session, logoff_at, now));
 

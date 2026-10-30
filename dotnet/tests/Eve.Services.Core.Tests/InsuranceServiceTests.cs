@@ -143,7 +143,7 @@ public sealed class InsuranceServiceTests
     }
 
     [Fact]
-    public void Loss_payout_uses_active_coverage_and_suppresses_concord_losses()
+    public void Loss_payout_uses_active_coverage_and_concord_losses_revert_to_base()
     {
         var lossDate = Eve.Services.Py.FileTimeFromUnixMs(NowUnixMs);
         const long fullPayoutValueCents = 712_023_300;
@@ -171,7 +171,7 @@ public sealed class InsuranceServiceTests
             284_809_320,
             InsuranceQuotes.PayoutForLoss(fullPayoutValueCents, null, lossDate, false));
         Assert.Equal(
-            0,
+            284_809_320,
             InsuranceQuotes.PayoutForLoss(fullPayoutValueCents, activeBasic, lossDate, true));
     }
 
@@ -472,7 +472,7 @@ public sealed class InsuranceServiceTests
     }
 
     [Fact]
-    public async Task Concord_losses_are_not_sent_to_insurance_settlement_even_for_the_base_payout()
+    public async Task Concord_losses_are_settled_so_the_host_can_pay_the_base_reimbursement()
     {
         var writer = new FakeInsuranceWriteModel();
         var service = new InsuranceService(new FakeInsuranceReadModel(), () => NowUnixMs, writer);
@@ -481,8 +481,8 @@ public sealed class InsuranceServiceTests
 
         var result = await service.SettleShipLossAsync(loss, CancellationToken.None);
 
-        Assert.Equal(InsuranceMutationStatus.NotEligible, result.Status);
-        Assert.Null(writer.Loss);
+        Assert.Equal(InsuranceMutationStatus.Applied, result.Status);
+        Assert.Equal(loss, writer.Loss);
     }
 
     [Theory]

@@ -92,7 +92,7 @@ impl Scene {
         }
         self.sim_damageable_entities.remove(&ship_id);
         self.unpiloted.remove(&ship_id);
-        let mut out = self.drop_targeting(ship_id, &pilot.targeting, now);
+        let mut out = self.drop_targeting(ship_id, &pilot.targeting, Some("Exploding"), now);
         self.destroyed.push(ship_id);
         let stamp = self.next_stamp(now);
         for watcher in told_of_it {

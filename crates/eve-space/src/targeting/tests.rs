@@ -192,6 +192,21 @@ fn a_lock_is_answered_at_once_as_going_and_had_when_its_time_is_up() {
 }
 
 #[test]
+fn an_instant_lock_is_pending_until_its_add_notification_arrives() {
+    let (mut scene, t) = crowd(2);
+    scene.pilots.get_mut(&B).unwrap().ship.spec.scan_resolution = 1.0e12;
+    let asked = scene.target_order(B, Order::Lock(ship_id(A)), t);
+    assert_eq!(answer(&asked), (true, vec![]));
+    assert_eq!(
+        on_target(&asked),
+        vec![
+            (B, words(&["add", &ship_id(A).to_string()])),
+            (A, words(&["otheradd", &ship_id(B).to_string()])),
+        ]
+    );
+}
+
+#[test]
 fn the_damage_state_of_what_is_locked_is_told_to_everyone_who_can_see_it_and_the_one_that_locks() {
     let (mut scene, t) = crowd(3);
     let (out, _) = locked(&mut scene, t, B, ship_id(A));

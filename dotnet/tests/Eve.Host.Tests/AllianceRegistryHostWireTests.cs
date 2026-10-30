@@ -67,10 +67,67 @@ public partial class HostServerTests
             ReadCorporationNotification(Assert.IsType<Send>(await front.ReceiveAsync())).Name);
         Assert.Equal("OnCorporationChanged",
             ReadCorporationNotification(Assert.IsType<Send>(await front.ReceiveAsync())).Name);
+
+        var allianceInfo = Assert.IsType<PyObject>(await CallOverHostAfterQueuedNotifications(front, open, 2,
+            "allianceRegistry", "GetAlliance", Py.Tuple(new PyLong(allianceId))));
+        Assert.Equal("util.KeyVal", T(allianceInfo.Name));
+        var allianceFields = Assert.IsType<PyDict>(allianceInfo.Args);
+        Assert.Equal(allianceId, Number(Assert.Single(allianceFields.Entries, entry => T(entry.Key) == "allianceID").Value));
+        Assert.Equal(corporation.Id, Number(Assert.Single(allianceFields.Entries, entry => T(entry.Key) == "executorCorpID").Value));
+        Assert.Equal(18, Assert.IsType<PyTuple>(
+            Assert.Single(allianceFields.Entries, entry => T(entry.Key) == "__header__").Value).Items.Count);
+
+        var publicInfo = Assert.IsType<PyObject>(await CallOverHostAfterQueuedNotifications(front, open, 3,
+            "allianceRegistry", "GetAlliancePublicInfo", Py.Tuple(new PyLong(allianceId))));
+        Assert.Equal("util.KeyVal", T(publicInfo.Name));
+        Assert.Equal(corporation.Id, Number(Assert.Single(Assert.IsType<PyDict>(publicInfo.Args).Entries,
+            entry => T(entry.Key) == "executorCorpID").Value));
+
+        var members = Assert.IsType<PyObject>(await CallOverHostAfterQueuedNotifications(front, open, 4,
+            "allianceRegistry", "GetAllianceMembers", Py.Tuple(new PyLong(allianceId))));
+        Assert.Equal("eve.common.script.sys.rowset.Rowset", T(members.Name));
+        var memberRowset = Assert.IsType<PyDict>(members.Args);
+        Assert.Equal(new[] { "corporationID", "allianceID", "chosenExecutorID", "startDate", "deleted" },
+            Assert.IsType<PyList>(Assert.Single(memberRowset.Entries, entry => T(entry.Key) == "header").Value)
+                .Items.Select(value => T(value)).ToArray());
+        var memberLine = Assert.IsType<PyList>(Assert.Single(Assert.IsType<PyList>(
+            Assert.Single(memberRowset.Entries, entry => T(entry.Key) == "lines").Value).Items)).Items;
+        Assert.Equal(corporation.Id, Number(memberLine[0]));
+        Assert.Equal(allianceId, Number(memberLine[1]));
+        Assert.Same(PyNone.Instance, memberLine[2]);
+        _ = Assert.IsType<PyLong>(memberLine[3]);
+        Assert.Equal(new PyInt(0), memberLine[4]);
+
+        var indexedMembers = Assert.IsType<PyObjectEx>(await CallOverHostAfterQueuedNotifications(front, open, 5,
+            "allianceRegistry", "GetMembers", Py.Tuple([])));
+        Assert.Equal(ObjectExKind.Ex2, indexedMembers.Kind);
+        var indexedMember = Assert.Single(indexedMembers.Dict,
+            entry => entry.Key == new PyInt(corporation.Id));
+        var indexedMemberRow = Assert.IsType<PyPackedRow>(indexedMember.Value);
+        Assert.Equal(corporation.Id, Number(indexedMemberRow.Values[0]));
+        Assert.Equal(allianceId, Number(indexedMemberRow.Values[1]));
+
+        var employment = Assert.IsType<PyObject>(await CallOverHostAfterQueuedNotifications(front, open, 6,
+            "allianceRegistry", "GetEmploymentRecord", Py.Tuple(new PyLong(corporation.Id))));
+        Assert.Equal("eve.common.script.sys.rowset.Rowset", T(employment.Name));
+        var employmentRows = Assert.IsType<PyList>(Assert.Single(Assert.IsType<PyDict>(employment.Args).Entries,
+            entry => T(entry.Key) == "lines").Value).Items;
+        Assert.Equal(2, employmentRows.Count);
+        Assert.Equal(allianceId, Number(Assert.IsType<PyList>(employmentRows[0]).Items[0]));
+        Assert.Same(PyNone.Instance, Assert.IsType<PyList>(employmentRows[1]).Items[0]);
+
+        var daysInAlliance = Assert.IsType<PyInt>(await CallOverHostAfterQueuedNotifications(front, open, 7,
+            "allianceRegistry", "GetDaysInAlliance", Py.Tuple(new PyLong(allianceId), new PyLong(corporation.Id))));
+        Assert.Equal(0, daysInAlliance.Value);
+
+        var olderMembers = Assert.IsType<PyList>(await CallOverHostAfterQueuedNotifications(front, open, 8,
+            "allianceRegistry", "GetAllianceMembersOlderThan", Py.Tuple(new PyLong(allianceId), new PyInt(0))));
+        Assert.Contains(new PyInt(corporation.Id), olderMembers.Items);
+
         actorSession!.Set("allianceid", new PyLong(allianceId));
         actorSession.Set("allianceID", new PyLong(allianceId));
         const long toId = 98_000_002;
-        Assert.Same(PyNone.Instance, await CallOverHostAfterQueuedNotifications(front, open, 2,
+        Assert.Same(PyNone.Instance, await CallOverHostAfterQueuedNotifications(front, open, 9,
             "allianceRegistry", "SetRelationship", Py.Tuple(new PyReal(4.5), new PyLong(toId))));
         var relationshipNotice = ReadCorporationNotification(Assert.IsType<Send>(await front.ReceiveAsync()));
         Assert.Equal(("OnAllianceRelationshipChanged", "ownerid"),
@@ -81,12 +138,12 @@ public partial class HostServerTests
             Assert.IsType<PyList>(Assert.Single(relationshipChanges.Entries,
                 entry => T(entry.Key) == "relationship").Value).Items);
 
-        var relationships = Assert.IsType<PyObjectEx>(await CallOverHostAfterQueuedNotifications(front, open, 3,
+        var relationships = Assert.IsType<PyObjectEx>(await CallOverHostAfterQueuedNotifications(front, open, 10,
             "allianceRegistry", "GetRelationships", Py.Tuple([])));
         var relationshipRow = Assert.IsType<PyPackedRow>(Assert.Single(relationships.Dict).Value);
         Assert.Equal(new PyValue[] { new PyInt(toId), new PyReal(4.5) }, relationshipRow.Values);
 
-        var missingAlliance = Packets.Call(open, 4, "allianceRegistry", "GetAlliance",
+        var missingAlliance = Packets.Call(open, 11, "allianceRegistry", "GetAlliance",
             Py.Tuple(new PyLong(allianceId + 1000)));
         await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(missingAlliance)));
         var missingAllianceReply = Assert.IsType<Send>(await front.ReceiveAsync());

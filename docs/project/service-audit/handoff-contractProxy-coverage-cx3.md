@@ -31,5 +31,7 @@ None. All eight P1 write rows identified at the start of this coverage group now
 
 - Host.Tests project build passed (0 warnings, 0 errors).
 - Acceptance DB Host-wire test passed before and after merging origin/main; completion, delete, create, and auction DB Host-wire tests passed locally: each 1 passed, 0 failed, 0 skipped.
-- Acceptance group commit `04dc4844` is pushed. Its push-triggered Actions run remains queued; the remaining coverage group must wait for that run to complete before push.
+- Acceptance group commit `04dc4844` is pushed. Its push-triggered CI run 41094335411 completed successfully with no failed jobs.
+- The remaining write coverage is committed locally in `3e6f2bd6`; after merging the latest origin/main, the Host.Tests build passed and all five focused PostgreSQL Host-wire cases passed together: 5 passed, 0 failed, 0 skipped.
+- Pre-push status shows the newest completed main CI run green (run 1345 for `04dc4844`); the next CI run for main is queued. The remaining coverage commit and merge are ready to push.
 - No graphical client run was performed.

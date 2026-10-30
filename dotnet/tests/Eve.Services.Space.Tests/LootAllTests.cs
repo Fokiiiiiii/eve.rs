@@ -173,6 +173,8 @@ public class LootAllTests
             await rig.Items.MoveToOwnerAsync(connection, transaction, can.Id, 777_000_001, can.LocationId, can.Flag);
             await transaction.CommitAsync();
         }
+        var rights = (await rig.SpaceItems.GetAsync(can.Id))!;
+        await rig.SpaceItems.SaveAsync(rights with { CharacterId = 777_000_001, CorporationId = 777_000_002 });
 
         Assert.Equal("SafetyActivated", UserError(await Assert.ThrowsAsync<MachoWrappedException>(() => LootAsync(f, f.First, f.Second))).Name);
 
@@ -200,6 +202,7 @@ public class LootAllTests
             Session = f.Session,
             BoundObjectId = Rig.OidOf(bound.Items[0]),
         };
+        var originalRights = (await rig.SpaceItems.GetAsync(container.Id))!;
 
         async Task SetContainerOwnerAsync(long ownerId)
         {
@@ -207,6 +210,15 @@ public class LootAllTests
             await using var transaction = await connection.BeginTransactionAsync();
             await rig.Items.MoveToOwnerAsync(connection, transaction, container.Id, ownerId, container.LocationId, container.Flag);
             await transaction.CommitAsync();
+            var rights = (await rig.SpaceItems.GetAsync(container.Id))!;
+            if (rights is not { CharacterId: 0, CorporationId: 0, AllianceId: 0, WarFactionId: 0 })
+            {
+                await rig.SpaceItems.SaveAsync(rights with
+                {
+                    CharacterId = ownerId,
+                    CorporationId = ownerId == f.Character.CharacterId ? originalRights.CorporationId : 777_000_002,
+                });
+            }
         }
 
         await SetContainerOwnerAsync(777_000_001);

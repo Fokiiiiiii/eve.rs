@@ -23,6 +23,8 @@ EveJS 261028.1 implements the same flow: `src/server/src/services/ship/beyonceSe
 
 ## Checks
 
+Pushed commit `300534155e083e1f4cfd95dc24aebbf9e72b565f` to `main`; Actions run 41022854575 completed with failures in `sim::tests::tether_host_policy_dispatches_to_the_real_scene_and_transitions_return_to_the_host`, `Eve.Space.Tests.SimCodecTests.A_valid_frame_encodes_to_its_bytes_and_decodes_back(name: "wreck loot rights abandoned")`, and two `LootAllTests` whose setups changed only inventory owner while leaving stored wreck rights unchanged. The local fixes update the protocol expectation to 84, teach the fixture decoder the nullable `ChangeWreck` fields, and keep item ownership and stored rights in sync in those two tests. Rust lint and focused tether test, C# project builds, and codec fixtures now pass locally. The PostgreSQL-backed tests are not run locally per this task's no-database instruction; CI must confirm their fixture correction.
+
 Passed locally: Rust format check; `eve-space` focused abandonment, sim command and observer-expiry tests; simlink fixture tests (11); `eve-space` cargo check; workspace clippy; .NET builds for `Eve.Space`, `Eve.Services.Space`, `Eve.Services.Inventory`, `Eve.Space.Tests` and `Eve.Host.Tests`; focused sim codec and registered Host abandonment wire tests.
 
 The graphical client was not exercised. PostgreSQL was intentionally not used for this task; persistence restore is verified by code-path inspection, not a database restart test. Existing unrelated cx3 WIP remains preserved in stash `cx3-pre-wreck-loot-wip`.

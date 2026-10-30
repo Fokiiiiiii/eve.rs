@@ -22,4 +22,4 @@
 
 After merging `origin/main`, local checks passed: Core build; Host test-project build; all 34 `InsuranceServiceTests`; both selected Host insurance tests; Rust `eve-space` check, format, workspace clippy, all 39 targeting tests and all 28 death tests. Before the merge, the unrelated dirty `SpaceDrones.cs` made the Host test project fail against its clean `WireDrones` fixture; that source was preserved in `stash@{0}`, and the clean post-merge Host build passed without a fixture change.
 
-No PostgreSQL was used, as required by the task header. The graphical client was not run. Before pushing, merge `origin/main`, repeat relevant checks, commit only this task's files, and push to `main`. Keep this note current after the push and record the Actions result.
+No PostgreSQL was used, as required by the task header. The graphical client was not run. Push commit `bce27ee2` passed main CI run `41014968985` (run 1331); `tools/dev/ci-status.py failures bce27ee2` reported no failed tests or jobs. The task commits are on `main`.

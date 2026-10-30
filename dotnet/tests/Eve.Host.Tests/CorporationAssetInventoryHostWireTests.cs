@@ -67,6 +67,8 @@ public sealed class CorporationAssetInventoryHostWireTests
                 await transaction.CommitAsync();
             }
             long propertyItemId;
+            long officeItemId;
+            long impoundedItemId;
             long deliveryItemId;
             await using (var connection = await source.OpenConnectionAsync())
             await using (var transaction = await connection.BeginTransactionAsync())
@@ -74,6 +76,12 @@ public sealed class CorporationAssetInventoryHostWireTests
                 propertyItemId = await items.CreateAsync(connection, transaction,
                     new NewItem(34, corporation.Id, stationId + 1, ItemFlags.CorpSAG3, 5,
                         CustomName: "corporate stack"));
+                officeItemId = await items.CreateAsync(connection, transaction,
+                    new NewItem(34, corporation.Id, stationId + 1000, ItemFlags.CorpSAG3, 3,
+                        CustomName: "office hangar"));
+                impoundedItemId = await items.CreateAsync(connection, transaction,
+                    new NewItem(34, corporation.Id, stationId, CorporationOfficeStore.ImpoundedFlag, 4,
+                        CustomName: "impounded stack"));
                 deliveryItemId = await items.CreateAsync(connection, transaction,
                     new NewItem(34, corporation.Id, stationId, 62, 2, CustomName: "corporate delivery"));
                 await transaction.CommitAsync();
@@ -144,6 +152,74 @@ public sealed class CorporationAssetInventoryHostWireTests
             {
                 new PyLong(stationId), new PyLong(30000142), new PyInt(1531), new PyInt(1)
             }, deliveryValues);
+
+            Assert.True(await dispatcher.DispatchAsync(
+                ClientCallPacket("GetAssetInventoryForLocation", new PyInt(corporation.Id),
+                    new PyLong(stationId + 1), new PyStr("property")), session));
+            Assert.Equal(5, capture.Packets.Count);
+            Assert.Equal(new PyStr("carbon.common.script.net.machoNetPacket.CallRsp"),
+                Assert.IsType<PyObject>(capture.Packets[4]).Name);
+            var propertyItems = Rowset(Result(capture.Packets[4]));
+            Assert.Equal(new PyValue[]
+            {
+                Py.Tuple(new PyStr("itemID"), new PyInt(0x14)),
+                Py.Tuple(new PyStr("typeID"), new PyInt(0x03)),
+                Py.Tuple(new PyStr("ownerID"), new PyInt(0x03)),
+                Py.Tuple(new PyStr("locationID"), new PyInt(0x14)),
+                Py.Tuple(new PyStr("flagID"), new PyInt(0x02)),
+                Py.Tuple(new PyStr("quantity"), new PyInt(0x03)),
+                Py.Tuple(new PyStr("groupID"), new PyInt(0x03)),
+                Py.Tuple(new PyStr("categoryID"), new PyInt(0x03)),
+                Py.Tuple(new PyStr("customInfo"), new PyInt(0x81)),
+                Py.Tuple(new PyStr("stacksize"), new PyInt(0x03)),
+                Py.Tuple(new PyStr("singleton"), new PyInt(0x03)),
+            }, Descriptor.DescriptorColumns(Field(propertyItems, "header")));
+            var propertyItem = RowValues(Assert.Single(Lines(propertyItems)));
+            Assert.Equal(new PyValue[]
+            {
+                new PyLong(propertyItemId), new PyInt(34), new PyInt(corporation.Id),
+                new PyLong(stationId + 1), new PyInt(ItemFlags.CorpSAG3), new PyInt(5)
+            }, propertyItem.Take(6));
+            Assert.Equal(new PyWString("corporate stack"), propertyItem[8]);
+            Assert.Equal(new PyInt(5), propertyItem[9]);
+            Assert.Equal(new PyInt(0), propertyItem[10]);
+
+            Assert.True(await dispatcher.DispatchAsync(
+                ClientCallPacket("GetAssetInventoryForLocation", new PyInt(corporation.Id),
+                    new PyLong(stationId), new PyStr("offices")), session));
+            Assert.Equal(6, capture.Packets.Count);
+            var officeItems = Rowset(Result(capture.Packets[5]));
+            var officeItem = RowValues(Assert.Single(Lines(officeItems)));
+            Assert.Equal(new PyLong(officeItemId), officeItem[0]);
+            Assert.Equal(new PyLong(stationId + 1000), officeItem[3]);
+            Assert.Equal(new PyWString("office hangar"), officeItem[8]);
+
+            Assert.True(await dispatcher.DispatchAsync(
+                ClientCallPacket("GetAssetInventoryForLocation", new PyInt(corporation.Id),
+                    new PyLong(stationId), new PyStr("impounded")), session));
+            Assert.Equal(7, capture.Packets.Count);
+            var impoundedItems = Rowset(Result(capture.Packets[6]));
+            var impoundedItem = RowValues(Assert.Single(Lines(impoundedItems)));
+            Assert.Equal(new PyLong(impoundedItemId), impoundedItem[0]);
+            Assert.Equal(new PyInt(CorporationOfficeStore.ImpoundedFlag), impoundedItem[4]);
+            Assert.Equal(new PyWString("impounded stack"), impoundedItem[8]);
+
+            Assert.True(await dispatcher.DispatchAsync(
+                ClientCallPacket("GetAssetInventoryForLocation", new PyInt(corporation.Id),
+                    new PyLong(stationId), new PyStr("property")), session));
+            Assert.Equal(8, capture.Packets.Count);
+            Assert.Empty(Lines(Rowset(Result(capture.Packets[7]))));
+
+            Assert.True(await dispatcher.DispatchAsync(
+                ClientCallPacket("GetAssetInventoryForLocation", new PyInt(corporation.Id),
+                    new PyLong(stationId), new PyStr("deliveries")), session));
+            Assert.Equal(9, capture.Packets.Count);
+            var deliveryItems = Rowset(Result(capture.Packets[8]));
+            var deliveryItem = RowValues(Assert.Single(Lines(deliveryItems)));
+            Assert.Equal(new PyLong(deliveryItemId), deliveryItem[0]);
+            Assert.Equal(new PyLong(stationId), deliveryItem[3]);
+            Assert.Equal(new PyInt(62), deliveryItem[4]);
+            Assert.Equal(new PyWString("corporate delivery"), deliveryItem[8]);
 
             Assert.Equal(propertyItemId, (await items.GetAsync(propertyItemId))!.Id);
             Assert.Equal(deliveryItemId, (await items.GetAsync(deliveryItemId))!.Id);

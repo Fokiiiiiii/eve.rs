@@ -7,6 +7,15 @@ using Npgsql;
 
 namespace Eve.Ships;
 
+public interface IWeaponBankStore
+{
+    Task<IReadOnlyDictionary<long, IReadOnlyList<long>>> WeaponBanksAsync(long shipId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyDictionary<long, IReadOnlyList<long>>> UpdateWeaponBanksAsync(
+        long shipId,
+        Func<IReadOnlyDictionary<long, IReadOnlyList<long>>, IReadOnlyDictionary<long, IReadOnlyList<long>>> update,
+        CancellationToken cancellationToken = default);
+}
+
 /// <summary>
 /// A character's ship as a whole: what is in it, what is fitted to it, and what its modules are doing. A change to it runs in one
 /// transaction across the modules that own the parts (ADR 0003): the item moves, the module state is kept, and the answer says what
@@ -14,7 +23,7 @@ namespace Eve.Ships;
 /// </summary>
 public sealed partial class CharacterShips(
     NpgsqlDataSource source, DogmaStatic statics, PgCharacterStore characters, PgItemStore items, PgSkillStore skills, PgModuleStateStore modules,
-    CharacterTraining? training = null, ExpertSystems? expertSystems = null)
+    CharacterTraining? training = null, ExpertSystems? expertSystems = null) : IWeaponBankStore
 {
     /// <summary>The inventory flags a ship's contents can be in besides its slots: the cargo hold.</summary>
     public const int CargoFlag = 5;
@@ -37,6 +46,15 @@ public sealed partial class CharacterShips(
 
     public Task<ShipSnapshot?> LoadShipAsync(long characterId, long shipId, CancellationToken cancellationToken = default) =>
         LoadSelectedShipAsync(characterId, shipId, cancellationToken);
+
+    public Task<IReadOnlyDictionary<long, IReadOnlyList<long>>> WeaponBanksAsync(long shipId, CancellationToken cancellationToken = default) =>
+        modules.WeaponBanksAsync(shipId, cancellationToken);
+
+    public Task<IReadOnlyDictionary<long, IReadOnlyList<long>>> UpdateWeaponBanksAsync(
+        long shipId,
+        Func<IReadOnlyDictionary<long, IReadOnlyList<long>>, IReadOnlyDictionary<long, IReadOnlyList<long>>> update,
+        CancellationToken cancellationToken = default) =>
+        modules.UpdateWeaponBanksAsync(shipId, update, cancellationToken);
 
     private async Task<ShipSnapshot?> LoadSelectedShipAsync(long characterId, long? shipId, CancellationToken cancellationToken, long? shipOwnerIdOverride = null)
     {
@@ -300,6 +318,10 @@ public sealed partial class CharacterShips(
         if (wasInSlot || landsInSlot)
         {
             await modules.SetAsync(connection, transaction, item.Id, newState, cancellationToken);
+        }
+        if (wasInSlot && !landsInSlot)
+        {
+            await modules.RemoveFromWeaponBanksAsync(connection, transaction, ship.Id, item.Id, cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
 

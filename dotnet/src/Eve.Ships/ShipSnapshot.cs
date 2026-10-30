@@ -93,6 +93,9 @@ public sealed class ShipSnapshot
     /// <summary>What each fitted module has taken (a module with nothing in the map has taken nothing and never been mended).</summary>
     public IReadOnlyDictionary<long, ModuleCondition> ModuleConditions { get; init; } = new Dictionary<long, ModuleCondition>();
 
+    /// <summary>The fitted weapon modules grouped by master item id.</summary>
+    public IReadOnlyDictionary<long, IReadOnlyList<long>> WeaponBanks { get; init; } = new Dictionary<long, IReadOnlyList<long>>();
+
     /// <summary>
     /// The capsuleer ships of the same system, for a transport field (the Gravitational Transportation Field Oscillator): the space host lists them, since
     /// the ships of a system are its own. Empty unless the host has set it (<see cref="WithNeighbours"/>).
@@ -105,20 +108,20 @@ public sealed class ShipSnapshot
     /// <summary>The same ship with the other capsuleer ships of its system (see <see cref="Neighbours"/>).</summary>
     public ShipSnapshot WithNeighbours(IReadOnlyList<TransportNeighbour> neighbours) => new()
     {
-        Character = Character, Ship = Ship, Fitted = Fitted, Charges = Charges, Stance = Stance, Skills = Skills, World = World, Condition = Condition, ModuleConditions = ModuleConditions,
+        Character = Character, Ship = Ship, Fitted = Fitted, Charges = Charges, Stance = Stance, Skills = Skills, World = World, Condition = Condition, ModuleConditions = ModuleConditions, WeaponBanks = WeaponBanks,
         Neighbours = neighbours,
     };
 
     /// <summary>The same ship with what it has taken as told (a ship in space is asked of the simulation, which has it live).</summary>
     public ShipSnapshot WithCondition(ShipCondition condition) => new()
     {
-        Character = Character, Ship = Ship, Fitted = Fitted, Charges = Charges, Stance = Stance, Skills = Skills, World = World, Condition = condition, ModuleConditions = ModuleConditions, Neighbours = Neighbours,
+        Character = Character, Ship = Ship, Fitted = Fitted, Charges = Charges, Stance = Stance, Skills = Skills, World = World, Condition = condition, ModuleConditions = ModuleConditions, WeaponBanks = WeaponBanks, Neighbours = Neighbours,
     };
 
     /// <summary>The same ship after its dogma sources and module states have changed.</summary>
     public ShipSnapshot WithDogma(DogmaWorld world, ShipCondition condition, IReadOnlyList<CharacterSkill> skills) => new()
     {
-        Character = Character, Ship = Ship, Fitted = Fitted, Charges = Charges, Stance = Stance, Skills = skills, World = world, Condition = condition, ModuleConditions = ModuleConditions, Neighbours = Neighbours,
+        Character = Character, Ship = Ship, Fitted = Fitted, Charges = Charges, Stance = Stance, Skills = skills, World = world, Condition = condition, ModuleConditions = ModuleConditions, WeaponBanks = WeaponBanks, Neighbours = Neighbours,
     };
 
     /// <summary>What a fitted module has taken.</summary>
@@ -152,6 +155,7 @@ public sealed class ShipSnapshot
         var (fitted, charges) = await SlotsOfAsync(statics, contents, cancellationToken);
         var states = await modules.StatesAsync(fitted.Select(i => i.Id), cancellationToken);
         var moduleConditions = await modules.ModuleConditionsAsync(fitted.Select(i => i.Id), cancellationToken);
+        var weaponBanks = await modules.WeaponBanksAsync(shipId, cancellationToken);
         var condition = await modules.ShipConditionAsync(shipId, cancellationToken);
         var stored = skillsOverride ?? await skills.ForCharacterAsync(characterId, cancellationToken);
         // the levels the character's expert systems grant show in its skills (the training itself runs from the trained levels)
@@ -201,7 +205,7 @@ public sealed class ShipSnapshot
             world.SetValue(id, DogmaWorld.SkillLevel, skill.Level);
             world.SetValue(id, SkillPointsAttribute, skill.SkillPoints);
         }
-        return new ShipSnapshot { Character = character, Ship = ship, Fitted = fitted, Charges = charges, Stance = StanceOf(contents), Skills = trained, World = world, Condition = condition, ModuleConditions = moduleConditions };
+        return new ShipSnapshot { Character = character, Ship = ship, Fitted = fitted, Charges = charges, Stance = StanceOf(contents), Skills = trained, World = world, Condition = condition, ModuleConditions = moduleConditions, WeaponBanks = weaponBanks };
     }
 }
 

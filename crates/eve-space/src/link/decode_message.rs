@@ -316,13 +316,18 @@ pub(super) fn read_ship(reader: &mut Reader) -> Result<ShipSpec, DecodeError> {
     let vitals = read_vitals(reader)?;
     let condition = read_condition(reader)?;
     let count = reader.u32()? as usize;
-    // a module takes 16 bytes, so a count the frame cannot hold is refused before anything is allocated for it
-    if count > reader.data.len() / 16 {
+    // a module takes 24 bytes, so a count the frame cannot hold is refused before anything is allocated for it
+    if count > reader.data.len() / 24 {
         return Err(DecodeError::Truncated);
     }
     let mut modules = Vec::with_capacity(count);
     for _ in 0..count {
-        modules.push(ModuleSpec { item_id: reader.i64()?, type_id: reader.i32()?, flag: reader.i32()? });
+        modules.push(ModuleSpec {
+            item_id: reader.i64()?,
+            type_id: reader.i32()?,
+            flag: reader.i32()?,
+            bank_master_id: reader.i64()?,
+        });
     }
     let sensor_strength = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
     let ecm_resistance = reader.f64()?;

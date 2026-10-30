@@ -71,7 +71,12 @@ fn simulation(pilots: usize) -> Sim {
                 armor_pinned: false,
             },
             condition: Condition::FULL,
-            modules: vec![ModuleSpec { item_id: entity_id + 1, type_id: 21_857, flag: 19 }],
+            modules: vec![ModuleSpec {
+                item_id: entity_id + 1,
+                type_id: 21_857,
+                flag: 19,
+                bank_master_id: 0,
+            }],
         };
         sim.handle(
             Message::Enter(Box::new(Enter {

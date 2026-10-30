@@ -31,7 +31,8 @@ public sealed partial class DogmaIMService(
     PilotAugmentationRpc? augmentations = null,
     Func<ClientSession, ShipSnapshot, CancellationToken, ValueTask<ShipSnapshot?>>? prepareSpaceDogma = null,
     Func<ClientSession, CancellationToken, ValueTask<ShipSnapshot?>>? snapshotProvider = null,
-    Func<long, long, IReadOnlyList<long>, long, int?, long?, CancellationToken, Task<ShipOutcome>>? unloadAmmo = null) : IBoundObjectReleaseHandler
+    Func<long, long, IReadOnlyList<long>, long, int?, long?, CancellationToken, Task<ShipOutcome>>? unloadAmmo = null,
+    IWeaponBankStore? weaponBankStore = null) : IBoundObjectReleaseHandler
 {
     private readonly CharacterDogmaSync _sync = sync ?? new CharacterDogmaSync(statics, ships, nowUnixMs);
 

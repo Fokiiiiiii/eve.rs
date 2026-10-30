@@ -14,6 +14,9 @@ public static class ItemFlags
     /// <summary>The cargo hold of a ship (what a character carries loose in its ship).</summary>
     public const int Cargo = 5;
 
+    public const int CorpDeliveries = 62;
+    public const int Deliveries = 184;
+
     /// <summary>The seven corporation hangar divisions (the client flagCorpSAG1 = 115 to flagCorpSAG7 = 121, eve-logic inventorycommon/const.py).</summary>
     public const int CorpSAG1 = 115;
     public const int CorpSAG2 = 116;
@@ -23,7 +26,7 @@ public static class ItemFlags
     public const int CorpSAG6 = 120;
     public const int CorpSAG7 = 121;
     public const int HiddenModifiers = 156;
-    public static bool IsCorporationHangar(int flag) => flag is >= CorpSAG1 and <= CorpSAG7;
+    public static bool IsCorporationHangar(int flag) => flag is CorpDeliveries or (>= CorpSAG1 and <= CorpSAG7);
 
     /// <summary>The first of the eight low slots of a ship (11 to 18).</summary>
     public const int LowSlot0 = 11;

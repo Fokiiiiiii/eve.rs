@@ -24,8 +24,7 @@ public static class ShipNotifications
         PyNone.Instance, new PyInt(-1), PyBool.False, PyNone.Instance);
 
     /// <summary>
-    /// <c>OnItemChange</c>: the row of an item that changed and, as the reference sends it, only what differs from before: the place it left (3), the flag it left (4) and
-    /// the size of the stack it was (9).
+    /// <c>OnItemChange</c>: the row of an item that changed and the previous values of fields the client uses to move it between inventory owners and locations.
     /// </summary>
     public static void SendItemChange(ClientSession session, ItemChanged change, Func<Eve.Inventory.Item, ItemRow> row) =>
         session.SendNotification("OnItemChange", "clientID", InventoryWire.PackedRow(row(change.After)), Differences(change), PyNone.Instance);
@@ -45,6 +44,10 @@ public static class ShipNotifications
         if (change.After.Quantity != change.PreviousQuantity)
         {
             differences.Add(new(new PyInt(9), InventoryWire.Id(change.PreviousQuantity)));
+        }
+        if (change.PreviousOwnerId is { } previousOwner && change.After.OwnerId != previousOwner)
+        {
+            differences.Add(new(new PyInt(2), InventoryWire.Id(previousOwner)));
         }
         return new PyDict(differences);
     }
@@ -92,10 +95,19 @@ public static class ShipNotifications
         }
         foreach (var moved in changed.Items)
         {
+            var differences = new List<KeyValuePair<PyValue, PyValue>>
+            {
+                new(new PyInt(3), InventoryWire.Id(moved.PreviousLocationId)),
+                new(new PyInt(4), new PyInt(moved.PreviousFlag)),
+            };
+            if (moved.PreviousOwnerId is { } previousOwner && moved.After.OwnerId != previousOwner)
+            {
+                differences.Add(new(new PyInt(2), InventoryWire.Id(previousOwner)));
+            }
             session.SendNotification(
                 "OnItemsChanged", "charid",
                 new PyList([InventoryWire.PackedRow(row(moved.After))]),
-                new PyDict([new(new PyInt(3), InventoryWire.Id(moved.PreviousLocationId)), new(new PyInt(4), new PyInt(moved.PreviousFlag))]),
+                new PyDict(differences),
                 PyNone.Instance);
         }
         foreach (var stack in changed.Stacks ?? [])

@@ -347,12 +347,12 @@ public sealed partial class CharacterShips(
             var stacks = new List<ItemChanged>();
             if (assembled is not null) stacks.Add(assembled);
             if (split is { } created)
-                stacks.AddRange([new(item with { Quantity = item.Quantity - created.Quantity }, item.LocationId, item.Flag, item.Quantity), new(created, 0, created.Flag, 0)]);
+                stacks.AddRange([new(item with { Quantity = item.Quantity - created.Quantity }, item.LocationId, item.Flag, item.Quantity), new(created, 0, created.Flag, 0, item.OwnerId)]);
             else
-                stacks.Add(new(item with { OwnerId = destinationItemOwnerId, LocationId = destinationLocationId, Flag = destinationFlag }, item.LocationId, item.Flag, item.Quantity));
+                stacks.Add(new(item with { OwnerId = destinationItemOwnerId, LocationId = destinationLocationId, Flag = destinationFlag }, item.LocationId, item.Flag, item.Quantity, item.OwnerId));
             return new ShipChanged(split?.Id ?? item.Id, ship.Id, [], events, stacks);
         }
-        var moved = new ItemMoved(item with { OwnerId = destinationItemOwnerId, LocationId = destinationLocationId, Flag = destinationFlag }, item.LocationId, item.Flag);
+        var moved = new ItemMoved(item with { OwnerId = destinationItemOwnerId, LocationId = destinationLocationId, Flag = destinationFlag }, item.LocationId, item.Flag, item.OwnerId);
         return new ShipChanged(item.Id, ship.Id, [moved], events, assembled is null ? null : [assembled]);
     }
 

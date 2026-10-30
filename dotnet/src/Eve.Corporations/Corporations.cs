@@ -52,9 +52,11 @@ public sealed record AllianceDepartureMutation(AllianceMember? Member, Alliance?
 public static class CorporationRoles
 {
     public const long Director = 1;
+    public const long DeliveriesHangarTake = 1L << 1;
+    public const long DeliveriesHangarQuery = 1L << 2;
     public const long StationManager = 1L << 11;
     public const long BrandManager = 1L << 35;
-    public const long RentOffice = 1L << 41;
+    public const long RentOffice = 1L << 49;
     public const long PersonnelManager = 128;
     public const long FactoryManager = 1024;
     public const long Accountant = 256;
@@ -80,8 +82,11 @@ public static class CorporationRoles
 
     public static bool HasHangarAccess(SessionRoles? roles, long stationId, int flag, bool take)
     {
-        if (roles is null || flag is < 115 or > 121)
+        if (roles is null)
             return false;
+        if (flag == 62)
+            return (roles.AtAll & (take ? DeliveriesHangarTake : DeliveriesHangarQuery)) != 0;
+        if (flag is < 115 or > 121) return false;
         var scoped = stationId == roles.HqId
             ? roles.AtHq
             : stationId == roles.BaseId ? roles.AtBase : roles.AtOther;

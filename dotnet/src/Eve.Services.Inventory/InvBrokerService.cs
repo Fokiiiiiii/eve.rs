@@ -109,7 +109,7 @@ public sealed partial class InvBrokerService(
         if (view is null || view.Structure.Id != structureId || view.Structure.OwnerId <= 0
             || statics.CategoryId("Structure") is not { } category
             || statics.Type(view.Structure.TypeId)?.CategoryId != category
-            || view.Contents.Any(item => item.LocationId != structureId || item.OwnerId != view.Structure.OwnerId))
+            || view.Contents.Any(item => item.LocationId != structureId))
             return null;
         return view;
     }
@@ -299,13 +299,7 @@ public sealed partial class InvBrokerService(
         {
             if (await ControlledStructureAsync(session, context.ItemId, cancellationToken) is { } controlled)
             {
-                var visible = new List<Item>();
-                foreach (var item in controlled.Contents)
-                {
-                    if (session.CharacterId == item.OwnerId ||
-                        await CanAccessCorporationItemAsync(session, item, CorporationHangarOperation.Query, cancellationToken))
-                        visible.Add(item);
-                }
+                var visible = controlled.Contents.Where(item => item.OwnerId == controlled.Structure.OwnerId);
                 return await RowsAsync(visible, cancellationToken);
             }
             if (context.Kind == Kind.Structure)

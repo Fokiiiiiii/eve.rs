@@ -9,6 +9,12 @@
 - Current EveJS reference: `/home/user/evejs-261028.1/src/server/src/services/corporation/corpmgrService.js:472-505` builds the same public KeyVal fields.
 - Checks passed: Host.Tests build; the focused Host wire test (1 passed, 0 skipped); CorporationProtocolTests.Corporation_core_and_role_rpcs_preserve_public_fields_and_role_contracts (1 passed, 0 skipped). Database: `eve_p4`.
 
+## CI follow-up
+
+- Push `c6411f459a76` exposed `Eve.Services.Inventory.Tests.StructureControlInfoTests.Controlled_structure_item_list_and_capacity_reads_are_owner_scoped_and_the_binding_cannot_mutate_inventory` (run 41030581055). A controlled structure view containing a foreign-owner row was rejected wholesale, and the fallback hid the corporation-owned rows. `InvBrokerService` now keeps only rows owned by the controlled structure; the host read model already scopes its real result to that owner.
+- V24.01 evidence: `eve/client/script/environment/invCache.py:491-497` gets the current structure item hangar through `GetInventoryFromId`; `invCache.py:1131-1165` consumes the inventory `List` reply into the client cache; `eve/client/script/ui/shared/inventory/neocomInventoryBadging.py:105` reads the current structure item hangar.
+- Fix verification passed: `dotnet build` for Inventory.Tests and Host.Tests; all 83 Inventory.Tests passed; related Host inventory/structure tests passed (4, 0 skipped). Database: `eve_p4`.
+
 ## Remaining IMPLEMENTED-UNTESTED rows
 
 - RPC-01218–RPC-01233: `GetAssetInventory` (16 rows)

@@ -47,7 +47,9 @@ public partial class HostServerTests
 
         var createResult = await CallOverHostAfterQueuedNotifications(front, open, 1,
             "corpRegistry", "CreateAlliance", Py.Tuple(
-                new PyWString("Host Alliance"), new PyWString("HOST"), new PyWString(""), new PyWString("")));
+                new PyWString($"Host Alliance {Guid.NewGuid():N}"[..20]),
+                new PyWString("H" + Guid.NewGuid().ToString("N")[..4].ToUpperInvariant()),
+                new PyWString(""), new PyWString("")));
         Assert.NotNull(createResult);
         var allianceId = Number(createResult);
         var notification = ReadCorporationNotification(Assert.IsType<Send>(await front.ReceiveAsync()));

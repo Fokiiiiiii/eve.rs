@@ -18,5 +18,6 @@
 
 ## Validation and limits
 
-- Passed Host test-project build and selected non-database Host checks: the service-access wire test, the neighboring settings/travel wire test, and the persisted-directory read-model test (3 passed, 0 skipped).
-- PostgreSQL was not used, as required for this job. The test covers the service availability gates and wire data, not a paid repair/insurance/reprocessing transaction. No graphical-client session was used.
+- Passed `dotnet build dotnet/tests/Eve.Host.Tests -p:UseSharedCompilation=false --no-restore` (0 warnings/errors). The focused service-access wire test, neighboring structure-directory Host test, and persisted-directory read-model test passed across selected runs (3 passed, 0 skipped).
+- Push-triggered CI run 1332 completed successfully; `ci-status.py wait` reported no failed tests or jobs. Its output did not enumerate skipped tests.
+- PostgreSQL was not used, as required for this job. The test covers service availability gates and wire data, not a paid repair/insurance/reprocessing transaction. No graphical-client session was used.

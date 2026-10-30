@@ -12,7 +12,7 @@
 
 ## Checks and continuation
 
-- After merging `origin/main` at `d9a25e7a`, `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -m:1 -p:UseSharedCompilation=false`: passed with 0 warnings and 0 errors.
-- `Registered_industry_manager_routes_keep_client_shapes_and_accept_transport_kwargs`: passed 1/1, 0 skipped.
-- No PostgreSQL connection was used. The 501-ID and office authorization regressions are database-backed and are scheduled for the selected Host Actions shard. Main CI run 1321 and Agent test 1198 on `d9a25e7a` both passed. After pushing this change, dispatch the Host, Corporations, and Station test projects and inspect the push-triggered CI run.
+- After merging `origin/main` at `c3dd5fe4`, `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -m:1 -p:UseSharedCompilation=false`: passed with 0 warnings and 0 errors. `Registered_industry_manager_routes_keep_client_shapes_and_accept_transport_kwargs`: passed 1/1, 0 skipped.
+- The corporation office Host wire test initially assumed the response was the only captured packet; dispatch sends two notifications before `CallRsp`. Commit `53142b5c` selects the `CallRsp` by packet name while retaining the reply assertions. Build passed again after merge; the focused non-DB test passed 1/1, 0 skipped. No PostgreSQL connection was used locally.
+- Selected Actions run 1200 (`Eve.Host.Tests,Eve.Corporations.Tests,Eve.Services.Station.Tests`) on `53142b5c` passed with no failed jobs. Push-triggered CI run 1323 on the same commit passed, including all Host test shards. The prior run 1322 failed only `ReprocessingHostTests.Reprocess_persists_corporation_hangar_yields_and_checks_member_role_and_office`; run 1323 is green after the test fix.
 - No graphical-client walk was performed. The multi-location reprocess unpack failure remains a client-side defect outside this server repository.

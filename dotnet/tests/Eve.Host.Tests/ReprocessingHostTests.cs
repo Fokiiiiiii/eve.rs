@@ -185,7 +185,8 @@ public sealed class ReprocessingHostTests : IAsyncLifetime
             Assert.True(await dispatcher.DispatchAsync(ClientCallPacket(1,
                 new PyList([new PyLong(founderInput)]), new PyLong(StationId), new PyLong(corporation.Id),
                 new PyLong(office.OfficeId), new PyInt(115)), founderSession));
-            var founderResponse = Assert.IsType<PyTuple>(Result(Assert.Single(capture.Packets)));
+            var founderResponsePacket = capture.Packets.Single(packet => packet is PyObject { Name: PyStr name } && name.Value.EndsWith(".CallRsp", StringComparison.Ordinal));
+            var founderResponse = Assert.IsType<PyTuple>(Result(founderResponsePacket));
             var founderResult = Assert.IsType<PyList>(founderResponse.Items[1]);
             Assert.Equal(founderInput, Assert.IsType<PyLong>(Assert.Single(Assert.IsType<PyList>(founderResult.Items[0]).Items)).Value);
             var corporationYields = await items.InLocationAsync(office.OfficeId, corporation.Id, default);

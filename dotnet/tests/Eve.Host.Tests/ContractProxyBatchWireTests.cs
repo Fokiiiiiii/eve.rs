@@ -330,7 +330,7 @@ public partial class HostServerTests
         Assert.Null(writer.CreatedRequest);
     }
 
-    private void StartContractHost(RecordingContractWriter writer, IContractReadModel? readModel = null,
+    private void StartContractHost(IContractWriteModel writer, IContractReadModel? readModel = null,
         IContractInventoryReader? inventory = null, bool staff = true,
         Func<long, long, CancellationToken, ValueTask<bool>>? isCharacterInCurrentCorporation = null)
     {

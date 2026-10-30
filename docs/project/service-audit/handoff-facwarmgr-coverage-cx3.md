@@ -2,7 +2,7 @@
 
 ## Result
 
-No coverage row changed. All 14 requested P1 rows remain `IMPLEMENTED-UNTESTED`. The task explicitly forbids PostgreSQL, while production handlers read or mutate the PostgreSQL-backed FW store, character/standing relations, LP wallet, and affiliations. A registered Host test with fabricated callback data would not prove persistence or real notifications, so no test was added and no row was marked tested.
+All 14 requested P1 rows now have passing registered Host wire coverage. Rows 01454, 01456–01458, 01462–01465, and 01467–01471 use `FacWarMgrReadPersistenceHostWireTests.Faction_warfare_reads_round_trip_from_persisted_state_through_host_registration`; row 01453 uses `FacWarMgrDonationHostWireTests.Solar_system_lp_donation_debits_the_wallet_and_persists_the_pool_through_host`. The read test seeds and commits a unique PostgreSQL schema, then reads through a newly constructed FwStore/FwService and the real Host socket/dispatcher. The donation test verifies stale-tax refusal leaves both stores unchanged, then checks the accepted call debits loyalty LP and persists the pool.
 
 ## Whole-client call and consumer trace
 
@@ -21,6 +21,6 @@ Whole-tree Serena searches of `/home/user/eve-logic` confirmed the RPC wrappers 
 - RPC-01468 `GetStats_Militia`: dashboard selects it at `statisticsController.py:99-100`; `GetStatisticsScrollData` consumes its header and six metric maps at `:37-53`.
 - RPC-01469/01470/01471 `GetStats_TopAndAllKillsAndVPs`: wrappers consume character, corporation and alliance groups at `facWarSvc.py:339-342,357-360,372-375`; the dashboard and theaters consumers above display those values.
 
-## Blocked verification
+## Verification and handoff
 
-The inspected Host handlers are registered from `dotnet/src/Eve.Host/Rpc/CoreRpc.cs:126-146`. Statistics call `FwService` store reads; for example `OwnerWindowsAsync` opens its store connection. The LP donation path also needs the persisted LP wallet/pool/ledger update. The required database-backed Host checks cannot run under this job's no-PostgreSQL instruction. No compile or test command was run; no GUI-client verification was performed.
+Production registration is `dotnet/src/Eve.Host/Rpc/CoreRpc.cs:126-146`; `FacWarMgrService` reads through `FwService` and the persisted FwStore. The 2026-10-30 focused Host run passed 3 tests with 0 skipped, including the pre-existing rank/enlistment wire test; `Eve.FactionWarfare.Tests` passed `FacWarMgrRpcTests|FwDatabaseTests` (18 passed, 0 skipped) on eve_p3. No rows remain untested in this 14-row batch. The whole-client call/consumer evidence above remains the reference for UI use; no graphical-client session was run.

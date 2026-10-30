@@ -14,5 +14,5 @@
 
 - After merging `origin/main` at `d9a25e7a`, `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -m:1 -p:UseSharedCompilation=false`: passed with 0 warnings and 0 errors.
 - `Registered_industry_manager_routes_keep_client_shapes_and_accept_transport_kwargs`: passed 1/1, 0 skipped.
-- No PostgreSQL connection was used. The 501-ID and office authorization regressions are database-backed and are scheduled for the selected Host Actions shard. Main CI run 1321 on `d9a25e7a` is in progress; check it before pushing.
+- No PostgreSQL connection was used. The 501-ID and office authorization regressions are database-backed and are scheduled for the selected Host Actions shard. Main CI run 1321 and Agent test 1198 on `d9a25e7a` both passed. After pushing this change, dispatch the Host, Corporations, and Station test projects and inspect the push-triggered CI run.
 - No graphical-client walk was performed. The multi-location reprocess unpack failure remains a client-side defect outside this server repository.

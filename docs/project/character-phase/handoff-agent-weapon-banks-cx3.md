@@ -21,6 +21,7 @@ EVE University describes identical weapons as activatable together and states th
 
 - Passed: Host tests project build; registered Host wire test for all seven RPCs and their reply shapes; Dogma GetAllInfo shipState bank slot assertion.
 - Passed: Eve.Space SimCodecTests (415); Rust focused bank activation test; Rust SimLink fixtures (11), including a nonzero bank-master wire roundtrip; Rust fmt check, eve-space cargo check and workspace clippy.
+- CI follow-up: the first push failed on the existing tether host policy test because it still expected SimLink protocol version 82. Updated it to 83; the exact test, fmt check, eve-space cargo check and workspace clippy pass locally. The CI-fix push is pending.
 - The task explicitly forbids PostgreSQL use. No database migration, persistence/restart test or database-backed neighbor test was run.
 - EveJS 261028.1 behavior was traced in source; the live EveJS flow was not executed.
 - No graphical V24.01 client session was run.

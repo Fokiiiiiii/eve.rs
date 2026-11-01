@@ -189,11 +189,17 @@ def test_a_pilot_docks_at_the_structure_and_undocks_from_it():
         _, ship_id = _undocked_pilot(client)
         seen = timed_events(client, 30.0, until=lambda events: _structure_slim(events) is not None)
         assert _structure_slim(seen) is not None, f"the structure {STRUCTURE} is not in the ballpark"
+        time.sleep(10.0)
 
-        try:
-            client.call("structureDocking", "Dock", STRUCTURE, int(ship_id))
-        except p.MachoError as failure:
-            pytest.fail(f"the docking was refused: the server answered {_refusal(failure)[0]}: {describe(failure.payload)}")
+        deadline = time.time() + 120
+        while True:
+            try:
+                client.call("structureDocking", "Dock", STRUCTURE, int(ship_id))
+                break
+            except p.MachoError as failure:
+                if _refusal(failure)[0] != "DockingApproach" or time.time() > deadline:
+                    pytest.fail(f"the docking was refused: the server answered {_refusal(failure)[0]}: {describe(failure.payload)}")
+            timed_events(client, 5.0)
         finished = timed_events(
             client,
             60.0,
@@ -292,10 +298,11 @@ def test_a_moon_extraction_started_from_space_is_refused_as_not_controlling():
         assert "You must be controlling this structure." in payload
 
 def _docked_pilot(client, structure: int = STRUCTURE) -> tuple[int, int]:
-    """A new pilot of the recorded race, undocked and then docked in a structure (the ship goes into its hangar): (character id, ship id)."""
+    """A new pilot of the recorded race, docked after the undock session timer (character id, ship id)."""
     character, ship_id = _undocked_pilot(client)
     seen = timed_events(client, 30.0, until=lambda events: _structure_slim(events, structure) is not None)
     assert _structure_slim(seen, structure) is not None, f"the structure {structure} is not in the ballpark of system {SYSTEM} within 30 s"
+    time.sleep(10.0)
     deadline = time.time() + 120
     waited_for_session_change = False
     while True:

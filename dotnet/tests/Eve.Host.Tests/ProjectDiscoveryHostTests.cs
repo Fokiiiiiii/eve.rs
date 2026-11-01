@@ -99,6 +99,44 @@ public sealed class ProjectDiscoveryHostTests : IAsyncLifetime
     }
 
     [PgFact]
+    public async Task Project_discovery_tutorial_transitions_persist_through_the_registered_service()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url));
+        var host = await HostComposition.BuildAsync(Settings());
+        try
+        {
+            var characters = new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA"));
+            var characterId = await InsertPilotAsync(source, characters, "Tutorial Transition");
+            var store = new ProjectDiscoveryTutorialStore(source, Schema("EVE_CHARACTERS_SCHEMA"));
+            await store.WriteAsync(characterId, new ProjectDiscoveryTutorial(false, 3), 1_000);
+            var service = host.Registry.Lookup("ProjectDiscovery")!;
+            var session = new ClientSession { CharacterId = characterId };
+
+            var skipped = await service.CallAsync(new ServiceCall { Method = "skip_tutorial", Args = [], Session = session });
+            Assert.Equal(Py.KeyVal(
+                ("rank", new PyInt(1)),
+                ("experience", new PyInt(0)),
+                ("analysisKredits", new PyInt(0)),
+                ("finishedTutorial", PyBool.True),
+                ("tutorialLevel", new PyInt(8))), skipped);
+            Assert.Equal(new ProjectDiscoveryTutorial(true, 8), await store.ReadAsync(characterId));
+
+            _ = await service.CallAsync(new ServiceCall { Method = "reset_tutorial", Args = [], Session = session });
+            Assert.Equal(new ProjectDiscoveryTutorial(false, 0), await store.ReadAsync(characterId));
+
+            await Task.WhenAll(Enumerable.Range(0, 2).Select(_ => service.CallAsync(new ServiceCall
+            {
+                Method = "increase_tutorial_level", Args = [], Session = session,
+            }).AsTask()));
+            Assert.Equal(new ProjectDiscoveryTutorial(false, 2), await store.ReadAsync(characterId));
+        }
+        finally
+        {
+            await host.ShutdownAsync();
+        }
+    }
+
+    [PgFact]
     public async Task Season_reads_answer_no_active_season_through_the_host_registry()
     {
         var host = await HostComposition.BuildAsync(Settings());

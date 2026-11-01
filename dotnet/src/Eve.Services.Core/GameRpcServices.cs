@@ -32,6 +32,7 @@ public sealed record GameRpcCallbacks(
     PublicQaToolsRpcCallbacks? PublicQaTools = null,
     IJumpCloneStore? JumpClones = null,
     Func<long, CancellationToken, ValueTask<ProjectDiscoveryPlayerState?>>? ReadProjectDiscoveryState = null,
+    Func<long, string, CancellationToken, ValueTask<ProjectDiscoveryPlayerState?>>? TransitionProjectDiscoveryTutorial = null,
     JumpCloneSpaceLink? JumpCloneSpace = null);
 
 [Service("raffleMgr")]

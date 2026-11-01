@@ -4,7 +4,7 @@
 
 Implemented `achievementTrackerMgr.ResetAllForChar`. The V24.01 caller sends no arguments and ignores the return value (`achievements/client/achievementSvc.py:77-80`). The Host replaces the authenticated character's persisted completion and event-count maps with empty maps, then sends `achievementTrackerMgr.OnAchievementsReset`; the client handler clears its cache and reloads the saved maps (`achievements/client/achievementSvc.py:91-96, 120-138`). The reset leaves the separate `hasEverWarped` value intact.
 
-The client writes both achievement maps as complete snapshots (`achievements/client/achievementSvc.py:224-230)); the existing `AchievementTrackerStore.WriteAsync` transaction already replaces both tables atomically. EveJS 261028.1 has no `ResetAllForChar` handler; this method is grounded in the client call and its reset notification consumer.
+The client writes both achievement maps as complete snapshots (`achievements/client/achievementSvc.py:224-230`); the existing `AchievementTrackerStore.WriteAsync` transaction already replaces both tables atomically. EveJS 261028.1 has no `ResetAllForChar` handler; this method is grounded in the client call and its reset notification consumer.
 
 ## Remaining open target rows
 
@@ -21,5 +21,5 @@ The client writes both achievement maps as complete snapshots (`achievements/cli
 - `Achievement_reset_clears_persisted_maps_and_notifies_the_client_after_the_write`: 1 passed.
 - `AchievementTrackerStoreTests` on `eve_p3`: 2 passed.
 - Achievement-related `Eve.Services.Core.Tests` classes on `eve_p3`: 30 passed.
-- `HostServerTests` on `eve_p3`: 393 passed, 0 skipped.
+- `HostServerTests` on `eve_p3`: 394 passed, 0 skipped.
 - No graphical client session was used.

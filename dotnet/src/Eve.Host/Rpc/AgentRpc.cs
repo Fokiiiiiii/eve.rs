@@ -79,7 +79,14 @@ internal sealed partial class CharacterServicesComposition
     [
             agentMissionService,
             new LoyaltyPointsService(loyaltyPoints, async (characterId, token) =>
-                (await characters.GetAsync(characterId, token))?.CorporationId),
+                (await characters.GetAsync(characterId, token))?.CorporationId,
+                isDirector: IsCorporationDirectorAsync,
+                isEligibleDestination: async (corporationId, token) =>
+                {
+                    var corporation = await corporations.GetAsync(corporationId, token);
+                    return corporation is { IsNpc: false, Deleted: false } &&
+                        (await corporations.MembersAsync(corporationId, token)).Count > 0;
+                }),
             new Eve.Services.Wallet.LpStoreMgrService(lpStoreCache, lpStorePurchases, IsCorporationDirectorAsync,
                 hasLoyaltyStoreService: (characterId, structureId, token) => structureDirectoryReadModel.CharacterHasServiceAsync(
                     characterId, structureId, Eve.Structures.StructureServiceIds.LoyaltyStore, token)),

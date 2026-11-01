@@ -6,7 +6,7 @@ using Npgsql;
 
 namespace Eve.Services.Wallet.Tests;
 
-/// <summary>LPSvc answers the client's balance rowsets and refuses what is not built; the announcer tells the sessions.</summary>
+/// <summary>LPSvc answers the client's balance rowsets and validates loyalty point transfers; the announcer tells the sessions.</summary>
 /// <summary>Skips a test, loudly, when there is no PostgreSQL to test against (see tools/dev/pg18.sh).</summary>
 public sealed class LpPgFactAttribute : FactAttribute
 {
@@ -64,7 +64,7 @@ public class LoyaltyPointsServiceTests
 
     private static ClientSession Pilot(Sink sink, long corporation = CorporationId)
     {
-        var session = new ClientSession(sink) { UserId = 7, CharacterId = PilotId };
+        var session = new ClientSession(sink) { UserId = 7, CharacterId = PilotId, SessionId = 71 };
         session.Set("charid", new PyInt(PilotId));
         session.Set("corpid", new PyInt(corporation));
         return session;
@@ -113,19 +113,58 @@ public class LoyaltyPointsServiceTests
     }
 
     [LpPgFact]
-    public async Task The_concord_exchange_and_the_donations_are_refused_with_the_reason()
+    public async Task The_concord_exchange_still_refuses_with_the_reason()
     {
         await using var db = new Db();
         var service = new LoyaltyPointsService(await db.StoreAsync());
         var session = Pilot(new Sink());
 
-        foreach (var method in new[] { "ExchangeConcordLP", "TransferLPFromMyWalletToOtherCorp", "TransferLPFromMyCorpWalletToOtherCorp" })
+        await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(new ServiceCall
         {
-            await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(new ServiceCall
-            {
-                Method = method, Args = [new PyInt(CorporationId), new PyInt(10)], Session = session, CallId = new PyInt(1), Kwargs = PyNone.Instance,
-            }).AsTask());
-        }
+            Method = "ExchangeConcordLP", Args = [new PyInt(IssuerId), new PyInt(10)], Session = session, CallId = new PyInt(1), Kwargs = PyNone.Instance,
+        }).AsTask());
+    }
+
+    [LpPgFact]
+    public async Task A_character_transfer_updates_both_wallets_once_and_invalidates_both_client_caches()
+    {
+        await using var db = new Db();
+        var store = await db.StoreAsync();
+        const long receiverCorporationId = 98000002;
+        const long receiverCharacterId = 140000002;
+        await store.ApplyAndCommitAsync(new LoyaltyHolder(LoyaltyHolderKind.Character, PilotId), IssuerId, 240, "mission", "donation-seed");
+        var sink = new Sink();
+        var pilot = Pilot(sink);
+        var receiverMember = new ClientSession(sink) { UserId = 8, CharacterId = receiverCharacterId };
+        receiverMember.Set("corpid", new PyInt(receiverCorporationId));
+        var sessions = new CharacterSessions();
+        sessions.Enter(PilotId, pilot);
+        sessions.Enter(receiverCharacterId, receiverMember);
+        using var announcer = new LoyaltyPointAnnouncer(store, sessions);
+        var service = new LoyaltyPointsService(store,
+            (_, _) => Task.FromResult<long?>(CorporationId),
+            isEligibleDestination: (corporationId, _) => ValueTask.FromResult(corporationId == receiverCorporationId));
+        var call = new ServiceCall
+        {
+            Method = "TransferLPFromMyWalletToOtherCorp",
+            Args = [new PyLong(receiverCorporationId), new PyLong(IssuerId), new PyLong(75)],
+            Session = pilot,
+            CallId = new PyInt(42),
+            Kwargs = PyNone.Instance,
+        };
+
+        Assert.Equal(PyNone.Instance, await service.CallAsync(call));
+        Assert.Equal(PyNone.Instance, await service.CallAsync(call));
+
+        Assert.Equal([new LoyaltyPointBalance(IssuerId, 165)], await store.ReadAsync(new LoyaltyHolder(LoyaltyHolderKind.Character, PilotId)));
+        Assert.Equal([new LoyaltyPointBalance(IssuerId, 75)], await store.ReadAsync(new LoyaltyHolder(LoyaltyHolderKind.Corporation, receiverCorporationId)));
+        Assert.Equal(2, sink.Packets.Count);
+        var expectedCharacter = ClientNotification.Build(7, pilot.NodeId, "OnLPChange", "clientID",
+            [new PyStr("set"), new PyInt(IssuerId), new PyInt(240), new PyInt(165)], 0);
+        var expectedCorporation = ClientNotification.Build(8, receiverMember.NodeId, "OnCorpLPChange", "clientID",
+            [new PyStr("transfer_in"), new PyInt(IssuerId)], 0);
+        Assert.Equal(MarshalCodec.Encode(expectedCharacter), MarshalCodec.Encode(sink.Packets[0]));
+        Assert.Equal(MarshalCodec.Encode(expectedCorporation), MarshalCodec.Encode(sink.Packets[1]));
     }
 
     [LpPgFact]

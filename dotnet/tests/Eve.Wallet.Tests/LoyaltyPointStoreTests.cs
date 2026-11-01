@@ -93,6 +93,65 @@ public class LoyaltyPointStoreTests
     }
 
     [PgFact]
+    public async Task A_transfer_moves_both_wallets_once_and_announces_source_before_destination()
+    {
+        await using var rig = await LoyaltyRig.CreateAsync();
+        var store = rig.Store();
+        var source = Pilot;
+        var destination = new LoyaltyHolder(LoyaltyHolderKind.Corporation, 98000002);
+        await store.ApplyAndCommitAsync(source, IssuerA, 100, "mission", "transfer-seed");
+        var announced = new List<LoyaltyPointChange>();
+        store.BalanceCommitted += announced.Add;
+        var request = new LoyaltyPointTransferRequest(source, destination, IssuerA, 35, "rpc:session:call");
+
+        Assert.True(await store.TransferAndCommitAsync(request));
+        Assert.False(await store.TransferAndCommitAsync(request));
+
+        Assert.Equal([new LoyaltyPointBalance(IssuerA, 65)], await store.ReadAsync(source));
+        Assert.Equal([new LoyaltyPointBalance(IssuerA, 35)], await store.ReadAsync(destination));
+        Assert.Equal([
+            new LoyaltyPointChange(source, IssuerA, 100, 65, "transfer_out"),
+            new LoyaltyPointChange(destination, IssuerA, 0, 35, "transfer_in"),
+        ], announced);
+        await Assert.ThrowsAsync<InsufficientLoyaltyPointsException>(() =>
+            store.TransferAndCommitAsync(request with { Amount = 66, Reference = "rpc:session:insufficient" }));
+        Assert.Equal([new LoyaltyPointBalance(IssuerA, 65)], await store.ReadAsync(source));
+        Assert.Equal([new LoyaltyPointBalance(IssuerA, 35)], await store.ReadAsync(destination));
+    }
+
+    [PgFact]
+    public async Task Concurrent_transfers_from_one_wallet_cannot_spend_the_same_points_twice()
+    {
+        await using var rig = await LoyaltyRig.CreateAsync();
+        var store = rig.Store();
+        var source = new LoyaltyHolder(LoyaltyHolderKind.Corporation, 98000003);
+        var firstDestination = new LoyaltyHolder(LoyaltyHolderKind.Corporation, 98000004);
+        var secondDestination = new LoyaltyHolder(LoyaltyHolderKind.Corporation, 98000005);
+        await store.ApplyAndCommitAsync(source, IssuerA, 100, "mission", "concurrent-transfer-seed");
+
+        async Task<bool> Transfer(LoyaltyHolder destination, string reference)
+        {
+            try
+            {
+                return await store.TransferAndCommitAsync(new LoyaltyPointTransferRequest(source, destination, IssuerA, 80, reference));
+            }
+            catch (InsufficientLoyaltyPointsException)
+            {
+                return false;
+            }
+        }
+
+        var outcomes = await Task.WhenAll(
+            Transfer(firstDestination, "concurrent-transfer:first"),
+            Transfer(secondDestination, "concurrent-transfer:second"));
+
+        Assert.Single(outcomes, outcome => outcome);
+        Assert.Equal([new LoyaltyPointBalance(IssuerA, 20)], await store.ReadAsync(source));
+        Assert.Equal(80, (await store.ReadAsync(firstDestination)).Sum(balance => balance.Amount) +
+            (await store.ReadAsync(secondDestination)).Sum(balance => balance.Amount));
+    }
+
+    [PgFact]
     public async Task A_rolled_back_change_leaves_no_balance_and_announces_nothing()
     {
         await using var rig = await LoyaltyRig.CreateAsync();

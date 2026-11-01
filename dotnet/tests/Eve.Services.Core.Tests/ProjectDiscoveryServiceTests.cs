@@ -21,9 +21,32 @@ public sealed class ProjectDiscoveryServiceTests
                      "get_player_state",
                      "get_player_statistics",
                      "get_tutorial_completion_status",
+                     "get_project_id",
+                     "get_total_needed_xp",
+                     "get_tutorial_level",
+                     "get_tutorial_xp_reward",
+                     "get_is_player_entitled_to_tutorial_reward",
+                     "give_tutorial_rewards",
+                     "increase_tutorial_level",
+                     "reset_tutorial",
+                     "skip_tutorial",
                      "is_enabled",
                  })
             Assert.True(service!.HasMethod(method), method);
+    }
+
+    [Fact]
+    public async Task Project_discovery_static_progression_methods_match_the_client_contract()
+    {
+        var service = CoreServices.Create(new NoAccounts(), () => 0)
+            .Single(candidate => candidate.Name == "ProjectDiscovery");
+        var session = new ClientSession();
+
+        Assert.Equal(new PyInt(1), await service.CallAsync(Request("get_project_id", session)));
+        Assert.Equal(new PyInt(300), await service.CallAsync(Request("get_total_needed_xp", session, new PyInt(3))));
+        Assert.Equal(new PyInt(100), await service.CallAsync(Request("get_tutorial_xp_reward", session)));
+        Assert.Equal(PyBool.False, await service.CallAsync(Request("get_is_player_entitled_to_tutorial_reward", session)));
+        Assert.Equal(PyBool.False, await service.CallAsync(Request("give_tutorial_rewards", session)));
     }
 
     [Fact]

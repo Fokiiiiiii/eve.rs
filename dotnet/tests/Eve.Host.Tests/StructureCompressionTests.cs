@@ -27,7 +27,7 @@ public sealed class StructureCompressionTests
     private const long Corporation = 98_000_001, Outsider = 98_000_002;
     private const int CorporationDivisionOne = 115;
 
-    private sealed class Route : IAsyncDisposable
+    internal sealed class Route : IAsyncDisposable
     {
         private readonly string[] _schemas;
 
@@ -135,7 +135,7 @@ public sealed class StructureCompressionTests
     }
 
     /// <summary>The packets a session was sent, in order.</summary>
-    private sealed class Sink : IPacketSink
+    internal sealed class Sink : IPacketSink
     {
         public List<PyValue> Sent { get; } = [];
         public void Send(PyValue packet) => Sent.Add(packet);

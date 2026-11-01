@@ -114,7 +114,19 @@ public partial class HostServerTests
         Assert.Same(PyNone.Instance,
             await HostRpcAsync(front, open, 2, "structureDocking", "Undock", new PyLong(1_000_000_000_051), new PyLong(1_000_000_000_052)));
 
-        Assert.Equal(["dock:1000000000051:1000000000052", "undock:1000000000051:1000000000052:False"], transitions);
+        var kwargs = new PyDict([
+            new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("ignoreContraband"), PyBool.True),
+        ]);
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.CallWithKwargs(open, 3, "structureDocking", "Undock",
+                Py.Tuple(new PyLong(1_000_000_000_051), new PyLong(1_000_000_000_052)), kwargs))));
+        Assert.Same(PyNone.Instance,
+            Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
+
+        Assert.Equal(
+            ["dock:1000000000051:1000000000052", "undock:1000000000051:1000000000052:False", "undock:1000000000051:1000000000052:True"],
+            transitions);
     }
 
     [Fact]

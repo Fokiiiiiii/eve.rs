@@ -45,7 +45,7 @@ public sealed partial class SpaceSessions
             var reply = await _sim.CommandAsync(id, SimCommands.Dock, [stationId], cancellationToken);
             if (reply.Accepted)
             {
-                return new PyLong(reply.At);
+                return None;
             }
             if (reply.ApproachDistance is { } distance)
             {

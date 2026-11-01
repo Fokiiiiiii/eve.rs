@@ -51,6 +51,12 @@ EveJS 261028.1 `server/src/services/ship/warpCommands.js:424-457,994-1235` clamp
 
 `cargo +1.94.1 test -p eve-space a_warp` passed after both guards. `cargo +1.94.1 check -p eve-space`, `cargo +1.94.1 fmt --all -- --check`, and workspace clippy with `-D warnings` passed. No graphical-client run was made.
 
+## CmdDock accepted response shape
+
+The only direct V24.01 `CmdDock` caller found by whole-tree search is `movementFunctions.RealDock` (`eve/client/script/ui/services/menuSvcExtras/movementFunctions.py:502-519`), reached from the station menu via `menusvc.DockStation` (`eve/client/script/ui/services/menusvc.py:2990-2995`). It calls `PerformSessionChange('dock', bp.CmdDock, itemID, session.shipid)` at `movementFunctions.py:516` as a statement and does not read the RPC result. The bound Host method registers `CmdDock` and forwards the result of `space.DockAsync` (`dotnet/src/Eve.Services.Space/BeyonceService.cs:813-822`). EveJS 261028.1 `server/src/services/ship/beyonceService.js:4210-4281` explicitly returns `null` on accepted docking; the client wire value is `None`.
+
+`SpaceSessions.DockAsync` previously returned the sim's acceptance timestamp as a `PyLong`, even though the simulation's later `SimDocked` event drives the actual transition and the client ignores the call result. Its accepted branch now returns `None` (`dotnet/src/Eve.Services.Space/SpaceSessions.Movement.cs:25-52`). The focused registered Host regression is `SpaceServiceTests.A_dock_returns_nothing_for_an_accepted_command_and_when_it_is_refused` (`dotnet/tests/Eve.Services.Space.Tests/SpaceServiceTests.cs:3033-3045`). Before the service fix, changing the assertion to the client-required `PyNone` failed: expected `PyNone`, actual `PyLong` timestamp `134351527136350000`. After the fix the same test passed, and the DB-backed `SpaceServiceTests` plus `StructureUndockingTests` passed on `eve_p3` (155 passed, 0 failed, 0 skipped). This is a wire-shape correction only; the accepted `Dock` sim command and subsequent event-driven state transition remain in place.
+
 ## Remaining audit scope
 
 This increment audits one core movement RPC. It does not complete hostile, malformed or out-of-order input coverage for every Host service or every first-day and daily player flow. Continue with undock/dock, target/combat and the other movement RPCs. Existing inventory/loot, wallet, wormhole and NPC handoffs document adjacent gameplay work but do not establish complete RPC-validation coverage.

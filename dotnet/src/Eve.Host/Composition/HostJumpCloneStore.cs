@@ -13,7 +13,8 @@ namespace Eve.Host;
 /// <summary>The jump clone service's store: the clone rows of the characters schema, and the character's skill levels from PostgreSQL.</summary>
 internal sealed class HostJumpCloneStore(PgJumpCloneStore clones, NpgsqlDataSource source, PgSkillStore skills,
     WalletTransactions wallet, PgWalletStore walletStore, PgCharacterStore characters, PgItemStore items, DogmaStatic statics,
-    StationCatalog stations, Eve.Services.Skills.SkillBoosterLapse boosters) : IJumpCloneStore
+    StationCatalog stations, Eve.Structures.StructureStore structures, SolarSystemCatalog solarSystems,
+    Eve.Services.Skills.SkillBoosterLapse boosters) : IJumpCloneStore
 {
 
     private const int JumpCloneInstallationReference = 55;
@@ -119,7 +120,17 @@ internal sealed class HostJumpCloneStore(PgJumpCloneStore clones, NpgsqlDataSour
         var bodyImplants = body.Select(item => (PilotAugmentations.SlotOf(statics.Type(item.TypeId)), item.TypeId)).ToList();
 
         var target = await clones.JumpAsync(connection, transaction, characterId, targetCloneId, originLocationId, originLocationKind, bodyImplants, nowFileTime, cancellationToken);
-        if (target is null || target.LocationKind != "station" || stations.Get(target.LocationId) is not { } station)
+        if (target is null)
+            return new CloneJumpResult("CLONE_NOT_FOUND");
+        var station = target.LocationKind == "station" ? stations.Get(target.LocationId) : null;
+        Eve.Structures.StructureRecord? structure = null;
+        if (target.LocationKind == "structure")
+        {
+            structure = await structures.GetAsync(connection, transaction, target.LocationId, false, cancellationToken);
+            if (structure is null || structure.Snapshot.DestroyedMs > 0 || solarSystems.Get(structure.SolarSystemId) is null)
+                return new CloneJumpResult("CLONE_NOT_FOUND");
+        }
+        if (station is null && structure is null)
             return new CloneJumpResult("CLONE_NOT_FOUND");
         try
         {
@@ -144,14 +155,21 @@ internal sealed class HostJumpCloneStore(PgJumpCloneStore clones, NpgsqlDataSour
             await items.DeleteAsync(connection, transaction, implant.Id, cancellationToken);
         foreach (var typeId in target.ImplantTypeIds)
             await items.CreateAsync(connection, transaction, new NewItem(typeId, characterId, characterId, PilotAugmentations.ImplantFlag, 1, Singleton: true), cancellationToken);
-        await characters.SetStationAsync(connection, transaction, characterId, station.Id, cancellationToken);
-        await characters.SetLocationAsync(connection, transaction, characterId, station.SolarSystemId, station.ConstellationId, station.RegionId, cancellationToken);
+        var solarSystem = station is not null ? solarSystems.Get(station.SolarSystemId) : solarSystems.Get(structure!.SolarSystemId)!;
+        if (station is not null)
+            await characters.SetStationAsync(connection, transaction, characterId, station.Id, cancellationToken);
+        else
+            await characters.SetStructureAsync(connection, transaction, characterId, structure!.Snapshot.StructureId, cancellationToken);
+        await characters.SetLocationAsync(connection, transaction, characterId, solarSystem!.Id, solarSystem.ConstellationId, solarSystem.RegionId, cancellationToken);
 
         var endedBoosters = await boosters.EndNormalBoostersAsync(connection, transaction, characterId, nowFileTime, statics, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         if (endedBoosters)
             await boosters.AnnounceEndedAsync(characterId, cancellationToken);
-        return new CloneJumpResult(null, station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId);
+        return station is not null
+            ? new CloneJumpResult(null, station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId)
+            : new CloneJumpResult(null, SolarSystemId: solarSystem!.Id, ConstellationId: solarSystem.ConstellationId,
+                RegionId: solarSystem.RegionId, StructureId: structure!.Snapshot.StructureId);
     }
 
     private static JumpCloneRecord Map(InstalledJumpClone clone) =>

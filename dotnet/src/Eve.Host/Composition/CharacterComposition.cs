@@ -271,7 +271,7 @@ internal sealed partial class CharacterServicesComposition
                     });
                 }),
             JumpClones: new HostJumpCloneStore(new Eve.Characters.PgJumpCloneStore(source, characterSchema), source, skills, economyWallets, wallets,
-                characters, items, dogma, stations, boosterLapse),
+                characters, items, dogma, stations, structureStore, solarSystems, boosterLapse),
             ReadProjectDiscoveryState: ReadProjectDiscoveryStateAsync,
             TransitionProjectDiscoveryTutorial: TransitionProjectDiscoveryTutorialAsync,
             JumpCloneSpace: jumpCloneSpace);

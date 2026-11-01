@@ -73,7 +73,7 @@ internal sealed partial class CharacterServicesComposition
             officeManager,
             new Eve.Services.Corporations.StandingMgrService(foundations.Reads, corporations, now),
             new Eve.Services.Corporations.WarsInfoMgrService(foundations.Relations, now),
-            new Eve.Services.Corporations.VoteManagerService(corporations),
+            new Eve.Services.Corporations.VoteManagerService(corporations, characterSessions),
             new Eve.Services.Corporations.ItemLockingService(corporations),
             new Eve.Services.Corporations.CorpStationMgrService(corporations, characterSessions, StandingTowardAsync, StationPlace,
                 StationStandingRulesAsync, now),

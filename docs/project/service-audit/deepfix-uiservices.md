@@ -2,7 +2,7 @@
 
 ## Scope completed
 
-This change audits one core daily flow: editing participants on a personal calendar event. Other UI service flows (overview presets, bookmarks, notepad, neocom and shared settings) still need their full client-to-Host audit.
+This pass found and fixed two daily-flow defects: concurrent calendar invite updates could exceed the client cap, and another character could align or warp to a shared bookmark before its availability delay ended. Overview presets, notepad, neocom and shared settings remain outside this pass.
 
 ## Client evidence
 
@@ -16,6 +16,16 @@ This change audits one core daily flow: editing participants on a personal calen
 ## EveJS comparison
 
 EveJS 261028.1 performs its participant normalization and 50-invitee validation in one synchronous operation in `server/src/services/calendar/calendarRuntimeState.js:665-710`. Its RPC handler and notification path are in `server/src/services/calendar/calendarMgrService.js:129-150`. In Node's synchronous state mutation, concurrent RPC handlers cannot both commit from the same stale attendee count.
+
+## Shared bookmark warp availability
+
+The full V24.01 client path was checked, including list refresh and relevant consumers. `bookmarkSvc.py:40` binds `accessGroupBookmarkMgr`; `:69-71` primes/refreshes the bookmark cache; `:373-392` filters active bookmarks for map/navigation consumers. `bookmarkUtil.py:117-123` permits the creator immediately and otherwise permits use only when `created + SHARED_BOOKMARK_DELAY < now`; `bookmarkSvc.py:186-200` schedules the delayed cache refresh. Navigation consumers issue `CmdWarpToStuff('bookmark', bookmark.bookmarkID)` from `menuSvcExtras/movementFunctions.py:418,432` and `addressBookEntries.py:155`; align menus issue `CmdAlignTo(..., bookmarkID=...)` at `menusvc.py:2784-2789`. The system map and map view consume filtered active bookmarks at `systemMapSvc.py:400` and `mapViewBookmarkHandler.py:88`.
+
+The EVE University [Bookmarks guide](https://wiki.eveuniversity.org/Bookmarks) specifies a two-minute delay before shared-folder bookmarks become usable. EveJS 261028.1 enforces availability at the ship action boundary in `server/src/services/ship/beyonceService.js:358-372`, including the creator exception. Its time comparison allows the exact 120-second boundary; V24.01 still rejects at equality (`bookmarkUtil.py:122`), so eve.rs follows the client. This one-millisecond edge is recorded in `docs/reference/compat/DEVIATIONS.md`.
+
+In eve.rs, the Host callback is wired from `dotnet/src/Eve.Host/Rpc/CharacterServiceList.cs:89-92`; both align and warp resolve through `BeyonceService.cs:361-362,488-489`. Before the fix, `AccessGroupBookmarkMgrService.ResolveActiveBookmarkAsync` returned any bookmark in an active folder. It now applies the caller-aware creator and timestamp rule in `dotnet/src/Eve.Bookmarks/BookmarkStore.cs:48,113-114` before the shared resolver returns the target (`dotnet/src/Eve.Services.Core/AccessGroupBookmarkMgrService.cs:38-46`).
+
+The Host wire regression in `dotnet/tests/Eve.Host.Tests/BeyonceBookmarkPersistenceWireTests.cs:17-137` creates a shared bookmark by another character, confirms it cannot trigger `CmdAlignTo` before the delay, remains blocked at the exact boundary, and resolves one millisecond later. It also verifies creator-created/moved/copied bookmarks remain immediately usable. The test failed before the resolver fix: the pre-delay call produced a second `AlignTo` command.
 
 ## eve.rs defect and fix
 
@@ -34,6 +44,11 @@ Implementation: `dotnet/src/Eve.Calendar/CalendarStore.cs:235-275`, `dotnet/src/
 - Builds completed for `Eve.Calendar`, `Eve.Services.Core`, and `Eve.Host.Tests`. The `Eve.Services.Core.Tests` project also built after restoring its missing assets.
 - No graphical client session was used. This fix has not yet received its push-triggered Actions result.
 
+- Shared bookmark regression: failed before the fix (2 `AlignTo` commands instead of 1), then passed after the fix on `eve_p3` (1 passed, 0 skipped). The 2-minute boundary and creator, move and copy cases are asserted.
+- `Eve.Bookmarks.Tests`: 34 passed, 0 skipped on `eve_p3`; this includes store, shared-folder, notification, expiry and manager tests.
+- `AccessGroupBookmarkMgrHostWireTests` and `BeyonceBookmarkPersistenceWireTests`: 3 passed, 0 skipped on `eve_p3`.
+- `OwnerGroupManagerServiceTests`: 7 passed, 0 skipped on `eve_p3`.
+
 ## Remaining audit work
 
-The other listed UI-service flows have not been traced through every V24.01 caller and consumer in this pass. Do not treat this note as an audit verdict for overview presets, bookmarks, notepad, calendar reads/responses, neocom or shared settings.
+Overview presets, notepad, neocom and shared settings have not been traced in this pass. Calendar reads/responses were not audited; only participant editing was. The bookmark review covered shared-bookmark align/warp availability, not every folder-edit or bookmark notification transition.

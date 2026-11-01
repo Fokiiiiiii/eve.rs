@@ -1,5 +1,9 @@
 # Deviations from the reference server
 
+## Shared bookmark delay boundary
+
+V24.01 keeps a newly shared bookmark unavailable to other characters while `created + SHARED_BOOKMARK_DELAY < now` is false (`eve/client/script/util/bookmarkUtil.py:117-123`). EveJS 261028.1 uses elapsed milliseconds `< 120_000` (`server/src/services/ship/beyonceService.js:358-372`), which permits use at exact equality. eve.rs follows the client's strict boundary; this one millisecond edge is an intentional compatibility choice.
+
 ## Station inventory stack splitting (2026-11-01)
 
 V24.01 `eve/client/script/ui/services/menuSvcExtras/invItemFunctions.py:385-403` calls the station InvBroker's `SplitStack(stationID, itemID, qty, ownerID)`, then invalidates the owner's station cache; for corporation assets it also updates the local source quantity and scatters `OnCorpAssetChange`. EveJS 261028.1 has no ordinary `Handle_SplitStack` in `server/src/services/inventory/invBrokerService.js`; its only exact-name handler is the unrelated contract audit stub at `server/src/services/_other/contractProxyService.js:910-913`. eve.rs implements the ordinary call with a locked, transactional source reduction and same-location stack creation, then sends the two `OnItemsChanged` rows before the client performs its cache update. The database-backed InvBroker test pins both persisted stacks, and a concurrent request test verifies no quantity duplication.

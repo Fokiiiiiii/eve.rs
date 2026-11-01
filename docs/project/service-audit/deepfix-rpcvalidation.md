@@ -35,7 +35,7 @@ Origin/main's fix commit `75e89ae1` was merged after Run 1389. The conflict was 
 
 ## Push checkpoint
 
-The branch was pushed to main at `8df1b530d306` after CI Run 1390 completed green and `git fetch origin main && git merge origin/main` reported up to date. Push-triggered CI Run 1391 (`41354321450`) completed successfully; no failed tests or jobs were reported.
+The code branch was pushed to main at `8df1b530d306` after CI Run 1390 completed green and `git fetch origin main && git merge origin/main` reported up to date. Push-triggered CI Run 1391 (`41354321450`) completed successfully; no failed tests or jobs were reported. A documentation checkpoint was then pushed as `37e93e95` after merging origin/main at `0978698f`.
 
 ## Warp destination geometry and overflow
 
@@ -59,4 +59,4 @@ The only direct V24.01 `CmdDock` caller found by whole-tree search is `movementF
 
 ## Remaining audit scope
 
-This increment audits one core movement RPC. It does not complete hostile, malformed or out-of-order input coverage for every Host service or every first-day and daily player flow. Continue with undock/dock, target/combat and the other movement RPCs. Existing inventory/loot, wallet, wormhole and NPC handoffs document adjacent gameplay work but do not establish complete RPC-validation coverage.
+This increment covers invalid warp inputs and the accepted `CmdDock` reply shape, with their registered Host tests and sim transition checks. It does not complete hostile, malformed or out-of-order input coverage for every Host service or every first-day and daily player flow. Continue with undock, target/combat and the other movement RPCs. Existing inventory/loot, wallet, wormhole and NPC handoffs document adjacent gameplay work but do not establish complete RPC-validation coverage.

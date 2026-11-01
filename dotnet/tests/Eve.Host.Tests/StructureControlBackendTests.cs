@@ -378,10 +378,11 @@ public sealed class StructureControlBackendTests
     }
 
     [PgFact]
-    public async Task Refused_release_preserves_the_existing_owner_and_control_session()
+    public async Task Release_control_refusal_is_atomic_then_success_clears_the_persisted_owner()
     {
         await using var f = await Fixture.CreateAsync();
         var session = await f.SessionAsync(20);
+        var ship = session.GetInt("shipid");
         await f.Backend.TakeControlAsync(f.Call(session), Structure);
         var before = await f.OwnerAsync();
         f.Sim.Answer = request => Task.FromResult<string?>(request.Active ? null : "DETACH_REFUSED");
@@ -389,6 +390,12 @@ public sealed class StructureControlBackendTests
         Assert.Equal(before, await f.OwnerAsync());
         Assert.Equal(Structure, session.GetInt("shipid"));
         Assert.True(f.Space.IsStructureObserver(session));
+
+        f.Sim.Answer = _ => Task.FromResult<string?>(null);
+        await f.Backend.ReleaseControlAsync(f.Call(session));
+        Assert.Null(await f.OwnerAsync());
+        Assert.Equal(ship, session.GetInt("shipid"));
+        Assert.False(f.Space.IsStructureObserver(session));
     }
 
     [PgFact]

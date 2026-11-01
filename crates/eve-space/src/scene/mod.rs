@@ -81,8 +81,14 @@ const UNIX_EPOCH_SECONDS: i64 = 11_644_473_600;
 /// How long a docking takes from the moment it is accepted.
 const DOCKING_DELAY: i64 = 4 * TICKS_PER_SECOND;
 
-/// How close (from surface to surface) a ship has to be to dock.
-const DOCKING_RANGE: f64 = 2_500.0;
+/// How close (from surface to surface) a ship has to be to dock at an NPC station.
+const DOCKING_RANGE: f64 = 500.0;
+/// Upwell structures keep the interaction range used by EveJS until the wiki documents a separate value.
+const STRUCTURE_DOCKING_RANGE: f64 = 2_500.0;
+
+fn docking_range(kind: BodyKind) -> f64 {
+    if kind == BodyKind::Structure { STRUCTURE_DOCKING_RANGE } else { DOCKING_RANGE }
+}
 
 /// How long after a jump was accepted the ship leaves for the other system at the soonest, and how long after the jump-out effect begins.
 const JUMP_DELAY: i64 = 4 * TICKS_PER_SECOND;

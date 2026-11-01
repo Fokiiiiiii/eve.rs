@@ -846,17 +846,20 @@ fn a_docking_asked_for_again_is_accepted_with_the_first_time_and_orders_are_igno
 }
 
 #[test]
-fn docking_range_is_measured_between_surfaces_and_two_and_a_half_kilometres_is_in() {
+fn docking_range_is_measured_between_surfaces_and_five_hundred_metres_is_in() {
     let dock_from = |gap: f64| {
         let mut scene = near_the_station();
         scene.pilots.get_mut(&SESSION).unwrap().ship.position =
             Vec3::new(1_000_000.0 + 1_000.0 + 47.0 + gap, 0.0, 0.0);
         scene.command(SESSION, Command::Dock { station_id: STATION }, NOON)
     };
-    assert!(matches!(dock_from(2_500.0).last(), Some(Out::Accepted { .. })));
-    assert!(
-        matches!(dock_from(2_500.5).last(), Some(Out::Approaching { distance, .. }) if *distance == 2_500.5)
-    );
+    assert!(matches!(dock_from(500.0).last(), Some(Out::Accepted { .. })));
+    assert!(matches!(dock_from(500.5).last(), Some(Out::Approaching { distance, .. }) if *distance == 500.5));
+}
+
+#[test]
+fn an_upwell_structure_keeps_its_docking_range() {
+    assert_eq!(docking_range(BodyKind::Structure), STRUCTURE_DOCKING_RANGE);
 }
 
 #[test]

@@ -583,7 +583,7 @@ fn a_ship_that_docks_is_lost_when_it_has_docked() {
         scene.undock(session, spec_of(n), STATION, NOON).unwrap();
     }
     let station = scene.system().body(STATION).unwrap().clone();
-    for (session, gap) in [(A, 1_000.0), (B, 15_000.0)] {
+    for (session, gap) in [(A, 500.0), (B, 15_000.0)] {
         let pilot = scene.pilots.get_mut(&session).unwrap();
         let distance = station.radius + pilot.ship.spec.radius + gap;
         pilot.ship.position =

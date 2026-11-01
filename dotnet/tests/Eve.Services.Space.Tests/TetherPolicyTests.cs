@@ -297,6 +297,7 @@ public sealed class TetherPolicyTests
     public async Task Cyno_delay_starts_after_protection_ends_and_an_early_command_updates_its_persisted_deadline(string how)
     {
         var (rig, character, session) = await EnterAsync();
+        rig.Space.Transitions.EndSessionChange((ulong)session.SessionId);
         await using var dispose = rig;
         long persisted = 0;
         rig.Space.ReadTetherBlockUntilAsync = (_, _) => Task.FromResult(Interlocked.Read(ref persisted));

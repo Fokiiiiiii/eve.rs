@@ -251,7 +251,8 @@ private static readonly (string Name,int Type)[] MemberTrackingColumns =
 }
 
 [Eve.Services.Service("voteManager")]
-public sealed partial class VoteManagerService(Eve.Corporations.CorporationStore store)
+public sealed partial class VoteManagerService(Eve.Corporations.CorporationStore store,
+    Eve.Services.CharacterSessions? characterSessions = null)
 {
     private const int VoteCaseStatusAll = 0;
     private const int VoteCaseStatusClosed = 1;
@@ -359,6 +360,7 @@ public sealed partial class VoteManagerService(Eve.Corporations.CorporationStore
         var voteCaseId = await store.InsertVoteCaseAsync(corporationId,actorId,voteCaseText,description,voteType,
             Eve.Marshal.MarshalCodec.Encode(options),optionCount,parameter,parameter1,parameter2,
             OptionalNumber(call.Arg(4)) ?? 1L,call.Cancellation);
+        NotifyCorporationAfterResponse(call, corporationId, voteCaseId, "OnVoteCaseChanged");
         return new PyInt(voteCaseId);
     }
 
@@ -372,6 +374,7 @@ public sealed partial class VoteManagerService(Eve.Corporations.CorporationStore
             throw new Eve.Corporations.CorporationError("CORPORATION_ACCESS_DENIED");
         await store.InsertVoteAsync(corporationId,voteCaseId,actorId,
             Number(call.Arg(2)),call.Cancellation);
+        NotifyCorporationAfterResponse(call, corporationId, voteCaseId, "OnVoteCast");
         return PyNone.Instance;
     }
 
@@ -398,9 +401,26 @@ public sealed partial class VoteManagerService(Eve.Corporations.CorporationStore
     [Eve.Services.Method("ActivateSanctionedAction")]
     public async ValueTask<PyValue> ActivateSanctionedAction(Eve.Services.ServiceCall call)
     {
-        await store.ActivateSanctionedVoteAsync(CurrentCorporation(call.Session),call.Session.CharacterId ?? 0,
-            Number(call.Arg(0)),call.Cancellation);
+        var corporationId = CurrentCorporation(call.Session);
+        var voteCaseId = Number(call.Arg(0));
+        await store.ActivateSanctionedVoteAsync(corporationId,call.Session.CharacterId ?? 0,
+            voteCaseId,call.Cancellation);
+        NotifyCorporationAfterResponse(call, corporationId, voteCaseId, "OnSanctionedActionChanged");
         return PyNone.Instance;
+    }
+
+    private void NotifyCorporationAfterResponse(Eve.Services.ServiceCall call,long corporationId,long voteCaseId,string name)
+    {
+        if (characterSessions is null) return;
+        call.Session.AfterResponse(() =>
+        {
+            foreach (var session in characterSessions.All())
+            {
+                if ((session.GetInt("corpid") ?? session.GetInt("corporationID")) != corporationId) continue;
+                try { session.SendNotification(name,"corpid",new PyInt(corporationId),new PyInt(voteCaseId)); }
+                catch (Exception) { }
+            }
+        });
     }
 
     private static PyValue VoteCasesRowset(IReadOnlyList<Eve.Corporations.CorporationStore.CorporationVoteCase> cases) =>

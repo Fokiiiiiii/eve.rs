@@ -13,6 +13,31 @@ namespace Eve.Host.Tests;
 
 public partial class HostServerTests
 {
+    private sealed class VoteNotificationSink : IPacketSink
+    {
+        public List<Eve.Marshal.PyValue> Packets { get; } = [];
+        public void Send(Eve.Marshal.PyValue packet) => Packets.Add(packet);
+    }
+
+    private static string VoteNotificationName(Eve.Marshal.PyValue value)
+    {
+        var notification = Assert.IsType<Eve.Marshal.PyObject>(value);
+        Assert.Equal(Eve.Services.ClientNotification.ClassName,
+            Eve.Macho.JsSemantics.StringValue(notification.Name));
+        var packet = Assert.IsType<Eve.Marshal.PyTuple>(notification.Args);
+        var destination = Assert.IsType<Eve.Marshal.PyObject>(packet.Items[2]);
+        var address = Assert.IsType<Eve.Marshal.PyTuple>(destination.Args);
+        return Eve.Macho.JsSemantics.StringValue(address.Items[1])!;
+    }
+
+    private static async Task AssertVoteNotification(VoteNotificationSink sink,int count,string name)
+    {
+        for (var attempt = 0; attempt < 100 && sink.Packets.Count < count; attempt++)
+            await Task.Delay(10);
+        Assert.Equal(count, sink.Packets.Count);
+        Assert.Equal(name, VoteNotificationName(sink.Packets[count - 1]));
+    }
+
     [PgFact]
     public async Task Vote_manager_rpc_flow_uses_the_host_wire_and_persists_cases_and_ballots()
     {
@@ -48,9 +73,15 @@ public partial class HostServerTests
             }
 
             var corporation = await store.CreateAsync(founder, new("Host Vote Works", "HVOTE", "", "", 0m), "vote-manager-host");
+            var characterSessions = new Eve.Services.CharacterSessions();
+            var notificationSink = new VoteNotificationSink();
+            var notificationSession = new Eve.Services.ClientSession(notificationSink) { CharacterId = founder };
+            notificationSession.Set("corpid", new Eve.Marshal.PyInt(corporation.Id));
+            characterSessions.Enter(founder, notificationSession);
+            Assert.Same(notificationSession, characterSessions.Of(founder));
             var errors = new List<string>();
             Start(
-                configure: registry => registry.Register(new VoteManagerService(store)),
+                configure: registry => registry.Register(new VoteManagerService(store, characterSessions)),
                 onProblem: (_, error) => { if (error is not null) errors.Add(error.ToString()); },
                 sessionOpened: session =>
                 {
@@ -88,6 +119,7 @@ public partial class HostServerTests
                 new Eve.Marshal.PyList([new Eve.Marshal.PyWString("For"), new Eve.Marshal.PyWString("Against")]),
                 new Eve.Marshal.PyInt(1)));
             Assert.True(voteCaseId.Value > 0);
+            await AssertVoteNotification(notificationSink, 1, "OnVoteCaseChanged");
 
             var cases = Assert.IsType<Eve.Marshal.PyDict>(await Rpc(4, "GetVoteCasesByCorporation",
                 new Eve.Marshal.PyInt(corporation.Id)));
@@ -110,6 +142,7 @@ public partial class HostServerTests
 
             Assert.IsType<Eve.Marshal.PyNone>(await Rpc(7, "InsertVote",
                 new Eve.Marshal.PyInt(corporation.Id), voteCaseId, new Eve.Marshal.PyInt(1)));
+            await AssertVoteNotification(notificationSink, 2, "OnVoteCast");
             var ballots = RowsetRows(await Rpc(8, "GetVotes", voteCaseId));
             var personalBallot = Assert.IsType<Eve.Marshal.PyList>(ballots.Items.Single());
             Assert.Equal(new Eve.Marshal.PyInt(1), personalBallot.Items[0]);
@@ -122,6 +155,26 @@ public partial class HostServerTests
             persisted.Parameters.AddWithValue(voteCaseId.Value);
             persisted.Parameters.AddWithValue(founder);
             Assert.Equal(1L, Convert.ToInt64(await persisted.ExecuteScalarAsync()));
+
+            var sanctionedVoteId = Assert.IsType<Eve.Marshal.PyInt>(await Rpc(13, "InsertVoteCase",
+                new Eve.Marshal.PyWString("Issue shares"), new Eve.Marshal.PyWString("Issue shares"),
+                new Eve.Marshal.PyInt(2), Eve.Services.Py.Tuple(
+                    Eve.Services.Py.Tuple(new Eve.Marshal.PyWString("Create shares"),
+                        Eve.Services.Py.Dict(("shares", new Eve.Marshal.PyInt(200)))),
+                    Eve.Services.Py.Tuple(new Eve.Marshal.PyWString("Do not create shares")),
+                    new Eve.Marshal.PyInt(200), Eve.Marshal.PyNone.Instance, Eve.Marshal.PyNone.Instance),
+                new Eve.Marshal.PyInt(1)));
+            await AssertVoteNotification(notificationSink, 3, "OnVoteCaseChanged");
+            Assert.IsType<Eve.Marshal.PyNone>(await Rpc(14, "InsertVote",
+                new Eve.Marshal.PyInt(corporation.Id), sanctionedVoteId, new Eve.Marshal.PyInt(0)));
+            await AssertVoteNotification(notificationSink, 4, "OnVoteCast");
+            now += 86_400_001;
+            _ = await Rpc(15, "GetVoteCasesByCorporation", new Eve.Marshal.PyInt(corporation.Id));
+            Assert.Contains(Assert.IsType<Eve.Marshal.PyDict>(await Rpc(16, "GetCorpSanctionedActions" )).Entries,
+                entry => entry.Key.Equals(sanctionedVoteId));
+            Assert.IsType<Eve.Marshal.PyNone>(await Rpc(17, "ActivateSanctionedAction", sanctionedVoteId));
+            await AssertVoteNotification(notificationSink, 5, "OnSanctionedActionChanged");
+            Assert.Equal(1_200L, (await store.ShareholdersAsync(corporation.Id)).Single().Shares);
         }
         finally
         {

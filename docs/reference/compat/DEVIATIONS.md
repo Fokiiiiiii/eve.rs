@@ -3270,6 +3270,11 @@ Status: implemented. Tests: `Eve.Corporations.Tests` (`ItemLockTests`, 3, Postgr
 - **Existing locks at migration.** A blueprint locked by a vote before migration `013` has no row in `item_locks`, so it is not listed
   until the vote ends. The databases in use are development databases; no backfill was written.
 
+## voteManager mutation notifications (V24.01)
+
+- The client handlers `CorporationVotes.OnVoteCaseChanged`, `OnVoteCast`, and `OnSanctionedActionChanged` clear vote, ballot, and sanctioned-action caches (`eve/client/script/ui/services/corporation/voting.py:77-109`). The UI consumes them in `corp_ui_votes.py:810-822`, `base_corporation_ui.py:190-202`, and `corp_ui_sanctionableactions.py:82-84`.
+- Current EveJS 261028.1 persists `InsertVoteCase`, `InsertVote`, and `ActivateSanctionedAction` but does not emit those event names (`server/src/services/corporation/voteManagerService.js:249-303,316-323`). eve.rs emits the client-declared two-ID events after successful mutation and response so each online corporation session refreshes its corresponding view. Host coverage: `dotnet/tests/Eve.Host.Tests/VoteManagerHostTests.cs:Vote_manager_rpc_flow_uses_the_host_wire_and_persists_cases_and_ballots`.
+
 ## Reprocessing (reprocessingSvc, 37a)
 
 Status: the server side is implemented for NPC stations. The client has not been driven through a reprocess.

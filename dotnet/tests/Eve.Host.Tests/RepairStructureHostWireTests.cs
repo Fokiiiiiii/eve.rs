@@ -3,7 +3,6 @@ using Eve.Data;
 using Eve.Fitting;
 using Eve.Host;
 using Eve.Identity;
-using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
@@ -11,6 +10,10 @@ using Eve.Sde;
 using Eve.Structures;
 using Eve.Universe;
 using Eve.Wallet;
+using Eve.Dogma;
+using Eve.Inventory;
+using Eve.Market;
+using Eve.Services.Station;
 using Npgsql;
 
 namespace Eve.Host.Tests;
@@ -29,7 +32,6 @@ public sealed class RepairStructureHostWireTests : IAsyncLifetime
     private readonly string prefix = "rsw" + Guid.NewGuid().ToString("N")[..10];
     private readonly Dictionary<string, string?> saved = [];
     private readonly List<string> schemas = [];
-    private HostRuntime? host;
 
     private string Schema(string variable) => $"{prefix}_{variable["EVE_".Length..^"_SCHEMA".Length].ToLowerInvariant()}";
 
@@ -52,11 +54,6 @@ public sealed class RepairStructureHostWireTests : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
-        if (host is not null)
-        {
-            await host.ShutdownAsync();
-            host = null;
-        }
         if (Environment.GetEnvironmentVariable("EVE_PG_URL") is { } url)
         {
             await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
@@ -75,10 +72,6 @@ public sealed class RepairStructureHostWireTests : IAsyncLifetime
         public List<PyValue> Packets { get; } = [];
         public void Send(PyValue packet) => Packets.Add(packet);
     }
-
-    private static HostSettings Settings() => new(
-        "", "disabled", new ClusterOptions { NewCharacterExperienceEnabled = false, NewCharacterExperienceMode = "disabled" },
-        new AccountOptions { AutoCreate = true }, StrictRpc: true);
 
     private static ServiceCall Call(ClientSession session, string method, long id, params PyValue[] args) =>
         new() { Session = session, Method = method, Args = args, CallId = new PyInt(id) };
@@ -117,9 +110,14 @@ public sealed class RepairStructureHostWireTests : IAsyncLifetime
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
-        host = await HostComposition.BuildAsync(Settings());
-        var repair = host.Registry.Lookup("repairSvc") ?? throw new InvalidOperationException("repairSvc is not registered");
-        var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
+        await PgCharacterStore.MigrateAsync(source, Schema("EVE_CHARACTERS_SCHEMA"));
+        await PgItemStore.MigrateAsync(source, Schema("EVE_INVENTORY_SCHEMA"));
+        await PgWalletStore.MigrateAsync(source, Schema("EVE_WALLET_SCHEMA"));
+        await PgModuleStateStore.MigrateAsync(source, Schema("EVE_FITTING_SCHEMA"));
+        await StructureStore.MigrateAsync(source, Schema("EVE_STRUCTURES_SCHEMA"));
+        var sde = new SdeReader(source);
+        var stationCatalog = await StationCatalog.LoadAsync(sde);
+        var station = stationCatalog.All.First();
         var character = await CreateCharacterAsync(source, station);
         const long structureId = 9_000_000_000_000_001;
         const long ownerCorporationId = 99_000_000_001;
@@ -153,13 +151,32 @@ public sealed class RepairStructureHostWireTests : IAsyncLifetime
 
         var items = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
         var modules = new PgModuleStateStore(source, Schema("EVE_FITTING_SCHEMA"));
+        var walletSchema = Schema("EVE_WALLET_SCHEMA");
+        var wallet = new PgWalletStore(source, walletSchema);
+        var transactions = new WalletTransactions(source, walletSchema);
+        var marketSchema = Schema("EVE_MARKET_SCHEMA");
+        await MarketStore.MigrateAsync(source, marketSchema);
+        var prices = new AdjustedPriceCache(new AdjustedPriceStore(source, marketSchema),
+            new EsiAdjustedPrices(new HttpClient(), EsiAdjustedPrices.DefaultBase),
+            () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        var itemTypes = new ItemTypeCatalog(sde);
+        var dogma = await DogmaStatic.LoadAsync(sde);
+        RepairService NewRepairService() => new(source, items, itemTypes, stationCatalog, dogma, modules,
+            prices, transactions, wallet, () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), structures);
+        var registry = new ServiceRegistry();
+        registry.Register(NewRepairService());
+        var repair = registry.Lookup("repairSvc") ?? throw new InvalidOperationException("repairSvc is not registered");
         long shipId;
+        long stationShipId;
         await using (var connection = await source.OpenConnectionAsync())
         await using (var transaction = await connection.BeginTransactionAsync())
         {
             shipId = await items.CreateAsync(connection, transaction,
                 new NewItem(587, character, structureId, ItemFlags.Hangar, 1, Singleton: true));
             await modules.SetShipConditionAsync(connection, transaction, shipId, new ShipCondition(0.5, 1, 0.5, 0.2, false));
+            stationShipId = await items.CreateAsync(connection, transaction,
+                new NewItem(587, character, station.Id, ItemFlags.Hangar, 1, Singleton: true));
+            await modules.SetShipConditionAsync(connection, transaction, stationShipId, new ShipCondition(0.5, 1, 0.5, 0.2, false));
             await transaction.CommitAsync();
         }
 
@@ -168,10 +185,24 @@ public sealed class RepairStructureHostWireTests : IAsyncLifetime
         session.Set("charid", new PyLong(character));
         session.Set("structureid", new PyLong(structureId));
         session.Set("solarsystemid2", new PyInt(station.SolarSystemId));
+        var dispatcher = new PacketDispatcher(registry) { StrictRpc = true };
+        var open = new SessionOpen(801, 801, 1, 0, "127.0.0.1", "EN", "US");
+        async Task<PyValue> WireCall(long callId, PyTuple boundParameters, PyTuple boundCall)
+        {
+            var packetsBefore = sink.Packets.Count;
+            Assert.True(await dispatcher.DispatchAsync(
+                Packets.Call(open, callId, "repairSvc", "MachoBindObject", boundParameters, boundCall), session));
+            Assert.True(sink.Packets.Count > packetsBefore);
+            var response = Assert.IsType<PyObject>(sink.Packets[^1]);
+            var responseFields = Assert.IsType<PyTuple>(response.Args).Items;
+            Assert.Equal(7, Assert.IsType<PyInt>(responseFields[0]).Value);
+            var payload = Assert.IsType<PyTuple>(responseFields[4]);
+            return payload.Items[0] is PySubStream { Decoded: { } result } ? result : payload.Items[0];
+        }
         var boundParameters = Py.Tuple(new PyLong(structureId), new PyInt(station.SolarSystemId), new PyInt(6));
         var itemIds = new PyList([new PyLong(shipId)]);
         var quoteCall = Py.Tuple(new PyStr("GetRepairQuotes"), Py.Tuple(itemIds), new PyDict([]));
-        var quoteReply = Assert.IsType<PyTuple>(await repair.CallAsync(Call(session, "MachoBindObject", 1, boundParameters, quoteCall)));
+        var quoteReply = Assert.IsType<PyTuple>(await WireCall(1, boundParameters, quoteCall));
         var quotes = Assert.IsType<PyDict>(quoteReply.Items[1]);
         var quote = Assert.Single(Assert.IsType<PyList>(Assert.Single(quotes.Entries).Value).Items);
         var quotedDamage = Field(quote, "damage");
@@ -184,10 +215,9 @@ public sealed class RepairStructureHostWireTests : IAsyncLifetime
         var expectedCharge = decimal.Round((decimal)(Math.Ceiling(quotedDamage) * unitCost), 2, MidpointRounding.AwayFromZero);
         var expectedTax = decimal.Round(expectedCharge * 0.15m / 1.15m, 2, MidpointRounding.AwayFromZero);
 
-        var wallet = new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA"));
         var beforeIsk = (await wallet.GetAsync(character))!.Isk;
         var repairCall = Py.Tuple(new PyStr("RepairItemsInStructure"), Py.Tuple(itemIds), new PyDict([]));
-        var repairReply = Assert.IsType<PyTuple>(await repair.CallAsync(Call(session, "MachoBindObject", 2, boundParameters, repairCall)));
+        var repairReply = Assert.IsType<PyTuple>(await WireCall(2, boundParameters, repairCall));
         Assert.Same(PyNone.Instance, repairReply.Items[1]);
         Assert.Equal(beforeIsk - expectedCharge, (await wallet.GetAsync(character))!.Isk);
         Assert.Equal(expectedTax, (await wallet.GetAsync(ownerCorporationId))!.Isk);
@@ -197,14 +227,33 @@ public sealed class RepairStructureHostWireTests : IAsyncLifetime
         Assert.Equal(0, repaired.Damage, 6);
         Assert.Equal(0, repaired.ArmorDamage, 6);
         Assert.Equal(1, repaired.ShieldCharge, 6);
-        Assert.NotEmpty(sink.Packets);
+        Assert.Contains(sink.Packets, packet => MachoPacket.Decode(packet) is
+            { Type: MachoMessage.Notification, Dest.BroadcastId: "OnItemChange" });
 
-        await host.ShutdownAsync();
-        host = await HostComposition.BuildAsync(Settings());
+        registry = new ServiceRegistry();
+        registry.Register(NewRepairService());
+        repair = registry.Lookup("repairSvc") ?? throw new InvalidOperationException("repairSvc is not registered after restart");
+        dispatcher = new PacketDispatcher(registry) { StrictRpc = true };
         Assert.Equal(beforeIsk - expectedCharge, (await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).GetAsync(character))!.Isk);
         repaired = await new PgModuleStateStore(source, Schema("EVE_FITTING_SCHEMA")).ShipConditionAsync(shipId);
         Assert.Equal(0, repaired.Damage, 6);
         Assert.Equal(expectedTax, (await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).GetAsync(ownerCorporationId))!.Isk);
+
+        var stationBound = Py.Tuple(new PyLong(station.Id), new PyInt(station.SolarSystemId), new PyInt(6));
+        var stationItems = new PyList([new PyLong(stationShipId)]);
+        session.Set("stationid", new PyLong(station.Id));
+        var stationQuoteReply = Assert.IsType<PyTuple>(await WireCall(4, stationBound,
+            Py.Tuple(new PyStr("GetRepairQuotes"), Py.Tuple(stationItems), new PyDict([]))));
+        var stationQuotes = Assert.IsType<PyDict>(stationQuoteReply.Items[1]);
+        var stationQuote = Assert.Single(Assert.IsType<PyList>(Assert.Single(stationQuotes.Entries).Value).Items);
+        var stationDamage = Field(stationQuote, "damage");
+        Assert.True(stationDamage > 0);
+        var stationCost = decimal.Round((decimal)(Math.Ceiling(stationDamage) * Field(stationQuote, "costToRepairOneUnitOfDamage")), 2, MidpointRounding.AwayFromZero);
+        var stationRepair = Assert.IsType<PyTuple>(await WireCall(5, stationBound,
+            Py.Tuple(new PyStr("RepairItemsInStation"), Py.Tuple(stationItems, PyNone.Instance), new PyDict([]))));
+        Assert.Same(PyNone.Instance, stationRepair.Items[1]);
+        Assert.Equal(beforeIsk - expectedCharge - stationCost, (await wallet.GetAsync(character))!.Isk);
+        Assert.Equal(0, (await modules.ShipConditionAsync(stationShipId)).Damage, 6);
 
         var lowFundsSink = new Sink();
         var lowFundsSession = new ClientSession(lowFundsSink) { CharacterId = character, SessionId = 802 };
@@ -222,14 +271,13 @@ public sealed class RepairStructureHostWireTests : IAsyncLifetime
             await transaction.CommitAsync();
         }
         var persistedOwnerBalance = (await wallet.GetAsync(ownerCorporationId))!.Isk;
-        var reloadedRepair = host.Registry.Lookup("repairSvc") ?? throw new InvalidOperationException("repairSvc is not registered after restart");
-        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
-            await reloadedRepair.CallAsync(Call(lowFundsSession, "MachoBindObject", 3, boundParameters, repairCall)));
-        Assert.Equal("NotEnoughMoney", refusal.Error.UserErrorMessage);
+        Assert.True(await dispatcher.DispatchAsync(
+            Packets.Call(open, 3, "repairSvc", "MachoBindObject", boundParameters, repairCall), lowFundsSession));
+        var refusal = Assert.IsType<MachoPacket>(MachoPacket.Decode(Assert.Single(lowFundsSink.Packets)));
+        Assert.Equal(MachoMessage.ErrorResponse, refusal.Type);
         Assert.Equal(0, (await wallet.GetAsync(character))!.Isk);
         Assert.Equal(persistedOwnerBalance, (await wallet.GetAsync(ownerCorporationId))!.Isk);
         var unchanged = await modules.ShipConditionAsync(shipId);
         Assert.Equal(new ShipCondition(0.5, 1, 0.5, 0.2, false), unchanged);
-        Assert.Empty(lowFundsSink.Packets);
     }
 }

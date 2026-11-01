@@ -110,6 +110,44 @@ public partial class HostServerTests
     }
 
     [Fact]
+    public async Task Achievement_reset_clears_persisted_maps_and_notifies_the_client_after_the_write()
+    {
+        const long characterId = 42;
+        var written = false;
+        var service = new AchievementTrackerMgrService(
+            writeState: (id, completed, events, _) =>
+            {
+                Assert.Equal(characterId, id);
+                Assert.Empty(completed.Entries);
+                Assert.Empty(events.Entries);
+                written = true;
+                return ValueTask.CompletedTask;
+            });
+        Start(configure: registry => registry.Register(service),
+            sessionOpened: session => session.Set("charid", new PyInt(characterId)));
+        var (front, open) = await OpenFrontAsync();
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.CallWithKwargs(open, 1, "achievementTrackerMgr", "ResetAllForChar", new PyTuple([]), TransportKwargs()))));
+
+        var notification = Assert.IsType<Send>(await front.ReceiveAsync());
+        var notificationValue = MarshalCodec.Decode(notification.Payload);
+        var notificationPacket = MachoPacket.Decode(notificationValue)!;
+        Assert.True(written);
+        Assert.Equal(MachoMessage.Notification, notificationPacket.Type);
+        Assert.Equal("achievementTrackerMgr", notificationPacket.Dest.Service);
+        var notificationEnvelope = Assert.IsType<PyTuple>(notificationPacket.Payload).Items;
+        var notificationCall = Assert.IsType<PyTuple>(MarshalCodec.Decode(
+            Assert.IsType<PyBuffer>(Assert.IsType<PyTuple>(notificationEnvelope[0]).Items[1]).Value)).Items;
+        Assert.Equal("OnAchievementsReset", WireText(notificationCall[1]));
+        Assert.Empty(Assert.IsType<PyTuple>(notificationCall[2]).Items);
+
+        var response = Assert.IsType<Send>(await front.ReceiveAsync());
+        var responseValue = MarshalCodec.Decode(response.Payload);
+        Assert.Equal(MachoMessage.CallRsp, MachoPacket.Decode(responseValue)!.Type);
+        Assert.Same(PyNone.Instance, Result(responseValue));
+    }
+
+    [Fact]
     public async Task Abyssal_player_calls_use_the_registered_host_handler_and_error_envelope()
     {
         var compositionType = typeof(HostServer).Assembly.GetType("Eve.Host.CharacterServicesComposition")!;

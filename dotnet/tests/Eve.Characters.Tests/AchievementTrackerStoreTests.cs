@@ -33,15 +33,19 @@ public sealed class AchievementTrackerStoreTests
     }
 
     [PgFact]
-    public async Task An_empty_write_is_a_record_with_no_entries()
+    public async Task An_empty_write_resets_achievement_maps_and_survives_a_restart()
     {
         await using var s = await PgSchemas.CreateAsync();
         var characterId = await Insert(s, Pilot("Empty Tracker"));
         var store = new AchievementTrackerStore(s.Source, s.CharactersSchema);
 
+        await store.RecordWarpAsync(characterId, 4);
+        await store.WriteAsync(characterId, [(9, 134273341290000000L)], [("client_openMap", 3L)], 4);
         await store.WriteAsync(characterId, [], [], 5);
 
-        var record = await store.ReadAsync(characterId);
+        var restartedStore = new AchievementTrackerStore(s.Source, s.CharactersSchema);
+        var record = await restartedStore.ReadAsync(characterId);
+        Assert.True(await restartedStore.HasEverWarpedAsync(characterId));
         Assert.NotNull(record);
         Assert.Empty(record!.Completed);
         Assert.Empty(record.EventCounts);

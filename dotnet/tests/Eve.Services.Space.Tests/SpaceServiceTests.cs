@@ -1023,6 +1023,32 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task An_incomplete_tengu_does_not_pay_an_undock_contraband_penalty()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await rig.Statics.EnsureTypesAsync([29984]);
+        var character = await rig.NewCharacterAsync(shipTypeId: 29984);
+        var session = await rig.SessionAsync(character);
+        var binding = await rig.BindShipAsync(session);
+        var penalties = 0;
+        rig.Space.ApplyContrabandPenaltyAsync = (_, _, _, _) =>
+        {
+            penalties++;
+            return Task.FromResult<Eve.Services.Space.ContrabandPenalty?>(null);
+        };
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            rig.ShipCallAsync(session, "Undock", binding, new PyLong(character.ShipId), PyBool.True));
+
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+        Assert.Equal(0, penalties);
+        Assert.Equal(Rig.Station, session.GetInt("stationid"));
+        Assert.Empty(rig.Sim.Heard.OfType<SimEnter>());
+        var ship = (await rig.Items.GetAsync(character.ShipId))!;
+        Assert.Equal((Rig.Station, Eve.Inventory.ItemFlags.Hangar), (ship.LocationId, ship.Flag));
+    }
+
+    [PgFact]
     public async Task The_ballpark_binds_only_for_a_ship_in_space_and_once_the_answer_has_gone_the_simulation_sends_the_scene()
     {
         var (rig, _, session) = await DockedAsync();

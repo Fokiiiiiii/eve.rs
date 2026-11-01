@@ -63,6 +63,10 @@ internal sealed partial class CharacterServicesComposition
         startText = Env("EVE_START_STATION", "60015249");
         startStation = startText == "school" ? null : long.Parse(startText, System.Globalization.CultureInfo.InvariantCulture);
         catalog = await CreationCatalog.LoadAsync(sde, startStation);
+        npcCharacterCorporations = (await sde.ReadAsync("npcCharacters"))
+            .Where(row => row.Doc.TryGetProperty("corporationID", out var corporationId) &&
+                corporationId.TryGetInt64(out var value) && value > 0)
+            .ToDictionary(row => row.Key, row => row.Doc.GetProperty("corporationID").GetInt64());
         characters = new PgCharacterStore(source, characterSchema);
         items = new PgItemStore(source, inventorySchema);
         spaceItemStore = new PgSpaceItemStore(source, spaceSchema);

@@ -15,7 +15,8 @@ public sealed partial class CorpMgrService(
     Func<long, (long SolarSystemId, int? TypeId)?>? resolveAssetLocation = null,
     Func<long, CancellationToken, ValueTask<CorpMgrAggressionSettings?>>? readAggressionSettings = null,
     Func<long, long, long, long, int, CancellationToken, ValueTask<IReadOnlyList<CorpMgrAuditEvent>>>? readAuditEvents = null,
-    Func<long, CancellationToken, ValueTask<IReadOnlyList<Eve.Inventory.Item>>>? readAssetWraps = null)
+    Func<long, CancellationToken, ValueTask<IReadOnlyList<Eve.Inventory.Item>>>? readAssetWraps = null,
+    IReadOnlyDictionary<long, long>? npcCharacterCorporations = null)
 {
     private async Task<Corporation?> Resolve(ServiceCall call) =>
         await store.GetAsync(call.Arg(0) is PyInt id && id.Value > 0 ? id.Value :
@@ -32,6 +33,9 @@ public sealed partial class CorpMgrService(
         var id = call.Arg(0) switch { PyInt n => n.Value,PyLong n => n.Value,_ => 0 };
         if (id > 0 && await characters.GetAsync(id,call.Cancellation) is { CorporationId: > 0 } character)
             return new PyInt(character.CorporationId);
+        if (id > 0 && npcCharacterCorporations is { } npcCorporations &&
+            npcCorporations.TryGetValue(id, out var npcCorporationId) && npcCorporationId > 0)
+            return new PyInt(npcCorporationId);
         if (id > 0 && id != call.Session.CharacterId)
             return PyNone.Instance;
         return new PyInt(call.Session.GetInt("corporationID") ?? call.Session.GetInt("corpid") ?? 1000004);

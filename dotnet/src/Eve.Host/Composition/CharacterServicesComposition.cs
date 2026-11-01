@@ -161,6 +161,7 @@ internal sealed partial class CharacterServicesComposition
     private string crimewatchSchema = default!;
     private Eve.Crimewatch.PgCrimewatchStore crimewatchStore = default!;
     private SdeReader sde = default!;
+    private IReadOnlyDictionary<long, long> npcCharacterCorporations = default!;
     private string startText = default!;
     private long? startStation;
     private CreationCatalog catalog = default!;

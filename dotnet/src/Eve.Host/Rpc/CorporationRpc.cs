@@ -50,7 +50,8 @@ internal sealed partial class CharacterServicesComposition
                     ? (station.SolarSystemId, (int?)station.TypeId)
                     : id is >= 0 and <= int.MaxValue && solarSystems.Get((int)id) is { } system
                         ? ((long)system.Id, (int?)null)
-                        : null),
+                        : null,
+                npcCharacterCorporations: npcCharacterCorporations),
             new Eve.Services.Corporations.MutualWarInviteMgrService(
                 mutualWarInvites.ReadPendingInvitesAsync,
                 mutualWarInvites.ReadInvitesBlockedAsync,

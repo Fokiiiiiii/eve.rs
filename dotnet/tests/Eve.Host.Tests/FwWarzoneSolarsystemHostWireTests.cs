@@ -9,6 +9,55 @@ namespace Eve.Host.Tests;
 
 public partial class HostServerTests
 {
+    [PgFact]
+    public async Task Registered_host_warzone_read_returns_occupation_persisted_in_postgres()
+    {
+        var connectionString = Eve.Data.PgConnection.ForTest(
+            Environment.GetEnvironmentVariable("EVE_PG_URL") ?? throw new InvalidOperationException("EVE_PG_URL is required."));
+        await using var source = Npgsql.NpgsqlDataSource.Create(connectionString);
+        var schema = "fw_wire_" + Guid.NewGuid().ToString("N")[..12];
+        var walletSchema = "wallet_wire_" + Guid.NewGuid().ToString("N")[..12];
+        await FwStore.MigrateAsync(source, schema);
+        var store = new FwStore(source, schema);
+        var systemId = FwWarzones.SystemsOf(FwWarzones.AmarrMinmatar)[0];
+        await using (var connection = await source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await store.SeedSystemsAsync(connection, transaction,
+                [new FwSystem(systemId, FwWarzones.AmarrMinmatar, FwFactions.AmarrEmpire, 0, 0, 0)]);
+            await transaction.CommitAsync();
+        }
+
+        var factionWarfare = new FwService(store, new Eve.Wallet.LoyaltyPointStore(source, walletSchema));
+        var service = new FwWarzoneSolarsystemHostService(
+            async call =>
+            {
+                var occupied = await factionWarfare.OccupiedSystemsAsync(call.Cancellation);
+                return SovFwReadSnapshot.Empty with
+                {
+                    FwOccupationStates = occupied.Select(system =>
+                        new FwOccupationRecord(system.WarzoneId, system.SolarSystemId, system.OccupierId)).ToArray(),
+                };
+            },
+            _ => ValueTask.FromResult<IReadOnlyDictionary<long, IReadOnlyCollection<long>>>(
+                new Dictionary<long, IReadOnlyCollection<long>>()),
+            _ => ValueTask.FromResult<IReadOnlyDictionary<long, long>>(new Dictionary<long, long>()));
+
+        Start(
+            configure: registry => registry.Register(service),
+            sessionOpened: session => session.Set("solarsystemid2", new PyInt(systemId)));
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        _ = await front.ReceiveAsync();
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.Call(open, 1, "fwWarzoneSolarsystem", "GetLocalOccupationState", []))));
+        var reply = Assert.IsType<Send>(await front.ReceiveAsync());
+        var local = Assert.IsType<PyTuple>(Result(MarshalCodec.Decode(reply.Payload)));
+        Assert.Equal(new PyInt(systemId), local.Items[0]);
+        Assert.Equal(new PyInt(FwFactions.AmarrEmpire), FwGet(FwFields(local.Items[1]), "occupierID"));
+    }
+
     [Fact]
     public async Task Faction_warfare_warzone_calls_use_real_host_wire_shapes_and_sde_adjacency_values()
     {
@@ -44,9 +93,14 @@ public partial class HostServerTests
                 [FwFactions.MinmatarRepublic] = 30_002_055,
             }));
 
+        ClientSession? hostSession = null;
         Start(
             configure: registry => registry.Register(service),
-            sessionOpened: session => session.Set("solarsystemid2", new PyInt(amarrFrontline)));
+            sessionOpened: session =>
+            {
+                hostSession = session;
+                session.Set("solarsystemid2", new PyInt(amarrFrontline));
+            });
         var front = await Handshaken(await ConnectAsync());
         var open = Open();
         await front.SendAsync(open);
@@ -82,6 +136,11 @@ public partial class HostServerTests
         var local = Assert.IsType<PyTuple>(await Call("GetLocalOccupationState"));
         Assert.Equal(new PyInt(amarrFrontline), local.Items[0]);
         Assert.Equal("FL", T(FwGet(FwFields(local.Items[1]), "adjacencyState")));
+
+        hostSession!.Set("solarsystemid2", new PyInt(30_000_146));
+        var outsideWarzone = Assert.IsType<PyTuple>(await Call("GetLocalOccupationState"));
+        Assert.Equal(new PyInt(30_000_146), outsideWarzone.Items[0]);
+        Assert.Same(PyNone.Instance, outsideWarzone.Items[1]);
     }
 
     private static PyDict FwFields(PyDict states, long systemId) =>

@@ -76,7 +76,10 @@ public sealed class MoonExtractionStartHostTests
                     return route?.MoonAccessAllowed == true;
                 });
             var sink = new Sink();
-            route = new Route(schema, source, structures, store, new MoonExtractionsRpcService(mutationBackend: authority.CallAsync), sink, scheduler, clock);
+            route = new Route(schema, source, structures, store, new MoonExtractionsRpcService(
+                readState: async () => (JsonObject?)await store.ReadLegacyAsync(),
+                mutationBackend: authority.CallAsync,
+                readAccess: authority.ValidateReadAccessAsync), sink, scheduler, clock);
             return route;
         }
 
@@ -335,6 +338,54 @@ public sealed class MoonExtractionStartHostTests
 
         Assert.Equal(Field(started, "extractionID"), Field(pair.Items[0], "extractionID"));
         Assert.Equal(new PyInt(1), pair.Items[1]);
+    }
+
+    [PgFact]
+    public async Task Moon_reads_reject_other_corporations_and_uncontrolled_structures()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.RefineryAsync();
+        await route.RefineryAsync(structure: Structure + 1, owner: OtherCorporation);
+        await route.Moon.CallAsync(route.Start());
+
+        var own = Assert.IsType<PyTuple>(await route.Moon.CallAsync(new ServiceCall
+        {
+            Method = "GetExtractionAndEventIDFromStructureID",
+            Args = [],
+            Session = route.Session,
+        }));
+        Assert.IsType<PyObject>(own.Items[0]);
+
+        Assert.Equal("StructureDefenseDenied", Assert.IsType<MachoWrappedException>(await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(new ServiceCall
+            {
+                Method = "GetMoonResourcesForStructure",
+                Args = [new PyLong(Structure + 1)],
+                Session = route.Session,
+            }).AsTask())).Error.UserErrorMessage);
+
+        Assert.Equal("Station Manager role is required.", Notice(await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(new ServiceCall
+            {
+                Method = "GetExtractionsForCorp",
+                Args = [new PyLong(OtherCorporation)],
+                Session = route.Session,
+            }).AsTask())));
+
+        route.Session.Set("corprole", new PyLong(2048));
+        Assert.Single(Assert.IsType<PyList>(await route.Moon.CallAsync(new ServiceCall
+        {
+            Method = "GetExtractionsForCorp",
+            Args = [],
+            Session = route.Session,
+        })).Items);
+        Assert.Equal("Station Manager role is required.", Notice(await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(new ServiceCall
+            {
+                Method = "GetExtractionsForCorp",
+                Args = [new PyLong(OtherCorporation)],
+                Session = route.Session,
+            }).AsTask())));
     }
 
     private static ServiceCall Mutation(string method, ClientSession session) => new()

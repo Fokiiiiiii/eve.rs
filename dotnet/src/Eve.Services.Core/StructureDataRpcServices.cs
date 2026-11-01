@@ -16,13 +16,16 @@ public sealed class MoonExtractionsRpcService : IService
     private const long DefaultFractureDelaySeconds = 10800;
     private readonly Func<Task<JsonObject?>> _readState;
     private readonly Func<ServiceCall, ValueTask<PyValue>>? _mutationBackend;
+    private readonly Func<ServiceCall, ValueTask>? _readAccess;
 
     public MoonExtractionsRpcService(
         Func<Task<JsonObject?>>? readState = null,
-        Func<ServiceCall, ValueTask<PyValue>>? mutationBackend = null)
+        Func<ServiceCall, ValueTask<PyValue>>? mutationBackend = null,
+        Func<ServiceCall, ValueTask>? readAccess = null)
     {
         _readState = readState ?? (() => Task.FromResult<JsonObject?>(null));
         _mutationBackend = mutationBackend;
+        _readAccess = readAccess;
     }
 
     public string Name => "moonExtractions";
@@ -48,6 +51,8 @@ public sealed class MoonExtractionsRpcService : IService
             return call.Method == "StartNewExtraction" ? result : PyNone.Instance;
         }
 
+        if (_readAccess is not null)
+            await _readAccess(call).ConfigureAwait(false);
         var state = await _readState().ConfigureAwait(false) ?? new JsonObject();
         return call.Method switch
         {

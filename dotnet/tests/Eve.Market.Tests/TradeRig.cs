@@ -15,12 +15,12 @@ namespace Eve.Market.Tests;
 internal sealed class TradeRig : IAsyncDisposable
 {
     private readonly string[] _schemas;
-    private TradeRig(NpgsqlDataSource source,StationCatalog stations,MarketTopology topology)
+    private TradeRig(NpgsqlDataSource source,StationCatalog stations,MarketTopology topology,long? stationId)
     {
         var id = Guid.NewGuid().ToString("N")[..12];
         _schemas=["mk_"+id,"mc_"+id,"mw_"+id,"mi_"+id,"ms_"+id,"cp_"+id,"sc_"+id];
         Source=source; Stations=stations; Topology=topology;
-        Station=stations.All.First();
+        Station=stationId is { } stationKey ? stations.Get(stationKey) ?? throw new InvalidOperationException($"Station {stationKey} is missing from the SDE") : stations.All.First();
         Characters=new(source,_schemas[1]); WalletStore=new(source,_schemas[2]); Wallets=new(source,_schemas[2]);
         Items=new(source,_schemas[3]); Skills=new(source,_schemas[4]);
         Corporations=new(source,Characters,WalletStore,Wallets,Skills,() => Now,_schemas[5]);
@@ -47,6 +47,7 @@ internal sealed class TradeRig : IAsyncDisposable
     /// <summary>What the expiry announced, in order (the notifications the host would send to the sessions).</summary>
     public List<MarketReceipt> Announcements { get; } = [];
     public string MarketSchema => _schemas[0];
+    public string CharacterSchema => _schemas[1];
     public string WalletSchema => _schemas[2];
     public string ItemSchema => _schemas[3];
     /// <summary>The reconciliation the expiry job runs (M8), over this rig's schemas.</summary>
@@ -72,11 +73,11 @@ internal sealed class TradeRig : IAsyncDisposable
         Expiry=NewExpiry();
         await Expiry.StartAsync();
     }
-    public static async Task<TradeRig> Create()
+    public static async Task<TradeRig> Create(long? stationId = null)
     {
         var source=NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde=new SdeReader(source);
-        var rig=new TradeRig(source,await StationCatalog.LoadAsync(sde),await MarketTopology.LoadAsync(sde));
+        var rig=new TradeRig(source,await StationCatalog.LoadAsync(sde),await MarketTopology.LoadAsync(sde),stationId);
         await MarketStore.MigrateAsync(source,rig._schemas[0]);
         await PgCharacterStore.MigrateAsync(source,rig._schemas[1]);
         await PgWalletStore.MigrateAsync(source,rig._schemas[2]);

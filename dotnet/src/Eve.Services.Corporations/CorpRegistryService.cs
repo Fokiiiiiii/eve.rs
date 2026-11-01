@@ -2155,8 +2155,8 @@ public sealed partial class CorpRecruitmentProxyService(
             OptionalNumber(call.Arg(1),ad.TypeMask),OptionalNumber(call.Arg(2),ad.LangMask),
             call.Arg(3) is PyNone ? ad.Description : Text(call.Arg(3),MaxDescriptionLength),
             call.Arg(5) is PyNone ? ad.Title : Text(call.Arg(5),MaxTitleLength),
-            OptionalNumber(call.Arg(7),ad.HourMask1),OptionalNumber(call.Arg(8),ad.MinSP),
-            OptionalNumber(call.Arg(9),ad.OtherMask),addedDays,nowFiletime,
+            OptionalNumber(call.Arg(7),ad.HourMask1),OptionalNumber(call.Kwarg("minSP") ?? call.Arg(8),ad.MinSP),
+            OptionalNumber(call.Kwarg("otherMask") ?? call.Arg(9),ad.OtherMask),addedDays,nowFiletime,
             call.Arg(4) is PyNone ? ad.Recruiters : RecruiterIds(call.Arg(4)),call.Cancellation);
         if (changed)
             CorporationNotificationAdapter.RecruitmentAdChanged(sessions,call);

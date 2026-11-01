@@ -30,6 +30,7 @@ Changed:
 - `dotnet/src/Eve.Characters/Migrations/0016_character_structure_location.sql`
 - `dotnet/src/Eve.Services.CharacterSelect/CharUnboundMgrService.cs`
 - `dotnet/tests/Eve.Host.Tests/JumpCloneSettlementHostWireTests.cs`
+- `dotnet/tests/Eve.Characters.Tests/StoreTests.cs`
 
 The registered Host regression exercises the client confirmation error and retry, jumping from a station to a structure clone, the ISK fee, the active session's structure fields, the replacement clone stored at the origin, persisted location, and Host restart plus character reselection. The new assertion failed when the former structure-rejection behavior was temporarily restored, then passed after that rejection was removed.
 
@@ -39,9 +40,11 @@ Checks run on the local PostgreSQL lane `eve_p3`:
 - Host clone settlement, character-selection and character-host tests: 23 passed, 0 failed, 0 skipped.
 - Eve.Services.Core clone service/ship-install tests: 7 passed, 0 failed, 0 skipped.
 - Eve.Characters JumpCloneStoreTests: 5 passed, 0 failed, 0 skipped.
+- Migration upgrade plus JumpCloneStoreTests: 6 passed, 0 failed, 0 skipped. The first push CI run found that `StoreTests.Home_station_cooldown_migration_preserves_existing_rows` expected the pre-0016 migration list; updated the expected list to include `0016_character_structure_location` and reproduced the fix locally on `eve_p3`.
+- Eve.Characters.Tests build after the migration assertion fix: passed, 0 warnings and 0 errors.
 - `git diff --check`: passed.
 
-The wrong Host test filter attempt and the deliberate before-fix failure are not counted as passes. No graphical-client session or Actions run has been performed.
+The wrong Host test filter attempt and the deliberate before-fix failure are not counted as passes. Push CI run 1375 exposed the migration expectation mismatch; commit `43ece20c` added the missing migration to the expected list. The exact migration test plus JumpCloneStoreTests passed locally (6 passed, 0 skipped), push CI run 1377 passed with no failed jobs, and the selected Host/Characters Agent Test run passed. No graphical-client session was performed.
 
 ## Other area records and remaining verification
 

@@ -108,6 +108,35 @@ public sealed partial class CharacterShips(
     /// Moves an item the character owns to the ship it flies or to the hangar of the station the ship is in: fitting it (in the slot asked
     /// for, or the first that suits), taking it out of its slot, or putting it in the cargo hold.
     /// </summary>
+    public async Task<ShipOutcome> SplitStackAsync(
+        long characterId, long itemId, long stationId, long ownerId, long quantity, CancellationToken cancellationToken = default)
+    {
+        if (quantity <= 0) return new NothingHappened();
+
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+
+        var character = await characters.GetAsync(characterId, cancellationToken);
+        var item = await items.LockAndGetAsync(connection, transaction, itemId, cancellationToken);
+        if (character?.StationId != stationId || item is null || item.OwnerId != ownerId
+            || item.Singleton || quantity >= item.Quantity
+            || (item.LocationId != stationId
+                && !await IsOwnedDockedInventoryAsync(item.LocationId, ownerId, stationId, cancellationToken))
+            || (item.LocationId == stationId && item.Flag != ItemFlags.Hangar && !ItemFlags.IsCorporationHangar(item.Flag)))
+            return new NothingHappened();
+
+        var created = await items.MoveStackAsync(
+            connection, transaction, item, quantity, ownerId, item.LocationId, item.Flag, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        return new ShipChanged(created.Id, 0, [], [],
+        [
+            new(item with { Quantity = item.Quantity - quantity }, item.LocationId, item.Flag, item.Quantity),
+            new(created, 0, created.Flag, 0, item.OwnerId)
+        ]);
+    }
+
     public async Task<ShipOutcome> MoveAsync(
         long characterId, long itemId, long sourceLocationId, long destinationLocationId, int? flag, long? quantity, CancellationToken cancellationToken = default, long? sourceOwnerId = null, long? destinationOwnerId = null)
     {

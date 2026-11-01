@@ -128,7 +128,8 @@ public class Arc29StepsTests
             },
             () => now,
             (characterId, agent, atLocation, ct) => new ValueTask(runtime.OnConversationAsync(characterId, agent.AgentId,
-                agent.IsInSpace ? host.IsPilotInSystem(characterId, (int)agent.SolarSystemId!.Value) : atLocation, ct))));
+                agent.IsInSpace ? host.IsPilotInSystem(characterId, (int)agent.SolarSystemId!.Value) : atLocation, ct)),
+            OnMissionTurnIn: (characterId, agentId, ct) => new ValueTask<bool>(runtime.OnMissionTurnInAsync(characterId, agentId, ct))));
 
         now = now.AddMinutes(1);
         await machine.DoActionAsync(Pilot, agents[Alitura], new PyInt(AgentDialogueToken.Request), true, default);
@@ -139,6 +140,9 @@ public class Arc29StepsTests
         Assert.Equal((Pilot, (int)ArnonSystem, 3509L), Assert.Single(host.Starts));
         now = now.AddMinutes(1);
         await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.3509", 1, default);
+        Assert.Empty(host.Credits);
+        Assert.Equal(AgentMissionState.Accepted, (await store.ReadAsync(Pilot, Alitura))!.State);
+        await machine.DoActionAsync(Pilot, agents[Alitura], new PyInt(AgentDialogueToken.CompleteReady), true, default);
         Assert.Equal(100000, Assert.Single(host.Credits).Amount);
         Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Alitura))!.State);
 

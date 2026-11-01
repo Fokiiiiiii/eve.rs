@@ -31,6 +31,7 @@ public class AgentDialogueTests
         public DateTimeOffset Now { get; set; } = Start;
         public AgentStandings Standings { get; set; } = new(0, 0, 0);
         public AgentMissionContent? Pool { get; set; }
+        public int TurnIns { get; private set; }
         public AgentMissionStore Store { get; }
 
         private World(NpgsqlDataSource source)
@@ -56,7 +57,13 @@ public class AgentDialogueTests
             (_, _, _) => ValueTask.FromResult(0),
             _ => Faction,
             (_, _, _) => ValueTask.FromResult(Pool),
-            () => Now);
+            () => Now,
+            OnMissionTurnIn: async (characterId, agentId, cancellationToken) =>
+            {
+                TurnIns++;
+                return await Store.CompleteAsync(characterId, agentId, Now,
+                    $"dialogue-turnin:{characterId}:{agentId}:{Now.ToUnixTimeMilliseconds()}", cancellationToken) is not null;
+            });
 
         public async ValueTask DisposeAsync()
         {
@@ -138,6 +145,28 @@ public class AgentDialogueTests
         Assert.Equal(AgentMissionState.Quit, (await world.Store.ReadAsync(Pilot, Agent))!.State);
         var quitInfo = quit.LastActionInfo;
         Assert.Equal(PyBool.True, quitInfo.Entries.Single(entry => entry.Key is PyStr { Value: "missionQuit" }).Value);
+    }
+
+    [AgentsPgFact]
+    public async Task A_completed_objective_offers_turn_in_only_at_the_issuing_agent()
+    {
+        await using var world = await World.CreateAsync();
+        await world.MigrateAsync();
+        var machine = Machine(world);
+        await world.Store.OfferAsync(Pilot, Agent, Courier, Start, "offer:turnin");
+        await world.Store.AcceptAsync(Pilot, Agent, Start, "accept:turnin");
+        await world.Store.MarkObjectiveCompletedAsync(Pilot, Agent, Start, "objective:turnin");
+
+        var away = await machine.DoActionAsync(Pilot, Basic(), PyNone.Instance, false, default);
+        Assert.Empty(away.Actions);
+        Assert.Equal(0, world.TurnIns);
+
+        var atAgent = await machine.DoActionAsync(Pilot, Basic(), PyNone.Instance, true, default);
+        Assert.Contains((AgentDialogueToken.CompleteReady, AgentDialogueButton.Complete), atAgent.Actions);
+        var turnedIn = await machine.DoActionAsync(Pilot, Basic(), Button(AgentDialogueToken.CompleteReady), true, default);
+        Assert.Equal(1, world.TurnIns);
+        Assert.Equal(AgentMissionState.Completed, (await world.Store.ReadAsync(Pilot, Agent))!.State);
+        Assert.Equal(PyBool.True, turnedIn.LastActionInfo.Entries.Single(entry => entry.Key is PyStr { Value: "missionCompleted" }).Value);
     }
 
     [AgentsPgFact]

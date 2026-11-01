@@ -67,7 +67,9 @@ public sealed class AgentMissionDispatchTests
                 (_, _, _) => ValueTask.FromResult(0),
                 _ => Faction,
                 (_, _, _) => ValueTask.FromResult<AgentMissionContent?>(new AgentMissionContent(5001, 9100, "", "courier", false)),
-                () => Start);
+                () => Start,
+                OnMissionTurnIn: async (characterId, agentId, ct) =>
+                    await store.CompleteAsync(characterId, agentId, Start, $"dispatch-turnin:{characterId}:{agentId}", ct) is not null);
             var agent = AgentData();
             var service = new AgentMissionService(
                 (_, _) => ValueTask.FromResult<System.Text.Json.Nodes.JsonObject?>(null),
@@ -112,15 +114,22 @@ public sealed class AgentMissionDispatchTests
             Assert.Equal(AgentDialogueButton.Quit, ((PyInt)quitAction.Items[1]).Value);
             Assert.Equal(AgentMissionState.Accepted, (await new AgentMissionStore(source, schema).ReadAsync(Pilot, Agent))!.State);
 
-            gated.RejectedMethod = "DoAction";
+            await store.MarkObjectiveCompletedAsync(Pilot, Agent, Start, "dispatch-objective");
             Assert.True(await dispatcher.DispatchAsync(Request(5, null, new PyStr(oid!), "DoAction", PyNone.Instance), session));
+            Assert.Contains(DialogueActions(sink.Packets[^1]), action => action.Items[0] is PyInt id && id.Value == AgentDialogueToken.CompleteReady);
+            Assert.True(await dispatcher.DispatchAsync(Request(6, null, new PyStr(oid!), "DoAction",
+                new PyInt(AgentDialogueToken.CompleteReady)), session));
+            Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Agent))!.State);
+
+            gated.RejectedMethod = "DoAction";
+            Assert.True(await dispatcher.DispatchAsync(Request(7, null, new PyStr(oid!), "DoAction", PyNone.Instance), session));
             Assert.Equal("exceptions.AttributeError", ErrorClass(sink.Packets[^1]));
 
             gated.RejectedMethod = null;
-            Assert.True(await dispatcher.DispatchAsync(Request(6, null, new PyStr(oid!), "NoSuchAgentMethod"), session));
+            Assert.True(await dispatcher.DispatchAsync(Request(8, null, new PyStr(oid!), "NoSuchAgentMethod"), session));
             Assert.Equal("exceptions.AttributeError", ErrorClass(sink.Packets[^1]));
 
-            Assert.True(await dispatcher.DispatchAsync(Request(7, "agentMgr", new PyInt(1), "MachoBindObject",
+            Assert.True(await dispatcher.DispatchAsync(Request(9, "agentMgr", new PyInt(1), "MachoBindObject",
                 new PyTuple([new PyInt(3008999)]), PyNone.Instance), session));
             Assert.Equal(MachoErrors.UserErrorClass, ErrorClass(sink.Packets[^1]));
         }

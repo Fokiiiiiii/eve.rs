@@ -73,6 +73,7 @@ public sealed class WormholeJumpServiceTests
         var session = await rig.SessionAsync(character);
         var oid = await rig.BindShipAsync(session);
         await rig.ShipCallAsync(session, "Undock", oid, new PyLong(session.GetInt("shipid")!.Value), PyBool.False);
+        rig.Space.Transitions.EndSessionChange((ulong)session.SessionId);
         await rig.BindBeyonceAsync(session);
         return (session, character, oid);
     }

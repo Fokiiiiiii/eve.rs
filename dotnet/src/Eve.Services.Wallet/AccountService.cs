@@ -101,12 +101,10 @@ public sealed partial class AccountService(PgWalletStore wallets, Eve.Corporatio
                 : monthStart.AddMonths(1).ToUnixTimeMilliseconds();
         }
         var recentAfter = DateTimeOffset.UtcNow.AddDays(-30).ToUnixTimeMilliseconds();
-        var limit = isCorpWallet ? 1000 : 100;
         var entries = await walletTransactions.JournalForAccountAsync(ownerId, accountKey,
-            limit: filterByMonth ? null : limit, cancellationToken: call.Cancellation,
-            fromTimeMs: monthStartMs, untilTimeMs: nextMonthStartMs);
-        var filteredEntries = filterByMonth ? entries : entries.Where(entry => entry.TimeMs >= recentAfter);
-        var rows = filteredEntries
+            limit: null, cancellationToken: call.Cancellation,
+            fromTimeMs: filterByMonth ? monthStartMs : recentAfter, untilTimeMs: nextMonthStartMs);
+        var rows = entries
             .Select(WalletTransactionInfo)
             .ToArray();
         return new PyList(rows);

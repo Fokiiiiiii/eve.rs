@@ -6,7 +6,7 @@ impl Scene {
     pub(super) fn warp_to(&mut self, session: SessionId, target_id: i64, range: f64, now: i64) -> Vec<Out> {
         let code = Command::WarpTo { target_id, range }.code();
         let refused = |reason| vec![Out::Refused { session, command: code, reason }];
-        if !range.is_finite() {
+        if !range.is_finite() || range < 0.0 {
             return refused("BAD_RANGE");
         }
         let Some(pilot) = self.pilots.get(&session) else { return refused("NO_SHIP_IN_SPACE") };
@@ -26,7 +26,7 @@ impl Scene {
     ) -> Vec<Out> {
         let code = Command::WarpToPoint { destination, range }.code();
         let refused = |reason| vec![Out::Refused { session, command: code, reason }];
-        if !finite_vector(destination) || !range.is_finite() {
+        if !finite_vector(destination) || !range.is_finite() || range < 0.0 {
             return refused("BAD_WARP_POINT");
         }
         self.begin_warp(session, code, None, destination, range.max(0.0), now)
@@ -85,17 +85,21 @@ impl Scene {
             return refused("WARP_SCRAMBLED");
         }
         let ship = &pilot.ship;
-        let toward = motion::unit(Vec3::new(
-            raw.x - ship.position.x,
-            raw.y - ship.position.y,
-            raw.z - ship.position.z,
-        ))
-        .unwrap_or(ship.direction);
+        let to_destination =
+            Vec3::new(raw.x - ship.position.x, raw.y - ship.position.y, raw.z - ship.position.z);
+        let distance_to_destination = to_destination.x.hypot(to_destination.y).hypot(to_destination.z);
+        if !distance_to_destination.is_finite() || stop < 0.0 || stop > distance_to_destination {
+            return refused("BAD_WARP_POINT");
+        }
+        let toward = motion::unit(to_destination).unwrap_or(ship.direction);
         let end = Vec3::new(raw.x - toward.x * stop, raw.y - toward.y * stop, raw.z - toward.z * stop);
         let total = ((end.x - ship.position.x).powi(2)
             + (end.y - ship.position.y).powi(2)
             + (end.z - ship.position.z).powi(2))
         .sqrt();
+        if !finite_vector(end) || !total.is_finite() {
+            return refused("BAD_WARP_POINT");
+        }
         if total < minimum {
             return refused("WARP_DISTANCE_TOO_CLOSE");
         }

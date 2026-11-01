@@ -2055,6 +2055,12 @@ public class SpaceServiceTests
         }
         Assert.DoesNotContain(Events.Of(session), e => e.Name == "OnInvulnCancelled"); // a warp that was refused costs the pilot nothing
 
+        var beforeNegativeRange = rig.Sim.Heard.Count;
+        var negativeRange = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.BeyonceCallWithAsync(
+            session, "CmdWarpToStuff", oid, [new PyStr("item"), new PyInt(40491233)], ("minRange", new PyInt(-1))));
+        Assert.Equal("CustomNotify", negativeRange.Error.UserErrorMessage);
+        Assert.Equal(beforeNegativeRange, rig.Sim.Heard.Count);
+
         foreach (var unsupportedSubject in new[] { "operationDungeon", "epinstance", "externalDungeon", "moonMiningPoint" })
         {
             var refused = await Assert.ThrowsAsync<MachoWrappedException>(() =>

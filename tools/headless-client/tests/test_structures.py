@@ -297,14 +297,19 @@ def _docked_pilot(client, structure: int = STRUCTURE) -> tuple[int, int]:
     seen = timed_events(client, 30.0, until=lambda events: _structure_slim(events, structure) is not None)
     assert _structure_slim(seen, structure) is not None, f"the structure {structure} is not in the ballpark of system {SYSTEM} within 30 s"
     deadline = time.time() + 120
+    waited_for_session_change = False
     while True:
         try:
             client.call("structureDocking", "Dock", structure, int(ship_id))
             break
         except p.MachoError as failure:
-
-            if _refusal(failure)[0] != "DockingApproach" or time.time() > deadline:
-                pytest.fail(f"the docking was refused: the server answered {_refusal(failure)[0]}: {describe(failure.payload)}")
+            label = _refusal(failure)[0]
+            if label == "DockingRequestDenied" and not waited_for_session_change:
+                waited_for_session_change = True
+                timed_events(client, 11.0)
+                continue
+            if label != "DockingApproach" or time.time() > deadline:
+                pytest.fail(f"the docking was refused: the server answered {label}: {describe(failure.payload)}")
         timed_events(client, 5.0)
     finished = timed_events(client, 60.0, until=lambda events: _named(events, "OnDockingFinished") != [])
     assert _named(finished, "OnDockingFinished"), "the docking was not finished within 60 s"

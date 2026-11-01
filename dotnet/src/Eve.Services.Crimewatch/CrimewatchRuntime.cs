@@ -294,7 +294,7 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
         await store.UpdateAsync(request.Attacker, state =>
             (outcome = Aggression.Assist(state, recipient, request.Where, request.SolarSystemId, facts, now)).Attacker,
             now, cancellationToken);
-        var result = new AggressionResult(request, outcome!);
+        var result = new AggressionResult(request, outcome!, PolicyAction.RemoteAssistance);
         try
         {
             if (result.Outcome.IsCriminalOffense)

@@ -301,8 +301,7 @@ public sealed partial class SpaceSessions
                 HasWeaponsTimer: state.HasWeaponsTimer(now),
                 HasCriminalTimer: state.IsCriminal(now),
                 ActorIsCapsule: pilot.TypeId == CharacterShips.CapsuleTypeId,
-                HasSessionChangeTimer: action is not (PolicyAction.Dock or PolicyAction.GateJump)
-                    && _transitions.SessionChangeActive((ulong)pilot.Session.SessionId))));
+                HasSessionChangeTimer: _transitions.SessionChangeActive((ulong)pilot.Session.SessionId))));
     }
 
     // ── jumping ──────────────────────────────────────────────────────────────

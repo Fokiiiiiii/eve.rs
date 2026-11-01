@@ -182,6 +182,11 @@ public class SpaceServiceTests
         return (rig, character, await rig.SessionAsync(character));
     }
 
+    private static Eve.Scheduler.LocalTimers CooldownElapsedTimers() => new(delay: (duration, token) =>
+        duration == TimeSpan.FromSeconds(10)
+            ? Task.CompletedTask
+            : new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task.WaitAsync(token));
+
     [PgFact]
     public async Task Safe_logoff_closes_the_space_session_after_its_timer()
     {
@@ -851,7 +856,8 @@ public class SpaceServiceTests
     [PgFact]
     public async Task A_pilot_that_docks_is_reported_to_the_mission_runtime_with_the_station_it_docked_at()
     {
-        var (rig, character, session) = await DockedAsync();
+        using var timers = CooldownElapsedTimers();
+        var (rig, character, session) = await DockedAsync(localTimers: timers);
         await using var _ = rig;
         await InSpaceAsync(rig, session);
         var docked = new List<(long Character, long Station)>();
@@ -1876,7 +1882,8 @@ public class SpaceServiceTests
     [PgFact]
     public async Task A_dock_that_a_running_module_prevents_is_said_in_the_reference_words()
     {
-        var (rig, character, session) = await DockedAsync();
+        using var timers = CooldownElapsedTimers();
+        var (rig, character, session) = await DockedAsync(localTimers: timers);
         await using var _ = rig;
         await ShipAsync(rig, character);
         await InSpaceAsync(rig, session);
@@ -2365,6 +2372,42 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task Docking_is_refused_during_session_change_timer()
+    {
+        using var timers = new Eve.Scheduler.LocalTimers(delay: (duration, token) =>
+            duration == TimeSpan.FromSeconds(10)
+                ? new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task.WaitAsync(token)
+                : Task.CompletedTask);
+        var (rig, _, session) = await DockedAsync(localTimers: timers);
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        var before = rig.Sim.Heard.Count;
+
+        await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            rig.Space.DockAsync(session, Rig.Station, CancellationToken.None));
+
+        Assert.Equal(before, rig.Sim.Heard.Count);
+    }
+
+    [PgFact]
+    public async Task Gate_jump_is_refused_during_session_change_timer()
+    {
+        using var timers = new Eve.Scheduler.LocalTimers(delay: (duration, token) =>
+            duration == TimeSpan.FromSeconds(10)
+                ? new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task.WaitAsync(token)
+                : Task.CompletedTask);
+        var (rig, character, session) = await DockedAsync(localTimers: timers);
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        var before = rig.Sim.Heard.Count;
+
+        await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            rig.Space.JumpAsync(session, Gate, NextGate, character.ShipId, null, CancellationToken.None));
+
+        Assert.Equal(before, rig.Sim.Heard.Count);
+    }
+
+    [PgFact]
     public async Task Concord_response_spawns_the_authored_fleet_and_enforces_ship_loss_after_timer()
     {
         var waits = new List<(TimeSpan After, TaskCompletionSource Done)>();
@@ -2512,7 +2555,8 @@ public class SpaceServiceTests
     [PgFact]
     public async Task A_jump_is_given_to_the_simulation_the_client_is_told_the_queue_and_returns_the_bound_object_and_cooldown()
     {
-        var (rig, character, session) = await DockedAsync();
+        using var timers = CooldownElapsedTimers();
+        var (rig, character, session) = await DockedAsync(localTimers: timers);
         await using var _ = rig;
         await InSpaceAsync(rig, session);
         var oid = await rig.BindBeyonceAsync(session);
@@ -2546,7 +2590,8 @@ public class SpaceServiceTests
     public async Task A_gate_whose_client_list_leaves_out_the_pilot_ship_group_refuses_the_jump_before_the_simulation_hears_it()
     {
         // the pilot flies a frigate (group 25, the Cockroach); the gate's list names only group 1022 (the Zarzakh rule, subcapitals only)
-        var (rig, character, session) = await DockedAsync();
+        using var timers = CooldownElapsedTimers();
+        var (rig, character, session) = await DockedAsync(localTimers: timers);
         await using var _ = rig;
         await InSpaceAsync(rig, session);
         var oid = await rig.BindBeyonceAsync(session);
@@ -2571,7 +2616,8 @@ public class SpaceServiceTests
     [PgFact]
     public async Task A_gate_toll_is_charged_once_when_the_jump_is_taken_and_refused_when_the_wallet_cannot_pay_or_the_simulation_refuses()
     {
-        var (rig, character, session) = await DockedAsync();
+        using var timers = CooldownElapsedTimers();
+        var (rig, character, session) = await DockedAsync(localTimers: timers);
         await using var _ = rig;
         await InSpaceAsync(rig, session);
         var oid = await rig.BindBeyonceAsync(session);
@@ -2615,7 +2661,8 @@ public class SpaceServiceTests
     [PgFact]
     public async Task A_gate_arrival_inspects_the_ship_in_the_destination_system_only_after_the_jump_succeeds()
     {
-        var (rig, character, session) = await DockedAsync();
+        using var timers = CooldownElapsedTimers();
+        var (rig, character, session) = await DockedAsync(localTimers: timers);
         await using var _ = rig;
         await InSpaceAsync(rig, session);
         var oid = await rig.BindBeyonceAsync(session);
@@ -2638,7 +2685,8 @@ public class SpaceServiceTests
     [PgFact]
     public async Task A_jump_that_cannot_be_done_is_the_message_the_reference_tells()
     {
-        var (rig, character, session) = await DockedAsync();
+        using var timers = CooldownElapsedTimers();
+        var (rig, character, session) = await DockedAsync(localTimers: timers);
         await using var _ = rig;
         await InSpaceAsync(rig, session);
         var oid = await rig.BindBeyonceAsync(session);
@@ -2691,7 +2739,8 @@ public class SpaceServiceTests
     [PgFact]
     public async Task When_the_simulation_says_the_ship_has_jumped_the_client_is_told_in_the_reference_order_and_the_ship_and_the_character_are_in_the_other_system()
     {
-        var (rig, character, session) = await DockedAsync();
+        using var timers = CooldownElapsedTimers();
+        var (rig, character, session) = await DockedAsync(localTimers: timers);
         await using var _ = rig;
         var from = (int)session.GetInt("solarsystemid2")!.Value;
         await InSpaceAsync(rig, session);
@@ -2949,7 +2998,8 @@ public class SpaceServiceTests
     [PgFact]
     public async Task A_dock_returns_nothing_for_an_accepted_command_and_when_it_is_refused()
     {
-        var (rig, _, session) = await DockedAsync();
+        using var timers = CooldownElapsedTimers();
+        var (rig, _, session) = await DockedAsync(localTimers: timers);
         await using var _ = rig;
         await InSpaceAsync(rig, session);
         var oid = await rig.BindBeyonceAsync(session);
@@ -2966,7 +3016,8 @@ public class SpaceServiceTests
     [PgFact]
     public async Task A_dock_from_beyond_the_range_is_answered_with_the_reference_user_error_and_the_distance_rounded_half_up()
     {
-        var (rig, _, session) = await DockedAsync();
+        using var timers = CooldownElapsedTimers();
+        var (rig, _, session) = await DockedAsync(localTimers: timers);
         await using var _ = rig;
         await InSpaceAsync(rig, session);
         var oid = await rig.BindBeyonceAsync(session);

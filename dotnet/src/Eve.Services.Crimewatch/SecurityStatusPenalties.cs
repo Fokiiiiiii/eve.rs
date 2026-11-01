@@ -49,7 +49,8 @@ public sealed class SecurityStatusPenalties(
     /// <summary>A crime was committed: the penalty, if there is one to pay.</summary>
     public async Task OnAggressionAsync(AggressionResult result)
     {
-        if (!result.Outcome.IsCriminalOffense)
+        if (result.Action != PolicyAction.Attack ||
+            result.Outcome.Reason is not (AggressionReason.Criminal or AggressionReason.Suspect))
         {
             return;
         }

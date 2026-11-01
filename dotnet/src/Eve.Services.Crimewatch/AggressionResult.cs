@@ -6,4 +6,7 @@ using Eve.Universe;
 
 namespace Eve.Services.Crimewatch;
 
-public sealed record AggressionResult(AggressionRequest Request, AggressionOutcome Outcome);
+public sealed record AggressionResult(
+    AggressionRequest Request,
+    AggressionOutcome Outcome,
+    PolicyAction Action = PolicyAction.Attack);

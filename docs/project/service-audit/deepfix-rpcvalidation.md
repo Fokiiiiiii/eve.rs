@@ -20,8 +20,9 @@ EveJS 261028.1 `/home/user/evejs-261028.1/src/server/src/services/ship/beyonceSe
 
 ## Verification
 
-- .NET build of `dotnet/tests/Eve.Services.Space.Tests/Eve.Services.Space.Tests.csproj`: passed, 0 warnings/errors.
-- Final related-class database run on `eve_p3` through `tools/dev/db-lock.sh`: `SpaceServiceTests`, `ScanProbeHostTests`, `IndustrialInvulnerabilityHostTests`, `StargateJumpWireTests`; 178 passed, 0 failed, 0 skipped. Focused test also passed separately, 1/1.
+- .NET build of `dotnet/tests/Eve.Services.Space.Tests/Eve.Services.Space.Tests.csproj`, including after merge: passed, 0 warnings/errors.
+- Pre-merge related-class database run on `eve_p3` through `tools/dev/db-lock.sh`: `SpaceServiceTests`, `ScanProbeHostTests`, `IndustrialInvulnerabilityHostTests`, `StargateJumpWireTests`; 178 passed, 0 failed, 0 skipped. After merge, those plus `CynoJumpHostTests`, `StructureDockingTests`, `StructureHangarTests`, `StructureUndockingTests`, and `TetherPolicyTests` passed: 225 passed, 0 failed, 0 skipped.
+- The merge-touched moon-extraction headless scenario passed against the live local stack: 1 passed. System Python reported unknown `timeout` and `timeout_method` pytest options because the optional pytest timeout plugin is absent.
 - Pre-fix failure was reproduced as described above. No graphical-client run was made.
 
 ## Remaining audit scope

@@ -25,6 +25,12 @@ EveJS 261028.1 `/home/user/evejs-261028.1/src/server/src/services/ship/beyonceSe
 - The merge-touched moon-extraction headless scenario passed against the live local stack: 1 passed. System Python reported unknown `timeout` and `timeout_method` pytest options because the optional pytest timeout plugin is absent.
 - Pre-fix failure was reproduced as described above. No graphical-client run was made.
 
+## Merge follow-up: docking test fixture
+
+The next origin/main merge changed the NPC station docking range to 500 m (`crates/eve-space/src/scene/mod.rs:83-88`), consistent with EVE University [Warp Mechanics](https://wiki.eveuniversity.org/Warp_Mechanics). The existing targeting test placed the docking pilot 1,000 m from the surface but still expected immediate acceptance. The first merged `cargo test -p eve-space dock` run caught this: `targeting::tests::a_ship_that_docks_is_lost_when_it_has_docked` received `Approaching` instead of `Accepted`. The fixture now places that ship 400 m from the surface (`crates/eve-space/src/targeting/tests.rs:585`); the test still verifies that completing the dock drops the target. The exact test and the dock-filtered set pass after this fixture correction.
+
+After merging origin/main at `a9fe2540`, `cargo +1.94.1 check -p eve-space`, `cargo +1.94.1 fmt --all -- --check`, and workspace clippy with `-D warnings` passed. The dock-filtered Rust tests passed (40 unit tests and 3 reference tests). `SpaceServiceTests` and `StructureUndockingTests` passed on `eve_p3` (155 passed, 0 failed, 0 skipped). At the time of this checkpoint, main CI Run 1389 at `a9fe2540` had a failed Rust tests job while the workflow was still in progress; its final failure summary is pending.
+
 ## Remaining audit scope
 
 This increment audits one core movement RPC. It does not complete hostile, malformed or out-of-order input coverage for every Host service or every first-day and daily player flow. Continue with undock/dock, target/combat and the other movement RPCs. Existing inventory/loot, wallet, wormhole and NPC handoffs document adjacent gameplay work but do not establish complete RPC-validation coverage.

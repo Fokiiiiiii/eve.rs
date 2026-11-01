@@ -198,6 +198,7 @@ def test_a_pilot_docks_at_the_structure_and_undocks_from_it():
         _, ship_id = _undocked_pilot(client)
         seen = _structure_ready_for_docking(client)
         assert _structure_slim(seen) is not None, f"the structure {STRUCTURE} is not in the ballpark"
+        time.sleep(10.0)
 
         deadline = time.monotonic() + 120.0
         while True:
@@ -306,10 +307,11 @@ def test_a_moon_extraction_started_from_space_is_refused_as_not_controlling():
         assert "You must be controlling this structure." in payload
 
 def _docked_pilot(client, structure: int = STRUCTURE) -> tuple[int, int]:
-    """A new pilot of the recorded race, undocked and then docked in a structure (the ship goes into its hangar): (character id, ship id)."""
+    """A new pilot of the recorded race, docked after the undock session timer (character id, ship id)."""
     character, ship_id = _undocked_pilot(client)
     seen = _structure_ready_for_docking(client, structure)
     assert _structure_slim(seen, structure) is not None, f"the structure {structure} is not in the ballpark of system {SYSTEM} within 30 s"
+    time.sleep(10.0)
     deadline = time.time() + 120
     waited_for_session_change = False
     while True:

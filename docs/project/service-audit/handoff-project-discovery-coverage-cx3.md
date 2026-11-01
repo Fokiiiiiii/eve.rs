@@ -29,3 +29,4 @@
 - `dotnet test dotnet/tests/Eve.Services.Core.Tests --filter 'FullyQualifiedName~ProjectDiscovery'` passed 9, skipped 0.
 - `dotnet test dotnet/tests/Eve.Characters.Tests --filter 'FullyQualifiedName~ProjectDiscovery'` passed 1, skipped 0.
 - The focused Host wire test passed 1, skipped 0. No graphical-client session was run.
+- Pushed as `3e3582eb`; focused `agent-test.yml` run 1212 and push-triggered `ci.yml` run 1366 both succeeded.

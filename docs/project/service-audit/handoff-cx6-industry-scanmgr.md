@@ -12,8 +12,16 @@ Client evidence from the full V24.01 source tree:
 
 Verification: Host test project build passed with zero warnings/errors. On eve_p6, the selected Host coverage passed (22 passed, zero failed, zero skipped); the PostgreSQL scan-probe selection passed (35 passed, zero failed, zero skipped). The eve_p6.sde foreign tables point to build 3396210 in eve_p3; test writes ran in eve_p6.
 
-## Remaining target rows
+## Completed scan manager rows
 
-Scan manager rows RPC-02222–RPC-02227 remain open for the next increment: GetSystemScanMgr and SignalTrackerRegister (the two P2 rows are the devtools caller of the same registration method).
+Rows RPC-02222–RPC-02227 are covered by the registered Host wire test ScanMgr_full_state_and_registration_include_the_current_signature_map_over_host_wire in dotnet/tests/Eve.Host.Tests/ScanMgrHostWireTests.cs. It obtains the bound scan manager, checks the four-map full-state shape and signature map, then checks SignalTrackerRegister's None reply and full-state/delta notification sequence. The two P2 rows are the devtools caller of the same registered method.
 
-The existing scan-manager deep check also records that static-site and structure maps in GetFullState have no authoritative Host source yet. Those methods are outside the open CSV rows above; retain that limitation in any broader scan-manager status.
+Client evidence from the whole V24.01 source tree:
+- eve/client/script/parklife/scanSvc.py:110-115 lazily obtains and caches the bound manager from GetSystemScanMgr. The same file calls RequestScans:192-197, DestroyProbe:264-265, ReconnectToLostProbes:268-278, RecoverProbes:323-340, QAOverrideProbeExpiry:347-353, SetActivityState:425 and :433, and QAScanSites:782-783.
+- eve/client/script/parklife/sensorSuiteService.py:164-178 calls SignalTrackerRegister on entering space; :501-528 unpacks the four full-state maps and :531 onward applies deltas; :717 and :721 make direct GetFullState calls.
+- eve/client/script/parklife/directionalScanSvc.py:46 calls ConeScan. eve/client/script/parklife/sensorSuiteService.py:531 onward consumes the registration notifications. eve/devtools/script/svc_slash.py:1560-1561 calls SignalTrackerRegister too. eve/client/script/explorationscanner/signalTracker.py:203, :223 and :251 calls GetScanTargetID.
+- Current EveJS reference src/server/src/services/exploration/scanMgrService.js:2334-2368 implements registration and full-state notifications.
+
+Verification: on eve_p6, Host coverage passed (22 passed, zero failed, zero skipped); scan-probe tests passed (35 passed, zero failed, zero skipped). The Host wire regression covers GetSystemScanMgr and SignalTrackerRegister. No graphical-client session was used.
+
+The existing scan-manager deep check records that static-site and structure maps in GetFullState have no authoritative Host source yet. The target CSV rows cover the implemented route and signature state behavior; authoritative population of those two maps remains a broader scan-manager gap.

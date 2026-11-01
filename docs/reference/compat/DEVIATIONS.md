@@ -5731,6 +5731,8 @@ The client groups items by source location in `eve/client/script/ui/reprocessing
 
 `corpRecProxy` recruitment list/search methods now refuse collections above 5,000 rows with `CORPORATION_RECRUITMENT_AD_LIMIT_EXCEEDED` instead of materializing and returning an unbounded result. The query reads at most one row beyond the supported result ceiling and never returns a partial successful list. `Corporation_recruitment_ad_enumeration_refuses_more_than_5000_rows` covers the store and search RPC.
 
+`corpRecProxy.UpdateRecruitmentAd` reads `minSP` and `otherMask` from keyword fields when present, retaining positional slots 8 and 9 as a fallback. V24 calls pass both as keywords in `eve/client/script/ui/services/corporation/base_corporation.py:641-642`; EveJS 261028.1 `server/src/services/corporation/corpRecProxyService.js:311-331` reads them only from `args`, while `server/src/services/baseService.js:69-101` passes `kwargs` separately. The client call shape therefore takes precedence; `CorpRecruitmentProxyHostWireTests.Recruitment_ads_read_update_and_delete_through_registered_host` verifies both keyword values survive the registered Host update and persisted follow-up read.
+
 
 `corpMgr.GetAggressionSettingsForCorps` now requires list, tuple, or dictionary input containing positive integer corporation IDs. Malformed shapes or entries receive `CORPMGR_BULK_ARGUMENT_INVALID` or `CORPMGR_CORPORATION_ID_INVALID` before reads; the 500 raw-entry ceiling remains. Valid dictionary keys and duplicate collapse remain supported. `CorporationProtocolTests.Corp_mgr_aggression_reads_refuse_more_than_500_corporations_before_storage_access` covers malformed shapes and IDs.
 

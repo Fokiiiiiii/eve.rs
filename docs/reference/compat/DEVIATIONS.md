@@ -1,5 +1,9 @@
 # Deviations from the reference server
 
+## Biomassing a player-corporation CEO (2026-11-01)
+
+The V24.01 client calls `PrepareCharacterForDelete(charID)` from `eve/client/script/ui/login/charSelection/characterSelection.py:861-868` and `DeleteCharacter(charID)` from `:835-859`. EVE University's [Accounts guide](https://wiki.eveuniversity.org/Accounts) requires a player-corporation CEO to resign or close the corporation before entering the biomass queue. EveJS 261028.1 (`server/src/services/character/characterDeletionRuntime.js:672-693, 716-799`) checks ownership/offline/timer but omits the CEO rule. eve.rs intentionally rejects queueing and finalization for the active CEO of a non-NPC corporation using persisted CorporationStore state; the second check also covers a character promoted during the 600-minute timer. A Host wire/database regression test covers refusal, promotion while queued, and the permitted non-CEO path.
+
 ## Station inventory stack splitting (2026-11-01)
 
 V24.01 `eve/client/script/ui/services/menuSvcExtras/invItemFunctions.py:385-403` calls the station InvBroker's `SplitStack(stationID, itemID, qty, ownerID)`, then invalidates the owner's station cache; for corporation assets it also updates the local source quantity and scatters `OnCorpAssetChange`. EveJS 261028.1 has no ordinary `Handle_SplitStack` in `server/src/services/inventory/invBrokerService.js`; its only exact-name handler is the unrelated contract audit stub at `server/src/services/_other/contractProxyService.js:910-913`. eve.rs implements the ordinary call with a locked, transactional source reduction and same-location stack creation, then sends the two `OnItemsChanged` rows before the client performs its cache update. The database-backed InvBroker test pins both persisted stacks, and a concurrent request test verifies no quantity duplication.

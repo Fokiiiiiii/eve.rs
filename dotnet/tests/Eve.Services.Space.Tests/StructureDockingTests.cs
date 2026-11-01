@@ -22,6 +22,7 @@ public sealed class StructureDockingTests
         var session = await rig.SessionAsync(character);
         var oid = await rig.BindShipAsync(session);
         await rig.ShipCallAsync(session, "Undock", oid, new PyLong(session.GetInt("shipid")!.Value), PyBool.False);
+        rig.Space.Transitions.EndSessionChange((ulong)session.SessionId);
         Events.Of(session);
         rig.Space.StructureExistsAsync = (id, _) => Task.FromResult(id == Structure);
         rig.Space.StructureDockingAllowedAsync = (_, _, _) => Task.FromResult(true);

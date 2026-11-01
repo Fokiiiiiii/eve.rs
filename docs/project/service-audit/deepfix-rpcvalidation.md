@@ -37,6 +37,8 @@ Origin/main's fix commit `75e89ae1` was merged after Run 1389. The conflict was 
 
 The code branch was pushed to main at `8df1b530d306` after CI Run 1390 completed green and `git fetch origin main && git merge origin/main` reported up to date. Push-triggered CI Run 1391 (`41354321450`) completed successfully; no failed tests or jobs were reported. A documentation checkpoint was then pushed as `37e93e95` after merging origin/main at `0978698f`.
 
+The `CmdDock` wire-shape fix was pushed as `c78bbcd55fff` after Run 1392 at `75e58ed6` completed green and origin/main at `c4a3b562` was merged. Push-triggered Run 1393 (`41358373943`) was starting when this handoff was updated; monitor it through completion before proceeding.
+
 ## Warp destination geometry and overflow
 
 ### Evidence and behavior

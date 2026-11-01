@@ -18,6 +18,7 @@ Regression: `TradingTests.Zarzakh_sales_tax_uses_the_order_station_after_the_sel
 - Re-run after merging `34f4d4ad`: 76 market sim/database tests passed, 0 skipped, and 13 Host market/contract tests passed, 0 skipped, on `eve_p5` through `tools/dev/db-lock.sh`.
 - `MarketTradeHostWireTests`: 1 passed, 0 skipped, on `eve_p5` through `tools/dev/db-lock.sh`. The first attempt exposed that this pre-existing lane DB lacked `sde_mission`; that static schema was copied additively from the complete local SDE database before rerunning.
 - The focused regression was confirmed failing before the fix and passing after it.
+- Market fix commit `7b952f63` was pushed to main. Selected Market/Host Actions run `41320090744` passed, and push CI run `41320080436` completed successfully with no failed jobs.
 - No real graphical client session was run.
 
 ## Item-exchange contract trace

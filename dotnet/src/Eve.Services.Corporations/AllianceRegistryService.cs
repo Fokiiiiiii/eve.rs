@@ -120,7 +120,9 @@ private static double RelationshipValue(PyValue value)
     [Method("GetAlliance")]
     public async ValueTask<PyValue> GetAlliance(ServiceCall call)
     {
-        if (await store.AllianceAsync(await Id(call),call.Cancellation) is not { } alliance) return PyNone.Instance;
+        var allianceId = await Id(call);
+        if (allianceId <= 0 || await store.AllianceAsync(allianceId,call.Cancellation) is not { } alliance)
+            throw new InvalidOperationException("NoSuchAlliance");
         var counts = await store.AllianceCharacterCountsAsync([alliance.Id],call.Cancellation);
         var prime = await store.AlliancePrimeTimeAsync(alliance.Id,call.Cancellation);
         var sovereignty = readSovSnapshot is null ? null : await readSovSnapshot(alliance.Id,call.Cancellation);
@@ -806,12 +808,12 @@ private static double RelationshipValue(PyValue value)
         var (_,alliance) = await RequireAllianceMember(call);
         var relationStore = relations ?? throw new InvalidOperationException("Alliance relationship RPCs require RelationStore registration.");
         var rows = await relationStore.FromAsync(Eve.Relations.RelationKinds.Standing.Name,alliance,cancellationToken:call.Cancellation);
-        var descriptor = CorporationWire.DescriptorOf(("toID",3),("relationship",3));
+        var descriptor = CorporationWire.DescriptorOf(("toID",3),("relationship",5));
         return new PyObjectEx(ObjectExKind.Ex2,
             Py.Tuple(Py.Tuple(new PyToken("carbon.common.script.sys.crowset.CIndexedRowset")),
                 Py.Dict(("header",descriptor.Header),("idName",new PyStr("toID")),("columnName",new PyStr("toID")))),
             [],[.. rows.Select(row => new KeyValuePair<PyValue,PyValue>(new PyInt(row.Object),
-                new PyPackedRow(descriptor,[new PyInt(row.Object),new PyInt((long)row.Value)])))]);
+                new PyPackedRow(descriptor,[new PyInt(row.Object),Py.Number(row.Value)])))]);
     }
 
     [Method("SetRelationship")]
@@ -933,7 +935,8 @@ private static double RelationshipValue(PyValue value)
         var (_,alliance) = await RequireAllianceMember(call);
         var labels = await store.AllianceContactLabelsAsync(alliance,call.Cancellation);
         return new PyDict(labels.Select(label => new KeyValuePair<PyValue,PyValue>(new PyInt(label.LabelId),
-            Py.KeyVal(("labelID",new PyInt(label.LabelId)),("name",new PyStr(label.Name)),("color",new PyInt(label.Color))))).ToArray());
+            Py.KeyVal(("labelID",new PyInt(label.LabelId)),("name",new PyStr(label.Name)),
+                ("color",label.Color is { } color ? new PyInt(color) : PyNone.Instance)))).ToArray());
     }
 
     [Method("CreateLabel")]
@@ -944,9 +947,10 @@ private static double RelationshipValue(PyValue value)
         var name = JsSemantics.StringValue(call.Arg(0)) ?? "";
         if (name.Length > 40)
             throw new CorporationError("ALLIANCE_CONTACT_LABEL_NAME_LIMIT_EXCEEDED");
-        var color = Number(call.Arg(1));
+        var color = call.Args.Count > 1 && call.Arg(1) is not PyNone ? Number(call.Arg(1)) : (long?)null;
         if (color is < 0 or > 16777215) throw AllianceAccessDenied();
-        var label = await store.CreateAllianceContactLabelAsync(actor,alliance,name,(int)color,call.Cancellation);
+        var label = await store.CreateAllianceContactLabelAsync(actor,alliance,name,
+            color is { } value ? (int)value : null,call.Cancellation);
         return new PyInt(label.LabelId);
     }
 
@@ -955,7 +959,11 @@ private static double RelationshipValue(PyValue value)
     {
         var (actor,alliance) = await RequireAllianceExecutorDirector(call);
         RequireBoundAlliance(call,alliance);
+        var before = await store.AllianceContactsAsync(alliance,call.Cancellation);
         await store.DeleteAllianceContactLabelAsync(actor,alliance,Number(call.Arg(0)),call.Cancellation);
+        var after = await store.AllianceContactsAsync(alliance,call.Cancellation);
+        CorporationNotificationAdapter.OrganizationContactsUpdated(characterSessions,call,alliance,true,
+            CorporationNotificationAdapter.ChangedContacts(before,after));
         return PyNone.Instance;
     }
 
@@ -985,7 +993,12 @@ private static double RelationshipValue(PyValue value)
         RequireBoundAlliance(call,alliance);
         var mask = Number(call.Arg(1));
         if (mask < 0) throw AllianceAccessDenied();
-        await store.AssignAllianceContactLabelsAsync(actor,alliance,ContactIds(call.Arg(0)),mask,call.Cancellation);
+        var contactIds = ContactIds(call.Arg(0));
+        var before = await store.AllianceContactsAsync(alliance,call.Cancellation);
+        await store.AssignAllianceContactLabelsAsync(actor,alliance,contactIds,mask,call.Cancellation);
+        var after = await store.AllianceContactsAsync(alliance,call.Cancellation);
+        CorporationNotificationAdapter.OrganizationContactsUpdated(characterSessions,call,alliance,true,
+            CorporationNotificationAdapter.ChangedContacts(before,after));
         return PyNone.Instance;
     }
 
@@ -996,7 +1009,12 @@ private static double RelationshipValue(PyValue value)
         RequireBoundAlliance(call,alliance);
         var mask = Number(call.Arg(1));
         if (mask < 0) throw AllianceAccessDenied();
-        await store.RemoveAllianceContactLabelsAsync(actor,alliance,ContactIds(call.Arg(0)),mask,call.Cancellation);
+        var contactIds = ContactIds(call.Arg(0));
+        var before = await store.AllianceContactsAsync(alliance,call.Cancellation);
+        await store.RemoveAllianceContactLabelsAsync(actor,alliance,contactIds,mask,call.Cancellation);
+        var after = await store.AllianceContactsAsync(alliance,call.Cancellation);
+        CorporationNotificationAdapter.OrganizationContactsUpdated(characterSessions,call,alliance,true,
+            CorporationNotificationAdapter.ChangedContacts(before,after));
         return PyNone.Instance;
     }
 

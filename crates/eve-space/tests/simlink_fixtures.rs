@@ -272,6 +272,7 @@ fn ship_of(case: &Value) -> ShipSpec {
                 item_id: wide(m, "itemId"),
                 type_id: m["typeId"].as_i64().unwrap() as i32,
                 flag: m["flag"].as_i64().unwrap() as i32,
+                bank_master_id: m["bankMasterId"].as_str().and_then(|id| id.parse().ok()).unwrap_or(0),
             })
             .collect(),
     }
@@ -1386,7 +1387,8 @@ fn message_of(case: &Value) -> Message {
         "ChangeWreck" => Message::ChangeWreck {
             session_id: session_id(),
             wreck_id: wide(case, "wreckId"),
-            is_empty: case["isEmpty"].as_bool().unwrap(),
+            is_empty: case["isEmpty"].as_bool(),
+            abandoned: case["abandoned"].as_bool(),
         },
         "RemoveWreck" => {
             Message::RemoveWreck { wreck_id: wide(case, "wreckId"), effect: number("effect") as i32 }

@@ -76,11 +76,17 @@ impl Scene {
     }
 
     /// A ship has gone (docked, jumped, logged off; it is out of the scene already): what it had locked is let go, and whoever had it locked is told.
-    pub(crate) fn drop_targeting(&mut self, ship_id: i64, held: &Targeting, now: i64) -> Vec<Out> {
+    pub(crate) fn drop_targeting(
+        &mut self,
+        ship_id: i64,
+        held: &Targeting,
+        reason: Option<&'static str>,
+        now: i64,
+    ) -> Vec<Out> {
         let mut out = Vec::new();
         for locked in &held.locked {
             if let Some(other) = self.session_of_ship(locked.target) {
-                out.push(on_target(other, "otherlost", Some(ship_id)));
+                out.push(on_target_reason(other, "otherlost", Some(ship_id), reason));
             }
         }
         let sources: Vec<SessionId> = self
@@ -94,7 +100,7 @@ impl Scene {
             .collect();
         for source in sources {
             out.extend(self.cancel_pending(source, ship_id, true));
-            out.extend(self.remove_locked(source, ship_id, None, false, now));
+            out.extend(self.remove_locked(source, ship_id, reason, false, now));
         }
         out
     }

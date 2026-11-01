@@ -846,7 +846,8 @@ private static PyValue RowField(PyValue value,string key)
                 "010_corporation_war_bills",
                 "011_alliance_registry_state",
                 "012_alliance_bill_lifecycle",
-                "013_item_locks"
+                "013_item_locks",
+                "014_nullable_contact_label_colors"
             },applied);
 
             await using var read = await rig.Source.OpenConnectionAsync();
@@ -959,9 +960,12 @@ private static PyValue RowField(PyValue value,string key)
         async Task<PyPackedRow> MemberRow() => Assert.IsType<PyPackedRow>(MarshalCodec.Decode(MarshalCodec.Encode(
             await ((IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now)).CallAsync(Call(memberSession,"GetMember",new PyInt(member))))));
 
-        var tooManyMemberIds = new PyList(Enumerable.Range(1, 501).Select(id => (PyValue)new PyInt(id)).ToArray());
-        var limitError = await Assert.ThrowsAsync<CorporationError>(async () => await CorpRpc("GetMembersByIds", tooManyMemberIds));
-        Assert.Equal("CORPORATION_BULK_LIMIT_EXCEEDED", limitError.Code);
+        var bulkMemberIds = new PyList(Enumerable.Range(1, 500).Select(id => (PyValue)new PyInt(id))
+            .Append(new PyInt(member)).ToArray());
+        var bulkMemberRows = Assert.IsType<PyList>(await CorpRpc("GetMembersByIds", bulkMemberIds));
+        var bulkMemberRow = Assert.IsType<PyPackedRow>(MarshalCodec.Decode(MarshalCodec.Encode(
+            Assert.Single(bulkMemberRows.Items))));
+        Assert.Equal((await MemberRow()).Values, bulkMemberRow.Values);
         var malformedMemberIds = await Assert.ThrowsAsync<CorporationError>(async () =>
             await CorpRpc("GetMembersByIds",new PyStr("not-a-list")));
         Assert.Equal("CORPORATION_BULK_ARGUMENT_INVALID",malformedMemberIds.Code);
@@ -996,7 +1000,7 @@ private static PyValue RowField(PyValue value,string key)
         var emptyKick = Assert.IsType<PyDict>(await CorpRpc("KickOutMembers",new PyList([])));
         Assert.Empty(Assert.IsType<PyList>(emptyKick.Entries.Single(e => e.Key == new PyStr("kicked")).Value).Items);
         Assert.Empty(Assert.IsType<PyList>(emptyKick.Entries.Single(e => e.Key == new PyStr("notKicked")).Value).Items);
-        Assert.Equal(new PyInt(corp.Id),await ManagerRpc("GetCorporationIDForCharacter",new PyLong(long.MaxValue)));
+        Assert.IsType<PyNone>(await ManagerRpc("GetCorporationIDForCharacter",new PyLong(long.MaxValue)));
         Assert.IsType<PyNone>(await CorpRpc("UpdateCorporation",new PyStr("Updated description"),new PyStr("https://corp.example"),
             Py.Number(0.12),new PyInt(1),Py.Number(0.03)));
         var publicInfo = await ManagerRpc("GetPublicInfo",new PyInt(corp.Id));

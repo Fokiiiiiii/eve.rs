@@ -28,7 +28,7 @@ public sealed record CorporationRecruitmentAd(
     long Id,long CorporationId,long ChannelId,long TypeMask,long LangMask,string Description,string Title,
     long CreateFiletime,long ExpiryFiletime,long HourMask1,long MinSP,long OtherMask,IReadOnlyList<long> Recruiters);
 public sealed record CorporationContact(long ContactId,int RelationshipId,long LabelMask,bool InWatchlist);
-public sealed record CorporationContactLabel(long LabelId,string Name,int Color);
+public sealed record CorporationContactLabel(long LabelId,string Name,int? Color);
 public sealed record CorporationBulletin(long BulletinId,long CorporationId,long CreateCharacterId,long CreateDateTime,
     long EditCharacterId,long EditDateTime,string Title,string Body,int SortOrder);
 
@@ -52,9 +52,11 @@ public sealed record AllianceDepartureMutation(AllianceMember? Member, Alliance?
 public static class CorporationRoles
 {
     public const long Director = 1;
+    public const long DeliveriesHangarTake = 1L << 1;
+    public const long DeliveriesHangarQuery = 1L << 2;
     public const long StationManager = 1L << 11;
     public const long BrandManager = 1L << 35;
-    public const long RentOffice = 1L << 41;
+    public const long RentOffice = 1L << 49;
     public const long PersonnelManager = 128;
     public const long FactoryManager = 1024;
     public const long Accountant = 256;
@@ -69,6 +71,9 @@ public static class CorporationRoles
 
     public static bool IsKnown(long value, long allowed) => value >= 0 && (value & ~allowed) == 0;
     public static long WalletTakeRole(int accountKey) => accountKey is >= 1000 and <= 1006 ? 1L << (27 + accountKey - 1000) : 0;
+    public static bool CanTakeWalletDivision(SessionRoles roles, int accountKey) =>
+        accountKey is >= 1000 and <= 1006 &&
+        (roles.AtAll & (Director | WalletTakeRole(accountKey))) != 0;
     private static long Effective(long direct, long allowed, IEnumerable<long> titles, long? titleAllowed = null)
     {
         if (!IsKnown(direct, allowed)) return 0;
@@ -77,8 +82,11 @@ public static class CorporationRoles
 
     public static bool HasHangarAccess(SessionRoles? roles, long stationId, int flag, bool take)
     {
-        if (roles is null || flag is < 115 or > 121)
+        if (roles is null)
             return false;
+        if (flag == 62)
+            return (roles.AtAll & (take ? DeliveriesHangarTake : DeliveriesHangarQuery)) != 0;
+        if (flag is < 115 or > 121) return false;
         var scoped = stationId == roles.HqId
             ? roles.AtHq
             : stationId == roles.BaseId ? roles.AtBase : roles.AtOther;

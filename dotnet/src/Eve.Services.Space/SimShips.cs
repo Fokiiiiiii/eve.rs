@@ -113,7 +113,8 @@ public static SimHeatProfile HeatProfileOf(ShipSnapshot snapshot, DogmaStatic st
             Attribute(Radius), Attribute(Mass), Attribute(MaxVelocity), Attribute(Agility), WarpSpeedAu(Attribute(BaseWarpSpeed), Attribute(WarpSpeedMultiplier)), Attribute(ShieldRechargeRate),
             Attribute(MaxTargetRange), Attribute(ScanResolution), Attribute(SignatureRadius), LockLimit(Attribute(MaxLockedTargets), snapshot.World.Get(character.Id, MaxLockedTargets)),
             Attribute(CapacitorCapacity), Attribute(RechargeRate) / 1000.0,
-            [.. snapshot.Fitted.Select(module => new SimModule(module.Id, module.TypeId, module.Flag))],
+            [.. snapshot.Fitted.Select(module => new SimModule(module.Id, module.TypeId, module.Flag,
+                snapshot.WeaponBanks.FirstOrDefault(bank => bank.Key == module.Id || bank.Value.Contains(module.Id)).Key))],
             VitalsOf(snapshot), ConditionOf(snapshot.Condition), SensorsOf(Attribute, _ => true), DroneDamageMultiplierOf(snapshot), StanceOf(snapshot));
     }
 

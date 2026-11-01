@@ -414,7 +414,10 @@ fn a_pilot_who_had_the_ship_locked_lets_go_of_it_and_is_told() {
     assert_eq!(scene.locked_by(PLAYER), Vec::<i64>::new());
     let lost = notified(&told, "OnTarget");
     assert_eq!(lost.len(), 1, "{told:?}");
-    assert_eq!(lost[0][0], Value::Str("lost".into()));
+    assert_eq!(
+        lost[0].as_slice(),
+        [Value::Str("lost".into()), Value::Long(RAT_SHIP), Value::Str("Exploding".into())]
+    );
 }
 
 #[test]

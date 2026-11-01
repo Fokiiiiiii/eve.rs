@@ -126,6 +126,7 @@ public sealed partial class CorporationService(
         var graphics = ParseMedalGraphics(call.Arg(2));
         var id = await store.CreateMedalAsync(corporationId,actor,
             title,description,graphics,call.Cancellation);
+        CorporationNotificationAdapter.CorporationMedalAdded(characterSessions,call,corporationId,id);
         return CorporationWire.Id(id);
     }
 

@@ -495,8 +495,11 @@ public sealed class AbyssalHostFlowTests
         var gate = run.Data.Rooms[0].Entities.Single(entity => entity.Role == AbyssalEntityRole.Gate);
         rig.Simulator.Pose = [gate.Position.X, gate.Position.Y, gate.Position.Z];
         var request = new ServiceCall { Session = session, Method = "AbyssalGateActivation", Args = [new PyLong(gate.EntityId)] };
+        rig.ClientNotifications.Clear();
         await rig.Service.CallAsync(request);
         await rig.Drain();
+        Assert.Equal(new[] { "OnExitingDungeon", "OnEnteringDungeonRoom" }, rig.ClientNotifications
+            .Where(name => name is "OnExitingDungeon" or "OnEnteringDungeonRoom"));
         var transitioned = await rig.State(run.InstanceId);
         Assert.Equal(2, transitioned.CurrentRoomIndex);
         Assert.Equal(new AbyssalPosition(3_932_160, 3_932_160, 3_932_160), transitioned.PrivateSceneOrigin);

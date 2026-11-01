@@ -152,8 +152,12 @@ public sealed class EssMgrServiceTests
         return session;
     }
 
-    private static Task<PyValue> Call(IService service, ClientSession session, string method, params PyValue[] args) =>
-        service.CallAsync(new ServiceCall { Method = method, Args = args, Session = session }).AsTask();
+    private static async Task<PyValue> Call(IService service, ClientSession session, string method, params PyValue[] args)
+    {
+        var result = await service.CallAsync(new ServiceCall { Method = method, Args = args, Session = session });
+        session.RunAfterResponse();
+        return result;
+    }
 
     private static PyValue Value(PyDict dict, string key) =>
         dict.Entries.Single(entry => entry.Key == new PyStr(key)).Value;

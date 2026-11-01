@@ -261,7 +261,7 @@ impl Scene {
             let Some(jump) = pilot.jump.take() else { continue };
             pilot.clear_overheat_for_jump();
             let held = std::mem::take(&mut pilot.targeting);
-            told.extend(self.drop_targeting(pilot.ship.spec.ship_id, &held, now));
+            told.extend(self.drop_targeting(pilot.ship.spec.ship_id, &held, None, now));
             told.extend(self.announce_departure(session, pilot.ship.spec.ship_id, now));
             travellers.push(Traveller {
                 session,

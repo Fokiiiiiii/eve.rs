@@ -293,7 +293,7 @@ impl Scene {
         let mut pilot = self.pilots.remove(&session).expect("participant checked above");
         let ship_id = pilot.ship.spec.ship_id;
         told.extend(self.clear_tether_policy(session, now));
-        told.extend(self.drop_targeting(ship_id, &pilot.targeting, now));
+        told.extend(self.drop_targeting(ship_id, &pilot.targeting, None, now));
         if let Some(brains) = self.brains.as_mut() {
             brains.forget(session);
         }

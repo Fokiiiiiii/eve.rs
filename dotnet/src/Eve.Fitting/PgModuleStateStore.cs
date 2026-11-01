@@ -55,6 +55,132 @@ public sealed class PgModuleStateStore
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
         Migrations.ApplyAsync(source, schema, MigrationSet(), cancellationToken);
 
+    /// <summary>Reads one ship's weapon groups in stable master and slave id order.</summary>
+    public async Task<IReadOnlyDictionary<long, IReadOnlyList<long>>> WeaponBanksAsync(long shipId, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand($"SELECT master_module_id, slave_module_id FROM {_schema}.weapon_bank WHERE ship_id = $1 ORDER BY master_module_id, slave_module_id");
+        command.Parameters.Add(new NpgsqlParameter { Value = shipId });
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var banks = new SortedDictionary<long, List<long>>();
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var master = reader.GetInt64(0);
+            if (!banks.TryGetValue(master, out var slaves))
+                banks.Add(master, slaves = []);
+            slaves.Add(reader.GetInt64(1));
+        }
+        return banks.ToDictionary(pair => pair.Key, pair => (IReadOnlyList<long>)pair.Value);
+    }
+
+    /// <summary>Serializes changes to one ship's banks and commits the replacement together.</summary>
+    public async Task<IReadOnlyDictionary<long, IReadOnlyList<long>>> UpdateWeaponBanksAsync(
+        long shipId,
+        Func<IReadOnlyDictionary<long, IReadOnlyList<long>>, IReadOnlyDictionary<long, IReadOnlyList<long>>> update,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using (var gate = new NpgsqlCommand("SELECT pg_advisory_xact_lock($1)", connection, transaction))
+        {
+            gate.Parameters.Add(new NpgsqlParameter { Value = shipId });
+            await gate.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        var current = await WeaponBanksAsync(connection, transaction, shipId, cancellationToken);
+        var next = update(current);
+        await using (var delete = new NpgsqlCommand($"DELETE FROM {_schema}.weapon_bank WHERE ship_id = $1", connection, transaction))
+        {
+            delete.Parameters.Add(new NpgsqlParameter { Value = shipId });
+            await delete.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await using (var insert = new NpgsqlCommand($"INSERT INTO {_schema}.weapon_bank (ship_id, master_module_id, slave_module_id) VALUES ($1, $2, $3)", connection, transaction))
+        {
+            var ship = insert.Parameters.Add("$1", NpgsqlTypes.NpgsqlDbType.Bigint);
+            var master = insert.Parameters.Add("$2", NpgsqlTypes.NpgsqlDbType.Bigint);
+            var slave = insert.Parameters.Add("$3", NpgsqlTypes.NpgsqlDbType.Bigint);
+            ship.Value = shipId;
+            foreach (var pair in next.OrderBy(pair => pair.Key))
+            {
+                master.Value = pair.Key;
+                foreach (var slaveId in pair.Value.Order())
+                {
+                    slave.Value = slaveId;
+                    await insert.ExecuteNonQueryAsync(cancellationToken);
+                }
+            }
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return next;
+    }
+
+    /// <summary>Removes a module that leaves a ship's fitting and promotes its first remaining slave if it was a bank master.</summary>
+    public async Task RemoveFromWeaponBanksAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long shipId, long moduleId, CancellationToken cancellationToken = default)
+    {
+        await using (var gate = new NpgsqlCommand("SELECT pg_advisory_xact_lock($1)", connection, transaction))
+        {
+            gate.Parameters.Add(new NpgsqlParameter { Value = shipId });
+            await gate.ExecuteNonQueryAsync(cancellationToken);
+        }
+        var current = await WeaponBanksAsync(connection, transaction, shipId, cancellationToken);
+        if (!current.Any(bank => bank.Key == moduleId || bank.Value.Contains(moduleId)))
+            return;
+        var next = new SortedDictionary<long, IReadOnlyList<long>>();
+        foreach (var (master, slaves) in current)
+        {
+            if (master == moduleId)
+            {
+                var members = slaves.Where(id => id != moduleId).ToArray();
+                if (members.Length > 1)
+                    next[members[0]] = members[1..];
+            }
+            else
+            {
+                var remaining = slaves.Where(id => id != moduleId).ToArray();
+                if (remaining.Length > 0)
+                    next[master] = remaining;
+            }
+        }
+        await using (var delete = new NpgsqlCommand($"DELETE FROM {_schema}.weapon_bank WHERE ship_id = $1", connection, transaction))
+        {
+            delete.Parameters.Add(new NpgsqlParameter { Value = shipId });
+            await delete.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await using var insert = new NpgsqlCommand($"INSERT INTO {_schema}.weapon_bank (ship_id, master_module_id, slave_module_id) VALUES ($1, $2, $3)", connection, transaction);
+        insert.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Bigint });
+        insert.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Bigint });
+        insert.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Bigint });
+        foreach (var (master, slaves) in next)
+        {
+            insert.Parameters[0].Value = shipId;
+            insert.Parameters[1].Value = master;
+            foreach (var slave in slaves)
+            {
+                insert.Parameters[2].Value = slave;
+                await insert.ExecuteNonQueryAsync(cancellationToken);
+            }
+        }
+    }
+
+    private async Task<IReadOnlyDictionary<long, IReadOnlyList<long>>> WeaponBanksAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long shipId, CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand($"SELECT master_module_id, slave_module_id FROM {_schema}.weapon_bank WHERE ship_id = $1 ORDER BY master_module_id, slave_module_id", connection, transaction)
+        {
+            Parameters = { new() { Value = shipId } },
+        };
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var banks = new SortedDictionary<long, List<long>>();
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var master = reader.GetInt64(0);
+            if (!banks.TryGetValue(master, out var slaves))
+                banks.Add(master, slaves = []);
+            slaves.Add(reader.GetInt64(1));
+        }
+        return banks.ToDictionary(pair => pair.Key, pair => (IReadOnlyList<long>)pair.Value);
+    }
+
     /// <summary>Sets how far a module is switched on, inside the caller's transaction. Offline is the absence of a row.</summary>
     public async Task SetAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long itemId, ItemState state, CancellationToken cancellationToken = default)
     {

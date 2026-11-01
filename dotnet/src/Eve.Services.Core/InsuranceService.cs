@@ -83,12 +83,14 @@ public sealed record InsuranceQuote(int FractionPercent, long PremiumCents, long
             long lossDateFileTime,
             bool isConcordDestruction)
         {
-            if (fullPayoutValueCents <= 0 || lossDateFileTime <= 0 || isConcordDestruction)
+            if (fullPayoutValueCents <= 0 || lossDateFileTime <= 0)
             {
                 return 0;
             }
 
-            var fraction = IsActiveAt(contract, lossDateFileTime) ? contract!.Fraction : 0.4d;
+            var fraction = !isConcordDestruction && IsActiveAt(contract, lossDateFileTime)
+                ? contract!.Fraction
+                : 0.4d;
             return RoundCents((decimal)fullPayoutValueCents * (decimal)fraction);
         }
 
@@ -509,9 +511,6 @@ private readonly IInsuranceWriteModel? _writeModel;
     {
         if (request.LossId <= 0 || request.ShipId <= 0 || request.LossDateFileTime <= 0)
             return ValueTask.FromResult(new InsuranceMutationResult(InsuranceMutationStatus.InvalidRequest));
-        if (request.IsConcordDestruction)
-            return ValueTask.FromResult(new InsuranceMutationResult(InsuranceMutationStatus.NotEligible));
-
         return WriteModel().SettleShipLossAsync(request, cancellationToken);
     }
 

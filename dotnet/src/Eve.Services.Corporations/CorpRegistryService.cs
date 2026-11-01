@@ -378,14 +378,18 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     public async ValueTask<PyValue> GetMembersByIds(ServiceCall call)
     {
         var memberIds = RequiredBatchItems(call.Arg(0));
-        if (memberIds.Count > MaxBulkMemberIds)
-            throw new CorporationError("CORPORATION_BULK_LIMIT_EXCEEDED");
-
+        if (await Current(call) is not { } corporation)
+            return new PyList([]);
+        var requestedIds = memberIds.Select(Number).Where(id => id > 0).ToArray();
+        var members = (await store.MembersByIdsAsync(corporation.Id, requestedIds, call.Cancellation))
+            .ToDictionary(member => member.CharacterId);
+        var charactersById = (await characters.ForCorporationByIdsAsync(corporation.Id, requestedIds, call.Cancellation))
+            .ToDictionary(character => character.Id);
         var rows = new List<PyValue>();
-        foreach (var id in memberIds)
+        foreach (var id in requestedIds.Distinct())
         {
-            var row = await GetMember(new ServiceCall { Method="GetMember",Args=[id],Session=call.Session,Cancellation=call.Cancellation });
-            if (row is not PyNone) rows.Add(row);
+            if (members.TryGetValue(id, out var member) && charactersById.TryGetValue(id, out var character))
+                rows.Add(CorporationWire.Member(member, character.Name));
         }
         return new PyList(rows);
     }
@@ -1566,7 +1570,8 @@ private static int MemberFieldInteger(PyValue value)
           var labels = corporation is null ? [] : await store.CorporationContactLabelsAsync(corporation.Id,call.Cancellation);
           return new PyDict(labels.Select(label => new KeyValuePair<PyValue,PyValue>(
               CorporationMaskValue(label.LabelId),Py.KeyVal(
-                  ("labelID",CorporationMaskValue(label.LabelId)),("name",new PyWString(label.Name)),("color",new PyInt(label.Color))))).ToArray());
+                  ("labelID",CorporationMaskValue(label.LabelId)),("name",new PyWString(label.Name)),
+                  ("color",label.Color is { } color ? new PyInt(color) : PyNone.Instance)))).ToArray());
       }
 
       [Method("CreateLabel")]
@@ -1577,10 +1582,11 @@ private static int MemberFieldInteger(PyValue value)
         if (rawName.Length > 40)
             throw new CorporationError("CORPORATION_CONTACT_LABEL_NAME_LIMIT_EXCEEDED");
         var name = rawName.Trim();
-        var color = Number(call.Arg(1));
+        var color = call.Args.Count > 1 && call.Arg(1) is not PyNone ? Number(call.Arg(1)) : (long?)null;
         if (color is < 0 or > 16777215)
             throw CorporationAccessDenied();
-        var label = await store.CreateCorporationContactLabelAsync(corporation.Id,name,(int)color,call.Cancellation);
+        var label = await store.CreateCorporationContactLabelAsync(corporation.Id,name,
+            color is { } value ? (int)value : null,call.Cancellation);
         return CorporationMaskValue(label.LabelId);
     }
 
@@ -1590,7 +1596,13 @@ private static int MemberFieldInteger(PyValue value)
           var corporation = await RequireCorporationSocialRole(call,CorporationRoles.Diplomat);
           var labelId = Number(call.Arg(0));
           if (labelId > 0)
+          {
+              var before = await store.CorporationContactsAsync(corporation.Id,call.Cancellation);
               await store.DeleteCorporationContactLabelAsync(corporation.Id,labelId,call.Cancellation);
+              var after = await store.CorporationContactsAsync(corporation.Id,call.Cancellation);
+              CorporationNotificationAdapter.OrganizationContactsUpdated(characterSessions,call,corporation.Id,false,
+                  CorporationNotificationAdapter.ChangedContacts(before,after));
+          }
           return PyNone.Instance;
       }
 
@@ -1599,10 +1611,11 @@ private static int MemberFieldInteger(PyValue value)
     {
         var corporation = await RequireCorporationSocialRole(call,CorporationRoles.Diplomat);
         var labelId = Number(call.Arg(0));
-        var name = call.Args.Count > 1 ? Text(call.Arg(1)) : null;
+        var hasName = call.Args.Count > 1 && call.Arg(1) is not PyNone;
+        var name = hasName ? JsSemantics.StringValue(call.Arg(1)) : null;
         if (name is { Length: > 40 })
             throw new CorporationError("CORPORATION_CONTACT_LABEL_NAME_LIMIT_EXCEEDED");
-        var rawColor = call.Args.Count > 2 ? Number(call.Arg(2)) : (long?)null;
+        var rawColor = call.Args.Count > 2 && call.Arg(2) is not PyNone ? Number(call.Arg(2)) : (long?)null;
         if (rawColor is < 0 or > 16777215)
             throw CorporationAccessDenied();
         await store.EditCorporationContactLabelAsync(corporation.Id,labelId,name,rawColor is { } color ? (int)color : null,call.Cancellation);
@@ -1613,7 +1626,12 @@ private static int MemberFieldInteger(PyValue value)
       public async ValueTask<PyValue> AssignLabels(ServiceCall call)
       {
           var corporation = await RequireCorporationSocialRole(call,CorporationRoles.Diplomat);
-          await store.ChangeCorporationContactLabelsAsync(corporation.Id,CorporationBulkIds(call.Arg(0)),Number(call.Arg(1)),true,call.Cancellation);
+          var contactIds = CorporationBulkIds(call.Arg(0));
+          var before = await store.CorporationContactsAsync(corporation.Id,call.Cancellation);
+          await store.ChangeCorporationContactLabelsAsync(corporation.Id,contactIds,Number(call.Arg(1)),true,call.Cancellation);
+          var after = await store.CorporationContactsAsync(corporation.Id,call.Cancellation);
+          CorporationNotificationAdapter.OrganizationContactsUpdated(characterSessions,call,corporation.Id,false,
+              CorporationNotificationAdapter.ChangedContacts(before,after));
           return PyNone.Instance;
       }
 
@@ -1621,7 +1639,12 @@ private static int MemberFieldInteger(PyValue value)
       public async ValueTask<PyValue> RemoveLabels(ServiceCall call)
       {
           var corporation = await RequireCorporationSocialRole(call,CorporationRoles.Diplomat);
-          await store.ChangeCorporationContactLabelsAsync(corporation.Id,CorporationBulkIds(call.Arg(0)),Number(call.Arg(1)),false,call.Cancellation);
+          var contactIds = CorporationBulkIds(call.Arg(0));
+          var before = await store.CorporationContactsAsync(corporation.Id,call.Cancellation);
+          await store.ChangeCorporationContactLabelsAsync(corporation.Id,contactIds,Number(call.Arg(1)),false,call.Cancellation);
+          var after = await store.CorporationContactsAsync(corporation.Id,call.Cancellation);
+          CorporationNotificationAdapter.OrganizationContactsUpdated(characterSessions,call,corporation.Id,false,
+              CorporationNotificationAdapter.ChangedContacts(before,after));
           return PyNone.Instance;
       }
 

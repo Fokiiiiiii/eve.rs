@@ -58,6 +58,7 @@ internal sealed partial class CharacterServicesComposition
             corporations,
             characterEntryHooks,
             controlledStructureInventory: structureControlReadModel.InventoryAsync,
+            officeStore: corporationOfficeStore,
             dockableAssetLocation: async (structureId, token) =>
             {
                 if (await ReadHomeStationStructureAsync(structureId, token) is not { Location: { } location })

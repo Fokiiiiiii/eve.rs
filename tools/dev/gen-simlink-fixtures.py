@@ -119,7 +119,7 @@ def ship(m):
     body += vitals(m["vitals"]) + condition(m["condition"])
     body += struct.pack("<I", len(m["modules"]))
     for module in m["modules"]:
-        body += i64(module["itemId"]) + struct.pack("<ii", module["typeId"], module["flag"])
+        body += i64(module["itemId"]) + struct.pack("<iiq", module["typeId"], module["flag"], int(module.get("bankMasterId", 0)))
     body += struct.pack("<7d", *m["sensorStrength"], m["ecmResistance"], m["energyWarfareResistance"], m.get("droneDamageMultiplier", 1.0))
     # the stance (protocol 55): a flag, then when there is one the old stance, the switch time (a FILETIME) and the new stance
     stance = m.get("stance")
@@ -575,7 +575,11 @@ def build(m):
     if k == "Arrived":
         return frame(k, u64(m["sessionId"]) + i64(m["beltId"]) + struct.pack("<3d", *m["position"]))
     if k == "ChangeWreck":
-        return frame(k, u64(m["sessionId"]) + i64(m["wreckId"]) + bytes([1 if m["isEmpty"] else 0]))
+        is_empty = m["isEmpty"]
+        abandoned = m["abandoned"]
+        return frame(k, u64(m["sessionId"]) + i64(m["wreckId"])
+                     + bytes([2 if is_empty is None else (1 if is_empty else 0),
+                              2 if abandoned is None else (1 if abandoned else 0)]))
     if k == "RemoveWreck":
         return frame(k, i64(m["wreckId"]) + struct.pack("<i", m["effect"]))
     if k == "Deployed":
@@ -818,6 +822,10 @@ valid = [
         "nearbyObjects": [{"itemId": "400000001", "typeId": 23, "centerDistanceMeters": 1000000.0}]}},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
+    {"name": "enter ship with a weapon bank", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
+     "how": 0, "stationId": "60015249", "ship": dict(IBIS, modules=[
+        {"itemId": "9988400001941", "typeId": 900001, "flag": 27, "bankMasterId": "9988400001941"},
+        {"itemId": "9988400001942", "typeId": 900001, "flag": 28, "bankMasterId": "9988400001941"}])},
     {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
      "solarSystemId": 30000142, "how": 1, "stationId": "0", "ship": dict(BARE, name="イビス"),
      "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0]},
@@ -1332,8 +1340,9 @@ valid = [
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "direction": [0.6159, 0.01306, 0.78769]},
     {"name": "player's warp ended at a belt", "kind": "Arrived", "sessionId": "1790646377000015", "beltId": "40009256",
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187]},
-    {"name": "wreck with something to take", "kind": "ChangeWreck", "sessionId": "1790646377000015", "wreckId": "9988400002948", "isEmpty": False},
-    {"name": "wreck with nothing to take", "kind": "ChangeWreck", "sessionId": "1790646377000015", "wreckId": "9988400002417", "isEmpty": True},
+    {"name": "wreck with something to take", "kind": "ChangeWreck", "sessionId": "1790646377000015", "wreckId": "9988400002948", "isEmpty": False, "abandoned": None},
+    {"name": "wreck with nothing to take", "kind": "ChangeWreck", "sessionId": "1790646377000015", "wreckId": "9988400002417", "isEmpty": True, "abandoned": None},
+    {"name": "wreck loot rights abandoned", "kind": "ChangeWreck", "sessionId": "1790646377000015", "wreckId": "9988400002948", "isEmpty": None, "abandoned": True},
     {"name": "can taken out of space with the destruction effect", "kind": "RemoveWreck", "wreckId": "9988400002948", "effect": 3},
     {"name": "wreck taken out of space without one", "kind": "RemoveWreck", "wreckId": "9988400002417", "effect": 0},
     {"name": "cynosural field lit by a generator, told with its life", "kind": "Deployed", "solarSystemId": 30100032,

@@ -334,6 +334,10 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
                     CREATE INDEX item_locks_location
                         ON item_locks(corporation_id,location_id,item_id);
                 """),
+                new Migration("014_nullable_contact_label_colors", """
+                    ALTER TABLE corporation_contact_labels ALTER COLUMN color DROP NOT NULL;
+                    ALTER TABLE alliance_contact_labels ALTER COLUMN color DROP NOT NULL;
+                """),
     ];
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
         Migrations.ApplyAsync(source, schema, MigrationSet(), cancellationToken);
@@ -430,6 +434,26 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
         var result = new List<Member>();
         await using var r = await command.ExecuteReaderAsync(token);
         while (await r.ReadAsync(token)) result.Add(ReadMember(r));
+        return result;
+    }
+
+    public async Task<IReadOnlyList<Member>> MembersByIdsAsync(long corporation, IReadOnlyCollection<long> characterIds, CancellationToken token = default)
+    {
+        var result = new List<Member>();
+        if (await GetAsync(corporation, token) is { IsNpc: true })
+        {
+            foreach (var batch in characterIds.Distinct().Chunk(500))
+                result.AddRange((await _characters.ForCorporationByIdsAsync(corporation, batch, token)).Select(NpcMember));
+            return result;
+        }
+        foreach (var batch in characterIds.Distinct().Chunk(500))
+        {
+            await using var command = _source.CreateCommand($"SELECT {MemberColumns} FROM {_schema}.members WHERE corporation_id=$1 AND character_id=ANY($2)");
+            command.Parameters.Add(new NpgsqlParameter { Value = corporation });
+            command.Parameters.Add(new NpgsqlParameter { Value = batch });
+            await using var reader = await command.ExecuteReaderAsync(token);
+            while (await reader.ReadAsync(token)) result.Add(ReadMember(reader));
+        }
         return result;
     }
 

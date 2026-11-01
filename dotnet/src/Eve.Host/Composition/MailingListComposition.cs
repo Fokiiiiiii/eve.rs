@@ -148,13 +148,16 @@ internal sealed partial class CharacterServicesComposition
                     if (mutation.Method == Eve.Services.Core.MailingListManagerMethod.Create)
                     {
                         if (args.Count < 1 || MailingListPyText(args[0]) is not { } requestedName)
-                            return Eve.Marshal.PyNone.Instance;
+                            throw Eve.Services.MachoErrors.ThrowUserError("CustomInfo",
+                                ("info", new Eve.Marshal.PyStr("INVALID_MAILING_LIST")));
                         var (name, displayName) = NormalizeMailingListName(requestedName);
-                        if (name.Length is 0 or > 64 ||
-                            lists.Any(entry => entry.Value is JsonObject existing &&
-                                !MailingListDeleted(existing) &&
-                                string.Equals(MailingListJsonText(existing["name"]), name, StringComparison.OrdinalIgnoreCase)))
-                            return Eve.Marshal.PyNone.Instance;
+                        if (name.Length is 0 or > 64)
+                            throw Eve.Services.MachoErrors.ThrowUserError("CustomInfo",
+                                ("info", new Eve.Marshal.PyStr("INVALID_MAILING_LIST")));
+                        if (lists.Any(entry => entry.Value is JsonObject existing &&
+                            !MailingListDeleted(existing) &&
+                            string.Equals(MailingListJsonText(existing["name"]), name, StringComparison.OrdinalIgnoreCase)))
+                            throw Eve.Services.MachoErrors.ThrowUserError("MailingListNameTaken");
 
                         var nextId = Math.Max(500_000_000L, lists
                             .Select(entry => long.TryParse(entry.Key, out var existingId) ? existingId : 0)
@@ -163,8 +166,6 @@ internal sealed partial class CharacterServicesComposition
                         var defaultAccess = args.Count > 1 ? MailingListPyLong(args[1]) ?? 0 : 0;
                         var defaultMemberAccess = args.Count > 2 ? MailingListPyLong(args[2]) ?? 0 : 0;
                         var cost = args.Count > 3 ? MailingListPyLong(args[3]) ?? 0 : 0;
-                        if (cost < 0)
-                            return Eve.Marshal.PyNone.Instance;
                         var row = new JsonObject
                         {
                             ["listID"] = nextId,
@@ -174,7 +175,7 @@ internal sealed partial class CharacterServicesComposition
                             ["members"] = new JsonObject { [MailingListKey(characterId)] = 0 },
                             ["defaultAccess"] = defaultAccess,
                             ["defaultMemberAccess"] = defaultMemberAccess,
-                            ["cost"] = cost,
+                            ["cost"] = Math.Max(0, cost),
                             ["access"] = new JsonObject(),
                             ["welcomeMail"] = null,
                         };
@@ -185,13 +186,13 @@ internal sealed partial class CharacterServicesComposition
                     if (mutation.Method == Eve.Services.Core.MailingListManagerMethod.Join)
                     {
                         if (args.Count < 1 || MailingListPyText(args[0]) is not { } requestedName)
-                            return Eve.Marshal.PyNone.Instance;
+                            throw Eve.Services.MachoErrors.ThrowUserError("MailingListNoSuchList");
                         var (normalized, _) = NormalizeMailingListName(requestedName);
                         var found = lists.FirstOrDefault(entry => entry.Value is JsonObject row &&
                             !MailingListDeleted(row) &&
                             string.Equals(MailingListJsonText(row["name"]), normalized, StringComparison.OrdinalIgnoreCase));
                         if (found.Value is not JsonObject list)
-                            return Eve.Marshal.PyNone.Instance;
+                            throw Eve.Services.MachoErrors.ThrowUserError("MailingListNoSuchList");
                         var id = MailingListJsonLong(list["listID"]);
                         var members = list["members"] as JsonObject ?? new JsonObject();
                         var memberKey = MailingListKey(characterId);
@@ -207,7 +208,7 @@ internal sealed partial class CharacterServicesComposition
                         entityAccess ??= allianceId > 0 ? explicitAccess?[MailingListKey(allianceId)] : null;
                         var allowed = defaultAccess == 0 || entityAccess is not null && MailingListJsonLong(entityAccess) == 0;
                         if (!allowed)
-                            return Eve.Marshal.PyNone.Instance;
+                            throw Eve.Services.MachoErrors.ThrowUserError("MailingListCantJoin");
 
                         var updated = (JsonObject)list.DeepClone();
                         var updatedMembers = updated["members"] as JsonObject ?? new JsonObject();
@@ -222,7 +223,7 @@ internal sealed partial class CharacterServicesComposition
                         return Eve.Marshal.PyNone.Instance;
                     var key = MailingListKey(listId);
                     if (lists[key] is not JsonObject current || MailingListDeleted(current))
-                        return Eve.Marshal.PyNone.Instance;
+                        throw Eve.Services.MachoErrors.ThrowUserError("MailingListNoSuchList");
 
                     var currentRole = MailingListRole(current, characterId);
                     var membersNow = current["members"] as JsonObject ?? new JsonObject();
@@ -230,8 +231,9 @@ internal sealed partial class CharacterServicesComposition
                     {
                         case Eve.Services.Core.MailingListManagerMethod.Leave:
                         {
-                            if (!membersNow.ContainsKey(MailingListKey(characterId)) ||
-                                MailingListJsonLong(current["ownerID"]) == characterId)
+                            if (MailingListJsonLong(current["ownerID"]) == characterId)
+                                throw Eve.Services.MachoErrors.ThrowUserError("MailingListCantRemoveOwner");
+                            if (!membersNow.ContainsKey(MailingListKey(characterId)))
                                 return Eve.Marshal.PyNone.Instance;
                             var updated = (JsonObject)current.DeepClone();
                             (updated["members"] as JsonObject)?.Remove(MailingListKey(characterId));
@@ -241,11 +243,17 @@ internal sealed partial class CharacterServicesComposition
                         case Eve.Services.Core.MailingListManagerMethod.Delete:
                         {
                             if (MailingListJsonLong(current["ownerID"]) != characterId)
-                                return Eve.Marshal.PyNone.Instance;
+                                throw Eve.Services.MachoErrors.ThrowUserError("MailingListCantDeleteNotOwner");
+                            var memberIds = membersNow.Select(pair => long.TryParse(pair.Key, out var memberId) ? memberId : 0)
+                                .Where(memberId => memberId > 0).Distinct().ToArray();
                             var updated = (JsonObject)current.DeepClone();
                             updated["deleted"] = true;
                             updated["deletedAt"] = Py.FileTimeFromUnixMs(now());
+                            updated["members"] = new JsonObject();
                             await PersistMailingListRowAsync(listId, updated, cancellationToken);
+                            foreach (var memberId in memberIds)
+                                characterSessions.Of(memberId)?.SendNotification(
+                                    "OnMailingListDeleted", "clientID", new Eve.Marshal.PyLong(listId));
                             return Eve.Marshal.PyNone.Instance;
                         }
                         case Eve.Services.Core.MailingListManagerMethod.KickMembers:
@@ -311,6 +319,7 @@ internal sealed partial class CharacterServicesComposition
                                 {
                                     Eve.Services.Core.MailingListManagerMethod.SetMembersMuted => "OnMailingListSetMuted",
                                     Eve.Services.Core.MailingListManagerMethod.SetMembersOperator => "OnMailingListSetOperator",
+                                    _ when defaultRole == 0 => "OnMailingListSetMuted",
                                     _ => "OnMailingListSetClear",
                                 };
                                 foreach (var targetId in changed)

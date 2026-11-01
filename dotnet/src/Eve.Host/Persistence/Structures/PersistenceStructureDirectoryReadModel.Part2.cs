@@ -39,13 +39,22 @@ public sealed partial class PersistenceStructureDirectoryReadModel
 {
     private static int? SettingIdForService(long serviceId) => serviceId switch
     {
-        DockingServiceId => DockAccessSettingId,
-        JumpBridgeServiceId => JumpBridgeAccessSettingId,
+        DockingServiceId or 2 or 8 or 9 or 11 => DockAccessSettingId,
+        4 => 3,
+        5 => 4,
+        6 => 23,
+        20 or 21 or 30 or 40 => 0,
         3 => 20,
-        Eve.Structures.StructureServiceIds.Market => 4,
-        Eve.Structures.StructureServiceIds.LoyaltyStore => 19,
-        Eve.Structures.StructureServiceIds.Medical => 23,
-        // MOON_MINING is admitted by the control setting (EVE.js structureServiceAuthority.js SERVICE_ACCESS_SETTING_BY_ID)
+        JumpBridgeServiceId => JumpBridgeAccessSettingId,
+        18 => 36,
+        22 => 29,
+        23 => 30,
+        24 => 31,
+        31 or 32 or 33 => 32,
+        34 => 33,
+        41 => 28,
+        42 => 26,
+        43 => 27,
         14 => 17,
         16 => 35,
         _ => null,
@@ -659,6 +668,9 @@ public sealed partial class PersistenceStructureDirectoryReadModel
         JsonObject accessGroupState,
         int settingId)
     {
+        if (settingId == 0)
+            return true;
+
         var profiles = profileState["profilesByID"] as JsonObject ?? profileState;
         var requestedProfileId = Integer(structure["profileID"]);
         if (requestedProfileId < 0)

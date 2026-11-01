@@ -44,7 +44,8 @@ public class SimCodecTests
         (int)s["corporationId"]!, (int)s["allianceId"]!, (int)s["warFactionId"]!, (double)s["securityStatus"]!, (double)s["radius"]!, (double)s["mass"]!,
         (double)s["maxVelocity"]!, (double)s["agility"]!, (double)s["warpSpeedAu"]!, (double)s["shieldRechargeMs"]!,
         (double)s["maxTargetRange"]!, (double)s["scanResolution"]!, (double)s["signatureRadius"]!, (int)s["maxLockedTargets"]!, (double)s["capacitorCapacity"]!, (double)s["capacitorRechargeS"]!,
-        [.. ((JsonArray)s["modules"]!).Select(m => new SimModule(Wide(m!, "itemId"), (int)m!["typeId"]!, (int)m["flag"]!))],
+        [.. ((JsonArray)s["modules"]!).Select(m => new SimModule(Wide(m!, "itemId"), (int)m!["typeId"]!, (int)m["flag"]!,
+            m["bankMasterId"] is { } master ? long.Parse((string)master!, CultureInfo.InvariantCulture) : 0))],
         VitalsOf(s["vitals"]!), ConditionOf(s["condition"]!), SensorsOf(s), s["droneDamageMultiplier"] is { } drone ? (double)drone : 1d,
             s["stance"] is { } stance ? new SimShipStance((int)stance["oldStance"]!, long.Parse((string)stance["switchedAt"]!, CultureInfo.InvariantCulture), (int)stance["stance"]!) : null);
 
@@ -559,7 +560,8 @@ public class SimCodecTests
                 new SimCredit(Wide(c, "characterId"), Wide(c, "corporationId"), Wide(c, "allianceId"), Wide(c, "warFactionId")), (double)c["distance"]!) { ExpectedScene = c["expectedScene"] is { } expectedScene ? SceneKeyOf(expectedScene) : null },
             "Arrived" => new SimArrived(Session(), Wide(c, "beltId"), VectorOf(c["position"]!)),
             "ContainerPlaced" => new SimContainerPlaced(Session(), Wide(c, "containerId"), VectorOf(c["position"]!), VectorOf(c["direction"]!)),
-            "ChangeWreck" => new SimChangeWreck(Session(), Wide(c, "wreckId"), (bool)c["isEmpty"]!),
+            "ChangeWreck" => new SimChangeWreck(
+                Session(), Wide(c, "wreckId"), c["isEmpty"] is null ? null : (bool)c["isEmpty"]!, c["abandoned"] is null ? null : (bool)c["abandoned"]!),
             "RemoveWreck" => new SimRemoveWreck(Wide(c, "wreckId"), (int)c["effect"]!),
             "Deployed" => new SimDeployed((int)c["solarSystemId"]!, Wide(c, "deployableId"), (string)c["typeName"]!, (int)c["typeId"]!, (int)c["groupId"]!, VectorOf(c["position"]!),
                 (double)c["radius"]!, Wide(c, "ownerId"), (int)c["corporationId"]!, (int)c["allianceId"]!, Wide(c, "shipId"), (double)c["lifetimeMs"]!),
@@ -1052,12 +1054,24 @@ public class SimCodecTests
     }
 
     [Fact]
+    public void Change_wreck_encodes_abandonment_without_changing_the_empty_state()
+    {
+        var message = new SimChangeWreck(123, 456, null, true);
+
+        var frame = SimCodec.Encode(message);
+        var decoded = Assert.IsType<SimChangeWreck>(SimCodec.Decode(frame.AsMemory(4)));
+
+        Assert.Equal([2, 1], frame[^2..]);
+        Assert.Equal(message, decoded);
+    }
+
+    [Fact]
     public void A_module_count_the_frame_cannot_hold_is_refused_without_allocating_for_it()
     {
         var good = SimCodec.Encode(MessageOf(Case("valid", "enter by undocking")));
-        // the count is the four bytes before the two 16-byte modules and the seven 8-byte numbers at the end of the frame: the six sensor numbers (protocol 27)
+        // the count is the four bytes before the two 24-byte modules and the seven 8-byte numbers at the end of the frame: the six sensor numbers (protocol 27)
         // and the drone damage multiplier (protocol 47)
-        var at = good.Length - (7 * 8) - (2 * 16) - 4;
+        var at = good.Length - (7 * 8) - (2 * 24) - 4;
         var forged = (byte[])good.Clone();
         BitConverter.GetBytes(uint.MaxValue).CopyTo(forged, at);
         var error = Assert.Throws<SimLinkException>(() => SimCodec.Decode(forged.AsMemory(4)));

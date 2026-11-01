@@ -10,17 +10,20 @@ namespace Eve.Host.Tests;
 
 public partial class HostServerTests
 {
-    [Fact]
+    [PgFact]
     public async Task Calendar_rpc_methods_are_reachable_over_host_and_share_state_and_notifications()
     {
-        const long ownerId = 91_001;
-        const long inviteeId = 91_002;
-        const long removedInviteeId = 91_003;
-        const long addedInviteeId = 91_004;
-        const long corporationId = 98_001;
-        const long allianceId = 98_002;
+        var ownerId = Random.Shared.NextInt64(91_000_000, 92_000_000);
+        var inviteeId = ownerId + 1;
+        var removedInviteeId = ownerId + 2;
+        var addedInviteeId = ownerId + 3;
+        var corporationId = ownerId + 10;
+        var allianceId = ownerId + 11;
         const long chatManagerRole = 36_028_797_018_963_968L;
-        var store = new WireCalendarStore();
+        await using var dataSource = Npgsql.NpgsqlDataSource.Create(
+            Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await CalendarStore.MigrateAsync(dataSource);
+        var store = new CalendarStore(dataSource);
         var sessions = new CharacterSessions();
         var audience = new WireCalendarAudience(inviteeId, removedInviteeId);
         var opened = 0;

@@ -316,13 +316,18 @@ pub(super) fn read_ship(reader: &mut Reader) -> Result<ShipSpec, DecodeError> {
     let vitals = read_vitals(reader)?;
     let condition = read_condition(reader)?;
     let count = reader.u32()? as usize;
-    // a module takes 16 bytes, so a count the frame cannot hold is refused before anything is allocated for it
-    if count > reader.data.len() / 16 {
+    // a module takes 24 bytes, so a count the frame cannot hold is refused before anything is allocated for it
+    if count > reader.data.len() / 24 {
         return Err(DecodeError::Truncated);
     }
     let mut modules = Vec::with_capacity(count);
     for _ in 0..count {
-        modules.push(ModuleSpec { item_id: reader.i64()?, type_id: reader.i32()?, flag: reader.i32()? });
+        modules.push(ModuleSpec {
+            item_id: reader.i64()?,
+            type_id: reader.i32()?,
+            flag: reader.i32()?,
+            bank_master_id: reader.i64()?,
+        });
     }
     let sensor_strength = [reader.f64()?, reader.f64()?, reader.f64()?, reader.f64()?];
     let ecm_resistance = reader.f64()?;
@@ -987,12 +992,17 @@ impl Message {
             kind::CHANGE_WRECK => {
                 let session_id = r.u64()?;
                 let wreck_id = r.i64()?;
-                let is_empty = match r.u8()? {
-                    0 => false,
-                    1 => true,
-                    _ => return Err(DecodeError::BadValue("is_empty")),
+                let read_optional_bool = |r: &mut Reader<'_>| -> Result<Option<bool>, DecodeError> {
+                    match r.u8()? {
+                        0 => Ok(Some(false)),
+                        1 => Ok(Some(true)),
+                        2 => Ok(None),
+                        _ => Err(DecodeError::BadValue("optional bool")),
+                    }
                 };
-                Message::ChangeWreck { session_id, wreck_id, is_empty }
+                let is_empty = read_optional_bool(&mut r)?;
+                let abandoned = read_optional_bool(&mut r)?;
+                Message::ChangeWreck { session_id, wreck_id, is_empty, abandoned }
             }
             kind::REMOVE_WRECK => Message::RemoveWreck { wreck_id: r.i64()?, effect: r.i32()? },
             kind::DEPLOYED => {

@@ -873,6 +873,35 @@ public sealed class MailServiceTests
     }
 
     [Fact]
+    public void Create_label_refuses_the_custom_label_limit_with_a_user_error()
+    {
+        var labels = new JsonObject();
+        for (var index = 0; index < 25; index++)
+        {
+            var id = 1L << (index + 4);
+            labels[id.ToString()] = new JsonObject { ["labelID"] = id, ["name"] = $"Label {index}" };
+        }
+        var state = new JsonObject
+        {
+            ["mailboxes"] = new JsonObject
+            {
+                ["90000001"] = new JsonObject
+                {
+                    ["statuses"] = new JsonObject(),
+                    ["labels"] = labels,
+                },
+            },
+        };
+        var request = new MailboxMutationRequest(
+            90000001, "CreateLabel", [new PyStr("One more")], Request("CreateLabel").Session);
+
+        var refusal = Assert.Throws<MachoWrappedException>(() => MailboxMutation.Apply(state, request));
+
+        Assert.Equal("MAIL_LABEL_LIMIT_EXCEEDED", MailInfo(refusal));
+        Assert.Equal(25, labels.Count);
+    }
+
+    [Fact]
     public async Task Create_label_initializes_a_mailbox_before_the_character_receives_mail()
     {
         var state = new JsonObject();

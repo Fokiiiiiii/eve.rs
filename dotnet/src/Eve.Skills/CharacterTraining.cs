@@ -339,6 +339,9 @@ public sealed class CharacterTraining(
     /// <summary>The history the character's skills have, newest first.</summary>
     public Task<IReadOnlyList<HistoryEntry>> HistoryAsync(long characterId, CancellationToken cancellationToken = default) => store.HistoryAsync(characterId, cancellationToken);
 
+    public Task<IReadOnlyList<HistoryEntry>> HistoryAsync(long characterId, int maxResults, CancellationToken cancellationToken = default) =>
+        store.HistoryAsync(characterId, maxResults, cancellationToken);
+
     /// <summary>
     /// Makes what the clock finished real: the levels are in the character's skills, the queue has moved on, and the history says so. Returns
     /// what changed, or null when nothing had. <see cref="Settled"/> is raised for a change.

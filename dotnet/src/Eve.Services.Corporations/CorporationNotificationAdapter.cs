@@ -11,10 +11,13 @@ internal static class CorporationNotificationAdapter
         bool allianceOwner,IReadOnlyList<(long ContactId,long? RelationshipId,long? LabelMask)> updates)
     {
         if (sessions is null || updates.Count == 0) return;
+        static PyValue Number(long value) => value is >= int.MinValue and <= int.MaxValue
+            ? new PyInt(value)
+            : new PyLong(value);
         var rows = new PyList([.. updates.Select(update => (PyValue)Py.Tuple(
             CorporationWire.Id(update.ContactId),
-            update.RelationshipId is { } relationship ? CorporationWire.Id(relationship) : PyNone.Instance,
-            update.LabelMask is { } labelMask ? CorporationWire.Id(labelMask) : PyNone.Instance))]);
+            update.RelationshipId is { } relationship ? Number(relationship) : PyNone.Instance,
+            update.LabelMask is { } labelMask ? Number(labelMask) : PyNone.Instance))]);
         call.Session.AfterResponse(() =>
         {
             foreach (var session in sessions.All())
@@ -27,6 +30,38 @@ internal static class CorporationNotificationAdapter
                 Send(session,"OnOrganizationContactsUpdated",idType,CorporationWire.Id(ownerId),rows);
             }
         });
+    }
+
+    public static IReadOnlyList<(long ContactId,long? RelationshipId,long? LabelMask)> ChangedContacts(
+        IReadOnlyList<CorporationContact> before,IReadOnlyList<CorporationContact> after)
+    {
+        var previous = before.ToDictionary(contact => contact.ContactId);
+        return after.Where(contact => !previous.TryGetValue(contact.ContactId,out var old) ||
+                old.RelationshipId != contact.RelationshipId || old.LabelMask != contact.LabelMask)
+            .Select(contact =>
+            {
+                var existed = previous.TryGetValue(contact.ContactId,out var old);
+                return (contact.ContactId,
+                    existed && old is not null && old.RelationshipId == contact.RelationshipId ? null : (long?)contact.RelationshipId,
+                    existed && old is not null && old.LabelMask == contact.LabelMask ? null : (long?)contact.LabelMask);
+            })
+            .ToArray();
+    }
+
+    public static IReadOnlyList<(long ContactId,long? RelationshipId,long? LabelMask)> ChangedContacts(
+        IReadOnlyList<CorporationStore.AllianceContact> before,IReadOnlyList<CorporationStore.AllianceContact> after)
+    {
+        var previous = before.ToDictionary(contact => contact.ContactId);
+        return after.Where(contact => !previous.TryGetValue(contact.ContactId,out var old) ||
+                old.RelationshipId != contact.RelationshipId || old.LabelMask != contact.LabelMask)
+            .Select(contact =>
+            {
+                var existed = previous.TryGetValue(contact.ContactId,out var old);
+                return (contact.ContactId,
+                    existed && old is not null && old.RelationshipId == contact.RelationshipId ? null : (long?)contact.RelationshipId,
+                    existed && old is not null && old.LabelMask == contact.LabelMask ? null : (long?)contact.LabelMask);
+            })
+            .ToArray();
     }
 
     public static void MemberChanged(CharacterSessions? sessions,ServiceCall call,long corporationId,long characterId,
@@ -88,6 +123,16 @@ public static void ApplicationChanged(CharacterSessions? sessions,ServiceCall ca
             foreach (var id in uniqueRecipients)
                 if (sessions.Of(id) is { } member)
                     Send(member,"OnMedalIssued","clientID",Py.Tuple(CorporationWire.Id(medalId)));
+        });
+    }
+
+    public static void CorporationMedalAdded(CharacterSessions? sessions,ServiceCall call,long corporationId,long medalId)
+    {
+        if (sessions is null) return;
+        call.Session.AfterResponse(() =>
+        {
+            foreach (var session in sessions.OfCorporation(corporationId))
+                Send(session,"OnCorporationMedalAdded","corpid",CorporationWire.Id(medalId));
         });
     }
 
@@ -440,7 +485,7 @@ public static void ApplicationChanged(CharacterSessions? sessions,ServiceCall ca
         {
             var oldValue = Value(before,field.Key);
             var newValue = Value(after,field.Key);
-            if (!oldValue.Equals(newValue))
+            if (before is null || !oldValue.Equals(newValue))
                 changes.Add(new(new PyStr(field.Key),new PyList([oldValue,newValue])));
         }
         return new PyDict(changes);

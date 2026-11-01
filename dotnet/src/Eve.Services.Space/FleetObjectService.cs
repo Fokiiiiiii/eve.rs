@@ -4,6 +4,16 @@ using Eve.Space;
 
 namespace Eve.Services.Space;
 
+internal static class FleetBroadcasts
+{
+    internal static readonly System.Collections.Generic.HashSet<string> Names = new(StringComparer.Ordinal)
+    {
+        "EnemySpotted", "HealArmor", "HealShield", "HealCapacitor", "InPosition", "NeedBackup",
+        "HoldPosition", "Location", "TravelTo", "JumpBeacon", "Target", "HealTarget", "WarpTo",
+        "AlignTo", "JumpTo"
+    };
+}
+
 [Service("fleetObjectHandler")]
 public sealed partial class FleetObjectService(FleetStore store, Func<long> nowUnixMs, Func<long, ClientSession?>? sessionForCharacter = null, Func<IReadOnlyList<long>, CancellationToken, Task<PyValue>>? compositionForMembers = null, Func<long, long, string, ClientSession, CancellationToken, Task<PyValue?>>? loadFleetSetup = null, Func<long, long, PyValue, ClientSession, CancellationToken, Task<PyValue?>>? createFleetAdvert = null, Func<ClientSession, ClientSession, bool>? sameBubble = null, Func<long, CancellationToken, Task<IReadOnlyList<int>>>? memberSkillsForCharacter = null) : IBoundObjectReleaseHandler
 {
@@ -295,58 +305,101 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
     }
 
     [Method("CreateWing")]
-    public async ValueTask<PyValue> CreateWing(ServiceCall call) =>
-        FleetId(call) is { } id && await store.CreateWingAsync(id, CharacterId(call.Session), call.Cancellation) is var wing && wing > 0
-            ? new PyLong(wing) : None;
+    public async ValueTask<PyValue> CreateWing(ServiceCall call)
+    {
+        if (FleetId(call) is not { } fleetId) return None;
+        var wingId = await store.CreateWingAsync(fleetId, CharacterId(call.Session), call.Cancellation);
+        if (wingId <= 0) return None;
+        if (await store.SnapshotAsync(fleetId, call.Cancellation) is { } after)
+            NotifyFleetMembers(after, call.Session, "OnFleetWingAdded", new PyLong(wingId));
+        return new PyLong(wingId);
+    }
 
     [Method("DeleteWing")]
     public async ValueTask<PyValue> DeleteWing(ServiceCall call)
     {
-        if (FleetId(call) is { } id) await store.DeleteWingAsync(id, CharacterId(call.Session), Number(call.Arg(0)) ?? 0, call.Cancellation);
+        if (FleetId(call) is not { } fleetId ||
+            await store.SnapshotAsync(fleetId, call.Cancellation) is not { } before)
+            return None;
+        var wingId = Number(call.Arg(0)) ?? 0;
+        if (!await store.DeleteWingAsync(fleetId, CharacterId(call.Session), wingId, call.Cancellation) ||
+            await store.SnapshotAsync(fleetId, call.Cancellation) is not { } after)
+            return None;
+        await PublishMemberChangesAsync(call.Session, fleetId, before, after, call.Cancellation);
+        NotifyFleetMembers(after, call.Session, "OnFleetWingDeleted", new PyLong(wingId));
+        if (before.AutoJoinSquadId != after.AutoJoinSquadId)
+            NotifyFleetOptionsChanged(fleetId, before, after, call.Session);
         return None;
     }
 
     [Method("CreateSquad")]
-    public async ValueTask<PyValue> CreateSquad(ServiceCall call) =>
-        FleetId(call) is { } id && await store.CreateSquadAsync(id, CharacterId(call.Session), Number(call.Arg(0)) ?? 0, call.Cancellation) is var squad && squad > 0
-            ? new PyLong(squad) : None;
+    public async ValueTask<PyValue> CreateSquad(ServiceCall call)
+    {
+        if (FleetId(call) is not { } fleetId) return None;
+        var wingId = Number(call.Arg(0)) ?? 0;
+        var squadId = await store.CreateSquadAsync(fleetId, CharacterId(call.Session), wingId, call.Cancellation);
+        if (squadId <= 0) return None;
+        if (await store.SnapshotAsync(fleetId, call.Cancellation) is { } after)
+            NotifyFleetMembers(after, call.Session, "OnFleetSquadAdded", new PyLong(wingId), new PyLong(squadId));
+        return new PyLong(squadId);
+    }
 
     [Method("DeleteSquad")]
     public async ValueTask<PyValue> DeleteSquad(ServiceCall call)
     {
-        if (FleetId(call) is { } id) await store.DeleteSquadAsync(id, CharacterId(call.Session), Number(call.Arg(0)) ?? 0, call.Cancellation);
+        if (FleetId(call) is not { } fleetId ||
+            await store.SnapshotAsync(fleetId, call.Cancellation) is not { } before)
+            return None;
+        var squadId = Number(call.Arg(0)) ?? 0;
+        if (!await store.DeleteSquadAsync(fleetId, CharacterId(call.Session), squadId, call.Cancellation) ||
+            await store.SnapshotAsync(fleetId, call.Cancellation) is not { } after)
+            return None;
+        await PublishMemberChangesAsync(call.Session, fleetId, before, after, call.Cancellation);
+        NotifyFleetMembers(after, call.Session, "OnFleetSquadDeleted", new PyLong(squadId));
+        if (before.AutoJoinSquadId != after.AutoJoinSquadId)
+            NotifyFleetOptionsChanged(fleetId, before, after, call.Session);
         return None;
     }
 
     [Method("ChangeWingName")]
     public async ValueTask<PyValue> ChangeWingName(ServiceCall call)
     {
-        if (FleetId(call) is { } id) await store.RenameWingAsync(id, CharacterId(call.Session), Number(call.Arg(0)) ?? 0, Text(call.Arg(1)), call.Cancellation);
+        if (FleetId(call) is not { } fleetId) return None;
+        var wingId = Number(call.Arg(0)) ?? 0;
+        var name = Text(call.Arg(1));
+        if (await store.RenameWingAsync(fleetId, CharacterId(call.Session), wingId, name, call.Cancellation) &&
+            await store.SnapshotAsync(fleetId, call.Cancellation) is { } after)
+            NotifyFleetMembers(after, call.Session, "OnFleetWingNameChanged", new PyLong(wingId), new PyWString(name));
         return None;
     }
 
     [Method("ChangeSquadName")]
     public async ValueTask<PyValue> ChangeSquadName(ServiceCall call)
     {
-        if (FleetId(call) is { } id) await store.RenameSquadAsync(id, CharacterId(call.Session), Number(call.Arg(0)) ?? 0, Text(call.Arg(1)), call.Cancellation);
+        if (FleetId(call) is not { } fleetId) return None;
+        var squadId = Number(call.Arg(0)) ?? 0;
+        var name = Text(call.Arg(1));
+        if (await store.RenameSquadAsync(fleetId, CharacterId(call.Session), squadId, name, call.Cancellation) &&
+            await store.SnapshotAsync(fleetId, call.Cancellation) is { } after)
+            NotifyFleetMembers(after, call.Session, "OnFleetSquadNameChanged", new PyLong(squadId), new PyWString(name));
         return None;
     }
 
     [Method("MoveMember")]
     public async ValueTask<PyValue> MoveMember(ServiceCall call)
     {
-        if (FleetId(call) is not { } fleetId) return None;
+        if (FleetId(call) is not { } fleetId) return MoveMemberResult(false);
         var before = await store.SnapshotAsync(fleetId, call.Cancellation);
-        if (before is null) return None;
+        if (before is null) return MoveMemberResult(false);
         var characterId = Number(call.Arg(0)) ?? 0;
         var wingId = Number(call.Arg(1)) ?? FleetStore.NoUnit;
         var squadId = Number(call.Arg(2)) ?? FleetStore.NoUnit;
         var role = FleetRole(call.Arg(3));
         if (!await store.MoveMemberAsync(fleetId, CharacterId(call.Session), characterId, wingId, squadId, role, call.Cancellation))
-            return None;
+            return MoveMemberResult(false);
         var after = await store.SnapshotAsync(fleetId, call.Cancellation);
         await PublishMemberChangesAsync(call.Session, fleetId, before, after, call.Cancellation);
-        return None;
+        return MoveMemberResult(true);
     }
 
     [Method("MassMoveMembers")]
@@ -360,18 +413,18 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
         var requestedMemberIds = memberIds.Select(Number).ToArray();
         if (requestedMemberIds.Any(id => id is not > 0))
             throw MachoErrors.ThrowUserError("FleetError");
-        if (FleetId(call) is not { } fleetId) return None;
+        if (FleetId(call) is not { } fleetId) return MassMoveMembersResult([]);
         var before = await store.SnapshotAsync(fleetId, call.Cancellation);
-        if (before is null) return None;
+        if (before is null) return MassMoveMembersResult([]);
         var wingId = Number(call.Arg(1)) ?? FleetStore.NoUnit;
         var squadId = Number(call.Arg(2)) ?? FleetStore.NoUnit;
         var role = FleetRole(call.Arg(3));
         var ids = requestedMemberIds.Select(id => id!.Value).Distinct().ToArray();
-        if (!await store.MassMoveMembersAsync(fleetId, CharacterId(call.Session), ids, wingId, squadId, role, call.Cancellation))
-            return None;
+        var moved = await store.MassMoveMembersAsync(fleetId, CharacterId(call.Session), ids, wingId, squadId, role, call.Cancellation);
+        if (moved.Count == 0) return MassMoveMembersResult(moved);
         var after = await store.SnapshotAsync(fleetId, call.Cancellation);
         await PublishMemberChangesAsync(call.Session, fleetId, before, after, call.Cancellation);
-        return None;
+        return MassMoveMembersResult(moved);
     }
 
     [Method("MakeLeader")]
@@ -588,13 +641,6 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
 
 public sealed partial class FleetObjectService
 {
-private static readonly System.Collections.Generic.HashSet<string> BroadcastNames = new(StringComparer.Ordinal)
-    {
-        "EnemySpotted", "HealArmor", "HealShield", "HealCapacitor", "InPosition", "NeedBackup",
-        "HoldPosition", "Location", "TravelTo", "JumpBeacon", "Target", "RepTarget", "WarpTo",
-        "AlignTo", "JumpTo"
-    };
-
     [Method("GetWings")]
     public async ValueTask<PyValue> GetWings(ServiceCall call)
     {
@@ -714,12 +760,12 @@ private static readonly System.Collections.Generic.HashSet<string> BroadcastName
         var sender = snapshot.Members.FirstOrDefault(member => member.CharacterId == senderId);
         var name = Text(call.Arg(0));
         var scope = Number(call.Arg(1));
-        if (sender is null || !BroadcastNames.Contains(name) || scope is not (1 or 2 or 3)) return;
+        if (sender is null || !FleetBroadcasts.Names.Contains(name) || scope is not (1 or 2 or 3)) return;
 
         var systemId = call.Session.GetInt("solarsystemid2") ?? call.Session.GetInt("solarsystemid");
         var range = name switch
         {
-            "Target" or "RepTarget" or "HealArmor" or "HealShield" or "HealCapacitor" => 2,
+            "Target" or "HealTarget" or "HealArmor" or "HealShield" or "HealCapacitor" => 2,
             "WarpTo" or "AlignTo" or "JumpTo" => 1,
             _ => 0
         };
@@ -804,7 +850,7 @@ private static readonly System.Collections.Generic.HashSet<string> BroadcastName
         return None;
     }
 
-    private void NotifyFleetOptionsChanged(long fleetId, FleetSnapshot before, FleetSnapshot after, ClientSession issuer)
+    internal void NotifyFleetOptionsChanged(long fleetId, FleetSnapshot before, FleetSnapshot after, ClientSession issuer)
     {
         var oldOptions = FleetOptionsValue(before);
         var newOptions = FleetOptionsValue(after);
@@ -812,6 +858,23 @@ private static readonly System.Collections.Generic.HashSet<string> BroadcastName
             (member.CharacterId == CharacterId(issuer) ? issuer : sessionForCharacter?.Invoke(member.CharacterId))
                 ?.SendNotification("OnFleetOptionsChanged", "fleetid", oldOptions, newOptions);
     }
+
+    internal void NotifyFleetMembers(FleetSnapshot snapshot, ClientSession issuer, string notificationName, params PyValue[] args)
+    {
+        foreach (var member in snapshot.Members)
+        {
+            var recipient = member.CharacterId == CharacterId(issuer)
+                ? issuer
+                : sessionForCharacter?.Invoke(member.CharacterId);
+            if (recipient?.CharacterId == member.CharacterId)
+                recipient.SendNotification(notificationName, "fleetid", args);
+        }
+    }
+
+    internal static PyValue MoveMemberResult(bool moved) => moved ? PyBool.True : PyBool.False;
+
+    internal static PyValue MassMoveMembersResult(IEnumerable<long> movedCharacterIds) =>
+        new PyList(movedCharacterIds.Select(id => (PyValue)new PyLong(id)).ToArray());
 
     private void NotifyMemberChanged(long fleetId, FleetMemberSnapshot oldMember, FleetMemberSnapshot newMember,
         FleetSnapshot after, ClientSession issuer)

@@ -130,7 +130,7 @@ impl Scene {
         let pilot = self.pilots.get_mut(&session).expect("the pilot is in the scene");
         pilot.protected_until = 0;
         if duration <= 1.0 {
-            tether_out.extend(Self::answer(session, order, false, Vec::new()));
+            tether_out.extend(Self::answer(session, order, true, Vec::new()));
             tether_out.extend(self.finish_lock(session, subject, sequence, origin, now));
             return tether_out;
         }

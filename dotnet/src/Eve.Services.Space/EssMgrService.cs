@@ -136,35 +136,38 @@ public sealed partial class EssMgrService
         if (!result.Succeeded)
             return PyNone.Instance;
 
-        switch (operation)
+        call.Session.AfterResponse(() =>
         {
-            case EssMgrOperation.AttemptLinkToMainBank:
-                call.Session.SendNotification("OnESSMainBankLinkNotification", "clientID", Py.Number(systemId));
-                break;
-            case EssMgrOperation.AttemptLinkToReserveBank:
-                call.Session.SendNotification("OnESSReserveBankLinkNotification", "clientID", Py.Number(systemId));
-                break;
-            case EssMgrOperation.RequestMainBankUnlink:
-                call.Session.SendNotification(
-                    "OnMainBankPlayerLinkDisconnected", "clientID",
-                    Py.Dict(
-                        ("solarSystemID", Py.Number(result.State?.SolarSystemId ?? 0)),
-                        ("linkID", new PyStr(result.RemovedMainBankLink?.LinkId ?? string.Empty)),
-                        ("characterID", Py.Number(result.RemovedMainBankLink?.CharacterId ?? 0)),
-                        ("reason", new PyInt(0))));
-                break;
-            case EssMgrOperation.RequestReserveBankUnlink:
-                call.Session.SendNotification(
-                    "OnReserveBankPlayerLinkDisconnected", "clientID",
-                    Py.Dict(
-                        ("solarSystemID", Py.Number(result.State?.SolarSystemId ?? 0)),
-                        ("characterID", Py.Number(characterId)),
-                        ("reason", new PyInt(0))));
-                break;
-        }
+            switch (operation)
+            {
+                case EssMgrOperation.AttemptLinkToMainBank:
+                    call.Session.SendNotification("OnESSMainBankLinkNotification", "clientID", Py.Number(systemId));
+                    break;
+                case EssMgrOperation.AttemptLinkToReserveBank:
+                    call.Session.SendNotification("OnESSReserveBankLinkNotification", "clientID", Py.Number(systemId));
+                    break;
+                case EssMgrOperation.RequestMainBankUnlink:
+                    call.Session.SendNotification(
+                        "OnMainBankPlayerLinkDisconnected", "clientID",
+                        Py.Dict(
+                            ("solarSystemID", Py.Number(result.State?.SolarSystemId ?? 0)),
+                            ("linkID", new PyStr(result.RemovedMainBankLink?.LinkId ?? string.Empty)),
+                            ("characterID", Py.Number(result.RemovedMainBankLink?.CharacterId ?? 0)),
+                            ("reason", new PyInt(0))));
+                    break;
+                case EssMgrOperation.RequestReserveBankUnlink:
+                    call.Session.SendNotification(
+                        "OnReserveBankPlayerLinkDisconnected", "clientID",
+                        Py.Dict(
+                            ("solarSystemID", Py.Number(result.State?.SolarSystemId ?? 0)),
+                            ("characterID", Py.Number(characterId)),
+                            ("reason", new PyInt(0))));
+                    break;
+            }
 
-        if (result.State is { } state)
-            NotifyEssDataChanged(call.Session, state);
+            if (result.State is { } state)
+                NotifyEssDataChanged(call.Session, state);
+        });
         return PyNone.Instance;
     }
 

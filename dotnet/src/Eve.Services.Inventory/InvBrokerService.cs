@@ -19,10 +19,12 @@ public sealed partial class InvBrokerService(
     Func<ClientSession, long, CancellationToken, ValueTask<ControlledStructureInventory?>>? controlledStructureInventory = null,
             Func<IReadOnlyCollection<long>, CancellationToken, Task<IReadOnlyDictionary<long, double>>>? crystalDamage = null,
             Func<long, CancellationToken, ValueTask<DockableAssetLocation?>>? dockableAssetLocation = null,
-            Func<long, long, int?, long, CancellationToken, Task<IReadOnlyList<ItemChanged>>>? stackAll = null) : IBoundObjectReleaseHandler, IContractInventoryReader
+    Func<long, long, int?, long, CancellationToken, Task<IReadOnlyList<ItemChanged>>>? stackAll = null,
+    Func<long, long, CancellationToken, ValueTask<bool>>? hasCorporationOffice = null) : IBoundObjectReleaseHandler, IContractInventoryReader
 {
     /// <summary>The container the client asks for to get the hangar of the station it is docked at.</summary>
     public const int ContainerHangar = 10004;
+    public const int ContainerCorpMarket = 10012;
     public const int ContainerStructure = 10014;
 
     private const int ShipCategory = 6;
@@ -78,6 +80,7 @@ public sealed partial class InvBrokerService(
 
     /// <summary>The station the session is docked at.</summary>
     private static long? StationOf(ClientSession session) => session.DockedLocationId;
+    private static long? DockedLocationOf(ClientSession session) => StationOf(session) ?? session.GetInt("structureid");
 
     public void OnBoundObjectReleased(string oid, ClientSession? session) => _bound.TryRemove(oid, out _);
 
@@ -106,7 +109,7 @@ public sealed partial class InvBrokerService(
         if (view is null || view.Structure.Id != structureId || view.Structure.OwnerId <= 0
             || statics.CategoryId("Structure") is not { } category
             || statics.Type(view.Structure.TypeId)?.CategoryId != category
-            || view.Contents.Any(item => item.LocationId != structureId || item.OwnerId != view.Structure.OwnerId))
+            || view.Contents.Any(item => item.LocationId != structureId))
             return null;
         return view;
     }
@@ -175,11 +178,12 @@ public sealed partial class InvBrokerService(
             : ValueTask.FromResult(false);
 
     private async Task<(long StationId, int DivisionFlag)?> CorporationDivisionOfItemAsync(
-        Item item, long corporationId, CancellationToken cancellationToken)
+        ClientSession session, Item item, long corporationId, CancellationToken cancellationToken)
     {
         if (item.OwnerId != corporationId)
             return null;
-        if (ItemFlags.IsCorporationHangar(item.Flag) && stations.Get(item.LocationId) is not null)
+        if (ItemFlags.IsCorporationHangar(item.Flag) &&
+            (stations.Get(item.LocationId) is not null || session.GetInt("structureid") == item.LocationId))
             return (item.LocationId, item.Flag);
 
         var location = item.LocationId;
@@ -189,7 +193,8 @@ public sealed partial class InvBrokerService(
             if (await items.GetAsync(location, cancellationToken) is not { OwnerId: var owner, LocationId: var parentLocation, Flag: var flag } parent
                 || owner != corporationId)
                 return null;
-            if (ItemFlags.IsCorporationHangar(flag) && stations.Get(parentLocation) is not null)
+            if (ItemFlags.IsCorporationHangar(flag) &&
+                (stations.Get(parentLocation) is not null || session.GetInt("structureid") == parentLocation))
                 return (parentLocation, flag);
             location = parentLocation;
         }
@@ -204,7 +209,7 @@ public sealed partial class InvBrokerService(
         var corporationId = CorporationIdOf(session);
         if (corporationId <= 0 || corporationId != item.OwnerId)
             return false;
-        var division = await CorporationDivisionOfItemAsync(item, corporationId, cancellationToken);
+        var division = await CorporationDivisionOfItemAsync(session, item, corporationId, cancellationToken);
         return division is { } location
             && await CorporationAccessAsync(character, corporationId, location.StationId, location.DivisionFlag, operation, cancellationToken);
     }
@@ -293,7 +298,10 @@ public sealed partial class InvBrokerService(
         if (context.Kind is Kind.Structure or Kind.Hangar)
         {
             if (await ControlledStructureAsync(session, context.ItemId, cancellationToken) is { } controlled)
-                return await RowsAsync(controlled.Contents, cancellationToken);
+            {
+                var visible = controlled.Contents.Where(item => item.OwnerId == controlled.Structure.OwnerId);
+                return await RowsAsync(visible, cancellationToken);
+            }
             if (context.Kind == Kind.Structure)
                 return [];
         }
@@ -328,6 +336,12 @@ public sealed partial class InvBrokerService(
             return await RowsAsync(contents, cancellationToken);
         if (container.CustomInfo?.StartsWith("analysis_beacon_loot:", StringComparison.Ordinal) == true)
             return await RowsAsync(contents.Where(item => item.OwnerId == character), cancellationToken);
+        if (context.Kind == Kind.Container && space is not null && space.IsInSpace(session))
+        {
+            if (!await space.MayTakeFromAsync(session, container, cancellationToken))
+                return [];
+            return await RowsAsync(contents, cancellationToken);
+        }
         if (container.OwnerId == character)
             return await RowsAsync(contents.Where(item => item.OwnerId == character), cancellationToken);
         if (await CanAccessCorporationItemAsync(session, container, CorporationHangarOperation.Query, cancellationToken))
@@ -391,6 +405,14 @@ public sealed partial class InvBrokerService(
                 ? Bind(new Context(Kind.Hangar, structureId, 0), call.Session)
                 : None;
 
+        if (container == ContainerCorpMarket)
+        {
+            var locationId = StationOf(call.Session) ?? call.Session.GetInt("structureid");
+            return locationId is > 0 && CorporationIdOf(call.Session) > 0
+                ? Bind(new Context(Kind.Hangar, locationId.Value, 0, ItemFlags.CorpDeliveries), call.Session)
+                : None;
+        }
+
         if (StationOf(call.Session) is not { } station)
             return None;
         return container is null || container == ContainerHangar || container == station
@@ -445,7 +467,7 @@ public sealed partial class InvBrokerService(
                 ? Bind(new Context(Kind.Container, id, 0, CharacterShips.ContainerFlag), call.Session)
                 : None;
         }
-        else if (StationOf(call.Session) is not { } station)
+        else if (DockedLocationOf(call.Session) is not { } station)
         {
             result = await OpenInSpaceAsync(call, id);
         }
@@ -567,9 +589,7 @@ public sealed partial class InvBrokerService(
             var flag = FlagOf(call);
             var controlled = context.Kind is Kind.Structure or Kind.Hangar
                 ? await ControlledStructureAsync(call.Session, context.ItemId, call.Cancellation) : null;
-            var contents = controlled is not null
-                ? await RowsAsync(controlled.Contents, call.Cancellation)
-                : await ContentsAsync(context, call.Session, call.Cancellation);
+            var contents = await ContentsAsync(context, call.Session, call.Cancellation);
             if (context.Kind == Kind.GlobalAssets && call.Session.CharacterId is { } character)
             {
                 var owned = await items.OwnedByAsync(character, call.Cancellation);
@@ -725,7 +745,7 @@ public sealed partial class InvBrokerService(
             || await items.GetAsync(itemId, call.Cancellation) is not { } item)
             return false;
 
-        if (StationOf(call.Session) is not { } stationId || item.LocationId != stationId)
+        if (DockedLocationOf(call.Session) is not { } stationId || item.LocationId != stationId)
             return false;
         if (item.Flag == ItemFlags.Hangar && item.OwnerId != characterId)
             return false;
@@ -767,8 +787,14 @@ public sealed partial class InvBrokerService(
     [Method("GetContainerContents")]
     public async ValueTask<PyValue> GetContainerContents(ServiceCall call)
     {
-        if (IdOf(call.Arg(0)) is not { } itemId
-            || await ContainerContentsContextAsync(call.Session, itemId, call.Cancellation) is not { } context)
+        var context = ContextOf(call);
+        if (context is null)
+        {
+            if (IdOf(call.Arg(0)) is not { } itemId)
+                return InventoryWire.Rowset([]);
+            context = await ContainerContentsContextAsync(call.Session, itemId, call.Cancellation);
+        }
+        if (context is null)
             return InventoryWire.Rowset([]);
         return InventoryWire.Rowset(await ContentsAsync(context, call.Session, call.Cancellation));
     }
@@ -1053,9 +1079,8 @@ public sealed partial class InvBrokerService(
     }
 
     /// <summary>
-    /// <c>GetCapacity(flag)</c>: how big the inventory is and how much is in it. A ship's hold is the ship's own capacity (dogma's); asked of a ship with no flag it is the
-    /// cargo hold. A hangar holds a million cubic metres whatever is in it; asked for the cargo hold it answers what the reference does for an inventory that is no
-    /// ship (5,000).
+    /// <c>GetCapacity(flag)</c>: how big the inventory is and how much is in it. Station hangars report the client's effectively unlimited capacity and zero used;
+    /// ship holds and structure inventories report their actual capacity and contents.
     /// </summary>
     [Method("GetCapacity")]
     public async ValueTask<PyValue> GetCapacity(ServiceCall call)
@@ -1161,7 +1186,7 @@ public sealed partial class InvBrokerService(
         {
             if (owner != CorporationIdOf(call.Session))
                 throw MachoErrors.ThrowUserError("ItemNotYours");
-            if (await CorporationDivisionOfItemAsync(item, owner, call.Cancellation) is not { } division
+            if (await CorporationDivisionOfItemAsync(call.Session, item, owner, call.Cancellation) is not { } division
                 || division.StationId != station)
                 return None;
             if (!await CanAccessCorporationItemAsync(call.Session, item, CorporationHangarOperation.Take, call.Cancellation))
@@ -1364,7 +1389,7 @@ private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, lo
                 : None;
         }
 
-        if (StationOf(call.Session) is not { } station
+        if (DockedLocationOf(call.Session) is not { } station
             || await items.GetAsync(itemId, call.Cancellation) is not { } item
             || item.LocationId != source)
             return None;
@@ -1582,7 +1607,7 @@ private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, lo
                 var corporationHangar = false;
                 if (!personalHangar && corporationId > 0 && item.OwnerId == corporationId
                     && ItemFlags.IsCorporationHangar(item.Flag)
-                    && await CorporationDivisionOfItemAsync(item, corporationId, call.Cancellation) is { } division
+                    && await CorporationDivisionOfItemAsync(call.Session, item, corporationId, call.Cancellation) is { } division
                     && division.StationId == dockedStation
                     && division.DivisionFlag == item.Flag)
                 {

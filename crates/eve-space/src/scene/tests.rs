@@ -75,7 +75,7 @@ pub(crate) fn spec() -> ShipSpec {
             armor_pinned: false,
         },
         condition: Condition::FULL,
-        modules: vec![ModuleSpec { item_id: 9_988_400_001_940, type_id: 21857, flag: 19 }],
+        modules: vec![ModuleSpec { item_id: 9_988_400_001_940, type_id: 21857, flag: 19, bank_master_id: 0 }],
     }
 }
 
@@ -2160,9 +2160,11 @@ fn an_overheated_cycle_damages_and_burns_a_fitted_module_in_its_rack() {
 
     let told = scene.poll(NOON + TICKS_PER_SECOND);
     assert!(told.iter().any(|out| matches!(out, Out::Notify { name: "OnModuleAttributeChanges", .. })));
+    assert!(told.iter().any(|out| matches!(out, Out::ModuleEnded { session: SESSION, module_id: ended, .. } if *ended == module_id)));
     let damaged = &scene.pilots[&SESSION].heat.modules[&module_id].profile;
     assert_eq!(damaged.damage_hp, damaged.structure_hp);
     assert!(!damaged.online);
+    assert!(!scene.pilots[&SESSION].heat.modules[&module_id].overloaded);
 }
 
 /// Moves every ship of the scene by one offset, out past the station's surface, so that none is within a smartbomb's restriction of it

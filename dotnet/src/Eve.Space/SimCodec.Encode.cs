@@ -749,6 +749,7 @@ private static void WriteStructureDamageCorrelation(
             w.I64(module.ItemId);
             w.I32(module.TypeId);
             w.I32(module.Flag);
+            w.I64(module.BankMasterId);
         }
         var sensors = s.Sensors ?? SimSensors.Plain;
         foreach (var number in new[] { sensors.Gravimetric, sensors.Ladar, sensors.Magnetometric, sensors.Radar, sensors.EcmResistance, sensors.EnergyWarfareResistance })
@@ -1319,7 +1320,8 @@ private static void WriteStructureDamageCorrelation(
                 w.U8(Kind.ChangeWreck);
                 w.U64(m.SessionId);
                 w.I64(m.WreckId);
-                w.U8((byte)(m.IsEmpty ? 1 : 0));
+                w.U8(m.IsEmpty is null ? (byte)2 : (byte)(m.IsEmpty.Value ? 1 : 0));
+                w.U8(m.Abandoned is null ? (byte)2 : (byte)(m.Abandoned.Value ? 1 : 0));
                 break;
             case SimRemoveWreck m:
                 w.U8(Kind.RemoveWreck);

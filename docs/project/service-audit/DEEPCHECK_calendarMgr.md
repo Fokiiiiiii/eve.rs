@@ -24,10 +24,10 @@ Client requests use positional method values; the transport adds machoVersion se
 
 CalendarMgrService is registered from CoreServices.Create and uses the persistent CalendarStore through MailComposition. Writes commit before observer notifications; observer sends are scheduled after the response. The existing deep check traces calendar audience/role checks and verifies subsequent reads.
 
-EveJS v0.12.9 manager handlers are in server/src/services/calendar/calendarMgrService.js:24-162 and delegate mutations/reads to its calendar runtime state. eve.rs uses CalendarStore transactions and the same client-visible reply and notification shapes.
+EveJS 261028.1 manager handlers are in `/home/user/evejs-261028.1/src/server/src/services/calendar/calendarMgrService.js:24-162` and delegate mutations/reads to its calendar runtime state. eve.rs uses CalendarStore transactions and the same client-visible reply and notification shapes.
 
 ## Test evidence and limits
 
-CalendarRpcHostWireTests.cs exercises the registered Host listener and covers the create, read, edit, response, delete, authorization and error paths; the prior deep check records 2 focused tests passing and a red full Host shard due to the no-database environment. EVE_RS_COVERAGE.csv still labels these eleven rows IMPLEMENTED-UNTESTED because its generated match list predates the wire test; that status does not describe the current source tree. The deepcheck and test source are the evidence for this group.
+`CalendarRpcHostWireTests.Calendar_rpc_methods_are_reachable_over_host_and_share_state_and_notifications` exercises the registered Host listener with the PostgreSQL `CalendarStore`; it covers all eleven manager RPCs, persisted follow-up reads, and notifications. The focused DB-backed test passed 1/1 against `eve_p3`; `CalendarMgrServiceTests` passed 10/10. `EVE_RS_COVERAGE.csv` now records RPC-00968–00978 as `IMPLEMENTED-TESTED` with that Host test as evidence.
 
-No PostgreSQL database or graphical V24 client was used in this pass. No code changed.
+No graphical V24 client was used in this pass.

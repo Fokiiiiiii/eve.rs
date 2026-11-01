@@ -77,7 +77,8 @@ public partial class HostServerTests
                 character = new FwCharacterWarfareState(faction, until);
                 return ValueTask.FromResult(true);
             },
-            CurrentFileTime: () => cooldown));
+            CurrentFileTime: () => cooldown,
+            ReadStandingAsync: (_, _, _) => ValueTask.FromResult(0d)));
         Start(
             strictRpc: true,
             configure: registry => registry.Register(service),
@@ -113,25 +114,40 @@ public partial class HostServerTests
             }
         }
 
-        Assert.Equal(new PyList([new PyInt(corporationFactionId), PyNone.Instance, new PyInt(corporationFactionId)]),
-            await Call(1, "GetMyEnlistment"));
-        Assert.Equal(new PyList([new PyInt(500_001), new PyInt(500_002)]),
-            await Call(2, "GetCorpAllowedEnlistmentFactions", new PyInt(corporationId)));
+        async Task AssertEnlistmentNotification(params PyValue[] args)
+        {
+            var decoded = MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
+            var notification = Assert.IsType<MachoPacket>(MachoPacket.Decode(decoded));
+            Assert.Equal(MachoMessage.Notification, notification.Type);
+            Assert.Equal("OnEnlistmentStateUpdated", notification.Dest.BroadcastId);
+            Assert.Equal("charid", notification.Dest.IdType);
+            var envelope = Assert.IsType<PyTuple>(notification.Payload);
+            var inner = Assert.IsType<PyBuffer>(Assert.IsType<PyTuple>(Assert.Single(envelope.Items)).Items[1]);
+            Assert.Equal(MarshalCodec.Encode(new PyTuple([new PyInt(0),
+                new PyTuple([new PyInt(1), new PyTuple(args)])])), inner.Value.ToArray());
+        }
+
+        Assert.Equal(new PyValue[] { new PyInt(corporationFactionId), PyNone.Instance, new PyInt(corporationFactionId) },
+            Assert.IsType<PyList>(await Call(1, "GetMyEnlistment")).Items);
+        Assert.Equal(new PyValue[] { new PyInt(500_001), new PyInt(500_002) },
+            Assert.IsType<PyList>(await Call(2, "GetCorpAllowedEnlistmentFactions", new PyInt(corporationId))).Items);
         Assert.Equal(new PyLong(0), await Call(3, "GetMyDirectEnlistmentCooldownTimestamp"));
 
-        var updatedPolicy = new PyList([new PyInt(500_002)]);
-        Assert.Equal(updatedPolicy,
-            await Call(4, "SetMyCorpAllowedEnlistmentFactions", updatedPolicy));
-        Assert.Equal(updatedPolicy,
-            await Call(5, "GetCorpAllowedEnlistmentFactions", new PyInt(corporationId)));
+        var updatedPolicy = new PyList([new PyInt(directFactionId)]);
+        Assert.Equal(updatedPolicy.Items,
+            Assert.IsType<PyList>(await Call(4, "SetMyCorpAllowedEnlistmentFactions", updatedPolicy)).Items);
+        Assert.Equal(updatedPolicy.Items,
+            Assert.IsType<PyList>(await Call(5, "GetCorpAllowedEnlistmentFactions", new PyInt(corporationId))).Items);
 
         Assert.Equal(PyNone.Instance, await Call(6, "CreateMyDirectEnlistment", new PyInt(directFactionId)));
-        Assert.Equal(new PyList([new PyInt(directFactionId), new PyInt(directFactionId), new PyInt(corporationFactionId)]),
-            await Call(7, "GetMyEnlistment"));
+        await AssertEnlistmentNotification(new PyInt(directFactionId), new PyInt(directFactionId), new PyInt(corporationFactionId));
+        Assert.Equal(new PyValue[] { new PyInt(directFactionId), new PyInt(directFactionId), new PyInt(corporationFactionId) },
+            Assert.IsType<PyList>(await Call(7, "GetMyEnlistment")).Items);
 
         Assert.Equal(PyNone.Instance, await Call(8, "RemoveMyDirectEnlistment"));
-        Assert.Equal(new PyList([new PyInt(corporationFactionId), PyNone.Instance, new PyInt(corporationFactionId)]),
-            await Call(9, "GetMyEnlistment"));
+        await AssertEnlistmentNotification(new PyInt(corporationFactionId), PyNone.Instance, new PyInt(corporationFactionId));
+        Assert.Equal(new PyValue[] { new PyInt(corporationFactionId), PyNone.Instance, new PyInt(corporationFactionId) },
+            Assert.IsType<PyList>(await Call(9, "GetMyEnlistment")).Items);
         Assert.Equal(new PyLong(cooldown + TimeSpan.TicksPerDay),
             await Call(10, "GetMyDirectEnlistmentCooldownTimestamp"));
         Assert.Equal(2, sessionChanges);

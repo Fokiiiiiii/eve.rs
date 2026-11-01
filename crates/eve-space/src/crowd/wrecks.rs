@@ -106,6 +106,7 @@ impl Scene {
                 character_id: can.credit.character_id,
                 corporation_id: can.credit.corporation_id,
             },
+            abandoned: false,
             launcher_id: can.launcher_id,
             is_empty: true,
             rights_known: false,
@@ -140,14 +141,32 @@ impl Scene {
     }
 
     /// What is in a wreck or a can changed: its slim item is told again to whoever has it in view.
-    pub fn change_wreck(&mut self, wreck_id: i64, is_empty: bool, now: i64) -> Vec<Out> {
+    pub fn change_wreck(
+        &mut self,
+        wreck_id: i64,
+        is_empty: Option<bool>,
+        abandoned: Option<bool>,
+        now: i64,
+    ) -> Vec<Out> {
         let Some(wreck) = self.wrecks.get_mut(&wreck_id) else { return Vec::new() };
-        wreck.is_empty = is_empty;
-        wreck.rights_known |= !is_empty;
+        if let Some(is_empty) = is_empty {
+            wreck.is_empty = is_empty;
+            wreck.rights_known |= !is_empty;
+        }
+        if let Some(abandoned) = abandoned {
+            wreck.abandoned = abandoned;
+            if abandoned {
+                wreck.rights = crate::wreck::LootRights::default();
+                wreck.owner_id = 0;
+                wreck.corporation_id = 0;
+                wreck.alliance_id = 0;
+                wreck.war_faction_id = 0;
+            }
+        }
         let stamp = self.next_stamp(now);
         let Some(wreck) = self.wrecks.get(&wreck_id) else { return Vec::new() };
         let changed = payload::slim_item_change(stamp, wreck);
-        self.view_sessions()
+        self.wreck_view_sessions()
             .into_iter()
             .filter(|observer| self.sees_wreck(*observer, wreck_id))
             .map(|watcher| Self::update(watcher, vec![changed.clone()]))
@@ -160,11 +179,17 @@ impl Scene {
             return Vec::new();
         }
         let watchers: Vec<SessionId> = self
-            .view_sessions()
+            .wreck_view_sessions()
             .into_iter()
             .filter(|observer| self.sees_wreck(*observer, wreck_id))
             .collect();
-        let viewers: Vec<_> = self.pilots.keys().chain(self.controlled_structures.keys()).copied().collect();
+        let viewers: Vec<_> = self
+            .pilots
+            .keys()
+            .chain(self.controlled_structures.keys())
+            .chain(self.widowed.keys())
+            .copied()
+            .collect();
         for viewer in viewers {
             self.set_sees_wreck(viewer, wreck_id, false);
         }
@@ -207,13 +232,17 @@ impl Scene {
         let mut out = Vec::new();
         for id in gone {
             self.wrecks.remove(&id);
-            let watchers: Vec<SessionId> = self
-                .in_entry_order()
-                .into_iter()
-                .filter(|s| self.pilots[s].bound && self.pilots[s].sees_wrecks.contains(&id))
+            let watchers: Vec<SessionId> =
+                self.wreck_view_sessions().into_iter().filter(|s| self.sees_wreck(*s, id)).collect();
+            let viewers: Vec<_> = self
+                .pilots
+                .keys()
+                .chain(self.controlled_structures.keys())
+                .chain(self.widowed.keys())
+                .copied()
                 .collect();
-            for pilot in self.pilots.values_mut() {
-                pilot.sees_wrecks.remove(&id);
+            for viewer in viewers {
+                self.set_sees_wreck(viewer, id, false);
             }
             if !watchers.is_empty() {
                 let removal = payload::remove_ships(self.next_stamp(now), [id]);

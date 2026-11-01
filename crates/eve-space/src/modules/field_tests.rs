@@ -121,7 +121,8 @@ fn controlled_structure_scene() -> (Scene, i64, i64, Vec3, i64, i64, i64) {
     structure_spec.ship_id = structure_id;
     structure_spec.capacitor_capacity = 100.0;
     structure_spec.capacitor_recharge_s = 100.0;
-    structure_spec.modules = vec![ModuleSpec { item_id: MODULE, type_id: STRUCTURE_HOG_TYPE, flag: 27 }];
+    structure_spec.modules =
+        vec![ModuleSpec { item_id: MODULE, type_id: STRUCTURE_HOG_TYPE, flag: 27, bank_master_id: 0 }];
     scene.respec(A, structure_spec, now);
     (scene, structure_id, second_structure_id, origin, b_id, c_id, now)
 }

@@ -271,6 +271,24 @@ public class TrainingServiceTests
         Assert.Equal((3301L, 250L, 2L), (Notes.Number(history[1]["skillTypeID"]), Notes.Number(history[1]["absolutePoints"]), Notes.Number(history[1]["level"])));
         Assert.IsType<PyLong>(history[0]["logDate"]);
         Assert.Equal("util.KeyVal", JsSemantics.StringValue(((PyObject)((PyList)await Call(rig, session, "GetSkillHistory", [])).Items[0]).Name));
+        var limited = Assert.IsType<PyList>(await Call(rig, session, "GetSkillHistory", [new PyInt(1)]));
+        Assert.Single(limited.Items);
+        Assert.Equal(38, Notes.Number(Notes.Fields(limited.Items[0])["eventTypeID"]));
+        Assert.Equal(2, Assert.IsType<PyList>(await Call(rig, session, "GetSkillHistory", [new PyInt(0)])).Items.Count);
+    }
+
+    [PgFact]
+    public async Task Applying_free_points_to_the_running_skill_returns_the_client_user_error()
+    {
+        var (rig, session, _) = await ReadyAsync();
+        await using var owned = rig;
+        await rig.GrantFreeSkillPointsAsync(Character, 100);
+        await Call(rig, session, "SaveNewQueue", [Queue((0, 3301, 2))]);
+
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            Call(rig, session, "ApplyFreeSkillPoints", [new PyInt(3301), new PyInt(1)]));
+        Assert.True(refused.Error.IsUserError);
+        Assert.Equal("CannotApplyFreePointsWhileTrainingSkill", refused.Error.UserErrorMessage);
     }
 
     [PgFact]

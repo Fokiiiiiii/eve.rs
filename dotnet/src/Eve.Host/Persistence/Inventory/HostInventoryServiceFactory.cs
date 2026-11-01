@@ -50,7 +50,8 @@ public static class HostInventoryServiceFactory
         IReadOnlyList<ICharacterEntryHook>? entryHooks = null,
         Func<Eve.Services.ClientSession, long, CancellationToken, ValueTask<ControlledStructureInventory?>>? controlledStructureInventory = null,
         Func<IReadOnlyCollection<long>, CancellationToken, Task<IReadOnlyDictionary<long, double>>>? crystalDamage = null,
-        Func<long, CancellationToken, ValueTask<DockableAssetLocation?>>? dockableAssetLocation = null) =>
+        Func<long, CancellationToken, ValueTask<DockableAssetLocation?>>? dockableAssetLocation = null,
+        Eve.Corporations.CorporationOfficeStore? officeStore = null) =>
         new(
             items,
             types,
@@ -64,7 +65,9 @@ public static class HostInventoryServiceFactory
             entryHooks: entryHooks,
             controlledStructureInventory: controlledStructureInventory,
             crystalDamage: crystalDamage,
-            dockableAssetLocation: dockableAssetLocation);
+            dockableAssetLocation: dockableAssetLocation,
+            hasCorporationOffice: officeStore is null ? null : async (corporationId, locationId, token) =>
+                (await officeStore.ForCorporationAsync(corporationId, token)).Any(office => office.StationId == locationId));
 
     /// <summary>
     /// The access to a corporation division hangar: the Query, Take and Deposit operations. Deposit needs only membership (the existing rule); Query and Take read

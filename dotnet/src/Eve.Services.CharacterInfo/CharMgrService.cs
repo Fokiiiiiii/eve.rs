@@ -1057,19 +1057,32 @@ public sealed partial class CharMgrService(
         {
             var notes = data.OwnerNotes.ToList();
             var index = notes.FindIndex(note => note.NoteId == noteId);
-            if (noteId <= 0 || index < 0)
+            if (noteId <= 0)
             {
                 return data;
             }
 
-            var previous = notes[index];
+            var previous = index >= 0
+                ? notes[index]
+                : DefaultFoldersNote(data) is { } defaultFolders && defaultFolders.NoteId == noteId
+                    ? defaultFolders
+                    : null;
+            if (previous is null)
+            {
+                return data;
+            }
             var updated = previous with
             {
                 Label = label ?? previous.Label,
                 Note = noteText ?? previous.Note,
             };
-            notes[index] = updated;
+            if (index >= 0)
+                notes[index] = updated;
+            else
+                notes.Add(updated);
             var nextNoteId = data.NextOwnerNoteId;
+            if (index < 0 && noteId < long.MaxValue && (nextNoteId is null || nextNoteId <= noteId))
+                nextNoteId = noteId + 1;
             if (previous.Label == "S:Folders" && updated.Label != "S:Folders" &&
                 !notes.Any(note => note.Label == "S:Folders"))
             {

@@ -76,12 +76,16 @@ public sealed class TrainingAnnouncer(CharacterTraining training, SkillCatalog c
         }
     }
 
-    /// <summary>New skills, after their transaction committed; they did not train any levels.</summary>
-    public async Task AnnouncePurchasedAsync(ClientSession session, long characterId,
-        IReadOnlyList<CharacterSkill> before, IReadOnlyList<CharacterSkill> granted)
+    /// <summary>Committed skill point changes that did not come from training a level.</summary>
+    public Task AnnouncePurchasedAsync(ClientSession session, long characterId,
+        IReadOnlyList<CharacterSkill> before, IReadOnlyList<CharacterSkill> granted) =>
+        AnnounceSkillsChangedAsync(session, characterId, before, granted);
+
+    public async Task AnnounceSkillsChangedAsync(ClientSession session, long characterId,
+        IReadOnlyList<CharacterSkill> before, IReadOnlyList<CharacterSkill> changedSkills)
     {
-        if (granted.Count == 0) return;
-        var changed = SkillWire.EntryDictionary(characterId, catalog, granted);
+        if (changedSkills.Count == 0) return;
+        var changed = SkillWire.EntryDictionary(characterId, catalog, changedSkills);
         SkillNotifications.ServerSkillsChanged(session, changed, null, NowFileTime);
         SkillNotifications.SkillsChanged(session, changed);
         if (dogma is not null)

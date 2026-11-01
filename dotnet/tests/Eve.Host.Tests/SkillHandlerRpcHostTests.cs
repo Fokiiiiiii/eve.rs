@@ -92,11 +92,31 @@ public partial class HostServerTests
     {
         await using var rig = await CharacterHostTests.CharacterHostRig.CreateAsync();
         var character = await rig.CreateCharacterAsync();
+        var catalog = await SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        var trainingSkill = catalog.Skills.First(skill => skill.Published && skill.Rank == 1 && !skill.Needs.Any()
+            && catalog.AlphaMaxLevel(1, skill.TypeId) >= 1);
+        long capsule;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            capsule = await new Eve.Inventory.PgItemStore(rig.Source, rig.InventorySchema).CreateAsync(connection, transaction,
+                new Eve.Inventory.NewItem(670, character, rig.Station, 4, 1, Singleton: true));
+            await rig.Characters.SetShipAsync(connection, transaction, character, capsule);
+            await transaction.CommitAsync();
+        }
+        await rig.SetSkillLevelAsync(character, trainingSkill.TypeId, 0);
         var skillMgr2 = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillMgr2"));
         var skillHandler = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillHandler"));
-        var catalog = await SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
         var largeInjector = catalog.ItemTypeId("Large Skill Injector")!.Value;
         var smallInjector = catalog.ItemTypeId("Small Skill Injector")!.Value;
+        var historyStore = new PgTrainingStore(rig.Source, rig.SkillsSchema);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await historyStore.AppendHistoryAsync(connection, transaction, character,
+                [new HistoryEntry(100, 36, 3300, 100, 1), new HistoryEntry(200, 38, 3300, 200, 2)]);
+            await transaction.CommitAsync();
+        }
 
         Start(
             configure: registry =>
@@ -110,6 +130,7 @@ public partial class HostServerTests
                 session.UserId = 1;
                 session.Set("charid", new PyLong(character));
                 session.Set("stationid", new PyLong(rig.Station));
+                session.Set("shipid", new PyLong(capsule));
             });
 
         var front = await Handshaken(await ConnectAsync());
@@ -151,7 +172,11 @@ public partial class HostServerTests
         Assert.IsType<PyInt>(Result(await Call("skillHandler", "GetFreeSkillPoints")));
         Assert.Equal(new PyInt(0), Result(await Call("skillHandler", "GetSkillPoints")));
         Assert.IsType<PyList>(Result(await Call("skillHandler", "GetSkillChangesForISIS")));
-        Assert.IsType<PyList>(Result(await Call("skillHandler", "GetSkillHistory", new PyInt(50))));
+        var history = Assert.IsType<PyList>(Result(await Call("skillHandler", "GetSkillHistory", new PyInt(1))));
+        Assert.Single(history.Items);
+        var historyFields = Assert.IsType<PyDict>(Assert.IsType<PyObject>(history.Items[0]).Args).Entries
+            .ToDictionary(entry => JsSemantics.StringValue(entry.Key)!, entry => entry.Value);
+        Assert.Equal(new PyInt(38), historyFields["eventTypeID"]);
 
         var respecInfo = Result(await Call("skillHandler", "GetRespecInfo"));
         var respecFields = respecInfo switch
@@ -184,6 +209,9 @@ public partial class HostServerTests
         var invalidInjection = await Call("skillHandler", "InjectSkillpoints", new PyLong(long.MaxValue), new PyInt(1));
         Assert.Equal(MachoMessage.ErrorResponse,
             Assert.IsType<MachoPacket>(MachoPacket.Decode(invalidInjection)).Type);
+        var cannotApplyFreePoints = await Call("skillHandler", "ApplyFreeSkillPoints", new PyInt(3300), new PyInt(1));
+        Assert.Equal(MachoMessage.ErrorResponse,
+            Assert.IsType<MachoPacket>(MachoPacket.Decode(cannotApplyFreePoints)).Type);
 
         var items = new Eve.Inventory.PgItemStore(rig.Source, rig.InventorySchema);
         var skills = new PgSkillStore(rig.Source, rig.SkillsSchema);
@@ -191,17 +219,17 @@ public partial class HostServerTests
         await using (var connection = await rig.Source.OpenConnectionAsync())
         await using (var transaction = await connection.BeginTransactionAsync())
         {
-            await skills.GrantFreeSkillPointsAsync(connection, transaction, character, 4_501_000);
+            await skills.GrantFreeSkillPointsAsync(connection, transaction, character, 3_999_000);
             injectorId = await items.CreateAsync(connection, transaction,
                 new Eve.Inventory.NewItem(largeInjector, character, rig.Station, 4, 2, Singleton: false));
             await transaction.CommitAsync();
         }
 
-        Assert.Equal(new PyInt(900_000), Result(await Call("skillHandler", "InjectSkillpoints",
+        Assert.Equal(new PyInt(1_000_000), Result(await Call("skillHandler", "InjectSkillpoints",
             new PyLong(injectorId), new PyInt(2))));
         Assert.Equal(["OnItemChange", "OnFreeSkillPointsChanged"], notifications);
         notifications.Clear();
-        Assert.Equal(5_401_000, await skills.FreeSkillPointsAsync(character));
+        Assert.Equal(4_999_000, await skills.FreeSkillPointsAsync(character));
         Assert.Null(await items.GetAsync(injectorId));
 
         long splitInjectorId;
@@ -218,5 +246,48 @@ public partial class HostServerTests
         Assert.Null(await items.GetAsync(splitInjectorId));
         Assert.Contains(await items.InLocationAsync(rig.Station, character),
             item => item.TypeId == smallInjector && item.Quantity == 3);
+
+        Assert.Equal(PyNone.Instance, Result(await Call("skillHandler", "CharStartTrainingSkill",
+            new PyLong(SkillWire.ItemId(character, trainingSkill.TypeId)), new PyLong(character))));
+        var queue = Assert.IsType<PyList>(Result(await Call("skillHandler", "GetMySkillQueue")));
+        var firstLine = Assert.IsType<PyObject>(Assert.Single(queue.Items));
+        var fields = Assert.IsType<PyDict>(firstLine.Args).Entries
+            .ToDictionary(entry => JsSemantics.StringValue(entry.Key)!, entry => entry.Value);
+        Assert.Equal(new PyInt(1), fields["trainingToLevel"]);
+
+        var skillTypes = catalog.Skills;
+        var target = skillTypes.First(skill => skill.Rank >= 2
+            && !skillTypes.Any(dependent => dependent.Needs.Any(requirement => requirement.TypeId == skill.TypeId)));
+        var skillPoints = Eve.Skills.SkillPoints.ForTraining(target.Rank, 5);
+        var trained = new List<CharacterSkill> { new(target.TypeId, 5, skillPoints) };
+        var totalPoints = skillPoints;
+        foreach (var skill in skillTypes.Where(skill => skill.TypeId != target.TypeId))
+        {
+            if (totalPoints >= 5_500_000) break;
+            var points = Math.Min(Eve.Skills.SkillPoints.ForTraining(skill.Rank, 5), 5_500_000 - totalPoints);
+            if (points <= 0) continue;
+            trained.Add(new CharacterSkill(skill.TypeId, Eve.Skills.SkillPoints.LevelAt(skill.Rank, points), points));
+            totalPoints += points;
+        }
+        Assert.True(totalPoints >= 5_500_000);
+        var skillStore = new PgSkillStore(rig.Source, rig.SkillsSchema);
+        var extractorType = catalog.ItemTypeId("Skill Extractor")!.Value;
+        long extractorId;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await skillStore.GrantAsync(connection, transaction, character, trained);
+            extractorId = await items.CreateAsync(connection, transaction,
+                new Eve.Inventory.NewItem(extractorType, character, rig.Station, 4, 1, Singleton: true));
+            await transaction.CommitAsync();
+        }
+
+        notifications.Clear();
+        Assert.Equal(PyNone.Instance, Result(await Call("skillHandler", "ExtractSkills", new PyLong(extractorId),
+            new PyList([Py.Tuple(new PyInt(target.TypeId), new PyLong(long.MaxValue))]))));
+        Assert.Equal(["OnServerSkillsChanged", "OnSkillsChanged"], notifications.Take(2));
+        Assert.Equal(2, notifications.Count(name => name == "OnItemChange"));
+        Assert.Equal(["OnItemChange", "OnItemChange"], notifications.TakeLast(2));
+        Assert.Null(await items.GetAsync(extractorId));
     }
 }

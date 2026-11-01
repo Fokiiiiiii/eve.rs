@@ -11,6 +11,8 @@ pub struct ModuleSpec {
     pub item_id: i64,
     pub type_id: i32,
     pub flag: i32,
+    /// The master item id when this weapon belongs to a grouped bank, otherwise zero.
+    pub bank_master_id: i64,
 }
 
 /// A ship's stance and when it last changed (`old` is the stance it had before, `switched_at` a FILETIME).

@@ -122,8 +122,8 @@ public sealed class ShipCosmeticsMgrRpcService : IService
         if (_catalog is { Skins.Count: > 0 } && skin is null) Notify("That SKIN could not be found.");
         var license = skin is null ? null : _catalog?.LicenseTypes.Values.Where(x => x.SkinId == skinId).OrderBy(x => x.LicenseTypeId).FirstOrDefault();
         var requestedDuration = Math.Max(0, Number(call.Kwarg("duration")));
-        var duration = requestedDuration > 0 ? requestedDuration : license?.DurationDays ?? 0;
-        var singleUse = call.Kwarg("isSingleUse") is { } value ? Boolean(value) : license?.IsSingleUse ?? false;
+        var duration = requestedDuration;
+        var singleUse = Boolean(call.Kwarg("isSingleUse"));
         WriteOverride(characterId, skinId, new JsonObject
         {
             ["skinID"] = skinId,

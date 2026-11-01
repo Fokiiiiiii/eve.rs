@@ -4,7 +4,7 @@ using Eve.Inventory;
 namespace Eve.Ships;
 
 /// <summary>An item that is somewhere else than it was.</summary>
-public sealed record ItemMoved(Item After, long PreviousLocationId, int PreviousFlag);
+public sealed record ItemMoved(Item After, long PreviousLocationId, int PreviousFlag, long? PreviousOwnerId = null);
 
 /// <summary>Something dogma tells the client happened to a ship or a module.</summary>
 public abstract record DogmaEvent;

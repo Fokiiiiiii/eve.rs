@@ -287,7 +287,7 @@ impl Scene {
             let held = scene.pilots.get(&session).map(|pilot| pilot.targeting.clone()).unwrap_or_default();
             let mut out = scene.stop_controlled_structure_modules(session, now);
             out.extend(scene.clear_locks(session, true, now));
-            out.extend(scene.drop_targeting(structure_id, &held, now));
+            out.extend(scene.drop_targeting(structure_id, &held, None, now));
             out
         })
     }
@@ -754,7 +754,7 @@ impl Scene {
             told.extend(self.clear_tether_policy(session, now));
             if let Some(pilot) = self.pilots.remove(&session) {
                 told.push(Out::Docked { session, station_id, condition: Self::condition_of(&pilot, now) });
-                told.extend(self.drop_targeting(pilot.ship.spec.ship_id, &pilot.targeting, now));
+                told.extend(self.drop_targeting(pilot.ship.spec.ship_id, &pilot.targeting, None, now));
                 told.extend(self.announce_departure(session, pilot.ship.spec.ship_id, now));
                 told.extend(self.release_drones(session, None, now));
             }

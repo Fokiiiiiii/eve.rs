@@ -89,7 +89,6 @@ internal sealed partial class CharacterServicesComposition
                 newCharacterExperienceMode: () => newCharacterExperienceMode,
                 readTutorialState: ReadAirNpeCharacterStateAsync),
             new MissionTrackerMgrService(
-                readMissionInfoItems: agentMissionService.ReadMissionInfoItemsAsync,
                 readAllMissionObjectives: async (characterId, agentId, session, ct) =>
                 {
                     var context = await ReadMissionTrackerContextAsync(characterId, agentId, session, ct);

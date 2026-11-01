@@ -398,7 +398,10 @@ public sealed record MailboxMutationResult(
     long? CreatedLabelId = null,
     string? CreatedLabelName = null,
     long? CreatedLabelColor = null,
-    bool LabelsChanged = false)
+    bool LabelsChanged = false,
+    long? UpdatedLabelId = null,
+    string? UpdatedLabelName = null,
+    long? UpdatedLabelColor = null)
 {
     public static MailboxMutationResult Empty { get; } = new([], [], []);
 }
@@ -411,6 +414,9 @@ public static class MailboxMutation
     private const long FirstCustomLabelMask = 16;
     private const int MaxCustomLabels = 25;
     private const int MaxLabelSize = 40;
+
+    private static MachoWrappedException MailLimitRefusal(string refusalCode) =>
+        MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr(refusalCode)));
 
     public static MailboxMutationResult Apply(JsonObject state, MailboxMutationRequest request)
     {
@@ -541,7 +547,7 @@ public static class MailboxMutation
         var ownLabelCount = labels.Select(pair => ParseId(pair.Key))
             .Count(id => id > 0 && (id & MailSystemLabelMask) == 0);
         if (ownLabelCount >= MaxCustomLabels)
-            return MailboxMutationResult.Empty;
+            throw MailLimitRefusal("MAIL_LABEL_LIMIT_EXCEEDED");
 
         var meta = mailbox["_meta"] as JsonObject;
         if (meta is null)
@@ -595,7 +601,9 @@ public static class MailboxMutation
         }
         if (hasColor)
             label["color"] = Math.Max(0, Integer(arguments[2]));
-        return new MailboxMutationResult([], [], [], LabelsChanged: true);
+        return new MailboxMutationResult([], [], [], LabelsChanged: true,
+            UpdatedLabelId: id, UpdatedLabelName: label["name"]?.GetValue<string>() ?? "",
+            UpdatedLabelColor: Integer(label["color"]));
     }
 
     private static MailboxMutationResult DeleteLabel(
@@ -684,6 +692,17 @@ public static class MailboxMutationNotifications
                     ("color", new PyInt(result.CreatedLabelColor ?? 0))));
             return;
         }
+        if (result.UpdatedLabelId is { } updatedLabelId)
+        {
+            recipientSession.SendNotification(
+                "OnLabelsCreatedByExternal",
+                "clientID",
+                Py.KeyVal(
+                    ("labelID", new PyInt(updatedLabelId)),
+                    ("name", new PyStr(result.UpdatedLabelName ?? "")),
+                    ("color", new PyInt(result.UpdatedLabelColor ?? 0))));
+            return;
+        }
         if (result.RemovedStatuses.Count > 0)
         {
             recipientSession.SendNotification(
@@ -692,7 +711,7 @@ public static class MailboxMutationNotifications
                 new PyList([.. result.RemovedStatuses.Select(id => (PyValue)new PyInt(id))]));
             return;
         }
-        if (result.Changed.Count == 0 || request.Method is "EditLabel" or "DeleteLabel")
+        if (result.Changed.Count == 0)
             return;
 
         var messageIds = new PyList([.. result.Changed.Select(entry => (PyValue)new PyInt(entry.Id))]);
@@ -704,7 +723,7 @@ public static class MailboxMutationNotifications
         {
             recipientSession.SendNotification("OnMailRestored", "clientID", messageIds);
         }
-        else if (request.Method is "AssignLabels" or "RemoveLabels" or "ReplaceLabels")
+        else if (request.Method is "AssignLabels" or "RemoveLabels" or "ReplaceLabels" or "DeleteLabel")
         {
             foreach (var group in result.Changed.GroupBy(entry => entry.LabelMask))
                 recipientSession.SendNotification(
@@ -712,7 +731,7 @@ public static class MailboxMutationNotifications
                     "clientID",
                     new PyList([.. group.Select(entry => (PyValue)new PyInt(entry.Id))]),
                     PyNone.Instance,
-                    new PyInt(checked((int)group.Key)));
+                    new PyLong(group.Key));
         }
         else
         {

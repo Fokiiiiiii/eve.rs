@@ -109,10 +109,15 @@ public sealed class PgTrainingStore
     }
 
     /// <summary>The character's history, newest first.</summary>
-    public async Task<IReadOnlyList<HistoryEntry>> HistoryAsync(long characterId, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<HistoryEntry>> HistoryAsync(long characterId, CancellationToken cancellationToken = default) =>
+        HistoryAsync(characterId, HistoryLimit, cancellationToken);
+
+    public async Task<IReadOnlyList<HistoryEntry>> HistoryAsync(long characterId, int maxResults, CancellationToken cancellationToken = default)
     {
-        await using var command = _source.CreateCommand($"SELECT log_date, event_type, type_id, absolute_points, level FROM {_schema}.skill_history WHERE character_id = $1 ORDER BY id DESC LIMIT {HistoryLimit}");
+        var limit = Math.Clamp(maxResults, 0, HistoryLimit);
+        await using var command = _source.CreateCommand($"SELECT log_date, event_type, type_id, absolute_points, level FROM {_schema}.skill_history WHERE character_id = $1 ORDER BY id DESC LIMIT $2");
         command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        command.Parameters.Add(new NpgsqlParameter { Value = limit });
         var list = new List<HistoryEntry>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))

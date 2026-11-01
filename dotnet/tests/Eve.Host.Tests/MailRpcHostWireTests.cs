@@ -210,32 +210,40 @@ public partial class HostServerTests
             Assert.IsType<PyDict>(Assert.IsType<PyObject>(createdNotice.Args[0]).Args), "name")));
         Assert.Same(PyNone.Instance, await HostRpcAsync(front, open, callId++, "mailMgr",
             "EditLabel", new PyLong(16), PyNone.Instance, new PyLong(12)));
+        var editNotice = ReadMailNotification(await otherFront.ReceiveAsync());
+        Assert.Equal("OnLabelsCreatedByExternal", editNotice.Name);
+        Assert.Equal(12, WireInteger(MailWireField(
+            Assert.IsType<PyDict>(Assert.IsType<PyObject>(editNotice.Args[0]).Args), "color")));
         var labels = Assert.IsType<PyDict>(await HostRpcAsync(front, open, callId++, "mailMgr", "GetLabels"));
         var labelRow = Assert.IsType<PyObject>(labels.Entries.Single(entry => WireInteger(entry.Key) == 16).Value);
         Assert.Equal(12, WireInteger(MailWireField(Assert.IsType<PyDict>(labelRow.Args), "color")));
         Assert.Equal("Research", JsSemantics.StringValue(MailWireField(Assert.IsType<PyDict>(labelRow.Args), "name")));
 
         Assert.Same(PyNone.Instance, await HostRpcAsync(front, open, callId++, "mailMgr",
-            "AssignLabels", new PyTuple([new PyLong(102)]), new PyLong(16)));
+            "AssignLabels", new PyTuple([new PyLong(102)]), new PyLong((1L << 31) | 16)));
         var assignNotice = ReadMailNotification(await otherFront.ReceiveAsync());
         Assert.Equal("OnMailUpdatedByExternal", assignNotice.Name);
         Assert.Same(PyNone.Instance, assignNotice.Args[1]);
-        Assert.Equal(16, WireInteger(assignNotice.Args[2]));
+        Assert.Equal((1L << 31) | 16, WireInteger(assignNotice.Args[2]));
         var sync = Assert.IsType<PyObject>(await HostRpcAsync(front, open, callId++, "mailMgr",
             "SyncMail", PyNone.Instance, new PyInt(0)));
         var statusRows = Assert.IsType<PyList>(MailWireField(Assert.IsType<PyDict>(sync.Args), "mailStatus"));
         var status102 = statusRows.Items.Single(row =>
             WireInteger(MailWireField(Assert.IsType<PyDict>(Assert.IsType<PyObject>(row).Args), "messageID")) == 102);
-        Assert.Equal(16, WireInteger(MailWireField(
+        Assert.Equal((1L << 31) | 16, WireInteger(MailWireField(
             Assert.IsType<PyDict>(Assert.IsType<PyObject>(status102).Args), "labelMask")));
 
         Assert.Same(PyNone.Instance, await HostRpcAsync(front, open, callId++, "mailMgr", "DeleteLabel", new PyLong(16)));
+        var deleteNotice = ReadMailNotification(await otherFront.ReceiveAsync());
+        Assert.Equal("OnMailUpdatedByExternal", deleteNotice.Name);
+        Assert.Equal([102L], Assert.IsType<PyList>(deleteNotice.Args[0]).Items.Select(WireInteger));
+        Assert.Equal(1L << 31, WireInteger(deleteNotice.Args[2]));
         sync = Assert.IsType<PyObject>(await HostRpcAsync(front, open, callId++, "mailMgr",
             "SyncMail", PyNone.Instance, new PyInt(0)));
         statusRows = Assert.IsType<PyList>(MailWireField(Assert.IsType<PyDict>(sync.Args), "mailStatus"));
         status102 = statusRows.Items.Single(row =>
             WireInteger(MailWireField(Assert.IsType<PyDict>(Assert.IsType<PyObject>(row).Args), "messageID")) == 102);
-        Assert.Equal(0, WireInteger(MailWireField(
+        Assert.Equal(1L << 31, WireInteger(MailWireField(
             Assert.IsType<PyDict>(Assert.IsType<PyObject>(status102).Args), "labelMask")));
 
         Assert.Same(PyNone.Instance, await HostRpcAsync(front, open, callId++, "mailMgr", "EmptyTrash"));

@@ -9,7 +9,7 @@ public abstract record AmmoEvent;
 /// A stack changed: its row after, and where it was, how many it held. The client is told the quantity (the stack's size) that differed, the place it left
 /// and the flag it left; a stack that was taken whole into a module is told as leaving for <see cref="CharacterShips.JunkLocation"/>.
 /// </summary>
-public sealed record ItemChanged(Item After, long PreviousLocationId, int PreviousFlag, long PreviousQuantity) : AmmoEvent;
+public sealed record ItemChanged(Item After, long PreviousLocationId, int PreviousFlag, long PreviousQuantity, long? PreviousOwnerId = null) : AmmoEvent;
 
 /// <summary>A module is about to hold rounds of a charge (the client shows the reload; <paramref name="ReloadMs"/> is the module's reload time).</summary>
 public sealed record ChargeBeingLoaded(IReadOnlyList<long> ModuleIds, int ChargeTypeId, int ReloadMs) : AmmoEvent;

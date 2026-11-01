@@ -128,6 +128,12 @@ public class CorporationTests
         Assert.Equal(new RoleMasks(),CorporationRoles.GrantableFor(corp,member,123,[]));
         Assert.Equal(8589934592,CorporationRoles.WalletTakeRole(1006));
         Assert.Equal(0,CorporationRoles.WalletTakeRole(1007));
+        Assert.True(CorporationRoles.CanTakeWalletDivision(roles,1000));
+        var accountant = roles with { AtAll = CorporationRoles.Accountant };
+        Assert.False(CorporationRoles.CanTakeWalletDivision(accountant,1000));
+        Assert.True(CorporationRoles.CanTakeWalletDivision(
+            accountant with { AtAll = accountant.AtAll | CorporationRoles.WalletTakeRole(1002) },1002));
+        Assert.False(CorporationRoles.CanTakeWalletDivision(accountant,1007));
     }
 
     [Fact]

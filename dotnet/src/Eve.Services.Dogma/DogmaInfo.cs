@@ -253,7 +253,9 @@ public sealed class DogmaInfo(DogmaStatic statics)
         var loaded = s.Charges.Count == 0
             ? new PyDict([])
             : new PyDict([new(InventoryWire.Id(s.Ship.Id), new PyDict([.. s.Charges.Select(c => new KeyValuePair<PyValue, PyValue>(new PyInt(c.Flag), ChargeStateRow(s.Ship.Id, c)))]))]);
-        return Py.Tuple(new PyDict(rows), loaded, new PyDict([]), DogmaWire.HeatState(now));
+        var weaponBanks = new PyDict(s.WeaponBanks.OrderBy(bank => bank.Key).Select(bank => new KeyValuePair<PyValue, PyValue>(
+            InventoryWire.Id(bank.Key), new PyList([.. bank.Value.Select(InventoryWire.Id)]))).ToArray());
+        return Py.Tuple(new PyDict(rows), loaded, weaponBanks, DogmaWire.HeatState(now));
     }
 
     /// <summary>

@@ -163,7 +163,7 @@ public enum EnterHow : byte
 }
 
 /// <summary>A fitted module, as the ship's slim item lists it.</summary>
-public sealed record SimModule(long ItemId, int TypeId, int Flag);
+public sealed record SimModule(long ItemId, int TypeId, int Flag, long BankMasterId = 0);
 
 /// <summary>How the three layers of a ship resist each kind of damage (em, thermal, kinetic, explosive): the share of a hit that gets through.</summary>
 public sealed record SimResonances(IReadOnlyList<double> Shield, IReadOnlyList<double> Armor, IReadOnlyList<double> Structure)
@@ -1191,7 +1191,7 @@ public sealed record SimContainerPlaced(ulong SessionId, long ContainerId, IRead
 /// What is in a wreck or a can changed (it has something to take, or nothing): whoever has it in view is told its slim item again, and the pilot who changed it
 /// (<see cref="SessionId"/>) is answered with <see cref="SimAccepted"/> under <see cref="SimCommands.ChangeWreck"/> after that (or <see cref="SimRefused"/> when there is no such wreck).
 /// </summary>
-public sealed record SimChangeWreck(ulong SessionId, long WreckId, bool IsEmpty) : SimMessage;
+public sealed record SimChangeWreck(ulong SessionId, long WreckId, bool? IsEmpty, bool? Abandoned = null) : SimMessage;
 
 /// <summary>Takes a wreck or a can out of space; <see cref="Effect"/> is the destruction effect the client plays first (0: none).</summary>
 public sealed record SimRemoveWreck(long WreckId, int Effect) : SimMessage;

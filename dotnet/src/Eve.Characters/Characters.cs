@@ -118,6 +118,21 @@ public sealed partial class PgCharacterStore
         return list;
     }
 
+    public async Task<IReadOnlyList<Character>> ForCorporationByIdsAsync(long corporationId, IReadOnlyCollection<long> characterIds,
+        CancellationToken cancellationToken = default)
+    {
+        var characters = new List<Character>();
+        foreach (var batch in characterIds.Distinct().Chunk(500))
+        {
+            await using var command = _source.CreateCommand($"SELECT {Columns} FROM {_schema}.characters WHERE corporation_id=$1 AND id=ANY($2) AND deleted_at IS NULL ORDER BY id");
+            command.Parameters.Add(new NpgsqlParameter { Value = corporationId });
+            command.Parameters.Add(new NpgsqlParameter { Value = batch });
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken)) characters.Add(Read(reader));
+        }
+        return characters;
+    }
+
     public async Task<Character?> GetAsync(long id, CancellationToken cancellationToken = default)
     {
         await using var command = _source.CreateCommand($"SELECT {Columns} FROM {_schema}.characters WHERE id = $1");

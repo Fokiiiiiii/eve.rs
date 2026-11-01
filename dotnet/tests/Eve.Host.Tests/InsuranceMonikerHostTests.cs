@@ -97,6 +97,16 @@ public partial class HostServerTests
     }
 
     [Fact]
+    public void Insurance_host_uses_the_base_reimbursement_for_an_active_contract_lost_to_CONCORD()
+    {
+        var activeContract = new InsuranceContractSnapshot(
+            9, InsuranceWireShipId, InsuranceWireTypeId, InsuranceWireCharacterId,
+            InsuranceOwnerKind.Character, 0.5, 1, 100, "active");
+
+        Assert.Equal(4_000_000, InsuranceQuotes.PayoutForLoss(10_000_000, activeContract, 50, true));
+    }
+
+    [Fact]
     public async Task Insurance_service_moniker_wire_covers_all_client_calls_errors_and_post_response_notification()
     {
         var nowFileTime = Py.FileTimeFromUnixMs(FixedNowMs);

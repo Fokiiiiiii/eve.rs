@@ -29,5 +29,6 @@ The targeted database regression was observed failing before the gate was restor
 - Pre-fix reproduction: after temporarily removing the gate, the new regression failed because two simulation jump commands were accepted while the first response was held.
 - Final compile: `dotnet build dotnet/tests/Eve.Services.Space.Tests -p:UseSharedCompilation=false` passed with zero warnings and errors.
 - Final focused PostgreSQL run: `WormholeJumpServiceTests` on `eve_p4`: 7 passed, 0 failed, 0 skipped.
+- The fixture ends the undock session-change timer before exercising a separate wormhole action; the timer is covered by movement-policy scenarios and is not part of the connection-mass race.
 - Null-sec and FW verification results are preserved in their linked handoffs. This pass did not rerun those suites or incursion tests.
 - Headless Host/database evidence only; no graphical V24 client run was performed.

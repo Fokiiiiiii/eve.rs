@@ -185,6 +185,12 @@ internal sealed partial class CharacterServicesComposition
         return tutorial is null ? null : new ProjectDiscoveryPlayerState(FinishedTutorial: tutorial.Finished, TutorialLevel: tutorial.Level);
     }
 
+    private async ValueTask<ProjectDiscoveryPlayerState?> TransitionProjectDiscoveryTutorialAsync(long characterId, string action, CancellationToken cancellationToken)
+    {
+        var tutorial = await ProjectDiscoveryTutorials.TransitionAsync(characterId, action, now(), cancellationToken);
+        return new ProjectDiscoveryPlayerState(FinishedTutorial: tutorial.Finished, TutorialLevel: tutorial.Level);
+    }
+
     private Task EconomyAndInsurance()
     {
         economyWallets = new WalletTransactions(source, walletSchema);
@@ -267,6 +273,7 @@ internal sealed partial class CharacterServicesComposition
             JumpClones: new HostJumpCloneStore(new Eve.Characters.PgJumpCloneStore(source, characterSchema), source, skills, economyWallets, wallets,
                 characters, items, dogma, stations, boosterLapse),
             ReadProjectDiscoveryState: ReadProjectDiscoveryStateAsync,
+            TransitionProjectDiscoveryTutorial: TransitionProjectDiscoveryTutorialAsync,
             JumpCloneSpace: jumpCloneSpace);
 
         stationGuestLedger = new Eve.Services.Station.StationGuestLedger();

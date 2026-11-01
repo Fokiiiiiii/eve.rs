@@ -33,4 +33,26 @@ public sealed class ProjectDiscoveryTutorialStore(NpgsqlDataSource source, strin
         command.Parameters.Add(new NpgsqlParameter { Value = nowMs });
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
+
+    /// <summary>Applies one tutorial action atomically and returns the state committed by that action.</summary>
+    public async Task<ProjectDiscoveryTutorial> TransitionAsync(long characterId, string action, long nowMs, CancellationToken cancellationToken = default)
+    {
+        if (action is not ("reset" or "skip" or "increase"))
+            throw new ArgumentOutOfRangeException(nameof(action));
+        await using var command = source.CreateCommand(
+            $"INSERT INTO {schema}.project_discovery_tutorials (character_id, finished, tutorial_level, updated_ms) " +
+            "VALUES ($1, $2 <> 'reset', CASE $2 WHEN 'reset' THEN 0 WHEN 'skip' THEN 8 ELSE 1 END, $3) " +
+            "ON CONFLICT (character_id) DO UPDATE SET " +
+            "finished = CASE $2 WHEN 'reset' THEN false WHEN 'skip' THEN true ELSE project_discovery_tutorials.tutorial_level >= 7 END, " +
+            "tutorial_level = CASE $2 WHEN 'reset' THEN 0 WHEN 'skip' THEN 8 ELSE LEAST(8, project_discovery_tutorials.tutorial_level + 1) END, " +
+            "updated_ms = EXCLUDED.updated_ms " +
+            "RETURNING finished, tutorial_level");
+        command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        command.Parameters.Add(new NpgsqlParameter { Value = action });
+        command.Parameters.Add(new NpgsqlParameter { Value = nowMs });
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+            throw new InvalidOperationException("Project Discovery tutorial transition returned no state.");
+        return new ProjectDiscoveryTutorial(reader.GetBoolean(0), reader.GetInt32(1));
+    }
 }

@@ -16,12 +16,15 @@ public sealed record ProjectDiscoveryPlayerStatistics(string Message, int Code, 
 public sealed record ProjectDiscoveryRpcCallbacks(
     Func<long, CancellationToken, ValueTask<ProjectDiscoveryPlayerState?>>? ReadPlayerStateAsync = null,
     Func<long, double?, CancellationToken, ValueTask>? FixTaskIdAsync = null,
-    Func<long, CancellationToken, ValueTask<ProjectDiscoveryPlayerStatistics?>>? ReadPlayerStatisticsAsync = null);
+    Func<long, CancellationToken, ValueTask<ProjectDiscoveryPlayerStatistics?>>? ReadPlayerStatisticsAsync = null,
+    Func<long, string, CancellationToken, ValueTask<ProjectDiscoveryPlayerState?>>? TransitionTutorialAsync = null);
 
 public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callbacks = null) : IService
 {
     private const int PlayerNotInDatabaseErrorCode = 103010;
     private const string ActiveProjectId = "mcgill-polyseg";
+    private const int TutorialLevels = 8;
+    private const int TutorialXpReward = 100;
     private const string StatisticsUnavailableMessage =
         "Project Discovery API is not backed by live MMOS data in this emulator";
 
@@ -36,7 +39,16 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
         "get_player_state" or
         "get_player_statistics" or
         "get_tutorial_completion_status" or
-        "initialize_tutorial_status";
+        "initialize_tutorial_status" or
+        "get_project_id" or
+        "get_total_needed_xp" or
+        "get_tutorial_level" or
+        "get_tutorial_xp_reward" or
+        "get_is_player_entitled_to_tutorial_reward" or
+        "give_tutorial_rewards" or
+        "increase_tutorial_level" or
+        "reset_tutorial" or
+        "skip_tutorial";
 
     public async ValueTask<PyValue> CallAsync(ServiceCall call)
     {
@@ -47,6 +59,7 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
         {
             "fix_task_id" => call.Kwargs is PyNone && call.Args.Count == 1,
             "get_player_statistics" => HasValidStatisticsArguments(call),
+            "get_total_needed_xp" => call.Kwargs is PyNone && call.Args.Count == 1 && call.Arg(0) is PyInt or PyLong or PyReal,
             _ => call.Kwargs is PyNone && call.Args.Count == 0,
         };
         if (!validArguments)
@@ -59,6 +72,25 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
         {
             case "is_enabled":
                 return PyBool.True;
+
+            case "get_project_id":
+                return new PyInt(1);
+
+            case "get_total_needed_xp":
+            {
+                var rank = NormalizeRank(JsSemantics.NumberValue(call.Arg(0)));
+                var needed = (rank - 1) * rank * 50;
+                if (!double.IsFinite(needed))
+                    throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_RANK_INVALID");
+                return Py.Number(needed);
+            }
+
+            case "get_tutorial_xp_reward":
+                return new PyInt(TutorialXpReward);
+
+            case "get_is_player_entitled_to_tutorial_reward":
+            case "give_tutorial_rewards":
+                return PyBool.False;
 
             case "fix_task_id":
                 var taskId = FixedTaskId(call.Arg(0));
@@ -108,6 +140,29 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
                 return state.FinishedTutorial ? PyBool.True : PyBool.False;
             }
 
+            case "get_tutorial_level":
+            {
+                var state = await ReadStateAsync(characterId, call.Cancellation);
+                return Py.Number(NonNegativeInteger(state.TutorialLevel));
+            }
+
+            case "reset_tutorial":
+                return PlayerStateValue(await TransitionTutorialAsync(characterId, "reset", call.Cancellation));
+
+            case "skip_tutorial":
+            {
+                var state = await TransitionTutorialAsync(characterId, "skip", call.Cancellation);
+                call.Session.AfterResponse(() =>
+                {
+                    call.Session.SendNotification("OnPlayerStateUpdated", "charid", PlayerStateValue(state));
+                    call.Session.SendNotification("OnAnalysisKreditsChange", "charid");
+                });
+                return PlayerStateValue(state);
+            }
+
+            case "increase_tutorial_level":
+                return PlayerStateValue(await TransitionTutorialAsync(characterId, "increase", call.Cancellation));
+
             default:
                 return PyNone.Instance;
         }
@@ -131,6 +186,22 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
             return state;
         return new ProjectDiscoveryPlayerState();
     }
+
+    private async ValueTask<ProjectDiscoveryPlayerState> TransitionTutorialAsync(long characterId, string action, CancellationToken cancellationToken)
+    {
+        if (characterId <= 0 || _callbacks.TransitionTutorialAsync is not { } transition)
+            throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TUTORIAL_UNAVAILABLE");
+        if (await transition(characterId, action, cancellationToken) is not { } state)
+            throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TUTORIAL_UNAVAILABLE");
+        return state;
+    }
+
+    private static PyValue PlayerStateValue(ProjectDiscoveryPlayerState state) => Py.KeyVal(
+        ("rank", Py.Number(NormalizeRank(state.Rank))),
+        ("experience", Py.Number(NonNegativeInteger(state.Experience))),
+        ("analysisKredits", Py.Number(NonNegativeInteger(state.AnalysisKredits))),
+        ("finishedTutorial", state.FinishedTutorial ? PyBool.True : PyBool.False),
+        ("tutorialLevel", Py.Number(NonNegativeInteger(state.TutorialLevel))));
 
     private static KeyValuePair<PyValue, PyValue> Pair(string key, PyValue value) =>
         new(new PyStr(key), value);

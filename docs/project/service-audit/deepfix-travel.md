@@ -53,4 +53,5 @@ Gate callers, session-change handling and refusal error are traced above. The cl
 - On PostgreSQL `eve_p5`, the affected `SpaceServiceTests`, `StructureUndockingTests` and `UndockContrabandTests` selection passed (161 passed, 0 skipped). The structure fixture advances its local cooldown so those tests continue to exercise undocking and subsequent docking.
 - `cargo +1.94.1 test -p eve-space docking_range` passed (3 passed; remaining tests filtered out).
 - `cargo +1.94.1 fmt --all -- --check`, `cargo +1.94.1 check -p eve-space`, and `cargo +1.94.1 clippy --workspace --all-targets -- -D warnings` passed after merging `origin/main`.
-- The graphical V24.01 client was not launched; push-triggered Actions results will be appended after the run completes.
+- CI run 1389 failed `targeting::tests::a_ship_that_docks_is_lost_when_it_has_docked` in Linux and Windows Rust jobs: its unrelated targeting setup expected an immediate Dock at a 1,000 m surface gap. The new station threshold is 500 m, so the setup now starts at 500 m (`crates/eve-space/src/targeting/tests.rs:585`). The test failed locally before that fixture correction and passes after it; fmt and workspace clippy also pass. The remaining CI jobs finished successfully.
+- The graphical V24.01 client was not launched; the follow-up CI run for the targeted test correction will be recorded after it completes.

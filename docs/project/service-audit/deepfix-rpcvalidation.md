@@ -29,7 +29,21 @@ EveJS 261028.1 `/home/user/evejs-261028.1/src/server/src/services/ship/beyonceSe
 
 The next origin/main merge changed the NPC station docking range to 500 m (`crates/eve-space/src/scene/mod.rs:83-88`), consistent with EVE University [Warp Mechanics](https://wiki.eveuniversity.org/Warp_Mechanics). The existing targeting test placed the docking pilot 1,000 m from the surface but still expected immediate acceptance. The first merged `cargo test -p eve-space dock` run caught this: `targeting::tests::a_ship_that_docks_is_lost_when_it_has_docked` received `Approaching` instead of `Accepted`. The fixture now places that ship 400 m from the surface (`crates/eve-space/src/targeting/tests.rs:585`); the test still verifies that completing the dock drops the target. The exact test and the dock-filtered set pass after this fixture correction.
 
-After merging origin/main at `a9fe2540`, `cargo +1.94.1 check -p eve-space`, `cargo +1.94.1 fmt --all -- --check`, and workspace clippy with `-D warnings` passed. The dock-filtered Rust tests passed (40 unit tests and 3 reference tests). `SpaceServiceTests` and `StructureUndockingTests` passed on `eve_p3` (155 passed, 0 failed, 0 skipped). At the time of this checkpoint, main CI Run 1389 at `a9fe2540` had a failed Rust tests job while the workflow was still in progress; its final failure summary is pending.
+After merging origin/main at `a9fe2540`, `cargo +1.94.1 check -p eve-space`, `cargo +1.94.1 fmt --all -- --check`, and workspace clippy with `-D warnings` passed. The dock-filtered Rust tests passed (40 unit tests and 3 reference tests). `SpaceServiceTests` and `StructureUndockingTests` passed on `eve_p3` (155 passed, 0 failed, 0 skipped). Main CI Run 1389 at `a9fe2540` completed red because `targeting::tests::a_ship_that_docks_is_lost_when_it_has_docked` still expected immediate acceptance from 1,000 m after NPC station range changed to 500 m. The worktree fixture now places the pilot 400 m from the surface; the exact test and dock-filtered set pass locally. RED GATE therefore blocks unrelated pushes until main has a green completed CI run.
+
+## Warp destination geometry and overflow
+
+### Evidence and behavior
+
+The client delegates target warps through `CmdWarpToStuff`; representative bookmark callers supply a selectable arrival range with a default of 20,000 m (`/home/user/eve-logic/eve/client/script/ui/services/menuSvcExtras/movementFunctions.py:408-421`). Client-facing failures are `CustomNotify`, and Michelle does not consume an RPC return value (`/home/user/eve-logic/eve/client/script/remote/michelle.py:732-737`). The accepted movement state is therefore observed through the space simulation notifications.
+
+In `crates/eve-space/src/scene/warping.rs:83-101`, the sim now computes the distance to the raw destination, refuses a stop range greater than that distance, and rejects non-finite intermediate destination coordinates or total distances before mutating `Course`, `Flight`, or `warp_target`. Previously a positive range larger than the destination distance placed the warp endpoint behind the ship and emitted a warp. Very large finite coordinates could overflow the Euclidean distance and be accepted into warp state.
+
+Two regression tests in `crates/eve-space/src/scene/tests.rs` cover those cases and assert refusal without starting warp. Both were reproduced as failing before the corresponding guards and passed after. The client-visible Host adapter maps simulation refusal to the existing generic warp notification (`dotnet/src/Eve.Services.Space/SpaceSessions.Movement.cs:280`).
+
+EveJS 261028.1 `server/src/services/ship/warpCommands.js:424-457,994-1235` clamps negative stop ranges but checks only the minimum warp distance; it does not reject a range beyond the target or overflowed coordinates. eve.rs deliberately rejects those invalid geometries before state mutation. This is a defensive deviation: EVE University [Warp](https://wiki.eveuniversity.org/Warp) documents the 150 km minimum and arrival ranges, but does not define warps whose stop point lies beyond the destination. No client caller in the whole-tree search requests a stop range larger than its selected destination distance or supplies non-finite coordinates.
+
+`cargo +1.94.1 test -p eve-space a_warp` passed after both guards. `cargo +1.94.1 check -p eve-space`, `cargo +1.94.1 fmt --all -- --check`, and workspace clippy with `-D warnings` passed. No graphical-client run was made.
 
 ## Remaining audit scope
 

@@ -488,17 +488,17 @@ public class CalendarMgrServiceTests
             return Task.FromResult(true);
         }
 
-        public Task<bool> UpdateParticipantsAsync(
+        public Task<CalendarParticipantUpdateResult> UpdateParticipantsAsync(
             long eventId, long ownerId, IReadOnlyCollection<long> add, IReadOnlyCollection<long> remove, CancellationToken cancellationToken = default)
         {
             if (!Events.Any(row => row.EventId == eventId && row.OwnerId == ownerId && !row.IsDeleted))
-                return Task.FromResult(false);
+                return Task.FromResult(CalendarParticipantUpdateResult.EventNotFound);
             foreach (var id in add.Where(id => id > 0).Distinct()) Upsert(eventId, id, CalendarResponseStates.Undecided);
             foreach (var id in remove.Where(id => id > 0))
                 for (var i = 0; i < Responses.Count; i++)
                     if (Responses[i].EventId == eventId && Responses[i].CharacterId == id)
                         Responses[i] = Responses[i] with { Status = CalendarResponseStates.Uninvited };
-            return Task.FromResult(true);
+            return Task.FromResult(CalendarParticipantUpdateResult.Updated);
         }
 
         public Task<bool> SendResponseAsync(

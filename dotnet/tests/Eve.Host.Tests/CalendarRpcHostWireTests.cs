@@ -546,19 +546,19 @@ public partial class HostServerTests
             return Task.FromResult(true);
         }
 
-        public Task<bool> UpdateParticipantsAsync(
+        public Task<CalendarParticipantUpdateResult> UpdateParticipantsAsync(
             long eventId, long ownerId, IReadOnlyCollection<long> add, IReadOnlyCollection<long> remove,
             CancellationToken cancellationToken = default)
         {
             if (!_events.TryGetValue(eventId, out var value) || value.OwnerId != ownerId)
-                return Task.FromResult(false);
+                return Task.FromResult(CalendarParticipantUpdateResult.EventNotFound);
             foreach (var characterId in remove)
                 _responses[(eventId, characterId)] =
                     new CalendarResponse(eventId, characterId, CalendarResponseStates.Uninvited);
             foreach (var characterId in add.Where(id => !remove.Contains(id)))
                 _responses[(eventId, characterId)] =
                     new CalendarResponse(eventId, characterId, CalendarResponseStates.Undecided);
-            return Task.FromResult(true);
+            return Task.FromResult(CalendarParticipantUpdateResult.Updated);
         }
 
         public Task<bool> SendResponseAsync(

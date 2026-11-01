@@ -1916,11 +1916,11 @@ public partial class HostServerTests : IAsyncLifetime
             long eventId, long ownerId, long dateModified, System.Threading.CancellationToken cancellationToken = default) =>
             System.Threading.Tasks.Task.FromResult(false);
 
-        public System.Threading.Tasks.Task<bool> UpdateParticipantsAsync(
+        public System.Threading.Tasks.Task<Eve.Calendar.CalendarParticipantUpdateResult> UpdateParticipantsAsync(
             long eventId, long ownerId, System.Collections.Generic.IReadOnlyCollection<long> add,
             System.Collections.Generic.IReadOnlyCollection<long> remove,
             System.Threading.CancellationToken cancellationToken = default) =>
-            System.Threading.Tasks.Task.FromResult(false);
+            System.Threading.Tasks.Task.FromResult(Eve.Calendar.CalendarParticipantUpdateResult.EventNotFound);
 
         public System.Threading.Tasks.Task<bool> SendResponseAsync(
             long eventId, long ownerId, long characterId, short response,

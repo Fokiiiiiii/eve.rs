@@ -180,11 +180,13 @@ public sealed partial class CalendarMgrService
                 .Select(row => row.CharacterId));
             active.ExceptWith(remove);
             active.UnionWith(add.Where(id => !remove.Contains(id)));
-            if (active.Count > 50) throw CalendarWire.TooManyInvitees();
+            if (active.Count > CalendarLimits.MaxInvitees) throw CalendarWire.TooManyInvitees();
         }
 
         var before = await Store.GetResponsesToEventAsync(eventId, calendarEvent.OwnerId, call.Cancellation);
-        if (!await Store.UpdateParticipantsAsync(eventId, calendarEvent.OwnerId, add, remove, call.Cancellation))
+        var update = await Store.UpdateParticipantsAsync(eventId, calendarEvent.OwnerId, add, remove, call.Cancellation);
+        if (update == CalendarParticipantUpdateResult.TooManyInvitees) throw CalendarWire.TooManyInvitees();
+        if (update != CalendarParticipantUpdateResult.Updated)
             throw EventNotFound();
         var after = await Store.GetResponsesToEventAsync(eventId, calendarEvent.OwnerId, call.Cancellation);
         var beforeVisible = before.Where(row => row.Status != CalendarResponseStates.Uninvited)

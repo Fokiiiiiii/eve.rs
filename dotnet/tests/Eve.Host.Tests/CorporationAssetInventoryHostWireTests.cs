@@ -224,6 +224,21 @@ public sealed class CorporationAssetInventoryHostWireTests
             Assert.Equal(propertyItemId, (await items.GetAsync(propertyItemId))!.Id);
             Assert.Equal(deliveryItemId, (await items.GetAsync(deliveryItemId))!.Id);
             Assert.Equal(9, capture.Packets.Count);
+
+            Assert.True(await dispatcher.DispatchAsync(ClientCallPacket("SearchAssets",
+                new PyStr("property"), new PyInt(0), new PyInt(0), new PyInt(34), new PyInt(5)), session));
+            var matchingLocations = Rowset(Result(capture.Packets[9]));
+            Assert.Equal(new PyValue[]
+            {
+                Py.Tuple(new PyStr("locationID"), new PyInt(0x14)),
+            }, Descriptor.DescriptorColumns(Field(matchingLocations, "header")));
+            Assert.Equal(new PyLong(stationId + 1), RowValues(Assert.Single(Lines(matchingLocations)))[0]);
+
+            Assert.True(await dispatcher.DispatchAsync(ClientCallPacket("SearchAssets",
+                new PyStr("property"), new PyInt(0), new PyInt(0), new PyInt(34), new PyInt(6)), session));
+            var noMatches = Rowset(Result(capture.Packets[10]));
+            Assert.Empty(Lines(noMatches));
+            Assert.Equal(11, capture.Packets.Count);
         }
         finally
         {

@@ -23,7 +23,15 @@ It sends `MachoBindObject`, bound `GetRepairQuotes`, and `RepairItemsInStation` 
 
 ## Remaining requested service groups
 
-Continue with `tourneyMgr`, `operationsManager`, `authentication`, `inventoryAssetHoldingMgr`, `cache`, `machoNet`, `seasonManager`, `notificationMgr`, and `voteManager`; inspect their complete client call/consumer paths before testing each. Do not mark RPC-02216 complete until structure repair is implemented and covered.
+`voteManager` is now covered on main: `dotnet/tests/Eve.Host.Tests/VoteManagerHostTests.cs:Vote_manager_rpc_flow_uses_the_host_wire_and_persists_cases_and_ballots`.
+
+`repairSvc` has all three requested rows covered, including the merged structure-repair test described above.
+
+Continue with `authentication`, `inventoryAssetHoldingMgr`, `cache`, `machoNet`, `seasonManager`, `notificationMgr`, `operationsManager`, and `tourneyMgr`.
+
+Current machoNet investigation: the client uses `GetConnectionProperties` in `eve/client/script/util/profiling.py:141,152`, `eve/devtools/script/networkdatamonitor.py:70,84-88`, `carbon/client/script/util/monitor.py:401,695-699`, and `carbon/common/script/net/http.py:46`; `GetConnectedClusterName` is used by `monolithconfig/__init__.py:396`. The Host `MachoNetService` currently exposes neither these three methods nor an implementation of `GetConnectionProperties`; its class body is `dotnet/src/Eve.Host/MachoNetService.cs:62-170`. Do not mark these rows tested until Host behavior exists and client-consumed values are sourced from authoritative runtime state.
+
+The existing `handoff-cx5-tourneyMgr.md` records that only a narrow subset of reads/actions exists and that match lifecycle methods lack an authoritative runtime. Resolve implementation before adding tests for such methods.
 
 ## Worktree recovery
 

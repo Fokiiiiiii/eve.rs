@@ -28,5 +28,12 @@
 ## Remaining P1 rows
 
 - RPC-01244–RPC-01247: `GetCorporationIDForCharacter` in NPC info-window paths (4 rows)
-- RPC-02208–RPC-02213: `repackagingSvc.RepackageItems` (6 rows)
-Total remaining: 10 rows.
+
+## repackagingSvc coverage — cx3
+
+- RPC-02208–RPC-02213 are covered by `RepackagingHostWireTests.Repackage_items_persist_and_notify_through_registered_host_for_client_call_shapes`. The PgFact registers the real `repackagingSvc`, sends three actual Macho CallReq shapes through PacketDispatcher (plain `itemsByStation`, `destroyable=True`, and the selected `newItemsByStation` retry shape), and confirms each CallRsp contains `PySubStream(None)`, one `OnItemChange` notification before the response, and the persisted singleton-to-stack state.
+- V24 direct callers are `eve/client/script/ui/services/menuSvcExtras/invItemFunctions.py:558-580`; `:543-547` validates/filters the selection, and `menusvc.py:3411-3412` is the menu entry point. `sellMulti.py:181` calls `CheckRepackageItems` as a preflight but does not issue this RPC. Repackage inventory changes enter the client at `eve/client/script/environment/invCache.py:219-223`; `:228-303` updates inventory caches and scatters `OnItemChange` / `OnItemChanged` to dependent views and services. The whole-tree listener search also found consumers in `clientDogmaLocation.py:569`, `shared/container.py:263`, `shared/neocom/contracts/createContractWnd.py:942`, `shared/info/infosvc.py:173`, `services/inventorysvc.py:396`, `ui/structure/dropbox/dropboxController.py:86`, `ui/station/securityOfficeWindow.py:130`, `ui/inflight/drone.py:476`, `ui/shared/fitting/multiFitWnd.py:529`, `inventorycommon/holdTracker.py:163`, and `itemcompression/client/ui/compression_window.py:235` / `decompression_window.py:70` (plus the other listeners returned by the whole-client `OnItemChange` search). The packet name is the client inventory event; it is not a custom repackaging-only event.
+- EveJS 261028.1 `src/server/src/services/station/repackagingService.js:15-25` extracts the first positional dictionary, passes kwargs separately to `repackageItemsForSession`, and returns null. `repackagingSupport.js:491-497` reads `destroyable`; `:692-718` sends the inventory item update before the handler response. This matches the Host test's keyword, notification-order and `None` assertions.
+- Local verification on `eve_p3`: `dotnet build dotnet/tests/Eve.Host.Tests -p:UseSharedCompilation=false --no-restore` passed (0 warnings/errors); the Host wire test passed 1/1, `InventoryServiceTests` repackaging acceptance/ownership cases passed 2/2, and `ShipTests.Repackaging_a_rigged_ship_requires_confirmation_then_offloads_contents_and_voids_insurance` passed 1/1. All database tests had 0 skips. Push CI is pending.
+
+Total remaining: 4 rows (RPC-01244–RPC-01247).

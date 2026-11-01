@@ -35,7 +35,7 @@ Origin/main's fix commit `75e89ae1` was merged after Run 1389. The conflict was 
 
 ## Push checkpoint
 
-The branch was pushed to main at `8df1b530d306` after CI Run 1390 completed green and `git fetch origin main && git merge origin/main` reported up to date. Push-triggered CI Run 1391 (`41354321450`) was queued when this checkpoint was written. Follow it to completion and fix any failure before further changes.
+The branch was pushed to main at `8df1b530d306` after CI Run 1390 completed green and `git fetch origin main && git merge origin/main` reported up to date. Push-triggered CI Run 1391 (`41354321450`) completed successfully; no failed tests or jobs were reported.
 
 ## Warp destination geometry and overflow
 

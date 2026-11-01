@@ -52,4 +52,5 @@ Gate callers, session-change handling and refusal error are traced above. The cl
 - On PostgreSQL `eve_p5`, through `tools/dev/db-lock.sh`, the focused undock regression passed (1 passed, 0 skipped).
 - On PostgreSQL `eve_p5`, the affected `SpaceServiceTests`, `StructureUndockingTests` and `UndockContrabandTests` selection passed (161 passed, 0 skipped). The structure fixture advances its local cooldown so those tests continue to exercise undocking and subsequent docking.
 - `cargo +1.94.1 test -p eve-space docking_range` passed (3 passed; remaining tests filtered out).
-- `cargo +1.94.1 fmt --all -- --check` passed. The workspace clippy and final CI results will be recorded after they complete.
+- `cargo +1.94.1 fmt --all -- --check`, `cargo +1.94.1 check -p eve-space`, and `cargo +1.94.1 clippy --workspace --all-targets -- -D warnings` passed after merging `origin/main`.
+- The graphical V24.01 client was not launched; push-triggered Actions results will be appended after the run completes.

@@ -27,7 +27,7 @@ public sealed record ShipCloneBay(long ShipId, bool CanReceiveCloneJumps, bool H
 /// The outcome of a clone jump's state change. A refusal names the reason (<c>MUST_LEAVE_SHIP</c>, <c>CLONE_NOT_FOUND</c>,
 /// <c>INSUFFICIENT_FUNDS</c>); otherwise the station the character is in now, with its solar system, constellation and region.
 /// </summary>
-public sealed record CloneJumpResult(string? Refusal, long StationId = 0, int SolarSystemId = 0, int ConstellationId = 0, int RegionId = 0);
+public sealed record CloneJumpResult(string? Refusal, long StationId = 0, int SolarSystemId = 0, int ConstellationId = 0, int RegionId = 0, long StructureId = 0);
 
 
 public static class CloneJumpRules
@@ -397,6 +397,14 @@ public sealed partial class JumpCloneService(Func<long> nowUnixMs, IJumpCloneSto
         if (!confirmed && snapshot.Clones.Any(clone => clone.LocationId == current && clone.JumpCloneId != target.JumpCloneId))
             throw MachoErrors.ThrowUserError("JumpCheckWillLoseExistingClone", ("locationID", new PyLong(current)));
 
+        if (target.LocationKind == "structure")
+        {
+            if (await Space().StructureBayAsync(characterId, target.LocationId, call.Cancellation) is not { } targetBay)
+                throw MachoErrors.ThrowUserError("StructureCloneBayDenied", ("structureName", new PyStr(target.LocationId.ToString())));
+            if (!confirmed)
+                throw MachoErrors.ThrowUserError("JumpCheckIntoStructure", ("structureID", new PyLong(targetBay.StructureId)));
+        }
+
         var (fee, ownerCorporationId) = await CloneJumpFee(call);
         var originLocationKind = IsStationDock(call.Session) ? "station" : "structure";
         var result = await Store().JumpAsync(characterId, target.JumpCloneId, current, originLocationKind, fee, ownerCorporationId, now, call.Cancellation);
@@ -412,7 +420,23 @@ public sealed partial class JumpCloneService(Func<long> nowUnixMs, IJumpCloneSto
             default:
                 throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Jump clone not found")));
         }
-        CharacterSessionRelocation.Docked(call.Session, result.StationId, result.SolarSystemId, result.ConstellationId, result.RegionId, call.Session.GetInt("shipid"));
+        if (result.StructureId > 0)
+        {
+            call.Session.Change(
+                ("stationid", PyNone.Instance),
+                ("stationid2", PyNone.Instance),
+                ("structureid", new PyLong(result.StructureId)),
+                ("solarsystemid", new PyInt(result.SolarSystemId)),
+                ("solarsystemid2", new PyInt(result.SolarSystemId)),
+                ("constellationid", new PyInt(result.ConstellationId)),
+                ("regionid", new PyInt(result.RegionId)),
+                ("shipid", call.Session.GetInt("shipid") is { } shipId ? new PyLong(shipId) : PyNone.Instance),
+                ("locationid", new PyLong(result.StructureId)));
+        }
+        else
+        {
+            CharacterSessionRelocation.Docked(call.Session, result.StationId, result.SolarSystemId, result.ConstellationId, result.RegionId, call.Session.GetInt("shipid"));
+        }
         Invalidate(call.Session, current, characterId);
         if (target.LocationId != current)
             Invalidate(call.Session, target.LocationId, characterId);

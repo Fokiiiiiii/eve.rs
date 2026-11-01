@@ -111,12 +111,12 @@ public sealed class JumpCloneSettlementHostWireTests : IAsyncLifetime
         return character;
     }
 
-    private async Task<long> CloneAtAsync(NpgsqlDataSource source, long characterId, long locationId)
+    private async Task<long> CloneAtAsync(NpgsqlDataSource source, long characterId, long locationId, string locationKind = "station")
     {
         await using var connection = await source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
         var cloneId = await new PgJumpCloneStore(source, Schema("EVE_CHARACTERS_SCHEMA"))
-            .InsertAsync(connection, transaction, characterId, locationId, "station");
+            .InsertAsync(connection, transaction, characterId, locationId, locationKind);
         await transaction.CommitAsync();
         return cloneId;
     }
@@ -226,6 +226,25 @@ public sealed class JumpCloneSettlementHostWireTests : IAsyncLifetime
         var structureJumpClones = await new PgJumpCloneStore(source, Schema("EVE_CHARACTERS_SCHEMA")).ReadAsync(structureCharacter);
         Assert.Contains(structureJumpClones.Clones, clone => clone.LocationId == structureId && clone.LocationKind == "structure");
 
+        var structureDestinationCharacter = await CharacterAsync(source, station, ownerCorporationId, 5_000_000m);
+        var structureDestinationClone = await CloneAtAsync(source, structureDestinationCharacter, structureId, "structure");
+        var structureDestinationSession = new ClientSession(new Sink()) { CharacterId = structureDestinationCharacter, SessionId = 905 };
+        structureDestinationSession.Set("charid", new PyLong(structureDestinationCharacter));
+        structureDestinationSession.Set("stationid", new PyLong(station.Id));
+        structureDestinationSession.Set("solarsystemid2", new PyInt(station.SolarSystemId));
+        var confirmation = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            BoundCall(structureDestinationSession, station.Id, station.SolarSystemId, "CloneJump",
+                new PyLong(structureId), new PyLong(structureDestinationClone), new PyReal(900_000), PyBool.False));
+        Assert.Equal("JumpCheckIntoStructure", confirmation.Error.UserErrorMessage);
+        Assert.Same(PyNone.Instance, await BoundCall(structureDestinationSession, station.Id, station.SolarSystemId, "CloneJump",
+            new PyLong(structureId), new PyLong(structureDestinationClone), new PyReal(900_000), PyBool.True));
+        Assert.Equal(structureId, structureDestinationSession.GetInt("structureid"));
+        Assert.Null(structureDestinationSession.GetInt("stationid"));
+        Assert.Equal(4_100_000m, (await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).GetAsync(structureDestinationCharacter))!.Isk);
+        var structureDestinationClones = await new PgJumpCloneStore(source, Schema("EVE_CHARACTERS_SCHEMA")).ReadAsync(structureDestinationCharacter);
+        Assert.Contains(structureDestinationClones.Clones, clone => clone.LocationId == station.Id && clone.LocationKind == "station");
+        Assert.DoesNotContain(structureDestinationClones.Clones, clone => clone.JumpCloneId == structureDestinationClone);
+
         var poorCharacter = await CharacterAsync(source, station, ownerCorporationId + 2, 0m);
         var poorCloneId = await CloneAtAsync(source, poorCharacter, targetStation.Id);
         var poorSession = new ClientSession(new Sink()) { CharacterId = poorCharacter, SessionId = 903 };
@@ -238,5 +257,15 @@ public sealed class JumpCloneSettlementHostWireTests : IAsyncLifetime
         Assert.Equal("NotEnoughMoney", error.Error.UserErrorMessage);
         Assert.Equal(0m, (await wallet.GetAsync(poorCharacter))!.Isk);
         Assert.Single((await new PgJumpCloneStore(source, Schema("EVE_CHARACTERS_SCHEMA")).ReadAsync(poorCharacter)).Clones);
+
+        Assert.Equal(structureId, (await new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA")).GetAsync(structureDestinationCharacter))!.StructureId);
+        await host.ShutdownAsync();
+        host = await HostComposition.BuildAsync(Settings());
+        var characterService = host.Registry.Lookup("charUnboundMgr") ?? throw new InvalidOperationException("charUnboundMgr is not registered");
+        var reentered = new ClientSession(new Sink()) { UserId = 1, SessionId = 906 };
+        Assert.Same(PyNone.Instance, await characterService.CallAsync(Call(reentered, "SelectCharacterID", new PyLong(structureDestinationCharacter))));
+        Assert.Equal(structureId, reentered.GetInt("structureid"));
+        Assert.Null(reentered.GetInt("stationid"));
+        Assert.Equal(station.SolarSystemId, reentered.GetInt("solarsystemid"));
     }
 }

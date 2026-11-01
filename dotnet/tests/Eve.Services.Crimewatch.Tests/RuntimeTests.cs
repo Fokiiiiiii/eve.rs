@@ -1373,6 +1373,39 @@ public class PenaltyTests : IAsyncLifetime
     }
 
     [PgFact]
+    public async Task An_unlawful_ship_attack_in_low_security_costs_security_status_before_its_suspect_notifications()
+    {
+        var (runtime, _) = Rig();
+        using var _ = runtime;
+
+        var result = await runtime.RecordAggressionAsync(Attack(security: 0.3, where: SecurityClass.LowSec));
+
+        Assert.Equal(AggressionReason.Suspect, result.Outcome.Reason);
+        Assert.Equal([(1L, -0.075, "aggression")], _written);
+        var told = Notes.Of(_attacker);
+        Assert.Equal(["OnModuleAttributeChanges", "OnSecurityStatusUpdate", "OnWeaponsTimerUpdate", "OnPvpTimerUpdate", "OnCriminalTimerUpdate", "OnSystemCriminalFlagUpdates"], told.Select(n => n.Name));
+        Assert.Equal([Py.Number(-0.075)], told[1].Args);
+        Assert.Equal(new PyInt(304), told[4].Args[0]);
+        Assert.Equal([Py.Tuple(), Py.Tuple(new PyInt(1)), Py.Tuple()], told[5].Args);
+    }
+
+    [PgFact]
+    public async Task Remote_assistance_crime_does_not_apply_the_attack_security_penalty()
+    {
+        var (runtime, _) = Rig();
+        using var _ = runtime;
+        await runtime.RecordAggressionAsync(Attack());
+        _written.Clear();
+
+        var result = await runtime.RecordRemoteAssistanceAsync(
+            new AggressionRequest(2, 1, 9_988_400_003_315, System, 1.0, SecurityClass.SafeSec, false));
+
+        Assert.Equal(Eve.Crimewatch.PolicyAction.RemoteAssistance, result.Action);
+        Assert.Equal(AggressionReason.Criminal, result.Outcome.Reason);
+        Assert.Empty(_written);
+    }
+
+    [PgFact]
     public async Task A_second_shot_at_the_same_ship_costs_nothing_for_a_minute_and_one_at_another_ship_costs_again()
     {
         var (runtime, _) = Rig();

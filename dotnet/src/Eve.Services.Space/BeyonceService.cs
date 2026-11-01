@@ -439,7 +439,7 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
         }
         var targetId = requestedTarget is { } number ? (long)number : 0;
         var range = call.Kwarg("minRange") is { } named ? Number(named) ?? 0 : 0;
-        if (!double.IsFinite(range))
+        if (!double.IsFinite(range) || range < 0)
         {
             throw WarpRefusal();
         }

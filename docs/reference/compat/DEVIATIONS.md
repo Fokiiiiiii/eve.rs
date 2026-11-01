@@ -1,5 +1,9 @@
 # Deviations from the reference server
 
+## Turret wrecking shots below one percent (2026-11-01)
+
+EVE University [Turret mechanics — Damage](https://wiki.eveuniversity.org/Falloff#Damage) says a roll below 0.01 produces a wrecking shot and that below 1% hit chance only misses and wrecking shots occur. EveJS 261028.1 `server/src/space/combat/laserTurrets.js:92-192` rejects `roll >= hitChance` before checking the wrecking threshold. eve.rs now applies the wrecking result for a positive hit chance before that ordinary cutoff; a zero hit chance still misses. V24.01 `eve/client/script/environment/godma.py:219-243,501-549` batches and consumes `hitQuality` for turret state and the combat log; `eve/client/script/parklife/bracketMgr.py:1169-1184` consumes applied damage for attacker display; `eve/client/script/ui/inflight/bracketsAndTargets/targetInBar.py:1009-1030` uses damage to blink the target's health bar; and `eve/client/script/ui/shared/uilog.py:314-350` resolves the object names used by the combat message. `weapons::tests::a_wrecking_shot_lands_when_the_positive_hit_chance_is_below_one_percent` pins the corrected sim result and its 3x damage.
+
 ## Insurance payout after CONCORD destruction (2026-10-30)
 
 EVE University Insurance says active coverage is lost on a CONCORD highsec destruction and the ship reverts to the default 40% reimbursement ([Insurance](https://wiki.eveuniversity.org/Insurance), “Losing your insurance”). EveJS 261028.1 `server/src/services/insurance/insuranceRuntime.js:1274-1464` instead voids the contract and skips the payout for CONCORD destruction. eve.rs voids the insured fraction for this loss but pays the 40% base amount, following the gameplay reference. The other listed voiding triggers remain handled by inventory repackaging, owner change, and placing the ship in a corporation hangar.

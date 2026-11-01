@@ -5,6 +5,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Corporations;
+using Eve.Sde;
 using Eve.Skills;
 using Eve.Wallet;
 using Npgsql;
@@ -33,6 +34,14 @@ public sealed class CorporationPublicInfoHostWireTests
             await CorporationStore.MigrateAsync(source, corpSchema);
 
             var characters = new PgCharacterStore(source, characterSchema);
+            var sde = new SdeReader(source);
+            var npcRows = await sde.ReadAsync("npcCharacters");
+            var npcCharacterCorporations = npcRows
+                .Where(row => row.Doc.TryGetProperty("corporationID", out var corporationId) &&
+                    corporationId.TryGetInt64(out var value) && value > 0)
+                .ToDictionary(row => row.Key, row => row.Doc.GetProperty("corporationID").GetInt64());
+            var npc = npcRows.First(row => npcCharacterCorporations.ContainsKey(row.Key) &&
+                !row.Doc.TryGetProperty("agentTypeID", out _));
             var wallets = new PgWalletStore(source, walletSchema);
             var skills = new PgSkillStore(source, skillSchema);
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -59,7 +68,8 @@ public sealed class CorporationPublicInfoHostWireTests
             var application = await store.ApplyAsync(member, corporation.Id, "");
             await store.RespondAsync(founder, application, 6, "", "");
             await store.RespondAsync(member, application, 2, "", "");
-            var service = (IService)new CorpMgrService(store, characters);
+            var service = (IService)new CorpMgrService(store, characters,
+                npcCharacterCorporations: npcCharacterCorporations);
             var registry = new ServiceRegistry();
             registry.Register(service);
             Assert.Same(service, registry.Lookup("corpmgr"));
@@ -72,6 +82,10 @@ public sealed class CorporationPublicInfoHostWireTests
             Assert.True(await dispatcher.DispatchAsync(ClientCallPacket(
                 "GetCorporationIDForCharacter", new PyInt(member)), session));
             Assert.Equal(new PyInt(corporation.Id), Result(capture.Packets[^1]));
+
+            Assert.True(await dispatcher.DispatchAsync(ClientCallPacket(
+                "GetCorporationIDForCharacter", new PyLong(npc.Key)), session));
+            Assert.Equal(new PyInt(npc.Doc.GetProperty("corporationID").GetInt32()), Result(capture.Packets[^1]));
 
             Assert.True(await dispatcher.DispatchAsync(ClientCallPacket(
                 "GetCorporationIDForCharacter", new PyLong(long.MaxValue)), session));

@@ -52,3 +52,21 @@ The Host wire test `dotnet/tests/Eve.Host.Tests/CalendarRpcHostWireTests.cs:Cale
 A graphical V24.01 client session was not run.
 
 A graphical V24.01 client session was not run.
+
+## Completed group: taleMgr
+
+`dotnet/tests/Eve.Host.Tests/TaleManagerHostWireTests.cs:Tale_manager_calls_cross_the_host_wire_and_notify_the_current_system` passed on PostgreSQL database `eve_p4` (1 passed, 0 failed, 0 skipped). The real Host TCP listener uses strict RPC routing; the callback reads a test incursion record persisted to a temporary PostgreSQL table. The test checks both calls, the cached global response, `OnTaleData` before the response with the current system and tale entry, and the empty template lookup response. CSV rows RPC-02701–RPC-02704 now point to this Host wire test.
+
+### Whole-client evidence
+
+- `/home/user/eve-logic/taleclient/tale_service.py:127-130` calls `get_active_tales_by_template(template_id)` and maps rows to `ActiveTaleThin(tale_id, template_id, solar_system_id, start_date, end_date)`; `eve/client/script/ui/shared/mapView/filters/mapFilterVanguardNemesisConvoys.py:23-39` consumes those fields to count systems.
+- `taleclient/tale_service.py:145-146` calls `GetGlobalWorldEventTales()`; `tale_service.py:57-63` consumes `OnTaleData`, and `eve/client/script/ui/shared/incursionSvc.py:68-72` reads `templateClassID` and `taleID` to start the incursion UI.
+- EveJS 261028.1 returns the empty cached list at `server/src/services/tale/taleMgrService.js:60-71`. The global Host reply and notification match that behavior and use the persisted incursion read side. `dotnet/tests/Eve.Services.Core.Tests/IncursionAnomalyServiceTests.cs` passed (7 passed, 0 failed, 0 skipped); the neighboring Host incursion/read-model test passed (1 passed, 0 failed, 0 skipped).
+
+A graphical V24.01 client session was not run.
+
+## Remaining rows for this assignment
+
+- DB2: RPC-00659–RPC-00662 (MISSING).
+- alert: RPC-00860–RPC-00864 (MISSING). RPC-00859 and RPC-00865 are already implemented and have an existing Host wire test.
+- structureCompressionMgr: RPC-02617–RPC-02626 were already IMPLEMENTED-TESTED before this assignment.

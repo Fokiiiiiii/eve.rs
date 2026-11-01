@@ -31,7 +31,11 @@ The next origin/main merge changed the NPC station docking range to 500 m (`crat
 
 After merging origin/main at `a9fe2540`, `cargo +1.94.1 check -p eve-space`, `cargo +1.94.1 fmt --all -- --check`, and workspace clippy with `-D warnings` passed. The dock-filtered Rust tests passed (40 unit tests and 3 reference tests). `SpaceServiceTests` and `StructureUndockingTests` passed on `eve_p3` (155 passed, 0 failed, 0 skipped). Main CI Run 1389 at `a9fe2540` completed red because `targeting::tests::a_ship_that_docks_is_lost_when_it_has_docked` still expected immediate acceptance from 1,000 m after NPC station range changed to 500 m. The worktree fixture now places the pilot 400 m from the surface; the exact test and dock-filtered set pass locally. RED GATE therefore blocks unrelated pushes until main has a green completed CI run.
 
-Origin/main's fix commit `75e89ae1` was merged after Run 1389. The conflict was resolved in favor of the same 400 m fixture, safely inside the 500 m NPC station range. After this merge, the exact targeting test passed; the dock-filtered tests passed (40 unit and 3 reference tests); the warp-filtered Rust tests passed (17 unit and 3 reference tests); and `cargo +1.94.1 check -p eve-space`, `fmt --all -- --check`, and workspace clippy passed. The Space tests project built with 0 warnings/errors; `SpaceServiceTests` and `StructureUndockingTests` passed on `eve_p3` (155 passed, 0 failed, 0 skipped). Run 1390 for `75e89ae1` was still in progress at this handoff checkpoint.
+Origin/main's fix commit `75e89ae1` was merged after Run 1389. The conflict was resolved in favor of the same 400 m fixture, safely inside the 500 m NPC station range. After this merge, the exact targeting test passed; the dock-filtered tests passed (40 unit and 3 reference tests); the warp-filtered Rust tests passed (17 unit and 3 reference tests); and `cargo +1.94.1 check -p eve-space`, `fmt --all -- --check`, and workspace clippy passed. The Space tests project built with 0 warnings/errors; `SpaceServiceTests` and `StructureUndockingTests` passed on `eve_p3` (155 passed, 0 failed, 0 skipped). Run 1390 for `75e89ae1` completed successfully.
+
+## Push checkpoint
+
+The branch was pushed to main at `8df1b530d306` after CI Run 1390 completed green and `git fetch origin main && git merge origin/main` reported up to date. Push-triggered CI Run 1391 (`41354321450`) was queued when this checkpoint was written. Follow it to completion and fix any failure before further changes.
 
 ## Warp destination geometry and overflow
 

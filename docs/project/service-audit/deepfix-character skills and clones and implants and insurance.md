@@ -44,7 +44,7 @@ Checks run on the local PostgreSQL lane `eve_p3`:
 - Eve.Characters.Tests build after the migration assertion fix: passed, 0 warnings and 0 errors.
 - `git diff --check`: passed.
 
-The wrong Host test filter attempt and the deliberate before-fix failure are not counted as passes. Push CI run 1375 exposed the migration expectation mismatch; its corrective commit is being prepared for a new CI run. No graphical-client session was performed.
+The wrong Host test filter attempt and the deliberate before-fix failure are not counted as passes. Push CI run 1375 exposed the migration expectation mismatch; commit `43ece20c` added the missing migration to the expected list. The exact migration test plus JumpCloneStoreTests passed locally (6 passed, 0 skipped), push CI run 1377 passed with no failed jobs, and the selected Host/Characters Agent Test run passed. No graphical-client session was performed.
 
 ## Other area records and remaining verification
 

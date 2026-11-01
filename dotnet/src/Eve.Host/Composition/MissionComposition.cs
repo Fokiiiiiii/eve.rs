@@ -379,7 +379,9 @@ internal sealed partial class CharacterServicesComposition
                     if (missionDungeons is { } dungeons) await dungeons.OnAcceptedAsync(characterId, agentId, token);
                     if (agentMissionAgentById.TryGetValue(agentId, out var acceptedAgent)) await StorylineOffersService.MarkAcceptedAsync(acceptedAgent, characterId, token);
                 },
-                async (characterId, agentId, token) => { if (missionDungeons is { } dungeons) await dungeons.OnQuitAsync(characterId, agentId, token); }));
+                async (characterId, agentId, token) => { if (missionDungeons is { } dungeons) await dungeons.OnQuitAsync(characterId, agentId, token); },
+                async (characterId, agentId, token) => missionDungeons is { } dungeons &&
+                    await dungeons.OnMissionTurnInAsync(characterId, agentId, token)));
         await AttachMissionDungeonsAsync();
     }
 

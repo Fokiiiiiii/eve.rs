@@ -8,7 +8,7 @@ using Npgsql;
 namespace Eve.Services.Core.Tests;
 
 /// <summary>
-/// the dungeon's outcome decides the mission, and the reward is credited once (a replayed outcome pays nothing).
+/// a dungeon outcome completes the objective, then an agent turn-in completes and rewards the mission once.
 /// </summary>
 public class MissionDungeonRuntimeTests
 {
@@ -116,7 +116,7 @@ public class MissionDungeonRuntimeTests
         []);
 
     [AgentsPgFact]
-    public async Task An_accepted_kill_mission_starts_its_dungeon_for_the_pilot_in_space_and_completion_pays_once()
+    public async Task An_accepted_kill_mission_marks_its_objective_at_the_dungeon_and_pays_once_at_agent_turn_in()
     {
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
@@ -136,12 +136,19 @@ public class MissionDungeonRuntimeTests
         Assert.Equal((Pilot, System, 3509L), Assert.Single(host.Starts));
 
         await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.3509", 77, default);
+        var objective = await store.ReadAsync(Pilot, Agent);
+        Assert.Equal(AgentMissionState.Accepted, objective!.State);
+        Assert.True(objective.ObjectiveCompleted);
+        Assert.Empty(host.Credits);
+
+        await runtime.OnMissionTurnInAsync(Pilot, Agent, default);
         var credit = Assert.Single(host.Credits);
         Assert.Equal((Pilot, 100000m, Corporation, 33), (credit.Character, credit.Amount, credit.Counterparty, credit.RefType));
-        Assert.Equal("agent-mission:" + Pilot + ":9101:dungeon:77", credit.Key);
+        Assert.Equal("agent-mission:" + Pilot + ":9101:turnin:9101:" + Start.ToUnixTimeMilliseconds(), credit.Key);
         Assert.Equal(AgentMissionState.Completed, (await store.ReadAsync(Pilot, Agent))!.State);
 
         await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.3509", 77, default);
+        await runtime.OnMissionTurnInAsync(Pilot, Agent, default);
         Assert.Single(host.Credits);
     }
 
@@ -174,8 +181,14 @@ public class MissionDungeonRuntimeTests
         Assert.Equal(2, await runtime.SweepAsync());
 
         await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.3509", 79, default);
+        Assert.Empty(host.Credits);
         completedAt = Start.AddMinutes(5);
         await runtime.OnDungeonOutcomeAsync("completed", Pilot + 1, "dungeon.3509", 80, default);
+        Assert.Empty(host.Credits);
+        completedAt = Start.AddMinutes(4);
+        await runtime.OnMissionTurnInAsync(Pilot, Agent, default);
+        completedAt = Start.AddMinutes(5);
+        await runtime.OnMissionTurnInAsync(Pilot + 1, Agent, default);
 
         Assert.Equal(new[] { 105000m, 42000m, 105000m }, host.Credits.Select(credit => credit.Amount));
         Assert.Equal(new[] { 33, 34, 33 }, host.Credits.Select(credit => credit.RefType));
@@ -221,7 +234,7 @@ public class MissionDungeonRuntimeTests
         """;
 
     [AgentsPgFact]
-    public async Task A_basic_level_4_mission_uses_the_configured_isk_and_standing_reward_once()
+    public async Task A_basic_level_4_mission_pays_the_configured_isk_and_standing_reward_at_turn_in()
     {
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
@@ -241,6 +254,11 @@ public class MissionDungeonRuntimeTests
         Assert.Equal(1, await runtime.SweepAsync());
 
         await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.3509", 78, default);
+        Assert.Empty(host.Credits);
+        Assert.Empty(host.Standings);
+        Assert.True((await store.ReadAsync(Pilot, Agent))!.ObjectiveCompleted);
+
+        await runtime.OnMissionTurnInAsync(Pilot, Agent, default);
         var credit = Assert.Single(host.Credits);
         Assert.Equal((Pilot, 920_000m, Corporation), (credit.Character, credit.Amount, credit.Counterparty));
 
@@ -316,6 +334,10 @@ public class MissionDungeonRuntimeTests
 
         await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.3509", 80, default);
         await runtime.OnDungeonOutcomeAsync("completed", Pilot, "dungeon.3509", 80, default);
+
+        Assert.Empty(host.Standings);
+        await runtime.OnMissionTurnInAsync(Pilot, Agent, default);
+        await runtime.OnMissionTurnInAsync(Pilot, Agent, default);
 
         var standing = Assert.Single(host.Standings);
         Assert.Equal((Pilot, 500003L), (standing.Character, standing.Faction));

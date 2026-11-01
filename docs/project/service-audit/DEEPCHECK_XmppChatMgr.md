@@ -46,3 +46,12 @@ V24.01全体の利用確認: `xmppchatsvc.py:1190-1192` は `GetFullRoomName` �
 eve.rsはSetMotdのfull JIDから有効なconference domainを検証してroom IDを抽出し、corp/allianceの現在のsession IDとdirector roleを確認してpersist後にsubjectを配信する。player-owned muc#owner GET/SETは既存`XmppPlayerChannelStore`の設定値を使い、owner-only destroy後にroom内occupantへunavailable presenceを順に送る。room-configに設定したpassword、members-only、members-by-defaultは再起動後も保持し、join/message権限に反映する。player-room configフォームを `XmppPlayerChannelStore` の既存tableへ加えた追加列は `ADD COLUMN IF NOT EXISTS` で既存schemaにも適用する。
 
 比較: EveJS 261028.1 `server/src/services/chat/xmppStubServer.js:3053-3160` はowner IQ GETでconfig formを返し、SETをchannel adminに限定し、destroy時にchannelを削除してroom memberを退室させる。`server/src/services/chat/xmppChatMgrService.js:337-378` のSetMotdは `corp_` のみを正規化するが、V24.01 client callsiteはalliance roomも渡すため、Hostはclient観測形状に合わせてalliance roomも実装する。Host regressionは`XmppChatMgrHostWireTests.Xmpp_chat_mgr_calls_keep_client_wire_shapes_through_host_dispatch`, `XmppOrganizationRoomTests.Corporation_motd_is_authorized_broadcast_and_returned_on_join`, and `XmppOrganizationRoomTests.Player_room_owner_iq_configures_persists_and_destroys_with_member_presence`。前2件とXMPP非DB選択テスト30件はローカルpass。Actions run 40862223202で招待済みmemberのMUC roleをvisitorと期待して失敗したため、memberはparticipant、未招待guestはvisitorを確認するassertへ修正した。修正後のPostgreSQLテストはActions run 40864053685でpass、push起点の通常CI run 40864046138も全job成功（失敗なし）。GUI clientでの操作確認は引き続き未実施。
+## Resource wars room の修正 (2026-11-01)
+
+以前の「3 methodが未登録」という記述のうち、`EnsureResourceWarsChannelExists` は修正済み。GMMute/GMUnmute は引き続き別途必要。
+
+V24.01 `resourcewars/client/rwservice.py:90-112` は入場時にEnsure RPCを呼び、その後 `resourcewars_<instanceID>` に参加し、次のinstanceへ移ると前のroomから退出する。EveJS 261028.1 `server/src/services/chat/xmppChatMgrService.js:248-258` は正のinstance IDをroom名へ変換し、`server/src/_secondary/chat/chatRuntime.js:1085-1098` はroomを `destroyWhenEmpty` として作り、最後の退出で `chatRuntime.js:978-1003` がroom状態を削除する。
+
+Hostは `XmppChatMgrService.cs:20-22` でrouteとNone/room名replyを登録し、`XmppChatHub.cs:85-102` に正のIDの一時状態を置く。`XmppMuc.cs:70-90` はEnsure済みのroomだけを許可し、成功時は通常のMUC presenceを送る。最後のoccupant退出では `XmppMuc.cs:132-146` がroom状態を削除し、disconnectも `XmppClientSession.cs:162-163` から同じ退出処理を通る。RPCはHost wire regression `XmppChatMgrHostWireTests.cs:61-75` で正/無効ID、join presence、未Ensure時の拒否、最後の退出後の削除、再Ensure後の再参加を確認する。
+
+修正前の同Host wire testはEnsure呼び出しで success frame 7の代わりにremote-error frame 15を受けて失敗した。修正後はEve.Host.TestsのXMPP対象34件がpass、skip 0。PostgreSQLを使うplayer-channel persistence regressionも同じXMPP対象実行でpassした。GUI clientでは操作していない。

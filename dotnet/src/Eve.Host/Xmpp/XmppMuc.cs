@@ -70,7 +70,16 @@ public sealed partial class XmppChatHub
 
 private bool CanAccessRoom(ClientSession? session, long characterId, string room) => session is not null
         && (StaticAccessChannels(session).Contains(room, StringComparer.Ordinal)
-            || IsPublicHelpChannel(room) || HasPrivateRoomAccess(session, room) || PlayerChannels?.CanJoin(room, characterId) == true);
+            || IsPublicHelpChannel(room) || IsEnsuredResourceWarsRoom(room) || HasPrivateRoomAccess(session, room) || PlayerChannels?.CanJoin(room, characterId) == true);
+
+    private bool IsEnsuredResourceWarsRoom(string room)
+    {
+        const string prefix = "resourcewars_";
+        return room.StartsWith(prefix, StringComparison.Ordinal)
+            && long.TryParse(room.AsSpan(prefix.Length), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var instanceId)
+            && instanceId > 0
+            && HasResourceWarsInstance(instanceId);
+    }
 
     internal bool TryJoinRoom(XmppLink link, string room, string nickname, string password, out IReadOnlyList<XmppOccupant> occupants)
     {
@@ -134,6 +143,8 @@ private bool CanAccessRoom(ClientSession? session, long characterId, string room
                 && (link.AccountRole & Eve.Services.GameMasterRoles.ChtInvisible) == 0;
             remaining = _occupants.Where(pair => pair.Key.Room == room
                 && (pair.Value.Link.AccountRole & Eve.Services.GameMasterRoles.ChtInvisible) == 0).Select(pair => pair.Value).ToArray();
+            if (!_occupants.Keys.Any(key => key.Room == room))
+                RetireEmptyResourceWarsChannel(room);
         }
 
         var from = RoomJid(room, leaving.Nickname);

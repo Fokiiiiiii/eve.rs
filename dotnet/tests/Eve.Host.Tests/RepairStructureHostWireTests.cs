@@ -106,7 +106,7 @@ public sealed class RepairStructureHostWireTests : IAsyncLifetime
     }
 
     [PgFact]
-    public async Task Registered_repair_service_quotes_charges_tax_and_persists_or_refuses_atomically()
+    public async Task Registered_repair_service_quotes_free_structure_repairs_and_preserves_paid_station_repairs()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
@@ -209,11 +209,11 @@ public sealed class RepairStructureHostWireTests : IAsyncLifetime
         Assert.True(quotedDamage > 0);
         var unitCost = Field(quote, "costToRepairOneUnitOfDamage");
         var baseUnitCost = Field(quote, "baseCostToRepairOneUnitOfDamage");
-        Assert.Equal(0.15, Field(quote, "structureTaxRate"), 6);
+        Assert.Equal(0, Field(quote, "structureTaxRate"), 6);
         Assert.True(baseUnitCost > 0);
-        Assert.Equal(baseUnitCost * 1.15, unitCost, 6);
-        var expectedCharge = decimal.Round((decimal)(Math.Ceiling(quotedDamage) * unitCost), 2, MidpointRounding.AwayFromZero);
-        var expectedTax = decimal.Round(expectedCharge * 0.15m / 1.15m, 2, MidpointRounding.AwayFromZero);
+        Assert.Equal(0, unitCost, 6);
+        var expectedCharge = 0m;
+        var expectedTax = 0m;
 
         var beforeIsk = (await wallet.GetAsync(character))!.Isk;
         var repairCall = Py.Tuple(new PyStr("RepairItemsInStructure"), Py.Tuple(itemIds), new PyDict([]));
@@ -273,11 +273,11 @@ public sealed class RepairStructureHostWireTests : IAsyncLifetime
         var persistedOwnerBalance = (await wallet.GetAsync(ownerCorporationId))!.Isk;
         Assert.True(await dispatcher.DispatchAsync(
             Packets.Call(open, 3, "repairSvc", "MachoBindObject", boundParameters, repairCall), lowFundsSession));
-        var refusal = Assert.IsType<MachoPacket>(MachoPacket.Decode(Assert.Single(lowFundsSink.Packets)));
-        Assert.Equal(MachoMessage.ErrorResponse, refusal.Type);
+        Assert.Contains(lowFundsSink.Packets, packet => MachoPacket.Decode(packet) is
+            { Type: MachoMessage.Notification, Dest.BroadcastId: "OnItemChange" });
         Assert.Equal(0, (await wallet.GetAsync(character))!.Isk);
         Assert.Equal(persistedOwnerBalance, (await wallet.GetAsync(ownerCorporationId))!.Isk);
-        var unchanged = await modules.ShipConditionAsync(shipId);
-        Assert.Equal(new ShipCondition(0.5, 1, 0.5, 0.2, false), unchanged);
+        var repairedWithoutFunds = await modules.ShipConditionAsync(shipId);
+        Assert.Equal(ShipCondition.Full, repairedWithoutFunds);
     }
 }

@@ -100,6 +100,12 @@ internal sealed class SentLog : IEnumerable<PyValue>
 internal sealed class Rig : IAsyncDisposable{
     public static readonly string? Url = Environment.GetEnvironmentVariable("EVE_PG_URL");
 
+    // Movement tests start after the session cooldown unless they explicitly inject an active timer.
+    public static Eve.Scheduler.LocalTimers CooldownElapsedTimers() => new(delay: (duration, token) =>
+        duration == TimeSpan.FromSeconds(10)
+            ? Task.CompletedTask
+            : Task.Delay(duration, token));
+
     public const long ClockMs = 1_700_000_000_123;
     public const long Station = 60015249;
 
@@ -262,6 +268,7 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         IReadOnlyDictionary<int, Eve.Universe.ClientSystemFlags>? clientFlags = null,
         Func<DogmaStatic, Task<DogmaStatic>>? staticsOverride = null, int? maxFleetJoinRequests = null)
     {
+        localTimers ??= CooldownElapsedTimers();
         CharacterNames.EnsureUnicodeSupport();
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
         var sde = new SdeReader(source);

@@ -110,7 +110,7 @@ public sealed partial class DynamicBountyMgrService(ReadDynamicBountyCallback? r
         var result = readOutput is { } read
             ? await read(systemId, call.Cancellation)
             : null;
-                return Py.Tuple(Py.Number(result?.Output ?? 1), result?.DbsiIsActive == true ? PyBool.True : PyBool.False);
+                return Py.Tuple(new PyReal(result?.Output ?? 1), result?.DbsiIsActive == true ? PyBool.True : PyBool.False);
     }
 }
 

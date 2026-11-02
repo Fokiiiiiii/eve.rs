@@ -163,12 +163,19 @@ public sealed class WormholeJumpServiceTests
         // the destination's beacon raises the ship's maximum velocity by 30 percent (the attribute of the dogma layer)
         var environment = SystemEnvironment.EffectOf(1, "Class 7 Test Effects", new Dictionary<string, double> { ["maxVelocityMultiplier"] = 1.3 }, name => name == "maxVelocity" ? 37 : null).Effect!;
         rig.Space.SystemEnvironment = id => id == KSystem ? [environment] : [];
+        var inspections = new List<int>();
+        rig.Space.ApplyContrabandPenaltyAsync = (_, _, systemId, _) =>
+        {
+            inspections.Add(systemId);
+            return Task.FromResult<Eve.Services.Space.ContrabandPenalty?>(null);
+        };
         rig.Sim.JumpAnswer = new CommandReply(true, 0, null, null, KSystem, 0);
         await rig.Space.WormholeJumpAsync(session, end.BodyId, oid, CancellationToken.None);
 
         rig.Sim.Say(new SimJumped((ulong)session.SessionId, JSystem, end.BodyId, KSystem, end.BodyId + 1));
         await Rig.UntilAsync(() => session.GetInt("solarsystemid") == KSystem);
         await Rig.UntilAsync(() => rig.Sim.Heard.Any(message => message is SimShipChanged));
+        Assert.Empty(inspections);
 
         // the ship's maximum velocity as the simulation was given it on entering the J-system, and as it is given now
         var entered = rig.Sim.Heard.OfType<SimEnter>().Single().Ship.MaxVelocity;

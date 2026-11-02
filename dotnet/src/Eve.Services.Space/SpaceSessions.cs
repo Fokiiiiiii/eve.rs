@@ -72,6 +72,7 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
 
         /// <summary>Marks the protection ended; false when it had ended already (each ending is told once).</summary>
         public bool ProtectionEnded;
+        public bool InspectContrabandOnJumpArrival;
         public bool CynoJumpPending;
         public bool CynoArrival;
         public long TetherDelayUntilMs;

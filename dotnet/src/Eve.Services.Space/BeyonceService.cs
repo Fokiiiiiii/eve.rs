@@ -721,7 +721,8 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
     {
         if (!_binding.Owns(call) || Number(call.Arg(0)) is not { } gate)
             return None;
-        return await space.JumpAsync(call.Session, (long)gate, (long)(Number(call.Arg(1)) ?? 0), (long)(Number(call.Arg(2)) ?? 0), call.BoundObjectId, call.Cancellation);
+        await space.JumpAsync(call.Session, (long)gate, (long)(Number(call.Arg(1)) ?? 0), (long)(Number(call.Arg(2)) ?? 0), call.BoundObjectId, call.Cancellation);
+        return None;
     }
 
     /// <summary>

@@ -34,4 +34,4 @@ Local checks on database `eve_p5`:
 - `Eve.Skills.Tests` character learning tests: 3 passed, 0 failed, 0 skipped.
 - `Eve.Ships.Tests` pilot learning bonus tests: 2 passed, 0 failed, 0 skipped.
 
-Main CI was green before the change was prepared (CI run 1433, commit `304f4970`). Push and post-push Actions verification are pending.
+The fix commit is `ee69a91f` (`Fix training attribute augmentation reply`); it was merged with current main and pushed as `a78bef65`. Push-triggered CI run 1435 completed successfully with no failed tests or jobs. The CI headless end-to-end check passed. No interactive graphical V24.01 client session was run for this change.

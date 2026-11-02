@@ -904,7 +904,7 @@ public sealed class ContractReadModelTests
         var contractsSchema = $"contract_auction_expiry_{suffix}";
         var inventorySchema = $"contract_auction_expiry_items_{suffix}";
         var walletSchema = $"contract_auction_expiry_wallet_{suffix}";
-        var schedulerSchema = $"contract_expiry_sched_{suffix}";
+        var schedulerSchema = $"contract_auction_expiry_jobs_{suffix}";
         await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(connectionString));
         await PersistenceContractReadModel.MigrateAsync(source, contractsSchema);
         await Eve.Scheduler.DurableScheduler.MigrateAsync(source, schedulerSchema);
@@ -933,8 +933,8 @@ public sealed class ContractReadModelTests
                 await transaction.CommitAsync();
             }
             const long now = 1_800_000_000_000;
-            var expiryJobs = new ContractExpiryJobs(source, itemStore, wallets,
-                new Eve.Scheduler.DurableScheduler(source, () => now, schema: schedulerSchema), contractsSchema);
+            var scheduler = new Eve.Scheduler.DurableScheduler(source, () => now, schema: schedulerSchema);
+            var expiryJobs = new ContractExpiryJobs(source, itemStore, wallets, scheduler, contractsSchema);
             var writer = new PersistenceContractWriteModel(source, itemStore, wallets, () => now, contractsSchema, expiryJobs);
             var created = await writer.CreateContractAsync(new Eve.Services.Core.CreateItemExchangeRequest(
                 IssuerCharacterId: 100, IssuerCorporationId: 200, IsCorporationIssued: false,

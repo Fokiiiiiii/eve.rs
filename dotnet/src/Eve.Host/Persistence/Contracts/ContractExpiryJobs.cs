@@ -30,7 +30,8 @@ public sealed class ContractExpiryJobs(
     private sealed record ExpiredContract(
         long ContractId, short Type, long IssuerId, long IssuerCorporationId, bool CorporationIssued,
         long StartStationId, long ExpiredFileTime, decimal RewardEscrow, decimal Deposit,
-        int IssuerWalletKey, int IssuerItemFlag, long WrapItemId);
+        int IssuerWalletKey, int IssuerItemFlag, long WrapItemId, short Status, long AcceptedAtFileTime,
+        int NumDays, long AcceptorId, bool AcceptorIsCorporation, decimal CollateralEscrow);
 
     public void Register() => scheduler.Register(JobKind, async (job, token) =>
     {
@@ -84,8 +85,10 @@ public sealed class ContractExpiryJobs(
         await using (var command = new NpgsqlCommand($"""
             SELECT contract_type, issuer_id, issuer_corporation_id, is_corporation_issued, start_station_id,
                    date_expired_filetime, reward_escrow, deposit_isk, issuer_wallet_account_key,
-                   issuer_item_flag, plastic_wrap_item_id
-            FROM {_schema}.contract_records WHERE contract_id = $1 AND status = 0 FOR UPDATE
+                   issuer_item_flag, plastic_wrap_item_id, status, date_accepted_filetime, num_days,
+                   acceptor_id, acceptor_is_corporation, collateral_escrow
+            FROM {_schema}.contract_records
+            WHERE contract_id = $1 AND (status = 0 OR (contract_type = 3 AND status = 1)) FOR UPDATE
             """, connection, transaction))
         {
             command.Parameters.AddWithValue(contractId);
@@ -93,14 +96,19 @@ public sealed class ContractExpiryJobs(
             if (!await reader.ReadAsync(cancellationToken)) return false;
             contract = new ExpiredContract(contractId, reader.GetInt16(0), reader.GetInt64(1), reader.GetInt64(2),
                 reader.GetBoolean(3), reader.GetInt64(4), reader.GetInt64(5), reader.GetDecimal(6), reader.GetDecimal(7),
-                reader.GetInt32(8), reader.GetInt32(9), reader.GetInt64(10));
+                reader.GetInt32(8), reader.GetInt32(9), reader.GetInt64(10), reader.GetInt16(11), reader.GetInt64(12),
+                reader.GetInt32(13), reader.GetInt64(14), reader.GetBoolean(15), reader.GetDecimal(16));
         }
 
         var nowFileTime = checked(FileTimeUnixEpoch + nowMs * TicksPerMillisecond);
-        if (!force && contract.ExpiredFileTime > nowFileTime)
+        var acceptedCourier = contract.Status == 1;
+        var deadlineFileTime = acceptedCourier
+            ? checked(contract.AcceptedAtFileTime + (long)contract.NumDays * TimeSpan.TicksPerDay)
+            : contract.ExpiredFileTime;
+        if (!force && deadlineFileTime > nowFileTime)
         {
             if (schedule is not null)
-                await schedule(new JobSpec(JobKind, ToUnixMs(contract.ExpiredFileTime))
+                await schedule(new JobSpec(JobKind, ToUnixMs(deadlineFileTime))
                 {
                     Key = contractId.ToString(System.Globalization.CultureInfo.InvariantCulture),
                     Payload = new Payload(contractId),
@@ -110,6 +118,61 @@ public sealed class ContractExpiryJobs(
 
         var issuerOwner = contract.CorporationIssued ? contract.IssuerCorporationId : contract.IssuerId;
         var escrowLocation = checked(EscrowLocationBase + contractId);
+        if (acceptedCourier)
+        {
+            var wrap = await items.LockAndGetAsync(connection, transaction, contract.WrapItemId, cancellationToken);
+            if (wrap is null || wrap.TypeId != 3468 || wrap.OwnerId != contract.AcceptorId)
+                throw new InvalidOperationException($"Accepted courier {contractId} has no valid package.");
+            var courierItems = new List<long>();
+            await using (var command = new NpgsqlCommand($"SELECT item_id FROM {_schema}.contract_items WHERE contract_id = $1 AND in_crate ORDER BY item_id", connection, transaction))
+            {
+                command.Parameters.AddWithValue(contractId);
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken)) courierItems.Add(reader.GetInt64(0));
+            }
+            foreach (var itemId in courierItems)
+            {
+                var item = await items.LockAndGetAsync(connection, transaction, itemId, cancellationToken);
+                if (item is null || item.OwnerId != EscrowOwnerId || item.LocationId != escrowLocation)
+                    throw new InvalidOperationException($"Accepted courier {contractId} has invalid escrow contents.");
+                await items.MoveToOwnerAsync(connection, transaction, itemId, contract.AcceptorId, wrap.LocationId,
+                    wrap.Flag, cancellationToken);
+            }
+            if (contract.CollateralEscrow > 0)
+                await wallets.AdjustAsync(connection, transaction, new WalletAccount(issuerOwner, contract.IssuerWalletKey),
+                    contract.CollateralEscrow, contract.AcceptorId, 85, "Courier contract collateral paid to issuer", nowMs,
+                    $"contract:{contractId}:courier:collateral-forfeit", $"contract:{contractId}", cancellationToken, referenceId: contractId);
+            if (contract.RewardEscrow > 0)
+                await wallets.AdjustAsync(connection, transaction, new WalletAccount(issuerOwner, contract.IssuerWalletKey),
+                    contract.RewardEscrow, contract.AcceptorId, 83, "Courier contract reward returned", nowMs,
+                    $"contract:{contractId}:courier:reward-return", $"contract:{contractId}", cancellationToken, referenceId: contractId);
+            await items.DeleteAsync(connection, transaction, contract.WrapItemId, cancellationToken);
+            await using (var completed = new NpgsqlCommand($"""
+                UPDATE {_schema}.contract_records SET status = 7, date_completed_filetime = $2,
+                    reward_escrow = 0, collateral_escrow = 0, plastic_wrap_item_id = 0
+                WHERE contract_id = $1 AND status = 1
+                """, connection, transaction))
+            {
+                completed.Parameters.AddWithValue(contractId);
+                completed.Parameters.AddWithValue(Eve.Services.Py.FileTimeFromUnixMs(nowMs));
+                if (await completed.ExecuteNonQueryAsync(cancellationToken) != 1) return false;
+            }
+            await using (var delivered = new NpgsqlCommand($"UPDATE {_schema}.contract_items SET in_crate = false WHERE contract_id = $1 AND in_crate", connection, transaction))
+            {
+                delivered.Parameters.AddWithValue(contractId);
+                await delivered.ExecuteNonQueryAsync(cancellationToken);
+            }
+            await PublishNotificationAsync(connection, transaction, contract, "OnContractFailed", contractId, cancellationToken);
+            if (events is not null)
+            {
+                var acceptor = contract.AcceptorIsCorporation
+                    ? new ContractNotifications.Payload("OnContractFailed", contractId, 0, contract.AcceptorId, 0)
+                    : new ContractNotifications.Payload("OnContractFailed", contractId, contract.AcceptorId, 0, 0);
+                await events.PublishAsync(connection, transaction, ContractNotifications.Topic, acceptor,
+                    $"contract:{contractId}:OnContractFailed:acceptor", cancellationToken);
+            }
+            return true;
+        }
         var winningBid = contract.Type == 2 ? await ReadWinningBidAsync(connection, transaction, contractId, cancellationToken) : null;
         var offeredItems = new List<long>();
         await using (var command = new NpgsqlCommand($"SELECT item_id FROM {_schema}.contract_items WHERE contract_id = $1 AND in_crate ORDER BY item_id", connection, transaction))

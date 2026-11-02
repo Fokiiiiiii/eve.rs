@@ -1,8 +1,13 @@
 # Deviations from the reference server
 
+## Biomassing a player-corporation CEO (2026-11-01)
+
+The V24.01 client calls `PrepareCharacterForDelete(charID)` from `eve/client/script/ui/login/charSelection/characterSelection.py:861-868` and `DeleteCharacter(charID)` from `:835-859`. EVE University's [Accounts guide](https://wiki.eveuniversity.org/Accounts) requires a player-corporation CEO to resign or close the corporation before entering the biomass queue. EveJS 261028.1 (`server/src/services/character/characterDeletionRuntime.js:672-693, 716-799`) checks ownership/offline/timer but omits the CEO rule. eve.rs intentionally rejects queueing and finalization for the active CEO of a non-NPC corporation using persisted CorporationStore state; the second check also covers a character promoted during the 600-minute timer. A Host wire/database regression test covers refusal, promotion while queued, and the permitted non-CEO path.
+
 ## AIR NPE skip clears tutorial UI (2026-11-02)
 
 V24.01 `operations/client/tutorialOperationsController.py:50-52` terminates the active tutorial on `OnTutorialSkipped`; `operations/client/eventdirector/eventdirector.py:49-51` clears tutorial highlights and conversations; and `eve/client/script/ui/shared/infoPanels/infoPanelSvc.py:395-397` refreshes the Operations panel. The `storylines/client/airnpe.py:101-111` skip path calls `air_npe.skip_air_npe()` with no arguments and relies on notifications. EveJS 261028.1 `server/src/services/npe/airNpeService.js:36-52` emits `OnAirNpeStateChanged` but omits `OnTutorialSkipped`. eve.rs sends the zero-argument `OnTutorialSkipped` event after the persisted skip transition and before `OnAirNpeStateChanged`, so all client consumers clear their state in the expected order. The Host wire test pins this order and the state notification payload.
+
 
 ## Shared bookmark delay boundary
 

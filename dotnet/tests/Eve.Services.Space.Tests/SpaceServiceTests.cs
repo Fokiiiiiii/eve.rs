@@ -4488,7 +4488,8 @@ public class SpaceServiceTests
                 Eve.Services.Space.FleetStore.Member));
             Assert.NotNull(await store.JoinAsync(fleetId, member.CharacterId));
             Eve.Services.IService proxy = new Eve.Services.Space.FleetProxyService(
-                store, store.FleetFinderAdvertOperationAsync, _ => leaderSession);
+                store, store.FleetFinderAdvertOperationAsync,
+                characterId => characterId == member.CharacterId ? memberSession : leaderSession);
 
             async Task<PyValue> Call(string method, ClientSession caller, params PyValue[] args) =>
                 await proxy.CallAsync(new Eve.Services.ServiceCall
@@ -4582,6 +4583,12 @@ public class SpaceServiceTests
             Assert.Equal(PyBool.False, Field(added, "hideInfo"));
             Assert.Equal(PyBool.False, Field(added, "updateOnBossChange"));
             Assert.Equal(new PyInt(12), Field(added, "advertJoinLimit"));
+
+            Assert.Equal(["OnFleetOptionsChanged"], Events.Of(leaderSession).Select(item => item.Name));
+            Assert.Equal(["OnFleetOptionsChanged"], Events.Of(memberSession).Select(item => item.Name));
+            added = Assert.IsType<PyDict>(await Call("AddFleetFinderAdvert", leaderSession, input));
+            Assert.Equal(["OnFleetOptionsChanged"], Events.Of(leaderSession).Select(item => item.Name));
+            Assert.Equal(["OnFleetOptionsChanged"], Events.Of(memberSession).Select(item => item.Name));
 
             var reloadedStore = rig.FleetStore;
             Eve.Services.IService reloadedProxy = new Eve.Services.Space.FleetProxyService(

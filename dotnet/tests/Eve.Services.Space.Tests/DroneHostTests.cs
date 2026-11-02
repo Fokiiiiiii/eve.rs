@@ -670,6 +670,7 @@ public class DroneHostTests
     public async Task A_salvage_drone_cycle_consumes_a_wreck_and_persists_an_sde_salvage_product()
     {
         await using var rig = await Rig.CreateAsync();
+        rig.Containers.SalvageRewardRoll = () => 0.99;
         var types = await new Eve.Sde.SdeReader(rig.Source).ReadTypeSummariesAsync();
         var droneTypeId = SdeTypeId(types, "Salvage Drone I");
         var wreckTypeId = Assert.Single(types, type => type.Name == "Amarr Frigate Wreck").TypeId;

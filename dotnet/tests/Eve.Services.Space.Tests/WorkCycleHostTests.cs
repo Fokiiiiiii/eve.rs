@@ -210,6 +210,7 @@ public class WorkCycleHostTests
     public async Task A_granted_salvage_tells_the_pilot_what_it_recovered_and_announces_the_wreck_salvaged()
     {
         await using var rig = await Rig.CreateAsync();
+        rig.Containers.SalvageRewardRoll = () => 0.99;
         var (flying, wreck, _) = await SalvagerOnWreckAsync(rig);
         var facts = await SalvageFactsAsync(rig);
         StartModule(rig, flying);

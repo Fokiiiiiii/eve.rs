@@ -400,14 +400,14 @@ public sealed partial class SpaceContainers
         }
 
         var salvageProducts = await _statics.TypesInGroupsAsync(["Salvaged Materials"]);
-        var salvageTypeId = SelectSalvageProductTypeId(targetType, targetSpace, salvageProducts);
-        if (salvageTypeId is null)
+        if (salvageProducts.Count == 0)
         {
             return WorkOutcome.Refuse("NO_SALVAGE_PRODUCTS");
         }
+        var salvageRewards = SelectSalvageRewards(targetType, targetSpace, salvageProducts);
         var salvaged = await _ships.SalvageWreckAsync(
             cycle.CharacterId, cycle.ShipId, cycle.SolarSystemId, cycle.IsModule ? MiningSource.Module : MiningSource.Drone,
-            cycle.OwnerId, cycle.TargetId, salvageTypeId,
+            cycle.OwnerId, cycle.TargetId, salvageRewards,
             targetSpace, _nowUnixMs() + (long)CanLifetime.TotalMilliseconds, _spaceItems, (long)cycle.CycleId, _cycles, _events);
         if (!salvaged.Accepted)
         {
@@ -446,19 +446,16 @@ public sealed partial class SpaceContainers
                 _log?.Invoke($"loot container {container.Id} was saved but not placed in the simulation: {error.Message}");
             }
         }
-        // the pilot is told what was recovered once the grant is kept; a replayed grant has no change and is not told again
-        var recovered = _statics.Type(salvageTypeId.Value)?.Name ?? string.Empty;
-        return new WorkOutcome(true, "", 0, 1, true, Notice: salvaged.Change is null ? null : Py.Tuple(new PyStr("CustomNotify"), new PyDict([
-            new(new PyStr("notify"), new PyStr($"Salvaging succeeded. Recovered 1 x {recovered} and placed it in your cargo hold."))])));
+        // the pilot is told the outcome once the grant is kept; a replayed grant is not told again
+        var notice = salvageRewards.Count > 0
+            ? $"Salvaging succeeded. Recovered {string.Join(", ", salvageRewards.Select(reward => $"{reward.Quantity} x {_statics.Type(reward.TypeId)?.Name ?? "salvage"}"))} and placed it in your cargo hold."
+            : "Salvaging succeeded, but no salvage materials were recovered.";
+        return new WorkOutcome(true, "", 0, 1, true, Notice: salvaged.Replayed ? null : Py.Tuple(new PyStr("CustomNotify"), new PyDict([
+            new(new PyStr("notify"), new PyStr(notice))])));
     }
 
-    private int? SelectSalvageProductTypeId(TypeDef wreckType, SpaceItem wreckSpace, IReadOnlyList<TypeDef> products)
+    private IReadOnlyList<(int TypeId, long Quantity)> SelectSalvageRewards(TypeDef wreckType, SpaceItem wreckSpace, IReadOnlyList<TypeDef> products)
     {
-        if (products.Count == 0)
-        {
-            return null;
-        }
-
         var factionName = wreckSpace.WarFactionId > 0 && wreckSpace.WarFactionId <= int.MaxValue
             ? _statics.FactionName((int)wreckSpace.WarFactionId)
             : "";
@@ -475,6 +472,29 @@ public sealed partial class SpaceContainers
             advanced = true;
         }
 
+        var size = identity.Contains("Capital", StringComparison.OrdinalIgnoreCase)
+            || identity.Contains("Carrier", StringComparison.OrdinalIgnoreCase)
+            || identity.Contains("Dreadnought", StringComparison.OrdinalIgnoreCase)
+            || identity.Contains("Titan", StringComparison.OrdinalIgnoreCase)
+            || identity.Contains("Freighter", StringComparison.OrdinalIgnoreCase)
+            ? 3
+            : identity.Contains("Battleship", StringComparison.OrdinalIgnoreCase)
+                ? 2
+                : identity.Contains("Cruiser", StringComparison.OrdinalIgnoreCase)
+                    || identity.Contains("Battlecruiser", StringComparison.OrdinalIgnoreCase)
+                    ? 1
+                    : 0;
+        var emptyChance = size switch { 0 => 0.22, 1 => 0.14, 2 => 0.08, _ => 0.02 };
+        double Roll()
+        {
+            var value = SalvageRewardRoll();
+            return Math.Clamp(double.IsFinite(value) ? value : 0, 0, Math.BitDecrement(1d));
+        }
+        if (Roll() < emptyChance)
+        {
+            return [];
+        }
+
         var materialNames = SalvageMaterialNames(identity, advanced);
         IReadOnlyList<TypeDef> pool = materialNames is null
             ? products
@@ -484,7 +504,15 @@ public sealed partial class SpaceContainers
             pool = products;
         }
         var ordered = pool.OrderBy(product => product.TypeId).ToArray();
-        return ordered[(int)(wreckSpace.ItemId % ordered.Length)].TypeId;
+        var rollCount = size switch { 3 => 4 + (int)(Roll() * 5), 2 => 1 + (int)(Roll() * 3), 1 => 1 + (int)(Roll() * 2), _ => 1 };
+        var rewards = new Dictionary<int, long>();
+        for (var index = 0; index < rollCount; index++)
+        {
+            var product = ordered[(int)(Roll() * ordered.Length)];
+            var quantity = size switch { 3 => 2 + (long)(Roll() * 4), 2 => 1 + (long)(Roll() * 3), 1 => 1 + (long)(Roll() * 2), _ => 1 };
+            rewards[product.TypeId] = rewards.GetValueOrDefault(product.TypeId) + quantity;
+        }
+        return rewards.Select(reward => (reward.Key, reward.Value)).ToArray();
     }
 
     private static string[]? SalvageMaterialNames(string identity, bool advanced)

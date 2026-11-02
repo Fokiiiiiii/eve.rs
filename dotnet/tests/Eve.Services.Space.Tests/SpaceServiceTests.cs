@@ -2656,16 +2656,10 @@ public class SpaceServiceTests
     private static Task<PyValue> JumpAsync(Rig rig, ClientSession session, string oid, long ship) =>
         rig.BeyonceCallAsync(session, "CmdStargateJump", oid, new PyInt((int)Gate), new PyInt((int)NextGate), new PyLong(ship));
 
-    private static void AssertBoundJumpResult(PyValue value, string oid)
-    {
-        var result = Assert.IsType<PyTuple>(value);
-        Assert.Equal(2, result.Items.Count);
-        Assert.Equal(oid, Assert.IsType<PyStr>(result.Items[0]).Value);
-        Assert.Equal(Py.FileTimeFromUnixMs(Rig.ClockMs + 10_000), Assert.IsType<PyLong>(result.Items[1]).Value);
-    }
+    private static void AssertJumpReturnsNone(PyValue value) => Assert.Equal(PyNone.Instance, value);
 
     [PgFact]
-    public async Task A_jump_is_given_to_the_simulation_the_client_is_told_the_queue_and_returns_the_bound_object_and_cooldown()
+    public async Task A_jump_is_given_to_the_simulation_the_client_is_told_the_queue_and_returns_none()
     {
         using var timers = CooldownElapsedTimers();
         var (rig, character, session) = await DockedAsync(localTimers: timers);
@@ -2676,7 +2670,7 @@ public class SpaceServiceTests
         var before = rig.Sim.Heard.Count;
 
         var result = await JumpAsync(rig, session, oid, character.ShipId);
-        AssertBoundJumpResult(result, oid);
+        AssertJumpReturnsNone(result);
         Assert.Equal(
             [Describe(new SimCommand((ulong)session.SessionId, SimCommands.Jump, [Gate, NextGate]))],
             rig.Sim.Heard.Skip(before).OfType<SimCommand>().Select(Describe));
@@ -2721,7 +2715,7 @@ public class SpaceServiceTests
         rig.Space.GateRules = new Eve.Services.Space.Gates.GateRules(
             new Dictionary<long, int> { [Gate] = 579 }, new Dictionary<int, IReadOnlySet<int>> { [579] = new HashSet<int> { 25 } },
             new Dictionary<long, long>(), new Dictionary<long, int>(), new Dictionary<int, Eve.Universe.AlignmentToll>());
-        AssertBoundJumpResult(await JumpAsync(rig, session, oid, character.ShipId), oid);
+        AssertJumpReturnsNone(await JumpAsync(rig, session, oid, character.ShipId));
         Assert.Contains(rig.Sim.Heard, m => m is SimCommand { Code: SimCommands.Jump });
     }
 
@@ -2755,7 +2749,7 @@ public class SpaceServiceTests
 
         // a paid jump is charged once and taken
         payable = true;
-        AssertBoundJumpResult(await JumpAsync(rig, session, oid, character.ShipId), oid);
+        AssertJumpReturnsNone(await JumpAsync(rig, session, oid, character.ShipId));
         Assert.Single(charges);
         Assert.Equal((character.CharacterId, 10_000m), (charges[0].Character, charges[0].Amount));
         Assert.StartsWith("gate-toll:", charges[0].Key);
@@ -2778,6 +2772,7 @@ public class SpaceServiceTests
         await using var _ = rig;
         await InSpaceAsync(rig, session);
         var oid = await rig.BindBeyonceAsync(session);
+        var from = (int)session.GetInt("solarsystemid2")!.Value;
         var inspections = new List<(long Character, long Ship, int System)>();
         rig.Space.ApplyContrabandPenaltyAsync = (characterId, shipId, systemId, _) =>
         {
@@ -2790,7 +2785,13 @@ public class SpaceServiceTests
         Assert.Empty(inspections);
 
         rig.Sim.JumpAnswer = new CommandReply(true, 0, null, null, NextSystem, 0);
-        AssertBoundJumpResult(await JumpAsync(rig, session, oid, character.ShipId), oid);
+        AssertJumpReturnsNone(await JumpAsync(rig, session, oid, character.ShipId));
+        Assert.Empty(inspections);
+        Assert.Equal(from, session.GetInt("solarsystemid2"));
+
+        rig.Sim.Say(new SimJumped((ulong)session.SessionId, from, Gate, NextSystem, NextGate));
+        await Rig.UntilAsync(() => session.GetInt("solarsystemid2") == NextSystem && inspections.Count == 1);
+
         Assert.Equal([(character.CharacterId, character.ShipId, NextSystem)], inspections);
     }
 

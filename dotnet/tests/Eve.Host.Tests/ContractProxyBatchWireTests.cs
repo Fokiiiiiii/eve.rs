@@ -454,7 +454,8 @@ public partial class HostServerTests
                 : ValueTask.FromResult(true);
         }
 
-        public ValueTask<bool> FinishAuctionAsync(long contractId, CancellationToken cancellationToken)
+        public ValueTask<bool> FinishAuctionAsync(long contractId, long characterId, long corporationId,
+            bool isIssuer, bool hasCorpContractManager, CancellationToken cancellationToken)
         {
             Finished.Add(contractId);
             return ValueTask.FromResult(true);

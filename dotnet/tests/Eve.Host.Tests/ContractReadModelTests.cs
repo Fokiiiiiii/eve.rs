@@ -896,7 +896,7 @@ public sealed class ContractReadModelTests
     }
 
     [Fact]
-    public async Task Expired_auction_settles_the_winning_bid_and_returns_the_public_deposit()
+    public async Task Expired_auction_keeps_winning_item_and_proceeds_as_independent_claims()
     {
         var connectionString = Environment.GetEnvironmentVariable("EVE_PG_URL")
             ?? throw new InvalidOperationException("EVE_PG_URL must name the assigned PostgreSQL lane");
@@ -931,7 +931,9 @@ public sealed class ContractReadModelTests
                 await transaction.CommitAsync();
             }
             const long now = 1_800_000_000_000;
-            var writer = new PersistenceContractWriteModel(source, itemStore, wallets, () => now, contractsSchema);
+            var expiryJobs = new ContractExpiryJobs(source, itemStore, wallets,
+                new Eve.Scheduler.DurableScheduler(source, () => now), contractsSchema);
+            var writer = new PersistenceContractWriteModel(source, itemStore, wallets, () => now, contractsSchema, expiryJobs);
             var created = await writer.CreateContractAsync(new Eve.Services.Core.CreateItemExchangeRequest(
                 IssuerCharacterId: 100, IssuerCorporationId: 200, IsCorporationIssued: false,
                 StartStationId: 600, StartStationDivision: ItemFlags.Hangar, Availability: 0, AssigneeId: 0,
@@ -940,13 +942,23 @@ public sealed class ContractReadModelTests
                 Items: [new Eve.Services.Core.ContractOfferedItem(itemId, 1)], ContractType: 2, Collateral: 2000),
                 CancellationToken.None);
             Assert.True(await writer.PlaceBidAsync(created.ContractId, 300, 301, 0, false, 1000, 1000, CancellationToken.None));
-            var jobs = new ContractExpiryJobs(source, itemStore, wallets,
-                new Eve.Scheduler.DurableScheduler(source, () => now), contractsSchema);
-
-            Assert.True(await jobs.SettleExpiredAsync(created.ContractId, now + 100_000_000, CancellationToken.None));
+            Assert.False(await expiryJobs.SettleExpiredAsync(created.ContractId, now + 100_000_000, CancellationToken.None));
+            var stillEscrowed = await itemStore.GetAsync(created.EscrowItemIds.Single(), CancellationToken.None);
+            Assert.NotNull(stillEscrowed);
+            Assert.Equal(1L, stillEscrowed.OwnerId);
+            var claimWriter = new PersistenceContractWriteModel(source, itemStore, wallets,
+                () => now + 100_000_000, contractsSchema, expiryJobs);
+            Assert.True(await claimWriter.FinishAuctionAsync(created.ContractId, 300, 301, false, false, CancellationToken.None));
             var delivered = await itemStore.GetAsync(created.EscrowItemIds.Single(), CancellationToken.None);
             Assert.NotNull(delivered);
             Assert.Equal((300L, 600L, ItemFlags.Hangar), (delivered.OwnerId, delivered.LocationId, delivered.Flag));
+            Assert.Equal(4950m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
+            Assert.Equal(4000m, await wallets.AccountBalanceAsync(new WalletAccount(300), CancellationToken.None));
+            var issuerClaims = await Task.WhenAll(
+                claimWriter.FinishAuctionAsync(created.ContractId, 100, 200, true, false, CancellationToken.None).AsTask(),
+                claimWriter.FinishAuctionAsync(created.ContractId, 100, 200, true, false, CancellationToken.None).AsTask());
+            Assert.All(issuerClaims, claim => Assert.True(claim));
+            Assert.True(await claimWriter.FinishAuctionAsync(created.ContractId, 300, 301, false, false, CancellationToken.None));
             Assert.Equal(6000m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
             Assert.Equal(4000m, await wallets.AccountBalanceAsync(new WalletAccount(300), CancellationToken.None));
             await using var read = source.CreateCommand($"SELECT status, acceptor_id FROM {contractsSchema}.contract_records WHERE contract_id=$1");

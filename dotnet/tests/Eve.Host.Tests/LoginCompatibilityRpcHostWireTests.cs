@@ -64,10 +64,16 @@ public partial class HostServerTests
             MarshalCodec.Encode(Packets.CallWithKwargs(
                 open, ++callId, "air_npe", "skip_air_npe", new PyTuple([]),
                 Py.Dict(("machoVersion", new PyInt(1)))))));
-        var notification = Assert.IsType<PyObject>(
+        var tutorialSkipped = Assert.IsType<PyObject>(
             MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload));
         Assert.Equal(ClientNotification.ClassName,
-            Encoding.UTF8.GetString(Assert.IsType<PyBytes>(notification.Name).Value.Span));
+            Encoding.UTF8.GetString(Assert.IsType<PyBytes>(tutorialSkipped.Name).Value.Span));
+        Assert.Equal("OnTutorialSkipped", MachoPacket.Decode(tutorialSkipped)?.Dest.BroadcastId);
+        var airNpeStateChanged = Assert.IsType<PyObject>(
+            MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload));
+        Assert.Equal(ClientNotification.ClassName,
+            Encoding.UTF8.GetString(Assert.IsType<PyBytes>(airNpeStateChanged.Name).Value.Span));
+        Assert.Equal("OnAirNpeStateChanged", MachoPacket.Decode(airNpeStateChanged)?.Dest.BroadcastId);
         Assert.Same(PyNone.Instance, Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
         Assert.True(skipped);
         Assert.Equal(2, state);

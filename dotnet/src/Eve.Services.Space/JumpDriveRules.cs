@@ -119,12 +119,12 @@ public static class JumpDriveRules
 
     /// <summary>
     /// The units of fuel a jump of <paramref name="lightYears"/> takes: light years times the fuel per light year, times (1 + the Jump Fuel Conservation percentage
-    /// a level as a fraction: -0.1), and less 10 % a level of jump freighters for a jump freighter (pass 0 otherwise), rounded up to whole units.
+    /// a level as a fraction: -0.1), and less 10 % a level of jump freighters for a jump freighter (pass 0 otherwise), floored to whole units after normalizing float noise.
     /// The economizers are a multiplier of their own (<see cref="EconomizerMultiplier"/>); a caller that reads the fuel per light year from the flown ship passes 0 levels.
     /// </summary>
     public static long FuelQuantity(
         double lightYears, double fuelPerLightYear, int fuelConservationLevel, double conservationPerLevel, int jumpFreighterLevel, double economizers) =>
-        (long)Math.Ceiling(Math.Round(lightYears * fuelPerLightYear * (1 + conservationPerLevel * fuelConservationLevel) * (1 - 0.1 * jumpFreighterLevel) * economizers, 6));
+        (long)Math.Floor(Math.Round(lightYears * fuelPerLightYear * (1 + conservationPerLevel * fuelConservationLevel) * (1 - 0.1 * jumpFreighterLevel) * economizers, 6, MidpointRounding.AwayFromZero));
 
     /// <summary>
     /// </summary>

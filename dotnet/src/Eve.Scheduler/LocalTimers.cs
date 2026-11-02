@@ -14,6 +14,18 @@ public sealed class LocalTimers : IDisposable
     private sealed class Entry(CancellationTokenSource source)
     {
         public CancellationTokenSource Source { get; } = source;
+
+        public void Cancel()
+        {
+            try
+            {
+                Source.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // A completed timer can dispose its source after a replacer has read this entry.
+            }
+        }
     }
 
     private readonly ConcurrentDictionary<string, Entry> _entries = new(StringComparer.Ordinal);
@@ -41,7 +53,7 @@ public sealed class LocalTimers : IDisposable
         var wait = _delay(after == Timeout.InfiniteTimeSpan || after >= TimeSpan.Zero ? after : TimeSpan.Zero, entry.Source.Token);
         if (_entries.TryGetValue(key, out var old))
         {
-            old.Source.Cancel();
+            old.Cancel();
         }
         _entries[key] = entry;
         _ = Task.Run(async () =>
@@ -88,7 +100,7 @@ public sealed class LocalTimers : IDisposable
         {
             return false;
         }
-        entry.Source.Cancel();
+        entry.Cancel();
         return true;
     }
 

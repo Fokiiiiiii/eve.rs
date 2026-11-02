@@ -2814,3 +2814,8 @@ Security review follow-up: `officeManager.GetMyCorporationsOffices` now consumes
 
 - Host now maps every V24.01 `SERVICES_ACCESS_SETTINGS` entry and treats `SETTING_NONE` as unconditional, matching EveJS. The registered-Host regression verifies all mapped IDs, the structure-list `services` field, and repair/insurance/reprocessing service checks. See [cx4 handoff](handoff-cx4-structure-service-access.md) for whole-client evidence and exact source locations.
 - The non-owner `GetStructureInfo` basic payload intentionally omits `services`, as in EveJS. Structure-browser rows receive `services` from `GetMyCharacterStructures` or `GetMyCorporationStructures`; `GetStructureInfos` is an internal Host name lookup, not a client RPC.
+
+## Undock and delayed docking sequence audit (2026-11-02)
+
+- Generic `CmdDock` structure IDs now pass through Host structure access checks. The simulation waits four seconds, asks Host to recheck timers, module restrictions and ACL, and only then removes the pilot and reports `Docked`.
+- A delayed denial ends the client's docking travel state with `OnDockingFinished` while leaving the session in space. Evidence, full V24 caller/consumer tracing and comparisons are in [the deepfix handoff](service-audit/deepfix-undock-dock-sequences.md); the graphical client check remains open.

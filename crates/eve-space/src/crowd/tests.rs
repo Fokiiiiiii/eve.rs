@@ -401,7 +401,16 @@ fn a_ship_that_docks_is_shown_to_stop_and_then_taken_from_view_when_it_has_docke
         ]
     );
     assert!(scene.poll(NOON + 5 * SECOND).is_empty(), "four seconds have not passed");
-    let out = scene.poll(NOON + 6 * SECOND + 1);
+    let ready = scene.poll(NOON + 6 * SECOND + 1);
+    assert_eq!(
+        ready,
+        [Out::Accepted { session: B, command: crate::scene::DOCKING_READY_COMMAND, at: STATION }]
+    );
+    let out = scene.command(
+        B,
+        crate::scene::Command::DockingDecision { station_id: STATION, allowed: true },
+        NOON + 6 * SECOND + 1,
+    );
     assert!(matches!(out[0], Out::Docked { session: B, .. }));
     assert_eq!((recipient(&out[1]), names(&out[1])), (A, vec!["RemoveBalls".to_string()]));
 }

@@ -2001,6 +2001,28 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task A_weapons_timer_started_during_station_docking_delay_prevents_completion()
+    {
+        using var timers = CooldownElapsedTimers();
+        var (rig, _, session) = await DockedAsync(localTimers: timers);
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        await rig.Space.DockAsync(session, Rig.Station, CancellationToken.None);
+
+        rig.Space.CrimewatchStateOf = (_, _) => Task.FromResult(Eve.Crimewatch.CombatState.Idle with
+        {
+            WeaponsUntilMs = rig.Now + Eve.Crimewatch.CombatState.WeaponsDurationMs,
+        });
+        rig.Sim.Say(new SimAccepted((ulong)session.SessionId, SimCommands.DockingReady, Rig.Station));
+        await rig.Space.QuiesceAsync();
+
+        var decision = Assert.Single(rig.Sim.Heard.OfType<SimCommand>(), command => command.Code == SimCommands.DockingDecision);
+        Assert.Equal([(double)Rig.Station, 0d], decision.Args);
+        Assert.True(rig.Space.IsInSpace(session));
+        Assert.Contains(Events.Of(session), e => e.Name == "OnDockingFinished");
+    }
+
+    [PgFact]
     public async Task The_module_orders_of_a_pilot_are_asked_one_at_a_time()
     {
         var (rig, character, session) = await DockedAsync();

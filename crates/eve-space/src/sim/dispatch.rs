@@ -1,6 +1,6 @@
 use super::spawn::AbyssalParticipantMove;
 use super::*;
-use crate::scene::MAX_CONDUIT_PASSENGERS;
+use crate::scene::{DOCKING_DECISION_COMMAND, MAX_CONDUIT_PASSENGERS};
 
 /// The command a code and its arguments say, if they say one.
 pub(super) fn command_of(code: u8, args: &[f64]) -> Option<Command> {
@@ -9,6 +9,11 @@ pub(super) fn command_of(code: u8, args: &[f64]) -> Option<Command> {
         (2, [x, y, z]) => Some(Command::GotoDirection(Vec3::new(*x, *y, *z))),
         (3, []) => Some(Command::Stop),
         (4, [station]) if is_id(*station) => Some(Command::Dock { station_id: *station as i64 }),
+        (DOCKING_DECISION_COMMAND, [station, allowed])
+            if is_id(*station) && (*allowed == 0.0 || *allowed == 1.0) =>
+        {
+            Some(Command::DockingDecision { station_id: *station as i64, allowed: *allowed == 1.0 })
+        }
         (5, [target, range]) if is_id(*target) && range.is_finite() => {
             Some(Command::FollowBall { target_id: *target as i64, range: *range })
         }
@@ -990,7 +995,7 @@ impl Sim {
 
     /// A pilot's commands to its ship, by their command codes.
     fn handle_command(&mut self, message: Message, now: i64) -> Result<Vec<Message>, ProtocolError> {
-        let outs = match message {
+        let mut outs = match message {
             Message::Command { session_id, command: 16, args } => {
                 match (self.scene_of(session_id), args.as_slice()) {
                     (Some(scene), [module]) if is_id(*module) => {
@@ -1087,7 +1092,9 @@ impl Sim {
             }
             _ => unreachable!("handle sends only the command messages here"),
         };
+        let teardown = self.forget_docked(&outs);
         self.forget_the_destroyed(&outs);
+        outs.extend(teardown);
         Ok(Self::messages(outs))
     }
 

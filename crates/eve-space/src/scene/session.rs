@@ -730,8 +730,9 @@ impl Scene {
             .filter_map(|(session, pilot)| {
                 let station_id = pilot.docking_approach?;
                 let station = self.system.body(station_id).filter(|body| is_dock_body(body))?;
-                (surface_distance(&pilot.ship, station.position, station.radius) <= DOCKING_RANGE)
-                    .then_some(*session)
+                (surface_distance(&pilot.ship, station.position, station.radius)
+                    <= docking_range(station.kind))
+                .then_some(*session)
             })
             .collect();
         for session in arrived {

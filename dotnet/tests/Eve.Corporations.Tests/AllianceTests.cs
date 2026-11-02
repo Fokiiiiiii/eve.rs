@@ -1592,6 +1592,28 @@ public class AllianceTests
                 "DeleteBulletin", new Eve.Marshal.PyInt(bulletinId))));
             Assert.IsType<Eve.Marshal.PyNone>(await service.CallAsync(Call(director,
                 "GetBulletin", new Eve.Marshal.PyInt(bulletinId))));
+            for (var index = 0; index < 9; index++)
+                await service.CallAsync(Call(director, "AddBulletin",
+                    new Eve.Marshal.PyWString($"Bulletin {index}"), new Eve.Marshal.PyWString("Body")));
+            var concurrentAdds = await Task.WhenAll(Enumerable.Range(0, 2).Select(async index =>
+            {
+                try
+                {
+                    await service.CallAsync(Call(director, "AddBulletin",
+                        new Eve.Marshal.PyWString($"Concurrent {index}"), new Eve.Marshal.PyWString("Body")));
+                    return (Added: true, Error: (string?)null);
+                }
+                catch (Eve.Services.MachoWrappedException error)
+                {
+                    return (Added: false, Error: error.Error.UserErrorMessage);
+                }
+            }));
+            Assert.Single(concurrentAdds, result => result.Added);
+            Assert.Equal("CorpTooManyBulletins", Assert.Single(concurrentAdds, result => !result.Added).Error);
+            var tooMany = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() => service.CallAsync(Call(director,
+                "AddBulletin", new Eve.Marshal.PyWString("Eleventh"), new Eve.Marshal.PyWString("Body"))).AsTask());
+            Assert.Equal("CorpTooManyBulletins", tooMany.Error.UserErrorMessage);
+            Assert.Equal(10, (await store.AllianceBulletinsAsync(alliance.Id)).Count);
             await Assert.ThrowsAnyAsync<Exception>(() => service.CallAsync(Call(outsider, "AddBulletin",
                 new Eve.Marshal.PyWString("Unauthorized"), new Eve.Marshal.PyWString("No."))).AsTask());
         }

@@ -46,6 +46,7 @@ public static class BookmarkRules
     public const int MaxSubfolders = 30;
     public const int MaxBookmarksInPersonalFolder = 3000;
     public const int MaxBookmarksInSharedFolder = 500;
+    public const long SharedBookmarkDelayMs = 120_000;
     public const int MaxFolderNameLength = 40;
     public const int MaxBookmarkNameLength = 100;
     public const int MaxDescriptionLength = 3900;
@@ -109,6 +110,9 @@ public sealed partial class BookmarkStore
 
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
         Migrations.ApplyAsync(source, schema, MigrationSet(), cancellationToken);
+
+    public bool IsUsable(Bookmark bookmark, long characterId) => bookmark.CreatorId == characterId || bookmark.CreatedMs <= 0 ||
+        bookmark.CreatedMs + BookmarkRules.SharedBookmarkDelayMs < _nowMs();
 
     /// <summary>The folders the character has in its list (its personal folders and its shared connections), with their active state.</summary>
     public Task<IReadOnlyList<FolderView>> KnownFoldersAsync(long characterId, AccessLists? lists = null, CancellationToken token = default) =>
@@ -475,7 +479,11 @@ public sealed partial class BookmarkStore
             var copies = new List<Bookmark>();
             foreach (var source in sources)
             {
-                var copy = source with { BookmarkId = await NextIdAsync(connection, tx, token), FolderId = toFolderId, SubfolderId = subfolderId, CreatorId = characterId, CreatedMs = now };
+                var copy = source with
+                {
+                    BookmarkId = await NextIdAsync(connection, tx, token), FolderId = toFolderId, SubfolderId = subfolderId,
+                    CreatorId = characterId, CreatedMs = now,
+                };
                 await InsertBookmarkAsync(connection, tx, copy, token);
                 copies.Add(copy);
             }

@@ -15,19 +15,19 @@ public sealed partial class CharacterShips
         .Sum(item => item.Quantity);
 
     /// <summary>The modules fitted to the ship (its low, medium and high slots), with their type and the dogma attributes each carries.</summary>
-    public async Task<IReadOnlyList<(int TypeId, IReadOnlyDictionary<int, double> Attributes)>> FittedModulesAsync(
+    public async Task<IReadOnlyList<(long ItemId, int TypeId, IReadOnlyDictionary<int, double> Attributes)>> FittedModulesAsync(
         long characterId, long shipId, CancellationToken cancellationToken = default)
     {
         var fitted = (await items.InLocationAsync(shipId, characterId, cancellationToken))
             .Where(item => item.Flag is >= Eve.Inventory.ItemFlags.LowSlot0 and <= Eve.Inventory.ItemFlags.HiSlot0 + 7)
             .ToList();
         await statics.EnsureTypesAsync(fitted.Select(item => item.TypeId).Distinct().ToArray(), cancellationToken);
-        var modules = new List<(int, IReadOnlyDictionary<int, double>)>();
+        var modules = new List<(long, int, IReadOnlyDictionary<int, double>)>();
         foreach (var item in fitted)
         {
             if (statics.Type(item.TypeId) is { } module)
             {
-                modules.Add((item.TypeId, module.Attributes));
+                modules.Add((item.Id, item.TypeId, module.Attributes));
             }
         }
         return modules;
@@ -45,6 +45,22 @@ public sealed partial class CharacterShips
         }
         await transaction.CommitAsync(cancellationToken);
         return true;
+    }
+
+    /// <summary>Returns fuel to a ship after a reserved activation is refused, restoring the type's normal fuel bay or cargo location.</summary>
+    public async Task RefundFuelAsync(long characterId, long shipId, int fuelTypeId, long quantity, CancellationToken cancellationToken = default)
+    {
+        if (quantity <= 0)
+            return;
+        await statics.EnsureTypesAsync([fuelTypeId], cancellationToken);
+        var group = statics.Type(fuelTypeId) is { } fuel ? statics.GroupName(fuel.GroupId) : "";
+        var flag = FuelBayGroups.Contains(group, StringComparer.OrdinalIgnoreCase) ? FuelBayFlag : CargoFlag;
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+        if (await items.GetAsync(shipId, cancellationToken) is { OwnerId: var owner } && owner == characterId)
+            await items.CreateAsync(connection, transaction, new Eve.Inventory.NewItem(fuelTypeId, characterId, shipId, flag, quantity, Singleton: false), cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     /// <summary>
@@ -73,6 +89,25 @@ public sealed partial class CharacterShips
         return true;
     }
 
+    /// <summary>Restores a refused conduit jump's fuel and every participant's prior fatigue in one transaction.</summary>
+    public async Task RestoreGroupJumpAsync(
+        PgJumpFatigueStore fatigue, long anchorCharacterId, long anchorShipId, int fuelTypeId, long quantity,
+        IReadOnlyDictionary<long, JumpFatigueState> priorStates, CancellationToken cancellationToken = default)
+    {
+        await statics.EnsureTypesAsync([fuelTypeId], cancellationToken);
+        var group = statics.Type(fuelTypeId) is { } fuel ? statics.GroupName(fuel.GroupId) : "";
+        var flag = FuelBayGroups.Contains(group, StringComparer.OrdinalIgnoreCase) ? FuelBayFlag : CargoFlag;
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        foreach (var character in priorStates.Keys.Append(anchorCharacterId).Distinct().OrderBy(id => id))
+            await LockAsync(connection, transaction, character, cancellationToken);
+        if (await items.GetAsync(anchorShipId, cancellationToken) is { OwnerId: var owner } && owner == anchorCharacterId)
+            await items.CreateAsync(connection, transaction, new Eve.Inventory.NewItem(fuelTypeId, anchorCharacterId, anchorShipId, flag, quantity, Singleton: false), cancellationToken);
+        foreach (var (character, state) in priorStates)
+            await fatigue.SaveAsync(connection, transaction, character, state, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
     /// <summary>
     /// passenger's fatigue state is written, in one transaction. False, with nothing changed, when the bridging ship holds too little.
     /// </summary>
@@ -94,6 +129,24 @@ public sealed partial class CharacterShips
         await fatigue.SaveAsync(connection, transaction, passengerCharacterId, passengerNext, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return true;
+    }
+
+    /// <summary>Reverses a bridge passage refused by the simulation: its fuel and the passenger's prior fatigue are restored together.</summary>
+    public async Task RestoreBridgeAsync(
+        PgJumpFatigueStore fatigue, long bridgerCharacterId, long bridgerShipId, int fuelTypeId, long quantity,
+        long passengerCharacterId, JumpFatigueState passengerPrior, CancellationToken cancellationToken = default)
+    {
+        await statics.EnsureTypesAsync([fuelTypeId], cancellationToken);
+        var group = statics.Type(fuelTypeId) is { } fuel ? statics.GroupName(fuel.GroupId) : "";
+        var flag = FuelBayGroups.Contains(group, StringComparer.OrdinalIgnoreCase) ? FuelBayFlag : CargoFlag;
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        foreach (var character in new[] { bridgerCharacterId, passengerCharacterId }.Distinct().OrderBy(id => id))
+            await LockAsync(connection, transaction, character, cancellationToken);
+        if (await items.GetAsync(bridgerShipId, cancellationToken) is { OwnerId: var owner } && owner == bridgerCharacterId)
+            await items.CreateAsync(connection, transaction, new Eve.Inventory.NewItem(fuelTypeId, bridgerCharacterId, bridgerShipId, flag, quantity, Singleton: false), cancellationToken);
+        await fatigue.SaveAsync(connection, transaction, passengerCharacterId, passengerPrior, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     /// <summary>

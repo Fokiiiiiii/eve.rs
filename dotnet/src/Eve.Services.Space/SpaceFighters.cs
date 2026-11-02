@@ -294,7 +294,7 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
         state.Started(now, effect.DurationMs, entry.CooldownSeconds);
         Keep(squadron);
         var pilot = squadron.Pilot;
-        Later(() => pilot.SendNotification("OnFighterAbilitySlotActivated", "clientID",
+        session.AfterResponse(() => pilot.SendNotification("OnFighterAbilitySlotActivated", "clientID",
             InventoryWire.Id(fighterId), new PyInt(slot), state.ChargesLeftValue is { } left ? new PyInt(left) : PyNone.Instance,
             FileTimeOf(now), new PyInt((int)Math.Max(1, effect.DurationMs)), state.CooldownNotice(FileTimeOf)));
         return null;
@@ -348,7 +348,7 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
         }
         // the ability ends at the end of its cycle in the simulation: the pilot is told it stopped (the notice of the reference, queued after the answer)
         var pilot = squadron.Pilot;
-        Later(() => pilot.SendNotification("OnFighterAbilitySlotDeactivated", "clientID", InventoryWire.Id(fighterId), new PyInt(slot)));
+        session.AfterResponse(() => pilot.SendNotification("OnFighterAbilitySlotDeactivated", "clientID", InventoryWire.Id(fighterId), new PyInt(slot)));
         state.Stop();
         return null;
     }

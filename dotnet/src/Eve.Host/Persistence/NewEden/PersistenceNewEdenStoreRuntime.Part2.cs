@@ -390,8 +390,94 @@ public sealed partial class PersistenceNewEdenStoreRuntime
         PyValue itemId,
         CancellationToken cancellationToken)
     {
-        await MutatePendingTokensAsync(authenticatedUserId, [new TokenPair(Positive(itemId), 0)], "reversed", cancellationToken);
+        RequireAccount(authenticatedUserId);
+        var requestedItemId = Positive(itemId);
+        if (requestedItemId <= 0)
+            throw ReverseRedeemUnavailable();
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var accountKey = authenticatedUserId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var state = await PersistenceReadHelpers.ReadOptionalTableAsync(store, RedeemTable, cancellationToken)
+                .ConfigureAwait(false);
+            var accounts = state[RedeemRow] as JsonObject ?? new JsonObject();
+            var accountTokens = accounts[accountKey] as JsonObject ?? new JsonObject();
+            if (accountTokens.Any(entry => Integer((entry.Value as JsonObject)?["sourceItemID"]) == requestedItemId) ||
+                (accountTokens["claimed"] as JsonObject)?.Any(entry =>
+                    Integer((entry.Value as JsonObject)?["sourceItemID"]) == requestedItemId) == true)
+                return;
+
+            await using var connection = await source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            var item = await items.LockAndGetAsync(connection, transaction, requestedItemId, cancellationToken)
+                .ConfigureAwait(false);
+            if (item is null)
+                throw ReverseRedeemUnavailable();
+
+            var character = await characters.GetAsync(item.OwnerId, cancellationToken).ConfigureAwait(false);
+            if (character is null || character.AccountId != checked((int)authenticatedUserId))
+                throw new UnauthorizedAccessException("The requested PLEX item does not belong to this account.");
+            if (item.TypeId != 44992 || item.Flag != Eve.Inventory.ItemFlags.Hangar || item.LocationId <= 0 || item.Quantity <= 0)
+                throw ReverseRedeemUnavailable();
+
+            var type = await itemTypes.GetAsync(item.TypeId, cancellationToken).ConfigureAwait(false);
+            if (type is null)
+                throw ReverseRedeemUnavailable();
+
+            var tokenId = checked(MaximumRedeemTokenId(accountTokens) + 1);
+            var tokenKey = tokenId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            accountTokens[tokenKey] = new JsonObject
+            {
+                ["tokenID"] = tokenId,
+                ["massTokenID"] = tokenId,
+                ["sourceItemID"] = item.Id,
+                ["typeID"] = item.TypeId,
+                ["quantity"] = item.Quantity,
+                ["stationID"] = item.LocationId,
+                ["dateTime"] = ToFileTime(nowUnixMs()),
+                ["expireDateTime"] = 0,
+                ["availableDateTime"] = ToFileTime(nowUnixMs()),
+                ["label"] = "PLEX",
+                ["description"] = "Reverse-redeemed PLEX",
+                ["blueprintRuns"] = 0,
+                ["blueprintMaterialLevel"] = 0,
+                ["blueprintProductivityLevel"] = 0,
+                ["soulbound"] = false,
+                ["available"] = true,
+                ["isAutoInject"] = false,
+                ["addedByContext"] = 0,
+                ["addedByExtra"] = null,
+                ["status"] = "pending",
+            };
+            accounts[accountKey] = accountTokens;
+            await items.DeleteAsync(connection, transaction, item.Id, cancellationToken).ConfigureAwait(false);
+            await store.ApplyChangesAsync(
+                connection, transaction, RedeemTable,
+                [new RowUpsert(RedeemRow, accounts.ToJsonString())], [], ownerFence, cancellationToken).ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+
+            if (sessions.Of(item.OwnerId) is { } session)
+            {
+                var row = new ItemRow(
+                    item.Id, item.TypeId, item.OwnerId, 6, 0, item.Quantity, type.GroupId, type.CategoryId);
+                session.AfterResponse(() => session.SendNotification("OnItemChange", "clientID", InventoryWire.PackedRow(row),
+                    new PyDict([
+                        new(new PyInt(3), InventoryWire.Id(item.LocationId)),
+                        new(new PyInt(4), new PyInt(item.Flag)),
+                        new(new PyInt(9), InventoryWire.Id(item.Quantity)),
+                    ]), PyNone.Instance));
+            }
+        }
+        finally
+        {
+            _gate.Release();
+        }
     }
+
+    private static Exception ReverseRedeemUnavailable() =>
+        MachoErrors.ThrowUserError("CustomNotify",
+            ("notify", new PyStr("Only PLEX in a station or structure hangar can be reverse redeemed.")));
 
     public ValueTask TrashRedeemTokensAsync(
         long authenticatedUserId,

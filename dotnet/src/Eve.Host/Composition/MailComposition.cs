@@ -100,6 +100,29 @@ internal sealed partial class CharacterServicesComposition
                 new Dictionary<long, int> { [recipientId] = 1 });
         }
 
+        if (request.MailingListWelcomeRecipientId is { } welcomeRecipientId)
+        {
+            if (request.MailingListId is not { } welcomeListId ||
+                request.SenderCharacterId != welcomeRecipientId || session.CharacterId != welcomeRecipientId ||
+                request.CharacterRecipientIds.Count != 0 || request.CorporationOrAllianceRecipientIds is { Count: > 0 } ||
+                request.SaveSenderCopy || request.ReplyToMessageId is not null || request.ForwardedFromMessageId is not null)
+                return null;
+
+            var list = mailCache.Read("mail", $"/mailingLists/{welcomeListId}").Data as JsonObject;
+            var welcome = list?["welcomeMail"] as JsonObject;
+            var memberKey = welcomeRecipientId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (list is null ||
+                list["deleted"] is JsonValue deleted && deleted.TryGetValue<bool>(out var isDeleted) && isDeleted ||
+                (list["members"] as JsonObject)?.ContainsKey(memberKey) != true ||
+                !string.Equals(MailingListJsonText(welcome?["title"]), request.Title, StringComparison.Ordinal) ||
+                !string.Equals(MailingListJsonText(welcome?["body"]), request.Body, StringComparison.Ordinal))
+                return null;
+
+            return new PersistenceMailSendRecipients(
+                [welcomeRecipientId], MailingListJsonText(list["displayName"]), 0,
+                new Dictionary<long, int> { [welcomeRecipientId] = 1 });
+        }
+
         if (request.SenderCharacterId <= 0 || session.CharacterId != request.SenderCharacterId)
             return null;
         var sender = await characters.GetAsync(request.SenderCharacterId, cancellationToken);

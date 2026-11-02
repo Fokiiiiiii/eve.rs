@@ -43,7 +43,8 @@ public sealed partial class AccessGroupBookmarkMgrService(BookmarkStore store, F
         if (notifier is not null && active.Expired is { Count: > 0 } expired &&
             await notifier.PlanRemovalsAsync(expired, character, call.Cancellation) is { } send)
             call.Session.AfterResponse(send);
-        return active.Bookmarks.FirstOrDefault(bookmark => bookmark.BookmarkId == bookmarkId);
+        var bookmark = active.Bookmarks.FirstOrDefault(bookmark => bookmark.BookmarkId == bookmarkId);
+        return bookmark is not null && store.IsUsable(bookmark, character) ? bookmark : null;
     }
 
     /// <summary>A personal folder, or a shared one on the access lists given (the admin list is required).</summary>

@@ -44,9 +44,12 @@ public sealed class IncursionDirectorTests
         Assert.Equal(systems.Count, systems.Distinct().Count());
         Assert.All(rows, row =>
         {
-            Assert.Equal((long)IncursionRules.StateMobilizing, row["state"]!.GetValue<long>());
+            Assert.Equal((long)IncursionRules.StateEstablished, row["state"]!.GetValue<long>());
             Assert.Equal(1.0, row["influence"]!.GetValue<double>());
             Assert.Equal(IncursionRules.StagingRewardGroupId, row["rewardGroupID"]!.GetValue<long>());
+            var band = rig.BandOf(row);
+            Assert.All(row["incursedSystems"]!.AsArray(), system =>
+                Assert.Equal(band, IncursionRules.BandOf(rig.Systems.Get((int)system!.GetValue<long>())!.Security)));
         });
 
         var sites = await rig.Content.ActiveByKindAsync(DungeonWaveDirector.Kind);
@@ -65,15 +68,15 @@ public sealed class IncursionDirectorTests
         await using var rig = await IncursionRig.CreateAsync();
         await rig.RunDueAsync();
 
-        rig.Advance(Mobilized - TimeSpan.FromMinutes(1));
-        await rig.RunDueAsync();
-        Assert.All(await rig.ReadActiveAsync(), row => Assert.Equal((long)IncursionRules.StateMobilizing, row["state"]!.GetValue<long>()));
-
-        rig.Advance(TimeSpan.FromMinutes(1));
+        rig.Advance(Established - TimeSpan.FromMinutes(1));
         await rig.RunDueAsync();
         Assert.All(await rig.ReadActiveAsync(), row => Assert.Equal((long)IncursionRules.StateEstablished, row["state"]!.GetValue<long>()));
 
-        rig.Advance(Established);
+        rig.Advance(TimeSpan.FromMinutes(1));
+        await rig.RunDueAsync();
+        Assert.All(await rig.ReadActiveAsync(), row => Assert.Equal((long)IncursionRules.StateMobilizing, row["state"]!.GetValue<long>()));
+
+        rig.Advance(Mobilized);
         await rig.RunDueAsync();
         Assert.All(await rig.ReadActiveAsync(), row => Assert.Equal((long)IncursionRules.StateWithdrawing, row["state"]!.GetValue<long>()));
 
@@ -144,7 +147,7 @@ public sealed class IncursionDirectorTests
 
         var rows = await rig.ReadActiveAsync();
         Assert.Equal(5, rows.Count);
-        Assert.All(rows, row => Assert.Equal((long)IncursionRules.StateEstablished, row["state"]!.GetValue<long>()));
+        Assert.All(rows, row => Assert.Equal((long)IncursionRules.StateMobilizing, row["state"]!.GetValue<long>()));
         Assert.Equal(1, rows.Count(row => rig.BandOf(row) == IncursionBand.HighSec));
         Assert.Equal(3, rows.Count(row => rig.BandOf(row) == IncursionBand.NullSec));
         Assert.Equal(ExpectedSites(rows), await rig.CountSitesAsync());
@@ -202,7 +205,7 @@ public sealed class IncursionDirectorTests
         Assert.All(report.Items, item =>
         {
             var fields = FieldsOf(item);
-            Assert.Equal((long)IncursionRules.StateMobilizing, Int(fields["state"]));
+            Assert.Equal((long)IncursionRules.StateEstablished, Int(fields["state"]));
             Assert.Equal(IncursionRules.StagingRewardGroupId, Int(fields["rewardGroupID"]));
         });
         var rowset = Assert.IsType<PyObject>(await map.CallAsync(WireCall("GetSystemsInIncursions")));
@@ -239,7 +242,7 @@ public sealed class IncursionDirectorTests
         await rig.CompleteAsync(staging);
         var after = (await rig.ReadActiveAsync()).Single(r => r["taleID"]!.GetValue<long>() == tale);
         Assert.Equal(1.0 - 1.0 / total, after["influence"]!.GetValue<double>(), 9);
-        Assert.Equal((long)IncursionRules.StateMobilizing, after["state"]!.GetValue<long>());
+        Assert.Equal((long)IncursionRules.StateEstablished, after["state"]!.GetValue<long>());
     }
 
     [PgFact]
@@ -315,21 +318,46 @@ public sealed class IncursionDirectorTests
         new SolarSystemInfo(1000, "High A", 100, 10, 0.9),
         new SolarSystemInfo(1001, "High B", 100, 10, 0.6),
         new SolarSystemInfo(1002, "High C", 100, 10, 0.7),
+        new SolarSystemInfo(1003, "High D", 100, 10, 0.8),
+        new SolarSystemInfo(1004, "High E", 100, 10, 0.55),
+        new SolarSystemInfo(1005, "High F", 100, 10, 0.5),
         new SolarSystemInfo(2000, "Low A", 200, 10, 0.3),
         new SolarSystemInfo(2001, "Low B", 200, 10, 0.1),
         new SolarSystemInfo(2002, "Low C", 200, 10, 0.2),
+        new SolarSystemInfo(2003, "Low D", 200, 10, 0.35),
+        new SolarSystemInfo(2004, "Low E", 200, 10, 0.15),
+        new SolarSystemInfo(2005, "Low F", 200, 10, 0.25),
         new SolarSystemInfo(3010, "Null A", 301, 11, -0.4),
         new SolarSystemInfo(3011, "Null B", 301, 11, -0.2),
         new SolarSystemInfo(3012, "Null B2", 301, 11, -0.5),
+        new SolarSystemInfo(3013, "Null B3", 301, 11, -0.6),
+        new SolarSystemInfo(3014, "Null B4", 301, 11, -0.7),
+        new SolarSystemInfo(3015, "Null B5", 301, 11, -0.8),
         new SolarSystemInfo(3020, "Null C", 302, 11, -0.9),
         new SolarSystemInfo(3021, "Null C2", 302, 11, -0.3),
         new SolarSystemInfo(3022, "Null C3", 302, 11, -0.6),
+        new SolarSystemInfo(3023, "Null C4", 302, 11, -0.7),
+        new SolarSystemInfo(3024, "Null C5", 302, 11, -0.8),
+        new SolarSystemInfo(3025, "Null C6", 302, 11, -0.5),
         new SolarSystemInfo(3030, "Null D", 303, 11, -0.1),
         new SolarSystemInfo(3031, "Null D2", 303, 11, -0.2),
         new SolarSystemInfo(3032, "Null D3", 303, 11, -0.7),
+        new SolarSystemInfo(3033, "Null D4", 303, 11, -0.4),
+        new SolarSystemInfo(3034, "Null D5", 303, 11, -0.8),
+        new SolarSystemInfo(3035, "Null D6", 303, 11, -0.9),
         new SolarSystemInfo(3040, "Null E", 304, 11, 0.0),
         new SolarSystemInfo(3041, "Null E2", 304, 11, -0.3),
         new SolarSystemInfo(3042, "Null E3", 304, 11, -0.8),
+        new SolarSystemInfo(3043, "Null E4", 304, 11, -0.5),
+        new SolarSystemInfo(3044, "Null E5", 304, 11, -0.6),
+        new SolarSystemInfo(3045, "Null E6", 304, 11, -0.7),
+        new SolarSystemInfo(4000, "Mixed High A", 400, 12, 0.7),
+        new SolarSystemInfo(4001, "Mixed High B", 400, 12, 0.6),
+        new SolarSystemInfo(4002, "Mixed High C", 400, 12, 0.5),
+        new SolarSystemInfo(4003, "Mixed High D", 400, 12, 0.8),
+        new SolarSystemInfo(4004, "Mixed High E", 400, 12, 0.55),
+        new SolarSystemInfo(4005, "Mixed High F", 400, 12, 0.9),
+        new SolarSystemInfo(4006, "Mixed Low", 400, 12, 0.3),
     ]);
 
     /// <summary>A synthetic gate chain through every system of the universe, in id order: each system is some jumps from every other.</summary>

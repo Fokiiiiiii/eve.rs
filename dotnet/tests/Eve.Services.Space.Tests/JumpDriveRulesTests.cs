@@ -64,13 +64,15 @@ public class JumpDriveRulesTests
     }
 
     [Fact]
-    public void Fuel_is_light_years_times_the_fuel_per_light_year_less_ten_percent_a_level_of_conservation_rounded_up()
+    public void Fuel_is_light_years_times_the_fuel_per_light_year_less_ten_percent_a_level_of_conservation_floored_after_float_normalization()
     {
         Assert.Equal(9_000, JumpDriveRules.FuelQuantity(3, 3_000, 0, -0.1, 0, 1.0));
         Assert.Equal(4_500, JumpDriveRules.FuelQuantity(3, 3_000, 5, -0.1, 0, 1.0));
         // a jump freighter's own skill takes the same share again
         Assert.Equal(23_500, JumpDriveRules.FuelQuantity(5, 9_400, 0, -0.1, 5, 1.0));
-        Assert.Equal(4, JumpDriveRules.FuelQuantity(1.0001, 3, 0, -0.1, 0, 1.0));
+        Assert.Equal(3, JumpDriveRules.FuelQuantity(1.0001, 3, 0, -0.1, 0, 1.0));
+        // Dogma's 700 * (1 - 0.1 * 3) can arrive a hair below 490 in binary floating point.
+        Assert.Equal(490, JumpDriveRules.FuelQuantity(1, 700, 3, -0.1, 0, 1.0));
         // an economizer takes its multiplier before the rounding
         Assert.Equal(8_100, JumpDriveRules.FuelQuantity(3, 3_000, 0, -0.1, 0, 0.9));
     }

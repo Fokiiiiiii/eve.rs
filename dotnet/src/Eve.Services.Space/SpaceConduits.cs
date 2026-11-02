@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Eve.Dogma;
+using Eve.Fitting;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Ships;
@@ -14,6 +15,7 @@ namespace Eve.Services.Space;
 /// </summary>
 public sealed class SpaceConduits(
     CharacterShips ships,
+    PgModuleStateStore moduleStates,
     DogmaStatic statics,
     PgDeployedStore deployed,
     PgJumpFatigueStore fatigue,
@@ -79,8 +81,10 @@ public sealed class SpaceConduits(
             || !hull.Attributes.TryGetValue(JumpDriveRules.ConduitFuelAttribute, out var fuelPerLightYear))
             throw Notify("Your ship has no conduit.");
 
-        var generator = (await ships.FittedModulesAsync(character, shipId, cancellationToken))
-            .FirstOrDefault(module => module.TypeId == JumpDriveRules.CovertGeneratorType);
+        var fitted = await ships.FittedModulesAsync(character, shipId, cancellationToken);
+        var moduleStatesById = await moduleStates.StatesAsync(fitted.Select(module => module.ItemId), cancellationToken);
+        var generator = fitted.FirstOrDefault(module => moduleStatesById[module.ItemId] == Eve.Dogma.ItemState.Online
+            && module.TypeId == JumpDriveRules.CovertGeneratorType);
         if (generator.Attributes is null
             || !generator.Attributes.TryGetValue(JumpDriveRules.ConduitEnableAttribute, out var enabled) || enabled <= 0
             || !generator.Attributes.TryGetValue(1298, out var fitsGroup) || (int)fitsGroup != hull.GroupId)
@@ -93,6 +97,9 @@ public sealed class SpaceConduits(
             throw Notify(entry);
 
         var now = nowUnixMs();
+        var anchorState = await fatigue.GetAsync(character, cancellationToken);
+        if (anchorState.CooldownUntilMs > now)
+            throw Notify("Your jump drive is still cooling down.");
         var lightYears = systems.LightYearsBetween(origin, destinationSystem) ?? throw Refusal("DeniedShipChanged");
         var calibration = await LevelAsync(JumpDriveRules.CalibrationSkill, character, cancellationToken);
         if (lightYears > JumpDriveRules.Range(baseRange, calibration, await PerLevelAsync(JumpDriveRules.CalibrationSkill, JumpDriveRules.CalibrationPerLevelAttribute, cancellationToken)))
@@ -105,7 +112,7 @@ public sealed class SpaceConduits(
             throw Notify("Your ship does not have enough jump fuel for the conduit.");
 
         var limit = hull.Attributes.TryGetValue(JumpDriveRules.ConduitPassengerCountAttribute, out var count) ? (int)count : 0;
-        var passengers = new List<(long Character, long Ship, JumpFatigueState Next)>();
+        var passengers = new List<(long Character, long Ship, JumpFatigueState Prior, JumpFatigueState Next)>();
         var snapshot = await fleets.SnapshotAsync(fleet.Value, cancellationToken);
         foreach (var member in snapshot?.Members ?? [])
         {
@@ -128,19 +135,37 @@ public sealed class SpaceConduits(
                 continue;
             var memberMultiplier = memberHull.Attributes.TryGetValue(JumpDriveRules.FatigueMultiplierAttribute, out var own) ? own : 1.0;
             var (memberFatigue, memberCooldown) = JumpDriveRules.AfterJump(Math.Max(0, memberState.FatigueUntilMs - now), lightYears * memberMultiplier);
-            passengers.Add((member.CharacterId, memberShip, new JumpFatigueState(now + memberFatigue, now + memberCooldown)));
+            passengers.Add((member.CharacterId, memberShip, memberState, new JumpFatigueState(now + memberFatigue, now + memberCooldown)));
         }
 
-        var anchorState = await fatigue.GetAsync(character, cancellationToken);
         var anchorMultiplier = hull.Attributes.TryGetValue(JumpDriveRules.FatigueMultiplierAttribute, out var anchorOwn) ? anchorOwn : 1.0;
         var (anchorFatigue, anchorCooldown) = JumpDriveRules.AfterJump(Math.Max(0, anchorState.FatigueUntilMs - now), lightYears * anchorMultiplier);
         var states = new Dictionary<long, JumpFatigueState> { [character] = new JumpFatigueState(now + anchorFatigue, now + anchorCooldown) };
         foreach (var passenger in passengers)
             states[passenger.Character] = passenger.Next;
 
-        var answer = await space.ConduitJumpAsync(session, shipId, fieldId, destinationSystem, passengers.Select(passenger => passenger.Ship).ToArray(), boundObjectId, cancellationToken);
+        var priorStates = new Dictionary<long, JumpFatigueState> { [character] = anchorState };
+        foreach (var passenger in passengers)
+            priorStates[passenger.Character] = passenger.Prior;
         if (!await ships.DebitGroupJumpAsync(fatigue, character, shipId, (int)fuelType, quantity, states, cancellationToken))
-            log?.Invoke($"the conduit fuel of ship {shipId} was taken by another debit after the check");
+            throw Notify("Your ship does not have enough jump fuel for the conduit.");
+        PyValue answer;
+        try
+        {
+            answer = await space.ConduitJumpAsync(session, shipId, fieldId, destinationSystem, passengers.Select(passenger => passenger.Ship).ToArray(), boundObjectId, cancellationToken);
+        }
+        catch
+        {
+            try
+            {
+                await ships.RestoreGroupJumpAsync(fatigue, character, shipId, (int)fuelType, quantity, priorStates, CancellationToken.None);
+            }
+            catch (Exception restoreError)
+            {
+                log?.Invoke($"the conduit fuel and fatigue of ship {shipId} could not be restored after refusal: {restoreError.Message}");
+            }
+            throw;
+        }
 
         session.SendNotification("OnGroupJumpAnchorActivated", "clientID", new PyInt(destinationSystem), new PyInt(passengers.Count));
         foreach (var passenger in passengers)

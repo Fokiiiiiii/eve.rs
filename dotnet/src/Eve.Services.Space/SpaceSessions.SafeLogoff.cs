@@ -61,10 +61,16 @@ public sealed partial class SpaceSessions
 
         if (_safeLogoffs.TryAdd(id, 0))
         {
+            // shortcut: space scenes advertise 1:1 time; when dilation varies, project this deadline onto scene sim time.
+            session.AfterResponse(() => session.SendNotification(
+                "OnSafeLogoffTimerStarted", "clientID", new PyLong(Py.FileTimeFromUnixMs(_nowUnixMs() + 30_000))));
             _timers.Set($"space.safe-logoff:{id}", SafeLogoffDuration, () =>
             {
                 if (_safeLogoffs.TryRemove(id, out _))
+                {
+                    session.SendNotification("OnSafeLogoffActivated", "clientID");
                     session.Close();
+                }
             });
         }
         return new PyList([]);
@@ -72,16 +78,23 @@ public sealed partial class SpaceSessions
 
     public PyValue AbortSafeLogoff(ClientSession session)
     {
-        CancelSafeLogoff(session);
+        CancelSafeLogoff(session, reasonCode: null);
         return None;
     }
 
-    public bool CancelSafeLogoff(ClientSession session)
+    public bool CancelSafeLogoff(
+        ClientSession session,
+        string? reasonCode = "UI/Inflight/SafeLogoff/SafeLogoffCantOrbitOrKeepAtRangeBody",
+        IReadOnlyList<string>? failedConditions = null)
     {
         var id = (ulong)session.SessionId;
         if (!_safeLogoffs.TryRemove(id, out _))
             return false;
         _timers.Cancel($"space.safe-logoff:{id}");
+        if (failedConditions is not null)
+            session.SendNotification("OnSafeLogoffFailed", "clientID", new PyList([.. failedConditions.Select(label => new PyStr(label))]));
+        else if (reasonCode is not null)
+            session.SendNotification("OnSafeLogoffAborted", "clientID", new PyStr(reasonCode));
         return true;
     }
 

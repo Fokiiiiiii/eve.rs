@@ -115,6 +115,11 @@ internal sealed class FakeSim : ISimulation
     /// <summary>What a jump is answered with.</summary>
     public CommandReply JumpAnswer { get; set; } = new(true, 0, null, null, 30100034, 50016839);
 
+    public Func<SimCommand, CancellationToken, Task<CommandReply>>? JumpHandler { get; set; }
+    public Func<SimCommand, CancellationToken, Task<CommandReply>>? OpenBridgeHandler { get; set; }
+    public Func<SimCommand, CancellationToken, Task<CommandReply>>? BridgeJumpHandler { get; set; }
+    public Func<SimCommand, CancellationToken, Task<CommandReply>>? ConduitJumpHandler { get; set; }
+
     /// <summary>What a cynosural jump (the spool) is answered with.</summary>
     public CommandReply CynoJumpAnswer { get; set; } = new(true, 0, null, null, 30100034, 50016839);
 
@@ -439,6 +444,22 @@ internal sealed class FakeSim : ISimulation
                 Position = PositionAnswers.GetValueOrDefault(targetId, [0, 0, 0]),
                 Direction = [1, 0, 0]
             });
+        }
+        if (code == SimCommands.Jump && JumpHandler is { } jumpHandler)
+        {
+            return jumpHandler(new SimCommand(sessionId, code, args), cancellationToken);
+        }
+        if (code == SimCommands.OpenBridge && OpenBridgeHandler is { } openBridgeHandler)
+        {
+            return openBridgeHandler(new SimCommand(sessionId, code, args), cancellationToken);
+        }
+        if (code == SimCommands.BridgeJump && BridgeJumpHandler is { } bridgeJumpHandler)
+        {
+            return bridgeJumpHandler(new SimCommand(sessionId, code, args), cancellationToken);
+        }
+        if (code == SimCommands.ConduitJump && ConduitJumpHandler is { } conduitJumpHandler)
+        {
+            return conduitJumpHandler(new SimCommand(sessionId, code, args), cancellationToken);
         }
         return Task.FromResult(code switch { SimCommands.WarpTo or SimCommands.WarpToPoint => WarpAnswer, SimCommands.Jump => JumpAnswer, SimCommands.CynoJump or SimCommands.OpenBridge or SimCommands.BridgeJump or SimCommands.ConduitJump => CynoJumpAnswer, _ => DockAnswer });
     }

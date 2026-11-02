@@ -1,4 +1,5 @@
 using Eve.Dogma;
+using Eve.Fitting;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Ships;
@@ -14,6 +15,7 @@ namespace Eve.Services.Space;
 /// </summary>
 public sealed class SpaceJumpDrive(
     CharacterShips ships,
+    PgModuleStateStore moduleStates,
     DogmaStatic statics,
     PgDeployedStore deployed,
     PgJumpFatigueStore fatigue,
@@ -275,9 +277,12 @@ public sealed class SpaceJumpDrive(
     private async Task<IReadOnlyList<double>> EconomizerBonusesAsync(long characterId, long shipId, int hullGroupId, CancellationToken cancellationToken)
     {
         var bonuses = new List<double>();
-        foreach (var (typeId, attributes) in await ships.FittedModulesAsync(characterId, shipId, cancellationToken))
+        var fitted = await ships.FittedModulesAsync(characterId, shipId, cancellationToken);
+        var states = await moduleStates.StatesAsync(fitted.Select(module => module.ItemId), cancellationToken);
+        foreach (var (itemId, typeId, attributes) in fitted)
         {
-            if (statics.Type(typeId) is { GroupId: JumpDriveRules.EconomizerGroup }
+            if (states[itemId] == Eve.Dogma.ItemState.Online
+                && statics.Type(typeId) is { GroupId: JumpDriveRules.EconomizerGroup }
                 && JumpDriveRules.EconomizerFits(hullGroupId, attributes)
                 && attributes.TryGetValue(JumpDriveRules.FuelBonusAttribute, out var percent))
             {

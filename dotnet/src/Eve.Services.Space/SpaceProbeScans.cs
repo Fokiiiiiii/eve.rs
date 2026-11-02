@@ -544,10 +544,15 @@ public sealed class SpaceProbeScans
     private static double[]? Vector3(PyValue value)
     {
         var items = value switch { PyTuple t => t.Items, PyList l => l.Items, _ => null };
-        if (items is null || items.Count != 3 || items.Select(Number).Any(n => n is null))
+        if (items is null || items.Count != 3)
         {
             return null;
         }
-        return [Number(items[0])!.Value, Number(items[1])!.Value, Number(items[2])!.Value];
+        var coordinates = items.Select(Number).ToArray();
+        if (coordinates.Any(number => !number.HasValue || !double.IsFinite(number.Value)))
+        {
+            return null;
+        }
+        return [coordinates[0]!.Value, coordinates[1]!.Value, coordinates[2]!.Value];
     }
 }

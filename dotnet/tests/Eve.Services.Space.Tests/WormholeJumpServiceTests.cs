@@ -60,19 +60,20 @@ public sealed class WormholeJumpServiceTests
     }
 
     /// <summary>A pilot undocked in the J-system: its location is set before the undock, as the drone tests do.</summary>
-    private static async Task<(ClientSession Session, Eve.Characters.Created Character, string Oid)> PilotInJSpaceAsync(Rig rig)
+    private static async Task<(ClientSession Session, Eve.Characters.Created Character, string Oid)> PilotInJSpaceAsync(Rig rig, long id = 1)
     {
         var place = rig.Systems.Get(JSystem) ?? throw new InvalidOperationException($"the static data has no solar system {JSystem}");
-        var character = await rig.NewCharacterAsync("Wormhole Pilot");
+        var character = await rig.NewCharacterAsync($"Wormhole Pilot {id}");
         await using (var connection = await rig.Source.OpenConnectionAsync())
         await using (var transaction = await connection.BeginTransactionAsync())
         {
             await rig.Characters.SetLocationAsync(connection, transaction, character.CharacterId, JSystem, place.ConstellationId, place.RegionId);
             await transaction.CommitAsync();
         }
-        var session = await rig.SessionAsync(character);
+        var session = await rig.SessionAsync(character, id);
         var oid = await rig.BindShipAsync(session);
         await rig.ShipCallAsync(session, "Undock", oid, new PyLong(session.GetInt("shipid")!.Value), PyBool.False);
+        rig.Space.Transitions.EndSessionChange((ulong)session.SessionId);
         await rig.BindBeyonceAsync(session);
         return (session, character, oid);
     }
@@ -120,6 +121,36 @@ public sealed class WormholeJumpServiceTests
 
         var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Space.WormholeJumpAsync(session, end.BodyId, oid, CancellationToken.None));
         Assert.Equal("You are polarized to this wormhole: you cannot go into it from this side yet.", NotifyOf(refused));
+    }
+
+    [PgFact]
+    public async Task Concurrent_jumps_cannot_both_enter_a_connection_that_only_has_mass_for_one_ship()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var world = await JWorld.CreateAsync(rig, Type(1001, 1e4, 1e8));
+        var (firstSession, _, firstOid) = await PilotInJSpaceAsync(rig, id: 1);
+        var (secondSession, _, secondOid) = await PilotInJSpaceAsync(rig, id: 2);
+        var end = Assert.Single(await world.World.EndsInSystemAsync(JSystem));
+        var firstAtSimulation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseSimulation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        rig.Sim.JumpHandler = async (_, cancellationToken) =>
+        {
+            firstAtSimulation.TrySetResult();
+            await releaseSimulation.Task.WaitAsync(cancellationToken);
+            return new CommandReply(true, 0, null, null, KSystem, 0);
+        };
+
+        var firstJump = rig.Space.WormholeJumpAsync(firstSession, end.BodyId, firstOid, CancellationToken.None);
+        await firstAtSimulation.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var secondJump = rig.Space.WormholeJumpAsync(secondSession, end.BodyId, secondOid, CancellationToken.None);
+        await Task.Delay(50);
+        Assert.Single(rig.Sim.Heard.OfType<SimCommand>(), command => command.Code == SimCommands.Jump);
+
+        releaseSimulation.TrySetResult();
+        await firstJump;
+        await Assert.ThrowsAsync<MachoWrappedException>(() => secondJump);
+        Assert.Single(rig.Sim.Heard.OfType<SimCommand>(), command => command.Code == SimCommands.Jump);
+        Assert.Single(await world.World.EndsInSystemAsync(JSystem));
     }
 
     [PgFact]

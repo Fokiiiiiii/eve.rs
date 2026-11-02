@@ -24,7 +24,8 @@ public partial class HostServerTests
             timeDeclared = 1_700_000_000_000L,
             timeStarted = 1_700_000_086_400L,
         });
-        var war = Assert.Single(await rig.Relations.ListAsync("war"));
+        var wars = await rig.Relations.ListAsync("war");
+        var war = Assert.Single(wars);
         await rig.SetAsync("war.ally", 1003, war.Id, new { side = "defender", timeStarted = 1_700_000_086_400L });
 
         var service = new WarsInfoMgrService(rig.Relations, () => 1_700_000_000_000L);
@@ -71,6 +72,20 @@ public partial class HostServerTests
 
         var structureWars = Assert.IsType<PyList>(await Call(5, "GetWarsForStructure", new PyLong(7000)));
         Assert.Equal(war.Id, ReadWarNumber(WarKeyValFields(Assert.Single(structureWars.Items))["warID"]));
+
+        await rig.SetAsync("war", 1004, 1005, new
+        {
+            timeDeclared = 1_700_000_000_001L,
+            timeStarted = 1_700_086_400_001L,
+        });
+        var secondWar = Assert.Single(await rig.Relations.ListAsync("war"), row => row.Subject == 1004);
+        var publicWars = Assert.IsType<PyList>(await Call(
+            6,
+            "GetPublicWarInfo",
+            PyList.Of(new PyLong(war.Id), new PyLong(9999), new PyLong(secondWar.Id))));
+        Assert.Equal([war.Id, secondWar.Id], publicWars.Items
+            .Select(item => ReadWarNumber(WarKeyValFields(item)["warID"])));
+        Assert.IsType<PyList>(await Call(7, "GetPublicWarInfo", PyList.Of()));
     }
 
     [Fact]

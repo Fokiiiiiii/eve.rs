@@ -1263,7 +1263,7 @@ fn a_neutralizer_is_weakened_by_resistance_and_immunity_keeps_the_capacitor() {
     let after = charge(&scene, B, t);
     assert!(
         (before - after - 20.0).abs() < 1e-6,
-        "half of 40 against a resistance of 0.5: {before} -> {after}"
+        "40 GJ at 50% resistance drains 20 GJ: {before} -> {after}"
     );
 
     scene.pilots.get_mut(&B).unwrap().ship.spec.energy_warfare_resistance = 0.0;
@@ -1341,6 +1341,7 @@ fn a_neutralizer_made_for_bigger_ships_is_weaker_against_a_smaller_target_in_pro
 #[test]
 fn a_nosferatu_takes_from_a_ship_that_holds_more_than_it_does_and_nothing_from_one_that_holds_less() {
     let (mut scene, t) = reaching(5_000.0);
+    scene.pilots.get_mut(&B).unwrap().ship.spec.energy_warfare_resistance = 0.5;
     // A holds less than B: it drains B and what is taken fills A
     scene.pilots.get_mut(&A).unwrap().modules.capacitor.as_mut().unwrap().draw(t, 100.0);
     let (own, theirs) = (charge(&scene, A, t), charge(&scene, B, t));
@@ -1353,7 +1354,7 @@ fn a_nosferatu_takes_from_a_ship_that_holds_more_than_it_does_and_nothing_from_o
     let paid = charge(&scene, A, t);
     let (_, after) = poll_until(&mut scene, t, 5.1);
     assert!(
-        (charge(&scene, B, after) - (theirs - 25.0)).abs() < 1.0,
+        (charge(&scene, B, after) - (theirs - 12.5)).abs() < 1.0,
         "{} from {theirs}",
         charge(&scene, B, after)
     );

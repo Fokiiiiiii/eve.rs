@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Eve.Dogma;
+using Eve.Fitting;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Ships;
@@ -15,6 +16,7 @@ namespace Eve.Services.Space;
 /// </summary>
 public sealed class SpaceBridges(
     CharacterShips ships,
+    PgModuleStateStore moduleStates,
     DogmaStatic statics,
     PgDeployedStore deployed,
     PgJumpFatigueStore fatigue,
@@ -34,6 +36,7 @@ public sealed class SpaceBridges(
         long ExpiresAtMs);
 
     private readonly ConcurrentDictionary<long, JumpBridgeRecord> _bridges = new();
+    private readonly SemaphoreSlim _activationGate = new(1, 1);
 
     /// <summary>The bridges open now, by the ship that opened each.</summary>
     public IReadOnlyCollection<JumpBridgeRecord> Open => _bridges.Values.ToArray();
@@ -51,6 +54,20 @@ public sealed class SpaceBridges(
         OpenAsync(session, structureId, destinationSystem, structureTypeId, cancellationToken);
 
     private async Task OpenAsync(
+        ClientSession session, long fieldId, int destinationSystem, int? structureTypeId, CancellationToken cancellationToken)
+    {
+        await _activationGate.WaitAsync(cancellationToken);
+        try
+        {
+            await OpenLockedAsync(session, fieldId, destinationSystem, structureTypeId, cancellationToken);
+        }
+        finally
+        {
+            _activationGate.Release();
+        }
+    }
+
+    private async Task OpenLockedAsync(
         ClientSession session, long fieldId, int destinationSystem, int? structureTypeId, CancellationToken cancellationToken)
     {
         if (session.CharacterId is not { } character || session.GetInt("shipid") is not { } shipId || shipId <= 0)
@@ -78,14 +95,20 @@ public sealed class SpaceBridges(
             || !hull.Attributes.TryGetValue(JumpDriveRules.FuelTypeAttribute, out var jumpFuel))
             throw Notify("Your ship has no jump drive.");
 
-        var generator = (await ships.FittedModulesAsync(character, shipId, cancellationToken))
-            .FirstOrDefault(module => structureTypeId is not null
+        var fitted = await ships.FittedModulesAsync(character, shipId, cancellationToken);
+        var moduleStatesById = await moduleStates.StatesAsync(fitted.Select(module => module.ItemId), cancellationToken);
+        var generator = fitted.FirstOrDefault(module => moduleStatesById[module.ItemId] == Eve.Dogma.ItemState.Online
+            && (structureTypeId is not null
                 ? module.TypeId == JumpDriveRules.TitanGeneratorType
-                : module.TypeId is JumpDriveRules.TitanGeneratorType or JumpDriveRules.CovertGeneratorType or JumpDriveRules.IndustrialGeneratorType);
+                : module.TypeId is JumpDriveRules.TitanGeneratorType or JumpDriveRules.CovertGeneratorType or JumpDriveRules.IndustrialGeneratorType));
         if (generator.Attributes is null || !generator.Attributes.TryGetValue(JumpDriveRules.PortalDurationAttribute, out var lifetime) || lifetime <= 0
             || !generator.Attributes.TryGetValue(JumpDriveRules.PortalPassengerAttribute, out var passengerAttribute)
             || !generator.Attributes.TryGetValue(1298, out var fitsGroup) || (int)fitsGroup != hull.GroupId)
             throw Notify("Your ship is not fitted with an online jump portal generator for that cynosural field.");
+
+        await SweepAsync();
+        if (_bridges.ContainsKey(shipId))
+            throw Notify("That jump portal generator is already active.");
 
         var titan = generator.TypeId == JumpDriveRules.TitanGeneratorType;
         var industrial = generator.TypeId == JumpDriveRules.IndustrialGeneratorType;
@@ -117,9 +140,27 @@ public sealed class SpaceBridges(
 
         var capacitor = generator.Attributes.TryGetValue(JumpDriveRules.ModuleCapacitorAttribute, out var need) ? need : 0;
         var immobile = titan ? (long)lifetime : 0;
-        await space.OpenBridgeAsync(session, shipId, fieldId, destinationSystem, (long)lifetime, immobile, JumpDriveRules.BridgeRangeMeters, capacitor, cancellationToken);
         if (activationFuel > 0 && !await ships.DebitFuelAsync(character, shipId, activationType, activationFuel, cancellationToken))
-            log?.Invoke($"the activation fuel of character {character} was taken by another debit after the check");
+            throw Notify("The bridge ship does not have enough jump portal activation fuel.");
+        try
+        {
+            await space.OpenBridgeAsync(session, shipId, fieldId, destinationSystem, (long)lifetime, immobile, JumpDriveRules.BridgeRangeMeters, capacitor, cancellationToken);
+        }
+        catch
+        {
+            if (activationFuel > 0)
+            {
+                try
+                {
+                    await ships.RefundFuelAsync(character, shipId, activationType, activationFuel, CancellationToken.None);
+                }
+                catch (Exception refundError)
+                {
+                    log?.Invoke($"the activation fuel of character {character} could not be refunded after bridge refusal: {refundError.Message}");
+                }
+            }
+            throw;
+        }
 
         var conservation = await PerLevelAsync(JumpDriveRules.FuelConservationSkill, JumpDriveRules.FuelBonusAttribute, cancellationToken);
         var conservationLevel = await LevelAsync(JumpDriveRules.FuelConservationSkill, character, cancellationToken);
@@ -156,7 +197,8 @@ public sealed class SpaceBridges(
             throw Refusal("DeniedShipChanged");
         }
         var origin = (int)(session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid") ?? 0);
-        if (origin <= 0 || await space.PositionOfAsync(session, shipId, cancellationToken) is null)
+        var passengerPosition = await space.PositionOfAsync(session, shipId, cancellationToken);
+        if (origin <= 0 || passengerPosition is null)
         {
             throw Refusal("DeniedShipChanged");
         }
@@ -169,6 +211,19 @@ public sealed class SpaceBridges(
         if (await fleets.FleetIdForCharacterAsync(character, cancellationToken) != bridge.FleetId)
         {
             throw Notify("You are not in the fleet of that bridge.");
+        }
+        if (shipId == bridge.BridgerShipId)
+        {
+            throw Notify("You cannot jump through your own fleet bridge.");
+        }
+        var bridgePosition = await space.PositionOfAsync(session, bridge.BridgerShipId, cancellationToken);
+        if (bridgePosition is null)
+        {
+            throw Notify("That fleet bridge is no longer available.");
+        }
+        if (Distance(passengerPosition.Value, bridgePosition.Value) > JumpDriveRules.BridgeRangeMeters)
+        {
+            throw Notify("You are too far away from the fleet bridge.");
         }
         if (await ships.ShipTypeOfAsync(character, shipId, cancellationToken) is not { } passengerType)
         {
@@ -203,14 +258,24 @@ public sealed class SpaceBridges(
             Math.Max(0, state.FatigueUntilMs - now), lightYears * passengerMultiplier * bridge.FatigueMultiplier);
         var next = new JumpFatigueState(now + fatigueMs, now + cooldownMs);
 
-        // the simulation is asked first: a passage it refuses takes nothing
-        var answer = await space.BridgeJumpAsync(session, shipId, bridge.BridgerShipId, bridge.FieldId, solarSystemId, boundObjectId, cancellationToken);
         if (!await ships.DebitBridgeAsync(fatigue, bridge.BridgerCharacterId, bridge.BridgerShipId, bridge.FuelTypeId, quantity, character, next, cancellationToken))
+            throw Notify("The bridge ship does not have enough jump portal fuel.");
+        try
         {
-            // shortcut: the fuel was checked a moment before; a debit lost in that moment lets the passage stand (as the jump drive's)
-            log?.Invoke($"the bridge fuel of ship {bridge.BridgerShipId} was taken by another debit after the check");
+            return await space.BridgeJumpAsync(session, shipId, bridge.BridgerShipId, bridge.FieldId, solarSystemId, boundObjectId, cancellationToken);
         }
-        return answer;
+        catch
+        {
+            try
+            {
+                await ships.RestoreBridgeAsync(fatigue, bridge.BridgerCharacterId, bridge.BridgerShipId, bridge.FuelTypeId, quantity, character, state, CancellationToken.None);
+            }
+            catch (Exception refundError)
+            {
+                log?.Invoke($"the bridge fuel and fatigue of passenger {character} could not be restored after refusal: {refundError.Message}");
+            }
+            throw;
+        }
     }
 
     /// <summary>The bridges whose time is up are closed: their fleet is told (OnBridgeModeChange, not active). Run by the scheduler.</summary>
@@ -260,4 +325,7 @@ public sealed class SpaceBridges(
     private static MachoWrappedException Refusal(string name) => MachoErrors.ThrowUserError(name);
 
     private static MachoWrappedException Notify(string text) => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(text)));
+
+    private static double Distance(WarpCoordinates a, WarpCoordinates b) =>
+        Math.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y) + (a.Z - b.Z) * (a.Z - b.Z));
 }

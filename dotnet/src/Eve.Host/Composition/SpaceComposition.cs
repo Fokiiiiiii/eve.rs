@@ -438,8 +438,10 @@ internal sealed partial class CharacterServicesComposition
             };
             crimewatchRuntime.Aggressed += result =>
             {
-                if (characterSessions.Of(result.Request.Attacker) is { } activeSession)
-                    spaceSessions.CancelSafeLogoff(activeSession);
+                const string pvpTimer = "UI/Inflight/SafeLogoff/SafeLogoffCantHavePvpTimerBody";
+                foreach (var characterId in new[] { result.Request.Attacker, result.Request.Target }.Distinct())
+                    if (characterSessions.Of(characterId) is { } activeSession)
+                        spaceSessions.CancelSafeLogoff(activeSession, reasonCode: null, failedConditions: [pvpTimer]);
                 return Task.CompletedTask;
             };
             var weaponSafetyReadModel = new PersistenceWeaponTargetContextReadModel(

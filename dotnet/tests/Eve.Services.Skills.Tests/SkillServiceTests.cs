@@ -495,9 +495,12 @@ public class SkillHandlerTests
             Assert.Equal(new PyInt(50_000), await Rig.CallAsync(alphaRig.Handler, session, "InjectSkillpoints", new PyLong(first), new PyInt(1)));
             Assert.Equal(77_001, seenAlphaAccount);
             var second = await alphaRig.CreateItemAsync(new Eve.Inventory.NewItem(dailyAlphaType.Value, characterId, 60_000_001, 4, 1, true));
+            var preview = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+                await Rig.CallAsync(alphaRig.Handler, session, "CheckInjectionConstraints", new PyLong(second), new PyInt(1)));
+            Assert.Equal("AlreadyInjectedToday", preview.Error.UserErrorMessage);
             var cooldown = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
                 await Rig.CallAsync(alphaRig.Handler, session, "InjectSkillpoints", new PyLong(second), new PyInt(1)));
-            Assert.Equal("A Daily Alpha Injector can only be used once per day.", CustomNotifyOf(cooldown));
+            Assert.Equal("AlreadyInjectedToday", cooldown.Error.UserErrorMessage);
         }
 
         await using (var omegaRig = await Rig.CreateAsync(isAlphaClone: _ => false, useCurrentSdeCatalog: true))
@@ -507,9 +510,12 @@ public class SkillHandlerTests
             Assert.NotNull(dailyAlphaType);
             var session = Rig.Session(characterId).Session;
             var item = await omegaRig.CreateItemAsync(new Eve.Inventory.NewItem(dailyAlphaType.Value, characterId, 60_000_001, 4, 1, true));
+            var previewDenied = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+                await Rig.CallAsync(omegaRig.Handler, session, "CheckInjectionConstraints", new PyLong(item), new PyInt(1)));
+            Assert.Equal("InjectorSkillPointLimitReached", previewDenied.Error.UserErrorMessage);
             var denied = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
                 await Rig.CallAsync(omegaRig.Handler, session, "InjectSkillpoints", new PyLong(item), new PyInt(1)));
-            Assert.Equal("That skill injector cannot be used.", CustomNotifyOf(denied));
+            Assert.Equal("InjectorSkillPointLimitReached", denied.Error.UserErrorMessage);
         }
     }
 

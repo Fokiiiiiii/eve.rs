@@ -113,7 +113,7 @@ public class StructureFuelTests
         rig.Now += HourMs;
         await rig.Tick();
 
-        Assert.Equal(0, bay.Stock[Structure]);
+        Assert.Equal(20, bay.Stock[Structure]);
         Assert.Equal(ServiceState.Offline, (await Services(rig, Structure))[StructureServiceIds.CynoJammer]);
         Assert.Equal(UpkeepState.LowPower, (await rig.Snapshot(Structure)).Upkeep);
         Assert.Null(await rig.Scheduler.FindAsync(JobKind, $"structure:{Structure}"));

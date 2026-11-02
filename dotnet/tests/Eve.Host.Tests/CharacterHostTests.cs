@@ -88,6 +88,34 @@ public sealed class CharacterHostTests
         Assert.Null(await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(itemId));
     }
 
+    [PgFact]
+    public async Task Daily_alpha_injector_preview_and_use_return_the_client_error_after_downtime_use()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var session = new ClientSession { CharacterId = character, UserId = 1 };
+        session.Set("stationid", new PyInt(rig.Station));
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillHandler"));
+        var catalog = await Eve.Skills.SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        var dailyAlpha = catalog.ItemTypeId("Daily Alpha Injector");
+        Assert.NotNull(dailyAlpha);
+        var items = new PgItemStore(rig.Source, rig.InventorySchema);
+        var first = await CreateHostItemAsync(rig, items,
+            new NewItem(dailyAlpha.Value, character, rig.Station, 4, 1, Singleton: true));
+        var second = await CreateHostItemAsync(rig, items,
+            new NewItem(dailyAlpha.Value, character, rig.Station, 4, 1, Singleton: true));
+
+        Assert.Equal(new PyInt(50_000), await CallAsync(service, "InjectSkillpoints", session,
+            new PyLong(first), new PyInt(1)));
+        var previewError = await Assert.ThrowsAsync<MachoWrappedException>(() => CallAsync(service,
+            "CheckInjectionConstraints", session, new PyLong(second), new PyInt(1)));
+        Assert.Equal("AlreadyInjectedToday", previewError.Error.UserErrorMessage);
+        var useError = await Assert.ThrowsAsync<MachoWrappedException>(() => CallAsync(service,
+            "InjectSkillpoints", session, new PyLong(second), new PyInt(1)));
+        Assert.Equal("AlreadyInjectedToday", useError.Error.UserErrorMessage);
+        Assert.NotNull(await items.GetAsync(second));
+    }
+
     private static async Task<long> CreateHostItemAsync(CharacterHostRig rig, PgItemStore store, NewItem item)
     {
         await using var connection = await rig.Source.OpenConnectionAsync();

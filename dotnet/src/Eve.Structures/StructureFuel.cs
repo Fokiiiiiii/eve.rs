@@ -134,7 +134,7 @@ public sealed class StructureFuel
     }
 
     /// <summary>
-    /// Pays one hour for every online service. The bay gives what it has; a shortfall takes every service offline (Low Power). With nothing online the
+    /// Pays one hour for every online service. A shortfall consumes no part of that cycle and takes every service offline (Low Power). With nothing online the
     /// hour is not scheduled again, and the next online service schedules it.
     /// </summary>
     public async Task HourAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, CancellationToken cancellationToken = default)
@@ -156,7 +156,12 @@ public sealed class StructureFuel
         {
             return;
         }
-        var fuel = await _bay.TakeAsync(connection, transaction, structureId, hourly, allowPartial: true, cancellationToken: cancellationToken);
+        if (await _bay.QuantityAsync(connection, transaction, structureId, cancellationToken) < hourly)
+        {
+            await _timers.FuelOutAsync(connection, transaction, structureId, cancellationToken);
+            return;
+        }
+        var fuel = await _bay.TakeAsync(connection, transaction, structureId, hourly, allowPartial: false, cancellationToken: cancellationToken);
         if (fuel.Taken < hourly)
         {
             await _timers.FuelOutAsync(connection, transaction, structureId, cancellationToken);

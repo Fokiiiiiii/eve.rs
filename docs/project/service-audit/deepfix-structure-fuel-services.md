@@ -1,0 +1,21 @@
+# Upwell構造物の燃料・サービス・補強・アンカー監査
+
+## 確認した燃料サイクル欠陥と修正
+
+- V24.01クライアントの全コード検索では、オンライン切替の呼び出し元は `eve/client/script/ui/shared/fitting/fittingSlotController.py:325-332` から `eve/client/script/dogma/clientDogmaLocation.py:696-718` に至る経路だった。オンラインは `SetModuleOnline(locationID, moduleID)`、オフラインは `TakeModuleOffline(locationID, moduleID)` を呼ぶ。オンライン失敗時は `UserError` を再送出し、オフライン失敗時は表示効果を戻す。UIはRPCの戻り値を使わない。
+- EveJS 261028.1の `src/server/src/services/structure/structureServiceModules.js:380-443` は、燃料候補の合計量が1サイクル分に届かないと `NOT_ENOUGH_FUEL`、消費量0、アイテム変更なしを返す。同ファイル `:656-778` はサイクル分の燃料不足時にサービスモジュールをオフラインにする。オンライン時刻と次回サイクルは `:449-505` で記録される。Dogma側は `src/server/src/services/dogma/dogmaService/moduleOperation.js:2088-2091` で不足をプレイヤー向け通知エラーにする。
+- eve.rsの旧 `StructureFuel.HourAsync` は `dotnet/src/Eve.Structures/StructureFuel.cs` で `allowPartial: true` により残燃料を先に消費してからFuelOutへ進んでいた。必要な合計量の事前確認を行い、不足時は燃料を残したままFuelOutへ移るよう変更した。実際の燃料量は引き続きfuel bay authorityと同じDBトランザクションが所有する。
+- 回帰テスト `dotnet/tests/Eve.Structures.Tests/StructureFuelTests.cs` は、40個必要なサイクルに20個しかない場合、20個が残り全サービスがオフライン、構造物がLow Powerになることを検証する。修正前はこのテストが `Expected: 20, Actual: 0` で失敗し、修正後は通過した。
+
+## クライアント全体から確認した関連経路
+
+- サービス可用性: `eve/client/script/ui/services/structure/structureServices.py:28-56` が `structureSettings.CharacterGetServices` を取得し、`OnStructureServiceChanged` で再取得後に `OnStructureServiceUpdated` を散布する。全体検索でUI消費元として `eve/client/script/ui/shared/dockedUI/lobbyWnd.py:302-304`、情報ウィンドウとして `eve/client/script/ui/shared/info/infosvc.py:840-843`、ジャンプ経路判定として `eve/client/script/parklife/autopilot.py:624-627` を確認した。
+- 補強時間: `eve/client/script/ui/structure/structureBrowser/reinforcementTimeWnd.py:170-172` が曜日・時刻を `UpdateReinforceTimesFromClient` に渡す。`reinforceTimersBundle.py:17-34` は現在値に既定値を使い、次回値・適用時刻の欠損を `None` として読む。構造物状態通知は `structureEntryMyCorp.py:423-425` と `structureBrowserController.py:101-106` が一覧を更新し、`cosmeticFitting.py:118-121` は現在構造物の表示を遅延更新する。
+- eve.rsのDogma経路: `dotnet/src/Eve.Services.Dogma/DogmaIMService.cs:199-228` はオンライン切替を `CharacterShips.SetOnlineAsync` に渡す。構造物Dogma読取モデルは `dotnet/src/Eve.Host/Persistence/Structures/StructureControlReadModel.cs:30-65` で組み立てられ、`dotnet/src/Eve.Host/Composition/StructureComposition.cs:296-297` は燃料ジョブを登録する。これらから、`StructureFuel.OnlineAsync` を呼ぶ本番RPC接続が存在しないことも確認した。構造物のモジュールをDogma RPCからオンライン化する経路は本監査の未修正項目であり、燃料修正だけではプレイヤー操作の完了にならない。
+- アンカー・補強の状態遷移通知はクライアントが上記状態更新を消費するところまで確認した。既存状態の永続化では `StructureSnapshot.AnchoringMs` と `StructureStore` の `anchoring_ms` が使われ、復帰後のタイマーがこの値を読む。個別の実クライアント動作はこの作業では実行していない。
+
+## データ根拠と未確認事項
+
+- 公式SDE固定値は `sde/lock.json` のbuild `3396210`。燃料ルールローダー `dotnet/src/Eve.Host/Persistence/Structures/ServiceFuelRulesSource.cs:8-43` はservice module typeのdogma属性2109（時間あたり）と2110（オンライン時）を読む。ローカルPostgreSQLにはSDE schemaがなく、今回の作業で個別moduleの属性値をDBから再照合できていない。値のハードコード追加はしていない。
+- 力学の照合先: [EVE University: Fitting Upwell structures](https://wiki.eveuniversity.org/Fitting_upwell_structures), [EVE University: Vulnerability](https://wiki.eveuniversity.org/Vulnerability), [EVE University: Anchoring structures](https://wiki.eveuniversity.org/Anchoring_structures). UIとの互換判断は上記V24.01クライアントcallsiteを優先する。
+- ローカル確認: `Eve.Structures` と `Eve.Structures.Tests` をビルド。DBロック経由で `eve_p7` の対象ケース1件、その後 `StructureFuelTests` 全7件が成功し、スキップはなかった。GitHub Actions・実グラフィカルクライアント・SDE属性行の個別比較は、この記録作成時点では実施していない。

@@ -207,7 +207,11 @@ internal sealed partial class CharacterServicesComposition
         loyaltyAnnouncer = new LoyaltyPointAnnouncer(loyaltyPoints, characterSessions);
         insuranceReadModel = new PersistenceInsuranceReadModel(mailStore);
         insuranceWriteModel = new PersistenceInsuranceWriteModel(
-            source, items, mailStore, mailStoreOwner.Fence, economyWallets, insuranceReadModel, now);
+            source, items, mailStore, mailStoreOwner.Fence, economyWallets, insuranceReadModel,
+            (recipientId, shipId, amount, defaultPayout, lossId, token) =>
+                mailSendWriter.WriteInsurancePayoutNotificationAsync(
+                    recipientId, shipId, amount, defaultPayout, lossId, token),
+            now);
         items.ShipInsuranceInvalidator = insuranceWriteModel;
         insuranceService = new Eve.Services.Core.InsuranceService(
             insuranceReadModel, now, insuranceWriteModel,

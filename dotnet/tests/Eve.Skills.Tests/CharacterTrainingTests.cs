@@ -278,6 +278,23 @@ public class CharacterTrainingTests
     }
 
     [PgFact]
+    public async Task Concurrent_starts_for_different_characters_cannot_exceed_the_account_training_slots()
+    {
+        await using var rig = await TrainingRig.CreateAsync();
+        const long second = 1002;
+        await rig.GiveAsync(second);
+        IReadOnlyList<long> account = [TrainingRig.Character, second];
+
+        var outcomes = await Task.WhenAll(
+            rig.Training.SaveQueueAsync(TrainingRig.Character, TrainingRig.Account, [new(3301, 2)], true, account),
+            rig.Training.SaveQueueAsync(second, TrainingRig.Account, [new(3301, 2)], true, account));
+
+        Assert.Single(outcomes, outcome => outcome is QueueSaved);
+        Assert.Single(outcomes, outcome => outcome is TrainingBusy { Training: 1 });
+        Assert.Equal(1, await rig.Store.RunningCountAsync(account));
+    }
+
+    [PgFact]
     public async Task A_lapsed_subscription_trains_at_half_speed_and_the_server_speed_multiplies()
     {
         await using var half = await TrainingRig.CreateAsync(new TrainingSettings { HasOmega = _ => false });

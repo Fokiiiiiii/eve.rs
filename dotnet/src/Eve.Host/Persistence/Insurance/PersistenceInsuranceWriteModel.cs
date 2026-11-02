@@ -42,6 +42,7 @@ sealed class PersistenceInsuranceWriteModel(
     OwnerFence ownerFence,
     WalletTransactions wallets,
     Eve.Services.Core.IInsuranceReadModel readModel,
+    Func<long, long, decimal, bool, long, CancellationToken, Task> notifyInsurancePayout,
     Func<long> nowUnixMs) : Eve.Services.Core.IInsuranceWriteModel, Eve.Inventory.IShipInsuranceInvalidator
 {
     private const string Table = "insuranceContracts";
@@ -203,8 +204,22 @@ sealed class PersistenceInsuranceWriteModel(
             var settlements = state[SettlementsRow] as JsonObject ?? new JsonObject();
             var lossKey = Key(request.LossId);
             if (settlements[lossKey] is JsonObject settled)
-                return Result(Eve.Services.Core.InsuranceMutationStatus.AlreadyApplied,
+            {
+                var result = Result(Eve.Services.Core.InsuranceMutationStatus.AlreadyApplied,
                     Number(settled["ownerID"]), Number(settled["amountCents"]));
+                var recipientId = Number(settled["notificationCharacterID"]);
+                if (recipientId <= 0) recipientId = request.FinalOwnerId;
+                var savedShipId = Number(settled["shipID"]);
+                if (savedShipId <= 0) savedShipId = request.ShipId;
+                var amountCents = Number(settled["amountCents"]);
+                var wasDefaultPayout = settled["defaultPayout"] is JsonValue defaultNode &&
+                    defaultNode.TryGetValue<bool>(out var savedDefaultPayout)
+                        ? savedDefaultPayout
+                        : Number(settled["contractID"]) <= 0;
+                await transaction.CommitAsync(cancellationToken);
+                await NotifyPayoutAsync(recipientId, savedShipId, amountCents, wasDefaultPayout, request.LossId, cancellationToken);
+                return result;
+            }
 
             var shipKey = Key(request.ShipId);
             var contractRow = contracts[shipKey] as JsonObject;
@@ -222,8 +237,12 @@ sealed class PersistenceInsuranceWriteModel(
                 contract = null;
             var payoutCents = Eve.Services.Core.InsuranceQuotes.PayoutForLoss(
                 fullPayoutCents, contract, request.LossDateFileTime, request.IsConcordDestruction);
+            var defaultPayout = contract is null || request.IsConcordDestruction ||
+                !ActiveAt(contract, request.LossDateFileTime);
             var ownerId = ship?.OwnerId ?? contract?.OwnerId ??
                 (request.FinalOwnerId > 0 ? request.FinalOwnerId : request.FinalOwnerCorporationId);
+            var notificationCharacterId = request.FinalOwnerId > 0 ? request.FinalOwnerId :
+                contract?.OwnerKind == Eve.Services.Core.InsuranceOwnerKind.Character ? contract.OwnerId : 0;
             if (payoutCents > 0 && ownerId <= 0)
                 return Result(Eve.Services.Core.InsuranceMutationStatus.NotEligible);
 
@@ -235,7 +254,7 @@ sealed class PersistenceInsuranceWriteModel(
                     $"insurance:payout:{request.LossId}", cancellationToken);
 
             if (contractRow is not null)
-                contractRow["status"] = contract is not null && payoutCents > 0 ? "paid" : "void";
+                contractRow["status"] = !defaultPayout && payoutCents > 0 ? "paid" : "void";
             settlements[lossKey] = new JsonObject
             {
                 ["lossID"] = request.LossId,
@@ -245,6 +264,8 @@ sealed class PersistenceInsuranceWriteModel(
                 ["isConcordDestruction"] = request.IsConcordDestruction,
                 ["settledAtFiletime"] = checked(116444736000000000L + nowUnixMs() * 10_000L),
                 ["contractID"] = contract?.ContractId ?? 0,
+                ["notificationCharacterID"] = notificationCharacterId,
+                ["defaultPayout"] = defaultPayout,
             };
             await store.ApplyChangesAsync(
                 connection, transaction, Table,
@@ -252,7 +273,11 @@ sealed class PersistenceInsuranceWriteModel(
                  new RowUpsert(SettlementsRow, settlements.ToJsonString())], [], ownerFence, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             if (payoutCents > 0)
+            {
                 wallets.AnnounceCommitted(new WalletBalanceChange(ownerId, 1000, balance));
+                await NotifyPayoutAsync(notificationCharacterId, request.ShipId, payoutCents,
+                    defaultPayout, request.LossId, cancellationToken);
+            }
             return Result(Eve.Services.Core.InsuranceMutationStatus.Applied, ownerId, payoutCents);
         }
         catch (Exception error) when (error is Eve.Wallet.WalletNotFoundException or
@@ -268,6 +293,12 @@ sealed class PersistenceInsuranceWriteModel(
     }
 
 
+
+    private Task NotifyPayoutAsync(
+        long recipientId, long shipId, long amountCents, bool defaultPayout, long lossId, CancellationToken cancellationToken) =>
+        amountCents > 0
+            ? notifyInsurancePayout(recipientId, shipId, amountCents / 100m, defaultPayout, lossId, cancellationToken)
+            : Task.CompletedTask;
 
     public async ValueTask InvalidateAsync(
         NpgsqlConnection connection,

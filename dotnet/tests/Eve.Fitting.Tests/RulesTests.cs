@@ -70,6 +70,15 @@ public class RulesTests
     }
 
     [Fact]
+    public void Charge_capacity_matches_the_clients_rounding_at_binary_float_boundaries()
+    {
+        var module = Module(6001, 55, 7, new Dictionary<int, double> { [604] = 86, [38] = 0.6 });
+        var charge = new TypeDef(6002, 86, 8, new Dictionary<int, double> { [161] = 0.05 }, []);
+
+        Assert.Equal(12, AmmoRules.Capacity(module, charge));
+    }
+
+    [Fact]
     public void A_module_that_fits_is_accepted_in_a_slot_of_its_kind_the_ship_has()
     {
         var (world, statics) = Ship();

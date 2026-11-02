@@ -907,9 +907,9 @@ public sealed class ContractReadModelTests
         var schedulerSchema = $"contract_auction_expiry_jobs_{suffix}";
         await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(connectionString));
         await PersistenceContractReadModel.MigrateAsync(source, contractsSchema);
+        await Eve.Scheduler.DurableScheduler.MigrateAsync(source, schedulerSchema);
         await PgItemStore.MigrateAsync(source, inventorySchema);
         await PgWalletStore.MigrateAsync(source, walletSchema);
-        await Eve.Scheduler.DurableScheduler.MigrateAsync(source, schedulerSchema);
         try
         {
             var itemStore = new PgItemStore(source, inventorySchema);

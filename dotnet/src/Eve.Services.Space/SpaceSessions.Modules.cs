@@ -42,7 +42,7 @@ public sealed partial class SpaceSessions
     {
         var id = (ulong)session.SessionId;
         if (order == TargetingOrder.Lock)
-            CancelSafeLogoff(session);
+            CancelSafeLogoff(session, reasonCode: null, failedConditions: ["UI/Inflight/SafeLogoff/SafeLogoffCantTargetLockBody"]);
         if (!_pilots.TryGetValue(id, out var pilot))
         {
             return null;
@@ -82,7 +82,7 @@ public sealed partial class SpaceSessions
             {
                 var target = _pilots.Values.FirstOrDefault(other => other.ShipId == targetId);
                 if (target is not null)
-                    CancelSafeLogoff(target.Session);
+                    CancelSafeLogoff(target.Session, reasonCode: null, failedConditions: ["UI/Inflight/SafeLogoff/SafeLogoffCantBeTargetLockedBody"]);
             }
             if (!IsStructureObserver(session))
             {
@@ -121,7 +121,7 @@ public sealed partial class SpaceSessions
         {
             return structureObserver || session.GetInt("shipid") != pilot.ShipId ? ModuleResult.Refusal("REFUSED") : null;
         }
-        CancelSafeLogoff(session);
+        CancelSafeLogoff(session, reasonCode: null, failedConditions: ["UI/Inflight/SafeLogoff/SafeLogoffCantHaveActiveModulesBody"]);
 
         if (pilot.Repairs.ContainsKey(moduleId) && snapshot.Fitted.FirstOrDefault(m => m.Id == moduleId) is { } repairing)
         {

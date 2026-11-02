@@ -207,11 +207,19 @@ public class SpaceServiceTests
         var result = await rig.ShipCallAsync(session, "SafeLogoff", oid);
 
         Assert.Empty(Assert.IsType<PyList>(result).Items);
+        Assert.DoesNotContain(Events.Of(session), message => message.Name == "OnSafeLogoffTimerStarted");
+        session.RunAfterResponse();
+        var startedEvent = Assert.Single(Events.Of(session));
+        Assert.Equal(("OnSafeLogoffTimerStarted", "clientID"), (startedEvent.Name, startedEvent.IdType));
+        Assert.IsType<PyLong>(Assert.Single(startedEvent.Args));
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         release.TrySetResult();
         await Rig.UntilAsync(() => !rig.Space.IsInSpace(session));
 
         await rig.Space.QuiesceAsync();
+        var activatedEvent = Assert.Single(Events.Of(session));
+        Assert.Equal(("OnSafeLogoffActivated", "clientID"), (activatedEvent.Name, activatedEvent.IdType));
+        Assert.Empty(activatedEvent.Args);
         var ship = (await rig.Items.GetAsync(character.ShipId))!;
         var spaceItem = await rig.SpaceItems.GetAsync(character.ShipId);
         var system = session.GetInt("solarsystemid")!.Value;
@@ -270,6 +278,8 @@ public class SpaceServiceTests
         session.Closed += () => closed = true;
 
         Assert.Empty(Assert.IsType<PyList>(await rig.ShipCallAsync(session, "SafeLogoff", oid)).Items);
+        session.RunAfterResponse();
+        Assert.Equal("clientID", Assert.Single(Events.Of(session), message => message.Name == "OnSafeLogoffTimerStarted").IdType);
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         rig.Space.Command(session, SimCommands.Stop);
         release.TrySetResult();
@@ -277,6 +287,9 @@ public class SpaceServiceTests
 
         Assert.False(closed);
         Assert.True(rig.Space.IsInSpace(session));
+        var abortedEvent = Assert.Single(Events.Of(session), message => message.Name == "OnSafeLogoffAborted");
+        Assert.Equal("clientID", abortedEvent.IdType);
+        Assert.Equal("UI/Inflight/SafeLogoff/SafeLogoffCantOrbitOrKeepAtRangeBody", JsSemantics.StringValue(Assert.Single(abortedEvent.Args)));
     }
 
     [PgFact]

@@ -1130,7 +1130,7 @@ enum Moment {
     ReachCheck(usize),
 }
 
-/// The share of a neutralisation a target takes for its resistance: the value itself, never below 0 (immune), and whole if the value is not a number.
+/// The share of cap warfare strength a target takes for its resistance: the value itself, never below 0 (immune), and whole if the value is not a number.
 fn capacitor_warfare_multiplier(resistance: f64) -> f64 {
     if resistance.is_finite() { resistance.max(0.0) } else { 1.0 }
 }

@@ -8,7 +8,7 @@ public class RemoteResistanceTests
     private static double NoModuleAttribute(int _) => 0;
 
     [Fact]
-    public void Each_remote_is_weakened_by_the_resistance_attribute_that_names_it()
+    public void Host_uses_target_resistance_for_non_capacitor_warfare_effects()
     {
         Assert.Equal(2115, RemoteResistance.AttributeOf(new SimRemote.Web(-50), NoModuleAttribute));
         Assert.Equal(2115, RemoteResistance.AttributeOf(new SimRemote.Tackle(1, -50), NoModuleAttribute));
@@ -16,8 +16,9 @@ public class RemoteResistanceTests
         Assert.Equal(2112, RemoteResistance.AttributeOf(new SimRemote.Damp(-30, -30), NoModuleAttribute));
         Assert.Equal(2113, RemoteResistance.AttributeOf(new SimRemote.Disrupt(-20, -20, -20), NoModuleAttribute));
         Assert.Equal(2113, RemoteResistance.AttributeOf(new SimRemote.GuidanceDisrupt(-10, 0, 0, 0), NoModuleAttribute));
-        Assert.Equal(2045, RemoteResistance.AttributeOf(new SimRemote.Neutralize(100, 0), NoModuleAttribute));
-        Assert.Equal(2045, RemoteResistance.AttributeOf(new SimRemote.Drain(100, 0), NoModuleAttribute));
+        // Capacitor warfare resistance is applied by the simulation, including for drone effects.
+        Assert.Equal(0, RemoteResistance.AttributeOf(new SimRemote.Neutralize(100, 0), NoModuleAttribute));
+        Assert.Equal(0, RemoteResistance.AttributeOf(new SimRemote.Drain(100, 0), NoModuleAttribute));
         // a scramble and a jam keep their own rules
         Assert.Equal(0, RemoteResistance.AttributeOf(new SimRemote.Scramble(1, false), NoModuleAttribute));
         Assert.Equal(0, RemoteResistance.AttributeOf(new SimRemote.Jam(1, 1, 1, 1), NoModuleAttribute));

@@ -21,7 +21,8 @@ The whole-client search found one caller of `GetOutputForClientSolarSystem`, in 
 - `Eve.Host.Tests.HostServerTests.Dungeon_and_dynamic_resource_cache_calls_round_trip_through_host_registration`: first reproduced a stale `(0, 0)` expected pair locally. The follow-up wire assertion checks the tuple members independently and requires `PyReal(1)` plus `PyBool.False`, matching EveJS's marshalled-real output; it passed locally (1 passed, 0 skipped).
 - `eve_p4` database-backed tests: `NpcBountyHostTests|NpcLootHostTests|SpaceEventsTests`: 28 passed, 0 skipped.
 - `eve_p4` database-backed tests: NPC bounty, loot, selector, belt-rat, armament, and PostgreSQL bounty-store classes: 156 passed, 0 skipped.
-- The first push CI run failed only because this Host wire test still expected the previous `(0, 0)` values. That exact failure was reproduced locally before changing the assertion; the corrected test and real-valued default now pass locally. Follow-up CI is required to confirm the correction.
+- CI run 1439 failed only because this Host wire test still expected the previous `(0, 0)` values. That exact failure was reproduced locally; a follow-up exposed that `Py.Number(1)` also produces `PyInt`, unlike EveJS's real-valued output, so the service now emits `PyReal` explicitly and the wire test checks each tuple item.
+- Follow-up push `5553e1b9` passed CI run 1440, including all .NET shards, Windows, Rust, and headless end-to-end checks.
 
 ## Remaining boundary
 

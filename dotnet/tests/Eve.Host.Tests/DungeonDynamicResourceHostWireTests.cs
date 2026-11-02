@@ -139,8 +139,11 @@ public partial class HostServerTests
         Assert.Equal(new PyReal(1.75), EntryValue(outputBySystem, systemId));
         Assert.DoesNotContain(outputBySystem.Entries, entry => entry.Key == new PyInt(systemId + 1));
 
-        Assert.Equal(new PyTuple([new PyInt(0), new PyInt(0)]),
+        var bountyOutput = Assert.IsType<PyTuple>(
             await Call("dynamicBountyMgr", "GetOutputForClientSolarSystem"));
+        Assert.Equal(2, bountyOutput.Items.Count);
+        Assert.Equal(new PyInt(1), Assert.IsType<PyInt>(bountyOutput.Items[0]));
+        Assert.Same(PyBool.False, Assert.IsType<PyBool>(bountyOutput.Items[1]));
     }
 
     private static JsonObject Site(long instanceId, long systemId, long dungeonId, long archetypeId, string kind) =>

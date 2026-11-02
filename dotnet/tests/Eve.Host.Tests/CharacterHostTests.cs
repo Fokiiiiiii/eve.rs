@@ -314,6 +314,52 @@ public sealed class CharacterHostTests
     }
 
     [PgFact]
+    public async Task Concurrent_clone_jumps_commit_only_one_activation_and_refuse_the_other_with_the_cooldown_error()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var session = new ClientSession { CharacterId = character, Sink = new RecordingPacketSink() };
+        session.Set("stationid", new PyInt(rig.Station));
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
+        var stations = await StationCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        var destinations = stations.All.Where(station => station.Id != rig.Station).OrderBy(station => station.Id).Take(2).ToArray();
+        Assert.Equal(2, destinations.Length);
+        var capsule = await GiveItemAsync(rig, character, 670, rig.Station, 4, singleton: true);
+        await SetShipAsync(rig, character, capsule);
+        await FundAsync(rig, character, 2_000_000m);
+        var clones = new long[2];
+        for (var index = 0; index < destinations.Length; index++)
+            clones[index] = await rig.AddCloneAsync(character, destinations[index].Id, "station", $"Concurrent {index}", []);
+
+        async Task<(PyValue? Value, MachoWrappedException? Error)> Jump(int index)
+        {
+            try
+            {
+                return (await BoundAsync(service, session, "CloneJump", new PyLong(destinations[index].Id),
+                    new PyLong(clones[index]), new PyReal(900_000.0), PyBool.False), null);
+            }
+            catch (MachoWrappedException error)
+            {
+                return (null, error);
+            }
+        }
+
+        var outcomes = await Task.WhenAll(Jump(0), Jump(1));
+
+        Assert.Single(outcomes, outcome => outcome.Value is not null);
+        var refused = Assert.Single(outcomes, outcome => outcome.Error is not null).Error!;
+        Assert.Equal("CustomNotify", refused.Error.UserErrorMessage);
+        var notifyText = refused.Error.Payload is PyObjectEx
+        {
+            Header: PyTuple { Items: [_, PyTuple { Items: [_, PyDict arguments] }, ..] },
+        } ? arguments.Entries.FirstOrDefault(entry => entry.Key is PyStr { Value: "notify" }).Value as PyStr : null;
+        Assert.Equal("UI/CharacterSheet/CharacterSheetWindow/JumpCloneScroll/JumpCooldownError", notifyText?.Value);
+        Assert.Equal(1_100_000m, await BalanceAsync(rig, character));
+        Assert.Contains((await rig.Characters.GetAsync(character))!.StationId, destinations.Select(destination => destination.Id));
+        Assert.Equal(2, (await new PgJumpCloneStore(rig.Source, rig.CharactersSchema).ReadAsync(character)).Clones.Count);
+    }
+
+    [PgFact]
     public async Task A_clone_jump_ends_the_normal_boosters_and_the_cerebral_accelerator_goes_on_with_the_pilot()
     {
         // the wiki: a jump ends a normal booster (its row and item go, the pilot is told) and keeps a cerebral accelerator

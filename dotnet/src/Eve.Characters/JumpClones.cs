@@ -11,6 +11,8 @@ public sealed record JumpCloneInstallRecord(long LocationId, string LocationKind
 /// <summary>What a character has installed, and the FILETIME of its last clone jump (0 when none).</summary>
 public sealed record JumpCloneState(IReadOnlyList<InstalledJumpClone> Clones, long TimeLastJumpFileTime);
 
+public sealed record JumpCloneJumpOutcome(InstalledJumpClone? Target, bool CooldownActive);
+
 /// <summary>The installed jump clones (migration 0006 of this project), kept in the characters schema beside the character.</summary>
 public sealed class PgJumpCloneStore
 {
@@ -106,16 +108,23 @@ public sealed class PgJumpCloneStore
 
     /// <summary>
     /// The clone rows of a jump, inside the caller's transaction. The target clone goes (it becomes the body), and so does the clone at
-    /// old body); a target at the origin keeps its id. The last jump time is set to <paramref name="nowFileTime"/>. Returns the target as
-    /// it was, or null when the character has no such clone.
+    /// old body); a target at the origin keeps its id. The cooldown is checked again in this transaction before any clone row moves.
+    /// The last jump time is set to <paramref name="nowFileTime"/>. Returns the target as it was, or a cooldown refusal or missing-clone result.
     /// </summary>
-    public async Task<InstalledJumpClone?> JumpAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long targetCloneId,
-        long originLocationId, string originLocationKind, IReadOnlyList<(int Slot, int TypeId)> bodyImplants, long nowFileTime, CancellationToken cancellationToken = default)
+    public async Task<JumpCloneJumpOutcome> JumpAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long targetCloneId,
+        long originLocationId, string originLocationKind, IReadOnlyList<(int Slot, int TypeId)> bodyImplants, int cooldownHours, long nowFileTime,
+        CancellationToken cancellationToken = default)
     {
         var clones = await ReadClonesAsync(connection, transaction, characterId, cancellationToken);
         if (clones.FirstOrDefault(clone => clone.JumpCloneId == targetCloneId) is not { } target)
         {
-            return null;
+            return new(null, false);
+        }
+        var lastJump = await ReadLastJumpAsync(connection, transaction, characterId, cancellationToken);
+        if (target.LocationId != originLocationId && cooldownHours > 0 && lastJump > 0
+            && lastJump + cooldownHours * TimeSpan.TicksPerHour > nowFileTime)
+        {
+            return new(null, true);
         }
         var origin = clones.FirstOrDefault(clone => clone.LocationId == originLocationId && clone.JumpCloneId != targetCloneId);
         foreach (var cloneId in origin is null ? new[] { targetCloneId } : new[] { origin.JumpCloneId, targetCloneId })
@@ -163,7 +172,7 @@ public sealed class PgJumpCloneStore
         {
             await time.ExecuteNonQueryAsync(cancellationToken);
         }
-        return target;
+        return new(target, false);
     }
 
     private async Task<long> ReadLastJumpAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, CancellationToken cancellationToken)

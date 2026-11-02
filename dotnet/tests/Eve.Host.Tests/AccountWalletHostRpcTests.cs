@@ -1,3 +1,4 @@
+using System.Text;
 using Eve.Characters;
 using Eve.Corporations;
 using Eve.Data;
@@ -111,6 +112,17 @@ public sealed class AccountWalletHostRpcTests
                 return Result(Assert.Single(replies));
             }
 
+            async Task<string> CallError(long callId, string method, params PyValue[] args)
+            {
+                capture.Sent.Clear();
+                var request = Packets.Call(open, callId, "account", method, args);
+                var decodedRequest = MarshalCodec.Decode(MarshalCodec.Encode(request));
+                Assert.True(await dispatcher.DispatchAsync(decodedRequest, session));
+                var response = Assert.IsType<MachoPacket>(MachoPacket.Decode(Assert.Single(capture.Sent)));
+                Assert.Equal(MachoMessage.ErrorResponse, response.Type);
+                return Encoding.ASCII.GetString(MarshalCodec.Encode(capture.Sent[0]));
+            }
+
             void AssertNotifications(params string[] expectedIdTypes)
             {
                 var packets = capture.Sent.Select(packet =>
@@ -128,6 +140,17 @@ public sealed class AccountWalletHostRpcTests
             Assert.Equal(new PyReal(5_000), await Call(1, "GetCashBalance", new PyInt(0)));
             Assert.Equal(new PyReal(0), await Call(2, "GetCashBalance", new PyInt(1), new PyInt(1000)));
 
+            var senderBeforeRefusal = (await wallets.GetAsync(sender))!.Isk;
+            var recipientBeforeRefusal = (await wallets.GetAsync(recipient))!.Isk;
+            var insufficientFunds = await CallError(17, "GiveCash", Py.Number(recipient),
+                new PyReal((double)(senderBeforeRefusal + 1m)));
+            Assert.Contains("NotEnoughMoney", insufficientFunds);
+            Assert.Contains("amount", insufficientFunds);
+            Assert.Contains("balance", insufficientFunds);
+            Assert.Equal(senderBeforeRefusal, (await wallets.GetAsync(sender))!.Isk);
+            Assert.Equal(recipientBeforeRefusal, (await wallets.GetAsync(recipient))!.Isk);
+            Assert.Empty(changes);
+
             Assert.Equal(PyBool.True, await Call(3, "GiveCash", Py.Number(recipient),
                 new PyReal(125.75), new PyStr("private gift")));
             AssertNotifications("clientID");
@@ -137,6 +160,16 @@ public sealed class AccountWalletHostRpcTests
                 new PyReal(40.25), new PyStr("corporation deposit")));
             AssertNotifications("clientID", "*corpid&corpAccountKey");
             Assert.Equal(new PyReal(40.25), await Call(6, "GetCashBalance", new PyInt(1), new PyInt(1000)));
+
+            var recipientBeforeCorpRefusal = (await wallets.GetAsync(recipient))!.Isk;
+            var refusedCorpTransfer = await CallError(18, "GiveCashFromCorpAccount", Py.Number(recipient),
+                new PyReal(40.26), new PyInt(1000), new PyStr("too much"));
+            Assert.Contains("NotEnoughMoney", refusedCorpTransfer);
+            Assert.Contains("amount", refusedCorpTransfer);
+            Assert.Contains("balance", refusedCorpTransfer);
+            Assert.Equal(4, changes.Count);
+            Assert.Equal(40.25m, await transactions.AccountBalanceAsync(new WalletAccount(corporation.Id, 1000)));
+            Assert.Equal(recipientBeforeCorpRefusal, (await wallets.GetAsync(recipient))!.Isk);
 
             Assert.Equal(PyNone.Instance, await Call(7, "GiveCashFromCorpAccount", Py.Number(recipient),
                 new PyReal(12.25), new PyInt(1000), new PyStr("corporation payout")));

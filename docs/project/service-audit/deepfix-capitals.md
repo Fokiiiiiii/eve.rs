@@ -28,3 +28,10 @@ This pass followed the repeatable travel chain for jump-capable ships: jumping t
 ## Remaining audit scope
 
 Fighter launch/recall/ability end-to-end behavior and superweapon activation/effect behavior still need a dedicated pass.
+
+## Delivery
+
+- Code commit `b9050398` was pushed to main in merge commit `0dcbe09bf49f4ddac617c8a2e443ff11a042ae17`.
+- Main CI run 1395 succeeded; `python3 tools/dev/ci-status.py failures 0dcbe09bf49f4ddac617c8a2e443ff11a042ae17` reported no failed jobs.
+- Agent-test run 41366400572 succeeded for `CynoJumpHostTests|JumpDriveRulesTests`.
+- After merging the latest main commit, the space test project built with 0 warnings and 0 errors; the focused database tests passed 49, skipped 0 on `eve_p5`.

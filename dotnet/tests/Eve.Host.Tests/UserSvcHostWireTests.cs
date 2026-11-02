@@ -63,9 +63,23 @@ public sealed class UserSvcHostWireTests
             new PyList([Py.Tuple(new PyLong(trashToken), PyNone.Instance)])));
         Assert.Empty(Assert.IsType<PyObjectEx>(await Call(userSvc, session, "GetRedeemTokens")).List);
 
-        var reverseToken = await CreateRedeemTokenAsync(userSvc, session, 36);
-        Assert.Equal(PyBool.True, await Call(userSvc, session, "ReverseRedeem", new PyLong(reverseToken)));
+        var reverseInvalid = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await Call(userSvc, session, "ReverseRedeem", new PyLong(long.MaxValue)));
+        Assert.True(reverseInvalid.Error.IsUserError);
         Assert.Empty(Assert.IsType<PyObjectEx>(await Call(userSvc, session, "GetRedeemTokens")).List);
+
+        var items = new PgItemStore(rig.Source, rig.InventorySchema);
+        long plexItemId;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            plexItemId = await items.CreateAsync(connection, transaction,
+                new NewItem(44992, characterId, rig.Station, ItemFlags.Hangar, 2));
+            await transaction.CommitAsync();
+        }
+        Assert.Equal(PyBool.True, await Call(userSvc, session, "ReverseRedeem", new PyLong(plexItemId)));
+        Assert.Null(await items.GetAsync(plexItemId));
+        Assert.Single(Assert.IsType<PyObjectEx>(await Call(userSvc, session, "GetRedeemTokens")).List);
 
         var token = Assert.IsType<PyStr>(await Call(userSvc, session, "GetUserToken"));
         Assert.NotEmpty(token.Value);

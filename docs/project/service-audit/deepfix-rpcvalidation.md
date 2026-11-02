@@ -69,7 +69,7 @@ EveJS 261028.1's `Handle_Undock` throws the same error with `item: [4, firstCont
 
 `Station_undock_carries_the_contraband_confirmation_before_any_ship_moves` now asserts the exact dictionary key and tuple `(4, 3721)`, and continues to assert no ship movement/session transition before confirmation (`dotnet/tests/Eve.Services.Space.Tests/SpaceServiceTests.cs:998-1028`). The new wire assertion failed before the Host change because the values dictionary was empty; after the change, build succeeded and `SpaceServiceTests` plus `StructureUndockingTests` passed on `eve_p3` (155 passed, 0 failed, 0 skipped). No real graphical-client run was made.
 
-The Undock fix was built and its DB-backed tests rerun after merging origin/main at `0dcbe09b`. Run 1395 for that main commit completed successfully before this change is pushed.
+The Undock fix was built and its DB-backed tests rerun after merging origin/main at `0dcbe09b`. Run 1395 for that main commit completed successfully before this change was pushed as `fe620da1`; its push-triggered Run 1396 (`41366379102`) completed successfully with no failed jobs. The selected-agent run `41366400572` also succeeded.
 
 ## Remaining audit scope
 

@@ -446,6 +446,28 @@ public class ScanProbeHostTests
     }
 
     [PgFact]
+    public async Task A_probe_scan_ignores_non_finite_client_destinations_instead_of_persisting_them()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _, launcher) = await LauncherInSpaceAsync(rig, probes: 8);
+        await rig.Space.LaunchAsync(session, launcher, 1, CancellationToken.None);
+        var placed = Assert.Single(Placed(rig));
+        var before = await rig.Probes.GetAsync(placed.ProbeId);
+        Assert.NotNull(before);
+        var request = ScanRequest((placed.ProbeId, [double.NaN, before.Position[1], before.Position[2]], 1));
+
+        await rig.ProbeScans.RequestScansAsync(session, request, CancellationToken.None);
+        rig.Now += 7_500;
+        await rig.Scheduler.RunDueAsync();
+
+        var after = await rig.Probes.GetAsync(placed.ProbeId);
+        Assert.NotNull(after);
+        Assert.Equal(before.Position, after.Position);
+        Assert.All(after.Position, coordinate => Assert.True(double.IsFinite(coordinate)));
+        Assert.Contains(Events.Of(session), notification => notification.Name == "OnSystemScanStopped");
+    }
+
+    [PgFact]
     public async Task Recovered_probes_go_back_into_the_launcher_they_came_from_and_the_pilot_is_told_each_one_that_left()
     {
         await using var rig = await Rig.CreateAsync();

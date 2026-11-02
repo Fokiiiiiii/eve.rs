@@ -58,6 +58,8 @@ internal sealed class StructureOfficeRentDue(
         {
             // the paid bill renewed the office: the job waits for the next bill's due time
             await RescheduleAsync(officeId, cancellationToken);
+            if (characterSessions is { } sessions)
+                CorporationOfficeNotifications.BillReceived(sessions, bill.CorporationId);
             return;
         }
         await GiveUpAsync(officeId, now, cancellationToken);
@@ -82,8 +84,6 @@ internal sealed class StructureOfficeRentDue(
             {
                 foreach (var change in changes)
                     wallets.AnnounceCommitted(change);
-                if (characterSessions is { } sessions)
-                    CorporationOfficeNotifications.BillReceived(sessions, bill.CorporationId);
             }
             return paid;
         }

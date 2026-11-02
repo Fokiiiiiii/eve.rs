@@ -92,7 +92,7 @@ internal sealed class HostJumpCloneStore(PgJumpCloneStore clones, NpgsqlDataSour
         (await walletStore.GetAsync(characterId, cancellationToken))?.Isk ?? 0m;
 
     public async ValueTask<CloneJumpResult> JumpAsync(long characterId, long targetCloneId, long originLocationId, string originLocationKind,
-        decimal fee, long ownerCorporationId, long nowFileTime,
+        decimal fee, long ownerCorporationId, int cooldownHours, long nowFileTime,
         CancellationToken cancellationToken)
     {
         // the zero balances are opened on their own, so that a refused jump keeps them
@@ -119,7 +119,11 @@ internal sealed class HostJumpCloneStore(PgJumpCloneStore clones, NpgsqlDataSour
         await statics.EnsureTypesAsync(body.Select(item => item.TypeId).ToArray(), cancellationToken);
         var bodyImplants = body.Select(item => (PilotAugmentations.SlotOf(statics.Type(item.TypeId)), item.TypeId)).ToList();
 
-        var target = await clones.JumpAsync(connection, transaction, characterId, targetCloneId, originLocationId, originLocationKind, bodyImplants, nowFileTime, cancellationToken);
+        var jump = await clones.JumpAsync(connection, transaction, characterId, targetCloneId, originLocationId, originLocationKind,
+            bodyImplants, cooldownHours, nowFileTime, cancellationToken);
+        if (jump.CooldownActive)
+            return new CloneJumpResult("COOLDOWN_ACTIVE");
+        var target = jump.Target;
         if (target is null)
             return new CloneJumpResult("CLONE_NOT_FOUND");
         var station = target.LocationKind == "station" ? stations.Get(target.LocationId) : null;

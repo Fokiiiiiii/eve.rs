@@ -98,6 +98,40 @@ public sealed class JumpCloneStoreTests
         Assert.Equal(0L, (await new PgJumpCloneStore(s.Source, s.CharactersSchema).ReadAsync(characterId)).TimeLastJumpFileTime);
     }
 
+    [PgFact]
+    public async Task Jump_rechecks_the_cooldown_inside_the_transaction_before_moving_a_second_clone()
+    {
+        await using var s = await PgSchemas.CreateAsync();
+        var characterId = await Insert(s, Pilot("Clone Concurrent Jumper"));
+        const long origin = 60000610;
+        var first = await AddCloneAsync(s, characterId, 60000611, "station", "First", []);
+        var second = await AddCloneAsync(s, characterId, 60000612, "station", "Second", []);
+        var store = new PgJumpCloneStore(s.Source, s.CharactersSchema);
+        const long firstJump = 133000000000000000;
+
+        await using (var connection = await s.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            var jump = await store.JumpAsync(connection, transaction, characterId, first, origin, "station", [], 24, firstJump);
+            Assert.False(jump.CooldownActive);
+            Assert.Equal(first, jump.Target!.JumpCloneId);
+            await transaction.CommitAsync();
+        }
+
+        await using (var connection = await s.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            var jump = await store.JumpAsync(connection, transaction, characterId, second, origin, "station", [], 24, firstJump + 1);
+            Assert.True(jump.CooldownActive);
+            Assert.Null(jump.Target);
+            await transaction.CommitAsync();
+        }
+
+        var state = await store.ReadAsync(characterId);
+        Assert.Equal(firstJump, state.TimeLastJumpFileTime);
+        Assert.Contains(state.Clones, clone => clone.JumpCloneId == second && clone.LocationId == 60000612);
+    }
+
     private static async Task<long> AddCloneAsync(PgSchemas s, long characterId, long locationId, string kind, string name, int[] implants)
     {
         await using var connection = await s.Source.OpenConnectionAsync();

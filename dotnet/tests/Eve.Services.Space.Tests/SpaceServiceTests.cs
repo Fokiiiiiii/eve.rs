@@ -280,6 +280,66 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task Asking_for_targets_does_not_abort_a_running_safe_logoff()
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var timers = new Eve.Scheduler.LocalTimers(delay: (duration, token) =>
+        {
+            if (duration != TimeSpan.FromSeconds(30)) return Task.CompletedTask;
+            started.TrySetResult();
+            return release.Task.WaitAsync(token);
+        });
+        var (rig, _, session) = await DockedAsync(localTimers: timers);
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        rig.Space.LifecycleBlockers = (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<string>>([]);
+        var oid = await rig.BindShipInSpaceAsync(session);
+        var closed = false;
+        session.Closed += () => closed = true;
+
+        Assert.Empty(Assert.IsType<PyList>(await rig.ShipCallAsync(session, "SafeLogoff", oid)).Items);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await rig.Space.OrderAsync(session, TargetingOrder.Targets, [], CancellationToken.None);
+        release.TrySetResult();
+        await Rig.UntilAsync(() => closed);
+
+        Assert.True(closed);
+        Assert.False(rig.Space.IsInSpace(session));
+    }
+
+    [PgFact]
+    public async Task Trying_to_lock_a_target_aborts_safe_logoff_even_when_the_lock_is_refused()
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var timers = new Eve.Scheduler.LocalTimers(delay: (duration, token) =>
+        {
+            if (duration != TimeSpan.FromSeconds(30)) return Task.CompletedTask;
+            started.TrySetResult();
+            return release.Task.WaitAsync(token);
+        });
+        var (rig, _, session) = await DockedAsync(localTimers: timers);
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        rig.Space.LifecycleBlockers = (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<string>>([]);
+        var oid = await rig.BindShipInSpaceAsync(session);
+        var closed = false;
+        session.Closed += () => closed = true;
+
+        Assert.Empty(Assert.IsType<PyList>(await rig.ShipCallAsync(session, "SafeLogoff", oid)).Items);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        rig.Sim.TargetAnswer = new CommandReply(false, 0, "TARGET_OUT_OF_RANGE");
+        var refusal = await rig.Space.OrderAsync(session, TargetingOrder.Lock, [60015249], CancellationToken.None);
+        Assert.False(refusal!.Ok);
+        release.TrySetResult();
+        await Task.Delay(25);
+
+        Assert.False(closed);
+        Assert.True(rig.Space.IsInSpace(session));
+    }
+
+    [PgFact]
     public async Task Ejecting_in_space_leaves_the_hull_and_boards_it_back()
     {
         var sessionChangeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

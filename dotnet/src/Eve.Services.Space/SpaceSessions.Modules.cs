@@ -41,7 +41,8 @@ public sealed partial class SpaceSessions
     public async Task<TargetingResult?> OrderAsync(ClientSession session, TargetingOrder order, IReadOnlyList<long> targets, CancellationToken cancellationToken)
     {
         var id = (ulong)session.SessionId;
-        CancelSafeLogoff(session);
+        if (order == TargetingOrder.Lock)
+            CancelSafeLogoff(session);
         if (!_pilots.TryGetValue(id, out var pilot))
         {
             return null;

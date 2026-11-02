@@ -184,6 +184,7 @@ fn of_two_applications_the_stronger_works_and_the_other_waits_inert_until_it_run
     let shooter = Shooter {
         session: A,
         ship_id: scene.pilots[&A].ship.spec.ship_id,
+        telemetry_ship_id: scene.pilots[&A].ship.spec.ship_id,
         module_id: MODULE,
         weapon_type_id: 85_084,
         owner_id: 0,
@@ -223,6 +224,7 @@ fn the_slim_item_shows_the_damage_over_time_and_drops_it_when_the_effect_ends() 
     let shooter = Shooter {
         session: A,
         ship_id: scene.pilots[&A].ship.spec.ship_id,
+        telemetry_ship_id: scene.pilots[&A].ship.spec.ship_id,
         module_id: MODULE,
         weapon_type_id: 85_084,
         owner_id: 0,
@@ -260,6 +262,7 @@ fn the_effect_ends_when_the_ship_leaves_the_scene() {
     let shooter = Shooter {
         session: A,
         ship_id: scene.pilots[&A].ship.spec.ship_id,
+        telemetry_ship_id: scene.pilots[&A].ship.spec.ship_id,
         module_id: MODULE,
         weapon_type_id: 85_084,
         owner_id: 0,
@@ -311,12 +314,87 @@ fn shooter_a(scene: &Scene) -> Shooter {
     Shooter {
         session: A,
         ship_id: scene.pilots[&A].ship.spec.ship_id,
+        telemetry_ship_id: scene.pilots[&A].ship.spec.ship_id,
         module_id: MODULE,
         weapon_type_id: 85_084,
         owner_id: 4_242,
         corporation_id: 0,
         alliance_id: 0,
     }
+}
+
+#[test]
+fn tournament_damage_ledger_keeps_inflight_dot_after_attacker_death() {
+    use crate::scene::tournament_metrics::Participant;
+    let (mut scene, t) = crowd();
+    let a = scene.pilots[&A].ship.spec.clone();
+    let b = scene.pilots[&B].ship.spec.clone();
+    let roster = vec![
+        Participant { character: a.character_id, ship: a.ship_id, team: 0 },
+        Participant { character: b.character_id, ship: b.ship_id, team: 1 },
+    ];
+    scene.tournament_metrics_register(1, 1, t + 1, t, roster.clone()).unwrap();
+    let shooter = shooter_a(&scene);
+    scene.apply_dot(b.ship_id, STRONG, shooter, t + 1);
+    scene.destroy(A, None, t + 2);
+    scene.poll(t + SECOND + 1);
+    let sample = scene.tournament_metrics_sample(1, 1, t + 1, t + SECOND + 1, &roster).unwrap();
+    assert!(sample.pilots[0].destroyed);
+    assert!(!sample.pilots[1].destroyed);
+    assert!(sample.applied.unwrap()[0] > 0.0);
+}
+
+#[test]
+fn tournament_damage_ledger_tracks_real_pod_launch_and_damage_tick() {
+    use crate::scene::tournament_metrics::Participant;
+    let (mut scene, t) = crowd();
+    let a = scene.pilots[&A].ship.spec.clone();
+    let b = scene.pilots[&B].ship.spec.clone();
+    scene
+        .tournament_metrics_register(
+            1,
+            1,
+            t + 1,
+            t,
+            vec![
+                Participant { character: a.character_id, ship: a.ship_id, team: 0 },
+                Participant { character: b.character_id, ship: b.ship_id, team: 1 },
+            ],
+        )
+        .unwrap();
+    launch_pod_at_b(&mut scene, pod(STRONG), t + 1);
+    let now = poll_for(&mut scene, t + 1, 4.0);
+    let totals = scene.tournament_metrics.snapshot(1, 1, now).unwrap();
+    assert!(totals[0] > 0.0, "{totals:?}");
+    assert_eq!(totals[1], 0.0);
+}
+
+#[test]
+fn tournament_damage_ledger_attributes_dot_to_captured_parent_ship() {
+    use crate::scene::tournament_metrics::Participant;
+    let (mut scene, t) = crowd();
+    let a = scene.pilots[&A].ship.spec.clone();
+    let b = scene.pilots[&B].ship.spec.clone();
+    scene
+        .tournament_metrics
+        .register(
+            1,
+            1,
+            t + 1,
+            t,
+            vec![
+                Participant { character: a.character_id, ship: a.ship_id, team: 0 },
+                Participant { character: b.character_id, ship: b.ship_id, team: 1 },
+            ],
+        )
+        .unwrap();
+    let mut shooter = shooter_a(&scene);
+    shooter.ship_id = a.ship_id + 999; // the launcher is a drone; telemetry retains its parent
+    scene.apply_dot(b.ship_id, STRONG, shooter, t + 1);
+    scene.poll(t + SECOND + 1);
+    let totals = scene.tournament_metrics.snapshot(1, 1, t + SECOND + 1).unwrap();
+    assert!(totals[0] > 0.0, "{totals:?}");
+    assert_eq!(totals[1], 0.0);
 }
 
 #[test]

@@ -6,18 +6,32 @@ namespace Eve.Services.Core;
 
 public sealed record ProjectDiscoveryPlayerState(
     double Rank = 1,
-    double Experience = 0,
+    long Experience = 0,
     double AnalysisKredits = 0,
     bool FinishedTutorial = false,
     double TutorialLevel = 0);
 
-public sealed record ProjectDiscoveryPlayerStatistics(string Message, int Code, string ProjectId);
+public sealed record ProjectDiscoveryRewardGrant(bool Granted, decimal? WalletBalance, long? ItemId = null, long? ItemLocation = null);
+
+public sealed record ProjectDiscoveryPlayerStatistics(string Message, int Code, string ProjectId, double? Score = null);
 
 public sealed record ProjectDiscoveryRpcCallbacks(
     Func<long, CancellationToken, ValueTask<ProjectDiscoveryPlayerState?>>? ReadPlayerStateAsync = null,
-    Func<long, double?, CancellationToken, ValueTask>? FixTaskIdAsync = null,
+    Func<long, long?, CancellationToken, ValueTask>? FixTaskIdAsync = null,
     Func<long, CancellationToken, ValueTask<ProjectDiscoveryPlayerStatistics?>>? ReadPlayerStatisticsAsync = null,
-    Func<long, string, CancellationToken, ValueTask<ProjectDiscoveryPlayerState?>>? TransitionTutorialAsync = null);
+    Func<long, string, CancellationToken, ValueTask<ProjectDiscoveryPlayerState?>>? TransitionTutorialAsync = null,
+    Func<ServiceCall, ValueTask<PyValue>>? GetTaskAsync = null,
+    Func<ServiceCall, ValueTask<PyValue>>? SubmitClassificationAsync = null,
+    Func<long, CancellationToken, ValueTask<bool>>? ReadRewardEntitlementAsync = null,
+    Func<ServiceCall, ValueTask<ProjectDiscoveryRewardGrant>>? GrantRewardAsync = null,
+    Action<long, decimal>? AnnounceRewardWallet = null,
+    Func<long>? ReadTutorialXpReward = null,
+    Func<long, string, CancellationToken, ValueTask<int>>? ReadBonusSamplesAsync = null,
+    Func<ServiceCall, ValueTask<PyValue>>? NewTrainingTaskAsync = null,
+    Func<ServiceCall, string, ValueTask<ProjectDiscoveryPlayerState?>>? TransitionTutorialCallAsync = null,
+    bool NotifyStateAfterSubmit = false,
+    Func<int>? ReadProjectId = null,
+    Action<ClientSession, long, long>? AnnounceRewardItem = null);
 
 public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callbacks = null) : IService
 {
@@ -35,6 +49,11 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
     public bool HasMethod(string method) => method is
         "is_enabled" or
         "fix_task_id" or
+        "get_new_task" or
+        "get_maximum_bonus_samples" or
+        "get_remaining_bonus_samples" or
+        "new_training_task" or
+        "post_classification" or
         "get_player_analysis_kredits" or
         "get_player_state" or
         "get_player_statistics" or
@@ -58,6 +77,9 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
         var validArguments = call.Method switch
         {
             "fix_task_id" => call.Kwargs is PyNone && call.Args.Count == 1,
+            "post_classification" => (call.Kwargs is PyNone or PyDict { Entries.Count: 0 } && call.Args.Count is 2 or 3 or 4) ||
+                (call.Args.Count == 3 && call.Kwargs is PyDict { Entries.Count: 1 } remark && JsSemantics.StringValue(remark.Entries[0].Key) == "remark" && remark.Entries[0].Value is PyBool),
+            "new_training_task" => call.Kwargs is PyNone && call.Args.Count == 1 && call.Arg(0) is PyInt or PyLong,
             "get_player_statistics" => HasValidStatisticsArguments(call),
             "get_total_needed_xp" => call.Kwargs is PyNone && call.Args.Count == 1 && call.Arg(0) is PyInt or PyLong or PyReal,
             _ => call.Kwargs is PyNone && call.Args.Count == 0,
@@ -70,11 +92,36 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
         var characterId = call.Session.CharacterId.GetValueOrDefault();
         switch (call.Method)
         {
+            case "get_maximum_bonus_samples":
+            case "get_remaining_bonus_samples":
+                if (characterId <= 0 || _callbacks.ReadBonusSamplesAsync is not { } bonus) throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_BONUS_UNAVAILABLE");
+                return new PyInt(await bonus(characterId, call.Method, call.Cancellation));
+            case "new_training_task":
+                return _callbacks.NewTrainingTaskAsync is { } training ? await training(call) : throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TRAINING_UNAVAILABLE");
+            case "get_new_task":
+                return _callbacks.GetTaskAsync is { } getTask
+                    ? await getTask(call)
+                    : throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TASK_UNAVAILABLE");
+
+            case "post_classification":
+            {
+                if (_callbacks.SubmitClassificationAsync is not { } submit) throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TASK_UNAVAILABLE");
+                var response = await submit(call);
+                if (_callbacks.NotifyStateAfterSubmit && characterId > 0)
+                {
+                    ProjectDiscoveryPlayerState? state = null;
+                    try { state = await ReadStateAsync(characterId, call.Cancellation); }
+                    catch (Exception error) { Console.Error.WriteLine($"Project Discovery state notification read failed: {error.GetType().Name}"); }
+                    if (state is not null) call.Session.AfterResponse(() => SafeNotify(() => call.Session.SendNotification("OnPlayerStateUpdated", "charid", PlayerStateValue(state))));
+                }
+                return response;
+            }
+
             case "is_enabled":
                 return PyBool.True;
 
             case "get_project_id":
-                return new PyInt(1);
+                return new PyInt(_callbacks.ReadProjectId?.Invoke() ?? 1);
 
             case "get_total_needed_xp":
             {
@@ -86,15 +133,36 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
             }
 
             case "get_tutorial_xp_reward":
-                return new PyInt(TutorialXpReward);
+                return Py.Number(_callbacks.ReadTutorialXpReward?.Invoke() ?? TutorialXpReward);
 
             case "get_is_player_entitled_to_tutorial_reward":
+                return characterId > 0 && _callbacks.ReadRewardEntitlementAsync is { } entitled && await entitled(characterId, call.Cancellation) ? PyBool.True : PyBool.False;
             case "give_tutorial_rewards":
-                return PyBool.False;
+            {
+                if (characterId <= 0 || _callbacks.GrantRewardAsync is not { } grant) return PyBool.False;
+                var reward = await grant(call);
+                if (reward.Granted)
+                {
+                    ProjectDiscoveryPlayerState? state = null;
+                    try { state = await ReadStateAsync(characterId, call.Cancellation); }
+                    catch (Exception error) { Console.Error.WriteLine($"Project Discovery state notification read failed: {error.GetType().Name}"); }
+                    call.Session.AfterResponse(() =>
+                    {
+                        if (reward.WalletBalance is { } balance) SafeNotify(() => _callbacks.AnnounceRewardWallet?.Invoke(characterId, balance));
+                        if (reward.ItemId is { } item && reward.ItemLocation is { } location) SafeNotify(() => _callbacks.AnnounceRewardItem?.Invoke(call.Session, item, location));
+                        if (state is not null) SafeNotify(() => call.Session.SendNotification("OnPlayerStateUpdated", "charid", PlayerStateValue(state)));
+                    });
+                }
+                return reward.Granted ? PyBool.True : PyBool.False;
+            }
 
             case "fix_task_id":
                 var taskId = FixedTaskId(call.Arg(0));
-                if (characterId <= 0 || _callbacks.FixTaskIdAsync is not { } fixTaskId)
+                if (characterId <= 0)
+                    throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TASK_FIX_UNAVAILABLE");
+                if (!PublicQaToolsServerService.HasStaffAccountRole(call.Session))
+                    throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TASK_FIX_UNAUTHORIZED");
+                if (_callbacks.FixTaskIdAsync is not { } fixTaskId)
                     throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TASK_FIX_UNAVAILABLE");
                 await fixTaskId(characterId, taskId, call.Cancellation);
                 return PyNone.Instance;
@@ -110,7 +178,7 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
                 var state = await ReadStateAsync(characterId, call.Cancellation);
                 return Py.KeyVal(
                     ("rank", Py.Number(NormalizeRank(state.Rank))),
-                    ("experience", Py.Number(NonNegativeInteger(state.Experience))),
+                    ("experience", new PyInt(Math.Max(0L, state.Experience))),
                     ("analysisKredits", Py.Number(NonNegativeInteger(state.AnalysisKredits))),
                     ("finishedTutorial", state.FinishedTutorial ? PyBool.True : PyBool.False),
                     ("tutorialLevel", Py.Number(NonNegativeInteger(state.TutorialLevel))));
@@ -125,6 +193,8 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
                     StatisticsUnavailableMessage,
                     PlayerNotInDatabaseErrorCode,
                     ActiveProjectId);
+                if (statistics.Score is { } score)
+                    return new PyDict([Pair("project", new PyDict([Pair("score", new PyReal(score))]))]);
                 return new PyDict(
                 [
                     Pair("message", new PyStr(statistics.Message)),
@@ -147,11 +217,11 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
             }
 
             case "reset_tutorial":
-                return PlayerStateValue(await TransitionTutorialAsync(characterId, "reset", call.Cancellation));
+                return PlayerStateValue(await TransitionTutorialAsync(call, "reset"));
 
             case "skip_tutorial":
             {
-                var state = await TransitionTutorialAsync(characterId, "skip", call.Cancellation);
+                var state = await TransitionTutorialAsync(call, "skip");
                 call.Session.AfterResponse(() =>
                 {
                     call.Session.SendNotification("OnPlayerStateUpdated", "charid", PlayerStateValue(state));
@@ -161,11 +231,17 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
             }
 
             case "increase_tutorial_level":
-                return PlayerStateValue(await TransitionTutorialAsync(characterId, "increase", call.Cancellation));
+                return PlayerStateValue(await TransitionTutorialAsync(call, "increase"));
 
             default:
                 return PyNone.Instance;
         }
+    }
+
+    private static void SafeNotify(Action action)
+    {
+        try { action(); }
+        catch (Exception error) { Console.Error.WriteLine($"Project Discovery notification failed: {error.GetType().Name}"); }
     }
 
     private static bool HasValidStatisticsArguments(ServiceCall call) =>
@@ -187,8 +263,12 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
         return new ProjectDiscoveryPlayerState();
     }
 
-    private async ValueTask<ProjectDiscoveryPlayerState> TransitionTutorialAsync(long characterId, string action, CancellationToken cancellationToken)
+    private async ValueTask<ProjectDiscoveryPlayerState> TransitionTutorialAsync(ServiceCall call, string action)
     {
+        long characterId = call.Session.CharacterId.GetValueOrDefault();
+        var cancellationToken = call.Cancellation;
+        if (characterId > 0 && _callbacks.TransitionTutorialCallAsync is { } sessionTransition)
+            return await sessionTransition(call, action) ?? throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TUTORIAL_UNAVAILABLE");
         if (characterId <= 0 || _callbacks.TransitionTutorialAsync is not { } transition)
             throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TUTORIAL_UNAVAILABLE");
         if (await transition(characterId, action, cancellationToken) is not { } state)
@@ -198,7 +278,7 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
 
     private static PyValue PlayerStateValue(ProjectDiscoveryPlayerState state) => Py.KeyVal(
         ("rank", Py.Number(NormalizeRank(state.Rank))),
-        ("experience", Py.Number(NonNegativeInteger(state.Experience))),
+        ("experience", new PyInt(Math.Max(0L, state.Experience))),
         ("analysisKredits", Py.Number(NonNegativeInteger(state.AnalysisKredits))),
         ("finishedTutorial", state.FinishedTutorial ? PyBool.True : PyBool.False),
         ("tutorialLevel", Py.Number(NonNegativeInteger(state.TutorialLevel))));
@@ -212,7 +292,7 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
     private static double NonNegativeInteger(double value) =>
         double.IsFinite(value) ? Math.Max(0, Math.Truncate(value)) : 0;
 
-    private static double? FixedTaskId(PyValue value) => value switch
+    private static long? FixedTaskId(PyValue value) => value switch
     {
         PyInt integer when integer.Value > 0 => integer.Value,
         PyLong integer when integer.Value > 0 => integer.Value,

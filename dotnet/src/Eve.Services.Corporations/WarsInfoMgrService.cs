@@ -95,7 +95,28 @@ public sealed partial class WarsInfoMgrService
     [Eve.Services.Method("GetPublicWarInfo")]
     public async ValueTask<Eve.Marshal.PyValue> GetPublicWarInfo(Eve.Services.ServiceCall call)
     {
-        var warId = PositiveId(call.Arg(0)) ?? 0;
+        var argument = call.Arg(0);
+        if (argument is Eve.Marshal.PyList or Eve.Marshal.PyTuple)
+        {
+            var requestedIds = Sequence(argument)
+                .Select(PositiveId)
+                .Where(id => id.HasValue)
+                .Select(id => id!.Value)
+                .ToArray();
+            if (requestedIds.Length == 0)
+            {
+                return new Eve.Marshal.PyList([]);
+            }
+
+            var records = await WarsAsync(call.Cancellation);
+            var byId = records.ToDictionary(war => war.WarId);
+            return new Eve.Marshal.PyList(requestedIds
+                .Where(byId.ContainsKey)
+                .Select(id => (Eve.Marshal.PyValue)Payload(byId[id]))
+                .ToArray());
+        }
+
+        var warId = PositiveId(argument) ?? 0;
         if (warId == 0)
         {
             return Eve.Marshal.PyNone.Instance;

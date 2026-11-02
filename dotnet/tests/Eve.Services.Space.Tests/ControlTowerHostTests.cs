@@ -171,6 +171,78 @@ public class ControlTowerHostTests
     }
 
     [PgFact]
+    public async Task Tower_eligibility_events_follow_deadline_and_transactional_removal()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var bus = new Eve.Events.EventBus(rig.Source, rig.Scheduler,
+            new Eve.Events.EventBusOptions { MaxAttempts = 3 }, rig.EventsSchema, _ => { });
+        var seen = new List<long>();
+        bus.Subscribe("test.tower.eligibility", [SpaceContainers.ControlTowerEligibilityChangedTopic], (context, _) =>
+        {
+            var payload = context.Event.Payload<SpaceContainers.ControlTowerEligibilityChanged>()!;
+            context.AfterCommit(_ => { seen.Add(payload.CorporationId); return Task.CompletedTask; });
+            return Task.CompletedTask;
+        });
+        await bus.PumpAsync();
+        var (session, items) = await PilotWithItemsAsync(rig, [ControlTower], LowSecSystem);
+        var tower = items[0];
+        const long corporation = 98_000_001;
+        session.Set("corpid", new PyLong(corporation));
+        await rig.Containers.LaunchFromShipAsync(session, tower, CancellationToken.None);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Containers.PublishControlTowerAnchoredAsync(connection, transaction, bus, tower);
+            await transaction.CommitAsync();
+        }
+        await bus.PumpAsync();
+        Assert.Empty(seen);
+        rig.Now += AnchoringMs;
+        await rig.Scheduler.RunDueAsync();
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Containers.PublishControlTowerAnchoredAsync(connection, transaction, bus, tower);
+            await transaction.CommitAsync();
+        }
+        await bus.PumpAsync();
+        Assert.Equal(corporation, Assert.Single(seen));
+        await rig.Deployed.SetTowerStateAsync(tower, SpaceContainers.TowerUnanchoring);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Items.DeleteAsync(connection, transaction, tower);
+            await transaction.CommitAsync();
+        }
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Containers.CompleteControlTowerUnanchorAsync(tower, connection, transaction, bus);
+            await transaction.RollbackAsync();
+        }
+        await bus.PumpAsync();
+        Assert.NotNull(await rig.Deployed.GetAsync(tower));
+        Assert.Single(seen);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Containers.CompleteControlTowerUnanchorAsync(tower, connection, transaction, bus);
+            await transaction.CommitAsync();
+        }
+        await bus.PumpAsync();
+        Assert.Null(await rig.Deployed.GetAsync(tower));
+        Assert.Equal(new[] { corporation, corporation }, seen);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Containers.CompleteControlTowerUnanchorAsync(tower, connection, transaction, bus);
+            await transaction.CommitAsync();
+        }
+        await bus.PumpAsync();
+        Assert.Equal(2, seen.Count);
+    }
+
+    [PgFact]
     public async Task A_control_tower_burns_one_period_of_its_race_fuel_and_goes_offline_when_the_bay_cannot_pay()
     {
         await using var rig = await Rig.CreateAsync();

@@ -2042,12 +2042,13 @@ public class AllianceTests
             session.Set("allianceid", new Eve.Marshal.PyInt(alliance.Id));
             sessions.Enter(executor, session);
             var service = (Eve.Services.IService)new Eve.Services.Corporations.AllianceRegistryService(
-                rig.Store, rig.Characters, () => rig.Now, relations: relations, characterSessions: sessions);
+                rig.Store, rig.Characters, () => rig.Now, relations: relations, characterSessions: sessions, validateWarHQ: (_, owner, hq, _) => ValueTask.FromResult(owner == alliance.Id && hq == 60000002),
+                readWarEligibility: (ids, _) => ValueTask.FromResult<IReadOnlyDictionary<long,bool>>(ids.ToDictionary(id => id, _ => true)));
             await service.CallAsync(new Eve.Services.ServiceCall
             {
                 Session = session,
                 Method = "DeclareWarAgainst",
-                Args = [new Eve.Marshal.PyInt(targetCorp.Id), Eve.Marshal.PyNone.Instance],
+                Args = [new Eve.Marshal.PyInt(targetCorp.Id), new Eve.Marshal.PyInt(60000002)],
                 CallId = new Eve.Marshal.PyInt(71030)
             });
             session.RunAfterResponse();
@@ -2185,12 +2186,13 @@ public class AllianceTests
             var maintenanceDueMs = maintenanceBill.DueFiletime / 10_000L - 11_644_473_600_000L;
             rig.Now = maintenanceDueMs - 24L * 60 * 60 * 1000 - 2_000;
             var service = (Eve.Services.IService)new Eve.Services.Corporations.AllianceRegistryService(
-                rig.Store, rig.Characters, () => rig.Now, relations: relations, characterSessions: sessions);
+                rig.Store, rig.Characters, () => rig.Now, relations: relations, characterSessions: sessions, validateWarHQ: (_, owner, hq, _) => ValueTask.FromResult(owner == alliance.Id && hq == 60000002),
+                readWarEligibility: (ids, _) => ValueTask.FromResult<IReadOnlyDictionary<long,bool>>(ids.ToDictionary(id => id, _ => true)));
             await service.CallAsync(new Eve.Services.ServiceCall
             {
                 Session = session,
                 Method = "DeclareWarAgainst",
-                Args = [new Eve.Marshal.PyInt(targetCorp.Id), Eve.Marshal.PyNone.Instance],
+                Args = [new Eve.Marshal.PyInt(targetCorp.Id), new Eve.Marshal.PyInt(60000002)],
                 CallId = new Eve.Marshal.PyInt(73010)
             });
             session.RunAfterResponse();
@@ -2267,10 +2269,12 @@ public class AllianceTests
             session.Set("corpid", new Eve.Marshal.PyInt(executorCorp.Id));
             session.Set("allianceid", new Eve.Marshal.PyInt(alliance.Id));
             sessions.Enter(actor, session);
+            long deniedOwner = 0;
             var service = (Eve.Services.IService)new Eve.Services.Corporations.AllianceRegistryService(
                 rig.Store, rig.Characters, () => rig.Now, relations: relations, characterSessions: sessions,
-                validateWarHQ: (_, _, _, _) => ValueTask.FromResult(false));
-            Eve.Services.ServiceCall DeclareCall(long againstId, long? warHqId = null) => new()
+                validateWarHQ: (_, owner, hq, _) => ValueTask.FromResult(owner == alliance.Id && hq == 60000002),
+                readWarEligibility: (ids, _) => ValueTask.FromResult<IReadOnlyDictionary<long,bool>>(ids.ToDictionary(id => id, id => id != deniedOwner)));
+            Eve.Services.ServiceCall DeclareCall(long againstId, long? warHqId = 60000002) => new()
             {
                 Session = session,
                 Method = "DeclareWarAgainst",
@@ -2278,6 +2282,8 @@ public class AllianceTests
                 CallId = new Eve.Marshal.PyInt(71003)
             };
 
+            await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() =>
+                service.CallAsync(DeclareCall(targetCorp.Id, null)).AsTask());
             await Assert.ThrowsAsync<Eve.Corporations.CorporationError>(() =>
                 service.CallAsync(DeclareCall(targetCorp.Id + 10, 60000001)).AsTask());
             await Assert.ThrowsAnyAsync<Exception>(() => service.CallAsync(new Eve.Services.ServiceCall
@@ -2288,6 +2294,33 @@ public class AllianceTests
             }).AsTask());
             Assert.Empty(await rig.Store.AllianceBillsAsync(alliance.Id));
             Assert.Null(await relations.GetAsync("war", alliance.Id, targetCorp.Id + 10));
+
+            foreach (var ineligible in new[] { alliance.Id, targetCorp.Id })
+            {
+                deniedOwner = ineligible;
+                var denied = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(
+                    () => service.CallAsync(DeclareCall(targetCorp.Id)).AsTask());
+                var header = Assert.IsType<Eve.Marshal.PyTuple>(Assert.IsType<Eve.Marshal.PyObjectEx>(denied.Error.Payload).Header);
+                var args = Assert.IsType<Eve.Marshal.PyTuple>(header.Items[1]);
+                Assert.Equal(new Eve.Marshal.PyStr("CustomNotify"),args.Items[0]);
+                var values = Assert.IsType<Eve.Marshal.PyDict>(args.Items[1]);
+                Assert.Equal(new Eve.Marshal.PyStr("Both sides must be eligible for war."),
+                    values.Entries.Single(entry => entry.Key == new Eve.Marshal.PyStr("notify")).Value);
+                Assert.Empty(await rig.Store.AllianceBillsAsync(alliance.Id));
+                Assert.Null(await relations.GetAsync("war",alliance.Id,targetCorp.Id));
+                session.RunAfterResponse();
+                Assert.Empty(sink.Packets);
+            }
+            deniedOwner = 0;
+            var memberTarget = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(
+                () => service.CallAsync(DeclareCall(executorCorp.Id)).AsTask());
+            var memberHeader = Assert.IsType<Eve.Marshal.PyTuple>(Assert.IsType<Eve.Marshal.PyObjectEx>(memberTarget.Error.Payload).Header);
+            var memberArgs = Assert.IsType<Eve.Marshal.PyTuple>(memberHeader.Items[1]);
+            Assert.Equal(new Eve.Marshal.PyStr("CustomNotify"),memberArgs.Items[0]);
+            Assert.Empty(await rig.Store.AllianceBillsAsync(alliance.Id));
+            Assert.Null(await relations.GetAsync("war",alliance.Id,executorCorp.Id));
+            session.RunAfterResponse();
+            Assert.Empty(sink.Packets);
 
             var declaration = Assert.IsType<Eve.Marshal.PyObject>(await service.CallAsync(DeclareCall(targetCorp.Id)));
             Assert.Empty(sink.Packets);
@@ -2310,8 +2343,12 @@ public class AllianceTests
             Assert.Equal(alliance.Id, bill.DebtorId);
             Assert.Equal(1_000_125, bill.CreditorId);
 
+            rig.Now += 1_000;
             var replay = Assert.IsType<Eve.Marshal.PyObject>(await service.CallAsync(DeclareCall(targetCorp.Id)));
             var replayFields = Assert.IsType<Eve.Marshal.PyDict>(replay.Args);
+            foreach (var name in new[] { "timeDeclared", "timeStarted" })
+                Assert.Equal(fields.Entries.Single(entry => entry.Key == new Eve.Marshal.PyStr(name)).Value,
+                    replayFields.Entries.Single(entry => entry.Key == new Eve.Marshal.PyStr(name)).Value);
             Assert.Equal(new Eve.Marshal.PyInt(warId), replayFields.Entries.Single(entry =>
                 entry.Key == new Eve.Marshal.PyStr("warID")).Value);
             session.RunAfterResponse();

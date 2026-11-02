@@ -1,5 +1,50 @@
 use super::*;
 
+#[test]
+fn tournament_damage_ledger_attributes_drone_shot_to_parent_hull() {
+    use crate::scene::tests::{NOON, spec, system};
+    use crate::scene::tournament_metrics::Participant;
+    let mut scene = Scene::new(system());
+    let a = spec();
+    let mut b = spec();
+    b.ship_id += 10;
+    b.character_id += 10;
+    scene.enter_in_space(7, a.clone(), [1000.0, 0.0, 0.0], [1.0, 0.0, 0.0], NOON).unwrap();
+    scene.enter_in_space(8, b.clone(), [2000.0, 0.0, 0.0], [1.0, 0.0, 0.0], NOON).unwrap();
+    scene
+        .tournament_metrics
+        .register(
+            1,
+            1,
+            NOON + 1,
+            NOON,
+            vec![
+                Participant { character: a.character_id, ship: a.ship_id, team: 0 },
+                Participant { character: b.character_id, ship: b.ship_id, team: 1 },
+            ],
+        )
+        .unwrap();
+    let shot = Shot {
+        hit: true,
+        wrecking: false,
+        quality: 1.0,
+        chance_to_hit: 1.0,
+        roll: 0.0,
+        damage: [0.0, 20.0, 0.0, 0.0],
+    };
+    let shooter = Shooter {
+        reporter: 7,
+        attacker_ship: a.ship_id + 999,
+        aggressor_ship: a.ship_id,
+        owner: a.character_id,
+        weapon: 42,
+    };
+    scene.land_shot(shooter, 8, &shot, NOON + 1);
+    let totals = scene.tournament_metrics.snapshot(1, 1, NOON + 1).unwrap();
+    assert!((totals[0] - 16.0).abs() < 1e-6, "{totals:?}");
+    assert_eq!(totals[1], 0.0);
+}
+
 fn ship(position: [f64; 3], velocity: [f64; 3], radius: f64, signature: f64) -> Kinematics {
     Kinematics { position, velocity, radius, signature_radius: signature }
 }

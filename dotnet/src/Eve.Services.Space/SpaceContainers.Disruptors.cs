@@ -302,7 +302,7 @@ public sealed partial class SpaceContainers
             _sim.PlaceDisruptor(new SimPlaceDisruptor(
                 deployable.Id, system, type.Name, item.TypeId, type.GroupId, position, radius, range, anchoringDelayMs <= 0, character, corporation, alliance, shipId));
         }
-        if (anchoringDelayMs > 0)
+        if (anchoringDelayMs > 0 || tower)
         {
             await _scheduler.ScheduleAsync(new JobSpec(AnchorJob, activateAt)
             {

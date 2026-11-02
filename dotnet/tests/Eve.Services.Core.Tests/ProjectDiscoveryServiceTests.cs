@@ -85,7 +85,7 @@ public sealed class ProjectDiscoveryServiceTests
     {
         long readCharacter = 0;
         long fixedCharacter = 0;
-        double? fixedTaskId = null;
+        long? fixedTaskId = null;
         var service = new ProjectDiscoveryService(new ProjectDiscoveryRpcCallbacks(
             ReadPlayerStateAsync: (characterId, _) =>
             {
@@ -100,6 +100,7 @@ public sealed class ProjectDiscoveryServiceTests
                 return ValueTask.CompletedTask;
             }));
         var session = new ClientSession { CharacterId = 98000001 };
+        session.Set("accountRole", new PyLong(Eve.Services.GameMasterRoles.Qa));
 
         Assert.Equal(
             Py.KeyVal(
@@ -112,11 +113,28 @@ public sealed class ProjectDiscoveryServiceTests
         Assert.Equal(98000001, readCharacter);
         await service.CallAsync(Request("fix_task_id", session, new PyLong(42)));
         Assert.Equal(98000001, fixedCharacter);
-        Assert.Equal(42, fixedTaskId);
+        Assert.Equal(42L, fixedTaskId);
         await service.CallAsync(Request("fix_task_id", session, new PyLong(-42)));
         Assert.Null(fixedTaskId);
         await service.CallAsync(Request("fix_task_id", session, new PyInt(0)));
         Assert.Null(fixedTaskId);
+    }
+
+    [Fact]
+    public async Task Project_discovery_task_fix_requires_a_staff_account_role()
+    {
+        var callbackCalls = 0;
+        var service = new ProjectDiscoveryService(new ProjectDiscoveryRpcCallbacks(
+            FixTaskIdAsync: (_, _, _) =>
+            {
+                callbackCalls++;
+                return ValueTask.CompletedTask;
+            }));
+        var session = new ClientSession { CharacterId = 42 };
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(
+            () => service.CallAsync(Request("fix_task_id", session, new PyLong(12))).AsTask());
+        Assert.Equal("PROJECT_DISCOVERY_TASK_FIX_UNAUTHORIZED", error.Error.UserErrorMessage);
+        Assert.Equal(0, callbackCalls);
     }
 
     [Fact]
@@ -161,7 +179,7 @@ public sealed class ProjectDiscoveryServiceTests
     public async Task Project_discovery_clears_a_non_positive_task_id_like_the_reference()
     {
         var callbackCalls = 0;
-        double? fixedTaskId = double.NaN;
+        long? fixedTaskId = long.MinValue;
         var service = new ProjectDiscoveryService(new ProjectDiscoveryRpcCallbacks(
             FixTaskIdAsync: (_, taskId, _) =>
             {
@@ -170,10 +188,29 @@ public sealed class ProjectDiscoveryServiceTests
                 return ValueTask.CompletedTask;
             }));
         var session = new ClientSession { CharacterId = 42 };
+        session.Set("accountRole", new PyLong(Eve.Services.GameMasterRoles.Qa));
 
         Assert.Same(PyNone.Instance, await service.CallAsync(Request("fix_task_id", session, new PyInt(-1))));
         Assert.Equal(1, callbackCalls);
         Assert.Null(fixedTaskId);
+    }
+
+    [Fact]
+    public async Task Unavailable_legacy_bonus_and_training_are_explicit_errors()
+    {
+        var service = new ProjectDiscoveryService();
+        var session = new ClientSession { CharacterId = 42 };
+        foreach (var method in new[] { "get_maximum_bonus_samples", "get_remaining_bonus_samples" })
+        {
+            Assert.True(service.HasMethod(method));
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(Request(method, session)).AsTask());
+            Assert.Equal("PROJECT_DISCOVERY_BONUS_UNAVAILABLE", error.Error.UserErrorMessage);
+        }
+        Assert.True(service.HasMethod("new_training_task"));
+        var unavailable = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(Request("new_training_task", session, new PyInt(2))).AsTask());
+        Assert.Equal("PROJECT_DISCOVERY_TRAINING_UNAVAILABLE", unavailable.Error.UserErrorMessage);
+        var invalid = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(Request("new_training_task", session, new PyStr("2"))).AsTask());
+        Assert.Equal("PROJECT_DISCOVERY_ARGUMENTS_INVALID", invalid.Error.UserErrorMessage);
     }
 
     private static ServiceCall Request(string method, ClientSession session, params PyValue[] args) => new()

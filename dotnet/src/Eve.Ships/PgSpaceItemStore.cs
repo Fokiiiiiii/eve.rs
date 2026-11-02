@@ -115,6 +115,13 @@ public sealed class PgSpaceItemStore
     }
 
     /// <summary>What lies in a solar system, oldest first.</summary>
+    public async Task<IReadOnlyList<SpaceItem>> InSystemAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, int solarSystemId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"SELECT {Columns} FROM {_schema}.space_items WHERE solar_system_id = $1 ORDER BY item_id", connection, transaction);
+        command.Parameters.AddWithValue(solarSystemId);
+        return await ReadAllAsync(command, cancellationToken);
+    }
+
     public async Task<IReadOnlyList<SpaceItem>> InSystemAsync(int solarSystemId, CancellationToken cancellationToken = default)
     {
         await using var command = _source.CreateCommand($"SELECT {Columns} FROM {_schema}.space_items WHERE solar_system_id = $1 ORDER BY item_id");

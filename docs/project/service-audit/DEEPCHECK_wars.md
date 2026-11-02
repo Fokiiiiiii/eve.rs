@@ -64,7 +64,7 @@ Client calls は `war_cso.py`; UI actions は `warWindows.py`。成功時 client
 
 ## 未確認と必要な regression
 
-- GetPublicWarInfo sequence-in/sequence-out、GetWarsByOwners の実 Python set、bound nested calls を通す Host wire tests が必要。
+- `GetPublicWarInfo` is now verified through a registered Host wire call backed by PostgreSQL: the pinned client passes `structureInfo.wars` (a list of war IDs) and iterates/slices the returned wars. Host accepts list/tuple IDs and returns ordered `KeyVal` items, omitting unknown IDs; scalar `KeyVal`/`None` behavior remains compatible. At pinned EveJS commit `7cc6f323c7c5c92c2738476a62768318799d8077`, `server/src/services/corporation/warsInfoMgrService.js` still parses only `args[0]` as one numeric ID and returns one payload or null. The batch behavior is therefore an intentional client-contract difference; EveJS scalar behavior does not satisfy this actual caller. `GetWarsByOwners` with the real Python set marshal shape and bound nested calls still need Host wire coverage.
 - negotiation では persistence、subsequent read、通知順、再起動後の state を Host tests で確認する必要がある。EveJS は `warNegotiationRuntimeState.js` と `warNotificationCenter.js` を使う。
 - int/long 両形、None/message optional、UserError/exception envelope、bound kwargs、DB runtime、GUI client はこの作業で実行確認していない。task のため PostgreSQL は未使用。
 - 変更は行っていない。Serena existing-file edit tool の失敗と merge conflicts により、fix/test/merge/push は未完了。

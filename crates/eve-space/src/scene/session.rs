@@ -753,6 +753,7 @@ impl Scene {
         for (session, station_id) in due {
             told.extend(self.clear_tether_policy(session, now));
             if let Some(pilot) = self.pilots.remove(&session) {
+                self.tournament_departed(pilot.ship.spec.character_id, pilot.ship.spec.ship_id, now);
                 told.push(Out::Docked { session, station_id, condition: Self::condition_of(&pilot, now) });
                 told.extend(self.drop_targeting(pilot.ship.spec.ship_id, &pilot.targeting, None, now));
                 told.extend(self.announce_departure(session, pilot.ship.spec.ship_id, now));

@@ -381,6 +381,9 @@ public sealed partial class SpaceSessions
         string? error;
         if (sessionHandoff)
         {
+            List<Func<CancellationToken, ValueTask>> releases = [];
+            try
+            {
             error = await _sim.MoveAbyssalParticipantInOrderAsync(request, reply =>
             {
                 if (reply.Error is not null || pilot is null || destinationSystem is null) return;
@@ -389,8 +392,14 @@ public sealed partial class SpaceSessions
                 pilot.AbyssalContentId = move.Destination.InstanceId > 0 ? contentId : null;
                 pilot.LastAbyssalMove = new AbyssalMoveReceipt(
                     contentId, pilot.CharacterId, pilot.ShipId, move.Source, move.Destination);
-                ApplyAbyssalSessionHandoff(pilot.Session, move.Destination, destinationSystem);
+                releases = ApplyAbyssalSessionHandoff(pilot.Session, move.Destination, destinationSystem);
             }, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                using var cleanupTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                await CompleteBoundObjectReleasesAsync(releases, cleanupTimeout.Token);
+            }
         }
         else
         {
@@ -420,11 +429,12 @@ public sealed partial class SpaceSessions
         return null;
     }
 
-    private void ApplyAbyssalSessionHandoff(ClientSession session, SimSceneKey destination, Eve.Universe.SolarSystemInfo system)
+    private List<Func<CancellationToken, ValueTask>> ApplyAbyssalSessionHandoff(ClientSession session, SimSceneKey destination, Eve.Universe.SolarSystemInfo system)
     {
-        ReleaseBoundObjects(session);
+        var releases = DetachBoundObjects(session);
         _transitions.StartSessionChange((ulong)session.SessionId);
         session.Change(AbyssalSessionLocationAttributes(destination, system));
+        return releases;
     }
 
     private static (string Name, PyValue Value)[] AbyssalSessionLocationAttributes(
@@ -679,7 +689,7 @@ public sealed partial class SpaceSessions
             _pilots.TryRemove((ulong)pilot.Session.SessionId, out _);
             _abyssalOfflineResidents.TryRemove(request.ShipId, out _);
             var client = pilot.Session;
-            ReleaseBoundObjects(client);
+            await CompleteBoundObjectReleasesAsync(DetachBoundObjects(client), CancellationToken.None);
             if (shipDeath is not null) NotifyDeathClient(pilot, shipDeath);
             var systemId = new PyInt(station!.SolarSystemId);
             client.Change(
@@ -809,7 +819,7 @@ public sealed partial class SpaceSessions
             }
 
             var client = pilot.Session;
-            ReleaseBoundObjects(client);
+            await CompleteBoundObjectReleasesAsync(DetachBoundObjects(client), CancellationToken.None);
             if (shipDeath is not null) NotifyDeathClient(pilot, shipDeath);
             var system = new PyInt(station.SolarSystemId);
             client.Change(

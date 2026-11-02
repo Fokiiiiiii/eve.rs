@@ -140,15 +140,26 @@ public sealed partial class CorporationStore
         return await r.ReadAsync(token) ? ReadApplication(r) : null;
     }
 
-    public Task<Application> RespondAsync(long actor,long applicationId,int status,string text,string response,CancellationToken token = default) =>
-        WriteAsync(async (connection,tx) =>
+    public async Task<Application> RespondAsync(long actor,long applicationId,int status,string text,string response,CancellationToken token = default) =>
+        (await RespondWithOutcomeAsync(actor, applicationId, status, text, response, token)).Application;
+
+    public Task<(Application Application, bool Changed)> RespondWithOutcomeAsync(long actor,long applicationId,int status,string text,string response,CancellationToken token = default) =>
+        WriteAsync<(Application Application, bool Changed)>(async (connection,tx) =>
         {
             Application application;
             await using (var command = Command(connection,tx,$"SELECT {ApplicationColumns} FROM {_schema}.applications WHERE id=$1 FOR UPDATE",applicationId))
             await using (var r = await command.ExecuteReaderAsync(token))
                 application = await r.ReadAsync(token) ? ReadApplication(r) : throw new CorporationError("APPLICATION_NOT_FOUND");
             var corp = await GetAsync(connection,tx,application.CorporationId,true,token) ?? throw new CorporationError("CORPORATION_NOT_FOUND");
-            if (application.Archived) return application;
+            if (application.Archived)
+            {
+                var authorized = status is 2 or 3 or 7
+                    ? actor == application.CharacterId
+                    : status == 4 && await HasRoleAsync(connection,tx,corp,actor,CorporationRoles.PersonnelManager,token);
+                if (!authorized || status != application.Status || text != application.Text || response != application.Response)
+                    throw new CorporationError("CORPORATION_ACCESS_DENIED");
+                return (application, false);
+            }
             if (status is 1 or 2 or 3 or 7)
             {
                 if (actor != application.CharacterId || (status == 2 && application.Status is not (6 or 8)))
@@ -174,7 +185,7 @@ public sealed partial class CorporationStore
             var terminal = status is 2 or 3 or 4 or 7;
             await using (var update = Command(connection,tx,$"UPDATE {_schema}.applications SET text=$2,status=$3,response=$4,updated_ms=$5,archived=$6 WHERE id=$1",applicationId,text,status,response,now,terminal))
                 await update.ExecuteNonQueryAsync(token);
-            return application with { Text = text,Status = status,Response = response,UpdatedMs = now,Archived = terminal };
+            return (application with { Text = text,Status = status,Response = response,UpdatedMs = now,Archived = terminal }, true);
         },token);
 
     private async Task CanLeaveAsync(NpgsqlConnection connection,NpgsqlTransaction tx,Character character,CancellationToken token)

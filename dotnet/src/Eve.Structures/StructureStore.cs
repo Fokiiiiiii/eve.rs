@@ -81,6 +81,30 @@ public sealed class StructureStore
     }
 
     /// <summary>Every structure that is not gone, by id.</summary>
+    /// <summary>Whether an owner has a live deployed structure of one of the supplied eligible SDE types.</summary>
+    public async Task<bool> HasEligibleStructureAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction,
+        long[] ownerIds, int[] eligibleTypeIds, CancellationToken cancellationToken = default)
+    {
+        if (ownerIds.Length == 0 || eligibleTypeIds.Length == 0) return false;
+        await using var command = Sql.Command(connection, transaction,
+            Q("SELECT EXISTS(SELECT 1 FROM {schema}.structures WHERE owner_corporation_id = ANY($1) AND type_id = ANY($2) AND destroyed_ms = 0 AND state <> 1)"),
+            ownerIds, eligibleTypeIds);
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken))!;
+    }
+
+    public async Task<IReadOnlySet<long>> EligibleStructureOwnersAsync(NpgsqlConnection connection,
+        NpgsqlTransaction? transaction, long[] ownerIds, int[] eligibleTypeIds, CancellationToken cancellationToken = default)
+    {
+        var result = new HashSet<long>();
+        if (ownerIds.Length == 0 || eligibleTypeIds.Length == 0) return result;
+        await using var command = Sql.Command(connection, transaction,
+            Q("SELECT DISTINCT owner_corporation_id FROM {schema}.structures WHERE owner_corporation_id = ANY($1) AND type_id = ANY($2) AND destroyed_ms = 0 AND state <> 1"),
+            ownerIds, eligibleTypeIds);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) result.Add(reader.GetInt64(0));
+        return result;
+    }
+
     public async Task<IReadOnlyList<StructureRecord>> ListAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, bool includeGone, CancellationToken cancellationToken = default)
     {
         await using var command = Sql.Command(connection, transaction,

@@ -145,6 +145,55 @@ fn a_squadron_sent_to_a_point_flies_there_and_is_told_the_point_as_the_reference
 }
 
 #[test]
+fn tournament_fighter_sample_tracks_damage_on_same_scene_tick() {
+    use crate::scene::tournament_metrics::Participant;
+    let (mut scene, squadron, _) = launched();
+    let player = &scene.pilots[&PLAYER].ship.spec;
+    let roster = vec![Participant { character: player.character_id, ship: player.ship_id, team: 0 }];
+    let controller_ship = player.ship_id;
+    scene.tournament_metrics_register(91, 2, LATER + SECOND, LATER, roster.clone()).unwrap();
+    let read = |scene: &mut Scene, at| {
+        scene.tournament_metrics_sample(91, 2, LATER + SECOND, at, &roster).unwrap().pilots[0]
+            .companions
+            .iter()
+            .find(|c| c.ship_id == SQUADRON_SHIP)
+            .cloned()
+    };
+    let initial = read(&mut scene, LATER).unwrap();
+    assert_eq!(
+        (initial.ship_id, initial.type_id, initial.controller_ship_id, initial.members),
+        (SQUADRON_SHIP, 23_055, controller_ship, Some(6))
+    );
+    let (_, whole) = scene.pilots[&squadron].ship.health.points_left(LATER);
+    let member = whole / 6.0;
+    let mut size = 6;
+    for step in 1..=400 {
+        let now = LATER + step * SECOND;
+        let (_, hit) = scene.damage(SQUADRON_SHIP, [member * 0.5, 0.0, 0.0, 0.0], now);
+        let sample = read(&mut scene, now);
+        if hit.is_some_and(|h| h.destroyed) {
+            assert_eq!(sample.unwrap().members, Some(0), "destroyed resident squadron is known empty");
+            assert!(size < 6, "test must observe a live size change");
+            return;
+        }
+        let current = scene.pilots[&squadron]
+            .ship
+            .npc
+            .as_ref()
+            .unwrap()
+            .drone
+            .as_ref()
+            .unwrap()
+            .squadron
+            .unwrap()
+            .told_size;
+        assert_eq!(sample.unwrap().members, Some(current));
+        size = current;
+    }
+    panic!("squadron was not destroyed");
+}
+
+#[test]
 fn a_squadron_is_told_its_size_as_its_members_are_lost_and_is_destroyed_with_the_last() {
     let (mut scene, squadron, _) = launched();
     let (_, whole) = scene.pilots[&squadron].ship.health.points_left(LATER);

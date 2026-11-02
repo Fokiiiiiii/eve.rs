@@ -128,7 +128,8 @@ pub fn body_entries(system: &SolarSystem, body: &Body) -> Entries {
         | BodyKind::Moon
         | BodyKind::Belt
         | BodyKind::Star
-        | BodyKind::AbyssalEnvironment => {}
+        | BodyKind::AbyssalEnvironment
+        | BodyKind::TournamentBeacon => {}
     }
     entries
 }

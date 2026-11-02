@@ -1039,6 +1039,66 @@ fn remote_repair_cycle_request(out: &[Out]) -> (u64, i32, i64, i64, bool) {
         .expect("remote repair cycle request")
 }
 
+/// A real scene with an unresolved, cutoff-time remote repair cycle, for Sim fence tests.
+pub(crate) struct PendingRepairFixture {
+    pub(crate) scene: Scene,
+    pub(crate) at: i64,
+    pub(crate) session: SessionId,
+    pub(crate) module_id: i64,
+    pub(crate) target_ship_id: i64,
+    pub(crate) cycle_id: u64,
+    pub(crate) armor_before: f64,
+}
+
+pub(crate) fn pending_repair_fixture() -> PendingRepairFixture {
+    let (mut scene, t) = reaching(10_000.0);
+    hurt_partner(&mut scene, t);
+    let armor_before = partner_layers(&scene, t).armor;
+    let mut effect = projected(
+        Remote::MutadaptiveRepair { layer: Layer::Armor, amount: 10.0, bonus_per_cycle: 0.1, bonus_max: 1.5 },
+        Applies::CycleEnd,
+        partner(),
+    );
+    effect.duration_ms = 6_000.0;
+    effect.capacitor_need = 0.0;
+    effect.repeat = 3;
+    let started = scene.activate(A, effect, t);
+    assert!(matches!(started.first(), Some(Out::Accepted { command: 17, .. })), "{started:?}");
+    let (out, at) = poll_until(&mut scene, t, 6.0);
+    let (cycle_id, _, _, _, _) = remote_repair_cycle_request(&out);
+    assert!(scene.tournament_has_pending_host_work(at));
+    PendingRepairFixture {
+        scene,
+        at,
+        session: A,
+        module_id: MODULE,
+        target_ship_id: partner(),
+        cycle_id,
+        armor_before,
+    }
+}
+
+#[test]
+fn tournament_remote_repair_fence_classification_respects_cutoff_and_unsupported_work() {
+    let mut fixture = pending_repair_fixture();
+    assert!(!fixture.scene.tournament_can_fence_remote_only(fixture.at - 1));
+    assert!(fixture.scene.tournament_can_fence_remote_only(fixture.at));
+    assert!(fixture.scene.tournament_can_fence_remote_only(fixture.at + 1));
+    let run = fixture
+        .scene
+        .pilots
+        .get_mut(&fixture.session)
+        .unwrap()
+        .modules
+        .running
+        .iter_mut()
+        .find(|run| run.effect.module_id == fixture.module_id)
+        .unwrap();
+    run.pending_reload = true;
+    assert!(!fixture.scene.tournament_can_fence_remote_only(fixture.at));
+    assert!(fixture.scene.tournament_has_pending_host_work(fixture.at));
+}
+
 #[test]
 fn mutadaptive_remote_repair_waits_for_host_amount_on_every_cycle_and_marks_the_final_one() {
     let (mut scene, t) = reaching(10_000.0);
@@ -1059,9 +1119,13 @@ fn mutadaptive_remote_repair_waits_for_host_amount_on_every_cycle_and_marks_the_
     let (cycle1, number1, cycle_at1, duration1, ends1) = remote_repair_cycle_request(&out1);
     assert_eq!((number1, duration1, ends1), (1, 6_000, false));
     assert_eq!(partner_layers(&scene, at1).armor, before, "repair waits for the host result");
+    assert!(scene.tournament_has_pending_host_work(at1));
+    assert!(!scene.tournament_has_pending_host_work(at1 - 1));
     assert!(scene.remote_repair_cycle_result(A, MODULE, partner(), cycle1 + 10, true, 999.0).is_empty());
     assert_eq!(partner_layers(&scene, at1).armor, before, "a stale result is ignored");
+    assert!(scene.tournament_has_pending_host_work(at1));
     scene.remote_repair_cycle_result(A, MODULE, partner(), cycle1, true, 11.0);
+    assert!(!scene.tournament_has_pending_host_work(at1));
     assert!((partner_layers(&scene, at1).armor - (before + 11.0)).abs() < 1e-3);
     assert!(scene.remote_repair_cycle_result(A, MODULE, partner(), cycle1, true, 999.0).is_empty());
     assert!(
@@ -5223,6 +5287,26 @@ fn launched_structure_bomb() -> (Scene, i64, i64, i64, (u64, i64, u64, u32, Vec<
     );
     assert!(!request.4.contains(&structure_id), "the launching structure is not in its own blast");
     (scene, structure_id, now, 0, request)
+}
+
+#[test]
+fn tournament_cutoff_waits_only_for_structure_bombs_due_at_or_before_cutoff() {
+    let (mut scene, _structure_id, _second, now) = controlled_structure_point_defense();
+    scene.pilots.get_mut(&B).unwrap().protected_until = 0;
+    scene.activate(A, structure_bomb_effect(), now);
+    let (bomb_id, due_at) =
+        scene.deployables.iter().next().map(|(id, bomb)| (*id, bomb.ends_at)).expect("launched bomb");
+    assert!(
+        !scene.tournament_has_pending_host_work(due_at - 1),
+        "a future bomb must not block an earlier cutoff"
+    );
+    assert!(scene.tournament_has_pending_host_work(due_at), "a bomb due at cutoff must be handled");
+    let bomb = scene.deployables.remove(&bomb_id).unwrap();
+    assert!(scene.tournament_has_pending_host_work(due_at - 1), "missing bomb state must fail closed");
+    scene.deployables.insert(bomb_id, bomb);
+    let out = scene.poll(due_at);
+    assert!(out.iter().any(|item| matches!(item, Out::StructureDamageCandidatesRequest { .. })));
+    assert!(scene.tournament_has_pending_host_work(due_at), "a due authorization must remain pending");
 }
 
 #[test]

@@ -90,6 +90,18 @@ public sealed class EventBus
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
         await _scheduler.EnsureRecurringAsync(PurgeKind, "purge", TimeSpan.FromHours(1), cancellationToken: cancellationToken);
+        // Establish every registered cursor before the host can accept a publisher. Otherwise a
+        // StartAt.Now subscriber's first background pump can skip the first live notification.
+        Subscription[] subscriptions;
+        lock (_gate) subscriptions = [.. _subscriptions.Values];
+        if (subscriptions.Length != 0)
+        {
+            long? horizon;
+            while ((horizon = await HorizonAsync(cancellationToken)) is null)
+                await Task.Delay((int)RetryHorizonMs, cancellationToken);
+            foreach (var subscription in subscriptions)
+                await EnsureSubscriberAsync(subscription, horizon.Value, cancellationToken);
+        }
         lock (_gate)
         {
             if (_loop is not null)

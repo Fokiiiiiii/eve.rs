@@ -16,17 +16,18 @@ public sealed partial class CorpMgrService(
     Func<long, CancellationToken, ValueTask<CorpMgrAggressionSettings?>>? readAggressionSettings = null,
     Func<long, long, long, long, int, CancellationToken, ValueTask<IReadOnlyList<CorpMgrAuditEvent>>>? readAuditEvents = null,
     Func<long, CancellationToken, ValueTask<IReadOnlyList<Eve.Inventory.Item>>>? readAssetWraps = null,
-    IReadOnlyDictionary<long, long>? npcCharacterCorporations = null)
+    IReadOnlyDictionary<long, long>? npcCharacterCorporations = null,
+    Func<long,CancellationToken,ValueTask<bool>>? readWarEligibility = null)
 {
     private async Task<Corporation?> Resolve(ServiceCall call) =>
         await store.GetAsync(call.Arg(0) is PyInt id && id.Value > 0 ? id.Value :
             call.Session.CharacterId is { } character ? (await characters.GetAsync(character,call.Cancellation))?.CorporationId ?? 0 : 0,call.Cancellation);
     [Method("GetPublicInfo")]
     public async ValueTask<PyValue> GetPublicInfo(ServiceCall call) => await Resolve(call) is { } c
-        ? CorporationWire.PublicInfo(c,(await store.MembersAsync(c.Id,call.Cancellation)).Count) : PyNone.Instance;
+        ? CorporationWire.PublicInfo(c,(await store.MembersAsync(c.Id,call.Cancellation)).Count, readWarEligibility is not null && await readWarEligibility(c.Id,call.Cancellation)) : PyNone.Instance;
     [Method("GetCorporations")]
     public async ValueTask<PyValue> GetCorporations(ServiceCall call) => await Resolve(call) is { } c
-        ? CorporationWire.Row(c,(await store.MembersAsync(c.Id,call.Cancellation)).Count) : PyNone.Instance;
+        ? CorporationWire.Row(c,(await store.MembersAsync(c.Id,call.Cancellation)).Count, readWarEligibility is not null && await readWarEligibility(c.Id,call.Cancellation)) : PyNone.Instance;
     [Method("GetCorporationIDForCharacter")]
     public async ValueTask<PyValue> GetCorporationIDForCharacter(ServiceCall call)
     {

@@ -52,6 +52,10 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
 
         /// <summary>The exact most recent Abyssal scene move, retained for Host receipt retries.</summary>
         public AbyssalMoveReceipt? LastAbyssalMove { get; set; }
+        public PublicMoveReceipt? LastPublicMove { get; set; }
+        public PendingDockedEntry? LastPublicEntry { get; set; }
+        public PublicMoveReceipt? PendingPublicMove { get; set; }
+        public int PublicMoveInFlight;
 
         public Task? StructureControlDeath { get; set; }
 
@@ -99,6 +103,7 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
 
         /// <summary>The effects the pilot's modules run, as asked and as the simulation holds them (<see cref="RunningModule"/>): a refresh rebuilds them.</summary>
         public ConcurrentDictionary<long, RunningModule> RunningModules { get; } = new();
+        public object ModuleLifecycleSync { get; } = new();
 
         /// <summary>The module repairs under way (nanite paste): what each began with. Ended by a stop, or by the pilot leaving the ship (<see cref="CancelRepairsAsync"/>).</summary>
         public ConcurrentDictionary<long, ModuleRepairRecord> Repairs { get; } = new();
@@ -432,10 +437,23 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
     private long FileTimeNow() => Py.FileTimeFromUnixMs(_nowUnixMs());
 
     /// <summary>Whether the session's ship is in space.</summary>
-    public bool IsInSpace(ClientSession session) => _pilots.ContainsKey((ulong)session.SessionId);
+    public bool IsInSpace(ClientSession session) => !_pendingDockedEntries.ContainsKey((ulong)session.SessionId) && _pilots.TryGetValue((ulong)session.SessionId, out var pilot) && pilot.PendingPublicMove is null;
+
+    /// <summary>Whether this exact live pilot occupies the public scene of the requested system.</summary>
+    public bool IsInPublicSystem(ClientSession session, long systemId) =>
+        systemId is > 0 and <= int.MaxValue && _pilots.TryGetValue((ulong)session.SessionId, out var pilot) &&
+        ReferenceEquals(pilot.Session, session) && session.CharacterId == pilot.CharacterId &&
+        session.GetInt("shipid") == pilot.ShipId && pilot.PendingPublicMove is null &&
+        pilot.SimulationScene == SimSceneKey.SolarSystem((int)systemId);
+
+    public void RequirePublicMoveSettled(ClientSession session)
+    {
+        if (_pendingDockedEntries.ContainsKey((ulong)session.SessionId) || (_pilots.TryGetValue((ulong)session.SessionId, out var pilot) && pilot.PendingPublicMove is not null))
+            throw Notify("A space relocation is still being resolved.");
+    }
 
     /// <summary>The solar system the session's ship is in, or null when it is not in space.</summary>
-    public int? SolarSystemOf(ClientSession session) => _pilots.TryGetValue((ulong)session.SessionId, out var pilot) ? pilot.SolarSystemId : null;
+    public int? SolarSystemOf(ClientSession session) => !_pendingDockedEntries.ContainsKey((ulong)session.SessionId) && _pilots.TryGetValue((ulong)session.SessionId, out var pilot) && pilot.PendingPublicMove is null ? pilot.SolarSystemId : null;
 
     public long? ShipIdOf(ClientSession session) =>
         _pilots.TryGetValue((ulong)session.SessionId, out var pilot) ? pilot.ShipId : null;
@@ -973,11 +991,19 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                     break;
                 // an effect the simulation ended on its own account (the cycles done, the capacitor short, the target gone): the module is taken out of the
                 // numbers the ship is sent with, and the ship is sent again so the simulation drops the module's modifiers (FP-C1)
-                case SimModuleEnded ended when _pilots.TryGetValue(ended.SessionId, out var endedPilot) && endedPilot.ActiveModules.TryRemove(ended.ModuleId, out _):
-                    Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.Reset(ended.ModuleId);
-                    endedPilot.RunningModules.TryRemove(ended.ModuleId, out _);
-                    Background(() => SendShipAsync(ended.SessionId, endedPilot, null, CancellationToken.None));
-                    Background(() => RefreshRunningAsync(endedPilot, ended.SessionId, CancellationToken.None));
+                case SimModuleEnded ended when _pilots.TryGetValue(ended.SessionId, out var endedPilot):
+                    bool moduleRemoved;
+                    lock (endedPilot.ModuleLifecycleSync)
+                    {
+                        moduleRemoved = endedPilot.ActiveModules.TryRemove(ended.ModuleId, out _);
+                        if (moduleRemoved) endedPilot.RunningModules.TryRemove(ended.ModuleId, out _);
+                    }
+                    if (moduleRemoved)
+                    {
+                        Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.Reset(ended.ModuleId);
+                        Background(() => SendShipAsync(ended.SessionId, endedPilot, null, CancellationToken.None));
+                        Background(() => RefreshRunningAsync(endedPilot, ended.SessionId, CancellationToken.None));
+                    }
                     break;
                 case SimRefused { Command: SimCommands.Stop, Reason: "IN_WARP" } inWarp when _pilots.TryGetValue(inWarp.SessionId, out var warping):
                     _warping[inWarp.SessionId] = 0;

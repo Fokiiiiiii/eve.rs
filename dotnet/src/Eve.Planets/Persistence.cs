@@ -40,6 +40,42 @@ public sealed class PlanetStore(NpgsqlDataSource source, string schema = PlanetS
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
         Migrations.ApplyAsync(source, schema, Migrations.Embedded(typeof(PlanetStore).Assembly, "Migrations"), cancellationToken);
 
+    /// <summary>Checks live customs offices against the authoritative inventory owner.</summary>
+    public async Task<bool> HasOwnedCustomsOfficeAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction,
+        string inventorySchema, long[] ownerCorporationIds, CancellationToken cancellationToken = default)
+    {
+        if (ownerCorporationIds.Length == 0) return false;
+        if (!System.Text.RegularExpressions.Regex.IsMatch(inventorySchema, "^[a-z_][a-z0-9_]{0,62}$"))
+            throw new ArgumentException("Not a usable inventory schema name.", nameof(inventorySchema));
+        await using var command = new NpgsqlCommand($"""
+            SELECT EXISTS(SELECT 1 FROM {inventorySchema}.items i
+                JOIN {schema}.customs_offices o ON o.office_id = i.id
+                WHERE i.owner_id = ANY($1) AND i.type_id = $2)
+            """, connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = ownerCorporationIds });
+        command.Parameters.Add(new NpgsqlParameter { Value = Customs.OfficeTypeId });
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken))!;
+    }
+
+    public async Task<IReadOnlySet<long>> CustomsOfficeOwnersAsync(NpgsqlConnection connection,
+        NpgsqlTransaction? transaction, string inventorySchema, long[] ownerIds, CancellationToken cancellationToken = default)
+    {
+        var result = new HashSet<long>();
+        if (ownerIds.Length == 0) return result;
+        if (!System.Text.RegularExpressions.Regex.IsMatch(inventorySchema, "^[a-z_][a-z0-9_]{0,62}$"))
+            throw new ArgumentException("Not a usable inventory schema name.", nameof(inventorySchema));
+        await using var command = new NpgsqlCommand($"""
+            SELECT DISTINCT i.owner_id FROM {inventorySchema}.items i
+                JOIN {schema}.customs_offices o ON o.office_id = i.id
+                WHERE i.owner_id = ANY($1) AND i.type_id = $2
+            """, connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = ownerIds });
+        command.Parameters.Add(new NpgsqlParameter { Value = Customs.OfficeTypeId });
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) result.Add(reader.GetInt64(0));
+        return result;
+    }
+
     public async Task<ColonyDocument?> LockAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long ownerId, long planetId, CancellationToken cancellationToken = default)
     {
         await using var command = new NpgsqlCommand($"SELECT doc::text FROM {schema}.colonies WHERE owner_id = $1 AND planet_id = $2 FOR UPDATE", connection, transaction)

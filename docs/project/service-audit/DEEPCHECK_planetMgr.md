@@ -8,7 +8,7 @@
 | GetMyLaunchesDetails() | eve/client/script/ui/shared/planet/planetUISvc.py:169-173; no args. The CRowset is cached for the planetary UI and launch journal; rows carry launchID, solarSystemID, itemID, ownerID, planetID, status, launchTime and coordinates. |
 | DeleteLaunch(launchID) | eve/client/script/ui/shared/neocom/journal.py:455-464 passes launchID positionally through uthread.new. Reply is ignored; the client removes the row locally and forces a launch-list refresh. |
 
-GetPin calls in the same coverage report are CLIENT-LOCAL: the whole client calls BasePlanet.GetPin, not a planetMgr bound object.
+GetPin calls in the same coverage report are CLIENT-LOCAL, not planetMgr RPCs: `BasePinContainer.ProcessColonyDataSet` calls `planetSvc.GetPlanet(planetID).GetPin(self.pin.id)` at `BasePinContainer.py:607-610`; `planetUIPins.ProcessColonyDataSet` does the same at `planetUIPins.py:471-475`. Both are local model getters on `BasePlanet`, not a remote service or bound object.
 
 ## Host persistence and result shapes
 

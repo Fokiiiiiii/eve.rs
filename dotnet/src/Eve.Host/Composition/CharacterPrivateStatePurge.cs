@@ -24,6 +24,12 @@ internal sealed class CharacterPrivateStatePurge(GameStoreCache cache, string ag
         // These per-character records outlive ordinary session state and do not cascade from the tombstoned character row.
         $"DELETE FROM {charactersSchema}.nes_intro_states WHERE character_id = $1",
         $"DELETE FROM {charactersSchema}.project_discovery_tutorials WHERE character_id = $1",
+        $"DELETE FROM {charactersSchema}.project_discovery_progress WHERE character_id = $1",
+        $"DELETE FROM {charactersSchema}.project_discovery_bonus_days WHERE character_id = $1",
+        $"DELETE FROM {charactersSchema}.project_discovery_bonus_receipts WHERE character_id = $1",
+        $"DELETE FROM {charactersSchema}.project_discovery_training_issuances WHERE character_id = $1",
+        $"DELETE FROM {charactersSchema}.project_discovery_tutorial_receipts WHERE character_id = $1",
+        $"DELETE FROM {charactersSchema}.project_discovery_tutorial_claim_calls WHERE character_id = $1",
         // The account-scoped login milestone remains available to the account's other characters.
         // Skill plans and their dependent requirements/milestones/active selection belong to the character.
         $"DELETE FROM {skillsSchema}.skill_plans WHERE character_id = $1",

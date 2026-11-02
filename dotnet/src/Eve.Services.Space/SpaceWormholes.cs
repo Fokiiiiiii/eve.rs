@@ -121,6 +121,7 @@ public sealed partial class SpaceSessions
     /// </summary>
     public async Task<PyValue> WormholeJumpAsync(ClientSession session, long endId, string? boundObjectId, CancellationToken cancellationToken)
     {
+        RequirePublicMoveSettled(session);
         if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
         {
             throw JumpRefused("NOT_IN_SPACE");

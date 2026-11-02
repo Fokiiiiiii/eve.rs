@@ -86,6 +86,79 @@ fn scene() -> Scene {
 }
 
 #[test]
+fn tournament_damage_ledger_records_real_area_damage_and_preserves_unknown_history() {
+    use super::tournament_metrics::Participant;
+    let mut scene = Scene::new(system());
+    let first = spec();
+    let mut second = spec();
+    second.ship_id += 100;
+    second.character_id += 100;
+    scene.enter_in_space(SESSION, first.clone(), [1_000.0, 0.0, 0.0], [1.0, 0.0, 0.0], NOON).unwrap();
+    scene.enter_in_space(SESSION + 1, second.clone(), [2_000.0, 0.0, 0.0], [1.0, 0.0, 0.0], NOON).unwrap();
+    let roster = vec![
+        Participant { character: first.character_id, ship: first.ship_id, team: 0 },
+        Participant { character: second.character_id, ship: second.ship_id, team: 1 },
+    ];
+    scene.tournament_metrics_register(1, 1, NOON + SECOND, NOON, roster.clone()).unwrap();
+    assert_eq!(scene.tournament_metrics.snapshot(1, 1, NOON), Some([0.0, 0.0]));
+    let at = NOON + SECOND;
+    scene.damage_ship(SESSION, 1, (SESSION + 1, second.ship_id), [0.0, 20.0, 0.0, 0.0], at);
+    let measured = scene.tournament_metrics.snapshot(1, 1, at).unwrap();
+    assert!((measured[0] - 16.0).abs() < 1e-6, "{measured:?}");
+    assert_eq!(measured[1], 0.0);
+    let sample = scene.tournament_metrics_sample(1, 1, NOON + SECOND, at, &roster).unwrap();
+    assert_eq!(sample.at, at);
+    assert_eq!(sample.applied, Some(measured));
+    assert_eq!(sample.pilots.len(), 2);
+    assert_eq!(sample.pilots[0].fitted[0].item_id, first.modules[0].item_id);
+    assert_eq!(sample.pilots[0].fitted[0].overloaded, None);
+    assert!(scene.tournament_metrics_sample(1, 2, NOON + SECOND, at, &roster).is_none());
+    assert!(scene.tournament_metrics_sample(1, 1, NOON, at, &roster).is_none());
+    assert!(scene.tournament_metrics_sample(1, 1, NOON + SECOND, at, &roster[..1]).is_none());
+    assert_eq!(scene.tournament_metrics.snapshot(1, 1, at + SECOND), Some([0.0, 0.0]));
+    scene.tournament_metrics.register(2, 1, NOON, at, roster.clone()).unwrap();
+    assert_eq!(scene.tournament_metrics.snapshot(2, 1, at), None);
+    assert_eq!(scene.tournament_metrics.snapshot(2, 1, at + SECOND - 1), None);
+    assert_eq!(scene.tournament_metrics.snapshot(2, 1, at + SECOND), Some([0.0, 0.0]));
+    scene.tournament_departed(first.character_id, first.ship_id, at + SECOND);
+    assert_eq!(scene.tournament_metrics.snapshot(1, 1, at + SECOND), None);
+    assert!(scene.tournament_has_metrics());
+    assert!(scene.tournament_metrics.release(1, 1, NOON, roster.clone()).is_err());
+    scene.tournament_metrics.release(1, 1, NOON + SECOND, roster.clone()).unwrap();
+    scene.tournament_metrics.release(1, 1, NOON + SECOND, roster.clone()).unwrap();
+    assert!(scene.tournament_metrics.register(1, 1, NOON + SECOND, at, roster.clone()).is_err());
+    assert_eq!(scene.tournament_metrics.snapshot(1, 1, at + SECOND), None);
+}
+
+#[test]
+fn tournament_damage_ledger_fails_closed_on_overflow_unknown_source_and_clock_regression() {
+    use super::tournament_metrics::{Participant, Source};
+    let mut scene = Scene::new(system());
+    let first = spec();
+    scene.enter_in_space(SESSION, first.clone(), [1_000.0, 0.0, 0.0], [1.0, 0.0, 0.0], NOON).unwrap();
+    let hit = scene.damage(first.ship_id, [0.0, 1.0, 0.0, 0.0], NOON).1;
+    assert!(hit.is_some());
+    let roster = vec![Participant { character: first.character_id, ship: first.ship_id, team: 0 }];
+    for id in 1..=3 {
+        scene.tournament_metrics.register(id, 1, NOON + 1, NOON, roster.clone()).unwrap();
+    }
+    scene.tournament_metrics.record(Source::Ship(777), first.ship_id, NOON + 1, hit);
+    assert_eq!(scene.tournament_metrics.snapshot(1, 1, NOON + 1), None);
+    for id in 1..=3 {
+        scene.tournament_metrics.release(id, 1, NOON + 1, roster.clone()).unwrap();
+    }
+    scene.tournament_metrics.register(4, 1, NOON + 1, NOON, roster.clone()).unwrap();
+    for _ in 0..=4096 {
+        scene.tournament_metrics.record(Source::Ship(first.ship_id), first.ship_id, NOON + 1, hit);
+    }
+    assert_eq!(scene.tournament_metrics.snapshot(4, 1, NOON + 1), None);
+    scene.tournament_metrics.register(5, 1, NOON + 1, NOON, roster).unwrap();
+    assert_eq!(scene.tournament_metrics.snapshot(5, 1, NOON + 2), Some([0.0, 0.0]));
+    scene.tournament_metrics.record(Source::Ship(first.ship_id), first.ship_id, NOON + 1, hit);
+    assert_eq!(scene.tournament_metrics.snapshot(5, 1, NOON + 3), None);
+}
+
+#[test]
 fn a_space_login_primes_visuals_before_the_full_bind_without_undocking_again() {
     let mut scene = Scene::new(system());
     scene.enter_in_space(SESSION, spec(), [100.0, 200.0, 300.0], [0.0, 0.0, 1.0], NOON).unwrap();
@@ -1430,6 +1503,10 @@ fn gate(id: i64, position: Vec3, radius: f64, to: (i32, i64), facing: Option<[f6
 }
 
 /// The test system with a gate a few kilometres from the station and another a very long way off, and the system they lead to.
+pub(crate) fn set_test_system(scene: &mut Scene, system: SolarSystem) {
+    scene.system = Arc::new(system);
+}
+
 pub(crate) fn gated_systems() -> (SolarSystem, SolarSystem) {
     let mut here = (*system()).clone();
     // a few kilometres from where a ship comes out of the station

@@ -290,6 +290,43 @@ public sealed class TetherPolicyTests
         Assert.Equal(100, (await rig.Items.GetAsync(itemId))!.Quantity);
     }
 
+    [PgFact]
+    public async Task Concurrent_relocation_of_the_same_session_is_refused_until_first_move_finishes()
+    {
+        var (rig, _, session) = await EnterAsync();
+        await using var dispose = rig;
+        rig.Sim.PublicMoveStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        rig.Sim.PublicMoveRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var first = rig.Space.RelocateAsync(session, 30000142, null, null, CancellationToken.None, Guid.NewGuid().ToString("D"));
+        await rig.Sim.PublicMoveStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var second = await rig.Space.RelocateAsync(session, 30000144, null, null, CancellationToken.None, Guid.NewGuid().ToString("D"));
+        Assert.NotNull(second);
+        Assert.Single(rig.Sim.Heard.OfType<SimMovePublicParticipant>());
+        rig.Sim.PublicMoveRelease.SetResult();
+        Assert.Null(await first);
+    }
+
+    [PgFact]
+    public async Task Conduit_refuses_a_passenger_with_an_unresolved_public_move_before_simulation()
+    {
+        var (rig, conductor, conductorSession) = await EnterAsync();
+        await using var dispose = rig;
+        var passenger = await rig.NewCharacterAsync("Conduit Passenger", 2);
+        var passengerSession = await rig.SessionAsync(passenger, 2);
+        var oid = await rig.BindShipAsync(passengerSession);
+        await rig.ShipCallAsync(passengerSession, "Undock", oid, new PyLong(passenger.ShipId), PyBool.False);
+        rig.Sim.DropPublicMoveReply = true;
+        var refusal = await rig.Space.RelocateAsync(passengerSession, 30000142, null, null, CancellationToken.None, Guid.NewGuid().ToString("D"));
+        Assert.NotNull(refusal);
+        Assert.False(rig.Space.IsInSpace(passengerSession));
+        var before = rig.Sim.Heard.OfType<SimCommand>().Count(m => m.Code == SimCommands.ConduitJump);
+        await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Space.ConduitJumpAsync(conductorSession, conductor.ShipId, 42,
+            30000142, [passenger.ShipId], null, CancellationToken.None));
+        Assert.Equal(before, rig.Sim.Heard.OfType<SimCommand>().Count(m => m.Code == SimCommands.ConduitJump));
+        await rig.Space.ConduitJumpAsync(conductorSession, conductor.ShipId, 42, 30000142, [], null, CancellationToken.None);
+        Assert.Equal(before + 1, rig.Sim.Heard.OfType<SimCommand>().Count(m => m.Code == SimCommands.ConduitJump));
+    }
+
     [PgTheory]
     [InlineData("drive")]
     [InlineData("bridge")]

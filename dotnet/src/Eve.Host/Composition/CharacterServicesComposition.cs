@@ -37,8 +37,18 @@ namespace Eve.Host;
 
 internal sealed partial class CharacterServicesComposition
 {
-    internal static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch, Eve.Calendar.ICalendarStore? CalendarStore, Eve.Calendar.ICalendarAudienceReader? CalendarAudience, Eve.Services.Core.GameRpcCallbacks? GameRpcCallbacks, Eve.Services.Core.KeeperRpcCallbacks? KeeperRpcCallbacks, CharacterSessions? CharacterSessions, Func<long, long, CancellationToken, ValueTask<decimal>>? ContractBrokerFeeAdjustment, Func<long, long, CancellationToken, ValueTask<bool>>? HasContractManagerRole, Func<long, long, short, CancellationToken, ValueTask<bool>>? CanManageCalendarGroupEvent, Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? ReadCurrentCalendarGroups)> CharacterServicesAsync(NpgsqlDataSource source, PgAccountDirectory accounts, OnlineCharacters online, Func<long> now, Foundations foundations, PersistenceStore mailStore, OwnerSession mailStoreOwner, GameStoreCache mailCache, string newCharacterExperienceMode, IOmegaAccountStore omegaAccounts, ConnectedSessions connected)
-        => await new CharacterServicesComposition(source, accounts, online, now, foundations, mailStore, mailStoreOwner, mailCache, newCharacterExperienceMode, omegaAccounts, connected).RunAsync();
+    internal static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch, Eve.Calendar.ICalendarStore? CalendarStore, Eve.Calendar.ICalendarAudienceReader? CalendarAudience, Eve.Services.Core.GameRpcCallbacks? GameRpcCallbacks, Eve.Services.Core.KeeperRpcCallbacks? KeeperRpcCallbacks, CharacterSessions? CharacterSessions, Func<long, long, CancellationToken, ValueTask<decimal>>? ContractBrokerFeeAdjustment, Func<long, long, CancellationToken, ValueTask<bool>>? HasContractManagerRole, Func<long, long, short, CancellationToken, ValueTask<bool>>? CanManageCalendarGroupEvent, Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? ReadCurrentCalendarGroups)> CharacterServicesAsync(NpgsqlDataSource source, PgAccountDirectory accounts, OnlineCharacters online, Func<long> now, Foundations foundations, PersistenceStore mailStore, OwnerSession mailStoreOwner, GameStoreCache mailCache, string newCharacterExperienceMode, IOmegaAccountStore omegaAccounts, ConnectedSessions connected, Action<List<ICharacterEntryHook>>? receiveEntryHooks = null, Action<SpaceContainers?>? receiveSpaceContainers = null, Action<CharacterShips>? receiveTournamentShips = null)
+    {
+        var composition = new CharacterServicesComposition(source, accounts, online, now, foundations, mailStore, mailStoreOwner, mailCache, newCharacterExperienceMode, omegaAccounts, connected);
+        var result = await composition.RunAsync();
+        if (result.Services.Count != 0)
+        {
+            receiveEntryHooks?.Invoke(composition.characterEntryHooks);
+            receiveTournamentShips?.Invoke(composition.ships);
+        }
+        receiveSpaceContainers?.Invoke(composition.spaceContainers);
+        return result;
+    }
 
     public CharacterServicesComposition(NpgsqlDataSource source, PgAccountDirectory accounts, OnlineCharacters online, Func<long> now, Foundations foundations, PersistenceStore mailStore, OwnerSession mailStoreOwner, GameStoreCache mailCache, string newCharacterExperienceMode, IOmegaAccountStore omegaAccounts, ConnectedSessions connected)
     {

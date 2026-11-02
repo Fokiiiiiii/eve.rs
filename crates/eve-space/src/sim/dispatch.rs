@@ -424,7 +424,343 @@ impl Sim {
 
     /// One message from the host.
     pub fn handle(&mut self, message: Message, now: i64) -> Result<Vec<Message>, ProtocolError> {
-        match message {
+        self.handle_with_frame_len(message, now, 1 << 20)
+    }
+
+    /// Transport supplies the received frame size for bounded cutoff buffering.
+    pub fn handle_with_frame_len(
+        &mut self,
+        message: Message,
+        now: i64,
+        frame_bytes: usize,
+    ) -> Result<Vec<Message>, ProtocolError> {
+        const MAX_DEFERRED: usize = 1024;
+        const MAX_DEFERRED_BYTES: usize = 8 * 1024 * 1024;
+        let registering = matches!(
+            &message,
+            Message::RegisterTournamentCutoff { .. } | Message::RegisterTournamentMetrics { .. }
+        );
+        let now = self.observe_wall(now, registering);
+        if let Some(error) = self.deferred_error.take() {
+            return Err(error);
+        }
+        let mut prefix = self.settle_cutoff_fence(now, false)?;
+        let another_due = self.cutoff_fence.as_ref().is_some_and(|fence| {
+            self.scenes.iter().any(|(key, scene)| {
+                !fence.scenes.contains(key)
+                    && scene.tournament_next_deadline().is_some_and(|deadline| deadline <= now)
+            })
+        });
+        if another_due {
+            prefix.extend(self.settle_cutoff_fence(now, true)?);
+        }
+        if self.cutoff_fence.is_none() {
+            prefix.extend(self.tournament_barriers(now));
+        }
+        let is_fence_control = matches!(
+            &message,
+            Message::ReadTournamentCutoff { .. }
+                | Message::ReleaseTournamentCutoff { .. }
+                | Message::ReadTournamentMetrics { .. }
+                | Message::ReadTournamentMetricsV2 { .. }
+                | Message::ReleaseTournamentMetrics { .. }
+                | Message::ModuleWorkResult { .. }
+                | Message::RemoteRepairCycleResult { .. }
+                | Message::DroneWorkResult { .. }
+                | Message::StructureDamageCandidatesResult { .. }
+                | Message::StructureDamageCandidatesFieldResult { .. }
+        );
+        if self.cutoff_fence.is_some() && !is_fence_control {
+            // Unclassified mutations abort the proof rather than silently
+            // stopping an unrelated system or risking a false snapshot.
+            let affected = match &message {
+                Message::Command { session_id, .. }
+                | Message::Activate { session_id, .. }
+                | Message::ShipSpec { session_id, .. }
+                | Message::Bind { session_id }
+                | Message::Leave { session_id, .. }
+                | Message::UpdateState { session_id, .. } => {
+                    self.sessions.get(session_id).map(|key| vec![*key])
+                }
+                Message::MovePublicParticipant { source, destination, .. } => {
+                    Some(vec![*source, *destination])
+                }
+                _ => None,
+            };
+            if let Some(affected) = affected {
+                let affected: BTreeSet<_> = affected.into_iter().collect();
+                let fenced: BTreeSet<_> = affected
+                    .iter()
+                    .copied()
+                    .filter(|key| self.cutoff_fence.as_ref().is_some_and(|fence| fence.scenes.contains(key)))
+                    .collect();
+                if !fenced.is_empty() && fenced.len() != affected.len() {
+                    // A destination may continue advancing while the source is
+                    // fenced; replaying an old transfer there would rewind it.
+                    prefix.extend(self.settle_cutoff_fence(now, true)?);
+                } else if !fenced.is_empty() {
+                    let bytes = frame_bytes.max(1);
+                    let overflow = self.cutoff_fence.as_ref().is_some_and(|fence| {
+                        fence.deferred.len() >= MAX_DEFERRED
+                            || bytes > MAX_DEFERRED_BYTES.saturating_sub(fence.deferred_bytes)
+                            || fenced.iter().any(|key| {
+                                bytes
+                                    > MAX_DEFERRED_BYTES
+                                        .saturating_sub(*fence.scene_bytes.get(key).unwrap_or(&0))
+                            })
+                    });
+                    if overflow {
+                        prefix.extend(self.settle_cutoff_fence(now, true)?);
+                    } else {
+                        let fence = self.cutoff_fence.as_mut().expect("active cutoff fence");
+                        fence.deferred_bytes += bytes;
+                        for key in fenced {
+                            *fence.scene_bytes.entry(key).or_default() += bytes;
+                        }
+                        fence.deferred.push((message, now, bytes));
+                        return Ok(prefix);
+                    }
+                }
+            } else {
+                prefix.extend(self.settle_cutoff_fence(now, true)?);
+            }
+        }
+        let result = match message {
+            Message::RegisterTournamentMetrics { identity } => {
+                use crate::scene::tournament_metrics::Participant;
+                let roster = identity
+                    .roster
+                    .iter()
+                    .map(|&(character, ship, team)| Participant { character, ship, team })
+                    .collect();
+                let result = self.scenes.get_mut(&identity.scene).map(|scene| {
+                    scene.tournament_metrics_register(
+                        identity.match_id,
+                        identity.generation,
+                        identity.start,
+                        now,
+                        roster,
+                    )
+                });
+                let (status, error) = match result {
+                    None => (1, String::new()),
+                    Some(Ok(())) => (0, String::new()),
+                    Some(Err(e)) => (2, e.to_string()),
+                };
+                Ok(vec![Message::RegisterTournamentMetricsReply { identity, status, error }])
+            }
+            message @ (Message::ReadTournamentMetrics { .. } | Message::ReadTournamentMetricsV2 { .. }) => {
+                let (identity, v2) = match message {
+                    Message::ReadTournamentMetrics { identity } => (identity, false),
+                    Message::ReadTournamentMetricsV2 { identity } => (identity, true),
+                    _ => unreachable!(),
+                };
+                use crate::health::RemainingEffectiveHp;
+                use crate::link::{
+                    MetricsCompanion, MetricsFitted, MetricsPilot, MetricsRunning, MetricsSample,
+                };
+                use crate::scene::tournament_metrics::Participant;
+                let roster: Vec<_> = identity
+                    .roster
+                    .iter()
+                    .map(|&(character, ship, team)| Participant { character, ship, team })
+                    .collect();
+                if self.cutoff_fence.is_none() {
+                    prefix.extend(self.poll_at(now));
+                }
+                if let Some(error) = self.deferred_error.take() {
+                    return Err(error);
+                }
+                let sample = if self.cutoff_fence.is_none() {
+                    self.scenes
+                        .get_mut(&identity.scene)
+                        .and_then(|scene| {
+                            scene.tournament_metrics_sample(
+                                identity.match_id,
+                                identity.generation,
+                                identity.start,
+                                now,
+                                &roster,
+                            )
+                        })
+                        .filter(|s| {
+                            s.match_id == identity.match_id
+                                && s.generation == identity.generation
+                                && s.start == identity.start
+                        })
+                        .map(|s| MetricsSample {
+                            at: s.at,
+                            applied: s.applied,
+                            pilots: s
+                                .pilots
+                                .into_iter()
+                                .map(|p| {
+                                    let (ehp_status, ehp) = match p.ehp {
+                                        RemainingEffectiveHp::Unknown(_) => (0, None),
+                                        RemainingEffectiveHp::Finite(v) => (1, Some(v)),
+                                        RemainingEffectiveHp::Infinite => (2, None),
+                                    };
+                                    MetricsPilot {
+                                        character: p.participant.character,
+                                        ship: p.participant.ship,
+                                        team: p.participant.team,
+                                        state: u8::from(p.destroyed),
+                                        ehp_status,
+                                        ehp,
+                                        fitted: p
+                                            .fitted
+                                            .into_iter()
+                                            .map(|m| MetricsFitted {
+                                                item: m.item_id,
+                                                type_id: m.type_id,
+                                                flag: m.flag,
+                                                heat: match m.overloaded {
+                                                    None => 0,
+                                                    Some(false) => 1,
+                                                    Some(true) => 2,
+                                                },
+                                            })
+                                            .collect(),
+                                        running: p
+                                            .running
+                                            .into_iter()
+                                            .map(|m| MetricsRunning {
+                                                item: m.module_id,
+                                                effect: m.effect_id,
+                                                target: m.target_id,
+                                                charge: m.charge_type,
+                                                rounds: m.rounds,
+                                            })
+                                            .collect(),
+                                        companions: p
+                                            .companions
+                                            .into_iter()
+                                            .map(|c| MetricsCompanion {
+                                                ship: c.ship_id,
+                                                type_id: c.type_id,
+                                                controller: c.controller_ship_id,
+                                                activity: c.activity,
+                                                members: if v2 { c.members } else { None },
+                                                kind: match c.kind {
+                                                    crate::ship::CompanionKind::Drone => 0,
+                                                    crate::ship::CompanionKind::Fighter => 1,
+                                                },
+                                            })
+                                            .collect(),
+                                    }
+                                })
+                                .collect(),
+                        })
+                } else {
+                    None
+                };
+                let sample =
+                    sample.filter(|sample| crate::link::tournament_metrics::valid_sample(sample, &identity));
+                let status = if sample.is_some() { 0 } else { 1 };
+                Ok(vec![if v2 {
+                    Message::ReadTournamentMetricsV2Reply { identity, status, error: String::new(), sample }
+                } else {
+                    Message::ReadTournamentMetricsReply { identity, status, error: String::new(), sample }
+                }])
+            }
+            Message::ReleaseTournamentMetrics { identity } => {
+                use crate::scene::tournament_metrics::Participant;
+                let roster = identity
+                    .roster
+                    .iter()
+                    .map(|&(character, ship, team)| Participant { character, ship, team })
+                    .collect();
+                let result = self.scenes.get_mut(&identity.scene).map(|scene| {
+                    scene.tournament_metrics.release(
+                        identity.match_id,
+                        identity.generation,
+                        identity.start,
+                        roster,
+                    )
+                });
+                let (status, error) = match result {
+                    None => (1, String::new()),
+                    Some(Ok(())) => (0, String::new()),
+                    Some(Err(e)) => (2, e.to_string()),
+                };
+                Ok(vec![Message::ReleaseTournamentMetricsReply { identity, status, error }])
+            }
+            Message::RegisterTournamentCutoff { identity, roster } => {
+                use crate::scene::tournament::{TournamentCutoff, TournamentPilot};
+                let result = match self.scenes.get_mut(&identity.scene) {
+                    Some(scene) => scene.tournament_register(
+                        identity.match_id,
+                        identity.generation,
+                        identity.start,
+                        identity.deadline,
+                        now,
+                        roster
+                            .into_iter()
+                            .map(|(character_id, ship_id)| TournamentPilot { character_id, ship_id })
+                            .collect(),
+                    ),
+                    None => Ok(TournamentCutoff::Unavailable),
+                };
+                let (status, error) = match result {
+                    Ok(TournamentCutoff::Pending) => (0, String::new()),
+                    Ok(TournamentCutoff::Ready(_)) => (1, String::new()),
+                    Ok(TournamentCutoff::Unavailable) => (2, String::new()),
+                    Err(error) => (3, error.to_string()),
+                };
+                Ok(vec![Message::RegisterTournamentCutoffReply { identity, status, error }])
+            }
+            Message::ReadTournamentCutoff { identity } => {
+                use crate::scene::tournament::{TournamentCutoff, TournamentEvidence};
+                let result = match self.scenes.get(&identity.scene) {
+                    Some(scene) => scene.tournament_read(
+                        identity.match_id,
+                        identity.generation,
+                        identity.start,
+                        identity.deadline,
+                    ),
+                    None => Ok(TournamentCutoff::Unavailable),
+                };
+                let (status, evidence, error) = match result {
+                    Ok(TournamentCutoff::Pending) => (0, Vec::new(), String::new()),
+                    Ok(TournamentCutoff::Ready(items)) => (
+                        1,
+                        items
+                            .into_iter()
+                            .map(|(pilot, state)| {
+                                (
+                                    pilot.character_id,
+                                    pilot.ship_id,
+                                    match state {
+                                        TournamentEvidence::Alive => 0,
+                                        TournamentEvidence::Destroyed => 1,
+                                        TournamentEvidence::Unknown => 2,
+                                    },
+                                )
+                            })
+                            .collect(),
+                        String::new(),
+                    ),
+                    Ok(TournamentCutoff::Unavailable) => (2, Vec::new(), String::new()),
+                    Err(error) => (3, Vec::new(), error.to_string()),
+                };
+                Ok(vec![Message::ReadTournamentCutoffReply { identity, status, evidence, error }])
+            }
+            Message::ReleaseTournamentCutoff { identity } => {
+                let result = match self.scenes.get_mut(&identity.scene) {
+                    Some(scene) => scene.tournament_release(
+                        identity.match_id,
+                        identity.generation,
+                        identity.start,
+                        identity.deadline,
+                    ),
+                    None => Err("tournament scene not loaded"),
+                };
+                let (status, error) = match result {
+                    Ok(()) => (0, String::new()),
+                    Err(error) => (3, error.to_string()),
+                };
+                Ok(vec![Message::ReleaseTournamentCutoffReply { identity, status, error }])
+            }
             Message::Hello { .. }
             | Message::EnsureAbyssalScene { .. }
             | Message::EnsureAbyssalSceneObject { .. }
@@ -432,12 +768,19 @@ impl Sim {
             | Message::EnsureAbyssalEnvironmentObject { .. }
             | Message::RefreshAbyssalNpc { .. }
             | Message::EnsureAbyssalLootContainer { .. }
+            | Message::MovePublicParticipant { .. }
+            | Message::EnterPublicParticipant { .. }
             | Message::MoveAbyssalParticipant { .. }
             | Message::RebindAbyssalSession { .. }
             | Message::RemoveAbyssalScene { .. }
             | Message::EnsureAbyssalTracePublished { .. }
             | Message::RemoveAbyssalTrace { .. }
             | Message::RemoveAbyssalParticipant { .. }
+            | Message::EnsureTournamentBeacon { .. }
+            | Message::RemoveTournamentBeacon { .. }
+            | Message::QueryTournamentWreck { .. }
+            | Message::RemoveTournamentWreck { .. }
+            | Message::GetSceneBody { .. }
             | Message::GetAbyssalParticipantPose { .. }
             | Message::Enter(..)
             | Message::Leave { .. }
@@ -501,7 +844,10 @@ impl Sim {
                 "a message of kind {} is for the host, not the simulation",
                 other.kind()
             ))),
-        }
+        };
+        prefix.extend(result?);
+        prefix.extend(self.settle_cutoff_fence(now, false)?);
+        Ok(prefix)
     }
 
     /// Applies a host-authorized structure observer transition in the named live scene.
@@ -662,8 +1008,90 @@ impl Sim {
             Message::RemoveAbyssalParticipant { request_id, scene, ship_id } => {
                 return Ok(self.remove_abyssal_participant(request_id, scene, ship_id, now));
             }
+            Message::EnsureTournamentBeacon {
+                request_id,
+                scene,
+                item_id,
+                type_id,
+                group_id,
+                category_id,
+                owner_id,
+                graphic_id,
+                name,
+                position,
+                radius,
+            } => {
+                return Ok(self.ensure_tournament_beacon(
+                    request_id,
+                    scene,
+                    item_id,
+                    type_id,
+                    group_id,
+                    category_id,
+                    owner_id,
+                    graphic_id,
+                    name,
+                    position,
+                    radius,
+                    now,
+                ));
+            }
+            Message::RemoveTournamentBeacon { request_id, scene, item_id } => {
+                return Ok(self.remove_tournament_beacon(request_id, scene, item_id, now));
+            }
+            Message::QueryTournamentWreck { request_id, scene, item_id } => {
+                return Ok(self.tournament_wreck(request_id, scene, item_id, None, now));
+            }
+            Message::RemoveTournamentWreck {
+                request_id,
+                scene,
+                item_id,
+                owner_id,
+                launcher_id,
+                type_id,
+                center,
+                radius,
+            } => {
+                return Ok(self.tournament_wreck(
+                    request_id,
+                    scene,
+                    item_id,
+                    Some((owner_id, launcher_id, type_id, center, radius)),
+                    now,
+                ));
+            }
+            Message::MovePublicParticipant {
+                request_id,
+                operation_id,
+                session_id,
+                ship_id,
+                source,
+                destination,
+                use_anchor,
+                position,
+                direction,
+            } => {
+                return Ok(self.move_public_participant(
+                    request_id,
+                    operation_id,
+                    session_id,
+                    ship_id,
+                    source,
+                    destination,
+                    use_anchor,
+                    position,
+                    direction,
+                    now,
+                ));
+            }
+            Message::GetSceneBody { request_id, scene, item_id } => {
+                return Ok(self.get_scene_body(request_id, scene, item_id));
+            }
             Message::GetAbyssalParticipantPose { request_id, scene, ship_id } => {
                 return Ok(self.get_abyssal_participant_pose(request_id, scene, ship_id, now));
+            }
+            Message::EnterPublicParticipant { request_id, operation_id, enter } => {
+                return Ok(self.enter_public_participant(request_id, operation_id, *enter, now));
             }
             Message::Enter(enter) => return Ok(self.enter(*enter, now)),
             Message::Leave { session_id, why } => {
@@ -990,6 +1418,16 @@ impl Sim {
 
     /// A pilot's commands to its ship, by their command codes.
     fn handle_command(&mut self, message: Message, now: i64) -> Result<Vec<Message>, ProtocolError> {
+        // Commands and scene polling share the scene clock. Clock activation remains
+        // disabled until every scene route and cross-scene timer is translated.
+        let now = match &message {
+            Message::Command { session_id, .. } => self
+                .sessions
+                .get(session_id)
+                .map(|scene| self.scene_clocks.observe(*scene, now))
+                .unwrap_or(now),
+            _ => now,
+        };
         let outs = match message {
             Message::Command { session_id, command: 16, args } => {
                 match (self.scene_of(session_id), args.as_slice()) {

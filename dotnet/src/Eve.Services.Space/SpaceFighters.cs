@@ -53,6 +53,7 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
     private readonly DogmaStatic _statics;
     private readonly Func<ClientSession, int?> _solarSystemOf;
     private readonly Func<int, double?>? _securityOf;
+    private readonly Action<ClientSession>? _requireMoveSettled;
     private readonly Action<string>? _log;
     private readonly ConcurrentDictionary<long, Launched> _launched = new();
     /// <summary>The squadrons let go in space: their items stay there until they are scooped back or destroyed (the simulation keeps them).</summary>
@@ -60,7 +61,7 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
     private long _requests;
 
     public SpaceFighters(ISimulation? sim, CharacterShips ships, DogmaStatic statics, Func<ClientSession, int?> solarSystemOf, Action<string>? log = null,
-        Func<int, double?>? securityOf = null)
+        Func<int, double?>? securityOf = null, Action<ClientSession>? requireMoveSettled = null)
     {
         _sim = sim;
         _ships = ships;
@@ -68,12 +69,18 @@ public sealed class SpaceFighters : ISpaceFighters, IDisposable
         _solarSystemOf = solarSystemOf;
         _log = log;
         _securityOf = securityOf;
+        _requireMoveSettled = requireMoveSettled;
         if (_sim is not null)
         {
             _sim.Received += OnReceived;
             _sim.Lost += OnLost;
         }
     }
+
+    /// <summary>Stable identities and tube ownership of squadrons controlled by a ship.</summary>
+    public IReadOnlyList<TournamentFighterFlight> TournamentFlights(long characterId, long shipId) =>
+        _launched.Values.Where(x => x.CharacterId == characterId && x.ShipId == shipId)
+            .OrderBy(x => x.FighterId).Select(x => new TournamentFighterFlight(x.FighterId, x.TypeId, x.TubeFlag)).ToArray();
 
     public void Dispose()
     {
@@ -1066,6 +1073,7 @@ public (long CharacterId, int TypeId, int SolarSystemId, long CorporationId, lon
 
     private (ClientSession Session, long CharacterId, long ShipId) Pilot(ServiceCall call)
     {
+        _requireMoveSettled?.Invoke(call.Session);
         if (call.Session.CharacterId is not { } characterId || ShipOf(call.Session) is not { } shipId)
         {
             throw MachoErrors.ThrowUserError(NoShipText);

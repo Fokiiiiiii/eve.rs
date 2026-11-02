@@ -73,7 +73,7 @@ where
             frame = reader.next() => {
                 let Some(payload) = frame? else { return Ok(()) };
                 let message = Message::decode(&payload).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                let replies = sim.handle(message, clock()).map_err(io::Error::other)?;
+                let replies = sim.handle_with_frame_len(message, clock(), payload.len() + 4).map_err(io::Error::other)?;
                 write_all(&mut writer, &replies).await?;
             }
             _ = poll.tick() => {

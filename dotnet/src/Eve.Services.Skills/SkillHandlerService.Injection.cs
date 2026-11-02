@@ -118,6 +118,18 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
             || item.OwnerId != character || !IsSkillInjectorType(item.TypeId)
             || item.Singleton && quantity != 1 || !item.Singleton && quantity > item.Quantity)
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector cannot be used.")));
+
+        var dailyAlphaTypeId = catalog.ItemTypeId("Daily Alpha Injector");
+        if (item.TypeId == dailyAlphaTypeId)
+        {
+            if (isAlphaClone?.Invoke(AccountOf(call)) != true)
+                throw MachoErrors.ThrowUserError("InjectorSkillPointLimitReached",
+                    ("typeID", new PyInt(item.TypeId)), ("limit", new PyInt(0)));
+            if (quantity != 1
+                || await store.DailyAlphaSkillInjectorUsedAtAsync(character, item.TypeId, call.Cancellation) is { } usedAt
+                    && SkillInjectorDowntime.NextAfterMs(usedAt) > nowUnixMs())
+                throw MachoErrors.ThrowUserError("AlreadyInjectedToday", ("type", new PyInt(item.TypeId)));
+        }
         return None;
     }
 
@@ -130,10 +142,16 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
         var current = await items.GetAsync(itemId, call.Cancellation);
         var dailyAlphaTypeId = catalog.ItemTypeId("Daily Alpha Injector");
         if (current is null || current.OwnerId != character || !IsSkillInjectorType(current.TypeId)
-            || current.Singleton && quantity != 1 || !current.Singleton && quantity > current.Quantity
-            || current.TypeId == dailyAlphaTypeId
-                && (quantity != 1 || isAlphaClone?.Invoke(AccountOf(call)) != true))
+            || current.Singleton && quantity != 1 || !current.Singleton && quantity > current.Quantity)
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector cannot be used.")));
+        if (current.TypeId == dailyAlphaTypeId)
+        {
+            if (isAlphaClone?.Invoke(AccountOf(call)) != true)
+                throw MachoErrors.ThrowUserError("InjectorSkillPointLimitReached",
+                    ("typeID", new PyInt(current.TypeId)), ("limit", new PyInt(0)));
+            if (quantity != 1)
+                throw MachoErrors.ThrowUserError("AlreadyInjectedToday", ("type", new PyInt(current.TypeId)));
+        }
 
         await dogmaStatic.EnsureTypesAsync([current.TypeId], call.Cancellation);
         var type = dogmaStatic.Type(current.TypeId)
@@ -151,7 +169,7 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
                 throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector cannot be used.")));
             if (item.TypeId == dailyAlphaTypeId
                 && !await store.TryUseDailyAlphaSkillInjectorAsync(connection, transaction, character, item.TypeId, nowUnixMs(), token))
-                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("A Daily Alpha Injector can only be used once per day.")));
+                throw MachoErrors.ThrowUserError("AlreadyInjectedToday", ("type", new PyInt(item.TypeId)));
             var total = await store.TotalPointsAsync(connection, transaction, character, token);
             var free = await store.FreeSkillPointsAsync(connection, transaction, character, token);
             var award = DiminishedInjectorSp(DiminishingTotal(total, free), item.TypeId, quantity, 0);

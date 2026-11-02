@@ -389,11 +389,19 @@ private sealed record ShipHoldRule(
             return new(false, "INVALID_PROFILE", asteroid.Quantity, 0, false, null);
         }
         var delivered = mined.TransferredQuantity;
+        var miningHoldFlags = gas ? new[] { 135, 134 }
+            : CanAddToShipHold(181, yieldType, false, delivered) ? new[] { 181, 134 }
+            : new[] { 182, 134 };
+        var miningHoldFlag = miningHoldFlags.FirstOrDefault(flag =>
+            CanAddToShipHold(flag, yieldType, false, delivered)
+            && CapacityAttributeOf(flag) is { } attribute
+            && snapshot.World.Get(shipId, attribute) > 0);
+        var destinationFlag = miningHoldFlag == 0 ? CargoFlag : miningHoldFlag;
         var remaining = asteroid.Quantity - mined.DepletedQuantity;
         if (delivered > 0)
         {
-            var candidate = new Item(0, yieldTypeId, characterId, shipId, CargoFlag, delivered, false, null);
-            if (await RefuseWhatDoesNotFitTogetherAsync(snapshot, [candidate], CargoFlag, cancellationToken) is not null)
+            var candidate = new Item(0, yieldTypeId, characterId, shipId, destinationFlag, delivered, false, null);
+            if (await RefuseWhatDoesNotFitTogetherAsync(snapshot, [candidate], destinationFlag, cancellationToken) is not null)
             {
                 return new(false, "CARGO_FULL", asteroid.Quantity, 0, false, null);
             }
@@ -401,8 +409,8 @@ private sealed record ShipHoldRule(
         ItemChanged? change = null;
         if (delivered > 0)
         {
-            var id = await items.CreateAsync(connection, transaction, new NewItem(yieldTypeId, characterId, shipId, CargoFlag, delivered, false), cancellationToken);
-            change = new ItemChanged(new Item(id, yieldTypeId, characterId, shipId, CargoFlag, delivered, false, null), solarSystemId, InSpaceFlag, 0);
+            var id = await items.CreateAsync(connection, transaction, new NewItem(yieldTypeId, characterId, shipId, destinationFlag, delivered, false), cancellationToken);
+            change = new ItemChanged(new Item(id, yieldTypeId, characterId, shipId, destinationFlag, delivered, false, null), solarSystemId, InSpaceFlag, 0);
         }
         await items.SetQuantityAsync(connection, transaction, asteroidId, remaining, cancellationToken);
         await ledger.RecordAsync(connection, transaction, new WorkCycleRecord(minerId, cycleId, true, "", remaining, delivered, remaining == 0), cancellationToken);

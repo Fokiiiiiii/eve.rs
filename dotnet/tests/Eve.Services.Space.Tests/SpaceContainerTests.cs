@@ -16,9 +16,9 @@ public class SpaceContainerTests
     private sealed record Flying(Rig Rig, ClientSession Session, Created Character, long Stack);
 
     /// <summary>A pilot in space with <paramref name="quantity"/> tritanium in its hold.</summary>
-    private static async Task<Flying> FlyingWithCargoAsync(Rig rig, long quantity = 100, int type = Tritanium)
+    private static async Task<Flying> FlyingWithCargoAsync(Rig rig, long quantity = 100, int type = Tritanium, int shipTypeId = Rig.Cockroach)
     {
-        var character = await rig.NewCharacterAsync();
+        var character = await rig.NewCharacterAsync(shipTypeId: shipTypeId);
         var stack = (await rig.Ships.GrantAsync(character.CharacterId, type, quantity, singleton: false))!.Single().After;
         Assert.IsType<Eve.Ships.ShipChanged>(await rig.Ships.MoveAsync(character.CharacterId, stack.Id, Rig.Station, character.ShipId, Eve.Ships.CharacterShips.CargoFlag, null));
         var session = await rig.SessionAsync(character, 1);
@@ -449,11 +449,14 @@ public class SpaceContainerTests
         Assert.Equal("Harvestable Cloud", rig.Statics.GroupName(rig.Statics.Type(item.TypeId)!.GroupId));
     }
 
-    [PgFact]
-    public async Task Mine_cycles_check_drone_ownership_and_range_then_persist_ore_and_notify_the_pilot()
+    [PgTheory]
+    [InlineData(32880, 134)]
+    [InlineData(Rig.Cockroach, 182)]
+    [InlineData(601, 5)]
+    public async Task Mine_cycles_check_drone_ownership_and_range_then_persist_ore_and_notify_the_pilot(int shipTypeId, int expectedHoldFlag)
     {
         await using var rig = await Rig.CreateAsync();
-        var flying = await FlyingWithCargoAsync(rig);
+        var flying = await FlyingWithCargoAsync(rig, shipTypeId: shipTypeId);
         var system = (int)flying.Session.GetInt("solarsystemid")!.Value;
         var types = await new Eve.Sde.SdeReader(rig.Source).ReadTypeSummariesAsync();
         var veldspar = Assert.Single(types, type => type.Published && type.Name == "Veldspar").TypeId;
@@ -488,8 +491,32 @@ public class SpaceContainerTests
         Assert.True(mined.Accepted);
         Assert.Equal((750L, 250L, false), (mined.UnitsRemaining, mined.DeliveredUnits, mined.Complete));
         Assert.Equal(750, (await rig.Items.GetAsync(asteroid.Id))!.Quantity);
-        Assert.Equal(250L, Assert.Single(await rig.Items.InContainerAsync(flying.Character.ShipId), i => i.TypeId == veldspar).Quantity);
+        var ore = Assert.Single(await rig.Items.InContainerAsync(flying.Character.ShipId), i => i.TypeId == veldspar);
+        Assert.Equal((250L, expectedHoldFlag), (ore.Quantity, ore.Flag));
         Assert.Contains(Events.Of(flying.Session), e => e.Name == "OnItemChange");
+
+        if (expectedHoldFlag != 5)
+        {
+            var capacity = (await rig.Ships.RoomAsync(flying.Character.CharacterId, flying.Character.ShipId, expectedHoldFlag))!.Value.Capacity;
+            var unitVolume = rig.Statics.Type(veldspar)!.Attributes[rig.Statics.AttributeId("volume")!.Value];
+            var fill = (long)Math.Floor(capacity / unitVolume) - ore.Quantity;
+            if (fill > 0)
+            {
+                await using var connection = await rig.Source.OpenConnectionAsync();
+                await using var transaction = await connection.BeginTransactionAsync();
+                await rig.Items.CreateAsync(connection, transaction,
+                    new NewItem(veldspar, flying.Character.CharacterId, flying.Character.ShipId, expectedHoldFlag, fill, false));
+                await transaction.CommitAsync();
+            }
+
+            rig.Sim.Say(Cycle(drone, 13));
+            await Rig.UntilAsync(() => rig.Sim.Heard.OfType<Eve.Space.SimDroneWorkResult>().Any(r => r.CycleId == 13));
+            var full = rig.Sim.Heard.OfType<Eve.Space.SimDroneWorkResult>().Single(r => r.CycleId == 13);
+            Assert.False(full.Accepted);
+            Assert.Equal("CARGO_FULL", full.Reason);
+            Assert.Equal(750, (await rig.Items.GetAsync(asteroid.Id))!.Quantity);
+            Assert.DoesNotContain(await rig.Items.InContainerAsync(flying.Character.ShipId), item => item.TypeId == veldspar && item.Flag == 5);
+        }
     }
 
     [PgFact]

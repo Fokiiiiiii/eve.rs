@@ -22,4 +22,8 @@ Regression proof:
 
 ## Scope and remaining verification
 
-Verified in headless tests and project builds, including the merged-main Corporation tests (91 passed, 0 skipped) and HostServerTests plus the new bulletin Host test (401 passed, 0 skipped); no real graphical V24 client session was run. The active Zendesk support backend is external and not implemented by eve.rs. This change does not alter the unrelated dirty worktree files present before the audit.
+Verified in headless tests and project builds, including the merged-main Corporation tests (91 passed, 0 skipped) and HostServerTests plus the new bulletin Host test (401 passed, 0 skipped); no real graphical V24 client session was run. The active Zendesk support backend is external and not implemented by eve.rs. The bulletin audit does not alter the unrelated dirty worktree files present before the audit.
+
+## CI follow-up: timer replacement race
+
+CI run 1418 exposed an intermittent `ObjectDisposedException` in `AbyssalSpaceSessionsTests.Disconnect_persists_the_domain_transition_but_keeps_the_sim_resident_ship`: `LocalTimers.Set` can read an entry, then the timer removes it, finishes its action, and disposes its cancellation source before replacement calls `Cancel` (`dotnet/src/Eve.Scheduler/LocalTimers.cs:16-25,54-58,84-87`). `Entry.Cancel` now treats cancellation after disposal as terminal, and the worker disposes its source on every exit path. A 100,000-operation concurrent replacement regression was added in `dotnet/tests/Eve.Scheduler.Tests/LocalTimersTests.cs`; pre-fix, the database-backed failing test passed 12 repetitions locally, consistent with the race being intermittent. After the fix, LocalTimersTests passed 6/6 and the full AbyssalSpaceSessionsTests class passed 20/20 on `eve_p5`.

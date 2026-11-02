@@ -1,4 +1,3 @@
-using System.Text;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
@@ -64,11 +63,22 @@ public partial class HostServerTests
             MarshalCodec.Encode(Packets.CallWithKwargs(
                 open, ++callId, "air_npe", "skip_air_npe", new PyTuple([]),
                 Py.Dict(("machoVersion", new PyInt(1)))))));
-        var notification = Assert.IsType<PyObject>(
-            MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload));
-        Assert.Equal(ClientNotification.ClassName,
-            Encoding.UTF8.GetString(Assert.IsType<PyBytes>(notification.Name).Value.Span));
-        Assert.Same(PyNone.Instance, Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
+        var notifications = new List<string>();
+        PyValue response;
+        while (true)
+        {
+            var message = MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
+            var packet = MachoPacket.Decode(message);
+            if (packet?.Type == MachoMessage.Notification)
+            {
+                notifications.Add(packet.Dest.BroadcastId ?? string.Empty);
+                continue;
+            }
+            response = message;
+            break;
+        }
+        Assert.Equal(["OnTutorialSkipped", "OnAirNpeStateChanged"], notifications);
+        Assert.Same(PyNone.Instance, Result(response));
         Assert.True(skipped);
         Assert.Equal(2, state);
     }

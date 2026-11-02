@@ -1013,6 +1013,13 @@ public class SpaceServiceTests
         var warning = await Assert.ThrowsAsync<MachoWrappedException>(() =>
             rig.ShipCallAsync(session, "Undock", binding, new PyLong(character.ShipId), PyBool.False));
         Assert.Equal("ShipContrabandWarningUndock", warning.Error.UserErrorMessage);
+        var header = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(warning.Error.Payload).Header);
+        var arguments = Assert.IsType<PyTuple>(header.Items[1]);
+        var values = Assert.IsType<PyDict>(arguments.Items[1]);
+        var item = Assert.IsType<PyTuple>(Assert.Single(values.Entries).Value);
+        Assert.Equal(new PyStr("item"), Assert.Single(values.Entries).Key);
+        Assert.Equal(new PyInt(4), item.Items[0]);
+        Assert.Equal(new PyInt(3721), item.Items[1]);
         Assert.Equal(stationId, session.GetInt("stationid"));
         Assert.Equal(enters, rig.Sim.Heard.OfType<SimEnter>().Count());
 

@@ -87,7 +87,7 @@ public sealed partial class WalletTransactions
         }
         if (balances[from] < amount)
         {
-            throw new InsufficientFundsException(from);
+            throw new InsufficientFundsException(from, balances[from]);
         }
         if (amount > WalletLimits.MaximumIsk - balances[to]) throw new MoneyLimitException();
         await ApplyAsync(connection, transaction, from, to, -amount, refTypeId, reason, timeMs, operationKey, cancellationToken);

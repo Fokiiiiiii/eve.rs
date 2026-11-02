@@ -223,11 +223,17 @@ public sealed partial class AccountService(PgWalletStore wallets, Eve.Corporatio
             // Never return the corporation's post-transfer balance to an unrelated donor.
             return recipientCorporation is null ? PyBool.True : PyNone.Instance;
         }
+        catch (InsufficientFundsException error)
+        {
+            throw MachoErrors.ThrowUserError("NotEnoughMoney",
+                ("balance", new PyReal((double)(error.AvailableBalance ?? 0m))),
+                ("amount", new PyReal((double)amount)));
+        }
         catch (MoneyLimitException)
         {
             throw MoneyLimitError();
         }
-        catch (Exception error) when (error is InsufficientFundsException or WalletNotFoundException or WalletOperationConflictException)
+        catch (Exception error) when (error is WalletNotFoundException or WalletOperationConflictException)
         {
             return PyNone.Instance;
         }
@@ -277,11 +283,17 @@ public sealed partial class AccountService(PgWalletStore wallets, Eve.Corporatio
             Announce(walletTransactions, settlement);
             return PyNone.Instance;
         }
+        catch (InsufficientFundsException error)
+        {
+            throw MachoErrors.ThrowUserError("NotEnoughMoney",
+                ("balance", new PyReal((double)(error.AvailableBalance ?? 0m))),
+                ("amount", new PyReal((double)amount)));
+        }
         catch (MoneyLimitException)
         {
             throw MoneyLimitError();
         }
-        catch (Exception error) when (error is InsufficientFundsException or WalletNotFoundException or WalletOperationConflictException)
+        catch (Exception error) when (error is WalletNotFoundException or WalletOperationConflictException)
         {
             return PyNone.Instance;
         }

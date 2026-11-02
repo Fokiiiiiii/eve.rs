@@ -93,17 +93,22 @@ public sealed class LoginInitializationRpcServicesTests
         Assert.Same(PyNone.Instance, await service.CallAsync(Call("skip_air_npe", session)));
         Assert.Equal(2, skipCalls);
 
-        var packet = Assert.IsType<PyObject>(Assert.Single(sink.Packets));
-        Assert.Equal(new PyStr("carbon.common.script.net.machoNetPacket.Notification"), packet.Name);
-        var packetItems = Assert.IsType<PyTuple>(packet.Args).Items;
-        var envelope = Assert.IsType<PyTuple>(packetItems[4]);
-        var notificationBody = Assert.IsType<PyTuple>(Assert.Single(envelope.Items));
-        var notification = Assert.IsType<PyTuple>(MarshalCodec.DecodeExact(
-            Assert.IsType<PyBuffer>(notificationBody.Items[1]).Value));
-        var invocation = Assert.IsType<PyTuple>(notification.Items[1]);
-        var args = Assert.IsType<PyTuple>(invocation.Items[1]);
-        Assert.Equal(new PyInt(42), args.Items[0]);
-        Assert.Equal(new PyInt(3), args.Items[1]);
+        var notifications = sink.Packets.Select(packet =>
+        {
+            var packetObject = Assert.IsType<PyObject>(packet);
+            Assert.Equal(new PyStr("carbon.common.script.net.machoNetPacket.Notification"), packetObject.Name);
+            var packetItems = Assert.IsType<PyTuple>(packetObject.Args).Items;
+            var envelope = Assert.IsType<PyTuple>(packetItems[4]);
+            var notificationBody = Assert.IsType<PyTuple>(Assert.Single(envelope.Items));
+            var notification = Assert.IsType<PyTuple>(MarshalCodec.DecodeExact(
+                Assert.IsType<PyBuffer>(notificationBody.Items[1]).Value));
+            var invocation = Assert.IsType<PyTuple>(notification.Items[1]);
+            return Assert.IsType<PyTuple>(invocation.Items[1]).Items;
+        }).ToArray();
+        Assert.Equal(2, notifications.Length);
+        Assert.Empty(notifications[0]);
+        Assert.Equal(new PyInt(42), notifications[1][0]);
+        Assert.Equal(new PyInt(3), notifications[1][1]);
     }
 
     [Fact]

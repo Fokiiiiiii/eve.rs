@@ -25,6 +25,40 @@ public sealed class CharacterHostTests
     private const long ProxyNode = MachoMessage.ProxyNodeId;
 
     [PgFact]
+    public async Task Air_npe_skip_clears_the_client_tutorial_and_persists_through_host_restart()
+    {
+        var previousMode = Environment.GetEnvironmentVariable("EVE_NEW_CHARACTER_EXPERIENCE_MODE");
+        Environment.SetEnvironmentVariable("EVE_NEW_CHARACTER_EXPERIENCE_MODE", "tutorial");
+        try
+        {
+            await using var rig = await CharacterHostRig.CreateAsync();
+            var character = await rig.CreateCharacterAsync("tutorial", 1);
+            var sink = new RecordingPacketSink();
+            var session = new ClientSession { CharacterId = character, Sink = sink };
+            session.Set("charid", new PyLong(character));
+            var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("air_npe"));
+
+            Assert.IsType<PyNone>(await CallAsync(service, "skip_air_npe", session));
+            var notifications = Notifications(sink);
+            Assert.Equal(new[] { "OnTutorialSkipped", "OnAirNpeStateChanged" },
+                notifications.Select(notification => notification.Name));
+            Assert.Empty(notifications[0].Args);
+            Assert.Equal(new PyValue[] { new PyInt(character), new PyInt(3) }, notifications[1].Args);
+
+            var skipped = await rig.Characters.GetAsync(character);
+            Assert.Equal(3, skipped!.AirNpeState);
+            Assert.Equal("none", skipped.TutorialFirstLoginHandoff);
+
+            await rig.RestartAsync();
+            Assert.Equal(3, (await rig.Characters.GetAsync(character))!.AirNpeState);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("EVE_NEW_CHARACTER_EXPERIENCE_MODE", previousMode);
+        }
+    }
+
+    [PgFact]
     public async Task Achievement_tracker_updates_are_validated_before_persisting_and_survive_host_restart()
     {
         await using var rig = await CharacterHostRig.CreateAsync();
@@ -1431,7 +1465,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             (_runtime, _shutdown) = await BuildHostAsync(_schemas);
         }
 
-        public async Task<long> CreateCharacterAsync()
+        public async Task<long> CreateCharacterAsync(string tutorialEntryMode = "disabled", int airNpeState = 2)
         {
             var character = new NewCharacter(
                 AccountId: 1,
@@ -1439,7 +1473,11 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
                 Gender: 0, RaceId: 1, BloodlineId: 1, AncestryId: 1, SchoolId: 0, TypeId: 1373,
                 CorporationId: CorporationId, FactionId: null,
                 StationId: Station, SolarSystemId: 30000142, ConstellationId: 20000020, RegionId: 10000002,
-                DollInfo: null, PortraitInfo: null);
+                DollInfo: null, PortraitInfo: null)
+            {
+                TutorialEntryMode = tutorialEntryMode,
+                AirNpeState = airNpeState,
+            };
             await using var connection = await Source.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
             var id = await new PgCharacterStore(Source, CharactersSchema).InsertAsync(connection, transaction, character);

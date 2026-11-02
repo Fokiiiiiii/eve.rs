@@ -79,6 +79,10 @@ EveJS 261028.1 distinguishes these: `baseService` dispatches safe-logoff action 
 
 `Asking_for_targets_does_not_abort_a_running_safe_logoff` reproduced the defect before the change: after `GetTargets`, releasing the 30-second timer did not close the session (`SpaceServiceTests.cs:282-309`). `Trying_to_lock_a_target_aborts_safe_logoff_even_when_the_lock_is_refused` covers the action side: EveJS aborts when the client attempts a lock, even if the simulation later refuses it (`SpaceServiceTests.cs:311-342`). After the fix and merge of origin/main at `3bed36cd`, the Space project built cleanly; both focused tests passed, and `SpaceServiceTests` plus `StructureUndockingTests` passed on `eve_p3` (157 passed, 0 failed, 0 skipped). Run 1397 for `3bed36cd` completed green before this change is pushed.
 
+## Latest push checkpoint
+
+The safe-logoff target-query fix was committed as `44529e57` and pushed to main in merge commit `d7d698de` after merging the latest origin/main updates. The Space tests project built with 0 warnings/errors; `SpaceServiceTests` and `StructureUndockingTests` passed on `eve_p3` after the final merge (157 passed, 0 failed, 0 skipped). The latest completed main CI before the push was Run 1400 (`f70d87a538f4`), green. Push-triggered CI Run 1401 (`41377699967`) completed successfully with no failed tests or jobs.
+
 ## Remaining audit scope
 
 This increment covers invalid warp inputs, the accepted `CmdDock` reply shape, the Undock contraband warning payload, and read-only target queries during safe logoff, with Host/live checks for these paths. It does not complete hostile, malformed or out-of-order input coverage for every Host service or every first-day and daily player flow. Continue with combat actions and the other movement RPCs. Existing inventory/loot, wallet, wormhole and NPC handoffs document adjacent gameplay work but do not establish complete RPC-validation coverage.

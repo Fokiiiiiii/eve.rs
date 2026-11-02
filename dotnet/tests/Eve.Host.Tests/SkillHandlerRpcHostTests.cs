@@ -13,7 +13,12 @@ public partial class HostServerTests
     public async Task Skill_rpcs_accept_transport_macho_version_and_keep_the_client_wire_shapes_on_the_host()
     {
         var catalog = new SkillCatalog([], new Dictionary<int, IReadOnlyList<StartingSkill>>());
-        var training = new CharacterTraining(null!, catalog, null!, null!, new TrainingSettings(), () => 0);
+        var training = new CharacterTraining(null!, catalog, null!, null!, new TrainingSettings
+        {
+            Speed = 1.5,
+            Attribute = (_, id) => id,
+            LearningBonus = (_, id) => id - 160,
+        }, () => 0);
         var handler = new SkillHandlerService(null!, catalog, training, null!, null!, null!, null!, () => 0, null!);
         Start(strictRpc: true, configure: registry =>
         {
@@ -70,7 +75,13 @@ public partial class HostServerTests
         Assert.Equal(MachoMessage.ErrorResponse, Assert.IsType<MachoPacket>(MachoPacket.Decode(invalidExtraction)).Type);
 
         Assert.IsType<PyNone>(await Call(15, "GetAllSkills"));
-        Assert.Equal(5, Assert.IsType<PyDict>(await Call(16, "GetAttributes")).Entries.Count);
+        var attributes = Assert.IsType<PyDict>(await Call(16, "GetAttributes"));
+        Assert.Equal(5, attributes.Entries.Count);
+        Assert.Equal(Py.Number(252), attributes.Entries.Single(entry => entry.Key == new PyInt(164)).Value);
+        Assert.Equal(Py.Number(255), attributes.Entries.Single(entry => entry.Key == new PyInt(165)).Value);
+        Assert.Equal(Py.Number(258), attributes.Entries.Single(entry => entry.Key == new PyInt(166)).Value);
+        Assert.Equal(Py.Number(261), attributes.Entries.Single(entry => entry.Key == new PyInt(167)).Value);
+        Assert.Equal(Py.Number(264), attributes.Entries.Single(entry => entry.Key == new PyInt(168)).Value);
         Assert.Empty(Assert.IsType<PyDict>(await Call(17, "GetBoosters")).Entries);
         Assert.Equal(new PyInt(0), await Call(18, "GetDiminishedSpFromInjectors", new PyInt(40520), new PyInt(1), new PyInt(0)));
         Assert.Equal(new PyInt(0), await Call(19, "GetFreeSkillPoints"));

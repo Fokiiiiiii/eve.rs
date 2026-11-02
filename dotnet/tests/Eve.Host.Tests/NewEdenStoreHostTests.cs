@@ -183,12 +183,14 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
         Assert.True(((PyInt)tokenFields["tokenID"]).Value > 0);
         Assert.Equal(new PyInt(15), tokenFields["quantity"]);
         Assert.Equal(new PyInt(station.Id), tokenFields["stationID"]);
+        Assert.Same(PyNone.Instance, tokenFields["massTokenID"]);
 
         var claimToken = Py.Dict(
             ("tokenID", tokenFields["tokenID"]),
             ("massTokenID", PyNone.Instance),
             ("typeID", tokenFields["typeID"]));
-        var claimArgs = new PyValue[] { new PyList([claimToken]), new PyLong(pilot) };
+        var claimTokenWithMassId = Py.Tuple(tokenFields["tokenID"], tokenFields["tokenID"], tokenFields["typeID"]);
+        var claimArgs = new PyValue[] { new PyList([claimToken, claimTokenWithMassId]), new PyLong(pilot) };
         session.Set("stationid", new PyLong(otherStation.Id));
         var wrongStation = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
         {

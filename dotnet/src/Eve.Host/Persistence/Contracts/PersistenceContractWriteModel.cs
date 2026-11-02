@@ -216,7 +216,7 @@ public sealed class PersistenceContractWriteModel(
         if (status != 0 || expired < nowFileTime) throw new ContractUserErrorException("ConContractNotAvailable");
         if (availability != 0 && assigneeId != characterId && assigneeId != corporationId && (allianceId == 0 || assigneeId != allianceId))
             throw new ContractUserErrorException("ConContractNotAvailable");
-        if ((!isCorporationIssued && issuerId == characterId) || (isCorporationIssued && issuerCorporationId == corporationId))
+        if (issuerId == characterId || (isCorporationIssued && issuerCorporationId == corporationId))
             throw new ContractUserErrorException("ConCannotAcceptOwnContract");
 
         var requested = new List<(int TypeId, long Quantity)>();
@@ -356,7 +356,7 @@ public sealed class PersistenceContractWriteModel(
         if (currentStationId != startStationId) throw new ContractUserErrorException("ConNotInStation");
         if (availability != 0 && assigneeId != characterId && assigneeId != corporationId && (allianceId == 0 || assigneeId != allianceId))
             throw new ContractUserErrorException("ConContractNotAvailable");
-        if ((!isCorporationIssued && issuerId == characterId) || (isCorporationIssued && issuerCorporationId == corporationId))
+        if (issuerId == characterId || (isCorporationIssued && issuerCorporationId == corporationId))
             throw new ContractUserErrorException("ConCannotAcceptOwnContract");
         if (wrapItemId <= 0) throw new ContractUserErrorException("ConContractNotAvailable");
         var wrap = await items.LockAndGetAsync(connection, transaction, wrapItemId, cancellationToken);
@@ -379,6 +379,12 @@ public sealed class PersistenceContractWriteModel(
             command.Parameters.AddWithValue(nowFileTime); command.Parameters.AddWithValue(acceptForCorporation);
             command.Parameters.AddWithValue(acceptForCorporation ? acceptorWalletKey : 1000);
             if (await command.ExecuteNonQueryAsync(cancellationToken) != 1) throw new ContractUserErrorException("ConContractNotAvailable");
+        }
+        if (expiryJobs is not null)
+        {
+            await expiryJobs.CancelAsync(connection, transaction, contractId, cancellationToken);
+            await expiryJobs.ScheduleAsync(connection, transaction, contractId,
+                checked(nowFileTime + (long)numDays * TimeSpan.TicksPerDay), cancellationToken);
         }
         await PublishNotificationAsync(connection, transaction, isCorporationIssued ? 0 : issuerId,
             isCorporationIssued ? issuerCorporationId : 0, 0, "OnContractAccepted", contractId, cancellationToken);
@@ -548,6 +554,8 @@ public sealed class PersistenceContractWriteModel(
             notifyIssuer ? (isCorporationIssued ? 0 : issuerId) : (acceptorIsCorporation ? 0 : acceptorId),
             notifyIssuer ? (isCorporationIssued ? issuerCorporationId : 0) : (acceptorIsCorporation ? acceptorId : 0),
             0, targetStatus == 4 ? "OnContractCompleted" : "OnContractFailed", contractId, cancellationToken);
+        if (expiryJobs is not null)
+            await expiryJobs.CancelAsync(connection, transaction, contractId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         events?.Wake();
         return true;
@@ -739,7 +747,7 @@ public sealed class PersistenceContractWriteModel(
         if (status != 0 || expired < nowFileTime) throw new ContractUserErrorException("ConContractNotAvailable");
         if (availability != 0 && assigneeId != characterId && assigneeId != corporationId && (allianceId == 0 || assigneeId != allianceId))
             throw new ContractUserErrorException("ConContractNotAvailable");
-        if ((!isCorporationIssued && issuerId == characterId) || (isCorporationIssued && issuerCorporationId == corporationId))
+        if (issuerId == characterId || (isCorporationIssued && issuerCorporationId == corporationId))
             throw new ContractUserErrorException("ConCannotAcceptOwnContract");
 
         long previousBidId = 0, previousBidderId = 0;

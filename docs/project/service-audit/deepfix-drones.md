@@ -37,4 +37,4 @@ This handoff covers the capacitor-warfare path below. Drones' other command/life
 
 ## Remaining verification
 
-No graphical-client session was used. The other drone, electronic-warfare, and remote-repair flows remain outside this increment. Code is committed as e1d4eb28 after merging origin/main at ac348916; push awaits the red gate's in-progress CI run 41371810281.
+No graphical-client session was used. The other drone, electronic-warfare, and remote-repair flows remain outside this increment. Code is committed as e1d4eb28 after merging origin/main at ac348916 and pushed in 7a1b1af2. Push-triggered CI run 41373642745 (CI 1399) completed successfully with no failed jobs. After merging subsequent origin/main commit f70d87a5, the Rust module suite (160), Host resistance tests (4), and database-backed Host module tests (36) passed again. Main CI 1400 at f70d87a5 also completed successfully.

@@ -1,3 +1,5 @@
+using Eve.Dogma;
+using Eve.Fitting;
 using Eve.Inventory;
 using Eve.Marshal;
 using Eve.Services.Ships;
@@ -53,6 +55,34 @@ public class AmmoHostTests
         var told = rig.Sim.Heard.OfType<SimActivate>().Last().Effect.OnChanges.Single(c => c.AttributeId == 54);
         Assert.Equal(turret.OptimalRange, told.Value);
         Assert.Equal(snapshot.World.Get(gun, 54), turret.OptimalRange, 3);
+    }
+
+    [PgFact]
+    public async Task A_charge_capacity_at_a_binary_float_boundary_is_preserved_in_the_simulation()
+    {
+        static async Task<DogmaStatic> FloatingCapacityStatics(DogmaStatic statics)
+        {
+            await statics.EnsureTypesAsync([RailgunI, Antimatter], CancellationToken.None);
+            var module = statics.Type(RailgunI)!;
+            var moduleAttributes = module.Attributes.ToDictionary();
+            moduleAttributes[AmmoRules.CapacityAttribute] = 0.6;
+            var charge = statics.Type(Antimatter)!;
+            var chargeAttributes = charge.Attributes.ToDictionary();
+            chargeAttributes[AmmoRules.VolumeAttribute] = 0.05;
+            return statics.WithFixtures([
+                module with { Attributes = moduleAttributes },
+                charge with { Attributes = chargeAttributes },
+            ]);
+        }
+
+        await using var rig = await Rig.CreateAsync(staticsOverride: FloatingCapacityStatics);
+        var (session, character, gun) = await ArmedInSpaceAsync(rig, loaded: true);
+        var loaded = (await rig.Ships.LoadAsync(character.CharacterId, CancellationToken.None))!;
+        Assert.Equal(12, loaded.Charges.Single().Quantity);
+
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, gun, "projectileFired", 980050000105, 1000, CancellationToken.None));
+        var turret = Assert.IsType<SimTurret>(Assert.IsType<SimActivate>(rig.Sim.Heard.Last()).Effect.Turret);
+        Assert.Equal(12, turret.Charge!.Rounds);
     }
 
     [PgFact]

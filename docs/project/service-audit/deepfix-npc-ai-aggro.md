@@ -25,6 +25,7 @@ The whole-client search found one caller of `GetOutputForClientSolarSystem`, in 
 - CI run 1439 failed only because this Host wire test still expected the previous `(0, 0)` values. That exact failure was reproduced locally; a follow-up exposed that `Py.Number(1)` also produces `PyInt`, unlike EveJS's real-valued output, so the service now emits `PyReal` explicitly and the wire test checks each tuple item.
 - Follow-up push `5553e1b9` passed CI run 1440, including all .NET shards, Windows, Rust, and headless end-to-end checks.
 - CI run 1441 on the subsequent main sync exposed the nondeterministic salvage success test above; the failure was reproduced before adding the deterministic reward roll.
+- Fix push `6c2da3ad` passed CI run 1442 with no failed tests or jobs.
 
 ## Remaining boundary
 

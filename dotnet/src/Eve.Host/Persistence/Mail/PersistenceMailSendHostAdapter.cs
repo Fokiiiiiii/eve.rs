@@ -410,6 +410,12 @@ public sealed class PersistenceMailSendHostAdapter(
         CancellationToken cancellationToken) =>
         WriteNotificationAsync(recipientId, placerId, typeId, BountiesGroupId, data, idempotencyKey, cancellationToken);
 
+    public Task WriteInsurancePayoutNotificationAsync(
+        long recipientId, long shipId, decimal amount, bool defaultPayout, long lossId, CancellationToken cancellationToken) =>
+        WriteNotificationAsync(recipientId, 1_000_113, 35, 11,
+            new JsonObject { ["itemID"] = shipId, ["amount"] = amount, ["payout"] = defaultPayout },
+            $"insurance-payout:{lossId}", cancellationToken);
+
     public Task WriteJumpCloneDeletedNotificationAsync(
         long characterId,
         long cloneId,

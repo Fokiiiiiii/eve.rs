@@ -86,6 +86,9 @@ public sealed class InsuranceRpcHostWireTests : IAsyncLifetime
     private static PyValue Field(PyObject row, string name) =>
         Assert.IsType<PyDict>(row.Args).Entries.Single(entry => JsSemantics.PlainText(entry.Key) == name).Value;
 
+    private static PyValue Field(PyDict row, string name) =>
+        row.Entries.Single(entry => JsSemantics.PlainText(entry.Key) == name).Value;
+
     private static long Integer(PyValue value) => value switch
     {
         PyInt number => number.Value,
@@ -209,12 +212,58 @@ public sealed class InsuranceRpcHostWireTests : IAsyncLifetime
         Assert.NotEqual(Field(contract, "contractID"), Field(replacement, "contractID"));
         var replacementContracts = Assert.IsType<PyList>(await insurance.CallAsync(Call(session, "GetContracts", 20)));
         Assert.Single(replacementContracts.Items);
-        var walletAfterReplacement = (await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).GetAsync(characterId))!.Isk;
+
+        long payoutShipId;
+        await using (var connection = await source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            payoutShipId = await new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA")).CreateAsync(
+                connection, transaction, new NewItem(rifterTypeId, characterId, station.Id, ItemFlags.Hangar, 1));
+            await transaction.CommitAsync();
+        }
+        var payoutQuote = Assert.Single(InsuranceQuotes.ForFullPayoutValue(Cents(price)), item => item.FractionPercent == 50);
+        Assert.Same(PyNone.Instance, await insurance.CallAsync(Call(session, "InsureShip", 24, new PyLong(payoutShipId),
+            new PyReal(payoutQuote.PremiumCents / 100d), PyBool.False)));
+        var lossFileTime = DateTimeOffset.UtcNow.ToFileTime();
+        var loss = new InsuranceLossSettlementRequest(9_000_000_000_000L + payoutShipId, payoutShipId, lossFileTime,
+            IsConcordDestruction: false, FinalOwnerId: characterId, FinalOwnerCorporationId: 0);
+        var insuranceWriter = (InsuranceService)insurance;
+        var settlement = await insuranceWriter.SettleShipLossAsync(loss, CancellationToken.None);
+        Assert.Equal(InsuranceMutationStatus.Applied, settlement.Status);
+
+        var notificationMgr = _host.Registry.Lookup("notificationMgr")
+            ?? throw new InvalidOperationException("notificationMgr is not registered");
+        var unprocessed = Assert.IsType<PyList>(await notificationMgr.CallAsync(Call(session, "GetUnprocessed", 25)));
+        var payoutNotification = Assert.Single(unprocessed.Items.OfType<PyObject>(),
+            row => Integer(Field(row, "typeID")) == 35);
+        Assert.Equal(1000113, Integer(Field(payoutNotification, "senderID")));
+        var payoutData = Assert.IsType<PyDict>(Field(payoutNotification, "data"));
+        Assert.Equal(payoutShipId, Integer(Field(payoutData, "itemID")));
+        Assert.Equal(settlement.AmountCents, Cents(Field(payoutData, "amount")));
+        Assert.Same(PyBool.False, Field(payoutData, "payout"));
+        var walletAfterLoss = (await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).GetAsync(characterId))!.Isk;
+        Assert.Equal(InsuranceMutationStatus.AlreadyApplied,
+            (await insuranceWriter.SettleShipLossAsync(loss, CancellationToken.None)).Status);
+        var afterRetry = Assert.IsType<PyList>(await notificationMgr.CallAsync(Call(session, "GetUnprocessed", 26)));
+        Assert.Single(afterRetry.Items.OfType<PyObject>(), row => Integer(Field(row, "typeID")) == 35);
 
         Assert.Same(PyNone.Instance, await insurance.CallAsync(Call(session, "UnInsureShip", 21, new PyLong(shipId))));
         Assert.Same(PyNone.Instance, await insurance.CallAsync(Call(session, "GetContractForShip", 22, new PyLong(shipId))));
         Assert.Empty(Assert.IsType<PyList>(await insurance.CallAsync(Call(session, "GetContracts", 23))).Items);
-        Assert.Equal(walletAfterReplacement,
-            (await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).GetAsync(characterId))!.Isk);
+        var defaultLoss = new InsuranceLossSettlementRequest(9_100_000_000_000L + shipId, shipId,
+            DateTimeOffset.UtcNow.ToFileTime(), IsConcordDestruction: false,
+            FinalOwnerId: characterId, FinalOwnerCorporationId: 0);
+        var defaultSettlement = await insuranceWriter.SettleShipLossAsync(defaultLoss, CancellationToken.None);
+        Assert.Equal(InsuranceMutationStatus.Applied, defaultSettlement.Status);
+        var afterDefaultPayout = Assert.IsType<PyList>(await notificationMgr.CallAsync(Call(session, "GetUnprocessed", 27)));
+        var insuranceNotifications = afterDefaultPayout.Items.OfType<PyObject>()
+            .Where(row => Integer(Field(row, "typeID")) == 35).ToArray();
+        Assert.Equal(2, insuranceNotifications.Length);
+        var defaultNotification = insuranceNotifications.Single(row =>
+            Integer(Field(Assert.IsType<PyDict>(Field(row, "data")), "itemID")) == shipId);
+        Assert.Same(PyBool.True, Field(Assert.IsType<PyDict>(Field(defaultNotification, "data")), "payout"));
+        var walletAfterDefaultLoss = (await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).GetAsync(characterId))!.Isk;
+        Assert.Equal(walletAfterLoss,
+            walletAfterDefaultLoss - defaultSettlement.AmountCents / 100m);
     }
 }

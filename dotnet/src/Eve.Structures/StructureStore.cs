@@ -9,6 +9,8 @@ public sealed record StructureRecord(
     StructureSnapshot Snapshot, int TypeId, int SolarSystemId, double X, double Y, double Z, double Yaw, long OwnerCorporationId, long AllianceId,
     string Name, string Bio, long ProfileId, JsonObject Doc, long Version);
 
+public sealed record StructureServiceFuelCycle(int ServiceId, int State, long OnlineSinceMs, long NextFuelCycleMs);
+
 /// <summary>A structure that is about to be anchored (a fresh row in the Unanchored state).</summary>
 public sealed record NewStructure(
     long StructureId, int TypeId, int SolarSystemId, double X, double Y, double Z, double Yaw, long OwnerCorporationId, long AllianceId, string Name, string Bio,
@@ -55,7 +57,14 @@ public sealed class StructureStore
         return (long)(await command.ExecuteScalarAsync(cancellationToken))!;
     }
 
-    public static IReadOnlyList<Migration> MigrationSet() => Migrations.Embedded(typeof(StructureStore).Assembly, "Migrations");
+    public static IReadOnlyList<Migration> MigrationSet() =>
+    [
+        .. Migrations.Embedded(typeof(StructureStore).Assembly, "Migrations"),
+        new Migration("0004_service_fuel_cycle", """
+            ALTER TABLE structure_services ADD COLUMN next_fuel_cycle_ms bigint NOT NULL DEFAULT 0;
+            UPDATE structure_services SET next_fuel_cycle_ms = online_since_ms + 3600000 WHERE state = 1 AND online_since_ms > 0;
+            """),
+    ];
 
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
         Migrations.ApplyAsync(source, schema, MigrationSet(), cancellationToken);
@@ -145,6 +154,18 @@ public sealed class StructureStore
         return services;
     }
 
+    public async Task<IReadOnlyList<StructureServiceFuelCycle>> ServiceFuelCyclesAsync(
+        NpgsqlConnection connection, NpgsqlTransaction? transaction, long structureId, CancellationToken cancellationToken = default)
+    {
+        await using var command = Sql.Command(connection, transaction,
+            Q("SELECT service_id, state, online_since_ms, next_fuel_cycle_ms FROM {schema}.structure_services WHERE structure_id = $1 ORDER BY service_id"), structureId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var services = new List<StructureServiceFuelCycle>();
+        while (await reader.ReadAsync(cancellationToken))
+            services.Add(new(reader.GetInt32(0), reader.GetInt16(1), reader.GetInt64(2), reader.GetInt64(3)));
+        return services;
+    }
+
     // ---- writing --------------------------------------------------------------------------------------------------------------------------------
 
     /// <summary>Inserts a fresh structure in the Unanchored state. Returns false when the id is taken.</summary>
@@ -170,9 +191,22 @@ public sealed class StructureStore
     /// <summary>Sets a service's state. An online service records <paramref name="nowMs"/> as the time it came online; an offline one holds 0.</summary>
     public async Task SetServiceAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, int serviceId, int state, long nowMs, CancellationToken cancellationToken = default) =>
         await Sql.ExecuteAsync(connection, transaction, Q("""
-            INSERT INTO {schema}.structure_services (structure_id, service_id, state, online_since_ms) VALUES ($1, $2, $3, CASE WHEN $3 = 1 THEN $4::bigint ELSE 0 END)
-            ON CONFLICT (structure_id, service_id) DO UPDATE SET state = EXCLUDED.state, online_since_ms = EXCLUDED.online_since_ms
-            """), cancellationToken, structureId, serviceId, (short)state, nowMs);
+            INSERT INTO {schema}.structure_services (structure_id, service_id, state, online_since_ms, next_fuel_cycle_ms)
+            VALUES ($1, $2, $3, CASE WHEN $3 = 1 THEN $4::bigint ELSE 0 END, CASE WHEN $3 = 1 THEN $4::bigint + $5 ELSE 0 END)
+            ON CONFLICT (structure_id, service_id) DO UPDATE SET state = EXCLUDED.state, online_since_ms = EXCLUDED.online_since_ms, next_fuel_cycle_ms = EXCLUDED.next_fuel_cycle_ms
+            """), cancellationToken, structureId, serviceId, (short)state, nowMs, StructureFuel.HourMs);
+
+    public async Task AdvanceFuelCycleAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, int serviceId, long elapsedCycles, CancellationToken cancellationToken = default) =>
+        await Sql.ExecuteAsync(connection, transaction,
+            Q("UPDATE {schema}.structure_services SET next_fuel_cycle_ms = next_fuel_cycle_ms + $3 WHERE structure_id = $1 AND service_id = $2 AND state = 1"),
+            cancellationToken, structureId, serviceId, checked(elapsedCycles * StructureFuel.HourMs));
+
+    public async Task InitializeFuelCyclesAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, long nowMs, CancellationToken cancellationToken = default) =>
+        await Sql.ExecuteAsync(connection, transaction,
+            Q("UPDATE {schema}.structure_services SET next_fuel_cycle_ms = CASE WHEN online_since_ms > 0 THEN online_since_ms + $2 ELSE $3 END WHERE structure_id = $1 AND state = 1 AND next_fuel_cycle_ms <= 0"),
+            cancellationToken, structureId, StructureFuel.HourMs, checked(nowMs + StructureFuel.HourMs));
 
     /// <summary>
     /// When the first online service of this kind in the system came online: 0 when it was online before the record existed, null when none is online in a
@@ -186,7 +220,7 @@ public sealed class StructureStore
 
     /// <summary>Takes every online service of a structure offline (the fuel ran out). Returns how many were online.</summary>
     public async Task<int> TakeServicesOfflineAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, CancellationToken cancellationToken = default) =>
-        await Sql.ExecuteAsync(connection, transaction, Q("UPDATE {schema}.structure_services SET state = 2 WHERE structure_id = $1 AND state = 1"), cancellationToken, structureId);
+        await Sql.ExecuteAsync(connection, transaction, Q("UPDATE {schema}.structure_services SET state = 2, next_fuel_cycle_ms = 0 WHERE structure_id = $1 AND state = 1"), cancellationToken, structureId);
 
     public async Task SetDescriptionAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long structureId, string description, CancellationToken cancellationToken = default) =>
         await Sql.ExecuteAsync(connection, transaction, Q("UPDATE {schema}.structures SET bio = $2, version = version + 1 WHERE structure_id = $1"), cancellationToken, structureId, description);
@@ -344,7 +378,9 @@ public sealed class StructureStore
                 {
                     if (int.TryParse(serviceKey, NumberStyles.None, CultureInfo.InvariantCulture, out var serviceId) && serviceId > 0 && IsNumber(state))
                     {
-                        await SetServiceAsync(connection, transaction, id, serviceId, (int)Integer(state), 0, cancellationToken);
+                        var serviceState = (int)Integer(state);
+                        await SetServiceAsync(connection, transaction, id, serviceId, serviceState,
+                            serviceState == ServiceState.Online ? nowMs : 0, cancellationToken);
                     }
                 }
             }

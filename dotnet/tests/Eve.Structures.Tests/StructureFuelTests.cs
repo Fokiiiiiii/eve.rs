@@ -77,7 +77,46 @@ public class StructureFuelTests
         Assert.Equal(ServiceState.Online, (await Services(rig, Structure))[StructureServiceIds.CynoJammer]);
         var job = await rig.Scheduler.FindAsync(JobKind, $"structure:{Structure}");
         Assert.NotNull(job);
-        Assert.Equal((rig.Now / HourMs + 1) * HourMs, job.RunAtMs);
+        Assert.Equal(rig.Now + HourMs, job.RunAtMs);
+    }
+
+    [PgFact]
+    public async Task First_cycle_is_one_hour_after_service_online_time()
+    {
+        await using var rig = await Rig.Create();
+        var bay = new FakeBay { Stock = { [Structure] = 2880 } };
+        var fuel = Fuel(rig, bay);
+        await rig.Working(Structure);
+        rig.Now += 7 * 60_000;
+
+        Assert.Equal(ServiceOnlineOutcome.Online, await rig.Commit((c, t) => fuel.OnlineAsync(c, t, Structure, StructureServiceIds.CynoJammer)));
+
+        Assert.Equal(rig.Now + HourMs, (await rig.Scheduler.FindAsync(JobKind, $"structure:{Structure}"))!.RunAtMs);
+    }
+
+    [PgFact]
+    public async Task Services_started_at_different_times_pay_only_their_due_cycles()
+    {
+        await using var rig = await Rig.Create();
+        var bay = new FakeBay { Stock = { [Structure] = 2880 + 720 + 1000 } };
+        var fuel = Fuel(rig, bay);
+        await rig.Working(Structure);
+        await rig.Commit((c, t) => fuel.OnlineAsync(c, t, Structure, StructureServiceIds.CynoJammer));
+        var firstDue = rig.Now + HourMs;
+
+        rig.Now += 15 * 60_000;
+        await rig.Commit((c, t) => fuel.OnlineAsync(c, t, Structure, StructureServiceIds.Reprocessing));
+        Assert.Equal(firstDue, (await rig.Scheduler.FindAsync(JobKind, $"structure:{Structure}"))!.RunAtMs);
+
+        rig.Now = firstDue;
+        await rig.Tick();
+        Assert.Equal(1000 - 40, bay.Stock[Structure]);
+        var secondDue = firstDue + 15 * 60_000;
+        Assert.Equal(secondDue, (await rig.Scheduler.FindAsync(JobKind, $"structure:{Structure}"))!.RunAtMs);
+
+        rig.Now = secondDue;
+        await rig.Tick();
+        Assert.Equal(1000 - 40 - 10, bay.Stock[Structure]);
     }
 
     [PgFact]

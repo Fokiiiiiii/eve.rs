@@ -604,9 +604,11 @@ public sealed class PersistenceContractWriteModel(
         return dismissed;
     }
 
-    public async ValueTask<bool> FinishAuctionAsync(long contractId, CancellationToken cancellationToken) =>
+    public async ValueTask<bool> FinishAuctionAsync(long contractId, long characterId, long corporationId,
+        bool isIssuer, bool hasCorpContractManager, CancellationToken cancellationToken) =>
         await (expiryJobs ?? throw new InvalidOperationException("contract expiry jobs are not wired"))
-            .SettleExpiredAsync(contractId, nowUnixMs(), cancellationToken);
+            .ClaimAuctionAsync(contractId, nowUnixMs(), characterId, corporationId,
+                isIssuer, hasCorpContractManager, cancellationToken);
 
     public ValueTask<bool> ExpireContractNowAsync(long contractId, CancellationToken cancellationToken) =>
         new((expiryJobs ?? throw new InvalidOperationException("contract expiry jobs are not wired"))

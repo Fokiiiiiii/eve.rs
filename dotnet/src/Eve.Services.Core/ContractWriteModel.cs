@@ -69,7 +69,8 @@ public interface IContractWriteModel
     ValueTask<bool> DismissNotificationAsync(long contractId, long characterId, long corporationId,
         bool forCorporation, bool hasCorpContractManager, CancellationToken cancellationToken);
 
-    ValueTask<bool> FinishAuctionAsync(long contractId, CancellationToken cancellationToken);
+    ValueTask<bool> FinishAuctionAsync(long contractId, long characterId, long corporationId,
+        bool isIssuer, bool hasCorpContractManager, CancellationToken cancellationToken);
 
     ValueTask<bool> ExpireContractNowAsync(long contractId, CancellationToken cancellationToken);
 

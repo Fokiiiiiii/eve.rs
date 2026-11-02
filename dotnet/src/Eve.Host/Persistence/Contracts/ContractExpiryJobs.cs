@@ -3,6 +3,7 @@ using Eve.Inventory;
 using Eve.Scheduler;
 using Eve.Events;
 using Eve.Wallet;
+using Eve.Services.Core;
 using Npgsql;
 
 namespace Eve.Host.Persistence;
@@ -77,6 +78,174 @@ public sealed class ContractExpiryJobs(
         return settled;
     }
 
+    public async Task<bool> ClaimAuctionAsync(long contractId, long nowMs, long characterId, long corporationId,
+        bool isIssuer, bool hasCorpContractManager, CancellationToken cancellationToken)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        short type, status;
+        long issuerId, issuerCorporationId, stationId, expired;
+        bool corporationIssued;
+        int issuerWalletKey, issuerItemFlag;
+        decimal deposit;
+        await using (var command = new NpgsqlCommand($"""
+            SELECT contract_type, status, issuer_id, issuer_corporation_id, is_corporation_issued,
+                   start_station_id, date_expired_filetime, issuer_wallet_account_key,
+                   issuer_item_flag, deposit_isk
+            FROM {_schema}.contract_records WHERE contract_id = $1 FOR UPDATE
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue(contractId);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                throw new ContractUserErrorException("ConContractNotFound");
+            type = reader.GetInt16(0); status = reader.GetInt16(1);
+            issuerId = reader.GetInt64(2); issuerCorporationId = reader.GetInt64(3);
+            corporationIssued = reader.GetBoolean(4); stationId = reader.GetInt64(5);
+            expired = reader.GetInt64(6); issuerWalletKey = reader.GetInt32(7);
+            issuerItemFlag = reader.GetInt32(8); deposit = reader.GetDecimal(9);
+        }
+        if (type != 2)
+            throw new ContractUserErrorException("ConIllegalType");
+        var ownsIssuer = corporationIssued
+            ? corporationId == issuerCorporationId && hasCorpContractManager
+            : characterId == issuerId;
+        if (isIssuer ? !ownsIssuer : false)
+            throw new ContractUserErrorException("ConContractNotAvailable");
+        if (expired > Eve.Services.Py.FileTimeFromUnixMs(nowMs))
+            throw new ContractUserErrorException("ConContractNotAvailable");
+        if (status is not (0 or 2 or 3 or 4))
+            throw new ContractUserErrorException("ConContractNotAvailable");
+
+        long bidderId = 0;
+        bool bidderIsCorporation = false;
+        decimal amount = 0;
+        await using (var command = new NpgsqlCommand($"""
+            SELECT bidder_id, bidder_is_corporation, amount
+            FROM {_schema}.contract_bids
+            WHERE contract_id = $1 AND NOT is_refunded
+            ORDER BY amount DESC, created_at_filetime DESC, bid_id DESC LIMIT 1
+            FOR UPDATE
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue(contractId);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (await reader.ReadAsync(cancellationToken))
+            {
+                bidderId = reader.GetInt64(0);
+                bidderIsCorporation = reader.GetBoolean(1);
+                amount = reader.GetDecimal(2);
+            }
+        }
+        var ownsWinner = bidderId > 0 && (bidderIsCorporation
+            ? corporationId == bidderId && hasCorpContractManager
+            : characterId == bidderId);
+        if (status == 4)
+        {
+            if (isIssuer ? ownsIssuer : ownsWinner)
+            {
+                await transaction.CommitAsync(cancellationToken);
+                return true;
+            }
+            throw new ContractUserErrorException("ConContractNotAvailable");
+        }
+        if (isIssuer ? (status is 2 or 4) : (!ownsWinner || status is 3 or 4))
+        {
+            await transaction.CommitAsync(cancellationToken);
+            if (isIssuer ? status is 2 or 4 : ownsWinner && status is 3 or 4)
+                return true;
+            throw new ContractUserErrorException("ConContractNotAvailable");
+        }
+
+        var issuerOwner = corporationIssued ? issuerCorporationId : issuerId;
+        var nextStatus = (short)(status == 0 ? (isIssuer ? 2 : 3) : 4);
+        if (bidderId == 0)
+        {
+            if (!isIssuer)
+                throw new ContractUserErrorException("ConContractNotAvailable");
+            var returnedItems = new List<long>();
+            await using (var command = new NpgsqlCommand(
+                $"SELECT item_id FROM {_schema}.contract_items WHERE contract_id = $1 AND in_crate ORDER BY item_id", connection, transaction))
+            {
+                command.Parameters.AddWithValue(contractId);
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken)) returnedItems.Add(reader.GetInt64(0));
+            }
+            foreach (var itemId in returnedItems)
+                await items.MoveToOwnerAsync(connection, transaction, itemId, issuerOwner, stationId, issuerItemFlag, cancellationToken);
+            if (deposit > 0)
+                await wallets.AdjustAsync(connection, transaction, new WalletAccount(issuerOwner, issuerWalletKey),
+                    deposit, 0, ContractSettlementRef, "Contract auction deposit returned", nowMs,
+                    $"contract:{contractId}:auction:deposit-return", $"contract:{contractId}", cancellationToken,
+                    referenceId: contractId);
+            await using var returned = new NpgsqlCommand(
+                $"UPDATE {_schema}.contract_items SET in_crate = false WHERE contract_id = $1 AND in_crate", connection, transaction);
+            returned.Parameters.AddWithValue(contractId);
+            await returned.ExecuteNonQueryAsync(cancellationToken);
+            nextStatus = 4;
+        }
+        else if (isIssuer)
+        {
+            await wallets.AdjustAsync(connection, transaction, new WalletAccount(issuerOwner, issuerWalletKey),
+                amount + deposit, bidderId, ContractSettlementRef, "Contract auction seller proceeds", nowMs,
+                $"contract:{contractId}:auction:seller-payout", $"contract:{contractId}", cancellationToken,
+                referenceId: contractId);
+        }
+        else
+        {
+            var offeredItems = new List<long>();
+            await using (var command = new NpgsqlCommand(
+                $"SELECT item_id FROM {_schema}.contract_items WHERE contract_id = $1 AND in_crate ORDER BY item_id", connection, transaction))
+            {
+                command.Parameters.AddWithValue(contractId);
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken)) offeredItems.Add(reader.GetInt64(0));
+            }
+            foreach (var itemId in offeredItems)
+                await items.MoveToOwnerAsync(connection, transaction, itemId, bidderId, stationId,
+                    bidderIsCorporation ? 62 : ItemFlags.Hangar, cancellationToken);
+            await using var delivered = new NpgsqlCommand(
+                $"UPDATE {_schema}.contract_items SET in_crate = false WHERE contract_id = $1 AND in_crate", connection, transaction);
+            delivered.Parameters.AddWithValue(contractId);
+            await delivered.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using (var update = new NpgsqlCommand($"""
+            UPDATE {_schema}.contract_records
+            SET status = $2, acceptor_id = $3, acceptor_is_corporation = $4,
+                date_completed_filetime = CASE WHEN $2 = 4 THEN $5 ELSE date_completed_filetime END,
+                deposit_isk = CASE WHEN $6 THEN 0 ELSE deposit_isk END
+            WHERE contract_id = $1
+            """, connection, transaction))
+        {
+            update.Parameters.AddWithValue(contractId);
+            update.Parameters.AddWithValue(nextStatus);
+            update.Parameters.AddWithValue(bidderId);
+            update.Parameters.AddWithValue(bidderIsCorporation);
+            update.Parameters.AddWithValue(Eve.Services.Py.FileTimeFromUnixMs(nowMs));
+            update.Parameters.AddWithValue(isIssuer || bidderId == 0);
+            await update.ExecuteNonQueryAsync(cancellationToken);
+        }
+        if (nextStatus == 4)
+        {
+            if (events is not null)
+            {
+                await events.PublishAsync(connection, transaction, ContractNotifications.Topic,
+                    new ContractNotifications.Payload("OnContractCompleted", contractId,
+                        corporationIssued ? 0 : issuerId, corporationIssued ? issuerCorporationId : 0, 0),
+                    $"contract:{contractId}:auction:completed:issuer", cancellationToken);
+                if (bidderId > 0)
+                    await events.PublishAsync(connection, transaction, ContractNotifications.Topic,
+                        new ContractNotifications.Payload("OnContractCompleted", contractId,
+                            bidderIsCorporation ? 0 : bidderId, bidderIsCorporation ? bidderId : 0, 0),
+                        $"contract:{contractId}:auction:completed:winner", cancellationToken);
+            }
+        }
+        await transaction.CommitAsync(cancellationToken);
+        if (nextStatus == 4) events?.Wake();
+        return true;
+    }
+
     private async Task<bool> SettleAsync(long contractId, NpgsqlConnection connection, NpgsqlTransaction transaction,
         long nowMs, Func<JobSpec, CancellationToken, Task<long>>? schedule, CancellationToken cancellationToken,
         bool force = false)
@@ -115,6 +284,9 @@ public sealed class ContractExpiryJobs(
                 }, cancellationToken);
             return false;
         }
+
+        if (contract.Type == 2)
+            return false;
 
         var issuerOwner = contract.CorporationIssued ? contract.IssuerCorporationId : contract.IssuerId;
         var escrowLocation = checked(EscrowLocationBase + contractId);

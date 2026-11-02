@@ -1162,9 +1162,17 @@ private static double RelationshipValue(PyValue value)
         var (bulletinIdArgument,editDateTimeArgument) = BulletinEditArguments(call);
         var editFiletime = Number(editDateTimeArgument);
         var bulletinId = bulletinIdArgument is PyNone ? 0 : PositiveIntegerId(bulletinIdArgument);
-        var id = await store.AddAllianceBulletinAsync(alliance, actor, title, body,
-            bulletinId > 0 ? bulletinId : null, nowFiletime,
-            editFiletime > 0 ? editFiletime : nowFiletime, call.Cancellation);
+        long id;
+        try
+        {
+            id = await store.AddAllianceBulletinAsync(alliance, actor, title, body,
+                bulletinId > 0 ? bulletinId : null, nowFiletime,
+                editFiletime > 0 ? editFiletime : nowFiletime, call.Cancellation);
+        }
+        catch (CorporationError error) when (error.Code == "ALLIANCE_BULLETIN_COUNT_EXCEEDED")
+        {
+            throw MachoErrors.ThrowUserError("CorpTooManyBulletins");
+        }
         return new PyInt(id);
     }
 
@@ -1179,8 +1187,15 @@ private static double RelationshipValue(PyValue value)
             throw new CorporationError("ALLIANCE_BULLETIN_LIMIT_EXCEEDED");
         var nowFiletime = Number(CorporationWire.Time(now()));
         var editFiletime = Number(call.Arg(3));
-        return new PyInt(await store.AddAllianceBulletinAsync(alliance, actor, title, body,
-            bulletinId, nowFiletime, editFiletime > 0 ? editFiletime : nowFiletime, call.Cancellation));
+        try
+        {
+            return new PyInt(await store.AddAllianceBulletinAsync(alliance, actor, title, body,
+                bulletinId, nowFiletime, editFiletime > 0 ? editFiletime : nowFiletime, call.Cancellation));
+        }
+        catch (CorporationError error) when (error.Code == "ALLIANCE_BULLETIN_COUNT_EXCEEDED")
+        {
+            throw MachoErrors.ThrowUserError("CorpTooManyBulletins");
+        }
     }
 
     [Method("DeleteBulletin")]

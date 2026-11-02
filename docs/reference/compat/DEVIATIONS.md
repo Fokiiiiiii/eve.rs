@@ -1,5 +1,9 @@
 # Deviations from the reference server
 
+## Fleet Finder advert member count (2026-11-02)
+
+eve.rs derives `numMembers` from persisted fleet membership when updating and reading adverts, instead of trusting the client-supplied value as EveJS 261028.1 does (`src/server/src/services/fleets/fleetRuntime.js:2832-2861`). The V24.01 client normally supplies its local member count (`eve/client/script/parklife/fleetSvc.py:1730-1747`), but updates are delayed 60 seconds (`:55-57`), and Fleet Finder displays the count and compares it with the join limit (`eve/client/script/ui/shared/fleet/fleetFinderEntry.py:84-87`). Persisted membership is authoritative during that delay and after membership transitions. See `docs/project/service-audit/deepfix-fleet-finder.md` for the regression coverage and remaining audit work.
+
 ## Biomassing a player-corporation CEO (2026-11-01)
 
 The V24.01 client calls `PrepareCharacterForDelete(charID)` from `eve/client/script/ui/login/charSelection/characterSelection.py:861-868` and `DeleteCharacter(charID)` from `:835-859`. EVE University's [Accounts guide](https://wiki.eveuniversity.org/Accounts) requires a player-corporation CEO to resign or close the corporation before entering the biomass queue. EveJS 261028.1 (`server/src/services/character/characterDeletionRuntime.js:672-693, 716-799`) checks ownership/offline/timer but omits the CEO rule. eve.rs intentionally rejects queueing and finalization for the active CEO of a non-NPC corporation using persisted CorporationStore state; the second check also covers a character promoted during the 600-minute timer. A Host wire/database regression test covers refusal, promotion while queued, and the permitted non-CEO path.

@@ -4611,6 +4611,16 @@ public class SpaceServiceTests
             Assert.Empty(Assert.IsType<PyDict>(await Call("GetAvailableFleetAds", memberSession)).Entries);
             memberSession.Set("corpid", new PyLong(leaderCorporationId));
 
+            Assert.NotNull(await store.LeaveAsync(fleetId, member.CharacterId));
+            var availableAfterLeave = Assert.IsType<PyDict>(await Call("GetAvailableFleetAds", memberSession));
+            Assert.Equal(new PyInt(1), Field(Assert.Single(availableAfterLeave.Entries).Value, "numMembers"));
+            var ownerAdvertAfterLeave = await Call("GetMyFleetFinderAdvert", leaderSession);
+            Assert.Equal(new PyInt(1), Field(ownerAdvertAfterLeave, "numMembers"));
+            Assert.True(await store.InviteAsync(fleetId, leader.CharacterId, member.CharacterId,
+                Eve.Services.Space.FleetStore.NoUnit, Eve.Services.Space.FleetStore.NoUnit,
+                Eve.Services.Space.FleetStore.Member));
+            Assert.NotNull(await store.JoinAsync(fleetId, member.CharacterId));
+
             Assert.Equal(PyNone.Instance, await store.FleetFinderAdvertOperationAsync(
                 "UpdateAdvertInfo", member.CharacterId,
                 [new PyInt(2), Py.KeyVal([("publicToAddToAllowed", new PyList([new PyLong(leaderCorporationId + 1)]))])],
@@ -4623,7 +4633,7 @@ public class SpaceServiceTests
                 ("membergroupsToAddToAllowed", new PyList([new PyLong(980000128)])),
                 ("membergroupsToRemoveFromDisallowed", new PyList([new PyLong(980000126)]))
             ]));
-            Assert.Equal(new PyInt(9), Field(infoUpdate, "numMembers"));
+            Assert.Equal(new PyInt(2), Field(infoUpdate, "numMembers"));
             Assert.Equal(Eve.Services.InventoryWire.Set([new PyLong(leaderCorporationId + 1)]), Field(infoUpdate, "public_allowedEntities"));
             Assert.Equal(Eve.Services.InventoryWire.Set([new PyLong(980000124), new PyLong(980000127)]), Field(infoUpdate, "public_disallowedEntities"));
             Assert.Equal(Eve.Services.InventoryWire.Set([new PyLong(980000125), new PyLong(980000128)]), Field(infoUpdate, "membergroups_allowedEntities"));

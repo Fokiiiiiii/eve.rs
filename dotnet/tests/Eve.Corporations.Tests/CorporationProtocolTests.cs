@@ -3297,15 +3297,54 @@ private static PyValue RowField(PyValue value,string key)
         Assert.Equal(new string('B',4_000),maxBulletin.Body);
         Assert.IsType<PyNone>(await Rpc(session,"DeleteBulletin",maxBulletinId));
         var bulletinId = Assert.IsType<PyInt>(await Rpc(session,"AddBulletin",new PyWString("Ops"),new PyWString("Docking window")));
+        var namedBulletinUpdate = Assert.IsType<PyInt>(await service.CallAsync(new ServiceCall
+        {
+            Session = session,
+            Method = "AddBulletin",
+            Args = [new PyWString("Ops updated"),new PyWString("Docking window updated")],
+            Kwargs = Py.Dict(("bulletinID",bulletinId),("editDateTime",new PyLong(rig.Now + 1)))
+        }));
+        Assert.Equal(bulletinId,namedBulletinUpdate);
+        Assert.Single(await rig.Store.CorporationBulletinsAsync(corp.Id));
         var bulletinRows = Assert.IsType<PyObject>(await Rpc(session,"GetBulletins"));
         Assert.NotEmpty(MarshalCodec.Encode(bulletinRows));
         Assert.Single(Assert.IsType<PyList>(Field(bulletinRows,"lines")).Items);
         Assert.IsType<PyPackedRow>(await Rpc(session,"GetBulletin",bulletinId));
         Assert.Equal(MarshalCodec.Encode(bulletinRows),MarshalCodec.Encode(await Rpc(session,"GetBulletinEntries")));
-
         var reopened = (IService)new CorpRegistryService(rig.ReopenStore(),rig.Characters,() => rig.Now);
         Assert.Single(Assert.IsType<PyDict>(await reopened.CallAsync(Call(session,"GetCorporateContacts"))).Entries);
         Assert.Single(Assert.IsType<PyList>(Field(await reopened.CallAsync(Call(session,"GetBulletins")),"lines")).Items);
+        var extraBulletinIds = new List<PyInt>();
+        for (var index = 1; index < 9; index++)
+        {
+            var added = Assert.IsType<PyInt>(await Rpc(session,"AddBulletin",new PyWString($"Bulletin {index}"),new PyWString("Body")));
+            extraBulletinIds.Add(added);
+        }
+        var concurrentAdds = await Task.WhenAll(Enumerable.Range(0,2).Select(async index =>
+        {
+            try
+            {
+                var id = await rig.Store.AddCorporationBulletinAsync(corp.Id,founder,$"Concurrent {index}","Body",null,rig.Now,rig.Now);
+                return (Id:(long?)id,Code:(string?)null);
+            }
+            catch (CorporationError error)
+            {
+                return (Id:(long?)null,Code:error.Code);
+            }
+        }));
+        var acceptedConcurrentAdd = Assert.Single(concurrentAdds,result => result.Id is not null);
+        Assert.Equal("CORPORATION_BULLETIN_COUNT_EXCEEDED",Assert.Single(concurrentAdds,result => result.Code is not null).Code);
+        extraBulletinIds.Add(new PyInt(acceptedConcurrentAdd.Id!.Value));
+        var tooManyBulletins = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await Rpc(session,"AddBulletin",new PyWString("Eleventh"),new PyWString("Body")));
+        Assert.Equal("CorpTooManyBulletins",tooManyBulletins.Error.UserErrorMessage);
+        Assert.Equal(10,(await rig.Store.CorporationBulletinsAsync(corp.Id)).Count);
+        await Rpc(session,"UpdateBulletin",bulletinId,new PyWString("Updated at limit"),new PyWString("Body"));
+        await Rpc(session,"DeleteBulletin",extraBulletinIds[0]);
+        var replacementBulletinId = Assert.IsType<PyInt>(await Rpc(session,"AddBulletin",new PyWString("Replacement"),new PyWString("Body")));
+        Assert.Equal(10,(await rig.Store.CorporationBulletinsAsync(corp.Id)).Count);
+        foreach (var extraBulletinId in extraBulletinIds.Skip(1).Append(replacementBulletinId))
+            await Rpc(session,"DeleteBulletin",extraBulletinId);
 
         Assert.IsType<PyNone>(await Rpc(session,"EditCorporateContact",new PyInt(contactId),new PyInt(2)));
         var directContact = Assert.Single(await rig.Store.CorporationContactsAsync(corp.Id));

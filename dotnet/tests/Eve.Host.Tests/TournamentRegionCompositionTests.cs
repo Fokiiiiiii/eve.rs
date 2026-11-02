@@ -14,6 +14,7 @@ public sealed class TournamentRegionCompositionTests
     public async Task Region_file_is_loaded_at_host_start_and_identical_restart_is_safe()
     {
         var originalUrl = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        var template = new NpgsqlConnectionStringBuilder(PgConnection.ForTest(originalUrl)).Database!;
         var database = "tourney_region_" + Guid.NewGuid().ToString("N")[..12];
         var adminUrl = new UriBuilder(originalUrl) { Path = "/postgres" }.Uri.ToString();
         var testUrl = new UriBuilder(originalUrl) { Path = "/" + database }.Uri.ToString();
@@ -28,7 +29,7 @@ public sealed class TournamentRegionCompositionTests
         try
         {
             await using (var admin = NpgsqlDataSource.Create(PgConnection.ForTest(adminUrl)))
-            await using (var command = admin.CreateCommand($"CREATE DATABASE {database} TEMPLATE eve"))
+            await using (var command = admin.CreateCommand($"CREATE DATABASE {database} TEMPLATE {new NpgsqlCommandBuilder().QuoteIdentifier(template)}"))
             { await command.ExecuteNonQueryAsync(); created = true; }
             const long owner = 140_091_002;
             await using (var source = NpgsqlDataSource.Create(PgConnection.ForTest(testUrl)))

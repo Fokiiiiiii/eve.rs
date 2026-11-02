@@ -53,6 +53,7 @@ public sealed partial class AbyssalHostFlowTests
             await PersistenceTournamentMatches.MigratePostgameAsync(rig.Source, schema);
             await PersistenceTournamentMatches.MigrateCompletionPolicyAsync(rig.Source, schema); await PersistenceTournamentMatches.MigrateCutoffIntentAsync(rig.Source, schema);
             await PersistenceTournamentMatches.MigrateRefereeLeaseGenerationAsync(rig.Source, schema);
+            await PersistenceTournamentMatches.MigrateParticipantDeathsAsync(rig.Source, schema);
             var arenas = new PersistenceTournamentArenas(rig.Source, rig.Sde, rig.Characters, rig.Items, deployed, rig.Foundations.Events, schema);
             await arenas.ImportIfMissingAsync(new TournamentArenaImport(system, run.Data.CreatorCharacterId,
                 [new TournamentBeaconImport(10645, "Camera Arena", [100000000000d,200000000000d,300000000000d], 5)]));

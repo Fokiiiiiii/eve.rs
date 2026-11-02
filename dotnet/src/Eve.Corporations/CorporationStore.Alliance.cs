@@ -1100,6 +1100,9 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
                 await update.ExecuteNonQueryAsync(token);
                 return id;
             }
+            await using var count = Command(connection,tx,$"SELECT COUNT(*) FROM {_schema}.corporation_bulletins WHERE corporation_id=$1",corporationId);
+            if (Convert.ToInt32(await count.ExecuteScalarAsync(token)) >= 10)
+                throw new CorporationError("CORPORATION_BULLETIN_COUNT_EXCEEDED");
             await using var order = Command(connection,tx,$"SELECT COALESCE(MAX(sort_order),-1)+1 FROM {_schema}.corporation_bulletins WHERE corporation_id=$1",corporationId);
             var sortOrder = Convert.ToInt32(await order.ExecuteScalarAsync(token));
             await using var insert = Command(connection,tx,$"INSERT INTO {_schema}.corporation_bulletins(corporation_id,bulletin_id,create_character_id,create_filetime,edit_character_id,edit_filetime,title,body,sort_order) VALUES($1,$2,$3,$4,$3,$5,$6,$7,$8)",corporationId,id,actorId,createFiletime,editFiletime,title,body,sortOrder);
@@ -1353,6 +1356,10 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
                 await update.ExecuteNonQueryAsync(token);
                 return id;
             }
+            await using var count = Command(connection,tx,
+                $"SELECT COUNT(*) FROM {_schema}.alliance_bulletins WHERE alliance_id=$1",allianceId);
+            if (Convert.ToInt32(await count.ExecuteScalarAsync(token)) >= 10)
+                throw new CorporationError("ALLIANCE_BULLETIN_COUNT_EXCEEDED");
             await using var order = Command(connection,tx,
                 $"SELECT COALESCE(MAX(sort_order),-1)+1 FROM {_schema}.alliance_bulletins WHERE alliance_id=$1",
                 allianceId);

@@ -40,7 +40,7 @@ public sealed class RaffleCompositionTests
     {
         var sourceUrl = Environment.GetEnvironmentVariable("EVE_PG_URL")
             ?? throw new InvalidOperationException("EVE_PG_URL must identify the local pinned-SDE database");
-        var databaseUrl = new UriBuilder(sourceUrl) { Path = "/eve_raffle_host" }.Uri.ToString();
+        var databaseUrl = sourceUrl;
         var names = new[] { "EVE_PG_URL", "EVE_SIM", "EVE_MARKET_SEED", "EVE_WORMHOLES" };
         var saved = names.ToDictionary(name => name, Environment.GetEnvironmentVariable);
         HostRuntime? host = null;

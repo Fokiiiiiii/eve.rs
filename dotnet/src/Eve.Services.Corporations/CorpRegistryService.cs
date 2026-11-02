@@ -1690,15 +1690,23 @@ private static int MemberFieldInteger(PyValue value)
           var bodyText = Text(body);
           if (titleText.Length > 100 || bodyText.Length > 4_000)
               throw new CorporationError("CORPORATION_BULLETIN_LIMIT_EXCEEDED");
-          var id = await store.AddCorporationBulletinAsync(corporation.Id,actor,titleText,bodyText,bulletinId,
-              createFiletime,editFiletime,call.Cancellation);
+          long id;
+          try
+          {
+              id = await store.AddCorporationBulletinAsync(corporation.Id,actor,titleText,bodyText,bulletinId,
+                  createFiletime,editFiletime,call.Cancellation);
+          }
+          catch (CorporationError error) when (error.Code == "CORPORATION_BULLETIN_COUNT_EXCEEDED")
+          {
+              throw MachoErrors.ThrowUserError("CorpTooManyBulletins");
+          }
           return CorporationMaskValue(id);
       }
 
       [Method("AddBulletin")]
       public ValueTask<PyValue> AddBulletin(ServiceCall call) =>
-          UpsertCorporationBulletin(call,call.Args.Count > 2 ? PositiveId(call.Arg(2)) : null,
-              call.Arg(0),call.Arg(1),call.Args.Count > 3 ? call.Arg(3) : PyNone.Instance);
+          UpsertCorporationBulletin(call,PositiveId(call.Kwarg("bulletinID") ?? call.Arg(2)),
+              call.Arg(0),call.Arg(1),call.Kwarg("editDateTime") ?? call.Arg(3));
 
       [Method("UpdateBulletin")]
       public ValueTask<PyValue> UpdateBulletin(ServiceCall call) =>

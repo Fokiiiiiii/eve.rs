@@ -19,5 +19,6 @@ Other client behavior checked for this area is recorded in `DEEPCHECK_map.md`; t
 - `dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --no-restore` passed, 0 warnings and 0 errors.
 - On the old predicate, `Map_telemetry_and_beacons_keep_client_wire_shapes_through_registered_route` failed: expected 2 kills, got 3.
 - On PostgreSQL lane `eve_p5`, via `tools/dev/db-lock.sh`, the fixed `Map_telemetry_and_beacons_keep_client_wire_shapes_through_registered_route` and `Map_inside_abyssal_space_returns_the_reference_user_error_over_host_wire` passed: 2 passed, 0 failed, 0 skipped.
+- Commit `f70d87a538f4` was pushed to `main`; push-triggered CI run [1400](https://github.com/Fokiiiiiii/eve.rs/actions/runs/41375159067) passed all jobs, and `ci-status.py failures f70d87a538f4` reported no failed tests or jobs.
 - That focused Host fixture deliberately uses a closed PostgreSQL port for its injected read source; the database lane/lock was used, but the focused regression itself does not query PostgreSQL. The change is limited to pure aggregation logic, not persistence or database query behavior.
 - No graphical V24.01 client session was run.

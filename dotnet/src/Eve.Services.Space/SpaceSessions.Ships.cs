@@ -68,9 +68,12 @@ public sealed partial class SpaceSessions
         {
             return None;
         }
-        if (!ignoreContraband && InspectUndockContrabandAsync is { } inspect &&
-            (await inspect(characterId, snapshot.Ship.Id, snapshot.Character.SolarSystemId, cancellationToken)).Count > 0)
-            throw MachoErrors.ThrowUserError("ShipContrabandWarningUndock");
+        if (!ignoreContraband && InspectUndockContrabandAsync is { } inspect)
+        {
+            var contraband = await inspect(characterId, snapshot.Ship.Id, snapshot.Character.SolarSystemId, cancellationToken);
+            if (contraband.Count > 0)
+                throw MachoErrors.ThrowUserError("ShipContrabandWarningUndock", ("item", new PyTuple([new PyInt(4), new PyInt(contraband[0])])));
+        }
         // a Strategic Cruiser leaves its station only with one subsystem of each class (the reference's STRATEGIC_CRUISER_FIT_INCOMPLETE)
         if (_statics.Type(snapshot.Ship.TypeId)?.GroupId == Eve.Fitting.StrategicCruisers.GroupId
             && Eve.Fitting.StrategicCruisers.IncompleteFit(snapshot.Fitted

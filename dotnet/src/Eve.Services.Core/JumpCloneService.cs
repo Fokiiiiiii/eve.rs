@@ -25,7 +25,7 @@ public sealed record ShipCloneBay(long ShipId, bool CanReceiveCloneJumps, bool H
 
 /// <summary>
 /// The outcome of a clone jump's state change. A refusal names the reason (<c>MUST_LEAVE_SHIP</c>, <c>CLONE_NOT_FOUND</c>,
-/// <c>INSUFFICIENT_FUNDS</c>); otherwise the station the character is in now, with its solar system, constellation and region.
+/// <c>INSUFFICIENT_FUNDS</c>, <c>COOLDOWN_ACTIVE</c>); otherwise the station the character is in now, with its solar system, constellation and region.
 /// </summary>
 public sealed record CloneJumpResult(string? Refusal, long StationId = 0, int SolarSystemId = 0, int ConstellationId = 0, int RegionId = 0, long StructureId = 0);
 
@@ -65,7 +65,8 @@ public interface IJumpCloneStore
     /// the origin (replacing the clone there), the character is in the target's station, the cooldown starts at
     /// <paramref name="nowFileTime"/> and the fee is debited. Nothing changes on a refusal.
     /// </summary>
-    ValueTask<CloneJumpResult> JumpAsync(long characterId, long targetCloneId, long originLocationId, string originLocationKind, decimal fee, long ownerCorporationId, long nowFileTime, CancellationToken cancellationToken);
+    ValueTask<CloneJumpResult> JumpAsync(long characterId, long targetCloneId, long originLocationId, string originLocationKind,
+        decimal fee, long ownerCorporationId, int cooldownHours, long nowFileTime, CancellationToken cancellationToken);
 }
 
 /// <summary>The space side of the clone installs, supplied by the Host: the pilot's active ship, the distance of two ships, the online sessions and the structures' clone bays.</summary>
@@ -388,10 +389,12 @@ public sealed partial class JumpCloneService(Func<long> nowUnixMs, IJumpCloneSto
         var target = snapshot.Clones.FirstOrDefault(clone => clone.JumpCloneId == cloneId && (destination == 0 || clone.LocationId == destination))
             ?? throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Jump clone not found")));
         var now = Py.FileTimeFromUnixMs(nowUnixMs());
+        var cooldownHours = 0;
         if (target.LocationId != current)
         {
             var level = await Store().SkillLevelAsync(characterId, CloneJumpRules.SynchronizingSkillId, call.Cancellation);
-            if (CloneJumpRules.CooldownActive(snapshot.TimeLastJumpFileTime, CloneJumpRules.CooldownHours(level), now))
+            cooldownHours = CloneJumpRules.CooldownHours(level);
+            if (CloneJumpRules.CooldownActive(snapshot.TimeLastJumpFileTime, cooldownHours, now))
                 throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("UI/CharacterSheet/CharacterSheetWindow/JumpCloneScroll/JumpCooldownError")));
         }
         if (!confirmed && snapshot.Clones.Any(clone => clone.LocationId == current && clone.JumpCloneId != target.JumpCloneId))
@@ -407,7 +410,8 @@ public sealed partial class JumpCloneService(Func<long> nowUnixMs, IJumpCloneSto
 
         var (fee, ownerCorporationId) = await CloneJumpFee(call);
         var originLocationKind = IsStationDock(call.Session) ? "station" : "structure";
-        var result = await Store().JumpAsync(characterId, target.JumpCloneId, current, originLocationKind, fee, ownerCorporationId, now, call.Cancellation);
+        var result = await Store().JumpAsync(characterId, target.JumpCloneId, current, originLocationKind, fee, ownerCorporationId,
+            cooldownHours, now, call.Cancellation);
         switch (result.Refusal)
         {
             case null:
@@ -417,6 +421,8 @@ public sealed partial class JumpCloneService(Func<long> nowUnixMs, IJumpCloneSto
             case "INSUFFICIENT_FUNDS":
                 var balance = await Store().IskBalanceAsync(characterId, call.Cancellation);
                 throw MachoErrors.ThrowUserError("NotEnoughMoney", ("amount", new PyReal((double)fee)), ("balance", new PyReal((double)balance)));
+            case "COOLDOWN_ACTIVE":
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("UI/CharacterSheet/CharacterSheetWindow/JumpCloneScroll/JumpCooldownError")));
             default:
                 throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Jump clone not found")));
         }

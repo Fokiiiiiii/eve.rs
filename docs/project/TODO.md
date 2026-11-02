@@ -2778,6 +2778,8 @@ Security review follow-up: `corpRegistry.CanBeKickedOut` now gates cross-member 
 
 Security review follow-up: `warRegistry` full-war reads and mutations now consume 10 weighted per-session units to bound repeated scans of the persisted war relation set.
 
+Service audit follow-up: `warsInfoMgr.GetPublicWarInfo` now accepts the collection supplied by `structureInfo.wars` and returns matching war KeyVals as a list for the structure tooltip. The Host wire regression reproduces the former `PyNone` response and covers multiple IDs, an unknown ID, and an empty collection; see [deepfix-wars-sov.md](service-audit/deepfix-wars-sov.md).
+
 Security review follow-up: alliance contact mutations accept only positive integer target IDs and integer relationship values; fractional, string, nested, and nonpositive entries refuse before storage access.
 
 Security review follow-up: fleet invitation RPCs accept positive integer character IDs only; fractional or numeric-string targets cannot be coerced into invitations.

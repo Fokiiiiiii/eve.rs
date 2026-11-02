@@ -75,6 +75,8 @@ public sealed partial class PersistenceNewEdenStoreRuntime
                     continue;
                 if (String(token["status"]) is not ("" or "pending"))
                     continue;
+                if (!IsRedeemTokenAvailable(token, ToFileTime(nowUnix)))
+                    continue;
                 var soulbound = token["soulbound"] is JsonValue flag && flag.TryGetValue<bool>(out var isSoulbound) && isSoulbound;
                 if (!soulbound || Array.IndexOf(TrainingCertificateTypeIds, checked((int)Integer(token["typeID"]))) < 0)
                     continue;

@@ -6,6 +6,7 @@ using Eve.Services.Crimewatch;
 using Eve.Wallet;
 using Eve.Identity;
 using Eve.Inventory;
+using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Npgsql;
@@ -80,19 +81,29 @@ public sealed class CharacterReSculptHostTests : IAsyncLifetime
         var host = await HostComposition.BuildAsync(Settings());
         try
         {
-            pilot = await InsertPilotAsync(source, new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA")), "Resculpt Pilot");
+            var characters = new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA"));
+            pilot = await InsertPilotAsync(source, characters, "Resculpt Pilot");
+            await characters.SetAppearanceAsync(pilot, MarshalCodec.Encode(new PyList([])), true, null, true);
             var items = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
             certificate = (await CreateItemsAsync(source, items, new NewItem(34132, pilot, 60000610, ItemFlags.Hangar)))[0];
             notACertificate = (await CreateItemsAsync(source, items, new NewItem(96_000_020, pilot, 60000610, ItemFlags.Hangar)))[0];
-            var session = new ClientSession { UserId = 1, CharacterId = pilot };
+            var sink = new Sink();
+            var session = new ClientSession(sink) { UserId = 1, CharacterId = pilot };
+            session.Set("stationid", new PyLong(60000610));
+            host.CharacterSessions!.Enter(pilot, session);
             var userSvc = host.Registry.Lookup("userSvc")!;
             var charMgr = host.Registry.Lookup("charMgr")!;
 
-            // a pilot with no doll is in no customization state yet (2)
-            Assert.Equal(new PyInt(2), await charMgr.CallAsync(new ServiceCall { Args = [new PyInt(pilot)], Method = "GetPaperdollState", Session = session }));
+            // An existing appearance is state 0, where a resculpt certificate is required.
+            Assert.Equal(new PyInt(0), await charMgr.CallAsync(new ServiceCall { Args = [new PyInt(pilot)], Method = "GetPaperdollState", Session = session }));
             Assert.Equal(PyBool.True, await userSvc.CallAsync(new ServiceCall { Args = [new PyLong(certificate)], Method = "ActivateCharacterReSculpt", Session = session }));
             Assert.Null(await items.GetAsync(certificate));
             Assert.Equal(new PyInt(3), await charMgr.CallAsync(new ServiceCall { Args = [new PyInt(pilot)], Method = "GetPaperdollState", Session = session }));
+            Assert.Equal(new[] { "OnItemChange", "OnCharacterHandler" }, sink.Packets.Select(packet =>
+            {
+                var packetFields = Assert.IsType<PyTuple>(Assert.IsType<PyObject>(packet).Args);
+                return MachoAddress.Decode(packetFields.Items[2]).BroadcastId;
+            }));
 
             // the same certificate again, and an item that is not one: refused, and the items stay
             Assert.Equal(PyBool.False, await userSvc.CallAsync(new ServiceCall { Args = [new PyLong(certificate)], Method = "ActivateCharacterReSculpt", Session = session }));
@@ -113,11 +124,211 @@ public sealed class CharacterReSculptHostTests : IAsyncLifetime
 
             // a save of the appearance ends the state
             await new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA")).SetAppearanceAsync(pilot, null, false, null, false);
-            Assert.Equal(new PyInt(2), await restarted.Registry.Lookup("charMgr")!.CallAsync(new ServiceCall { Args = [new PyInt(pilot)], Method = "GetPaperdollState", Session = session }));
+            Assert.Equal(new PyInt(0), await restarted.Registry.Lookup("charMgr")!.CallAsync(new ServiceCall { Args = [new PyInt(pilot)], Method = "GetPaperdollState", Session = session }));
         }
         finally
         {
             await restarted.ShutdownAsync();
+        }
+    }
+
+    [PgFact]
+    public async Task Concurrent_resculpt_activation_cannot_reuse_one_certificate()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url));
+        var host = await HostComposition.BuildAsync(Settings());
+        try
+        {
+            var characters = new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA"));
+            var pilot = await InsertPilotAsync(source, characters, "Concurrent Resculpt Pilot");
+            await characters.SetAppearanceAsync(pilot, MarshalCodec.Encode(new PyList([])), true, null, true);
+            var items = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
+            var certificate = (await CreateItemsAsync(source, items, new NewItem(34132, pilot, 60000610, ItemFlags.Hangar)))[0];
+            var session = new ClientSession { UserId = 1, CharacterId = pilot };
+            session.Set("stationid", new PyLong(60000610));
+            var userSvc = host.Registry.Lookup("userSvc")!;
+            var start = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            async Task<PyValue> ActivateAsync()
+            {
+                await start.Task;
+                return await userSvc.CallAsync(new ServiceCall
+                {
+                    Args = [new PyLong(certificate)],
+                    Method = "ActivateCharacterReSculpt",
+                    Session = session,
+                });
+            }
+
+            var activations = Task.WhenAll(ActivateAsync(), ActivateAsync());
+            start.SetResult(true);
+            var results = await activations;
+
+            Assert.Single(results, result => ReferenceEquals(result, PyBool.True));
+            Assert.Single(results, result => ReferenceEquals(result, PyBool.False));
+            Assert.Null(await items.GetAsync(certificate));
+        }
+        finally
+        {
+            await host.ShutdownAsync();
+        }
+    }
+
+    [PgFact]
+    public async Task Resculpt_activation_cannot_target_another_character_on_the_account()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url));
+        var host = await HostComposition.BuildAsync(Settings());
+        try
+        {
+            var active = await InsertPilotAsync(source, new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA")), "Active Resculpt Pilot");
+            var other = await InsertPilotAsync(source, new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA")), "Other Resculpt Pilot");
+            var items = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
+            var certificate = (await CreateItemsAsync(source, items, new NewItem(34132, other, 60000610, ItemFlags.Hangar)))[0];
+            var session = new ClientSession { UserId = 1, CharacterId = active };
+            session.Set("stationid", new PyLong(60000610));
+
+            var result = await host.Registry.Lookup("userSvc")!.CallAsync(new ServiceCall
+            {
+                Args = [new PyLong(certificate)],
+                Method = "ActivateCharacterReSculpt",
+                Session = session,
+            });
+
+            Assert.Same(PyBool.False, result);
+            Assert.NotNull(await items.GetAsync(certificate));
+            Assert.Null(await new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA")).PaperdollStateAsync(other));
+        }
+        finally
+        {
+            await host.ShutdownAsync();
+        }
+    }
+
+    [PgFact]
+    public async Task Resculpt_activation_consumes_one_certificate_from_a_stack_and_sets_the_no_gender_state()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url));
+        var host = await HostComposition.BuildAsync(Settings());
+        try
+        {
+            var characters = new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA"));
+            var pilot = await InsertPilotAsync(source, characters, "Stacked Resculpt Pilot");
+            await characters.SetAppearanceAsync(pilot, MarshalCodec.Encode(new PyList([])), true, null, true);
+            var items = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
+            var certificate = (await CreateItemsAsync(source, items,
+                new NewItem(89956, pilot, 60000610, ItemFlags.Hangar, 2)))[0];
+            var session = new ClientSession { UserId = 1, CharacterId = pilot };
+            session.Set("stationid", new PyLong(60000610));
+            var userSvc = host.Registry.Lookup("userSvc")!;
+            var charMgr = host.Registry.Lookup("charMgr")!;
+
+            Assert.Same(PyBool.True, await userSvc.CallAsync(new ServiceCall
+            {
+                Args = [new PyLong(certificate)],
+                Method = "ActivateCharacterReSculpt",
+                Session = session,
+            }));
+
+            Assert.Equal(1, (await items.GetAsync(certificate))?.Quantity);
+            Assert.Equal(new PyInt(1), await charMgr.CallAsync(new ServiceCall
+            {
+                Args = [new PyInt(pilot)],
+                Method = "GetPaperdollState",
+                Session = session,
+            }));
+        }
+        finally
+        {
+            await host.ShutdownAsync();
+        }
+    }
+
+    [PgFact]
+    public async Task Resculpt_activation_refuses_when_initial_customization_is_available()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url));
+        var host = await HostComposition.BuildAsync(Settings());
+        try
+        {
+            var pilot = await InsertPilotAsync(source, new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA")), "Initial Resculpt Pilot");
+            var items = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
+            var certificate = (await CreateItemsAsync(source, items,
+                new NewItem(34132, pilot, 60000610, ItemFlags.Hangar)))[0];
+            var session = new ClientSession { UserId = 1, CharacterId = pilot };
+            session.Set("stationid", new PyLong(60000610));
+
+            var result = await host.Registry.Lookup("userSvc")!.CallAsync(new ServiceCall
+            {
+                Args = [new PyLong(certificate)],
+                Method = "ActivateCharacterReSculpt",
+                Session = session,
+            });
+
+            Assert.Same(PyBool.False, result);
+            Assert.NotNull(await items.GetAsync(certificate));
+            Assert.Null(await new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA")).PaperdollStateAsync(pilot));
+        }
+        finally
+        {
+            await host.ShutdownAsync();
+        }
+    }
+
+    [PgFact]
+    public async Task Resculpt_activation_requires_the_item_in_the_current_hangar_or_active_ship_cargo()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url));
+        var host = await HostComposition.BuildAsync(Settings());
+        try
+        {
+            var characters = new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA"));
+            var pilot = await InsertPilotAsync(source, characters, "Resculpt Location Pilot");
+            await characters.SetAppearanceAsync(pilot, MarshalCodec.Encode(new PyList([])), true, null, true);
+            var items = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
+            var remoteCertificate = (await CreateItemsAsync(source, items,
+                new NewItem(34132, pilot, 60000611, ItemFlags.Hangar)))[0];
+            var session = new ClientSession { UserId = 1, CharacterId = pilot };
+            session.Set("stationid", new PyLong(60000610));
+            var userSvc = host.Registry.Lookup("userSvc")!;
+
+            var remoteResult = await userSvc.CallAsync(new ServiceCall
+            {
+                Args = [new PyLong(remoteCertificate)],
+                Method = "ActivateCharacterReSculpt",
+                Session = session,
+            });
+
+            Assert.Same(PyBool.False, remoteResult);
+            Assert.NotNull(await items.GetAsync(remoteCertificate));
+
+            long shipId;
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                shipId = await items.CreateAsync(connection, transaction,
+                    new NewItem(587, pilot, 60000610, ItemFlags.Hangar));
+                await characters.SetShipAsync(connection, transaction, pilot, shipId);
+                await transaction.CommitAsync();
+            }
+            var cargoCertificate = (await CreateItemsAsync(source, items,
+                new NewItem(34132, pilot, shipId, ItemFlags.Cargo)))[0];
+            session.Set("stationid", PyNone.Instance);
+            session.Set("shipid", new PyLong(shipId));
+
+            var cargoResult = await userSvc.CallAsync(new ServiceCall
+            {
+                Args = [new PyLong(cargoCertificate)],
+                Method = "ActivateCharacterReSculpt",
+                Session = session,
+            });
+
+            Assert.Same(PyBool.True, cargoResult);
+            Assert.Null(await items.GetAsync(cargoCertificate));
+        }
+        finally
+        {
+            await host.ShutdownAsync();
         }
     }
 
@@ -283,4 +494,11 @@ public sealed class CharacterReSculptHostTests : IAsyncLifetime
     private static HostSettings Settings() => new(
         "", "disabled", new ClusterOptions { NewCharacterExperienceEnabled = false, NewCharacterExperienceMode = "disabled" },
         new AccountOptions { AutoCreate = true }, StrictRpc: true);
+
+    private sealed class Sink : IPacketSink
+    {
+        public List<PyValue> Packets { get; } = [];
+
+        public void Send(PyValue packet) => Packets.Add(packet);
+    }
 }

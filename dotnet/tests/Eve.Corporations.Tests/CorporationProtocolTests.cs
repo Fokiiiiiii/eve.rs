@@ -44,12 +44,17 @@ public sealed class WarsInfoMgrServiceTests
         Assert.Collection(byOwners.Entries, _ => { }, _ => { }, _ => { });
         Assert.Contains(byOwners.Entries, entry => Number(entry.Key) == 1003 && Assert.IsType<Eve.Marshal.PyDict>(entry.Value).Entries.Count == 1);
 
-        var publicInfo = await service.GetPublicWarInfo(Call("GetPublicWarInfo", new Eve.Marshal.PyLong(war.Id)));
-        var fields = KeyValFields(publicInfo);
+        var publicInfo = Assert.IsType<Eve.Marshal.PyList>(await service.GetPublicWarInfo(Call(
+            "GetPublicWarInfo",
+            new Eve.Marshal.PyList([new Eve.Marshal.PyLong(war.Id), new Eve.Marshal.PyLong(long.MaxValue)]))));
+        var fields = KeyValFields(Assert.Single(publicInfo.Items));
         Assert.Equal(war.Id, Number(fields["warID"]));
         Assert.Equal(4001, Number(fields["warHQ"]));
         Assert.Single(Assert.IsType<Eve.Marshal.PyDict>(fields["allies"]).Entries);
-        Assert.IsType<Eve.Marshal.PyNone>(await service.GetPublicWarInfo(Call("GetPublicWarInfo", new Eve.Marshal.PyLong(long.MaxValue))));
+        Assert.Empty(Assert.IsType<Eve.Marshal.PyList>(await service.GetPublicWarInfo(
+            Call("GetPublicWarInfo", new Eve.Marshal.PyList([new Eve.Marshal.PyLong(long.MaxValue)])))).Items);
+        Assert.Empty(Assert.IsType<Eve.Marshal.PyList>(await service.GetPublicWarInfo(
+            Call("GetPublicWarInfo", new Eve.Marshal.PyList([])))).Items);
 
         var structureWars = Assert.IsType<Eve.Marshal.PyList>(await service.GetWarsForStructure(Call("GetWarsForStructure", new Eve.Marshal.PyLong(4001))));
         Assert.Equal(war.Id, Number(KeyValFields(Assert.Single(structureWars.Items))["warID"]));

@@ -40,14 +40,16 @@ Implementation: `dotnet/src/Eve.Calendar/CalendarStore.cs:235-275`, `dotnet/src/
 - Regression before fix: failed as expected; both concurrent calls succeeded and the active set reached 51.
 - Regression after fix: passed on PostgreSQL database `eve_p3`; one call succeeds, the other receives `CustomNotify`, and the persisted active set remains 50.
 - `CalendarMgrServiceTests`: 10 passed, 0 skipped.
-- Host RPC and server test classes passed against `eve_p3`: 399 passed, 0 skipped.
-- Builds completed for `Eve.Calendar`, `Eve.Services.Core`, and `Eve.Host.Tests`. The `Eve.Services.Core.Tests` project also built after restoring its missing assets.
-- No graphical client session was used. This fix has not yet received its push-triggered Actions result.
+- Calendar Host RPC and server test classes passed against `eve_p3`: 399 passed, 0 skipped.
+- Builds completed for `Eve.Calendar`, `Eve.Bookmarks`, `Eve.Services.Core`, and `Eve.Host.Tests`. The `Eve.Services.Core.Tests` project also built after restoring its missing assets.
+- No graphical client session was used.
 
 - Shared bookmark regression: failed before the fix (2 `AlignTo` commands instead of 1), then passed after the fix on `eve_p3` (1 passed, 0 skipped). The 2-minute boundary and creator, move and copy cases are asserted.
 - `Eve.Bookmarks.Tests`: 34 passed, 0 skipped on `eve_p3`; this includes store, shared-folder, notification, expiry and manager tests.
 - `AccessGroupBookmarkMgrHostWireTests` and `BeyonceBookmarkPersistenceWireTests`: 3 passed, 0 skipped on `eve_p3`.
 - `OwnerGroupManagerServiceTests`: 7 passed, 0 skipped on `eve_p3`.
+- After syncing main, the selected calendar and bookmark Host classes passed together: 402 passed, 0 skipped. `CalendarMgrServiceTests` plus `AccessGroupBookmarkMgrWireContractTests`: 12 passed, 0 skipped.
+- Pushed as `3bed36cdf1669029e7c456888c34510153882e6d`; main CI run 1397 and Agent test run 1230 both succeeded.
 
 ## Remaining audit work
 

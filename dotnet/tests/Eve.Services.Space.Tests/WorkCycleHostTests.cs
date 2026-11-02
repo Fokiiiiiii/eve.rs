@@ -153,6 +153,7 @@ public class WorkCycleHostTests
     public async Task A_salvager_cycle_on_a_wreck_is_granted_its_product_into_the_hold()
     {
         await using var rig = await Rig.CreateAsync();
+        rig.Containers.SalvageRewardRoll = () => 0.99;
         var types = await new Eve.Sde.SdeReader(rig.Source).ReadTypeSummariesAsync();
         var salvagerTypeId = DroneHostTests.SdeTypeId(types, "Salvager I");
         // a wreck type is not published, as the drone salvage test finds it

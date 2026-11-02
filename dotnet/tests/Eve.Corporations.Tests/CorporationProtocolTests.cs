@@ -2053,11 +2053,13 @@ private static PyValue RowField(PyValue value,string key)
                 Call(attackerSession, "GetTop50", new PyInt(-1))));
             Assert.Empty(Assert.IsType<PyObjectEx>(negativeTop50).List);
 
-            var publicInfo = await service.GetPublicWarInfo(
-                Call(attackerSession, "GetPublicWarInfo", ownerRows[0].Values[0]));
+            var publicInfos = Assert.IsType<PyList>(await service.GetPublicWarInfo(
+                Call(attackerSession, "GetPublicWarInfo", new PyList([ownerRows[0].Values[0]]))));
+            var publicInfo = Assert.Single(publicInfos.Items);
             Assert.Equal(new PyStr("util.KeyVal"), Assert.IsType<PyObject>(publicInfo).Name);
-            Assert.Equal(PyValue.None, await service.GetPublicWarInfo(
-                Call(attackerSession, "GetPublicWarInfo", new PyInt(long.MaxValue))));
+            Assert.Equal(ownerRows[0].Values[0], Field(publicInfo, "warID"));
+            Assert.Empty(Assert.IsType<PyList>(await service.GetPublicWarInfo(
+                Call(attackerSession, "GetPublicWarInfo", new PyList([new PyInt(long.MaxValue)])))).Items);
 
             var structureWars = Assert.IsType<PyList>(await service.GetWarsForStructure(
                 Call(attackerSession, "GetWarsForStructure", new PyInt(structure))));
@@ -2068,8 +2070,8 @@ private static PyValue RowField(PyValue value,string key)
                 Call(attackerSession, "GetWarsByOwnerID", new PyInt(legacyOwner)))));
             var legacyRow = Assert.IsType<PyPackedRow>(Assert.Single(legacyRows.List));
             Assert.Equal(new PyInt(legacyStructure), legacyRow.Values[14]);
-            var legacyInfo = await service.GetPublicWarInfo(
-                Call(attackerSession, "GetPublicWarInfo", legacyRow.Values[0]));
+            var legacyInfo = Assert.Single(Assert.IsType<PyList>(await service.GetPublicWarInfo(
+                Call(attackerSession, "GetPublicWarInfo", new PyList([legacyRow.Values[0]])))).Items);
             Assert.Equal(PyValue.None, Field(legacyInfo, "warHQID"));
             Assert.Equal(PyValue.None, Field(legacyInfo, "warHQ"));
             Assert.Empty(Assert.IsType<PyList>(await service.GetWarsForStructure(

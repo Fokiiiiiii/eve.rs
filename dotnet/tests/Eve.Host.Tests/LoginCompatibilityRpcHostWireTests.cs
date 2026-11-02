@@ -64,10 +64,21 @@ public partial class HostServerTests
             MarshalCodec.Encode(Packets.CallWithKwargs(
                 open, ++callId, "air_npe", "skip_air_npe", new PyTuple([]),
                 Py.Dict(("machoVersion", new PyInt(1)))))));
-        var notification = Assert.IsType<PyObject>(
+        var skippedNotification = Assert.IsType<PyObject>(
             MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload));
+        var skippedPacket = Assert.IsType<MachoPacket>(MachoPacket.Decode(skippedNotification));
+        Assert.Equal(MachoMessage.Notification, skippedPacket.Type);
+        Assert.Equal("OnTutorialSkipped", skippedPacket.Dest.BroadcastId);
         Assert.Equal(ClientNotification.ClassName,
-            Encoding.UTF8.GetString(Assert.IsType<PyBytes>(notification.Name).Value.Span));
+            Encoding.UTF8.GetString(Assert.IsType<PyBytes>(skippedNotification.Name).Value.Span));
+
+        var stateNotification = Assert.IsType<PyObject>(
+            MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload));
+        var statePacket = Assert.IsType<MachoPacket>(MachoPacket.Decode(stateNotification));
+        Assert.Equal(MachoMessage.Notification, statePacket.Type);
+        Assert.Equal("OnAirNpeStateChanged", statePacket.Dest.BroadcastId);
+        Assert.Equal(ClientNotification.ClassName,
+            Encoding.UTF8.GetString(Assert.IsType<PyBytes>(stateNotification.Name).Value.Span));
         Assert.Same(PyNone.Instance, Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
         Assert.True(skipped);
         Assert.Equal(2, state);

@@ -79,8 +79,12 @@ internal sealed class StructureOfficeRentDue(
                 },
                 cancellationToken);
             if (paid)
+            {
                 foreach (var change in changes)
                     wallets.AnnounceCommitted(change);
+                if (characterSessions is { } sessions)
+                    CorporationOfficeNotifications.BillReceived(sessions, bill.CorporationId);
+            }
             return paid;
         }
         catch (InsufficientFundsException)

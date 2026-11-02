@@ -5,6 +5,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Scheduler;
 using Eve.Services;
+using Eve.Services.Corporations;
 using Eve.Structures;
 using Npgsql;
 using Xunit;
@@ -68,6 +69,28 @@ public sealed class StructureNotificationsTests
         116_444_736_000_000_000L + unixMilliseconds * 10_000L;
 
     private static List<string> Notices(Sink sink) => ClientNotices(sink).Select(notice => notice.Name).ToList();
+
+    [Fact]
+    public void Auto_paid_rent_refreshes_bill_list_for_corporation_sessions()
+    {
+        var sessions = new CharacterSessions();
+        var member = new Sink();
+        var memberSession = new ClientSession(member) { SessionId = 1, CharacterId = 1 };
+        memberSession.Set("corpid", new PyInt(Corporation));
+        sessions.Enter(1, memberSession);
+        var outsider = new Sink();
+        var outsiderSession = new ClientSession(outsider) { SessionId = 2, CharacterId = 2 };
+        outsiderSession.Set("corpid", new PyInt(OtherCorporation));
+        sessions.Enter(2, outsiderSession);
+
+        CorporationOfficeNotifications.BillReceived(sessions, Corporation);
+
+        var notice = Assert.Single(ClientNotices(member));
+        Assert.Equal("OnBillReceived", notice.Name);
+        Assert.Equal("corpid", notice.IdType);
+        Assert.Empty(notice.Args.Items);
+        Assert.Empty(ClientNotices(outsider));
+    }
 
     [PgFact]
     public async Task The_owner_and_docked_pilots_receive_persisted_hangar_view_updates_in_order_and_unrelated_sessions_hear_nothing()

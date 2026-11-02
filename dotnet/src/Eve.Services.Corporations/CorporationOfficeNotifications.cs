@@ -41,6 +41,14 @@ public static class CorporationOfficeNotifications
         RentalChanged(sessions, corporationId, stationId, officeFolderId);
     }
 
+    public static void BillReceived(CharacterSessions sessions, long corporationId)
+    {
+        ArgumentNullException.ThrowIfNull(sessions);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(corporationId);
+        foreach (var session in sessions.OfCorporation(corporationId))
+            Send(session, "OnBillReceived", "corpid");
+    }
+
     public static void RentalChanged(CharacterSessions sessions, long corporationId, long stationId, long officeFolderId)
     {
         Validate(sessions, corporationId, stationId, officeFolderId, null);

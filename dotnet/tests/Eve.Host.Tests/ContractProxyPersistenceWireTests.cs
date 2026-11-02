@@ -18,7 +18,7 @@ namespace Eve.Host.Tests;
 public partial class HostServerTests
 {
     [Fact]
-    public async Task Finish_auction_settles_expired_bid_and_persists_winner_inventory_and_notification()
+    public async Task Finish_auction_claims_items_and_proceeds_independently()
     {
         var connectionString = Environment.GetEnvironmentVariable("EVE_PG_URL")
             ?? throw new InvalidOperationException("EVE_PG_URL must name the assigned PostgreSQL lane");
@@ -91,8 +91,14 @@ public partial class HostServerTests
                 await transaction.CommitAsync();
             }
             var reads = new PersistenceContractReadModel(source, contractsSchema, sdeSchema);
-            StartContractHost(new PersistenceContractWriteModel(source, itemStore, wallets, () => nowMs,
-                contractsSchema, expiryJobs, events), reads);
+            var writer = new PersistenceContractWriteModel(source, itemStore, wallets, () => nowMs,
+                contractsSchema, expiryJobs, events);
+            Assert.False(await expiryJobs.SettleExpiredAsync(contractId, nowMs, CancellationToken.None));
+            Assert.Equal(0m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
+            var escrowed = await itemStore.GetAsync(offeredItemId, CancellationToken.None);
+            Assert.NotNull(escrowed);
+            Assert.Equal(1L, escrowed.OwnerId);
+            StartContractHost(writer, reads);
             var front = await Handshaken(await ConnectAsync());
             var open = Open();
             await front.SendAsync(open);
@@ -117,16 +123,35 @@ public partial class HostServerTests
                 state.Parameters.AddWithValue(contractId);
                 await using var reader = await state.ExecuteReaderAsync();
                 Assert.True(await reader.ReadAsync());
-                Assert.Equal((short)4, reader.GetInt16(0));
+                Assert.Equal((short)3, reader.GetInt16(0));
                 Assert.Equal(bidderId, reader.GetInt64(1));
             }
             var delivered = await itemStore.GetAsync(offeredItemId, CancellationToken.None);
             Assert.NotNull(delivered);
             Assert.Equal((bidderId, 3001L, ItemFlags.Hangar), (delivered.OwnerId, delivered.LocationId, delivered.Flag));
+            Assert.Equal(0m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
+            var issuerClaims = await Task.WhenAll(
+                writer.FinishAuctionAsync(contractId, 100, 84, true, false, CancellationToken.None).AsTask(),
+                writer.FinishAuctionAsync(contractId, 100, 84, true, false, CancellationToken.None).AsTask());
+            Assert.All(issuerClaims, claim => Assert.True(claim));
+            await using (var state = source.CreateCommand($"SELECT status, date_completed_filetime FROM {contractsSchema}.contract_records WHERE contract_id=$1"))
+            {
+                state.Parameters.AddWithValue(contractId);
+                await using var reader = await state.ExecuteReaderAsync();
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal((short)4, reader.GetInt16(0));
+                Assert.True(reader.GetInt64(1) > 0);
+            }
             Assert.Equal(500m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
-            await using var notice = source.CreateCommand($"SELECT payload->>'name' FROM {eventsSchema}.outbox WHERE topic=$1");
+            await using var notice = source.CreateCommand(
+                $"SELECT payload->>'name', payload->>'characterId' FROM {eventsSchema}.outbox WHERE topic=$1 ORDER BY id");
             notice.Parameters.AddWithValue(ContractNotifications.Topic);
-            Assert.Equal("OnContractCompleted", (string?)await notice.ExecuteScalarAsync());
+            await using var notifications = await notice.ExecuteReaderAsync();
+            Assert.True(await notifications.ReadAsync());
+            Assert.Equal(("OnContractCompleted", "100"), (notifications.GetString(0), notifications.GetString(1)));
+            Assert.True(await notifications.ReadAsync());
+            Assert.Equal(("OnContractCompleted", "42"), (notifications.GetString(0), notifications.GetString(1)));
+            Assert.False(await notifications.ReadAsync());
         }
         finally
         {

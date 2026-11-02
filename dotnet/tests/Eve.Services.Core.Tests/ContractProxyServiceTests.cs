@@ -583,7 +583,8 @@ public sealed class ContractProxyServiceTests
             bool forCorporation, bool hasCorpContractManager, CancellationToken cancellationToken) =>
             ValueTask.FromResult(true);
 
-        public ValueTask<bool> FinishAuctionAsync(long contractId, CancellationToken cancellationToken) =>
+        public ValueTask<bool> FinishAuctionAsync(long contractId, long characterId, long corporationId,
+            bool isIssuer, bool hasCorpContractManager, CancellationToken cancellationToken) =>
             ValueTask.FromResult(true);
 
         public ValueTask<bool> ExpireContractNowAsync(long contractId, CancellationToken cancellationToken) =>

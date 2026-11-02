@@ -116,6 +116,7 @@ public sealed class BillMgrService(
           var billId = PositiveId(call.Arg(0));
           var accountKey = NormalizeWalletKey(call.Kwarg("fromAccountKey") ?? call.Arg(1));
           var paidAtMs = nowUnixMs();
+          IReadOnlyList<WalletBalanceChange>? officeRentChanges = null;
           var paid = await officeStore.PayBillAsync(
               billId,
               authority.Corporation.Id,
@@ -125,7 +126,7 @@ public sealed class BillMgrService(
               {
                   var creditorId = bill.CreditorId ?? stationOwnerOf(bill.StationId);
                   if (creditorId is not > 0) throw new CorporationError("BILL_NOT_PAYABLE");
-                  await OfficeRentSettlement.SettleAsync(wallets, connection, transaction, bill,
+                  officeRentChanges = await OfficeRentSettlement.SettleAsync(wallets, connection, transaction, bill,
                       new WalletAccount(authority.Corporation.Id, accountKey), creditorId.Value, paidAtMs, call.Cancellation);
               },
               call.Cancellation);
@@ -136,6 +137,9 @@ public sealed class BillMgrService(
               paid = await payOtherBill(billId, authority.Corporation.Id,
                   call.Session.CharacterId.GetValueOrDefault(), accountKey, call.Cancellation);
           if (!paid) throw new CorporationError("BILL_NOT_PAYABLE");
+          if (officeRentChanges is not null)
+              foreach (var change in officeRentChanges)
+                  wallets.AnnounceCommitted(change);
           return PyNone.Instance;
       }
 

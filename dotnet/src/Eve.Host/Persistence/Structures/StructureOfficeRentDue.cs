@@ -70,10 +70,18 @@ internal sealed class StructureOfficeRentDue(
         if (!settings.EnabledBillTypes.TryGetValue(RentalBillTypeId, out var enabled) || !enabled) return false;
         try
         {
-            return await offices.PayBillAsync(bill.BillId, bill.CorporationId, bill.CorporationId, now,
-                (connection, transaction, open) => OfficeRentSettlement.SettleAsync(wallets, connection, transaction, open,
-                    new WalletAccount(bill.CorporationId, settings.DivisionId), open.CreditorId!.Value, now, cancellationToken),
+            var changes = new List<WalletBalanceChange>();
+            var paid = await offices.PayBillAsync(bill.BillId, bill.CorporationId, bill.CorporationId, now,
+                async (connection, transaction, open) =>
+                {
+                    changes.AddRange(await OfficeRentSettlement.SettleAsync(wallets, connection, transaction, open,
+                        new WalletAccount(bill.CorporationId, settings.DivisionId), open.CreditorId!.Value, now, cancellationToken));
+                },
                 cancellationToken);
+            if (paid)
+                foreach (var change in changes)
+                    wallets.AnnounceCommitted(change);
+            return paid;
         }
         catch (InsufficientFundsException)
         {

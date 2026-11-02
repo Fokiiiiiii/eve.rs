@@ -75,7 +75,7 @@ public static class IncursionRules
         _ => TimeSpan.Zero,
     };
 
-    public const int MinimumLayoutSystems = 3;
+    public const int MinimumLayoutSystems = 6;
 
     /// <summary>
     /// id); the vanguard and assault systems are the nearest of the rest, in counts that grow with the constellation's size. <paramref name="others"/> carries each

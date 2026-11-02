@@ -1,3 +1,4 @@
+using System.Text;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
@@ -63,22 +64,22 @@ public partial class HostServerTests
             MarshalCodec.Encode(Packets.CallWithKwargs(
                 open, ++callId, "air_npe", "skip_air_npe", new PyTuple([]),
                 Py.Dict(("machoVersion", new PyInt(1)))))));
-        var notifications = new List<string>();
-        PyValue response;
-        while (true)
-        {
-            var message = MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
-            var packet = MachoPacket.Decode(message);
-            if (packet?.Type == MachoMessage.Notification)
-            {
-                notifications.Add(packet.Dest.BroadcastId ?? string.Empty);
-                continue;
-            }
-            response = message;
-            break;
-        }
-        Assert.Equal(["OnTutorialSkipped", "OnAirNpeStateChanged"], notifications);
-        Assert.Same(PyNone.Instance, Result(response));
+        var skippedNotification = Assert.IsType<PyObject>(
+            MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload));
+        var skippedPacket = Assert.IsType<MachoPacket>(MachoPacket.Decode(skippedNotification));
+        Assert.Equal(MachoMessage.Notification, skippedPacket.Type);
+        Assert.Equal("OnTutorialSkipped", skippedPacket.Dest.BroadcastId);
+        Assert.Equal(ClientNotification.ClassName,
+            Encoding.UTF8.GetString(Assert.IsType<PyBytes>(skippedNotification.Name).Value.Span));
+
+        var stateNotification = Assert.IsType<PyObject>(
+            MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload));
+        var statePacket = Assert.IsType<MachoPacket>(MachoPacket.Decode(stateNotification));
+        Assert.Equal(MachoMessage.Notification, statePacket.Type);
+        Assert.Equal("OnAirNpeStateChanged", statePacket.Dest.BroadcastId);
+        Assert.Equal(ClientNotification.ClassName,
+            Encoding.UTF8.GetString(Assert.IsType<PyBytes>(stateNotification.Name).Value.Span));
+        Assert.Same(PyNone.Instance, Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
         Assert.True(skipped);
         Assert.Equal(2, state);
     }

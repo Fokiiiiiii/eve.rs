@@ -17,10 +17,10 @@
 
 `CharacterShips.Cargo.cs:390-411` は成果物の種類に応じて専用 asteroid / gas / ice hold、次に一般 mining hold を選び、SDE ship dogma の容量が正で、かつ item が入る hold だけを候補にする。候補がない船だけ通常カーゴを使う。選択した hold の容量拒否、item 作成、`ItemChanged` の flag を一貫させた。選択済み mining hold が満杯なら `CARGO_FULL` を返し、asteroid や cargo を変更しない。
 
-回帰テスト `dotnet/tests/Eve.Services.Space.Tests/SpaceContainerTests.cs:452-519` は SDE の Venture（general mining hold 134）、Cockroach fixture（asteroid hold 182）、Caldari rookie ship（cargo 5）を比較し、採掘ホールドが満杯でも cargo に流れず asteroid が残ることを確認する。`dotnet/tests/Eve.Ships.Tests/GasCloudMiningTests.cs:11-37` は Prospect の gas cycle が一般 mining hold に入ることを、`IceMiningHoldTests.cs:8-37` は Endurance の ice cycle が SDE 容量どおり一般 mining hold に入ることを検証する。テストは修正を戻した状態で 3 行を実行し、採掘ホールドを持つ2行が cargo flag 5 となるため失敗することを確認後、修正を復元して関連クラスを再実行した。
+回帰テスト `dotnet/tests/Eve.Services.Space.Tests/SpaceContainerTests.cs:452-519` は SDE の Venture（general mining hold 134）、Cockroach fixture（asteroid hold 182）、Caldari rookie ship（cargo 5）を比較し、採掘ホールドが満杯でも cargo に流れず asteroid が残ることを確認する。`dotnet/tests/Eve.Services.Space.Tests/DroneHostTests.cs:627-666` は Cockroach 上の採掘ドローンが枯渇した asteroid から採掘した鉱石を flag 182 で永続化することを検証する。`dotnet/tests/Eve.Ships.Tests/GasCloudMiningTests.cs:11-37` は Prospect の gas cycle が一般 mining hold に入ることを、`IceMiningHoldTests.cs:8-37` は Endurance の ice cycle が SDE 容量どおり一般 mining hold に入ることを検証する。以前の確認では mining hold のある船の2行が cargo flag 5 になるためテストが失敗した。push 後の CI でも DroneHostTests が従来 cargo flag 5 を要求して失敗し、`eve_p5` の再実行で同じ失敗（生成 item flag 182）を再現したため、その期待値を修正した。
 
 ## 検証範囲
 
-- DB-backed headless tests は自分の `eve_p5` で実行。最終成功実行は Space: SpaceContainerTests / MoonFieldTests / MiningActivationTests / CompressionHostTests、46 passed・0 skipped。Ships: GasCloudMiningTests / MiningProfileTests / IceMiningHoldTests、9 passed・0 skipped。
+- DB-backed headless tests は自分の `eve_p5` で実行。Space: SpaceContainerTests / MoonFieldTests / MiningActivationTests / CompressionHostTests は 46 passed・0 skipped。Ships: GasCloudMiningTests / MiningProfileTests / IceMiningHoldTests は 9 passed・0 skipped。CI で失敗した DroneHostTests の採掘ドローンケースは、flag 5 の旧条件でローカル再現し、flag 182 に直した後、同クラスと関連 Space 回帰クラスで 74 passed・0 skipped。
 - `Eve.Ships`、`Eve.Services.Space.Tests`、`Eve.Ships.Tests` の build は警告・エラーなし。
 - 実 graphical V24.01 client での画面確認は行っていない。テストは headless で、UI の見た目そのものはこの記録の検証対象外。

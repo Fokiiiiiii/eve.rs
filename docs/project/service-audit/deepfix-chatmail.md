@@ -25,3 +25,7 @@ EVE University’s [EVE Mail guide](https://wiki.eveuniversity.org/EVE_Mail) des
 ## Remaining coverage
 
 The tests exercise the access policy directly and exercise the mail persistence adapter, but do not yet run the full registered Host `Join` RPC against a persistent mailing-list row and then read the resulting welcome mail through `SyncMail`. Chat-channel join/message delivery and contact add/remove are outside this patch; prior service-audit notes `docs/project/service-audit/DEEPCHECK_mailMgr.md` and `docs/project/service-audit/deepfix-fleets and chat and mail and contacts.md` contain related checks. The graphical V24.01 client was not launched for this change.
+
+## Post-push CI follow-up
+
+The first push's main CI exposed a race in `SpaceServiceTests.Asking_for_targets_does_not_abort_a_running_safe_logoff`: the test waited for the synchronous `Closed` event before the asynchronous space cleanup completed. Commit `ccaf0bee` waits for both conditions. Its focused Actions run `41387091756` passed, and push-triggered main CI run `41387080659` completed successfully with no failed tests or jobs.

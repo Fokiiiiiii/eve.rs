@@ -25,3 +25,7 @@ The client has no separate salvage-result RPC payload consumer: the user-visible
 dotnet/tests/Eve.Services.Space.Tests/SpaceContainerTests.cs:525–605 covers retry after failed access, empty success, multiple size-based reward quantities, wreck removal, retained contents in a can, and the success notice. WorkCycleHostTests.cs:210–227 checks the Host notification and salvage fact. DroneHostTests.cs:671 onward verifies an SDE salvage item is persisted. These fixtures pin reward rolls without weakening their assertions. The four affected database test classes passed together on eve_p4: 74 passed, 0 failed, 0 skipped.
 
 The graphical V24.01 client was not exercised. EveJS source was inspected, not run end-to-end for this scenario.
+
+## Push and checks
+
+Implementation commit `304f4970992a` is on `main`. Push-triggered CI run [41471425498](https://github.com/Fokiiiiiii/eve.rs/actions/runs/41471425498) completed successfully with no failed jobs. The dispatched focused Actions run [41471470725](https://github.com/Fokiiiiiii/eve.rs/actions/runs/41471470725) also succeeded. The local focused suite passed 74 tests across SpaceContainerTests, WorkCycleHostTests, DroneHostTests, and LootAllTests, with no skips. Reward generation timing and weighted-pool parity remain open as described above.

@@ -1,0 +1,28 @@
+# NPC AI, aggro, spawning, bounty, and loot deep check
+
+## Change
+
+`DynamicBountyMgrService.GetOutputForClientSolarSystem` now returns the client contract as `(real output, boolean active)`. If no dynamic bounty state reader is wired, it returns the neutral inactive pair `(1.0, false)`. This avoids treating inactive state as a zero payout multiplier and matches the V24.01 consumer's tuple semantics. The runtime reader is still optional and is not supplied by `CoreServices.Create`; this change does not claim to implement dynamic bounty simulation.
+
+Evidence: V24.01 `eve/client/script/ui/shared/dynamicResource/dynamicResourceSvc.py:59-65` returns `(1.0, False)` when DBS is emergency-offline and otherwise unpacks the RPC pair; `:160-165` primes the cache as `(rate, True)` on the state notification. `eve/client/script/ui/shared/infoPanels/infoPanelLocationInfo.py:319-326` displays percentage output only when active. Current EveJS `src/server/src/services/dynamic/dynamicBountyMgrService.js:12-22` returns a marshalled real plus a boolean; `dynamicBountyRuntime.js:31-35` returns `(1, false)` outside coverage and equilibrium output with `active=true` for covered systems without a state bank. EVE University describes system bounty risk modifier as a multiplier applied to NPC bounties, varying with system activity: [Ratting](https://wiki.eveuniversity.org/Ratting).
+
+The whole-client search found one caller of `GetOutputForClientSolarSystem`, in `dynamicResourceSvc.py:59-65`; consumers are its local cache/update event and the location info panel above. The response carries no user-facing error code, and the client simply hides the value while inactive. Session changes clear the cache and scatter the local update at `dynamicResourceSvc.py:175-182`; global emergency-offline changes do the same at `:184-191`.
+
+## Flows checked
+
+- **NPC aggro/combat:** V24.01 `behaviors/trees/combat.py:114-129` covers clearing stale/cloaked/leaving targets, target synchronization, approach/orbit, lock retries, effects, and waiting. Its caller graph includes the general combat behavior and specialized pirate, sleeper, drifter, mining, dungeon, and incursion trees. eve.rs counterpart is `crates/eve-behaviors/src/trees/combat.rs:167-230`. The reviewed target selection/action sequence showed no client-visible mismatch requiring a change.
+- **Spawn group cap:** V24.01 `behaviors/actions/entityspawning.py:59-73,128-138` computes remaining group capacity, clamps it at zero, spawns only when data exists, then updates the group and consumes spawn data. eve.rs `crates/eve-behaviors/src/actions/entityspawning.rs:145-161` follows that order. For pooled spawn points, V24.01 `behaviors/utility/spawning.py:83-124` rejects missing points or an undersized pool before selecting and consuming points; eve.rs counterpart is `crates/eve-behaviors/src/utility/spawning.rs:139-157`. No discrepancy was found in the inspected paths.
+- **NPC bounty and wreck loot:** the existing Host paths were checked against their tests and prior audit records. `dotnet/src/Eve.Services.Space/SpaceSessions.cs:1444-1460` enters the bounty payment path; `dotnet/src/Eve.Npc/PgBountyStore.cs:140-166` owns durable payout; tests cover payout amounts, retry/balance limits, and payment ordering (`dotnet/tests/Eve.Npc.Tests/NpcBountyTests.cs:11-98`, `dotnet/tests/Eve.Npc.Tests/PgBountyStoreTests.cs:84-135`, `dotnet/tests/Eve.Services.Space.Tests/SpaceEventsTests.cs:61-98`). Wreck handling is checked in `dotnet/tests/Eve.Services.Space.Tests/NpcLootHostTests.cs:41-147`; client loot actions are `eve/client/script/environment/invControllers.py:1346-1366` and wreck explosion loot is `behaviors/entity.py:92-127,143-154`. Existing fixes and further trace evidence are recorded in `docs/project/service-audit/deepfix-npcs.md` and `docs/project/service-audit/deepfix-loot-salvage.md`.
+
+## Verification
+
+- `dotnet build dotnet/src/Eve.Services.Core -p:UseSharedCompilation=false`: passed, 0 warnings and 0 errors.
+- Focused `Eve.Services.Core.Tests` case `Dynamic_bounty_returns_the_reference_disabled_pair_or_the_wired_state`: passed, 1 passed, 0 skipped. Before adjusting the service and fixtures, the test project failed to compile because the implementation modeled the active flag as numeric rather than boolean.
+- `Eve.Host.Tests.HostServerTests.Dungeon_and_dynamic_resource_cache_calls_round_trip_through_host_registration`: first reproduced a stale `(0, 0)` expected pair locally. The follow-up wire assertion checks the tuple members independently and requires `PyReal(1)` plus `PyBool.False`, matching EveJS's marshalled-real output; it passed locally (1 passed, 0 skipped).
+- `eve_p4` database-backed tests: `NpcBountyHostTests|NpcLootHostTests|SpaceEventsTests`: 28 passed, 0 skipped.
+- `eve_p4` database-backed tests: NPC bounty, loot, selector, belt-rat, armament, and PostgreSQL bounty-store classes: 156 passed, 0 skipped.
+- The first push CI run failed only because this Host wire test still expected the previous `(0, 0)` values. That exact failure was reproduced locally before changing the assertion; the corrected test and real-valued default now pass locally. Follow-up CI is required to confirm the correction.
+
+## Remaining boundary
+
+The dynamic bounty reader is not yet wired to a persistent Host runtime, and bounty payout does not yet consume the system DBS multiplier. The change fixes the RPC's type and safe inactive default only. No graphical V24.01 client session was run. The spawn and combat conclusions apply to the inspected flows above, not every behavior tree or all SDE-authored NPC encounters.

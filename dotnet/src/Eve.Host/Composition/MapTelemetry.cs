@@ -136,7 +136,7 @@ public static class MapTelemetryState
                 var factionId = PositiveLong(record["victimFactionID"]);
                 var time = UnixMs(record["killTime"] ?? record["killmailTime"]);
                 if (!IsPublicSystem(systemId) || shipTypeId <= 0 ||
-                    (typeCategories.TryGetValue(shipTypeId, out var category) && category != 6) ||
+                    (!typeCategories.TryGetValue(shipTypeId, out var category) || category != 6) ||
                     time <= 0 || time < cutoff || time > nowMs + 60_000)
                     continue;
 

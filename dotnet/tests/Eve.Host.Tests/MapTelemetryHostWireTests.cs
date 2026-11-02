@@ -64,6 +64,11 @@ public partial class HostServerTests
                     ["killID"] = 4, ["killTime"] = filetime, ["solarSystemID"] = systemA,
                     ["victimShipTypeID"] = 13, ["victimCharacterID"] = characterId,
                 },
+                ["6"] = new JsonObject
+                {
+                    ["killID"] = 6, ["killTime"] = filetime, ["solarSystemID"] = systemA,
+                    ["victimShipTypeID"] = 14, ["victimFactionID"] = 500_001,
+                },
                 ["5"] = new JsonObject
                 {
                     ["killID"] = 5, ["killTime"] = now - 25L * 60 * 60 * 1000,

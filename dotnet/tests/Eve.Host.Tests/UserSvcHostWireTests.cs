@@ -63,8 +63,9 @@ public sealed class UserSvcHostWireTests
             new PyList([Py.Tuple(new PyLong(trashToken), PyNone.Instance)])));
         Assert.Empty(Assert.IsType<PyObjectEx>(await Call(userSvc, session, "GetRedeemTokens")).List);
 
-        var reverseToken = await CreateRedeemTokenAsync(userSvc, session, 36);
-        Assert.Equal(PyBool.True, await Call(userSvc, session, "ReverseRedeem", new PyLong(reverseToken)));
+        var reverseInvalid = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await Call(userSvc, session, "ReverseRedeem", new PyLong(long.MaxValue)));
+        Assert.True(reverseInvalid.Error.IsUserError);
         Assert.Empty(Assert.IsType<PyObjectEx>(await Call(userSvc, session, "GetRedeemTokens")).List);
 
         var token = Assert.IsType<PyStr>(await Call(userSvc, session, "GetUserToken"));

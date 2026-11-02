@@ -21,6 +21,8 @@ The primary reference’s current `Handle_ReverseRedeem` only logs and returns t
 
 The new PostgreSQL Host wire test exercises invalid item rejection without item loss, item deletion, no notification before the response and one notification after it, retry without a second notification, station mismatch with the token retained, successful claim with one item created, and reverse retry after claim (`dotnet/tests/Eve.Host.Tests/NewEdenStoreHostTests.cs:139-207`). I temporarily removed the transactional item deletion and ran the focused test: it failed at the item-presence assertion, then passed after restoring deletion.
 
+The broader `userSvc` wire test also sent an item ID belonging to a fabricated QA redeem token and asserted success. That is not a physical inventory item accepted by V24.01's `ReverseRedeem(item.itemID)` call, so the assertion now checks that the unavailable item gets a player-visible UserError and leaves the redeeming queue empty (`dotnet/tests/Eve.Host.Tests/UserSvcHostWireTests.cs:65-70`; client call: `eve/client/script/ui/services/redeemsvc.py:67-77`). The old test failed locally and in the push CI before this correction.
+
 ## Reviewed flows with no change
 
 - NES catalog purchase stays unavailable until a payment settlement provider is wired. The client treats a falsy result as failure, and the Host does not grant items, PLEX, Omega time, or training slots without settlement (`dotnet/src/Eve.Services.Core/StoreOffersService.cs:318-330`, `docs/reference/compat/DEVIATIONS.md` under “Store checkout remains disabled”). This matches the current fail-closed Host composition; enabling it would create charge-free entitlements. The current EveJS purchase code validates PLX and settles purchases through its fulfillment path (`server/src/services/account/storeManagerService.js:98-155`, `server/src/services/account/storeFulfillment.js:186-252`).
@@ -31,4 +33,5 @@ The new PostgreSQL Host wire test exercises invalid item rejection without item 
 
 - Passed: focused PostgreSQL Host test `Reverse_redeeming_plex_moves_the_item_to_a_station_locked_token_and_claims_it_once`.
 - Passed: 17 tests across `NewEdenStoreHostTests`, `NewEdenEntitlementHostTests`, and `UserSvcRedeemTokenPersistenceTests`; 0 skipped.
+- After correcting the stale wire fixture: 18 tests across those three classes plus `UserSvcHostWireTests` and `UserSvcRpcHostWireTests`; 0 skipped on `eve_p3`.
 - The graphical V24.01 client was not used. Checkout behavior remains intentionally unavailable pending a settlement provider. No separate end-to-end test was added for real-money fast checkout.

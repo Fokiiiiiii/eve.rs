@@ -772,6 +772,8 @@ pub struct Scene {
     pub(crate) rng: PythonRandom,
     /// The offensive acts since the brains last looked (`crate::brains` tells the NPCs that were their targets).
     pub(crate) aggressions: Vec<crate::weapons::Aggression>,
+    /// Ships whose security status fell since the brains last looked.
+    pub(crate) security_status_losses: Vec<(i64, i64)>,
     /// The missiles that are on their way to a ship, by id: entities of their own, apart from the ships (`crate::missile_entity`).
     pub(crate) missiles: BTreeMap<i64, crate::missile_entity::MissileEntity>,
     /// How many missiles have been fired in this scene (their ids are numbered from it).
@@ -865,6 +867,7 @@ impl Scene {
             group_sequence: 0,
             rng: PythonRandom::new(0x5348_4f54),
             aggressions: Vec::new(),
+            security_status_losses: Vec::new(),
             missiles: BTreeMap::new(),
             missile_sequence: 0,
             dots: BTreeMap::new(),

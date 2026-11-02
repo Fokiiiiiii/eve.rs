@@ -1,5 +1,9 @@
 # Deviations from the reference server
 
+## CONCORD response composition (2026-11-02)
+
+EVE University describes a high-security CONCORD response that begins with two police cruisers and escalates to a battleship; response delay depends on system security status ([CONCORD](https://wiki.eveuniversity.org/CONCORD)). EveJS 261028.1 instead selects response groups of five, six, or seven ships (`src/server/src/services/security/crimewatchState.js:1282-1291`). eve.rs follows the documented composition, spawning the cruisers first and the battleship 15 seconds later (`SpaceSessions.Npc.cs:665-742`), and uses the security-status delay bands (`CrimewatchRuntime.cs:550-559`). `SpaceServiceTests.Concord_response_uses_concord_hulls_and_enforces_ship_loss_after_timer` checks the hulls, order, delay, and loss outcome.
+
 ## Biomassing a player-corporation CEO (2026-11-01)
 
 The V24.01 client calls `PrepareCharacterForDelete(charID)` from `eve/client/script/ui/login/charSelection/characterSelection.py:861-868` and `DeleteCharacter(charID)` from `:835-859`. EVE University's [Accounts guide](https://wiki.eveuniversity.org/Accounts) requires a player-corporation CEO to resign or close the corporation before entering the biomass queue. EveJS 261028.1 (`server/src/services/character/characterDeletionRuntime.js:672-693, 716-799`) checks ownership/offline/timer but omits the CEO rule. eve.rs intentionally rejects queueing and finalization for the active CEO of a non-NPC corporation using persisted CorporationStore state; the second check also covers a character promoted during the 600-minute timer. A Host wire/database regression test covers refusal, promotion while queued, and the permitted non-CEO path.

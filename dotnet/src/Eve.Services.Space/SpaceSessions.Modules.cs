@@ -513,7 +513,21 @@ public sealed partial class SpaceSessions
     public Func<long, CancellationToken, Task<CombatState>>? CrimewatchStateOf { get; set; }
 
     /// <summary>Host calls this after a criminal with an active timer enters high-security space.</summary>
-    public Func<long, long, double, CancellationToken, Task>? CriminalEnteredSystem { get; set; }
+      public Func<long, long, double, CancellationToken, Task>? PilotEnteredSystem { get; set; }
+
+      private async Task NotifyPilotEnteredSystemAsync(long characterId, long solarSystemId)
+      {
+          if (solarSystemId <= 0 || solarSystemId > int.MaxValue ||
+              _systems.Get((int)solarSystemId) is not { } system || PilotEnteredSystem is not { } entered) return;
+          try
+          {
+              await entered(characterId, solarSystemId, system.Security, CancellationToken.None);
+          }
+          catch (Exception error) when (error is not OperationCanceledException)
+          {
+              _log?.Invoke($"crimewatch system entry for character {characterId} could not be recorded: {error.Message}");
+          }
+      }
 
     /// <summary>The security status of a character (its relation of that kind; 0 when it is not set). The ship in space shows it in its slim item.</summary>
     public Func<long, CancellationToken, Task<double>>? SecurityStatusOf { get; set; }

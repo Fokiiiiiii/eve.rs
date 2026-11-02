@@ -671,29 +671,39 @@ public sealed partial class SpaceSessions
         var pilot = _pilots.Values.FirstOrDefault(candidate =>
             candidate.CharacterId == attackerCharacterId
             && candidate.SolarSystemId == solarSystemId
-            && (attackerShipId <= 0 || candidate.ShipId == attackerShipId));
+            && candidate.ShipId == attackerShipId)
+            ?? _pilots.Values.FirstOrDefault(candidate =>
+                candidate.CharacterId == attackerCharacterId
+                && candidate.SolarSystemId == solarSystemId
+                && candidate.TypeId != CharacterShips.CapsuleTypeId
+                && candidate.Session.GetInt("shipid") == candidate.ShipId);
         if (pilot is null || pilot.TypeId == CharacterShips.CapsuleTypeId
             || Npcs is not { } selector)
         {
             return false;
         }
 
-        var (selection, error, suggestions) = selector.Select("concord_response_fleet");
-        if (selection is null)
+        var profileGroups = new List<IReadOnlyList<NpcProfile>>(2);
+        foreach (var (profileId, count) in new[]
         {
-            _log?.Invoke($"CONCORD response pool is unavailable: {error}; {string.Join(", ", suggestions)}");
-            return false;
-        }
-        await EnsureNpcTypesAsync(selection.ShipTypes, cancellationToken);
-        var plan = selector.Roll(
-            selection,
-            3,
-            type => NpcHull.HasHitPoints(_statics.Type(type)),
-            Random.Shared.NextDouble);
-        if (!plan.Succeeded)
+            ("concord_police_cruiser", 2),
+            ("concord_police_battleship", 1),
+        })
         {
-            _log?.Invoke($"CONCORD response could not be rolled: {plan.Error}");
-            return false;
+            var (selection, error, suggestions) = selector.Select(profileId);
+            if (selection is null)
+            {
+                _log?.Invoke($"CONCORD response profile {profileId} is unavailable: {error}; {string.Join(", ", suggestions)}");
+                return false;
+            }
+            await EnsureNpcTypesAsync(selection.ShipTypes, cancellationToken);
+            var plan = selector.Roll(selection, count, type => NpcHull.HasHitPoints(_statics.Type(type)), Random.Shared.NextDouble, "concord");
+            if (!plan.Succeeded)
+            {
+                _log?.Invoke($"CONCORD response profile {profileId} could not be spawned: {plan.Error}");
+                return false;
+            }
+            profileGroups.Add(plan.Profiles);
         }
 
         var position = await PositionOfAsync(pilot.Session, pilot.ShipId, cancellationToken);
@@ -702,7 +712,7 @@ public sealed partial class SpaceSessions
             return false;
         }
         var (composition, _) = await SpawnGroupAsync(
-            plan.Profiles,
+            profileGroups[0],
             new SpawnAnchor(
                 pilot.SolarSystemId,
                 pilot.ShipId,
@@ -723,15 +733,55 @@ public sealed partial class SpaceSessions
         {
             _concordDestroyed.TryRemove(markedShip, out _);
         });
-        var creditProfile = plan.Profiles[0];
+        var creditProfile = profileGroups[1][0];
         _timers.Set(
             $"space:concord:punishment:{attackerCharacterId}:{solarSystemId}",
             TimeSpan.FromSeconds(15),
-            () => FinishConcordPunishmentAsync(
+            () => FinishConcordResponseAsync(
                 attackerCharacterId,
                 solarSystemId,
+                profileGroups[1],
                 new SimCredit(0, creditProfile.CorporationId, creditProfile.AllianceId, creditProfile.FactionId)));
         return true;
+    }
+
+    private async Task FinishConcordResponseAsync(
+        long characterId,
+        long solarSystemId,
+        IReadOnlyList<NpcProfile> battleships,
+        SimCredit credit)
+    {
+        var current = _pilots.Values.FirstOrDefault(pilot =>
+            pilot.CharacterId == characterId
+            && pilot.SolarSystemId == solarSystemId
+            && pilot.TypeId != CharacterShips.CapsuleTypeId
+            && pilot.Session.GetInt("shipid") == pilot.ShipId);
+        if (current is null)
+        {
+            return;
+        }
+
+        var position = await PositionOfAsync(current.Session, current.ShipId, CancellationToken.None);
+        if (position is not { } targetPoint)
+        {
+            return;
+        }
+
+        var (composition, _) = await SpawnGroupAsync(
+            battleships,
+            new SpawnAnchor(
+                current.SolarSystemId,
+                current.ShipId,
+                [targetPoint.X, targetPoint.Y, targetPoint.Z],
+                BaseDistance: 8_000,
+                Window: 4_000),
+            CancellationToken.None,
+            hostileResponseThreshold: 0,
+            aggressionRangeOverride: 50_000);
+        if (composition.Count != 0)
+        {
+            await FinishConcordPunishmentAsync(characterId, solarSystemId, credit);
+        }
     }
 
     private Task FinishConcordPunishmentAsync(long characterId, long solarSystemId, SimCredit credit)
@@ -739,7 +789,8 @@ public sealed partial class SpaceSessions
         var current = _pilots.Values.FirstOrDefault(pilot =>
             pilot.CharacterId == characterId
             && pilot.SolarSystemId == solarSystemId
-            && pilot.TypeId != CharacterShips.CapsuleTypeId);
+            && pilot.TypeId != CharacterShips.CapsuleTypeId
+            && pilot.Session.GetInt("shipid") == pilot.ShipId);
         if (current is null)
         {
             return Task.CompletedTask;

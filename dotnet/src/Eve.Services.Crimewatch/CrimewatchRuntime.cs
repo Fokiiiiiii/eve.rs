@@ -470,26 +470,40 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
     }
 
     /// <summary>Applies CONCORD response when a criminal with an active timer enters high-security space.</summary>
-    public async Task RespondToCriminalEntryAsync(
+    public async Task OnSystemEnteredAsync(
         long characterId,
         long solarSystemId,
         double security,
         CancellationToken cancellationToken = default)
     {
-        if (characterId <= 0 || solarSystemId <= 0 || security < 0.5)
+        if (characterId <= 0 || solarSystemId <= 0)
         {
             return;
         }
+
         var now = nowUnixMs();
         var state = await store.StateOfAsync(characterId, cancellationToken);
-        if (!state.IsCriminal(now))
+        if (state.FlagAt(now) != Flag.None)
         {
-            return;
+            var (before, after) = await store.UpdateAsync(
+                characterId,
+                current => current.FlagAt(now) == Flag.None ? current : current with { SolarSystemId = solarSystemId },
+                now,
+                cancellationToken);
+            state = after;
+            if (before.FlagAt(now) != Flag.None && after.FlagAt(now) != Flag.None && before.SolarSystemId != after.SolarSystemId)
+            {
+                await TellFlagsAsync(before.SolarSystemId, now, cancellationToken);
+                await TellFlagsAsync(after.SolarSystemId, now, cancellationToken);
+            }
         }
+
+        var securityClass = Security.ClassFromLevel(SecurityPenalty.PseudoSecurity(security));
+        if (!Security.IsHighSecOrHigher(securityClass) || !state.IsCriminal(now)) return;
         var attackerShipId = sessions.Of(characterId)?.GetInt("shipid") ?? 0;
         ScheduleConcordResponse(
             new ConcordResponseRequest(characterId, attackerShipId, solarSystemId, security, now),
-            now,
+            now + ConcordResponseDelayMs(security),
             now);
     }
 
@@ -508,30 +522,41 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
 
     private async Task DispatchConcordResponseAsync(ConcordResponseRequest response)
     {
-        if (ConcordResponseDue is not { } handlers)
+        try
         {
-            log?.Invoke($"crimewatch has no CONCORD response handler for {response.AttackerCharacterId} in {response.SolarSystemId}");
-            return;
+            if (ConcordResponseDue is not { } handlers)
+            {
+                log?.Invoke($"crimewatch has no CONCORD response handler for {response.AttackerCharacterId} in {response.SolarSystemId}");
+                return;
+            }
+            foreach (var handler in handlers.GetInvocationList().Cast<Func<ConcordResponseRequest, Task>>())
+            {
+                try
+                {
+                    await handler(response);
+                }
+                catch (Exception error)
+                {
+                    log?.Invoke($"CONCORD response for {response.AttackerCharacterId} in {response.SolarSystemId} failed: {error.Message}");
+                }
+            }
         }
-        foreach (var handler in handlers.GetInvocationList().Cast<Func<ConcordResponseRequest, Task>>())
+        finally
         {
-            try
-            {
-                await handler(response);
-            }
-            catch (Exception error)
-            {
-                log?.Invoke($"CONCORD response for {response.AttackerCharacterId} in {response.SolarSystemId} failed: {error.Message}");
-            }
+            _concordResponses.TryRemove((response.AttackerCharacterId, response.SolarSystemId), out _);
         }
     }
 
-    internal static long ConcordResponseDelayMs(double security) =>
-        security >= 0.9 ? 6_000
-        : security >= 0.8 ? 7_000
-        : security >= 0.7 ? 10_000
-        : security >= 0.6 ? 14_000
-        : 19_000;
+    internal static long ConcordResponseDelayMs(double security)
+    {
+        var displayedSecurity = Math.Round(SecurityPenalty.PseudoSecurity(security), 1, MidpointRounding.AwayFromZero);
+        return displayedSecurity >= 0.9 ? 6_000
+            : displayedSecurity >= 0.8 ? 7_000
+            : displayedSecurity >= 0.7 ? 10_000
+            : displayedSecurity >= 0.6 ? 14_000
+            : displayedSecurity >= 0.5 ? 19_000
+            : 0;
+    }
 
     private static string ConcordKey(long characterId, long solarSystemId) =>
         $"crime:concord:{characterId}:{solarSystemId}";

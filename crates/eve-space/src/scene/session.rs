@@ -658,6 +658,8 @@ impl Scene {
             })
             .unwrap_or_default();
         let security_changed = new.security_status != old.security_status;
+        let security_status_loss = (new.character_id > 0 && new.security_status < old.security_status)
+            .then_some((new.character_id, new.ship_id));
         // a stance that changed is in the slim item too (`shipStance`, the reference's slim update after a switch)
         let stance_changed = new.stance != old.stance;
         let name_changed = new.name != old.name;
@@ -717,6 +719,9 @@ impl Scene {
                 alliance_id,
                 war_faction_id,
             ));
+        }
+        if let Some(loss) = security_status_loss {
+            self.security_status_losses.push(loss);
         }
         out
     }

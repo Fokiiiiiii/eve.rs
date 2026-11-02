@@ -303,7 +303,7 @@ internal sealed partial class CharacterServicesComposition
             spaceSessions.Aggression = async (request, token) => await crimewatchRuntime.RecordAggressionAsync(request, token);   // what an attack makes of the attacker
             spaceSessions.SecurityStatusOf = securityStatusOf;   // the ship in space shows it
             spaceSessions.CrimewatchStateOf = crimewatchRuntime.StateOfAsync;
-            spaceSessions.CriminalEnteredSystem = crimewatchRuntime.RespondToCriminalEntryAsync;
+              spaceSessions.PilotEnteredSystem = crimewatchRuntime.OnSystemEnteredAsync;
             spaceSessions.LifecycleBlockers = async (action, session, shipId, token) =>
             {
                 if (session.CharacterId is not { } characterId || characterId <= 0)
@@ -414,7 +414,8 @@ internal sealed partial class CharacterServicesComposition
                 try
                 {
 
-                    var standing = npcFactionStanding.ApplyAsync(kill.FinalBlowCharacterId, kill.Profile.FactionId, kill.SolarSystemId, CancellationToken.None).GetAwaiter().GetResult();
+                    var standing = npcFactionStanding.ApplyAsync(kill.FinalBlowCharacterId, kill.Profile.FactionId, kill.SolarSystemId,
+                        CancellationToken.None, kill.NpcTypeId).GetAwaiter().GetResult();
                     if (standing is { } changed && characterSessions?.Of(kill.FinalBlowCharacterId) is { } pilot)
                     {
                         pilot.SendNotification("OnStandingSet", "clientID", new Eve.Marshal.PyList(

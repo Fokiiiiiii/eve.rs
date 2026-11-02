@@ -15,7 +15,7 @@ public class GasCloudMiningTests
         await rig.Statics.EnsureTypesAsync([GasCloudHarvesterI, AmberCytoserocin]);
         var gas = await rig.Statics.GasYieldTypeAsync(AmberCytoserocin);
         Assert.NotNull(gas);
-        var c = await rig.NewCharacterAsync();
+        var c = await rig.NewCharacterAsync(shipTypeId: 33697);
         await rig.Ships.UndockAsync(c.CharacterId);
         var system = (int)(await rig.Items.GetAsync(c.ShipId))!.LocationId;
         var harvester = await rig.GiveAsync(c.CharacterId, GasCloudHarvesterI, singleton: true, quantity: 1, location: c.ShipId, flag: ItemFlags.HiSlot0);
@@ -33,7 +33,7 @@ public class GasCloudMiningTests
         Assert.True(mined.Accepted, mined.Reason);
         Assert.Equal(gas!.Value, mined.OreTypeId);
         Assert.True(mined.DeliveredUnits > 0);
-        Assert.Contains(await rig.Items.InContainerAsync(c.ShipId), item => item.TypeId == gas.Value && item.Quantity == mined.DeliveredUnits);
+        Assert.Contains(await rig.Items.InContainerAsync(c.ShipId), item => item.TypeId == gas.Value && item.Quantity == mined.DeliveredUnits && item.Flag == 134);
         Assert.Equal(1000 - mined.DeliveredUnits, (await rig.Items.GetAsync(cloud))!.Quantity);
     }
 }

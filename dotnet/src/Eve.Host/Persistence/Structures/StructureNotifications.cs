@@ -61,5 +61,12 @@ public static class StructureNotifications
                 }
             }
         });
+        events.Subscribe("structure.service.notify", [StructureTimers.ServiceChangedTopic], (context, _) =>
+        {
+            var change = context.Event.Payload<StructureServiceChanged>()!;
+            foreach (var session in sessions.InStructure(change.StructureId))
+                session.SendNotification("OnStructureServiceChanged", "clientID", new PyLong(change.StructureId));
+            return Task.CompletedTask;
+        });
     }
 }

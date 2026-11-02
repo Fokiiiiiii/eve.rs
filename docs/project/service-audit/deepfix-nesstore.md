@@ -21,7 +21,7 @@ The primary reference’s current `Handle_ReverseRedeem` only logs and returns t
 
 The new PostgreSQL Host wire test exercises invalid item rejection without item loss, item deletion, no notification before the response and one notification after it, retry without a second notification, station mismatch with the token retained, successful claim with one item created, and reverse retry after claim (`dotnet/tests/Eve.Host.Tests/NewEdenStoreHostTests.cs:139-207`). I temporarily removed the transactional item deletion and ran the focused test: it failed at the item-presence assertion, then passed after restoring deletion.
 
-The broader `userSvc` wire test also sent an item ID belonging to a fabricated QA redeem token and asserted success. That is not a physical inventory item accepted by V24.01's `ReverseRedeem(item.itemID)` call, so the assertion now checks that the unavailable item gets a player-visible UserError and leaves the redeeming queue empty (`dotnet/tests/Eve.Host.Tests/UserSvcHostWireTests.cs:65-70`; client call: `eve/client/script/ui/services/redeemsvc.py:67-77`). The old test failed locally and in the push CI before this correction.
+The broader `userSvc` wire test also sent an item ID belonging to a fabricated QA redeem token and asserted success. That is not a physical inventory item accepted by V24.01's `ReverseRedeem(item.itemID)` call. It now checks both a player-visible UserError for an unavailable ID and a real PLEX item’s success, deletion, and token listing (`dotnet/tests/Eve.Host.Tests/UserSvcHostWireTests.cs:65-81`; client call: `eve/client/script/ui/services/redeemsvc.py:67-77`). The old test failed locally and in push CI before this correction.
 
 ## Reviewed flows with no change
 

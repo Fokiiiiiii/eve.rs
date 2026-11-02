@@ -68,6 +68,19 @@ public sealed class UserSvcHostWireTests
         Assert.True(reverseInvalid.Error.IsUserError);
         Assert.Empty(Assert.IsType<PyObjectEx>(await Call(userSvc, session, "GetRedeemTokens")).List);
 
+        var items = new PgItemStore(rig.Source, rig.InventorySchema);
+        long plexItemId;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            plexItemId = await items.CreateAsync(connection, transaction,
+                new NewItem(44992, characterId, rig.Station, ItemFlags.Hangar, 2));
+            await transaction.CommitAsync();
+        }
+        Assert.Equal(PyBool.True, await Call(userSvc, session, "ReverseRedeem", new PyLong(plexItemId)));
+        Assert.Null(await items.GetAsync(plexItemId));
+        Assert.Single(Assert.IsType<PyObjectEx>(await Call(userSvc, session, "GetRedeemTokens")).List);
+
         var token = Assert.IsType<PyStr>(await Call(userSvc, session, "GetUserToken"));
         Assert.NotEmpty(token.Value);
         Assert.Equal(PyBool.True, await Call(userSvc, session, "ReportBot", new PyLong(characterId + 1)));

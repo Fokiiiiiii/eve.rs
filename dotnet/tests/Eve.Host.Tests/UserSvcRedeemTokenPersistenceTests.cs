@@ -26,7 +26,7 @@ public sealed class UserSvcRedeemTokenPersistenceTests
                 store, PersistenceRoles.World, "user-redeem-" + Guid.NewGuid().ToString("N"));
             OwnerFence ownerFence = owner.Fence;
             var runtime = new PersistenceNewEdenStoreRuntime(
-                source, store, ownerFence, null!, null!, null!, null!, null!,
+                source, store, ownerFence, null!, null!, null!, null!, null!, null!,
                 () => 1_700_000_000_123,
                 null!);
             var service = (IService)(object)new RedeemService(

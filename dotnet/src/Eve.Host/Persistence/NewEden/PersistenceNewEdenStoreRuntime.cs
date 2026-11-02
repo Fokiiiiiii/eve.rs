@@ -42,6 +42,7 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
     PgWalletStore plexWallets,
     PgCharacterStore characters,
     PgItemStore items,
+    PgSkillStore skills,
     ItemTypeCatalog itemTypes,
     CharacterSessions sessions,
     Func<long> nowUnixMs,
@@ -374,7 +375,7 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
             throw new InvalidOperationException("Redeem items can only be claimed at a station or structure.");
         var requested = TokenPairs(tokens);
         if (requested.Length == 0)
-            return await RedeemResultAsync(characterId, stationId, []);
+            return await RedeemResultAsync(characterId, stationId, [], [], 0);
 
         await _gate.WaitAsync(cancellationToken);
         try
@@ -386,11 +387,21 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
             var claimed = accountTokens["claimed"] as JsonObject ?? new JsonObject();
             var pending = new List<(long TokenId, JsonObject Token, ItemType Type)>();
             var replayItems = new List<(long ItemId, int TypeId, long Quantity)>();
+            var errors = new List<PyValue>();
+            var skillPointsRewarded = 0L;
+            var nowFileTime = ToFileTime(nowUnixMs());
             foreach (var pair in requested.Distinct())
             {
                 var key = pair.TokenId.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 if (claimed[key] is JsonObject prior)
                 {
+                    var claimedCharacterId = Integer(prior["characterID"]);
+                    if (claimedCharacterId > 0 && claimedCharacterId != characterId)
+                    {
+                        errors.Add(RedeemTokenNotFound(pair.TokenId > 0 ? pair.TokenId : pair.MassTokenId));
+                        continue;
+                    }
+                    skillPointsRewarded = checked(skillPointsRewarded + Integer(prior["skillpoints"]));
                     foreach (var item in prior["itemsCreated"] as JsonArray ?? [])
                         if (item is JsonObject row)
                             replayItems.Add((Integer(row["itemID"]), checked((int)Integer(row["typeID"])), Integer(row["quantity"])));
@@ -398,8 +409,12 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
                 }
                 if (accountTokens[key] is not JsonObject token ||
                     String(token["status"]) is not ("" or "pending") ||
-                    (pair.MassTokenId > 0 && Integer(token["massTokenID"]) != pair.MassTokenId))
-                    throw new InvalidOperationException("A redeem token is unavailable or does not belong to this account.");
+                    (pair.MassTokenId > 0 && Integer(token["massTokenID"]) != pair.MassTokenId) ||
+                    !IsRedeemTokenAvailable(token, nowFileTime))
+                {
+                    errors.Add(RedeemTokenNotFound(pair.TokenId > 0 ? pair.TokenId : pair.MassTokenId));
+                    continue;
+                }
                 var originStationId = Integer(token["stationID"]);
                 if (originStationId > 0 && originStationId != stationId)
                     throw MachoErrors.ThrowUserError("CustomNotify",
@@ -412,36 +427,61 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
             }
 
             var newCreated = new List<(long ItemId, int TypeId, long Quantity)>();
-            await using (var connection = await source.OpenConnectionAsync(cancellationToken))
-            await using (var transaction = await connection.BeginTransactionAsync(cancellationToken))
+            var itemChanges = new List<ItemRow>();
+            if (pending.Count > 0)
             {
+                await using var connection = await source.OpenConnectionAsync(cancellationToken);
+                await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
                 foreach (var entry in pending)
                 {
                     var quantity = Integer(entry.Token["quantity"]);
+                    var skillPointsPerItem = RedeemSkillPoints(entry.Type);
+                    var tokenSkillPoints = skillPointsPerItem == 0 ? 0 : checked(skillPointsPerItem * quantity);
                     var singleton = entry.Type.CategoryId is 6 or 9;
-                    var itemCount = singleton ? quantity : 1;
-                    var stackQuantity = singleton ? 1 : quantity;
                     var tokenItems = new JsonArray();
-                    for (var index = 0L; index < itemCount; index++)
+                    if (tokenSkillPoints > 0)
                     {
-                        var itemId = await items.CreateAsync(
-                            connection, transaction,
-                            new NewItem(entry.Type.TypeId, characterId, stationId, Eve.Inventory.ItemFlags.Hangar,
-                                stackQuantity, singleton),
-                            cancellationToken);
-                        newCreated.Add((itemId, entry.Type.TypeId, stackQuantity));
-                        tokenItems.Add(new JsonObject
+                        await skills.GrantFreeSkillPointsAsync(connection, transaction, characterId, tokenSkillPoints, cancellationToken);
+                        skillPointsRewarded = checked(skillPointsRewarded + tokenSkillPoints);
+                    }
+                    else
+                    {
+                        var itemCount = singleton ? quantity : 1;
+                        var stackQuantity = singleton ? 1 : quantity;
+                        var blueprintRuns = Integer(entry.Token["blueprintRuns"]);
+                        var blueprintCopy = entry.Type.CategoryId == 9 && blueprintRuns > 0;
+                        var customInfo = String(entry.Token["label"]);
+                        if (string.IsNullOrEmpty(customInfo)) customInfo = String(entry.Token["description"]);
+                        for (var index = 0L; index < itemCount; index++)
                         {
-                            ["itemID"] = itemId,
-                            ["typeID"] = entry.Type.TypeId,
-                            ["quantity"] = stackQuantity,
-                        });
+                            var itemId = await items.CreateAsync(
+                                connection, transaction,
+                                new NewItem(entry.Type.TypeId, characterId, stationId, ItemFlags.Hangar,
+                                    stackQuantity, singleton,
+                                    BlueprintCopy: blueprintCopy,
+                                    BlueprintRuns: blueprintCopy ? checked((int)blueprintRuns) : null,
+                                    MaterialEfficiency: entry.Type.CategoryId == 9 ? checked((int)Integer(entry.Token["blueprintMaterialLevel"])) : 0,
+                                    TimeEfficiency: entry.Type.CategoryId == 9 ? checked((int)Integer(entry.Token["blueprintProductivityLevel"])) : 0,
+                                    CustomInfo: string.IsNullOrEmpty(customInfo) ? null : customInfo),
+                                cancellationToken);
+                            newCreated.Add((itemId, entry.Type.TypeId, stackQuantity));
+                            itemChanges.Add(new ItemRow(itemId, entry.Type.TypeId, characterId, stationId,
+                                ItemFlags.Hangar, singleton ? -1 : stackQuantity, entry.Type.GroupId, entry.Type.CategoryId));
+                            tokenItems.Add(new JsonObject
+                            {
+                                ["itemID"] = itemId,
+                                ["typeID"] = entry.Type.TypeId,
+                                ["quantity"] = stackQuantity,
+                            });
+                        }
                     }
                     claimed[entry.TokenId.ToString(System.Globalization.CultureInfo.InvariantCulture)] = new JsonObject
                     {
+                        ["characterID"] = characterId,
                         ["stationID"] = stationId,
                         ["sourceItemID"] = entry.Token["sourceItemID"]?.DeepClone(),
                         ["itemsCreated"] = tokenItems,
+                        ["skillpoints"] = tokenSkillPoints,
                         ["claimedAt"] = ToFileTime(nowUnixMs()),
                     };
                     accountTokens.Remove(entry.TokenId.ToString(System.Globalization.CultureInfo.InvariantCulture));
@@ -454,7 +494,31 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
                 await transaction.CommitAsync(cancellationToken);
             }
 
-            return await RedeemResultAsync(characterId, stationId, [.. replayItems, .. newCreated]);
+            foreach (var item in replayItems)
+            {
+                var current = await items.GetAsync(item.ItemId, cancellationToken);
+                if (current is null || current.OwnerId != characterId)
+                    continue;
+                if (await itemTypes.GetAsync(current.TypeId, cancellationToken) is not { } type)
+                    continue;
+                itemChanges.Add(new ItemRow(current.Id, current.TypeId, current.OwnerId, current.LocationId, current.Flag,
+                    current.Singleton ? -1 : current.Quantity, type.GroupId, type.CategoryId));
+            }
+
+            IReadOnlyList<(long ItemId, int TypeId, long Quantity)> createdItems = [.. replayItems, .. newCreated];
+            var result = await RedeemResultAsync(characterId, stationId, createdItems, errors, skillPointsRewarded);
+            if (sessions.Of(characterId) is { } session)
+            {
+                foreach (var item in itemChanges)
+                    session.AfterResponse(() => session.SendNotification("OnItemChange", "clientID",
+                        InventoryWire.PackedRow(item), new PyDict([]), PyNone.Instance));
+                if (skillPointsRewarded > 0)
+                {
+                    var balance = await skills.FreeSkillPointsAsync(characterId, cancellationToken);
+                    session.AfterResponse(() => session.SendNotification("OnFreeSkillPointsChanged", "charid", Py.Number(balance)));
+                }
+            }
+            return result;
         }
         finally
         {
@@ -526,14 +590,38 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
             ("isAutoInject", row["isAutoInject"] is JsonValue autoInject && autoInject.TryGetValue<bool>(out var enabled) && enabled
                 ? PyBool.True : PyBool.False));
 
+    private static bool IsRedeemTokenAvailable(JsonObject token, long nowFileTime)
+    {
+        if (token["available"] is JsonValue available && available.TryGetValue<bool>(out var isAvailable) && !isAvailable)
+            return false;
+        var expiry = Integer(token["expireDateTime"]);
+        return expiry <= 0 || expiry > nowFileTime;
+    }
+
+    private static long RedeemSkillPoints(ItemType type)
+    {
+        const string suffix = " Skill Points";
+        if (!type.Name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            return 0;
+        return long.TryParse(type.Name[..^suffix.Length], System.Globalization.NumberStyles.AllowThousands,
+            System.Globalization.CultureInfo.InvariantCulture, out var points) && points > 0 ? points : 0;
+    }
+
+    private static PyValue RedeemTokenNotFound(long tokenId) =>
+        Py.Tuple(new PyLong(tokenId), Py.KeyVal(
+            ("msg", new PyStr("RedeemTokenNotFound")),
+            ("dict", new PyDict([]))));
+
     private async ValueTask<PyValue> RedeemResultAsync(
         long characterId,
         long stationId,
-        IReadOnlyList<(long ItemId, int TypeId, long Quantity)> itemsCreated)
+        IReadOnlyList<(long ItemId, int TypeId, long Quantity)> itemsCreated,
+        IReadOnlyList<PyValue> errors,
+        long skillPointsRewarded)
     {
         var wallet = await plexWallets.GetAsync(characterId);
         return Py.Dict(
-            ("errors", new PyList([])),
+            ("errors", new PyList([.. errors])),
             ("stationID", new PyLong(stationId)),
             ("itemsCreated", new PyList([.. itemsCreated.Select(item => Py.Dict(
                 ("itemID", new PyLong(item.ItemId)),
@@ -542,7 +630,7 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
             ("activated_licenses", new PyList([])),
             ("isk_rewarded", new PyReal(0)),
             ("isk_balance", wallet is null ? PyNone.Instance : new PyReal((double)wallet.Isk)),
-            ("skillpoints", new PyInt(0)),
+            ("skillpoints", Py.Number(skillPointsRewarded)),
             ("charID", new PyLong(characterId)));
     }
 

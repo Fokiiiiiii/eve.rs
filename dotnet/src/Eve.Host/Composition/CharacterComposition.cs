@@ -221,7 +221,7 @@ internal sealed partial class CharacterServicesComposition
                 await corporations.HasRoleAsync(characterId, corporationId,
                     Eve.Corporations.CorporationRoles.JuniorAccountant, cancellationToken));
         storeRuntime = new PersistenceNewEdenStoreRuntime(
-            source, mailStore, mailStoreOwner.Fence, wallets, characters, items, itemTypes,
+            source, mailStore, mailStoreOwner.Fence, wallets, characters, items, skills, itemTypes,
             characterSessions, now, accounts);
         // a slot's end pauses the queues it no longer covers: the job is scheduled with the grant (multipleTrainingExpiry is set by TrainingSkillsAndCreation)
         storeRuntime.ScheduleSlotExpiry = (connection, transaction, accountId, endsAt, token) =>

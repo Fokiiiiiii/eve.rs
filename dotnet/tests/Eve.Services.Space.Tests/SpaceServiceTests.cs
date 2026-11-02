@@ -302,7 +302,7 @@ public class SpaceServiceTests
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await rig.Space.OrderAsync(session, TargetingOrder.Targets, [], CancellationToken.None);
         release.TrySetResult();
-        await Rig.UntilAsync(() => closed);
+        await Rig.UntilAsync(() => closed && !rig.Space.IsInSpace(session));
 
         Assert.True(closed);
         Assert.False(rig.Space.IsInSpace(session));

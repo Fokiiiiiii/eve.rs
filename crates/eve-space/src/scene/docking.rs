@@ -193,8 +193,9 @@ impl Scene {
             return vec![Out::Refused { session, command: code, reason }];
         }
         let distance = surface_distance(&pilot.ship, station.position, station.radius);
-        if distance > DOCKING_RANGE {
-            let out = self.approach(session, station_id, distance, now);
+        let docking_range = docking_range(station.kind);
+        if distance > docking_range {
+            let out = self.approach(session, station_id, distance, docking_range, now);
             if out.iter().any(|event| matches!(event, Out::Approaching { .. })) {
                 self.pilots.get_mut(&session).expect("the caller checked").docking_approach =
                     Some(station_id);
@@ -233,10 +234,11 @@ impl Scene {
         session: SessionId,
         station_id: i64,
         distance: f64,
+        docking_range: f64,
         now: i64,
     ) -> Vec<Out> {
         let code = Command::Dock { station_id }.code();
-        let follow = Command::FollowBall { target_id: station_id, range: DOCKING_RANGE };
+        let follow = Command::FollowBall { target_id: station_id, range: docking_range };
         let mut out = self.steer_pilot(session, follow, now);
         out.retain(|o| !matches!(o, Out::Accepted { .. }));
         out.push(Out::Approaching { session, command: code, distance });

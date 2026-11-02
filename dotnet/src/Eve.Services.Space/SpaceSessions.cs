@@ -1240,7 +1240,7 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         var id = (ulong)session.SessionId;
         var abyssalResident = _pilots.TryGetValue(id, out var resident)
             && resident.SimulationScene.InstanceId > 0;
-        CancelSafeLogoff(session);
+        CancelSafeLogoff(session, reasonCode: null);
         _transitions.EndSessionChange(id);
         _lockedTargets.TryRemove(id, out _);
         _targeting.TryRemove(id, out _); // not disposed: an order may still be waiting on it

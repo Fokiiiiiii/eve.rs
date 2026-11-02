@@ -19,7 +19,8 @@ public sealed partial class ShipService(
     ISpaceDrones? drones = null,
     Func<long, CancellationToken, ValueTask<ShipFittingInfo?>>? getShipFittingInfo = null,
     CharacterShips? ships = null,
-    Func<Eve.Inventory.Item, ItemRow>? rowOf = null) : IBoundObjectReleaseHandler
+    Func<Eve.Inventory.Item, ItemRow>? rowOf = null,
+    PgShipConfigurationStore? shipConfigurations = null) : IBoundObjectReleaseHandler
 {
     private readonly Binding _binding = new(nowUnixMs);
 
@@ -31,6 +32,81 @@ public sealed partial class ShipService(
     [Method("GetDirtTimestamp")]
     public PyValue GetDirtTimestamp(ServiceCall call) =>
         new PyLong(checked(116444736000000000L + nowUnixMs() * 10_000L));
+
+    [Method("GetShipConfiguration")]
+    public async ValueTask<PyValue> GetShipConfiguration(ServiceCall call)
+    {
+        if (shipConfigurations is null)
+            throw ConfigurationUnavailable();
+        var shipId = IdOf(call.Arg(0)) ?? call.Session.GetInt("shipid");
+        if (shipId is not > 0)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("No active ship is available.")));
+
+        var configuration = await shipConfigurations.GetAsync(shipId.Value, call.Cancellation);
+        return new PyDict(
+        [
+            new(new PyStr("allowFleetSMBUsage"), configuration.SmbFleetAccess ? PyBool.True : PyBool.False),
+            new(new PyStr("SMB_AllowFleetAccess"), configuration.SmbFleetAccess ? PyBool.True : PyBool.False),
+            new(new PyStr("allowCorpSMBUsage"), configuration.SmbCorpAccess ? PyBool.True : PyBool.False),
+            new(new PyStr("SMB_AllowCorpAccess"), configuration.SmbCorpAccess ? PyBool.True : PyBool.False),
+            new(new PyStr("FleetHangar_AllowFleetAccess"), configuration.FleetHangarFleetAccess ? PyBool.True : PyBool.False),
+            new(new PyStr("FleetHangar_AllowCorpAccess"), configuration.FleetHangarCorpAccess ? PyBool.True : PyBool.False),
+        ]);
+    }
+
+    [Method("ConfigureShip")]
+    public async ValueTask<PyValue> ConfigureShip(ServiceCall call)
+    {
+        if (shipConfigurations is null)
+            throw ConfigurationUnavailable();
+        if (!_binding.Owns(call) || call.Session.GetInt("shipid") is not { } shipId || shipId <= 0 || call.Arg(0) is not PyDict input)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Ship configuration cannot be changed in this session.")));
+
+        bool? smbFleet = null, smbCorp = null, hangarFleet = null, hangarCorp = null;
+        foreach (var (rawKey, value) in input.Entries)
+        {
+            var key = Eve.Macho.JsSemantics.StringValue(rawKey);
+            if (key is null)
+                continue;
+            var enabled = BooleanValue(value);
+            switch (key)
+            {
+                case "allowFleetSMBUsage":
+                case "SMB_AllowFleetAccess":
+                    smbFleet = enabled;
+                    break;
+                case "allowCorpSMBUsage":
+                case "SMB_AllowCorpAccess":
+                    smbCorp = enabled;
+                    break;
+                case "FleetHangar_AllowFleetAccess":
+                    hangarFleet = enabled;
+                    break;
+                case "FleetHangar_AllowCorpAccess":
+                    hangarCorp = enabled;
+                    break;
+            }
+        }
+
+        await shipConfigurations.PatchAsync(shipId, smbFleet, smbCorp, hangarFleet, hangarCorp, call.Cancellation);
+        return None;
+    }
+
+    private static bool BooleanValue(PyValue value) => value switch
+    {
+        PyNone => false,
+        PyBool boolean => boolean.Value,
+        PyInt integer => integer.Value != 0,
+        PyLong integer => integer.Value != 0,
+        PyReal real => real.Value != 0,
+        PyStr text => text.Value.Length != 0,
+        PyBytes bytes => !bytes.Value.IsEmpty,
+        PyBuffer buffer => !buffer.Value.IsEmpty,
+        _ => true,
+    };
+
+    private static MachoWrappedException ConfigurationUnavailable() => MachoErrors.ThrowUserError(
+        "CustomNotify", ("notify", new PyStr("Ship configuration storage is unavailable.")));
 
     /// <summary>The proxy node serves every ship object.</summary>
     [Method("MachoResolveObject")]

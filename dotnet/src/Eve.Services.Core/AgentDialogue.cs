@@ -89,7 +89,8 @@ public sealed record AgentDialogueSources(
     IAgentResearchPort? Research = null,
     IAgentLocatorPort? Locator = null,
     Func<long, long, CancellationToken, ValueTask>? OnAccepted = null,
-    Func<long, long, CancellationToken, ValueTask>? OnQuit = null);
+    Func<long, long, CancellationToken, ValueTask>? OnQuit = null,
+    Func<long, long, CancellationToken, ValueTask<bool>>? OnMissionTurnIn = null);
 
 
 public sealed record AgentDialogueReply(PyValue AgentSays, IReadOnlyList<(long ActionId, int ButtonType)> Actions, PyDict LastActionInfo)
@@ -189,6 +190,20 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
                     // expired or already changed: the greeting is shown again
                 }
                 break;
+
+            case AgentDialogueButton.Complete when mission?.State == AgentMissionState.Accepted &&
+                    mission.ObjectiveCompleted && atAgentLocation && sources.OnMissionTurnIn is { } turnIn:
+                bool completed;
+                try
+                {
+                    completed = await turnIn(characterId, agent.AgentId, cancellationToken);
+                }
+                catch (AgentMissionRefusedException)
+                {
+                    completed = false;
+                }
+                return AgentDialogueStep.Of(await ConversationAsync(characterId, agent, standing, atAgentLocation,
+                    cancellationToken, LastInfo(completed: completed)));
 
             // The reference asks before it declines or quits (sendAgentDeclineConfirmation, sendAgentQuitConfirmation): the
             // transition runs only on a yes, and a no shows the conversation as it was.
@@ -301,9 +316,13 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
         }
         if (mission?.State == AgentMissionState.Accepted)
         {
+            var heldActions = new List<(long ActionId, int ButtonType)>();
+            if (mission.ObjectiveCompleted && atAgentLocation && sources.OnMissionTurnIn is not null)
+                heldActions.Add((AgentDialogueToken.CompleteReady, AgentDialogueButton.Complete));
+            if (atAgentLocation) heldActions.Add((AgentDialogueToken.Quit, AgentDialogueButton.Quit));
             return new AgentDialogueReply(
                 Greeting(mission.Content.MissionId),
-                atAgentLocation ? [(AgentDialogueToken.Quit, AgentDialogueButton.Quit)] : [],
+                heldActions,
                 lastInfo);
         }
         if (!standing.CanUse)
@@ -657,9 +676,9 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
     private static PyDict EmptyDict() => new(new List<KeyValuePair<PyValue, PyValue>>());
 
 
-    private static PyDict LastInfo(bool quit = false, bool declined = false) => new(
+    private static PyDict LastInfo(bool quit = false, bool declined = false, bool completed = false) => new(
     [
-        new KeyValuePair<PyValue, PyValue>(new PyStr("missionCompleted"), PyNone.Instance),
+        new KeyValuePair<PyValue, PyValue>(new PyStr("missionCompleted"), completed ? PyBool.True : PyNone.Instance),
         new KeyValuePair<PyValue, PyValue>(new PyStr("missionQuit"), quit ? PyBool.True : PyNone.Instance),
         new KeyValuePair<PyValue, PyValue>(new PyStr("missionCantReplay"), PyNone.Instance),
         new KeyValuePair<PyValue, PyValue>(new PyStr("loyaltyPoints"), new PyInt(0)),

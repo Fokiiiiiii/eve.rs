@@ -1,4 +1,6 @@
+using System.IO.Compression;
 using System.Globalization;
+using System.IO;
 using System.Text;
 using System.Text.Json.Nodes;
 using Eve.Macho;
@@ -36,6 +38,9 @@ public sealed partial class SecurityMgrService
 public sealed partial class AlertService
 {
     private const int MaxRememberedStackHashes = 10_000;
+    private const int MaxAlertEntries = 10_000;
+    private const int MaxCompressedAlertBytes = 1_048_576;
+    private const int MaxInflatedAlertBytes = 8_388_608;
     private static long _nextErrorId;
     private static readonly object ErrorIdGate = new();
     private static readonly Dictionary<string, long> ErrorIdByStackHash = new(StringComparer.Ordinal);
@@ -48,6 +53,169 @@ public sealed partial class AlertService
             throw MachoErrors.ThrowUserError("ALERT_ARGUMENTS_INVALID");
         return new PyTuple([PyNone.Instance, PyNone.Instance]);
     }
+
+    [Method("BeanDelivery")]
+    public PyValue BeanDelivery(ServiceCall call)
+    {
+        if (call.Kwargs is not PyNone || call.Args.Count != 1 ||
+            call.Arg(0) is not PyDict beans || beans.Entries.Count > MaxAlertEntries ||
+            beans.Entries.Any(entry => !PositiveInteger(entry.Key) || !BeanCountValue(entry.Value)))
+            throw MachoErrors.ThrowUserError("ALERT_ARGUMENTS_INVALID");
+
+        Console.Error.WriteLine($"eve-host: client bean delivery entries={beans.Entries.Count}");
+        return PyNone.Instance;
+    }
+
+    [Method("GroupBeanDelivery")]
+    public PyValue GroupBeanDelivery(ServiceCall call)
+    {
+        if (call.Kwargs is not PyNone || call.Args.Count is < 1 or > 2 ||
+            (call.Args.Count == 2 && call.Arg(1) is not (PyNone or PyInt or PyLong)))
+            throw MachoErrors.ThrowUserError("ALERT_ARGUMENTS_INVALID");
+
+        var compressed = call.Arg(0) is PyBytes;
+        var groups = call.Arg(0) switch
+        {
+            PyDict direct => direct,
+            PyBytes bytes => DecodeGroupBeans(bytes),
+            _ => null,
+        };
+        if (groups is null || groups.Entries.Count > MaxAlertEntries ||
+            groups.Entries.Any(entry => !PositiveInteger(entry.Key) || entry.Value is not PyDict))
+            throw MachoErrors.ThrowUserError("ALERT_ARGUMENTS_INVALID");
+
+        var userCount = 0;
+        long totalCount = 0;
+        foreach (var group in groups.Entries)
+        {
+            var users = (PyDict)group.Value;
+            if (users.Entries.Count > MaxAlertEntries - userCount)
+                throw MachoErrors.ThrowUserError("ALERT_ARGUMENTS_INVALID");
+            userCount += users.Entries.Count;
+            foreach (var user in users.Entries)
+            {
+                if (!GroupBeanCountValue(user.Value, out var count))
+                    throw MachoErrors.ThrowUserError("ALERT_ARGUMENTS_INVALID");
+                totalCount = long.MaxValue - totalCount < count ? long.MaxValue : totalCount + count;
+            }
+        }
+
+        Console.Error.WriteLine($"eve-host: client group bean delivery groups={groups.Entries.Count} users={userCount} count={totalCount} compressed={compressed}");
+        return PyNone.Instance;
+    }
+
+    [Method("GetLogModeForError")]
+    public PyValue GetLogModeForError(ServiceCall call)
+    {
+        if (call.Kwargs is not PyNone || call.Args.Count != 1 ||
+            call.Arg(0) is not PyDict errorModes || errorModes.Entries.Count > MaxAlertEntries)
+            throw MachoErrors.ThrowUserError("ALERT_ARGUMENTS_INVALID");
+        foreach (var entry in errorModes.Entries)
+        {
+            if (!BeanLogModeValue(entry.Value))
+                throw MachoErrors.ThrowUserError("ALERT_ARGUMENTS_INVALID");
+        }
+
+        Console.Error.WriteLine($"eve-host: client log mode query entries={errorModes.Entries.Count}");
+        return new PyTuple([new PyDict([]), new PyList([])]);
+    }
+
+    private static PyDict? DecodeGroupBeans(PyBytes bytes)
+    {
+        if (bytes.Value.Length > MaxCompressedAlertBytes)
+            return null;
+
+        try
+        {
+            using var input = new MemoryStream(bytes.Value.ToArray());
+            using var decompressor = new ZLibStream(input, CompressionMode.Decompress);
+            using var output = new MemoryStream();
+            var buffer = new byte[8192];
+            while (true)
+            {
+                var read = decompressor.Read(buffer);
+                if (read == 0)
+                    break;
+                if (output.Length + read > MaxInflatedAlertBytes)
+                    return null;
+                output.Write(buffer, 0, read);
+            }
+            return MarshalCodec.DecodeExact(output.ToArray()) as PyDict;
+        }
+        catch (InvalidDataException)
+        {
+            return null;
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
+    }
+
+    private static bool PositiveInteger(PyValue value) => value switch
+    {
+        PyInt integer => integer.Value > 0,
+        PyLong integer => integer.Value > 0,
+        _ => false,
+    };
+
+    private static bool NonnegativeInteger(PyValue value) => value switch
+    {
+        PyInt integer => integer.Value >= 0,
+        PyLong integer => integer.Value >= 0,
+        _ => false,
+    };
+
+    private static bool BeanCountValue(PyValue value)
+    {
+        var pair = value switch
+        {
+            PyTuple tuple => tuple.Items,
+            PyList list => list.Items,
+            _ => Array.Empty<PyValue>(),
+        };
+        return pair.Count == 2 && NonnegativeInteger(pair[0]) && NonnegativeInteger(pair[1]);
+    }
+
+    private static bool GroupBeanCountValue(PyValue value, out long count)
+    {
+        var row = value switch
+        {
+            PyTuple tuple => tuple.Items,
+            PyList list => list.Items,
+            _ => Array.Empty<PyValue>(),
+        };
+        count = row.Count > 0 ? IntegerValue(row[0]) : -1;
+        return row.Count >= 2 && count >= 0 && NonnegativeInteger(row[1]);
+    }
+
+    private static long IntegerValue(PyValue value) => value switch
+    {
+        PyInt integer => integer.Value,
+        PyLong integer => integer.Value,
+        _ => -1,
+    };
+
+    private static bool BeanLogModeValue(PyValue value)
+    {
+        var pair = value switch
+        {
+            PyTuple tuple => tuple.Items,
+            PyList list => list.Items,
+            _ => Array.Empty<PyValue>(),
+        };
+        return pair.Count == 2 && (pair[0] is PyNone || PositiveInteger(pair[0])) && IsBeanLogMode(pair[1]);
+    }
+
+    private static bool IsBeanLogMode(PyValue value) => value switch
+    {
+        PyNone => true,
+        PyStr text => text.Value is "B" or "D",
+        PyWString text => text.Value is "B" or "D",
+        PyToken text => text.Value is "B" or "D",
+        PyBytes bytes => bytes.Value.Length == 1 && bytes.Value.Span[0] is (byte)'B' or (byte)'D',
+        _ => false,
+    };
 
     [Method("SendClientStackTraceAlert")]
     public PyValue SendClientStackTraceAlert(ServiceCall call)

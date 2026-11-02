@@ -661,7 +661,7 @@ public class DroneHostTests
 
         var shipId = flying.Session.GetInt("shipid")!.Value;
         var ore = Assert.Single(await rig.Items.InLocationAsync(shipId, flying.Character),
-            item => item.Flag == CharacterShips.CargoFlag && item.TypeId == oreTypeId);
+            item => item.Flag == 182 && item.TypeId == oreTypeId);
         Assert.Equal(1, ore.Quantity);
         await Rig.UntilAsync(() => Events.Of(flying.Session, clear: false).Any(e => e.Name == "OnItemChange"));
     }

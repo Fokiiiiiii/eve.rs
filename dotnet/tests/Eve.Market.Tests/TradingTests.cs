@@ -30,6 +30,40 @@ public class TradingTests
     }
 
     [PgFact]
+    public async Task Zarzakh_sales_tax_uses_the_order_station_after_the_seller_changes_station()
+    {
+        await using var r=await TradeRig.Create(60015187);
+        var seller=await r.Actor("Pirate Seller");
+        var buyer=await r.Actor("Pirate Buyer");
+        var item=await r.Stock(seller,10);
+        var trading=new MarketTrading(r.Source,r.Book,r.Characters,r.Corporations,r.Skills,r.Items,r.Wallets,r.Stations,r.Topology,
+            () => r.Now,new Eve.Services.Market.DurableExpiryJobs(r.Scheduler))
+        {
+            WarFactionId=(_,_) => ValueTask.FromResult(500010L),
+        };
+        await trading.PlaceAsync(r.Sell(seller,item,10,10,90),"zarzakh-ask");
+
+        var elsewhere=r.Stations.All.First(station => station.SolarSystemId!=r.Station.SolarSystemId);
+        await using (var move=r.Source.CreateCommand($"""
+            UPDATE {r.CharacterSchema}.characters
+            SET station_id=$2,solar_system_id=$3,constellation_id=$4,region_id=$5
+            WHERE id=$1
+            """))
+        {
+            move.Parameters.AddWithValue(seller);
+            move.Parameters.AddWithValue(elsewhere.Id);
+            move.Parameters.AddWithValue(elsewhere.SolarSystemId);
+            move.Parameters.AddWithValue(elsewhere.ConstellationId);
+            move.Parameters.AddWithValue(elsewhere.RegionId);
+            await move.ExecuteNonQueryAsync();
+        }
+
+        await trading.PlaceAsync(r.Buy(buyer,10,10),"zarzakh-buy");
+
+        Assert.Equal(9_996.25m,(await r.WalletStore.GetAsync(seller))!.Isk); // Zarzakh's 50% tax reduction: 3.75 ISK tax on 100 ISK.
+    }
+
+    [PgFact]
     public async Task A_partially_filled_immediate_order_keeps_its_requested_volume()
     {
         await using var r=await TradeRig.Create();

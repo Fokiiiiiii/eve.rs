@@ -280,6 +280,7 @@ def test_a_ship_undocks_flies_and_docks_as_the_reference_did(race):
                 ballpark = raw
             events = wait_quietly(who, seconds, until)
             if "ok" in step:
-                problems += compare_answer(label, step["ok"], answer, where)
+                expected = None if label == "dock" else step["ok"]
+                problems += compare_answer(label, expected, answer, where)
             problems += compare_events(step["events"], events, where, mapping)
     assert problems == [], "\n".join(problems[:40])

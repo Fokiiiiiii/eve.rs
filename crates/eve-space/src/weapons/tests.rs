@@ -244,6 +244,20 @@ fn a_roll_a_little_over_one_percent_is_not_a_wrecking_shot() {
 }
 
 #[test]
+fn a_wrecking_shot_lands_when_the_positive_hit_chance_is_below_one_percent() {
+    let attacker = ship([0.0; 3], [0.0; 3], 10.0, 0.0);
+    let target = ship([6_000.0, 0.0, 0.0], [0.0; 3], 10.0, 50.0);
+    let gun = turret([5.0; 4], 1.0, 40.0, 3_000.0, 1_000.0);
+    let chance = chance_to_hit(&gun, &attacker, &target);
+    assert!(chance > 0.0 && chance < 0.01, "{chance}");
+
+    let shot = resolve_shot(&gun, &attacker, &target, 0.005);
+    assert!(shot.hit && shot.wrecking, "{shot:?}");
+    assert_eq!(shot.quality, 3.0);
+    assert_eq!(shot.damage, [15.0; 4]);
+}
+
+#[test]
 fn distances_and_angles_are_measured_between_surfaces_and_centres() {
     let attacker = ship([0.0; 3], [0.0; 3], 38.0, 0.0);
     let target = ship([5_000.0, 0.0, 0.0], [0.0, 100.0, 0.0], 47.0, 28.0);
@@ -293,7 +307,7 @@ fn a_125mm_railgun_hits_a_stopped_rifter_but_loses_tracking_on_a_fast_transversa
     let chance = chance_to_hit(&gun, &attacker, &moving_transversally);
     assert!((chance - expected).abs() < 1e-12, "{chance} != {expected}");
     assert!(chance < 0.0001, "{chance}");
-    assert!(!resolve_shot(&gun, &attacker, &moving_transversally, 0.0001).hit);
+    assert!(!resolve_shot(&gun, &attacker, &moving_transversally, 0.01).hit);
 }
 
 #[test]

@@ -51,6 +51,7 @@ public sealed partial class XmppChatHub
     private readonly XmppMotdStore? _motdStore;
     private readonly object _gate = new();
     private readonly Dictionary<long, XmppLink> _linkByCharacter = [];
+    private readonly HashSet<long> _resourceWarsInstances = [];
 
     public XmppChatHub(
         ConnectedSessions sessions,
@@ -81,6 +82,29 @@ public sealed partial class XmppChatHub
 
     public XmppChatSettings Settings { get; }
     internal XmppPlayerChannelStore? PlayerChannels { get; }
+
+    internal string? EnsureResourceWarsChannel(long instanceId)
+    {
+        if (instanceId <= 0)
+            return null;
+        lock (_gate)
+            _resourceWarsInstances.Add(instanceId);
+        return $"resourcewars_{instanceId.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+    }
+
+    private bool HasResourceWarsInstance(long instanceId)
+    {
+        lock (_gate)
+            return _resourceWarsInstances.Contains(instanceId);
+    }
+
+    private void RetireEmptyResourceWarsChannel(string room)
+    {
+        const string prefix = "resourcewars_";
+        if (room.StartsWith(prefix, StringComparison.Ordinal)
+            && long.TryParse(room.AsSpan(prefix.Length), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var instanceId))
+            _resourceWarsInstances.Remove(instanceId);
+    }
 
     /// <summary>True only when a connected session of the character holds the token the chat service issued for it.</summary>
     public bool Authenticate(long characterId, string token)

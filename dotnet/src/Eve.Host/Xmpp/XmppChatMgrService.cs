@@ -18,6 +18,10 @@ public sealed partial class XmppChatMgrService(XmppChatHub hub)
     [Method("GetRookieChannel")]
     public PyValue GetRookieChannel(ServiceCall call) => new PyStr(RookieHelpChannel);
 
+    [Method("EnsureResourceWarsChannelExists")]
+    public PyValue EnsureResourceWarsChannelExists(ServiceCall call) =>
+        hub.EnsureResourceWarsChannel(PositiveId(call.Arg(0))) is { } room ? new PyStr(room) : PyNone.Instance;
+
     [Method("GetHelpChannel")]
     public PyValue GetHelpChannel(ServiceCall call)
     {

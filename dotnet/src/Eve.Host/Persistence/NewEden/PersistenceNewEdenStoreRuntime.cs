@@ -400,6 +400,10 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
                     String(token["status"]) is not ("" or "pending") ||
                     (pair.MassTokenId > 0 && Integer(token["massTokenID"]) != pair.MassTokenId))
                     throw new InvalidOperationException("A redeem token is unavailable or does not belong to this account.");
+                var originStationId = Integer(token["stationID"]);
+                if (originStationId > 0 && originStationId != stationId)
+                    throw MachoErrors.ThrowUserError("CustomNotify",
+                        ("notify", new PyStr("Reverse-redeemed PLEX can only be redeemed at the station where it was reversed.")));
                 var typeId = checked((int)Integer(token["typeID"]));
                 var type = await itemTypes.GetAsync(typeId, cancellationToken);
                 if (type is null || Integer(token["quantity"]) <= 0)
@@ -436,6 +440,7 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
                     claimed[entry.TokenId.ToString(System.Globalization.CultureInfo.InvariantCulture)] = new JsonObject
                     {
                         ["stationID"] = stationId,
+                        ["sourceItemID"] = entry.Token["sourceItemID"]?.DeepClone(),
                         ["itemsCreated"] = tokenItems,
                         ["claimedAt"] = ToFileTime(nowUnixMs()),
                     };

@@ -146,6 +146,7 @@ public sealed class AchievementTrackerMgrService(
     public bool HasMethod(string method) => method is
         "HasEverWarped" or
         "GetCompletedAchievementsAndClientEventCount" or
+        "ResetAllForChar" or
         "UpdateClientAchievmentsAndCounters";
 
     public async ValueTask<PyValue> CallAsync(ServiceCall call)
@@ -158,6 +159,7 @@ public sealed class AchievementTrackerMgrService(
         {
             case "HasEverWarped":
             case "GetCompletedAchievementsAndClientEventCount":
+            case "ResetAllForChar":
                 if (call.Args.Count != 0)
                     throw MachoErrors.ThrowUserError("ACHIEVEMENT_ARGUMENTS_INVALID");
                 break;
@@ -170,6 +172,18 @@ public sealed class AchievementTrackerMgrService(
 
         if (rpcHandler is not null && await rpcHandler(call, call.Cancellation) is { } handled)
             return handled;
+
+        if (call.Method == "ResetAllForChar")
+        {
+            var characterId = call.Session.GetInt("charid") ?? 0;
+            if (characterId <= 0)
+                throw MachoErrors.ThrowUserError("ACHIEVEMENT_CHARACTER_REQUIRED");
+            if (writeState is null)
+                throw MachoErrors.ThrowUserError("ACHIEVEMENT_RESET_UNAVAILABLE");
+            await writeState(characterId, new PyDict([]), new PyDict([]), call.Cancellation);
+            call.Session.SendServiceNotification("achievementTrackerMgr", "OnAchievementsReset", []);
+            return PyNone.Instance;
+        }
 
         if (call.Method == "HasEverWarped")
         {

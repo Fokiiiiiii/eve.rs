@@ -2557,6 +2557,52 @@ fn an_undock_puts_the_ship_in_space_and_binding_sends_it_the_scene_as_marshalled
 }
 
 #[test]
+fn rejected_public_scene_entries_do_not_leave_empty_scenes_behind() {
+    let mut sim = sim();
+    let missing_pose = sim
+        .handle(
+            Message::Enter(Box::new(Enter {
+                session_id: 9,
+                scene: SceneKey::solar_system(SYSTEM),
+                how: How::InSpace,
+                station_id: 0,
+                ship: spec(),
+                position: None,
+                direction: None,
+            })),
+            NOON,
+        )
+        .unwrap();
+    assert!(matches!(
+        missing_pose.as_slice(),
+        [Message::EnterReply { outcome: Err(reason), .. }] if reason == "SPACE_STATE_REQUIRED"
+    ));
+    assert!(sim.scenes.is_empty());
+    assert_eq!(sim.ships(), 0);
+
+    let bad_pose = sim
+        .handle(
+            Message::Enter(Box::new(Enter {
+                session_id: 10,
+                scene: SceneKey::solar_system(SYSTEM),
+                how: How::InSpace,
+                station_id: 0,
+                ship: spec(),
+                position: Some([f64::NAN, 0.0, 0.0]),
+                direction: Some([0.0, 0.0, 1.0]),
+            })),
+            NOON,
+        )
+        .unwrap();
+    assert!(matches!(
+        bad_pose.as_slice(),
+        [Message::EnterReply { outcome: Err(reason), .. }] if reason == "BAD_SPACE_STATE"
+    ));
+    assert!(sim.scenes.is_empty());
+    assert_eq!(sim.ships(), 0);
+}
+
+#[test]
 fn an_undock_rejects_bad_locations_and_in_space_login_restores_the_saved_pose() {
     let mut sim = sim();
     let reason = |message: Vec<Message>| match &message[0] {

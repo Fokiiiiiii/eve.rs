@@ -52,3 +52,28 @@ The Host wire test `dotnet/tests/Eve.Host.Tests/CalendarRpcHostWireTests.cs:Cale
 A graphical V24.01 client session was not run.
 
 A graphical V24.01 client session was not run.
+
+## Completed group: taleMgr
+
+`dotnet/tests/Eve.Host.Tests/TaleManagerHostWireTests.cs:Tale_manager_calls_cross_the_host_wire_and_notify_the_current_system` passed on PostgreSQL database `eve_p4` (1 passed, 0 failed, 0 skipped). The real Host TCP listener uses strict RPC routing; the callback reads a test incursion record persisted to a temporary PostgreSQL table. The test checks both calls, the cached global response, `OnTaleData` before the response with the current system and tale entry, and the empty template lookup response. CSV rows RPC-02701–RPC-02704 now point to this Host wire test.
+
+### Whole-client evidence
+
+- `/home/user/eve-logic/taleclient/tale_service.py:127-130` calls `get_active_tales_by_template(template_id)` and maps rows to `ActiveTaleThin(tale_id, template_id, solar_system_id, start_date, end_date)`; `eve/client/script/ui/shared/mapView/filters/mapFilterVanguardNemesisConvoys.py:23-39` consumes those fields to count systems.
+- `taleclient/tale_service.py:145-146` calls `GetGlobalWorldEventTales()`; `tale_service.py:57-63` consumes `OnTaleData`, and `eve/client/script/ui/shared/incursionSvc.py:68-72` reads `templateClassID` and `taleID` to start the incursion UI.
+- EveJS 261028.1 returns the empty cached list at `server/src/services/tale/taleMgrService.js:60-71`. The global Host reply and notification match that behavior and use the persisted incursion read side. `dotnet/tests/Eve.Services.Core.Tests/IncursionAnomalyServiceTests.cs` passed (7 passed, 0 failed, 0 skipped); the neighboring Host incursion/read-model test passed (1 passed, 0 failed, 0 skipped).
+
+A graphical V24.01 client session was not run.
+
+## Remaining rows for this assignment
+
+- DB2: RPC-00659–RPC-00662 remain open. The whole-client callsites are internal server paths: `http.py:31-33`, `httpService.py:805`, `machoNetTransport.py:460-461`, and `machoNet.py:3393-3394`; see `DEEPCHECK_DB2.md` before adding any route.
+- structureCompressionMgr: RPC-02617–RPC-02626 were already IMPLEMENTED-TESTED before this assignment.
+
+## Completed group: alert
+
+`dotnet/tests/Eve.Host.Tests/AlertHostWireTests.cs:Alert_delivery_and_log_mode_rpcs_cross_host_wire_with_client_shapes` and `:Alert_group_bean_delivery_rejects_non_payloads` passed on PostgreSQL database `eve_p4` (2 passed, 0 failed, 0 skipped). The related Host alert tests passed (6 passed, 0 failed, 0 skipped), as did the Core alert tests (3 passed, 0 failed, 0 skipped). CSV rows RPC-00860–RPC-00864 now point to the wire test; RPC-00859 already had coverage.
+
+The whole-client protocol evidence is in `/home/user/eve-logic/carbon/common/script/sys/alert.py:322-416` (delivery calls and ignored replies), `:796-822` (`GetLogModeForError` consumes a dict and returns changes plus flooded IDs), and `:509-520` (stacktrace map entries contain `(errorID, logMode)`). The client’s `LOGGING_BATCHED` and `LOGGING_DETAILS` are `'B'` and `'D'` at `:22-23`; the Host handles their wire byte-string form. EveJS 261028.1 records delivery summaries and returns `(empty dict, empty list)` at `src/server/src/services/alert/alertService.js:188-199, 271-315`. These endpoints are diagnostic, not gameplay state; Host validates bounded payloads, safely inflates grouped data and logs only aggregate metadata.
+
+A graphical V24.01 client session was not run.

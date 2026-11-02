@@ -22,6 +22,18 @@ public static class CalendarResponseStates
     public const short Maybe = 5;
 }
 
+public static class CalendarLimits
+{
+    public const int MaxInvitees = 50;
+}
+
+public enum CalendarParticipantUpdateResult
+{
+    Updated,
+    EventNotFound,
+    TooManyInvitees,
+}
+
 public sealed record CalendarEvent(
     long EventId,
     long OwnerId,
@@ -59,7 +71,7 @@ public interface ICalendarStore
     Task<long> CreateEventAsync(CalendarEventInput input, IReadOnlyCollection<long> invitees, CancellationToken cancellationToken = default);
     Task<bool> EditEventAsync(long eventId, long ownerId, long oldEventDateTime, CalendarEventInput input, CancellationToken cancellationToken = default);
     Task<bool> DeleteEventAsync(long eventId, long ownerId, long dateModified, CancellationToken cancellationToken = default);
-    Task<bool> UpdateParticipantsAsync(long eventId, long ownerId, IReadOnlyCollection<long> add, IReadOnlyCollection<long> remove, CancellationToken cancellationToken = default);
+    Task<CalendarParticipantUpdateResult> UpdateParticipantsAsync(long eventId, long ownerId, IReadOnlyCollection<long> add, IReadOnlyCollection<long> remove, CancellationToken cancellationToken = default);
     Task<bool> SendResponseAsync(long eventId, long ownerId, long characterId, short response, CancellationToken cancellationToken = default);
 }
 
@@ -221,19 +233,40 @@ public sealed class CalendarStore : ICalendarStore
         return true;
     }
 
-    public async Task<bool> UpdateParticipantsAsync(
+    public async Task<CalendarParticipantUpdateResult> UpdateParticipantsAsync(
         long eventId, long ownerId, IReadOnlyCollection<long> add, IReadOnlyCollection<long> remove, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await using var exists = Command(connection, transaction,
-            Q("SELECT 1 FROM {schema}.events WHERE event_id=$1 AND owner_id=$2 AND is_deleted=false FOR UPDATE"),
+            Q("SELECT creator_id FROM {schema}.events WHERE event_id=$1 AND owner_id=$2 AND is_deleted=false FOR UPDATE"),
             eventId, ownerId);
-        if (await exists.ExecuteScalarAsync(cancellationToken) is null) return false;
+        if (await exists.ExecuteScalarAsync(cancellationToken) is not { } creatorValue)
+            return CalendarParticipantUpdateResult.EventNotFound;
+        var creatorId = Convert.ToInt64(creatorValue, System.Globalization.CultureInfo.InvariantCulture);
 
-        foreach (var characterId in add.Where(id => id > 0).Distinct())
+        var activeInvitees = new HashSet<long>();
+        await using (var responses = Command(connection, transaction,
+            Q("SELECT character_id, status FROM {schema}.responses WHERE event_id=$1"), eventId))
+        await using (var reader = await responses.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var characterId = reader.GetInt64(0);
+                if (characterId != creatorId && reader.GetInt16(1) != CalendarResponseStates.Uninvited)
+                    activeInvitees.Add(characterId);
+            }
+        }
+
+        var removed = remove.Where(id => id > 0 && id != creatorId).ToHashSet();
+        activeInvitees.ExceptWith(removed);
+        activeInvitees.UnionWith(add.Where(id => id > 0 && id != creatorId && !removed.Contains(id)));
+        if (activeInvitees.Count > CalendarLimits.MaxInvitees)
+            return CalendarParticipantUpdateResult.TooManyInvitees;
+
+        foreach (var characterId in add.Where(id => id > 0 && id != creatorId).Distinct())
             await UpsertResponseAsync(connection, transaction, eventId, characterId, CalendarResponseStates.Undecided, cancellationToken);
-        foreach (var characterId in remove.Where(id => id > 0).Distinct())
+        foreach (var characterId in removed)
         {
             await using var command = Command(connection, transaction,
                 Q("UPDATE {schema}.responses SET status=$1 WHERE event_id=$2 AND character_id=$3"),
@@ -242,7 +275,7 @@ public sealed class CalendarStore : ICalendarStore
         }
 
         await transaction.CommitAsync(cancellationToken);
-        return true;
+        return CalendarParticipantUpdateResult.Updated;
     }
 
     public async Task<bool> SendResponseAsync(

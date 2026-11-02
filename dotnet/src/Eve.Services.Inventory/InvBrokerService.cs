@@ -1451,6 +1451,40 @@ private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, lo
     /// <c>MultiAdd(itemIDs, sourceLocationID, flag=None)</c>: the loot window's "Loot All": what is in a can or a wreck beside the ship goes into its hold at once (room for all of it, or nothing moves).
     /// Answers True when something moved; a batch of which nothing could be moved is the message the client shows. Only the hold in space is served: elsewhere the answer is None.
     /// </summary>
+    /// <summary>Splits part of a docked stack in place, preserving its owner, location and flag.</summary>
+    [Method("SplitStack")]
+    public async ValueTask<PyValue> SplitStack(ServiceCall call)
+    {
+        if (call.Session.CharacterId is not { } character
+            || IdOf(call.Arg(0)) is not { } station || StationOf(call.Session) != station)
+            throw MachoErrors.ThrowUserError("CanOnlyDoInStations");
+        if (IdOf(call.Arg(1)) is not { } itemId || IdOf(call.Arg(2)) is not { } quantity
+            || IdOf(call.Arg(3)) is not { } ownerId || quantity <= 0)
+            throw MachoErrors.ThrowUserError("INVENTORY_OPERATION_INVALID");
+        if (await items.GetAsync(itemId, call.Cancellation) is not { } item
+            || item.OwnerId != ownerId || item.Singleton || quantity >= item.Quantity
+            || (ownerId != character && ownerId != CorporationIdOf(call.Session)))
+            throw MachoErrors.ThrowUserError("FakeItemNotFound");
+
+        long? corporationOwner = ownerId == character ? null : ownerId;
+        if (corporationOwner is { } corporation
+            && (!await CanAccessCorporationItemAsync(call.Session, item, CorporationHangarOperation.Take, call.Cancellation)
+                || !await CanAccessCorporationItemAsync(call.Session, item, CorporationHangarOperation.Deposit, call.Cancellation)))
+            throw MachoErrors.ThrowUserError("FakeItemNotFound");
+
+        var outcome = await ships.SplitStackAsync(character, itemId, station, ownerId, quantity, call.Cancellation);
+        switch (outcome)
+        {
+            case ShipChanged changed:
+                ShipNotifications.Send(call.Session, character, changed, DogmaRow, Py.FileTimeFromUnixMs(nowUnixMs()));
+                return None;
+            case ShipRefused refused:
+                throw ShipErrors.Of(refused, statics);
+            default:
+                throw MachoErrors.ThrowUserError("FakeItemNotFound");
+        }
+    }
+
     [Method("MultiAdd")]
     public async ValueTask<PyValue> MultiAdd(ServiceCall call)
     {

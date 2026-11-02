@@ -20,6 +20,13 @@ public sealed class FighterLaunchBombTests
     private const int Hornet = 40_362; // slot 2 is LaunchBomb (ability 7); the bomb is Micro Electron Bomb 41549 (EM 640, 15 km)
     private const int LaunchBombSlot = 2;
 
+    private sealed class RecordingPacketSink : IPacketSink
+    {
+        public List<PyValue> Packets { get; } = [];
+
+        public void Send(PyValue packet) => Packets.Add(packet);
+    }
+
     private static ServiceCall Call(string method, ClientSession session, params PyValue[] args) =>
         new() { Method = method, Args = args, Session = session };
 
@@ -65,6 +72,29 @@ public sealed class FighterLaunchBombTests
         Assert.Equal(15_000d, blast.RadiusMeters);
         Assert.Equal([640d, 0d, 0d, 0d], blast.Damage);
         Assert.True(blast.IsValid);
+    }
+
+    [PgFact]
+    public async Task Ability_activation_notice_is_sent_only_after_the_call_response()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var pilot = await rig.NewCharacterAsync("Bomber Pilot");
+        var session = await rig.SessionAsync(pilot);
+        var squadron = await SquadronInSpaceAsync(rig, pilot.CharacterId, Hornet);
+        await rig.Ships.SetSquadronStateAsync(pilot.CharacterId, squadron, StateOf(pilot.ShipId));
+        var sim = new FakeSim();
+        var fighters = Host(sim, rig, security: 0.0);
+        await fighters.RebuildAsync(session, pilot.CharacterId);
+        var packets = new RecordingPacketSink();
+        session.Sink = packets;
+        var point = new PyTuple([new PyReal(12_000d), new PyReal(-3_000d), new PyReal(45_000d)]);
+
+        await fighters.CmdActivateAbilitySlotsAsync(Call("CmdActivateAbilitySlots", session, new PyList([new PyInt(squadron)]), new PyInt(LaunchBombSlot), point));
+
+        await Task.Delay(100);
+        Assert.Empty(packets.Packets);
+        session.RunAfterResponse();
+        Assert.Single(packets.Packets);
     }
 
     [PgFact]

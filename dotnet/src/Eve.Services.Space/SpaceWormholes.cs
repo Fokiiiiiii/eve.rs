@@ -71,6 +71,8 @@ public sealed partial class SpaceSessions
     /// <summary>Until when each pilot of a character may not go into a wormhole end again (in memory; the rule is the pilot's, not the account's).</summary>
     private readonly Dictionary<(long Character, long EndId), long> _polarizedUntil = new();
 
+    private readonly ConcurrentDictionary<long, SemaphoreSlim> _wormholeTransitGates = new();
+
     public static SimPlaceWormhole ToSim(WormholeEnd end) => new(end.BodyId, end.SolarSystemId, end.Name, end.TypeId, end.GroupId, end.Position, end.Radius,
         end.DestinationSystemId, end.DestinationEnd, end.DestinationClass, end.DestinationPosition, end.DestinationRadius, end.MaxJumpMass);
 
@@ -116,8 +118,7 @@ public sealed partial class SpaceSessions
     /// <c>wormholeMgr.WormholeJump(itemID)</c>: the pilot goes into the wormhole end it picked. The ship's mass is checked against the wormhole (refused
     /// over its individual limit) and taken from it when the simulation takes the jump; a wormhole that empties collapses behind the ship, and both its
     /// ends are taken out. The simulation takes the jump as it takes a stargate's (<see cref="JumpAsync"/>).
-    /// shortcut: the mass is checked before the simulation is asked and taken after it says yes; another ship that transits in between is not
-    /// seen by the first check, so the second transit can be refused after the jump is taken (logged).
+    /// Jumps through this connection are serialized until the accepted jump's mass debit and collapse state are committed.
     /// </summary>
     public async Task<PyValue> WormholeJumpAsync(ClientSession session, long endId, string? boundObjectId, CancellationToken cancellationToken)
     {
@@ -136,57 +137,68 @@ public sealed partial class SpaceSessions
             throw MovementRefused(policy, "jump");
         }
         var world = Wormholes ?? throw JumpRefused("STARGATE_NOT_FOUND");
-        var end = await world.EndAsync(endId, cancellationToken) ?? throw JumpRefused("STARGATE_NOT_FOUND");
-        if (end.SolarSystemId != pilot.SolarSystemId)
-        {
-            throw JumpRefused("STARGATE_NOT_FOUND");
-        }
-        var now = _nowUnixMs();
-        if (PolarizationOf(endId, pilot.CharacterId) is not null)
-        {
-            throw Notify("You are polarized to this wormhole: you cannot go into it from this side yet.");
-        }
         var connectionId = endId / 2;
-        var mass = await ShipMassAsync(pilot, cancellationToken);
-        var preview = await world.PreviewAsync(connectionId, mass, cancellationToken) ?? throw JumpRefused("STARGATE_NOT_FOUND");
-        if (preview.Outcome == TransitOutcome.Refused)
-        {
-            throw Notify("Your ship is too large for this wormhole.");
-        }
-
-        CommandReply reply;
+        var transitGate = _wormholeTransitGates.GetOrAdd(connectionId, static _ => new SemaphoreSlim(1, 1));
+        // The simulation accepts before PostgreSQL commits the mass debit, so serialize this whole interval per connection.
+        // shortcut: this gate covers one Host process; use a store reservation if wormhole jumps run across multiple Hosts.
+        await transitGate.WaitAsync(cancellationToken);
         try
         {
-            reply = await _sim.CommandAsync((ulong)session.SessionId, SimCommands.Jump, [endId, 0], cancellationToken);
-        }
-        catch (SimUnavailableException error)
-        {
-            _log?.Invoke($"wormhole jump of session {session.SessionId}: {error.Message}");
-            throw JumpRefused("SCENE_NOT_FOUND");
-        }
-        if (!reply.Accepted || reply.DestinationSystem is not { } destination)
-        {
-            _log?.Invoke($"wormhole jump of session {session.SessionId} through {endId} refused: {reply.Reason}");
-            throw JumpRefused(reply.Reason);
-        }
+            var end = await world.EndAsync(endId, cancellationToken) ?? throw JumpRefused("STARGATE_NOT_FOUND");
+            if (end.SolarSystemId != pilot.SolarSystemId)
+            {
+                throw JumpRefused("STARGATE_NOT_FOUND");
+            }
+            var now = _nowUnixMs();
+            if (PolarizationOf(endId, pilot.CharacterId) is not null)
+            {
+                throw Notify("You are polarized to this wormhole: you cannot go into it from this side yet.");
+            }
+            var mass = await ShipMassAsync(pilot, cancellationToken);
+            var preview = await world.PreviewAsync(connectionId, mass, cancellationToken) ?? throw JumpRefused("STARGATE_NOT_FOUND");
+            if (preview.Outcome == TransitOutcome.Refused)
+            {
+                throw Notify("Your ship is too large for this wormhole.");
+            }
 
-        await CancelShipSelfDestructAsync(pilot.ShipId, cancellationToken);
-        var changes = new List<WormholeChange>();
-        var transit = await world.TransitAsync(connectionId, mass, now, changes.Add, cancellationToken);
-        if (transit.Outcome == TransitOutcome.Refused)
-        {
-            _log?.Invoke($"wormhole {connectionId}: the transit of session {session.SessionId} was refused after the jump was taken (a race, see the shortcut)");
+            CommandReply reply;
+            try
+            {
+                reply = await _sim.CommandAsync((ulong)session.SessionId, SimCommands.Jump, [endId, 0], cancellationToken);
+            }
+            catch (SimUnavailableException error)
+            {
+                _log?.Invoke($"wormhole jump of session {session.SessionId}: {error.Message}");
+                throw JumpRefused("SCENE_NOT_FOUND");
+            }
+            if (!reply.Accepted || reply.DestinationSystem is not { } destination)
+            {
+                _log?.Invoke($"wormhole jump of session {session.SessionId} through {endId} refused: {reply.Reason}");
+                throw JumpRefused(reply.Reason);
+            }
+
+            await CancelShipSelfDestructAsync(pilot.ShipId, cancellationToken);
+            var changes = new List<WormholeChange>();
+            var transit = await world.TransitAsync(connectionId, mass, now, changes.Add, cancellationToken);
+            if (transit.Outcome == TransitOutcome.Refused)
+            {
+                _log?.Invoke($"wormhole {connectionId}: the transit of session {session.SessionId} was refused after the simulation accepted the jump");
+            }
+            foreach (var change in changes)
+            {
+                PublishWormholeChange(change);
+            }
+            lock (_polarizedUntil)
+            {
+                _polarizedUntil[(pilot.CharacterId, endId)] = now + PolarizationMs;
+            }
+            await PlaceWormholeEndsAsync(destination, cancellationToken);
+            SendJumpQueueUpdate(session, pilot.CharacterId, destination);
+            return Py.Tuple(boundObjectId is null ? None : new PyStr(boundObjectId), new PyLong(Py.FileTimeFromUnixMs(now + SessionChangeCooldownMs)));
         }
-        foreach (var change in changes)
+        finally
         {
-            PublishWormholeChange(change);
+            transitGate.Release();
         }
-        lock (_polarizedUntil)
-        {
-            _polarizedUntil[(pilot.CharacterId, endId)] = now + PolarizationMs;
-        }
-        await PlaceWormholeEndsAsync(destination, cancellationToken);
-        SendJumpQueueUpdate(session, pilot.CharacterId, destination);
-        return Py.Tuple(boundObjectId is null ? None : new PyStr(boundObjectId), new PyLong(Py.FileTimeFromUnixMs(now + SessionChangeCooldownMs)));
     }
 }

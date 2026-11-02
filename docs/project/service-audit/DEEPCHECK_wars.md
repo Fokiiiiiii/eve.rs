@@ -4,9 +4,7 @@
 
 V24.01 client に RPC サービス名 `wars` はない。近い Host surface は read RPC `warsInfoMgr` と、`eveMoniker.GetWar()` が作る bound moniker `warRegistry`。`svc.war` はクライアント内サービスで Host service ではない。
 
-静的追跡で、全6件の `warsInfoMgr` RPC と `warRegistry` bound methods を確認した。重大な差分は、`GetPublicWarInfo` の sequence/iterable 契約、実 set 入力を送らない wire test、negotiation state/API の未実装、及び client が呼ぶGM methodsの欠落。実装・回帰テストは完了していない。
-
-Serena の既存ファイル置換は `No language servers available in the manager` で失敗した。origin/main merge では既存テスト・監査資料に競合が出たため abort し、先行作業を変更していない。PostgreSQL 接続なし。
+静的追跡で、全6件の `warsInfoMgr` RPC と `warRegistry` bound methods を確認した。`GetPublicWarInfo` は2026-11-02にV24.01のcollection契約に合わせ、複数IDからPyListを返すHost wire回帰を追加して修正した（詳細は [deepfix-wars-sov.md](deepfix-wars-sov.md)）。GetWarsByOwnersの実Python set wire coverage、negotiation state/API、clientが呼ぶGM methodsは引き続き未対応または未確認。
 
 ## サービス名と route
 
@@ -24,7 +22,7 @@ Serena の既存ファイル置換は `No language servers available in the mana
 | `GetWarsByOwnerID(ownerID)` | `corp_ui_wars.py:227`, `warHistoryCont.py:61,66`, `infosvc.py:2712`; CRowset の `Index('warID')`, `timeFinished`, `timeStarted` を消費（`infosvc.py:2736-2748`）。 | 登録済み。owner side/ally の wars relation を rowset に投影。既存 Host wire test は ally war を確認。read-only。 | 静的な形は整合。PyInt variant は wire test 未確認。 |
 | `GetWarsByOwners(ownerIDs)` | `war_cso.py:132-134`; 実入力は Python `set`。owner -> warID -> KeyVal の dict を `iteritems()` で読む。 | 登録済み。Host parser は list/tuple と set marshal 形を読むが、wire test は PyList のみ。共有 relation read、通知なし。 | 実クライアントの set wire regression がない。 |
 | `GetWarsForStructure(structureID)` | `panelWarHQ.py:41`; KeyVal iterable を `timeDeclared` 順で表示（同:30-42）。 | 登録済み。warHQID が合う KeyVal list。既存 Host wire test にあり。read-only。 | 静的な形は整合。DB runtime check なし。 |
-| `GetPublicWarInfo(wars)` | `structureIcon.py:44` が `self.wars` を渡し、同:50-65 で結果を iterable として走査し `againstID`/`declaredByID` を読む。`structureInfo.wars` は `structureEntryController.py:195-196` で返り、`structureDeployment.py:58-60` で件数として使う。 | 登録済みだが Host は引数0を単一IDとして扱い、KeyVal/PyNone を返す。EveJS も `src/server/src/services/corporation/warsInfoMgrService.js:210-214` で単一IDを読む。wire test なし。 | client が sequence/iterable を要求する形と Host/EveJS の単一値形が合わない。全体 client evidence を基準に実 wire 契約を修正すべき。 |
+| `GetPublicWarInfo(wars)` | `eve/client/script/ui/structure/structureIcon.py:44` が `self.wars` を渡し、同:50-65 で結果を反復し `againstID`/`declaredByID` を読む。`structureInfo.wars` は `structureEntryController.py:195-196` で返り、`structureDeployment.py:58-60` で件数として使う。 | HostはID collectionを読み、存在するwarのKeyValをPyListで返す。EveJS `server/src/services/corporation/warsInfoMgrService.js:129-133` は単一IDを読む。wire test `Wars_info_rpcs_keep_client_shapes_through_registered_host_with_transport_kwargs` が複数ID、存在しないID、空listをHost経由で検査する。 | V24.01 collection contractに合わせて修正済み。 |
 
 Host 実装は `dotnet/src/Eve.Services.Corporations/WarsInfoMgrService.cs`; EveJS 全6 methods は `src/server/src/services/corporation/warsInfoMgrService.js:147-222`。
 
@@ -64,7 +62,14 @@ Client calls は `war_cso.py`; UI actions は `warWindows.py`。成功時 client
 
 ## 未確認と必要な regression
 
-- `GetPublicWarInfo` is now verified through a registered Host wire call backed by PostgreSQL: the pinned client passes `structureInfo.wars` (a list of war IDs) and iterates/slices the returned wars. Host accepts list/tuple IDs and returns ordered `KeyVal` items, omitting unknown IDs; scalar `KeyVal`/`None` behavior remains compatible. At pinned EveJS commit `7cc6f323c7c5c92c2738476a62768318799d8077`, `server/src/services/corporation/warsInfoMgrService.js` still parses only `args[0]` as one numeric ID and returns one payload or null. The batch behavior is therefore an intentional client-contract difference; EveJS scalar behavior does not satisfy this actual caller. `GetWarsByOwners` with the real Python set marshal shape and bound nested calls still need Host wire coverage.
+- GetWarsByOwners の実 Python set と bound nested calls を通す Host wire tests が残る。
 - negotiation では persistence、subsequent read、通知順、再起動後の state を Host tests で確認する必要がある。EveJS は `warNegotiationRuntimeState.js` と `warNotificationCenter.js` を使う。
-- int/long 両形、None/message optional、UserError/exception envelope、bound kwargs、DB runtime、GUI client はこの作業で実行確認していない。task のため PostgreSQL は未使用。
-- 変更は行っていない。Serena existing-file edit tool の失敗と merge conflicts により、fix/test/merge/push は未完了。
+- negotiationのint/long両形、None/message optional、UserError/exception envelope、bound kwargs、再起動後の状態、GUI clientはこの作業で実行確認していない。
+- GetPublicWarInfoのPostgreSQL Host wire回帰はfocused runでpass。Graphical client検証は未実施。
+## GetPublicWarInfo merge evidence (2026-11-02)
+
+The pinned V24.01 client passes `structureInfo.wars` from `structureEntryController.py:195-196` at `eve/client/script/ui/structure/structureIcon.py:44`; the consumer iterates/slices the result and reads `againstID` / `declaredByID` (`structureIcon.py:50-65`). This collection contract is why the Host accepts list/tuple war IDs and returns an ordered PyList of existing KeyVals, omitting unknown IDs, while retaining scalar known/unknown compatibility.
+
+Both registered-wire test records are retained: mainline `Wars_info_rpcs_keep_client_shapes_through_registered_host_with_transport_kwargs`, and `WarsInfoMgrPublicBatchHostWireTests.Public_war_info_accepts_structure_war_id_batches_through_registered_host_wire` (PostgreSQL; ordered list/tuple, unknown omission, scalar compatibility). At pinned EveJS commit `7cc6f323c7c5c92c2738476a62768318799d8077`, `server/src/services/corporation/warsInfoMgrService.js` still parses a single numeric `args[0]` and returns one KeyVal or null, so the Host collection behavior follows the pinned client caller contract rather than that scalar EveJS implementation.
+
+The Python-set marshal path for `GetWarsByOwners`, negotiation persistence/notifications, bound nested calls, and graphical-client execution remain unverified.

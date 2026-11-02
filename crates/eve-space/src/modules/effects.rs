@@ -353,7 +353,10 @@ impl Scene {
                 self.take_capacitor(target, strength, at).0
             }
             Remote::Drain { amount, signature_resolution } => {
-                let strength = amount * share * resolved(*signature_resolution);
+                let strength = amount
+                    * share
+                    * resolved(*signature_resolution)
+                    * self.capacitor_warfare_multiplier(target);
                 self.drain_capacitor(session, target, strength, at)
             }
         };
@@ -574,7 +577,7 @@ impl Scene {
         out
     }
 
-    /// What the target's capacitor warfare resistance leaves of a neutralisation (`energyWarfareResistance`, 2045).
+    /// What the target's capacitor warfare resistance leaves of neutralizer or Nosferatu strength (`energyWarfareResistance`, 2045).
     pub(crate) fn capacitor_warfare_multiplier(&self, target: SessionId) -> f64 {
         self.pilots
             .get(&target)

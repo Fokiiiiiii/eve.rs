@@ -919,17 +919,20 @@ fn a_docking_asked_for_again_is_accepted_with_the_first_time_and_orders_are_igno
 }
 
 #[test]
-fn docking_range_is_measured_between_surfaces_and_two_and_a_half_kilometres_is_in() {
+fn docking_range_is_measured_between_surfaces_and_five_hundred_metres_is_in() {
     let dock_from = |gap: f64| {
         let mut scene = near_the_station();
         scene.pilots.get_mut(&SESSION).unwrap().ship.position =
             Vec3::new(1_000_000.0 + 1_000.0 + 47.0 + gap, 0.0, 0.0);
         scene.command(SESSION, Command::Dock { station_id: STATION }, NOON)
     };
-    assert!(matches!(dock_from(2_500.0).last(), Some(Out::Accepted { .. })));
-    assert!(
-        matches!(dock_from(2_500.5).last(), Some(Out::Approaching { distance, .. }) if *distance == 2_500.5)
-    );
+    assert!(matches!(dock_from(500.0).last(), Some(Out::Accepted { .. })));
+    assert!(matches!(dock_from(500.5).last(), Some(Out::Approaching { distance, .. }) if *distance == 500.5));
+}
+
+#[test]
+fn an_upwell_structure_keeps_its_docking_range() {
+    assert_eq!(docking_range(BodyKind::Structure), STRUCTURE_DOCKING_RANGE);
 }
 
 #[test]
@@ -1099,6 +1102,52 @@ fn a_warp_to_an_arbitrary_coordinate_uses_the_supplied_point() {
         Course::Warp { raw_destination, target_point, .. }
             if raw_destination == destination && target_point == destination
     ));
+}
+
+#[test]
+fn a_warp_range_cannot_extend_past_the_destination() {
+    let mut scene = scene_with_a_planet();
+    scene.pilots.get_mut(&SESSION).unwrap().ship.position = Vec3::new(1_000_000.0, 0.0, 0.0);
+
+    let refused = scene.command(
+        SESSION,
+        Command::WarpToPoint {
+            destination: Vec3::new(2_000_000.0, 3_000_000.0, 4_000_000.0),
+            range: 10_000_000.0,
+        },
+        NOON,
+    );
+
+    assert!(matches!(refused.as_slice(), [Out::Refused { reason: "BAD_WARP_POINT", .. }]), "{refused:?}");
+    assert!(!matches!(scene.ship(SESSION, NOON).unwrap().course, Course::Warp { .. }));
+}
+
+#[test]
+fn a_negative_warp_range_is_refused_without_starting_warp() {
+    let mut scene = scene_with_a_planet();
+
+    let refused = scene.command(
+        SESSION,
+        Command::WarpToPoint { destination: Vec3::new(2_000_000.0, 3_000_000.0, 4_000_000.0), range: -1.0 },
+        NOON,
+    );
+
+    assert!(matches!(refused.as_slice(), [Out::Refused { reason: "BAD_WARP_POINT", .. }]), "{refused:?}");
+    assert!(!matches!(scene.ship(SESSION, NOON).unwrap().course, Course::Warp { .. }));
+}
+
+#[test]
+fn a_warp_point_with_an_overflowing_distance_is_refused_without_starting_warp() {
+    let mut scene = scene_with_a_planet();
+
+    let refused = scene.command(
+        SESSION,
+        Command::WarpToPoint { destination: Vec3::new(1.0e200, 0.0, 0.0), range: 0.0 },
+        NOON,
+    );
+
+    assert!(matches!(refused.as_slice(), [Out::Refused { reason: "BAD_WARP_POINT", .. }]), "{refused:?}");
+    assert!(!matches!(scene.ship(SESSION, NOON).unwrap().course, Course::Warp { .. }));
 }
 
 #[test]

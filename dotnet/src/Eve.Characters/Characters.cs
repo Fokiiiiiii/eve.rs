@@ -38,6 +38,8 @@ public sealed record Character(
     public long DirectEnlistmentCooldownFileTime { get; init; }
 
     public long NextRemoteHomeStationChangeFileTime { get; init; } = 0;
+
+    public long? StructureId { get; init; }
 }
 
 public sealed record NewCharacter(
@@ -66,7 +68,7 @@ public sealed partial class PgCharacterStore
         "id, account_id, name, gender, race_id, bloodline_id, ancestry_id, school_id, type_id, corporation_id, faction_id, alliance_id, " +
         "station_id, home_station_id, solar_system_id, constellation_id, region_id, ship_id, created_at, last_logoff_at, delete_prepare_at, " +
         "tutorial_entry_mode, tutorial_first_login_handoff, air_npe_state, air_npe_reveal_on_first_login, direct_faction_id, direct_enlistment_cooldown_filetime, " +
-        "next_remote_home_station_change_filetime, deleted_at";
+        "next_remote_home_station_change_filetime, deleted_at, structure_id";
 
     private readonly NpgsqlDataSource _source;
     private readonly string _schema;
@@ -102,6 +104,7 @@ public sealed partial class PgCharacterStore
         DirectEnlistmentCooldownFileTime = r.GetInt64(26),
         NextRemoteHomeStationChangeFileTime = r.GetInt64(27),
         DeletedAt = r.IsDBNull(28) ? null : r.GetFieldValue<DateTimeOffset>(28),
+        StructureId = r.IsDBNull(29) ? null : r.GetInt64(29),
     };
 
     /// <summary>The account's characters, oldest first (the order the selection screen shows them).</summary>
@@ -396,9 +399,19 @@ public sealed partial class PgCharacterStore
     /// <summary>Records the station a character is docked at (or last was), inside the caller's transaction.</summary>
     public async Task SetStationAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long stationId, CancellationToken cancellationToken = default)
     {
-        await using var command = new NpgsqlCommand($"UPDATE {_schema}.characters SET station_id = $1 WHERE id = $2", connection, transaction)
+        await using var command = new NpgsqlCommand($"UPDATE {_schema}.characters SET station_id = $1, structure_id = NULL WHERE id = $2", connection, transaction)
         {
             Parameters = { new() { Value = stationId }, new() { Value = characterId } },
+        };
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>Records a character's current Upwell structure, inside the caller's transaction.</summary>
+    public async Task SetStructureAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long structureId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"UPDATE {_schema}.characters SET structure_id = $1 WHERE id = $2", connection, transaction)
+        {
+            Parameters = { new() { Value = structureId }, new() { Value = characterId } },
         };
         await command.ExecuteNonQueryAsync(cancellationToken);
     }

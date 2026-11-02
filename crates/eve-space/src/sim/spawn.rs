@@ -1060,11 +1060,26 @@ impl Sim {
         if !scene_key.is_valid() {
             return reply(Err("BAD_SCENE_KEY".to_string()));
         }
-        let scene = if scene_key.instance_id == 0 {
+        let public_system = if scene_key.instance_id == 0 {
             let system = match self.universe.system(scene_key.location_id) {
                 Ok(system) => system,
                 Err(reason) => return reply(Err(reason)),
             };
+            if how == How::InSpace {
+                let (Some(position), Some(direction)) = (position, direction) else {
+                    return reply(Err("SPACE_STATE_REQUIRED".to_string()));
+                };
+                if position.iter().chain(direction.iter()).any(|value| !value.is_finite())
+                    || direction.iter().all(|value| *value == 0.0)
+                {
+                    return reply(Err("BAD_SPACE_STATE".to_string()));
+                }
+            }
+            Some(system)
+        } else {
+            None
+        };
+        let scene = if let Some(system) = public_system {
             self.scenes.entry(scene_key).or_insert_with(|| self.universe.scene_of(system))
         } else if how == How::InSpace {
             let Some(scene) = self.scenes.get_mut(&scene_key) else {

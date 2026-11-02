@@ -88,6 +88,7 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
         private readonly System.Collections.Concurrent.ConcurrentQueue<PyValue> _packets = new();
         public int Count => _packets.Count;
         public void Send(PyValue packet) => _packets.Enqueue(packet);
+
     }
 
     private static HostSettings Settings() => new(
@@ -133,6 +134,80 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
         Assert.Same(PyNone.Instance, result);
         Assert.Equal(before, Quantity(await items.OwnedByAsync(pilot), CertificateTypeId));
         Assert.Equal(0, await PlexBalanceAsync(vault, session, 2));
+    }
+
+    [PgFact]
+    public async Task Reverse_redeeming_plex_moves_the_item_to_a_station_locked_token_and_claims_it_once()
+    {
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var host = await BuildHostAsync();
+        var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
+        var otherStation = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First(value => value.Id != station.Id);
+        var pilot = await CreatePilotAsync(source, station, "PLEX reverse redeem pilot");
+        var items = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
+        long plexItemId;
+        long otherItemId;
+        await using (var connection = await source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            plexItemId = await items.CreateAsync(connection, transaction,
+                new NewItem(PlexTypeId, pilot, station.Id, ItemFlags.Hangar, 15));
+            otherItemId = await items.CreateAsync(connection, transaction,
+                new NewItem(CertificateTypeId, pilot, station.Id, ItemFlags.Hangar, 1));
+            await transaction.CommitAsync();
+        }
+
+        var sink = new Sink();
+        var session = new ClientSession(sink) { SessionId = 402, UserId = 1, CharacterId = pilot };
+        session.Set("stationid", new PyLong(station.Id));
+        host.CharacterSessions!.Enter(pilot, session);
+        var userSvc = host.Registry.Lookup("userSvc")!;
+        var invalidItem = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await userSvc.CallAsync(Call(session, "ReverseRedeem", 9, [new PyLong(otherItemId)])));
+        Assert.True(invalidItem.Error.IsUserError);
+        Assert.NotNull(await items.GetAsync(otherItemId));
+
+        var result = await userSvc.CallAsync(Call(session, "ReverseRedeem", 10, [new PyLong(plexItemId)]));
+        Assert.Same(PyBool.True, result);
+        Assert.Null(await items.GetAsync(plexItemId));
+        Assert.Equal(0, sink.Count);
+        session.RunAfterResponse();
+        Assert.Equal(1, sink.Count);
+
+        await userSvc.CallAsync(Call(session, "ReverseRedeem", 18, [new PyLong(plexItemId)]));
+        Assert.Equal(1, sink.Count);
+
+        var tokens = Assert.IsType<PyObjectEx>(await userSvc.CallAsync(Call(session, "GetRedeemTokens", 11, [])));
+        var tokenFields = Assert.IsType<PyPackedRow>(Assert.Single(tokens.List)).Fields()
+            .ToDictionary(field => field.Key, field => field.Value);
+        Assert.True(((PyInt)tokenFields["tokenID"]).Value > 0);
+        Assert.Equal(new PyInt(15), tokenFields["quantity"]);
+        Assert.Equal(new PyInt(station.Id), tokenFields["stationID"]);
+
+        var claimToken = Py.Dict(
+            ("tokenID", tokenFields["tokenID"]),
+            ("massTokenID", PyNone.Instance),
+            ("typeID", tokenFields["typeID"]));
+        var claimArgs = new PyValue[] { new PyList([claimToken]), new PyLong(pilot) };
+        session.Set("stationid", new PyLong(otherStation.Id));
+        var wrongStation = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+        {
+            await userSvc.CallAsync(Call(session, "ClaimRedeemTokens", 12, claimArgs));
+        });
+        Assert.True(wrongStation.Error.IsUserError);
+        Assert.Single(Assert.IsType<PyObjectEx>(await userSvc.CallAsync(Call(session, "GetRedeemTokens", 13, []))).List);
+
+        session.Set("stationid", new PyLong(station.Id));
+        var claimed = Assert.IsType<PyDict>(await userSvc.CallAsync(Call(session, "ClaimRedeemTokens", 14, claimArgs)));
+        Assert.Empty(Assert.IsType<PyObjectEx>(await userSvc.CallAsync(Call(session, "GetRedeemTokens", 15, []))).List);
+        var created = Assert.IsType<PyDict>(Assert.Single(Assert.IsType<PyList>(ValueField(claimed, "itemsCreated")).Items));
+        var claimedItem = await items.GetAsync(((PyLong)ValueField(created, "itemID")).Value);
+        Assert.NotNull(claimedItem);
+        Assert.Equal((PlexTypeId, station.Id, Eve.Inventory.ItemFlags.Hangar, 15L),
+            (claimedItem.TypeId, claimedItem.LocationId, claimedItem.Flag, claimedItem.Quantity));
+
+        await userSvc.CallAsync(Call(session, "ReverseRedeem", 16, [new PyLong(plexItemId)]));
+        Assert.Empty(Assert.IsType<PyObjectEx>(await userSvc.CallAsync(Call(session, "GetRedeemTokens", 17, []))).List);
     }
 
     [PgFact]
@@ -525,6 +600,9 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
         Session = session,
         CallId = new PyInt(callId),
     };
+
+    private static PyValue ValueField(PyDict fields, string name) =>
+        fields.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == name).Value;
 
     private static string Field(PyDict fields, string name) =>
         JsSemantics.StringValue(fields.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == name).Value) ?? "";

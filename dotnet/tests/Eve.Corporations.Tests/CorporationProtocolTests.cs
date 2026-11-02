@@ -44,12 +44,17 @@ public sealed class WarsInfoMgrServiceTests
         Assert.Collection(byOwners.Entries, _ => { }, _ => { }, _ => { });
         Assert.Contains(byOwners.Entries, entry => Number(entry.Key) == 1003 && Assert.IsType<Eve.Marshal.PyDict>(entry.Value).Entries.Count == 1);
 
-        var publicInfo = await service.GetPublicWarInfo(Call("GetPublicWarInfo", new Eve.Marshal.PyLong(war.Id)));
-        var fields = KeyValFields(publicInfo);
+        var publicInfo = Assert.IsType<Eve.Marshal.PyList>(await service.GetPublicWarInfo(Call(
+            "GetPublicWarInfo",
+            new Eve.Marshal.PyList([new Eve.Marshal.PyLong(war.Id), new Eve.Marshal.PyLong(long.MaxValue)]))));
+        var fields = KeyValFields(Assert.Single(publicInfo.Items));
         Assert.Equal(war.Id, Number(fields["warID"]));
         Assert.Equal(4001, Number(fields["warHQ"]));
         Assert.Single(Assert.IsType<Eve.Marshal.PyDict>(fields["allies"]).Entries);
-        Assert.IsType<Eve.Marshal.PyNone>(await service.GetPublicWarInfo(Call("GetPublicWarInfo", new Eve.Marshal.PyLong(long.MaxValue))));
+        Assert.Empty(Assert.IsType<Eve.Marshal.PyList>(await service.GetPublicWarInfo(
+            Call("GetPublicWarInfo", new Eve.Marshal.PyList([new Eve.Marshal.PyLong(long.MaxValue)])))).Items);
+        Assert.Empty(Assert.IsType<Eve.Marshal.PyList>(await service.GetPublicWarInfo(
+            Call("GetPublicWarInfo", new Eve.Marshal.PyList([])))).Items);
 
         var structureWars = Assert.IsType<Eve.Marshal.PyList>(await service.GetWarsForStructure(Call("GetWarsForStructure", new Eve.Marshal.PyLong(4001))));
         Assert.Equal(war.Id, Number(KeyValFields(Assert.Single(structureWars.Items))["warID"]));
@@ -2095,11 +2100,13 @@ private static PyValue RowField(PyValue value,string key)
                 Call(attackerSession, "GetTop50", new PyInt(-1))));
             Assert.Empty(Assert.IsType<PyObjectEx>(negativeTop50).List);
 
-            var publicInfo = await service.GetPublicWarInfo(
-                Call(attackerSession, "GetPublicWarInfo", ownerRows[0].Values[0]));
+            var publicInfos = Assert.IsType<PyList>(await service.GetPublicWarInfo(
+                Call(attackerSession, "GetPublicWarInfo", new PyList([ownerRows[0].Values[0]]))));
+            var publicInfo = Assert.Single(publicInfos.Items);
             Assert.Equal(new PyStr("util.KeyVal"), Assert.IsType<PyObject>(publicInfo).Name);
-            Assert.Equal(PyValue.None, await service.GetPublicWarInfo(
-                Call(attackerSession, "GetPublicWarInfo", new PyInt(long.MaxValue))));
+            Assert.Equal(ownerRows[0].Values[0], Field(publicInfo, "warID"));
+            Assert.Empty(Assert.IsType<PyList>(await service.GetPublicWarInfo(
+                Call(attackerSession, "GetPublicWarInfo", new PyList([new PyInt(long.MaxValue)])))).Items);
 
             var structureWars = Assert.IsType<PyList>(await service.GetWarsForStructure(
                 Call(attackerSession, "GetWarsForStructure", new PyInt(structure))));
@@ -2110,8 +2117,8 @@ private static PyValue RowField(PyValue value,string key)
                 Call(attackerSession, "GetWarsByOwnerID", new PyInt(legacyOwner)))));
             var legacyRow = Assert.IsType<PyPackedRow>(Assert.Single(legacyRows.List));
             Assert.Equal(new PyInt(legacyStructure), legacyRow.Values[14]);
-            var legacyInfo = await service.GetPublicWarInfo(
-                Call(attackerSession, "GetPublicWarInfo", legacyRow.Values[0]));
+            var legacyInfo = Assert.Single(Assert.IsType<PyList>(await service.GetPublicWarInfo(
+                Call(attackerSession, "GetPublicWarInfo", new PyList([legacyRow.Values[0]])))).Items);
             Assert.Equal(PyValue.None, Field(legacyInfo, "warHQID"));
             Assert.Equal(PyValue.None, Field(legacyInfo, "warHQ"));
             Assert.Empty(Assert.IsType<PyList>(await service.GetWarsForStructure(

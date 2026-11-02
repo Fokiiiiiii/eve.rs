@@ -134,6 +134,15 @@ def _undocked_pilot(client) -> tuple[int, int]:
     _undock(client, ship_id, fitted)
     return character, ship_id
 
+def _structure_ready_for_docking(client, structure: int = STRUCTURE) -> list[dict]:
+    """Wait for both the structure and the 10 s undock session change timer."""
+    cooldown_expires = time.monotonic() + 10.0
+    return timed_events(
+        client,
+        30.0,
+        until=lambda events: _structure_slim(events, structure) is not None and time.monotonic() >= cooldown_expires,
+    )
+
 def _pilot_without_role(ceo, pilot) -> tuple[int, int, int]:
     """A member of a player corporation with no role, undocked: (its corporation, character id, its ship id). The corporation's chief executive is
     the character of `ceo`; the pilot's session takes the membership by a log off and select."""
@@ -187,13 +196,19 @@ def test_a_pilot_docks_at_the_structure_and_undocks_from_it():
     """
     with base.connect(f"walk-structure-{run_token()}") as client:
         _, ship_id = _undocked_pilot(client)
-        seen = timed_events(client, 30.0, until=lambda events: _structure_slim(events) is not None)
+        seen = _structure_ready_for_docking(client)
         assert _structure_slim(seen) is not None, f"the structure {STRUCTURE} is not in the ballpark"
+        time.sleep(10.0)
 
-        try:
-            client.call("structureDocking", "Dock", STRUCTURE, int(ship_id))
-        except p.MachoError as failure:
-            pytest.fail(f"the docking was refused: the server answered {_refusal(failure)[0]}: {describe(failure.payload)}")
+        deadline = time.monotonic() + 120.0
+        while True:
+            try:
+                client.call("structureDocking", "Dock", STRUCTURE, int(ship_id))
+                break
+            except p.MachoError as failure:
+                if _refusal(failure)[0] != "DockingApproach" or time.monotonic() >= deadline:
+                    pytest.fail(f"the docking was refused: the server answered {_refusal(failure)[0]}: {describe(failure.payload)}")
+                timed_events(client, 5.0)
         finished = timed_events(
             client,
             60.0,
@@ -292,19 +307,25 @@ def test_a_moon_extraction_started_from_space_is_refused_as_not_controlling():
         assert "You must be controlling this structure." in payload
 
 def _docked_pilot(client, structure: int = STRUCTURE) -> tuple[int, int]:
-    """A new pilot of the recorded race, undocked and then docked in a structure (the ship goes into its hangar): (character id, ship id)."""
+    """A new pilot of the recorded race, docked after the undock session timer (character id, ship id)."""
     character, ship_id = _undocked_pilot(client)
-    seen = timed_events(client, 30.0, until=lambda events: _structure_slim(events, structure) is not None)
+    seen = _structure_ready_for_docking(client, structure)
     assert _structure_slim(seen, structure) is not None, f"the structure {structure} is not in the ballpark of system {SYSTEM} within 30 s"
+    time.sleep(10.0)
     deadline = time.time() + 120
+    waited_for_session_change = False
     while True:
         try:
             client.call("structureDocking", "Dock", structure, int(ship_id))
             break
         except p.MachoError as failure:
-
-            if _refusal(failure)[0] != "DockingApproach" or time.time() > deadline:
-                pytest.fail(f"the docking was refused: the server answered {_refusal(failure)[0]}: {describe(failure.payload)}")
+            label = _refusal(failure)[0]
+            if label == "DockingRequestDenied" and not waited_for_session_change:
+                waited_for_session_change = True
+                timed_events(client, 11.0)
+                continue
+            if label != "DockingApproach" or time.time() > deadline:
+                pytest.fail(f"the docking was refused: the server answered {label}: {describe(failure.payload)}")
         timed_events(client, 5.0)
     finished = timed_events(client, 60.0, until=lambda events: _named(events, "OnDockingFinished") != [])
     assert _named(finished, "OnDockingFinished"), "the docking was not finished within 60 s"

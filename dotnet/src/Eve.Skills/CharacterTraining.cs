@@ -466,9 +466,19 @@ public sealed class CharacterTraining(
         {
             return new QueueRefused(error);
         }
-        if (requestedActive && !previous.Running && await store.RunningCountAsync(accountCharacters.Where(id => id != characterId), cancellationToken) is var others && others >= SlotsPerAccount + settings.AdditionalTrainingSlots(accountId))
+        if (requestedActive && !previous.Running)
         {
-            return new TrainingBusy(others);
+            await using (var accountLock = new NpgsqlCommand(
+                "SELECT pg_advisory_xact_lock(hashtextextended('skills-account:' || $1::text, 0))", connection, transaction))
+            {
+                accountLock.Parameters.Add(new NpgsqlParameter { Value = accountId });
+                await accountLock.ExecuteNonQueryAsync(cancellationToken);
+            }
+            var others = await store.RunningCountAsync(accountCharacters.Where(id => id != characterId), cancellationToken);
+            if (others >= SlotsPerAccount + settings.AdditionalTrainingSlots(accountId))
+            {
+                return new TrainingBusy(others);
+            }
         }
 
         var keepsStart = previous.Running && requestedActive && Same(previous.Entries[0], entries[0]) && state.ActiveStart is not null;

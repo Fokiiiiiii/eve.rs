@@ -281,8 +281,7 @@ public sealed class MissionDungeonRuntime(
 
     /// <summary>
 
-    /// Only an accepted mission whose kill dungeon is the instance's definition is decided. The reward is credited under the instance's key before the
-    /// completion, so a replay of the same outcome credits nothing.
+    /// A completed kill dungeon records the objective; the agent must still be visited to claim the reward.
     /// </summary>
     public async Task OnDungeonOutcomeAsync(string outcome, long owner, string definition, long instanceId, CancellationToken cancellationToken = default)
     {
@@ -305,12 +304,25 @@ public sealed class MissionDungeonRuntime(
                 }
                 return;
             }
-            await CompleteWithRewardAsync(owner, record, $"dungeon:{instanceId}", $"complete:{instanceId}", cancellationToken);
+            await store.MarkObjectiveCompletedAsync(owner, record.AgentId, now(), $"objective:{instanceId}", cancellationToken);
         }
         else
         {
             await TransitionAsync(() => store.FailAsync(owner, record.AgentId, now(), $"fail:{instanceId}:{outcome}", cancellationToken));
         }
+    }
+
+    public async Task<bool> OnMissionTurnInAsync(long characterId, long agentId, CancellationToken cancellationToken = default)
+    {
+        var record = await store.ReadAsync(characterId, agentId, cancellationToken);
+        if (record is not { State: AgentMissionState.Accepted, ObjectiveCompleted: true } || record.AcceptedAt is not { } acceptedAt)
+            return false;
+        var sequence = acceptedAt.ToUnixTimeMilliseconds();
+        await CompleteWithRewardAsync(characterId, record,
+            $"turnin:{record.Content.MissionId}:{sequence}",
+            $"turnin:{record.Content.MissionId}:{agentId}:{sequence}",
+            cancellationToken);
+        return (await store.ReadAsync(characterId, agentId, cancellationToken))?.State == AgentMissionState.Completed;
     }
 
     /// <summary>

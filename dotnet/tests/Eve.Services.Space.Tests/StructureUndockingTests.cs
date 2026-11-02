@@ -15,13 +15,19 @@ public sealed class StructureUndockingTests
 {
     private const long Structure = 1_040_000_000_001;
 
-    private static async Task<(Rig Rig, Eve.Characters.Created Character, ClientSession Session)> DockedAtStructureAsync()
+    private static Eve.Scheduler.LocalTimers CooldownElapsedTimers() => new(delay: (duration, token) =>
+        duration == TimeSpan.FromSeconds(10)
+            ? Task.CompletedTask
+            : new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task.WaitAsync(token));
+
+    private static async Task<(Rig Rig, Eve.Characters.Created Character, ClientSession Session)> DockedAtStructureAsync(Eve.Scheduler.LocalTimers timers)
     {
-        var rig = await Rig.CreateAsync();
+        var rig = await Rig.CreateAsync(localTimers: timers);
         var character = await rig.NewCharacterAsync();
         var session = await rig.SessionAsync(character);
         var oid = await rig.BindShipAsync(session);
         await rig.ShipCallAsync(session, "Undock", oid, new PyLong(session.GetInt("shipid")!.Value), PyBool.False);
+        rig.Space.Transitions.EndSessionChange((ulong)session.SessionId);
         Events.Of(session);
         rig.Space.StructureExistsAsync = (id, _) => Task.FromResult(id == Structure);
         rig.Space.StructureDockingAllowedAsync = (_, _, _) => Task.FromResult(true);
@@ -36,7 +42,8 @@ public sealed class StructureUndockingTests
     [PgFact]
     public async Task An_undock_from_the_structure_puts_the_ship_in_space_in_its_system_and_the_session_out_of_the_structure()
     {
-        var (rig, character, session) = await DockedAtStructureAsync();
+        using var timers = CooldownElapsedTimers();
+        var (rig, character, session) = await DockedAtStructureAsync(timers);
         await using var _ = rig;
         var system = session.GetInt("solarsystemid")!.Value;
         var locationChanges = new List<(long OldStation, long OldStructure, long? NewStation, long? NewStructure)>();
@@ -71,7 +78,8 @@ public sealed class StructureUndockingTests
     [PgFact]
     public async Task An_undock_is_refused_for_another_structure_and_for_another_ship_and_the_simulation_is_not_asked()
     {
-        var (rig, character, session) = await DockedAtStructureAsync();
+        using var timers = CooldownElapsedTimers();
+        var (rig, character, session) = await DockedAtStructureAsync(timers);
         await using var _ = rig;
         var locationChanges = 0;
         rig.Space.DockedLocationChanged = (_, _, _) => locationChanges++;
@@ -94,7 +102,8 @@ public sealed class StructureUndockingTests
     [PgFact]
     public async Task Contraband_warning_preserves_the_docked_ship_until_the_pilot_confirms()
     {
-        var (rig, character, session) = await DockedAtStructureAsync();
+        using var timers = CooldownElapsedTimers();
+        var (rig, character, session) = await DockedAtStructureAsync(timers);
         await using var _ = rig;
         var inspections = 0;
         rig.Space.InspectUndockContrabandAsync = (owner, ship, system, _) =>

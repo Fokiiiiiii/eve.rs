@@ -223,7 +223,7 @@ public partial class HostServerTests
         var machoVersion = new PyDict([
             new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1)),
         ]);
-        long callId = 1;
+        long callId = 100;
 
         async Task<PyValue> Call(string method, PyValue args)
         {
@@ -341,13 +341,24 @@ public partial class HostServerTests
     }
 
     [Fact]
-    public async Task Lp_wallet_mutation_routes_return_their_exact_not_available_user_error()
+    public async Task Lp_wallet_transfer_routes_accept_the_client_arguments_and_return_none()
     {
         const long characterId = 900_701;
         const long corporationId = 980_701;
         const long issuerCorporationId = 500_701;
         const long receiverCorporationId = 980_702;
-        var service = new LoyaltyPointsService(null!);
+        var transfers = new List<LoyaltyPointTransferRequest>();
+        var director = true;
+        var service = new LoyaltyPointsService(
+            null!,
+            (_, _) => Task.FromResult<long?>(corporationId),
+            isDirector: (_, _, _) => ValueTask.FromResult(director),
+            isEligibleDestination: (_, _) => ValueTask.FromResult(true),
+            transfer: (request, _) =>
+            {
+                transfers.Add(request);
+                return Task.CompletedTask;
+            });
         Start(
             configure: registry => registry.Register(service),
             sessionOpened: session =>
@@ -364,7 +375,7 @@ public partial class HostServerTests
         var kwargs = new PyDict([
             new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1)),
         ]);
-        long callId = 1;
+        long callId = 100;
 
         async Task<PyValue> Call(string method, PyValue args)
         {
@@ -404,11 +415,41 @@ public partial class HostServerTests
             });
         }
 
+        static void AssertNotify((string ErrorClass, string Code, PyDict Arguments) error, string expected)
+        {
+            Assert.Equal(MachoErrors.UserErrorClass, error.ErrorClass);
+            Assert.Equal("CustomNotify", error.Code);
+            var notify = Assert.Single(error.Arguments.Entries,
+                entry => JsSemantics.StringValue(entry.Key) == "notify").Value;
+            Assert.Equal(expected, notify switch
+            {
+                PyStr text => text.Value,
+                PyBytes bytes => System.Text.Encoding.UTF8.GetString(bytes.Value.Span),
+                _ => throw new InvalidOperationException($"Expected a user-error string, got {notify.GetType().Name}."),
+            });
+        }
+
         AssertInfo(UserError(await Call("ExchangeConcordLP", Py.Tuple(new PyLong(issuerCorporationId), new PyInt(500)))));
-        AssertInfo(UserError(await Call("TransferLPFromMyWalletToOtherCorp",
-            Py.Tuple(new PyLong(receiverCorporationId), new PyLong(issuerCorporationId), new PyLong(100)))));
-        AssertInfo(UserError(await Call("TransferLPFromMyCorpWalletToOtherCorp",
-            Py.Tuple(new PyInt(receiverCorporationId), new PyInt(issuerCorporationId), new PyInt(100)))));
+        Assert.Equal(PyNone.Instance, await CallOverHost(front, open, 2, "LPSvc", "TransferLPFromMyWalletToOtherCorp",
+            Py.Tuple(new PyLong(receiverCorporationId), new PyLong(issuerCorporationId), new PyLong(100))));
+        Assert.Equal(PyNone.Instance, await CallOverHost(front, open, 3, "LPSvc", "TransferLPFromMyCorpWalletToOtherCorp",
+            Py.Tuple(new PyInt(receiverCorporationId), new PyInt(issuerCorporationId), new PyInt(100))));
+        Assert.Collection(transfers,
+            transfer => Assert.Equal((new LoyaltyHolder(LoyaltyHolderKind.Character, characterId),
+                    new LoyaltyHolder(LoyaltyHolderKind.Corporation, receiverCorporationId), issuerCorporationId, 100L),
+                (transfer.Source, transfer.Destination, transfer.IssuerCorpId, transfer.Amount)),
+            transfer => Assert.Equal((new LoyaltyHolder(LoyaltyHolderKind.Corporation, corporationId),
+                    new LoyaltyHolder(LoyaltyHolderKind.Corporation, receiverCorporationId), issuerCorporationId, 100L),
+                (transfer.Source, transfer.Destination, transfer.IssuerCorpId, transfer.Amount)));
+        director = false;
+        AssertNotify(UserError(await Call("TransferLPFromMyCorpWalletToOtherCorp",
+            Py.Tuple(new PyInt(receiverCorporationId), new PyInt(issuerCorporationId), new PyInt(100)))),
+            "Loyalty point transfer failed: insufficient corporation roles.");
+        var transferCount = transfers.Count;
+        AssertNotify(UserError(await Call("TransferLPFromMyWalletToOtherCorp",
+            Py.Tuple(new PyInt(receiverCorporationId), new PyInt(1_000_419), new PyInt(100)))),
+            "That destination corporation is not valid for this loyalty point transfer.");
+        Assert.Equal(transferCount, transfers.Count);
     }
 
 }

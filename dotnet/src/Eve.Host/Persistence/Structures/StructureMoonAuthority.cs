@@ -43,6 +43,50 @@ public sealed class StructureMoonAuthority
         _ => throw Refusal("Moon extraction is not available on this server."),
     };
 
+    /// <summary>Read calls are limited to the corporation's Station Manager or a pilot with moon service access at the controlled structure.</summary>
+    public async ValueTask ValidateReadAccessAsync(ServiceCall call)
+    {
+        if (call.Method == "GetExtractionsForCorp")
+        {
+            var sessionCorporationId = PositiveId(call.Session.Get("corpid"));
+            var corporationId = PositiveId(call.Arg(0));
+            if (corporationId == 0)
+                corporationId = sessionCorporationId;
+            if (corporationId != sessionCorporationId || !HasStationManagerRole(call.Session))
+                throw Refusal("Station Manager role is required.");
+            return;
+        }
+
+        var structureId = PositiveId(call.Arg(0));
+        if (structureId == 0)
+            structureId = PositiveId(call.Session.Get("structureid"));
+        if (structureId == 0)
+            structureId = PositiveId(call.Session.Get("structureID"));
+        if (structureId == 0)
+            structureId = PositiveId(call.Session.Get("shipid"));
+        if (structureId == 0)
+            return;
+
+        await using var connection = await _source.OpenConnectionAsync(call.Cancellation);
+        var structure = await _structures.GetAsync(connection, null, structureId, false, call.Cancellation);
+        if (structure is null)
+            return;
+        if (structure.OwnerCorporationId == PositiveId(call.Session.Get("corpid")) && HasStationManagerRole(call.Session))
+            return;
+
+        var characterId = call.Session.CharacterId;
+        if (characterId is not null && call.Session.SessionId > 0 &&
+            PositiveId(call.Session.Get("structureid")) == structureId && PositiveId(call.Session.Get("shipid")) == structureId)
+        {
+            var pilot = await _pilots.GetBySessionAsync(connection, null, call.Session.SessionId, call.Cancellation);
+            if (pilot is { } && pilot.CharacterId == characterId && pilot.StructureId == structureId &&
+                await _hasMoonAccess(characterId.Value, structureId, call.Cancellation))
+                return;
+        }
+
+        throw StructureDefenseDenied();
+    }
+
     private async ValueTask<PyValue> StartAsync(ServiceCall call)
     {
         var structureId = PositiveId(call.Arg(0));
@@ -126,10 +170,13 @@ public sealed class StructureMoonAuthority
 
     private static Exception DrillRequired() => Refusal("An online Standup Moon Drill is required.");
 
+    private static bool HasStationManagerRole(ClientSession session) =>
+        (PositiveId(session.Get("corprole")) & StationManagerRole) != 0;
+
     /// <summary>The refusal the client shows: a named notice (the client reports success on any reply).</summary>
     public static Exception Refusal(string message) => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(message)));
 
-    private static long PositiveId(PyValue value)
+    private static long PositiveId(PyValue? value)
     {
         var id = value switch
         {

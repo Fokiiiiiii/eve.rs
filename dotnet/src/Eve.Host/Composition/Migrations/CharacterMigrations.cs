@@ -65,5 +65,6 @@ internal sealed partial class CharacterServicesComposition
         await PgModuleStateStore.MigrateAsync(source, fittingSchema);
         spaceSchema = Env("EVE_SPACE_SCHEMA", PgSpaceItemStore.DefaultSchema);
         await PgSpaceItemStore.MigrateAsync(source, spaceSchema);
+        await PgShipConfigurationStore.MigrateAsync(source, spaceSchema);
     }
 }

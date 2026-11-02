@@ -379,7 +379,7 @@ public sealed partial class SpaceSessions
         try
         {
             added = await store.RecordAsync(
-                new BountyKill(killer.CharacterId, solarSystemId, typeId, shipId, pilotShare), now,
+                new BountyKill(killer.CharacterId, solarSystemId, typeId, shipId, pilotShare, IsModified: pilotShare != amount), now,
                 inTransaction: essShare > 0 && Ess is { } ess ? (connection, transaction, token) => ess.CreditBountyShareAsync(connection, transaction, solarSystemId, mainShare, reserveShare, token) : null);
         }
         catch (InvalidOperationException) when (essShare > 0)

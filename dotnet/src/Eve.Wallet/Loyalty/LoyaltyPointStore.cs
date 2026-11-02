@@ -19,6 +19,9 @@ public readonly record struct LoyaltyHolder(LoyaltyHolderKind Kind, long Id)
 /// <summary>One issuing corporation's balance in a holder's wallet.</summary>
 public sealed record LoyaltyPointBalance(long IssuerCorpId, long Amount);
 
+/// <summary>A character or corporation loyalty-point transfer with a stable request reference.</summary>
+public sealed record LoyaltyPointTransferRequest(LoyaltyHolder Source, LoyaltyHolder Destination, long IssuerCorpId, long Amount, string Reference);
+
 /// <summary>A change that committed: the balance before and after, and why it changed.</summary>
 public sealed record LoyaltyPointChange(LoyaltyHolder Holder, long IssuerCorpId, long Before, long After, string Reason);
 
@@ -186,5 +189,42 @@ public sealed class LoyaltyPointStore
         await transaction.CommitAsync(cancellationToken);
         if (change is not null) AnnounceCommitted(change);
         return change;
+    }
+
+    /// <summary>Moves points between wallets atomically and announces the committed source then destination changes.</summary>
+    public async Task<bool> TransferAndCommitAsync(LoyaltyPointTransferRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.Source.Id <= 0 || request.Destination.Id <= 0 || request.Source == request.Destination)
+            throw new ArgumentOutOfRangeException(nameof(request), "source and destination must be distinct positive wallets");
+        if (request.IssuerCorpId <= 0 || request.Amount <= 0)
+            throw new ArgumentOutOfRangeException(nameof(request), "issuer and amount must be positive");
+
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var sourceFirst = request.Source.Kind < request.Destination.Kind ||
+            request.Source.Kind == request.Destination.Kind && request.Source.Id <= request.Destination.Id;
+        var first = sourceFirst ? request.Source : request.Destination;
+        var second = first == request.Source ? request.Destination : request.Source;
+        LoyaltyPointChange? sourceChange = null;
+        LoyaltyPointChange? destinationChange = null;
+        foreach (var holder in new[] { first, second })
+        {
+            var isSource = holder == request.Source;
+            var change = await ApplyAsync(connection, transaction, holder, request.IssuerCorpId,
+                isSource ? -request.Amount : request.Amount,
+                isSource ? "transfer_out" : "transfer_in",
+                request.Reference + (isSource ? ":out" : ":in"), cancellationToken);
+            if (isSource) sourceChange = change;
+            else destinationChange = change;
+        }
+
+        if ((sourceChange is null) != (destinationChange is null))
+            throw new InvalidOperationException("a loyalty point transfer was only partly applied");
+        await transaction.CommitAsync(cancellationToken);
+        if (sourceChange is null) return false;
+        AnnounceCommitted(sourceChange);
+        AnnounceCommitted(destinationChange!);
+        return true;
     }
 }

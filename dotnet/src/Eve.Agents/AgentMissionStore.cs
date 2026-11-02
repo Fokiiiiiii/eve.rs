@@ -28,7 +28,8 @@ public sealed record AgentMissionRecord(
     DateTimeOffset? AcceptedAt,
     DateTimeOffset? CompletedAt,
     DateTimeOffset? DeclineUntil,
-    DateTimeOffset? QuitAt);
+    DateTimeOffset? QuitAt,
+    bool ObjectiveCompleted = false);
 
 /// <summary>A transition that committed: the states before and after, the action the client is told, and the reference it applied under.</summary>
 public sealed record AgentMissionChange(
@@ -254,6 +255,58 @@ public sealed class AgentMissionStore
             return current with { State = AgentMissionState.Completed, CompletedAt = now };
         });
 
+    /// <summary>Persists completed objectives without paying or completing the mission; the pilot must turn it in.</summary>
+    public async Task<AgentMissionChange?> MarkObjectiveCompletedAsync(
+        long characterId, long agentId, DateTimeOffset now, string reference, CancellationToken cancellationToken = default)
+    {
+        Validate(characterId, agentId, reference, "objective_completed");
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        AgentMissionRecord? current;
+        await using (var read = new NpgsqlCommand(
+            $"SELECT {Columns} FROM {_schema}.missions WHERE character_id = $1 AND agent_id = $2 FOR UPDATE", connection, transaction)
+        {
+            Parameters = { new() { Value = characterId }, new() { Value = agentId } },
+        })
+        await using (var reader = await read.ExecuteReaderAsync(cancellationToken))
+        {
+            current = await reader.ReadAsync(cancellationToken) ? ReadRecord(reader) : null;
+        }
+        if (current?.State != AgentMissionState.Accepted || current.ObjectiveCompleted)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return null;
+        }
+
+        await using (var write = new NpgsqlCommand(
+            $"UPDATE {_schema}.missions SET objective_completed = true WHERE character_id = $1 AND agent_id = $2", connection, transaction)
+        {
+            Parameters = { new() { Value = characterId }, new() { Value = agentId } },
+        })
+        {
+            await write.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await using (var journal = new NpgsqlCommand(
+            $"INSERT INTO {_schema}.journal (character_id, agent_id, mission_id, from_state, to_state, action, reference, transition_at) VALUES ($1, $2, $3, $4, $4, $5, $6, $7)",
+            connection, transaction)
+        {
+            Parameters =
+            {
+                new() { Value = characterId }, new() { Value = agentId }, new() { Value = current.Content.MissionId },
+                new() { Value = (short)AgentMissionState.Accepted }, new() { Value = "objective_completed" },
+                new() { Value = reference }, new() { Value = now },
+            },
+        })
+        {
+            await journal.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+        var change = new AgentMissionChange(characterId, agentId, AgentMissionState.Accepted,
+            AgentMissionState.Accepted, "modified", reference, current.Content.MissionId);
+        Committed?.Invoke(change);
+        return change;
+    }
+
     /// <summary>Removes every offer whose expiry has passed (state back to allocated); one journal row per offer, idempotent per expiry.</summary>
     public async Task<IReadOnlyList<AgentMissionChange>> ExpireOffersAsync(DateTimeOffset now, CancellationToken cancellationToken = default)
     {
@@ -375,13 +428,13 @@ public sealed class AgentMissionStore
         await using (var write = new NpgsqlCommand(
             $"""
             INSERT INTO {_schema}.missions (character_id, agent_id, state, mission_id, name_id, title, mission_type_label, important,
-                offered_at, expires_at, accepted_at, completed_at, decline_until, quit_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                offered_at, expires_at, accepted_at, completed_at, decline_until, quit_at, objective_completed)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             ON CONFLICT (character_id, agent_id) DO UPDATE SET state = EXCLUDED.state, mission_id = EXCLUDED.mission_id,
                 name_id = EXCLUDED.name_id, title = EXCLUDED.title, mission_type_label = EXCLUDED.mission_type_label,
                 important = EXCLUDED.important, offered_at = EXCLUDED.offered_at, expires_at = EXCLUDED.expires_at,
                 accepted_at = EXCLUDED.accepted_at, completed_at = EXCLUDED.completed_at, decline_until = EXCLUDED.decline_until,
-                quit_at = EXCLUDED.quit_at
+                quit_at = EXCLUDED.quit_at, objective_completed = EXCLUDED.objective_completed
             """,
             connection, transaction)
         {
@@ -397,6 +450,7 @@ public sealed class AgentMissionStore
                 new() { Value = (object?)updated.CompletedAt ?? DBNull.Value },
                 new() { Value = (object?)updated.DeclineUntil ?? DBNull.Value },
                 new() { Value = (object?)updated.QuitAt ?? DBNull.Value },
+                new() { Value = updated.ObjectiveCompleted },
             },
         })
         {
@@ -444,7 +498,7 @@ public sealed class AgentMissionStore
     public void Announce(AgentMissionChange change) => Committed?.Invoke(change);
 
     private const string Columns =
-        "character_id, agent_id, state, mission_id, name_id, title, mission_type_label, important, offered_at, expires_at, accepted_at, completed_at, decline_until, quit_at";
+        "character_id, agent_id, state, mission_id, name_id, title, mission_type_label, important, offered_at, expires_at, accepted_at, completed_at, decline_until, quit_at, objective_completed";
 
     private static AgentMissionRecord ReadRecord(NpgsqlDataReader reader) => new(
         reader.GetInt64(0),
@@ -456,5 +510,6 @@ public sealed class AgentMissionStore
         reader.IsDBNull(10) ? null : reader.GetFieldValue<DateTimeOffset>(10),
         reader.IsDBNull(11) ? null : reader.GetFieldValue<DateTimeOffset>(11),
         reader.IsDBNull(12) ? null : reader.GetFieldValue<DateTimeOffset>(12),
-        reader.IsDBNull(13) ? null : reader.GetFieldValue<DateTimeOffset>(13));
+        reader.IsDBNull(13) ? null : reader.GetFieldValue<DateTimeOffset>(13),
+        reader.GetBoolean(14));
 }

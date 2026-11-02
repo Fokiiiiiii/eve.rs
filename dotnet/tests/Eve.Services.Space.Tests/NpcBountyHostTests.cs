@@ -56,6 +56,32 @@ public class NpcBountyHostTests
     }
 
     [PgFact]
+    public async Task An_ess_split_is_reported_as_a_modified_bounty_and_credited_to_the_banks()
+    {
+        var (rig, c, session) = await InSpaceAsync();
+        await using var _ = rig;
+        var schema = $"ess_{Guid.NewGuid():N}"[..20];
+        rig.KeepSchemas(schema);
+        await PgEssStore.MigrateAsync(rig.Source, schema);
+        var ess = new PgEssStore(rig.Source, rig.WalletTransactions, schema, rig.Log.Add);
+        var systemId = (int)session.GetInt("solarsystemid")!.Value;
+        await ess.RegisterAsync(systemId, 1_030_000_000_001, null, rig.Now);
+        rig.Space.Ess = ess;
+        var spawn = await SpawnAsync(rig, session, "Blood Visionary");
+
+        rig.Sim.Say(Destroyed(spawn, c.ShipId));
+        await Rig.UntilAsync(() => Events.Of(session, clear: false).Any(e => e.Name == "OnBountyAddedToPayout") && rig.Bounties.PendingAsync().Result.Count == 1);
+
+        var told = Events.Of(session).Single(e => e.Name == "OnBountyAddedToPayout");
+        var fields = ((PyDict)((PyObject)told.Args.Single()).Args).Entries.ToDictionary(pair => JsSemantics.StringValue(pair.Key)!, pair => pair.Value);
+        Assert.Equal(8_250, Events.Number(fields["amount"]));
+        Assert.Equal(PyBool.True, fields["isModified"]);
+        Assert.Equal(8_250m, Assert.Single(await rig.Bounties.PendingAsync()).Amount);
+        var state = (await ess.ReadAsync(systemId))!;
+        Assert.Equal((6_000m, 750m), (state.MainValue, state.ReserveValue));
+    }
+
+    [PgFact]
     public async Task A_sim_resident_triglavian_in_Pochven_pays_no_bounty()
     {
 

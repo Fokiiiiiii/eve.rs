@@ -5,7 +5,7 @@ namespace Eve.Services.Space.Effects;
 /// <summary>
 /// weakens the effect's strength. EVE.js's rule (<c>hostileModuleRuntime.js</c> <c>resolveTargetResistanceMultiplier</c>, <c>assistanceModuleRuntime.js</c>
 /// <c>resolveRemoteAssistanceMultiplier</c>): the attribute clamped to 0..1, 1 when the target does not have it. The attributes are the ones EVE.js names (2112 to
-/// 2116, 2045; a remote assistance module names its own in 2138, which defaults to the remote repair impedance 2116). The host resolves the multiplier when the
+/// 2116; a remote assistance module names its own in 2138, which defaults to the remote repair impedance 2116). The host resolves the multiplier when the
 /// effect starts and keeps it for the effect's life; EVE.js resolves it at each cycle (a target's resistance rarely changes during an effect).
 /// </summary>
 public static class RemoteResistance
@@ -25,9 +25,6 @@ public static class RemoteResistance
     /// <summary>remoteRepairImpedance: the default for a remote repair, transfer or mutadaptive repair.</summary>
     public const int RemoteRepairImpedance = 2116;
 
-    /// <summary>energyWarfareResistance: an energy neutralizer and a nosferatu.</summary>
-    public const int EnergyWarfareResistance = 2045;
-
     /// <summary>remoteResistanceID: the attribute of a remote assistance module that names the target resistance it uses.</summary>
     public const int RemoteResistanceId = 2138;
 
@@ -41,7 +38,6 @@ public static class RemoteResistance
         SimRemote.Paint => TargetPainterResistance,
         SimRemote.Damp => SensorDampenerResistance,
         SimRemote.Disrupt or SimRemote.GuidanceDisrupt => WeaponDisruptionResistance,
-        SimRemote.Neutralize or SimRemote.Drain => EnergyWarfareResistance,
         SimRemote.Repair or SimRemote.MutadaptiveRepair or SimRemote.Transfer => (int)moduleAttribute(RemoteResistanceId) is var named && named > 0 ? named : RemoteRepairImpedance,
         _ => 0,
     };
@@ -56,8 +52,6 @@ public static class RemoteResistance
         SimRemote.Repair repair => repair with { Amount = repair.Amount * multiplier },
         SimRemote.MutadaptiveRepair repair => repair with { Amount = repair.Amount * multiplier },
         SimRemote.Transfer transfer => transfer with { Amount = transfer.Amount * multiplier },
-        SimRemote.Neutralize neutralize => neutralize with { Amount = neutralize.Amount * multiplier },
-        SimRemote.Drain drain => drain with { Amount = drain.Amount * multiplier },
         SimRemote.Web web => web with { Percent = web.Percent * multiplier },
         SimRemote.Tackle tackle => tackle with { WebPercent = tackle.WebPercent * multiplier },
         SimRemote.Paint paint => paint with { Percent = paint.Percent * multiplier },

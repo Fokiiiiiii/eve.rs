@@ -68,10 +68,12 @@ public sealed partial class SpaceSessions
         {
             return None;
         }
-        if (!ignoreContraband && InspectUndockContrabandAsync is { } inspect &&
-            (await inspect(characterId, snapshot.Ship.Id, snapshot.Character.SolarSystemId, cancellationToken)).Count > 0)
-            throw MachoErrors.ThrowUserError("ShipContrabandWarningUndock");
-        await ApplyContrabandAsync(session, characterId, snapshot.Ship.Id, snapshot.Character.SolarSystemId, cancellationToken);
+        if (!ignoreContraband && InspectUndockContrabandAsync is { } inspect)
+        {
+            var contraband = await inspect(characterId, snapshot.Ship.Id, snapshot.Character.SolarSystemId, cancellationToken);
+            if (contraband.Count > 0)
+                throw MachoErrors.ThrowUserError("ShipContrabandWarningUndock", ("item", new PyTuple([new PyInt(4), new PyInt(contraband[0])])));
+        }
         // a Strategic Cruiser leaves its station only with one subsystem of each class (the reference's STRATEGIC_CRUISER_FIT_INCOMPLETE)
         if (_statics.Type(snapshot.Ship.TypeId)?.GroupId == Eve.Fitting.StrategicCruisers.GroupId
             && Eve.Fitting.StrategicCruisers.IncompleteFit(snapshot.Fitted
@@ -79,6 +81,7 @@ public sealed partial class SpaceSessions
         {
             throw Notify(incomplete);
         }
+        await ApplyContrabandAsync(session, characterId, snapshot.Ship.Id, snapshot.Character.SolarSystemId, cancellationToken);
         await SyncBuffsAsync(snapshot.World, snapshot.Ship.Id, cancellationToken);
         // a ship comes out of its station with its shield and capacitor full; what it has lost of its armor and hull it keeps (the reference's)
         var spec = SimShips.Of(snapshot, _statics, await SecurityStatusAsync(characterId, cancellationToken));

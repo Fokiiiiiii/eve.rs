@@ -46,7 +46,7 @@ public sealed partial class SpaceSessions
             var reply = await _sim.CommandAsync(id, SimCommands.Dock, [stationId], cancellationToken);
             if (reply.Accepted)
             {
-                return new PyLong(reply.At);
+                return None;
             }
             if (reply.ApproachDistance is { } distance)
             {
@@ -305,8 +305,7 @@ public sealed partial class SpaceSessions
                 HasWeaponsTimer: state.HasWeaponsTimer(now),
                 HasCriminalTimer: state.IsCriminal(now),
                 ActorIsCapsule: pilot.TypeId == CharacterShips.CapsuleTypeId,
-                HasSessionChangeTimer: action is not (PolicyAction.Dock or PolicyAction.GateJump)
-                    && _transitions.SessionChangeActive((ulong)pilot.Session.SessionId))));
+                HasSessionChangeTimer: _transitions.SessionChangeActive((ulong)pilot.Session.SessionId))));
     }
 
     // ── jumping ──────────────────────────────────────────────────────────────

@@ -12,9 +12,8 @@ public partial class HostServerTests
     public async Task Xmpp_chat_mgr_calls_keep_client_wire_shapes_through_host_dispatch()
     {
         var sessions = new ConnectedSessions();
-        var service = new XmppChatMgrService(new XmppChatHub(
-            sessions,
-            new XmppChatSettings("chat.example", "xmpp-gateway.example")));
+        var hub = new XmppChatHub(sessions, new XmppChatSettings("chat.example", "xmpp-gateway.example"));
+        var service = new XmppChatMgrService(hub);
         Start(
             configure: registry => registry.Register(service),
             sessionOpened: session =>
@@ -59,5 +58,20 @@ public partial class HostServerTests
         Assert.Equal(PyBool.False,
             await HostRpcAsync(front, open, 10, "XmppChatMgr", "SetMotd",
                 new PyStr("alliance_99@conference.other.example"), new PyStr("Wrong host")));
+        Assert.Equal("resourcewars_987654321", Encoding.ASCII.GetString(Assert.IsType<PyBytes>(
+            await HostRpcAsync(front, open, 11, "XmppChatMgr", "EnsureResourceWarsChannelExists", new PyLong(987654321))).Value.Span));
+        Assert.Same(PyNone.Instance,
+            await HostRpcAsync(front, open, 12, "XmppChatMgr", "EnsureResourceWarsChannelExists", new PyInt(0)));
+        var stanzas = new List<string>();
+        var link = Assert.IsType<XmppLink>(hub.Bind(42, "resource-wars", stanzas.Add, () => { }));
+        Assert.True(hub.TryJoinRoom(link, "resourcewars_987654321", "Pilot", "", out var occupants));
+        Assert.Empty(occupants);
+        Assert.Contains(stanzas, stanza => stanza.Contains("resourcewars_987654321@conference.chat.example/Pilot", StringComparison.Ordinal));
+        hub.LeaveRoom(link, "resourcewars_987654321");
+        Assert.False(hub.TryJoinRoom(link, "resourcewars_987654322", "Pilot", "", out _));
+        Assert.False(hub.TryJoinRoom(link, "resourcewars_987654321", "Pilot", "", out _));
+        Assert.Equal("resourcewars_987654321", Encoding.ASCII.GetString(Assert.IsType<PyBytes>(
+            await HostRpcAsync(front, open, 13, "XmppChatMgr", "EnsureResourceWarsChannelExists", new PyLong(987654321))).Value.Span));
+        Assert.True(hub.TryJoinRoom(link, "resourcewars_987654321", "Pilot", "", out _));
     }
 }

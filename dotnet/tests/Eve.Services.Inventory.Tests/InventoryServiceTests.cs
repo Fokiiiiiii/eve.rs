@@ -580,6 +580,60 @@ public class InvBrokerTests
     }
 
     [PgFact]
+    public async Task SplitStack_keeps_both_stacks_in_the_same_station_hangar()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var stack = await rig.AddAsync(Rig.Tritanium, Rig.Character, Rig.Station, quantity: 12);
+        var session = Rig.Session();
+
+        var result = await rig.CallAsync(session, "SplitStack", null,
+            new PyLong(Rig.Station), new PyLong(stack), new PyLong(5), new PyLong(Rig.Character));
+
+        Assert.Equal(PyNone.Instance, result);
+        var items = await rig.Items.InLocationAsync(Rig.Station, Rig.Character);
+        Assert.Equal(7, (await rig.Items.GetAsync(stack))!.Quantity);
+        Assert.Contains(items, item => item.Id != stack && item.TypeId == Rig.Tritanium
+            && item.OwnerId == Rig.Character && item.LocationId == Rig.Station
+            && item.Flag == ItemFlags.Hangar && item.Quantity == 5);
+    }
+
+    [PgFact]
+    public async Task SplitStack_serializes_concurrent_requests_and_rejects_a_full_stack_split()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var stack = await rig.AddAsync(Rig.Tritanium, Rig.Character, Rig.Station, quantity: 12);
+
+        async Task<bool> Split()
+        {
+            try
+            {
+                await rig.CallAsync(Rig.Session(), "SplitStack", null,
+                    new PyLong(Rig.Station), new PyLong(stack), new PyLong(8), new PyLong(Rig.Character));
+                return true;
+            }
+            catch (MachoWrappedException error) when (error.Error.UserErrorMessage == "FakeItemNotFound")
+            {
+                return false;
+            }
+        }
+
+        var outcomes = await Task.WhenAll(Split(), Split());
+        Assert.Single(outcomes, succeeded => succeeded);
+        Assert.Single(outcomes, succeeded => !succeeded);
+
+        var items = await rig.Items.InLocationAsync(Rig.Station, Rig.Character);
+        Assert.Equal(12, items.Where(item => item.TypeId == Rig.Tritanium).Sum(item => item.Quantity));
+        Assert.Equal(4, (await rig.Items.GetAsync(stack))!.Quantity);
+        Assert.Single(items, item => item.TypeId == Rig.Tritanium && item.Quantity == 8);
+
+        var fullSplit = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.CallAsync(
+            Rig.Session(), "SplitStack", null,
+            new PyLong(Rig.Station), new PyLong(stack), new PyLong(4), new PyLong(Rig.Character)));
+        Assert.Equal("FakeItemNotFound", fullSplit.Error.UserErrorMessage);
+        Assert.Equal(4, (await rig.Items.GetAsync(stack))!.Quantity);
+    }
+
+    [PgFact]
     public async Task Global_assets_bind_lists_personal_station_assets_and_nested_container_items()
     {
         await using var rig = await Rig.CreateAsync();

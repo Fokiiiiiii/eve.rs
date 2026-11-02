@@ -82,6 +82,12 @@ internal sealed partial class CharacterServicesComposition
 
     static long MailingListAccess(long value) => value == 0 ? 0 : 1;
 
+    internal static bool MailingListCanJoin(long defaultAccess, IEnumerable<long> explicitAccess)
+    {
+        var levels = explicitAccess.Select(MailingListAccess).ToArray();
+        return !levels.Contains(0) && (levels.Contains(1) || MailingListAccess(defaultAccess) == 1);
+    }
+
     static bool MailingListCanManageTarget(long actorRole, long targetRole) =>
         actorRole is 2 or 3 && targetRole != 3 && !(actorRole == 2 && targetRole == 2);
 
@@ -200,13 +206,19 @@ internal sealed partial class CharacterServicesComposition
                         if (members.ContainsKey(memberKey))
                             return MailingListJoinValue(id, list, characterId, role);
 
-                        var defaultAccess = MailingListJsonLong(list["defaultAccess"]);
                         var explicitAccess = list["access"] as JsonObject;
                         var corporationId = session.GetInt("corpid") ?? 0;
                         var allianceId = session.GetInt("allianceid") ?? 0;
-                        var entityAccess = corporationId > 0 ? explicitAccess?[MailingListKey(corporationId)] : null;
-                        entityAccess ??= allianceId > 0 ? explicitAccess?[MailingListKey(allianceId)] : null;
-                        var allowed = defaultAccess == 0 || entityAccess is not null && MailingListJsonLong(entityAccess) == 0;
+                        var explicitLevels = new[]
+                        {
+                            explicitAccess?[memberKey],
+                            corporationId > 0 ? explicitAccess?[MailingListKey(corporationId)] : null,
+                            allianceId > 0 ? explicitAccess?[MailingListKey(allianceId)] : null,
+                        }.Where(level => level is not null)
+                            .Select(level => MailingListJsonLong(level)).ToArray();
+                        var allowed = MailingListCanJoin(MailingListJsonLong(list["defaultAccess"]), explicitLevels);
+                        if (members.Count >= 3000)
+                            throw Eve.Services.MachoErrors.ThrowUserError("MailingListFull");
                         if (!allowed)
                             throw Eve.Services.MachoErrors.ThrowUserError("MailingListCantJoin");
 
@@ -216,6 +228,18 @@ internal sealed partial class CharacterServicesComposition
                         updatedMembers[memberKey] = memberRole;
                         updated["members"] = updatedMembers;
                         await PersistMailingListRowAsync(id, updated, cancellationToken);
+                        if (updated["welcomeMail"] is JsonObject welcome)
+                        {
+                            var title = MailingListJsonText(welcome["title"]);
+                            var body = MailingListJsonText(welcome["body"]);
+                            if (title.Length > 0 || body.Length > 0)
+                                await mailSendWriter.SendAsync(
+                                    new Eve.Services.Core.MailSendRequest(
+                                        characterId, [], id, null, title, body, null, null,
+                                        SaveSenderCopy: false, MailingListWelcomeRecipientId: characterId),
+                                    session,
+                                    cancellationToken);
+                        }
                         return MailingListJoinValue(id, updated, characterId, memberRole);
                     }
 

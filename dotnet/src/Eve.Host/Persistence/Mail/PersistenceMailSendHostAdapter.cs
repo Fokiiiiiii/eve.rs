@@ -101,10 +101,12 @@ public sealed class PersistenceMailSendHostAdapter(
             var messageKey = Key(messageId);
             var directRecipients = request.CharacterRecipientIds.Distinct().ToArray();
             var corpOrAllianceIds = request.CorporationOrAllianceRecipientIds?.Distinct().ToArray();
+            var mailSenderId = request.MailingListWelcomeRecipientId is not null && request.MailingListId is { } welcomeListId
+                ? welcomeListId : request.SenderCharacterId;
             var message = new JsonObject
             {
                 ["messageID"] = messageId,
-                ["senderID"] = request.SenderCharacterId,
+                ["senderID"] = mailSenderId,
                 ["senderName"] = recipients.SenderName,
                 ["toCharacterIDs"] = LongArray(directRecipients),
                 ["toListID"] = OptionalLong(request.MailingListId),
@@ -116,7 +118,7 @@ public sealed class PersistenceMailSendHostAdapter(
                 ["sentDate"] = sentFiletime,
                 ["replyToMessageID"] = OptionalLong(request.ReplyToMessageId),
                 ["forwardedFromMessageID"] = OptionalLong(request.ForwardedFromMessageId),
-                ["statusMask"] = 0,
+                ["statusMask"] = request.MailingListWelcomeRecipientId is null ? 0 : 16,
                 ["labelMask"] = 0,
                 ["read"] = false,
                 ["trashed"] = false,
@@ -125,11 +127,11 @@ public sealed class PersistenceMailSendHostAdapter(
             };
 
             var statuses = new Dictionary<(long CharacterId, long MessageId), JsonObject>();
-            foreach (var recipientId in recipients.CharacterIds.Distinct().Where(id => id != request.SenderCharacterId))
+            foreach (var recipientId in recipients.CharacterIds.Distinct().Where(id => id != mailSenderId))
             {
                 statuses[(recipientId, messageId)] = new JsonObject
                 {
-                    ["statusMask"] = 0,
+                    ["statusMask"] = request.MailingListWelcomeRecipientId is null ? 0 : 16,
                     ["labelMask"] = recipients.LabelMasksByCharacterId.GetValueOrDefault(recipientId, 1),
                 };
             }
@@ -172,7 +174,7 @@ public sealed class PersistenceMailSendHostAdapter(
             {
                 var persistedMessages = persisted["messages"] as JsonObject;
                 if (persistedMessages?[messageKey] is not JsonObject savedMessage ||
-                    Number(savedMessage["senderID"]) != request.SenderCharacterId ||
+                    Number(savedMessage["senderID"]) != mailSenderId ||
                     !string.Equals(Text(savedMessage["title"]), request.Title, StringComparison.Ordinal) ||
                     !string.Equals(Text(savedMessage["body"]), request.Body, StringComparison.Ordinal))
                     return false;
@@ -195,7 +197,8 @@ public sealed class PersistenceMailSendHostAdapter(
                 if (statuses.TryGetValue((recipientId, messageId), out var recipientStatus))
                     sendMailSentNotification?.Invoke(recipientId,
                         Eve.Services.Core.MailSentNotification.Build(
-                            request, messageId, sentFiletime, Number(recipientStatus["statusMask"])), session);
+                            request, messageId, sentFiletime,
+                            request.MailingListWelcomeRecipientId is null ? Number(recipientStatus["statusMask"]) : 16), session);
             if (request.SaveSenderCopy && request.SenderCharacterId > 0 &&
                 !recipients.CharacterIds.Contains(request.SenderCharacterId) &&
                 statuses.TryGetValue((request.SenderCharacterId, messageId), out var senderStatus))
@@ -207,7 +210,7 @@ public sealed class PersistenceMailSendHostAdapter(
             var notificationBoxes = notifications["boxes"] as JsonObject ?? new JsonObject();
             var nextNotificationId = NextNotificationId(notificationBoxes);
             var notificationIds = new Dictionary<long, long>();
-            foreach (var recipientId in recipients.CharacterIds.Distinct().Where(id => id != request.SenderCharacterId))
+            foreach (var recipientId in recipients.CharacterIds.Distinct().Where(id => id != mailSenderId))
             {
                 var notificationId = nextNotificationId++;
                 notificationIds[recipientId] = notificationId;
@@ -216,7 +219,7 @@ public sealed class PersistenceMailSendHostAdapter(
                 {
                     ["notificationID"] = notificationId,
                     ["typeID"] = 1004,
-                    ["senderID"] = request.SenderCharacterId,
+                    ["senderID"] = mailSenderId,
                     ["receiverID"] = recipientId,
                     ["processed"] = false,
                     ["created"] = sentFiletime,
@@ -245,13 +248,13 @@ public sealed class PersistenceMailSendHostAdapter(
                 foreach (var (recipientId, notificationId) in notificationIds)
                 {
                     var data = NotificationData(
-                        request.SenderCharacterId, recipients.SenderName,
+                        mailSenderId, recipients.SenderName,
                         request.Title, message, sentFiletime);
                     sendNotification(recipientId,
                     [
                         new Eve.Marshal.PyLong(notificationId),
                         new Eve.Marshal.PyInt(1004),
-                        new Eve.Marshal.PyLong(request.SenderCharacterId),
+                        new Eve.Marshal.PyLong(mailSenderId),
                         Py.FileTimeLong(sentFiletime),
                         data,
                     ]);

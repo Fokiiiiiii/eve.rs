@@ -370,7 +370,8 @@ public static class MailSentNotification
         return
         [
             new PyLong(messageId),
-            new PyLong(request.SenderCharacterId),
+            new PyLong(request.MailingListWelcomeRecipientId is not null && request.MailingListId is { } welcomeListId
+                ? welcomeListId : request.SenderCharacterId),
             new PyLong(sentFiletime),
             new PyList([.. request.CharacterRecipientIds.Select(id => (PyValue)new PyLong(id))]),
             request.MailingListId is { } listId ? new PyLong(listId) : PyNone.Instance,
@@ -756,7 +757,8 @@ public sealed record MailSendRequest(
     string Body,
     long? ReplyToMessageId,
     long? ForwardedFromMessageId,
-    bool SaveSenderCopy = true);
+    bool SaveSenderCopy = true,
+    long? MailingListWelcomeRecipientId = null);
 
 public sealed record GmChatPokeMailRequest(
     long CharacterId,

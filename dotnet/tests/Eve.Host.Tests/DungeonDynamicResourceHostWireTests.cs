@@ -142,7 +142,7 @@ public partial class HostServerTests
         var bountyOutput = Assert.IsType<PyTuple>(
             await Call("dynamicBountyMgr", "GetOutputForClientSolarSystem"));
         Assert.Equal(2, bountyOutput.Items.Count);
-        Assert.Equal(new PyInt(1), Assert.IsType<PyInt>(bountyOutput.Items[0]));
+        Assert.Equal(new PyReal(1), Assert.IsType<PyReal>(bountyOutput.Items[0]));
         Assert.Same(PyBool.False, Assert.IsType<PyBool>(bountyOutput.Items[1]));
     }
 

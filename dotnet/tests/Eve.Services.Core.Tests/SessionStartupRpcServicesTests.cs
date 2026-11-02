@@ -138,7 +138,7 @@ public sealed class SessionStartupRpcServicesTests
         var session = new ClientSession();
         session.Set("solarsystemid", new PyInt(30000142));
         IService empty = new DynamicBountyMgrService();
-        Assert.Equal(new PyTuple([new PyInt(1), PyBool.False]), await empty.CallAsync(
+            Assert.Equal(new PyTuple([new PyReal(1), PyBool.False]), await empty.CallAsync(
             Call(empty, "GetOutputForClientSolarSystem", session)));
 
         long? observedSystem = null;

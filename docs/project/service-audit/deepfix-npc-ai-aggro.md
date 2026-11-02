@@ -2,7 +2,7 @@
 
 ## Change
 
-`DynamicBountyMgrService.GetOutputForClientSolarSystem` now returns the client contract as `(output, active)`, with `active` encoded as a boolean. If no dynamic bounty state reader is wired, it returns the neutral inactive pair `(1, false)`. This avoids treating inactive state as a zero payout multiplier and matches the V24.01 consumer's tuple semantics. The runtime reader is still optional and is not supplied by `CoreServices.Create`; this change does not claim to implement dynamic bounty simulation.
+`DynamicBountyMgrService.GetOutputForClientSolarSystem` now returns the client contract as `(real output, boolean active)`. If no dynamic bounty state reader is wired, it returns the neutral inactive pair `(1.0, false)`. This avoids treating inactive state as a zero payout multiplier and matches the V24.01 consumer's tuple semantics. The runtime reader is still optional and is not supplied by `CoreServices.Create`; this change does not claim to implement dynamic bounty simulation.
 
 Evidence: V24.01 `eve/client/script/ui/shared/dynamicResource/dynamicResourceSvc.py:59-65` returns `(1.0, False)` when DBS is emergency-offline and otherwise unpacks the RPC pair; `:160-165` primes the cache as `(rate, True)` on the state notification. `eve/client/script/ui/shared/infoPanels/infoPanelLocationInfo.py:319-326` displays percentage output only when active. Current EveJS `src/server/src/services/dynamic/dynamicBountyMgrService.js:12-22` returns a marshalled real plus a boolean; `dynamicBountyRuntime.js:31-35` returns `(1, false)` outside coverage and equilibrium output with `active=true` for covered systems without a state bank. EVE University describes system bounty risk modifier as a multiplier applied to NPC bounties, varying with system activity: [Ratting](https://wiki.eveuniversity.org/Ratting).
 
@@ -18,8 +18,10 @@ The whole-client search found one caller of `GetOutputForClientSolarSystem`, in 
 
 - `dotnet build dotnet/src/Eve.Services.Core -p:UseSharedCompilation=false`: passed, 0 warnings and 0 errors.
 - Focused `Eve.Services.Core.Tests` case `Dynamic_bounty_returns_the_reference_disabled_pair_or_the_wired_state`: passed, 1 passed, 0 skipped. Before adjusting the service and fixtures, the test project failed to compile because the implementation modeled the active flag as numeric rather than boolean.
+- `Eve.Host.Tests.HostServerTests.Dungeon_and_dynamic_resource_cache_calls_round_trip_through_host_registration`: first reproduced a stale `(0, 0)` expected pair locally. The follow-up wire assertion checks the tuple members independently and requires `PyReal(1)` plus `PyBool.False`, matching EveJS's marshalled-real output; it passed locally (1 passed, 0 skipped).
 - `eve_p4` database-backed tests: `NpcBountyHostTests|NpcLootHostTests|SpaceEventsTests`: 28 passed, 0 skipped.
 - `eve_p4` database-backed tests: NPC bounty, loot, selector, belt-rat, armament, and PostgreSQL bounty-store classes: 156 passed, 0 skipped.
+- The first push CI run failed only because this Host wire test still expected the previous `(0, 0)` values. That exact failure was reproduced locally before changing the assertion; the corrected test and real-valued default now pass locally. Follow-up CI is required to confirm the correction.
 
 ## Remaining boundary
 

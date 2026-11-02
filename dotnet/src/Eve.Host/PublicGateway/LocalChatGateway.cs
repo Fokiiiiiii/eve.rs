@@ -206,18 +206,21 @@ internal sealed class LocalChatGateway
     private void LeaveSystem(ClientSession session, long characterId)
     {
         long systemId;
+        var notifyMembers = false;
         lock (_gate)
         {
             if (!_systemByCharacter.Remove(characterId, out systemId)) return;
             if (_characterBySession.TryGetValue(session, out var activeCharacter) && activeCharacter == characterId)
                 _characterBySession.Remove(session);
+            notifyMembers = !IsDelayed(systemId);
             if (_speakersBySystem.TryGetValue(systemId, out var speakers))
             {
-                speakers.Remove(characterId);
+                notifyMembers |= speakers.Remove(characterId);
                 _lastSpoke.Remove((systemId, characterId));
                 if (speakers.Count == 0) _speakersBySystem.Remove(systemId);
             }
         }
+        if (!notifyMembers) return;
         var notice = new ProtoWriter();
         notice.Message(1, EncodeIdentifier(characterId));
         notice.Message(2, EncodeIdentifier(systemId));

@@ -93,7 +93,7 @@ public sealed partial class JumpTimersService(ReadJumpTimersCallback? readTimers
     private static PyValue Long(long? value) => value is { } ticks ? new PyLong(ticks) : PyNone.Instance;
 }
 
-public sealed record DynamicBountyState(double Output, double DbsiIsActive);
+public sealed record DynamicBountyState(double Output, bool DbsiIsActive);
 
 public delegate ValueTask<DynamicBountyState?> ReadDynamicBountyCallback(long? solarSystemId, CancellationToken cancellationToken);
 
@@ -110,7 +110,7 @@ public sealed partial class DynamicBountyMgrService(ReadDynamicBountyCallback? r
         var result = readOutput is { } read
             ? await read(systemId, call.Cancellation)
             : null;
-        return Py.Tuple(Py.Number(result?.Output ?? 0), Py.Number(result?.DbsiIsActive ?? 0));
+                return Py.Tuple(Py.Number(result?.Output ?? 1), result?.DbsiIsActive == true ? PyBool.True : PyBool.False);
     }
 }
 

@@ -45,10 +45,10 @@ V24.01 全 `TryLockTarget` 呼び出し元は前掲の `targetMgr.py` に集約�
 
 ## ローカル検証と引き継ぎ状態
 
-- Rust: `cargo +1.94.1 fmt --all -- --check`、`cargo +1.94.1 check -p eve-space`、`cargo +1.94.1 clippy --workspace --all-targets -- -D warnings`、`cargo +1.94.1 test -p eve-space --lib targeting::tests::` は pass（48 tests）。MWD focus 1/1、`ewar::tests::` 7/7。
-- .NET: Dogma / Host / Dogma.Tests projects の build は pass。eve_p3 の DB-backed `DogmaServiceTests|ShipEventTests|TargetingTests` は pass 30, skipped 0。
-- `SpaceServiceTests` 全体は `eve_p3` で 156 pass、skip 0。上記 focused safe-logoff tests は 3 pass、skip 0。
-- Dogma の `DogmaServiceTests|ShipEventTests|TargetingTests` は `eve_p3` で 30 pass、skip 0。Space / Dogma / Host production projects、Space.Tests、Dogma.Tests は build 成功、0 warning / 0 error。
-- Rust: `cargo +1.94.1 fmt --all -- --check`、`cargo +1.94.1 check -p eve-space`、`cargo +1.94.1 clippy --workspace --all-targets -- -D warnings`、`targeting::tests::` 48件、MWD signature retime 1件、`ewar::tests::` 7件 pass。mutation tests 復元後の hard cap / formula / target-limit / Exploding順 focused test も pass。
-- Post-merge build/tests、push-triggered Actions、commit SHA は実行後に追記する。
-- Graphical V24.01 client での操作確認は未実施。sim/Host tests は client rendering や実 client session を証明しない。
+- merge後の .NET build: `Eve.Services.Space`、`Eve.Services.Dogma`、`Eve.Host` は成功、0 warning / 0 error。
+- merge後の Rust checks: `cargo +1.94.1 fmt --all -- --check`、`cargo +1.94.1 check -p eve-space`、`cargo +1.94.1 clippy --workspace --all-targets -- -D warnings` は成功。
+- merge後の Rust tests: `targeting::tests::` 48/48、MWD signature lock-time regression 1/1、`ewar::tests::` 7/7、`others_match_reference` 5/5 が成功。
+- `eve_p3` の `db-lock.sh` 経由: `SpaceServiceTests` 157/157、`DogmaServiceTests|ShipEventTests|TargetingTests` 30/30 が成功。skip 0。
+- SafeLogoff の拒否、add/lost/clear、pending lock の両 pilot 側中断を追加テストで確認。SpaceServiceTests 全体に含めて実行済み。
+- 最新 completed main CI は push 前に `python3 tools/dev/ci-status.py status` で再確認する。push 後の SHA と Actions 結果を追記する。
+- 実 graphical V24.01 client session の操作確認は行っていない。

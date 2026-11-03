@@ -2078,6 +2078,7 @@ public class SpaceServiceTests
         await using var _ = rig;
         await ShipAsync(rig, character);
         await InSpaceAsync(rig, session);
+        await Rig.UntilAsync(() => !timers.IsSet($"space.transition.session-change:{session.SessionId}"));
         rig.Sim.DockAnswer = new CommandReply(false, 0, "DOCKING_DISALLOWED_BY_MODULE");
         var error = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Space.DockAsync(session, Rig.Station, CancellationToken.None));
         Assert.Equal("CustomNotify", error.Error.UserErrorMessage);

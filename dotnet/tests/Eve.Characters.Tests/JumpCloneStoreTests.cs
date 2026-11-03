@@ -132,6 +132,81 @@ public sealed class JumpCloneStoreTests
         Assert.Contains(state.Clones, clone => clone.JumpCloneId == second && clone.LocationId == 60000612);
     }
 
+    [PgFact]
+    public async Task Same_station_jump_preserves_an_expired_timer_and_allows_a_remote_jump()
+    {
+        await using var s = await PgSchemas.CreateAsync();
+        var characterId = await Insert(s, Pilot("Clone Local Station"));
+        const long origin = 60000610;
+        var local = await AddCloneAsync(s, characterId, origin, "station", "Local", []);
+        var remote = await AddCloneAsync(s, characterId, 60000611, "station", "Remote", []);
+        const long previousJump = 133000000000000000;
+        const long nextJump = previousJump + TimeSpan.TicksPerDay;
+        await SetLastJumpAsync(s, characterId, previousJump);
+        var store = new PgJumpCloneStore(s.Source, s.CharactersSchema);
+
+        await using (var connection = await s.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            var result = await store.JumpAsync(connection, transaction, characterId, local, origin, "station", [], 24, nextJump - 1);
+            Assert.False(result.CooldownActive);
+            Assert.Equal(local, result.Target!.JumpCloneId);
+            await transaction.CommitAsync();
+        }
+
+        Assert.Equal(previousJump, (await store.ReadAsync(characterId)).TimeLastJumpFileTime);
+
+        await using (var connection = await s.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            var result = await store.JumpAsync(connection, transaction, characterId, remote, origin, "station", [], 24, nextJump);
+            Assert.False(result.CooldownActive);
+            Assert.Equal(remote, result.Target!.JumpCloneId);
+            await transaction.CommitAsync();
+        }
+
+        Assert.Equal(nextJump, (await store.ReadAsync(characterId)).TimeLastJumpFileTime);
+    }
+
+    [PgFact]
+    public async Task Same_structure_jump_preserves_an_active_timer_and_remote_jump_remains_blocked()
+    {
+        await using var s = await PgSchemas.CreateAsync();
+        var characterId = await Insert(s, Pilot("Clone Local Structure"));
+        const long origin = 1_000_000_000_001;
+        const long remoteLocation = 1_000_000_000_002;
+        var local = await AddCloneAsync(s, characterId, origin, "structure", "Local", []);
+        var remote = await AddCloneAsync(s, characterId, remoteLocation, "structure", "Remote", []);
+        const long previousJump = 133000000000000000;
+        var now = previousJump + TimeSpan.TicksPerHour;
+        await SetLastJumpAsync(s, characterId, previousJump);
+        var store = new PgJumpCloneStore(s.Source, s.CharactersSchema);
+
+        await using (var connection = await s.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            var result = await store.JumpAsync(connection, transaction, characterId, local, origin, "structure", [], 24, now);
+            Assert.False(result.CooldownActive);
+            Assert.Equal(local, result.Target!.JumpCloneId);
+            await transaction.CommitAsync();
+        }
+
+        Assert.Equal(previousJump, (await store.ReadAsync(characterId)).TimeLastJumpFileTime);
+
+        await using (var connection = await s.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            var result = await store.JumpAsync(connection, transaction, characterId, remote, origin, "structure", [], 24, now + 1);
+            Assert.True(result.CooldownActive);
+            Assert.Null(result.Target);
+            await transaction.CommitAsync();
+        }
+
+        var state = await store.ReadAsync(characterId);
+        Assert.Equal(previousJump, state.TimeLastJumpFileTime);
+        Assert.Contains(state.Clones, clone => clone.JumpCloneId == remote && clone.LocationId == remoteLocation);
+    }
+
     private static async Task<long> AddCloneAsync(PgSchemas s, long characterId, long locationId, string kind, string name, int[] implants)
     {
         await using var connection = await s.Source.OpenConnectionAsync();
@@ -167,6 +242,15 @@ public sealed class JumpCloneStoreTests
             $"SELECT count(*) FROM {s.CharactersSchema}.character_jump_clone_implants WHERE jump_clone_id = $1");
         command.Parameters.Add(new NpgsqlParameter { Value = cloneId });
         return (long)(await command.ExecuteScalarAsync())!;
+    }
+
+    private static async Task SetLastJumpAsync(PgSchemas s, long characterId, long fileTime)
+    {
+        await using var set = s.Source.CreateCommand(
+            $"UPDATE {s.CharactersSchema}.characters SET time_last_clone_jump_filetime = $1 WHERE id = $2");
+        set.Parameters.Add(new NpgsqlParameter { Value = fileTime });
+        set.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        await set.ExecuteNonQueryAsync();
     }
 
     private static async Task<long> Insert(PgSchemas s, NewCharacter c)

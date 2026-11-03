@@ -1,4 +1,5 @@
 using Eve.Crimewatch;
+using Eve.Data;
 using Eve.Host;
 using Eve.Macho;
 using Eve.Marshal;
@@ -9,12 +10,17 @@ namespace Eve.Host.Tests;
 
 public partial class HostServerTests
 {
+    private static NpgsqlDataSource CrimewatchTestDataSource() => NpgsqlDataSource.Create(
+        PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL") ??
+            "Host=127.0.0.1;Database=eve;Username=postgres;Timeout=1;Command Timeout=1"));
+
     [Fact]
     public async Task Crimewatch_bound_get_character_security_status_uses_the_registered_host_route()
     {
         const long characterId = 90000001;
         const long targetId = 90000002;
-        await using var dataSource = NpgsqlDataSource.Create("Host=127.0.0.1;Database=eve;Username=postgres;Timeout=1;Command Timeout=1");
+        await using var dataSource = CrimewatchTestDataSource();
+        await PgCrimewatchStore.MigrateAsync(dataSource);
         var service = new CrimewatchService(
             new PgCrimewatchStore(dataSource), null!, () => 1_800_000_000_000,
             (id, _) => Task.FromResult(id == targetId ? 2.5 : 0d));
@@ -46,9 +52,42 @@ public partial class HostServerTests
     }
 
     [Fact]
+    public async Task Crimewatch_bound_get_my_security_status_returns_fractional_recovery_over_the_wire()
+    {
+        const long characterId = 90000001;
+        await using var dataSource = CrimewatchTestDataSource();
+        await PgCrimewatchStore.MigrateAsync(dataSource);
+        var service = new CrimewatchService(
+            new PgCrimewatchStore(dataSource), null!, () => 1_800_000_000_000,
+            (id, _) => Task.FromResult(id == characterId ? 0.03125 : 0d));
+        Start(strictRpc: true,
+            configure: registry => registry.Register(service),
+            sessionOpened: session => session.CharacterId = characterId);
+
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+        var kwargs = new PyDict([new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1))]);
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.CallWithKwargs(open, 1, "crimewatch", "MachoBindObject",
+                new PyTuple([new PyTuple([new PyInt(30000142), new PyInt(1)]), PyNone.Instance]), kwargs))));
+        var bind = MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
+        var binding = Assert.IsType<PyTuple>(Result(bind));
+        var oid = BoundObjects.ExtractName(Assert.IsType<PySubStruct>(binding.Items[0]))!;
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.BoundCall(open, 2, oid, "GetMySecurityStatus", new PyTuple([]), kwargs))));
+        var reply = MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
+        Assert.Equal(MachoMessage.CallRsp, Assert.IsType<MachoPacket>(MachoPacket.Decode(reply)).Type);
+        Assert.Equal(new PyReal(0.03125), Result(reply));
+    }
+
+    [Fact]
     public async Task Crimewatch_bound_rpcs_return_the_client_shapes_through_the_registered_host_route()
     {
-        await using var dataSource = NpgsqlDataSource.Create("Host=127.0.0.1;Database=eve;Username=postgres;Timeout=1;Command Timeout=1");
+        await using var dataSource = CrimewatchTestDataSource();
+        await PgCrimewatchStore.MigrateAsync(dataSource);
         var service = new CrimewatchService(
             new PgCrimewatchStore(dataSource), null!, () => 1_800_000_000_000,
             (id, _) => Task.FromResult(id == 90000002 ? 2.5 : 0d));

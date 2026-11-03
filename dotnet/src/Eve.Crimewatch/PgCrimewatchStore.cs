@@ -26,6 +26,18 @@ public sealed record KillRightActivation(
     decimal PricePaid,
     string ActivationKind);
 
+public sealed record NpcSecurityStatusRecoveryWindow(
+    long CharacterId,
+    long WindowEndMs,
+    long SourceEventId,
+    long SolarSystemId,
+    long NpcShipId,
+    long NpcTypeId,
+    long NpcCorporationId,
+    int NpcFactionId,
+    string ProfileId,
+    decimal Bounty);
+
 public sealed record KillRightActionResult(
     KillRight? Right,
     KillRightActivation? Activation,
@@ -172,6 +184,21 @@ public sealed class PgCrimewatchStore
                 paid_ms bigint
             );
             CREATE INDEX IF NOT EXISTS player_bounty_payouts_pending ON player_bounty_payouts (status, created_ms) WHERE status = 'pending';
+            """),
+        new Migration("0006_npc_security_status_recovery_windows", """
+            CREATE TABLE IF NOT EXISTS npc_security_status_recovery_windows (
+                character_id bigint NOT NULL CHECK (character_id > 0),
+                window_end_ms bigint NOT NULL,
+                source_event_id bigint NOT NULL,
+                solar_system_id bigint NOT NULL,
+                npc_ship_id bigint NOT NULL,
+                npc_type_id bigint NOT NULL,
+                npc_corporation_id bigint NOT NULL,
+                npc_faction_id integer NOT NULL,
+                profile_id text NOT NULL,
+                bounty numeric(20,2) NOT NULL CHECK (bounty > 0),
+                PRIMARY KEY (character_id, window_end_ms)
+            );
             """)
     ];
 
@@ -179,6 +206,86 @@ public sealed class PgCrimewatchStore
         Migrations.ApplyAsync(source, schema, MigrationSet(), cancellationToken);
 
     private string Q(string text) => Sql.In(_schema, text);
+
+    public Task RecordNpcSecurityStatusRecoveryWindowAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        NpcSecurityStatusRecoveryWindow window,
+        CancellationToken cancellationToken = default) =>
+        Sql.ExecuteAsync(connection, transaction, Q("""
+            INSERT INTO {schema}.npc_security_status_recovery_windows (
+                character_id, window_end_ms, source_event_id, solar_system_id, npc_ship_id, npc_type_id,
+                npc_corporation_id, npc_faction_id, profile_id, bounty)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ON CONFLICT (character_id, window_end_ms) DO UPDATE SET
+                source_event_id = EXCLUDED.source_event_id,
+                solar_system_id = EXCLUDED.solar_system_id,
+                npc_ship_id = EXCLUDED.npc_ship_id,
+                npc_type_id = EXCLUDED.npc_type_id,
+                npc_corporation_id = EXCLUDED.npc_corporation_id,
+                npc_faction_id = EXCLUDED.npc_faction_id,
+                profile_id = EXCLUDED.profile_id,
+                bounty = EXCLUDED.bounty
+            WHERE npc_security_status_recovery_windows.bounty < EXCLUDED.bounty
+            """), cancellationToken,
+            window.CharacterId, window.WindowEndMs, window.SourceEventId, window.SolarSystemId, window.NpcShipId,
+            window.NpcTypeId, window.NpcCorporationId, window.NpcFactionId, window.ProfileId, window.Bounty);
+
+    public async Task<NpcSecurityStatusRecoveryWindow?> NpcSecurityStatusRecoveryWindowAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long characterId,
+        long windowEndMs,
+        CancellationToken cancellationToken = default)
+    {
+        await using var command = Sql.Command(connection, transaction, Q("""
+            SELECT character_id, window_end_ms, source_event_id, solar_system_id, npc_ship_id, npc_type_id,
+                   npc_corporation_id, npc_faction_id, profile_id, bounty
+            FROM {schema}.npc_security_status_recovery_windows
+            WHERE character_id = $1 AND window_end_ms = $2
+            FOR UPDATE
+            """), characterId, windowEndMs);
+        await using var row = await command.ExecuteReaderAsync(cancellationToken);
+        return await row.ReadAsync(cancellationToken)
+            ? new NpcSecurityStatusRecoveryWindow(
+                row.GetInt64(0), row.GetInt64(1), row.GetInt64(2), row.GetInt64(3), row.GetInt64(4), row.GetInt64(5),
+                row.GetInt64(6), row.GetInt32(7), row.GetString(8), row.GetDecimal(9))
+            : null;
+    }
+
+    public async Task<NpcSecurityStatusRecoveryWindow?> LatestNpcSecurityStatusRecoveryWindowAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long characterId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var command = Sql.Command(connection, transaction, Q("""
+            SELECT character_id, window_end_ms, source_event_id, solar_system_id, npc_ship_id, npc_type_id,
+                   npc_corporation_id, npc_faction_id, profile_id, bounty
+            FROM {schema}.npc_security_status_recovery_windows
+            WHERE character_id = $1
+            ORDER BY window_end_ms DESC
+            LIMIT 1
+            FOR UPDATE
+            """), characterId);
+        await using var row = await command.ExecuteReaderAsync(cancellationToken);
+        return await row.ReadAsync(cancellationToken)
+            ? new NpcSecurityStatusRecoveryWindow(
+                row.GetInt64(0), row.GetInt64(1), row.GetInt64(2), row.GetInt64(3), row.GetInt64(4), row.GetInt64(5),
+                row.GetInt64(6), row.GetInt32(7), row.GetString(8), row.GetDecimal(9))
+            : null;
+    }
+
+    public Task DeleteNpcSecurityStatusRecoveryWindowAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long characterId,
+        long windowEndMs,
+        CancellationToken cancellationToken = default) =>
+        Sql.ExecuteAsync(connection, transaction, Q("""
+            DELETE FROM {schema}.npc_security_status_recovery_windows
+            WHERE character_id = $1 AND window_end_ms = $2
+            """), cancellationToken, characterId, windowEndMs);
 
     /// <summary>The character's safety level; full when it has never set one.</summary>
     public async Task<int> SafetyOfAsync(long characterId, CancellationToken cancellationToken = default)

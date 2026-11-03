@@ -39,4 +39,34 @@
 ## 次の担当への状態
 
 - Sentryのstatus-loss通知契約とRust monitor lifecycleはunit/headless test済み。通常low-sec gate/station sentry flowのend-to-end確認は残るため、この領域全体を完了扱いにしないこと。
-- Push前に `python3 tools/dev/ci-status.py status` でmain最終CIがgreenであることを確認し、merge後に上記の選定DBテストを再実行する。
+- `origin/main` merge後のビルドと選定DBテストは下記のとおり再実行済み。push前に `python3 tools/dev/ci-status.py status` でmain最終CIの状態を確認する。
+
+## マージ後のローカル確認
+
+- Rust: `cargo +1.94.1 fmt --all -- --check`、`cargo +1.94.1 clippy --workspace --all-targets -- -D warnings`、`cargo +1.94.1 check -p eve-space -p eve-behaviors`、security-status 2件、Pochven sentry 1件、combat filter 69件を確認。
+- .NET build: `Eve.Crimewatch.Tests`、`Eve.Services.Crimewatch.Tests`、`Eve.Services.Space.Tests`、`Eve.Host.Tests` は全て警告・エラーなし。
+- eve_p5 の DB ロック経由で `AggressionTests` 23件、`RuntimeTests` 33件、Space 関連4クラス207件、Host 関連テスト24件が成功。
+- Host の Abyssal 実 sim cleanup と saved-origin Rust scene guard の2件はテスト側の条件で skip。成功数に含めていない。
+- 実クライアントGUI上の飛行・NPC反応と EveJS 実行比較は行っていない。EVE Online V24.01 クライアント呼出し・消費元の静的追跡と EveJS 261028.1 実装の照合は本文の file:line 根拠を参照。
+- 現在の main 最終完了 CI #1446（`17a6e0e7`）は Windows Rust の docking wire test で失敗。task 変更外の失敗なので push を保留し、main CI #1447（`f06bfb23`）の完了を待つ。
+## NPC security-status recovery: end-to-end check (2026-11-03)
+
+### V24.01 client path
+
+- Whole-client search found the service RPC/cached-value path at `eve/client/script/ui/services/crimewatchSvc.py:590-600`: `GetMySecurityStatus` calls the bound RPC only while the cached value is `None`, and `OnSecurityStatusUpdate` replaces that cache. Consumers found across the client are: agent warning `eve/client/script/ui/station/agents/agentDialogueUtil.py:175,424`; character overview `eve/client/script/ui/shared/neocom/charsheet/characterOverviewPanel/characterOverviewPanel.py:153-166` (one decimal place); dogma `eve/client/script/dogma/clientDogmaLocation.py:747-750`; fitting `eve/client/script/ui/shared/fittingScreen/fittingDogmaLocation.py:787-788`; security office slider and refresh `eve/client/script/ui/station/securityOfficeWindow.py:89-121,146-148,164-173,342-349`; and high-sec warning thresholds `eve/client/script/ui/services/crimewatchSvc.py:643-658`.
+- Transaction history is a separate bound call at `crimewatchSvc.py:602-603`; `eve/client/script/ui/shared/neocom/charsheet/securityStatusPanel.py:26-74` displays it by `eventTypeID`. `eve/common/script/mgt/appLogConst.py:303-307` maps pirate-NPC gains to event ID 378. The read RPC has no client error-code translation; a missing cache triggers a fetch, while the transaction panel consumes returned rows. The Host wire test checks fractional status as `PyReal`.
+
+### eve.rs and EveJS comparison
+
+- `SpaceSessions.Npc.cs:322` emits `npc.killed` for an NPC ship death. `NpcSecurityStatusRecoverySubscriber.cs:64-119` filters the profile and persists the highest eligible bounty in the character's anchored five-minute window; settlement writes the relation history and `npc.security_status.recovered` in one transaction. `SpaceComposition.cs:116-141` registers recovery and notification delivery outside the simulator-only block. The notification bridge sends `OnSecurityStatusUpdate` with subject `charid` and a numeric status, matching the service cache update and security-office refresh.
+- EveJS 261028.1 immediately applies recovery for every fresh bounty kill (`/home/user/evejs-261028.1/src/server/src/services/bounty/bountyRuntime.js:362-446`). CCP documents a character-wide five-minute interval starting with the first NPC kill and Fast Talk at 5% per level ([CCP dev blog](https://www.eveonline.com/news/view/wanttotrade-tags-for-security-status), lines 61-74); EVE University describes the highest outlaw NPC per interval and a +5 NPC recovery ceiling ([Repairing security status](https://wiki.eveuniversity.org/Repairing_security_status), sections "Security gain mechanics" and "Notes"). These sources justify the durable aggregation and +5 cap.
+- The profile gate allows Guristas, Angel Cartel, Blood Raiders, Sansha's Nation, and Serpentis. EVE University excludes Amarr/Gallente faction rats, sentry guns and typically named targets. The current kill producer supplies an NPC ship profile, so sentry structures are outside this event path; generic mission profiles, Empire factions and Rogue Drones with positive bounties are rejected. `NpcSecurityStatusRecoveryTests.cs` covers the five allowed factions and these excluded profile classes.
+- Exact per-rat rates remain a known gap: the profile model exposes bounty, faction and the NPC's own security status (`dotnet/src/Eve.Npc/NpcAuthority.cs:7-12`) but no recovery modifier. The EVE University examples list 0.1920% at 500,000 ISK and 0.0762% at 74,063 ISK with max Fast Talk. EveJS's fallback in `bountyRuntime.js:273-287` yields 0.3125% and about 0.0926%; eve.rs retains that fallback without claiming exact rate parity. A supported per-profile rate source or client trace is still needed.
+
+### Verification
+
+- Builds completed with no warnings or errors for Host, Host.Tests, NPC.Tests, Services.Crimewatch.Tests, Crimewatch.Tests, Events.Tests and Services.Dogma.Tests. `eve_p5` database tests through `tools/dev/db-lock.sh`: recovery subscriber 1 passed; Crimewatch aggression/safety 44 passed; service runtime/player-bounty/recovery 36 passed; EventBus 17 passed; Host crimewatch wire 6 passed; Host Abyssal neighbor 20 passed and 2 skipped; Dogma kill-right neighbor 2 passed. NPC recovery unit test: 20 passed. The skipped Abyssal cases were `Real_sim_cleanup_confirms_live_npc_environment_and_reward_scene_removal_with_another_run_intact` and `Saved_origin_gate_open_update_passes_the_real_rust_scene_guard` and do not count as passes.
+- Before/after evidence: recovery first reached 7.63671875 through per-kill accrual where the NPC cap is +5; after the tick fix the regression passes. Before the profile gate, a 1,000,000 ISK Rogue Drone beat the eligible 500,000 ISK pirate; after the gate the database test passes.
+- Still to check: graphical V24.01 client behavior, exact per-profile recovery percentages, and post-merge/push Actions. The rate-source gap remains open.
+- Main push gate at 2026-11-03 01:58 UTC: `ci-status.py wait 41560688216` completed for CI run #1448, SHA `18bb1d8fa4d8a9dd87725dd7c34c801bea211e71`, with failure. Rust tests failed at `modules::tests::a_lock_the_dampened_ship_can_no_longer_reach_is_given_up`; the Windows job failed at `Load SDE and test Rust workspace`. This worktree has not been merged or pushed; wait for a later completed green main CI, then fetch/merge and rerun the listed tests before pushing.
+- Main push gate at 2026-11-03 02:27 UTC: CI run #1449 for SHA `f7c0e9e14ccd` completed successfully, including Required CI gate. The prior red gate is cleared; merge and post-merge local verification are now pending.

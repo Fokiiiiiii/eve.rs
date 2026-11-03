@@ -21,9 +21,9 @@ EveJS 261028.1 initializes and retains npcTimerExpiresAtMs (src/server/src/servi
 ## Checks completed
 
 - After merging origin/main at ce983679, builds of Eve.Services.Space.Tests, Eve.Host.Tests, and Eve.Services.Crimewatch.Tests passed with 0 warnings and 0 errors. These transitively build the changed Space service and Host project.
-- With eve_p4 and tools/dev/db-lock.sh, the NPC combat Space test, the Host GetClientStates registered-route test, and Npc_and_disapproval_timers_persist_renew_and_expire each passed after the merge (1 passed, 0 skipped each).
+- After the subsequent merge of origin/main at 481bc22c, the Host test project built with 0 warnings and 0 errors. With eve_p4 and tools/dev/db-lock.sh after that merge, the NPC combat Space test, the Host GetClientStates registered-route test, and Npc_and_disapproval_timers_persist_renew_and_expire each passed (1 passed, 0 skipped each).
 - An initial Crimewatch PgFact invocation without EVE_PG_URL skipped; it was rerun with the required eve_p4 URL and passed.
 
 ## Remaining checks
 
-The graphical V24.01 client has not been run. The implementation and docs were pushed to main as `e4aaef11fe7793145eac183fd954099f3adeb476`. Agent test run 1282 and push-triggered CI run 1467 both completed successfully; `python3 tools/dev/ci-status.py failures e4aaef11fe7793145eac183fd954099f3adeb476` reported no failed tests or jobs. The three touched builds and three DB-locked focused tests also passed after merging origin/main at ce983679.
+The graphical V24.01 client has not been run. The implementation and docs were pushed to main as `e4aaef11fe7793145eac183fd954099f3adeb476`. Agent test run 1282 and push-triggered CI run 1467 both completed successfully; `python3 tools/dev/ci-status.py failures e4aaef11fe7793145eac183fd954099f3adeb476` reported no failed tests or jobs. The later main commit 481bc22c also passed Agent test run 1283 and CI run 1468. After merging it, the Host build and three DB-locked focused tests passed locally.

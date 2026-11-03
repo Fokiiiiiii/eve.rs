@@ -1,3 +1,4 @@
+using Eve.FactionWarfare;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
@@ -16,8 +17,6 @@ public sealed record ShipcasterLandingPad(
 public sealed class ShipcasterRpcService : IService
 {
     private const string LandingPadDataClass = "shipcaster.landingPadData.LandingPadData";
-    private static readonly int[] KnownFactionIds = [500001, 500002, 500003, 500004, 500010, 500011];
-
     private readonly SolarSystemCatalog _solarSystems;
     private readonly Func<IReadOnlyList<ShipcasterLandingPad>>? _readLandingPads;
     private readonly Func<IReadOnlyList<int>>? _readFactionsWithShipcaster;
@@ -62,6 +61,9 @@ public sealed class ShipcasterRpcService : IService
         if (call.Method is "GetAllLandingPads" or "GetFactionLandingPads")
         {
             var factionId = call.Method == "GetAllLandingPads" ? null : FactionId(call.Arg(0));
+            if (call.Method == "GetFactionLandingPads" &&
+                (factionId is null || !FwFactions.IsWarfareFaction(factionId.Value)))
+                return new PyList([]);
             return new PyList(LandingPads(factionId).Select(ToWire).ToArray());
         }
 
@@ -73,7 +75,7 @@ public sealed class ShipcasterRpcService : IService
                     ? LandingPads(null).Select(pad => pad.FactionId).ToArray()
                     : throw MissingBackend("Shipcaster faction data");
             return new PyList(factions
-                .Where(KnownFactionIds.Contains)
+                .Where(factionId => FwFactions.IsWarfareFaction(factionId))
                 .Distinct()
                 .OrderBy(factionId => factionId)
                 .Select(factionId => (PyValue)new PyInt(factionId))
@@ -81,7 +83,7 @@ public sealed class ShipcasterRpcService : IService
         }
 
         if (call.Method == "CanCharacterJump")
-            return (_canCharacterJump?.Invoke(call) ?? false) ? PyBool.True : PyBool.False;
+            return (_canCharacterJump ?? throw MissingBackend("Starter shipcaster eligibility"))(call) ? PyBool.True : PyBool.False;
 
         if (_travel is not null)
             return await _travel(call).ConfigureAwait(false);
@@ -96,7 +98,7 @@ public sealed class ShipcasterRpcService : IService
         (_readLandingPads ?? throw MissingBackend("Shipcaster landing-pad data"))()
         .Where(pad => pad.ItemId > 0 &&
             _solarSystems.Get(pad.SolarSystemId) is not null &&
-            KnownFactionIds.Contains(pad.FactionId) &&
+            FwFactions.IsWarfareFaction(pad.FactionId) &&
             (factionId is null || pad.FactionId == factionId))
         .OrderBy(pad => pad.FactionId)
         .ThenBy(pad => pad.SolarSystemId)
@@ -135,8 +137,6 @@ public sealed class ShipcasterRpcService : IService
             PyStr text when int.TryParse(text.Value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var parsed) => parsed,
             _ => 0,
         };
-        return raw is >= int.MinValue and <= int.MaxValue && KnownFactionIds.Contains((int)raw)
-            ? (int)raw
-            : null;
+        return raw is >= 1 and <= int.MaxValue && FwFactions.IsWarfareFaction((int)raw) ? (int)raw : null;
     }
 }

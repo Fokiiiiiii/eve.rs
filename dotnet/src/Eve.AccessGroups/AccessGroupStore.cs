@@ -35,9 +35,8 @@ public sealed partial class AccessGroupStore
         {
             await EnsureCorporationGroupAsync(connection, tx, who.CorporationId, token);
             var visible = new List<GroupView>();
-            foreach (var group in await TouchingAsync(connection, tx, who, token))
+            foreach (var (group, members) in await TouchingWithMembersAsync(connection, tx, who, token))
             {
-                var members = await MembersOfAsync(connection, tx, group.GroupId, token);
                 var role = AccessRules.RoleOf(group, members, who);
                 if (AccessRules.CanSee(role, group)) visible.Add(new GroupView(group, role, AdminsOf(group, members)));
             }
@@ -53,9 +52,9 @@ public sealed partial class AccessGroupStore
         {
             await EnsureCorporationGroupAsync(connection, tx, who.CorporationId, token);
             var roles = new Dictionary<long, int>();
-            foreach (var group in await TouchingAsync(connection, tx, who, token))
+            foreach (var (group, members) in await TouchingWithMembersAsync(connection, tx, who, token))
             {
-                var role = AccessRules.RoleOf(group, await MembersOfAsync(connection, tx, group.GroupId, token), who);
+                var role = AccessRules.RoleOf(group, members, who);
                 if (role is MembershipType.Member or MembershipType.Manager or MembershipType.Admin) roles[group.GroupId] = (int)role;
             }
             return (IReadOnlyDictionary<long, int>)roles;
@@ -159,11 +158,13 @@ public sealed partial class AccessGroupStore
         {
             var (group, members, role) = await RequireManagerAsync(connection, tx, who, groupId, token);
             var before = members.ToList();
+            var memberIds = members.Select(member => member.MemberId).ToHashSet();
             var failures = new List<MemberFailure>();
             foreach (var entry in entries.DistinctBy(entry => entry.MemberId))
             {
-                if (members.Any(member => member.MemberId == entry.MemberId)) { failures.Add(new(entry.MemberId, "AlreadyMember")); continue; }
+                if (memberIds.Contains(entry.MemberId)) { failures.Add(new(entry.MemberId, "AlreadyMember")); continue; }
                 if (!AccessRules.ValidForKind(entry.Kind, entry.Type) || !AccessRules.MayAdd(role, entry.Type)) { failures.Add(new(entry.MemberId, "NotAllowed")); continue; }
+                memberIds.Add(entry.MemberId);
                 await InsertMemberAsync(connection, tx, groupId, entry.MemberId, entry.Kind, entry.Type, token);
                 await LogAsync(connection, tx, groupId, who.CharacterId, AccessGroupChanges.MemberAdded, entry.MemberId, null, (int)entry.Type, null, token);
                 members.Add(new AccessMember(entry.MemberId, entry.Kind, entry.Type));
@@ -178,16 +179,19 @@ public sealed partial class AccessGroupStore
         {
             var (group, members, role) = await RequireManagerAsync(connection, tx, who, groupId, token);
             var before = members.ToList();
+            var membersById = members.ToDictionary(member => member.MemberId);
+            var removedIds = new HashSet<long>();
             var failures = new List<MemberFailure>();
             foreach (var memberId in memberIds.Distinct())
             {
-                var current = members.FirstOrDefault(member => member.MemberId == memberId);
-                if (current is null) { failures.Add(new(memberId, "NotAMember")); continue; }
+                if (!membersById.TryGetValue(memberId, out var current)) { failures.Add(new(memberId, "NotAMember")); continue; }
                 if (!AccessRules.MayRemove(role, current.Type)) { failures.Add(new(memberId, "NotAllowed")); continue; }
                 await Execute(connection, tx, $"DELETE FROM {_schema}.members WHERE group_id=$1 AND member_id=$2", token, groupId, memberId);
                 await LogAsync(connection, tx, groupId, who.CharacterId, AccessGroupChanges.MemberRemoved, memberId, (int)current.Type, -1, null, token);
-                members.Remove(current);
+                membersById.Remove(memberId);
+                removedIds.Add(memberId);
             }
+            if (removedIds.Count > 0) members.RemoveAll(member => removedIds.Contains(member.MemberId));
             return Changed(groupId, group, before, members, [who.CharacterId], AccessGroupChanges.MemberRemoved, failures);
         }, token);
 
@@ -201,12 +205,12 @@ public sealed partial class AccessGroupStore
         {
             var (group, members, role) = await RequireManagerAsync(connection, tx, who, groupId, token);
             var before = members.ToList();
+            var membersById = members.ToDictionary(member => member.MemberId);
             var failures = new List<MemberFailure>();
             var changed = 0;
             foreach (var memberId in memberIds.Distinct())
             {
-                var current = members.FirstOrDefault(member => member.MemberId == memberId);
-                if (current is null) { failures.Add(new(memberId, "NotAMember")); continue; }
+                if (!membersById.TryGetValue(memberId, out var current)) { failures.Add(new(memberId, "NotAMember")); continue; }
                 if (current.Type == type) continue;
                 if (!AccessRules.ValidForKind(current.Kind, type) || !AccessRules.MayChange(role, current.Type, type))
                 {
@@ -215,9 +219,11 @@ public sealed partial class AccessGroupStore
                 }
                 await Execute(connection, tx, $"UPDATE {_schema}.members SET membership_type=$3 WHERE group_id=$1 AND member_id=$2", token, groupId, memberId, (int)type);
                 await LogAsync(connection, tx, groupId, who.CharacterId, AccessGroupChanges.MemberTypeChanged, memberId, (int)current.Type, (int)type, null, token);
-                members[members.IndexOf(current)] = current with { Type = type };
+                membersById[memberId] = current with { Type = type };
                 changed++;
             }
+            if (changed > 0)
+                for (var index = 0; index < members.Count; index++) members[index] = membersById[members[index].MemberId];
             return Changed(groupId, group, before, members, [who.CharacterId], AccessGroupChanges.MemberTypeChanged, failures);
         }, token);
 
@@ -287,15 +293,27 @@ public sealed partial class AccessGroupStore
     }
 
     /// <summary>The groups an entry of the character, its corporation, its alliance or everyone names, or the corporation's built-in list.</summary>
-    private async Task<IReadOnlyList<AccessGroup>> TouchingAsync(NpgsqlConnection connection, NpgsqlTransaction tx, Affiliation who, CancellationToken token)
+    private async Task<IReadOnlyList<(AccessGroup Group, List<AccessMember> Members)>> TouchingWithMembersAsync(
+        NpgsqlConnection connection, NpgsqlTransaction tx, Affiliation who, CancellationToken token)
     {
         await using var command = Command(connection, tx,
-            $"SELECT g.group_id, g.creator_id, g.group_name, g.description, g.corp_built_in, g.created_ms FROM {_schema}.groups g " +
+            $"SELECT g.group_id, g.creator_id, g.group_name, g.description, g.corp_built_in, g.created_ms, m.member_id, m.member_kind, m.membership_type " +
+            $"FROM {_schema}.groups g LEFT JOIN {_schema}.members m ON m.group_id=g.group_id " +
             $"WHERE (g.corp_built_in AND $2 > 0 AND g.group_id=$2) OR EXISTS (SELECT 1 FROM {_schema}.members m WHERE m.group_id=g.group_id AND " +
             "((m.member_kind=1 AND m.member_id=$1) OR (m.member_kind=2 AND $2 > 0 AND m.member_id=$2) OR (m.member_kind=3 AND $3 > 0 AND m.member_id=$3) OR m.member_kind=0)) " +
-            "ORDER BY g.group_id",
+            "ORDER BY g.group_id, m.member_id",
             who.CharacterId, who.CorporationId, who.AllianceId);
-        return await ReadGroupsAsync(command, token);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        var groups = new List<(AccessGroup Group, List<AccessMember> Members)>();
+        while (await reader.ReadAsync(token))
+        {
+            var groupId = reader.GetInt64(0);
+            if (groups.Count == 0 || groups[^1].Group.GroupId != groupId)
+                groups.Add((new AccessGroup(groupId, reader.GetInt64(1), reader.GetString(2), reader.GetString(3), reader.GetBoolean(4), reader.GetInt64(5)), []));
+            if (!reader.IsDBNull(6))
+                groups[^1].Members.Add(new AccessMember(reader.GetInt64(6), (MemberKind)reader.GetInt16(7), (MembershipType)reader.GetInt16(8)));
+        }
+        return groups;
     }
 
     private async Task<AccessGroup?> GroupAsync(NpgsqlConnection connection, NpgsqlTransaction tx, long groupId, CancellationToken token)

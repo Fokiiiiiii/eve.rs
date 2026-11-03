@@ -78,11 +78,20 @@ public static class AccessRules
     public static MembershipType RoleOf(AccessGroup group, IReadOnlyList<AccessMember> members, Affiliation who)
     {
         if (group.CorpBuiltIn) return who.CorporationId > 0 && who.CorporationId == group.CreatorId ? MembershipType.Member : MembershipType.None;
-        var entry = Find(members, MemberKind.Character, who.CharacterId)
-            ?? Find(members, MemberKind.Corporation, who.CorporationId)
-            ?? Find(members, MemberKind.Alliance, who.AllianceId)
-            ?? Find(members, MemberKind.Everyone, 0);
-        return entry?.Type ?? MembershipType.None;
+        AccessMember? corporation = null;
+        AccessMember? alliance = null;
+        AccessMember? everyone = null;
+        foreach (var member in members)
+        {
+            if (member.Kind == MemberKind.Character && member.MemberId == who.CharacterId) return member.Type;
+            if (corporation is null && who.CorporationId > 0 && member.Kind == MemberKind.Corporation && member.MemberId == who.CorporationId)
+                corporation = member;
+            else if (alliance is null && who.AllianceId > 0 && member.Kind == MemberKind.Alliance && member.MemberId == who.AllianceId)
+                alliance = member;
+            else if (everyone is null && member.Kind == MemberKind.Everyone && member.MemberId == 0)
+                everyone = member;
+        }
+        return corporation?.Type ?? alliance?.Type ?? everyone?.Type ?? MembershipType.None;
     }
 
     /// <summary>A member or blocked entry of the group, which the client lists; the admin and manager ones are seen by managers only.</summary>
@@ -109,11 +118,4 @@ public static class AccessRules
     public static bool MayChange(MembershipType actor, MembershipType current, MembershipType target) =>
         actor == MembershipType.Admin || (current is MembershipType.Member or MembershipType.Excluded && target is MembershipType.Member or MembershipType.Excluded);
 
-    private static AccessMember? Find(IReadOnlyList<AccessMember> members, MemberKind kind, long id)
-    {
-        if (kind != MemberKind.Everyone && id <= 0) return null;
-        foreach (var member in members)
-            if (member.Kind == kind && member.MemberId == id) return member;
-        return null;
-    }
 }

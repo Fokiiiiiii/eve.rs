@@ -30,6 +30,62 @@ public sealed class AccessGroupStoreTests
     }
 
     [PgFact]
+    public async Task Visible_groups_and_member_roles_read_all_matching_groups_with_their_members()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var adminGroup = (await rig.Store.CreateAsync(Aff(Alice), "Admin", "")).Result.GroupId;
+        var managerGroup = (await rig.Store.CreateAsync(Aff(Bob), "Manager", "")).Result.GroupId;
+        await rig.Store.AddMembersAsync(Aff(Bob), managerGroup,
+            [new NewMember(Alice, MemberKind.Character, MembershipType.Manager)]);
+        var privateGroup = (await rig.Store.CreateAsync(Aff(Carol, CorpB, 0), "Private", "")).Result.GroupId;
+
+        var visible = await rig.Store.VisibleGroupsAsync(Aff(Alice));
+        var byId = visible.ToDictionary(view => view.Group.GroupId);
+
+        Assert.Equal([CorpA, adminGroup, managerGroup], visible.Select(view => view.Group.GroupId));
+        Assert.Equal(MembershipType.Admin, byId[adminGroup].Role);
+        Assert.Equal([Alice], byId[adminGroup].Admins);
+        Assert.Equal(MembershipType.Manager, byId[managerGroup].Role);
+        Assert.Equal([Bob], byId[managerGroup].Admins);
+        Assert.DoesNotContain(privateGroup, byId.Keys);
+
+        var roles = await rig.Store.MemberRolesAsync(Aff(Alice));
+        Assert.Equal(3, roles.Count);
+        Assert.Equal((int)MembershipType.Member, roles[CorpA]);
+        Assert.Equal((int)MembershipType.Admin, roles[adminGroup]);
+        Assert.Equal((int)MembershipType.Manager, roles[managerGroup]);
+    }
+
+    [PgFact]
+    public async Task Bulk_member_mutations_keep_refusal_order_and_the_remaining_entries()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var group = (await rig.Store.CreateAsync(Aff(Alice), "G", "")).Result.GroupId;
+        await rig.Store.AddMembersAsync(Aff(Alice), group,
+        [
+            new NewMember(Bob, MemberKind.Character, MembershipType.Member),
+            new NewMember(Carol, MemberKind.Character, MembershipType.Member),
+            new NewMember(Dan, MemberKind.Character, MembershipType.Excluded),
+        ]);
+
+        var added = await rig.Store.AddMembersAsync(Aff(Alice), group,
+        [
+            new NewMember(Bob, MemberKind.Character, MembershipType.Member),
+            new NewMember(90000005, MemberKind.Character, MembershipType.Member),
+        ]);
+        Assert.Equal([(Bob, "AlreadyMember")], added.Result.Select(failure => (failure.MemberId, failure.Reason)));
+
+        var changed = await rig.Store.ChangeMembershipTypesAsync(Aff(Alice), group, [Carol, Bob, Carol, 90000006], MembershipType.Manager);
+        Assert.Equal([(90000006, "NotAMember")], changed.Result.Select(failure => (failure.MemberId, failure.Reason)));
+
+        var removed = await rig.Store.DeleteMembersAsync(Aff(Alice), group, [Dan, Bob, Dan, 90000006]);
+        Assert.Equal([(90000006, "NotAMember")], removed.Result.Select(failure => (failure.MemberId, failure.Reason)));
+        Assert.Equal(
+            [(Alice, MembershipType.Admin), (Carol, MembershipType.Manager), (90000005, MembershipType.Member)],
+            (await rig.Store.MembersAsync(Aff(Alice), group)).Select(member => (member.MemberId, member.Type)));
+    }
+
+    [PgFact]
     public async Task A_manager_adds_members_but_cannot_add_a_manager_or_remove_an_admin()
     {
         await using var rig = await Rig.CreateAsync();

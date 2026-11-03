@@ -239,7 +239,7 @@ public class AggressionTests
         Assert.False(safetyDisabled.Lawful);
 
         var outcome = Aggression.Record(CombatState.Idle, CombatState.Idle, SecurityClass.HighSec, System, false, facts, Now);
-        Assert.Equal(Flag.Criminal, outcome.Attacker.FlagAt(Now));
+                Assert.Equal(Flag.Criminal, outcome.Attacker.FlagAt(Now));
     }
 
     [Fact]
@@ -272,10 +272,12 @@ public class AggressionTests
             LimitedEngagementInterference: true);
         var authorizedFight = interference with { OtherLegalPermission = true };
 
-        Assert.Equal(Flag.Criminal, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.HighSec, suspect)).Consequence);
+        Assert.Equal(Flag.Suspect, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.HighSec, suspect)).Consequence);
         Assert.Equal(Flag.Suspect, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.LowSec, suspect)).Consequence);
         Assert.Equal(Flag.None, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.LowSec, outlaw)).Consequence);
+        Assert.Equal(Flag.Suspect, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.HighSec, outlaw)).Consequence);
         Assert.Equal(Flag.Criminal, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.LowSec, criminal)).Consequence);
+        Assert.Equal(Flag.Criminal, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.HighSec, criminal)).Consequence);
         Assert.Equal(Flag.Criminal, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.HighSec, interference)).Consequence);
         Assert.Equal(Flag.Suspect, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.LowSec, interference)).Consequence);
         Assert.Equal(Flag.None, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.HighSec, authorizedFight)).Consequence);
@@ -323,7 +325,7 @@ public class AggressionTests
         Assert.Equal(Now + 20_000, outcome.Attacker.PvpUntilMs);
         Assert.Equal(Now + 30_000, outcome.Attacker.NpcUntilMs);
         Assert.Equal(Now + 40_000, outcome.Attacker.DisapprovalUntilMs);
-        Assert.Equal(Flag.Criminal, outcome.Attacker.FlagAt(Now));
+              Assert.Equal(Flag.Suspect, outcome.Attacker.FlagAt(Now));
     }
 
     [Fact]

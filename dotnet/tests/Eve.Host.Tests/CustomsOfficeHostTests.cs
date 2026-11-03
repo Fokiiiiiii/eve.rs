@@ -8,6 +8,7 @@ using Eve.Planets;
 using Eve.Services;
 using Eve.Services.Inventory;
 using Eve.Services.Planets;
+using Eve.Services.Ships;
 using Eve.Skills;
 using Eve.Wallet;
 using Npgsql;
@@ -69,7 +70,7 @@ public sealed class CustomsOfficeHostTests : IAsyncLifetime
 
     [PgFact]
     public async Task Customs_office_rates_are_written_through_the_host_and_survive_restart()
-        {
+    {
         var host = await HostComposition.BuildAsync(Settings());
         try
         {
@@ -108,13 +109,19 @@ public sealed class CustomsOfficeHostTests : IAsyncLifetime
             var denied = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(
                 () => UpdateOfficeRatesAsync(host, nonDirector, corporationId, officeId, 0.03));
             Assert.Equal("CustomsOfficeAccessDenied", denied.Error.UserErrorMessage);
-            await UpdateOfficeRatesAsync(host, pilot, corporationId, officeId, 0.03);
+            var overLimit = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(
+                () => UpdateOfficeRatesAsync(host, pilot, corporationId, officeId, 1.01));
+            Assert.Equal("CustomsOfficeAccessDenied", overLimit.Error.UserErrorMessage);
+            var underLimit = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(
+                () => UpdateOfficeRatesAsync(host, pilot, corporationId, officeId, -0.01));
+            Assert.Equal("CustomsOfficeAccessDenied", underLimit.Error.UserErrorMessage);
+            await UpdateOfficeRatesAsync(host, pilot, corporationId, officeId, 1.0);
             Assert.Equal(0.10, beforeRestart, 6);
-            Assert.Equal(0.13, await HostTaxRateAsync(host, pilot, officeId), 6);
+            Assert.Equal(1.10, await HostTaxRateAsync(host, pilot, officeId), 6);
             await host.ShutdownAsync();
 
             host = await HostComposition.BuildAsync(Settings());
-            Assert.Equal(0.13, await HostTaxRateAsync(host, pilot, officeId), 6);
+            Assert.Equal(1.10, await HostTaxRateAsync(host, pilot, officeId), 6);
             Assert.Equal(1L, await ScalarAsync<long>(source,
                 $"SELECT count(*) FROM {Schema("EVE_PLANETS_SCHEMA")}.customs_offices WHERE office_id = {officeId} AND owner_corporation_id = {corporationId}"));
         }
@@ -134,7 +141,12 @@ public sealed class CustomsOfficeHostTests : IAsyncLifetime
             var pilot = await InsertPilotAsync(source, characters);
             var wallets = new WalletTransactions(source, Schema("EVE_WALLET_SCHEMA"));
             var items = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
-            const long planetId = 40486618;
+            var planetId = await ScalarAsync<long>(source, """
+                SELECT p.key::bigint
+                FROM sde."mapPlanets" p JOIN sde."mapStars" s ON p.doc->>'orbitID' = s.key
+                WHERE s.doc->>'solarSystemID' = '30000142'
+                ORDER BY p.key LIMIT 1
+                """);
             const long shipId = 98_000_012;
             const int commandCenterType = 2524;
             const int commandCenterUpgradeType = 2505;
@@ -197,7 +209,7 @@ public sealed class CustomsOfficeHostTests : IAsyncLifetime
                     Parameters =
                     {
                         new() { Value = CorporationId },
-                        new() { Value = """{"corporation":0.05,"alliance":0.05,"standingHigh":0.05,"standingGood":0.05,"standingNeutral":0.05,"standingBad":0.05,"standingHorrible":0.05}""" },
+                        new() { Value = """{"corporation":1.0,"alliance":0.05,"standingHigh":0.05,"standingGood":0.05,"standingNeutral":0.05,"standingBad":0.05,"standingHorrible":0.05}""" },
                         new() { Value = officeId },
                     },
                 })
@@ -227,9 +239,14 @@ public sealed class CustomsOfficeHostTests : IAsyncLifetime
                 Args = [new PyLong(officeId)],
                 Session = session,
             })).Value;
-            Assert.Equal(0.05, rate, 6);
+            Assert.Equal(1.10, rate, 6);
 
             var customs = Assert.IsAssignableFrom<ICustomsOffices>(planetMgr);
+            var office = await items.GetAsync(officeId) ?? throw new InvalidOperationException("customs office item is missing");
+            var inventory = new InvBrokerService(items, null!, null!, null!, null!, () => 1, new CustomsOfficeTestSpace(office))
+            {
+                Customs = customs,
+            };
             var account = host.Registry.Lookup("account")!;
             var cashBeforeSettlement = Assert.IsType<PyReal>(await account.CallAsync(new ServiceCall
             {
@@ -237,10 +254,10 @@ public sealed class CustomsOfficeHostTests : IAsyncLifetime
                 Args = [new PyInt(0)],
                 Session = session,
             })).Value;
-            await customs.ImportExportAsync(session, officeId, padId, new Dictionary<long, long> { [stockId] = 1 },
-                new Dictionary<int, long>(), rate, CancellationToken.None);
-            await customs.ImportExportAsync(session, officeId, padId, new Dictionary<long, long>(),
-                new Dictionary<int, long> { [waterType] = 1 }, rate, CancellationToken.None);
+            await ImportExportWithPlanetAsync(inventory, session, officeId, padId,
+                new PyDict([new KeyValuePair<PyValue, PyValue>(new PyLong(stockId), new PyLong(1))]), new PyDict([]), rate);
+            await ImportExportWithPlanetAsync(inventory, session, officeId, padId, new PyDict([]),
+                new PyDict([new KeyValuePair<PyValue, PyValue>(new PyInt(waterType), new PyLong(1))]), rate);
 
             var cash = Assert.IsType<PyReal>(await host.Registry.Lookup("account")!.CallAsync(new ServiceCall
             {
@@ -248,19 +265,19 @@ public sealed class CustomsOfficeHostTests : IAsyncLifetime
                 Args = [new PyInt(0)],
                 Session = session,
             })).Value;
-            Assert.Equal(cashBeforeSettlement - 30, cash, 2);
+            Assert.Equal(cashBeforeSettlement - 660, cash, 2);
             await host.ShutdownAsync();
             host = await HostComposition.BuildAsync(Settings());
 
             var reopenedWallets = new WalletTransactions(source, Schema("EVE_WALLET_SCHEMA"));
-            Assert.Equal(30m, await ScalarAsync<decimal>(source,
+            Assert.Equal(600m, await ScalarAsync<decimal>(source,
                 $"SELECT isk FROM {Schema("EVE_WALLET_SCHEMA")}.balances WHERE owner_id = {CorporationId} AND account_key = 1000"));
             var ownerEntries = (await reopenedWallets.JournalForAccountAsync(CorporationId, 1000))
                 .Where(row => row.Reason == "planetary customs office tax").ToArray();
             Assert.Equal(2, ownerEntries.Length);
-            Assert.Equal(30m, ownerEntries.Sum(row => row.Amount));
+            Assert.Equal(600m, ownerEntries.Sum(row => row.Amount));
             Assert.All(ownerEntries, row => Assert.Equal(97, row.RefTypeId));
-            Assert.Equal(cashBeforeSettlement - 30, Assert.IsType<PyReal>(await host.Registry.Lookup("account")!.CallAsync(new ServiceCall
+            Assert.Equal(cashBeforeSettlement - 660, Assert.IsType<PyReal>(await host.Registry.Lookup("account")!.CallAsync(new ServiceCall
             {
                 Method = "GetCashBalance",
                 Args = [new PyInt(0)],
@@ -314,12 +331,47 @@ public sealed class CustomsOfficeHostTests : IAsyncLifetime
         return Assert.IsType<PyReal>(result).Value;
     }
 
+    private static async Task ImportExportWithPlanetAsync(
+        InvBrokerService inventory, ClientSession session, long officeId, long launchpadId, PyDict imports, PyDict exports, double taxRate)
+    {
+        var response = Assert.IsType<PyTuple>(await inventory.MachoBindObject(new ServiceCall
+        {
+            Method = "MachoBindObject",
+            Args =
+            [
+                new PyTuple([new PyLong(officeId)]),
+                new PyTuple([
+                    new PyStr("ImportExportWithPlanet"),
+                    new PyTuple([new PyLong(launchpadId), imports, exports, new PyReal(taxRate)]),
+                    PyNone.Instance,
+                ]),
+            ],
+            Session = session,
+        }));
+        Assert.IsType<PySubStruct>(response.Items[0]);
+        Assert.Equal(PyNone.Instance, response.Items[1]);
+    }
+
     private static ClientSession Session(long pilot)
     {
         var session = new ClientSession { CharacterId = pilot };
         session.Set("corpid", new PyLong(CorporationId));
         session.Set("solarsystemid2", new PyLong(Jita));
         return session;
+    }
+
+    private sealed class CustomsOfficeTestSpace(Item office) : ISpaceContainers
+    {
+        public bool IsInSpace(ClientSession session) => true;
+        public int? SolarSystemOf(ClientSession session) => (int)office.LocationId;
+        public Task<Item?> OpenAsync(ClientSession session, long containerId, CancellationToken cancellationToken) =>
+            Task.FromResult(containerId == office.Id ? office : null);
+        public Task<long?> MoveAsync(ClientSession session, long itemId, long sourceId, long destinationId, long? quantity,
+            CancellationToken cancellationToken) => Task.FromResult<long?>(null);
+        public Task<bool?> MoveAllAsync(ClientSession session, IReadOnlyList<long> itemIds, long sourceId, long destinationId,
+            CancellationToken cancellationToken) => Task.FromResult<bool?>(null);
+        public Task<IReadOnlyList<long>> JettisonAsync(ClientSession session, IReadOnlyList<long> itemIds, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<long>>([]);
     }
 
     private static async Task<T> ScalarAsync<T>(NpgsqlDataSource source, string sql)

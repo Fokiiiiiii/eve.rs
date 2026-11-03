@@ -78,9 +78,28 @@ public class CustomsTests
     [InlineData(0.10, 0.02, 0.12)]
     [InlineData(0.05, 0.02, 0.07)]
     [InlineData(0.17, 0.02, 0.19)]
-    [InlineData(0.10, 1.0, 1.0)]
-    public void Npc_and_owner_rates_combine_without_exceeding_one(double npc, double owner, double expected) =>
+    [InlineData(0.10, 1.0, 1.10)]
+    [InlineData(0.0, 1.0, 1.0)]
+    public void Npc_and_owner_rates_are_added_without_a_combined_ceiling(double npc, double owner, double expected) =>
         Assert.Equal(expected, Customs.CombinedRate(npc, owner), 9);
+
+    [Theory]
+    [InlineData(0, 1.10)]
+    [InlineData(1, 1.09)]
+    [InlineData(2, 1.08)]
+    [InlineData(3, 1.07)]
+    [InlineData(4, 1.06)]
+    [InlineData(5, 1.05)]
+    public void A_100_percent_owner_rate_adds_the_skill_adjusted_high_security_npc_rate(int skill, double expected) =>
+        Assert.Equal(expected, Customs.CombinedRate(Customs.Rate(0.858, skill), 1.0), 9);
+
+    [Fact]
+    public void An_npc_owned_office_outside_high_security_keeps_its_fixed_rate() =>
+        Assert.Equal(0.17, Customs.CombinedRate(Customs.Rate(0.2, 5), 0), 9);
+
+    [Fact]
+    public void A_player_owned_office_outside_high_security_has_no_npc_component() =>
+        Assert.Equal(1.0, Customs.CombinedRate(0, 1.0), 9);
 
     [Fact]
     public void The_fees_are_quantity_times_the_pad_rate_times_the_commodity_multiplier_times_the_office_rate()

@@ -11,7 +11,7 @@ import struct
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "..", "..", "oracle", "fixtures", "simlink", "messages.json")
 
-KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateState": 6, "Command": 7,
+KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateState": 6, "CriminalFlagActive": 140, "Command": 7,
          "ShipSpec": 8, "Notify": 9, "Docked": 10, "Refused": 11, "Accepted": 12, "EnterReply": 13, "Approaching": 14,
          "Jumping": 15, "Jumped": 16, "Targets": 17, "TargetRefused": 18, "Activate": 19, "Condition": 20,
          "Destroyed": 21, "Spawn": 22, "SpawnReply": 23, "Destroy": 24, "Respawn": 25, "PlaceWreck": 26, "ChargeSpent": 27,
@@ -404,6 +404,8 @@ def abyssal_point_defense(pulse):
 
 def build(m):
     k = m["kind"]
+    if k == "CriminalFlagActive":
+        return frame(k, u64(m["sessionId"]))
     if k == "EnsureAbyssalScene":
         return frame(k, u64(m["requestId"]) + abyssal_scene_spec(m["spec"]))
     if k == "EnsureAbyssalSceneObject":

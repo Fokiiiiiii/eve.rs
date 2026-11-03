@@ -103,3 +103,31 @@ The `d9fef52c` fast-forward was followed by fresh Release builds and `eve_p5` ch
 - Code commit `31dac370` was pushed to `main` after a green local build/test pass and green latest completed main CI.
 - Selected Actions run `41579007784` passed for `Eve.Host.Tests`, `Eve.Services.Crimewatch.Tests`, `Eve.Crimewatch.Tests`, `Eve.Npc.Tests`, and `Eve.Services.Space.Tests` with no failed tests or skipped jobs.
 - Push-triggered CI run `41578995207` (CI #1454) completed successfully with no failed tests or jobs, including the headless end-to-end and Windows jobs.
+
+## Security-status penalty memory correction (2026-11-03)
+
+### Finding
+
+Repeated low-sec attacks against the same pilot were only suppressed for the 60-second weapon timer. EveJS 261028.1 uses `SECURITY_STATUS_DUPLICATE_WINDOW_MS = WEAPON_TIMER_DURATION_MS` (`/home/user/evejs-261028.1/src/server/src/services/security/crimewatchState.js:68,80,1557-1587,2315-2496`) and keys the target by entity item ID plus ship/capsule. A player could wait out the weapon timer, change to another ship, and incur another penalty while the same suspect/criminal timer or limited engagement remained active.
+
+EVE University gives the ship/capsule penalty formula (`[Security status](https://wiki.eveuniversity.org/Security_status):169-183`) and says sentry guns engage on the grid while the security-loss event continues to recur after new offenses (`:196-200`). CCP's Crimewatch design explanation says the offense memory is retained while a suspect/criminal timer or any limited engagement remains and keys the victim plus ship/pod offense level ([archived CCP design discussion](https://eve-search.com/thread/160005-1/author/Gizznitt%20Malikite)). The weapon timer is therefore too short to own this memory.
+
+### Change and evidence
+
+- `SecurityStatusPenalties.OnAggressionAsync` now extends memory through the latest active criminal/suspect flag or limited engagement, and keys by target character plus ship/capsule (`dotnet/src/Eve.Services.Crimewatch/SecurityStatusPenalties.cs:49-119`). A fresh victim or offense level gets its own hit; non-attack Crimewatch actions only extend an existing memory.
+- Migration `0008` stores `(attacker_character_id,target_character_id,offense_level,expires_at_ms)`. The store serializes an attacker's reservation, expires old rows, and commits the reservation together with the status history write (`dotnet/src/Eve.Crimewatch/PgCrimewatchStore.cs:213-223,335-410`; Host callback `dotnet/src/Eve.Host/Composition/SpaceComposition.cs:455-480`). A persistence failure rolls the reservation back.
+- The V24.01 client contract remains scalar and notification-compatible: the full client reads `GetMySecurityStatus` and updates its cache from `OnSecurityStatusUpdate` (`eve/client/script/ui/services/crimewatchSvc.py:590-600`); `securityOfficeWindow.py:146-148` refreshes the visible status. Other readers and consumers remain listed above under “V24.01 client path.”
+- The CONCORD path remains the existing verified flow: `CrimewatchRuntime.RecordAggressionAsync` records criminal consequences before aggression handlers and synchronizes state in `finally` (`dotnet/src/Eve.Services.Crimewatch/CrimewatchRuntime.cs:196-256`); its response scheduling, restart resume, Host hookup, ship selection and ship loss are cited above. The crimewatch and Host wire regression classes passed in this run.
+
+### Verification for this change
+
+- Before/after: temporarily restored the former `now + 60_000` expiry. The Host sim regression failed because the second shot produced a second status-history write. Restored the Crimewatch timer expiry; the same test passed.
+- `Eve.Services.Crimewatch.Tests`: 55 passed, 0 skipped. `Eve.Crimewatch.Tests`: 60 passed, 0 skipped with `eve_p5` (the initial run without a DB URL skipped four database cases; the locked rerun included all of them). `WeaponHostTests`: 36 passed, 0 skipped. Host Crimewatch wire filter: 6 passed, 0 skipped. The focused Host sim test: 1 passed, 0 skipped.
+- Builds passed with 0 warnings/errors for `Eve.Crimewatch.Tests`, `Eve.Services.Crimewatch.Tests`, `Eve.Services.Space.Tests`, and `Eve.Host.Tests`. DB-backed tests ran against `eve_p5` via `tools/dev/db-lock.sh`.
+- The whole-client static path and EveJS implementation were compared, but no graphical V24.01 client session or EveJS process execution was performed.
+
+### Open sentry scope
+
+EVE University says any sentry gun on grid engages when a suspect/criminal act reduces security status, then stops after the pilot leaves that grid (`Security status:196-200`; [Timers](https://wiki.eveuniversity.org/Timers):190-205). V24.01 consumes `MESSAGE_SEC_STATUS_LOST_EVENT` through `behaviors/monitors/combat.py:368-406`; eve.rs queues and broadcasts the `(ownerID,shipID)` event and the Rust monitor applies the matching bubble/range checks (`crates/eve-space/src/scene/session.rs:606-727`, `brains/world.rs:164-174`, `eve-behaviors/src/monitors/combat.rs:474-512`).
+
+The normal Empire gate/station sentry population and its combat response are not complete in this checkout: the Rust sentry population found here is Pochven-only (`crates/eve-space/src/pochven_population.rs:475-498`), and `Scene::new` starts with empty NPC maps (`crates/eve-space/src/scene/mod.rs:867-917`). EveJS has Empire gate/station sentry scene entities and a native sentry policy (`/home/user/evejs-261028.1/src/server/src/space/defaultEmpireScenery.js:272-314,357-399`, `npc/npcSentryPolicy.js:75-124`). Do not treat the end-to-end standard Empire sentry flow as complete; this correction only fixes Crimewatch offense memory and its persistence.

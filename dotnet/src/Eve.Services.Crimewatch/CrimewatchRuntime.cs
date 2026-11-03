@@ -3,6 +3,7 @@ using Eve.Crimewatch;
 using Eve.Marshal;
 using Eve.Scheduler;
 using Eve.Universe;
+using Npgsql;
 
 namespace Eve.Services.Crimewatch;
 
@@ -42,8 +43,7 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
     private static string Key(long characterId) => $"crimewatch.end:{characterId}";
 
     /// <summary>
-    /// A pilot attacked the ship of another pilot: its timers run and it may be flagged; what a crime brings (<see cref="Aggressed"/>) is done, and then the clients are told the timers
-    /// (as in the reference, whose security status and kill right come before the timers).
+    /// A pilot attacked the ship of another pilot: the attacker gets weapons and PvP timers, and both pilots get PvP timers. Any crime consequences (<see cref="Aggressed"/>) run before the clients are told.
     /// </summary>
     /// <summary>Active peer-to-expiry Unix-ms values for one character.</summary>
     public Task<IReadOnlyList<SecurityStatusTransaction>> SecurityStatusTransactionsOfAsync(
@@ -229,8 +229,17 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
         await store.UpdateAsync(request.Attacker, state => (outcome = Aggression.Record(
             state, targetState, request.Where, request.SolarSystemId, request.TargetIsCapsule, policyFacts, now)).Attacker, now, cancellationToken);
         var result = new AggressionResult(request, outcome!);
+        var receiverTimerCommitted = false;
         try
         {
+            if (canPair && result.Outcome.Target is { } targetAfter)
+            {
+                await store.UpdateAsync(request.Target,
+                    state => state with { PvpUntilMs = Math.Max(state.PvpUntilMs, targetAfter.PvpUntilMs) },
+                    now,
+                    cancellationToken);
+                receiverTimerCommitted = true;
+            }
             if (startsOrRenewsEngagement)
             {
                 await RefreshLimitedEngagementAsync(request.Attacker, request.Target, now, alreadyEngaged, cancellationToken);
@@ -249,7 +258,17 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
         }
         finally
         {
-            await SyncAsync(request.Attacker, cancellationToken);
+            try
+            {
+                await SyncAsync(request.Attacker, cancellationToken);
+            }
+            finally
+            {
+                if (receiverTimerCommitted)
+                {
+                    await SyncAsync(request.Target, cancellationToken);
+                }
+            }
         }
         return result;
     }
@@ -591,6 +610,23 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
 
     /// <summary>The pilot's state at this time (what <c>GetClientStates</c> answers from).</summary>
     public Task<CombatState> StateOfAsync(long characterId, CancellationToken cancellationToken = default) => store.StateOfAsync(characterId, cancellationToken);
+
+      internal Task ExtendSecurityStatusPenaltyMemoryAsync(
+          long attackerCharacterId,
+          long expiresAtUnixMs,
+          long nowUnixMs,
+          CancellationToken cancellationToken = default) =>
+          store.ExtendSecurityStatusPenaltyMemoryAsync(attackerCharacterId, expiresAtUnixMs, nowUnixMs, cancellationToken);
+
+      internal Task<bool> TryRememberSecurityStatusPenaltyAsync(
+          long attackerCharacterId,
+          long targetCharacterId,
+          bool targetIsCapsule,
+          long expiresAtUnixMs,
+          long nowUnixMs,
+            Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task> applyPenalty,
+          CancellationToken cancellationToken = default) =>
+            store.TryRememberSecurityStatusPenaltyAsync(attackerCharacterId, targetCharacterId, targetIsCapsule, expiresAtUnixMs, nowUnixMs, applyPenalty, cancellationToken);
 
     /// <summary>Tells the pilot's client the timers that are not what it was told, tells the system the flags that changed, and waits for the next end.</summary>
     public async Task SyncAsync(long characterId, CancellationToken cancellationToken = default)

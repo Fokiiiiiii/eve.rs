@@ -288,7 +288,7 @@ internal sealed partial class CharacterServicesComposition
             spaceSessions.BuffStore = new Eve.Ships.PgShipBuffStore(source, spaceSchema);   // the buffs a restart keeps (track C8)
             ships.TransitionEventWriter = spaceSessions.Transitions.WriteEventAsync;
             spaceSessions.SafetyLevelOf = (character, token) => crimewatchStore.SafetyOfAsync(character, token);   // the ship safety the pilot has set
-            spaceSessions.Aggression = async (request, token) => await crimewatchRuntime.RecordAggressionAsync(request, token);   // what an attack makes of the attacker
+            spaceSessions.Aggression = async (request, token) => await crimewatchRuntime.RecordAggressionAsync(request, token);   // timers and flag changes for an attack
             spaceSessions.SecurityStatusOf = securityStatusOf;   // the ship in space shows it
             spaceSessions.CrimewatchStateOf = crimewatchRuntime.StateOfAsync;
             spaceSessions.RecordNpcTimerAsync = crimewatchRuntime.RecordNpcTimerAsync;
@@ -459,10 +459,8 @@ internal sealed partial class CharacterServicesComposition
                 securityStatusOf,
                 async (request, token) =>
                     (await items.GetAsync(request.TargetShipId, token))?.TypeId,
-                async (change, token) =>
+                  async (change, connection, transaction, token) =>
                 {
-                    await using var connection = await source.OpenConnectionAsync(token);
-                    await using var transaction = await connection.BeginTransactionAsync(token);
                     var attrs = new Dictionary<string, object?>
                     {
                         ["eventTypeID"] = change.EventTypeID,
@@ -477,7 +475,6 @@ internal sealed partial class CharacterServicesComposition
                         Eve.Relations.RelationKinds.SecurityStatus.Name,
                         change.CharacterId, Eve.Relations.RelationStore.World, change.NextStatus,
                         change.Reason, attrs, cancellationToken: token);
-                    await transaction.CommitAsync(token);
                 },
                 now,
                 async (character, token) => await spaceSessions.AffiliationChangedAsync(character, token)).Attach();

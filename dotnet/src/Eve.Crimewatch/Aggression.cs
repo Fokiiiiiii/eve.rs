@@ -31,14 +31,15 @@ public enum AggressionReason
     Criminal,
 }
 
-/// <summary>What <see cref="Aggression.Record"/> made of the attacker, and why.</summary>
-public sealed record AggressionOutcome(CombatState Attacker, AggressionReason Reason)
+/// <summary>What <see cref="Aggression.Record"/> made of the attacker and target, and why.</summary>
+/// <param name="Target">The attacked pilot after its PvP timer was renewed; null for remote assistance.</param>
+public sealed record AggressionOutcome(CombatState Attacker, AggressionReason Reason, CombatState? Target = null)
 {
     public bool IsCriminalOffense => Reason == AggressionReason.Criminal;
 }
 
 /// <summary>
-/// What an attack does to the attacker: weapons and PvP timers run in every system.
+/// The attacker gets weapons and PvP timers, and the target gets a PvP timer.
 /// The flag depends on security class and target state; the caller applies any
 /// security status, kill-right and CONCORD consequences.
 /// </summary>
@@ -62,19 +63,25 @@ public static class Aggression
             PvpUntilMs = Math.Max(attacker.PvpUntilMs, nowMs + CombatState.PvpDurationMs),
             SolarSystemId = solarSystemId,
         };
+        var targetTimed = target with
+        {
+            PvpUntilMs = Math.Max(target.PvpUntilMs, nowMs + CombatState.PvpDurationMs),
+        };
         facts = facts with { TargetIsCapsule = targetIsCapsule, TargetFlag = target.FlagAt(nowMs) };
         var decision = PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.Attack, where, facts, SafetyLevel.None));
         if (decision.Lawful)
         {
             return new AggressionOutcome(timed,
-                target.FlagAt(nowMs) == Flag.None ? AggressionReason.Legal : AggressionReason.TargetFlagged);
+                target.FlagAt(nowMs) == Flag.None ? AggressionReason.Legal : AggressionReason.TargetFlagged,
+                targetTimed);
         }
         if (decision.Consequence == Flag.None)
         {
-            return new AggressionOutcome(timed, AggressionReason.NoCrime);
+            return new AggressionOutcome(timed, AggressionReason.NoCrime, targetTimed);
         }
         return new AggressionOutcome(timed.Flagged(decision.Consequence, nowMs),
-            decision.Consequence == Flag.Criminal ? AggressionReason.Criminal : AggressionReason.Suspect);
+            decision.Consequence == Flag.Criminal ? AggressionReason.Criminal : AggressionReason.Suspect,
+            targetTimed);
     }
 
     public static AggressionOutcome Assist(

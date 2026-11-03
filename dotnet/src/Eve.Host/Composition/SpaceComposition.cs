@@ -288,7 +288,7 @@ internal sealed partial class CharacterServicesComposition
             spaceSessions.BuffStore = new Eve.Ships.PgShipBuffStore(source, spaceSchema);   // the buffs a restart keeps (track C8)
             ships.TransitionEventWriter = spaceSessions.Transitions.WriteEventAsync;
             spaceSessions.SafetyLevelOf = (character, token) => crimewatchStore.SafetyOfAsync(character, token);   // the ship safety the pilot has set
-            spaceSessions.Aggression = async (request, token) => await crimewatchRuntime.RecordAggressionAsync(request, token);   // what an attack makes of the attacker
+            spaceSessions.Aggression = async (request, token) => await crimewatchRuntime.RecordAggressionAsync(request, token);   // timers and flag changes for an attack
             spaceSessions.SecurityStatusOf = securityStatusOf;   // the ship in space shows it
             spaceSessions.CrimewatchStateOf = crimewatchRuntime.StateOfAsync;
               spaceSessions.PilotEnteredSystem = crimewatchRuntime.OnSystemEnteredAsync;

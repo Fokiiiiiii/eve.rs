@@ -4,9 +4,6 @@ using Npgsql;
 
 namespace Eve.AccessGroups;
 
-/// <summary>
-/// advisory lock, so the rules read the entries they change. Who may do what is <see cref="AccessRules"/>; the store only applies it.
-/// </summary>
 public sealed partial class AccessGroupStore
 {
     public const string DefaultSchema = "access_groups";
@@ -29,7 +26,7 @@ public sealed partial class AccessGroupStore
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
         Migrations.ApplyAsync(source, schema, MigrationSet(), cancellationToken);
 
-    /// <summary>The groups the character can see (managed, or the corporation's built-in list); the corporation's built-in list is created on first use.</summary>
+    /// <summary>The groups the character can see: groups they manage and their corporation's built-in group. The built-in group is created on first access.</summary>
     public Task<IReadOnlyList<GroupView>> VisibleGroupsAsync(Affiliation who, CancellationToken token = default) =>
         InTransactionAsync(0, async (connection, tx) =>
         {
@@ -202,7 +199,6 @@ public sealed partial class AccessGroupStore
             var (group, members, role) = await RequireManagerAsync(connection, tx, who, groupId, token);
             var before = members.ToList();
             var failures = new List<MemberFailure>();
-            var changed = 0;
             foreach (var memberId in memberIds.Distinct())
             {
                 var current = members.FirstOrDefault(member => member.MemberId == memberId);
@@ -216,12 +212,11 @@ public sealed partial class AccessGroupStore
                 await Execute(connection, tx, $"UPDATE {_schema}.members SET membership_type=$3 WHERE group_id=$1 AND member_id=$2", token, groupId, memberId, (int)type);
                 await LogAsync(connection, tx, groupId, who.CharacterId, AccessGroupChanges.MemberTypeChanged, memberId, (int)current.Type, (int)type, null, token);
                 members[members.IndexOf(current)] = current with { Type = type };
-                changed++;
             }
             return Changed(groupId, group, before, members, [who.CharacterId], AccessGroupChanges.MemberTypeChanged, failures);
         }, token);
 
-    /// <summary>The corporation's built-in list exists once a member of the corporation looks at its lists (the id is the corporation's).</summary>
+    /// <summary>The corporation's built-in group uses the corporation ID and is created on the first group lookup for that corporation.</summary>
     private async Task EnsureCorporationGroupAsync(NpgsqlConnection connection, NpgsqlTransaction tx, long corporationId, CancellationToken token)
     {
         if (corporationId <= 0) return;
@@ -335,7 +330,7 @@ public sealed partial class AccessGroupStore
         return Convert.ToInt64(await command.ExecuteScalarAsync(token));
     }
 
-    /// <summary>Runs one change: the group's advisory lock (when given), then the work, all in one transaction.</summary>
+    /// <summary>Serializes each group's mutations before permission checks so concurrent edits use the latest membership.</summary>
     private async Task<T> InTransactionAsync<T>(long lockGroupId, Func<NpgsqlConnection, NpgsqlTransaction, Task<T>> action, CancellationToken token)
     {
         await using var connection = await _source.OpenConnectionAsync(token);

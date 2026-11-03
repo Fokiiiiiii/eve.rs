@@ -205,6 +205,138 @@ public sealed class StructureCompositionTests : IAsyncLifetime
     }
 
     [PgFact]
+    public async Task Registered_tower_anchor_job_publishes_eligibility_event()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        var host = await BuildWithSpaceServicesAsync();
+        try
+        {
+            var events = host.Events ?? throw new InvalidOperationException("Event bus is unavailable");
+            var scheduler = host.Scheduler ?? throw new InvalidOperationException("Scheduler is unavailable");
+            var received = 0;
+            events.Subscribe("test.registered.tower", [Eve.Services.Space.SpaceContainers.ControlTowerEligibilityChangedTopic], (context, _) =>
+            {
+                var change = context.Event.Payload<Eve.Services.Space.SpaceContainers.ControlTowerEligibilityChanged>()!;
+                if (change.CorporationId == Corporation)
+                    context.AfterCommit(_ => { Interlocked.Increment(ref received); return Task.CompletedTask; });
+                return Task.CompletedTask;
+            });
+            await events.PumpAsync();
+            var due = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - 1000;
+            await using (var command = source.CreateCommand($"""
+                INSERT INTO {Schema("EVE_SPACE_SCHEMA")}.deployed(deployable_id,kind,solar_system_id,name,type_id,group_id,x,y,z,radius,corporation_id,expires_at_ms,activate_at_ms)
+                VALUES (1001,'control_tower',30000142,'Tower',12235,365,0,0,0,1,98000001,9223372036854775807,{due})
+                """))
+                await command.ExecuteNonQueryAsync();
+            await scheduler.ScheduleAsync(new Eve.Scheduler.JobSpec(Eve.Services.Space.SpaceContainers.AnchorJob, due)
+            {
+                Key = "deployable:1001",
+                Payload = new Eve.Services.Space.SpaceContainers.DisruptorAnchorDue(1001),
+            });
+            Assert.True(await WaitForAsync(async () =>
+            {
+                await events.PumpAsync();
+                return Volatile.Read(ref received) > 0;
+            }, TimeSpan.FromSeconds(10)));
+            Assert.Equal(1, Volatile.Read(ref received));
+        }
+        finally
+        {
+            await host.ShutdownAsync();
+        }
+    }
+
+    [PgFact]
+    public async Task Registered_war_declaration_refuses_ineligible_defender_without_bill_or_relation()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        var actor = await SeedManagerAsync();
+        const long target = Corporation + 1;
+        await SeedManagerAsync("Target Manager", target);
+        var session = ManagerSession(actor);
+        session.CharacterId = actor;
+        await StructureStore.MigrateAsync(source, Schema("EVE_STRUCTURES_SCHEMA"));
+        await using (var command = source.CreateCommand($"""
+            UPDATE {Schema("EVE_CORPORATIONS_SCHEMA")}.corporations SET ceo_id={actor} WHERE id={Corporation};
+            INSERT INTO {Schema("EVE_STRUCTURES_SCHEMA")}.structures(structure_id,type_id,solar_system_id,owner_corporation_id,state,destroyed_ms)
+                VALUES (1001,35832,30000142,98000001,110,0),
+                       (1002,35832,30000012,98000001,110,0),
+                       (1003,37534,30000142,98000001,110,0),
+                       (1004,35832,30000142,98000001,110,1);
+            """))
+            await command.ExecuteNonQueryAsync();
+        var host = await HostComposition.BuildAsync(Settings());
+        try
+        {
+            var directory = host.Registry.Lookup("structureDirectory") ?? throw new InvalidOperationException("structureDirectory is not registered");
+            var hqs = Assert.IsType<PyList>(await directory.CallAsync(Call(session,"GetValidWarHQs",1,new PyInt(Corporation))));
+            var hq = Assert.IsType<PyObject>(Assert.Single(hqs.Items));
+            var fields = Assert.IsType<PyDict>(hq.Args);
+            Assert.Equal(new PyInt(1001), fields.Entries.Single(entry => entry.Key == new PyStr("structureID")).Value);
+            var registry = host.Registry.Lookup("corpRegistry") ?? throw new InvalidOperationException("corpRegistry is not registered");
+            var refusal = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+                await registry.CallAsync(Call(session,"DeclareWarAgainst",2,new PyInt(target),new PyInt(StructureId))));
+            var header = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(refusal.Error.Payload).Header);
+            var args = Assert.IsType<PyTuple>(header.Items[1]);
+            Assert.Equal(new PyStr("CustomNotify"), args.Items[0]);
+            var values = Assert.IsType<PyDict>(args.Items[1]);
+            Assert.Equal(new PyStr("Both sides must be eligible for war."),
+                values.Entries.Single(entry => entry.Key == new PyStr("notify")).Value);
+            await using var bill = source.CreateCommand($"SELECT count(*) FROM {Schema("EVE_CORPORATIONS_SCHEMA")}.corporation_bills");
+            Assert.Equal(0L, (long)(await bill.ExecuteScalarAsync())!);
+            await using var relation = source.CreateCommand($"SELECT count(*) FROM {Schema("EVE_RELATIONS_SCHEMA")}.relations WHERE kind='war'");
+            Assert.Equal(0L, (long)(await relation.ExecuteScalarAsync())!);
+            await using (var makeTargetEligible = source.CreateCommand($"INSERT INTO {Schema("EVE_STRUCTURES_SCHEMA")}.structures(structure_id,type_id,solar_system_id,owner_corporation_id,state,destroyed_ms) VALUES (2001,35832,30000142,{target},110,0)"))
+                await makeTargetEligible.ExecuteNonQueryAsync();
+            Assert.IsType<PyObject>(await registry.CallAsync(Call(session,"DeclareWarAgainst",3,new PyInt(target),new PyInt(StructureId))));
+            Assert.Equal(1L, (long)(await bill.ExecuteScalarAsync())!);
+            Assert.Equal(1L, (long)(await relation.ExecuteScalarAsync())!);
+        }
+        finally
+        {
+            await host.ShutdownAsync();
+        }
+    }
+
+    [PgFact]
+    public async Task Registered_corporation_and_lookup_services_read_the_same_live_war_eligibility()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        var session = ManagerSession(await SeedManagerAsync());
+        await StructureStore.MigrateAsync(source, Schema("EVE_STRUCTURES_SCHEMA"));
+        await using (var command = source.CreateCommand($"INSERT INTO {Schema("EVE_STRUCTURES_SCHEMA")}.structures(structure_id,type_id,solar_system_id,owner_corporation_id,state,destroyed_ms) VALUES (1001,35832,30000142,98000001,110,0)"))
+            await command.ExecuteNonQueryAsync();
+        var host = await HostComposition.BuildAsync(Settings());
+        try
+        {
+            var corpMgr = host.Registry.Lookup("corpmgr") ?? throw new InvalidOperationException("corpmgr is not registered");
+            var lookup = host.Registry.Lookup("lookupSvc") ?? throw new InvalidOperationException("lookupSvc is not registered");
+            static PyValue Field(PyValue row, string name) => Assert.IsType<PyDict>(Assert.IsType<PyObject>(row).Args)
+                .Entries.Single(pair => JsSemantics.StringValue(pair.Key) == name).Value;
+            async Task AssertEligibility(bool expected)
+            {
+                var corp = await corpMgr.CallAsync(Call(session, "GetPublicInfo", 1, new PyInt(Corporation)));
+                Assert.Equal(expected ? PyBool.True : PyBool.False, Field(corp, "allowWar"));
+                var rows = Assert.IsType<PyList>(await lookup.CallAsync(Call(session, "LookupWarableCorporationsOrAlliances", 2,
+                    new PyStr("Structure Test"), PyBool.False)));
+                var row = Assert.Single(rows.Items, item => Field(item, "ownerID") is PyInt id && id.Value == Corporation);
+                Assert.Equal(new PyInt(expected ? 1 : 0), Field(row, "warPermit"));
+            }
+            await AssertEligibility(true);
+            await using (var command = source.CreateCommand($"UPDATE {Schema("EVE_STRUCTURES_SCHEMA")}.structures SET destroyed_ms=1 WHERE structure_id=1001"))
+                await command.ExecuteNonQueryAsync();
+            await AssertEligibility(false);
+        }
+        finally
+        {
+            await host.ShutdownAsync();
+        }
+    }
+
+    [PgFact]
     public async Task A_description_and_a_profile_set_through_the_composition_are_read_back_after_a_restart()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;

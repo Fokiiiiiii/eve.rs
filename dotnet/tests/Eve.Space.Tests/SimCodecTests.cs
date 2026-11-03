@@ -446,6 +446,34 @@ public class SimCodecTests
     private static SimMessage MessageOf(JsonObject c)
     {
         ulong Session() => (ulong)Wide(c, "sessionId");
+        SimMessage Metrics()
+        {
+            var request = (ulong)Wide(c, "requestId");
+            var scene = SceneKeyOf(c["scene"]!);
+            var match = Wide(c, "matchId");
+            var generation = Wide(c, "generation");
+            var start = Wide(c, "start");
+            var roster = ((JsonArray)c["roster"]!).Select(n =>
+            {
+                var a = (JsonArray)n!;
+                return new SimTournamentMetricsPilot(long.Parse((string)a[0]!), long.Parse((string)a[1]!), (byte)(int)a[2]!);
+            }).ToArray();
+            var status = (SimTournamentMetricsStatus)((int?)c["status"] ?? 0);
+            var error = (string?)c["error"] ?? "";
+            return (string)c["kind"]! switch
+            {
+                "RegisterTournamentMetrics" => new SimRegisterTournamentMetrics(request, scene, match, generation, start, roster),
+                "RegisterTournamentMetricsReply" => new SimRegisterTournamentMetricsReply(request, scene, match, generation, start, roster, status, error),
+                "ReadTournamentMetrics" => new SimReadTournamentMetrics(request, scene, match, generation, start, roster),
+                "ReadTournamentMetricsReply" => new SimReadTournamentMetricsReply(request, scene, match, generation, start, roster, status, error,
+                    status != SimTournamentMetricsStatus.Success ? null : new SimTournamentMetricsSample(Wide(c, "at"),
+                        c["applied"] is JsonArray applied ? applied.Select(n => (double)n!).ToArray() : null,
+                        roster.Select(p => new SimTournamentMetricsPilotSample(p, [], [], [], SimTournamentMetricsEhp.Unknown, null)).ToArray())),
+                "ReleaseTournamentMetrics" => new SimReleaseTournamentMetrics(request, scene, match, generation, start, roster),
+                "ReleaseTournamentMetricsReply" => new SimReleaseTournamentMetricsReply(request, scene, match, generation, start, roster, status, error),
+                _ => throw new InvalidOperationException(),
+            };
+        }
         return (string)c["kind"]! switch
         {
             "Hello" => new SimHello((ushort)(int)c["version"]!),
@@ -491,6 +519,31 @@ public class SimCodecTests
                 (ulong)Wide(c, "requestId"), SceneKeyOf(c["scene"]!), Wide(c, "shipId")),
             "RemoveAbyssalParticipantReply" => new SimRemoveAbyssalParticipantReply(
                 (ulong)Wide(c, "requestId"), (bool)c["alreadyAbsent"]!, c["error"] is null ? null : (string)c["error"]!),
+            "EnterPublicParticipant" => new SimEnterPublicParticipant((ulong)Wide(c, "requestId"), (string)c["operationId"]!, (SimEnter)MessageOf((JsonObject)c["enter"]!)),
+            "EnterPublicParticipantReply" => new SimEnterPublicParticipantReply((ulong)Wide(c, "requestId"), c["error"] is null ? null : (string)c["error"]!),
+            "RegisterTournamentMetrics" or "RegisterTournamentMetricsReply" or "ReadTournamentMetrics" or "ReadTournamentMetricsReply" or "ReleaseTournamentMetrics" or "ReleaseTournamentMetricsReply" => Metrics(),
+            "RegisterTournamentCutoff" => new SimRegisterTournamentCutoff((ulong)Wide(c,"requestId"),SceneKeyOf(c["scene"]!),Wide(c,"matchId"),Wide(c,"generation"),Wide(c,"start"),Wide(c,"deadline"),((JsonArray)c["roster"]!).Select(n => { var a = (JsonArray)n!; return new SimTournamentCutoffPilot(long.Parse((string)a[0]!), long.Parse((string)a[1]!)); }).ToArray()),
+            "RegisterTournamentCutoffReply" => new SimRegisterTournamentCutoffReply((ulong)Wide(c,"requestId"),SceneKeyOf(c["scene"]!),Wide(c,"matchId"),Wide(c,"generation"),Wide(c,"start"),Wide(c,"deadline"),(SimTournamentCutoffStatus)(int)c["status"]!,(string)c["error"]!),
+            "ReadTournamentCutoff" => new SimReadTournamentCutoff((ulong)Wide(c,"requestId"),SceneKeyOf(c["scene"]!),Wide(c,"matchId"),Wide(c,"generation"),Wide(c,"start"),Wide(c,"deadline")),
+            "ReadTournamentCutoffReply" => new SimReadTournamentCutoffReply((ulong)Wide(c,"requestId"),SceneKeyOf(c["scene"]!),Wide(c,"matchId"),Wide(c,"generation"),Wide(c,"start"),Wide(c,"deadline"),(SimTournamentCutoffStatus)(int)c["status"]!,((JsonArray)c["evidence"]!).Select(n => { var a = (JsonArray)n!; return new SimTournamentCutoffItem(long.Parse((string)a[0]!), long.Parse((string)a[1]!), (SimTournamentCutoffEvidence)(int)a[2]!); }).ToArray(),(string)c["error"]!),
+            "ReleaseTournamentCutoff" => new SimReleaseTournamentCutoff((ulong)Wide(c,"requestId"),SceneKeyOf(c["scene"]!),Wide(c,"matchId"),Wide(c,"generation"),Wide(c,"start"),Wide(c,"deadline")),
+            "ReleaseTournamentCutoffReply" => new SimReleaseTournamentCutoffReply((ulong)Wide(c,"requestId"),SceneKeyOf(c["scene"]!),Wide(c,"matchId"),Wide(c,"generation"),Wide(c,"start"),Wide(c,"deadline"),(SimTournamentCutoffStatus)(int)c["status"]!,(string)c["error"]!),
+            "QueryTournamentWreck" => new SimQueryTournamentWreck((ulong)Wide(c, "requestId"), SceneKeyOf(c["scene"]!), Wide(c, "itemId")),
+            "QueryTournamentWreckReply" => new SimQueryTournamentWreckReply((ulong)Wide(c, "requestId"), SceneKeyOf(c["scene"]!), Wide(c, "itemId"), (bool)c["present"]!, c["error"] is null ? null : (string)c["error"]!),
+            "RemoveTournamentWreck" => new SimRemoveTournamentWreck((ulong)Wide(c, "requestId"), SceneKeyOf(c["scene"]!), Wide(c, "itemId"), Wide(c, "ownerId"), Wide(c, "launcherId"), (int)c["typeId"]!, VectorOf(c["center"]!), (double)c["radius"]!),
+            "RemoveTournamentWreckReply" => new SimRemoveTournamentWreckReply((ulong)Wide(c, "requestId"), SceneKeyOf(c["scene"]!), Wide(c, "itemId"), (bool)c["present"]!, c["error"] is null ? null : (string)c["error"]!),
+            "MovePublicParticipant" => new SimMovePublicParticipant((ulong)Wide(c, "requestId"), (string)c["operationId"]!, (ulong)Wide(c, "sessionId"), Wide(c, "shipId"), SceneKeyOf(c["source"]!), SceneKeyOf(c["destination"]!), (bool)c["useAnchor"]!, (bool)c["useAnchor"]! ? [] : VectorOf(c["position"]!), (bool)c["useAnchor"]! ? [] : VectorOf(c["direction"]!)),
+            "MovePublicParticipantReply" => new SimMovePublicParticipantReply((ulong)Wide(c, "requestId"), c["error"] is null ? null : (string)c["error"]!),
+            "EnsureTournamentBeacon" => new SimEnsureTournamentBeacon((ulong)Wide(c, "requestId"), SceneKeyOf(c["scene"]!), Wide(c, "itemId"),
+                (int)c["typeId"]!, (int)c["groupId"]!, (int)c["categoryId"]!, Wide(c, "ownerId"), (int)c["graphicId"]!, (string)c["nameValue"]!, VectorOf(c["position"]!), (double)c["radius"]!),
+            "EnsureTournamentBeaconReply" => new SimEnsureTournamentBeaconReply((ulong)Wide(c, "requestId"), c["error"] is null ? null : (string)c["error"]!),
+            "RemoveTournamentBeacon" => new SimRemoveTournamentBeacon((ulong)Wide(c, "requestId"), SceneKeyOf(c["scene"]!), Wide(c, "itemId")),
+            "RemoveTournamentBeaconReply" => new SimRemoveTournamentBeaconReply((ulong)Wide(c, "requestId"), c["error"] is null ? null : (string)c["error"]!),
+            "GetSceneBody" => new SimGetSceneBody((ulong)Wide(c, "requestId"), SceneKeyOf(c["scene"]!), Wide(c, "itemId")),
+            "GetSceneBodyReply" => c["error"] is { } bodyError
+                ? new SimGetSceneBodyReply((ulong)Wide(c, "requestId"), SceneKeyOf(c["scene"]!), Wide(c, "itemId"), 0, 0, 0, [], bodyError.GetValue<string>())
+                : new SimGetSceneBodyReply((ulong)Wide(c, "requestId"), SceneKeyOf(c["scene"]!), Wide(c, "itemId"),
+                    (int)c["typeId"]!, (int)c["groupId"]!, (int)c["categoryId"]!, VectorOf(c["position"]!), null),
             "GetAbyssalParticipantPose" => new SimGetAbyssalParticipantPose(
                 (ulong)Wide(c, "requestId"), SceneKeyOf(c["scene"]!), Wide(c, "shipId")),
             "GetAbyssalParticipantPoseReply" => c["error"] is { } poseError
@@ -654,7 +707,7 @@ public class SimCodecTests
     public void The_fixtures_cover_every_message_kind()
     {
         var kinds = ((JsonArray)Fixtures["valid"]!).Select(c => (string)c!["kind"]!).Distinct().Order().ToArray();
-        Assert.Equal(["AbyssalFieldMembership", "Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "BuffState", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "ControlStructure", "DamageableEntityRemoved", "DamageableEntityUpserted", "Deployed", "Destroy", "Destroyed", "DirectionalTargets", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "EcmBurst", "EnsureAbyssalEnvironmentObject", "EnsureAbyssalEnvironmentObjectReply", "EnsureAbyssalLootContainer", "EnsureAbyssalLootContainerReply", "EnsureAbyssalRewardCache", "EnsureAbyssalRewardCacheReply", "EnsureAbyssalScene", "EnsureAbyssalSceneObject", "EnsureAbyssalSceneObjectReply", "EnsureAbyssalSceneReply", "EnsureAbyssalTracePublished", "EnsureAbyssalTracePublishedReply", "Enter", "EnterReply", "FighterGotoPoint", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "FighterSize", "GetAbyssalParticipantPose", "GetAbyssalParticipantPoseReply", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "MoveAbyssalParticipant", "MoveAbyssalParticipantReply", "Notify", "PlaceAccelerationGate", "PlaceAnalysisBeacon", "PlaceBattlefieldScoreboard", "PlaceCapturePoint", "PlaceContainer", "PlaceControlTower", "PlaceCynoBeacon", "PlaceDeadspacePocket", "PlaceDisruptor", "PlaceInhibitor", "PlaceObservatory", "PlaceProbe", "PlaceStructure", "PlaceWormhole", "PlaceWreck", "RebindAbyssalSession", "RebindAbyssalSessionReply", "RefreshAbyssalNpc", "RefreshAbyssalNpcReply", "Refused", "RemoteDecloakPing", "RemoveAbyssalParticipant", "RemoveAbyssalParticipantReply", "RemoveAbyssalScene", "RemoveAbyssalSceneReply", "RemoveAbyssalTrace", "RemoveAbyssalTraceReply", "RemoveCynoBeacon", "RemoveDeployed", "RemoveProbe", "RemoveStructure", "RemoveWormhole", "RemoveWreck", "Respawn", "ScanTargets", "ServiceNotify", "SetAnalysisBeaconState", "SetDisruptorActive", "SetSlimField", "SetStructureState", "ShipSpec", "Spawn", "SpawnReply", "StructureDamageCandidatesRequest", "StructureDamageCandidatesResult", "StructureDamaged", "TargetRefused", "Targets", "TetherChanged", "TetherPolicy", "UpdateEffect", "UpdateState"], kinds);
+        Assert.Equal(["AbyssalFieldMembership", "Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "BuffState", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "ControlStructure", "DamageableEntityRemoved", "DamageableEntityUpserted", "Deployed", "Destroy", "Destroyed", "DirectionalTargets", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "EcmBurst", "EnsureAbyssalEnvironmentObject", "EnsureAbyssalEnvironmentObjectReply", "EnsureAbyssalLootContainer", "EnsureAbyssalLootContainerReply", "EnsureAbyssalRewardCache", "EnsureAbyssalRewardCacheReply", "EnsureAbyssalScene", "EnsureAbyssalSceneObject", "EnsureAbyssalSceneObjectReply", "EnsureAbyssalSceneReply", "EnsureAbyssalTracePublished", "EnsureAbyssalTracePublishedReply", "EnsureTournamentBeacon", "EnsureTournamentBeaconReply", "Enter", "EnterPublicParticipant", "EnterPublicParticipantReply", "EnterReply", "FighterGotoPoint", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "FighterSize", "GetAbyssalParticipantPose", "GetAbyssalParticipantPoseReply", "GetSceneBody", "GetSceneBodyReply", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "MoveAbyssalParticipant", "MoveAbyssalParticipantReply", "MovePublicParticipant", "MovePublicParticipantReply", "Notify", "PlaceAccelerationGate", "PlaceAnalysisBeacon", "PlaceBattlefieldScoreboard", "PlaceCapturePoint", "PlaceContainer", "PlaceControlTower", "PlaceCynoBeacon", "PlaceDeadspacePocket", "PlaceDisruptor", "PlaceInhibitor", "PlaceObservatory", "PlaceProbe", "PlaceStructure", "PlaceWormhole", "PlaceWreck", "QueryTournamentWreck", "QueryTournamentWreckReply", "ReadTournamentCutoff", "ReadTournamentCutoffReply", "ReadTournamentMetrics", "ReadTournamentMetricsReply", "RebindAbyssalSession", "RebindAbyssalSessionReply", "RefreshAbyssalNpc", "RefreshAbyssalNpcReply", "Refused", "RegisterTournamentCutoff", "RegisterTournamentCutoffReply", "RegisterTournamentMetrics", "RegisterTournamentMetricsReply", "ReleaseTournamentCutoff", "ReleaseTournamentCutoffReply", "ReleaseTournamentMetrics", "ReleaseTournamentMetricsReply", "RemoteDecloakPing", "RemoveAbyssalParticipant", "RemoveAbyssalParticipantReply", "RemoveAbyssalScene", "RemoveAbyssalSceneReply", "RemoveAbyssalTrace", "RemoveAbyssalTraceReply", "RemoveCynoBeacon", "RemoveDeployed", "RemoveProbe", "RemoveStructure", "RemoveTournamentBeacon", "RemoveTournamentBeaconReply", "RemoveTournamentWreck", "RemoveTournamentWreckReply", "RemoveWormhole", "RemoveWreck", "Respawn", "ScanTargets", "ServiceNotify", "SetAnalysisBeaconState", "SetDisruptorActive", "SetSlimField", "SetStructureState", "ShipSpec", "Spawn", "SpawnReply", "StructureDamageCandidatesRequest", "StructureDamageCandidatesResult", "StructureDamaged", "TargetRefused", "Targets", "TetherChanged", "TetherPolicy", "UpdateEffect", "UpdateState"], kinds);
         Assert.True(((JsonArray)Fixtures["invalid"]!).Count >= 10);    }
 
     [Theory]
@@ -701,6 +754,18 @@ public class SimCodecTests
         Assert.Equal(SimLinkError.BadValue, error.Error);
     }
 
+    [Fact]
+    public void Scene_body_frames_match_shared_fixtures()
+    {
+        foreach (var name in new[] { "read public scene body", "public scene body present", "public scene body absent", "ensure tournament beacon", "tournament beacon ensured", "remove tournament beacon", "tournament beacon removed" })
+        {
+            var c = Case("valid", name);
+            var frame = Hex((string)c["hex"]!);
+            Assert.Equal(Convert.ToHexString(frame), Convert.ToHexString(SimCodec.Encode(MessageOf(c))));
+            Assert.Equal(Convert.ToHexString(frame), Convert.ToHexString(SimCodec.Encode(SimCodec.Decode(frame.AsMemory(4)))));
+        }
+    }
+
     [Theory]
     [MemberData(nameof(Valid))]
     public void A_valid_frame_encodes_to_its_bytes_and_decodes_back(string name)
@@ -717,6 +782,16 @@ public class SimCodecTests
         Assert.Equal(Convert.ToHexString(expected), Convert.ToHexString(SimCodec.Encode(decoded)));
     }
 
+
+    [Fact]
+    public void Public_move_encoder_requires_guid_d_form()
+    {
+        var move = Assert.IsType<SimMovePublicParticipant>(MessageOf(Case("valid", "move public pilot to explicit pose")));
+        foreach (var invalid in new[] { "not-a-guid", "0123456789abcdef0123456789abcdef", "{01234567-89ab-cdef-0123-456789abcdef}", " 01234567-89ab-cdef-0123-456789abcdef" })
+            Assert.Throws<ArgumentException>(() => SimCodec.Encode(move with { OperationId = invalid }));
+        Assert.NotEmpty(SimCodec.Encode(move with { OperationId = "01234567-89AB-CDEF-0123-456789ABCDEF" }));
+        Assert.NotEmpty(SimCodec.Encode(move with { OperationId = "00000000-0000-0000-0000-000000000000" }));
+    }
 
     [Fact]
     public void A_position_query_reply_roundtrips_through_the_sim_codec()

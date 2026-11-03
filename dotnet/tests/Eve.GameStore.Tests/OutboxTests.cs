@@ -10,6 +10,38 @@ public class OutboxTests
         await pg.Store.AcquireOwnerAsync("world", instance, new AcquireOptions(LeaseMs: 600_000));
 
     [PgFact]
+    public async Task Transaction_observer_rolls_back_on_failure_and_runs_once_in_all_journal_apply_paths()
+    {
+        await using var pg = await PgScope.CreateAsync();
+        var fence = await World(pg);
+        await pg.ExecuteAsync($"CREATE TABLE {pg.Q("observer_effects")} (operation_id bigint NOT NULL)");
+        var fail = true;
+        pg.Store.BeforeApplyOperationAsync = async (connection, transaction, operation, cancellation) =>
+        {
+            await using var command = new Npgsql.NpgsqlCommand(
+                $"INSERT INTO {pg.Q("observer_effects")} (operation_id) VALUES ($1)", connection, transaction);
+            command.Parameters.AddWithValue(operation.OperationId);
+            await command.ExecuteNonQueryAsync(cancellation);
+            if (fail) throw new InvalidOperationException("observer failed");
+        };
+        var first = await pg.Store.EnqueueAsync("items", [Up("1", "1")], [], fence);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => pg.Store.ReconcileOperationAsync(first.OperationId, "items", fence));
+        Assert.Equal(0L, await pg.ScalarAsync<long>($"SELECT count(*) FROM {pg.Q("observer_effects")}"));
+        Assert.Equal(0, await pg.Store.RowCountAsync("items"));
+        Assert.Equal(OperationState.Pending, Assert.Single(await pg.Store.ListOperationsAsync(fence)).State);
+        fail = false;
+        await pg.Store.ReconcileOperationAsync(first.OperationId, "items", fence);
+        var second = await pg.Store.EnqueueAsync("skills", [Up("1", "1")], [], fence);
+        await pg.Store.ApplyOperationAsync(second.OperationId, "skills", fence);
+        await pg.Store.ApplyOperationAsync(second.OperationId, "skills", fence);
+        var third = await pg.Store.EnqueueAsync("characters", [Up("1", "1")], [], fence);
+        await pg.Store.RecoverOperationsAsync(fence);
+        await pg.Store.RecoverOperationsAsync(fence);
+        Assert.Equal(3L, await pg.ScalarAsync<long>($"SELECT count(*) FROM {pg.Q("observer_effects")}"));
+        Assert.Equal(1L, await pg.ScalarAsync<long>($"SELECT count(*) FROM {pg.Q("observer_effects")} WHERE operation_id = {third.OperationId}"));
+    }
+
+    [PgFact]
     public async Task A_batch_is_journaled_then_applied_then_acknowledged()
     {
         await using var pg = await PgScope.CreateAsync();

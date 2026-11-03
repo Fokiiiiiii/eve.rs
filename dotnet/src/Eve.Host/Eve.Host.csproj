@@ -15,6 +15,10 @@
   <ItemGroup>
     <EmbeddedResource Include="Migrations/*.sql" />
     <EmbeddedResource Include="SkinrMigrations/*.sql" />
+    <EmbeddedResource Include="Assets/ProjectDiscovery/*.gz;Assets/ProjectDiscovery/*.json" />
+    <EmbeddedResource Include="Assets/ProjectDiscovery/*.png">
+      <LogicalName>Eve.Host.Assets.ProjectDiscovery.%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../Eve.GameStore/Eve.GameStore.csproj" />

@@ -93,6 +93,85 @@ public sealed class StructureNotificationsTests
     }
 
     [PgFact]
+    public async Task War_eligibility_recipients_include_old_and_current_alliance_members()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(
+            Environment.GetEnvironmentVariable("EVE_PG_URL") ?? throw new InvalidOperationException("EVE_PG_URL is required")));
+        var schema = "wn_corp_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            await Eve.Corporations.CorporationStore.MigrateAsync(source, schema);
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var command = new NpgsqlCommand($"""
+                INSERT INTO {schema}.owner_names(owner_id,name_key,ticker_key)
+                    VALUES (100,'c100','t100'),(101,'c101','t101'),(102,'c102','t102'),(500,'a500','a500'),(600,'a600','a600');
+                INSERT INTO {schema}.corporations(id,name,ticker,ceo_id,creator_id,alliance_id,station_id,solar_system_id,tax_rate,lp_tax_rate,description,url,member_limit,created_ms)
+                    VALUES (100,'c100','t100',1,1,600,1,1,0,0,'','',10,0),
+                           (101,'c101','t101',1,1,500,1,1,0,0,'','',10,0),
+                           (102,'c102','t102',1,1,600,1,1,0,0,'','',10,0);
+                INSERT INTO {schema}.alliances(id,name,short_name,description,url,executor_corporation_id,creator_corporation_id,creator_character_id,created_ms,founding_key)
+                    VALUES (500,'a500','a500','','',101,101,1,0,'a500'),(600,'a600','a600','','',100,100,1,0,'a600');
+                INSERT INTO {schema}.alliance_members(alliance_id,corporation_id,started_ms,chosen_executor_id)
+                    VALUES (500,101,0,101),(600,100,0,100),(600,102,0,100);
+                """, connection))
+                await command.ExecuteNonQueryAsync();
+            var store = new Eve.Corporations.CorporationStore(source, null!, null!, null!, null!, () => 0, schema);
+            var recipients = await CharacterServicesComposition.AffectedWarCorporationsAsync(store,100,500,CancellationToken.None);
+            Assert.Equal(new long[] {100,101,102}, recipients.Order());
+            var sessions = new CharacterSessions();
+            var sinks = new[] { new Sink(), new Sink(), new Sink(), new Sink() };
+            for (var i = 0; i < sinks.Length; i++)
+            {
+                var session = new ClientSession(sinks[i]) { SessionId = i + 1, CharacterId = i + 1 };
+                session.Set("corpid", new PyLong(100 + i));
+                sessions.Enter(i + 1, session);
+            }
+            var values = recipients.ToDictionary(id => id, _ => true);
+            CharacterServicesComposition.PrepareWarEligibilitySends(sessions, recipients, values)();
+            for (var i = 0; i < 3; i++)
+                Assert.Equal("OnAllowWarUpdated", Assert.Single(ClientNotices(sinks[i])).Name);
+            Assert.Empty(ClientNotices(sinks[3]));
+        }
+        finally
+        {
+            await using var connection = await source.OpenConnectionAsync();
+            await using var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE", connection);
+            await command.ExecuteNonQueryAsync();
+        }
+    }
+
+    [Fact]
+    public void War_eligibility_notice_targets_each_affected_corporation_and_carries_its_current_value()
+    {
+        var sessions = new CharacterSessions();
+        var first = new Sink();
+        var second = new Sink();
+        var outsider = new Sink();
+        var a = new ClientSession(first) { SessionId = 1, CharacterId = 1 };
+        var b = new ClientSession(second) { SessionId = 2, CharacterId = 2 };
+        var c = new ClientSession(outsider) { SessionId = 3, CharacterId = 3 };
+        a.Set("corpid", new PyLong(Corporation));
+        b.Set("corpid", new PyLong(OtherCorporation));
+        c.Set("corpid", new PyLong(OtherCorporation + 1));
+        sessions.Enter(1, a);
+        sessions.Enter(2, b);
+        sessions.Enter(3, c);
+        var send = CharacterServicesComposition.PrepareWarEligibilitySends(sessions,
+            [Corporation, OtherCorporation, Corporation], new Dictionary<long,bool>
+            { [Corporation] = true, [OtherCorporation] = false });
+        Assert.Empty(first.Sent);
+        send();
+        var firstNotice = Assert.Single(ClientNotices(first));
+        Assert.Equal("OnAllowWarUpdated", firstNotice.Name);
+        Assert.Equal("clientID", firstNotice.IdType);
+        Assert.Equal(new PyTuple([new PyLong(Corporation), PyBool.True]), firstNotice.Args);
+        var secondNotice = Assert.Single(ClientNotices(second));
+        Assert.Equal("OnAllowWarUpdated", secondNotice.Name);
+        Assert.Equal(new PyTuple([new PyLong(OtherCorporation), PyBool.False]), secondNotice.Args);
+        Assert.Empty(ClientNotices(outsider));
+    }
+
+    [PgFact]
     public async Task The_owner_and_docked_pilots_receive_persisted_hangar_view_updates_in_order_and_unrelated_sessions_hear_nothing()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL") ?? throw new InvalidOperationException("EVE_PG_URL is not set");

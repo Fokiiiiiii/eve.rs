@@ -53,8 +53,11 @@ public sealed partial class SpaceSessions
         return new ModuleRepairStart(started, missing, failed);
     }
 
-    public Task<ModuleRepairRecord?> EndRepairAsync(ClientSession session, long moduleId, CancellationToken cancellationToken) =>
-        Task.FromResult(_pilots.TryGetValue((ulong)session.SessionId, out var pilot) && pilot.Repairs.TryRemove(moduleId, out var record) ? record : null);
+    public Task<ModuleRepairRecord?> EndRepairAsync(ClientSession session, long moduleId, CancellationToken cancellationToken)
+    {
+        RequirePublicMoveSettled(session);
+        return Task.FromResult(_pilots.TryGetValue((ulong)session.SessionId, out var pilot) && pilot.Repairs.TryRemove(moduleId, out var record) ? record : null);
+    }
 
     /// <summary>
     /// The pilot leaves the ship (a jump, a dock, a board, an eject or a log off): the repairs under way end with what they mended by now, and the paste for it

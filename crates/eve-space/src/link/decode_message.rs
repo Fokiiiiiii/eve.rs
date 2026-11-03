@@ -399,6 +399,9 @@ impl Message {
     /// Reads a frame's payload.
     pub fn decode(payload: &[u8]) -> Result<Message, DecodeError> {
         let (&kind, body) = payload.split_first().ok_or(DecodeError::Empty)?;
+        if (148..=153).contains(&kind) && payload.len() > (1 << 20) {
+            return Err(DecodeError::BadValue("metrics frame length"));
+        }
         let mut r = Reader { data: body };
         let message = match kind {
             kind::HELLO => Message::Hello { version: r.u16()? },
@@ -426,6 +429,189 @@ impl Message {
             kind::ENSURE_ABYSSAL_SCENE_OBJECT_REPLY => {
                 let (request_id, outcome) = read_abyssal_result(&mut r)?;
                 Message::EnsureAbyssalSceneObjectReply { request_id, outcome }
+            }
+            kind::ENTER_PUBLIC_PARTICIPANT => {
+                let request_id = r.u64()?;
+                let operation_id = r.text()?;
+                let frame = r.bytes()?;
+                if request_id == 0
+                    || !valid_public_move_id(&operation_id)
+                    || frame.len() < 5
+                    || frame[4] != kind::ENTER
+                    || u32::from_le_bytes(frame[0..4].try_into().unwrap()) as usize != frame.len() - 4
+                {
+                    return Err(DecodeError::BadValue("public enter frame"));
+                }
+                let Message::Enter(enter) = Message::decode(&frame[4..])? else {
+                    return Err(DecodeError::BadValue("public enter kind"));
+                };
+                if enter.session_id == 0
+                    || enter.ship.ship_id <= 0
+                    || !enter.scene.is_valid()
+                    || enter.scene.instance_id != 0
+                    || !matches!(enter.how, How::Anchor | How::InSpace)
+                {
+                    return Err(DecodeError::BadValue("public enter"));
+                }
+                Message::EnterPublicParticipant { request_id, operation_id, enter }
+            }
+            kind::REGISTER_TOURNAMENT_METRICS => {
+                Message::RegisterTournamentMetrics { identity: tournament_metrics::read_identity(&mut r)? }
+            }
+            kind::READ_TOURNAMENT_METRICS => {
+                Message::ReadTournamentMetrics { identity: tournament_metrics::read_identity(&mut r)? }
+            }
+            kind::READ_TOURNAMENT_METRICS_V2 => {
+                Message::ReadTournamentMetricsV2 { identity: tournament_metrics::read_identity(&mut r)? }
+            }
+            kind::RELEASE_TOURNAMENT_METRICS => {
+                Message::ReleaseTournamentMetrics { identity: tournament_metrics::read_identity(&mut r)? }
+            }
+            kind::REGISTER_TOURNAMENT_METRICS_REPLY | kind::RELEASE_TOURNAMENT_METRICS_REPLY => {
+                let identity = tournament_metrics::read_identity(&mut r)?;
+                let status = r.u8()?;
+                let error = r.text()?;
+                if !tournament_metrics::valid_status(status, &error) {
+                    return Err(DecodeError::BadValue("metrics status"));
+                }
+                if kind == kind::REGISTER_TOURNAMENT_METRICS_REPLY {
+                    Message::RegisterTournamentMetricsReply { identity, status, error }
+                } else {
+                    Message::ReleaseTournamentMetricsReply { identity, status, error }
+                }
+            }
+            kind::READ_TOURNAMENT_METRICS_REPLY | kind::READ_TOURNAMENT_METRICS_V2_REPLY => {
+                let identity = tournament_metrics::read_identity(&mut r)?;
+                let status = r.u8()?;
+                let error = r.text()?;
+                if !tournament_metrics::valid_status(status, &error) {
+                    return Err(DecodeError::BadValue("metrics status"));
+                }
+                let sample = if status == 0 {
+                    Some(tournament_metrics::read_sample(
+                        &mut r,
+                        &identity,
+                        kind == kind::READ_TOURNAMENT_METRICS_V2_REPLY,
+                    )?)
+                } else {
+                    None
+                };
+                if kind == kind::READ_TOURNAMENT_METRICS_V2_REPLY {
+                    Message::ReadTournamentMetricsV2Reply { identity, status, error, sample }
+                } else {
+                    Message::ReadTournamentMetricsReply { identity, status, error, sample }
+                }
+            }
+            kind::RELEASE_TOURNAMENT_CUTOFF => {
+                Message::ReleaseTournamentCutoff { identity: tournament_cutoff::read_identity(&mut r)? }
+            }
+            kind::RELEASE_TOURNAMENT_CUTOFF_REPLY => {
+                let identity = tournament_cutoff::read_identity(&mut r)?;
+                let status = r.u8()?;
+                let error = r.text()?;
+                if (status != 0 && status != 3) || !tournament_cutoff::valid_status(status, &error) {
+                    return Err(DecodeError::BadValue("tournament release status"));
+                }
+                Message::ReleaseTournamentCutoffReply { identity, status, error }
+            }
+            kind::REGISTER_TOURNAMENT_CUTOFF => {
+                let identity = tournament_cutoff::read_identity(&mut r)?;
+                let count = r.u16()? as usize;
+                if count == 0 || count > tournament_cutoff::MAX_ROSTER {
+                    return Err(DecodeError::BadValue("tournament roster"));
+                }
+                let mut roster = Vec::with_capacity(count);
+                for _ in 0..count {
+                    roster.push((r.i64()?, r.i64()?));
+                }
+                if !tournament_cutoff::valid_roster(&roster) {
+                    return Err(DecodeError::BadValue("tournament roster"));
+                }
+                Message::RegisterTournamentCutoff { identity, roster }
+            }
+            kind::REGISTER_TOURNAMENT_CUTOFF_REPLY => {
+                let identity = tournament_cutoff::read_identity(&mut r)?;
+                let status = r.u8()?;
+                let error = r.text()?;
+                if !tournament_cutoff::valid_status(status, &error) {
+                    return Err(DecodeError::BadValue("tournament status"));
+                }
+                Message::RegisterTournamentCutoffReply { identity, status, error }
+            }
+            kind::READ_TOURNAMENT_CUTOFF => {
+                Message::ReadTournamentCutoff { identity: tournament_cutoff::read_identity(&mut r)? }
+            }
+            kind::READ_TOURNAMENT_CUTOFF_REPLY => {
+                let identity = tournament_cutoff::read_identity(&mut r)?;
+                let status = r.u8()?;
+                let count = r.u16()? as usize;
+                if count > tournament_cutoff::MAX_ROSTER {
+                    return Err(DecodeError::BadValue("tournament evidence"));
+                }
+                let mut evidence = Vec::with_capacity(count);
+                for _ in 0..count {
+                    evidence.push((r.i64()?, r.i64()?, r.u8()?));
+                }
+                let error = r.text()?;
+                let roster: Vec<_> =
+                    evidence.iter().map(|(character, ship, _)| (*character, *ship)).collect();
+                if !tournament_cutoff::valid_status(status, &error)
+                    || if status == 1 {
+                        !tournament_cutoff::valid_roster(&roster)
+                            || evidence.iter().any(|(_, _, value)| *value > 2)
+                    } else {
+                        !evidence.is_empty()
+                    }
+                {
+                    return Err(DecodeError::BadValue("tournament evidence"));
+                }
+                Message::ReadTournamentCutoffReply { identity, status, evidence, error }
+            }
+            kind::ENTER_PUBLIC_PARTICIPANT_REPLY => {
+                let (request_id, outcome) = read_abyssal_result(&mut r)?;
+                Message::EnterPublicParticipantReply { request_id, outcome }
+            }
+            kind::MOVE_PUBLIC_PARTICIPANT => {
+                let request_id = r.u64()?;
+                let operation_id = r.text()?;
+                let session_id = r.u64()?;
+                let ship_id = r.i64()?;
+                let source = read_scene_key(&mut r)?;
+                let destination = read_scene_key(&mut r)?;
+                let use_anchor = read_flag(&mut r, "public move anchor")?;
+                let (position, direction) = if use_anchor {
+                    ([0.0; 3], [0.0; 3])
+                } else {
+                    ([r.f64()?, r.f64()?, r.f64()?], [r.f64()?, r.f64()?, r.f64()?])
+                };
+                if request_id == 0
+                    || !valid_public_move_id(&operation_id)
+                    || session_id == 0
+                    || ship_id <= 0
+                    || !source.is_valid()
+                    || !destination.is_valid()
+                    || source.instance_id != 0
+                    || destination.instance_id != 0
+                    || position.iter().chain(&direction).any(|value| !value.is_finite())
+                    || (!use_anchor && direction.iter().all(|value| *value == 0.0))
+                {
+                    return Err(DecodeError::BadValue("public move"));
+                }
+                Message::MovePublicParticipant {
+                    request_id,
+                    operation_id,
+                    session_id,
+                    ship_id,
+                    source,
+                    destination,
+                    use_anchor,
+                    position,
+                    direction,
+                }
+            }
+            kind::MOVE_PUBLIC_PARTICIPANT_REPLY => {
+                let (request_id, outcome) = read_abyssal_result(&mut r)?;
+                Message::MovePublicParticipantReply { request_id, outcome }
             }
             kind::MOVE_ABYSSAL_PARTICIPANT => {
                 let request_id = r.u64()?;
@@ -646,6 +832,182 @@ impl Message {
                     already_absent,
                     error: (!error_text.is_empty()).then_some(error_text),
                 }
+            }
+            kind::ENSURE_TOURNAMENT_BEACON => {
+                let request_id = r.u64()?;
+                let scene = read_scene_key(&mut r)?;
+                let item_id = r.i64()?;
+                let type_id = r.i32()?;
+                let group_id = r.i32()?;
+                let category_id = r.i32()?;
+                let owner_id = r.i64()?;
+                let graphic_id = r.i32()?;
+                let name = r.text()?;
+                let position = [r.f64()?, r.f64()?, r.f64()?];
+                let radius = r.f64()?;
+                if request_id == 0
+                    || !scene.is_valid()
+                    || scene.instance_id != 0
+                    || item_id <= 0
+                    || type_id <= 0
+                    || group_id <= 0
+                    || category_id <= 0
+                    || owner_id <= 0
+                    || graphic_id <= 0
+                    || name.is_empty()
+                    || !position.iter().all(|v| v.is_finite())
+                    || !radius.is_finite()
+                    || radius <= 0.0
+                    || !(radius as f32).is_finite()
+                    || radius as f32 == 0.0
+                {
+                    return Err(DecodeError::BadValue("tournament beacon"));
+                }
+                Message::EnsureTournamentBeacon {
+                    request_id,
+                    scene,
+                    item_id,
+                    type_id,
+                    group_id,
+                    category_id,
+                    owner_id,
+                    graphic_id,
+                    name,
+                    position,
+                    radius,
+                }
+            }
+            kind::REMOVE_TOURNAMENT_BEACON => {
+                let request_id = r.u64()?;
+                let scene = read_scene_key(&mut r)?;
+                let item_id = r.i64()?;
+                if request_id == 0 || !scene.is_valid() || scene.instance_id != 0 || item_id <= 0 {
+                    return Err(DecodeError::BadValue("tournament beacon removal"));
+                }
+                Message::RemoveTournamentBeacon { request_id, scene, item_id }
+            }
+            kind::ENSURE_TOURNAMENT_BEACON_REPLY | kind::REMOVE_TOURNAMENT_BEACON_REPLY => {
+                let request_id = r.u64()?;
+                let status = r.u8()?;
+                let reason = r.text()?;
+                if request_id == 0
+                    || status > 1
+                    || (status == 0 && !reason.is_empty())
+                    || (status == 1 && reason.is_empty())
+                {
+                    return Err(DecodeError::BadValue("tournament beacon result"));
+                }
+                let outcome = if status == 0 { Ok(()) } else { Err(reason) };
+                if kind == kind::ENSURE_TOURNAMENT_BEACON_REPLY {
+                    Message::EnsureTournamentBeaconReply { request_id, outcome }
+                } else {
+                    Message::RemoveTournamentBeaconReply { request_id, outcome }
+                }
+            }
+            kind::QUERY_TOURNAMENT_WRECK | kind::REMOVE_TOURNAMENT_WRECK => {
+                let request_id = r.u64()?;
+                let scene = read_scene_key(&mut r)?;
+                let item_id = r.i64()?;
+                if request_id == 0 || !scene.is_valid() || scene.instance_id != 0 || item_id <= 0 {
+                    return Err(DecodeError::BadValue("tournament wreck request"));
+                }
+                if kind == kind::QUERY_TOURNAMENT_WRECK {
+                    Message::QueryTournamentWreck { request_id, scene, item_id }
+                } else {
+                    let owner_id = r.i64()?;
+                    let launcher_id = r.i64()?;
+                    let type_id = r.i32()?;
+                    let center = [r.f64()?, r.f64()?, r.f64()?];
+                    let radius = r.f64()?;
+                    if owner_id <= 0
+                        || launcher_id <= 0
+                        || type_id <= 0
+                        || !radius.is_finite()
+                        || radius <= 0.0
+                        || center.iter().any(|v| !v.is_finite())
+                    {
+                        return Err(DecodeError::BadValue("tournament wreck guard"));
+                    }
+                    Message::RemoveTournamentWreck {
+                        request_id,
+                        scene,
+                        item_id,
+                        owner_id,
+                        launcher_id,
+                        type_id,
+                        center,
+                        radius,
+                    }
+                }
+            }
+            kind::QUERY_TOURNAMENT_WRECK_REPLY | kind::REMOVE_TOURNAMENT_WRECK_REPLY => {
+                let request_id = r.u64()?;
+                let scene = read_scene_key(&mut r)?;
+                let item_id = r.i64()?;
+                if request_id == 0 || !scene.is_valid() || scene.instance_id != 0 || item_id <= 0 {
+                    return Err(DecodeError::BadValue("tournament wreck reply"));
+                }
+                let status = r.u8()?;
+                let present = match status {
+                    0 => false,
+                    1 => true,
+                    2 => false,
+                    _ => return Err(DecodeError::BadValue("tournament wreck status")),
+                };
+                let error = r.text()?;
+                if (status == 2 && error.is_empty()) || (status != 2 && !error.is_empty()) {
+                    return Err(DecodeError::BadValue("tournament wreck error"));
+                }
+                let outcome = if status == 2 { Err(error) } else { Ok(present) };
+                if kind == kind::QUERY_TOURNAMENT_WRECK_REPLY {
+                    Message::QueryTournamentWreckReply { request_id, scene, item_id, outcome }
+                } else {
+                    Message::RemoveTournamentWreckReply { request_id, scene, item_id, outcome }
+                }
+            }
+            kind::GET_SCENE_BODY => {
+                let request_id = r.u64()?;
+                let scene = read_scene_key(&mut r)?;
+                let item_id = r.i64()?;
+                if request_id == 0 || !scene.is_valid() || scene.instance_id != 0 || item_id <= 0 {
+                    return Err(DecodeError::BadValue("scene body request"));
+                }
+                Message::GetSceneBody { request_id, scene, item_id }
+            }
+            kind::GET_SCENE_BODY_REPLY => {
+                let request_id = r.u64()?;
+                let scene = read_scene_key(&mut r)?;
+                let item_id = r.i64()?;
+                if request_id == 0 || !scene.is_valid() || scene.instance_id != 0 || item_id <= 0 {
+                    return Err(DecodeError::BadValue("scene body reply identity"));
+                }
+                let outcome = match r.u8()? {
+                    0 => {
+                        let type_id = r.i32()?;
+                        let group_id = r.i32()?;
+                        let category_id = r.i32()?;
+                        let position = [r.f64()?, r.f64()?, r.f64()?];
+                        let error = r.text()?;
+                        if type_id <= 0
+                            || group_id <= 0
+                            || category_id <= 0
+                            || !error.is_empty()
+                            || position.iter().any(|v| !v.is_finite())
+                        {
+                            return Err(DecodeError::BadValue("scene body reply"));
+                        }
+                        Ok((type_id, group_id, category_id, position))
+                    }
+                    1 => {
+                        let error = r.text()?;
+                        if error.is_empty() {
+                            return Err(DecodeError::BadValue("scene body error"));
+                        }
+                        Err(error)
+                    }
+                    _ => return Err(DecodeError::BadValue("scene body result")),
+                };
+                Message::GetSceneBodyReply { request_id, scene, item_id, outcome }
             }
             kind::GET_ABYSSAL_PARTICIPANT_POSE => {
                 let request_id = r.u64()?;

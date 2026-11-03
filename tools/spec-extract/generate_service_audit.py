@@ -71,6 +71,8 @@ OWNER_REJECTIONS = {
 CLIENT_LOCAL_APIS = {
     ("charMgr", "InvalidateStationItemsCache"):
         "client-local cache eviction at eve/client/script/environment/invCache.py:855-859; no service or moniker call",
+    ("planetMgr", "GetPin"):
+        "client-local planet pin lookup: eve/client/script/ui/shared/planet/pinContainers/BasePinContainer.py:607-610 and eve/client/script/ui/shared/planet/planetUIPins.py:471-475 call local planetSvc.GetPlanet(...).GetPin(pinID); no planetMgr RPC or bound-object call",
 }
 CLIENT_DEAD_APIS = {
     ("beyonce", "GetFleetLocationAndInfo"):

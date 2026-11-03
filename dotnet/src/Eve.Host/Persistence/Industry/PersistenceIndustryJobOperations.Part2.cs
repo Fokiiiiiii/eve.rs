@@ -221,6 +221,12 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
                 throw InvalidJob();
         }
         var requiredMaterials = RequiredMaterials(job, blueprint, recipe, materialBonus);
+        // NPC station personal inventories expose only the station hangar for this facility.
+        if (job.OwnerId == actor.CharacterId && _stations.Get(job.FacilityId) is not null &&
+            (!IR.IsPersonalStationLocation(job.FacilityId, blueprint.LocationId, blueprint.Flag) ||
+             !IR.IsPersonalStationLocation(job.FacilityId, job.OutputLocation.LocationId, job.OutputLocation.FlagId) ||
+             (requiredMaterials.Count > 0 && !IR.IsPersonalStationLocation(job.FacilityId, job.InputLocation.LocationId, job.InputLocation.FlagId))))
+            throw InvalidJob();
 
         var skillLevels = new Dictionary<int, int>();
         foreach (var requirement in recipe.Skills)

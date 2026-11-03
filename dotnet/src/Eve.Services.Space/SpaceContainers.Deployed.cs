@@ -152,6 +152,11 @@ public sealed partial class SpaceContainers
                         record.OwnerId, record.CorporationId, record.AllianceId, record.ShipId));
                     continue;
                 }
+                if (record.Kind != CynoFieldKind)
+                {
+                    _log?.Invoke($"unknown deployed kind {record.Kind} for {record.DeployableId}; not restoring it as a cynosural field");
+                    continue;
+                }
                 _sim.RestoreDeployed(new SimDeployed(
                     record.SolarSystemId, record.DeployableId, record.Name, record.TypeId, record.GroupId, record.Position, record.Radius, record.OwnerId,
                     record.CorporationId, record.AllianceId, record.ShipId, record.ExpiresAtMs - now));

@@ -95,8 +95,68 @@ public sealed class ServiceRegistry
     /// refID than the object's current bind was queued for a connection the client has since replaced,
     /// so the object is kept. Returns whether the object existed.
     /// </summary>
-    public bool UnregisterBoundObject(string oid, ClientSession? session = null, long? releasedRefId = null)
+    public bool UnregisterBoundObject(string oid, ClientSession? session = null, long? releasedRefId = null) =>
+        UnregisterBoundObjectCore(oid, session, releasedRefId, out _, out _);
+
+    public async ValueTask<bool> UnregisterBoundObjectAsync(string oid, ClientSession? session = null,
+        long? releasedRefId = null, CancellationToken cancellationToken = default)
     {
+        var receipt = DetachBoundObject(oid, session, releasedRefId, out var existed);
+        if (receipt is not null) await receipt(cancellationToken).ConfigureAwait(false);
+        return existed;
+    }
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, Func<CancellationToken, ValueTask>> _pendingBoundReleases = new();
+
+    /// <summary>Detach synchronously and retain cleanup until it succeeds outside the ordered callback.</summary>
+    public Func<CancellationToken, ValueTask>? DetachBoundObject(string oid, ClientSession? session = null, long? releasedRefId = null)
+        => DetachBoundObject(oid, session, releasedRefId, out _);
+
+    private Func<CancellationToken, ValueTask>? DetachBoundObject(string oid, ClientSession? session, long? releasedRefId, out bool existed)
+    {
+        existed = UnregisterBoundObjectCore(oid, session, releasedRefId, out var service, out var captured);
+        if (!existed) return null;
+        var cleanup = service is ICapturedBoundObjectReleaseHandler ? captured :
+            service is IAsyncBoundObjectReleaseHandler handler
+                ? token => handler.OnBoundObjectReleasedAsync(oid, session, token) : null;
+        if (cleanup is null) return null;
+        var id = Guid.NewGuid();
+        var gate = new SemaphoreSlim(1, 1);
+        async ValueTask Complete(CancellationToken token)
+        {
+            await gate.WaitAsync(token).ConfigureAwait(false);
+            try
+            {
+                if (!_pendingBoundReleases.ContainsKey(id)) return;
+                await cleanup(token).ConfigureAwait(false);
+                _pendingBoundReleases.TryRemove(id, out _);
+            }
+            finally { gate.Release(); }
+        }
+        _pendingBoundReleases[id] = Complete;
+        return Complete;
+    }
+
+    /// <summary>Retry any previously detached cleanup that did not finish.</summary>
+    public async Task RetryPendingBoundReleasesAsync(CancellationToken cancellationToken = default)
+    {
+        var failures = new List<Exception>();
+        foreach (var release in _pendingBoundReleases.Values)
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(5));
+            try { await release(timeout.Token).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception error) { failures.Add(error); }
+        }
+        if (failures.Count > 0) throw new AggregateException("Bound object cleanup remains pending.", failures);
+    }
+
+    private bool UnregisterBoundObjectCore(string oid, ClientSession? session, long? releasedRefId, out IService? releasedService,
+        out Func<CancellationToken, ValueTask>? captured)
+    {
+        releasedService = null;
+        captured = null;
         if (string.IsNullOrEmpty(oid))
         {
             return false;
@@ -112,10 +172,13 @@ public sealed class ServiceRegistry
             }
             _boundObjectRefIds.Remove(oid);
             service = _boundObjects.GetValueOrDefault(oid);
+            if (service is ICapturedBoundObjectReleaseHandler capturing)
+                captured = capturing.CaptureBoundObjectRelease(oid, session);
             existed = _boundObjects.Remove(oid);
             _boundObjectParams.Remove(oid);
         }
 
+        releasedService = existed ? service : null;
         var preserveIdentity = service is IReusableBoundObject { ReuseBoundObjectForSession: true };
         if (service is IBoundObjectReleaseHandler handler)
         {

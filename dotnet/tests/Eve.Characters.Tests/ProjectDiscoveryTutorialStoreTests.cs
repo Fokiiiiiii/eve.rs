@@ -25,6 +25,17 @@ public sealed class ProjectDiscoveryTutorialStoreTests
         Assert.Equal(new ProjectDiscoveryTutorial(true, 8), restarted);
     }
 
+    [PgFact]
+    public async Task First_increase_is_not_finished_until_eighth_level()
+    {
+        await using var s = await PgSchemas.CreateAsync();
+        var characterId = await Insert(s, Pilot("Tutorial Levels"));
+        var store = new ProjectDiscoveryTutorialStore(s.Source, s.CharactersSchema);
+        for (var level = 1; level <= 8; level++)
+            Assert.Equal(new ProjectDiscoveryTutorial(level == 8, level), await store.TransitionAsync(characterId, "increase", level));
+        Assert.Equal(new ProjectDiscoveryTutorial(true, 8), await new ProjectDiscoveryTutorialStore(s.Source, s.CharactersSchema).ReadAsync(characterId));
+    }
+
     private static async Task<long> Insert(PgSchemas s, NewCharacter c)
     {
         await using var connection = await s.Source.OpenConnectionAsync();

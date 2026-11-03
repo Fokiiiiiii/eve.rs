@@ -12,6 +12,9 @@ public interface ISpaceContainers
     /// <summary>Whether the session has a ship flying in space.</summary>
     bool IsInSpace(ClientSession session);
 
+    /// <summary>Refuses mutations while a public-space relocation has an unresolved result.</summary>
+    void RequirePublicMoveSettled(ClientSession session) { }
+
     /// <summary>The solar system the session flies in.</summary>
     int? SolarSystemOf(ClientSession session);
 

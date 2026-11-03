@@ -39,7 +39,7 @@
 ## 次の担当への状態
 
 - Sentryのstatus-loss通知契約とRust monitor lifecycleはunit/headless test済み。通常low-sec gate/station sentry flowのend-to-end確認は残るため、この領域全体を完了扱いにしないこと。
-- `origin/main` merge後のビルドと選定DBテストは下記のとおり再実行済み。push前に `python3 tools/dev/ci-status.py status` でmain最終CIの状態を確認する。
+- Push gate: CI #1449 for SHA `f7c0e9e14ccd` completed green. `origin/main` has been merged and the post-merge selected tests below passed; the merge commit and push-triggered Actions run are still pending.
 
 ## マージ後のローカル確認
 
@@ -65,8 +65,8 @@
 
 ### Verification
 
-- Builds completed with no warnings or errors for Host, Host.Tests, NPC.Tests, Services.Crimewatch.Tests, Crimewatch.Tests, Events.Tests and Services.Dogma.Tests. `eve_p5` database tests through `tools/dev/db-lock.sh`: recovery subscriber 1 passed; Crimewatch aggression/safety 44 passed; service runtime/player-bounty/recovery 36 passed; EventBus 17 passed; Host crimewatch wire 6 passed; Host Abyssal neighbor 20 passed and 2 skipped; Dogma kill-right neighbor 2 passed. NPC recovery unit test: 20 passed. The skipped Abyssal cases were `Real_sim_cleanup_confirms_live_npc_environment_and_reward_scene_removal_with_another_run_intact` and `Saved_origin_gate_open_update_passes_the_real_rust_scene_guard` and do not count as passes.
+- Post-merge builds passed with 0 warnings/errors for Eve.Host and Host.Tests, Eve.Npc.Tests, Eve.Services.Crimewatch.Tests, Eve.Crimewatch.Tests, Eve.Events.Tests, and Eve.Services.Dogma.Tests. `eve_p5` tests via `tools/dev/db-lock.sh` passed: Services.Crimewatch 36, Crimewatch aggression/safety 44, NPC recovery 20, EventBus 17, Host 26, and Dogma kill-right 2. Host also skipped `Real_sim_cleanup_confirms_live_npc_environment_and_reward_scene_removal_with_another_run_intact` and `Saved_origin_gate_open_update_passes_the_real_rust_scene_guard`; neither is counted as a pass.
+- Post-merge Rust checks passed: `cargo +1.94.1 fmt --all -- --check`, workspace clippy, `cargo check -p eve-space`, and five focused tests (security-status slim update plus four target-lock recalculation/limit cases).
 - Before/after evidence: recovery first reached 7.63671875 through per-kill accrual where the NPC cap is +5; after the tick fix the regression passes. Before the profile gate, a 1,000,000 ISK Rogue Drone beat the eligible 500,000 ISK pirate; after the gate the database test passes.
-- Still to check: graphical V24.01 client behavior, exact per-profile recovery percentages, and post-merge/push Actions. The rate-source gap remains open.
-- Main push gate at 2026-11-03 01:58 UTC: `ci-status.py wait 41560688216` completed for CI run #1448, SHA `18bb1d8fa4d8a9dd87725dd7c34c801bea211e71`, with failure. Rust tests failed at `modules::tests::a_lock_the_dampened_ship_can_no_longer_reach_is_given_up`; the Windows job failed at `Load SDE and test Rust workspace`. This worktree has not been merged or pushed; wait for a later completed green main CI, then fetch/merge and rerun the listed tests before pushing.
-- Main push gate at 2026-11-03 02:27 UTC: CI run #1449 for SHA `f7c0e9e14ccd` completed successfully, including Required CI gate. The prior red gate is cleared; merge and post-merge local verification are now pending.
+- Still to check: graphical V24.01 client behavior, exact per-profile recovery percentages, and this commit's push-triggered Actions. The rate-source gap remains open.
+- Main CI #1448 failed before a later run #1449 for SHA `f7c0e9e14ccd` completed green, including Required CI gate. After #1449, `origin/main` was fetched and merged. Conflict resolution preserved the local security-status-loss queue and upstream target-lock recalculation. The merge commit and push are pending.

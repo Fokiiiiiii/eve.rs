@@ -951,7 +951,7 @@ impl Scene {
         let off = Self::effect_told(session, owner, ship_id, &run, at, false, run.cycle_start, error);
         let stamp = self.next_stamp(at);
         let mut actions = match run.effect.off {
-            Some(numbers) => self.renumber(session, numbers, stamp),
+            Some(numbers) => self.renumber(session, numbers, at, stamp),
             None => Vec::new(),
         };
         // the beam stops on its beacon, if it has one, and the beacon goes after it

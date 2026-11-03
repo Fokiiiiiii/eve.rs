@@ -25,6 +25,12 @@ Date: 2026-11-02
 
 After simulator approval, Host persists the ship and condition through `Ships.DockAsync`, removes the pilot, sends `OnInvulnCancelled`, releases bound objects, sends `OnItemsChanged`, applies the station or structure session tuple, then sends `OnDockingFinished` and invokes `DockedLocationChanged` (`SpaceSessions.Movement.cs:599-650`). Station and structure tests assert the wire notification/session ordering; no successful-path order was changed. Station docking sets `stationid/locationid` and clears `solarsystemid`; structure docking sets `structureid/locationid/solarsystemid` and clears `stationid`, matching GameUI's view transition consumers above.
 
+## Post-push CI follow-up (2026-11-03)
+
+- Push run `41550349898` failed the Linux Rust workspace test and the Windows Rust workspace step on `a_ship_that_docks_is_shown_as_the_reference_showed_it_and_is_gone_when_it_has_docked`. The test asserted that the four-second poll itself removed the ship; the new protocol emits readiness 255 first and requires the Host's allow decision 254 before the same observed ball removal (`crates/eve-space/tests/others_match_reference.rs:278-287`).
+- A local attempt without static data returned early in the helper. Re-running against the pinned SDE (`/home/user/eve.rs/.cache/sde/eve-online-static-data-3396210-jsonl`) reproduced the assertion failure; after updating the trace test to follow readiness then approval, the exact test passed and all five tests in that file passed. Rust formatting and workspace clippy also passed.
+- The push-triggered CI run completed with only these two Rust test failures; the selected Host Actions run passed. The test-only follow-up is ready to push, and its Actions run will be followed to completion.
+
 ## Verification
 
 - Rust focused library docking tests: 41 passed, 0 failed.

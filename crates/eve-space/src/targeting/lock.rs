@@ -1,5 +1,23 @@
 use super::*;
 
+// EVE targeting caps ordinary ships at 300 km and Upwell structures at 490 km; carriers and supercarriers are exempt.
+const SHIP_LOCK_RANGE_CAP: f64 = 300_000.0;
+const STRUCTURE_LOCK_RANGE_CAP: f64 = 490_000.0;
+const STRUCTURE_CATEGORY_ID: i32 = 65;
+const CARRIER_GROUP_ID: i32 = 547;
+const SUPERCARRIER_GROUP_ID: i32 = 659;
+
+fn effective_target_range(spec: &crate::ship::ShipSpec) -> f64 {
+    let cap = if spec.category_id == STRUCTURE_CATEGORY_ID {
+        STRUCTURE_LOCK_RANGE_CAP
+    } else if matches!(spec.group_id, CARRIER_GROUP_ID | SUPERCARRIER_GROUP_ID) {
+        f64::INFINITY
+    } else {
+        SHIP_LOCK_RANGE_CAP
+    };
+    spec.max_target_range.min(cap)
+}
+
 impl Scene {
     pub(super) fn check_lock(
         &self,
@@ -48,11 +66,12 @@ impl Scene {
         }
         let spec = &source.ship.spec;
         let apart = (distance(source.ship.position, target.position) - spec.radius - target.radius).max(0.0);
-        if spec.max_target_range <= 0.0 || apart >= spec.max_target_range {
+        let max_target_range = effective_target_range(spec);
+        if max_target_range <= 0.0 || apart >= max_target_range {
             return Err(Refusal {
                 reason: "TARGET_OUT_OF_RANGE",
                 target_type: target.type_id,
-                desired_range: spec.max_target_range.max(0.0),
+                desired_range: max_target_range.max(0.0),
                 actual_distance: apart,
             });
         }
@@ -135,7 +154,14 @@ impl Scene {
             return tether_out;
         }
         let complete_at = now + (duration * TICKS_PER_SECOND as f64 / 1000.0) as i64;
-        pilot.targeting.pending.push(Pending { target, sequence, complete_at, origin });
+        pilot.targeting.pending.push(Pending {
+            target,
+            sequence,
+            requested_at: now,
+            total_duration_ms: duration,
+            complete_at,
+            origin,
+        });
         tether_out.extend(Self::answer(session, order, true, self.locked_by(session)));
         tether_out
     }

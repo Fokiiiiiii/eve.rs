@@ -653,6 +653,15 @@ impl Scene {
             now.old_stance = before.stance;
         }
         let new = &pilot.ship.spec;
+        let scan_resolution_changed = new.scan_resolution != old.scan_resolution;
+        let signature_radius_changed = new.signature_radius != old.signature_radius;
+        let max_locked_targets_changed = new.max_locked_targets != old.max_locked_targets;
+        let targeting_attributes_changed = scan_resolution_changed
+            || signature_radius_changed
+            || max_locked_targets_changed
+            || new.max_target_range != old.max_target_range
+            || new.category_id != old.category_id
+            || new.group_id != old.group_id;
         pilot.ship.health.respec(new.vitals, new.shield_recharge_ms, now);
         // a reactive armor hardener that runs is shown the armor's resonances as they now are (a pin, or a new base, moves them)
         let armor_changes = shift_attributes
@@ -725,6 +734,15 @@ impl Scene {
         }
         if let Some(loss) = security_status_loss {
             self.security_status_losses.push(loss);
+        }
+        if scan_resolution_changed || signature_radius_changed {
+            self.rebase_pending_target_locks(session, scan_resolution_changed, signature_radius_changed, now);
+        }
+        if max_locked_targets_changed {
+            out.extend(self.enforce_target_limit(session, now));
+        }
+        if targeting_attributes_changed {
+            out.extend(self.settle_targets(now));
         }
         out
     }

@@ -217,6 +217,146 @@ public class SpaceServiceTests
             : new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task.WaitAsync(token));
 
     [PgFact]
+    public async Task Npc_combat_from_both_sides_persists_renews_and_blocks_safe_logoff_until_expiry()
+    {
+        var logoffStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishLogoff = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var spaceTimers = new Eve.Scheduler.LocalTimers(delay: (duration, token) =>
+        {
+            if (duration != TimeSpan.FromSeconds(30)) return Task.CompletedTask;
+            logoffStarted.TrySetResult();
+            return finishLogoff.Task.WaitAsync(token);
+        });
+        var (rig, character, session) = await DockedAsync(localTimers: spaceTimers);
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+
+        var schema = $"cwt_{Guid.NewGuid():N}"[..16];
+        rig.KeepSchemas(schema);
+        await Eve.Crimewatch.PgCrimewatchStore.MigrateAsync(rig.Source, schema);
+        var store = new Eve.Crimewatch.PgCrimewatchStore(rig.Source, schema);
+        var characterSessions = new Eve.Services.CharacterSessions();
+        characterSessions.Enter(character.CharacterId, session);
+        using var crimewatchTimers = new Eve.Scheduler.LocalTimers(delay: (_, token) =>
+            Task.Delay(Timeout.InfiniteTimeSpan, token));
+        using var crimewatch = new Eve.Services.Crimewatch.CrimewatchRuntime(
+            store, characterSessions, () => rig.Now, new NpcTimerPersistence(), localTimers: crimewatchTimers);
+        rig.Space.RecordNpcTimerAsync = crimewatch.RecordNpcTimerAsync;
+        rig.Space.CrimewatchStateOf = crimewatch.StateOfAsync;
+        rig.Space.LifecycleBlockers = async (action, pilotSession, _, token) =>
+        {
+            if (action != Eve.Services.Space.ShipLifecycleAction.SafeLogoff || pilotSession.CharacterId is not { } characterId)
+                return Array.Empty<string>();
+            return (await crimewatch.StateOfAsync(characterId, token)).NpcUntilMs > rig.Now
+                ? ["combat_timer"]
+                : Array.Empty<string>();
+        };
+
+        var report = await rig.Space.SpawnNpcsAsync(session, "Blood Visionary", 1, CancellationToken.None);
+        Assert.Null(report.Error);
+        var npc = rig.Sim.Heard.OfType<SimSpawn>().Last();
+        var npcShipId = npc.Ship.ShipId;
+        var npcDeadline = Rig.ClockMs + Eve.Crimewatch.CombatState.NpcDurationMs;
+
+        KeyValuePair<PyValue, PyValue> Field(string name, PyValue value) => new(new PyStr(name), value);
+        PyDict Damage(string attackType, long source, long target) => new PyDict([
+            Field("attackType", new PyStr(attackType)),
+            Field("source", new PyLong(source)),
+            Field("target", new PyLong(target)),
+        ]);
+
+        void ReportDamage(string attackType, long source, long target) => rig.Sim.Say(new SimNotify(
+            (ulong)session.SessionId,
+            "OnDamageMessage",
+            "clientID",
+            MarshalCodec.Encode(Py.Tuple(Damage(attackType, source, target)))));
+
+        Events.Of(session);
+        ReportDamage("me", character.ShipId, npcShipId);
+        Assert.Contains(Events.Of(session, clear: false), note => note.Name == "OnDamageMessage");
+        await rig.Space.QuiesceAsync();
+        var firstNotes = Events.Of(session);
+        var afterPlayerHit = await store.StateOfAsync(character.CharacterId);
+        Assert.True(firstNotes.Any(note => note.Name == "OnNpcTimerUpdate"),
+            $"NPC {npcShipId}, ship {character.ShipId}, timer {afterPlayerHit.NpcUntilMs}; {string.Join(Environment.NewLine, rig.Log)}");
+        var firstTimer = Assert.Single(firstNotes, note => note.Name == "OnNpcTimerUpdate");
+        Assert.Equal("charid", firstTimer.IdType);
+        Assert.Equal([new PyInt(402), new PyLong(Py.FileTimeFromUnixMs(npcDeadline))], firstTimer.Args);
+        Assert.Contains(firstNotes, note => note.Name == "OnDamageMessage");
+        Assert.Equal(npcDeadline, (await new Eve.Crimewatch.PgCrimewatchStore(rig.Source, schema)
+            .StateOfAsync(character.CharacterId)).NpcUntilMs);
+
+        var reconnect = new ClientSession(new Sink())
+        {
+            SessionId = session.SessionId + 1,
+            ClientId = session.ClientId + 1,
+            UserId = session.UserId,
+        };
+        reconnect.CharacterId = character.CharacterId;
+        reconnect.Set("solarsystemid", new PyInt(session.GetInt("solarsystemid")!.Value));
+        characterSessions.Enter(character.CharacterId, reconnect);
+        var crimewatchService = new Eve.Services.Crimewatch.CrimewatchService(store, crimewatch, () => rig.Now);
+        var clientStates = (PyTuple)await ((Eve.Services.IService)crimewatchService).CallAsync(new ServiceCall
+        {
+            Method = "GetClientStates",
+            Args = [],
+            Session = reconnect,
+        });
+        var reconnectNpcTimer = (PyTuple)((PyTuple)clientStates.Items[0]).Items[2];
+        Assert.Equal([new PyInt(402), new PyLong(Py.FileTimeFromUnixMs(npcDeadline))], reconnectNpcTimer.Items);
+
+        rig.Now += 10_000;
+        var renewedDeadline = npcDeadline + 10_000;
+        Events.Of(reconnect);
+        ReportDamage("otherPlayerWeapons", npcShipId, character.ShipId);
+        await rig.Space.QuiesceAsync();
+        var renewedNotes = Events.Of(reconnect);
+        Assert.True(renewedNotes.Any(note => note.Name == "OnNpcTimerUpdate"), string.Join(Environment.NewLine, rig.Log));
+        var renewedTimer = Assert.Single(renewedNotes, note => note.Name == "OnNpcTimerUpdate");
+        Assert.Equal([new PyInt(402), new PyLong(Py.FileTimeFromUnixMs(renewedDeadline))], renewedTimer.Args);
+        Assert.Equal(renewedDeadline, (await new Eve.Crimewatch.PgCrimewatchStore(rig.Source, schema)
+            .StateOfAsync(character.CharacterId)).NpcUntilMs);
+
+        var shipOid = await rig.BindShipInSpaceAsync(session);
+        Events.Of(session);
+        var blocked = Assert.IsType<PyList>(await rig.ShipCallAsync(session, "SafeLogoff", shipOid));
+        Assert.Equal([new PyStr("combat_timer")], blocked.Items);
+        Assert.True(rig.Space.IsInSpace(session));
+
+        rig.Now = renewedDeadline;
+        var allowed = Assert.IsType<PyList>(await rig.ShipCallAsync(session, "SafeLogoff", shipOid));
+        Assert.Empty(allowed.Items);
+        session.RunAfterResponse();
+        Assert.Contains(Events.Of(session), note => note.Name == "OnSafeLogoffTimerStarted");
+        await logoffStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        finishLogoff.TrySetResult();
+        await Rig.UntilAsync(() => !rig.Space.IsInSpace(session));
+        await rig.Space.QuiesceAsync();
+        Assert.Contains(Events.Of(session), note => note.Name == "OnSafeLogoffActivated");
+    }
+
+    private sealed class NpcTimerPersistence : Eve.Services.Crimewatch.ICrimewatchPersistenceCallbacks
+    {
+        public Task<IReadOnlyList<Eve.Services.Crimewatch.SecurityStatusTransaction>> SecurityStatusTransactionsOfAsync(long characterId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<long?> StartDuelChallengeAsync(long challengerCharacterId, long targetCharacterId, long challengerCorporationId, long challengerAllianceId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<Eve.Services.Crimewatch.LimitedEngagement>> LimitedEngagementsAsync(long nowUnixMs, long? characterId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<Eve.Services.Crimewatch.LimitedEngagement>>([]);
+
+        public Task UpsertLimitedEngagementAsync(long firstCharacterId, long secondCharacterId, long expiresAtUnixMs, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<bool> ExpireLimitedEngagementAsync(long firstCharacterId, long secondCharacterId, long expectedExpiresAtUnixMs, long nowUnixMs, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<bool> RespondToDuelChallengeAsync(long responderCharacterId, long challengerCharacterId, long challengeExpiresAtFileTime, bool accept, long? engagementExpiresAtUnixMs, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    [PgFact]
     public async Task Safe_logoff_closes_the_space_session_after_its_timer()
     {
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -276,7 +276,17 @@ fn a_ship_that_docks_is_shown_as_the_reference_showed_it_and_is_gone_when_it_has
     assert_eq!(action_names_of(&out_args(told[0])), recorded_names(&seen[0]));
     assert_eq!(without_stamps(&out_args(told[0])), without_stamps(&event_args(&seen[0])));
 
-    let gone = scene.poll(at + 4 * SECOND);
+    let ready = scene.poll(at + 4 * SECOND);
+    assert!(ready.iter().any(|out| matches!(
+        out,
+        Out::Accepted { session: ACTOR, command: eve_space::scene::DOCKING_READY_COMMAND, at: ready_station }
+            if *ready_station == station
+    )));
+    let gone = scene.command(
+        ACTOR,
+        Command::DockingDecision { station_id: station, allowed: true },
+        at + 4 * SECOND,
+    );
     let removal: Vec<&Out> =
         gone.iter().filter(|o| matches!(o, Out::Notify { session: WATCHER, .. })).collect();
     assert_eq!(removal.len(), 1);

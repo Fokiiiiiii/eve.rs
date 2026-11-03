@@ -41,7 +41,7 @@ public sealed class ProjectDiscoveryTutorialStore(NpgsqlDataSource source, strin
             throw new ArgumentOutOfRangeException(nameof(action));
         await using var command = source.CreateCommand(
             $"INSERT INTO {schema}.project_discovery_tutorials (character_id, finished, tutorial_level, updated_ms) " +
-            "VALUES ($1, $2 <> 'reset', CASE $2 WHEN 'reset' THEN 0 WHEN 'skip' THEN 8 ELSE 1 END, $3) " +
+            "VALUES ($1, $2 = 'skip', CASE $2 WHEN 'reset' THEN 0 WHEN 'skip' THEN 8 ELSE 1 END, $3) " +
             "ON CONFLICT (character_id) DO UPDATE SET " +
             "finished = CASE $2 WHEN 'reset' THEN false WHEN 'skip' THEN true ELSE project_discovery_tutorials.tutorial_level >= 7 END, " +
             "tutorial_level = CASE $2 WHEN 'reset' THEN 0 WHEN 'skip' THEN 8 ELSE LEAST(8, project_discovery_tutorials.tutorial_level + 1) END, " +

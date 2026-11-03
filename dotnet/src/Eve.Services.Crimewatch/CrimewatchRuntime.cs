@@ -42,8 +42,7 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
     private static string Key(long characterId) => $"crimewatch.end:{characterId}";
 
     /// <summary>
-    /// A pilot attacked the ship of another pilot: its timers run and it may be flagged; what a crime brings (<see cref="Aggressed"/>) is done, and then the clients are told the timers
-    /// (as in the reference, whose security status and kill right come before the timers).
+    /// A pilot attacked the ship of another pilot: the attacker gets weapons and PvP timers, and both pilots get PvP timers. Any crime consequences (<see cref="Aggressed"/>) run before the clients are told.
     /// </summary>
     /// <summary>Active peer-to-expiry Unix-ms values for one character.</summary>
     public Task<IReadOnlyList<SecurityStatusTransaction>> SecurityStatusTransactionsOfAsync(
@@ -229,8 +228,17 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
         await store.UpdateAsync(request.Attacker, state => (outcome = Aggression.Record(
             state, targetState, request.Where, request.SolarSystemId, request.TargetIsCapsule, policyFacts, now)).Attacker, now, cancellationToken);
         var result = new AggressionResult(request, outcome!);
+        var receiverTimerCommitted = false;
         try
         {
+            if (canPair && result.Outcome.Target is { } targetAfter)
+            {
+                await store.UpdateAsync(request.Target,
+                    state => state with { PvpUntilMs = Math.Max(state.PvpUntilMs, targetAfter.PvpUntilMs) },
+                    now,
+                    cancellationToken);
+                receiverTimerCommitted = true;
+            }
             if (startsOrRenewsEngagement)
             {
                 await RefreshLimitedEngagementAsync(request.Attacker, request.Target, now, alreadyEngaged, cancellationToken);
@@ -249,7 +257,17 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
         }
         finally
         {
-            await SyncAsync(request.Attacker, cancellationToken);
+            try
+            {
+                await SyncAsync(request.Attacker, cancellationToken);
+            }
+            finally
+            {
+                if (receiverTimerCommitted)
+                {
+                    await SyncAsync(request.Target, cancellationToken);
+                }
+            }
         }
         return result;
     }

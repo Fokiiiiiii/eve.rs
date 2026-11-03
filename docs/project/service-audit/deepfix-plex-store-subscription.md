@@ -1,12 +1,12 @@
 # PLEX・Omega/Alpha・ストア決済の深掘り handoff
 
-更新: 2026-11-02（worktree cx8）
+更新: 2026-11-03（worktree cx8）
 
 ## 進捗
 
-Redeem token の有効性、SP報酬、ブループリント配送、PLEX reverse-redeem を直し、DB付きHostテストで確認した。ストア購入の残作業があるため、この監査全体はまだ完了扱いにしない。
+Redeem tokenの有効性、SP報酬、ブループリント配送、PLEX reverse-redeemの後、Hostの`storeManager.buy_offer`にPLX精算を接続した。購入は信頼済みカタログの価格・配送定義を使い、PLEX減算、Omega/MCT/item付与、購入receiptを同一PostgreSQL transactionに記録する。同一account+CallIDの再送は同じwire応答を返し、二重の減算・通知をしない。
 
-既知の残作業: dotnet/src/Eve.Host/Rpc/RewardRpc.cs:96-97 は StoreOffersService にカタログReaderだけを渡して決済providerを接続していない。StoreOffersService.cs:56-57 はproviderがないと None を返すため、クライアントに canPurchase=true と出ているPLX商品も購入できない。EveJS 261028.1 はV24の storeManager.buy_offer を storeFulfillment.js:186-252 からPLX精算へ進める。次はPLX建てOmega/MCT商品のみ実決済を接続し、USD等の外部決済は実providerがない限り失敗を維持する。
+Alpha accountのMCT即時有効化はEVE UniversityのOmega制約に従い拒否する。実money/USD/AUR offerにcheckout providerはなく、V24のfalsey購入失敗を返して付与しない。実GUIクライアント確認はまだない。
 
 ## V24.01 全クライアント経路
 
@@ -15,7 +15,12 @@ Redeem token の有効性、SP報酬、ブループリント配送、PLEX revers
 - OnItemChange はinventory cacheが受けてitem row/attributeを更新する（eve/client/script/environment/invCache.py:117-120, 228-303）。SP残高通知は OnFreeSkillPointsChanged(newFreeSkillPoints) を受け、技能一覧・skill queue・SP購入画面が読む（eve/client/script/ui/services/skillsvc.py:844-845, 898-899; skillQueuePanelNew.py:623-624; applySkillPointsWindow.py:211-212; skillsCataloguePanel.py:157-158）。
 - ReverseRedeemはメニューからphysical itemIDを送り、最後にqueueを再取得する（eve/client/script/ui/services/menusvc.py:375-376; redeemsvc.py:66-74）。返却・拒否はUserErrorとしてUIへ流れる。
 - Omega表示は GetCloneGrade / GetSubscriptionTime を読む（eve/client/script/ui/services/omega/client/clone_grade_svc.py:124-138; plexPanel.py:145-161）。時間更新イベント OnSubscriptionTimeUpdateServer はPLEX panelが消費する（plexPanel.py:24-25, 159-161）。
-- Store購入は BuyOffer(offer,currency,qty,toCharacterID,message) を呼び、結果のtruthinessだけで成功/失敗panelを決める（eve/client/script/ui/view/aurumstore/vgsUiController.py:128-151; vgsDetailContainer.py:119-122）。現行Hostの None は成功扱いにならない。
+- Store一覧は`get_offers`を経てoffer JSONの`canPurchase`を読み、falseのofferを除外する（vgs/client/vgsClient.py:33-40; vgs/common/utils.py:46; aurumStoreContainer.py:535-544, 626-627）。New Eden StoreのNodeGraph条件も同じflagを読む（nodegraph/client/conditions/new_eden_store.py:20）。
+- 通常・ギフト購入は`purchaseDetailsPanel.py:422,436` → `vgsUiController.py:128-151` → `vgs/client/store.py:84-88` → `vgs/client/vgsClient.py:59-64`から`storeManager.buy_offer(offer,currency,qty,from_character_id,to_character_id,message,is_game_time,store_id)`を送る。成功後はstore cacheをclearし、falseyは`PurchaseFailedError`（vgs/client/vgsClient.py:14,62）になり、UIは成功/失敗panelを分ける（vgsUiController.py:142-151）。追加の細かい購入error codeをUIへ表示する経路は見つからない。
+- PLEX残高は`vaultManager.get_account_balance("PLX")`をrepositoryが読み、購入panelが`plexBalance >= offerPrice * quantity`で表示を更新する（vgs/client/vgsClient.py:28-35; plex/client/repository.py:29-51,96-103,131-137; purchaseDetailsPanel.py:141-145,333）。BalanceChangedNoticeをlistenerが購読し（plex/client/message_bus/notice_listener.py:17-23）、wire messageはidentifierとattributes（eveProto/generated/eve_public/plex/vault/api/notices_pb2.py:11-22; plex/client/transaction_attributes.py:31-38）を読む。
+- Omega時間は`plexPanel`がOnSubscriptionTimeUpdateServerを読む（plexPanel.py:24-25,159-161）。Omega gradeはclone grade serviceがOnSubscriptionChangedServerを受け、fanfare controllerからOnSubscriptionChangedをfan-outする（omega/client/clone_grade_svc.py:31,242-245; clone_grade_fanfare_ui_controller.py:19,58-69）。購入通知順は時間更新、次にgrade変更。
+- MCT追加slotのOnMultipleCharactersTrainingUpdatedをskill queue serviceが処理する（skillQueueSvc.py:840）。通常のMCT soulbound token UIはAlpha時に「Requires Omega」としてactivateを止める（redeemsvc.py:197-205; activateMultiTraining.py:226-232）。
+- 配送itemのOnItemChangeはinventory cacheが購読し、行を更新してinventory/dogma/UIへ配る（eve/client/script/environment/invCache.py:117-120,228-303）。
 
 ## 直した欠陥と根拠
 
@@ -23,17 +28,25 @@ Redeem token の有効性、SP報酬、ブループリント配送、PLEX revers
 2. Type 49810の「100,000 Skill Points」はSDE group 526 / category 17。名前から100,000を読みquantity倍率し、同じDB transactionでfree SPを加算、itemは作らず OnFreeSkillPointsChanged を返した。SDE英語名を ItemTypeCatalog が提供する。EveJS map userService.js:83-145 はtype 49810を100,000としており、処理は 388-390, 556-590, 823-850。
 3. Blueprint type 681（SDE group 104 / category 9）はrunsがあればcopyとして、runs/ME/TEを引き継ぐ。Blueprint Original/ResearchのEVE University資料はコピーの有限runsと研究値を示す: [Blueprint Original](https://wiki.eveuniversity.org/Blueprint_Original), [Research](https://wiki.eveuniversity.org/Research)。EveJSの該当形は userService.js:972-1000。
 4. ReverseRedeemをHostで永続化し、station/structure hangarのPLEX itemを消して元のstationに結びついたtokenを作成、OnItemChangeを応答後に送る。EVE University [Accounts](https://wiki.eveuniversity.org/Accounts) はreverse-redeem後のPLEXを元の場所で再redeemすると説明する。EveJS 261028.1 src/server/src/services/user/userService.js:1096-1099 は成功値だけを返す。差異は docs/reference/compat/DEVIATIONS.md に記録済み。既存の詳細メモ: docs/project/service-audit/deepfix-nesstore.md。
+5. Store purchaseは以前Hostにsettlement providerがなく、`canPurchase`がtrueのPLX商品もすべてNoneだった。`RewardRpc`がproviderを`StoreOffersService`へ渡し（dotnet/src/Eve.Host/Rpc/RewardRpc.cs:96-99）、`StoreOffersService.PurchaseAsync`はcatalog offerからtrusted termsを渡す（dotnet/src/Eve.Services.Core/StoreOffersService.cs:55-96）。HostはPLX残高、Omega/MCT/item fulfillment、receiptをtransactionで確定する（dotnet/src/Eve.Host/Persistence/NewEden/PersistenceNewEdenStoreRuntime.StorePurchases.cs:35-208）。catalog値はOmega 30日=500 PLX（new-eden-store.v1.json:208）、MCT 30日=485 PLX（:254）、resculpt certificate=100 PLX（:301）。EVE UniversityはMCTをaccount-based・30日追加queueとし、Omega中のmulti-character trainingを説明する（[Accounts](https://wiki.eveuniversity.org/Accounts), [Alternate characters](https://wiki.eveuniversity.org/Alternate_characters)）。
+6. Store MCTはAlpha accountから即時有効化できていた。EVE UniversityはMCTをOmega accountに限り、subscriptionが切れた時はMCT trainingを停止すると記述する（[Alternate characters](https://wiki.eveuniversity.org/Alternate_characters)）。HostはPLEX debit後、account行を`FOR UPDATE`し、有効なOmega expiryがある場合だけMCT slotを付与する（PersistenceNewEdenStoreRuntime.StorePurchases.cs:145-152,338-348）。EveJS 261028.1 `storePurchaseSettlementState.js:438-599` の`kind: "mct"` fulfillmentはOmega状態を検査せずslotを付与するため、このmechanics優先差をdocs/reference/compat/DEVIATIONS.mdに記録した。
+7. EveJSの`storeManagerService.js:98-155`はV24 buy_offerを`storeFulfillment.js:186-252`へ渡し、そこからprice/currency、quantity、同一accountのpayer/recipient（storeFulfillment.js:42-70）、Omega/MCT/item fulfillment（storePurchaseSettlementState.js:438-599）、PLEX調整（walletState.js:494-503,546-556,592-605）へ進む。残高通知のcent換算とBalanceChangedNotice wireはpublicGatewayLocal.js:1958-2010。Subscription notificationはsubscriptionNotices.js:112-132で時間更新をgrade変更より先に送り、同じgradeならgrade noticeを省く。
 
 SDE確認値: type 49810=100,000 Skill Points, group 526; type 44992=PLEX, group 1875; type 681=Clone Grade Beta Blueprint, group 104; type 34133=Multiple Pilot Training Certificate, group 1301。EVE University [Accounts](https://wiki.eveuniversity.org/Accounts) はMCTがaccount-basedで30日単位、複数queueで訓練するにはOmegaが必要と説明する。
 
 ## 検証済み
 
 - 変更前のfocused DBテストで、期限切れ・available=false token claimが2件とも受理され、direct MCT RPCでslotが2つ増える失敗を再現した。
-- dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false -m:2: 成功、warning/error 0。
-- eve_p8と tools/dev/db-lock.sh でNewEdenStoreHostTests、NewEdenEntitlementHostTests、UserSvcRedeemTokenPersistenceTests、UserSvcHostWireTests、UserSvcRpcHostWireTests、CompatibilityRpcServiceTests、SubscriptionTransitionsTests、LoginOnboardingSubscriptionRpcHostWireTestsを実行: 37 passed、0 failed、0 skipped。
-- focused redeem/blueprint/SP/reverse-redeem 4件も成功。
+- 変更前のHost wireでstore purchaseはOmega subscription expiryを`DateTimeOffset`として読めず失敗した。`ReadSubscriptionEndForUpdateAsync`をtyped readerに直し、Omega/MCT/item購入、通知順、残高、CallID再送、concurrency、Host再起動後receipt replayが通った。
+- 変更前のHost wire test `NewEdenStoreHostTests.Store_purchases_settle_on_the_host_wire_and_replay_receipts_after_restart`（NewEdenStoreHostTests.cs:811）でAlpha accountへのMCT store purchaseがsuccess dictを返す失敗を再現した。Omega期限をtransaction内でlockして確認した後、AlphaはNone・残高不変・slotなし・通知なし、Omega化後のMCTは成功する。
+- StoreOffersServiceのmissing offer回帰は、変更前に`InvalidOperationException`で失敗し、falsey Noneを返す修正後に成功した。Host wireにもmissing offer拒否を追加。
+- `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore -m:2 -p:UseSharedCompilation=false`: 成功、warning/error 0。
+- `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Services.Core.Tests/Eve.Services.Core.Tests.csproj --no-restore -m:2 -p:UseSharedCompilation=false`: 成功、warning/error 0。
+- eve_p8 + `tools/dev/db-lock.sh`: 最新コードで`NewEdenStoreHostTests` 15 passed / 0 failed / 0 skipped。直前のコード版では`NewEdenEntitlementHostTests` 6、`HostServerTests` 402、`UserSvcRedeemTokenPersistenceTests` 1、`SubscriptionTransitionsTests` 1、`CompatibilityRpcServiceTests` 14も各クラス単独で全件pass。merge後、push前にruntime参照クラスを再実行する。
+- `StoreOffersServiceTests|NewEdenStoreCatalogTests|OmegaStateTests`: 27 passed / 0 failed / 0 skipped。`DispatchGoldenTests`: 200 passed / 0 failed / 0 skipped。
+- 結合Host filterの一括実行はtesthost process crashで完走しなかったため合格に数えず、関連クラスを個別実行した。
 - GUIの実V24 client確認はしていない。
 
 ## 継続時の注意
 
-dotnet/src/Eve.Host/Persistence/NewEden/PersistenceNewEdenStoreRuntime.Part2.cs:387-474 がreverse-redeem配送、NewEdenStoreHostTests.cs:177-254 がそのDB wire regression。ストア決済の残作業は、成功・不足残高・unsupported currency・同一CallId再送・Host再起動後再送をDB付きfocusedテストで確かめてから別のgreen pushにする。
+dotnet/src/Eve.Host/Persistence/NewEden/PersistenceNewEdenStoreRuntime.Part2.cs:387-474がreverse-redeem配送、NewEdenStoreHostTests.cs:177-254がDB wire regression。store settlementの実money/USD/AUR checkout providerはないためfalsey失敗を維持し、falseyはV24 UIのgeneric PurchaseFailedErrorになる（vgs/client/vgsClient.py:14,59-64）。push前のCI red gateとmerge後のDB class rerun、push後のGitHub Actions完了確認が残る。

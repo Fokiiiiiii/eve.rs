@@ -95,7 +95,9 @@ internal sealed partial class CharacterServicesComposition
             new Eve.Services.Core.LoginCampaignMgrService(storeRuntime),
             new Eve.Services.Core.SeasonalLoginCampaignMgrService(storeRuntime),
             new StoreOffersService(
-                _ => ValueTask.FromResult<JsonObject?>(Eve.Services.Core.NewEdenStoreCatalog.Default.Root)),
+                _ => ValueTask.FromResult<JsonObject?>(Eve.Services.Core.NewEdenStoreCatalog.Default.Root),
+                storeRuntime.PurchaseStoreOfferAsync,
+                storeRuntime.SupportsStoreOfferPurchase),
             new Eve.Services.Core.FastCheckoutService(Eve.Services.Core.NewEdenStoreCatalog.Default),
             new Eve.Services.Core.RedeemService(
                 storeRuntime,

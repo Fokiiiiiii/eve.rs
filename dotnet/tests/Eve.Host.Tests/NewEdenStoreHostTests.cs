@@ -1,5 +1,9 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using Eve.Characters;
 using Eve.Data;
+using Eve.Host.PublicGateway;
 using Eve.Identity;
 using Eve.Inventory;
 using Eve.Macho;
@@ -16,8 +20,7 @@ using Npgsql;
 namespace Eve.Host.Tests;
 
 /// <summary>
-/// The New Eden Store as the real host composition registers it (HostComposition.BuildAsync), on scratch PostgreSQL schemas: a purchase
-/// requires an atomic payment settlement provider; store checkout paths are disabled until one is connected.
+/// The New Eden Store as the real host composition registers it (HostComposition.BuildAsync), on scratch PostgreSQL schemas.
 /// </summary>
 [Collection("host-composition")]
 public sealed class NewEdenStoreHostTests : IAsyncLifetime
@@ -92,6 +95,30 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
         public void Send(PyValue packet) => _packets.Enqueue(packet);
     }
 
+    private sealed class StorePurchaseWireService(IService store, CharacterSessions sessions, long userId, long characterId, long stationId) : IService
+    {
+        public string Name => "storePurchaseWire";
+
+        public bool HasMethod(string method) => method == "buy_offer";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            call.Session.UserId = userId;
+            call.Session.CharacterId = characterId;
+            call.Session.Set("stationid", new PyLong(stationId));
+            sessions.Enter(characterId, call.Session);
+            return store.CallAsync(new ServiceCall
+            {
+                Method = call.Method,
+                Args = call.Args,
+                Kwargs = call.Kwargs,
+                Session = call.Session,
+                CallId = call.CallId,
+                Cancellation = call.Cancellation,
+            });
+        }
+    }
+
     private static List<(string Name, PyValue[] Args)> Notifications(Sink sink)
     {
         var result = new List<(string Name, PyValue[] Args)>();
@@ -133,20 +160,71 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
         "", "disabled", new ClusterOptions { NewCharacterExperienceEnabled = false, NewCharacterExperienceMode = "disabled" },
         new AccountOptions { AutoCreate = true }, StrictRpc: true);
 
+    private static byte[] PasswordHash(byte value) => Enumerable.Repeat(value, LoginAttempt.PasswordHashLength).ToArray();
+
     private static ServiceCall Call(ClientSession session, string method, long callId, PyValue[] args, PyDict? kwargs = null) =>
         new() { Session = session, Method = method, Args = args, Kwargs = kwargs ?? new PyDict([]), CallId = new PyInt(callId) };
 
     /// <summary>A character with a wallet at the station: the account's PLEX balance starts at zero.</summary>
-    private async Task<long> CreatePilotAsync(NpgsqlDataSource source, Station station, string name)
+    private async Task<long> CreatePilotAsync(NpgsqlDataSource source, Station station, string name, long plex = 0)
     {
         await using var c = await source.OpenConnectionAsync();
         await using var tx = await c.BeginTransactionAsync();
         var actor = await new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA")).InsertAsync(c, tx,
             new NewCharacter(1, name, 0, 1, 1, 1, 11, 1376, 1000044, null,
                 station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId, null, null));
-        await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).OpenAsync(c, tx, actor, 10000m, 0);
+        await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).OpenAsync(c, tx, actor, 10000m, plex);
         await tx.CommitAsync();
         return actor;
+    }
+
+    private static async Task<(PyValue Result, List<string> Notifications)> StoreWireCallAsync(
+        TestFront front, SessionOpen open, long callId, string offer, long quantity, long characterId, string currency = "PLX")
+    {
+        var kwargs = Py.Dict(
+            ("from_character_id", Py.Number(characterId)),
+            ("to_character_id", Py.Number(characterId)),
+            ("message", new PyStr("")),
+            ("is_game_time", PyBool.True),
+            ("store_id", new PyInt(4)));
+        var packet = Packets.CallWithKwargs(
+            open, callId, "storePurchaseWire", "buy_offer",
+            Py.Tuple(new PyStr(offer), new PyStr(currency), Py.Number(quantity)), kwargs);
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(packet)));
+
+        var notifications = new List<string>();
+        while (true)
+        {
+            var sent = Assert.IsType<Send>(await front.ReceiveAsync());
+            var outer = Assert.IsType<PyObject>(MarshalCodec.Decode(sent.Payload));
+            var state = ((PyTuple)outer.Args).Items;
+            if (state[0] is PyInt { Value: MachoMessage.Notification })
+            {
+                var address = ((PyTuple)((PyObject)state[2]).Args).Items;
+                notifications.Add(JsSemantics.StringValue(address[1]) ?? "");
+                continue;
+            }
+            if (state[0] is PyInt { Value: MachoMessage.CallRsp })
+            {
+                var payload = (PyTuple)state[4];
+                var result = payload.Items[0] is PySubStream { Decoded: { } decoded } ? decoded : payload.Items[0];
+                return (result, notifications);
+            }
+        }
+    }
+
+    private static (string TypeUrl, byte[] Payload, long? CharacterId) DecodeGatewayNotice(byte[] frame)
+    {
+        var messages = GatewayEnvelope.TakeFrames([.. frame]);
+        var envelope = ProtoReader.Fields(Assert.Single(messages));
+        var anyField = envelope.Single(field => field.Number == 5);
+        var any = ProtoReader.Fields(anyField.Bytes);
+        var target = ProtoReader.Fields(envelope.Single(field => field.Number == 6).Bytes);
+        var character = target.FirstOrDefault(field => field.Number == 4);
+        return (
+            Encoding.UTF8.GetString(any.Single(field => field.Number == 1).Bytes.Span),
+            any.Single(field => field.Number == 2).Bytes.ToArray(),
+            character.Number == 4 ? checked((long)character.Scalar) : null);
     }
 
     private async Task<long> PlexBalanceAsync(IService vault, ClientSession session, long callId) =>
@@ -730,6 +808,156 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
         Assert.Equal(0, Quantity(await items.OwnedByAsync(pilot), CrateTypeId));
     }
 
+    [PgFact]
+    public async Task Store_purchases_settle_on_the_host_wire_and_replay_receipts_after_restart()
+    {
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var host = await BuildHostAsync();
+        var store = host.Registry.Lookup("storeManager")!;
+        var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
+        var listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        listener.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        listener.Listen(16);
+        using var stopServer = new CancellationTokenSource();
+        var serving = host.Server.ServeAsync(listener, stopServer.Token);
+        using var front = await TestFront.ConnectAsync((IPEndPoint)listener.LocalEndPoint!);
+        await front.SendAsync(new Hello(HostCodec.ProtocolVersion, 0xFFAA));
+        Assert.Equal(new HelloAck(HostCodec.ProtocolVersion), await front.ReceiveAsync());
+        Assert.IsType<ClusterConfig>(await front.ReceiveAsync());
+        var userId = Assert.IsType<Accepted>((await front.AuthenticateAsync("store-purchase-wire", PasswordHash(8), 1)).Outcome).UserId;
+        Assert.Equal(1u, userId);
+
+        var pilot = await CreatePilotAsync(source, station, "Store purchase wire pilot", plex: 2_000);
+        var accounts = new PgAccountDirectory(source, new AccountOptions(), Schema("EVE_IDENTITY_SCHEMA"));
+        accounts.SetSubscriptionEndsAt(userId, DateTimeOffset.UtcNow.AddDays(-1));
+        var sessions = Assert.IsType<CharacterSessions>(host.CharacterSessions);
+        host.Registry.Register(new StorePurchaseWireService(store, sessions, userId, pilot, station.Id));
+        var open = new SessionOpen(17, (userId * 1_000_000UL) + 0xFFAA, userId, 0, "127.0.0.1", "EN", "GB");
+        await front.SendAsync(open);
+        Assert.IsType<Send>(await front.ReceiveAsync());
+
+        var subscriber = host.PublicGateway.Notices.Subscribe(userId);
+        subscriber.Character = pilot;
+        var (unsupportedCurrency, unsupportedCurrencyNotifications) =
+            await StoreWireCallAsync(front, open, 500, "omega_30_days", 1, pilot, "USD");
+        Assert.Same(PyNone.Instance, unsupportedCurrency);
+        Assert.Empty(unsupportedCurrencyNotifications);
+        Assert.Equal(2_000L, await PlexBalanceAsync(host.Registry.Lookup("vaultManager")!,
+            new ClientSession { UserId = userId, CharacterId = pilot }, 500));
+        Assert.False(subscriber.Frames.Reader.TryRead(out _));
+
+        var (missingOffer, missingOfferNotifications) = await StoreWireCallAsync(
+            front, open, 498, "missing_offer", 1, pilot);
+        Assert.Same(PyNone.Instance, missingOffer);
+        Assert.Empty(missingOfferNotifications);
+
+        var (alphaMctResult, alphaMctNotifications) = await StoreWireCallAsync(
+            front, open, 499, "mct_slot_30_days", 1, pilot);
+        Assert.Same(PyNone.Instance, alphaMctResult);
+        Assert.Empty(alphaMctNotifications);
+        Assert.Equal(2_000L, await PlexBalanceAsync(host.Registry.Lookup("vaultManager")!,
+            new ClientSession { UserId = userId, CharacterId = pilot }, 500));
+        Assert.Empty(await accounts.TrainingSlotsAsync(userId, CancellationToken.None));
+        Assert.False(subscriber.Frames.Reader.TryRead(out _));
+
+        var (omegaResult, omegaNotifications) = await StoreWireCallAsync(front, open, 501, "omega_30_days", 1, pilot);
+        var omegaResponse = Assert.IsType<PyDict>(omegaResult);
+        Assert.Equal(PyBool.True, ValueField(omegaResponse, "success"));
+        Assert.Equal(new PyInt(500), ValueField(omegaResponse, "spent"));
+        Assert.Equal(new PyInt(1_500), ValueField(omegaResponse, "balance"));
+        Assert.Equal(pilot, Integer(ValueField(omegaResponse, "character_id")));
+        Assert.Equal(new[] { "OnSubscriptionTimeUpdateServer", "OnSubscriptionChangedServer" }, omegaNotifications);
+
+        var (gatewayType, gatewayPayload, gatewayCharacter) = DecodeGatewayNotice(await subscriber.Frames.Reader.ReadAsync());
+        Assert.Equal("type.evetech.net/eve_public.plex.vault.api.BalanceChangedNotice", gatewayType);
+        Assert.Equal(pilot, gatewayCharacter);
+        var noticeFields = ProtoReader.Fields(gatewayPayload);
+        var attributes = ProtoReader.Fields(noticeFields.Single(field => field.Number == 2).Bytes);
+        Assert.Equal(unchecked((ulong)(-50_000L)), ProtoReader.Fields(attributes.Single(field => field.Number == 2).Bytes).Single().Scalar);
+        Assert.Equal(150_000UL, ProtoReader.Fields(attributes.Single(field => field.Number == 3).Bytes).Single().Scalar);
+
+        var (mctResult, mctNotifications) = await StoreWireCallAsync(front, open, 502, "mct_slot_30_days", 1, pilot);
+        Assert.Equal(new PyInt(485), ValueField(Assert.IsType<PyDict>(mctResult), "spent"));
+        Assert.Equal(new[] { "OnMultipleCharactersTrainingUpdated" }, mctNotifications);
+        Assert.Single(await accounts.TrainingSlotsAsync(userId, CancellationToken.None), slot => slot.Value > DateTimeOffset.UtcNow);
+        _ = await subscriber.Frames.Reader.ReadAsync();
+
+        var (itemResult, itemNotifications) = await StoreWireCallAsync(front, open, 503, "pilot_resculpt_certificate", 1, pilot);
+        Assert.Equal(new PyInt(100), ValueField(Assert.IsType<PyDict>(itemResult), "spent"));
+        Assert.Equal(new[] { "OnItemChange" }, itemNotifications);
+        var items = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
+        Assert.Equal(1, Quantity(await items.OwnedByAsync(pilot), CertificateTypeId));
+        _ = await subscriber.Frames.Reader.ReadAsync();
+
+        var (repeatedResult, repeatedNotifications) = await StoreWireCallAsync(front, open, 503, "pilot_resculpt_certificate", 1, pilot);
+        AssertSamePurchaseResponse(itemResult, repeatedResult);
+        Assert.Empty(repeatedNotifications);
+        Assert.Equal(1, Quantity(await items.OwnedByAsync(pilot), CertificateTypeId));
+        Assert.Equal(915L, await PlexBalanceAsync(host.Registry.Lookup("vaultManager")!, new ClientSession { UserId = userId, CharacterId = pilot }, 504));
+        Assert.False(subscriber.Frames.Reader.TryRead(out _));
+
+        var changedRetry = await StoreWireCallAsync(front, open, 503, "skill_extractor_single", 1, pilot);
+        Assert.Same(PyNone.Instance, changedRetry.Result);
+        Assert.Empty(changedRetry.Notifications);
+        Assert.Equal(915L, await PlexBalanceAsync(host.Registry.Lookup("vaultManager")!, new ClientSession { UserId = userId, CharacterId = pilot }, 505));
+
+        var (insufficientFunds, insufficientFundsNotifications) =
+            await StoreWireCallAsync(front, open, 507, "pilot_resculpt_certificate", 10, pilot);
+        Assert.Same(PyNone.Instance, insufficientFunds);
+        Assert.Empty(insufficientFundsNotifications);
+        Assert.Equal(1, Quantity(await items.OwnedByAsync(pilot), CertificateTypeId));
+        Assert.Equal(915L, await PlexBalanceAsync(host.Registry.Lookup("vaultManager")!,
+            new ClientSession { UserId = userId, CharacterId = pilot }, 509));
+        Assert.False(subscriber.Frames.Reader.TryRead(out _));
+
+        var concurrentSink = new Sink();
+        var concurrentSession = new ClientSession(concurrentSink) { SessionId = 18, UserId = userId, CharacterId = pilot };
+        concurrentSession.Set("stationid", new PyLong(station.Id));
+        sessions.Enter(pilot, concurrentSession);
+        var concurrentCall = Call(concurrentSession, "buy_offer", 508,
+            [new PyStr("pilot_resculpt_certificate"), new PyStr("PLX"), new PyInt(1)],
+            Py.Dict(
+                ("from_character_id", Py.Number(pilot)),
+                ("to_character_id", Py.Number(pilot)),
+                ("message", new PyStr("")),
+                ("is_game_time", PyBool.True),
+                ("store_id", new PyInt(4))));
+        var concurrentResults = await Task.WhenAll(
+            store.CallAsync(concurrentCall).AsTask(),
+            store.CallAsync(concurrentCall).AsTask());
+        AssertSamePurchaseResponse(concurrentResults[0], concurrentResults[1]);
+        Assert.Equal(new PyInt(815), ValueField(Assert.IsType<PyDict>(concurrentResults[0]), "balance"));
+        Assert.Equal(new[] { "OnItemChange" }, Notifications(concurrentSink).Select(notification => notification.Name));
+        Assert.Equal(2, Quantity(await items.OwnedByAsync(pilot), CertificateTypeId));
+        Assert.Equal(815L, await PlexBalanceAsync(host.Registry.Lookup("vaultManager")!, concurrentSession, 510));
+        _ = await subscriber.Frames.Reader.ReadAsync();
+        Assert.False(subscriber.Frames.Reader.TryRead(out _));
+
+        await stopServer.CancelAsync();
+        listener.Dispose();
+        await serving;
+        front.Dispose();
+        _hosts.Remove(host);
+        await host.ShutdownAsync();
+
+        var restarted = await BuildHostAsync();
+        var restartedStore = restarted.Registry.Lookup("storeManager")!;
+        var replaySink = new Sink();
+        var replaySession = new ClientSession(replaySink) { UserId = userId, CharacterId = pilot };
+        var replay = await restartedStore.CallAsync(Call(replaySession, "buy_offer", 503,
+            [new PyStr("pilot_resculpt_certificate"), new PyStr("PLX"), new PyInt(1)],
+            Py.Dict(
+                ("from_character_id", Py.Number(pilot)),
+                ("to_character_id", Py.Number(pilot)),
+                ("message", new PyStr("")),
+                ("is_game_time", PyBool.True),
+                ("store_id", new PyInt(4)))));
+        AssertSamePurchaseResponse(itemResult, MarshalCodec.Decode(MarshalCodec.Encode(replay)));
+        Assert.Empty(replaySink.Packets);
+        Assert.Equal(2, Quantity(await items.OwnedByAsync(pilot), CertificateTypeId));
+        Assert.Equal(815L, await PlexBalanceAsync(restarted.Registry.Lookup("vaultManager")!, replaySession, 506));
+    }
+
     [Fact]
     public void The_client_global_config_carries_the_store_keys_with_the_values_eve_js_serves()
     {
@@ -760,6 +988,19 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
 
     private static PyValue ValueField(PyDict fields, string name) =>
         fields.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == name).Value;
+
+    private static void AssertSamePurchaseResponse(PyValue expected, PyValue actual)
+    {
+        var expectedFields = Assert.IsType<PyDict>(expected);
+        var actualFields = Assert.IsType<PyDict>(actual);
+        Assert.Equal(expectedFields.Entries.Count, actualFields.Entries.Count);
+        foreach (var entry in expectedFields.Entries)
+        {
+            var name = JsSemantics.StringValue(entry.Key);
+            Assert.NotNull(name);
+            Assert.Equal(entry.Value, ValueField(actualFields, name!));
+        }
+    }
 
     private static string Field(PyDict fields, string name) =>
         JsSemantics.StringValue(fields.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == name).Value) ?? "";

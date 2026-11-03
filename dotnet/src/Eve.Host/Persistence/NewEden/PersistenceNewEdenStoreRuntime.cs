@@ -46,7 +46,8 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
     ItemTypeCatalog itemTypes,
     CharacterSessions sessions,
     Func<long> nowUnixMs,
-    PgAccountDirectory accountDirectory)
+    PgAccountDirectory accountDirectory,
+    Action<string, byte[], long> publishNotice)
     : Eve.Services.Core.IRedeemCallbacks, Eve.Services.Core.IVaultManagerCallbacks, Eve.Services.Core.ILoginRewardCallbacks,
       Eve.Services.Core.IMultipleTrainingCallbacks
 {

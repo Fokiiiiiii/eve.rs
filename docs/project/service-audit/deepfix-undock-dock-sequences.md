@@ -60,4 +60,4 @@ Host commits `CharacterShips.UndockAsync` before entering the simulator; a simul
 ## Current branch state (2026-11-03)
 
 - The undock Host fix and PostgreSQL regression are in local commit `e4813423`; the latest local merge commit is `d41a00b9`, which includes `origin/main` through `31dac370`. The merged main history includes store/subscription persistence, Project Discovery, and NPC security-status recovery updates. After the merge, the touched .NET project built with 0 warnings/errors and the related Host classes passed 170/170 with no skips on `eve_p4`.
-- Main CI run 1454 (`41578995207`) on `31dac370` is in progress. At the latest status check, Rust, Python, format/clippy, .NET build, space tests and most other .NET shards had passed; Windows, end-to-end, and remaining Host shards were still running. Selected Agent run 1268 on `31dac370` passed.
+- Main CI run 1454 (`41578995207`) on `31dac370` completed successfully with no failed jobs. Selected Agent run 1268 on `31dac370` also passed.

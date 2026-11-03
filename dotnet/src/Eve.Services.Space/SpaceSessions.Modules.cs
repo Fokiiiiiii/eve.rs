@@ -495,7 +495,7 @@ public sealed partial class SpaceSessions
         }
         if (victim is not null && securityClass is { } crimeWhere && Aggression is { } record)
         {
-            // what the attack makes of the attacker is crimewatch's; the module runs whatever it keeps
+            // Crimewatch owns attack timers and flags; the module runs whatever it keeps
             try
             {
                 var security = _systems.Get(pilot.SolarSystemId)?.Security ?? 0;

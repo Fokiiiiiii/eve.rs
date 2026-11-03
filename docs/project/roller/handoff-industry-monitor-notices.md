@@ -58,4 +58,4 @@ Production `IndustryMonitorRpcService` now requires a policy callback backed by 
 - `HostServerTests.Inventory_registration_injects_the_drone_bay_port_for_capacity_and_return`: passed, 1/1, 0 skipped.
 - Tests used the pinned SDE copied into the task database `eve_p3` and ran through `tools/dev/db-lock.sh`.
 - No graphical-client session was performed.
-- GitHub Actions verification for this update is pending.
+- Pushed to `main` as `481bc22c09338964f2730ed74976878a0caa25a4`. Push CI run `41621572957` (CI 1468) completed successfully with no failed tests or jobs. Selected Host tests run `41621627080` (agent test 1283) completed successfully with no failures reported; the wait summary did not include a skip count. The local relevant Host selection passed 51/51 with 0 skipped tests after the final upstream merge.

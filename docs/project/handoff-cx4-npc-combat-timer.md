@@ -26,4 +26,4 @@ EveJS 261028.1 initializes and retains npcTimerExpiresAtMs (src/server/src/servi
 
 ## Remaining checks
 
-The graphical V24.01 client has not been run. The latest gate check was origin/main ce983679, whose CI run 1466 completed successfully. After merging ce983679, the three touched builds and three DB-locked focused tests above passed locally. The change is ready for push while the main CI gate is green. After pushing only HEAD:main, dispatch the selected Space, Crimewatch, and Host tests, wait for the Agent test and push-triggered CI runs to finish, inspect `ci-status.py failures <sha>`, and update this handoff with their results.
+The graphical V24.01 client has not been run. The implementation and docs were pushed to main as `e4aaef11fe7793145eac183fd954099f3adeb476`. Agent test run 1282 and push-triggered CI run 1467 both completed successfully; `python3 tools/dev/ci-status.py failures e4aaef11fe7793145eac183fd954099f3adeb476` reported no failed tests or jobs. The three touched builds and three DB-locked focused tests also passed after merging origin/main at ce983679.

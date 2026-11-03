@@ -891,6 +891,8 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     public void ShipChanged(ulong sessionId, SimShip ship) => Send(new SimShipChanged(sessionId, ship));
 
+    public void CriminalFlagActive(ulong sessionId) => Send(new SimCriminalFlagActive(sessionId));
+
     public async ValueTask DisposeAsync()
     {
         await _stop.CancelAsync();

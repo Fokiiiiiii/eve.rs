@@ -483,6 +483,7 @@ impl Sim {
                 | Message::Activate { session_id, .. }
                 | Message::ShipSpec { session_id, .. }
                 | Message::Bind { session_id }
+                | Message::CriminalFlagActive { session_id }
                 | Message::Leave { session_id, .. }
                 | Message::UpdateState { session_id, .. } => {
                     self.sessions.get(session_id).map(|key| vec![*key])
@@ -791,6 +792,7 @@ impl Sim {
             | Message::Leave { .. }
             | Message::Bind { .. }
             | Message::UpdateState { .. }
+            | Message::CriminalFlagActive { .. }
             | Message::Spawn(..)
             | Message::Destroy { .. }
             | Message::Respawn { .. }
@@ -1134,6 +1136,19 @@ impl Sim {
                     let mut out = s.update_state(session_id, now);
                     out.extend(s.abyssal_environment_fx(session_id, None, now, true));
                     out
+                })
+                .unwrap_or_default(),
+            Message::CriminalFlagActive { session_id } => self
+                .scene_of(session_id)
+                .map(|scene| {
+                    if let Some(activation) = scene
+                        .pilots
+                        .get(&session_id)
+                        .map(|pilot| (pilot.ship.spec.owner_id, pilot.ship.spec.ship_id))
+                    {
+                        scene.criminal_flag_activations.push(activation);
+                    }
+                    Vec::new()
                 })
                 .unwrap_or_default(),
             Message::ControlStructure {

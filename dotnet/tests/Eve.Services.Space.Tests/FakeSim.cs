@@ -526,6 +526,8 @@ internal sealed class FakeSim : ISimulation
 
     public void ShipChanged(ulong sessionId, SimShip ship) => Heard.Enqueue(new SimShipChanged(sessionId, ship));
 
+    public void CriminalFlagActive(ulong sessionId) => Heard.Enqueue(new SimCriminalFlagActive(sessionId));
+
     public void Say(SimMessage message) => Received?.Invoke(message);
 
     public void Lose() => Lost?.Invoke();

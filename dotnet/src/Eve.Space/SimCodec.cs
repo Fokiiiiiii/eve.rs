@@ -590,6 +590,9 @@ public static partial class SimCodec
             case Kind.ShipChanged:
                 message = new SimShipChanged(r.U64(), ReadShip(ref r));
                 break;
+                    case Kind.CriminalFlagActive:
+                        message = new SimCriminalFlagActive(r.U64());
+                        break;
             case Kind.Notify:
                 message = new SimNotify(r.U64(), r.Text(), r.Text(), r.Bytes());
                 break;

@@ -5,8 +5,8 @@ use std::collections::BTreeSet;
 use crate::consts::{CATEGORY_DRONE, CATEGORY_FIGHTER, is_player_owner};
 use crate::env::WorldError;
 use crate::events::message::{
-    CRIMEWATCH_EVENT_STARTED, INDIRECT_OFFENSE_EVENT, MAX_LOCKED_TARGETS_CHANGED, ON_CLOAK_BALL,
-    SEC_STATUS_LOST_EVENT,
+    CRIMEWATCH_EVENT_STARTED, CRIMINAL_FLAG_ACTIVE, INDIRECT_OFFENSE_EVENT, MAX_LOCKED_TARGETS_CHANGED,
+    ON_CLOAK_BALL, SEC_STATUS_LOST_EVENT,
 };
 use crate::groups::mixin::get_member_bubble_set;
 use crate::monitors::ballparks::item_subject;
@@ -18,6 +18,7 @@ use crate::value::Value;
 
 const HANDLER_CRIMEWATCH: u16 = 0;
 const HANDLER_INDIRECT_OFFENSE: u16 = 1;
+const HANDLER_SECURITY_STATUS_BUBBLE_CHECK: u16 = 2;
 
 /// `GetAggressorId` of `crimewatch.util`: a drone or a fighter is its pilot's ship.
 fn get_aggressor_id(
@@ -464,6 +465,7 @@ impl Task for MaxLockedTargetsChangedMonitor {
 #[derive(Debug, Default)]
 pub struct MonitorSecurityStatusLoss {
     solar_system_id: Option<i64>,
+    bubble_check_scheduled: bool,
 }
 
 impl Task for MonitorSecurityStatusLoss {
@@ -475,14 +477,53 @@ impl Task for MonitorSecurityStatusLoss {
         if let Some(solar_system_id) = t.world().solar_system_id() {
             self.solar_system_id = Some(solar_system_id);
             t.subscribe_item(solar_system_id, SEC_STATUS_LOST_EVENT, 0);
+            t.subscribe_item(solar_system_id, CRIMINAL_FLAG_ACTIVE, 0);
         }
-        t.set_status_to_success();
+        let Some(address) = t.required_address("combatTargetsAddress") else {
+            t.set_status_to_failed();
+            return;
+        };
+        if t.get_last_blackboard_value(&address).truthy() {
+            self.schedule_bubble_check(t);
+            t.set_status_to_success();
+        } else {
+            t.set_status_to_running();
+        }
     }
 
     fn clean_up(&mut self, t: &mut TaskCtx<'_, '_>) {
         t.set_status_to_invalid();
         if let Some(solar_system_id) = self.solar_system_id.filter(|s| *s != 0) {
             t.unsubscribe_item(solar_system_id, SEC_STATUS_LOST_EVENT, 0);
+        }
+    }
+
+    fn on_call(&mut self, t: &mut TaskCtx<'_, '_>, handler: u16, _args: &[Value]) {
+        if handler != HANDLER_SECURITY_STATUS_BUBBLE_CHECK {
+            return;
+        }
+        self.bubble_check_scheduled = false;
+        let Some(address) = t.required_address("combatTargetsAddress") else { return };
+        let current = t.get_last_blackboard_value(&address);
+        let Some(my_bubble_id) = get_my_ball(t).map(|ball| ball.new_bubble_id) else {
+            self.schedule_bubble_check(t);
+            return;
+        };
+        let mut remaining = Value::set(std::iter::empty());
+        for target in current.items().unwrap_or_default() {
+            let in_bubble = target
+                .as_int()
+                .is_some_and(|id| t.world().ball(id).is_some_and(|ball| ball.new_bubble_id == my_bubble_id));
+            if in_bubble {
+                remaining.set_add(target.clone());
+            }
+        }
+        if remaining != current {
+            t.send_blackboard_value(&address, remaining.clone());
+            t.request_reset();
+        }
+        if remaining.truthy() {
+            self.schedule_bubble_check(t);
         }
     }
 
@@ -507,7 +548,17 @@ impl Task for MonitorSecurityStatusLoss {
         }
         let Some(address) = t.required_address("combatTargetsAddress") else { return };
         if add_to_set_on_channel(t, &address, Value::Int(ship_id), true) == SetAdd::Added {
+            self.schedule_bubble_check(t);
             t.request_reset();
+        }
+    }
+}
+
+impl MonitorSecurityStatusLoss {
+    fn schedule_bubble_check(&mut self, t: &mut TaskCtx<'_, '_>) {
+        if !self.bubble_check_scheduled {
+            t.schedule_call(1.0, HANDLER_SECURITY_STATUS_BUBBLE_CHECK, Vec::new());
+            self.bubble_check_scheduled = true;
         }
     }
 }
@@ -721,6 +772,40 @@ mod tests {
         assert_eq!(combat_set(&mut rig), Value::Set(vec![Value::Int(40)]));
         rig.clean_up_task();
         assert!(rig.shared.events.subscribers(30000142, SEC_STATUS_LOST_EVENT).is_empty());
+    }
+
+    #[test]
+    fn security_status_loss_target_is_removed_after_leaving_its_bubble() {
+        let attrs = Attrs::new().with("combatTargetsAddress", item("Combat"));
+        let mut rig = Rig::new();
+        rig.world.solar_system = Some(30000142);
+        rig.world.add_ball(1, [0.0; 3], 2).new_bubble_id = 3;
+        rig.world.add_ball(40, [0.0; 3], 1).new_bubble_id = 3;
+        rig.run(Box::new(MonitorSecurityStatusLoss::default()), attrs);
+        tell(&mut rig, 30000142, SEC_STATUS_LOST_EVENT, &[Value::Int(1), Value::Int(40)]);
+        assert_eq!(combat_set(&mut rig), Value::Set(vec![Value::Int(40)]));
+
+        rig.world.balls.get_mut(&40).unwrap().new_bubble_id = 4;
+        rig.advance_seconds(1.1);
+        rig.deliver_scheduled();
+        assert_eq!(combat_set(&mut rig), Value::Set(vec![]));
+    }
+
+    #[test]
+    fn active_criminal_flag_adds_a_sentry_target() {
+        let attrs = Attrs::new().with("combatTargetsAddress", item("Combat"));
+        let mut rig = Rig::new();
+        rig.world.solar_system = Some(30000142);
+        rig.world.add_ball(1, [0.0; 3], 2).new_bubble_id = 3;
+        rig.world.add_ball(40, [0.0; 3], 1).new_bubble_id = 3;
+        rig.run(Box::new(MonitorSecurityStatusLoss::default()), attrs);
+        tell(
+            &mut rig,
+            30000142,
+            crate::events::message::CRIMINAL_FLAG_ACTIVE,
+            &[Value::Int(1), Value::Int(40)],
+        );
+        assert_eq!(combat_set(&mut rig), Value::Set(vec![Value::Int(40)]));
     }
 
     #[test]

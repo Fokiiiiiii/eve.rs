@@ -519,8 +519,20 @@ public sealed partial class SpaceSessions
             {
                 _log?.Invoke($"crimewatch could not record the attack of {characterId} on {victim.CharacterId}: {error.Message}");
             }
+                  if (SecurityStatusOf is not null)
+                  {
+                      try
+                      {
+                          await SendShipAsync(id, pilot, null, cancellationToken);
+                      }
+                      catch (Exception error) when (error is not OperationCanceledException)
+                      {
+                          _log?.Invoke($"the security status of {characterId} could not be refreshed in the simulation: {error.Message}");
+                      }
+                  }
         }
-        return ModuleResult.Done;
+          await NotifyCriminalFlagActiveAsync(characterId, id, cancellationToken);
+          return ModuleResult.Done;
     }
 
     /// <summary>
@@ -542,18 +554,35 @@ public sealed partial class SpaceSessions
     /// <summary>Host calls this after a criminal with an active timer enters high-security space.</summary>
       public Func<long, long, double, CancellationToken, Task>? PilotEnteredSystem { get; set; }
 
-      private async Task NotifyPilotEnteredSystemAsync(long characterId, long solarSystemId)
+    private async Task NotifyPilotEnteredSystemAsync(long characterId, ulong sessionId, long solarSystemId)
       {
-          if (solarSystemId <= 0 || solarSystemId > int.MaxValue ||
-              _systems.Get((int)solarSystemId) is not { } system || PilotEnteredSystem is not { } entered) return;
-          try
+        if (solarSystemId > 0 && solarSystemId <= int.MaxValue &&
+            _systems.Get((int)solarSystemId) is { } system && PilotEnteredSystem is { } entered)
           {
-              await entered(characterId, solarSystemId, system.Security, CancellationToken.None);
+            try
+            {
+                await entered(characterId, solarSystemId, system.Security, CancellationToken.None);
+            }
+            catch (Exception error) when (error is not OperationCanceledException)
+            {
+                _log?.Invoke($"crimewatch system entry for character {characterId} could not be recorded: {error.Message}");
+            }
           }
-          catch (Exception error) when (error is not OperationCanceledException)
-          {
-              _log?.Invoke($"crimewatch system entry for character {characterId} could not be recorded: {error.Message}");
-          }
+        await NotifyCriminalFlagActiveAsync(characterId, sessionId, CancellationToken.None);
+    }
+
+    private async Task NotifyCriminalFlagActiveAsync(long characterId, ulong sessionId, CancellationToken cancellationToken)
+    {
+        if (CrimewatchStateOf is not { } stateOf) return;
+        try
+        {
+            var state = await stateOf(characterId, cancellationToken);
+            if (state.IsCriminal(_nowUnixMs())) _sim.CriminalFlagActive(sessionId);
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            _log?.Invoke($"the criminal flag of {characterId} could not be refreshed in the simulation: {error.Message}");
+        }
       }
 
     /// <summary>The security status of a character (its relation of that kind; 0 when it is not set). The ship in space shows it in its slim item.</summary>

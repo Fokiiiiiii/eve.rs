@@ -43,7 +43,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 90;
+pub const PROTOCOL_VERSION: u16 = 91;
 
 /// A battlefield's capture point the host puts in space (protocol 77): a ball the pilots of its system see. Its factions (the attacker and the
 /// occupier, 0 for none) and its next point time (a FILETIME, 0 for none) are the dynamic slim fields the client reads from it.
@@ -1020,6 +1020,10 @@ pub enum Message {
     UpdateState {
         session_id: u64,
     },
+    /// The Host says the session entered space with an active criminal timer (protocol 91).
+    CriminalFlagActive {
+        session_id: u64,
+    },
     /// The host makes a session observe a structure in this system; generation is the Host's StructurePilotRecord.Version (protocol 68).
     ControlStructure {
         session_id: u64,
@@ -1678,6 +1682,7 @@ impl Message {
             Self::Leave { .. } => kind::LEAVE,
             Self::Bind { .. } => kind::BIND,
             Self::UpdateState { .. } => kind::UPDATE_STATE,
+            Self::CriminalFlagActive { .. } => kind::CRIMINAL_FLAG_ACTIVE,
             Self::ControlStructure { .. } => kind::CONTROL_STRUCTURE,
             Self::Command { .. } => kind::COMMAND,
             Self::ShipSpec { .. } => kind::SHIP_SPEC,

@@ -18,6 +18,7 @@ pub const ENTER: u8 = 3;
 pub const LEAVE: u8 = 4;
 pub const BIND: u8 = 5;
 pub const UPDATE_STATE: u8 = 6;
+pub const CRIMINAL_FLAG_ACTIVE: u8 = 140;
 pub const COMMAND: u8 = 7;
 pub const SHIP_SPEC: u8 = 8;
 pub const NOTIFY: u8 = 9;

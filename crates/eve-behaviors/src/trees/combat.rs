@@ -167,6 +167,8 @@ pub struct Combat {
     pub target_evaluation_function: Value,
     pub preferred_module_groups: Value,
     pub proximity_sensor_tags: Value,
+    /// Only acquire combat targets from the system's security-status-loss event.
+    pub security_status_loss_only: bool,
     /// The categories the proximity sensors report (`includedCategories`): ships, drones and fighters by default, the entities too for a fleet
     /// that fights NPCs of another faction (`create_pochven_npc_behavior_tree`).
     pub included_categories: Value,
@@ -186,6 +188,7 @@ impl Default for Combat {
             target_evaluation_function: Value::Str(THREAT_TARGET_EVALUATOR.to_string()),
             preferred_module_groups: Value::List(Vec::new()),
             proximity_sensor_tags: Value::Tuple(vec![Value::Str(DRIFTER_TAG.to_string())]),
+            security_status_loss_only: false,
             included_categories: int_list(&[CATEGORY_SHIP, CATEGORY_DRONE, CATEGORY_FIGHTER]),
             invalid_owner_ids: Value::None,
         }
@@ -194,33 +197,42 @@ impl Default for Combat {
 
 /// `CreateCombatBehavior`.
 pub fn create_combat_behavior(args: Combat) -> Node {
-    sequence()
-        .named("Combat")
-        .add(
-            Node::class("WaitForAggressiveAct")
-                .named("Aggression Monitor")
+    let mut combat = sequence().named("Combat");
+    if args.security_status_loss_only {
+        combat = combat.add(
+            Node::class("MonitorSecurityStatusLoss")
+                .named("Monitor Security Status Loss")
                 .with("combatTargetsAddress", combat_targets_set()),
-        )
-        .add(
-            Node::class("MonitorAssistanceToTargets")
-                .named("Monitor Enemy Assistance")
-                .with("combatTargetsAddress", combat_targets_set()),
-        )
-        .add(
-            Node::class("MonitorProximitySensors")
-                .with("objectListAddress", combat_targets_set())
-                .with("includedCategories", args.included_categories.clone())
-                .with("excludedGroups", int_list(&[GROUP_CAPSULE]))
-                .with("validOwnerIds", args.valid_owner_ids.clone())
-                .with("invalidOwnerIds", args.invalid_owner_ids.clone())
-                .with("tags", args.proximity_sensor_tags.clone()),
-        )
-        .add(
-            Node::class("MonitorInvulnerabilityCanceledInBubble")
-                .with("targetIdListAddress", combat_targets_set()),
-        )
-        .add(Node::class("MaxLockedTargetsChangedMonitor"))
-        .add(Node::class("BlackboardMessageMonitor").with("messageAddress", combat_targets_set()))
+        );
+    } else {
+        combat = combat
+            .add(
+                Node::class("WaitForAggressiveAct")
+                    .named("Aggression Monitor")
+                    .with("combatTargetsAddress", combat_targets_set()),
+            )
+            .add(
+                Node::class("MonitorAssistanceToTargets")
+                    .named("Monitor Enemy Assistance")
+                    .with("combatTargetsAddress", combat_targets_set()),
+            )
+            .add(
+                Node::class("MonitorProximitySensors")
+                    .with("objectListAddress", combat_targets_set())
+                    .with("includedCategories", args.included_categories.clone())
+                    .with("excludedGroups", int_list(&[GROUP_CAPSULE]))
+                    .with("validOwnerIds", args.valid_owner_ids.clone())
+                    .with("invalidOwnerIds", args.invalid_owner_ids.clone())
+                    .with("tags", args.proximity_sensor_tags.clone()),
+            )
+            .add(
+                Node::class("MonitorInvulnerabilityCanceledInBubble")
+                    .with("targetIdListAddress", combat_targets_set()),
+            )
+            .add(Node::class("MaxLockedTargetsChangedMonitor"))
+            .add(Node::class("BlackboardMessageMonitor").with("messageAddress", combat_targets_set()));
+    }
+    combat
         .add(create_select_target_behavior(
             &args.target_address,
             &args.target_evaluation_function,

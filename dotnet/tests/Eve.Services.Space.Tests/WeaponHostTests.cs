@@ -149,10 +149,14 @@ public class WeaponHostTests
                   () => rig.Now).Attach();
               rig.Space.SafetyLevelOf = (_, _) => Task.FromResult(0);
               rig.Space.Aggression = async (request, token) => await crimewatch.RecordAggressionAsync(request, token);
+                rig.Space.SecurityStatusOf = (id, _) => Task.FromResult(status.GetValueOrDefault(id));
               var targetShip = other.GetInt("shipid")!.Value;
 
               Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, gun, "targetAttack", targetShip, 1000, CancellationToken.None));
               Assert.Single(penalties);
+                var lostStatus = status[attacker.CharacterId];
+                Assert.Contains(rig.Sim.Heard.OfType<Eve.Space.SimShipChanged>(), change =>
+                    change.SessionId == (ulong)session.SessionId && change.Ship.SecurityStatus == lostStatus);
               Assert.Equal(ModuleResult.Done, await rig.Space.DeactivateAsync(session, gun, "targetAttack", CancellationToken.None));
 
               rig.Now += Eve.Crimewatch.CombatState.WeaponsDurationMs + 1;

@@ -27,6 +27,32 @@ public sealed class IndustryJobPersistenceTests
     private const int ManufacturingTimeSeconds = 600;
 
     [Fact]
+    public async Task Personal_station_jobs_reject_locations_outside_the_facility_without_side_effects()
+    {
+        await using var rig = await IndustryRig.CreateAsync();
+        var owner = await rig.Owner();
+        var localBlueprint = await rig.Give(owner, Blueprint, 1, blueprint: true);
+        var remoteBlueprint = await rig.Give(owner, Blueprint, 1, blueprint: true, remote: true);
+        await rig.Give(owner, Material, 86);
+        await rig.Give(owner, Material, 86, remote: true);
+        var balance = await rig.Balance(owner);
+
+        await Assert.ThrowsAsync<IndustryJobUserErrorException>(() =>
+            rig.Install(owner, localBlueprint, IndustryRules.Manufacturing, remoteOutput: true));
+        await Assert.ThrowsAsync<IndustryJobUserErrorException>(() =>
+            rig.Install(owner, localBlueprint, IndustryRules.Manufacturing, remoteInput: true));
+        await Assert.ThrowsAsync<IndustryJobUserErrorException>(() =>
+            rig.Install(owner, remoteBlueprint, IndustryRules.Manufacturing, remoteBlueprint: true));
+        Assert.Equal(balance, await rig.Balance(owner));
+        Assert.Equal(86, await rig.Quantity(owner, Material));
+        Assert.Equal(86, await rig.Quantity(owner, Material, remote: true));
+        Assert.Equal(0, await rig.JobCount());
+        Assert.False((await rig.Blueprint(localBlueprint)).BlueprintLocked);
+        Assert.False((await rig.Blueprint(remoteBlueprint)).BlueprintLocked);
+        Assert.True(await rig.Install(owner, localBlueprint, IndustryRules.Manufacturing) > 0);
+    }
+
+    [Fact]
     public async Task Manufacturing_charges_consumes_locks_and_delivers_the_product_after_completion()
     {
         await using var rig = await IndustryRig.CreateAsync();
@@ -323,25 +349,25 @@ internal sealed class IndustryRig : IAsyncDisposable
         return id;
     }
 
-    public async Task<long> Give(long owner, int typeId, long quantity, bool blueprint = false, bool copy = false, int runs = -1, int me = 0, int te = 0)
+    public async Task<long> Give(long owner, int typeId, long quantity, bool blueprint = false, bool copy = false, int runs = -1, int me = 0, int te = 0, bool remote = false)
     {
         await using var c = await _source.OpenConnectionAsync();
         await using var tx = await c.BeginTransactionAsync();
         var id = blueprint
-            ? await _items.CreateAsync(c, tx, new NewItem(typeId, owner, _station.Id, ItemFlags.Hangar, 1, true,
+            ? await _items.CreateAsync(c, tx, new NewItem(typeId, owner, remote ? _station.Id + 1 : _station.Id, ItemFlags.Hangar, 1, true,
                 BlueprintCopy: copy, BlueprintRuns: runs, MaterialEfficiency: me, TimeEfficiency: te))
-            : await _items.CreateAsync(c, tx, new NewItem(typeId, owner, _station.Id, ItemFlags.Hangar, quantity));
+            : await _items.CreateAsync(c, tx, new NewItem(typeId, owner, remote ? _station.Id + 1 : _station.Id, ItemFlags.Hangar, quantity));
         await tx.CommitAsync();
         return id;
     }
 
     public async Task<long> Install(long owner, long blueprintId, int activityId, int blueprintType = BlueprintType, bool copy = false,
-        int runs = 1, int licensedRuns = 1, int? productTypeId = null, int? optionalTypeId = null, bool alphaClone = false)
+        int runs = 1, int licensedRuns = 1, int? productTypeId = null, int? optionalTypeId = null, bool alphaClone = false, bool remoteInput = false, bool remoteOutput = false, bool remoteBlueprint = false)
     {
         var job = new IndustryJobInstallSubmission(
-            activityId, blueprintId, blueprintType, copy, _station.Id, ItemFlags.Hangar,
+            activityId, blueprintId, blueprintType, copy, remoteBlueprint ? _station.Id + 1 : _station.Id, ItemFlags.Hangar,
             _station.Id, owner, _station.SolarSystemId, _station.Id,
-            new IndustryJobLocation(_station.Id, ItemFlags.Hangar), new IndustryJobLocation(_station.Id, ItemFlags.Hangar),
+            new IndustryJobLocation(remoteInput ? _station.Id + 1 : _station.Id, ItemFlags.Hangar), new IndustryJobLocation(remoteOutput ? _station.Id + 1 : _station.Id, ItemFlags.Hangar),
             runs, licensedRuns, productTypeId, optionalTypeId, null, new IndustryJobWallet(owner, 1000), IsAlphaClone: alphaClone);
         var request = new IndustryJobInstallRequest(
             new IndustryJobOperationContext(new IndustryJobActor(owner, 0, 0, 1000), "op-" + Guid.NewGuid().ToString("N")), job);
@@ -462,11 +488,11 @@ internal sealed class IndustryRig : IAsyncDisposable
         return items.Where(item => item.TypeId == typeId).Sum(item => item.Quantity);
     }
 
-    public async Task<long> Quantity(long owner, int typeId)
+    public async Task<long> Quantity(long owner, int typeId, bool remote = false)
     {
         await using var c = await _source.OpenConnectionAsync();
         await using var tx = await c.BeginTransactionAsync();
-        var items = await _items.LockInLocationAsync(c, tx, _station.Id, owner, ItemFlags.Hangar, [typeId]);
+        var items = await _items.LockInLocationAsync(c, tx, remote ? _station.Id + 1 : _station.Id, owner, ItemFlags.Hangar, [typeId]);
         await tx.CommitAsync();
         return items.Where(item => item.TypeId == typeId).Sum(item => item.Quantity);
     }

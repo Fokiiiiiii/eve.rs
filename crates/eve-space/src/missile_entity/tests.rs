@@ -30,6 +30,7 @@ fn shooter() -> Shooter {
     Shooter {
         session: 7,
         ship_id: 9_988_400_003_581,
+        telemetry_ship_id: 9_988_400_003_581,
         module_id: 9_988_400_003_586,
         weapon_type_id: 10_629,
         owner_id: 140_000_465,

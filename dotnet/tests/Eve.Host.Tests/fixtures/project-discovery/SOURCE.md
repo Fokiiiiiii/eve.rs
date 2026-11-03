@@ -1,0 +1,7 @@
+# Project Discovery COVID research fixture
+
+Source: Brinkman, R., & Yokosawa, D. Y. O. (2025). *Crowdsourced Flow Cytometry Dataset from EVE Online’s Project Discovery for Machine Learning Applications* [Dataset]. Federated Research Data Repository. https://doi.org/10.20383/103.01043. License: CC BY 4.0, https://creativecommons.org/licenses/by/4.0/.
+
+This reduced, transformed subset is research data, not an authoritative live game task or reward. The CSV contains 62,452 GATA3/CD4 points from `A078/FR-FCM-Z2KP_export_COVID19_samples_23_04_20_ST3_COVID19_W_046_O_ST3_230420_011_Live_cells.fcs_123154_GATA3_CD4.csv`, file ID 30927, analysis ID 50. Its original uncompressed SHA-256 is `e7d6ce58d8e54ecd429651c474bc7d68777464dd8735e964a1b701b13844f32c`; it was gzip compressed without changing its bytes. Compressed fixture SHA-256 is `a458f60d4e299a8c5ca31626452be1f46e82bc2b05fde6611fae3ab87e905425`.
+
+The JSON retains only polygon vertices, normalization bounds, and published peer F1 from 30 selected analysis entries. It omits player and entry identifiers. JSON SHA-256 is `9810f2bb0c77eb4f8f17e7ddb624f12a0f2218b94f690d8b6e1833fe23ff1539`. Dataset `code/F1.R` and `code/get_F1_scores.R` define the peer comparison; the MLmetrics F1 arithmetic order is documented in https://github.com/cran/MLmetrics/blob/1e8c01cfa5f9553d07a61531acaeb08e917de9ba/R/Classification.R. The fixture evaluates the selected fixed cohort; the original script can randomly select different cohorts.

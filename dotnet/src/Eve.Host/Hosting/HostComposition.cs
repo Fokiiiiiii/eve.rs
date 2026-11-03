@@ -58,20 +58,26 @@ internal static class HostComposition
         IAccountDirectory accounts;
         IReadOnlyList<IService> characterServices = [];
         Eve.Services.Core.GameRpcCallbacks? gameRpcCallbacks = null;
+        TourneyQueryCallback? tourneyQueryCallback = null;
+        Eve.Host.Persistence.PersistenceTournamentMatches? tournamentMatches = null;
         Eve.Services.Core.KeeperRpcCallbacks? keeperRpcCallbacks = null;
         Eve.Calendar.ICalendarStore? calendarStore = null;
         Eve.Calendar.ICalendarAudienceReader? calendarAudience = null;
         Foundations? foundations = null;
         SpaceSessions? space = null;
+        SpaceContainers? tournamentContainers = null;
+        CharacterShips? tournamentShips = null;
         Eve.Services.Crimewatch.CrimewatchRuntime? crimewatch = null;
         SimClient? simulation = null;
         LegacyGameStore? legacy = null;
         IGlobalConfigPersistence globalConfigPersistence = new InMemoryGlobalConfigPersistence();
+        var registry = new ServiceRegistry();
         var online = new OnlineCharacters();
         var connected = new ConnectedSessions();
         Eve.Host.Xmpp.XmppListener? xmppListener = null;
         System.Security.Cryptography.X509Certificates.X509Certificate2? xmppCertificate = null;
         CharacterSessions? characterSessions = null;
+        List<ICharacterEntryHook>? characterEntryHooks = null;
         PublicGateway.PublicGatewayRoutes? publicGateway = null;
         Eve.Services.Core.IContractReadModel? contractReadModel = null;
         Eve.Services.Core.IContractWriteModel? contractWriteModel = null;
@@ -83,6 +89,7 @@ internal static class HostComposition
         Func<long, long, CancellationToken, ValueTask<bool>>? isCharacterInCurrentCorporation = null;
         NpgsqlDataSource? dataSource = null; // owned by the runtime: shut down with it, so its pooled connections return to the server
         Eve.Host.Persistence.PgAccruedTimeStore? accruedTimeStore = null;
+        Eve.Host.Persistence.RaffleProxyStore? raffleProxyStore = null;
         Eve.Host.Xmpp.XmppMotdStore? xmppMotdStore = null;
         Eve.Host.Xmpp.XmppPlayerChannelStore? xmppPlayerChannelStore = null;
         if (Env("EVE_PG_URL", "") is { Length: > 0 } pgUrl)
@@ -96,6 +103,9 @@ internal static class HostComposition
             contractReadModel = new Eve.Host.Persistence.PersistenceContractReadModel(source, contractSchema);
             var contractItems = new PgItemStore(source, Env("EVE_INVENTORY_SCHEMA", PgItemStore.DefaultSchema));
             var contractWallets = new WalletTransactions(source, Env("EVE_WALLET_SCHEMA", PgWalletStore.DefaultSchema));
+            raffleProxyStore = new Eve.Host.Persistence.RaffleProxyStore(source, contractItems, contractWallets, options.HyperNetPlexPriceOverride, Env("EVE_RAFFLE_SCHEMA", "raffle"), Eve.Sde.SdeReader.DefaultSchema,
+                Env("EVE_IDENTITY_SCHEMA", Eve.Identity.PgAccountDirectory.DefaultSchema));
+            await raffleProxyStore.MigrateAsync();
             var contractSkills = new PgSkillStore(source, Env("EVE_SKILLS_SCHEMA", PgSkillStore.DefaultSchema));
             var contractCharacters = new Eve.Characters.PgCharacterStore(source,
                 Env("EVE_CHARACTERS_SCHEMA", Eve.Characters.PgCharacterStore.DefaultSchema));
@@ -135,14 +145,19 @@ internal static class HostComposition
             globalConfigPersistence = new PgGlobalConfigPersistence(source, configSchema);
             Func<long> clock = () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             foundations = await Foundations.CreateAsync(source, clock, Env, message => Console.Error.WriteLine($"eve-host: {message}"));
+              if (raffleProxyStore is { } raffleStore)
+              {
+                  raffleStore.RegisterScheduler(foundations.Scheduler);
+                  await raffleStore.ScheduleExistingAsync();
+              }
             var contractExpiryJobs = new Eve.Host.Persistence.ContractExpiryJobs(source, contractItems, contractWallets,
                 foundations.Scheduler, contractSchema, foundations.Events);
             contractExpiryJobs.Register();
             contractWriteModel = new Eve.Host.Persistence.PersistenceContractWriteModel(source, contractItems, contractWallets,
                 clock, contractSchema, contractExpiryJobs, foundations.Events);
-            legacy = await LegacyGameStoreComposition.OpenAsync(source);
+            legacy = await LegacyGameStoreComposition.OpenAsync(source, foundations.Events);
             var notices = new PublicGateway.NoticeHub();
-            (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks, characterSessions, contractBrokerFeeAdjustment, hasContractManagerRole, canManageCalendarGroupEvent, readCurrentCalendarGroups) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected, notices);
+            (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks, characterSessions, contractBrokerFeeAdjustment, hasContractManagerRole, canManageCalendarGroupEvent, readCurrentCalendarGroups) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected, notices, hooks => characterEntryHooks = hooks, containers => tournamentContainers = containers, ships => tournamentShips = ships);
             if (characterSessions is not null)
                 new Eve.Host.Persistence.ContractNotifications(characterSessions).Subscribe(foundations.Events);
             // the public gateway's skill plans: the tables are the skills module's (migration 0009, applied with its store)
@@ -151,6 +166,101 @@ internal static class HostComposition
             await Eve.Host.Persistence.PgShipSkinrStore.MigrateAsync(source, skinrSchema);
             var skinrStore = new Eve.Host.Persistence.PgShipSkinrStore(source, skinrSchema);
             var sde = new Eve.Sde.SdeReader(source);
+            await Eve.Host.Persistence.PersistenceTournamentStore.MigrateAsync(source);
+            await Eve.Host.Persistence.PersistenceTournamentArenas.MigrateAsync(source);
+            var tournamentArenas = new Eve.Host.Persistence.PersistenceTournamentArenas(source, sde, contractCharacters,
+                contractItems, new PgDeployedStore(source, Env("EVE_SPACE_SCHEMA", PgSpaceItemStore.DefaultSchema)), foundations.Events);
+            if (Env("EVE_TOURNAMENT_ARENA_IMPORT", "") is { Length: > 0 } arenaImportPath)
+            {
+                var arenaJson = await File.ReadAllTextAsync(arenaImportPath);
+                var arenaImports = JsonSerializer.Deserialize<Eve.Host.Persistence.TournamentArenaImport[]>(arenaJson,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                    ?? throw new InvalidOperationException("Tournament arena import must be a JSON array.");
+                foreach (var arena in arenaImports) await tournamentArenas.ImportIfMissingAsync(arena);
+            }
+            var tournaments = new Eve.Host.Persistence.PersistenceTournamentStore(source, sde, tournamentArenas.ReadSystemsAsync, includeActiveMatches: true);
+            if (Env("EVE_TOURNAMENT_IMPORT", "") is { Length: > 0 } tournamentImportPath)
+            {
+                var json = await File.ReadAllTextAsync(tournamentImportPath);
+                var imports = JsonSerializer.Deserialize<Eve.Host.Persistence.TournamentImport[]>(json,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                    ?? throw new InvalidOperationException("Tournament import must be a JSON array.");
+                foreach (var import in imports)
+                    await tournaments.ImportIfMissingAsync(import.Configuration, import.Series);
+            }
+            tourneyQueryCallback = tournaments.QueryAsync;
+            await Eve.Host.Persistence.PersistenceTournamentMatches.MigrateAsync(source);
+            await Eve.Host.Persistence.PersistenceTournamentMatches.MigrateFleetAsync(source);
+            await Eve.Host.Persistence.PersistenceTournamentMatches.MigrateSpaceAsync(source);
+            await Eve.Host.Persistence.PersistenceTournamentMatches.MigrateAutobansAsync(source);
+            await Eve.Host.Persistence.PersistenceTournamentMatches.MigrateRecoveryAsync(source);
+            await Eve.Host.Persistence.PersistenceTournamentMatches.MigrateRefereeTravelAsync(source);
+            await Eve.Host.Persistence.PersistenceTournamentMatches.MigrateRulesAsync(source);
+            await Eve.Host.Persistence.PersistenceTournamentMatches.MigratePhysicalRegionsAsync(source);
+            await Eve.Host.Persistence.PersistenceTournamentMatches.MigrateRefereeDirectionAsync(source);
+            await Eve.Host.Persistence.PersistenceTournamentMatches.MigrateRosterAsync(source);
+            await Eve.Host.Persistence.PersistenceTournamentMatches.MigrateRefereeMoveIdsAsync(source);
+            await Eve.Host.Persistence.PersistenceTournamentMatches.MigrateParticipantMoveIdsAsync(source);
+            await Eve.Host.Persistence.PersistenceTournamentMatches.MigrateParticipantIntentAsync(source);
+            await Eve.Host.Persistence.PersistenceTournamentMatches.MigrateCleanupGuardsAsync(source);
+            await Eve.Host.Persistence.PersistenceTournamentMatches.MigrateCleanupStagesAsync(source);
+            await Eve.Host.Persistence.PersistenceTournamentMatches.MigrateCleanupScanAsync(source);
+            await Eve.Host.Persistence.PersistenceTournamentMatches.MigratePostgameAsync(source);
+            await Eve.Host.Persistence.PersistenceTournamentMatches.MigrateParticipantDeathsAsync(source);
+            await Eve.Host.Persistence.PersistenceTournamentMatches.MigrateRefereeLeaseGenerationAsync(source);
+            await Eve.Host.Persistence.PersistenceTournamentMatches.MigrateCompletionPolicyAsync(source);
+            await Eve.Host.Persistence.PersistenceTournamentMatches.MigrateCutoffIntentAsync(source);
+            await Eve.Host.Persistence.PersistenceTournamentMatches.MigrateMetricsIntentAsync(source);
+            tournamentMatches = new Eve.Host.Persistence.PersistenceTournamentMatches(source, tournamentArenas, contractItems,
+                new PgDeployedStore(source, Env("EVE_SPACE_SCHEMA", PgSpaceItemStore.DefaultSchema)), foundations.Events, simulation, sde,
+                scheduler: foundations.Scheduler, sessions: characterSessions,
+                fleetSchema: Env("EVE_FLEET_SCHEMA", Eve.Services.Space.FleetStore.DefaultSchema), space: space,
+                tournamentShips: tournamentShips, tournamentCharacters: contractCharacters, tournamentContainers: tournamentContainers);
+            if (Env("EVE_TOURNAMENT_REGION_IMPORT", "") is { Length: > 0 } regionImportPath)
+            {
+                var regionJson = await File.ReadAllTextAsync(regionImportPath);
+                var regions = JsonSerializer.Deserialize<Eve.Host.Persistence.TournamentRegionImport[]>(regionJson,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                    ?? throw new InvalidOperationException("Tournament region import must be a JSON array.");
+                var configuredArenas = await tournamentArenas.ReadSystemsAsync();
+                foreach (var region in regions)
+                {
+                    var arena = configuredArenas.SingleOrDefault(a => a.SolarSystemId == region.SolarSystemId)
+                        ?? throw new InvalidOperationException($"Tournament region system {region.SolarSystemId} has no arena.");
+                    if (region.CenterBeaconOrdinal < 0 || region.CenterBeaconOrdinal >= arena.BeaconIds.Count)
+                        throw new InvalidOperationException($"Tournament region system {region.SolarSystemId} has an invalid zero-based center beacon ordinal.");
+                    await tournamentMatches.ConfigurePhysicalRegionAsync(region.SolarSystemId, arena.BeaconIds[region.CenterBeaconOrdinal], region.RadiusMeters);
+                }
+            }
+            if (Env("EVE_TOURNAMENT_RULES_IMPORT", "") is { Length: > 0 } rulesImportPath)
+            {
+                var rulesJson = await File.ReadAllTextAsync(rulesImportPath);
+                var ruleImports = JsonSerializer.Deserialize<Eve.Host.Persistence.TournamentRulesImport[]>(rulesJson,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                    ?? throw new InvalidOperationException("Tournament rules import must be a JSON array.");
+                foreach (var rules in ruleImports) await tournamentMatches.ImportRulesAsync(rules);
+            }
+            if (Env("EVE_TOURNAMENT_COMPLETION_POLICY_IMPORT", "") is { Length: > 0 } completionImportPath)
+            {
+                var json = await File.ReadAllTextAsync(completionImportPath);
+                var policies = JsonSerializer.Deserialize<Eve.Host.Persistence.TournamentCompletionPolicyImport[]>(json,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                    ?? throw new InvalidOperationException("Tournament completion policy import must be a JSON array.");
+                foreach (var policy in policies) await tournamentMatches.ImportCompletionPolicyAsync(policy);
+            }
+            tournamentMatches.RegisterActionHandlers();
+            await tournamentMatches.InitializeCutoffRecoveryAsync();
+            await tournamentMatches.InitializeMetricsRecoveryAsync();
+            tournamentMatches.RegisterFleetHandlers();
+            if (space is not null)
+            {
+                tournamentMatches.RegisterSpaceHandlers();
+                await tournamentMatches.InitializeTournamentRestrictionsAsync();
+                space.TournamentRestricted = tournamentMatches.IsTournamentRestricted;
+            }
+            if (characterEntryHooks is not null && !characterEntryHooks.Contains(tournamentMatches))
+                characterEntryHooks.Add(tournamentMatches);
+            await tournamentMatches.ResetAfterRestartAsync();
             var missionSde = new Eve.Sde.SdeReader(source, Eve.Sde.SdeReader.MissionSchema);
             var skinrCatalog = await ShipSkinrCatalog.LoadAsync(missionSde);
             var skinrSkillTypeIds = (await sde.ReadTypeSummariesAsync())
@@ -190,6 +300,9 @@ internal static class HostComposition
             {
                 CharacterTitleRewards = new PublicGateway.CharacterTitleRewardService(titleStore, titles, notices),
             };
+            // Retry detached bound-object cleanup under the scheduler's server-owned lifetime.
+            foundations.Scheduler.Register("services.bound-release.retry", async (_, ct) => await registry.RetryPendingBoundReleasesAsync(ct));
+            await foundations.Scheduler.EnsureRecurringAsync("services.bound-release.retry", "pending", TimeSpan.FromSeconds(5));
             // every feature has registered its job handlers by now: the scheduler may start running jobs
             await foundations.StartAsync();
         }
@@ -199,6 +312,69 @@ internal static class HostComposition
             accounts = new InMemoryAccountDirectory(accountOptions);
         }
 
+        Eve.Host.ProjectDiscovery.ScientificReplayComposition? scientificReplay = null;
+        HttpClient? discoveryHttp = null;
+        Eve.Host.ProjectDiscovery.ProjectDiscoveryBonusPolicy? discoveryBonus = null;
+        var bonusPolicy = Env("EVE_PROJECT_DISCOVERY_BONUS_POLICY", "none");
+        if (bonusPolicy == "daily")
+        {
+            if (dataSource is null) throw new InvalidOperationException("Project Discovery bonus requires PostgreSQL.");
+            int maximum = int.Parse(Env("EVE_PROJECT_DISCOVERY_BONUS_DAILY_MAX", ""), System.Globalization.CultureInfo.InvariantCulture);
+            long bonusXp = long.Parse(Env("EVE_PROJECT_DISCOVERY_BONUS_XP", ""), System.Globalization.CultureInfo.InvariantCulture);
+            int resetHour = int.Parse(Env("EVE_PROJECT_DISCOVERY_BONUS_RESET_UTC_HOUR", ""), System.Globalization.CultureInfo.InvariantCulture);
+            if (maximum <= 0 || bonusXp <= 0 || resetHour is < 0 or > 23) throw new InvalidOperationException("Invalid Project Discovery bonus policy.");
+            discoveryBonus = new(dataSource, Env("EVE_CHARACTERS_SCHEMA", PgCharacterStore.DefaultSchema), maximum, bonusXp, resetHour);
+        }
+        else if (bonusPolicy != "none") throw new InvalidOperationException("Unsupported Project Discovery bonus policy.");
+        if (dataSource is not null)
+        {
+            var mode = Env("EVE_PROJECT_DISCOVERY_MODE", "scientific-replay");
+            var bind = IPAddress.Parse(Env("EVE_PROJECT_DISCOVERY_ASSET_BIND", "127.0.0.1"));
+            var port = int.Parse(Env("EVE_PROJECT_DISCOVERY_ASSET_PORT", "0"), System.Globalization.CultureInfo.InvariantCulture);
+            var origin = Env("EVE_PROJECT_DISCOVERY_ASSET_ORIGIN", "");
+            var replayOptions = Eve.Host.ProjectDiscovery.ScientificReplayOptions.Bundled with
+            {
+                ListenAddress = bind, ListenPort = port,
+                AllowNonLoopback = Env("EVE_PROJECT_DISCOVERY_ASSET_ALLOW_NONLOOPBACK", "false") == "true",
+                AdvertisedOrigin = origin.Length == 0 ? null : new Uri(origin, UriKind.Absolute), Bonus = discoveryBonus
+            };
+            var pins = new ProjectDiscoveryTaskPinStore(dataSource, Env("EVE_CHARACTERS_SCHEMA", PgCharacterStore.DefaultSchema));
+            var discoverySchema = Env("EVE_PROJECT_DISCOVERY_SCHEMA", "project_discovery");
+            if (mode == "remote")
+            {
+                var protocol = Env("EVE_PROJECT_DISCOVERY_REMOTE_PROTOCOL", "covid");
+                var remoteProject = Env("EVE_PROJECT_DISCOVERY_MMOS_PROJECT", "");
+                if (protocol is not ("covid" or "exoplanet" or "subcellular") || string.IsNullOrWhiteSpace(remoteProject))
+                    throw new InvalidOperationException("Invalid Project Discovery remote project and protocol.");
+                discoveryHttp = new HttpClient();
+                try
+                {
+                    var api = new Eve.Host.ProjectDiscovery.MmosApiClient(discoveryHttp, new Eve.Host.ProjectDiscovery.MmosApiOptions
+                    {
+                        Enabled = true, BaseUri = new Uri(Env("EVE_PROJECT_DISCOVERY_MMOS_ORIGIN", ""), UriKind.Absolute),
+                        Credential = Env("EVE_PROJECT_DISCOVERY_MMOS_CREDENTIAL", ""), Secret = Env("EVE_PROJECT_DISCOVERY_MMOS_SECRET", "")
+                    });
+                    var remote = new Eve.Host.ProjectDiscovery.RemoteDiscoveryProvider(dataSource, pins, api,
+                        new Eve.Host.ProjectDiscovery.RemoteDiscoveryOptions { Enabled = true, Game = Env("EVE_PROJECT_DISCOVERY_MMOS_GAME", ""), Project = remoteProject, Protocol = protocol }, discoverySchema, discoveryBonus, Env("EVE_CHARACTERS_SCHEMA", PgCharacterStore.DefaultSchema));
+                    await remote.MigrateAsync();
+                    gameRpcCallbacks = new Eve.Host.ProjectDiscovery.RemoteDiscoveryRpc(remote, protocol).Attach(gameRpcCallbacks ?? new Eve.Services.Core.GameRpcCallbacks());
+                }
+                catch { discoveryHttp.Dispose(); throw; }
+            }
+            else
+            {
+                scientificReplay = await Eve.Host.ProjectDiscovery.ScientificReplayComposition.StartAsync(mode, dataSource, pins, replayOptions, discoverySchema);
+                if (scientificReplay is not null)
+                    gameRpcCallbacks = scientificReplay.Attach(gameRpcCallbacks ?? new Eve.Services.Core.GameRpcCallbacks());
+            }
+        }
+        try
+        {
+        gameRpcCallbacks = (gameRpcCallbacks ?? new Eve.Services.Core.GameRpcCallbacks()) with
+        {
+            ReadProjectDiscoveryBonusSamples = discoveryBonus is null ? (_, _, _) => ValueTask.FromResult(0) : discoveryBonus.ReadAsync,
+            NotifyProjectDiscoveryStateAfterSubmit = discoveryBonus is not null
+        };
         var activeSurveyId = HostConfiguration.ParseActiveSurveyId(Env("EVE_ACTIVE_SURVEY_ID", ""));
         var configuredGameRpcCallbacks = gameRpcCallbacks ?? new Eve.Services.Core.GameRpcCallbacks();
         gameRpcCallbacks = configuredGameRpcCallbacks with
@@ -209,7 +385,6 @@ internal static class HostComposition
 
         GameStoreCache? mailCache = legacy?.Cache;
         PersistenceStore? mailStore = legacy?.Store;
-        var registry = new ServiceRegistry();
         Func<long> now = () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         ReadJumpTimersCallback? readJumpTimers = mailCache is { } characterCache
             ? (characterId, cancellationToken) =>
@@ -251,11 +426,18 @@ internal static class HostComposition
         foreach (var service in CoreServices.Create(
             omegaAccounts, now, calendarStore, calendarAudience,
             authentication: authentication,
-            gameRpcCallbacks: gameRpcCallbacks,
+            gameRpcCallbacks: raffleProxyStore is null ? gameRpcCallbacks : (gameRpcCallbacks ?? new Eve.Services.Core.GameRpcCallbacks()) with { RaffleProxy = new Eve.Services.Core.RaffleProxyCallbacks(raffleProxyStore.InvokeAsync) },
             readJumpTimers: readJumpTimers,
             readNonDiminishingInjections: readNonDiminishingInjections,
             keeperRpcCallbacks: keeperRpcCallbacks,
             superWeaponRpcCallbacks: superWeaponCallbacks,
+            tourneyQueryCallback: tourneyQueryCallback,
+            tournamentMatchCallbacks: tournamentMatches is null ? null : new TourneyMatchCallbacks(tournamentMatches.CreateAsync, tournamentMatches.ReleaseAsync, tournamentMatches.ActionAsync,
+                tournamentMatches.NominateFleetAsync, tournamentMatches.AcceptFleetAsync, tournamentMatches.SubmitBanAsync,
+                SpaceActionAsync: tournamentMatches.SpaceActionAsync, RefTravelAsync: tournamentMatches.RefTravelAsync, RefHomeAsync: tournamentMatches.RefHomeAsync,
+                ActiveCameraAsync: tournamentMatches.ActiveCameraAsync, RosterActionAsync: tournamentMatches.RosterActionAsync,
+                ReleaseStampedAsync: tournamentMatches.ReleaseStampedAsync, CameraDetailsAsync: tournamentMatches.CameraDetailsAsync,
+                OtherMatchAsync: tournamentMatches.OtherMatchAsync, RemoveRefereeAsync: tournamentMatches.RemoveRefereeAsync),
             spaceModules: space,
             isShipInSpace: space is null ? null : (Func<ClientSession, bool>)space.IsInSpace,
             unanchorControlTower: space is null ? null : (session, itemId, cancellationToken) => space.ControlTowerUnanchor is { } unanchor
@@ -305,6 +487,22 @@ internal static class HostComposition
         }
         // machoNet's configuration: the settings, with the administrator's writes on top (saved in PostgreSQL when it is configured)
         var config = await GlobalConfigStore.OpenAsync(GlobalConfig.Build(options), globalConfigPersistence);
+        if (raffleProxyStore is not null)
+            raffleProxyStore.SetPlexPriceProvider((call, ct) =>
+            {
+                ct.ThrowIfCancellationRequested();
+                var value = config.Current().Entries.FirstOrDefault(entry => Eve.Macho.JsSemantics.StringValue(entry.Key) == "HyperNetPlexPriceOverride").Value;
+                long price = value switch
+                {
+                    PyInt n => n.Value,
+                    PyLong n => n.Value,
+                    PyBool b => b.Value ? 1 : 0,
+                    PyReal n when double.IsFinite(n.Value) && n.Value >= -9223372036854775808d && n.Value < 9223372036854775808d => (long)Math.Truncate(n.Value),
+                    _ when Eve.Macho.JsSemantics.StringValue(value) is { } text && long.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var parsed) => parsed,
+                    _ => 0,
+                };
+                return ValueTask.FromResult<double?>(price == 0 ? Eve.Services.AdvertisedPlexPrice.Get(call.Session) : price);
+            });
         HostServer? server = null;
         var info = new HostMachoNetInfo(registry, config.Current, characterSessions);
         registry.Register(new MachoNetService(info, now, GlobalConfigWrites.Create(config, connected, () => server?.PublishClusterConfig())));
@@ -375,6 +573,13 @@ internal static class HostComposition
                 },
                 SessionClosedAsync = async session =>
                 {
+                    if (tournamentMatches is not null) await tournamentMatches.ReleaseSessionAsync(session.SessionId);
+                    try
+                    {
+                        using var cleanupTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                        await registry.RetryPendingBoundReleasesAsync(cleanupTimeout.Token);
+                    }
+                    catch (Exception error) { Console.Error.WriteLine($"eve-host: bound-object cleanup remains pending: {error.Message}"); }
                     if (accruedTimeStore is { } history && session.Get("accruedSessionId") is Eve.Marshal.PyLong rowId)
                         await history.CloseAsync(rowId.Value, DateTime.UtcNow.Ticks);
                 },
@@ -383,6 +588,13 @@ internal static class HostComposition
             accounts,
             () => MarshalCodec.Encode(config.Current()));
 
-        return new HostRuntime(server, registry, legacy, foundations, space, crimewatch, simulation, characterSessions, publicGateway, dataSource, xmppListener, xmppCertificate);
+        return new HostRuntime(server, registry, legacy, foundations, space, crimewatch, simulation, characterSessions, publicGateway, dataSource, xmppListener, xmppCertificate, scientificReplay, discoveryHttp);
+        }
+        catch
+        {
+            if (scientificReplay is not null) await scientificReplay.DisposeAsync();
+            discoveryHttp?.Dispose();
+            throw;
+        }
     }
 }

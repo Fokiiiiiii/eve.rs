@@ -589,6 +589,7 @@ fn a_defender_launcher_shoots_down_the_hostile_missile_in_its_reach() {
     let shooter = Shooter {
         session: B,
         ship_id: scene.pilots[&B].ship.spec.ship_id,
+        telemetry_ship_id: scene.pilots[&B].ship.spec.ship_id,
         module_id: MODULE + 300,
         weapon_type_id: 1,
         owner_id: 999,

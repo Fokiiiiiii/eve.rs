@@ -29,7 +29,13 @@ public static class IndustryRules
         return activities;
     }
 
-    /// <summary>The client's flagCorpDeliveries (inventorycommon/const.py) and the corporation hangar divisions 1..7 (flagCorpSAG1 = 115).</summary>
+    /// <summary>The personal inventory location exposed for an NPC station facility.</summary>
+    public const int PersonalStationHangarFlag = Eve.Inventory.ItemFlags.Hangar;
+
+    public static bool IsPersonalStationLocation(long facilityId, long locationId, int flag) =>
+        locationId == facilityId && flag == PersonalStationHangarFlag;
+
+    /// <summary>The client's flagCorpDeliveries (inventorycommon/const.py) and corporation hangar divisions 1..7.</summary>
     public const int CorporationDeliveriesFlag = 62;
     public const int CorporationHangarFirstFlag = 115;
     public const int CorporationHangarLastFlag = 121;

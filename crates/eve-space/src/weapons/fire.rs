@@ -222,6 +222,12 @@ impl Scene {
         let mut out = Vec::new();
         let shot = Shot { hit: true, wrecking: false, quality: 1.0, chance_to_hit: 1.0, roll: 0.0, damage };
         let (told, hit) = self.damage(target_id, damage, at);
+        self.tournament_metrics.record(
+            crate::scene::tournament_metrics::Source::Ship(structure_id),
+            target_id,
+            at,
+            hit,
+        );
         out.extend(told);
         let applied = hit.map_or(0.0, |hit| hit.taken.shield + hit.taken.armor + hit.taken.structure);
         let destroyed = hit.is_some_and(|hit| hit.destroyed);
@@ -273,6 +279,12 @@ impl Scene {
         let mut out = Vec::new();
         let shot = Shot { hit: true, wrecking: false, quality: 1.0, chance_to_hit: 1.0, roll: 0.0, damage };
         let (told, hit) = self.damage(target_id, damage, at);
+        self.tournament_metrics.record(
+            crate::scene::tournament_metrics::Source::Ship(attacker_id),
+            target_id,
+            at,
+            hit,
+        );
         out.extend(told);
         let applied = hit.map_or(0.0, |hit| hit.taken.shield + hit.taken.armor + hit.taken.structure);
         let destroyed = hit.is_some_and(|hit| hit.destroyed);
@@ -456,6 +468,12 @@ impl Scene {
         let mut destroyed = false;
         if shot.hit {
             let (told, hit) = self.damage(target_id, shot.damage, at);
+            self.tournament_metrics.record(
+                crate::scene::tournament_metrics::Source::Ship(shooter.aggressor_ship),
+                target_id,
+                at,
+                hit,
+            );
             out.extend(told);
             applied = hit.map_or(0.0, |hit| hit.taken.shield + hit.taken.armor + hit.taken.structure);
             destroyed = hit.is_some_and(|hit| hit.destroyed);

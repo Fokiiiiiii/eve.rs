@@ -40,6 +40,7 @@ internal sealed partial class CharacterServicesComposition
     /// <summary>Corporations: management, registry, standings, wars and votes.</summary>
     private IReadOnlyList<IService> CorporationRpc()
     {
+        Eve.Services.Corporations.CorporationShareNotifications.Register(corporations, characters, characterSessions, foundations.Events);
         var mutualWarInvites = new Eve.Services.Corporations.MutualWarInviteRuntimeState(
             source, foundations.Relations, characterSessions, now, CanManageWarAsync);
         return
@@ -51,7 +52,7 @@ internal sealed partial class CharacterServicesComposition
                     : id is >= 0 and <= int.MaxValue && solarSystems.Get((int)id) is { } system
                         ? ((long)system.Id, (int?)null)
                         : null,
-                npcCharacterCorporations: npcCharacterCorporations),
+                npcCharacterCorporations: npcCharacterCorporations, readWarEligibility: ReadWarEligibilityAsync),
             new Eve.Services.Corporations.MutualWarInviteMgrService(
                 mutualWarInvites.ReadPendingInvitesAsync,
                 mutualWarInvites.ReadInvitesBlockedAsync,
@@ -59,13 +60,14 @@ internal sealed partial class CharacterServicesComposition
                 mutualWarInvites.WithdrawInviteByPlayerAsync,
                 mutualWarInvites.RespondToInviteByPlayerAsync,
                 mutualWarInvites.SetInvitesBlockedByPlayerAsync),
-            new Eve.Services.Corporations.CorporationService(corporations, characters, characterSessions),
+            new Eve.Services.Corporations.CorporationService(corporations, characters, characterSessions, readWarEligibility: ReadWarEligibilityAsync),
             new Eve.Services.Corporations.CorpRegistryService(corporations, characters, now, characterSessions, items,
                   readRecentCorporationKillmails: ReadRecentCorporationKillmailPageAsync,
                   readCharacterAllyBaseCost: ReadCharacterAllyBaseCostAsync,
                   declareWar: CreateWarDeclarationAsync,
                   validateWarHQ: (call, ownerId, structureId, token) =>
-                      structureDirectoryReadModel.IsValidWarHQAsync(call, ownerId, structureId, token))
+                      structureDirectoryReadModel.IsValidWarHQAsync(call, ownerId, structureId, token),
+                  readWarEligibility: ReadWarEligibilityAsync)
             {
                 AllianceAffiliationWriter = allianceDue.WriteAffiliationAsync
             },
@@ -107,12 +109,19 @@ internal sealed partial class CharacterServicesComposition
     private async ValueTask<Eve.Services.Corporations.CorpWarDeclarationResult> CreateWarDeclarationAsync(
         Eve.Services.Corporations.CorpWarDeclarationRequest request, CancellationToken cancellationToken)
     {
-        var created = await corporations.CreateWarDeclarationAsync(
+        var created = await corporations.CreateWarDeclarationWithOutcomeAsync(
             request.CorporationId, request.DeclaredByCharacterId, request.AgainstId, request.WarHQId,
             request.TimeDeclaredFiletime, request.TimeStartedFiletime, request.DueFiletime, request.BillTypeId,
             request.BillAmount, request.CreditorId, request.OperationKey,
             async (connection, transaction, billId, token) =>
             {
+                var attacker = await corporations.GetForUpdateAsync(connection, transaction, request.CorporationId, token);
+                var target = await corporations.GetForUpdateAsync(connection, transaction, request.AgainstId, token);
+                if (attacker?.AllianceId is not null || target?.AllianceId is not null)
+                    throw Eve.Services.MachoErrors.ThrowUserError("CustomNotify", ("notify", new Eve.Marshal.PyStr("Wars involving an alliance member must be declared by and against the alliance.")));
+                var eligibility = await ReadWarEligibilityBatchAsync([request.CorporationId, request.AgainstId], token);
+                if (!eligibility.GetValueOrDefault(request.CorporationId) || !eligibility.GetValueOrDefault(request.AgainstId))
+                    throw Eve.Services.MachoErrors.ThrowUserError("CustomNotify", ("notify", new Eve.Marshal.PyStr("Both sides must be eligible for war.")));
                 if (await foundations.Relations.GetAsync("war", request.CorporationId, request.AgainstId,
                         connection, transaction, token, forUpdate: true) is not null)
                     throw new Eve.Corporations.CorporationError("WAR_ALREADY_DECLARED");
@@ -143,6 +152,6 @@ internal sealed partial class CharacterServicesComposition
                     connection, transaction, token, forUpdate: true))?.Id ?? 0;
             },
             cancellationToken);
-        return new Eve.Services.Corporations.CorpWarDeclarationResult(created.WarId, created.BillId);
+        return new Eve.Services.Corporations.CorpWarDeclarationResult(created.WarId, created.BillId, created.DueFiletime, created.Replayed);
     }
 }

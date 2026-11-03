@@ -887,6 +887,26 @@ private static void WriteStructureDamageCorrelation(
                 w.U8(Kind.EnsureAbyssalSceneObjectReply);
                 WriteAbyssalResult(w, m.RequestId, m.Error);
                 break;
+            case SimEnterPublicParticipant m:
+                if (m.RequestId == 0 || !IsPublicMoveId(m.OperationId) || m.Enter.SessionId == 0 || m.Enter.Ship.ShipId <= 0 ||
+                    !m.Enter.Scene.IsValid || m.Enter.Scene.InstanceId != 0 || m.Enter.How is not (EnterHow.Anchor or EnterHow.InSpace))
+                    throw new ArgumentException("Invalid public participant entry.", nameof(message));
+                w.U8(Kind.EnterPublicParticipant); w.U64(m.RequestId); w.Text(m.OperationId); w.Bytes(Encode(m.Enter)); break;
+            case SimEnterPublicParticipantReply m:
+                if (m.RequestId == 0 || m.Error is { Length: 0 }) throw new ArgumentException("Invalid public entry result.", nameof(message));
+                w.U8(Kind.EnterPublicParticipantReply); WriteAbyssalResult(w, m.RequestId, m.Error); break;
+            case SimMovePublicParticipant m:
+                if (m.RequestId == 0 || !IsPublicMoveId(m.OperationId) || m.SessionId == 0 || m.ShipId <= 0 ||
+                    !m.Source.IsValid || !m.Destination.IsValid || m.Source.InstanceId != 0 || m.Destination.InstanceId != 0 ||
+                    (!m.UseAnchor && (!IsVector(m.Position) || !IsVector(m.Direction) || m.Direction.All(v => v == 0))))
+                    throw new ArgumentException("Invalid public participant move.", nameof(message));
+                w.U8(Kind.MovePublicParticipant); w.U64(m.RequestId); w.Text(m.OperationId); w.U64(m.SessionId); w.I64(m.ShipId);
+                WriteSceneKey(w, m.Source); WriteSceneKey(w, m.Destination); w.U8(m.UseAnchor ? (byte)1 : (byte)0);
+                if (!m.UseAnchor) { WriteVector(w, m.Position); WriteVector(w, m.Direction); }
+                break;
+            case SimMovePublicParticipantReply m:
+                if (m.RequestId == 0 || m.Error is { Length: 0 }) throw new ArgumentException("Invalid public move result.", nameof(message));
+                w.U8(Kind.MovePublicParticipantReply); WriteAbyssalResult(w, m.RequestId, m.Error); break;
             case SimMoveAbyssalParticipant m:
                 if (!IsAbyssalMove(m)) throw new ArgumentException("Invalid Abyssal participant move.", nameof(message));
                 w.U8(Kind.MoveAbyssalParticipant);
@@ -997,6 +1017,72 @@ private static void WriteStructureDamageCorrelation(
                 w.U8(Kind.RemoveAbyssalParticipantReply);
                 w.U64(m.RequestId);
                 w.U8(m.AlreadyAbsent ? (byte)1 : (byte)0);
+                w.Text(m.Error ?? string.Empty);
+                break;
+            case SimEnsureTournamentBeacon m:
+                if (!IsTournamentBeacon(m)) throw new ArgumentException("Invalid tournament beacon.", nameof(message));
+                w.U8(Kind.EnsureTournamentBeacon); w.U64(m.RequestId); WriteSceneKey(w, m.Scene); w.I64(m.ItemId);
+                w.I32(m.TypeId); w.I32(m.GroupId); w.I32(m.CategoryId); w.I64(m.OwnerId); w.I32(m.GraphicId);
+                w.Text(m.Name); WriteVector(w, m.Position); w.F64(m.Radius);
+                break;
+            case SimEnsureTournamentBeaconReply m:
+                if (m.RequestId == 0 || m.Error is { Length: 0 }) throw new ArgumentException("Invalid tournament beacon result.", nameof(message));
+                w.U8(Kind.EnsureTournamentBeaconReply); WriteAbyssalResult(w, m.RequestId, m.Error); break;
+            case SimRemoveTournamentBeacon m:
+                if (m.RequestId == 0 || !m.Scene.IsValid || m.Scene.InstanceId != 0 || m.ItemId <= 0) throw new ArgumentException("Invalid tournament beacon removal.", nameof(message));
+                w.U8(Kind.RemoveTournamentBeacon); w.U64(m.RequestId); WriteSceneKey(w, m.Scene); w.I64(m.ItemId); break;
+            case SimRemoveTournamentBeaconReply m:
+                if (m.RequestId == 0 || m.Error is { Length: 0 }) throw new ArgumentException("Invalid tournament beacon result.", nameof(message));
+                w.U8(Kind.RemoveTournamentBeaconReply); WriteAbyssalResult(w, m.RequestId, m.Error); break;
+            case SimRegisterTournamentMetrics or SimRegisterTournamentMetricsReply or SimReadTournamentMetrics or SimReadTournamentMetricsReply or SimReadTournamentMetricsV2 or SimReadTournamentMetricsV2Reply or SimReleaseTournamentMetrics or SimReleaseTournamentMetricsReply:
+                WriteMetrics(w,message); break;
+            case SimRegisterTournamentCutoff m:
+                if (!ValidCutoffIdentity(m.RequestId,m.Scene,m.MatchId,m.Generation,m.Start,m.Deadline) || !ValidCutoffRoster(m.Roster)) throw new ArgumentException("Invalid cutoff registration.",nameof(message));
+                w.U8(Kind.RegisterTournamentCutoff); w.U64(m.RequestId); WriteSceneKey(w,m.Scene); w.I64(m.MatchId); w.I64(m.Generation); w.I64(m.Start); w.I64(m.Deadline); w.U16((ushort)m.Roster.Count); foreach (var pilot in m.Roster) { w.I64(pilot.CharacterId); w.I64(pilot.ShipId); } break;
+            case SimRegisterTournamentCutoffReply m:
+                if (!ValidCutoffIdentity(m.RequestId,m.Scene,m.MatchId,m.Generation,m.Start,m.Deadline) || !ValidCutoffStatus(m.Status,m.Error)) throw new ArgumentException("Invalid cutoff registration reply.",nameof(message));
+                w.U8(Kind.RegisterTournamentCutoffReply); w.U64(m.RequestId); WriteSceneKey(w,m.Scene); w.I64(m.MatchId); w.I64(m.Generation); w.I64(m.Start); w.I64(m.Deadline); w.U8((byte)m.Status); w.Text(m.Error); break;
+            case SimReadTournamentCutoff m:
+                if (!ValidCutoffIdentity(m.RequestId,m.Scene,m.MatchId,m.Generation,m.Start,m.Deadline)) throw new ArgumentException("Invalid cutoff read.",nameof(message));
+                w.U8(Kind.ReadTournamentCutoff); w.U64(m.RequestId); WriteSceneKey(w,m.Scene); w.I64(m.MatchId); w.I64(m.Generation); w.I64(m.Start); w.I64(m.Deadline); break;
+            case SimReadTournamentCutoffReply m:
+                if (!ValidCutoffIdentity(m.RequestId,m.Scene,m.MatchId,m.Generation,m.Start,m.Deadline) || !ValidCutoffStatus(m.Status,m.Error) || !ValidCutoffEvidence(m.Status,m.Evidence)) throw new ArgumentException("Invalid cutoff read reply.",nameof(message));
+                w.U8(Kind.ReadTournamentCutoffReply); w.U64(m.RequestId); WriteSceneKey(w,m.Scene); w.I64(m.MatchId); w.I64(m.Generation); w.I64(m.Start); w.I64(m.Deadline); w.U8((byte)m.Status); w.U16((ushort)m.Evidence.Count); foreach (var item in m.Evidence) { w.I64(item.CharacterId); w.I64(item.ShipId); w.U8((byte)item.Evidence); } w.Text(m.Error); break;
+            case SimReleaseTournamentCutoff m:
+                if (!ValidCutoffIdentity(m.RequestId,m.Scene,m.MatchId,m.Generation,m.Start,m.Deadline)) throw new ArgumentException("Invalid cutoff release.",nameof(message));
+                w.U8(Kind.ReleaseTournamentCutoff); w.U64(m.RequestId); WriteSceneKey(w,m.Scene); w.I64(m.MatchId); w.I64(m.Generation); w.I64(m.Start); w.I64(m.Deadline); break;
+            case SimReleaseTournamentCutoffReply m:
+                if (!ValidCutoffIdentity(m.RequestId,m.Scene,m.MatchId,m.Generation,m.Start,m.Deadline) || m.Status is not (SimTournamentCutoffStatus.Pending or SimTournamentCutoffStatus.Error) || !ValidCutoffStatus(m.Status,m.Error)) throw new ArgumentException("Invalid cutoff release reply.",nameof(message));
+                w.U8(Kind.ReleaseTournamentCutoffReply); w.U64(m.RequestId); WriteSceneKey(w,m.Scene); w.I64(m.MatchId); w.I64(m.Generation); w.I64(m.Start); w.I64(m.Deadline); w.U8((byte)m.Status); w.Text(m.Error); break;
+            case SimQueryTournamentWreck m:
+                if (m.RequestId == 0 || !m.Scene.IsValid || m.Scene.InstanceId != 0 || m.ItemId <= 0) throw new ArgumentException("Invalid tournament wreck query.", nameof(message));
+                w.U8(Kind.QueryTournamentWreck); w.U64(m.RequestId); WriteSceneKey(w, m.Scene); w.I64(m.ItemId); break;
+            case SimRemoveTournamentWreck m:
+                if (m.RequestId == 0 || !m.Scene.IsValid || m.Scene.InstanceId != 0 || m.ItemId <= 0 || m.OwnerId <= 0 || m.LauncherId <= 0 || m.TypeId <= 0 || !IsVector(m.Center) || !double.IsFinite(m.Radius) || m.Radius <= 0)
+                    throw new ArgumentException("Invalid tournament wreck removal.", nameof(message));
+                w.U8(Kind.RemoveTournamentWreck); w.U64(m.RequestId); WriteSceneKey(w, m.Scene); w.I64(m.ItemId);
+                w.I64(m.OwnerId); w.I64(m.LauncherId); w.I32(m.TypeId); WriteVector(w, m.Center); w.F64(m.Radius); break;
+            case SimQueryTournamentWreckReply m:
+                if (m.RequestId == 0 || !m.Scene.IsValid || m.Scene.InstanceId != 0 || m.ItemId <= 0 || m.Error is { Length: 0 }) throw new ArgumentException("Invalid tournament wreck reply.", nameof(message));
+                w.U8(Kind.QueryTournamentWreckReply); w.U64(m.RequestId); WriteSceneKey(w, m.Scene); w.I64(m.ItemId);
+                w.U8(m.Error is not null ? (byte)2 : m.Present ? (byte)1 : (byte)0); w.Text(m.Error ?? string.Empty); break;
+            case SimRemoveTournamentWreckReply m:
+                if (m.RequestId == 0 || !m.Scene.IsValid || m.Scene.InstanceId != 0 || m.ItemId <= 0 || m.Error is { Length: 0 }) throw new ArgumentException("Invalid tournament wreck reply.", nameof(message));
+                w.U8(Kind.RemoveTournamentWreckReply); w.U64(m.RequestId); WriteSceneKey(w, m.Scene); w.I64(m.ItemId);
+                w.U8(m.Error is not null ? (byte)2 : m.Removed ? (byte)1 : (byte)0); w.Text(m.Error ?? string.Empty); break;
+            case SimGetSceneBody m:
+                if (m.RequestId == 0 || !m.Scene.IsValid || m.Scene.InstanceId != 0 || m.ItemId <= 0)
+                    throw new ArgumentException("Invalid scene body request.", nameof(message));
+                w.U8(Kind.GetSceneBody); w.U64(m.RequestId); WriteSceneKey(w, m.Scene); w.I64(m.ItemId);
+                break;
+            case SimGetSceneBodyReply m:
+                if (m.RequestId == 0 || !m.Scene.IsValid || m.Scene.InstanceId != 0 || m.ItemId <= 0 ||
+                    (m.Error is null && (m.TypeId <= 0 || m.GroupId <= 0 || m.CategoryId <= 0 || !IsVector(m.Position))) ||
+                    (m.Error is not null && m.Error.Length == 0))
+                    throw new ArgumentException("Invalid scene body reply.", nameof(message));
+                w.U8(Kind.GetSceneBodyReply); w.U64(m.RequestId); WriteSceneKey(w, m.Scene); w.I64(m.ItemId);
+                w.U8(m.Error is null ? (byte)0 : (byte)1);
+                if (m.Error is null) { w.I32(m.TypeId); w.I32(m.GroupId); w.I32(m.CategoryId); WriteVector(w, m.Position); }
                 w.Text(m.Error ?? string.Empty);
                 break;
             case SimGetAbyssalParticipantPose m:

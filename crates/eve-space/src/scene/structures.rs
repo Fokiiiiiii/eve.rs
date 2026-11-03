@@ -17,6 +17,88 @@ impl Scene {
     }
 
     /// The authoritative structure body shared by scene observers and host range queries.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn ensure_tournament_beacon(
+        &mut self,
+        item_id: i64,
+        type_id: i32,
+        group_id: i32,
+        category_id: i32,
+        owner_id: i64,
+        graphic_id: i32,
+        name: String,
+        position: [f64; 3],
+        radius: f64,
+        now: i64,
+    ) -> Result<Vec<Out>, String> {
+        let position = Vec3::new(position[0], position[1], position[2]);
+        if let Some(body) = self.scene_body(item_id) {
+            if body.kind == BodyKind::TournamentBeacon
+                && body.type_id == type_id
+                && body.group_id == group_id
+                && body.category_id == category_id
+                && body.owner_id == owner_id
+                && body.graphic_id == Some(i64::from(graphic_id))
+                && body.name == name
+                && body.position == position
+                && body.radius == radius
+            {
+                return Ok(Vec::new());
+            }
+            return Err("TOURNAMENT_BEACON_ID_CONFLICT".to_string());
+        }
+        let body = Body {
+            id: item_id,
+            type_id,
+            group_id,
+            category_id,
+            owner_id,
+            name,
+            kind: BodyKind::TournamentBeacon,
+            position,
+            radius,
+            graphic_id: Some(i64::from(graphic_id)),
+            detail: Detail::None,
+        };
+        let stamp = self.next_stamp(now);
+        let system = Arc::make_mut(&mut self.system);
+        system.bodies.push(body);
+        let index = system.bodies.len() - 1;
+        let added = match payload::add_abyssal_scene_object(stamp, system, index) {
+            Ok(added) => added,
+            Err(_) => {
+                system.bodies.pop();
+                return Err("TOURNAMENT_BEACON_SERIALIZATION_FAILED".to_string());
+            }
+        };
+        Ok(self
+            .view_sessions()
+            .into_iter()
+            .map(|session| Self::update(session, vec![added.clone()]))
+            .collect())
+    }
+
+    pub(crate) fn remove_tournament_beacon(&mut self, item_id: i64, now: i64) -> Result<Vec<Out>, String> {
+        let Some(index) = self.system.bodies.iter().position(|body| body.id == item_id) else {
+            return Ok(Vec::new());
+        };
+        if self.system.bodies[index].kind != BodyKind::TournamentBeacon {
+            return Err("TOURNAMENT_BEACON_ID_CONFLICT".to_string());
+        }
+        Arc::make_mut(&mut self.system).bodies.remove(index);
+        let stamp = self.next_stamp(now);
+        let removed = payload::remove_ships(stamp, [item_id]);
+        Ok(self
+            .view_sessions()
+            .into_iter()
+            .map(|session| Self::update(session, vec![removed.clone()]))
+            .collect())
+    }
+
+    pub(crate) fn scene_body(&self, item_id: i64) -> Option<&Body> {
+        self.system.bodies.iter().find(|body| body.id == item_id)
+    }
+
     pub(crate) fn structure_body(&self, structure_id: i64) -> Option<&Body> {
         self.structure_index(structure_id).map(|index| &self.system.bodies[index])
     }

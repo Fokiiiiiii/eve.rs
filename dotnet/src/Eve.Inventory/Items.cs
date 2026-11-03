@@ -26,6 +26,7 @@ public static class ItemFlags
     public const int CorpSAG6 = 120;
     public const int CorpSAG7 = 121;
     public const int HiddenModifiers = 156;
+    public const int RaffleEscrow = 178;
     public static bool IsCorporationHangar(int flag) => flag is CorpDeliveries or (>= CorpSAG1 and <= CorpSAG7);
 
     /// <summary>The first of the eight low slots of a ship (11 to 18).</summary>
@@ -114,6 +115,8 @@ public sealed class PgItemStore
     public EventBus? Events { get; set; }
 
     public const string ItemMovedTopic = "inventory.item_moved";
+    public const string ItemOwnershipChangedTopic = "inventory.item_ownership_changed";
+    public sealed record ItemOwnershipChanged(long ItemId, int TypeId, long PreviousOwnerId, long OwnerId);
 
     /// <summary>The provenance of the mutated items (<c>item_mutations</c>, in this store's schema): the one way an item's mutation is read.</summary>
     public ItemMutationStore Mutations { get; }
@@ -228,6 +231,7 @@ public sealed class PgItemStore
     public async Task<long> CreateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, NewItem item, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(item);
+        await EnsureRaffleDestinationUnlockedAsync(connection, transaction, item.LocationId, cancellationToken);
         var storedCustomInfo = item.CustomInfo;
         if (item.RunSpaceProvenance is { } provenance)
         {
@@ -271,6 +275,7 @@ public sealed class PgItemStore
         var item = await LockAndGetAsync(connection, transaction, id, cancellationToken);
         if (item is null) return;
         EnsureUnlocked(item);
+        await EnsureRaffleDestinationUnlockedAsync(connection, transaction, locationId, cancellationToken);
         await using var command = new NpgsqlCommand(
             $"UPDATE {_schema}.items SET location_id = $2, flag = $3 WHERE id = $1",
             connection, transaction)
@@ -281,6 +286,15 @@ public sealed class PgItemStore
         await AnnounceMoveAsync(connection, transaction, item, locationId, flag, cancellationToken);
         if (ItemFlags.IsCorporationHangar(flag) && ShipInsuranceInvalidator is { } invalidator)
             await invalidator.InvalidateAsync(connection, transaction, id, ShipContractInvalidationReason.CorporationHangar, cancellationToken);
+    }
+
+    private async Task AnnounceOwnershipAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+        Item before, long ownerId, CancellationToken cancellationToken)
+    {
+        if (Events is null || before.OwnerId == ownerId) return;
+        await Events.PublishInTransactionAsync(connection, transaction, ItemOwnershipChangedTopic,
+            new ItemOwnershipChanged(before.Id, before.TypeId, before.OwnerId, ownerId),
+            key: $"item:{before.Id}", cancellationToken: cancellationToken);
     }
 
     /// <summary>Locks and returns an item and all inventory items nested inside it.</summary>
@@ -318,6 +332,7 @@ public sealed class PgItemStore
         var item = await LockAndGetAsync(connection, transaction, id, cancellationToken);
         if (item is null) return;
         EnsureUnlocked(item);
+        await EnsureRaffleDestinationUnlockedAsync(connection, transaction, locationId, cancellationToken);
         await using var command = new NpgsqlCommand(
             $"UPDATE {_schema}.items SET owner_id = $2, location_id = $3, flag = $4 WHERE id = $1",
             connection, transaction)
@@ -326,6 +341,7 @@ public sealed class PgItemStore
         };
         await command.ExecuteNonQueryAsync(cancellationToken);
         await AnnounceMoveAsync(connection, transaction, item, locationId, flag, cancellationToken);
+        await AnnounceOwnershipAsync(connection, transaction, item, ownerId, cancellationToken);
         if (item.OwnerId != ownerId && ShipInsuranceInvalidator is { } invalidator)
             await invalidator.InvalidateAsync(connection, transaction, id, ShipContractInvalidationReason.OwnerChanged, cancellationToken);
     }
@@ -445,9 +461,16 @@ public sealed class PgItemStore
         return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
     }
 
-private static void EnsureUnlocked(Item? item)
+    private async Task EnsureRaffleDestinationUnlockedAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+        long locationId, CancellationToken cancellationToken)
     {
-        if (item is { BlueprintLocked: true })
+        var destination = await LockAndGetAsync(connection, transaction, locationId, cancellationToken);
+        if (destination is { Flag: ItemFlags.RaffleEscrow }) throw new InvalidOperationException("ITEM_LOCKED");
+    }
+
+    private static void EnsureUnlocked(Item? item)
+    {
+        if (item is { BlueprintLocked: true } or { Flag: ItemFlags.RaffleEscrow })
             throw new InvalidOperationException("ITEM_LOCKED");
     }
 
@@ -553,14 +576,64 @@ private static void EnsureUnlocked(Item? item)
             throw new InvalidOperationException("INDUSTRY_BLUEPRINT_CHANGED");
     }
 
+    /// <summary>Marks a validated hangar item as raffle escrow without changing its owner or station.</summary>
+    public async Task<Item> PutInRaffleEscrowAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+        long id, long ownerId, long stationId, CancellationToken cancellationToken = default)
+    {
+        var item = await LockAndGetAsync(connection, transaction, id, cancellationToken);
+        if (item is null || item.OwnerId != ownerId || item.LocationId != stationId || item.Flag != ItemFlags.Hangar)
+            throw new InvalidOperationException("RAFFLE_ITEM_CHANGED");
+        EnsureUnlocked(item);
+        await using var command = new NpgsqlCommand(
+            $"UPDATE {_schema}.items SET flag=$2 WHERE id=$1 RETURNING {Columns}", connection, transaction)
+        {
+            Parameters = { new() { Value = id }, new() { Value = ItemFlags.RaffleEscrow } },
+        };
+        Item escrowed;
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            if (!await reader.ReadAsync(cancellationToken)) throw new InvalidOperationException("RAFFLE_ITEM_CHANGED");
+            escrowed = Read(reader);
+        }
+        await AnnounceMoveAsync(connection, transaction, item, stationId, ItemFlags.RaffleEscrow, cancellationToken);
+        return escrowed;
+    }
+
+    /// <summary>Releases only a raffle-escrowed item whose persisted owner and station still match the raffle record.</summary>
+    public async Task<Item> ReleaseRaffleEscrowAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+        long id, long expectedOwnerId, long expectedStationId, long newOwnerId, long newStationId,
+        CancellationToken cancellationToken = default)
+    {
+        var item = await LockAndGetAsync(connection, transaction, id, cancellationToken);
+        if (item is null || item.Flag != ItemFlags.RaffleEscrow || item.OwnerId != expectedOwnerId || item.LocationId != expectedStationId)
+            throw new InvalidOperationException("RAFFLE_ITEM_CHANGED");
+        await using var command = new NpgsqlCommand(
+            $"UPDATE {_schema}.items SET owner_id=$2,location_id=$3,flag=$4 WHERE id=$1 RETURNING {Columns}", connection, transaction)
+        {
+            Parameters = { new() { Value = id }, new() { Value = newOwnerId }, new() { Value = newStationId }, new() { Value = ItemFlags.Hangar } },
+        };
+        Item released;
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            if (!await reader.ReadAsync(cancellationToken)) throw new InvalidOperationException("RAFFLE_ITEM_CHANGED");
+            released = Read(reader);
+        }
+        await AnnounceMoveAsync(connection, transaction, item, newStationId, ItemFlags.Hangar, cancellationToken);
+        await AnnounceOwnershipAsync(connection, transaction, item, newOwnerId, cancellationToken);
+        if (item.OwnerId != newOwnerId && ShipInsuranceInvalidator is { } invalidator)
+            await invalidator.InvalidateAsync(connection, transaction, id, ShipContractInvalidationReason.OwnerChanged, cancellationToken);
+        return released;
+    }
+
     /// <summary>Move or split a packaged stack atomically. A stale expected fact cannot spend the same items twice.</summary>
     public async Task<Item> MoveStackAsync(NpgsqlConnection connection,NpgsqlTransaction transaction,Item expected,long quantity,
         long ownerId,long locationId,int flag,CancellationToken cancellationToken = default)
     {
         if (ownerId <= 0 || locationId <= 0 || flag < 0) throw new ArgumentOutOfRangeException(nameof(ownerId));
         var item = await LockAndGetAsync(connection,transaction,expected.Id,cancellationToken);
-        if (item != expected) throw new InvalidOperationException("ITEM_CHANGED");
+        if (item is null || item != expected) throw new InvalidOperationException("ITEM_CHANGED");
         EnsureUnlocked(item);
+        await EnsureRaffleDestinationUnlockedAsync(connection, transaction, locationId, cancellationToken);
         if (quantity <= 0 || item.Singleton || item.Quantity < quantity) throw new ArgumentOutOfRangeException(nameof(quantity));
         var sql = item.Quantity == quantity
             ? $"UPDATE {_schema}.items SET owner_id=$3,location_id=$4,flag=$5 WHERE id=$1 AND quantity=$2 RETURNING {Columns}"
@@ -582,6 +655,8 @@ private static void EnsureUnlocked(Item? item)
             moved = Read(reader);
         }
         await AnnounceMoveAsync(connection, transaction, item, locationId, flag, cancellationToken);
+        if (moved.Id == item.Id)
+            await AnnounceOwnershipAsync(connection, transaction, item, ownerId, cancellationToken);
         var reason = item.OwnerId != ownerId
             ? ShipContractInvalidationReason.OwnerChanged
             : ItemFlags.IsCorporationHangar(flag) ? ShipContractInvalidationReason.CorporationHangar : (ShipContractInvalidationReason?)null;
@@ -725,6 +800,17 @@ private static void EnsureUnlocked(Item? item)
         return list;
     }
 
+    /// <summary>Locks all items in an owner's location in deterministic order for a cross-domain snapshot.</summary>
+    public async Task<IReadOnlyList<Item>> LockAllInLocationAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long locationId, long ownerId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"SELECT {Columns} FROM {_schema}.items WHERE location_id=$1 AND owner_id=$2 ORDER BY id FOR UPDATE", connection, transaction);
+        command.Parameters.AddWithValue(locationId); command.Parameters.AddWithValue(ownerId);
+        var result = new List<Item>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) result.Add(Read(reader));
+        return result;
+    }
+
 /// <summary>Locks candidate material rows in deterministic item order on the caller's transaction.</summary>
     public async Task<IReadOnlyList<Item>> LockInLocationAsync(
         NpgsqlConnection connection,
@@ -832,6 +918,7 @@ private static void EnsureUnlocked(Item? item)
             Parameters = { new() { Value = id } },
         };
         await command.ExecuteNonQueryAsync(cancellationToken);
+        await AnnounceOwnershipAsync(connection, transaction, item, 0, cancellationToken);
     }
 
     public async Task<IReadOnlyList<Item>> OwnedByAsync(long ownerId, CancellationToken cancellationToken = default)

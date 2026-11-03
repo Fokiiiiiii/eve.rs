@@ -80,6 +80,9 @@ public sealed partial class ConfigService(
         IReadOnlyDictionary<long, decimal> sales = latestAverageSales is null
             ? new Dictionary<long, decimal>()
             : await latestAverageSales(call.Cancellation);
+        // Match the double sent on the wire, and publish only after this response succeeds.
+        double? plex = sales.TryGetValue(44992, out var average) && average > 0 ? (double)average : null;
+        call.Session.AfterResponse(() => AdvertisedPlexPrice.Set(call.Session, plex));
         var entries = sales
             .Where(sale => sale.Value > 0)
             .OrderBy(sale => sale.Key)

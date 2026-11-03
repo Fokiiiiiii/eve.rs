@@ -33,7 +33,9 @@ public sealed class NpcFactionStandingTests
             long now = 1_000_000;
             var standing = new NpcFactionStanding(relations, () => now);
 
-            var first = await standing.ApplyAsync(Pilot, Faction, System, npcTypeId: 12);
+            const long npcCorporation = 1_000_142;
+            const int npcType = 17720;
+            var first = await standing.ApplyAsync(Pilot, Faction, System, npcCorporationId: npcCorporation, npcTypeId: npcType);
             Assert.NotNull(first);
             var stored = await relations.ValueAsync(RelationKinds.Standing.Name, Faction, Pilot, 0);
             Assert.Equal(first!.Value, stored, 6);
@@ -41,10 +43,12 @@ public sealed class NpcFactionStandingTests
             var history = await relations.HistoryAsync(RelationKinds.Standing.Name, Faction, Pilot);
             using (var reason = global::System.Text.Json.JsonDocument.Parse(Assert.Single(history).Reason!))
             {
-                Assert.Equal(76, reason.RootElement.GetProperty("eventTypeID").GetInt32());
+                Assert.Equal(77, reason.RootElement.GetProperty("eventTypeID").GetInt32());
                 Assert.Equal(NpcFactionStanding.LossPerKillRaw, reason.RootElement.GetProperty("modification").GetDouble());
-                Assert.Equal("Combat aggression", reason.RootElement.GetProperty("msg").GetString());
-                Assert.Equal(12, reason.RootElement.GetProperty("int_1").GetInt32());
+                Assert.Equal("Combat ship kill", reason.RootElement.GetProperty("msg").GetString());
+                Assert.Equal(npcCorporation, reason.RootElement.GetProperty("int_1").GetInt64());
+                Assert.Equal(System, reason.RootElement.GetProperty("int_2").GetInt32());
+                Assert.Equal(npcType, reason.RootElement.GetProperty("int_3").GetInt32());
             }
 
             // another kill inside the ten-minute window moves nothing; a kill in another system is its own window

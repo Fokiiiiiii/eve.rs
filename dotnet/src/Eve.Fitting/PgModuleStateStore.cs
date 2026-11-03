@@ -49,6 +49,12 @@ public sealed class PgModuleStateStore
                 CHECK (shield_charge > '-Infinity'::double precision AND shield_charge < 'Infinity'::double precision);
             ALTER TABLE ship_condition ADD CONSTRAINT ship_condition_armor_damage_finite
                 CHECK (armor_damage > '-Infinity'::double precision AND armor_damage < 'Infinity'::double precision);
+            """),
+        new Migration("0005_ship_condition_revision", """
+            CREATE TABLE ship_condition_revision (
+                item_id bigint PRIMARY KEY,
+                revision bigint NOT NULL CHECK (revision > 0)
+            );
             """)
     ];
 
@@ -239,6 +245,35 @@ public sealed class PgModuleStateStore
         long shipId,
         ShipCondition condition,
         CancellationToken cancellationToken = default)
+    {
+        await using (var revision = new NpgsqlCommand($"INSERT INTO {_schema}.ship_condition_revision (item_id, revision) VALUES ($1, 1) ON CONFLICT (item_id) DO UPDATE SET revision = {_schema}.ship_condition_revision.revision + 1", connection, transaction))
+        {
+            revision.Parameters.Add(new NpgsqlParameter { Value = shipId });
+            await revision.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await WriteShipConditionAsync(connection, transaction, shipId, condition, cancellationToken);
+    }
+
+    /// <summary>Revision zero denotes a ship with no previous writes, even when its condition row is absent.</summary>
+    public async Task<long> ShipConditionRevisionAsync(long shipId, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand($"SELECT COALESCE((SELECT revision FROM {_schema}.ship_condition_revision WHERE item_id = $1), 0)");
+        command.Parameters.Add(new NpgsqlParameter { Value = shipId });
+        return (long)(await command.ExecuteScalarAsync(cancellationToken))!;
+    }
+
+    /// <summary>Writes only if no condition writer has committed since the supplied revision.</summary>
+    public async Task<bool> TrySetShipConditionAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long shipId, long expectedRevision, ShipCondition condition, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"INSERT INTO {_schema}.ship_condition_revision (item_id, revision) SELECT $1, 1 WHERE $2 = 0 OR EXISTS (SELECT 1 FROM {_schema}.ship_condition_revision WHERE item_id = $1) ON CONFLICT (item_id) DO UPDATE SET revision = {_schema}.ship_condition_revision.revision + 1 WHERE {_schema}.ship_condition_revision.revision = $2 RETURNING revision", connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = shipId });
+        command.Parameters.Add(new NpgsqlParameter { Value = expectedRevision });
+        if (await command.ExecuteScalarAsync(cancellationToken) is null) return false;
+        await WriteShipConditionAsync(connection, transaction, shipId, condition, cancellationToken);
+        return true;
+    }
+
+    private async Task WriteShipConditionAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long shipId, ShipCondition condition, CancellationToken cancellationToken)
     {
         var sql = condition == ShipCondition.Full
             ? $"DELETE FROM {_schema}.ship_condition WHERE item_id = $1"

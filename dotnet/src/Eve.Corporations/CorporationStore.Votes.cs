@@ -734,6 +734,7 @@ private Task<bool> ResolveExpiredVotesAsync(long corporationId,CancellationToken
             DO UPDATE SET shares={_schema}.vote_shareholders.shares+EXCLUDED.shares
             """,corporationId,shareholderId,amount);
         await command.ExecuteNonQueryAsync(token);
+        await PublishShareChangeAsync(connection,tx,corporationId,shareholderId,current,current+amount,token);
     }
 
     public Task<bool> CanRunForCEOAsync(long corporationId,long actorId,CancellationToken token = default)

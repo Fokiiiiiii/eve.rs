@@ -60,6 +60,7 @@ public class CynoFieldRecordHostTests
         var record = new DeployedRecord(Field, "cyno_field", System, "Cynosural Field", 21_094, 2_020, [1, 2, 3], 250, Pilot, 98_000_001, 0, 9_988_400_001_943, Rig.ClockMs + 120_000);
         await rig.Deployed.SaveAsync(record);
         await rig.Deployed.SaveAsync(record with { DeployableId = Field + 1, ExpiresAtMs = Rig.ClockMs - 1 });
+        await rig.Deployed.SaveAsync(record with { DeployableId = Field + 2, Kind = "tournament.beacon", ExpiresAtMs = long.MaxValue });
 
         rig.Now += 30_000;
         await rig.Containers.RestoreDeployedAsync(System);

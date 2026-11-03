@@ -9,6 +9,26 @@ public class EventBusTests
 
     private static DomainEventHandler Collect(List<string> into) => (ctx, _) => { into.Add(ctx.Event.Topic + ":" + ctx.Event.Key); return Task.CompletedTask; };
 
+    [PgFact]
+    public async Task Start_initializes_now_cursor_before_returning_and_delivers_first_live_event()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Publish("ready.test", key: "history");
+        var seen = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        rig.Bus.Subscribe("ready", ["ready.test"], (context, _) =>
+        {
+            seen.TrySetResult(context.Event.Key ?? "");
+            return Task.CompletedTask;
+        });
+        await rig.Bus.StartAsync();
+        try
+        {
+            await rig.Publish("ready.test", key: "live");
+            Assert.Equal("live", await seen.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+        finally { await rig.Bus.StopAsync(); }
+    }
+
     [Fact]
     public void Transaction_completion_registration_is_available_to_moon_subscribers()
     {

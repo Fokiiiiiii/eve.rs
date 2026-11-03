@@ -266,6 +266,27 @@ public Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, ShipTransitionEve
     /// or from space, and the character is in that system. The station the character last docked at stays (it is where the ship is recovered to if the
     /// simulation loses it). No gate, range or fuel rule applies: the relocation is the game master's.
     /// </summary>
+    public Task<long> ShipConditionRevisionAsync(long shipId, CancellationToken cancellationToken = default) =>
+        modules.ShipConditionRevisionAsync(shipId, cancellationToken);
+
+    public async Task<bool> TrySaveSpaceConditionAsync(long characterId, long shipId, int solarSystemId, long expectedRevision, ShipCondition condition, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+        if (await characters.GetAsync(characterId, cancellationToken) is not { ShipId: { } activeShipId } character ||
+            activeShipId != shipId || character.SolarSystemId != solarSystemId ||
+            await items.LockAndGetAsync(connection, transaction, shipId, cancellationToken) is not { } ship ||
+            ship.OwnerId != characterId || ship.LocationId != solarSystemId || ship.Flag != InSpaceFlag)
+            return false;
+        var existing = await modules.ShipConditionAsync(connection, transaction, shipId, cancellationToken);
+        if (!await modules.TrySetShipConditionAsync(connection, transaction, shipId, expectedRevision,
+            condition with { Incapacitated = existing.Incapacitated }, cancellationToken))
+            return false;
+        await transaction.CommitAsync(cancellationToken);
+        return true;
+    }
+
     public async Task<SpaceTransition> RelocateAsync(long characterId, int solarSystemId, int constellationId, int regionId, CancellationToken cancellationToken = default)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);

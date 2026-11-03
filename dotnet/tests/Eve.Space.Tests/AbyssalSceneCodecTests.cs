@@ -3,6 +3,34 @@ namespace Eve.Space.Tests;
 public sealed class AbyssalSceneCodecTests
 {
     [Fact]
+    public void Tournament_beacon_wire_rejects_private_scenes_and_nonrepresentable_radii()
+    {
+        var beacon = new SimEnsureTournamentBeacon(1, SimSceneKey.SolarSystem(30_000_142), 123, 10645, 310, 2,
+            90_000_001, 1211, "Celestial Beacon", [1, 2, 3], 5);
+        var decoded = Assert.IsType<SimEnsureTournamentBeacon>(SimCodec.Decode(SimCodec.Encode(beacon).AsMemory(4)));
+        Assert.Equal(beacon.ItemId, decoded.ItemId); Assert.Equal(beacon.Radius, decoded.Radius);
+        Assert.Equal(beacon.Position, decoded.Position);
+        Assert.Throws<ArgumentException>(() => SimCodec.Encode(beacon with { Scene = new SimSceneKey(30_000_142, 5, 1) }));
+        Assert.Throws<ArgumentException>(() => SimCodec.Encode(beacon with { Radius = double.MaxValue }));
+        Assert.Throws<ArgumentException>(() => SimCodec.Encode(beacon with { Radius = double.Epsilon }));
+        Assert.Throws<ArgumentException>(() => SimCodec.Encode(beacon with { Position = [double.NaN, 0, 0] }));
+    }
+
+    [Fact]
+    public void Public_scene_body_query_roundtrips_success_and_absence_and_rejects_private_scenes()
+    {
+        var scene = SimSceneKey.SolarSystem(30_000_142);
+        var query = new SimGetSceneBody(42, scene, 123);
+        Assert.Equal(query, Assert.IsType<SimGetSceneBody>(SimCodec.Decode(SimCodec.Encode(query).AsMemory(4))));
+        var present = new SimGetSceneBodyReply(42, scene, 123, 10645, 310, 2, [1, 2, 3], null);
+        var decoded = Assert.IsType<SimGetSceneBodyReply>(SimCodec.Decode(SimCodec.Encode(present).AsMemory(4)));
+        Assert.Equal(present.TypeId, decoded.TypeId); Assert.Equal(present.Position, decoded.Position);
+        var absent = new SimGetSceneBodyReply(42, scene, 123, 0, 0, 0, [], "SCENE_BODY_NOT_FOUND");
+        Assert.Equal(absent.Error, Assert.IsType<SimGetSceneBodyReply>(SimCodec.Decode(SimCodec.Encode(absent).AsMemory(4))).Error);
+        Assert.Throws<ArgumentException>(() => SimCodec.Encode(query with { Scene = new SimSceneKey(30_000_142, 5, 1) }));
+    }
+
+    [Fact]
     public void Ensure_scene_roundtrips_run_room_environment_boundary_and_expiry()
     {
         var spec = new SimAbyssalSceneSpec(

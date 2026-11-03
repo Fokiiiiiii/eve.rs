@@ -40,11 +40,14 @@ public sealed partial class SpaceSessions
     /// </summary>
     public async Task<TargetingResult?> OrderAsync(ClientSession session, TargetingOrder order, IReadOnlyList<long> targets, CancellationToken cancellationToken)
     {
+        RequirePublicMoveSettled(session);
         var id = (ulong)session.SessionId;
         if (!_pilots.TryGetValue(id, out var pilot))
         {
             return null;
         }
+        if (order == TargetingOrder.Lock && TournamentRestricted?.Invoke(pilot.CharacterId, TournamentRestriction.Lock) == true)
+            throw Notify("Target locking is restricted by the tournament referee.");
         var gate = _targeting.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(cancellationToken);
         CommandReply reply;
@@ -119,6 +122,7 @@ public sealed partial class SpaceSessions
     /// </summary>
     public async Task<ModuleResult?> ActivateAsync(ClientSession session, long moduleId, string effectName, long targetId, int repeat, CancellationToken cancellationToken, IReadOnlyList<double>? aim = null, IReadOnlyList<double>? aimEnd = null)
     {
+        RequirePublicMoveSettled(session);
         var id = (ulong)session.SessionId;
         if (!_pilots.TryGetValue(id, out var pilot) || session.CharacterId is not { } characterId)
         {
@@ -434,7 +438,24 @@ public sealed partial class SpaceSessions
             chargeOwnerTrackedHere = pilot.ModuleChargeOwners.TryAdd(moduleId, fittedModule.OwnerId);
             structureModuleTrackedHere = pilot.StructureModuleIds.TryAdd(moduleId, 0);
         }
-        var markedHere = pilot.ActiveModules.TryAdd(moduleId, ItemState.Active);
+        var provisional = RunningModule.Of(effectName, targetId, repeat, aim, aimEnd, package);
+        bool markedHere;
+        lock (pilot.ModuleLifecycleSync)
+        {
+            markedHere = pilot.ActiveModules.TryAdd(moduleId, ItemState.Active);
+            if (markedHere) pilot.RunningModules[moduleId] = provisional;
+        }
+        void UndoProvisional()
+        {
+            lock (pilot.ModuleLifecycleSync)
+            {
+                if (markedHere && pilot.RunningModules.TryGetValue(moduleId, out var current) && current.Generation == provisional.Generation)
+                {
+                    pilot.RunningModules.TryRemove(moduleId, out _);
+                    pilot.ActiveModules.TryRemove(moduleId, out _);
+                }
+            }
+        }
         CommandReply reply;
         try
         {
@@ -443,10 +464,7 @@ public sealed partial class SpaceSessions
         catch
         {
 
-            if (markedHere)
-            {
-                pilot.ActiveModules.TryRemove(moduleId, out _);
-            }
+            UndoProvisional();
             throw;
         }
         if (!reply.Accepted)
@@ -455,10 +473,7 @@ public sealed partial class SpaceSessions
                 pilot.ModuleChargeOwners.TryRemove(moduleId, out _);
             if (structureModuleTrackedHere)
                 pilot.StructureModuleIds.TryRemove(moduleId, out _);
-            if (markedHere)
-            {
-                pilot.ActiveModules.TryRemove(moduleId, out _);
-            }
+            UndoProvisional();
             var refusal = ModuleResult.Refusal(reply.Reason == "ALREADY_ACTIVE" ? "MODULE_ALREADY_ACTIVE" : reply.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);
             // a target out of reach is told with how far the module reaches and how far the target is
             return reply.Reason == "TARGET_OUT_OF_RANGE"
@@ -469,7 +484,6 @@ public sealed partial class SpaceSessions
         {
             await _ships.BurnOutModuleAsync(characterId, moduleId, cancellationToken).ConfigureAwait(false);
         }
-        pilot.RunningModules[moduleId] = RunningModule.Of(effectName, targetId, repeat, aim, aimEnd, package);
         await RefreshRunningAsync(pilot, id, cancellationToken).ConfigureAwait(false);
         AnnounceModeChange(pilot, snapshot, moduleId, started: true);
         await SendShipAsync(id, pilot, SimShips.VitalsOf(snapshot), cancellationToken);
@@ -659,6 +673,7 @@ public sealed partial class SpaceSessions
     /// <summary>Asks for an effect to stop at the end of the cycle it is in.</summary>
     public async Task<ModuleResult?> DeactivateAsync(ClientSession session, long moduleId, string effectName, CancellationToken cancellationToken)
     {
+        RequirePublicMoveSettled(session);
         var id = (ulong)session.SessionId;
         if (!_pilots.TryGetValue(id, out var pilot) || session.CharacterId is null)
         {
@@ -685,13 +700,23 @@ public sealed partial class SpaceSessions
         if (reply.Accepted)
         {
             Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.StopAfterCurrentCycle(moduleId);
-            if (pilot.ActiveModules.TryRemove(moduleId, out _))
+            if (RemoveRunningGeneration(pilot, moduleId, running?.Generation))
                 AnnounceModeChange(pilot, snapshot, moduleId, started: false);
-            pilot.RunningModules.TryRemove(moduleId, out _);
             await SendShipAsync(id, pilot, SimShips.VitalsOf(snapshot), cancellationToken);
             await RefreshRunningAsync(pilot, id, cancellationToken).ConfigureAwait(false);
         }
         return reply.Accepted ? ModuleResult.Done : ModuleResult.Refusal(reply.Reason == "NOT_ACTIVE" ? "MODULE_NOT_ACTIVE" : reply.Reason ?? "REFUSED", module?.TypeId ?? 0, type?.Name ?? "");
+    }
+
+    private static bool RemoveRunningGeneration(Pilot pilot, long moduleId, Guid? generation)
+    {
+        lock (pilot.ModuleLifecycleSync)
+        {
+            var present = pilot.RunningModules.TryGetValue(moduleId, out var current);
+            if (present && current!.Generation != generation || !present && generation is not null) return false;
+            if (present) pilot.RunningModules.TryRemove(moduleId, out _);
+            return pilot.ActiveModules.TryRemove(moduleId, out _);
+        }
     }
 
     internal static bool EffectNameMatches(string running, string requested) =>
@@ -870,10 +895,10 @@ public sealed partial class SpaceSessions
         var snapshot = await FlownShipAsync(pilot, cancellationToken);
         if (snapshot is not null)
             await _sim.SetHeatProfileAsync(id, SimShips.HeatProfileOf(snapshot, _statics), cancellationToken);
+        pilot.RunningModules.TryGetValue(moduleId, out var beforeOffline);
         await _sim.OfflineModuleAsync(id, moduleId, cancellationToken);
-        if (pilot.ActiveModules.TryRemove(moduleId, out _))
+        if (RemoveRunningGeneration(pilot, moduleId, beforeOffline?.Generation))
             AnnounceModeChange(pilot, snapshot, moduleId, started: false);
-        pilot.RunningModules.TryRemove(moduleId, out _);
         Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.Reset(moduleId);
         await RefreshRunningAsync(pilot, id, cancellationToken).ConfigureAwait(false);
         return ModuleResult.Done;

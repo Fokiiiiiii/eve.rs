@@ -29,6 +29,18 @@ public interface IBoundObjectReleaseHandler
     void OnBoundObjectReleased(string oid, ClientSession? session);
 }
 
+/// <summary>Durable cleanup awaited after a bound object has been detached.</summary>
+public interface IAsyncBoundObjectReleaseHandler
+{
+    ValueTask OnBoundObjectReleasedAsync(string oid, ClientSession? session, CancellationToken cancellationToken);
+}
+
+/// <summary>Captures immutable release identity before the synchronous detach handler runs.</summary>
+public interface ICapturedBoundObjectReleaseHandler
+{
+    Func<CancellationToken, ValueTask>? CaptureBoundObjectRelease(string oid, ClientSession? session);
+}
+
 /// <summary>Implemented by services that hand the same bound object to a session on every bind.</summary>
 public interface IReusableBoundObject
 {

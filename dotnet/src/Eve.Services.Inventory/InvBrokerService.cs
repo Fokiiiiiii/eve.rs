@@ -129,6 +129,7 @@ public sealed partial class InvBrokerService(
 
     private void RequireMutableInventory(ServiceCall call)
     {
+        space?.RequirePublicMoveSettled(call.Session);
         if (ContextOf(call)?.Kind == Kind.Character)
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("The character skill inventory is read-only.")));
         if (ContextOf(call)?.Kind == Kind.Structure)
@@ -1172,6 +1173,7 @@ public sealed partial class InvBrokerService(
 [Method("SetLabel")]
     public async ValueTask<PyValue> SetLabel(ServiceCall call)
     {
+        space?.RequirePublicMoveSettled(call.Session);
         if (call.Session.CharacterId is not { } character || IdOf(call.Arg(0)) is not { } itemId
             || await items.GetAsync(itemId, call.Cancellation) is not { } item)
             return None;

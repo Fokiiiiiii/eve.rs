@@ -63,7 +63,19 @@ internal static class ModulePackages
         effect.Turret is { Charge: { Reloads: true } charge } turret ? effect with { Turret = turret with { Charge = charge with { Reloads = false } } } : effect;
 
     /// <param name="autoReload">The pilot's account is one the operator named for reloads from the hold (a bot with no client UI); false for a client.</param>
-    public static Result Of(ShipSnapshot snapshot, DogmaStatic statics, long moduleId, string effectName, long targetId, int repeat, IReadOnlyList<double>? aim = null, IReadOnlyList<double>? aimEnd = null, bool autoReload = false)
+    public static Result Of(ShipSnapshot snapshot, DogmaStatic statics, long moduleId, string effectName, long targetId, int repeat, IReadOnlyList<double>? aim = null, IReadOnlyList<double>? aimEnd = null, bool autoReload = false) =>
+        OfCore(snapshot, statics, moduleId, effectName, targetId, repeat, aim, aimEnd, autoReload, potential: false);
+
+    /// <summary>Read-only untargeted metrics input; never submits an activation or its Accepted callback.</summary>
+    internal readonly record struct PotentialResult(double DurationMs, SimTurret? Turret, SimAction? Action, string? Reason);
+
+    internal static PotentialResult OfPotential(ShipSnapshot snapshot, DogmaStatic statics, long moduleId, string effectName)
+    {
+        var result = OfCore(snapshot, statics, moduleId, effectName, 0, 1, null, null, false, potential: true);
+        return new(result.Effect?.DurationMs ?? 0, result.Effect?.Turret, result.Effect?.Action, result.Reason);
+    }
+
+    private static Result OfCore(ShipSnapshot snapshot, DogmaStatic statics, long moduleId, string effectName, long targetId, int repeat, IReadOnlyList<double>? aim, IReadOnlyList<double>? aimEnd, bool autoReload, bool potential)
     {
         var module = snapshot.Fitted.FirstOrDefault(m => m.Id == moduleId);
         if (module is null || statics.Type(module.TypeId) is not { } type)
@@ -91,12 +103,15 @@ internal static class ModulePackages
 
         var context = new EffectContext<ShipSnapshot>(snapshot, snapshot.World, statics, moduleId, type, effect, targetId, repeat, aim, aimEnd);
         var handler = ModuleEffects.Default.Find(context);
+        if (potential && handler is not (TurretEffect or MissileEffect or RepairEffect or ProjectedEffect
+            or FueledArmorRepairEffect or FueledShieldBoostingEffect or AncillaryRemoteArmorRepairEffect or AncillaryRemoteShieldBoosterEffect))
+            return new Result(null, "UNSUPPORTED_EFFECT", module.TypeId, name);
         // the handler may refuse before the target is asked for (a gun with nothing to shoot is refused first: the reference's order)
         if (handler?.Refusal(context) is { } reason)
         {
             return new Result(null, reason, module.TypeId, name);
         }
-        if (effect.Category == EffectDef.Target && targetId <= 0)
+        if (!potential && effect.Category == EffectDef.Target && targetId <= 0)
         {
             return new Result(null, "TARGET_REQUIRED", module.TypeId, name);
         }
@@ -106,6 +121,7 @@ internal static class ModulePackages
             return new Result(null, "UNSUPPORTED_EFFECT", module.TypeId, name);
         }
         var built = handler.Build(context);
-        return new Result(autoReload ? built : WithoutReload(built), null, module.TypeId, name, () => handler.Accepted(context));
+        return new Result(autoReload ? built : WithoutReload(built), null, module.TypeId, name,
+            potential ? null : () => handler.Accepted(context));
     }
 }

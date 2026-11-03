@@ -1,3 +1,17 @@
+pub const RELEASE_TOURNAMENT_CUTOFF: u8 = 146;
+pub const READ_TOURNAMENT_METRICS_V2: u8 = 154;
+pub const READ_TOURNAMENT_METRICS_V2_REPLY: u8 = 155;
+pub const REGISTER_TOURNAMENT_METRICS: u8 = 148;
+pub const REGISTER_TOURNAMENT_METRICS_REPLY: u8 = 149;
+pub const READ_TOURNAMENT_METRICS: u8 = 150;
+pub const READ_TOURNAMENT_METRICS_REPLY: u8 = 151;
+pub const RELEASE_TOURNAMENT_METRICS: u8 = 152;
+pub const RELEASE_TOURNAMENT_METRICS_REPLY: u8 = 153;
+pub const RELEASE_TOURNAMENT_CUTOFF_REPLY: u8 = 147;
+pub const REGISTER_TOURNAMENT_CUTOFF: u8 = 142;
+pub const REGISTER_TOURNAMENT_CUTOFF_REPLY: u8 = 143;
+pub const READ_TOURNAMENT_CUTOFF: u8 = 144;
+pub const READ_TOURNAMENT_CUTOFF_REPLY: u8 = 145;
 pub const HELLO: u8 = 1;
 pub const HELLO_ACK: u8 = 2;
 pub const ENTER: u8 = 3;
@@ -164,6 +178,22 @@ pub const REFRESH_ABYSSAL_NPC: u8 = 123;
 pub const REFRESH_ABYSSAL_NPC_REPLY: u8 = 124;
 /// A notification that calls a method on a client-side service (protocol 82).
 pub const SERVICE_NOTIFY: u8 = 125;
+/// Host reads one public-scene body by identity (protocol 85).
+pub const GET_SCENE_BODY: u8 = 126;
+/// Result of a public-scene body lookup (protocol 85).
+pub const GET_SCENE_BODY_REPLY: u8 = 127;
+pub const QUERY_TOURNAMENT_WRECK: u8 = 132;
+pub const QUERY_TOURNAMENT_WRECK_REPLY: u8 = 133;
+pub const REMOVE_TOURNAMENT_WRECK: u8 = 134;
+pub const REMOVE_TOURNAMENT_WRECK_REPLY: u8 = 135;
+pub const MOVE_PUBLIC_PARTICIPANT: u8 = 136;
+pub const MOVE_PUBLIC_PARTICIPANT_REPLY: u8 = 137;
+pub const ENTER_PUBLIC_PARTICIPANT: u8 = 138;
+pub const ENTER_PUBLIC_PARTICIPANT_REPLY: u8 = 139;
+pub const ENSURE_TOURNAMENT_BEACON: u8 = 128;
+pub const ENSURE_TOURNAMENT_BEACON_REPLY: u8 = 129;
+pub const REMOVE_TOURNAMENT_BEACON: u8 = 130;
+pub const REMOVE_TOURNAMENT_BEACON_REPLY: u8 = 131;
 
 /// The host puts an acceleration gate of a dungeon room in space (protocol 75).
 pub const PLACE_ACCELERATION_GATE: u8 = 94;

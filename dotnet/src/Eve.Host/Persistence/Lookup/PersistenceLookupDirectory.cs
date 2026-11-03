@@ -4,7 +4,8 @@ public sealed class PersistenceLookupDirectory(
     Eve.Characters.PgCharacterStore characters,
     Eve.Corporations.CorporationStore corporations,
     Eve.Sde.SdeReader sde,
-    Eve.Universe.StationCatalog stations) : Eve.Services.Core.ILookupDirectory
+    Eve.Universe.StationCatalog stations,
+    Func<IReadOnlyList<long>,CancellationToken,ValueTask<IReadOnlyDictionary<long,bool>>>? readWarEligibility = null) : Eve.Services.Core.ILookupDirectory
 {
     private readonly Lazy<Task<IReadOnlyList<Eve.Services.Core.LookupFaction>>> _factions =
         new(() => LoadFactionsAsync(sde, CancellationToken.None));
@@ -30,7 +31,12 @@ public sealed class PersistenceLookupDirectory(
     {
         var npcFactionIds = await _npcFactionIds.Value.WaitAsync(cancellationToken);
         var rows = await corporations.AllAsync(cancellationToken);
-        return rows.Select(corporation => MapCorporation(corporation, npcFactionIds.GetValueOrDefault(corporation.Id))).ToArray();
+        var eligibility = readWarEligibility is null ? null :
+            await readWarEligibility(rows.Select(c => c.Id).ToArray(), cancellationToken);
+        return rows.Select(corporation => MapCorporation(corporation, npcFactionIds.GetValueOrDefault(corporation.Id)) with
+        {
+            WarPermit = eligibility is null ? (corporation.IsNpc ? 0 : null) : eligibility.GetValueOrDefault(corporation.Id) ? 1 : 0
+        }).ToArray();
     }
 
     internal static Eve.Services.Core.LookupCorporation MapCorporation(

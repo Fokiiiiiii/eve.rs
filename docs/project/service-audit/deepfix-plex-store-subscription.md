@@ -47,7 +47,7 @@ SDE確認値: type 49810=100,000 Skill Points, group 526; type 44992=PLEX, group
 - `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore -m:2 -p:UseSharedCompilation=false`: 成功、warning/error 0。
 - `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Services.Core.Tests/Eve.Services.Core.Tests.csproj --no-restore -m:2 -p:UseSharedCompilation=false`: 成功、warning/error 0。
 - After merging main at `f7c0e9e1`, eve_p8 + `tools/dev/db-lock.sh` passed `NewEdenStoreHostTests` 15, `NewEdenEntitlementHostTests` 6, `HostServerTests` 402, `UserSvcRedeemTokenPersistenceTests` 1, `SubscriptionTransitionsTests` 1, and `CompatibilityRpcServiceTests` 14; each had 0 failures and 0 skips.
-- The same post-merge checks passed `StoreOffersServiceTests|NewEdenStoreCatalogTests|OmegaStateTests` (27) and `DispatchGoldenTests` in `Eve.Services.Tests` (200), all with 0 failures and 0 skips. After the docs-only main merge `6a962f9f`, `NewEdenStoreHostTests` passed again (15, 0 failures, 0 skips).
+- The same post-merge checks passed `StoreOffersServiceTests|NewEdenStoreCatalogTests|OmegaStateTests` (27) and `DispatchGoldenTests` in `Eve.Services.Tests` (200), all with 0 failures and 0 skips. After main merges `6a962f9f` and `550a4ab4`, Host.Tests built with 0 warnings/errors; `NewEdenStoreHostTests` passed 15 and `NewEdenEntitlementHostTests` passed 6, each with 0 failures and 0 skips.
 - 結合Host filterの一括実行はtesthost process crashで完走しなかったため合格に数えず、関連クラスを個別実行した。
 - EveJS 261028.1のstore caller・fulfillment・settlement・notification実装はソースで照合した。配布物にstore用のtest scriptはなく、EveJS runtimeで同一購入シナリオは実行していない。
 - GUIの実V24 client確認はしていない。
@@ -56,4 +56,4 @@ SDE確認値: type 49810=100,000 Skill Points, group 526; type 44992=PLEX, group
 
 dotnet/src/Eve.Host/Persistence/NewEden/PersistenceNewEdenStoreRuntime.Part2.cs:387-474がreverse-redeem配送、NewEdenStoreHostTests.cs:177-254がDB wire regression。store settlementの実money/USD/AUR checkout providerはないためfalsey失敗を維持し、falseyはV24 UIのgeneric PurchaseFailedErrorになる（vgs/client/vgsClient.py:14,59-64）。
 
-変更はローカルcommit済みだが、pushはまだ完了していない。mainの`95bd9c92`向けCI 1450はfailureで完了し、`.NET build` が `dotnet/src/Eve.Host/Composition/SpaceComposition.cs:396` のCS1501（`ApplyAsync`の5引数overloadなし）で失敗した。Agent test 1263も同じsolution build failureである。これは今回のstore変更とは別のupstream space change。pushはmain更新との競合でnon-fast-forward拒否となり、forceは使っていない。最新の完了済みfull CIは1450 red（直前の1449 `f7c0e9e1`はsuccess）。新しいfull CIのgreenを待ち、最新mainをfetch/mergeした後にHost buildと`eve_p8`の`NewEdenStoreHostTests`を再実行してからpushする。
+変更はローカルcommit済みだが、pushはまだ完了していない。mainの`95bd9c92`向けCI 1450は `SpaceComposition.cs:396` のCS1501（`ApplyAsync`の5引数overloadなし）で失敗したが、main commit `550a4ab4`がこのbuild failureを修正し、CI 1451はsuccessで完了した。最新main `550a4ab4`はローカルへmerge済みで、Host.Tests buildとeve_p8のStore・entitlement Host classesは再度passした。先のpush試行はmain更新との競合でnon-fast-forward拒否となり、forceは使っていない。次はpush直前にred gateを再確認し、mainに新commitがあればfetch/merge後にHost buildとfocused DB classを再実行してからpushする。

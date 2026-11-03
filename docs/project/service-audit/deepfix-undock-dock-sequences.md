@@ -59,5 +59,5 @@ Host commits `CharacterShips.UndockAsync` before entering the simulator; a simul
 
 ## Current branch state (2026-11-03)
 
-- The undock Host fix and PostgreSQL regression are in local commit `e4813423`; the latest local merge commit is `1858412d`, which includes `origin/main` through `3d9ffdd2`. That main update includes store and subscription persistence work. After the merge, the touched .NET project built with 0 warnings/errors and the related Host classes passed 170/170 with no skips on `eve_p4`.
-- The newest completed main CI run is 1452 (`41574451738`) on `3d9ffdd2`; all jobs passed. Selected Agent run 1266 on the same commit also passed.
+- The undock Host fix and PostgreSQL regression are in local commit `e4813423`; the latest local merge commit is `63a14377`, which includes `origin/main` through `d9fef52c`. The merged main history includes store/subscription persistence work and a docs-only CI record. The touched .NET project built successfully after the source merge; after merging `d9fef52c`, the related Host classes passed 170/170 with no skips on `eve_p4`.
+- The newest completed main CI run is 1452 (`41574451738`) on `3d9ffdd2`; all jobs passed. Main then advanced to `d9fef52c`; `python3 tools/dev/ci-status.py status --branch main --limit 2 --no-logs` returned no newer completed CI run. Selected Agent run 1266 on `3d9ffdd2` also passed.

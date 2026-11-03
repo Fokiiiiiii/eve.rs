@@ -53,5 +53,5 @@ V24.01 全 `TryLockTarget` 呼び出し元は前掲の `targetMgr.py` に集約�
 - `18bb1d8fa4d8a9dd87725dd7c34c801bea211e71` の push-triggered CI run 1448 は Rust tests と Windows Rust workspace で `modules::tests::a_lock_the_dampened_ship_can_no_longer_reach_is_given_up` が失敗した。End to end、.NET build、Rust format/clippy は成功。Agent test run 1260 は成功。
 - 上の失敗はテストの観測漏れだった。`scene.activate` が同期で返す `OnTarget` を捨て、後続 poll のみ検査していたため、assertion を activation と poll 両方の出力に対して維持した。
 - 修正前の focused Rust test は `modules/tests.rs:1721` で失敗を再現。修正後は同 test が成功し、`modules::tests::` 全 161 件も成功。`cargo +1.94.1 fmt --all -- --check`、`cargo +1.94.1 check -p eve-space`、workspace clippy も成功。
-- この修正は失敗名を含むコミットで push し、次の Actions run を完了まで確認する。
+- 修正 commit `f7c0e9e14ccd2fe97c42cdd5339cd2b6b85146ab` を main に push。push-triggered CI run 1449 は全 job success、`python3 tools/dev/ci-status.py failures f7c0e9e14ccd2fe97c42cdd5339cd2b6b85146ab` は `No failed tests or jobs`。
 - 実 graphical V24.01 client session の操作確認は行っていない。

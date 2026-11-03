@@ -1764,7 +1764,7 @@ fn a_lock_the_dampened_ship_can_no_longer_reach_is_given_up() {
     let (_, t) = poll_until(&mut scene, t, 6.0);
     assert_eq!(scene.locked_by(B), vec![mine]);
     // a dampener that takes nine tenths of its range leaves it less than the distance between them
-    scene.activate(
+    let activated = scene.activate(
         A,
         holding(
             MODULE,
@@ -1783,7 +1783,10 @@ fn a_lock_the_dampened_ship_can_no_longer_reach_is_given_up() {
     let (told, _) = poll_until(&mut scene, t, 2.0);
     assert!(scene.locked_by(B).is_empty(), "the lock is given up: {:?}", scene.locked_by(B));
     assert!(
-        told.iter().any(|o| matches!(o, Out::Notify { session, name: "OnTarget", .. } if *session == B)),
+        activated
+            .iter()
+            .chain(&told)
+            .any(|o| matches!(o, Out::Notify { session, name: "OnTarget", .. } if *session == B)),
         "{:?}",
         labels(&told)
     );

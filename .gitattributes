@@ -6,3 +6,5 @@
 *.bat -text
 *.cmd -text
 *.ps1 -text
+# The scientific replay cohort is checked against the hash of its original bytes.
+**/covid-analysis50-gates.json -text

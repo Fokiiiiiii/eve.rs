@@ -92,6 +92,10 @@ internal static class HostComposition
         Eve.Host.Persistence.RaffleProxyStore? raffleProxyStore = null;
         Eve.Host.Xmpp.XmppMotdStore? xmppMotdStore = null;
         Eve.Host.Xmpp.XmppPlayerChannelStore? xmppPlayerChannelStore = null;
+        Eve.Host.ProjectDiscovery.ScientificReplayComposition? scientificReplay = null;
+        HttpClient? discoveryHttp = null;
+        try
+        {
         if (Env("EVE_PG_URL", "") is { Length: > 0 } pgUrl)
         {
             var schema = Env("EVE_IDENTITY_SCHEMA", PgAccountDirectory.DefaultSchema);
@@ -312,8 +316,6 @@ internal static class HostComposition
             accounts = new InMemoryAccountDirectory(accountOptions);
         }
 
-        Eve.Host.ProjectDiscovery.ScientificReplayComposition? scientificReplay = null;
-        HttpClient? discoveryHttp = null;
         Eve.Host.ProjectDiscovery.ProjectDiscoveryBonusPolicy? discoveryBonus = null;
         var bonusPolicy = Env("EVE_PROJECT_DISCOVERY_BONUS_POLICY", "none");
         if (bonusPolicy == "daily")
@@ -368,8 +370,6 @@ internal static class HostComposition
                     gameRpcCallbacks = scientificReplay.Attach(gameRpcCallbacks ?? new Eve.Services.Core.GameRpcCallbacks());
             }
         }
-        try
-        {
         gameRpcCallbacks = (gameRpcCallbacks ?? new Eve.Services.Core.GameRpcCallbacks()) with
         {
             ReadProjectDiscoveryBonusSamples = discoveryBonus is null ? (_, _, _) => ValueTask.FromResult(0) : discoveryBonus.ReadAsync,
@@ -592,8 +592,21 @@ internal static class HostComposition
         }
         catch
         {
-            if (scientificReplay is not null) await scientificReplay.DisposeAsync();
-            discoveryHttp?.Dispose();
+            async ValueTask Cleanup(Func<ValueTask> dispose)
+            {
+                try { await dispose(); }
+                catch (Exception error) { Console.Error.WriteLine($"eve-host: startup cleanup failed: {error.GetType().Name}"); }
+            }
+            if (xmppListener is not null) await Cleanup(xmppListener.DisposeAsync);
+            await Cleanup(() => { xmppCertificate?.Dispose(); return ValueTask.CompletedTask; });
+            if (scientificReplay is not null) await Cleanup(scientificReplay.DisposeAsync);
+            await Cleanup(() => { discoveryHttp?.Dispose(); return ValueTask.CompletedTask; });
+            if (legacy is not null) await Cleanup(legacy.DisposeAsync);
+            if (foundations is not null) await Cleanup(foundations.DisposeAsync);
+            await Cleanup(() => { space?.Dispose(); return ValueTask.CompletedTask; });
+            await Cleanup(() => { crimewatch?.Dispose(); return ValueTask.CompletedTask; });
+            if (simulation is not null) await Cleanup(simulation.DisposeAsync);
+            if (dataSource is not null) await Cleanup(dataSource.DisposeAsync);
             throw;
         }
     }

@@ -109,10 +109,58 @@ public sealed class ProjectDiscoveryHostTests : IAsyncLifetime
         {
             var characters = new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA"));
             var characterId = await InsertPilotAsync(source, characters, "Tutorial Transition");
-            var store = new ProjectDiscoveryTutorialStore(source, Schema("EVE_CHARACTERS_SCHEMA"));
-            await store.WriteAsync(characterId, new ProjectDiscoveryTutorial(false, 3), 1_000);
+            var schema = Schema("EVE_CHARACTERS_SCHEMA");
+            var store = new ProjectDiscoveryTutorialStore(source, schema);
+            Assert.Null(await store.ReadAsync(characterId));
             var service = host.Registry.Lookup("ProjectDiscovery")!;
             var session = new ClientSession { CharacterId = characterId };
+
+            var first = await service.CallAsync(new ServiceCall { Method = "increase_tutorial_level", Args = [], Session = session });
+            Assert.Equal(Py.KeyVal(
+                ("rank", new PyInt(1)),
+                ("experience", new PyInt(0)),
+                ("analysisKredits", new PyInt(0)),
+                ("finishedTutorial", PyBool.False),
+                ("tutorialLevel", new PyInt(1))), first);
+            Assert.Equal(new ProjectDiscoveryTutorial(false, 1),
+                await new ProjectDiscoveryTutorialStore(source, schema).ReadAsync(characterId));
+
+            var second = await service.CallAsync(new ServiceCall { Method = "increase_tutorial_level", Args = [], Session = session });
+            Assert.Equal(Py.KeyVal(
+                ("rank", new PyInt(1)),
+                ("experience", new PyInt(0)),
+                ("analysisKredits", new PyInt(0)),
+                ("finishedTutorial", PyBool.False),
+                ("tutorialLevel", new PyInt(2))), second);
+            Assert.Same(PyBool.False, await service.CallAsync(new ServiceCall
+            {
+                Method = "get_tutorial_completion_status", Args = [], Session = session,
+            }));
+
+            for (var level = 3; level <= 8; level++)
+            {
+                _ = await service.CallAsync(new ServiceCall { Method = "increase_tutorial_level", Args = [], Session = session });
+                Assert.Same(level == 8 ? PyBool.True : PyBool.False, await service.CallAsync(new ServiceCall
+                {
+                    Method = "get_tutorial_completion_status", Args = [], Session = session,
+                }));
+                Assert.Equal(new ProjectDiscoveryTutorial(level == 8, level), await store.ReadAsync(characterId));
+            }
+
+            var reset = await service.CallAsync(new ServiceCall { Method = "reset_tutorial", Args = [], Session = session });
+            Assert.Equal(Py.KeyVal(
+                ("rank", new PyInt(1)),
+                ("experience", new PyInt(0)),
+                ("analysisKredits", new PyInt(0)),
+                ("finishedTutorial", PyBool.False),
+                ("tutorialLevel", new PyInt(0))), reset);
+            Assert.Equal(new ProjectDiscoveryTutorial(false, 0), await store.ReadAsync(characterId));
+
+            await Task.WhenAll(Enumerable.Range(0, 2).Select(_ => service.CallAsync(new ServiceCall
+            {
+                Method = "increase_tutorial_level", Args = [], Session = session,
+            }).AsTask()));
+            Assert.Equal(new ProjectDiscoveryTutorial(false, 2), await store.ReadAsync(characterId));
 
             var skipped = await service.CallAsync(new ServiceCall { Method = "skip_tutorial", Args = [], Session = session });
             Assert.Equal(Py.KeyVal(
@@ -122,15 +170,6 @@ public sealed class ProjectDiscoveryHostTests : IAsyncLifetime
                 ("finishedTutorial", PyBool.True),
                 ("tutorialLevel", new PyInt(8))), skipped);
             Assert.Equal(new ProjectDiscoveryTutorial(true, 8), await store.ReadAsync(characterId));
-
-            _ = await service.CallAsync(new ServiceCall { Method = "reset_tutorial", Args = [], Session = session });
-            Assert.Equal(new ProjectDiscoveryTutorial(false, 0), await store.ReadAsync(characterId));
-
-            await Task.WhenAll(Enumerable.Range(0, 2).Select(_ => service.CallAsync(new ServiceCall
-            {
-                Method = "increase_tutorial_level", Args = [], Session = session,
-            }).AsTask()));
-            Assert.Equal(new ProjectDiscoveryTutorial(false, 2), await store.ReadAsync(characterId));
         }
         finally
         {
@@ -275,6 +314,7 @@ public sealed class ProjectDiscoveryHostTests : IAsyncLifetime
         reserve.Stop();
         string? oldPort = Environment.GetEnvironmentVariable("EVE_PROJECT_DISCOVERY_ASSET_PORT");
         string? oldSurvey = Environment.GetEnvironmentVariable("EVE_ACTIVE_SURVEY_ID");
+        string? oldBonus = Environment.GetEnvironmentVariable("EVE_PROJECT_DISCOVERY_BONUS_POLICY");
         try
         {
             Environment.SetEnvironmentVariable("EVE_PROJECT_DISCOVERY_ASSET_PORT", port.ToString());
@@ -287,11 +327,23 @@ public sealed class ProjectDiscoveryHostTests : IAsyncLifetime
             await Assert.ThrowsAsync<InvalidOperationException>(() => HostComposition.BuildAsync(Settings()));
             probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, port);
             probe.Start(); probe.Stop();
+            await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url));
+            await using var owner = source.CreateCommand($"SELECT active FROM {Schema("EVE_GAMESTORE_SCHEMA")}._persistence_owners WHERE owner_role = 'world'");
+            Assert.False(Assert.IsType<bool>(await owner.ExecuteScalarAsync()));
+            Environment.SetEnvironmentVariable("EVE_ACTIVE_SURVEY_ID", null);
+            Environment.SetEnvironmentVariable("EVE_PROJECT_DISCOVERY_BONUS_POLICY", "invalid");
+            await Assert.ThrowsAsync<InvalidOperationException>(() => HostComposition.BuildAsync(Settings()));
+            Assert.False(Assert.IsType<bool>(await owner.ExecuteScalarAsync()));
+            await using var activity = source.CreateCommand("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND (position($1 in query) > 0 OR position($2 in query) > 0)");
+            activity.Parameters.AddWithValue(Schema("EVE_EVENTS_SCHEMA"));
+            activity.Parameters.AddWithValue(Schema("EVE_SCHEDULER_SCHEMA"));
+            Assert.Equal(0L, Assert.IsType<long>(await activity.ExecuteScalarAsync()));
         }
         finally
         {
             Environment.SetEnvironmentVariable("EVE_PROJECT_DISCOVERY_ASSET_PORT", oldPort);
             Environment.SetEnvironmentVariable("EVE_ACTIVE_SURVEY_ID", oldSurvey);
+            Environment.SetEnvironmentVariable("EVE_PROJECT_DISCOVERY_BONUS_POLICY", oldBonus);
         }
     }
 

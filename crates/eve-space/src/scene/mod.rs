@@ -107,6 +107,10 @@ const UNDOCK_RADIUS_SHARE: f64 = 0.34;
 
 const UNDOCK_MIN_DISTANCE: f64 = 2_000.0;
 
+/// Internal host/simulation control codes; client commands use only their own codes below 50.
+pub const DOCKING_DECISION_COMMAND: u8 = 254;
+pub const DOCKING_READY_COMMAND: u8 = 255;
+
 /// How far from a belt's surface a warp may end for the ship to count as having arrived at the belt (the reference's `landingRadiusMeters`).
 pub const BELT_LANDING_RADIUS: f64 = 250_000.0;
 
@@ -120,6 +124,11 @@ pub enum Command {
     Stop,
     Dock {
         station_id: i64,
+    },
+    /// The host's final access and timer decision after the docking delay.
+    DockingDecision {
+        station_id: i64,
+        allowed: bool,
     },
     /// Approach a body and stay `range` metres off its surface.
     FollowBall {
@@ -219,6 +228,7 @@ impl Command {
             Self::GotoDirection(_) => 2,
             Self::Stop => 3,
             Self::Dock { .. } => 4,
+            Self::DockingDecision { .. } => DOCKING_DECISION_COMMAND,
             Self::FollowBall { .. } => 5,
             Self::Orbit { .. } => 6,
             Self::AlignTo { .. } => 7,
@@ -583,6 +593,7 @@ pub enum HeatError {
 struct PendingDock {
     station_id: i64,
     accepted_at: i64,
+    ready: bool,
 }
 
 #[derive(Debug, Clone)]

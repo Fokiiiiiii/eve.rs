@@ -814,10 +814,69 @@ fn an_accepted_docking_stops_the_ship_and_takes_four_seconds() {
     assert!(scene.contains(SESSION));
     assert_eq!(
         scene.poll(NOON + seconds(4)),
+        [Out::Accepted { session: SESSION, command: DOCKING_READY_COMMAND, at: STATION }]
+    );
+    assert!(scene.contains(SESSION), "the host decides after the docking delay");
+    assert_eq!(
+        scene.command(
+            SESSION,
+            Command::DockingDecision { station_id: STATION, allowed: true },
+            NOON + seconds(4),
+        ),
         [Out::Docked { session: SESSION, station_id: STATION, condition: Condition::FULL }]
     );
     assert!(!scene.contains(SESSION));
     assert!(scene.poll(NOON + seconds(9)).is_empty(), "docked once");
+}
+
+#[test]
+fn a_denied_docking_decision_releases_the_ship_and_cannot_be_replayed() {
+    let mut scene = near_the_station();
+    scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);
+
+    assert_eq!(
+        scene.command(
+            SESSION,
+            Command::DockingDecision { station_id: STATION, allowed: true },
+            NOON + seconds(1),
+        ),
+        [],
+        "the host cannot finish a docking before the four second delay"
+    );
+    assert!(scene.contains(SESSION));
+    assert_eq!(
+        scene.poll(NOON + seconds(4)),
+        [Out::Accepted { session: SESSION, command: DOCKING_READY_COMMAND, at: STATION }]
+    );
+    assert_eq!(
+        scene.command(
+            SESSION,
+            Command::DockingDecision { station_id: STATION + 1, allowed: true },
+            NOON + seconds(4),
+        ),
+        [],
+        "the decision must name the pending dock target"
+    );
+    assert!(scene.contains(SESSION));
+
+    let denied = scene.command(
+        SESSION,
+        Command::DockingDecision { station_id: STATION, allowed: false },
+        NOON + seconds(4),
+    );
+    assert_eq!(action_names(&denied[0]), ["SetBallMassive"]);
+    assert!(scene.contains(SESSION), "a denied dock leaves the ship in space");
+    assert!(
+        scene
+            .command(
+                SESSION,
+                Command::DockingDecision { station_id: STATION, allowed: true },
+                NOON + seconds(4),
+            )
+            .is_empty(),
+        "a later decision cannot reuse the denied docking"
+    );
+    assert!(scene.contains(SESSION));
 }
 
 #[test]
@@ -827,7 +886,20 @@ fn a_ship_that_docks_leaves_the_station_with_no_rack_heat() {
     let mut scene = near_the_station();
     scene.pilots.get_mut(&SESSION).unwrap().heat.levels = [40.0, 10.0, 5.0];
     scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);
-    assert!(matches!(scene.poll(NOON + seconds(4)).first(), Some(Out::Docked { .. })));
+    assert_eq!(
+        scene.poll(NOON + seconds(4)),
+        [Out::Accepted { session: SESSION, command: DOCKING_READY_COMMAND, at: STATION }]
+    );
+    assert!(matches!(
+        scene
+            .command(
+                SESSION,
+                Command::DockingDecision { station_id: STATION, allowed: true },
+                NOON + seconds(4),
+            )
+            .first(),
+        Some(Out::Docked { .. })
+    ));
     scene.undock(SESSION, spec(), STATION, NOON + seconds(10)).unwrap();
     assert_eq!(scene.pilots[&SESSION].heat.levels, [0.0, 0.0, 0.0]);
 }
@@ -1337,7 +1409,13 @@ fn a_dock_request_from_out_of_range_stops_in_range_until_asked_again() {
     assert!(accepted.iter().any(|out| matches!(out, Out::Accepted { command: 4, .. })));
     assert!(scene.pilots[&SESSION].docking.is_some());
 
-    let completed = scene.poll(arrived_at + seconds(4));
+    let ready = scene.poll(arrived_at + seconds(4));
+    assert_eq!(ready, [Out::Accepted { session: SESSION, command: DOCKING_READY_COMMAND, at: STATION }]);
+    let completed = scene.command(
+        SESSION,
+        Command::DockingDecision { station_id: STATION, allowed: true },
+        arrived_at + seconds(4),
+    );
     assert!(
         completed.iter().any(|out| matches!(out, Out::Docked { session: SESSION, station_id: STATION, .. }))
     );
@@ -2865,6 +2943,14 @@ fn a_structure_in_a_state_that_takes_ships_docks_a_ship_as_a_station_does() {
     );
     assert_eq!(
         scene.poll(NOON + seconds(4)),
+        [Out::Accepted { session: SESSION, command: DOCKING_READY_COMMAND, at: STRUCTURE }]
+    );
+    assert_eq!(
+        scene.command(
+            SESSION,
+            Command::DockingDecision { station_id: STRUCTURE, allowed: true },
+            NOON + seconds(4),
+        ),
         [Out::Docked { session: SESSION, station_id: STRUCTURE, condition: Condition::FULL }]
     );
 }
@@ -3538,7 +3624,15 @@ fn tether_docking_reports_disengage_before_the_docked_condition() {
         scene.is_tethered(spec().ship_id, NOON + SECOND),
         "docking keeps tether until the ship leaves space"
     );
-    let docked = scene.poll(NOON + 4 * SECOND);
+    assert_eq!(
+        scene.poll(NOON + 4 * SECOND),
+        [Out::Accepted { session: SESSION, command: DOCKING_READY_COMMAND, at: STRUCTURE }]
+    );
+    let docked = scene.command(
+        SESSION,
+        Command::DockingDecision { station_id: STRUCTURE, allowed: true },
+        NOON + 4 * SECOND,
+    );
     assert_eq!(tether_changes(&docked), [(SESSION, STRUCTURE, 0, false)]);
     let off =
         docked.iter().position(|out| matches!(out, Out::TetherChanged { structure_id: 0, .. })).unwrap();

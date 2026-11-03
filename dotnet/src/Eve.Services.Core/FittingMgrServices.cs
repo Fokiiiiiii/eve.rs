@@ -258,7 +258,7 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
             fields.TryGetValue("shipTypeID", out var ship) ? Int32Of(ship) : 0,
             name,
             description,
-            [.. items.Select(Item).OfType<FittingItem>()]);
+            [.. items.Select(Item)]);
         var typeIds = new HashSet<int> { draft.ShipTypeId };
         foreach (var item in draft.FitData)
         {
@@ -282,12 +282,14 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
         return (int)number.Value;
     }
 
-    private static FittingItem? Item(PyValue value)
+    private static FittingItem Item(PyValue value)
     {
         var parts = value switch { PyTuple t => t.Items, PyList l => l.Items, _ => [] };
-        return parts.Count < 3
-            ? null
-            : new FittingItem(Int32Of(parts[0]), Int32Of(parts[1]), Int32Of(parts[2]));
+        // Missing fields use the reference's zero defaults and are rejected by SavedFittingRules.
+        return new FittingItem(
+            parts.Count > 0 ? Int32Of(parts[0]) : 0,
+            parts.Count > 1 ? Int32Of(parts[1]) : 0,
+            parts.Count > 2 ? Int32Of(parts[2]) : 0);
     }
 
 

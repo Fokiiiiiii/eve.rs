@@ -43,10 +43,18 @@ public sealed class PgDeployedStore
         return (await ReadAllAsync(command, cancellationToken)).SingleOrDefault();
     }
 
-    /// <summary>Records a deployable (a second record of the same id replaces the first).</summary>
-    public async Task SaveAsync(DeployedRecord record, CancellationToken cancellationToken = default)
+    /// <summary>Locks a deployed record for an atomic cross-domain validation.</summary>
+    public async Task<DeployedRecord?> LockAndGetAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long deployableId, CancellationToken cancellationToken = default)
     {
-        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand($"SELECT {Columns} FROM {_schema}.deployed WHERE deployable_id = $1 FOR UPDATE", connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = deployableId });
+        return (await ReadAllAsync(command, cancellationToken)).SingleOrDefault();
+    }
+
+    /// <summary>Records a deployable (a second record of the same id replaces the first).</summary>
+    /// <summary>Writes one deployed record in the caller's transaction, alongside its inventory item and owner state.</summary>
+    public async Task SaveAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, DeployedRecord record, CancellationToken cancellationToken = default)
+    {
         await using var command = new NpgsqlCommand(
             $"""
             INSERT INTO {_schema}.deployed ({Columns}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
@@ -55,17 +63,19 @@ public sealed class PgDeployedStore
                 x = EXCLUDED.x, y = EXCLUDED.y, z = EXCLUDED.z, radius = EXCLUDED.radius, owner_id = EXCLUDED.owner_id, corporation_id = EXCLUDED.corporation_id,
                 alliance_id = EXCLUDED.alliance_id, ship_id = EXCLUDED.ship_id, expires_at_ms = EXCLUDED.expires_at_ms,
                 activate_at_ms = EXCLUDED.activate_at_ms, range_m = EXCLUDED.range_m
-            """,
-            connection);
+            """, connection, transaction);
         foreach (var value in new object[]
         {
             record.DeployableId, record.Kind, record.SolarSystemId, record.Name, record.TypeId, record.GroupId, record.Position[0], record.Position[1], record.Position[2],
             record.Radius, record.OwnerId, record.CorporationId, record.AllianceId, record.ShipId, record.ExpiresAtMs, record.ActivateAtMs, record.RangeMeters,
-        })
-        {
-            command.Parameters.Add(new NpgsqlParameter { Value = value });
-        }
+        }) command.Parameters.Add(new NpgsqlParameter { Value = value });
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task SaveAsync(DeployedRecord record, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await SaveAsync(connection, null, record, cancellationToken);
     }
 
     /// <summary>The fuel state of a control tower (<c>offline</c>, <c>online</c> or <c>unanchoring</c>), or null when it is not recorded.</summary>
@@ -135,6 +145,34 @@ public sealed class PgDeployedStore
         await using var command = _source.CreateCommand($"SELECT {Columns} FROM {_schema}.deployed WHERE expires_at_ms <= $1 ORDER BY expires_at_ms, deployable_id");
         command.Parameters.Add(new NpgsqlParameter { Value = nowMs });
         return await ReadAllAsync(command, cancellationToken);
+    }
+
+    /// <summary>A control tower remains anchored through unanchoring until its deployed row is removed.</summary>
+    public async Task<bool> HasAnchoredControlTowerAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction,
+        long[] ownerCorporationIds, long nowMs, CancellationToken cancellationToken = default)
+    {
+        if (ownerCorporationIds.Length == 0) return false;
+        await using var command = new NpgsqlCommand(
+            $"SELECT EXISTS(SELECT 1 FROM {_schema}.deployed WHERE kind = 'control_tower' AND corporation_id = ANY($1) AND activate_at_ms <= $2)",
+            connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = ownerCorporationIds });
+        command.Parameters.Add(new NpgsqlParameter { Value = nowMs });
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken))!;
+    }
+
+    public async Task<IReadOnlySet<long>> AnchoredControlTowerOwnersAsync(NpgsqlConnection connection,
+        NpgsqlTransaction? transaction, long[] ownerIds, long nowMs, CancellationToken cancellationToken = default)
+    {
+        var result = new HashSet<long>();
+        if (ownerIds.Length == 0) return result;
+        await using var command = new NpgsqlCommand(
+            $"SELECT DISTINCT corporation_id FROM {_schema}.deployed WHERE kind = 'control_tower' AND corporation_id = ANY($1) AND activate_at_ms <= $2",
+            connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = ownerIds });
+        command.Parameters.Add(new NpgsqlParameter { Value = nowMs });
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) result.Add(reader.GetInt32(0));
+        return result;
     }
 
     private static async Task<IReadOnlyList<DeployedRecord>> ReadAllAsync(NpgsqlCommand command, CancellationToken cancellationToken)

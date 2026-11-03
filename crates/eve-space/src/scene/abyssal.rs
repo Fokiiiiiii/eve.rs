@@ -270,9 +270,38 @@ impl Scene {
         direction: [f64; 3],
         now: i64,
     ) -> Result<Vec<Out>, String> {
-        if (self.abyssal.is_none() && destination.abyssal.is_none())
-            || self.pilots.get(&session).is_none_or(|pilot| pilot.ship.spec.ship_id != ship_id)
-        {
+        if self.abyssal.is_none() && destination.abyssal.is_none() {
+            return Err("ABYSSAL_PARTICIPANT_NOT_IN_SOURCE".to_string());
+        }
+        self.move_resident_to(destination, session, ship_id, position, direction, now)
+    }
+
+    /// Moves a public-space resident without reconstructing its live ship or module state.
+    pub(crate) fn move_public_participant_to(
+        &mut self,
+        destination: &mut Scene,
+        session: SessionId,
+        ship_id: i64,
+        position: [f64; 3],
+        direction: [f64; 3],
+        now: i64,
+    ) -> Result<Vec<Out>, String> {
+        if self.abyssal.is_some() || destination.abyssal.is_some() {
+            return Err("PUBLIC_MOVE_PRIVATE_SCENE".to_string());
+        }
+        self.move_resident_to(destination, session, ship_id, position, direction, now)
+    }
+
+    fn move_resident_to(
+        &mut self,
+        destination: &mut Scene,
+        session: SessionId,
+        ship_id: i64,
+        position: [f64; 3],
+        direction: [f64; 3],
+        now: i64,
+    ) -> Result<Vec<Out>, String> {
+        if self.pilots.get(&session).is_none_or(|pilot| pilot.ship.spec.ship_id != ship_id) {
             return Err("ABYSSAL_PARTICIPANT_NOT_IN_SOURCE".to_string());
         }
         if destination.pilots.contains_key(&session) {
@@ -291,6 +320,7 @@ impl Scene {
         self.settle_pilot(session, now);
         let mut told = self.abyssal_environment_fx(session, None, now, false);
         let mut pilot = self.pilots.remove(&session).expect("participant checked above");
+        self.tournament_departed(pilot.ship.spec.character_id, pilot.ship.spec.ship_id, now);
         let ship_id = pilot.ship.spec.ship_id;
         told.extend(self.clear_tether_policy(session, now));
         told.extend(self.drop_targeting(ship_id, &pilot.targeting, None, now));
@@ -324,6 +354,60 @@ impl Scene {
         destination.take_in_view(session);
         told.extend(destination.announce_arrival(session, now));
         told.extend(destination.abyssal_environment_fx(session, None, now, true));
+        Ok(told)
+    }
+
+    /// Relocates within one public scene while retaining the single authoritative pilot.
+    pub(crate) fn move_public_participant_within(
+        &mut self,
+        session: SessionId,
+        ship_id: i64,
+        position: [f64; 3],
+        direction: [f64; 3],
+        now: i64,
+    ) -> Result<Vec<Out>, String> {
+        if self.abyssal.is_some()
+            || self.pilots.get(&session).is_none_or(|pilot| pilot.ship.spec.ship_id != ship_id)
+        {
+            return Err("PUBLIC_MOVE_RESIDENT_NOT_FOUND".to_string());
+        }
+        if self
+            .pilots
+            .get(&session)
+            .is_some_and(|pilot| pilot.docking.is_some() || pilot.flight.is_some() || pilot.jump.is_some())
+        {
+            return Err("PUBLIC_MOVE_IN_TRANSITION".to_string());
+        }
+        self.settle_pilot(session, now);
+        let mut pilot = self.pilots.remove(&session).expect("resident checked above");
+        let mut told = self.clear_tether_policy(session, now);
+        told.extend(self.drop_targeting(ship_id, &pilot.targeting, None, now));
+        if let Some(brains) = self.brains.as_mut() {
+            brains.forget(session);
+        }
+        told.extend(self.announce_departure(session, ship_id, now));
+        pilot.ship.position = Vec3::new(position[0], position[1], position[2]);
+        pilot.ship.direction = Vec3::new(direction[0], direction[1], direction[2]);
+        pilot.ship.velocity = Vec3::ZERO;
+        pilot.ship.speed_fraction = 0.0;
+        pilot.ship.course = Course::Stop;
+        pilot.settled_at = now;
+        pilot.docking = None;
+        pilot.flight = None;
+        pilot.jump = None;
+        pilot.tether = Default::default();
+        pilot.jumped_in = true;
+        pilot.sees.clear();
+        pilot.sees_wrecks.clear();
+        pilot.sees_abyssal_traces.clear();
+        pilot.sees_asteroids.clear();
+        pilot.login_visuals_sent = false;
+        pilot.entered = self.next_entry();
+        self.pilots.insert(session, pilot);
+        self.boxes.clear();
+        self.take_in_view(session);
+        told.extend(self.announce_arrival(session, now));
+        told.extend(self.update_state(session, now));
         Ok(told)
     }
 

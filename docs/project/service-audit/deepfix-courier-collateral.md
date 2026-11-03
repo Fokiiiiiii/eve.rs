@@ -20,9 +20,14 @@ The courier deadline transition is documented in `deepfix-contracts.md`: V24.01 
 
 - `ContractProxyPersistenceWireTests.Finish_auction_claims_items_and_proceeds_independently` verifies the registered Host wire call, expiry behavior, separate item/money state, concurrent duplicate issuer claims, final balances/status and issuer-then-winner notification order.
 - `ContractReadModelTests.Expired_auction_keeps_winning_item_and_proceeds_as_independent_claims` verifies expiry, item ownership, both balances, final status and repeat-claim behavior against PostgreSQL.
+- The auction read-model test creates and migrates its own scheduler schema; it no longer relies on `scheduler.jobs` left by an earlier test or an initialized database.
 - Counterfactual check: temporarily removing the type-2 expiry guard made the Host regression fail at its expected-false assertion (actual true); the guard was restored.
 - `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests --no-restore -p:UseSharedCompilation=false`: passed, 0 warnings/errors.
 - On `eve_p5`, DB-locked Host `FullyQualifiedName~Contract`: 41 passed, 0 failed, 0 skipped.
 - Core `FullyQualifiedName~Contract`: 59 passed, 0 failed, 0 skipped.
 - Earlier courier and issuer-self-contract regression results are recorded in `deepfix-contracts.md`.
 - The graphical V24.01 client was not operated during this check. No stat/SDE value was changed.
+
+## CI follow-up
+
+The first selected Actions run found the auction read-model test was the only failure: a clean database lacked `scheduler.jobs`. Reproduced on a newly created `eve_p5_clean` database, added an isolated migrated scheduler schema to the test, then reran that focused case successfully (1 passed, 0 failed, 0 skipped) and the complete Host contract filter on `eve_p5` (41 passed, 0 failed, 0 skipped). The test-fixture correction is in the follow-up commit after this handoff's initial push.

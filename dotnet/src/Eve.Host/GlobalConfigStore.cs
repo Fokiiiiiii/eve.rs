@@ -52,8 +52,11 @@ public sealed class PgGlobalConfigPersistence(NpgsqlDataSource source, string sc
         "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at";
 
     /// <summary>Creates the schema and brings it up to date.</summary>
+    public static IReadOnlyList<Migration> MigrationSet() =>
+        Migrations.Embedded(typeof(PgGlobalConfigPersistence).Assembly, "Migrations");
+
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
-        Migrations.ApplyAsync(source, schema, Migrations.Embedded(typeof(PgGlobalConfigPersistence).Assembly, "Migrations"), cancellationToken);
+        Migrations.ApplyAsync(source, schema, MigrationSet(), cancellationToken);
 
     public async Task<IReadOnlyList<KeyValuePair<string, PyValue?>>> LoadAsync(CancellationToken cancellationToken)
     {

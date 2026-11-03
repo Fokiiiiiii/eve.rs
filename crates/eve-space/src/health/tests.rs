@@ -579,7 +579,16 @@ fn a_ship_that_docks_hurt_hands_over_what_it_has_taken() {
     // hurt at the station's door, it is told to dock and is in the station four seconds on
     scene.damage(ship_of(&spec()), [0.0, 0.0, 0.0, 1_000.0], NOON);
     scene.command(A, crate::scene::Command::Dock { station_id: STATION }, NOON);
-    let (out, _) = poll_until(&mut scene, NOON, 6.0);
+    let (mut out, docked_at) = poll_until(&mut scene, NOON, 6.0);
+    assert!(out.iter().any(|o| matches!(
+        o,
+        Out::Accepted { session: A, command: crate::scene::DOCKING_READY_COMMAND, at: STATION }
+    )));
+    out.extend(scene.command(
+        A,
+        crate::scene::Command::DockingDecision { station_id: STATION, allowed: true },
+        docked_at,
+    ));
     let docked = out
         .iter()
         .find_map(|o| match o {

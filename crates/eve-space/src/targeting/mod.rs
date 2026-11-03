@@ -84,6 +84,8 @@ impl LockOrigin {
 struct Pending {
     target: i64,
     sequence: u64,
+    requested_at: i64,
+    total_duration_ms: f64,
     complete_at: i64,
     origin: LockOrigin,
 }

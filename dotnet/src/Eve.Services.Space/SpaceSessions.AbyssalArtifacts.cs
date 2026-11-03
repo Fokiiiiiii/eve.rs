@@ -129,7 +129,7 @@ public sealed partial class SpaceSessions
             pilot.End();
             await _charges.CloseAsync((ulong)pilot.Session.SessionId).ConfigureAwait(false);
             await CancelRepairsAsync(pilot, CancellationToken.None).ConfigureAwait(false);
-            ReleaseBoundObjects(pilot.Session);
+            await CompleteBoundObjectReleasesAsync(DetachBoundObjects(pilot.Session), CancellationToken.None);
             _pilots.TryRemove((ulong)pilot.Session.SessionId, out _);
         }
         _abyssalOfflineResidents.TryRemove(persistedShip.Id, out _);

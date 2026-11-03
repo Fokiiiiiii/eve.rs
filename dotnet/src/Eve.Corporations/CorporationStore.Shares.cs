@@ -9,14 +9,22 @@ using Npgsql;
 
 namespace Eve.Corporations;
 
+public sealed record CorporationShareChange(long CorporationId,long ShareholderId,long Before,long After);
+
 public sealed partial class CorporationStore
 {
+    public Func<NpgsqlConnection,NpgsqlTransaction,CorporationShareChange,CancellationToken,Task>? ShareChangeWriter { get; set; }
+
+    private Task PublishShareChangeAsync(NpgsqlConnection connection,NpgsqlTransaction tx,long corporationId,long shareholderId,long before,long after,CancellationToken token) =>
+        before == after || ShareChangeWriter is null ? Task.CompletedTask :
+            ShareChangeWriter(connection,tx,new CorporationShareChange(corporationId,shareholderId,before,after),token);
     public async Task SetVoteShareholderAsync(long corporationId,long shareholderId,long shares,CancellationToken token = default)
     {
         if (corporationId <= 0 || shareholderId <= 0 || shares < 0) throw new CorporationError("CORPORATION_INVALID_SHAREHOLDER");
         await WriteAsync(async (connection,tx) =>
         {
             if (await GetAsync(connection,tx,corporationId,true,token) is null) throw new CorporationError("CORPORATION_NOT_FOUND");
+            var before = await ShareCountAsync(connection,tx,corporationId,shareholderId,token);
             if (shares == 0)
             {
                 await using var delete = Command(connection,tx,$"DELETE FROM {_schema}.vote_shareholders WHERE corporation_id=$1 AND shareholder_id=$2",corporationId,shareholderId);
@@ -31,6 +39,7 @@ public sealed partial class CorporationStore
                     """,corporationId,shareholderId,shares);
                 await upsert.ExecuteNonQueryAsync(token);
             }
+            await PublishShareChangeAsync(connection,tx,corporationId,shareholderId,before,shares,token);
             return true;
         },token);
     }
@@ -77,6 +86,35 @@ public sealed partial class CorporationStore
         var result = new List<CorporationShareholding>();
         while (await reader.ReadAsync(token))
             result.Add(new(reader.GetInt64(0),reader.GetInt64(1),reader.GetInt64(2)));
+        return result;
+    }
+
+    /// A foreign issuer's shareholders may be inspected by the active CEO of
+    /// a corporation that actually holds its shares. The authorization and the
+    /// returned rows come from one consistent database transaction.
+    public async Task<IReadOnlyList<CorporationShareholding>> ForeignShareholdersForCeoAsync(
+        long issuerId,long actorId,CancellationToken token = default)
+    {
+        if (issuerId <= 0 || actorId <= 0) throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        await using var connection = await _source.OpenConnectionAsync(token);
+        await using var tx = await connection.BeginTransactionAsync(IsolationLevel.RepeatableRead,token);
+        var actor = await _characters.LockAndGetAsync(connection,tx,actorId,token)
+            ?? throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        var owner = await GetAsync(connection,tx,actor.CorporationId,true,token);
+        var issuer = await GetAsync(connection,tx,issuerId,false,token);
+        if (owner is null || owner.IsNpc || owner.Deleted || owner.CeoId != actorId || owner.CeoRolesSuspended ||
+            issuer is null || issuer.IsNpc || issuer.Deleted || owner.Id == issuerId ||
+            await ShareCountAsync(connection,tx,issuerId,owner.Id,token) <= 0)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        var result = new List<CorporationShareholding>();
+        await using (var command = Command(connection,tx,$"""
+            SELECT shareholder_id,corporation_id,shares FROM {_schema}.vote_shareholders
+            WHERE corporation_id=$1 ORDER BY shareholder_id
+            """,issuerId))
+        await using (var reader = await command.ExecuteReaderAsync(token))
+            while (await reader.ReadAsync(token))
+                result.Add(new(reader.GetInt64(0),reader.GetInt64(1),reader.GetInt64(2)));
+        await tx.CommitAsync(token);
         return result;
     }
 
@@ -340,6 +378,8 @@ private static string ShareOperationKey(string? operationKey) =>
             DO UPDATE SET shares={_schema}.vote_shareholders.shares+EXCLUDED.shares
             """,corporationId,toOwnerId,amount);
         await credit.ExecuteNonQueryAsync(token);
+        await PublishShareChangeAsync(connection,tx,corporationId,fromOwnerId,fromShares,fromShares-amount,token);
+        await PublishShareChangeAsync(connection,tx,corporationId,toOwnerId,toShares,toShares+amount,token);
     }
 
 public async Task<bool> CanViewVotesAsync(long corporationId,long actorId,CancellationToken token = default)

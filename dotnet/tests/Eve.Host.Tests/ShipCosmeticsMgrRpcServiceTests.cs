@@ -204,6 +204,75 @@ public sealed class ShipCosmeticsMgrRpcServiceTests
         }
     }
 
+    [Fact]
+    public async Task Concurrent_skin_license_activation_consumes_only_one_copy_for_one_character_license()
+    {
+        var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL");
+        Assert.False(string.IsNullOrWhiteSpace(pgUrl));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(pgUrl!));
+        var sde = new SdeReader(source);
+        Assert.NotNull(await sde.BuildAsync());
+        var catalog = await ShipCosmeticsCatalog.LoadAsync(sde);
+        var license = catalog.LicenseTypes.Values.First(entry => catalog.Skins.ContainsKey(entry.SkinId));
+        var schema = "rpc_activation_race_" + Guid.NewGuid().ToString("N");
+        var inventorySchema = "rpc_activation_race_items_" + Guid.NewGuid().ToString("N");
+        var store = new PersistenceStore(source, schema);
+        try
+        {
+            await store.EnsureSchemaAsync();
+            await PgItemStore.MigrateAsync(source, inventorySchema);
+            var items = new PgItemStore(source, inventorySchema);
+            long itemId;
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                itemId = await items.CreateAsync(connection, transaction,
+                    new NewItem(license.LicenseTypeId, 20, 600, 4, 2));
+                await transaction.CommitAsync();
+            }
+
+            await using var owner = await OwnerSession.StartAsync(store, PersistenceRoles.World,
+                "rpc-activation-race-" + Guid.NewGuid().ToString("N"));
+            await using var cache = new GameStoreCache(store, owner,
+                new GameStoreCacheOptions { ProcessRole = PersistenceRoles.World, FlushDelay = TimeSpan.FromHours(1) });
+            await cache.RecoverAsync();
+            await cache.LoadAsync("shipCosmetics");
+            var service = new ShipCosmeticsMgrRpcService(cache, cache, items, source, catalog,
+                () => 1_700_000_000_000L);
+            var session = new ClientSession();
+            session.Set("charid", new PyInt(20));
+
+            async Task<bool> Activate()
+            {
+                try
+                {
+                    await service.CallAsync(Call("ActivateSkinLicense", session, new PyList([new PyLong(itemId)])));
+                    return true;
+                }
+                catch (MachoWrappedException error) when (error.Error.UserErrorMessage == "CustomInfo")
+                {
+                    return false;
+                }
+            }
+
+            var successes = await Task.WhenAll(Activate(), Activate());
+            Assert.Single(successes, success => success);
+            Assert.Single(successes, success => !success);
+            var remaining = await items.GetAsync(itemId);
+            Assert.NotNull(remaining);
+            Assert.Equal(1, remaining.Quantity);
+            Assert.True(cache.Read("shipCosmetics", $"/characters/20/skinOverridesBySkinID/{license.SkinId}").Success);
+        }
+        finally
+        {
+            await using var connection = await source.OpenConnectionAsync();
+            await using var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE", connection);
+            await command.ExecuteNonQueryAsync();
+            await using var inventoryCommand = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{inventorySchema}\" CASCADE", connection);
+            await inventoryCommand.ExecuteNonQueryAsync();
+        }
+    }
+
     private static ServiceCall Call(string method, ClientSession session, params PyValue[] args) =>
         new() { Method = method, Args = args, Session = session };
 

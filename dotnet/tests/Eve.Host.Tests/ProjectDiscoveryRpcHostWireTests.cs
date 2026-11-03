@@ -83,6 +83,7 @@ public partial class HostServerTests
         {
             session.CharacterId = characterId;
             session.Set("charid", new PyInt(characterId));
+            session.Set("accountRole", new PyLong(Eve.Services.GameMasterRoles.Qa));
         });
 
         using var front = await Handshaken(await ConnectAsync());

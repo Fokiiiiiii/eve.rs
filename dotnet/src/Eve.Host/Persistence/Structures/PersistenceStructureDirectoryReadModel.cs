@@ -639,6 +639,9 @@ public async ValueTask<bool> IsValidWarHQAsync(
         var typeRows = await sde.ReadAsync(
             "types", structures.Select(entry => (long)Positive(Integer(entry.Row["typeID"]))).Distinct(), cancellationToken);
         var types = typeRows.ToDictionary(row => row.Key);
+        var groupRows = await sde.ReadAsync("groups", typeRows.Select(row => (long)SdeInteger(row, "groupID"))
+            .Where(id => id > 0).Distinct(), cancellationToken);
+        var groups = groupRows.ToDictionary(row => row.Key);
         var systemRows = await sde.ReadAsync(
             "mapSolarSystems", structures.Select(entry => (long)Positive(Integer(entry.Row["solarSystemID"]))).Distinct(), cancellationToken);
         var systems = systemRows.ToDictionary(row => row.Key);
@@ -648,11 +651,15 @@ public async ValueTask<bool> IsValidWarHQAsync(
         {
             var typeId = Positive(Integer(structure["typeID"]));
             var solarSystemId = Positive(Integer(structure["solarSystemID"]));
-            if (!types.TryGetValue(typeId, out var type) ||
-                SdeInteger(type, "categoryID") != 65 ||
-                !SdeBoolean(type, "dockable") ||
+            if (!types.TryGetValue(typeId, out var type)) continue;
+            var groupId = SdeInteger(type, "groupID");
+            // The published SDE puts category on groups; citadels, engineering complexes and refineries are dockable.
+            var dockable = groupId > 0
+                ? groupId is 1404 or 1406 or 1657 && groups.TryGetValue(groupId, out var group) && SdeInteger(group, "categoryID") == 65
+                : SdeInteger(type, "categoryID") == 65 && SdeBoolean(type, "dockable");
+            if (!dockable ||
                 !systems.TryGetValue(solarSystemId, out var system) ||
-                SdeDouble(system, "security") < 0.45)
+                (system.Doc.TryGetProperty("securityStatus", out _) ? SdeDouble(system, "securityStatus") : SdeDouble(system, "security")) < 0.45)
                 continue;
 
             var ownerCorporationId = Positive(Integer(structure["ownerCorpID"] ?? structure["ownerID"]));

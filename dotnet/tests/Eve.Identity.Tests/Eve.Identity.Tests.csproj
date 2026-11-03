@@ -12,6 +12,9 @@
     <ProjectReference Include="../../src/Eve.Identity/Eve.Identity.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <EmbeddedResource Include="Fixtures/**/*" />
+  </ItemGroup>
+  <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
 </Project>

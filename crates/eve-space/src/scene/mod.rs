@@ -21,6 +21,8 @@ mod scan_targets;
 mod session;
 mod structures;
 mod tether;
+pub mod tournament;
+pub(crate) mod tournament_metrics;
 mod warping;
 mod wormholes;
 use self::collision::*;
@@ -107,6 +109,10 @@ const UNDOCK_RADIUS_SHARE: f64 = 0.34;
 
 const UNDOCK_MIN_DISTANCE: f64 = 2_000.0;
 
+/// Internal host/simulation control codes; client commands use only their own codes below 50.
+pub const DOCKING_DECISION_COMMAND: u8 = 254;
+pub const DOCKING_READY_COMMAND: u8 = 255;
+
 /// How far from a belt's surface a warp may end for the ship to count as having arrived at the belt (the reference's `landingRadiusMeters`).
 pub const BELT_LANDING_RADIUS: f64 = 250_000.0;
 
@@ -120,6 +126,11 @@ pub enum Command {
     Stop,
     Dock {
         station_id: i64,
+    },
+    /// The host's final access and timer decision after the docking delay.
+    DockingDecision {
+        station_id: i64,
+        allowed: bool,
     },
     /// Approach a body and stay `range` metres off its surface.
     FollowBall {
@@ -219,6 +230,7 @@ impl Command {
             Self::GotoDirection(_) => 2,
             Self::Stop => 3,
             Self::Dock { .. } => 4,
+            Self::DockingDecision { .. } => DOCKING_DECISION_COMMAND,
             Self::FollowBall { .. } => 5,
             Self::Orbit { .. } => 6,
             Self::AlignTo { .. } => 7,
@@ -583,6 +595,7 @@ pub enum HeatError {
 struct PendingDock {
     station_id: i64,
     accepted_at: i64,
+    ready: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -753,6 +766,8 @@ pub(crate) struct AbyssalRewardCacheReceipt {
 pub struct Scene {
     system: Arc<SolarSystem>,
     pub(crate) pilots: BTreeMap<SessionId, Pilot>,
+    pub(crate) tournament: tournament::TournamentTracker,
+    pub(crate) tournament_metrics: tournament_metrics::DamageLedger,
     next_stamp: u32,
     /// How many ships have come into the scene.
     pub(crate) entries: u64,
@@ -772,6 +787,8 @@ pub struct Scene {
     pub(crate) rng: PythonRandom,
     /// The offensive acts since the brains last looked (`crate::brains` tells the NPCs that were their targets).
     pub(crate) aggressions: Vec<crate::weapons::Aggression>,
+    /// Ships whose security status fell since the brains last looked.
+    pub(crate) security_status_losses: Vec<(i64, i64)>,
     /// The missiles that are on their way to a ship, by id: entities of their own, apart from the ships (`crate::missile_entity`).
     pub(crate) missiles: BTreeMap<i64, crate::missile_entity::MissileEntity>,
     /// How many missiles have been fired in this scene (their ids are numbered from it).
@@ -855,6 +872,8 @@ impl Scene {
         Self {
             system,
             pilots: BTreeMap::new(),
+            tournament: tournament::TournamentTracker::default(),
+            tournament_metrics: tournament_metrics::DamageLedger::default(),
             next_stamp: 0,
             entries: 0,
             boxes: HashMap::new(),
@@ -865,6 +884,7 @@ impl Scene {
             group_sequence: 0,
             rng: PythonRandom::new(0x5348_4f54),
             aggressions: Vec::new(),
+            security_status_losses: Vec::new(),
             missiles: BTreeMap::new(),
             missile_sequence: 0,
             dots: BTreeMap::new(),

@@ -21,6 +21,17 @@ public sealed partial class SpaceContainers
 
     /// <summary>The durable job that completes a control tower's unanchoring (keyed <c>tower:{id}</c>).</summary>
     public const string ControlTowerUnanchorJob = "space.control_tower.unanchor";
+    public const string ControlTowerEligibilityChangedTopic = "space.control_tower.eligibility_changed";
+    public sealed record ControlTowerEligibilityChanged(long CorporationId);
+
+    public async Task PublishControlTowerAnchoredAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+        Eve.Events.EventBus events, long towerId, CancellationToken cancellationToken = default)
+    {
+        if (_deployed is null || await _deployed.GetAsync(towerId, cancellationToken) is not { Kind: ControlTowerKind } record ||
+            record.ActivateAtMs > _nowUnixMs() || record.CorporationId <= 0) return;
+        await events.PublishInTransactionAsync(connection, transaction, ControlTowerEligibilityChangedTopic,
+            new ControlTowerEligibilityChanged(record.CorporationId), $"tower:{towerId}", cancellationToken);
+    }
 
     /// <summary>The fuel state of a control tower: its period was paid.</summary>
     public const string TowerOnline = "online";
@@ -108,7 +119,11 @@ public sealed partial class SpaceContainers
     /// The end of a control tower's unanchoring (the unanchor job): it leaves space, its record is forgotten, and its item stays, dropped where the tower was
     /// (the unanchor drop rule: a marked item in space, scoopable by its corporation). A tower that is no longer unanchoring is left alone.
     /// </summary>
-    public async Task CompleteControlTowerUnanchorAsync(long towerId, CancellationToken cancellationToken = default)
+    public Task CompleteControlTowerUnanchorAsync(long towerId, CancellationToken cancellationToken = default) =>
+        CompleteControlTowerUnanchorAsync(towerId, null, null, null, cancellationToken);
+
+    public async Task CompleteControlTowerUnanchorAsync(long towerId, NpgsqlConnection? connection,
+        NpgsqlTransaction? transaction, Eve.Events.EventBus? events, CancellationToken cancellationToken = default)
     {
         if (_deployed is null || await _deployed.GetAsync(towerId, cancellationToken) is not { Kind: ControlTowerKind } record
             || await _deployed.TowerStateAsync(towerId, cancellationToken) != TowerUnanchoring)
@@ -119,7 +134,7 @@ public sealed partial class SpaceContainers
         if (await _items.GetAsync(towerId, cancellationToken) is null)
         {
             // the item is gone (a manual removal): there is nothing to drop
-            await _deployed.RemoveAsync(towerId, cancellationToken);
+            await RemoveTowerAsync();
             return;
         }
         await _ships.SetCustomInfoAsync(towerId, StructureUnanchorDrop.HullMarker(towerId), cancellationToken);
@@ -127,6 +142,18 @@ public sealed partial class SpaceContainers
             towerId, record.SolarSystemId, record.Position, [1.0, 0.0, 0.0], record.Radius, record.GroupId, record.ShipId,
             record.OwnerId, record.CorporationId, record.AllianceId, 0, NeverExpires), cancellationToken);
         await PlaceUnanchorDropAsync(towerId, StructureUnanchorDrop.HullMarker(towerId), cancellationToken);
-        await _deployed.RemoveAsync(towerId, cancellationToken);
+        await RemoveTowerAsync();
+
+        async Task RemoveTowerAsync()
+        {
+            if (connection is null || transaction is null || events is null)
+            {
+                await _deployed.RemoveAsync(towerId, cancellationToken);
+                return;
+            }
+            if (await _deployed.RemoveAsync(connection, transaction, towerId, cancellationToken) && record.CorporationId > 0)
+                await events.PublishInTransactionAsync(connection, transaction, ControlTowerEligibilityChangedTopic,
+                    new ControlTowerEligibilityChanged(record.CorporationId), $"tower:{towerId}", cancellationToken);
+        }
     }
 }

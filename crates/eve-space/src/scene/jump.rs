@@ -259,6 +259,7 @@ impl Scene {
             told.extend(self.clear_tether_policy(session, now));
             let Some(mut pilot) = self.pilots.remove(&session) else { continue };
             let Some(jump) = pilot.jump.take() else { continue };
+            self.tournament_departed(pilot.ship.spec.character_id, pilot.ship.spec.ship_id, now);
             pilot.clear_overheat_for_jump();
             let held = std::mem::take(&mut pilot.targeting);
             told.extend(self.drop_targeting(pilot.ship.spec.ship_id, &held, None, now));

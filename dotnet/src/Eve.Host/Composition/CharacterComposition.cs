@@ -178,18 +178,27 @@ internal sealed partial class CharacterServicesComposition
     private Eve.Characters.ProjectDiscoveryTutorialStore? projectDiscoveryTutorials;
     private Eve.Characters.ProjectDiscoveryTutorialStore ProjectDiscoveryTutorials => projectDiscoveryTutorials ??= new Eve.Characters.ProjectDiscoveryTutorialStore(source, characterSchema);
 
+    private Eve.Characters.ProjectDiscoveryTaskPinStore? projectDiscoveryTaskPins;
+    private Eve.Characters.ProjectDiscoveryTaskPinStore ProjectDiscoveryTaskPins => projectDiscoveryTaskPins ??= new Eve.Characters.ProjectDiscoveryTaskPinStore(source, characterSchema);
+
     /// <summary>The tutorial the client's Project Discovery reads: a character with no stored tutorial has not started (the service default).</summary>
     private async ValueTask<ProjectDiscoveryPlayerState?> ReadProjectDiscoveryStateAsync(long characterId, CancellationToken cancellationToken)
     {
         var tutorial = await ProjectDiscoveryTutorials.ReadAsync(characterId, cancellationToken);
-        return tutorial is null ? null : new ProjectDiscoveryPlayerState(FinishedTutorial: tutorial.Finished, TutorialLevel: tutorial.Level);
+        var xp = await ProjectDiscoveryTutorials.ReadExperienceAsync(characterId, cancellationToken);
+        var rank = Math.Floor((1 + Math.Sqrt(1 + xp / 12.5)) / 2);
+        return tutorial is null && xp == 0 ? null : new ProjectDiscoveryPlayerState(Rank: rank, Experience: xp, FinishedTutorial: tutorial?.Finished ?? false, TutorialLevel: tutorial?.Level ?? 0);
     }
 
     private async ValueTask<ProjectDiscoveryPlayerState?> TransitionProjectDiscoveryTutorialAsync(long characterId, string action, CancellationToken cancellationToken)
     {
         var tutorial = await ProjectDiscoveryTutorials.TransitionAsync(characterId, action, now(), cancellationToken);
-        return new ProjectDiscoveryPlayerState(FinishedTutorial: tutorial.Finished, TutorialLevel: tutorial.Level);
+        var xp = await ProjectDiscoveryTutorials.ReadExperienceAsync(characterId, cancellationToken);
+        return new ProjectDiscoveryPlayerState(Rank: Math.Floor((1 + Math.Sqrt(1 + xp / 12.5)) / 2), Experience: xp, FinishedTutorial: tutorial.Finished, TutorialLevel: tutorial.Level);
     }
+
+    private ValueTask FixProjectDiscoveryTaskIdAsync(long characterId, long? taskId, CancellationToken cancellationToken) =>
+        new(ProjectDiscoveryTaskPins.SetAsync(characterId, taskId, now(), cancellationToken));
 
     private Task EconomyAndInsurance()
     {
@@ -221,18 +230,76 @@ internal sealed partial class CharacterServicesComposition
                 await corporations.HasRoleAsync(characterId, corporationId,
                     Eve.Corporations.CorporationRoles.JuniorAccountant, cancellationToken));
         storeRuntime = new PersistenceNewEdenStoreRuntime(
-            source, mailStore, mailStoreOwner.Fence, wallets, characters, items, itemTypes,
-            characterSessions, now, accounts);
+            source, mailStore, mailStoreOwner.Fence, wallets, characters, items, skills, itemTypes,
+            characterSessions, now, accounts,
+            (typeName, payload, characterId) => notices.Publish(typeName, payload, character: characterId));
         // a slot's end pauses the queues it no longer covers: the job is scheduled with the grant (multipleTrainingExpiry is set by TrainingSkillsAndCreation)
         storeRuntime.ScheduleSlotExpiry = (connection, transaction, accountId, endsAt, token) =>
             multipleTrainingExpiry.ScheduleAsync(connection, transaction, accountId, endsAt, token);
         return Task.CompletedTask;
     }
 
-    private Task CharacterEntryHooks()
+    private async Task CharacterEntryHooks()
     {
         publicQaSlashService = null;
         jumpCloneSpace.CloneDeletedNotification = mailSendWriter.WriteJumpCloneDeletedNotificationAsync;
+        Eve.Host.ProjectDiscovery.ProjectDiscoveryParticipationRewards? participationRewards = null;
+        Eve.Host.ProjectDiscovery.SubcellTrainingCatalog? trainingCatalog = null;
+        var catalogPath = Env("EVE_PROJECT_DISCOVERY_TRAINING_CATALOG", "");
+        if (catalogPath.Length > 0)
+        {
+            if (Env("EVE_PROJECT_DISCOVERY_MODE", "scientific-replay") != "disabled" && !(Env("EVE_PROJECT_DISCOVERY_MODE", "scientific-replay") == "remote" && Env("EVE_PROJECT_DISCOVERY_REMOTE_PROTOCOL", "covid") == "subcellular"))
+                throw new InvalidOperationException("A Subcellular catalog requires a disabled or Subcellular remote provider.");
+            trainingCatalog = await Eve.Host.ProjectDiscovery.SubcellTrainingCatalog.LoadAsync(source, characterSchema, catalogPath);
+        }
+        long? tutorialRewardXp = null;
+        var rewardPolicy = Env("EVE_PROJECT_DISCOVERY_TUTORIAL_REWARD_POLICY", "disabled");
+        if (rewardPolicy == "subcell-levels")
+        {
+            if (Env("EVE_PROJECT_DISCOVERY_MODE", "scientific-replay") != "disabled" && !(Env("EVE_PROJECT_DISCOVERY_MODE", "scientific-replay") == "remote" && Env("EVE_PROJECT_DISCOVERY_REMOTE_PROTOCOL", "covid") == "subcellular"))
+                throw new InvalidOperationException("Subcellular participation policy requires a disabled or Subcellular remote provider.");
+            long xp = long.Parse(Env("EVE_PROJECT_DISCOVERY_TUTORIAL_XP", ""), System.Globalization.CultureInfo.InvariantCulture);
+            if (xp <= 0) throw new InvalidOperationException("Invalid Project Discovery tutorial XP policy.");
+            tutorialRewardXp = xp;
+            participationRewards = new(source, characterSchema, economyWallets, xp, 0, 0, now);
+        }
+        else if (rewardPolicy == "exoplanet-local-finish")
+        {
+            if (Env("EVE_PROJECT_DISCOVERY_MODE", "scientific-replay") != "disabled" && !(Env("EVE_PROJECT_DISCOVERY_MODE", "scientific-replay") == "remote" && Env("EVE_PROJECT_DISCOVERY_REMOTE_PROTOCOL", "covid") == "exoplanet"))
+                throw new InvalidOperationException("Exoplanet participation requires a disabled or Exoplanet remote provider.");
+            int crateType = int.Parse(Env("EVE_PROJECT_DISCOVERY_TUTORIAL_CRATE_TYPE", ""), System.Globalization.CultureInfo.InvariantCulture);
+            int refType = int.Parse(Env("EVE_PROJECT_DISCOVERY_TUTORIAL_WALLET_REF_TYPE", ""), System.Globalization.CultureInfo.InvariantCulture);
+            var crate = crateType > 0 ? await itemTypes.GetAsync(crateType) : null;
+            if (crate is null || refType <= 0)
+                throw new InvalidOperationException("Exoplanet tutorial requires a valid SDE crate type and wallet reference type.");
+            tutorialRewardXp = 900;
+            participationRewards = new(source, characterSchema, economyWallets, 900, 250000m, refType, now, "exoplanet-local-finish", items, crate);
+        }
+        else if (rewardPolicy != "disabled") throw new InvalidOperationException("Unsupported Project Discovery tutorial reward policy.");
+        async ValueTask<ProjectDiscoveryPlayerState?> TransitionParticipationAsync(ServiceCall call, string action)
+        {
+            long character = call.Session.CharacterId.GetValueOrDefault();
+            long account = call.Session.UserId.GetValueOrDefault();
+            var ct = call.Cancellation;
+            if (rewardPolicy == "exoplanet-local-finish" && action == "increase")
+            {
+                await ProjectDiscoveryTutorials.MarkFinishedAsync(character, now(), ct);
+                return await ReadProjectDiscoveryStateAsync(character, ct);
+            }
+            if (rewardPolicy == "subcell-levels" && action == "increase")
+            {
+                if (trainingCatalog is null) throw Eve.Services.MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TRAINING_UNAVAILABLE");
+                if (account <= 0) throw Eve.Services.MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TRAINING_UNAVAILABLE");
+                await trainingCatalog.AdvanceAsync(character, account, ct);
+                return await ReadProjectDiscoveryStateAsync(character, ct);
+            }
+            if (rewardPolicy == "subcell-levels" && action == "reset" && trainingCatalog is not null)
+            {
+                await trainingCatalog.ResetAsync(character, ct);
+                return await ReadProjectDiscoveryStateAsync(character, ct);
+            }
+            return await TransitionProjectDiscoveryTutorialAsync(character, action, ct);
+        }
         gameRpcCallbacks = new Eve.Services.Core.GameRpcCallbacks(
             ReadSharedSettings: () => mailCache.Read("sharedSettings", "/").Data as JsonObject,
                     ReadOverviewPresets: () => mailCache.Read("overviewSharedPresets", "/").Data as JsonObject,
@@ -277,7 +344,15 @@ internal sealed partial class CharacterServicesComposition
             JumpClones: new HostJumpCloneStore(new Eve.Characters.PgJumpCloneStore(source, characterSchema), source, skills, economyWallets, wallets,
                 characters, items, dogma, stations, structureStore, solarSystems, boosterLapse),
             ReadProjectDiscoveryState: ReadProjectDiscoveryStateAsync,
-            TransitionProjectDiscoveryTutorial: TransitionProjectDiscoveryTutorialAsync,
+            TransitionProjectDiscoveryTutorialCall: TransitionParticipationAsync,
+            NewProjectDiscoveryTrainingTask: trainingCatalog is null ? null : trainingCatalog.IssueAsync,
+            ReadProjectDiscoveryProjectId: trainingCatalog is null ? null : () => trainingCatalog.ProjectId,
+            FixProjectDiscoveryTaskId: FixProjectDiscoveryTaskIdAsync,
+            ReadProjectDiscoveryRewardEntitlement: participationRewards is null ? null : participationRewards.IsEntitledAsync,
+            GrantProjectDiscoveryReward: participationRewards is null ? null : participationRewards.GrantAsync,
+            AnnounceProjectDiscoveryRewardWallet: participationRewards is null ? null : participationRewards.Announce,
+            AnnounceProjectDiscoveryRewardItem: participationRewards is null ? null : participationRewards.AnnounceItem,
+            ReadProjectDiscoveryTutorialXpReward: tutorialRewardXp is { } configuredXp ? () => configuredXp : null,
             JumpCloneSpace: jumpCloneSpace);
 
         stationGuestLedger = new Eve.Services.Station.StationGuestLedger();
@@ -295,6 +370,5 @@ internal sealed partial class CharacterServicesComposition
         characterEntryHooks.Add(guests);
         if (spaceSessions is not null)
             spaceSessions.DockedLocationChanged = guests.OnLocationChanged;
-        return Task.CompletedTask;
     }
 }

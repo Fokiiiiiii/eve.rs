@@ -1,0 +1,36 @@
+{
+  "asset_key": "projectdiscovery/covid-analysis50-science.png",
+  "file": "covid-analysis50-science.png",
+  "mime_type": "image/png",
+  "width": 530,
+  "height": 530,
+  "sha256": "766bb12193db2cd09f0e2881d1c8de865e7747afe102182f2d97e40520b469a4",
+  "points": 62452,
+  "channels": [
+    "GATA3",
+    "CD4"
+  ],
+  "normalization": {
+    "min_x": 23.201007270813,
+    "min_y": -30.203549385070783,
+    "max_x": 128.337999916077,
+    "max_y": 196.826071739197
+  },
+  "pixel_mapping": "x=floor((GATA3-min_x)/(max_x-min_x)*width); y=height-1-floor((CD4-min_y)/(max_y-min_y)*height); clamped to image bounds; no plot margins or axis decorations",
+  "gate_mapping": "Client gate proportions are [x_fraction, 1-y_fraction]; image rows are top-origin, so image_y=(1-gate_y)*height (nearest pixel; at most one-pixel raster quantization).",
+  "cohort_members": 30,
+  "cohort_min_max_frames": 1,
+  "source": {
+    "citation": "Brinkman, R., & Yokosawa, D. Y. O. (2025). Crowdsourced Flow Cytometry Dataset from EVE Online’s Project Discovery for Machine Learning Applications [Dataset]. Federated Research Data Repository. https://doi.org/10.20383/103.01043",
+    "license": "CC BY 4.0",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/",
+    "dataset_member": "A078/FR-FCM-Z2KP_export_COVID19_samples_23_04_20_ST3_COVID19_W_046_O_ST3_230420_011_Live_cells.fcs_123154_GATA3_CD4.csv",
+    "analysis_id": 50,
+    "data_id": 30927,
+    "uncompressed_csv_sha256": "e7d6ce58d8e54ecd429651c474bc7d68777464dd8735e964a1b701b13844f32c",
+    "selected_fixture_csv_gzip_sha256": "a458f60d4e299a8c5ca31626452be1f46e82bc2b05fde6611fae3ab87e905425",
+    "selected_fixture_gates_sha256": "9810f2bb0c77eb4f8f17e7ddb624f12a0f2218b94f690d8b6e1833fe23ff1539",
+    "whole_archive_sha256_verified": false
+  },
+  "semantics": "Local scientific replay visualization of public COVID research points, not an original CCP asset, live MMOS task, game task ID, gold set, score, or reward."
+}

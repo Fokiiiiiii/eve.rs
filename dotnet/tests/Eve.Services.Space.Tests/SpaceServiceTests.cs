@@ -174,12 +174,41 @@ public class SpaceServiceTests
         Assert.Equal(new PyLong(116444736000000000L + nowUnixMs * 10_000L), service.GetDirtTimestamp(null!));
     }
 
-    private static async Task<(Rig Rig, Eve.Characters.Created Character, ClientSession Session)> DockedAsync(
+      [PgFact]
+      public async Task A_high_security_undock_checks_for_an_active_criminal_timer_after_success()
+      {
+          var (rig, character, session) = await DockedAsync();
+          await using var _ = rig;
+          var criminalEntries = new List<(long Character, long System, double Security)>();
+          rig.Space.PilotEnteredSystem = (characterId, systemId, security, _) =>
+          {
+              criminalEntries.Add((characterId, systemId, security));
+              return Task.CompletedTask;
+          };
+
+          await UndockAsync(rig, session);
+
+          var entry = Assert.Single(criminalEntries);
+          Assert.Equal(character.CharacterId, entry.Character);
+          Assert.Equal(session.GetInt("solarsystemid"), entry.System);
+          Assert.True(entry.Security >= 0.5);
+      }
+
+      private static async Task<(Rig Rig, Eve.Characters.Created Character, ClientSession Session)> DockedAsync(
         TimeSpan? protection = null, Eve.Scheduler.LocalTimers? localTimers = null)
     {
         var rig = await Rig.CreateAsync(protection, localTimers: localTimers);
         var character = await rig.NewCharacterAsync();
         return (rig, character, await rig.SessionAsync(character));
+    }
+
+    private static SimNotify TargetNotification(ClientSession session, string action, long? targetId = null)
+    {
+        var args = targetId is { } id
+            ? Py.Tuple(new PyStr(action), new PyLong(id))
+            : Py.Tuple(new PyStr(action));
+        return new SimNotify((ulong)session.SessionId, "OnTarget", "shipid",
+            MarshalCodec.Encode(Py.Tuple(new PyInt(0), Py.Tuple(new PyInt(1), args))));
     }
 
     private static Eve.Scheduler.LocalTimers CooldownElapsedTimers() => new(delay: (duration, token) =>
@@ -322,7 +351,7 @@ public class SpaceServiceTests
     }
 
     [PgFact]
-    public async Task Trying_to_lock_a_target_aborts_safe_logoff_even_when_the_lock_is_refused()
+    public async Task A_refused_target_lock_does_not_abort_safe_logoff()
     {
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -345,11 +374,87 @@ public class SpaceServiceTests
         rig.Sim.TargetAnswer = new CommandReply(false, 0, "TARGET_OUT_OF_RANGE");
         var refusal = await rig.Space.OrderAsync(session, TargetingOrder.Lock, [60015249], CancellationToken.None);
         Assert.False(refusal!.Ok);
+        Assert.DoesNotContain(Events.Of(session), message => message.Name is "OnSafeLogoffFailed" or "OnSafeLogoffAborted");
         release.TrySetResult();
-        await Task.Delay(25);
+        await Rig.UntilAsync(() => closed && !rig.Space.IsInSpace(session));
+        Assert.True(closed);
+    }
 
-        Assert.False(closed);
-        Assert.True(rig.Space.IsInSpace(session));
+    [PgFact]
+    public async Task Target_lock_notifications_update_safe_logoff_state_until_loss_or_clear()
+    {
+        var (rig, _, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        rig.Space.LifecycleBlockers = (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<string>>([]);
+        var oid = await rig.BindShipInSpaceAsync(session);
+        const long target = 60015249;
+
+        rig.Sim.Say(TargetNotification(session, "add", target));
+        var added = Assert.Single(Events.Of(session));
+        Assert.Equal(("OnTarget", "shipid"), (added.Name, added.IdType));
+        Assert.NotEmpty(Assert.IsType<PyList>(await rig.ShipCallAsync(session, "SafeLogoff", oid)).Items);
+
+        rig.Sim.Say(TargetNotification(session, "lost", target));
+        Assert.Empty(Assert.IsType<PyList>(await rig.ShipCallAsync(session, "SafeLogoff", oid)).Items);
+        await rig.ShipCallAsync(session, "AbortSafeLogoff", oid);
+
+        rig.Sim.Say(TargetNotification(session, "add", target));
+        Assert.NotEmpty(Assert.IsType<PyList>(await rig.ShipCallAsync(session, "SafeLogoff", oid)).Items);
+        rig.Sim.Say(TargetNotification(session, "clear"));
+        Assert.Empty(Assert.IsType<PyList>(await rig.ShipCallAsync(session, "SafeLogoff", oid)).Items);
+        await rig.ShipCallAsync(session, "AbortSafeLogoff", oid);
+    }
+
+    [PgFact]
+    public async Task An_accepted_pending_lock_cancels_safe_logoff_and_blocks_both_pilots()
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var timerCount = 0;
+        using var timers = new Eve.Scheduler.LocalTimers(delay: (duration, token) =>
+        {
+            if (duration != TimeSpan.FromSeconds(30)) return Task.CompletedTask;
+            if (Interlocked.Increment(ref timerCount) == 2) started.TrySetResult();
+            return new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task.WaitAsync(token);
+        });
+        var (rig, _, source) = await DockedAsync(localTimers: timers);
+        await using var _ = rig;
+        await InSpaceAsync(rig, source);
+        var targetCharacter = await rig.NewCharacterAsync("Targeted Pilot");
+        var target = await rig.SessionAsync(targetCharacter, id: 2);
+        await InSpaceAsync(rig, target);
+        rig.Space.LifecycleBlockers = (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<string>>([]);
+        var sourceOid = await rig.BindShipInSpaceAsync(source);
+        var targetOid = await rig.BindShipInSpaceAsync(target);
+
+        Assert.Empty(Assert.IsType<PyList>(await rig.ShipCallAsync(source, "SafeLogoff", sourceOid)).Items);
+        Assert.Empty(Assert.IsType<PyList>(await rig.ShipCallAsync(target, "SafeLogoff", targetOid)).Items);
+        source.RunAfterResponse();
+        target.RunAfterResponse();
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var accepted = await rig.Space.OrderAsync(source, TargetingOrder.Lock, [targetCharacter.ShipId], CancellationToken.None);
+
+        Assert.True(accepted!.Ok);
+        Assert.True(accepted.Pending);
+        var sourceFailure = Assert.Single(Events.Of(source), message => message.Name == "OnSafeLogoffFailed");
+        var targetFailure = Assert.Single(Events.Of(target), message => message.Name == "OnSafeLogoffFailed");
+        Assert.Equal("UI/Inflight/SafeLogoff/SafeLogoffCantTargetLockBody",
+            JsSemantics.StringValue(Assert.Single(Assert.IsType<PyList>(Assert.Single(sourceFailure.Args)).Items)));
+        Assert.Equal("UI/Inflight/SafeLogoff/SafeLogoffCantBeTargetLockedBody",
+            JsSemantics.StringValue(Assert.Single(Assert.IsType<PyList>(Assert.Single(targetFailure.Args)).Items)));
+        Assert.NotEmpty(Assert.IsType<PyList>(await rig.ShipCallAsync(source, "SafeLogoff", sourceOid)).Items);
+        Assert.NotEmpty(Assert.IsType<PyList>(await rig.ShipCallAsync(target, "SafeLogoff", targetOid)).Items);
+
+        rig.Sim.Say(TargetNotification(source, "add", targetCharacter.ShipId));
+        rig.Sim.Say(TargetNotification(target, "otheradd", source.GetInt("shipid")!.Value));
+        rig.Sim.Say(TargetNotification(source, "lost", targetCharacter.ShipId));
+        rig.Sim.Say(TargetNotification(target, "otherlost", source.GetInt("shipid")!.Value));
+
+        Assert.Empty(Assert.IsType<PyList>(await rig.ShipCallAsync(target, "SafeLogoff", targetOid)).Items);
+        Assert.Empty(Assert.IsType<PyList>(await rig.ShipCallAsync(source, "SafeLogoff", sourceOid)).Items);
+        await rig.ShipCallAsync(target, "AbortSafeLogoff", targetOid);
+        await rig.ShipCallAsync(source, "AbortSafeLogoff", sourceOid);
     }
 
     [PgFact]
@@ -542,6 +647,13 @@ public class SpaceServiceTests
         await InSpaceAsync(rig, ownerSession);
         await InSpaceAsync(rig, outsiderSession);
         await InSpaceAsync(rig, observerSession);
+        var ownerSystemId = ownerSession.GetInt("solarsystemid")!.Value;
+        var systemEntries = new List<(long CharacterId, long SolarSystemId, long ShipId)>();
+        rig.Space.PilotEnteredSystem = (characterId, solarSystemId, _, _) =>
+        {
+            systemEntries.Add((characterId, solarSystemId, ownerSession.GetInt("shipid") ?? 0));
+            return Task.CompletedTask;
+        };
         rig.Space.LifecycleBlockers = (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<string>>([]);
 
         var ownerShipId = owner.ShipId;
@@ -573,6 +685,7 @@ public class SpaceServiceTests
             ownerSession, ownerShipId, ownerCapsuleId, CancellationToken.None);
         Assert.IsType<PyTuple>(ownerBoard);
         Assert.Null(insuranceBoarding);
+        Assert.Equal([(owner.CharacterId, ownerSystemId, ownerShipId)], systemEntries);
         await Task.Delay(25);
 
         Assert.IsType<PyTuple>(await rig.Space.EjectAsync(ownerSession, CancellationToken.None));
@@ -933,6 +1046,7 @@ public class SpaceServiceTests
         var (rig, character, session) = await DockedAsync(localTimers: timers);
         await using var _ = rig;
         await InSpaceAsync(rig, session);
+        rig.Space.Transitions.EndSessionChange((ulong)session.SessionId);
         var docked = new List<(long Character, long Station)>();
         rig.Space.PilotDocked = (characterId, stationId, _) =>
         {
@@ -1066,6 +1180,29 @@ public class SpaceServiceTests
         var again = await rig.ShipCallAsync(session, "Undock", oid, new PyLong(1), PyBool.False);
         Assert.Equal(PyNone.Instance, again);
         AssertUndockSimulationMessages(rig);
+    }
+
+    [PgFact]
+    public async Task An_undock_for_a_ship_outside_the_station_hangar_is_a_client_error()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        var oid = await rig.BindShipAsync(session);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Items.MoveAsync(connection, transaction, character.ShipId, 60000001, Eve.Inventory.ItemFlags.Hangar);
+            await transaction.CommitAsync();
+        }
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            rig.ShipCallAsync(session, "Undock", oid, new PyLong(character.ShipId), PyBool.False));
+
+        Assert.Equal("ShipNotInHangar", error.Error.UserErrorMessage);
+        Assert.Equal(Rig.Station, session.GetInt("stationid"));
+        var ship = (await rig.Items.GetAsync(character.ShipId))!;
+        Assert.Equal((60000001, Eve.Inventory.ItemFlags.Hangar), (ship.LocationId, ship.Flag));
+        Assert.Empty(rig.Sim.Heard.OfType<SimEnter>());
     }
 
     [PgFact]
@@ -1993,11 +2130,35 @@ public class SpaceServiceTests
         await using var _ = rig;
         await ShipAsync(rig, character);
         await InSpaceAsync(rig, session);
+        await Rig.UntilAsync(() => !timers.IsSet($"space.transition.session-change:{session.SessionId}"));
         rig.Sim.DockAnswer = new CommandReply(false, 0, "DOCKING_DISALLOWED_BY_MODULE");
         var error = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Space.DockAsync(session, Rig.Station, CancellationToken.None));
         Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
         var values = (PyDict)((PyTuple)((PyTuple)((PyObjectEx)error.Error.Payload).Header).Items[1]).Items[1];
         Assert.Equal("You cannot dock while a module that prevents docking is active.", JsSemantics.StringValue(values.Entries.Single().Value));
+    }
+
+    [PgFact]
+    public async Task A_weapons_timer_started_during_station_docking_delay_prevents_completion()
+    {
+        using var timers = CooldownElapsedTimers();
+        var (rig, _, session) = await DockedAsync(localTimers: timers);
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        rig.Space.Transitions.EndSessionChange((ulong)session.SessionId);
+        await rig.Space.DockAsync(session, Rig.Station, CancellationToken.None);
+
+        rig.Space.CrimewatchStateOf = (_, _) => Task.FromResult(Eve.Crimewatch.CombatState.Idle with
+        {
+            WeaponsUntilMs = rig.Now + Eve.Crimewatch.CombatState.WeaponsDurationMs,
+        });
+        rig.Sim.Say(new SimAccepted((ulong)session.SessionId, SimCommands.DockingReady, Rig.Station));
+        await rig.Space.QuiesceAsync();
+
+        var decision = Assert.Single(rig.Sim.Heard.OfType<SimCommand>(), command => command.Code == SimCommands.DockingDecision);
+        Assert.Equal([(double)Rig.Station, 0d], decision.Args);
+        Assert.True(rig.Space.IsInSpace(session));
+        Assert.Contains(Events.Of(session), e => e.Name == "OnDockingFinished");
     }
 
     [PgFact]
@@ -2520,7 +2681,7 @@ public class SpaceServiceTests
     }
 
     [PgFact]
-    public async Task Concord_response_spawns_the_authored_fleet_and_enforces_ship_loss_after_timer()
+    public async Task Concord_response_uses_concord_hulls_and_enforces_ship_loss_after_timer()
     {
         var waits = new List<(TimeSpan After, TaskCompletionSource Done)>();
         using var timers = new Eve.Scheduler.LocalTimers(delay: (after, token) =>
@@ -2529,34 +2690,55 @@ public class SpaceServiceTests
             lock (waits) waits.Add((after, done));
             return done.Task.WaitAsync(token);
         });
-        var responder = new Eve.Npc.NpcProfile(
-            "test-concord-response", "Test CONCORD response", [], "npc", Rig.Cockroach,
-            1000125, 0, 500003, Eve.Npc.NpcAuthority.RetailEmptyLoadoutId, "", "CONCORD response", 0, 0, 0);
-        var authority = new Eve.Npc.NpcAuthority(
-            [responder], [],
-            [new Eve.Npc.NpcPool(
-                "concord_response_fleet", "CONCORD response fleet", [], "npc",
-                [new Eve.Npc.NpcPoolEntry(responder.Id, 1)])]);
+        var authority = Eve.Npc.NpcAuthority.Load();
+        var cruiserLookup = authority.ResolveProfile("concord_police_cruiser");
+        var battleshipLookup = authority.ResolveProfile("concord_police_battleship");
+        Assert.True(cruiserLookup.Found);
+        Assert.True(battleshipLookup.Found);
+        Assert.Equal("concord", cruiserLookup.Match!.Row.EntityType);
+        Assert.Equal("concord", battleshipLookup.Match!.Row.EntityType);
         var rig = await Rig.CreateAsync(localTimers: timers, npcAuthority: authority);
         await using var _ = rig;
+        Assert.Same(authority, rig.Space.Npcs!.Authority);
+        Assert.True(rig.Space.Npcs.Select("concord_police_cruiser").Selection is not null);
         var character = await rig.NewCharacterAsync();
         var session = await rig.SessionAsync(character);
         await InSpaceAsync(rig, session);
+        var victim = await rig.NewCharacterAsync("Sentry Test Victim", account: 2);
+        var victimSession = await rig.SessionAsync(victim, id: 2);
+        await InSpaceAsync(rig, victimSession);
+        var losses = new List<ShipLoss>();
+        rig.Space.ShipLost += losses.Add;
         var systemId = session.GetInt("solarsystemid")!.Value;
         rig.Sim.PositionAnswers[character.ShipId] = [0, 0, 0];
 
         Assert.True(
-            await rig.Space.RespondToCriminalAsync(character.CharacterId, systemId, character.ShipId),
+              await rig.Space.RespondToCriminalAsync(character.CharacterId, systemId, character.ShipId + 1),
             string.Join(Environment.NewLine, rig.Log));
 
         var responders = rig.Sim.Heard.OfType<SimSpawn>().ToArray();
-        Assert.Equal(3, responders.Length);
+        Assert.Equal(2, responders.Length);
+        Assert.All(responders, spawn => Assert.Equal(1904, spawn.Ship.TypeId));
         Assert.All(responders, spawn =>
         {
+            Assert.Equal(1000125, spawn.Ship.OwnerId);
+            Assert.Equal(500006, spawn.Ship.WarFactionId);
             Assert.Equal(0, spawn.Identity.HostileResponseThreshold);
             Assert.True(spawn.Identity.AggressionRange >= 50_000);
             Assert.Equal("belt rat", spawn.Behavior);
         });
+
+        rig.Sim.Say(new SimDestroyed(
+            (ulong)victimSession.SessionId,
+            victim.ShipId,
+            0,
+            [0, 0, 0],
+            [1, 0, 0],
+            47,
+            responders[0].Ship.ShipId,
+            null));
+        await Rig.UntilAsync(() => losses.Count == 1);
+        Assert.Equal(ShipLossCause.Concord, Assert.Single(losses).Cause);
 
         (TimeSpan After, TaskCompletionSource Done) punishment;
         lock (waits)
@@ -2564,7 +2746,11 @@ public class SpaceServiceTests
             punishment = Assert.Single(waits, wait => wait.After == TimeSpan.FromSeconds(15));
         }
         punishment.Done.TrySetResult();
-        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimDestroy>().Any(destroy => destroy.ShipId == character.ShipId));
+        await Rig.UntilAsync(() =>
+            rig.Sim.Heard.OfType<SimSpawn>().Any(spawn => spawn.Ship.TypeId == 1912)
+            && rig.Sim.Heard.OfType<SimDestroy>().Any(destroy => destroy.ShipId == character.ShipId));
+        Assert.Equal(3, rig.Sim.Heard.OfType<SimSpawn>().Count());
+        Assert.Single(rig.Sim.Heard.OfType<SimSpawn>(), spawn => spawn.Ship.TypeId == 1912);
     }
 
     [PgFact]
@@ -2774,10 +2960,16 @@ public class SpaceServiceTests
         var oid = await rig.BindBeyonceAsync(session);
         var from = (int)session.GetInt("solarsystemid2")!.Value;
         var inspections = new List<(long Character, long Ship, int System)>();
+        var criminalEntries = new List<(long Character, long System, double Security)>();
         rig.Space.ApplyContrabandPenaltyAsync = (characterId, shipId, systemId, _) =>
         {
             inspections.Add((characterId, shipId, systemId));
             return Task.FromResult<Eve.Services.Space.ContrabandPenalty?>(null);
+        };
+          rig.Space.PilotEnteredSystem = (characterId, systemId, security, _) =>
+        {
+            criminalEntries.Add((characterId, systemId, security));
+            return Task.CompletedTask;
         };
 
         rig.Sim.JumpAnswer = new CommandReply(false, 0, "TOO_FAR_FROM_STARGATE");
@@ -2790,18 +2982,22 @@ public class SpaceServiceTests
         Assert.Equal(from, session.GetInt("solarsystemid2"));
 
         rig.Sim.Say(new SimJumped((ulong)session.SessionId, from, Gate, NextSystem, NextGate));
-        await Rig.UntilAsync(() => session.GetInt("solarsystemid2") == NextSystem && inspections.Count == 1);
+          await Rig.UntilAsync(() => session.GetInt("solarsystemid2") == NextSystem && inspections.Count == 1 && criminalEntries.Count == 1);
 
         Assert.Equal([(character.CharacterId, character.ShipId, NextSystem)], inspections);
+          Assert.Equal([(character.CharacterId, (long)NextSystem, 1.0)], criminalEntries);
     }
 
     [PgFact]
     public async Task A_jump_that_cannot_be_done_is_the_message_the_reference_tells()
     {
-        using var timers = CooldownElapsedTimers();
+        using var timers = new Eve.Scheduler.LocalTimers(delay: (_, token) => Task.Delay(Timeout.InfiniteTimeSpan, token));
         var (rig, character, session) = await DockedAsync(localTimers: timers);
         await using var _ = rig;
         await InSpaceAsync(rig, session);
+        Assert.True(rig.Space.Transitions.SessionChangeActive((ulong)session.SessionId));
+        rig.Space.Transitions.EndSessionChange((ulong)session.SessionId);
+        Assert.False(rig.Space.Transitions.SessionChangeActive((ulong)session.SessionId));
         var oid = await rig.BindBeyonceAsync(session);
         Events.Of(session);
 
@@ -3283,6 +3479,12 @@ public class SpaceServiceTests
         var sim = new FakeSim();
         using var space = new SpaceSessions(
             sim, rig.Ships, rig.Statics, rig.Stations, rig.Systems, () => rig.Now, spaceItems: rig.SpaceItems);
+          var crimewatchEntries = new List<(long Character, long System, double Security)>();
+          space.PilotEnteredSystem = (characterId, systemId, security, _) =>
+          {
+              crimewatchEntries.Add((characterId, systemId, security));
+              return Task.CompletedTask;
+          };
 
         async Task SaveSpaceItemAsync(long characterId, IReadOnlyList<double> position)
         {
@@ -3322,6 +3524,10 @@ public class SpaceServiceTests
         previousSession.Change([.. previousAttributes]);
         await space.OnCharacterEnteredAsync(previousSession, previous.CharacterId, CancellationToken.None);
         Assert.True(space.IsInSpace(previousSession));
+          var entry = Assert.Single(crimewatchEntries);
+          Assert.Equal(previous.CharacterId, entry.Character);
+          Assert.Equal(previousSession.GetInt("solarsystemid"), entry.System);
+          Assert.InRange(entry.Security, 0, 1);
         var repeatedAttributes = await space.GetSessionAttributesAsync(previousSession, previous.CharacterId, CancellationToken.None);
         Assert.Equal(PyNone.Instance, Assert.Single(repeatedAttributes, attribute => attribute.Name == "stationid").Value);
         Assert.Equal(Eve.Ships.CharacterShips.InSpaceFlag, (await rig.Ships.LoadAsync(previous.CharacterId, CancellationToken.None))!.Ship.Flag);

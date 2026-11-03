@@ -25,8 +25,11 @@ public sealed class SiteContainerStore
         _schema = Sql.CheckSchema(schema);
     }
 
+    public static IReadOnlyList<Migration> MigrationSet() =>
+        Migrations.Embedded(typeof(SiteContainerStore).Assembly, "Migrations");
+
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
-        Migrations.ApplyAsync(source, schema, Migrations.Embedded(typeof(SiteContainerStore).Assembly, "Migrations"), cancellationToken);
+        Migrations.ApplyAsync(source, schema, MigrationSet(), cancellationToken);
 
     /// <summary>Places containers in the caller's transaction (a container already recorded is left as it is).</summary>
     public async Task InsertAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, IEnumerable<SiteContainerRecord> records, CancellationToken cancellationToken = default)

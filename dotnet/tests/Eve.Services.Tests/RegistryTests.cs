@@ -19,6 +19,111 @@ public class RegistryTests
         public void OnBoundObjectReleased(string oid, ClientSession? session) => Released.Add(oid);
     }
 
+    private sealed class AsyncReleaseStub : IService, IAsyncBoundObjectReleaseHandler
+    {
+        public string Name => "asyncRelease";
+        public int Calls { get; private set; }
+        public TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool HasMethod(string method) => false;
+        public ValueTask<PyValue> CallAsync(ServiceCall call) => ValueTask.FromResult<PyValue>(PyNone.Instance);
+        public async ValueTask OnBoundObjectReleasedAsync(string oid, ClientSession? session, CancellationToken cancellationToken)
+        {
+            Calls++;
+            await Completion.Task.WaitAsync(cancellationToken);
+        }
+    }
+
+    private sealed class RetryReleaseStub : IService, IAsyncBoundObjectReleaseHandler
+    {
+        public string Name => "retryRelease";
+        public int Calls { get; private set; }
+        public bool Fail { get; set; }
+        public bool HasMethod(string method) => false;
+        public ValueTask<PyValue> CallAsync(ServiceCall call) => ValueTask.FromResult<PyValue>(PyNone.Instance);
+        public ValueTask OnBoundObjectReleasedAsync(string oid, ClientSession? session, CancellationToken cancellationToken)
+        {
+            Calls++;
+            if (Fail) throw new InvalidOperationException("retry");
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    [Fact]
+    public async Task Failed_release_is_retained_and_does_not_starve_other_receipts()
+    {
+        var registry = new ServiceRegistry();
+        var first = new RetryReleaseStub { Fail = true };
+        var second = new RetryReleaseStub { Fail = true };
+        registry.RegisterBoundObject("N=1:1", first);
+        registry.RegisterBoundObject("N=1:2", second);
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await registry.UnregisterBoundObjectAsync("N=1:1"));
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await registry.UnregisterBoundObjectAsync("N=1:2"));
+        second.Fail = false;
+        await Assert.ThrowsAsync<AggregateException>(() => registry.RetryPendingBoundReleasesAsync());
+        Assert.Equal(2, first.Calls);
+        Assert.Equal(2, second.Calls);
+        first.Fail = false;
+        await registry.RetryPendingBoundReleasesAsync();
+        Assert.Equal(3, first.Calls);
+        Assert.Equal(2, second.Calls);
+    }
+
+    [Fact]
+    public async Task Async_release_keeps_newer_references_and_awaits_cleanup_once()
+    {
+        var registry = new ServiceRegistry();
+        var service = new AsyncReleaseStub();
+        var session = new ClientSession();
+        registry.RegisterBoundObject("N=1:1", service, new PyLong(100));
+        session.RememberBoundObject("N=1:1");
+        Assert.False(await registry.UnregisterBoundObjectAsync("N=1:1", session, 99));
+        Assert.Same(service, registry.Lookup("N=1:1"));
+        Assert.Contains("N=1:1", session.BoundOids);
+        Assert.Equal(0, service.Calls);
+        var release = registry.UnregisterBoundObjectAsync("N=1:1", session, 100).AsTask();
+        Assert.False(release.IsCompleted);
+        Assert.Null(registry.Lookup("N=1:1"));
+        Assert.Empty(session.BoundOids);
+        Assert.False(await registry.UnregisterBoundObjectAsync("N=1:1", session, 100));
+        Assert.Equal(1, service.Calls);
+        service.Completion.SetResult();
+        Assert.True(await release);
+    }
+
+    [Fact]
+    public async Task Release_notification_is_confined_to_owner_and_awaits_current_reference_cleanup()
+    {
+        const string oid = "N=1:1";
+        var registry = new ServiceRegistry();
+        var service = new AsyncReleaseStub();
+        var owner = new ClientSession();
+        var foreign = new ClientSession();
+        registry.RegisterBoundObject(oid, service, new PyLong(100));
+        owner.RememberBoundObject(oid);
+        var dispatcher = new PacketDispatcher(registry, () => 0);
+        static PyValue Release(long refId) => Py.Tuple(
+            new PyInt(Eve.Macho.MachoMessage.Notification), PyNone.Instance, PyNone.Instance, PyNone.Instance,
+            Py.Tuple(Py.Tuple(new PyStr(oid), new PyStr("ClientHasReleasedTheseObjects"), Py.Tuple(), PyNone.Instance)),
+            Py.Dict(("OID-", Py.Dict((oid, new PyLong(refId))))));
+
+        Assert.True(await dispatcher.DispatchAsync(Release(100), foreign));
+        Assert.Same(service, registry.Lookup(oid));
+        Assert.Contains(oid, owner.BoundOids);
+        Assert.Equal(0, service.Calls);
+        Assert.True(await dispatcher.DispatchAsync(Release(99), owner));
+        Assert.Same(service, registry.Lookup(oid));
+        Assert.Equal(0, service.Calls);
+        var dispatch = dispatcher.DispatchAsync(Release(100), owner);
+        Assert.False(dispatch.IsCompleted);
+        Assert.Null(registry.Lookup(oid));
+        Assert.Empty(owner.BoundOids);
+        Assert.Equal(1, service.Calls);
+        service.Completion.SetResult();
+        Assert.True(await dispatch);
+        Assert.True(await dispatcher.DispatchAsync(Release(100), owner));
+        Assert.Equal(1, service.Calls);
+    }
+
     [Fact]
     public void Services_are_found_by_name_and_alias()
     {

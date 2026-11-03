@@ -73,6 +73,83 @@ public class SimClientTests
     }
 
     [Fact]
+    public async Task Cutoff_replies_reject_mismatched_identity_even_when_request_id_matches()
+    {
+        var (sim, client) = await ConnectedAsync(message => message switch
+        {
+            SimRegisterTournamentCutoff request => [new SimRegisterTournamentCutoffReply(request.RequestId, request.Scene, request.MatchId,
+                request.RequestId == 191 ? request.Generation + 1 : request.Generation, request.Start, request.Deadline, SimTournamentCutoffStatus.Pending, "")],
+            SimReadTournamentCutoff request => [new SimReadTournamentCutoffReply(request.RequestId,
+                request.RequestId == 192 ? SimSceneKey.SolarSystem(30_000_143) : request.Scene, request.MatchId, request.Generation, request.Start, request.Deadline,
+                SimTournamentCutoffStatus.Unavailable, [], "")],
+            SimReleaseTournamentCutoff request => [new SimReleaseTournamentCutoffReply(request.RequestId, request.Scene, request.MatchId, request.Generation,
+                request.Start, request.RequestId == 193 ? request.Deadline + 1 : request.Deadline, SimTournamentCutoffStatus.Pending, "")],
+            _ => [],
+        });
+        await using var _ = sim; await using var __ = client;
+        var scene = SimSceneKey.SolarSystem(30_000_142);
+        await Assert.ThrowsAsync<SimLinkException>(() => Within(client.RegisterTournamentCutoffAsync(new SimRegisterTournamentCutoff(191,scene,2,3,1000,2000,[new(101,201)]))));
+        await Assert.ThrowsAsync<SimLinkException>(() => Within(client.ReadTournamentCutoffAsync(new SimReadTournamentCutoff(192,scene,2,3,1000,2000))));
+        await Assert.ThrowsAsync<SimLinkException>(() => Within(client.ReleaseTournamentCutoffAsync(new SimReleaseTournamentCutoff(193,scene,2,3,1000,2000))));
+        Assert.Equal(SimTournamentCutoffStatus.Unavailable, (await Within(client.ReadTournamentCutoffAsync(new SimReadTournamentCutoff(194,scene,2,3,1000,2000)))).Status);
+    }
+
+    [Fact]
+    public async Task Metrics_replies_reject_forged_identity_or_roster()
+    {
+        var (sim,client)=await ConnectedAsync(message => message switch
+        {
+            SimRegisterTournamentMetrics r => [new SimRegisterTournamentMetricsReply(r.RequestId,r.Scene,r.MatchId,r.Generation+1,r.Start,r.Roster,SimTournamentMetricsStatus.Success,"")],
+            SimReadTournamentMetrics r => [new SimReadTournamentMetricsReply(r.RequestId,r.Scene,r.MatchId,r.Generation,r.Start,[new(101,999,0)],SimTournamentMetricsStatus.Unavailable,"",null)],
+            SimReadTournamentMetricsV2 r => [new SimReadTournamentMetricsV2Reply(r.RequestId,r.Scene,r.MatchId,r.Generation,r.Start,[new(101,999,0)],SimTournamentMetricsStatus.Unavailable,"",null)],
+            SimReleaseTournamentMetrics r => [new SimReleaseTournamentMetricsReply(r.RequestId,SimSceneKey.SolarSystem(30000143),r.MatchId,r.Generation,r.Start,r.Roster,SimTournamentMetricsStatus.Success,"")],
+            _ => [],
+        });
+        await using var _=sim; await using var __=client;
+        var scene=SimSceneKey.SolarSystem(30000142); SimTournamentMetricsPilot[] roster=[new(101,201,0)];
+        await Assert.ThrowsAsync<SimLinkException>(()=>Within(client.RegisterTournamentMetricsAsync(new(201,scene,3,4,1000,roster))));
+        await Assert.ThrowsAsync<SimLinkException>(()=>Within(client.ReadTournamentMetricsAsync(new(202,scene,3,4,1000,roster))));
+        await Assert.ThrowsAsync<SimLinkException>(()=>Within(client.ReadTournamentMetricsV2Async(new(204,scene,3,4,1000,roster))));
+        await Assert.ThrowsAsync<SimLinkException>(()=>Within(client.ReleaseTournamentMetricsAsync(new(203,scene,3,4,1000,roster))));
+    }
+
+    [Fact]
+    public async Task Metrics_v2_client_preserves_known_zero_fighter_members()
+    {
+        var (sim, client) = await ConnectedAsync(message => message switch
+        {
+            SimReadTournamentMetricsV2 r => [new SimReadTournamentMetricsV2Reply(r.RequestId,r.Scene,r.MatchId,r.Generation,r.Start,r.Roster,SimTournamentMetricsStatus.Success,"",
+                new SimTournamentMetricsSample(r.Start,null,[new SimTournamentMetricsPilotSample(r.Roster[0],[],[],[new(401,801,r.Roster[0].ShipId,1,SimTournamentCompanionKind.Fighter,0)],SimTournamentMetricsEhp.Unknown,null)]))],
+            _ => [],
+        });
+        await using var _ = sim; await using var __ = client;
+        var scene = SimSceneKey.SolarSystem(30000142); SimTournamentMetricsPilot[] roster = [new(101,201,0)];
+        var reply = await Within(client.ReadTournamentMetricsV2Async(new(205,scene,3,4,1000,roster)));
+        Assert.Equal(0, reply.Sample!.Pilots[0].Companions[0].Members);
+    }
+
+    [Fact]
+    public async Task Scene_body_reply_rejects_forged_scene_and_item_even_when_request_id_matches()
+    {
+        var (sim, client) = await ConnectedAsync(message => message switch
+        {
+            SimGetSceneBody request => [new SimGetSceneBodyReply(request.RequestId,
+                request.RequestId == 91 ? SimSceneKey.SolarSystem(30_000_143) : request.Scene,
+                request.RequestId == 92 ? request.ItemId + 1 : request.ItemId,
+                10645, 310, 2, [1, 2, 3], null)],
+            _ => [],
+        });
+        await using var _ = sim;
+        await using var __ = client;
+        var scene = SimSceneKey.SolarSystem(30_000_142);
+        await Assert.ThrowsAsync<SimLinkException>(() => Within(client.GetSceneBodyAsync(new SimGetSceneBody(91, scene, 123))));
+        await Assert.ThrowsAsync<SimLinkException>(() => Within(client.GetSceneBodyAsync(new SimGetSceneBody(92, scene, 123))));
+        var valid = await Within(client.GetSceneBodyAsync(new SimGetSceneBody(93, scene, 123)));
+        Assert.Equal(123, valid.ItemId);
+        Assert.Equal(scene, valid.Scene);
+    }
+
+    [Fact]
     public async Task Abyssal_scene_move_and_rebind_requests_wait_for_their_correlated_replies()
     {
         var (sim, client) = await ConnectedAsync(message => message switch

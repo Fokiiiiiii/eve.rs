@@ -494,7 +494,7 @@ public sealed partial class SpaceSessions
                 async (result, transitionToken) =>
                 {
                     var lost = result!;
-                    ReleaseBoundObjects(session);
+                    await CompleteBoundObjectReleasesAsync(DetachBoundObjects(session), CancellationToken.None);
                     if (simulationFailed)
                     {
                         if (await _ships.LoadAsync(pilot.CharacterId, transitionToken) is not { } recovered
@@ -579,7 +579,8 @@ public sealed partial class SpaceSessions
         var concord = _concordDestroyed.TryRemove(pilot.ShipId, out _)
             || (destroyed.KillerShipId != 0
                 && _npcShips.TryGetValue(destroyed.KillerShipId, out var npc)
-                && npc.Profile?.Id.Contains("concord_response", StringComparison.OrdinalIgnoreCase) == true);
+                  && (npc.Profile?.EntityType.Equals("concord", StringComparison.OrdinalIgnoreCase) == true
+                      || npc.Profile?.Id.Contains("concord_response", StringComparison.OrdinalIgnoreCase) == true));
         var cause = _deaths.ContainsKey(pilot.ShipId) ? ShipLossCause.SelfDestruct
             : concord ? ShipLossCause.Concord
             : killer is not null ? ShipLossCause.Player
@@ -681,12 +682,12 @@ public sealed partial class SpaceSessions
                 }
                 return Task.CompletedTask;
             },
-            (result, _) =>
+            async (result, _) =>
             {
                 var death = result!;
-                ReleaseBoundObjects(session);
+                await CompleteBoundObjectReleasesAsync(DetachBoundObjects(session), CancellationToken.None);
                 CharacterSessionRelocation.Docked(session, station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId, death.Ship.Id);
-                return Task.FromResult(true);
+                return true;
             },
             (result, _) =>
             {

@@ -164,6 +164,65 @@ public class SavedFittingStoreTests : IAsyncLifetime
         Assert.Equal((FittingOwnerScope.Character, Character), await restarted.OwnerOfAsync(id));
     }
 
+    [PgFact]
+    public async Task Ship_condition_revision_rejects_stale_writes_including_reset_and_rollback()
+    {
+        var (source, schema) = await FreshAsync();
+        var store = new PgModuleStateStore(source, schema);
+        const long ship = 9001;
+        var damaged = new ShipCondition(0.2, 0.4, 0.6, 0.1, false);
+        Assert.Equal(0, await store.ShipConditionRevisionAsync(ship));
+        await store.SetShipConditionAsync(ship, damaged);
+        var revision = await store.ShipConditionRevisionAsync(ship);
+        Assert.Equal(1, revision);
+        await store.SetShipConditionAsync(ship, ShipCondition.Full);
+        Assert.Equal(2, await store.ShipConditionRevisionAsync(ship));
+        await using var connection = await source.OpenConnectionAsync();
+        await using (var tx = await connection.BeginTransactionAsync())
+        {
+            Assert.False(await store.TrySetShipConditionAsync(connection, tx, ship, revision, damaged));
+            await tx.CommitAsync();
+        }
+        Assert.Equal(ShipCondition.Full, await store.ShipConditionAsync(ship));
+        await using (var tx = await connection.BeginTransactionAsync())
+        {
+            Assert.True(await store.TrySetShipConditionAsync(connection, tx, ship, 2, damaged));
+            await tx.RollbackAsync();
+        }
+        Assert.Equal(2, await store.ShipConditionRevisionAsync(ship));
+        Assert.Equal(ShipCondition.Full, await store.ShipConditionAsync(ship));
+        await using (var tx = await connection.BeginTransactionAsync())
+        {
+            Assert.True(await store.TrySetShipConditionAsync(connection, tx, ship, 2, damaged));
+            await tx.CommitAsync();
+        }
+        Assert.Equal(3, await store.ShipConditionRevisionAsync(ship));
+        Assert.Equal(damaged, await store.ShipConditionAsync(ship));
+    }
+
+    [PgFact]
+    public async Task Ship_condition_revision_allows_only_one_of_two_concurrent_writers()
+    {
+        var (source, schema) = await FreshAsync();
+        var store = new PgModuleStateStore(source, schema);
+        const long ship = 9002;
+        var original = new ShipCondition(0.1, 0.8, 0.7, 0.2, true);
+        await store.SetShipConditionAsync(ship, original);
+        var revision = await store.ShipConditionRevisionAsync(ship);
+        await using var first = await source.OpenConnectionAsync();
+        await using var second = await source.OpenConnectionAsync();
+        await using var firstTx = await first.BeginTransactionAsync();
+        await using var secondTx = await second.BeginTransactionAsync();
+        var winner = original with { ShieldCharge = 0.5 };
+        Assert.True(await store.TrySetShipConditionAsync(first, firstTx, ship, revision, winner));
+        var loser = store.TrySetShipConditionAsync(second, secondTx, ship, revision, original);
+        await firstTx.CommitAsync();
+        Assert.False(await loser);
+        await secondTx.CommitAsync();
+        Assert.Equal(revision + 1, await store.ShipConditionRevisionAsync(ship));
+        Assert.Equal(winner, await store.ShipConditionAsync(ship));
+    }
+
     /// <summary>A draft compared field by field: its item list is an <see cref="IReadOnlyList{T}"/>, which record equality does not compare by value.</summary>
     private static void AssertSameDraft(FittingDraft expected, FittingDraft actual)
     {

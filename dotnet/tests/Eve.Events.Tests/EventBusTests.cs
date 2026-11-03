@@ -7,7 +7,49 @@ public class EventBusTests
 {
     private sealed record Killed(long Ship, int Type);
 
+    private sealed class DelayedFailureException : Exception
+    {
+        private readonly TaskCompletionSource<bool> _messageRead;
+        private readonly ManualResetEventSlim _release;
+
+        public DelayedFailureException(TaskCompletionSource<bool> messageRead, ManualResetEventSlim release)
+        {
+            _messageRead = messageRead;
+            _release = release;
+        }
+
+        public override string Message
+        {
+            get
+            {
+                _messageRead.TrySetResult(true);
+                _release.Wait();
+                return "delayed failure";
+            }
+        }
+    }
+
     private static DomainEventHandler Collect(List<string> into) => (ctx, _) => { into.Add(ctx.Event.Topic + ":" + ctx.Event.Key); return Task.CompletedTask; };
+
+    [PgFact]
+    public async Task Start_initializes_now_cursor_before_returning_and_delivers_first_live_event()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Publish("ready.test", key: "history");
+        var seen = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        rig.Bus.Subscribe("ready", ["ready.test"], (context, _) =>
+        {
+            seen.TrySetResult(context.Event.Key ?? "");
+            return Task.CompletedTask;
+        });
+        await rig.Bus.StartAsync();
+        try
+        {
+            await rig.Publish("ready.test", key: "live");
+            Assert.Equal("live", await seen.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+        finally { await rig.Bus.StopAsync(); }
+    }
 
     [Fact]
     public void Transaction_completion_registration_is_available_to_moon_subscribers()
@@ -200,6 +242,77 @@ public class EventBusTests
         Assert.Equal(["wrote"], await rig.Effects());           // once
         Assert.Equal(0, (await rig.Bus.PumpAsync()).Delivered);
         Assert.Equal(0, (await rig.Bus.StatusAsync()).Single().Failures);
+    }
+
+    [PgFact]
+    public async Task A_stale_failure_cannot_dead_letter_or_rewind_after_another_pump_commits()
+    {
+        await using var rig = await Rig.Create(new EventBusOptions { MaxAttempts = 1 });
+        var (_, retryBus) = rig.Make();
+        var messageRead = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseFailure = new ManualResetEventSlim();
+        var laterAttempt = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseLater = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstAttempt = true;
+
+        rig.Bus.Subscribe("s", ["*"], async (ctx, token) =>
+        {
+            if (ctx.Event.Key == "first" && firstAttempt)
+            {
+                firstAttempt = false;
+                await Sql.ExecuteAsync(ctx.Connection, ctx.Transaction, $"INSERT INTO {rig.EventsSchema}.effects VALUES ($1)", token, ctx.Event.Key);
+                throw new DelayedFailureException(messageRead, releaseFailure);
+            }
+            if (ctx.Event.Key == "later")
+            {
+                laterAttempt.TrySetResult(true);
+                await releaseLater.Task.WaitAsync(token);
+            }
+            await Sql.ExecuteAsync(ctx.Connection, ctx.Transaction, $"INSERT INTO {rig.EventsSchema}.effects VALUES ($1)", token, ctx.Event.Key);
+        });
+        retryBus.Subscribe("s", ["*"], async (ctx, token) =>
+            await Sql.ExecuteAsync(ctx.Connection, ctx.Transaction, $"INSERT INTO {rig.EventsSchema}.effects VALUES ($1)", token, ctx.Event.Key));
+
+        await rig.Bus.PumpAsync();
+        var firstId = await rig.Bus.PublishAsync("test", null, "first");
+        var laterId = await rig.Bus.PublishAsync("test", null, "later");
+        Assert.True(firstId < laterId);
+
+        Task<EventBus.PumpResult>? stalePump = null;
+        try
+        {
+            stalePump = Task.Run(() => rig.Bus.PumpAsync());
+            await messageRead.Task.WaitAsync(TimeSpan.FromSeconds(10)); // handler transaction rolled back; failure recording is paused before its UPDATE
+
+            Assert.Empty(await rig.Effects());
+            Assert.Equal(2, (await retryBus.PumpAsync()).Delivered);
+            Assert.Equal(["first", "later"], await rig.Effects());
+            var committed = Assert.Single(await rig.Bus.StatusAsync());
+            Assert.Equal(laterId, committed.CursorId);
+            Assert.Empty(await rig.Bus.DeadLettersAsync("s"));
+
+            releaseFailure.Set();
+            if (await Task.WhenAny(laterAttempt.Task, stalePump) == laterAttempt.Task)
+            {
+                var duringStalePump = Assert.Single(await rig.Bus.StatusAsync());
+                Assert.True(duringStalePump.CursorId >= committed.CursorId);
+                releaseLater.TrySetResult(true);
+            }
+
+            await stalePump.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Empty(await rig.Bus.DeadLettersAsync("s"));
+            Assert.Equal(committed.CursorId, Assert.Single(await rig.Bus.StatusAsync()).CursorId);
+            Assert.Equal(["first", "later"], await rig.Effects());
+        }
+        finally
+        {
+            releaseFailure.Set();
+            releaseLater.TrySetResult(true);
+            if (stalePump is not null)
+            {
+                await stalePump.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+        }
     }
 
     [PgFact]

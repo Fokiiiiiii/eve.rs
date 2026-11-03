@@ -447,7 +447,11 @@ impl Sim {
         };
         let (already_absent, outs, should_remove_scene) = {
             let (already_absent, outs) = scene.remove_abyssal_trace(item_id, now);
-            (already_absent, outs, scene.is_empty())
+            (
+                already_absent,
+                outs,
+                scene.is_empty() && !scene.tournament_has_tracking() && !scene.tournament_has_metrics(),
+            )
         };
         let recipient_count = i32::try_from(outs.len()).unwrap_or(i32::MAX);
         let mut messages = Self::messages(outs);
@@ -524,6 +528,179 @@ impl Sim {
         messages
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn ensure_tournament_beacon(
+        &mut self,
+        request_id: u64,
+        scene: SceneKey,
+        item_id: i64,
+        type_id: i32,
+        group_id: i32,
+        category_id: i32,
+        owner_id: i64,
+        graphic_id: i32,
+        name: String,
+        position: [f64; 3],
+        radius: f64,
+        now: i64,
+    ) -> Vec<Message> {
+        let reply = |outcome| Message::EnsureTournamentBeaconReply { request_id, outcome };
+        if request_id == 0
+            || !scene.is_valid()
+            || scene.instance_id != 0
+            || item_id <= 0
+            || type_id <= 0
+            || group_id <= 0
+            || category_id <= 0
+            || owner_id <= 0
+            || graphic_id <= 0
+            || name.is_empty()
+            || name.len() > u16::MAX as usize
+            || !position.iter().all(|v| v.is_finite())
+            || !radius.is_finite()
+            || radius <= 0.0
+            || !(radius as f32).is_finite()
+            || radius as f32 == 0.0
+        {
+            return vec![reply(Err("BAD_TOURNAMENT_BEACON".to_string()))];
+        }
+        let Some(scene) = self.scenes.get_mut(&scene) else {
+            return vec![reply(Err("SCENE_NOT_LOADED".to_string()))];
+        };
+        match scene.ensure_tournament_beacon(
+            item_id,
+            type_id,
+            group_id,
+            category_id,
+            owner_id,
+            graphic_id,
+            name,
+            position,
+            radius,
+            now,
+        ) {
+            Ok(out) => {
+                let mut messages = Self::messages(out);
+                messages.push(reply(Ok(())));
+                messages
+            }
+            Err(error) => vec![reply(Err(error))],
+        }
+    }
+
+    pub(super) fn remove_tournament_beacon(
+        &mut self,
+        request_id: u64,
+        scene: SceneKey,
+        item_id: i64,
+        now: i64,
+    ) -> Vec<Message> {
+        let reply = |outcome| Message::RemoveTournamentBeaconReply { request_id, outcome };
+        if request_id == 0 || !scene.is_valid() || scene.instance_id != 0 || item_id <= 0 {
+            return vec![reply(Err("BAD_TOURNAMENT_BEACON".to_string()))];
+        }
+        let Some(scene) = self.scenes.get_mut(&scene) else {
+            return vec![reply(Err("SCENE_NOT_LOADED".to_string()))];
+        };
+        match scene.remove_tournament_beacon(item_id, now) {
+            Ok(out) => {
+                let mut messages = Self::messages(out);
+                messages.push(reply(Ok(())));
+                messages
+            }
+            Err(error) => vec![reply(Err(error))],
+        }
+    }
+
+    pub(super) fn tournament_wreck(
+        &mut self,
+        request_id: u64,
+        scene_key: SceneKey,
+        item_id: i64,
+        guard: Option<(i64, i64, i32, [f64; 3], f64)>,
+        now: i64,
+    ) -> Vec<Message> {
+        let remove = guard.is_some();
+        let mut updates = Vec::new();
+        let outcome =
+            if request_id == 0 || !scene_key.is_valid() || scene_key.instance_id != 0 || item_id <= 0 {
+                Err("BAD_TOURNAMENT_WRECK_REQUEST".to_string())
+            } else if let Some(scene) = self.scenes.get_mut(&scene_key) {
+                if let (Some(wreck), Some((owner_id, launcher_id, type_id, center, radius))) =
+                    (scene.wreck(item_id), guard)
+                {
+                    let x = (wreck.position.x - center[0]) / radius;
+                    let y = (wreck.position.y - center[1]) / radius;
+                    let z = (wreck.position.z - center[2]) / radius;
+                    if owner_id <= 0
+                        || launcher_id <= 0
+                        || type_id <= 0
+                        || !radius.is_finite()
+                        || radius <= 0.0
+                        || center.iter().any(|v| !v.is_finite())
+                        || wreck.group_id != crate::wreck::WRECK_GROUP
+                        || wreck.owner_id != owner_id
+                        || wreck.launcher_id != launcher_id
+                        || wreck.kind.type_id != type_id
+                        || !x.is_finite()
+                        || !y.is_finite()
+                        || !z.is_finite()
+                        || x * x + y * y + z * z > 1.0
+                    {
+                        return vec![Message::RemoveTournamentWreckReply {
+                            request_id,
+                            scene: scene_key,
+                            item_id,
+                            outcome: Err("TOURNAMENT_WRECK_GUARD_MISMATCH".to_string()),
+                        }];
+                    }
+                }
+                let present = scene.wreck(item_id).is_some();
+                if remove && present {
+                    updates = Self::messages(scene.remove_wreck(item_id, 0, now));
+                }
+                Ok(present)
+            } else {
+                Err("SCENE_NOT_LOADED".to_string())
+            };
+        updates.push(if remove {
+            Message::RemoveTournamentWreckReply { request_id, scene: scene_key, item_id, outcome }
+        } else {
+            Message::QueryTournamentWreckReply { request_id, scene: scene_key, item_id, outcome }
+        });
+        updates
+    }
+
+    pub(super) fn get_scene_body(&self, request_id: u64, scene_key: SceneKey, item_id: i64) -> Vec<Message> {
+        let outcome =
+            if request_id == 0 || !scene_key.is_valid() || scene_key.instance_id != 0 || item_id <= 0 {
+                Err("BAD_SCENE_BODY_REQUEST".to_string())
+            } else if let Some(scene) = self.scenes.get(&scene_key) {
+                match scene.scene_body(item_id) {
+                    Some(body)
+                        if body.type_id > 0
+                            && body.group_id > 0
+                            && body.category_id > 0
+                            && [body.position.x, body.position.y, body.position.z]
+                                .iter()
+                                .all(|v| v.is_finite()) =>
+                    {
+                        Ok((
+                            body.type_id,
+                            body.group_id,
+                            body.category_id,
+                            [body.position.x, body.position.y, body.position.z],
+                        ))
+                    }
+                    Some(_) => Err("SCENE_BODY_INVALID".to_string()),
+                    None => Err("SCENE_BODY_NOT_FOUND".to_string()),
+                }
+            } else {
+                Err("SCENE_NOT_LOADED".to_string())
+            };
+        vec![Message::GetSceneBodyReply { request_id, scene: scene_key, item_id, outcome }]
+    }
+
     pub(super) fn get_abyssal_participant_pose(
         &mut self,
         request_id: u64,
@@ -571,6 +748,117 @@ impl Sim {
             outcome,
             deployment,
         }]
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn move_public_participant(
+        &mut self,
+        request_id: u64,
+        operation_id: String,
+        session_id: SessionId,
+        ship_id: i64,
+        source_key: SceneKey,
+        destination_key: SceneKey,
+        use_anchor: bool,
+        position: [f64; 3],
+        direction: [f64; 3],
+        now: i64,
+    ) -> Vec<Message> {
+        let reply = |outcome| Message::MovePublicParticipantReply { request_id, outcome };
+        let fingerprint = PublicMoveFingerprint {
+            session_id,
+            ship_id,
+            source: source_key,
+            destination: destination_key,
+            use_anchor,
+            position,
+            direction,
+        };
+        if request_id == 0
+            || operation_id.is_empty()
+            || session_id == 0
+            || ship_id <= 0
+            || !source_key.is_valid()
+            || !destination_key.is_valid()
+            || source_key.instance_id != 0
+            || destination_key.instance_id != 0
+            || position.iter().chain(&direction).any(|v| !v.is_finite())
+            || (!use_anchor && direction.iter().all(|v| *v == 0.0))
+        {
+            return vec![reply(Err("BAD_PUBLIC_PARTICIPANT_MOVE".to_string()))];
+        }
+        if self.public_enters.contains_key(&operation_id) {
+            return vec![reply(Err("PUBLIC_MOVE_OPERATION_CONFLICT".to_string()))];
+        }
+        if let Some(previous) = self.public_moves.get(&operation_id) {
+            if previous != &fingerprint {
+                return vec![reply(Err("PUBLIC_MOVE_OPERATION_CONFLICT".to_string()))];
+            }
+            if self.sessions.get(&session_id) == Some(&destination_key)
+                && self.scenes.get(&destination_key).and_then(|scene| scene.session_of(ship_id))
+                    == Some(session_id)
+            {
+                return vec![reply(Ok(()))];
+            }
+            return vec![reply(Err("PUBLIC_MOVE_REPLAY_RESIDENT_MISMATCH".to_string()))];
+        }
+        if is_npc_session(session_id)
+            || self.sessions.get(&session_id) != Some(&source_key)
+            || self.scenes.get(&source_key).and_then(|scene| scene.session_of(ship_id)) != Some(session_id)
+        {
+            return vec![reply(Err("PUBLIC_MOVE_RESIDENT_NOT_FOUND".to_string()))];
+        }
+        let radius = self
+            .scenes
+            .get(&source_key)
+            .and_then(|scene| scene.pilots.get(&session_id))
+            .expect("resident checked")
+            .ship
+            .spec
+            .radius;
+        let anchor = use_anchor;
+        let moved = if source_key == destination_key {
+            let scene = self.scenes.get_mut(&source_key).expect("resident scene checked");
+            let (position, direction) =
+                if anchor { scene.public_anchor_pose(radius) } else { (position, direction) };
+            scene.move_public_participant_within(session_id, ship_id, position, direction, now)
+        } else {
+            let mut source = self.scenes.remove(&source_key).expect("resident scene checked");
+            let destination = if let Some(destination) = self.scenes.remove(&destination_key) {
+                Ok(destination)
+            } else {
+                self.universe.system(destination_key.location_id).map(|system| self.universe.scene_of(system))
+            };
+            let result = match destination {
+                Ok(mut destination) => {
+                    let (position, direction) =
+                        if anchor { destination.public_anchor_pose(radius) } else { (position, direction) };
+                    let result = source.move_public_participant_to(
+                        &mut destination,
+                        session_id,
+                        ship_id,
+                        position,
+                        direction,
+                        now,
+                    );
+                    self.scenes.insert(destination_key, destination);
+                    result
+                }
+                Err(reason) => Err(reason),
+            };
+            self.scenes.insert(source_key, source);
+            result
+        };
+        match moved {
+            Ok(told) => {
+                self.sessions.insert(session_id, destination_key);
+                self.public_moves.insert(operation_id, fingerprint);
+                let mut messages = vec![reply(Ok(()))];
+                messages.extend(Self::messages(told));
+                messages
+            }
+            Err(reason) => vec![reply(Err(reason))],
+        }
     }
 
     pub(super) fn move_abyssal_participant(
@@ -717,6 +1005,52 @@ impl Sim {
         vec![reply(Ok(()))]
     }
 
+    pub(super) fn enter_public_participant(
+        &mut self,
+        request_id: u64,
+        operation_id: String,
+        enter: Enter,
+        now: i64,
+    ) -> Vec<Message> {
+        let reply = |outcome| Message::EnterPublicParticipantReply { request_id, outcome };
+        if request_id == 0
+            || !crate::link::valid_public_move_id(&operation_id)
+            || enter.session_id == 0
+            || enter.ship.ship_id <= 0
+            || !enter.scene.is_valid()
+            || enter.scene.instance_id != 0
+            || !matches!(enter.how, How::Anchor | How::InSpace)
+        {
+            return vec![reply(Err("BAD_PUBLIC_ENTRY".to_string()))];
+        }
+        if let Some(previous) = self.public_enters.get(&operation_id) {
+            if previous != &enter {
+                return vec![reply(Err("PUBLIC_ENTRY_OPERATION_CONFLICT".to_string()))];
+            }
+            if self.sessions.get(&enter.session_id) == Some(&enter.scene)
+                && self.scenes.get(&enter.scene).and_then(|scene| scene.session_of(enter.ship.ship_id))
+                    == Some(enter.session_id)
+            {
+                return vec![reply(Ok(()))];
+            }
+            return vec![reply(Err("PUBLIC_ENTRY_REPLAY_RESIDENT_MISMATCH".to_string()))];
+        }
+        if self.public_moves.contains_key(&operation_id) {
+            return vec![reply(Err("PUBLIC_ENTRY_OPERATION_CONFLICT".to_string()))];
+        }
+        let mut result = self.enter(enter.clone(), now);
+        let outcome = match result.remove(0) {
+            Message::EnterReply { outcome, .. } => outcome,
+            _ => unreachable!(),
+        };
+        if outcome.is_ok() {
+            self.public_enters.insert(operation_id, enter);
+        }
+        let mut messages = vec![reply(outcome)];
+        messages.extend(result);
+        messages
+    }
+
     pub(super) fn enter(&mut self, enter: Enter, now: i64) -> Vec<Message> {
         let Enter { session_id, scene: scene_key, how, station_id, ship, position, direction } = enter;
         let reply = |outcome| vec![Message::EnterReply { session_id, outcome }];
@@ -781,6 +1115,8 @@ impl Sim {
                 let mut messages = reply(Err(format!("UNKNOWN_STATION {station}")));
                 if scene_key.instance_id == 0
                     && scene.is_empty()
+                    && !scene.tournament_has_tracking()
+                    && !scene.tournament_has_metrics()
                     && let Some(mut scene) = self.scenes.remove(&scene_key)
                 {
                     messages.extend(Self::messages(scene.take_sim_damageable_entity_removals()));
@@ -802,7 +1138,9 @@ impl Sim {
         });
         if let Some(scene_key) = system
             && scene_key.instance_id == 0
-            && self.scenes.get(&scene_key).is_some_and(Scene::is_empty)
+            && self.scenes.get(&scene_key).is_some_and(|scene| {
+                scene.is_empty() && !scene.tournament_has_tracking() && !scene.tournament_has_metrics()
+            })
             && let Some(mut scene) = self.scenes.remove(&scene_key)
         {
             return scene.take_sim_damageable_entity_removals();
@@ -811,6 +1149,16 @@ impl Sim {
     }
 
     /// A player whose ship was destroyed is not in space any more; its scene keeps its ballpark until the host gives it a capsule (`Respawn`) or it leaves.
+    pub(super) fn forget_docked(&mut self, outs: &[Out]) -> Vec<Out> {
+        let mut teardown = Vec::new();
+        for out in outs {
+            if let Out::Docked { session, .. } = out {
+                teardown.extend(self.forget(*session));
+            }
+        }
+        teardown
+    }
+
     pub(super) fn forget_the_destroyed(&mut self, outs: &[Out]) {
         for out in outs {
             if let Out::Destroyed { session, .. } = out
@@ -1017,36 +1365,219 @@ impl Sim {
         }
     }
 
-    pub fn poll(&mut self, now: i64) -> Vec<Message> {
-        let mut outs = Vec::new();
-        for scene in self.scenes.values_mut() {
-            outs.extend(scene.poll(now));
-            outs.extend(scene.advance_abyssal_environment(now));
-            outs.extend(scene.advance_abyssal_boundary(now));
-        }
-        let mut teardown = Vec::new();
-        for out in &outs {
-            if let Out::Docked { session, .. } = out {
-                teardown.extend(self.forget(*session));
+    /// Complete each registered cutoff before processing a later frame or poll.
+    pub(super) fn tournament_barriers(&mut self, now: i64) -> Vec<Message> {
+        let mut messages = Vec::new();
+        while self.cutoff_fence.is_none() {
+            let Some(deadline) = self
+                .scenes
+                .values()
+                .filter_map(|scene| scene.tournament_next_deadline())
+                .min()
+                .filter(|deadline| *deadline <= now)
+            else {
+                break;
+            };
+            messages.extend(self.poll_at(deadline));
+            let affected: BTreeSet<_> = self
+                .scenes
+                .iter()
+                .filter_map(|(key, scene)| {
+                    (scene.tournament_next_deadline() == Some(deadline)).then_some(*key)
+                })
+                .collect();
+            // Only a remote-repair-only pending set has a proven ordered
+            // completion fence. Other work remains fail-closed.
+            let has_pending =
+                affected.iter().any(|key| self.scenes[key].tournament_has_pending_host_work(deadline));
+            let supported = affected.iter().all(|key| {
+                !self.scenes[key].tournament_has_pending_host_work(deadline)
+                    || self.scenes[key].tournament_can_fence_remote_only(deadline)
+            });
+            if has_pending && supported {
+                let Some(epoch) = self.next_cutoff_epoch.checked_add(1) else {
+                    for scene in self.scenes.values_mut() {
+                        scene.tournament_freeze_due(deadline);
+                    }
+                    continue;
+                };
+                self.next_cutoff_epoch = epoch;
+                self.cutoff_fence = Some(CutoffFence {
+                    epoch,
+                    deadline,
+                    scenes: affected,
+                    scene_bytes: BTreeMap::new(),
+                    started_wall: now,
+                    deferred: Vec::new(),
+                    deferred_bytes: 0,
+                });
+                break;
+            }
+            for key in affected {
+                if let Some(scene) = self.scenes.get_mut(&key) {
+                    if scene.tournament_has_pending_host_work(deadline) {
+                        scene.tournament_freeze_due(deadline);
+                    } else {
+                        scene.tournament_settle_due(deadline);
+                    }
+                }
             }
         }
+        messages
+    }
+
+    /// Drain work already emitted at the cutoff before allowing later mutations.
+    /// Unsupported work, timeout, and unsafe cross-scene ordering fail closed.
+    pub(super) fn settle_cutoff_fence(
+        &mut self,
+        now: i64,
+        force: bool,
+    ) -> Result<Vec<Message>, ProtocolError> {
+        const TIMEOUT: i64 = 5 * 10_000_000;
+        let Some(fence) = self.cutoff_fence.as_ref() else { return Ok(Vec::new()) };
+        let deadline = fence.deadline;
+        let epoch = fence.epoch;
+        let affected = fence.scenes.clone();
+        let still_tracked = affected.iter().any(|key| {
+            self.scenes.get(key).is_some_and(|scene| scene.tournament_next_deadline() == Some(deadline))
+        });
+        let unsupported = affected.iter().any(|key| {
+            self.scenes.get(key).is_none_or(|scene| {
+                scene.tournament_has_pending_host_work(deadline)
+                    && !scene.tournament_can_fence_remote_only(deadline)
+            })
+        });
+        let expired =
+            force || !still_tracked || unsupported || now.saturating_sub(fence.started_wall) >= TIMEOUT;
+        if !expired
+            && affected.iter().any(|key| {
+                self.scenes.get(key).is_some_and(|scene| scene.tournament_has_pending_host_work(deadline))
+            })
+        {
+            return Ok(Vec::new());
+        }
+        let mut messages = Vec::new();
+        if !expired {
+            let excluded: BTreeSet<_> =
+                self.scenes.keys().filter(|key| !affected.contains(key)).copied().collect();
+            messages.extend(self.poll_at_excluding(deadline, &excluded));
+            if self.cutoff_fence.as_ref().is_none_or(|current| current.epoch != epoch) {
+                return Ok(messages);
+            }
+            if affected.iter().any(|key| {
+                self.scenes.get(key).is_some_and(|scene| scene.tournament_has_pending_host_work(deadline))
+            }) {
+                return Ok(messages);
+            }
+        }
+        if !expired {
+            for key in &affected {
+                if let Some(scene) = self.scenes.get_mut(key) {
+                    scene.tournament_settle_due(deadline);
+                }
+            }
+        } else {
+            for scene in self.scenes.values_mut() {
+                scene.tournament_freeze_due(deadline);
+            }
+        }
+        let fence = self.cutoff_fence.take().expect("active cutoff fence");
+        for (message, received_at, frame_bytes) in fence.deferred {
+            messages.extend(self.handle_with_frame_len(message, received_at, frame_bytes)?);
+        }
+        Ok(messages)
+    }
+
+    pub fn poll(&mut self, now: i64) -> Vec<Message> {
+        let now = self.observe_wall(now, false);
+        let mut messages = match self.settle_cutoff_fence(now, false) {
+            Ok(messages) => messages,
+            Err(error) => {
+                self.deferred_error = Some(error);
+                return Vec::new();
+            }
+        };
+        if let Some(fence) = &self.cutoff_fence {
+            let excluded = fence.scenes.clone();
+            let other_due = self.scenes.iter().any(|(key, scene)| {
+                !excluded.contains(key)
+                    && scene.tournament_next_deadline().is_some_and(|deadline| deadline <= now)
+            });
+            if other_due {
+                match self.settle_cutoff_fence(now, true) {
+                    Ok(told) => messages.extend(told),
+                    Err(error) => {
+                        self.deferred_error = Some(error);
+                        return messages;
+                    }
+                }
+            } else {
+                messages.extend(self.poll_at_excluding(now, &excluded));
+                return messages;
+            }
+        }
+        messages.extend(self.tournament_barriers(now));
+        if self.cutoff_fence.is_none() {
+            messages.extend(self.poll_at(now));
+        }
+        messages
+    }
+
+    pub(super) fn poll_at(&mut self, now: i64) -> Vec<Message> {
+        self.poll_at_excluding(now, &BTreeSet::new())
+    }
+
+    fn poll_at_excluding(&mut self, now: i64, excluded: &BTreeSet<SceneKey>) -> Vec<Message> {
+        let excluded_fence_epoch =
+            self.cutoff_fence.as_ref().filter(|fence| &fence.scenes == excluded).map(|fence| fence.epoch);
+        let mut outs = Vec::new();
+        for (key, scene) in &mut self.scenes {
+            if excluded.contains(key) {
+                continue;
+            }
+            let scene_now = self.scene_clocks.observe(*key, now);
+            outs.extend(scene.poll(scene_now));
+            outs.extend(scene.advance_abyssal_environment(scene_now));
+            outs.extend(scene.advance_abyssal_boundary(scene_now));
+        }
+        let teardown = self.forget_docked(&outs);
         self.forget_the_destroyed(&outs);
         outs.extend(teardown);
         let mut messages: Vec<Message> = Self::messages(outs);
         let mut travellers: Vec<Traveller> = Vec::new();
-        for scene in self.scenes.values_mut() {
-            let (gone, told) = scene.due_jumps(now);
+        for (key, scene) in &mut self.scenes {
+            if excluded.contains(key) {
+                continue;
+            }
+            let scene_now = self.scene_clocks.observe(*key, now);
+            let (gone, told) = scene.due_jumps(scene_now);
             travellers.extend(gone);
             messages.extend(Self::messages(told));
         }
         for traveller in travellers {
+            if self.cutoff_fence.as_ref().is_some_and(|fence| {
+                Some(fence.epoch) == excluded_fence_epoch
+                    && fence.scenes.contains(&SceneKey::solar_system(traveller.to_system))
+            }) {
+                match self.settle_cutoff_fence(now, true) {
+                    Ok(told) => messages.extend(told),
+                    Err(error) => {
+                        self.deferred_error = Some(error);
+                        return messages;
+                    }
+                }
+            }
             messages.extend(self.arrive(traveller, now));
         }
         let empty_systems: Vec<SceneKey> = self
             .scenes
             .iter()
             .filter_map(|(scene_key, scene)| {
-                (scene_key.instance_id == 0 && scene.is_empty()).then_some(*scene_key)
+                (scene_key.instance_id == 0
+                    && scene.is_empty()
+                    && !scene.tournament_has_tracking()
+                    && !scene.tournament_has_metrics())
+                .then_some(*scene_key)
             })
             .collect();
         for scene_key in empty_systems {
@@ -1088,7 +1619,8 @@ impl Sim {
                 messages
             }
             Err(traveller) => {
-                let should_remove = scene.is_empty();
+                let should_remove =
+                    scene.is_empty() && !scene.tournament_has_tracking() && !scene.tournament_has_metrics();
                 let mut removals = if should_remove {
                     self.scenes
                         .remove(&scene_key)

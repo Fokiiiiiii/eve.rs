@@ -5,7 +5,6 @@ using Eve.Marshal;
 
 namespace Eve.Services.Corporations;
 
-/// <summary>The client's standing manager, backed by shared affiliation and standing relations.</summary>
 /// <summary>Read-only projection of war relations into the warsInfoMgr wire contract.</summary>
 [Eve.Services.Service("warsInfoMgr")]
 public sealed partial class WarsInfoMgrService
@@ -95,7 +94,21 @@ public sealed partial class WarsInfoMgrService
     [Eve.Services.Method("GetPublicWarInfo")]
     public async ValueTask<Eve.Marshal.PyValue> GetPublicWarInfo(Eve.Services.ServiceCall call)
     {
-        var warIds = OwnerIds(call.Arg(0)).Where(warId => warId > 0).ToArray();
+        var argument = call.Arg(0);
+        // Scalar callers receive one KeyVal (or None); collection callers receive a list.
+        if (argument is not (Eve.Marshal.PyList or Eve.Marshal.PyTuple or Eve.Marshal.PyObjectEx or Eve.Marshal.PyCPickled))
+        {
+            var scalar = PositiveId(argument);
+            if (scalar is null) return Eve.Marshal.PyNone.Instance;
+            var war = (await WarsAsync(call.Cancellation)).FirstOrDefault(item => item.WarId == scalar.Value);
+            return war is null ? Eve.Marshal.PyNone.Instance : Payload(war);
+        }
+
+        // Lists and tuples retain the caller's order and duplicates; sets and pickles
+        // continue to use the existing owner-ID decoder.
+        var warIds = argument is Eve.Marshal.PyList or Eve.Marshal.PyTuple
+            ? Sequence(argument).Select(PositiveId).Where(id => id.HasValue).Select(id => id!.Value).ToArray()
+            : OwnerIds(argument).Where(id => id > 0).ToArray();
         if (warIds.Length == 0)
         {
             return new Eve.Marshal.PyList([]);

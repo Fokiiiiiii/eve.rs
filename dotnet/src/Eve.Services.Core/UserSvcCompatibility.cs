@@ -114,7 +114,7 @@ public sealed partial class RedeemService
         call.Cancellation.ThrowIfCancellationRequested();
         var itemId = call.Arg(0) switch { PyInt i => i.Value, PyLong l => l.Value, _ => 0L };
         var activated = ActivateReSculpt is not null && itemId > 0
-            && await ActivateReSculpt(AuthenticatedUserId(call), itemId, call.Cancellation);
+            && await ActivateReSculpt(AuthenticatedUserId(call), call, itemId, call.Cancellation);
         return await OverrideUserCallAsync(call, activated ? PyBool.True : PyBool.False);
     }
 

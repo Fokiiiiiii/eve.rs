@@ -565,6 +565,22 @@ public sealed partial class PgCharacterStore
         return !reader.IsDBNull(1) || !reader.IsDBNull(2) ? 0 : 2;
     }
 
+    /// <summary>Resolves and locks the current paperdoll state in the caller's transaction.</summary>
+    public async Task<int> LockResolvedPaperdollStateAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long id, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"SELECT paperdoll_state, doll_info, portrait_info FROM {_schema}.characters WHERE id = $1 FOR UPDATE",
+            connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = id });
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+            return 2;
+        if (!reader.IsDBNull(0))
+            return reader.GetInt16(0);
+        return !reader.IsDBNull(1) || !reader.IsDBNull(2) ? 0 : 2;
+    }
+
     /// <summary>Sets a persisted paperdoll recustomization state (1, 3, or forced recustomization 4) in the caller's transaction.</summary>
     public async Task SetPaperdollStateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long id, short state, CancellationToken cancellationToken = default)
     {

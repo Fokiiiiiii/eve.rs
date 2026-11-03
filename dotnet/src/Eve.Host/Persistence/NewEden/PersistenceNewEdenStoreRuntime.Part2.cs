@@ -513,6 +513,6 @@ public sealed partial class PersistenceNewEdenStoreRuntime
                     result.Add(new TokenPair(tokenId, 0));
             }
         }
-        return [.. result];
+        return [.. result.DistinctBy(pair => pair.TokenId)];
     }
 }

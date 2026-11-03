@@ -1,4 +1,5 @@
 using Eve.Identity;
+using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Core;
@@ -13,8 +14,20 @@ public class SubscriptionTransitionsTests
     private sealed class Packets : IPacketSink
     {
         public List<string> Sent { get; } = [];
+        public List<string> Notifications { get; } = [];
 
-        public void Send(PyValue packet) => Sent.Add(Convert.ToHexStringLower(MarshalCodec.Encode(packet)));
+        public void Send(PyValue packet)
+        {
+            Sent.Add(Convert.ToHexStringLower(MarshalCodec.Encode(packet)));
+            if (packet is not PyObject outer)
+                return;
+            var state = ((PyTuple)outer.Args).Items;
+            if (state[0] is not PyInt { Value: MachoMessage.Notification })
+                return;
+            var address = ((PyTuple)((PyObject)state[2]).Args).Items;
+            if (JsSemantics.StringValue(address[1]) is { } name)
+                Notifications.Add(name);
+        }
 
         public bool Announced(string notification) =>
             Sent.Any(packet => packet.Contains(Convert.ToHexStringLower(System.Text.Encoding.ASCII.GetBytes(notification)), StringComparison.Ordinal));
@@ -43,6 +56,7 @@ public class SubscriptionTransitionsTests
 
         Assert.True(sink.Announced("OnSubscriptionChangedServer"));
         Assert.True(sink.Announced("OnSubscriptionTimeUpdateServer"));
+        Assert.Equal(new[] { "OnSubscriptionTimeUpdateServer", "OnSubscriptionChangedServer" }, sink.Notifications);
         Assert.False(omega.Resolve(new PyLong(accountId)).HasLicense);
         Assert.Equal(new PyInt(0), await subscriptions.CallAsync(new ServiceCall { Method = "GetCloneGrade", Args = [], Session = session }));
     }

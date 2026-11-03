@@ -3,6 +3,7 @@ using Eve.Crimewatch;
 using Eve.Marshal;
 using Eve.Scheduler;
 using Eve.Universe;
+using Npgsql;
 
 namespace Eve.Services.Crimewatch;
 
@@ -42,8 +43,7 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
     private static string Key(long characterId) => $"crimewatch.end:{characterId}";
 
     /// <summary>
-    /// A pilot attacked the ship of another pilot: its timers run and it may be flagged; what a crime brings (<see cref="Aggressed"/>) is done, and then the clients are told the timers
-    /// (as in the reference, whose security status and kill right come before the timers).
+    /// A pilot attacked the ship of another pilot: the attacker gets weapons and PvP timers, and both pilots get PvP timers. Any crime consequences (<see cref="Aggressed"/>) run before the clients are told.
     /// </summary>
     /// <summary>Active peer-to-expiry Unix-ms values for one character.</summary>
     public Task<IReadOnlyList<SecurityStatusTransaction>> SecurityStatusTransactionsOfAsync(
@@ -229,8 +229,17 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
         await store.UpdateAsync(request.Attacker, state => (outcome = Aggression.Record(
             state, targetState, request.Where, request.SolarSystemId, request.TargetIsCapsule, policyFacts, now)).Attacker, now, cancellationToken);
         var result = new AggressionResult(request, outcome!);
+        var receiverTimerCommitted = false;
         try
         {
+            if (canPair && result.Outcome.Target is { } targetAfter)
+            {
+                await store.UpdateAsync(request.Target,
+                    state => state with { PvpUntilMs = Math.Max(state.PvpUntilMs, targetAfter.PvpUntilMs) },
+                    now,
+                    cancellationToken);
+                receiverTimerCommitted = true;
+            }
             if (startsOrRenewsEngagement)
             {
                 await RefreshLimitedEngagementAsync(request.Attacker, request.Target, now, alreadyEngaged, cancellationToken);
@@ -249,7 +258,17 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
         }
         finally
         {
-            await SyncAsync(request.Attacker, cancellationToken);
+            try
+            {
+                await SyncAsync(request.Attacker, cancellationToken);
+            }
+            finally
+            {
+                if (receiverTimerCommitted)
+                {
+                    await SyncAsync(request.Target, cancellationToken);
+                }
+            }
         }
         return result;
     }
@@ -470,26 +489,40 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
     }
 
     /// <summary>Applies CONCORD response when a criminal with an active timer enters high-security space.</summary>
-    public async Task RespondToCriminalEntryAsync(
+    public async Task OnSystemEnteredAsync(
         long characterId,
         long solarSystemId,
         double security,
         CancellationToken cancellationToken = default)
     {
-        if (characterId <= 0 || solarSystemId <= 0 || security < 0.5)
+        if (characterId <= 0 || solarSystemId <= 0)
         {
             return;
         }
+
         var now = nowUnixMs();
         var state = await store.StateOfAsync(characterId, cancellationToken);
-        if (!state.IsCriminal(now))
+        if (state.FlagAt(now) != Flag.None)
         {
-            return;
+            var (before, after) = await store.UpdateAsync(
+                characterId,
+                current => current.FlagAt(now) == Flag.None ? current : current with { SolarSystemId = solarSystemId },
+                now,
+                cancellationToken);
+            state = after;
+            if (before.FlagAt(now) != Flag.None && after.FlagAt(now) != Flag.None && before.SolarSystemId != after.SolarSystemId)
+            {
+                await TellFlagsAsync(before.SolarSystemId, now, cancellationToken);
+                await TellFlagsAsync(after.SolarSystemId, now, cancellationToken);
+            }
         }
+
+        var securityClass = Security.ClassFromLevel(SecurityPenalty.PseudoSecurity(security));
+        if (!Security.IsHighSecOrHigher(securityClass) || !state.IsCriminal(now)) return;
         var attackerShipId = sessions.Of(characterId)?.GetInt("shipid") ?? 0;
         ScheduleConcordResponse(
             new ConcordResponseRequest(characterId, attackerShipId, solarSystemId, security, now),
-            now,
+            now + ConcordResponseDelayMs(security),
             now);
     }
 
@@ -508,30 +541,41 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
 
     private async Task DispatchConcordResponseAsync(ConcordResponseRequest response)
     {
-        if (ConcordResponseDue is not { } handlers)
+        try
         {
-            log?.Invoke($"crimewatch has no CONCORD response handler for {response.AttackerCharacterId} in {response.SolarSystemId}");
-            return;
+            if (ConcordResponseDue is not { } handlers)
+            {
+                log?.Invoke($"crimewatch has no CONCORD response handler for {response.AttackerCharacterId} in {response.SolarSystemId}");
+                return;
+            }
+            foreach (var handler in handlers.GetInvocationList().Cast<Func<ConcordResponseRequest, Task>>())
+            {
+                try
+                {
+                    await handler(response);
+                }
+                catch (Exception error)
+                {
+                    log?.Invoke($"CONCORD response for {response.AttackerCharacterId} in {response.SolarSystemId} failed: {error.Message}");
+                }
+            }
         }
-        foreach (var handler in handlers.GetInvocationList().Cast<Func<ConcordResponseRequest, Task>>())
+        finally
         {
-            try
-            {
-                await handler(response);
-            }
-            catch (Exception error)
-            {
-                log?.Invoke($"CONCORD response for {response.AttackerCharacterId} in {response.SolarSystemId} failed: {error.Message}");
-            }
+            _concordResponses.TryRemove((response.AttackerCharacterId, response.SolarSystemId), out _);
         }
     }
 
-    internal static long ConcordResponseDelayMs(double security) =>
-        security >= 0.9 ? 6_000
-        : security >= 0.8 ? 7_000
-        : security >= 0.7 ? 10_000
-        : security >= 0.6 ? 14_000
-        : 19_000;
+    internal static long ConcordResponseDelayMs(double security)
+    {
+        var displayedSecurity = Math.Round(SecurityPenalty.PseudoSecurity(security), 1, MidpointRounding.AwayFromZero);
+        return displayedSecurity >= 0.9 ? 6_000
+            : displayedSecurity >= 0.8 ? 7_000
+            : displayedSecurity >= 0.7 ? 10_000
+            : displayedSecurity >= 0.6 ? 14_000
+            : displayedSecurity >= 0.5 ? 19_000
+            : 0;
+    }
 
     private static string ConcordKey(long characterId, long solarSystemId) =>
         $"crime:concord:{characterId}:{solarSystemId}";
@@ -566,6 +610,23 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
 
     /// <summary>The pilot's state at this time (what <c>GetClientStates</c> answers from).</summary>
     public Task<CombatState> StateOfAsync(long characterId, CancellationToken cancellationToken = default) => store.StateOfAsync(characterId, cancellationToken);
+
+      internal Task ExtendSecurityStatusPenaltyMemoryAsync(
+          long attackerCharacterId,
+          long expiresAtUnixMs,
+          long nowUnixMs,
+          CancellationToken cancellationToken = default) =>
+          store.ExtendSecurityStatusPenaltyMemoryAsync(attackerCharacterId, expiresAtUnixMs, nowUnixMs, cancellationToken);
+
+      internal Task<bool> TryRememberSecurityStatusPenaltyAsync(
+          long attackerCharacterId,
+          long targetCharacterId,
+          bool targetIsCapsule,
+          long expiresAtUnixMs,
+          long nowUnixMs,
+            Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task> applyPenalty,
+          CancellationToken cancellationToken = default) =>
+            store.TryRememberSecurityStatusPenaltyAsync(attackerCharacterId, targetCharacterId, targetIsCapsule, expiresAtUnixMs, nowUnixMs, applyPenalty, cancellationToken);
 
     /// <summary>Tells the pilot's client the timers that are not what it was told, tells the system the flags that changed, and waits for the next end.</summary>
     public async Task SyncAsync(long characterId, CancellationToken cancellationToken = default)

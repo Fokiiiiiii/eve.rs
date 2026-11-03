@@ -74,19 +74,23 @@ public static partial class Migrations
     /// <summary>The <c>*.sql</c> files embedded in <paramref name="assembly"/> under <paramref name="folder"/>, named by file.</summary>
     public static IReadOnlyList<Migration> Embedded(Assembly assembly, string folder)
     {
-        var prefix = folder.Trim('.') + ".";
+        var folderPrefix = folder.Trim('.') + ".";
+        var componentPrefix = "." + folderPrefix;
         var list = new List<Migration>();
         foreach (var resource in assembly.GetManifestResourceNames())
         {
             var name = resource;
-            var at = name.IndexOf(prefix, StringComparison.Ordinal);
-            if (at < 0 || !name.EndsWith(".sql", StringComparison.Ordinal))
+            var at = name.IndexOf(componentPrefix, StringComparison.Ordinal);
+            var contentStart = at >= 0
+                ? at + componentPrefix.Length
+                : name.StartsWith(folderPrefix, StringComparison.Ordinal) ? folderPrefix.Length : -1;
+            if (contentStart < 0 || !name.EndsWith(".sql", StringComparison.Ordinal))
             {
                 continue;
             }
             using var stream = assembly.GetManifestResourceStream(resource)!;
             using var text = new StreamReader(stream);
-            list.Add(new Migration(name[(at + prefix.Length)..^".sql".Length], text.ReadToEnd()));
+            list.Add(new Migration(name[contentStart..^".sql".Length], text.ReadToEnd()));
         }
         return list;
     }

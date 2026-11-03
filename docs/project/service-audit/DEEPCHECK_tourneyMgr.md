@@ -67,3 +67,9 @@ EveJS v0.12.9 server/src/services/tourneyMgrService.js は5つのread RPCと別�
 
 ## 引数型
 Setupは引数なし、他のread RPCはtournament IDを1 positional argで受ける。Camera/bound methodsも全てpositionalで、CreateMatchはmatch parametersを位置順に送りexternalRulesetIDはNoneになり得る。唯一のアプリkwargs callはStartAutobanningで、redCharID, blueCharID, totalNumBans。Python integer IDはwire上PyInt/PyLongになり得るためHostのPositive parserは両方を受ける。clientからmachoVersion=1もtransport kwargsに乗るがmethod引数ではない。
+
+## 現在のHost実装・wire検証（2026-11-02）
+
+以下はこの監査の初期スナップショットを更新する。CSVではtourneyMgr 41 callsite rows / 36 distinct methods がすべて IMPLEMENTED-TESTED になった。実証は登録Host serviceのmarshal/encoded dispatch、PostgreSQL、およびpinned Rust simulatorを通したfocused testsによるもので、GUI実機やproduction tournament runtimeを通した確認ではない。read/query defaults の空データ契約も含むため、「tested」は全production tournament stateや全遷移が網羅済みという意味ではない。
+
+`GetFancyDetails` の `Tournament_fancy_registered_wire_reads_live_two_team_metrics` は、登録encoded RPCで初回Noneの後に両チームの6 numeric metricsを返し、live online laser/crystal ships、positive EHP/potential DPS、実hit後のred actual > 0 / blue=0 / idle=0 を確認した。locked roster と state 3 はseedした fixture で、death と active-match repair は未検証。別の stale-running 競合については deterministic fail-before の後に ordering/token 修正を行い同testを通したほか、actual fancy/RemoteACK と旧A cleanupがBを消さない回帰をそれぞれ通した。これらの後続テストと以前の intermittent 結果との因果関係は立証されていない。

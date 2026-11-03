@@ -42,11 +42,12 @@ internal sealed partial class CharacterServicesComposition
     private Eve.Services.Space.SpaceFighters FighterProvider()
     {
         var fighters = new Eve.Services.Space.SpaceFighters(sim, ships, dogma, session => spaceSessions?.SolarSystemOf(session), message => Console.Error.WriteLine($"eve-host: fighters: {message}"),
-            systemId => spaceSessions?.SecurityOfSystem(systemId));
+            systemId => spaceSessions?.SecurityOfSystem(systemId), session => spaceSessions?.RequirePublicMoveSettled(session));
         if (spaceSessions is not null)
         {
             spaceSessions.PilotEntered = fighters.RebuildAsync;
             spaceSessions.StructureDamageFighterOwnerOf = fighters.DamageOwnerOf;
+            spaceSessions.TournamentFighterFlightsOf = fighters.TournamentFlights;
         }
         return fighters;
     }
@@ -59,7 +60,7 @@ internal sealed partial class CharacterServicesComposition
     private PersistenceLookupDirectory? _lookupDirectory;
 
     private PersistenceLookupDirectory LookupDirectory =>
-        _lookupDirectory ??= new PersistenceLookupDirectory(characters, corporations, sde, stations);
+        _lookupDirectory ??= new PersistenceLookupDirectory(characters, corporations, sde, stations, ReadWarEligibilityBatchAsync);
 
     /// <summary>
     /// Who is in each solar system now. The cap is <c>EVE_SYSTEM_POPULATION_CAP</c> characters per system (a positive

@@ -56,15 +56,22 @@ public class RelocationTests
 
         Assert.Null(await rig.Space.RelocateAsync(session, target.Id, place, facing, CancellationToken.None));
 
-        // the scene it left lets the ship go before the new scene takes it (the undock's enter comes first)
-        var after = rig.Sim.Heard.ToArray().SkipWhile(message => message is not SimLeave).ToArray();
-        Assert.Equal(new SimLeave((ulong)session.SessionId, LeaveWhy.Jumped), after[0]);
-        var enter = Assert.IsType<SimEnter>(after[1]);
-        Assert.Equal((SimSceneKey.SolarSystem(target.Id), EnterHow.InSpace), (enter.Scene, enter.How));
-        Assert.Equal(place, enter.Position);
-        Assert.Equal(facing, enter.Direction);
+        var messages = rig.Sim.Heard.ToArray();
+        var enter = Assert.Single(messages.OfType<SimEnter>());
+        var move = Assert.Single(messages.OfType<SimMovePublicParticipant>());
+        Assert.True(Array.IndexOf(messages, enter) < Array.IndexOf(messages, move));
+        Assert.DoesNotContain(messages.OfType<SimLeave>(), leave => leave.SessionId == (ulong)session.SessionId);
+        Assert.True(move.RequestId > 0);
+        Assert.True(Guid.TryParseExact(move.OperationId, "D", out _));
+        Assert.Equal(((ulong)session.SessionId, character.ShipId), (move.SessionId, move.ShipId));
+        Assert.Equal((SimSceneKey.SolarSystem(origin), SimSceneKey.SolarSystem(target.Id)), (move.Source, move.Destination));
+        Assert.False(move.UseAnchor);
+        Assert.Equal(place, move.Position);
+        Assert.Equal(facing, move.Direction);
         Assert.True(rig.Space.IsInSpace(session));
         Assert.Equal(target.Id, rig.Space.SolarSystemOf(session));
+        Assert.Equal((long)target.Id, session.GetInt("solarsystemid"));
+        Assert.Equal((long)target.Id, session.GetInt("solarsystemid2"));
         var ship = await rig.Items.GetAsync(character.ShipId);
         Assert.Equal((target.Id, CharacterShips.InSpaceFlag), (ship!.LocationId, ship.Flag));
     }

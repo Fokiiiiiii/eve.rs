@@ -50,6 +50,8 @@ pub const AUTO_TARGET_ID: i64 = -1;
 pub struct Shooter {
     pub session: SessionId,
     pub ship_id: i64,
+    /// Firing pilot hull, captured at launch even if a drone later leaves.
+    pub telemetry_ship_id: i64,
     pub module_id: i64,
     /// The type of the launcher (what `OnDamageMessage` calls `weapon`).
     pub weapon_type_id: i32,
@@ -460,6 +462,9 @@ impl Scene {
         let shooter = Shooter {
             session,
             ship_id,
+            telemetry_ship_id: self
+                .controller_of_drone(session)
+                .map_or(ship_id, |parent| self.ship_id_of(parent)),
             module_id: effect.module_id,
             weapon_type_id: turret.weapon_type_id,
             owner_id: owner,
@@ -579,6 +584,12 @@ impl Scene {
             return self.damage_structure(missile.target, applied, at);
         };
         let (mut out, hit) = self.damage(missile.target, applied, at);
+        self.tournament_metrics.record(
+            crate::scene::tournament_metrics::Source::Ship(missile.shooter.telemetry_ship_id),
+            missile.target,
+            at,
+            hit,
+        );
         // a breacher pod's hit starts its damage over time on the ship it reached (`dot_weapons`)
         if let Some(dot) = missile.spec.dot {
             out.extend(self.apply_dot(missile.target, dot, missile.shooter.clone(), at));

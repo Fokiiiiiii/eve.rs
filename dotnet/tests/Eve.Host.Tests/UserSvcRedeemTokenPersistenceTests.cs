@@ -1,5 +1,6 @@
 using Eve.GameStore;
 using Eve.Host;
+using Eve.Host.PublicGateway;
 using Eve.Data;
 using Eve.Marshal;
 using Eve.Services;
@@ -26,9 +27,9 @@ public sealed class UserSvcRedeemTokenPersistenceTests
                 store, PersistenceRoles.World, "user-redeem-" + Guid.NewGuid().ToString("N"));
             OwnerFence ownerFence = owner.Fence;
             var runtime = new PersistenceNewEdenStoreRuntime(
-                source, store, ownerFence, null!, null!, null!, null!, null!,
+                source, store, ownerFence, null!, null!, null!, null!, null!, null!,
                 () => 1_700_000_000_123,
-                null!);
+                null!, (_, _, _) => { });
             var service = (IService)(object)new RedeemService(
                 runtime,
                 userRpcHandler: async (rpc, cancellationToken) => rpc.Method == "CreateRedeemTokenQA"

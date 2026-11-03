@@ -438,6 +438,14 @@ fn a_docking_is_accepted_and_finished_as_the_reference_did() {
 
     assert_eq!(
         scene.poll(now + 40_000_000),
+        [Out::Accepted { session: SESSION, command: eve_space::scene::DOCKING_READY_COMMAND, at: station }]
+    );
+    assert_eq!(
+        scene.command(
+            SESSION,
+            Command::DockingDecision { station_id: station, allowed: true },
+            now + 40_000_000,
+        ),
         [Out::Docked { session: SESSION, station_id: station, condition: Condition::FULL }]
     );
     assert_eq!(json!(scene.contains(SESSION)), json!(false));

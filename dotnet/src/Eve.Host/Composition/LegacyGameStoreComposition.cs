@@ -55,9 +55,12 @@ internal sealed class LegacyGameStore(PersistenceStore store, OwnerSession owner
 /// <summary>Opens the legacy GameStore and loads the tables the host reads, in the original order.</summary>
 internal static class LegacyGameStoreComposition
 {
-    internal static async Task<LegacyGameStore> OpenAsync(NpgsqlDataSource source)
+    internal static async Task<LegacyGameStore> OpenAsync(NpgsqlDataSource source, Eve.Events.EventBus events)
     {
-        var mailStore = new PersistenceStore(source, Env("EVE_GAMESTORE_SCHEMA", "gamestore"));
+        var schema = Env("EVE_GAMESTORE_SCHEMA", "gamestore");
+        var mailStore = new PersistenceStore(source, schema);
+        mailStore.BeforeApplyOperationAsync = (connection, transaction, operation, token) =>
+            WarSovereigntyEvents.BeforeApplyAsync(events, schema, connection, transaction, operation, token);
         await mailStore.EnsureSchemaAsync();
         var mailStoreOwner = await OwnerSession.StartAsync(mailStore, PersistenceRoles.World, $"eve-host-{Environment.ProcessId}");
         var mailCache = new GameStoreCache(mailStore, mailStoreOwner, new GameStoreCacheOptions

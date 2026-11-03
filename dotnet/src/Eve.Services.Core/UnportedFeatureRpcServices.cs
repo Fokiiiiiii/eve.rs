@@ -522,9 +522,135 @@ public sealed record TourneyQueryRequest(TourneyQuery Query, long? TournamentId,
 
 public delegate ValueTask<PyValue?> TourneyQueryCallback(TourneyQueryRequest request, CancellationToken cancellationToken);
 
+public sealed record TourneyCreateMatchRequest(long TournamentId, long SeriesId, int MaximumPoints, int MatchLength,
+    int OvertimeLength, long? ExternalRulesetId, long SystemId, string BoundObjectId, ClientSession Session, Guid LeaseGeneration = default);
+public sealed record TourneyCreateMatchResult(long MatchId, IReadOnlyList<long> BeaconIds, long? RedCaptainId, long? BlueCaptainId);
+public enum TourneyMatchAction { BanShipType, UnBanShipType, StartAutobanning, FinalizeBans, CompletePregameChecks, StartCountdown, AbortCountdown, MatchCompleted, ResetMatch, TeleportPlayers, ReturnTeamPlayers, ReturnAllPlayers, TeleportRefHome, CleanupGrid, OverrideMoveRestrict, OverrideWarpRestrict, OverrideLockRestrict, UpdateFleetDetails, LockMemberList, UnlockMemberList, AddPlayer, RemovePlayer, OverrideError }
+public sealed record TourneyMatchActionRequest(TourneyMatchAction Operation, long MatchId, IReadOnlyList<PyValue> Arguments,
+    PyValue KeywordArguments, long SystemId, string BoundObjectId, ClientSession Session);
+public sealed record TourneyFleetNominationRequest(long MatchId, int Team, long CandidateId, long SystemId, string BoundObjectId, ClientSession Session, long CallId);
+public enum TourneyRefTravelOperation { TeleportToArena, TeleportToStation }
+public sealed record TourneyRefTravelRequest(TourneyRefTravelOperation Operation, long SystemId, string BoundObjectId, ClientSession Session);
+public sealed record TourneyMatchCallbacks(
+    Func<TourneyCreateMatchRequest, CancellationToken, ValueTask<TourneyCreateMatchResult>> CreateAsync,
+    Func<string, CancellationToken, ValueTask> ReleaseAsync,
+    Func<TourneyMatchActionRequest, CancellationToken, ValueTask<PyValue>>? ActionAsync = null,
+    Func<TourneyFleetNominationRequest, CancellationToken, ValueTask>? NominateFleetAsync = null,
+    Func<ClientSession, CancellationToken, ValueTask>? AcceptFleetAsync = null,
+    Func<TourneyBanSubmitRequest, CancellationToken, ValueTask<PyValue>>? SubmitBanAsync = null,
+    Func<TourneyMatchActionRequest, CancellationToken, ValueTask<PyValue>>? SpaceActionAsync = null,
+    Func<TourneyRefTravelRequest, CancellationToken, ValueTask<PyValue>>? RefTravelAsync = null,
+    Func<TourneyMatchActionRequest, CancellationToken, ValueTask<PyValue>>? RefHomeAsync = null,
+    Func<long, ClientSession, CancellationToken, ValueTask<PyValue>>? ActiveCameraAsync = null,
+    Func<TourneyMatchActionRequest, CancellationToken, ValueTask<PyValue>>? RosterActionAsync = null,
+    Func<string, Guid, CancellationToken, ValueTask>? ReleaseStampedAsync = null,
+    Func<long, long, ClientSession, bool, CancellationToken, ValueTask<PyValue>>? CameraDetailsAsync = null,
+    Func<long, string, ClientSession, CancellationToken, ValueTask<PyValue>>? OtherMatchAsync = null,
+    Func<string, Guid, long, CancellationToken, ValueTask>? RemoveRefereeAsync = null);
+
 [Service("tourneyMgr")]
-public sealed partial class TourneyMgrService(TourneyQueryCallback? query = null)
+public sealed partial class TourneyMgrService(TourneyQueryCallback? query = null, Func<long>? nowUnixMs = null,
+    TourneyMatchCallbacks? matches = null) : IBoundObjectReleaseHandler, IAsyncBoundObjectReleaseHandler, ICapturedBoundObjectReleaseHandler
 {
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (ClientSession Session, long SystemId, Guid Generation)> _bound = new(StringComparer.Ordinal);
+
+    public void OnBoundObjectReleased(string oid, ClientSession? session)
+    {
+        if (_bound.TryGetValue(oid, out var binding) && (session is null || ReferenceEquals(binding.Session, session)))
+            _bound.TryRemove(oid, out _);
+    }
+
+    public ValueTask OnBoundObjectReleasedAsync(string oid, ClientSession? session, CancellationToken cancellationToken) =>
+        matches is { } callback ? callback.ReleaseAsync(oid, cancellationToken) : ValueTask.CompletedTask;
+
+    public Func<CancellationToken, ValueTask>? CaptureBoundObjectRelease(string oid, ClientSession? session)
+    {
+        if (!_bound.TryGetValue(oid, out var binding) || (session is not null && !ReferenceEquals(binding.Session, session))) return null;
+        var generation = binding.Generation;
+        return token => matches?.ReleaseStampedAsync is { } release ? release(oid, generation, token)
+            : matches is { } callback ? callback.ReleaseAsync(oid, token) : ValueTask.CompletedTask;
+    }
+
+    [Method("MachoResolveObject")]
+    public PyValue MachoResolveObject(ServiceCall call) => new PyInt(MachoMessage.ProxyNodeId);
+
+    [Method("MachoBindObject")]
+    public async ValueTask<PyValue> MachoBindObject(ServiceCall call)
+    {
+        var parameter = call.Arg(0) switch
+        {
+            PyTuple { Items.Count: > 0 } tuple => tuple.Items[0],
+            PyList { Items.Count: > 0 } list => list.Items[0],
+            var value => value,
+        };
+        var system = Positive(parameter) ?? throw MachoErrors.ThrowUserError("UnMachoDestination");
+        var oid = $"N={MachoMessage.ProxyNodeId}:{BoundObjectIds.Next()}";
+        _bound[oid] = (call.Session, system, Guid.NewGuid());
+        call.Session.Closed += () => _bound.TryRemove(oid, out _);
+        var bound = new PySubStruct(new PySubStream(Py.Tuple(new PyStr(oid),
+            new PyLong(Py.FileTimeFromUnixMs((nowUnixMs ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()))())))));
+        try
+        {
+            if (call.Arg(1) is not PyTuple { Items.Count: > 0 } nested ||
+                JsSemantics.StringValue(nested.Items[0]) is not { } method)
+                return Py.Tuple(bound, PyNone.Instance);
+            var args = nested.Items.Count > 1 ? nested.Items[1] switch
+            {
+                PyTuple tuple => tuple.Items,
+                PyList list => list.Items,
+                var value => (IReadOnlyList<PyValue>)[value],
+            } : [];
+            var result = await ((IService)this).CallAsync(new ServiceCall
+            {
+                Method = method, Args = args,
+                Kwargs = nested.Items.Count > 2 ? nested.Items[2] : PyNone.Instance,
+                Session = call.Session, CallId = call.CallId, BoundObjectId = oid,
+                BoundObjectParameters = call.Arg(0), Cancellation = call.Cancellation,
+            }).ConfigureAwait(false);
+            return Py.Tuple(bound, result);
+        }
+        catch
+        {
+            _bound.TryRemove(oid, out _);
+            throw;
+        }
+    }
+
+    [Method("CreateMatch")]
+    public async ValueTask<PyValue> CreateMatch(ServiceCall call)
+    {
+        if (call.BoundObjectId is not { } oid || !_bound.TryGetValue(oid, out var binding) ||
+            !ReferenceEquals(binding.Session, call.Session) || !GameMasterRoles.Has(call.Session, GameMasterRoles.Staff) ||
+            call.Session.CharacterId is not > 0 || call.Session.DockedLocationId is not null ||
+            call.Session.GetInt("solarsystemid") != binding.SystemId)
+            throw MachoErrors.ThrowUserError("UnMachoDestination");
+        static long? Integer(PyValue value) => value switch { PyInt n => n.Value, PyLong n => n.Value, _ => null };
+        var tournament = Integer(call.Arg(0)); var series = Integer(call.Arg(1)); var points = Integer(call.Arg(2));
+        var length = Integer(call.Arg(3)); var overtime = Integer(call.Arg(4));
+        if (call.Args.Count != 6 || tournament is not > 0 || series is not >= 0 || points is not > 0 or > int.MaxValue ||
+            length is not > 0 or > int.MaxValue || overtime is not >= 0 or > int.MaxValue)
+            throw new ArgumentException("Invalid tournament match arguments.");
+        long? ruleset = call.Arg(5) is PyNone ? null : Positive(call.Arg(5)) ?? throw new ArgumentException("Invalid tournament ruleset.");
+        if (matches is not { } callback) throw new InvalidOperationException("Tournament matches are not wired.");
+        var result = await callback.CreateAsync(new TourneyCreateMatchRequest(tournament.Value, series.Value, (int)points.Value, (int)length.Value,
+            (int)overtime.Value, ruleset, binding.SystemId, oid, call.Session, binding.Generation), call.Cancellation).ConfigureAwait(false);
+        if (result.MatchId <= 0 || result.BeaconIds.Count == 0 || result.BeaconIds.Any(id => id <= 0))
+            throw new InvalidOperationException("Tournament match returned invalid authoritative state.");
+        static PyValue Wire(long id) => id is >= int.MinValue and <= int.MaxValue ? new PyInt(id) : new PyLong(id);
+        return Py.Tuple(Wire(result.MatchId), new PyList([.. result.BeaconIds.Select(Wire)]),
+            Py.Tuple(result.RedCaptainId is { } red ? Wire(red) : PyNone.Instance,
+                result.BlueCaptainId is { } blue ? Wire(blue) : PyNone.Instance));
+    }
+
+    [Method("GetMatchSystem")]
+    public PyValue GetMatchSystem(ServiceCall call)
+    {
+        if (call.BoundObjectId is not { } oid || !_bound.TryGetValue(oid, out var binding) ||
+            !ReferenceEquals(binding.Session, call.Session))
+            throw MachoErrors.ThrowUserError("UnMachoDestination");
+        return Py.Number(binding.SystemId);
+    }
+
     [Method("GetTourneySetup")]
     public ValueTask<PyValue> GetTourneySetup(ServiceCall call) =>
         QueryAsync(call, TourneyQuery.GetTourneySetup, null, Py.Tuple(new PyDict([]), new PyDict([]), new PyList([])));

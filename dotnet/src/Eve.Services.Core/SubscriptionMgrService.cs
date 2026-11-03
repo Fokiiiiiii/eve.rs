@@ -97,8 +97,19 @@ public sealed partial class SubscriptionMgrService(OmegaLicenses licenses)
     public static void AnnounceCloneGrade(ClientSession session, long cloneGrade, long? endTime)
     {
         session.Set(AnnouncedCloneGradeKey, new PyInt(cloneGrade));
-        session.SendNotification("OnSubscriptionChangedServer", "clientID", new PyInt(cloneGrade));
         session.SendNotification("OnSubscriptionTimeUpdateServer", "clientID", endTime is { } end ? new PyLong(end) : PyNone.Instance);
+        session.SendNotification("OnSubscriptionChangedServer", "clientID", new PyInt(cloneGrade));
+    }
+
+    /// <summary>Updates the subscription time first, then announces a clone-grade change only when the paid change crossed Alpha/Omega.</summary>
+    public static void AnnouncePurchasedSubscription(ClientSession session, long previousGrade, long currentGrade, long endTime)
+    {
+        session.SendNotification("OnSubscriptionTimeUpdateServer", "clientID", new PyLong(endTime));
+        if (previousGrade == currentGrade)
+            return;
+
+        session.Set(AnnouncedCloneGradeKey, new PyInt(currentGrade));
+        session.SendNotification("OnSubscriptionChangedServer", "clientID", new PyInt(currentGrade));
     }
 
     /// <summary>

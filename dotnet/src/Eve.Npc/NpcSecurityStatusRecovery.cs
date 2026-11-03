@@ -1,45 +1,44 @@
 namespace Eve.Npc;
 
 /// <summary>
-/// The NPC kill security-status recovery rule from EVE.js v0.12.9
-/// <c>server/src/services/bounty/bountyRuntime.js</c> at
-/// <c>828823a75f211fdecb945b087a26c225f111491f</c>. The EVE.js 4-digit equality check
-/// uses JavaScript <c>Math.round</c>; this method returns the unrounded value the server stores.
+/// The NPC kill security-status recovery formula and four-digit equality check used by the server.
 /// </summary>
 public static class NpcSecurityStatusRecovery
 {
     /// <summary>The EVE.js <c>ATTRIBUTE_FAST_TALK_PERCENTAGE</c> dogma attribute.</summary>
     public const int FastTalkPercentageAttributeId = 359;
 
-    private const double ModifierPerIsk = 1.0 / 100_000_000.0;
-    private const double ModifierCap = 0.0025;
+    /// <summary>NPC security-status recovery is available for the pirate factions represented by the NPC profile data.</summary>
+    public static bool IsEligibleFaction(int factionId) => factionId is 500010 or 500011 or 500012 or 500019 or 500020;
+
     private const double MinimumStatus = -10.0;
-    private const double MaximumStatus = 10.0;
+    private const double FormulaTargetStatus = 10.0;
+    private const double MaximumNpcRecoveryStatus = 5.0;
     private const int EqualityDigits = 4;
 
     /// <summary>
-    /// Computes the next status for one fresh NPC kill, or null when the bounty gives no gain or the
-    /// value rounded to four decimal places is unchanged. There is no five-minute aggregation window:
-    /// the pinned EVE.js server applies recovery once for each fresh victim reference.
+    /// Computes one NPC recovery, or null when the NPC has no security status bonus, the NPC limit is reached, or
+    /// the value rounded to four decimal places is unchanged. The caller selects one NPC per five-minute window.
     /// </summary>
-    public static double? TryNext(decimal bounty, double previousStatus, double fastTalkMultiplier)
+    public static double? TryNext(double securityStatusKillBonusPercent, double previousStatus, double fastTalkMultiplier)
     {
-        var amount = NpcBounty.Money(Math.Max(0m, bounty));
         var previous = double.IsFinite(previousStatus)
-            ? Math.Clamp(previousStatus, MinimumStatus, MaximumStatus)
+            ? Math.Clamp(previousStatus, MinimumStatus, FormulaTargetStatus)
             : 0.0;
         var fastTalk = double.IsFinite(fastTalkMultiplier)
             ? Math.Max(0.0, fastTalkMultiplier)
             : 1.0;
-        var baseModifier = Math.Min(ModifierCap, (double)amount * ModifierPerIsk);
+        var baseModifier = double.IsFinite(securityStatusKillBonusPercent)
+            ? Math.Max(0, securityStatusKillBonusPercent) / 100.0
+            : 0.0;
         var modifier = baseModifier * fastTalk;
-        if (!(modifier > 0))
+        if (!(modifier > 0) || !double.IsFinite(modifier))
         {
             return null;
         }
 
-        var next = Math.Min(MaximumStatus, previous + ((MaximumStatus - previous) * modifier));
-        return RoundNumber(next, EqualityDigits) == RoundNumber(previous, EqualityDigits)
+        var next = Math.Min(MaximumNpcRecoveryStatus, previous + ((FormulaTargetStatus - previous) * modifier));
+        return next <= previous || RoundNumber(next, EqualityDigits) == RoundNumber(previous, EqualityDigits)
             ? null
             : next;
     }

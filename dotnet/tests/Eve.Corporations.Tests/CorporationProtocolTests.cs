@@ -645,6 +645,53 @@ private static PyValue RowField(PyValue value,string key)
     }
 
     [PgFact]
+    public async Task Archived_application_replays_require_authority_and_do_not_emit_notifications()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Replay Founder");
+        var applicant = await rig.CharacterAsync("Replay Applicant");
+        var outsider = await rig.CharacterAsync("Replay Outsider");
+        var corp = await rig.Store.CreateAsync(founder,new("Replay Works","RPLAY","","",0.05m),"replay");
+        var applicationId = await rig.Store.ApplyAsync(applicant,corp.Id,"Join");
+        await rig.Store.RespondAsync(founder,applicationId,6,"Join","");
+        var sessions = new CharacterSessions();
+        var applicantSink = new PacketSink();
+        var outsiderSink = new PacketSink();
+        var applicantSession = new ClientSession(applicantSink) { SessionId = applicant, CharacterId = applicant };
+        var outsiderSession = new ClientSession(outsiderSink) { SessionId = outsider, CharacterId = outsider };
+        sessions.Enter(applicant,applicantSession);
+        sessions.Enter(outsider,outsiderSession);
+        var service = (IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now,characterSessions:sessions);
+        ValueTask<PyValue> Update(ClientSession session,int status,string text = "Join") =>
+            service.CallAsync(Call(session,"UpdateApplicationOffer",new PyInt(applicationId),new PyInt(applicant),
+                new PyInt(corp.Id),new PyStr(text),new PyInt(status),new PyStr("")));
+        Assert.IsType<PyNone>(await Update(applicantSession,2));
+        applicantSession.RunAfterResponse();
+        Assert.NotEmpty(applicantSink.Packets);
+        applicantSink.Packets.Clear();
+        var original = Assert.Single(await rig.Store.ApplicationsAsync(corporation:corp.Id,character:applicant,archived:true));
+        var member = await rig.Store.MemberAsync(applicant);
+
+        var unauthorized = await Assert.ThrowsAsync<CorporationError>(() => rig.Store.RespondAsync(outsider,applicationId,2,"Join",""));
+        Assert.Equal("CORPORATION_ACCESS_DENIED",unauthorized.Code);
+        await Assert.ThrowsAsync<CorporationError>(() => rig.Store.RespondAsync(applicant,applicationId,7,"Join",""));
+        await Assert.ThrowsAsync<CorporationError>(() => rig.Store.RespondAsync(applicant,applicationId,2,"Changed",""));
+        var replay = await rig.Store.RespondWithOutcomeAsync(applicant,applicationId,2,"Join","");
+        Assert.False(replay.Changed);
+        Assert.Equal(original,replay.Application);
+        Assert.IsType<PyNone>(await Update(outsiderSession,2));
+        Assert.IsType<PyNone>(await Update(applicantSession,2));
+        applicantSession.RunAfterResponse();
+        outsiderSession.RunAfterResponse();
+        Assert.Empty(applicantSink.Packets);
+        Assert.Empty(outsiderSink.Packets);
+        Assert.Equal(original,Assert.Single(await rig.Store.ApplicationsAsync(corporation:corp.Id,character:applicant,archived:true)));
+        Assert.Equal(member,await rig.Store.MemberAsync(applicant));
+        Assert.Equal(corp.Id,applicantSession.GetInt("corpid"));
+        Assert.Null(outsiderSession.GetInt("corpid"));
+    }
+
+    [PgFact]
     public async Task Corp_registry_membership_rpcs_preserve_application_invitation_and_authority_contracts()
     {
         await using var rig = await Rig.CreateAsync();
@@ -2359,9 +2406,23 @@ private static PyValue RowField(PyValue value,string key)
         var remainingCompanyShares = Assert.Single(Lines(await Rpc("GetSharesByShareholder",new PyInt(1))));
         Assert.Equal(new PyInt(corporation.Id),RowValues(remainingCompanyShares)[1]);
         Assert.Equal(new PyInt(700),RowValues(remainingCompanyShares)[2]);
+
+        // Another issuer transfers real shares to this corporation. The owning
+        // corporation must see those shares and its CEO can inspect the issuer.
+        Assert.IsType<PyNone>(await OtherCorpRpc("MoveCompanyShares",new PyInt(otherCorporation.Id),new PyInt(corporation.Id),new PyInt(125)));
+        var companyPortfolio = Lines(await Rpc("GetSharesByShareholder",new PyInt(1))).Select(RowValues)
+            .ToDictionary(row => Assert.IsType<PyInt>(row[1]).Value,row => Assert.IsType<PyInt>(row[2]).Value);
+        Assert.Equal(700,companyPortfolio[corporation.Id]);
+        Assert.Equal(125,companyPortfolio[otherCorporation.Id]);
+        var otherShareholders = Lines(await Rpc("GetShareholders",new PyInt(otherCorporation.Id))).Select(RowValues)
+            .ToDictionary(row => Assert.IsType<PyInt>(row[0]).Value,row => Assert.IsType<PyInt>(row[2]).Value);
+        Assert.Equal(125,otherShareholders[corporation.Id]);
         var nonManagerSession = new ClientSession { CharacterId=nonManager };
         nonManagerSession.Set("corporationID",new PyInt(corporation.Id));
         nonManagerSession.Set("corpid",new PyInt(corporation.Id));
+        await Assert.ThrowsAnyAsync<Exception>(async () => await registry.CallAsync(
+            Call(nonManagerSession,"GetShareholders",new PyInt(otherCorporation.Id))));
+        await Assert.ThrowsAnyAsync<Exception>(async () => await OtherCorpRpc("GetShareholders",new PyInt(corporation.Id)));
         await Assert.ThrowsAnyAsync<Exception>(async () => await registry.CallAsync(
             Call(nonManagerSession,"GetSharesByShareholder",new PyInt(1))));
         await Assert.ThrowsAnyAsync<Exception>(async () => await registry.CallAsync(
@@ -3512,6 +3573,48 @@ private static PyValue RowField(PyValue value,string key)
     }
 
     [PgFact]
+    public async Task Corporation_war_replay_keeps_original_times_and_does_not_renotify()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Replay War Founder");
+        var defender = await rig.CharacterAsync("Replay War Defender");
+        var corp = await rig.Store.CreateAsync(founder,new("Replay War Works","RWRK","","",0.05m),"replay-war");
+        var target = await rig.Store.CreateAsync(defender,new("Replay Target","RTGT","","",0.05m),"replay-war-target");
+        var sessions = new CharacterSessions();
+        var sink = new PacketSink();
+        var session = new ClientSession(sink) { CharacterId = founder };
+        session.Set("corpid",new PyInt(corp.Id));
+        sessions.Enter(founder,session);
+        var created = 0;
+        async ValueTask<CorpWarDeclarationResult> Declare(CorpWarDeclarationRequest request,CancellationToken token)
+        {
+            var result = await rig.Store.CreateWarDeclarationWithOutcomeAsync(request.CorporationId,
+                request.DeclaredByCharacterId,request.AgainstId,request.WarHQId,request.TimeDeclaredFiletime,
+                request.TimeStartedFiletime,request.DueFiletime,request.BillTypeId,request.BillAmount,
+                request.CreditorId,request.OperationKey,(_,_,_,_) => { created++; return Task.FromResult(9001L); },token);
+            return new CorpWarDeclarationResult(result.WarId,result.BillId,result.DueFiletime,result.Replayed);
+        }
+        var service = (IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now,
+            characterSessions:sessions,declareWar:Declare,
+            validateWarHQ:(_,owner,hq,_) => ValueTask.FromResult(owner == corp.Id && hq == 60000001));
+        ServiceCall DeclareCall() => new()
+        {
+            Session=session,Method="DeclareWarAgainst",Args=[new PyInt(target.Id),new PyInt(60000001)],CallId=new PyInt(9911)
+        };
+        var first = Assert.IsType<PyObject>(await service.CallAsync(DeclareCall()));
+        session.RunAfterResponse();
+        Assert.Single(sink.Packets);
+        rig.Now += 1000;
+        var replay = Assert.IsType<PyObject>(await service.CallAsync(DeclareCall()));
+        session.RunAfterResponse();
+        Assert.Equal(Field(first,"timeDeclared"),Field(replay,"timeDeclared"));
+        Assert.Equal(Field(first,"timeStarted"),Field(replay,"timeStarted"));
+        Assert.Single(sink.Packets);
+        Assert.Equal(1,created);
+        Assert.Single(await rig.Store.CorporationBillsAsync(corp.Id));
+    }
+
+    [PgFact]
     public async Task Corp_registry_declare_war_persists_a_bill_and_replays_by_call_id()
     {
         await using var rig = await Rig.CreateAsync();
@@ -3551,6 +3654,10 @@ private static PyValue RowField(PyValue value,string key)
             Session=ordinarySession,Method="DeclareWarAgainst",Args=[new PyInt(target.Id),new PyInt(60000001)],CallId=new PyInt(9004)
         }).AsTask());
         Assert.Null(received);
+        await Assert.ThrowsAsync<CorporationError>(() => service.CallAsync(new ServiceCall
+        {
+            Session=session,Method="DeclareWarAgainst",Args=[new PyInt(target.Id),PyNone.Instance],CallId=new PyInt(9005)
+        }).AsTask());
         await Assert.ThrowsAsync<CorporationError>(() => service.CallAsync(DeclareCall(60000002)).AsTask());
         await Assert.ThrowsAsync<CorporationError>(() => service.CallAsync(DeclareCall(-1)).AsTask());
         Assert.Null(received);

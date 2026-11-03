@@ -40,7 +40,8 @@ public static class CoreServices
         Func<long, long, short, CancellationToken, ValueTask<bool>>? canManageCalendarGroupEvent = null,
         Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? readCurrentCalendarGroups = null,
         IContractInventoryReader? contractInventoryReader = null,
-        Func<long, long, CancellationToken, ValueTask<bool>>? isCharacterInCurrentCorporation = null)
+        Func<long, long, CancellationToken, ValueTask<bool>>? isCharacterInCurrentCorporation = null,
+        TourneyMatchCallbacks? tournamentMatchCallbacks = null)
     {
         gameRpcCallbacks ??= new GameRpcCallbacks();
         var licenses = new OmegaLicenses(accounts, nowUnixMs);
@@ -71,9 +72,9 @@ public static class CoreServices
             new CustomAgencyProviderService(customAgencyProviderRpcCallbacks),
             new EpicArcStatusService(readEpicArcStatus),
             new SuperWeaponMgrService(superWeaponRpcCallbacks),
-            new TourneyMgrService(tourneyQueryCallback),
+            new TourneyMgrService(tourneyQueryCallback, nowUnixMs, tournamentMatchCallbacks),
             new RaffleMgrService(gameRpcCallbacks.SeedRafflesAsync),
-            new RaffleProxyService(),
+            new RaffleProxyService(gameRpcCallbacks.RaffleProxy),
             new ContractProxyService(contractReadModel, contractWriteModel, contractSkillLevel, contractBrokerFeeAdjustment,
                 hasContractManagerRole, readCurrentCalendarGroups, isCharacterInCurrentCorporation) { Inventory = contractInventoryReader },
             new JumpCloneService(nowUnixMs, gameRpcCallbacks.JumpClones, gameRpcCallbacks.JumpCloneSpace),
@@ -98,7 +99,21 @@ public static class CoreServices
               new NonDiminishingInjectionMgrService(readNonDiminishingInjections),
             new ProjectDiscoveryService(new ProjectDiscoveryRpcCallbacks(
                 ReadPlayerStateAsync: gameRpcCallbacks.ReadProjectDiscoveryState,
-                TransitionTutorialAsync: gameRpcCallbacks.TransitionProjectDiscoveryTutorial)),
+                TransitionTutorialAsync: gameRpcCallbacks.TransitionProjectDiscoveryTutorial,
+                FixTaskIdAsync: gameRpcCallbacks.FixProjectDiscoveryTaskId,
+                ReadPlayerStatisticsAsync: gameRpcCallbacks.ReadProjectDiscoveryStatistics,
+                ReadRewardEntitlementAsync: gameRpcCallbacks.ReadProjectDiscoveryRewardEntitlement,
+                GrantRewardAsync: gameRpcCallbacks.GrantProjectDiscoveryReward,
+                AnnounceRewardWallet: gameRpcCallbacks.AnnounceProjectDiscoveryRewardWallet,
+                ReadTutorialXpReward: gameRpcCallbacks.ReadProjectDiscoveryTutorialXpReward,
+                ReadBonusSamplesAsync: gameRpcCallbacks.ReadProjectDiscoveryBonusSamples,
+                NewTrainingTaskAsync: gameRpcCallbacks.NewProjectDiscoveryTrainingTask,
+                TransitionTutorialCallAsync: gameRpcCallbacks.TransitionProjectDiscoveryTutorialCall,
+                NotifyStateAfterSubmit: gameRpcCallbacks.NotifyProjectDiscoveryStateAfterSubmit,
+                ReadProjectId: gameRpcCallbacks.ReadProjectDiscoveryProjectId,
+                AnnounceRewardItem: gameRpcCallbacks.AnnounceProjectDiscoveryRewardItem,
+                GetTaskAsync: gameRpcCallbacks.GetProjectDiscoveryTask,
+                SubmitClassificationAsync: gameRpcCallbacks.SubmitProjectDiscoveryClassification)),
               new LocalizationServerService(localizationTextChanges),
               new SeasonManagerService(),
             authentication ?? new AuthenticationRpcService(),

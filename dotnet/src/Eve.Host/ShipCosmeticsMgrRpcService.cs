@@ -210,7 +210,7 @@ public sealed class ShipCosmeticsMgrRpcService : IService
         if (itemIds.Count == 0) return PyNone.Instance;
         if (_store is null || _items is null || _source is null || _catalog is null)
             Notify("SKIN license activation is unavailable.");
-        var plan = new List<(Item Item, SkinLicenseDefinition License, JsonObject? Previous)>();
+        var plan = new List<(Item Item, SkinLicenseDefinition License)>();
         var skinsPlanned = new HashSet<int>();
         foreach (var itemId in itemIds)
         {
@@ -218,51 +218,60 @@ public sealed class ShipCosmeticsMgrRpcService : IService
             if (item is null || item.OwnerId != characterId) Notify("That SKIN license is not in your inventory.");
             if (!_catalog.LicenseTypes.TryGetValue(item!.TypeId, out var license) || !_catalog.Skins.ContainsKey(license.SkinId)) Notify("That item is not a ship SKIN license.");
             if (EffectiveLicense(characterId, license.SkinId) is not null || !skinsPlanned.Add(license.SkinId)) Notify("That SKIN license is already active on this character.");
-            plan.Add((item, license, _store.Read("shipCosmetics", OverridePath(characterId, license.SkinId)).Data as JsonObject));
+            plan.Add((item, license));
         }
-        foreach (var entry in plan)
-        {
-            var skin = _catalog.Skins[entry.License.SkinId];
-            var write = _store.Write("shipCosmetics", OverridePath(characterId, entry.License.SkinId), new JsonObject
-            {
-                ["skinID"] = entry.License.SkinId, ["licenseTypeID"] = entry.License.LicenseTypeId,
-                ["skinMaterialID"] = entry.License.SkinMaterialId > 0 ? entry.License.SkinMaterialId : skin.SkinMaterialId,
-                ["expiresAtFileTime"] = entry.License.DurationDays > 0 ? FileTimeAfterDays(entry.License.DurationDays) : null,
-                ["isSingleUse"] = entry.License.IsSingleUse, ["revoked"] = false, ["updatedAt"] = NowIso(),
-                ["source"] = "shipCosmeticsMgr.ActivateSkinLicense",
-            });
-            if (!write.Success) { RestoreOverrides(characterId, plan); Notify("That SKIN license could not be activated."); }
-        }
+        var previousOverrides = new Dictionary<long, JsonObject?>();
+        var consumedItems = new List<(Item Item, SkinLicenseDefinition License, long RemainingQuantity)>();
         try
         {
             await using var connection = await _source.OpenConnectionAsync(call.Cancellation);
             await using var transaction = await connection.BeginTransactionAsync(call.Cancellation);
+            await using (var command = new NpgsqlCommand("SELECT pg_advisory_xact_lock(hashtextextended(@lock_key, 0))", connection, transaction))
+            {
+                command.Parameters.AddWithValue("lock_key", $"ship-skin-activation:{characterId}");
+                await command.ExecuteNonQueryAsync(call.Cancellation);
+            }
             foreach (var entry in plan)
             {
+                if (EffectiveLicense(characterId, entry.License.SkinId) is not null)
+                    Notify("That SKIN license is already active on this character.");
                 var locked = await _items.LockAndGetAsync(connection, transaction, entry.Item.Id, call.Cancellation);
                 if (locked is null || locked.OwnerId != characterId || locked.Quantity <= 0) Notify("That SKIN license could not be consumed.");
+                var path = OverridePath(characterId, entry.License.SkinId);
+                previousOverrides[entry.License.SkinId] = _store.Read("shipCosmetics", path).Data as JsonObject;
+                var skin = _catalog.Skins[entry.License.SkinId];
+                var write = _store.Write("shipCosmetics", path, new JsonObject
+                {
+                    ["skinID"] = entry.License.SkinId, ["licenseTypeID"] = entry.License.LicenseTypeId,
+                    ["skinMaterialID"] = entry.License.SkinMaterialId > 0 ? entry.License.SkinMaterialId : skin.SkinMaterialId,
+                    ["expiresAtFileTime"] = entry.License.DurationDays > 0 ? FileTimeAfterDays(entry.License.DurationDays) : null,
+                    ["isSingleUse"] = entry.License.IsSingleUse, ["revoked"] = false, ["updatedAt"] = NowIso(),
+                    ["source"] = "shipCosmeticsMgr.ActivateSkinLicense",
+                });
+                if (!write.Success) Notify("That SKIN license could not be activated.");
                 if (locked!.Quantity == 1) await _items.DeleteAsync(connection, transaction, locked.Id, call.Cancellation);
                 else await _items.SetQuantityAsync(connection, transaction, locked.Id, locked.Quantity - 1, call.Cancellation);
+                consumedItems.Add((locked, entry.License, locked.Quantity - 1));
             }
             await transaction.CommitAsync(call.Cancellation);
         }
-        catch { RestoreOverrides(characterId, plan); throw; }
-        foreach (var entry in plan)
+        catch { RestoreOverrides(characterId, previousOverrides); throw; }
+        foreach (var entry in consumedItems)
         {
             if (_inventoryItemConsumed is not null)
-                await _inventoryItemConsumed(characterId, entry.Item, Math.Max(0, entry.Item.Quantity - 1), call.Cancellation);
+                await _inventoryItemConsumed(characterId, entry.Item, entry.RemainingQuantity, call.Cancellation);
             _skinLicenseActivated?.Invoke(characterId, entry.License.SkinId);
         }
         return PyNone.Instance;
     }
 
-    private void RestoreOverrides(long characterId, IEnumerable<(Item Item, SkinLicenseDefinition License, JsonObject? Previous)> plan)
+    private void RestoreOverrides(long characterId, IReadOnlyDictionary<long, JsonObject?> previousOverrides)
     {
-        foreach (var entry in plan)
+        foreach (var (skinId, previous) in previousOverrides)
         {
-            var path = OverridePath(characterId, entry.License.SkinId);
-            if (entry.Previous is null) _store?.Remove("shipCosmetics", path);
-            else _store?.Write("shipCosmetics", path, entry.Previous);
+            var path = OverridePath(characterId, skinId);
+            if (previous is null) _store?.Remove("shipCosmetics", path);
+            else _store?.Write("shipCosmetics", path, previous);
         }
     }
 

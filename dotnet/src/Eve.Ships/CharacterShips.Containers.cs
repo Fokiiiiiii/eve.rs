@@ -184,6 +184,20 @@ public sealed partial class CharacterShips
             && type.Attributes.GetValueOrDefault(attribute, 0) > 0;
     }
 
+    public async Task<ShipRefused?> ContainerNestingRefusalAsync(
+        IReadOnlyCollection<int> itemTypeIds, int destinationTypeId, CancellationToken cancellationToken = default)
+    {
+        await statics.EnsureTypesAsync(itemTypeIds.Append(destinationTypeId).Distinct().ToArray(), cancellationToken);
+        if (statics.Type(destinationTypeId) is not { } destinationType || !IsCargoContainerType(destinationType))
+            return null;
+        foreach (var itemTypeId in itemTypeIds.Distinct())
+        {
+            if (statics.Type(itemTypeId) is { } itemType && IsCargoContainerType(itemType))
+                return new ShipRefused(ShipRefusal.ContainerNesting, ModuleTypeId: itemTypeId);
+        }
+        return null;
+    }
+
     /// <summary>How big a can or a wreck is (its type's capacity) and how much is in it.</summary>
     public async Task<Room?> ContainerRoomAsync(long containerId, CancellationToken cancellationToken = default)
     {
@@ -280,6 +294,8 @@ public sealed partial class CharacterShips
             if (statics.Type(target.TypeId) is not { } targetType || !IsCargoContainerType(targetType)
                 || await IsNestedUnderAsync(target.Id, item.Id, cancellationToken))
                 return new NothingHappened();
+            if (await ContainerNestingRefusalAsync([item.TypeId], target.TypeId, cancellationToken) is { } nesting)
+                return nesting;
             await items.LockContainerAsync(connection, transaction, target.Id, cancellationToken);
             container = target;
             destinationFlag = ContainerFlag;
@@ -342,6 +358,8 @@ public sealed partial class CharacterShips
         await statics.EnsureTypesAsync([item.TypeId], cancellationToken);
         if (quantity is { } asked && !item.Singleton && (asked <= 0 || asked > item.Quantity))
             return new NothingHappened();
+        if (fromShip && await ContainerNestingRefusalAsync([item.TypeId], container.TypeId, cancellationToken) is { } nestingRefusal)
+            return nestingRefusal;
         var splits = quantity is { } some && !item.Singleton && some < item.Quantity;
         var moving = splits ? quantity!.Value : item.Quantity;
         var destinationFlag = toShip ? requestedFlag ?? CargoFlag : ContainerFlag;

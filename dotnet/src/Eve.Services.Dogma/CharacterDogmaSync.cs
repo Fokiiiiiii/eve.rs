@@ -20,6 +20,9 @@ public sealed class CharacterDogmaSync(DogmaStatic statics, CharacterShips ships
     /// <summary>The service's own way of putting dogma in the shapes the client reads.</summary>
     public DogmaInfo Info { get; } = new(statics);
 
+    /// <summary>Refreshes the in-space ship spec after skill or expert-system grants change its attributes.</summary>
+    public Func<ClientSession, CancellationToken, Task>? RefreshSpaceShip { get; set; }
+
     /// <summary>The next version of a character's brain.</summary>
     public int NextBrainVersion(long characterId) => _brainVersions.AddOrUpdate(characterId, 1, (_, version) => version + 1);
 
@@ -127,6 +130,8 @@ public sealed class CharacterDogmaSync(DogmaStatic statics, CharacterShips ships
         var changes = await ships.SkillChangesAsync(characterId, trainedSkills, grantsBefore, cancellationToken);
         if (changes.Count > 0)
         {
+            if (RefreshSpaceShip is { } refresh)
+                await refresh(session, cancellationToken);
             session.SendNotification(
                 "OnModuleAttributeChanges", "clientID",
                 new PyList([.. changes.Select(c => ShipNotifications.AttributeChange(characterId, c.ItemId, c.AttributeId, fileTime, c.Old, c.New))]));
@@ -161,6 +166,8 @@ public sealed class CharacterDogmaSync(DogmaStatic statics, CharacterShips ships
         var changes = await ships.SkillChangesAsync(characterId, before, cancellationToken: cancellationToken);
         if (changes.Count > 0)
         {
+            if (RefreshSpaceShip is { } refresh)
+                await refresh(session, cancellationToken);
             session.SendNotification(
                 "OnModuleAttributeChanges", "clientID",
                 new PyList([.. changes.Select(c => ShipNotifications.AttributeChange(characterId, c.ItemId, c.AttributeId, fileTime, c.Old, c.New))]));

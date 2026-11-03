@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 
@@ -26,8 +27,20 @@ public class OmegaStateTests
     private sealed class Packets : IPacketSink
     {
         public List<string> Sent { get; } = [];
+        public List<string> Notifications { get; } = [];
 
-        public void Send(PyValue packet) => Sent.Add(Convert.ToHexStringLower(MarshalCodec.Encode(packet)));
+        public void Send(PyValue packet)
+        {
+            Sent.Add(Convert.ToHexStringLower(MarshalCodec.Encode(packet)));
+            if (packet is not PyObject outer)
+                return;
+            var state = ((PyTuple)outer.Args).Items;
+            if (state[0] is not PyInt { Value: MachoMessage.Notification })
+                return;
+            var address = ((PyTuple)((PyObject)state[2]).Args).Items;
+            if (JsSemantics.StringValue(address[1]) is { } name)
+                Notifications.Add(name);
+        }
 
         public bool Announced(string notification) =>
             Sent.Any(packet => packet.Contains(Convert.ToHexStringLower(Encoding.ASCII.GetBytes(notification)), StringComparison.Ordinal));
@@ -138,6 +151,7 @@ public class OmegaStateTests
         Assert.Equal(new PyInt(0), await Call(service, session, "GetCloneGrade"));
         Assert.True(sink.Announced("OnSubscriptionChangedServer"));
         Assert.True(sink.Announced("OnSubscriptionTimeUpdateServer"));
+        Assert.Equal(new[] { "OnSubscriptionTimeUpdateServer", "OnSubscriptionChangedServer" }, sink.Notifications);
 
         var sent = sink.Sent.Count;
         Assert.Equal(new PyInt(0), await Call(service, session, "GetCloneGrade"));
@@ -153,5 +167,19 @@ public class OmegaStateTests
 
         Assert.True(sink.Announced("OnSubscriptionChangedServer"));
         Assert.True(sink.Announced("OnSubscriptionTimeUpdateServer"));
+        Assert.Equal(new[] { "OnSubscriptionTimeUpdateServer", "OnSubscriptionChangedServer" }, sink.Notifications);
+    }
+
+    [Fact]
+    public void A_paid_expiry_extension_notifies_time_before_only_a_clone_grade_change()
+    {
+        var upgrade = new Packets();
+        var sameGrade = new Packets();
+
+        SubscriptionMgrService.AnnouncePurchasedSubscription(SessionOf(5, upgrade), 0, 1, OmegaLicenses.DefaultOmegaExpiryFileTime);
+        SubscriptionMgrService.AnnouncePurchasedSubscription(SessionOf(6, sameGrade), 1, 1, OmegaLicenses.DefaultOmegaExpiryFileTime);
+
+        Assert.Equal(new[] { "OnSubscriptionTimeUpdateServer", "OnSubscriptionChangedServer" }, upgrade.Notifications);
+        Assert.Equal(new[] { "OnSubscriptionTimeUpdateServer" }, sameGrade.Notifications);
     }
 }

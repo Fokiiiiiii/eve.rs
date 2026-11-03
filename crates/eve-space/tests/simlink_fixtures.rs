@@ -941,6 +941,25 @@ fn message_of(case: &Value) -> Message {
         start: wide(case, "start"),
         deadline: wide(case, "deadline"),
     };
+    let metrics = || eve_space::link::MetricsIdentity {
+        request_id: number("requestId"),
+        scene: scene_key(&case["scene"]),
+        match_id: wide(case, "matchId"),
+        generation: wide(case, "generation"),
+        start: wide(case, "start"),
+        roster: case["roster"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| {
+                (
+                    v[0].as_str().unwrap().parse().unwrap(),
+                    v[1].as_str().unwrap().parse().unwrap(),
+                    v[2].as_u64().unwrap() as u8,
+                )
+            })
+            .collect(),
+    };
     match case["kind"].as_str().unwrap() {
         "Hello" => Message::Hello { version: number("version") as u16 },
         "HelloAck" => {
@@ -1056,6 +1075,46 @@ fn message_of(case: &Value) -> Message {
             request_id: number("requestId"),
             already_absent: case["alreadyAbsent"].as_bool().unwrap(),
             error: case.get("error").and_then(Value::as_str).map(str::to_owned),
+        },
+        "RegisterTournamentMetrics" => Message::RegisterTournamentMetrics { identity: metrics() },
+        "RegisterTournamentMetricsReply" => Message::RegisterTournamentMetricsReply {
+            identity: metrics(),
+            status: number("status") as u8,
+            error: text(case, "error"),
+        },
+        "ReadTournamentMetrics" => Message::ReadTournamentMetrics { identity: metrics() },
+        "ReadTournamentMetricsReply" => Message::ReadTournamentMetricsReply {
+            identity: metrics(),
+            status: number("status") as u8,
+            error: text(case, "error"),
+            sample: (number("status") == 0).then(|| eve_space::link::MetricsSample {
+                at: wide(case, "at"),
+                applied: case
+                    .get("applied")
+                    .and_then(Value::as_array)
+                    .map(|v| [v[0].as_f64().unwrap(), v[1].as_f64().unwrap()]),
+                pilots: metrics()
+                    .roster
+                    .into_iter()
+                    .map(|(character, ship, team)| eve_space::link::MetricsPilot {
+                        character,
+                        ship,
+                        team,
+                        state: 0,
+                        fitted: vec![],
+                        running: vec![],
+                        companions: vec![],
+                        ehp_status: 0,
+                        ehp: None,
+                    })
+                    .collect(),
+            }),
+        },
+        "ReleaseTournamentMetrics" => Message::ReleaseTournamentMetrics { identity: metrics() },
+        "ReleaseTournamentMetricsReply" => Message::ReleaseTournamentMetricsReply {
+            identity: metrics(),
+            status: number("status") as u8,
+            error: text(case, "error"),
         },
         "RegisterTournamentCutoff" => Message::RegisterTournamentCutoff {
             identity: cutoff(),

@@ -534,8 +534,8 @@ def build(m):
             body += i64(m["at"]) + bytes([1 if m.get("applied") is not None else 0])
             if m.get("applied") is not None: body += struct.pack("<2d", *m["applied"])
             body += struct.pack("<H", len(roster))
-            for c, ship, team in roster:
-                body += i64(c) + i64(ship) + bytes([team]) + struct.pack("<HHH", 0, 0, 0) + bytes([0])
+            for c, ship_id, team in roster:
+                body += i64(c) + i64(ship_id) + bytes([team, 0]) + struct.pack("<HHH", 0, 0, 0) + bytes([0])
         return frame(k, body)
     if k == "Hello":
         return frame(k, struct.pack("<H", m["version"]))

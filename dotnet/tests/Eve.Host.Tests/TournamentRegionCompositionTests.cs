@@ -18,8 +18,8 @@ public sealed class TournamentRegionCompositionTests
         await using var occupiedTemplate = new NpgsqlConnection(template.ConnectionString);
         await occupiedTemplate.OpenAsync();
         var database = "tourney_region_" + Guid.NewGuid().ToString("N")[..12];
-        var adminUrl = new UriBuilder(originalUrl) { Path = "/postgres" }.Uri.ToString();
-        var testUrl = new UriBuilder(originalUrl) { Path = "/" + database }.Uri.ToString();
+        var adminUrl = new NpgsqlConnectionStringBuilder(template.ConnectionString) { Database = "postgres" }.ConnectionString;
+        var testUrl = new NpgsqlConnectionStringBuilder(template.ConnectionString) { Database = database }.ConnectionString;
         var folder = Path.Combine(Path.GetTempPath(), database);
         Directory.CreateDirectory(folder);
         var arenaPath = Path.Combine(folder, "arena.json");

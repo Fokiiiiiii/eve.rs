@@ -35,8 +35,9 @@ public sealed class CorporationSharesCompositionTests
     {
         var sourceUrl = Environment.GetEnvironmentVariable("EVE_PG_URL") ?? throw new InvalidOperationException("EVE_PG_URL required");
         var db = "share_host_" + Guid.NewGuid().ToString("N")[..12];
-        var adminUrl = new UriBuilder(sourceUrl) { Path = "/postgres" }.Uri.ToString();
-        var databaseUrl = new UriBuilder(sourceUrl) { Path = "/" + db }.Uri.ToString();
+        var template = PgConnection.ForTest(sourceUrl);
+        var adminUrl = new NpgsqlConnectionStringBuilder(template) { Database = "postgres" }.ConnectionString;
+        var databaseUrl = new NpgsqlConnectionStringBuilder(template) { Database = db }.ConnectionString;
         var names = new[] { "EVE_PG_URL", "EVE_SIM", "EVE_MARKET_SEED", "EVE_WORMHOLES" };
         var saved = names.ToDictionary(name => name, Environment.GetEnvironmentVariable);
         HostRuntime? host = null;

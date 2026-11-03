@@ -73,8 +73,7 @@ public static class Customs
         };
     }
 
-    public static double CombinedRate(double npcRate, double ownerRate) =>
-        Math.Clamp(npcRate + ownerRate, 0, 1);
+    public static double CombinedRate(double npcRate, double ownerRate) => npcRate + ownerRate;
 
     /// <summary>
     /// The import and export fees of a transfer (spaceportPin.GetImportTax, GetExportTax): sum of quantity x the launchpad's rate x the

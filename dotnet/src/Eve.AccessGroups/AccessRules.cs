@@ -54,9 +54,9 @@ public sealed class AccessGroupError(string code, string? notice = null) : Excep
 }
 
 /// <summary>
-/// list and manages every entry; a manager adds members and removes or changes only member and blocked entries; corporations, alliances and
-/// everyone can be member or blocked only; the most specific entry decides (character, then corporation, then alliance, then everyone).
-/// A corporation's built-in list is fixed: its corporation is its admin, and every member of the corporation may use it.
+/// An admin manages every entry; a manager manages member and blocked entries only. Corporation, alliance and everyone entries can only be
+/// members or blocked, and the most specific matching entry decides a character's role (character, corporation, alliance, then everyone).
+/// A corporation's built-in list is fixed: the corporation is its admin, and its members have the member role.
 /// </summary>
 public static class AccessRules
 {
@@ -85,7 +85,7 @@ public static class AccessRules
         return entry?.Type ?? MembershipType.None;
     }
 
-    /// <summary>A member or blocked entry of the group, which the client lists; the admin and manager ones are seen by managers only.</summary>
+    /// <summary>Admins and managers can see a group; members can see their corporation's built-in group.</summary>
     public static bool CanSee(MembershipType role, AccessGroup group) =>
         role is MembershipType.Admin or MembershipType.Manager || (group.CorpBuiltIn && role == MembershipType.Member);
 

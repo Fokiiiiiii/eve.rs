@@ -544,7 +544,7 @@ public sealed partial class InvBrokerService(
                 throw MachoErrors.ThrowUserError("INVENTORY_OPERATION_INVALID");
         }
         var rate = call.Arg(3) switch { PyReal real => real.Value, PyInt number => number.Value, PyLong number => number.Value, _ => double.NaN };
-        if (!double.IsFinite(rate) || rate is < 0 or > 1)
+        if (!double.IsFinite(rate) || rate < 0)
             throw MachoErrors.ThrowUserError("INVENTORY_OPERATION_INVALID");
         await Customs.ImportExportAsync(call.Session, office.ItemId, IdOf(call.Arg(0)) ?? 0, imports, exports, rate, call.Cancellation);
         return None;

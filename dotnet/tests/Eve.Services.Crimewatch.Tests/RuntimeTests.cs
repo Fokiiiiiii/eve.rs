@@ -1503,15 +1503,22 @@ public class PenaltyTests : IAsyncLifetime
         await _source.DisposeAsync();
     }
 
-    private (CrimewatchRuntime Runtime, SecurityStatusPenalties Penalties) Rig()
+        private (CrimewatchRuntime Runtime, SecurityStatusPenalties Penalties) Rig(CharacterSessions? sessionsOverride = null, bool enterAttackerSession = true, bool failFirstStatusWrite = false)
     {
-        var runtime = new CrimewatchRuntime(new PgCrimewatchStore(_source!, _schema), _sessions, () => _now, _persistence, delay: new Waits().Delay);
+          var sessions = sessionsOverride ?? _sessions;
+          var runtime = new CrimewatchRuntime(new PgCrimewatchStore(_source!, _schema), sessions, () => _now, _persistence, delay: new Waits().Delay);
+          var failWrite = failFirstStatusWrite;
         var penalties = new SecurityStatusPenalties(
-            runtime, _sessions,
+              runtime, sessions,
             (id, _) => Task.FromResult(_status.GetValueOrDefault(id)),
             (request, _) => Task.FromResult<int?>(request.TargetIsCapsule ? 670 : 587),
-            (change, _) =>
+              (change, _, _, _) =>
             {
+                  if (failWrite)
+                  {
+                      failWrite = false;
+                      throw new InvalidOperationException("test status persistence failure");
+                  }
                 _status[change.CharacterId] = change.NextStatus;
                 _written.Add((change.CharacterId, change.NextStatus, change.Reason));
                 _changes.Add(change);
@@ -1524,16 +1531,19 @@ public class PenaltyTests : IAsyncLifetime
                 return Task.CompletedTask;
             });
         penalties.Attach();
-        var session = new ClientSession(_attacker) { SessionId = 26_859_804_000_001, ClientId = 34_065_451, UserId = 35 };
-        session.CharacterId = 1;
-        session.Set("solarsystemid", new PyInt(System));
-        session.Set("shipid", new PyLong(9_988_400_003_315));
-        _sessions.Enter(1, session);
+          if (enterAttackerSession)
+          {
+              var session = new ClientSession(_attacker) { SessionId = 26_859_804_000_001, ClientId = 34_065_451, UserId = 35 };
+              session.CharacterId = 1;
+              session.Set("solarsystemid", new PyInt(System));
+              session.Set("shipid", new PyLong(9_988_400_003_315));
+              sessions.Enter(1, session);
+          }
         return (runtime, penalties);
     }
 
-    private static AggressionRequest Attack(long ship = 9_988_400_003_311, bool capsule = false, double security = 1.0, SecurityClass where = SecurityClass.SafeSec) =>
-        new(1, 2, ship, System, security, where, capsule);
+      private static AggressionRequest Attack(long ship = 9_988_400_003_311, bool capsule = false, double security = 1.0, SecurityClass where = SecurityClass.SafeSec, long target = 2) =>
+          new(1, target, ship, System, security, where, capsule);
 
     [PgFact]
     public async Task A_crime_costs_a_quarter_point_and_the_pilot_is_told_as_the_reference_told_it_before_its_timers()
@@ -1597,24 +1607,63 @@ public class PenaltyTests : IAsyncLifetime
         Assert.Empty(_written);
     }
 
-    [PgFact]
-    public async Task A_second_shot_at_the_same_ship_costs_nothing_for_a_minute_and_one_at_another_ship_costs_again()
-    {
-        var (runtime, _) = Rig();
-        using var _ = runtime;
-        await runtime.RecordAggressionAsync(Attack());
-        _now += 10_000;
-        await runtime.RecordAggressionAsync(Attack());
-        Assert.Single(_written);
+      [PgFact]
+      public async Task Security_status_memory_tracks_the_victim_and_ship_or_capsule_until_crimewatch_expires()
+        {
+            var (runtime, _) = Rig();
+            using var _ = runtime;
+            await runtime.RecordAggressionAsync(Attack());
+            _now += 61_000;
+            await runtime.RecordAggressionAsync(Attack(ship: 9_988_400_003_999));
+            Assert.Single(_written);
 
-        await runtime.RecordAggressionAsync(Attack(ship: 9_988_400_003_999));   // another ship
-        Assert.Equal(2, _written.Count);
-        Assert.True(_written[1].Value < _written[0].Value);
+            await runtime.RecordAggressionAsync(Attack(target: 3));
+            Assert.Equal(2, _written.Count);
+            Assert.True(_written[1].Value < _written[0].Value);
 
-        _now += 61_000;   // the window is over
-        await runtime.RecordAggressionAsync(Attack());
-        Assert.Equal(3, _written.Count);
-    }
+            await runtime.RecordAggressionAsync(Attack(capsule: true));
+            Assert.Equal(3, _written.Count);
+
+            _now += CombatState.FlagDurationMs + 1;
+            await runtime.RecordAggressionAsync(Attack());
+            Assert.Equal(4, _written.Count);
+        }
+
+      [PgFact]
+      public async Task Security_status_memory_remains_while_any_limited_engagement_is_active()
+      {
+          var (runtime, _) = Rig();
+          using var _ = runtime;
+          await runtime.RecordAggressionAsync(Attack());
+
+          _now += CombatState.FlagDurationMs - 60_000;
+          _persistence.Engagements[(1, 3)] = _now + 300_000;
+          var legal = await runtime.RecordAggressionAsync(Attack(target: 3));
+          Assert.Equal(AggressionReason.Legal, legal.Outcome.Reason);
+
+          _now += 120_001;
+          Assert.True(_now > CombatState.FlagDurationMs + Start);
+          await runtime.RecordAggressionAsync(Attack());
+          Assert.Single(_written);
+      }
+
+      [PgFact]
+      public async Task Security_status_memory_survives_a_runtime_restart_until_the_flag_ends()
+      {
+          var (runtime, _) = Rig();
+          await runtime.RecordAggressionAsync(Attack());
+          runtime.Dispose();
+
+          _now += 61_000;
+          var (restarted, _) = Rig(new CharacterSessions(), enterAttackerSession: false);
+          using var _ = restarted;
+          await restarted.RecordAggressionAsync(Attack(ship: 9_988_400_003_999));
+          Assert.Single(_written);
+
+          _now += CombatState.FlagDurationMs + 1;
+          await restarted.RecordAggressionAsync(Attack());
+          Assert.Equal(2, _written.Count);
+      }
 
     [PgFact]
     public async Task A_capsule_costs_ten_times_a_ship_and_what_is_no_crime_costs_nothing()
@@ -1649,8 +1698,8 @@ public class PenaltyTests : IAsyncLifetime
         Assert.DoesNotContain(Notes.Of(_attacker), n => n.Name == "OnSecurityStatusUpdate");
     }
 
-    [PgFact]
-    public async Task Concurrent_penalties_for_one_pilot_keep_each_distinct_ships_penalty()
+      [PgFact]
+      public async Task Concurrent_penalties_for_one_victim_are_suppressed_across_ship_changes()
     {
         var (runtime, _) = Rig();
         using var _ = runtime;
@@ -1668,7 +1717,7 @@ public class PenaltyTests : IAsyncLifetime
                 }
             },
             (_, _) => Task.FromResult<int?>(587),
-            (change, _) =>
+              (change, _, _, _) =>
             {
                 lock (sync)
                 {
@@ -1678,16 +1727,17 @@ public class PenaltyTests : IAsyncLifetime
                 return Task.CompletedTask;
             },
             () => _now);
-        var offense = new AggressionOutcome(CombatState.Idle, AggressionReason.Criminal);
+          var offense = new AggressionOutcome(
+              new CombatState(0, 0, 0, _now + CombatState.FlagDurationMs, Flag.Criminal, 0, System),
+              AggressionReason.Criminal);
 
         await Task.WhenAll(
             penalties.OnAggressionAsync(new AggressionResult(Attack(ship: 9_988_400_004_001), offense)),
             penalties.OnAggressionAsync(new AggressionResult(Attack(ship: 9_988_400_004_002), offense)));
 
-        Assert.Equal(2, changes.Count);
-        Assert.Equal(0, changes[0].PreviousStatus);
-        Assert.Equal(changes[0].NextStatus, changes[1].PreviousStatus);
-        Assert.True(changes[1].NextStatus < changes[0].NextStatus);
+          Assert.Single(changes);
+          Assert.Equal(0, changes[0].PreviousStatus);
+          Assert.True(changes[0].NextStatus < 0);
     }
 
     [PgFact]
@@ -1710,7 +1760,7 @@ public class PenaltyTests : IAsyncLifetime
                 }
             },
             (_, _) => Task.FromResult<int?>(587),
-            async (change, _) =>
+              async (change, _, _, _) =>
             {
                 if (Interlocked.Increment(ref reachedWrites) == 2)
                 {
@@ -1724,7 +1774,9 @@ public class PenaltyTests : IAsyncLifetime
                 }
             },
             () => _now);
-        var offense = new AggressionOutcome(CombatState.Idle, AggressionReason.Criminal);
+          var offense = new AggressionOutcome(
+              new CombatState(0, 0, 0, _now + CombatState.FlagDurationMs, Flag.Criminal, 0, System),
+              AggressionReason.Criminal);
         var result = new AggressionResult(Attack(), offense);
 
         await Task.WhenAll(
@@ -1733,6 +1785,18 @@ public class PenaltyTests : IAsyncLifetime
 
         Assert.Equal(1, written);
     }
+
+      [PgFact]
+      public async Task Security_status_persistence_failure_does_not_consume_the_victim_memory()
+      {
+          var (runtime, _) = Rig(failFirstStatusWrite: true);
+          using var _ = runtime;
+          await Assert.ThrowsAsync<InvalidOperationException>(() => runtime.RecordAggressionAsync(Attack()));
+
+          await runtime.RecordAggressionAsync(Attack());
+
+          Assert.Single(_written);
+      }
 }
 
 internal sealed class RelationsRig : IAsyncDisposable
@@ -1781,5 +1845,6 @@ internal sealed class RelationsRig : IAsyncDisposable
             await using var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE", connection);
             await command.ExecuteNonQueryAsync();
         }
+
     }
 }

@@ -13,9 +13,6 @@ public static class SecurityPenalty
     public const double Min = -10;
     public const double Max = 10;
 
-    /// <summary>How long after a loss for a target another shot at it costs nothing.</summary>
-    public const long DuplicateWindowMs = CombatState.WeaponsDurationMs;
-
     /// <summary>A security status as it is kept: between −10 and 10, four decimals (half away from zero).</summary>
     public static double Clamp(double value) =>
         double.IsFinite(value) ? Math.Round(Math.Clamp(value, Min, Max), 4, MidpointRounding.AwayFromZero) : 0;

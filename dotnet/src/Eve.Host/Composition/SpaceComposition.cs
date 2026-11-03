@@ -458,10 +458,8 @@ internal sealed partial class CharacterServicesComposition
                 securityStatusOf,
                 async (request, token) =>
                     (await items.GetAsync(request.TargetShipId, token))?.TypeId,
-                async (change, token) =>
+                  async (change, connection, transaction, token) =>
                 {
-                    await using var connection = await source.OpenConnectionAsync(token);
-                    await using var transaction = await connection.BeginTransactionAsync(token);
                     var attrs = new Dictionary<string, object?>
                     {
                         ["eventTypeID"] = change.EventTypeID,
@@ -476,7 +474,6 @@ internal sealed partial class CharacterServicesComposition
                         Eve.Relations.RelationKinds.SecurityStatus.Name,
                         change.CharacterId, Eve.Relations.RelationStore.World, change.NextStatus,
                         change.Reason, attrs, cancellationToken: token);
-                    await transaction.CommitAsync(token);
                 },
                 now,
                 async (character, token) => await spaceSessions.AffiliationChangedAsync(character, token)).Attach();

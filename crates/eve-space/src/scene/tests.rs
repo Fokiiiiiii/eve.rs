@@ -27,7 +27,7 @@ pub(crate) fn system() -> Arc<SolarSystem> {
         constellation_id: 20_000_001,
         region_id: 10_000_001,
         faction_id: None,
-        security: 0.9,
+        security: 0.0,
         bodies: vec![station],
     })
 }
@@ -345,7 +345,7 @@ fn binding_sends_the_time_the_ship_then_the_state_then_the_ship_numbers() {
         ]
     );
     assert_eq!(action_names(&out[4]), ["SetState"]);
-    assert_eq!(action_names(&out[5]), ["SetBallAgility", "SetMaxSpeed"]);
+    assert!(action_names(&out[5]).is_empty());
     // the ship comes at the stamp of the moment and the state a stamp after (the reference's 102 and 103)
     let now_stamp = i64::from(stamp_at(NOON));
     assert_eq!(stamps(&out[2]), [now_stamp]);

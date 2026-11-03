@@ -212,13 +212,15 @@ fn binding_gives_the_ships_in_view_in_the_order_they_came_and_the_numbers_of_eac
             "SetBallAgility",
             "SetBallMass",
             "SetMaxSpeed", // the other ship's
-            "SetBallAgility",
-            "SetMaxSpeed", // its own: the mass came with the start
         ]
     );
     // the state holds the balls of both ships
     let buffer = state_buffer(&bound[4]);
     assert!(holds_ball_of(&buffer, spec().ship_id) && holds_ball_of(&buffer, other_spec().ship_id));
+    let ego = buffer.windows(8).position(|bytes| bytes == other_spec().ship_id.to_le_bytes()).unwrap();
+    let speed = f32::from_le_bytes(buffer[ego + 63..ego + 67].try_into().unwrap());
+    let agility = f32::from_le_bytes(buffer[ego + 91..ego + 95].try_into().unwrap());
+    assert_eq!((speed, agility), (other_spec().max_velocity as f32, other_spec().agility as f32));
     // the state lists the ships in the same order
     let Out::Notify { args, .. } = &bound[4] else { panic!() };
     let text = format!("{args:?}");

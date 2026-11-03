@@ -54,4 +54,6 @@ SDE確認値: type 49810=100,000 Skill Points, group 526; type 44992=PLEX, group
 
 ## 継続時の注意
 
-dotnet/src/Eve.Host/Persistence/NewEden/PersistenceNewEdenStoreRuntime.Part2.cs:387-474がreverse-redeem配送、NewEdenStoreHostTests.cs:177-254がDB wire regression。store settlementの実money/USD/AUR checkout providerはないためfalsey失敗を維持し、falseyはV24 UIのgeneric PurchaseFailedErrorになる（vgs/client/vgsClient.py:14,59-64）。push前のCI red gateとmerge後のDB class rerun、push後のGitHub Actions完了確認が残る。
+dotnet/src/Eve.Host/Persistence/NewEden/PersistenceNewEdenStoreRuntime.Part2.cs:387-474がreverse-redeem配送、NewEdenStoreHostTests.cs:177-254がDB wire regression。store settlementの実money/USD/AUR checkout providerはないためfalsey失敗を維持し、falseyはV24 UIのgeneric PurchaseFailedErrorになる（vgs/client/vgsClient.py:14,59-64）。
+
+変更はローカルcommit済みだが、pushはまだ完了していない。mainの`95bd9c92`向けCI 1450は進行中で、`.NET build` が `dotnet/src/Eve.Host/Composition/SpaceComposition.cs:396` のCS1501（`ApplyAsync`の5引数overloadなし）で失敗している。これは今回のstore変更とは別のupstream space change。pushはmain更新との競合でnon-fast-forward拒否となり、forceは使っていない。最新の完了済みCIは1449（`f7c0e9e1`）success。CI 1450の完了とmainのgreenを待ち、最新mainをfetch/mergeした後にHost buildと`eve_p8`の`NewEdenStoreHostTests`を再実行してからpushする。

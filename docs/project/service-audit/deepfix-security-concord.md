@@ -71,3 +71,35 @@
 - Before/after evidence: recovery first reached 7.63671875 through per-kill accrual where the NPC cap is +5; after the tick fix the regression passes. Before the profile gate, a 1,000,000 ISK Rogue Drone beat the eligible 500,000 ISK pirate; after the gate the database test passes.
 - Still to check: graphical V24.01 client behavior, exact per-profile recovery percentages, and this commit's push-triggered Actions. The rate-source gap remains open.
 - Main CI #1448 failed before a later run #1449 for SHA `f7c0e9e14ccd` completed green, including Required CI gate. After #1449, `origin/main` was fetched and merged. Conflict resolution preserved the local security-status-loss queue and upstream target-lock recalculation. SHA `95bd9c920736` was pushed; Agent test #1263 and CI #1450 failed on the missing `ApplyAsync` overload. Signed fix `550a4ab4b5d7` was pushed; selected test #1264 and CI #1451 both passed with no failed tests or jobs. `ci-status.py failures 550a4ab4` confirmed the CI result.
+## Follow-up: NPC security-status recovery uses the SDE rate (2026-11-03)
+
+### Finding and evidence
+
+The recovery calculation previously treated bounty as the rate and capped it at `0.0025`. The subscriber also retained the greatest bounty in its durable five-minute window. This can select the wrong rat and produce the wrong amount: pinned SDE `dogmaAttributes` identifies `entitySecurityStatusKillBonus` (attribute ID 252) as the percentage movement for killing that type, and the queried SDE rows show different values for NPC types with the same bounty. EVE University documents that each rat has its own security percentage and the highest-value outlaw NPC in a five-minute period determines the gain; Fast Talk adds 5% per trained level ([Repairing security status](https://wiki.eveuniversity.org/Repairing_security_status), lines 133-168).
+
+The server kill event already carries both the NPC `typeId` and catalog profile: `SpaceSessions.FinishNpcDeathAsync` builds and announces it (`dotnet/src/Eve.Services.Space/SpaceSessions.Npc.cs:289-326`), and the sim regression test asserts those fields (`dotnet/tests/Eve.Services.Space.Tests/SpaceEventsTests.cs:209-228`). `NpcProfile.ShipTypeId` is the static type key (`dotnet/src/Eve.Npc/NpcAuthority.cs:8-10`). Host now resolves `entitySecurityStatusKillBonus` by SDE name, loads those profile types, and reads the value from `DogmaStatic.Type(...).Attributes` before creating each recovery profile (`dotnet/src/Eve.Host/Composition/SpaceComposition.cs:116-138`; `dotnet/src/Eve.Dogma/DogmaStatic.cs:109,129,139-187,311-391`).
+
+`NpcSecurityStatusRecovery.TryNext` now consumes that percentage directly, applies Fast Talk, preserves the reference formula and the existing five-status ceiling, and has no bounty-derived cap (`dotnet/src/Eve.Npc/NpcSecurityStatusRecovery.cs:25-45`). The durable window stores the percentage and replaces its candidate only when a higher percentage arrives; migration `0007` adds the rate and allows a zero-bounty NPC with a positive SDE rate (`dotnet/src/Eve.Crimewatch/PgCrimewatchStore.cs:29-41,195-213,220-290`). A legacy active window with the migration default of zero falls back to the current static profile rate during settlement (`dotnet/src/Eve.Services.Crimewatch/NpcSecurityStatusRecoverySubscriber.cs:109-181`).
+
+This intentionally diverges from EveJS 261028.1's fallback that derives a capped modifier from the bounty (`/home/user/evejs-261028.1/src/server/src/services/bounty/bountyRuntime.js:257-287,362-446`). The V24.01 client path stays scalar and unchanged: `GetMySecurityStatus` lazily calls the crimewatch bound RPC and `OnSecurityStatusUpdate` stores its value (`/home/user/eve-logic/eve/client/script/ui/services/crimewatchSvc.py:590-600`); the security-office listener refreshes the tag bar (`/home/user/eve-logic/eve/client/script/ui/station/securityOfficeWindow.py:137-148`). Whole-client search found the other `GetMySecurityStatus` readers in character overview (`characterOverviewPanel.py:152-166`), security warnings (`agentDialogueUtil.py:164-202,422-446`), crimewatch safety (`crimewatchSvc.py:643-658`), and fitting (`fittingDogmaLocation.py:787-788`). The client also exposes `GetCharacterSecurityStatus` through `crimewatchSvc.py:595-596` and dogma location callsites at `clientDogmaLocation.py:747-750` and `fittingDogmaLocation.py:787-788`.
+
+### Verification
+
+- Before the fix, the database-backed restart/window regression failed: expected `0.03`, got `0.03125` from the bounty cap.
+- After the fix, the focused recovery subscriber test passed (1); the full `Eve.Services.Crimewatch.Tests` project passed (52), `Eve.Crimewatch.Tests` passed (60), `NpcSecurityStatusRecoveryTests` passed (20), Host Crimewatch wire tests passed (6), and `SpaceEventsTests` passed (13). These runs had no skipped tests.
+- Release builds passed for `Eve.Host`, `Eve.Crimewatch`, `Eve.Npc.Tests`, `Eve.Services.Crimewatch.Tests`, `Eve.Host.Tests`, and `Eve.Crimewatch.Tests`.
+- The newest completed main CI before this change was run 1452 on `3d9ffdd28db3`, green across all jobs. This evidence does not include a run for the current recovery-rate patch.
+- The focused and neighboring tests were database-backed on `eve_p5`, and the sim test was headless. No graphical V24.01 client session was used for this change.
+### Verification after merge from `origin/main`
+
+The `d9fef52c` fast-forward was followed by fresh Release builds and `eve_p5` checks:
+
+- Builds passed for `Eve.Host`, `Eve.Npc.Tests`, `Eve.Services.Crimewatch.Tests`, `Eve.Host.Tests`, `Eve.Crimewatch.Tests`, and `Eve.Services.Space.Tests`, each with zero warnings and errors.
+- Database-locked checks passed with no skips: `NpcSecurityStatusRecoveryTests` (20), `Eve.Services.Crimewatch.Tests` (52), `Eve.Crimewatch.Tests` (60), Host `Crimewatch_` wire tests (6), and `SpaceEventsTests` (13).
+- The graphical V24.01 client was not used; behavior was checked against the client source callsites cited above.
+
+### Push and Actions handoff
+
+- Code commit `31dac370` was pushed to `main` after a green local build/test pass and green latest completed main CI.
+- Selected Actions run `41579007784` passed for `Eve.Host.Tests`, `Eve.Services.Crimewatch.Tests`, `Eve.Crimewatch.Tests`, `Eve.Npc.Tests`, and `Eve.Services.Space.Tests` with no failed tests or skipped jobs.
+- Push-triggered CI run `41578995207` (CI #1454) completed successfully with no failed tests or jobs, including the headless end-to-end and Windows jobs.

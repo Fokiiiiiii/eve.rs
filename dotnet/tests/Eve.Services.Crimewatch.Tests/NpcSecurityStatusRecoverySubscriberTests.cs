@@ -44,10 +44,10 @@ public sealed class NpcSecurityStatusRecoverySubscriberTests
 
             Eve.Services.Crimewatch.NpcSecurityStatusProfile? Profile(string profileId) => profileId switch
             {
-                "low" => new Eve.Services.Crimewatch.NpcSecurityStatusProfile(100_000m, npcCorporationId, npcFactionId, 1_001, true),
-                "high" => new Eve.Services.Crimewatch.NpcSecurityStatusProfile(200_000m, npcCorporationId, npcFactionId, 1_002, true),
-                "highest" => new Eve.Services.Crimewatch.NpcSecurityStatusProfile(500_000m, npcCorporationId, npcFactionId, 1_003, true),
-                "rogueDrone" => new Eve.Services.Crimewatch.NpcSecurityStatusProfile(1_000_000m, npcCorporationId, rogueDroneFactionId, 1_004, false),
+            "low" => new Eve.Services.Crimewatch.NpcSecurityStatusProfile(100_000m, npcCorporationId, npcFactionId, 1_001, true, 0.08),
+            "high" => new Eve.Services.Crimewatch.NpcSecurityStatusProfile(500_000m, npcCorporationId, npcFactionId, 1_002, true, 0.16),
+            "highest" => new Eve.Services.Crimewatch.NpcSecurityStatusProfile(0m, npcCorporationId, npcFactionId, 1_003, true, 0.24),
+            "rogueDrone" => new Eve.Services.Crimewatch.NpcSecurityStatusProfile(1_000_000m, npcCorporationId, rogueDroneFactionId, 1_004, false, 1.0),
                 _ => null,
             };
 
@@ -154,20 +154,22 @@ public sealed class NpcSecurityStatusRecoverySubscriberTests
             Assert.Equal(1, await scheduler.RunDueAsync());
             await restartedEvents.PumpAsync();
 
-            Assert.Equal(0.03125, (await restartedRelations.GetAsync(RelationKinds.SecurityStatus.Name,
-                characterId, RelationStore.World))?.Value);
+            var recoveredStatus = (await restartedRelations.GetAsync(RelationKinds.SecurityStatus.Name,
+                characterId, RelationStore.World))?.Value ?? double.NaN;
+            Assert.InRange(Math.Abs(recoveredStatus - 0.03), 0, 1e-12);
             Assert.NotNull(recoveredNotice);
             using (var notice = System.Text.Json.JsonDocument.Parse(recoveredNotice!))
             {
                 Assert.Equal(characterId, notice.RootElement.GetProperty("characterId").GetInt64());
-                Assert.Equal(0.03125, notice.RootElement.GetProperty("status").GetDouble());
+              Assert.InRange(Math.Abs(notice.RootElement.GetProperty("status").GetDouble() - 0.03), 0, 1e-12);
             }
 
             var history = await restartedRelations.HistoryAsync(RelationKinds.SecurityStatus.Name, characterId, RelationStore.World);
             var killRows = history.Where(entry => entry.Reason == Eve.Services.Crimewatch.NpcSecurityStatusRecoverySubscriber.HistoryReason).ToArray();
             var recovered = Assert.Single(killRows);
             Assert.True(recovered.Attrs.HasValue);
-            Assert.Equal(500_000m, recovered.Attrs.Value.GetProperty("bounty").GetDecimal());
+            Assert.Equal(0m, recovered.Attrs.Value.GetProperty("bounty").GetDecimal());
+            Assert.Equal(0.24, recovered.Attrs.Value.GetProperty("securityStatusKillBonusPercent").GetDouble());
             Assert.Equal(highestEventId, recovered.Attrs.Value.GetProperty("sourceEventID").GetInt64());
             Assert.Equal(1.25, recovered.Attrs.Value.GetProperty("fastTalkMultiplier").GetDouble());
             Assert.Equal(highestEventId, recovered.Attrs.Value.GetProperty("sourceEventID").GetInt64());

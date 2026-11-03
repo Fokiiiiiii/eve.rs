@@ -36,7 +36,8 @@ public sealed record NpcSecurityStatusRecoveryWindow(
     long NpcCorporationId,
     int NpcFactionId,
     string ProfileId,
-    decimal Bounty);
+      decimal Bounty,
+      double SecurityStatusKillBonusPercent);
 
 public sealed record KillRightActionResult(
     KillRight? Right,
@@ -199,6 +200,15 @@ public sealed class PgCrimewatchStore
                 bounty numeric(20,2) NOT NULL CHECK (bounty > 0),
                 PRIMARY KEY (character_id, window_end_ms)
             );
+            """),
+        new Migration("0007_npc_security_status_recovery_rates", """
+            ALTER TABLE npc_security_status_recovery_windows
+                ADD COLUMN IF NOT EXISTS security_status_kill_bonus_percent double precision NOT NULL DEFAULT 0
+                    CHECK (security_status_kill_bonus_percent >= 0);
+            ALTER TABLE npc_security_status_recovery_windows
+                DROP CONSTRAINT IF EXISTS npc_security_status_recovery_windows_bounty_check;
+            ALTER TABLE npc_security_status_recovery_windows
+                ADD CONSTRAINT npc_security_status_recovery_windows_bounty_nonnegative CHECK (bounty >= 0);
             """)
     ];
 
@@ -215,8 +225,8 @@ public sealed class PgCrimewatchStore
         Sql.ExecuteAsync(connection, transaction, Q("""
             INSERT INTO {schema}.npc_security_status_recovery_windows (
                 character_id, window_end_ms, source_event_id, solar_system_id, npc_ship_id, npc_type_id,
-                npc_corporation_id, npc_faction_id, profile_id, bounty)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                  npc_corporation_id, npc_faction_id, profile_id, bounty, security_status_kill_bonus_percent)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             ON CONFLICT (character_id, window_end_ms) DO UPDATE SET
                 source_event_id = EXCLUDED.source_event_id,
                 solar_system_id = EXCLUDED.solar_system_id,
@@ -225,11 +235,13 @@ public sealed class PgCrimewatchStore
                 npc_corporation_id = EXCLUDED.npc_corporation_id,
                 npc_faction_id = EXCLUDED.npc_faction_id,
                 profile_id = EXCLUDED.profile_id,
-                bounty = EXCLUDED.bounty
-            WHERE npc_security_status_recovery_windows.bounty < EXCLUDED.bounty
+                  bounty = EXCLUDED.bounty,
+                  security_status_kill_bonus_percent = EXCLUDED.security_status_kill_bonus_percent
+              WHERE npc_security_status_recovery_windows.security_status_kill_bonus_percent < EXCLUDED.security_status_kill_bonus_percent
             """), cancellationToken,
             window.CharacterId, window.WindowEndMs, window.SourceEventId, window.SolarSystemId, window.NpcShipId,
-            window.NpcTypeId, window.NpcCorporationId, window.NpcFactionId, window.ProfileId, window.Bounty);
+              window.NpcTypeId, window.NpcCorporationId, window.NpcFactionId, window.ProfileId, window.Bounty,
+              window.SecurityStatusKillBonusPercent);
 
     public async Task<NpcSecurityStatusRecoveryWindow?> NpcSecurityStatusRecoveryWindowAsync(
         NpgsqlConnection connection,
@@ -240,7 +252,7 @@ public sealed class PgCrimewatchStore
     {
         await using var command = Sql.Command(connection, transaction, Q("""
             SELECT character_id, window_end_ms, source_event_id, solar_system_id, npc_ship_id, npc_type_id,
-                   npc_corporation_id, npc_faction_id, profile_id, bounty
+                     npc_corporation_id, npc_faction_id, profile_id, bounty, security_status_kill_bonus_percent
             FROM {schema}.npc_security_status_recovery_windows
             WHERE character_id = $1 AND window_end_ms = $2
             FOR UPDATE
@@ -249,7 +261,7 @@ public sealed class PgCrimewatchStore
         return await row.ReadAsync(cancellationToken)
             ? new NpcSecurityStatusRecoveryWindow(
                 row.GetInt64(0), row.GetInt64(1), row.GetInt64(2), row.GetInt64(3), row.GetInt64(4), row.GetInt64(5),
-                row.GetInt64(6), row.GetInt32(7), row.GetString(8), row.GetDecimal(9))
+                  row.GetInt64(6), row.GetInt32(7), row.GetString(8), row.GetDecimal(9), row.GetDouble(10))
             : null;
     }
 
@@ -261,7 +273,7 @@ public sealed class PgCrimewatchStore
     {
         await using var command = Sql.Command(connection, transaction, Q("""
             SELECT character_id, window_end_ms, source_event_id, solar_system_id, npc_ship_id, npc_type_id,
-                   npc_corporation_id, npc_faction_id, profile_id, bounty
+                     npc_corporation_id, npc_faction_id, profile_id, bounty, security_status_kill_bonus_percent
             FROM {schema}.npc_security_status_recovery_windows
             WHERE character_id = $1
             ORDER BY window_end_ms DESC
@@ -272,7 +284,7 @@ public sealed class PgCrimewatchStore
         return await row.ReadAsync(cancellationToken)
             ? new NpcSecurityStatusRecoveryWindow(
                 row.GetInt64(0), row.GetInt64(1), row.GetInt64(2), row.GetInt64(3), row.GetInt64(4), row.GetInt64(5),
-                row.GetInt64(6), row.GetInt32(7), row.GetString(8), row.GetDecimal(9))
+                  row.GetInt64(6), row.GetInt32(7), row.GetString(8), row.GetDecimal(9), row.GetDouble(10))
             : null;
     }
 

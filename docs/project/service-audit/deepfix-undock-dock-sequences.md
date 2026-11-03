@@ -59,5 +59,5 @@ Host commits `CharacterShips.UndockAsync` before entering the simulator; a simul
 
 ## Current branch state (2026-11-03)
 
-- The verified Host fix and regression test are in local commit `e4813423`; the handoff gate update is in `cd945d4c`. Merge commit `8b355fa0` contains `origin/main` at `f7c0e9e` and preserves the targeting-lock changes from that main update.
-- Main CI run `41560688216` failed on `18bb1d8` in Linux and Windows Rust workspace tests on `modules::tests::a_lock_the_dampened_ship_can_no_longer_reach_is_given_up`; the .NET jobs succeeded. The subsequent main run `41563722104` on `f7c0e9e` passed all jobs. The merge-after checks listed above have passed; the local commits are ready to push.
+- The verified Host fix and regression test are in local commit `e4813423`; the handoff gate updates are in `cd945d4c` and `3cb689da`. Local merge commit `1ad8193d` contains main through `6a962f9`; the related Host tests were rerun successfully on that state.
+- Main CI run `41563722104` on `f7c0e9e` passed all jobs. Newer main commit `95bd9c9` is not merged locally: CI run `41568053639` has failed its .NET build with `SpaceComposition.cs(396,55): CS1501` (`ApplyAsync` has no overload taking five arguments), and selected Agent test run `41568066644` failed with the same compile error. This is in the upstream targeting change, outside the docking work; wait for a green main run before fetching/merging that commit or pushing the docking changes.

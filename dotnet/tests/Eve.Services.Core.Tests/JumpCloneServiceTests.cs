@@ -108,7 +108,7 @@ public sealed class JumpCloneServiceTests
         public ValueTask<decimal> IskBalanceAsync(long characterId, CancellationToken cancellationToken) => ValueTask.FromResult(100m);
 
         public ValueTask<CloneJumpResult> JumpAsync(long characterId, long targetCloneId, long originLocationId, string originLocationKind,
-            decimal fee, long ownerCorporationId, long nowFileTime, CancellationToken cancellationToken)
+            decimal fee, long ownerCorporationId, int cooldownHours, long nowFileTime, CancellationToken cancellationToken)
         {
             (Fee, OwnerCorporationId, OriginLocationKind) = (fee, ownerCorporationId, originLocationKind);
             return ValueTask.FromResult(new CloneJumpResult(Refusal, 200, 300, 400, 500));
@@ -148,6 +148,7 @@ public sealed class JumpCloneServiceTests
             string originLocationKind,
             decimal fee,
             long ownerCorporationId,
+            int cooldownHours,
             long nowFileTime,
             CancellationToken cancellationToken)
         {

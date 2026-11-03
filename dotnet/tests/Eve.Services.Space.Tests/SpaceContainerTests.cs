@@ -519,10 +519,14 @@ public class SpaceContainerTests
         }
     }
 
-    [PgFact]
-    public async Task Salvage_cycles_retry_failed_access_and_replace_the_wreck_without_losing_its_contents()
+    [PgTheory]
+    [InlineData("Amarr Frigate Wreck", 0.0, 0L)]
+    [InlineData("Amarr Frigate Wreck", 0.99, 1L)]
+    [InlineData("Amarr Battleship Wreck", 0.99, 9L)]
+    public async Task Salvage_cycles_retry_failed_access_and_replace_the_wreck_without_losing_its_contents(string wreckName, double rewardRoll, long expectedQuantity)
     {
         await using var rig = await Rig.CreateAsync();
+        rig.Containers.SalvageRewardRoll = () => rewardRoll;
         var flying = await FlyingWithCargoAsync(rig);
         var system = (int)flying.Session.GetInt("solarsystemid")!.Value;
         var sde = new Eve.Sde.SdeReader(rig.Source);
@@ -531,7 +535,7 @@ public class SpaceContainerTests
         var amarrFactionId = (int)Assert.Single(factions, faction =>
             faction.Doc.TryGetProperty("name", out var name)
             && Eve.Sde.SdeReader.English(name).Equals("Amarr Empire", StringComparison.OrdinalIgnoreCase)).Key;
-        var wreckTypeId = Assert.Single(types, type => type.Name == "Amarr Frigate Wreck").TypeId;
+        var wreckTypeId = types.Where(type => type.Name == wreckName).OrderBy(type => type.TypeId).First().TypeId;
         var salvageDroneI = Assert.Single(types, type => type.Published && type.Name == "Salvage Drone I").TypeId;
         await rig.Statics.EnsureTypesAsync([wreckTypeId, Tritanium, salvageDroneI]);
         var wreckType = rig.Statics.Type(wreckTypeId)!;
@@ -567,16 +571,31 @@ public class SpaceContainerTests
         Assert.True(salvaged.Accepted);
         Assert.True(salvaged.Complete);
         Assert.Equal(1L, salvaged.DeliveredUnits);
-        var product = Assert.Single(await rig.Items.InContainerAsync(flying.Character.ShipId), item =>
-            rig.Statics.GroupName(rig.Statics.Type(item.TypeId)!.GroupId) == "Salvaged Materials");
-        Assert.Equal(1L, product.Quantity);
-        var productTypeName = rig.Statics.Type(product.TypeId)!.Name;
-        Assert.Contains(productTypeName, new[]
+        var products = (await rig.Items.InContainerAsync(flying.Character.ShipId)).Where(item =>
+            rig.Statics.GroupName(rig.Statics.Type(item.TypeId)!.GroupId) == "Salvaged Materials").ToArray();
+        if (expectedQuantity > 0)
         {
-            "Armor Plates", "Burned Logic Circuit", "Charred Micro Circuit", "Contaminated Nanite Compound",
-            "Defective Current Pump", "Fried Interface Circuit", "Melted Capacitor Console",
-            "Tangled Power Conduit", "Tripped Power Circuit",
-        });
+            var product = Assert.Single(products);
+            Assert.Equal(expectedQuantity, product.Quantity);
+            var productTypeName = rig.Statics.Type(product.TypeId)!.Name;
+            Assert.Contains(productTypeName, new[]
+            {
+                "Armor Plates", "Burned Logic Circuit", "Charred Micro Circuit", "Contaminated Nanite Compound",
+                "Defective Current Pump", "Fried Interface Circuit", "Melted Capacitor Console",
+                "Tangled Power Conduit", "Tripped Power Circuit",
+            });
+        }
+        else
+        {
+            Assert.Empty(products);
+            var notice = Assert.Single(Events.Of(flying.Session, clear: false), e => e.Name == "OnRemoteMessage"
+                && Eve.Macho.JsSemantics.StringValue(Events.Items(e.Args[0])[0]) == "CustomNotify");
+            var noticeArgs = Events.Items(notice.Args[0]);
+            Assert.Equal("CustomNotify", Eve.Macho.JsSemantics.StringValue(noticeArgs[0]));
+            Assert.Contains(Assert.IsType<PyDict>(noticeArgs[1]).Entries, entry =>
+                Eve.Macho.JsSemantics.StringValue(entry.Key) == "notify"
+                && Eve.Macho.JsSemantics.StringValue(entry.Value) == "Salvaging succeeded, but no salvage materials were recovered.");
+        }
         Assert.Null(await rig.Items.GetAsync(wreckId));
         Assert.Null(await rig.SpaceItems.GetAsync(wreckId));
         var replacement = Assert.IsType<Eve.Space.SimPlaceWreck>(Assert.Single(rig.Sim.Heard.Skip(heard).OfType<Eve.Space.SimPlaceWreck>()));

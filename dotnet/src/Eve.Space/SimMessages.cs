@@ -286,6 +286,10 @@ public static class SimCommands
     public const byte GotoDirection = 2;
     public const byte Stop = 3;
     public const byte Dock = 4;
+    /// <summary>Internal host/simulation handshake; not a client movement command.</summary>
+    public const byte DockingDecision = 254;
+    /// <summary>An accepted message with this code means the four-second docking delay has elapsed; its At value is the station id.</summary>
+    public const byte DockingReady = 255;
     public const byte FollowBall = 5;
     public const byte Orbit = 6;
     public const byte AlignTo = 7;
@@ -384,7 +388,7 @@ public sealed record SimConditionReply(ulong SessionId, byte Command, SimConditi
 /// <summary>A command the scene cannot do.</summary>
 public sealed record SimRefused(ulong SessionId, byte Command, string Reason) : SimMessage;
 
-/// <summary>A command was accepted, after the update it made. A <c>Dock</c> is answered with the time (a FILETIME).</summary>
+/// <summary>A command was accepted, after the update it made. A <c>Dock</c> is answered with the time (a FILETIME); <see cref="SimCommands.DockingReady"/> carries a station id.</summary>
 public sealed record SimAccepted(ulong SessionId, byte Command, long At) : SimMessage;
 
 /// <summary>A requested target coordinate was resolved by the simulation.</summary>

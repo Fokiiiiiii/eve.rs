@@ -198,8 +198,22 @@ async fn a_ship_is_sent_out_bound_told_to_dock_and_reported_docked() {
     assert!(matches!(host.recv().await, Message::Notify { name, .. } if name == "DoDestinyUpdate"));
     assert_eq!(host.recv().await, Message::Accepted { session_id: SESSION, command: 4, at: NOON });
 
-    // the ship is docked once four seconds have gone by, which the simulation notices at its next poll
+    // after four seconds the simulation asks the host to run its final docking checks
     host.clock.store(NOON + 5 * SECOND, Ordering::SeqCst);
+    assert_eq!(
+        host.recv().await,
+        Message::Accepted {
+            session_id: SESSION,
+            command: eve_space::scene::DOCKING_READY_COMMAND,
+            at: STATION,
+        }
+    );
+    host.send(Message::Command {
+        session_id: SESSION,
+        command: eve_space::scene::DOCKING_DECISION_COMMAND,
+        args: vec![STATION as f64, 1.0],
+    })
+    .await;
     assert_eq!(
         host.recv().await,
         Message::Docked {

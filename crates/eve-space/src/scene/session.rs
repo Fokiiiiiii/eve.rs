@@ -540,6 +540,9 @@ impl Scene {
         self.settle_pilot(session, now);
         let told = match command {
             Command::Dock { station_id } => self.dock(session, station_id, now),
+            Command::DockingDecision { station_id, allowed } => {
+                self.resolve_docking(session, station_id, allowed, now)
+            }
             Command::WarpTo { target_id, range } => self.warp_to(session, target_id, range, now),
             Command::WarpToPoint { destination, range } => {
                 self.warp_to_point(session, destination, range, now)
@@ -747,19 +750,19 @@ impl Scene {
                 pilot
                     .docking
                     .as_ref()
-                    .filter(|d| now - d.accepted_at >= DOCKING_DELAY)
+                    .filter(|d| !d.ready && now - d.accepted_at >= DOCKING_DELAY)
                     .map(|d| (*session, d.station_id))
             })
             .collect();
         for (session, station_id) in due {
-            told.extend(self.clear_tether_policy(session, now));
-            if let Some(pilot) = self.pilots.remove(&session) {
-                self.tournament_departed(pilot.ship.spec.character_id, pilot.ship.spec.ship_id, now);
-                told.push(Out::Docked { session, station_id, condition: Self::condition_of(&pilot, now) });
-                told.extend(self.drop_targeting(pilot.ship.spec.ship_id, &pilot.targeting, None, now));
-                told.extend(self.announce_departure(session, pilot.ship.spec.ship_id, now));
-                told.extend(self.release_drones(session, None, now));
+            let Some(pending) = self.pilots.get_mut(&session).and_then(|pilot| pilot.docking.as_mut()) else {
+                continue;
+            };
+            if pending.station_id != station_id || pending.ready {
+                continue;
             }
+            pending.ready = true;
+            told.push(Out::Accepted { session, command: DOCKING_READY_COMMAND, at: station_id });
         }
         told.extend(self.note_drone_threats(now));
         told.extend(self.tick_brains(now));

@@ -26,6 +26,26 @@ public class TransactionTests
         Assert.Equal(12.34m, (await rig.Transfers.JournalAsync(2)).Single().Amount);
     }
 
+    
+    [PgFact]
+    public async Task An_insufficient_transfer_reports_the_locked_available_balance()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await rig.OpenAsync(1, 25m, 0);
+        await rig.OpenAsync(2, 0m, 0);
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var tx = await connection.BeginTransactionAsync();
+
+        var error = await Assert.ThrowsAsync<InsufficientFundsException>(
+            () => rig.Transfers.TransferAsync(connection, tx, 1, 2, 30m, 10, "gift", 100, "short-gift"));
+
+        Assert.Equal(25m, error.AvailableBalance);
+        Assert.Equal(25m, (await rig.Store.GetAsync(1))!.Isk);
+        Assert.Equal(0m, (await rig.Store.GetAsync(2))!.Isk);
+        Assert.Empty(await rig.Transfers.JournalAsync(1));
+        Assert.Empty(await rig.Transfers.JournalAsync(2));
+    }
+
 
     [PgFact]
     public async Task PLEX_adjustment_uses_the_caller_transaction()

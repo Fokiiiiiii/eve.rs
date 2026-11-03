@@ -54,7 +54,10 @@ public sealed class AirNpeService(
         var mode = newCharacterExperienceMode();
         if (characterId > 0 && mode is "tutorial" or "cinematic" &&
             await markTutorialSkipped(characterId, mode == "tutorial", call.Cancellation) is { } state)
+        {
+            call.Session.SendNotification("OnTutorialSkipped", "clientID");
             call.Session.SendNotification("OnAirNpeStateChanged", "clientID", new PyInt(characterId), new PyInt(state));
+        }
         return PyNone.Instance;
     }
 

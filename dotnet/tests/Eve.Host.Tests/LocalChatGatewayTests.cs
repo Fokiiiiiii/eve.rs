@@ -51,6 +51,26 @@ public sealed class LocalChatGatewayTests
     }
 
     [Fact]
+    public void Wormhole_silent_departure_does_not_publish_a_leave_notice()
+    {
+        const long systemId = 31_000_123;
+        var sessions = new ConnectedSessions();
+        var observer = Session(1001, 2001, systemId, 0);
+        var silent = Session(1002, 2002, systemId, 0);
+        sessions.Add(observer);
+        sessions.Add(silent);
+        var notices = new NoticeHub();
+        var subscriber = notices.Subscribe(9001);
+        subscriber.Character = 1001;
+        _ = new LocalChatGateway(sessions, notices).Handlers();
+        while (subscriber.Frames.Reader.TryRead(out _)) { }
+
+        silent.Change(("solarsystemid2", new PyLong(31_000_124)));
+
+        Assert.False(subscriber.Frames.Reader.TryRead(out _));
+    }
+
+    [Fact]
     public async Task Wormhole_local_lists_only_speakers_and_leaving_removes_membership()
     {
         const long systemId = 31_000_123;
@@ -59,7 +79,11 @@ public sealed class LocalChatGatewayTests
         var second = Session(1002, 2002, systemId, 0);
         sessions.Add(first);
         sessions.Add(second);
-        var gateway = new LocalChatGateway(sessions, new NoticeHub()).Handlers();
+        var notices = new NoticeHub();
+        var subscriber = notices.Subscribe(9001);
+        subscriber.Character = 1002;
+        var gateway = new LocalChatGateway(sessions, notices).Handlers();
+        while (subscriber.Frames.Reader.TryRead(out _)) { }
 
         var initial = await gateway[MembersRequest](Request(MembersRequest, 1002), CancellationToken.None);
         Assert.Empty(MemberIds(initial.Payload));
@@ -69,8 +93,15 @@ public sealed class LocalChatGatewayTests
         await gateway[BroadcastRequest](Request(BroadcastRequest, 1001, body.ToArray()), CancellationToken.None);
         var afterSpeak = await gateway[MembersRequest](Request(MembersRequest, 1002), CancellationToken.None);
         Assert.Equal(new long[] { 1001 }, MemberIds(afterSpeak.Payload));
+        Assert.Equal("eve_public.chat.local.api.MessageBroadcastNotice",
+            (await ReadNoticeAsync(new MemoryStream(await subscriber.Frames.Reader.ReadAsync()))).Type);
 
         first.Change(("solarsystemid2", new PyLong(31_000_124)));
+        var leave = await ReadNoticeAsync(new MemoryStream(await subscriber.Frames.Reader.ReadAsync()));
+        var membership = await ReadNoticeAsync(new MemoryStream(await subscriber.Frames.Reader.ReadAsync()));
+        Assert.Equal("eve_public.chat.local.api.LeaveNotice", leave.Type);
+        Assert.Equal(1001, IdentifierValue(ProtoReader.Fields(leave.Payload).Single(field => field.Number == 1).Bytes));
+        Assert.Equal("eve_public.chat.local.api.MembershipListNotice", membership.Type);
         var afterLeave = await gateway[MembersRequest](Request(MembersRequest, 1002), CancellationToken.None);
         Assert.Empty(MemberIds(afterLeave.Payload));
     }

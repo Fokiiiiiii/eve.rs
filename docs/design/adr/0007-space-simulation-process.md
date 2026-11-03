@@ -55,13 +55,13 @@ not exist is the scene: which balls a system has, who is where, how commands cha
    | `Leave` | 4 | host -> sim | `u64 sessionId`, `u8 why` (0 docked, 1 logged off, 2 jumped) |
    | `Bind` | 5 | host -> sim | `u64 sessionId`: the client bound the solar system's ballpark, send it the scene |
    | `UpdateState` | 6 | host -> sim | `u64 sessionId`: `UpdateStateRequest` |
-   | `Command` | 7 | host -> sim | `u64 sessionId`, `u8 command` (1 speed fraction, 2 go in a direction, 3 stop, 4 dock, 5 follow a body `(id, range)`, 6 orbit a body `(id, distance)`, 7 align to a body `(id)`, 8 warp to a body `(id, range)`, 9 jump through a stargate `(gateId, leadsToGateId)`, the second 0 when the client does not say), `u8 argc`, `f64 args[argc]` (ids travel as `f64` up to 2^53) |
+   | `Command` | 7 | host -> sim | `u64 sessionId`, `u8 command` (1 speed fraction, 2 go in a direction, 3 stop, 4 dock, 5 follow a body `(id, range)`, 6 orbit a body `(id, distance)`, 7 align to a body `(id)`, 8 warp to a body `(id, range)`, 9 jump through a stargate `(gateId, leadsToGateId)`, the second 0 when the client does not say; internal 254 is the Host's `(stationId, allowed 0|1)` final docking decision), `u8 argc`, `f64 args[argc]` (ids travel as `f64` up to 2^53) |
    | `ShipSpec` | 8 | host -> sim | `u64 sessionId`, the ship's spec: new numbers for a ship in space |
    | `Notify` | 9 | sim -> host | `u64 sessionId`, text `name`, text `idType`, bytes `marshalledArgs` (a marshalled tuple of the arguments) |
    | `ServiceNotify` | 125 | sim -> host | `u64 sessionId`, text `service`, text `method`, bytes `marshalledArgs` (a marshalled tuple of method arguments) |
    | `Docked` | 10 | sim -> host | `u64 sessionId`, `i64 stationId`: the ship has arrived and the docking is done in space; the host moves the character |
    | `Refused` | 11 | sim -> host | `u64 sessionId`, `u8 command`, text `reason`: a command the scene cannot do (the host answers the client with the reason) |
-   | `Accepted` | 12 | sim -> host | `u64 sessionId`, `u8 command`, `i64 filetime`: a command was accepted (a `Dock` is answered with the time). Its `DoDestinyUpdate` notifications are held for the next whole-second boundary; this reply stays immediate. |
+   | `Accepted` | 12 | sim -> host | `u64 sessionId`, `u8 command`, `i64 at`: a command was accepted (`Dock` uses a FILETIME). Internal command 255 means the four-second docking delay elapsed; `at` is the pending station id and the Host must recheck eligibility before sending internal command 254. Normal `DoDestinyUpdate` notifications stay held for the next whole-second boundary; the reply stays immediate. |
    | `Approaching` | 14 | sim -> host | `u64 sessionId`, `u8 command`, `f64 distance`: a `Dock` could not be done from here, the ship now follows the station; the host answers the call with `DockingApproach` (the distance is metres off the station's surface). The scene retains that station as the pending dock target and accepts docking when the ship reaches range, after rechecking current eligibility. |
    | `Jumping` | 15 | sim -> host | `u64 sessionId`, `u8 command`, `i32 destinationSystem`, `i64 destinationGate`: a `Jump` was accepted (the jump-out effect was sent, sent after that update); the host queues the pilot for the system and answers the call |
    | `Jumped` | 16 | sim -> host | `u64 sessionId`, `i32 fromSystem`, `i64 fromGate`, `i32 toSystem`, `i64 toGate`: the ship has left the scene it was in and is in that of the other system, in front of `toGate`; the host moves the ship and the character and tells the client |
@@ -81,8 +81,7 @@ not exist is the scene: which balls a system has, who is where, how commands cha
    carbon integrator (the ship eases towards the speed it is asked for). What the client is told is stamped with the
    destiny stamp (whole seconds of the Unix clock), never more than two ahead of the clock, as the reference does.
    Time dilation is reported and constant 1.0 until load says otherwise. With the same messages at the same times the
-   sim emits the same bytes, which is what the differential tests check. The one thing that happens by itself, a docking
-   finishing four seconds after it was accepted, is found by a poll of the clock (`pollHz` a second).
+   sim emits the same bytes, which is what the differential tests check. A poll notices when the four-second docking delay expires and tells the Host with internal `Accepted` command 255; the ship leaves the scene only after the Host rechecks movement timers, module restrictions and structure access, then sends internal `Command` 254 with an allow decision (`pollHz` a second).
 
 7. **Static data is built once per system** (`world`): the stations and celestials as rigid balls with their slim
    items, from the SDE. A scene copies them; nothing mutates them.

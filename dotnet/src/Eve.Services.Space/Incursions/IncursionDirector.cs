@@ -115,13 +115,9 @@ public sealed class IncursionDirector
         foreach (var (constellation, members) in _systemsOfConstellation)
         {
             // a constellation too small for the layout (a staging, a headquarters and another system) takes no incursion
-            if (members.Count < IncursionRules.MinimumLayoutSystems)
-            {
-                continue;
-            }
             foreach (IncursionBand band in Enum.GetValues<IncursionBand>())
             {
-                if (members.Any(s => IncursionRules.BandOf(s.Security) == band))
+                if (members.Count(s => IncursionRules.BandOf(s.Security) == band) >= IncursionRules.MinimumLayoutSystems)
                 {
                     if (!_constellationsOfBand.TryGetValue(band, out var ids))
                     {
@@ -273,9 +269,8 @@ public sealed class IncursionDirector
             return;
         }
         int constellation = free[Pick(free.Count)];
-        var members = _systemsOfConstellation[constellation];
-        var inBand = members.Where(s => IncursionRules.BandOf(s.Security) == band).ToList();
-        SolarSystemInfo stagingSystem = inBand[Pick(inBand.Count)];
+        var members = _systemsOfConstellation[constellation].Where(s => IncursionRules.BandOf(s.Security) == band).ToList();
+        SolarSystemInfo stagingSystem = members[Pick(members.Count)];
         int staging = stagingSystem.Id;
         int[] systems = members.Select(s => s.Id).ToArray();
 
@@ -297,10 +292,10 @@ public sealed class IncursionDirector
             INSERT INTO {schema}.incursions (band, constellation_id, staging_system_id, systems, phase, phase_since_ms, phase_due_ms, influence, reward_group_id, started_ms,
                 hq_system_id, vanguard_systems, assault_systems)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $6, $10, $11, $12) RETURNING id
-            """), cancellationToken, due.Band, constellation, staging, systems, IncursionRules.NameOf(IncursionPhase.Mobilized), nowMs,
-            nowMs + (long)IncursionRules.MobilizedLength.TotalMilliseconds, IncursionRules.FullInfluence, IncursionRules.StagingRewardGroupId,
+            """), cancellationToken, due.Band, constellation, staging, systems, IncursionRules.NameOf(IncursionPhase.Established), nowMs,
+            nowMs + (long)IncursionRules.EstablishedLength.TotalMilliseconds, IncursionRules.FullInfluence, IncursionRules.StagingRewardGroupId,
             headquarters, vanguards.ToArray(), assaults.ToArray()))!;
-        await context.ScheduleAsync(PhaseSpec(id, IncursionPhase.Mobilized, nowMs + (long)IncursionRules.MobilizedLength.TotalMilliseconds), cancellationToken);
+        await context.ScheduleAsync(PhaseSpec(id, IncursionPhase.Established, nowMs + (long)IncursionRules.EstablishedLength.TotalMilliseconds), cancellationToken);
         await context.ScheduleAsync(new JobSpec(SitesJob, nowMs) { Key = $"sites:{id}", Payload = new IncursionRef(id) }, cancellationToken);
     }
 
@@ -334,7 +329,7 @@ public sealed class IncursionDirector
             await EndAsync(context.Connection, context.Transaction, due.IncursionId, band, "withdrawn", nowMs, cancellationToken);
             return;
         }
-        var next = from == IncursionPhase.Mobilized ? IncursionPhase.Established : IncursionPhase.Withdrawing;
+        var next = from == IncursionPhase.Established ? IncursionPhase.Mobilized : IncursionPhase.Withdrawing;
         long dueMs = nowMs + (long)IncursionRules.LengthOf(next)!.Value.TotalMilliseconds;
         await Sql.ExecuteAsync(context.Connection, context.Transaction,
             Q("UPDATE {schema}.incursions SET phase = $2, phase_since_ms = $3, phase_due_ms = $4 WHERE id = $1"),

@@ -76,6 +76,7 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
 
         /// <summary>Marks the protection ended; false when it had ended already (each ending is told once).</summary>
         public bool ProtectionEnded;
+        public bool InspectContrabandOnJumpArrival;
         public bool CynoJumpPending;
         public bool CynoArrival;
         public long TetherDelayUntilMs;
@@ -883,7 +884,7 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                 case SimServiceNotify serviceNotify when _pilots.TryGetValue(serviceNotify.SessionId, out var servicePilot):
                     Forward(servicePilot.Session, serviceNotify);
                     break;
-                case SimAccepted accepted when !_structureObservers.ContainsKey(accepted.SessionId) && accepted.Command != SimCommands.ControlStructure && _pilots.TryGetValue(accepted.SessionId, out var mover):
+                case SimAccepted accepted when !_structureObservers.ContainsKey(accepted.SessionId) && accepted.Command != SimCommands.ControlStructure && accepted.Command != SimCommands.DockingReady && _pilots.TryGetValue(accepted.SessionId, out var mover):
                     if (accepted.Command == SimCommands.Stop)
                         _warping.TryRemove(accepted.SessionId, out _);
                     if (accepted.Command != SimCommands.Dock)
@@ -905,6 +906,12 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                             _log?.Invoke($"the arrival of session {arrived.SessionId} at belt {arrived.BeltId} could not be dealt with: {error.Message}");
                         }
                     });
+                    break;
+                case SimAccepted ready when ready.Command == SimCommands.DockingReady:
+                    if (_pilots.TryGetValue(ready.SessionId, out var dockingPilot))
+                        Background(() => ResolveDockingAsync(dockingPilot, ready.At));
+                    else
+                        _sim.Command(ready.SessionId, SimCommands.DockingDecision, ready.At, 0);
                     break;
                 case SimDocked docked when _pilots.TryGetValue(docked.SessionId, out var pilot):
                     _warping.TryRemove(docked.SessionId, out _);

@@ -2678,6 +2678,14 @@ fn commands_are_read_from_their_codes_and_arguments() {
         Some(Command::Jump { gate_id: 50_016_630, destination_gate: 0 }),
         "the gate alone is enough"
     );
+    assert_eq!(
+        command_of(crate::scene::DOCKING_DECISION_COMMAND, &[STATION as f64, 1.0]),
+        Some(Command::DockingDecision { station_id: STATION, allowed: true })
+    );
+    assert_eq!(
+        command_of(crate::scene::DOCKING_DECISION_COMMAND, &[STATION as f64, 0.0]),
+        Some(Command::DockingDecision { station_id: STATION, allowed: false })
+    );
     for (code, args) in [
         (1, vec![]),
         (1, vec![1.0, 2.0]),
@@ -2690,6 +2698,9 @@ fn commands_are_read_from_their_codes_and_arguments() {
         (9, vec![1.5]),
         (9, vec![50_016_630.0, f64::NAN]),
         (9, vec![1.0, 2.0, 3.0]),
+        (crate::scene::DOCKING_DECISION_COMMAND, vec![STATION as f64]),
+        (crate::scene::DOCKING_DECISION_COMMAND, vec![STATION as f64, 0.5]),
+        (crate::scene::DOCKING_DECISION_COMMAND, vec![1.5, 1.0]),
         (10, vec![]),
     ] {
         assert_eq!(command_of(code, &args), None, "{code} {args:?}");
@@ -3025,9 +3036,22 @@ fn tournament_damage_ledger_retains_gap_and_tombstone_across_dock_reentry() {
         NOON + 2 * SECOND,
     )
     .unwrap();
-    assert!(
-        sim.poll(NOON + 6 * SECOND).iter().any(|m| matches!(m, Message::Docked { session_id: SESSION, .. }))
-    );
+    let ready = sim.poll(NOON + 6 * SECOND);
+    assert!(ready.iter().any(|m| matches!(
+        m,
+        Message::Accepted { session_id: SESSION, command: crate::scene::DOCKING_READY_COMMAND, .. }
+    )));
+    let docked = sim
+        .handle(
+            Message::Command {
+                session_id: SESSION,
+                command: crate::scene::DOCKING_DECISION_COMMAND,
+                args: vec![STATION as f64, 1.0],
+            },
+            NOON + 6 * SECOND,
+        )
+        .unwrap();
+    assert!(docked.iter().any(|m| matches!(m, Message::Docked { session_id: SESSION, .. })));
     assert!(sim.scenes.get(&key).is_some_and(|scene| scene.tournament_has_metrics()));
     assert!(
         sim.handle(enter(SESSION, STATION, SYSTEM), NOON + 7 * SECOND)
@@ -3069,7 +3093,21 @@ fn tournament_cutoff_cannot_claim_continuous_presence_after_dock_and_reentry() {
         NOON + 2 * SECOND,
     )
     .unwrap();
-    let docked = sim.poll(NOON + 6 * SECOND);
+    let ready = sim.poll(NOON + 6 * SECOND);
+    assert!(ready.iter().any(|m| matches!(
+        m,
+        Message::Accepted { session_id: SESSION, command: crate::scene::DOCKING_READY_COMMAND, .. }
+    )));
+    let docked = sim
+        .handle(
+            Message::Command {
+                session_id: SESSION,
+                command: crate::scene::DOCKING_DECISION_COMMAND,
+                args: vec![STATION as f64, 1.0],
+            },
+            NOON + 6 * SECOND,
+        )
+        .unwrap();
     assert!(docked.iter().any(|m| matches!(m, Message::Docked { session_id: SESSION, .. })));
     assert!(
         sim.scenes.get(&key).is_some_and(|scene| scene.tournament_has_tracking()),
@@ -3086,6 +3124,51 @@ fn tournament_cutoff_cannot_claim_continuous_presence_after_dock_and_reentry() {
 }
 
 #[test]
+fn tournament_cutoff_keeps_a_pilot_present_when_docking_is_denied() {
+    let mut sim = undocked();
+    let identity = crate::link::CutoffIdentity {
+        request_id: 913,
+        scene: SceneKey::solar_system(SYSTEM),
+        match_id: 914,
+        generation: 1,
+        start: NOON + SECOND,
+        deadline: NOON + 10 * SECOND,
+    };
+    sim.handle(
+        Message::RegisterTournamentCutoff {
+            identity: identity.clone(),
+            roster: vec![(spec().character_id, spec().ship_id)],
+        },
+        NOON,
+    )
+    .unwrap();
+    sim.handle(
+        Message::Command { session_id: SESSION, command: 4, args: vec![STATION as f64] },
+        NOON + 2 * SECOND,
+    )
+    .unwrap();
+    let ready = sim.poll(NOON + 6 * SECOND);
+    assert!(ready.iter().any(|m| matches!(
+        m,
+        Message::Accepted { session_id: SESSION, command: crate::scene::DOCKING_READY_COMMAND, .. }
+    )));
+    sim.handle(
+        Message::Command {
+            session_id: SESSION,
+            command: crate::scene::DOCKING_DECISION_COMMAND,
+            args: vec![STATION as f64, 0.0],
+        },
+        NOON + 6 * SECOND,
+    )
+    .unwrap();
+    assert_eq!(sim.ships(), 1);
+    sim.poll(identity.deadline);
+    let snapshot = sim.handle(Message::ReadTournamentCutoff { identity }, NOON + 10 * SECOND + 1).unwrap();
+    assert!(matches!(&snapshot[..], [Message::ReadTournamentCutoffReply { status: 1, evidence, .. }]
+        if evidence == &vec![(spec().character_id, spec().ship_id, 0)]));
+}
+
+#[test]
 fn tournament_tombstone_capacity_does_not_block_normal_docking_or_undocking() {
     let mut sim = undocked();
     let key = SceneKey::solar_system(SYSTEM);
@@ -3098,7 +3181,21 @@ fn tournament_tombstone_capacity_does_not_block_normal_docking_or_undocking() {
         .handle(Message::Command { session_id: SESSION, command: 4, args: vec![STATION as f64] }, NOON)
         .unwrap();
     assert!(accepted.iter().any(|m| matches!(m, Message::Accepted { session_id: SESSION, command: 4, .. })));
-    let docked = sim.poll(NOON + 4 * SECOND);
+    let ready = sim.poll(NOON + 4 * SECOND);
+    assert!(ready.iter().any(|m| matches!(
+        m,
+        Message::Accepted { session_id: SESSION, command: crate::scene::DOCKING_READY_COMMAND, .. }
+    )));
+    let docked = sim
+        .handle(
+            Message::Command {
+                session_id: SESSION,
+                command: crate::scene::DOCKING_DECISION_COMMAND,
+                args: vec![STATION as f64, 1.0],
+            },
+            NOON + 4 * SECOND,
+        )
+        .unwrap();
     assert!(docked.iter().any(|m| matches!(m, Message::Docked { session_id: SESSION, .. })));
     assert!(sim.scenes.get(&key).is_some_and(|scene| scene.tournament_has_tracking()));
     let trace = sim
@@ -3127,7 +3224,7 @@ fn tournament_tombstone_capacity_does_not_block_normal_docking_or_undocking() {
 }
 
 #[test]
-fn a_command_is_answered_with_the_update_and_a_docking_is_finished_by_the_poll() {
+fn a_command_is_answered_with_the_update_and_docking_waits_for_the_host_after_four_seconds() {
     let mut sim = undocked();
     let out =
         sim.handle(Message::Command { session_id: SESSION, command: 1, args: vec![1.0] }, NOON).unwrap();
@@ -3143,6 +3240,23 @@ fn a_command_is_answered_with_the_update_and_a_docking_is_finished_by_the_poll()
     assert!(sim.poll(NOON + 3 * SECOND).is_empty(), "three seconds are not enough");
     assert_eq!(
         sim.poll(NOON + 4 * SECOND),
+        [Message::Accepted {
+            session_id: SESSION,
+            command: crate::scene::DOCKING_READY_COMMAND,
+            at: STATION,
+        }]
+    );
+    assert_eq!(sim.ships(), 1, "the ship stays in space until the host's final checks pass");
+    assert_eq!(
+        sim.handle(
+            Message::Command {
+                session_id: SESSION,
+                command: crate::scene::DOCKING_DECISION_COMMAND,
+                args: vec![STATION as f64, 1.0],
+            },
+            NOON + 4 * SECOND,
+        )
+        .unwrap(),
         [Message::Docked { session_id: SESSION, station_id: STATION, condition: Condition::FULL }]
     );
     assert_eq!((sim.ships(), sim.scenes.len()), (0, 0), "an empty scene is dropped");
@@ -3460,6 +3574,20 @@ fn a_ship_that_has_docked_is_taken_from_the_view_of_the_others_by_the_poll() {
     )
     .unwrap();
     let gone = sim.poll(NOON + 6 * SECOND);
+    assert_eq!(
+        gone,
+        [Message::Accepted { session_id: OTHER, command: crate::scene::DOCKING_READY_COMMAND, at: STATION }]
+    );
+    let gone = sim
+        .handle(
+            Message::Command {
+                session_id: OTHER,
+                command: crate::scene::DOCKING_DECISION_COMMAND,
+                args: vec![STATION as f64, 1.0],
+            },
+            NOON + 6 * SECOND,
+        )
+        .unwrap();
     assert_eq!(recipients(&gone), [(OTHER, "Docked".to_string()), (SESSION, "DoDestinyUpdate".to_string())]);
     assert_eq!(sim.ships(), 1, "the first ship is still there");
 }

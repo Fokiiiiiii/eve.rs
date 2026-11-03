@@ -5,6 +5,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Scheduler;
 using Eve.Services;
+using Eve.Services.Corporations;
 using Eve.Structures;
 using Npgsql;
 using Xunit;
@@ -68,6 +69,28 @@ public sealed class StructureNotificationsTests
         116_444_736_000_000_000L + unixMilliseconds * 10_000L;
 
     private static List<string> Notices(Sink sink) => ClientNotices(sink).Select(notice => notice.Name).ToList();
+
+    [Fact]
+    public void Auto_paid_rent_refreshes_bill_list_for_corporation_sessions()
+    {
+        var sessions = new CharacterSessions();
+        var member = new Sink();
+        var memberSession = new ClientSession(member) { SessionId = 1, CharacterId = 1 };
+        memberSession.Set("corpid", new PyInt(Corporation));
+        sessions.Enter(1, memberSession);
+        var outsider = new Sink();
+        var outsiderSession = new ClientSession(outsider) { SessionId = 2, CharacterId = 2 };
+        outsiderSession.Set("corpid", new PyInt(OtherCorporation));
+        sessions.Enter(2, outsiderSession);
+
+        CorporationOfficeNotifications.BillReceived(sessions, Corporation);
+
+        var notice = Assert.Single(ClientNotices(member));
+        Assert.Equal("OnBillReceived", notice.Name);
+        Assert.Equal("corpid", notice.IdType);
+        Assert.Empty(notice.Args.Items);
+        Assert.Empty(ClientNotices(outsider));
+    }
 
     [PgFact]
     public async Task War_eligibility_recipients_include_old_and_current_alliance_members()
@@ -341,6 +364,58 @@ public sealed class StructureNotificationsTests
             {
                 await Sql.ExecuteAsync(connection, null, $"DROP SCHEMA IF EXISTS {schema} CASCADE", CancellationToken.None);
             }
+        }
+    }
+
+    [PgFact]
+    public async Task A_service_change_notifies_only_clients_docked_in_the_structure_with_the_structure_id()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL") ?? throw new InvalidOperationException("EVE_PG_URL is not set");
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        var id = Guid.NewGuid().ToString("N")[..12];
+        var schedulerSchema = $"svc_ntf_sch_{id}";
+        var eventSchema = $"svc_ntf_evt_{id}";
+        try
+        {
+            await DurableScheduler.MigrateAsync(source, schedulerSchema);
+            await EventBus.MigrateAsync(source, eventSchema);
+            var scheduler = new DurableScheduler(source, () => Now, new SchedulerOptions { Concurrency = 1 }, schedulerSchema, _ => { });
+            var events = new EventBus(source, scheduler, new EventBusOptions { MaxAttempts = 3 }, eventSchema, _ => { });
+            var sessions = new CharacterSessions();
+            StructureNotifications.Subscribe(events, new StructureStore(source), sessions,
+                (_, _) => ValueTask.FromResult<PyValue?>(null));
+            await events.PumpAsync();
+
+            var docked = new Sink();
+            var dockedSession = new ClientSession(docked) { SessionId = 11, CharacterId = 11 };
+            dockedSession.Set("structureid", new PyLong(Structure));
+            sessions.Enter(11, dockedSession);
+            var elsewhere = new Sink();
+            var elsewhereSession = new ClientSession(elsewhere) { SessionId = 12, CharacterId = 12 };
+            elsewhereSession.Set("structureid", new PyLong(Structure + 1));
+            sessions.Enter(12, elsewhereSession);
+
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await events.PublishInTransactionAsync(connection, transaction, StructureTimers.ServiceChangedTopic,
+                    new StructureServiceChanged(Structure, Tanoo, StructureServiceIds.Market, ServiceState.Online, Now),
+                    $"structure:{Structure}", CancellationToken.None);
+                await transaction.CommitAsync();
+            }
+            await events.PumpAsync();
+
+            var notice = Assert.Single(ClientNotices(docked));
+            Assert.Equal("OnStructureServiceChanged", notice.Name);
+            Assert.Equal("clientID", notice.IdType);
+            Assert.Equal(Py.Tuple(new PyLong(Structure)), notice.Args);
+            Assert.Empty(ClientNotices(elsewhere));
+        }
+        finally
+        {
+            await using var connection = await source.OpenConnectionAsync();
+            await Sql.ExecuteAsync(connection, null, $"DROP SCHEMA IF EXISTS {eventSchema} CASCADE", CancellationToken.None);
+            await Sql.ExecuteAsync(connection, null, $"DROP SCHEMA IF EXISTS {schedulerSchema} CASCADE", CancellationToken.None);
         }
     }
 }

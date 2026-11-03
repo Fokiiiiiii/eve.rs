@@ -58,6 +58,8 @@ internal sealed class StructureOfficeRentDue(
         {
             // the paid bill renewed the office: the job waits for the next bill's due time
             await RescheduleAsync(officeId, cancellationToken);
+            if (characterSessions is { } sessions)
+                CorporationOfficeNotifications.BillReceived(sessions, bill.CorporationId);
             return;
         }
         await GiveUpAsync(officeId, now, cancellationToken);
@@ -70,10 +72,20 @@ internal sealed class StructureOfficeRentDue(
         if (!settings.EnabledBillTypes.TryGetValue(RentalBillTypeId, out var enabled) || !enabled) return false;
         try
         {
-            return await offices.PayBillAsync(bill.BillId, bill.CorporationId, bill.CorporationId, now,
-                (connection, transaction, open) => OfficeRentSettlement.SettleAsync(wallets, connection, transaction, open,
-                    new WalletAccount(bill.CorporationId, settings.DivisionId), open.CreditorId!.Value, now, cancellationToken),
+            var changes = new List<WalletBalanceChange>();
+            var paid = await offices.PayBillAsync(bill.BillId, bill.CorporationId, bill.CorporationId, now,
+                async (connection, transaction, open) =>
+                {
+                    changes.AddRange(await OfficeRentSettlement.SettleAsync(wallets, connection, transaction, open,
+                        new WalletAccount(bill.CorporationId, settings.DivisionId), open.CreditorId!.Value, now, cancellationToken));
+                },
                 cancellationToken);
+            if (paid)
+            {
+                foreach (var change in changes)
+                    wallets.AnnounceCommitted(change);
+            }
+            return paid;
         }
         catch (InsufficientFundsException)
         {

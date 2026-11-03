@@ -859,10 +859,17 @@ public class ShipTests
         var nested = await rig.GiveAsync(character.CharacterId, containerType.TypeId, singleton: true);
         var foreignItem = await rig.GiveAsync(character.CharacterId + 1, Rig.Afterburner, singleton: true);
 
-        var nestedMove = Assert.IsType<ShipChanged>(await rig.Ships.MoveContainerAsync(
+        var nestedMove = Assert.IsType<ShipRefused>(await rig.Ships.MoveContainerAsync(
             character.CharacterId, nested, Rig.Station, parent, null));
-        Assert.Equal(parent, Assert.Single(nestedMove.Stacks!).After.LocationId);
+        Assert.Equal(ShipRefusal.ContainerNesting, nestedMove.Reason);
+        Assert.Equal(Rig.Station, (await rig.Items.GetAsync(nested))!.LocationId);
 
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Items.MoveAsync(connection, transaction, nested, parent, CharacterShips.ContainerFlag);
+            await transaction.CommitAsync();
+        }
         Assert.IsType<NothingHappened>(await rig.Ships.MoveContainerAsync(
             character.CharacterId, parent, Rig.Station, nested, null));
         Assert.IsType<NothingHappened>(await rig.Ships.MoveContainerAsync(

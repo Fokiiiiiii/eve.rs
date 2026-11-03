@@ -382,8 +382,10 @@ public sealed class StructureOfficeTests : IAsyncLifetime
         await SetRentDueAsync(Outsider);
 
         // the job pays the due bill from the division and opens the next one; the office stays
-        Assert.True(await WaitForAsync(async () => await ScalarAsync<long>(
-            $"SELECT count(*) FROM {Schema("EVE_CORPORATIONS_SCHEMA")}.office_rent_bills WHERE corporation_id = $1 AND status = 1", Outsider) == 1, TimeSpan.FromSeconds(60)));
+        Assert.True(await WaitForAsync(async () => await ScalarAsync<bool>(
+            $"SELECT (SELECT count(*) FROM {Schema("EVE_CORPORATIONS_SCHEMA")}.office_rent_bills WHERE corporation_id = $1 AND status = 1) = 1 AND " +
+            $"EXISTS (SELECT 1 FROM {Schema("EVE_SCHEDULER_SCHEMA")}.jobs WHERE kind = 'office.rent_due' AND state = 'pending' AND run_at_ms > $2)",
+            Outsider, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()), TimeSpan.FromSeconds(60)));
         await host.ShutdownAsync();
 
         Assert.True(await OfficeActiveAsync(Outsider));

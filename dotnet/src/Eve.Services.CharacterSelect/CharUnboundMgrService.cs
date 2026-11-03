@@ -37,7 +37,8 @@ public sealed partial class CharUnboundMgrService(
     Func<string, CancellationToken, Task<bool>>? isCharacterNameTaken = null,
     Func<long, int, CancellationToken, Task>? writeCharacterGender = null,
     Func<long, int, int, int, CancellationToken, Task>? writeCharacterBloodline = null,
-    Func<CreationRequest, CancellationToken, Task<CreationOutcome>>? createCharacter = null)
+    Func<CreationRequest, CancellationToken, Task<CreationOutcome>>? createCharacter = null,
+    Func<long, long, CancellationToken, Task<bool>>? isCorporationCeo = null)
 {
     /// <summary>What every session's role gets on top of the account's (the client shows staff roles and the base bits alike).</summary>
     public const long SessionBaseRole = 0x6000000080000000;
@@ -508,6 +509,7 @@ public sealed partial class CharUnboundMgrService(
     public async ValueTask<PyValue> PrepareCharacterForDelete(ServiceCall call)
     {
         var (character, account) = await OwnedOfflineCharacter(call);
+        await EnsureNotCorporationCeo(character, Token(call));
         if (character.DeletePrepareAt is { } queued)
             return new PyLong(FileTime(queued));
         var readyAt = Now() + BiomassDelay;
@@ -531,6 +533,7 @@ public sealed partial class CharUnboundMgrService(
             return None;
         }
 
+        await EnsureNotCorporationCeo(character, Token(call));
         if (character.DeletePrepareAt is not { } readyAt)
             throw Info("That character is not in the biomass queue.");
         var now = Now();
@@ -559,6 +562,12 @@ public sealed partial class CharUnboundMgrService(
         if (online.IsOnline(characterId))
             throw Info("That character is currently online and cannot be deleted.");
         return (character, account);
+    }
+
+    private async Task EnsureNotCorporationCeo(Character character, CancellationToken cancellationToken)
+    {
+        if (isCorporationCeo is not null && await isCorporationCeo(character.Id, character.CorporationId, cancellationToken))
+            throw Info("You must resign as CEO or close the corporation before deleting this character.");
     }
 
     private static MachoWrappedException Info(string text) => MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr(text)));

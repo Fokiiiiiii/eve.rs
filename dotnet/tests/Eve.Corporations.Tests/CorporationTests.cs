@@ -1,5 +1,10 @@
 using System.Text.Json;
+using Eve.Host;
+using Eve.Macho;
+using Eve.Marshal;
 using Eve.Sde;
+using Eve.Services;
+using Eve.Services.Wallet;
 using Eve.Wallet;
 
 namespace Eve.Corporations.Tests;
@@ -772,19 +777,42 @@ public sealed class CorporationOfficeTests
         ]), corporationSettings.Value);
 
         var beforePayment = (await rig.Wallets.GetAsync(corporation.Id))!.Isk;
-        var call = Call("PayCorporationBill", actor, corporation.Id, new Eve.Marshal.PyLong(currentBill.BillId));
-        var payCall = new Eve.Services.ServiceCall
+        var announced = new List<WalletBalanceChange>();
+        rig.Transactions.BalanceCommitted += announced.Add;
+        var capture = new PacketCapture();
+        var session = new ClientSession(capture)
         {
-            Method = call.Method,
-            Args = call.Args,
-            Session = call.Session,
-            Kwargs = new Eve.Marshal.PyDict(
-            [
-                new(new Eve.Marshal.PyStr("fromAccountKey"), new Eve.Marshal.PyInt(1000)),
-            ]),
+            SessionId = 908,
+            ClientId = 909,
+            UserId = 910,
+            CharacterId = actor,
         };
-        Assert.Equal(Eve.Marshal.PyNone.Instance, await billMgr.CallAsync(payCall));
+        session.Set("corpid", new PyLong(corporation.Id));
+        session.Set("corporationID", new PyLong(corporation.Id));
+        session.Set("stationid", new PyLong(Station.Id));
+        var sessions = new CharacterSessions();
+        sessions.Enter(actor, session);
+        using var announcer = new WalletAnnouncer(rig.Transactions, sessions);
+        var registry = new ServiceRegistry();
+        registry.Register(billMgr);
+        var dispatcher = new PacketDispatcher(registry);
+        var open = new SessionOpen(908, 909, 910, 0, "127.0.0.1", "EN", "GB");
+        var request = CallPacket(open, 1, "billMgr", "PayCorporationBill",
+            new PyLong(currentBill.BillId), new PyInt(1000));
+        Assert.True(await dispatcher.DispatchAsync(MarshalCodec.Decode(MarshalCodec.Encode(request)), session));
+        var replies = capture.Sent.Select(packet =>
+            Assert.IsType<MachoPacket>(MachoPacket.Decode(packet))).ToArray();
+        Assert.Equal(2, replies.Length);
+        Assert.Equal(MachoMessage.Notification, replies[0].Type);
+        Assert.Equal("OnAccountChange", replies[0].Dest.BroadcastId);
+        Assert.Equal("*corpid&corpAccountKey", replies[0].Dest.IdType);
+        Assert.Equal(MachoMessage.CallRsp, replies[1].Type);
+        Assert.Equal(PyNone.Instance, CallResult(capture.Sent[1]));
         Assert.Equal(beforePayment - quote, (await rig.Wallets.GetAsync(corporation.Id))!.Isk);
+        Assert.Equal(new WalletBalanceChange(corporation.Id, 1000, beforePayment - quote), announced[0]);
+        Assert.Equal(new WalletBalanceChange(Station.OwnerId, 1000,
+            (await rig.Wallets.GetAsync(Station.OwnerId))!.Isk), announced[1]);
+        Assert.Equal(2, announced.Count);
         var receivable = Assert.IsType<Eve.Marshal.PyList>(
             await billMgr.CallAsync(Call("GetCorporationBillsReceivable", actor, corporation.Id)));
         Assert.Empty(receivable.Items);
@@ -866,5 +894,29 @@ public sealed class CorporationOfficeTests
             new Eve.Inventory.NewItem(34, corporationId, stationId, flag, Singleton: true));
         await transaction.CommitAsync();
         return id;
+    }
+
+    private static PyValue? CallResult(PyValue response)
+    {
+        var state = ((PyTuple)((PyObject)response).Args).Items;
+        var payload = (PyTuple)state[4];
+        return payload.Items[0] is PySubStream { Decoded: { } inner } ? inner : payload.Items[0];
+    }
+
+    private static PyValue CallPacket(SessionOpen open, long callId, string service, string method, params PyValue[] args)
+    {
+        var body = new PyTuple([new PyInt(1), new PyStr(method), new PyTuple(args), PyNone.Instance]);
+        var payload = new PyTuple([new PyTuple([new PyInt(0), new PySubStream(body)])]);
+        var source = new PyTuple([new PyInt(2), new PyLong((long)open.ClientId), new PyInt(callId), PyNone.Instance]);
+        var destination = new PyTuple([new PyInt(8), new PyStr(service), PyNone.Instance]);
+        return new PyObject(new PyStr("carbon.common.script.net.machoNetPacket.CallReq"),
+            new PyTuple([new PyInt(MachoMessage.CallReq), source, destination, new PyInt(open.UserId), payload,
+                PyNone.Instance, .. Enumerable.Repeat<PyValue>(PyNone.Instance, 8)]));
+    }
+
+    private sealed class PacketCapture : IPacketSink
+    {
+        public List<PyValue> Sent { get; } = [];
+        public void Send(PyValue packet) => Sent.Add(packet);
     }
 }

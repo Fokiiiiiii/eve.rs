@@ -31,6 +31,12 @@ public sealed partial class SpaceSessions
         {
             return None;
         }
+        if (_stations.Get(stationId) is null)
+        {
+            if (await IsStructureAsync(stationId, cancellationToken))
+                await DockStructureAsync(session, stationId, pilot.ShipId, cancellationToken);
+            return None;
+        }
         // a ship that its buffs keep from docking (disallowDocking 2354 on the ship, a fleet grant of the invulnerability core); the wording is the module's (see below)
         if (await ShipAttributeAsync(pilot, Eve.Services.Space.Effects.ModuleAttributes.DisallowDocking, cancellationToken))
         {
@@ -357,10 +363,9 @@ public sealed partial class SpaceSessions
             throw JumpRefused(reply.Reason);
         }
 
+        pilot.InspectContrabandOnJumpArrival = true;
         _warping.TryRemove((ulong)session.SessionId, out _);
         await CancelShipSelfDestructAsync(pilot.ShipId, cancellationToken);
-        // EVE.js jumpSessionViaStargate: the contraband of the ship is inspected in the system it arrives in
-        await ApplyContrabandAsync(session, pilot.CharacterId, pilot.ShipId, destination, cancellationToken);
         _emanationLocks.Left(pilot.CharacterId, pilot.SolarSystemId);
         if (GateRules?.DestinationOf(gateId) is { } arrivalGate)
         {
@@ -447,6 +452,8 @@ public sealed partial class SpaceSessions
     private async Task FinishJumpAsync(Pilot pilot, SimJumped jumped)
     {
         var session = pilot.Session;
+        var inspectContraband = pilot.InspectContrabandOnJumpArrival;
+        pilot.InspectContrabandOnJumpArrival = false;
         var arrivalFileTime = 0L;
         try
         {
@@ -532,7 +539,11 @@ public sealed partial class SpaceSessions
             if (transition.Moved is null)
                 _log?.Invoke($"jump of character {pilot.CharacterId} to system {jumped.ToSystem} failed: {transition.Refusal}");
             else
+            {
+                if (inspectContraband)
+                    await ApplyContrabandAsync(session, pilot.CharacterId, pilot.ShipId, jumped.ToSystem, CancellationToken.None);
                 TellEnteredBuffs((ulong)session.SessionId, pilot.ShipId, _nowUnixMs());
+            }
         }
         catch (Exception error)
         {
@@ -541,6 +552,51 @@ public sealed partial class SpaceSessions
     }
 
     // ── docking ──────────────────────────────────────────────────────────────
+
+    private async Task ResolveDockingAsync(Pilot pilot, long stationId)
+    {
+        var sessionId = (ulong)pilot.Session.SessionId;
+        var allowed = false;
+        var shouldEndClientDocking = false;
+        try
+        {
+            if (_pilots.TryGetValue(sessionId, out var current) && ReferenceEquals(current, pilot))
+            {
+                shouldEndClientDocking = true;
+                if (!await ShipAttributeAsync(pilot, Eve.Services.Space.Effects.ModuleAttributes.DisallowDocking, CancellationToken.None))
+                {
+                    var policy = await MovementPolicyAsync(pilot, PolicyAction.Dock, CancellationToken.None);
+                    if (policy.Allowed)
+                    {
+                        if (_stations.Get(stationId) is not null)
+                        {
+                            allowed = true;
+                        }
+                        else if (await IsStructureAsync(stationId, CancellationToken.None))
+                        {
+                            allowed = StructureDockingAllowedAsync is not { } check
+                                || await check(pilot.CharacterId, stationId, CancellationToken.None);
+                        }
+                    }
+                    else
+                    {
+                        _log?.Invoke($"docking of character {pilot.CharacterId} at {stationId} was no longer allowed: {policy.BlockReason}");
+                    }
+                }
+            }
+        }
+        catch (Exception error)
+        {
+            _log?.Invoke($"final docking checks for character {pilot.CharacterId} at {stationId} failed: {error.Message}");
+        }
+
+        _sim.Command(sessionId, SimCommands.DockingDecision, stationId, allowed ? 1 : 0);
+        if (!allowed && shouldEndClientDocking)
+        {
+            // The V24 client clears its docking travel state only on this terminal notification; location remains in space.
+            pilot.Session.SendNotification("OnDockingFinished", "charid", InventoryWire.Id(stationId));
+        }
+    }
 
     /// <summary>
     /// The ship has docked (or is being brought home): what the reference tells the client at the end of a docking, in its order, with the

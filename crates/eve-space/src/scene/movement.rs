@@ -333,6 +333,7 @@ pub(super) fn steer(ship: &mut Ship, target: Option<Target>, command: Command) -
         }
         Command::Stop => stop(ship),
         Command::Dock { .. }
+        | Command::DockingDecision { .. }
         | Command::WarpTo { .. }
         | Command::WarpToPoint { .. }
         | Command::ResolveWarpTarget { .. }

@@ -372,6 +372,21 @@ public class SpaceCargoTests
     }
 
     [PgFact]
+    public async Task A_cargo_container_cannot_be_moved_into_another_container_in_space()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (character, can) = await InSpaceWithACanAsync(rig);
+        var nested = await InAsync(rig, character.CharacterId, character.ShipId, CharacterShips.CargoFlag, can.TypeId, 1);
+
+        var refused = Assert.IsType<ShipRefused>(await rig.Ships.MoveInSpaceAsync(
+            character.CharacterId, nested, character.ShipId, can.Id, null));
+
+        Assert.Equal(ShipRefusal.ContainerNesting, refused.Reason);
+        Assert.Equal(character.ShipId, (await rig.Items.GetAsync(nested))!.LocationId);
+        Assert.Empty(await rig.Items.InContainerAsync(can.Id));
+    }
+
+    [PgFact]
     public async Task Removing_a_container_in_the_caller_transaction_recurses_and_preserves_moved_out_subtrees()
     {
         await using var rig = await Rig.CreateAsync();

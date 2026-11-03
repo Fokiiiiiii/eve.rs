@@ -49,7 +49,7 @@ public sealed record SalvageFailedEvent(long CharacterId, int SolarSystemId, lon
 {
     public const string Topic = "salvage.salvage_failed";
 }
-public sealed record DroneSalvageCommit(bool Accepted, string Reason, ShipChanged? Change, Item? Container, SpaceItem? ContainerSpaceItem);
+public sealed record DroneSalvageCommit(bool Accepted, string Reason, ShipChanged? Change, Item? Container, SpaceItem? ContainerSpaceItem, bool Replayed = false);
 
 /// <summary>
 /// The numbers of a mining cycle, read from the dogma of the item that mines (a drone or a module) by attribute name, so every source reads them the
@@ -479,7 +479,7 @@ private sealed record ShipHoldRule(
     /// is left in the wreck goes to a can; the miner checks are the ones of <see cref="MineAsteroidAsync"/>.
     /// </summary>
     public async Task<DroneSalvageCommit> SalvageWreckAsync(
-        long characterId, long shipId, int solarSystemId, MiningSource kind, long minerId, long wreckId, int? productTypeId,
+        long characterId, long shipId, int solarSystemId, MiningSource kind, long minerId, long wreckId, IReadOnlyList<(int TypeId, long Quantity)> salvageRewards,
         SpaceItem wreckSpace, long containerExpiresAtMs, PgSpaceItemStore spaceItems, long cycleId, PgWorkCycleLedger ledger, IFactBus events,
         CancellationToken cancellationToken = default)
     {
@@ -495,7 +495,7 @@ private sealed record ShipHoldRule(
         if (await ledger.LastAsync(connection, transaction, minerId, cancellationToken) is { } settled && settled.CycleId == cycleId)
         {
             await transaction.CommitAsync(cancellationToken);
-            return new(settled.Accepted, settled.Reason, null, null, null);
+            return new(settled.Accepted, settled.Reason, null, null, null, Replayed: true);
         }
         if (await items.LockAndGetAsync(connection, transaction, minerId, cancellationToken) is not { } drone
             || drone.OwnerId != characterId || !IsPlacedFor(kind, drone, solarSystemId, shipId)
@@ -509,29 +509,36 @@ private sealed record ShipHoldRule(
         {
             return new(false, "NO_WRECK", null, null, null);
         }
-        int[] typeIds = productTypeId is { } product ? [wreck.TypeId, product] : [wreck.TypeId];
+        if (salvageRewards.Any(reward => reward.Quantity <= 0))
+        {
+            return new(false, "INVALID_SALVAGE_PRODUCT", null, null, null);
+        }
+        int[] typeIds = [wreck.TypeId, .. salvageRewards.Select(reward => reward.TypeId).Distinct()];
         await statics.EnsureTypesAsync(typeIds, cancellationToken);
         var wreckType = statics.Type(wreck.TypeId);
         if (wreckType is null || !statics.GroupName(wreckType.GroupId).Contains("Wreck", StringComparison.OrdinalIgnoreCase))
         {
             return new(false, "NO_WRECK", null, null, null);
         }
-        if (productTypeId is { } productTypeIdValue)
+        if (salvageRewards.Count > 0)
         {
-            if (statics.Type(productTypeIdValue) is not { } productType
-                || !statics.GroupName(productType.GroupId).Equals("Salvaged Materials", StringComparison.OrdinalIgnoreCase))
+            var productCandidates = new List<Item>(salvageRewards.Count);
+            foreach (var reward in salvageRewards)
             {
-                return new(false, "INVALID_SALVAGE_PRODUCT", null, null, null);
+                if (statics.Type(reward.TypeId) is not { } productType
+                    || !statics.GroupName(productType.GroupId).Equals("Salvaged Materials", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new(false, "INVALID_SALVAGE_PRODUCT", null, null, null);
+                }
+                productCandidates.Add(new Item(0, reward.TypeId, characterId, shipId, CargoFlag, reward.Quantity, false, null));
             }
-            // ponytail: one salvage unit per successful wreck until SDE exposes an authoritative per-wreck amount table.
-            var productCandidate = new Item(0, productTypeIdValue, characterId, shipId, CargoFlag, 1, false, null);
-            if (await RefuseWhatDoesNotFitTogetherAsync(snapshot, [productCandidate], CargoFlag, cancellationToken) is not null)
+            if (await RefuseWhatDoesNotFitTogetherAsync(snapshot, productCandidates, CargoFlag, cancellationToken) is not null)
             {
                 return new(false, "CARGO_FULL", null, null, null);
             }
         }
         var contents = await items.LockContainerAsync(connection, transaction, wreckId, cancellationToken);
-        var moved = new List<ItemChanged>(contents.Count + (productTypeId is null ? 0 : 1));
+        var moved = new List<ItemChanged>(contents.Count + salvageRewards.Count);
         Item? container = null;
         SpaceItem? containerSpace = null;
         if (contents.Count > 0)
@@ -558,17 +565,17 @@ private sealed record ShipHoldRule(
                 wreckSpace.CharacterId, wreckSpace.CorporationId, wreckSpace.AllianceId, wreckSpace.WarFactionId, containerExpiresAtMs);
             await spaceItems.SaveAsync(connection, transaction, containerSpace, cancellationToken);
         }
-        if (productTypeId is { } salvageType)
+        foreach (var (salvageType, quantity) in salvageRewards)
         {
-            var id = await items.CreateAsync(connection, transaction, new NewItem(salvageType, characterId, shipId, CargoFlag, 1, false), cancellationToken);
-            moved.Add(new ItemChanged(new Item(id, salvageType, characterId, shipId, CargoFlag, 1, false, null), solarSystemId, InSpaceFlag, 0));
+            var id = await items.CreateAsync(connection, transaction, new NewItem(salvageType, characterId, shipId, CargoFlag, quantity, false), cancellationToken);
+            moved.Add(new ItemChanged(new Item(id, salvageType, characterId, shipId, CargoFlag, quantity, false, null), solarSystemId, InSpaceFlag, 0));
         }
         await items.DeleteAsync(connection, transaction, wreckId, cancellationToken);
         await spaceItems.RemoveAsync(connection, transaction, wreckId, cancellationToken);
         // the grant, the wreck's removal, the answer that records the cycle and its fact are one transaction (rule 1)
         await ledger.RecordAsync(connection, transaction, new WorkCycleRecord(minerId, cycleId, true, "", 0, 1, true), cancellationToken);
         await events.PublishInTransactionAsync(connection, transaction, SalvageWreckedEvent.Topic, new SalvageWreckedEvent(
-            characterId, solarSystemId, shipId, minerId, kind, wreckId, wreck.TypeId, productTypeId ?? 0, container?.Id ?? 0), $"char:{characterId}", cancellationToken);
+            characterId, solarSystemId, shipId, minerId, kind, wreckId, wreck.TypeId, salvageRewards.FirstOrDefault().TypeId, container?.Id ?? 0), $"char:{characterId}", cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         events.Wake();
         var change = moved.Count == 0 ? null : new ShipChanged(moved[0].After.Id, shipId, [], [], moved);

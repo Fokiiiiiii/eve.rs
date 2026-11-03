@@ -593,7 +593,8 @@ public sealed partial class ContractProxyService(
             throw MachoErrors.ThrowUserError("ConContractNotAvailable");
         if (snapshot.Status == 4)
             return PyBool.True;
-        return await writer.FinishAuctionAsync(snapshot.ContractId, call.Cancellation) ? PyBool.True : PyBool.False;
+        return await writer.FinishAuctionAsync(snapshot.ContractId, characterId, corporationId,
+            isIssuer, hasRole, call.Cancellation) ? PyBool.True : PyBool.False;
     }
 
     [Method("GM_ExpireContract")]

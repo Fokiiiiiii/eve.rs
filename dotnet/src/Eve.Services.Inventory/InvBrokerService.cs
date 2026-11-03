@@ -1512,7 +1512,8 @@ private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, lo
             return None;
         var corporationId = CorporationIdOf(call.Session);
         var corporationDestination = context.Kind == Kind.Hangar && ItemFlags.IsCorporationHangar((int)flag);
-        if (flag != 0 && !CharacterShips.IsShipHoldFlag((int)flag) && !corporationDestination)
+        var personalHangarDestination = context.Kind == Kind.Hangar && flag == ItemFlags.Hangar;
+        if (flag != 0 && !CharacterShips.IsShipHoldFlag((int)flag) && !corporationDestination && !personalHangarDestination)
             return None;
 
         if (space is not null && space.IsInSpace(call.Session))
@@ -1546,6 +1547,23 @@ private async ValueTask<bool> IsDockedShipContextAsync(ClientSession session, lo
         }
 
         var destinationId = context.Kind == Kind.Hangar ? station : context.ItemId;
+        if (context.Kind == Kind.Container
+            && await items.GetAsync(destinationId, call.Cancellation) is { } container)
+        {
+            var sourceTypeIds = new List<int>();
+            foreach (var itemId in ids)
+            {
+                if (await items.GetAsync(itemId, call.Cancellation) is not { } item || item.LocationId != source)
+                    continue;
+                if (item.OwnerId != character
+                    && (corporationId <= 0 || item.OwnerId != corporationId
+                        || !await CanAccessCorporationItemAsync(call.Session, item, CorporationHangarOperation.Take, call.Cancellation)))
+                    continue;
+                sourceTypeIds.Add(item.TypeId);
+            }
+            if (await ships.ContainerNestingRefusalAsync(sourceTypeIds, container.TypeId, call.Cancellation) is { } nesting)
+                throw ShipErrors.Of(nesting, statics);
+        }
         if (call.Session.GetInt("shipid") == source
             && context.Kind is Kind.Hangar or Kind.Ship
             && await ships.CheckBatchUnfitCargoCapacityAsync(

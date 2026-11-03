@@ -296,7 +296,7 @@ public sealed partial class RedeemService(IRedeemCallbacks callbacks, Func<long,
     /// Uses a re-sculpt certificate of an account's character (<c>ActivateCharacterReSculpt</c>): the item is consumed and the character's recustomization
     /// state is set. Answers false, and changes nothing, when the item is not such a certificate of one of the account's characters.
     /// </summary>
-    public Func<long, long, CancellationToken, ValueTask<bool>>? ActivateReSculpt { get; init; }
+    public Func<long, ServiceCall, long, CancellationToken, ValueTask<bool>>? ActivateReSculpt { get; init; }
 
     [Method("GetRedeemTokens")]
     public async ValueTask<PyValue> GetRedeemTokens(ServiceCall call)

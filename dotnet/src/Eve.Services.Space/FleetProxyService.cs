@@ -120,7 +120,7 @@ public sealed partial class FleetProxyService
         if (await BossFleetAsync(call) is not { } fleet) return PyNone.Instance;
         var result = await AdvertOperationAsync(operation, call, args);
         var after = await store.SnapshotAsync(fleet.FleetId, call.Cancellation);
-        if (after is not null && fleet.Snapshot.IsRegistered != after.IsRegistered)
+        if (after is not null && (operation == "AddFleetFinderAdvert" || fleet.Snapshot.IsRegistered != after.IsRegistered))
         {
             var oldOptions = FleetOptionsValue(fleet.Snapshot);
             var newOptions = FleetOptionsValue(after);

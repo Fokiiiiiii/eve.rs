@@ -505,7 +505,7 @@ public static SkillAugmentationReader CreateAugmentationReader(
         if (character is { } id)
             await store.NeuralRemapAsync(id, call.Cancellation);
         var owner = character ?? 0;
-        return new PyDict([.. AttributeIds.Select(id => new KeyValuePair<PyValue, PyValue>(new PyInt(id), Py.Number(training.Settings.Attribute(owner, id) * training.Settings.Speed)))]);
+        return new PyDict([.. AttributeIds.Select(id => new KeyValuePair<PyValue, PyValue>(new PyInt(id), Py.Number((training.Settings.Attribute(owner, id) + training.Settings.LearningBonus(owner, id)) * training.Settings.Speed)))]);
     }
 
     [Method("GetCharacterAttributeModifiers")]

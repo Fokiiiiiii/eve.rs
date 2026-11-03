@@ -59,7 +59,7 @@ public partial class HostServerTests
         Assert.Equal(new PyInt(1), await Call(1, "air_npe", "get_air_npe_state"));
         Assert.Same(PyNone.Instance, await Call(2, "air_npe", "skip_air_npe"));
         Assert.Equal(new PyInt(3), await Call(3, "air_npe", "get_air_npe_state"));
-        Assert.Equal(["OnAirNpeStateChanged"], notifications);
+        Assert.Equal(["OnTutorialSkipped", "OnAirNpeStateChanged"], notifications);
 
         Assert.Empty(Assert.IsType<PyList>(await Call(4, "authentication", "AccruedTime")).Items);
         Assert.Empty(Assert.IsType<PyList>(await Call(5, "authentication", "AccruedTime")).Items);

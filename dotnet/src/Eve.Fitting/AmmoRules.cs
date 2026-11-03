@@ -46,7 +46,7 @@ public static class AmmoRules
         var volume = charge.Attributes.GetValueOrDefault(VolumeAttribute, 0);
         if (capacity > 0 && volume > 0)
         {
-            return (long)Math.Floor(capacity / volume);
+            return (long)Math.Truncate(capacity / volume + 1e-7);
         }
         return 1; // the data gives no usable volume: one round, as the reference does
     }

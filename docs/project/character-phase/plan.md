@@ -32,7 +32,7 @@
 Packages marked GATE cannot start until the owner decides. Each decision is recorded in DEVIATIONS when made.
 
 - **GATE-A, public protobuf gateway (`eve_public.*`).** TODO rows 24 and 856 record owner decision 4: the gateway is not built. eve.rs has 0 public gateway RPC paths; EveJS has 6 (`docs/project/service-response-audit/host-protobuf.md`, counters). Skill plans (CH-21) and titles (CH-22) travel only through it. TODO row 58 records client errors and timeouts on the gateway at startup. Decide: build a minimal transport (CH-20) or keep CH-21 and CH-22 blocked.
-- **GATE-B, re-sculpt mechanics.** EveJS does not model it (see the stub above). The item that is consumed, the state that is set and when it ends come from the wiki and the SDE. The owner confirms the rule before CH-8 starts.
+- **GATE-B, re-sculpt mechanics (decided for CH-8).** Activate only for the session character with an accessible certificate, consume one unit, and expose the state until an appearance save clears it. Pinned SDE distinguishes the gender-inclusive 34132 certificate from no-gender 89956; V24 client state mapping is followed (state 3 for 34132, state 1 for 89956). Details and the EveJS difference are recorded in DEVIATIONS and the skins/cosmetics handoff.
 - **GATE-C, votes and reports (decided).** `CastUpvote`, `CastDownvote` and `ReportBot` answer `True` without retaining state, matching EveJS. `ReportISKSpammer` returns `False` when no Host report handler is configured; production currently has no sink. V24.01 callers ignore these replies (`customersatisficationcont.py:37,44,89`, `infoContentBase.py:1689`, `chat_service.py:202`, `devFunctions.py:69`). See DEVIATIONS and CH-10.
 - **GATE-D, player bounty payout.** Which kill claims a placed bounty, and when the payout is due. Source: EVE University wiki (Bounties), then EveJS `services/bounty/playerBountyState.js`. Needed for CH-18 only.
 - **GATE-E, faction-warfare rank.** The client reads rank from `facwar` (`fwwarzone/client/dashboard/progression.py:74`), which EveJS serves from `services/faction/facWarMgrService.js`. eve.rs has no faction rank state. Decide whether rank is in this phase (CH-R1, blocked) or in the faction phase.
@@ -47,8 +47,8 @@ Verdicts: **Missing** (no working handler), **Stub** (answers a constant or an e
 | 1 | `skillHandler.CheckAndSendNotifications` | Present | The only client caller is the development provider (`notifications/client/development/skillHistoryProvider.py:26`). eve.rs returns an empty list, matching EveJS v0.12.9 `skillMgrService.js:594-597`; the Host registry check is recorded in `docs/project/TODO.md`. CH-3. |
 | 2 | `seasonManager.get_season_data_for_character` | Missing | Client: `seasons/client/seasonservice.py` (`_initialize`, `_initialize_season`). eve.rs: `SeasonManagerService` (`SessionStartupRpcServices.cs:101-102`) answers only `process_client_event`, built with no callback (`CoreServices.cs:87`). CH-4. |
 | 3 | `ProjectDiscovery.initialize_tutorial_status` | Missing | Client: `projectdiscovery/client/projects/covid/service.py:22-25` (on every character session change). eve.rs has `get_tutorial_completion_status` and the player-state reads (`ProjectDiscoveryService.cs`). CH-4. |
-| 4 | `ActivateCharacterReSculpt` | Stub | `UserSvcCompatibility.cs:82-88` answers `False`, consumes nothing. EveJS answers `true`, no effect (`userService.js:1097`). GATE-B, CH-8. |
-| 5 | Paperdoll states 1 and 3 | Missing | `CharMgrService.cs:242-246` (comment): only states 0 and 2 are answered (`GetPaperdollState`, line 247). EveJS comment `charMgrService.js:714` names the states. CH-8. |
+| 4 | `ActivateCharacterReSculpt` | Present | Host activation validates the active character and reachable certificate, consumes one certificate, persists the selected state, and orders item then paperdoll notifications. `CharacterReSculptHostTests` covers ownership, location, stack quantity, state transitions, concurrency, and restart. CH-8. |
+| 5 | Paperdoll states 1 and 3 | Present | `GetPaperdollState` now resolves persisted state and appearance-save completion; Host coverage checks both certificate states and clearing on save. CH-8. |
 | 6 | `alphaInjectorMgr.GetNextAvailableInjection` | Stub | `CoreCompatibilityServiceAdapters.cs:25-33` returns `0` (available now) always. Client: `eve/client/script/ui/services/skillsvc.py:1004-1005`. CH-2. |
 | 7 | Alpha injections not recorded | Missing | No store. The Daily Alpha Injector exists only in the injector rules (`SkillHandlerService.Injection.cs:57-58`). CH-2. |
 | 8 | `userSvc` multi-character training | Partial | Present: slots, active-slot reads, soulbound activation, certificate-backed `ActivateMultiTraining`, and durable slot-expiry queue pausing (TODO row 131). A slot granted before expiry jobs were added has no startup backfill. CH-6. |
@@ -91,7 +91,7 @@ Lanes are the PostgreSQL databases from `docs/project/DATABASES.md`: `eve_p2` (l
 |CH-5|Login milestones (milestoneMgr)|Done|none|1|eve_p3|CH-2, CH-7, CH-9|
 |CH-6|Multi-character training: item activation, slot expiry|Done|none|1|eve_p2|CH-1, CH-3, CH-10, CH-12|
 |CH-7|Atomic population check on SelectCharacterID|Done|none|1|eve_p3|CH-2, CH-5, CH-9|
-|CH-8|Re-sculpt and paperdoll states 1 and 3|Partial|GATE-B|1 (gated)|eve_p4|CH-4, CH-11, CH-13, CH-14|
+|CH-8|Re-sculpt and paperdoll states 1 and 3|Partial|none|1|eve_p3|CH-4, CH-11, CH-13, CH-14|
 |CH-9|Achievement writes, no fixture|Done|none|1|eve_p3|CH-2, CH-5, CH-7|
 |CH-10|userSvc constant answers (playtime, votes, reports)|Done|GATE-C|1 (gated)|eve_p2|CH-1, CH-3, CH-6, CH-12|
 |CH-11|Implant and booster modifiers in pilot dogma and training|Done|none|1|eve_p3|CH-4, CH-8, CH-13, CH-14|

@@ -27,7 +27,7 @@ public partial class HostServerTests
             },
             multipleTraining: training)
         {
-            ActivateReSculpt = (userId, itemId, _) => ValueTask.FromResult(userId == 7 && itemId == 99),
+            ActivateReSculpt = (userId, call, itemId, _) => ValueTask.FromResult(userId == 7 && call.Session.CharacterId == 42 && itemId == 99),
         };
         ClientSession? openedSession = null;
         Start(configure: registry => registry.Register(service), strictRpc: true,

@@ -45,6 +45,8 @@ public static class ShipErrors
                     $"That cannot be removed while the cargo hold is this full. The hold carries {refused.Used.ToString("0.00", CultureInfo.InvariantCulture)} m3 and the ship would be left with room for {refused.CapacityAfter.ToString("0.00", CultureInfo.InvariantCulture)} m3. Move some cargo out first.");
             case ShipRefusal.NotAllowedInHold:
                 return MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That item cannot be placed in that ship hold.")));
+            case ShipRefusal.ContainerNesting:
+                return Notify("A cargo container cannot be placed inside another cargo container.");
             case ShipRefusal.NotADrone:
                 return Notify("Only drones can be placed in the Drone Bay.");
             case ShipRefusal.NoSpaceForThat:

@@ -182,6 +182,15 @@ public class SpaceServiceTests
         return (rig, character, await rig.SessionAsync(character));
     }
 
+    private static SimNotify TargetNotification(ClientSession session, string action, long? targetId = null)
+    {
+        var args = targetId is { } id
+            ? Py.Tuple(new PyStr(action), new PyLong(id))
+            : Py.Tuple(new PyStr(action));
+        return new SimNotify((ulong)session.SessionId, "OnTarget", "shipid",
+            MarshalCodec.Encode(Py.Tuple(new PyInt(0), Py.Tuple(new PyInt(1), args))));
+    }
+
     private static Eve.Scheduler.LocalTimers CooldownElapsedTimers() => new(delay: (duration, token) =>
         duration == TimeSpan.FromSeconds(10)
             ? Task.CompletedTask
@@ -322,7 +331,7 @@ public class SpaceServiceTests
     }
 
     [PgFact]
-    public async Task Trying_to_lock_a_target_aborts_safe_logoff_even_when_the_lock_is_refused()
+    public async Task A_refused_target_lock_does_not_abort_safe_logoff()
     {
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -345,11 +354,87 @@ public class SpaceServiceTests
         rig.Sim.TargetAnswer = new CommandReply(false, 0, "TARGET_OUT_OF_RANGE");
         var refusal = await rig.Space.OrderAsync(session, TargetingOrder.Lock, [60015249], CancellationToken.None);
         Assert.False(refusal!.Ok);
+        Assert.DoesNotContain(Events.Of(session), message => message.Name is "OnSafeLogoffFailed" or "OnSafeLogoffAborted");
         release.TrySetResult();
-        await Task.Delay(25);
+        await Rig.UntilAsync(() => closed && !rig.Space.IsInSpace(session));
+        Assert.True(closed);
+    }
 
-        Assert.False(closed);
-        Assert.True(rig.Space.IsInSpace(session));
+    [PgFact]
+    public async Task Target_lock_notifications_update_safe_logoff_state_until_loss_or_clear()
+    {
+        var (rig, _, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        rig.Space.LifecycleBlockers = (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<string>>([]);
+        var oid = await rig.BindShipInSpaceAsync(session);
+        const long target = 60015249;
+
+        rig.Sim.Say(TargetNotification(session, "add", target));
+        var added = Assert.Single(Events.Of(session));
+        Assert.Equal(("OnTarget", "shipid"), (added.Name, added.IdType));
+        Assert.NotEmpty(Assert.IsType<PyList>(await rig.ShipCallAsync(session, "SafeLogoff", oid)).Items);
+
+        rig.Sim.Say(TargetNotification(session, "lost", target));
+        Assert.Empty(Assert.IsType<PyList>(await rig.ShipCallAsync(session, "SafeLogoff", oid)).Items);
+        await rig.ShipCallAsync(session, "AbortSafeLogoff", oid);
+
+        rig.Sim.Say(TargetNotification(session, "add", target));
+        Assert.NotEmpty(Assert.IsType<PyList>(await rig.ShipCallAsync(session, "SafeLogoff", oid)).Items);
+        rig.Sim.Say(TargetNotification(session, "clear"));
+        Assert.Empty(Assert.IsType<PyList>(await rig.ShipCallAsync(session, "SafeLogoff", oid)).Items);
+        await rig.ShipCallAsync(session, "AbortSafeLogoff", oid);
+    }
+
+    [PgFact]
+    public async Task An_accepted_pending_lock_cancels_safe_logoff_and_blocks_both_pilots()
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var timerCount = 0;
+        using var timers = new Eve.Scheduler.LocalTimers(delay: (duration, token) =>
+        {
+            if (duration != TimeSpan.FromSeconds(30)) return Task.CompletedTask;
+            if (Interlocked.Increment(ref timerCount) == 2) started.TrySetResult();
+            return new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task.WaitAsync(token);
+        });
+        var (rig, _, source) = await DockedAsync(localTimers: timers);
+        await using var _ = rig;
+        await InSpaceAsync(rig, source);
+        var targetCharacter = await rig.NewCharacterAsync("Targeted Pilot");
+        var target = await rig.SessionAsync(targetCharacter, id: 2);
+        await InSpaceAsync(rig, target);
+        rig.Space.LifecycleBlockers = (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<string>>([]);
+        var sourceOid = await rig.BindShipInSpaceAsync(source);
+        var targetOid = await rig.BindShipInSpaceAsync(target);
+
+        Assert.Empty(Assert.IsType<PyList>(await rig.ShipCallAsync(source, "SafeLogoff", sourceOid)).Items);
+        Assert.Empty(Assert.IsType<PyList>(await rig.ShipCallAsync(target, "SafeLogoff", targetOid)).Items);
+        source.RunAfterResponse();
+        target.RunAfterResponse();
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var accepted = await rig.Space.OrderAsync(source, TargetingOrder.Lock, [targetCharacter.ShipId], CancellationToken.None);
+
+        Assert.True(accepted!.Ok);
+        Assert.True(accepted.Pending);
+        var sourceFailure = Assert.Single(Events.Of(source), message => message.Name == "OnSafeLogoffFailed");
+        var targetFailure = Assert.Single(Events.Of(target), message => message.Name == "OnSafeLogoffFailed");
+        Assert.Equal("UI/Inflight/SafeLogoff/SafeLogoffCantTargetLockBody",
+            JsSemantics.StringValue(Assert.Single(Assert.IsType<PyList>(Assert.Single(sourceFailure.Args)).Items)));
+        Assert.Equal("UI/Inflight/SafeLogoff/SafeLogoffCantBeTargetLockedBody",
+            JsSemantics.StringValue(Assert.Single(Assert.IsType<PyList>(Assert.Single(targetFailure.Args)).Items)));
+        Assert.NotEmpty(Assert.IsType<PyList>(await rig.ShipCallAsync(source, "SafeLogoff", sourceOid)).Items);
+        Assert.NotEmpty(Assert.IsType<PyList>(await rig.ShipCallAsync(target, "SafeLogoff", targetOid)).Items);
+
+        rig.Sim.Say(TargetNotification(source, "add", targetCharacter.ShipId));
+        rig.Sim.Say(TargetNotification(target, "otheradd", source.GetInt("shipid")!.Value));
+        rig.Sim.Say(TargetNotification(source, "lost", targetCharacter.ShipId));
+        rig.Sim.Say(TargetNotification(target, "otherlost", source.GetInt("shipid")!.Value));
+
+        Assert.Empty(Assert.IsType<PyList>(await rig.ShipCallAsync(target, "SafeLogoff", targetOid)).Items);
+        Assert.Empty(Assert.IsType<PyList>(await rig.ShipCallAsync(source, "SafeLogoff", sourceOid)).Items);
+        await rig.ShipCallAsync(target, "AbortSafeLogoff", targetOid);
+        await rig.ShipCallAsync(source, "AbortSafeLogoff", sourceOid);
     }
 
     [PgFact]

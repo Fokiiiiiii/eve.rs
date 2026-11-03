@@ -114,19 +114,28 @@ internal sealed partial class CharacterServicesComposition
         cosmicSites = null;
         siteNpcs = null;
         var npcAuthority = NpcAuthority.Load();
+          var npcTypeIds = npcAuthority.Profiles.Select(profile => profile.ShipTypeId).Distinct().ToArray();
+          var securityStatusKillBonusAttributeId = dogma.AttributeId("entitySecurityStatusKillBonus")
+              ?? throw new InvalidOperationException("The SDE is missing entitySecurityStatusKillBonus.");
+          await dogma.EnsureTypesAsync(npcTypeIds);
+          if (npcTypeIds.Any(typeId => dogma.Type(typeId) is null))
+          {
+              throw new InvalidOperationException("The NPC profiles contain ship types missing from the SDE.");
+          }
         var securityRecovery = new Eve.Services.Crimewatch.NpcSecurityStatusRecoverySubscriber(
             new Eve.Crimewatch.PgCrimewatchStore(source, crimewatchSchema),
             foundations.Scheduler,
             foundations.Events,
             foundations.Relations,
-            profile => npcAuthority.Profile(profile) is { Bounty: > 0 } npc
-                ? new Eve.Services.Crimewatch.NpcSecurityStatusProfile(
-                    npc.Bounty, npc.CorporationId, npc.FactionId, npc.ShipTypeId,
-                    Eve.Npc.NpcSecurityStatusRecovery.IsEligibleFaction(npc.FactionId))
-                : null,
+              profile => npcAuthority.Profile(profile) is { } npc
+                  ? new Eve.Services.Crimewatch.NpcSecurityStatusProfile(
+                      npc.Bounty, npc.CorporationId, npc.FactionId, npc.ShipTypeId,
+                      Eve.Npc.NpcSecurityStatusRecovery.IsEligibleFaction(npc.FactionId),
+                      dogma.Type(npc.ShipTypeId)!.Attributes.GetValueOrDefault(securityStatusKillBonusAttributeId))
+                  : null,
             async (connection, transaction, characterId, token) =>
                 1.0 + ((await skills.LevelAsync(connection, transaction, characterId, 3358, token)) * 0.05),
-            (previous, bounty, fastTalk) => Eve.Npc.NpcSecurityStatusRecovery.TryNext(bounty, previous, fastTalk));
+              (previous, killBonusPercent, fastTalk) => Eve.Npc.NpcSecurityStatusRecovery.TryNext(killBonusPercent, previous, fastTalk));
         securityRecovery.Register();
         foundations.Events.Subscribe("npc.security-status-notifications", ["npc.security_status.recovered"],
             (context, _) =>

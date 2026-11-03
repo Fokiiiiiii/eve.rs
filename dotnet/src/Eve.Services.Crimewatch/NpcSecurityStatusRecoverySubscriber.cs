@@ -8,7 +8,9 @@ using Npgsql;
 namespace Eve.Services.Crimewatch;
 
 /// <summary>Authoritative NPC facts used to record a security-status recovery.</summary>
-public sealed record NpcSecurityStatusProfile(decimal Bounty, long CorporationId, int FactionId, int ShipTypeId, bool EligibleForRecovery);
+public sealed record NpcSecurityStatusProfile(
+    decimal Bounty, long CorporationId, int FactionId, int ShipTypeId, bool EligibleForRecovery,
+    double SecurityStatusKillBonusPercent);
 
 public sealed record NpcSecurityStatusRecoveryWindowDue(long CharacterId, long WindowEndMs);
 
@@ -27,7 +29,7 @@ public sealed class NpcSecurityStatusRecoverySubscriber
     private readonly RelationStore _relations;
     private readonly Func<string, NpcSecurityStatusProfile?> _profileForId;
     private readonly Func<NpgsqlConnection, NpgsqlTransaction, long, CancellationToken, Task<double>> _fastTalkMultiplier;
-    private readonly Func<double, decimal, double, double?> _nextStatus;
+    private readonly Func<double, double, double, double?> _nextStatus;
 
     public NpcSecurityStatusRecoverySubscriber(
         PgCrimewatchStore crimewatch,
@@ -36,7 +38,7 @@ public sealed class NpcSecurityStatusRecoverySubscriber
         RelationStore relations,
         Func<string, NpcSecurityStatusProfile?> profileForId,
         Func<NpgsqlConnection, NpgsqlTransaction, long, CancellationToken, Task<double>> fastTalkMultiplier,
-        Func<double, decimal, double, double?> nextStatus)
+        Func<double, double, double, double?> nextStatus)
     {
         _crimewatch = crimewatch;
         _scheduler = scheduler;
@@ -65,7 +67,8 @@ public sealed class NpcSecurityStatusRecoverySubscriber
         }
 
         var profile = _profileForId(profileId);
-        if (profile is not { Bounty: > 0, EligibleForRecovery: true } npc)
+        if (profile is not { EligibleForRecovery: true } npc ||
+            !double.IsFinite(npc.SecurityStatusKillBonusPercent) || npc.SecurityStatusKillBonusPercent <= 0)
         {
             return;
         }
@@ -91,7 +94,8 @@ public sealed class NpcSecurityStatusRecoverySubscriber
             npc.CorporationId,
             npc.FactionId,
             profileId,
-            npc.Bounty);
+              npc.Bounty,
+              npc.SecurityStatusKillBonusPercent);
         await _crimewatch.RecordNpcSecurityStatusRecoveryWindowAsync(
             context.Connection, context.Transaction, window, cancellationToken).ConfigureAwait(false);
         var due = new NpcSecurityStatusRecoveryWindowDue(characterId, windowEndMs);
@@ -136,7 +140,12 @@ public sealed class NpcSecurityStatusRecoverySubscriber
 
         var fastTalk = await _fastTalkMultiplier(context.Connection, context.Transaction, window.CharacterId, cancellationToken).ConfigureAwait(false);
         fastTalk = double.IsFinite(fastTalk) ? Math.Max(0, fastTalk) : 1.0;
-        var next = _nextStatus(previous, window.Bounty, fastTalk);
+        var killBonusPercent = window.SecurityStatusKillBonusPercent;
+        if (!double.IsFinite(killBonusPercent) || killBonusPercent <= 0)
+        {
+            killBonusPercent = _profileForId(window.ProfileId)?.SecurityStatusKillBonusPercent ?? 0;
+        }
+        var next = _nextStatus(previous, killBonusPercent, fastTalk);
         if (next is { } value)
         {
             if (!double.IsFinite(value) || value <= previous || previous >= 10)
@@ -160,6 +169,7 @@ public sealed class NpcSecurityStatusRecoverySubscriber
                     ["npcFactionID"] = window.NpcFactionId,
                     ["profileID"] = window.ProfileId,
                     ["bounty"] = window.Bounty,
+                      ["securityStatusKillBonusPercent"] = killBonusPercent,
                     ["fastTalkMultiplier"] = fastTalk,
                 }, cancellationToken: cancellationToken).ConfigureAwait(false);
             await _events.PublishAsync(context.Connection, context.Transaction,

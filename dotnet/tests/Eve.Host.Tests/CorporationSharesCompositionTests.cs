@@ -43,7 +43,9 @@ public sealed class CorporationSharesCompositionTests
         await using var admin = NpgsqlDataSource.Create(PgConnection.ForTest(adminUrl));
         try
         {
-            await using (var command = admin.CreateCommand($"CREATE DATABASE {db} TEMPLATE eve_raffle_host")) await command.ExecuteNonQueryAsync();
+            await using (var command = admin.CreateCommand($"CREATE DATABASE {db} TEMPLATE template0")) await command.ExecuteNonQueryAsync();
+            await using (var sdeSource = NpgsqlDataSource.Create(PgConnection.ForTest(databaseUrl)))
+                await HostTestDatabase.AttachSdeAsync(sdeSource, new NpgsqlConnectionStringBuilder(PgConnection.ForTest(sourceUrl)));
             Environment.SetEnvironmentVariable("EVE_PG_URL", databaseUrl);
             Environment.SetEnvironmentVariable("EVE_SIM", "off");
             Environment.SetEnvironmentVariable("EVE_MARKET_SEED", "skip");
@@ -99,7 +101,6 @@ public sealed class CorporationSharesCompositionTests
         {
             if (host is not null) await host.ShutdownAsync();
             foreach (var (name, value) in saved) Environment.SetEnvironmentVariable(name, value);
-            NpgsqlConnection.ClearAllPools();
             await using var command = admin.CreateCommand($"DROP DATABASE IF EXISTS {db} WITH (FORCE)");
             await command.ExecuteNonQueryAsync();
         }

@@ -102,13 +102,23 @@ public sealed partial class AbyssalHostFlowTests
             await using (var q=rig.Source.CreateCommand($"SELECT COALESCE(original_station_id,original_structure_id),original_system_id,ship_id FROM {schema}.referee_travel WHERE character_id=$1"))
             { q.Parameters.AddWithValue(character); await using var row=await q.ExecuteReaderAsync(); Assert.True(await row.ReadAsync()); Assert.Equal(station,row.GetInt64(0)); Assert.Equal(stationData.SolarSystemId,row.GetInt32(1)); Assert.Equal(ship,row.GetInt64(2)); }
             var returnOid=await Bind(); Assert.NotEqual(arenaOid,returnOid);
+            SimCondition? returnedCondition=null;
+            rig.Simulator.ConditionObserved=observed => returnedCondition=observed;
             await Travel(returnOid,"TeleportToStation");
             Assert.Equal(station,session.GetInt(atStructure ? "structureid" : "stationid"));
             Assert.Null(session.GetInt(atStructure ? "stationid" : "structureid")); Assert.Equal(ship,session.GetInt("shipid"));
             var item=await rig.Items.GetAsync(ship); Assert.NotNull(item); Assert.Equal(character,item.OwnerId); Assert.Equal(station,item.LocationId);
             var snapshot=await rig.Ships.LoadAsync(character); Assert.NotNull(snapshot); Assert.Equal(station,snapshot.Character.StationId); Assert.Equal(ship,snapshot.Ship.Id);
             var saved=await new PgModuleStateStore(rig.Source,rig.Schemas[3]).ShipConditionAsync(ship);
-            Assert.True(saved.ShieldCharge <= condition.ShieldCharge+0.02 && saved.ArmorDamage >= condition.ArmorDamage-0.001 && saved.Damage >= condition.Damage-0.001);
+            Assert.NotNull(returnedCondition);
+            Assert.Equal(returnedCondition.ShieldCharge,saved.ShieldCharge);
+            Assert.Equal(returnedCondition.Charge,saved.Charge);
+            Assert.Equal(returnedCondition.ArmorDamage,saved.ArmorDamage);
+            Assert.Equal(returnedCondition.Damage,saved.Damage);
+            Assert.InRange(saved.ShieldCharge,condition.ShieldCharge,1);
+            Assert.InRange(saved.Charge,condition.Charge,1);
+            Assert.Equal(condition.ArmorDamage,saved.ArmorDamage,6);
+            Assert.Equal(condition.Damage,saved.Damage,6);
             await using var count=rig.Source.CreateCommand($"SELECT count(*) FROM {schema}.referee_travel"); Assert.Equal(0L,(long)(await count.ExecuteScalarAsync())!);
         }
         finally

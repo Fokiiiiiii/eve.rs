@@ -31,8 +31,7 @@ public sealed class RafflePriceRuntimeTests
     [Fact]
     public async Task RuntimeGlobalPriceAndFractionalDivisionDetermineActualTokenConsumption()
     {
-        var sourceUrl = Environment.GetEnvironmentVariable("EVE_PG_URL") ?? throw new InvalidOperationException("EVE_PG_URL required");
-        var databaseUrl = new UriBuilder(sourceUrl) { Path = "/eve_raffle_host" }.Uri.ToString();
+        var databaseUrl = Environment.GetEnvironmentVariable("EVE_PG_URL") ?? throw new InvalidOperationException("EVE_PG_URL required");
         string configSchema = "rf_price_" + Guid.NewGuid().ToString("N")[..12]; string marketSchema = configSchema + "_market";
         string[] names = ["EVE_PG_URL","EVE_SIM","EVE_MARKET_SEED","EVE_WORMHOLES","EVE_GLOBAL_CONFIG_SCHEMA","EVE_MARKET_SCHEMA"];
         var saved = names.ToDictionary(name => name, Environment.GetEnvironmentVariable);

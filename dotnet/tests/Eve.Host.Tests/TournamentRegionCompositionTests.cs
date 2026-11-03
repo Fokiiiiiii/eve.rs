@@ -14,7 +14,9 @@ public sealed class TournamentRegionCompositionTests
     public async Task Region_file_is_loaded_at_host_start_and_identical_restart_is_safe()
     {
         var originalUrl = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        var template = new NpgsqlConnectionStringBuilder(PgConnection.ForTest(originalUrl)).Database!;
+        var template = new NpgsqlConnectionStringBuilder(PgConnection.ForTest(originalUrl));
+        await using var occupiedTemplate = new NpgsqlConnection(template.ConnectionString);
+        await occupiedTemplate.OpenAsync();
         var database = "tourney_region_" + Guid.NewGuid().ToString("N")[..12];
         var adminUrl = new UriBuilder(originalUrl) { Path = "/postgres" }.Uri.ToString();
         var testUrl = new UriBuilder(originalUrl) { Path = "/" + database }.Uri.ToString();
@@ -29,11 +31,12 @@ public sealed class TournamentRegionCompositionTests
         try
         {
             await using (var admin = NpgsqlDataSource.Create(PgConnection.ForTest(adminUrl)))
-            await using (var command = admin.CreateCommand($"CREATE DATABASE {database} TEMPLATE {new NpgsqlCommandBuilder().QuoteIdentifier(template)}"))
+            await using (var command = admin.CreateCommand($"CREATE DATABASE {database} TEMPLATE template0"))
             { await command.ExecuteNonQueryAsync(); created = true; }
             const long owner = 140_091_002;
             await using (var source = NpgsqlDataSource.Create(PgConnection.ForTest(testUrl)))
             {
+                await HostTestDatabase.AttachSdeAsync(source, template);
                 await PgCharacterStore.MigrateAsync(source);
                 await using var seed = source.CreateCommand($"""
                     INSERT INTO characters.characters (id,account_id,name,name_key,gender,race_id,bloodline_id,ancestry_id,school_id,type_id,
@@ -117,7 +120,7 @@ public sealed class TournamentRegionCompositionTests
             if (created)
             {
                 await using var admin = NpgsqlDataSource.Create(PgConnection.ForTest(adminUrl));
-                await using var drop = admin.CreateCommand($"DROP DATABASE {database}");
+                await using var drop = admin.CreateCommand($"DROP DATABASE {database} WITH (FORCE)");
                 await drop.ExecuteNonQueryAsync();
             }
             Directory.Delete(folder, recursive: true);

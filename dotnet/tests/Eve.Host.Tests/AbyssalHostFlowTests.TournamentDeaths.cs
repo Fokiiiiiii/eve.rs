@@ -51,7 +51,7 @@ public sealed partial class AbyssalHostFlowTests
             long matchId;
             await using (var seed = rig.Source.CreateCommand($"""
                 INSERT INTO {schema}.matches(tournament_id,series_id,system_id,maximum_points,match_length,overtime_length,state,start_ms)
-                VALUES (1,1,$1,100,600,0,6,1700000000000) RETURNING id
+                VALUES (1,1,$1,100,600,0,5,1700000000000) RETURNING id
                 """)) { seed.Parameters.AddWithValue((long)character.SolarSystemId); matchId = (long)(await seed.ExecuteScalarAsync())!; }
             await using (var seed = rig.Source.CreateCommand($"""
                 WITH roster AS (INSERT INTO {schema}.match_members(match_id,team,character_id,locked) VALUES($1,0,$2,true) RETURNING 1)
@@ -132,6 +132,8 @@ public sealed partial class AbyssalHostFlowTests
                 Assert.Equal(originalShip, row.GetInt64(0)); Assert.Equal(actual.ShipId, row.GetInt64(1));
                 Assert.Equal(homeStation, row.GetInt64(2)); Assert.True(row.GetBoolean(3));
             }
+            await using (var complete = rig.Source.CreateCommand($"UPDATE {schema}.matches SET state=6 WHERE id=$1 AND state=5"))
+            { complete.Parameters.AddWithValue(matchId); Assert.Equal(1, await complete.ExecuteNonQueryAsync()); }
             Assert.False(await store.ReturnCompletedParticipantsAsync(matchId, CancellationToken.None));
             await rig.Foundations.Scheduler.RunDueAsync();
             Assert.True(await store.ReturnCompletedParticipantsAsync(matchId, CancellationToken.None));

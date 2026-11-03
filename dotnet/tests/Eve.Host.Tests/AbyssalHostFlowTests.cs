@@ -298,6 +298,12 @@ public sealed partial class AbyssalHostFlowTests
             Assert.True(publicPose.Found, publicPose.Error);
             Assert.NotNull(publicPose.Deployment);
             await rig.Disconnect(publicSession);
+            Assert.Equal(new[]
+            {
+                $"pilot {publicSetup.Data.CreatorCharacterId} entered space in system {publicSetup.Data.SourceSolarSystemId} (session {publicSession.SessionId})",
+                $"pilot {publicSetup.Data.CreatorCharacterId} left space in system {publicSetup.Data.SourceSolarSystemId} (session {publicSession.SessionId}): position saved True",
+            }, rig.Problems);
+            rig.Problems.Clear();
             var run = await rig.CreateRun();
             var other = await rig.CreateRun();
             await rig.Materialize(run, 1);
@@ -1104,7 +1110,7 @@ public sealed partial class AbyssalHostFlowTests
             var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
             var cs = new NpgsqlConnectionStringBuilder(PgConnection.ForTest(url));
             Assert.Equal(new NpgsqlConnectionStringBuilder(PgConnection.ToConnectionString(url)).Database, cs.Database);
-            Assert.Contains(cs.Database, new[] { "eve", "eve_p2", "eve_p3", "eve_p4", "eve_p5", "eve_p11" });
+            Assert.Contains(cs.Database, new[] { "eve", "eve_p2", "eve_p3", "eve_p4", "eve_p5", "eve_p11", "eve_p20" });
             var source = NpgsqlDataSource.Create(cs.ConnectionString);
             var suffix = Guid.NewGuid().ToString("N");
             var schemas = Enumerable.Range(0, 11).Select(index => $"abyss_hf_{index}_{suffix}").ToArray();
@@ -1372,6 +1378,13 @@ public sealed partial class AbyssalHostFlowTests
     public class FlowSim : DispatchProxy
     {
         public ISimulation? Inner { get; set; }
+        public Action<SimCondition>? ConditionObserved { get; set; }
+        private async Task<CommandReply> ObserveConditionAsync(ulong sessionId, byte code, double[] args, CancellationToken ct)
+        {
+            var reply = await Inner!.CommandAsync(sessionId, code, args, ct);
+            if (reply.Condition is { } condition) ConditionObserved?.Invoke(condition);
+            return reply;
+        }
         public List<SimEnter> Enters { get; } = [];
         public List<SimEnterPublicParticipant> PublicEnters { get; } = [];
         public bool DropNextPublicMoveReply { get; set; }
@@ -1419,6 +1432,8 @@ public sealed partial class AbyssalHostFlowTests
             ArgumentNullException.ThrowIfNull(method);
             if (Inner is not null)
             {
+                if (ConditionObserved is not null && method.Name == nameof(ISimulation.CommandAsync) && (byte)args![1]! == SimCommands.GetCondition)
+                    return ObserveConditionAsync((ulong)args[0]!, (byte)args[1]!, (double[])args[2]!, (CancellationToken)args[3]!);
                 if (method.Name == nameof(ISimulation.RemoteRepairCycleResult) && HoldNextRemoteRepairResult)
                 {
                     HoldNextRemoteRepairResult = false;

@@ -97,3 +97,9 @@ The `d9fef52c` fast-forward was followed by fresh Release builds and `eve_p5` ch
 - Builds passed for `Eve.Host`, `Eve.Npc.Tests`, `Eve.Services.Crimewatch.Tests`, `Eve.Host.Tests`, `Eve.Crimewatch.Tests`, and `Eve.Services.Space.Tests`, each with zero warnings and errors.
 - Database-locked checks passed with no skips: `NpcSecurityStatusRecoveryTests` (20), `Eve.Services.Crimewatch.Tests` (52), `Eve.Crimewatch.Tests` (60), Host `Crimewatch_` wire tests (6), and `SpaceEventsTests` (13).
 - The graphical V24.01 client was not used; behavior was checked against the client source callsites cited above.
+
+### Push and Actions handoff
+
+- Code commit `31dac370` was pushed to `main` after a green local build/test pass and green latest completed main CI.
+- Selected Actions run `41579007784` passed for `Eve.Host.Tests`, `Eve.Services.Crimewatch.Tests`, `Eve.Crimewatch.Tests`, `Eve.Npc.Tests`, and `Eve.Services.Space.Tests` with no failed tests or skipped jobs.
+- Push-triggered CI run `41578995207` (CI #1454) completed successfully with no failed tests or jobs, including the headless end-to-end and Windows jobs.

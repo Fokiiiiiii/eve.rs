@@ -115,7 +115,7 @@ public sealed class ResearchProjectStore
         return project;
     }
 
-    /// <summary>Takes a character's research lock for the caller's transaction: starts, cancels and datacore purchases of one character run in turn.</summary>
+    /// <summary>Acquires the per-character lock used to serialize research starts and datacore purchases.</summary>
     public async Task LockAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, CancellationToken cancellationToken = default)
     {
         await using var locked = new NpgsqlCommand("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", connection, transaction);

@@ -32,6 +32,8 @@ public class AggressionTests
         Assert.Equal(new TimerView(303, Now + 900_000), timers.Criminal);
         Assert.Equal(new TimerView(400, null), timers.Npc);
         Assert.Equal(System, outcome.Attacker.SolarSystemId);
+        Assert.Equal(Now + 900_000, outcome.Target!.PvpUntilMs);
+        Assert.Equal(0, outcome.Target!.WeaponsUntilMs);
     }
 
     [Theory]
@@ -90,7 +92,19 @@ public class AggressionTests
             Assert.Equal(AggressionReason.Legal, outcome.Reason);
             Assert.Equal(Now + 60_000, outcome.Attacker.WeaponsUntilMs);
             Assert.Equal(Flag.None, outcome.Attacker.FlagAt(Now));
+            Assert.Equal(Now + 900_000, outcome.Target!.PvpUntilMs);
+            Assert.Equal(0, outcome.Target!.WeaponsUntilMs);
         }
+    }
+
+    [Fact]
+    public void A_later_receiver_pvp_expiry_is_kept_without_a_weapon_timer_change()
+    {
+        var target = CombatState.Idle with { PvpUntilMs = Now + 1_200_000, WeaponsUntilMs = Now + 60_000 };
+        var outcome = Aggression.Record(CombatState.Idle, target, SecurityClass.HighSec, System, false, true, Now);
+
+        Assert.Equal(Now + 1_200_000, outcome.Target!.PvpUntilMs);
+        Assert.Equal(target.WeaponsUntilMs, outcome.Target!.WeaponsUntilMs);
     }
 
     [Fact]

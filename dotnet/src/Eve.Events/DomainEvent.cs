@@ -10,7 +10,11 @@ public sealed record DomainEvent(long Id, string Topic, string? Key, string Payl
     public T? Payload<T>() => JsonSerializer.Deserialize<T>(PayloadJson, EventBus.Json);
 
     /// <summary>The payload as a JSON document, for the code that filters on fields it does not know the type of.</summary>
-    public JsonElement Json() => JsonDocument.Parse(PayloadJson).RootElement.Clone();
+    public JsonElement Json()
+    {
+        using var document = JsonDocument.Parse(PayloadJson);
+        return document.RootElement.Clone();
+    }
 }
 
 /// <summary>

@@ -1046,6 +1046,7 @@ public class SpaceServiceTests
         var (rig, character, session) = await DockedAsync(localTimers: timers);
         await using var _ = rig;
         await InSpaceAsync(rig, session);
+        rig.Space.Transitions.EndSessionChange((ulong)session.SessionId);
         var docked = new List<(long Character, long Station)>();
         rig.Space.PilotDocked = (characterId, stationId, _) =>
         {
@@ -1179,6 +1180,29 @@ public class SpaceServiceTests
         var again = await rig.ShipCallAsync(session, "Undock", oid, new PyLong(1), PyBool.False);
         Assert.Equal(PyNone.Instance, again);
         AssertUndockSimulationMessages(rig);
+    }
+
+    [PgFact]
+    public async Task An_undock_for_a_ship_outside_the_station_hangar_is_a_client_error()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        var oid = await rig.BindShipAsync(session);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Items.MoveAsync(connection, transaction, character.ShipId, 60000001, Eve.Inventory.ItemFlags.Hangar);
+            await transaction.CommitAsync();
+        }
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            rig.ShipCallAsync(session, "Undock", oid, new PyLong(character.ShipId), PyBool.False));
+
+        Assert.Equal("ShipNotInHangar", error.Error.UserErrorMessage);
+        Assert.Equal(Rig.Station, session.GetInt("stationid"));
+        var ship = (await rig.Items.GetAsync(character.ShipId))!;
+        Assert.Equal((60000001, Eve.Inventory.ItemFlags.Hangar), (ship.LocationId, ship.Flag));
+        Assert.Empty(rig.Sim.Heard.OfType<SimEnter>());
     }
 
     [PgFact]
@@ -2121,6 +2145,7 @@ public class SpaceServiceTests
         var (rig, _, session) = await DockedAsync(localTimers: timers);
         await using var _ = rig;
         await InSpaceAsync(rig, session);
+        rig.Space.Transitions.EndSessionChange((ulong)session.SessionId);
         await rig.Space.DockAsync(session, Rig.Station, CancellationToken.None);
 
         rig.Space.CrimewatchStateOf = (_, _) => Task.FromResult(Eve.Crimewatch.CombatState.Idle with

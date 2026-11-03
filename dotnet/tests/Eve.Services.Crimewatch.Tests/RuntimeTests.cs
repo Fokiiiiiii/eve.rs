@@ -248,10 +248,15 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Equal([new PyInt(303), new PyLong(FileTime(Start + 900_000))], attacker[2].Args);
         Assert.Equal("solarsystemid2", attacker[3].IdType);
         Assert.Equal([[], [], [1L]], attacker[3].Args.Select(Ids));
-        // the pilot attacked is told who is flagged, not the timers of the attacker; nobody elsewhere or docked is told anything
+        // the pilot attacked gets a PvP timer but no weapons timer; nobody elsewhere or docked is told anything
         var victim = Told(2);
-        Assert.Equal(["OnSystemCriminalFlagUpdates"], victim.Select(n => n.Name));
+        Assert.Equal(["OnSystemCriminalFlagUpdates", "OnPvpTimerUpdate"], victim.Select(n => n.Name));
+        Assert.Equal(["solarsystemid2", "charid"], victim.Select(n => n.IdType));
         Assert.Equal([[], [], [1L]], victim[0].Args.Select(Ids));
+        Assert.Equal([new PyInt(202), new PyLong(FileTime(Start + 900_000))], victim[1].Args);
+        var victimState = await Store.StateOfAsync(2);
+        Assert.Equal(Start + 900_000, victimState.PvpUntilMs);
+        Assert.Equal(0, victimState.WeaponsUntilMs);
         Assert.Empty(Told(3));
         Assert.Empty(Told(4));
     }
@@ -413,7 +418,9 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Equal(["OnWeaponsTimerUpdate", "OnPvpTimerUpdate", "OnCriminalTimerUpdate"], attackerNotes.Select(note => note.Name));
         Assert.Equal([new PyInt(303), new PyLong(FileTime(_now + 900_000))], attackerNotes[2].Args);
         Assert.Empty(Told(2));
-        Assert.Empty(Told(3));
+        var secondVictim = Told(3);
+        Assert.Equal(["OnPvpTimerUpdate"], secondVictim.Select(note => note.Name));
+        Assert.Equal([new PyInt(202), new PyLong(FileTime(_now + 900_000))], secondVictim[0].Args);
 
         await runtime.OnSystemEnteredAsync(1, OtherSystem, 0.7);
         var responseWait = Assert.Single(_waits.Made, wait => wait.After == TimeSpan.FromMilliseconds(10_005));
@@ -431,7 +438,9 @@ public class RuntimeTests : IAsyncLifetime
         using var runtime = Runtime();
         await runtime.RecordAggressionAsync(Attack(1, 2, SecurityClass.HighSec, System, false));
         Told(1);
-        Told(2);
+        var firstVictimNotes = Told(2);
+        Assert.Equal(["OnSystemCriminalFlagUpdates", "OnPvpTimerUpdate"], firstVictimNotes.Select(n => n.Name));
+        Assert.Equal([new PyInt(202), new PyLong(FileTime(Start + 900_000))], firstVictimNotes[1].Args);
 
         _now += 10_000;
         await runtime.RecordAggressionAsync(Attack(1, 2, SecurityClass.HighSec, System, false));
@@ -439,7 +448,30 @@ public class RuntimeTests : IAsyncLifetime
         var attacker = Told(1);
         Assert.Equal(["OnWeaponsTimerUpdate", "OnPvpTimerUpdate", "OnCriminalTimerUpdate"], attacker.Select(n => n.Name));
         Assert.Equal([new PyInt(102), new PyLong(FileTime(Start + 70_000))], attacker[0].Args);
-        Assert.Empty(Told(2));   // the system is flagged as before
+        var victim = Told(2);
+        Assert.Equal(["OnPvpTimerUpdate"], victim.Select(n => n.Name));
+        Assert.Equal([new PyInt(202), new PyLong(FileTime(Start + 910_000))], victim[0].Args);
+    }
+
+    [PgFact]
+    public async Task Concurrent_attacks_extend_one_receivers_pvp_timer_without_giving_it_a_weapons_timer()
+    {
+        Pilot(1, System);
+        Pilot(2, System);
+        Pilot(3, System);
+        using var runtime = Runtime();
+        runtime.Legal = (_, _, _, _) => Task.FromResult(true);
+
+        await Task.WhenAll(
+            runtime.RecordAggressionAsync(Attack(1, 2, SecurityClass.HighSec, System, false)),
+            runtime.RecordAggressionAsync(Attack(3, 2, SecurityClass.HighSec, System, false)));
+
+        var state = await Store.StateOfAsync(2);
+        Assert.Equal(Start + 900_000, state.PvpUntilMs);
+        Assert.Equal(0, state.WeaponsUntilMs);
+        var notes = Told(2);
+        Assert.Equal(["OnPvpTimerUpdate"], notes.Select(n => n.Name));
+        Assert.Equal([new PyInt(202), new PyLong(FileTime(Start + 900_000))], notes[0].Args);
     }
 
     [PgFact]
@@ -466,30 +498,38 @@ public class RuntimeTests : IAsyncLifetime
         await runtime.RecordAggressionAsync(Attack(1, 2, SecurityClass.HighSec, System, false));
         Told(1);
         Told(2);
-        Assert.Equal(TimeSpan.FromMilliseconds(60_005), _waits.Made[^1].After);   // the first end, a moment after
+        var weaponsWait = Assert.Single(_waits.Made, wait => wait.After == TimeSpan.FromMilliseconds(60_005));
 
         _now = Start + 60_005;
         var made = _waits.Made.Count;
-        _waits.Made[^1].Done.SetResult();
+        weaponsWait.Done.SetResult();
         await _waits.Reached(made + 1);
         var weapons = Told(1);
         Assert.Equal(["OnWeaponsTimerUpdate"], weapons.Select(n => n.Name));
         Assert.Equal([new PyInt(100), PyNone.Instance], weapons[0].Args);
         Assert.Empty(Told(2));
 
-        Assert.Equal(TimeSpan.FromMilliseconds(900_000 - 60_005 + 5), _waits.Made[^1].After);   // then the end of the pvp timer and the flag
+        Assert.Contains(_waits.Made, wait => wait.After == TimeSpan.FromMilliseconds(900_000 - 60_005 + 5));   // then the end of the pvp timer and the flag
         // the last end waits for nothing: what is told is awaited on the clients' sinks (the packets, not the timers' bookkeeping)
         _now = Start + 900_005;
         var waiting = _waits.Made.Count;
-        _waits.Made[^1].Done.SetResult();
+        var endingWaits = _waits.Made.Where(wait => !wait.Done.Task.IsCompleted).ToArray();
+        Assert.Equal(3, endingWaits.Length);
+        foreach (var wait in endingWaits)
+        {
+            wait.Done.SetResult();
+        }
         await _sinks[1].Arrived(3);
-        await _sinks[2].Arrived(1);
+        await _sinks[2].Arrived(2);
         var rest = Told(1);
         Assert.Equal(["OnPvpTimerUpdate", "OnCriminalTimerUpdate", "OnSystemCriminalFlagUpdates"], rest.Select(n => n.Name));
         Assert.Equal([new PyInt(200), PyNone.Instance], rest[0].Args);
         Assert.Equal([new PyInt(300), PyNone.Instance], rest[1].Args);
         Assert.Equal([[1L], [], []], rest[2].Args.Select(Ids));   // the pilots that went idle
-        Assert.Equal(["OnSystemCriminalFlagUpdates"], Told(2).Select(n => n.Name));
+        var victimRest = Told(2);
+        Assert.Contains(victimRest, note => note.Name == "OnPvpTimerUpdate" &&
+            note.Args.SequenceEqual([new PyInt(200), PyNone.Instance]));
+        Assert.Contains(victimRest, note => note.Name == "OnSystemCriminalFlagUpdates");
         Assert.Equal(waiting, _waits.Made.Count);   // nothing is left to wait for
     }
 
@@ -504,12 +544,14 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Equal([new PyInt(304), new PyLong(FileTime(Start + 900_000))], suspect.Single(n => n.Name == "OnCriminalTimerUpdate").Args);
         Assert.Equal([[], [1L], []], suspect.Single(n => n.Name == "OnSystemCriminalFlagUpdates").Args.Select(Ids));
 
-        // pilot 3 shoots in null security: the weapons and pvp timers run, nothing else is told
+        // pilot 3 shoots in null security: both pilots get a pvp timer, only the attacker gets a weapons timer
         Pilot(3, OtherSystem);
         Pilot(5, OtherSystem);
         await runtime.RecordAggressionAsync(Attack(3, 5, SecurityClass.ZeroSec, OtherSystem, true));
         Assert.Equal(["OnWeaponsTimerUpdate", "OnPvpTimerUpdate"], Told(3).Select(n => n.Name));
-        Assert.Empty(Told(5));
+        var receiver = Told(5);
+        Assert.Equal(["OnPvpTimerUpdate"], receiver.Select(n => n.Name));
+        Assert.Equal([new PyInt(202), new PyLong(FileTime(Start + 900_000))], receiver[0].Args);
     }
 
     [PgFact]
@@ -529,7 +571,9 @@ public class RuntimeTests : IAsyncLifetime
         await runtime.RecordAggressionAsync(Attack(1, 2, SecurityClass.HighSec, System, false));
 
         Assert.Equal(["OnWeaponsTimerUpdate", "OnPvpTimerUpdate"], Told(1).Select(n => n.Name));
-        Assert.Empty(Told(2));
+        var victim = Told(2);
+        Assert.Equal(["OnPvpTimerUpdate"], victim.Select(n => n.Name));
+        Assert.Equal([new PyInt(202), new PyLong(FileTime(Start + 900_000))], victim[0].Args);
         var one = Assert.Single(heard);
         Assert.Equal((1L, 2L, AggressionReason.Legal), (one.Request.Attacker, one.Request.Target, one.Outcome.Reason));
     }
@@ -643,6 +687,7 @@ public class RuntimeTests : IAsyncLifetime
         }
         _waits.Made.Clear();
         Told(1);
+        Told(2);
 
         _now += 20_000;
         using var second = Runtime();
@@ -651,6 +696,19 @@ public class RuntimeTests : IAsyncLifetime
         // the client of the pilot is told what it was not told by this process; the wait is for the end of the weapons timer, forty seconds on
         Assert.Contains(_waits.Made, wait => wait.After == TimeSpan.FromMilliseconds(40_005));
         Assert.Contains("OnWeaponsTimerUpdate", Told(1).Select(n => n.Name));
+        var receiverNotes = Told(2);
+        Assert.Contains(receiverNotes, note => note.Name == "OnPvpTimerUpdate" &&
+            note.Args.SequenceEqual([new PyInt(202), new PyLong(FileTime(Start + 900_000))]));
+
+        var service = new CrimewatchService(Store, second, () => _now);
+        var states = (PyTuple)await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "GetClientStates",
+            Args = [],
+            Session = _sessions.Of(2)!,
+        });
+        var timers = ((PyTuple)states.Items[0]).Items.Cast<PyTuple>().ToList();
+        Assert.Equal([new PyInt(202), new PyLong(FileTime(Start + 900_000))], timers[1].Items);
     }
 
     [PgFact]
@@ -735,9 +793,12 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Equal([new PyInt(400), PyNone.Instance], timers[2].Items);
         Assert.Equal([new PyInt(303), new PyLong(FileTime(Start + 900_000))], timers[3].Items);
         Assert.Equal([new PyInt(500), PyNone.Instance], timers[4].Items);
-        // the pilot attacked has no timer but sees who is flagged in its system
+        // the pilot attacked has only a PvP timer and sees who is flagged in its system
         var victim = await StatesOf(2);
-        Assert.All(((PyTuple)victim.Items[0]).Items.Cast<PyTuple>(), timer => Assert.Equal(PyNone.Instance, timer.Items[1]));
+        var victimTimers = ((PyTuple)victim.Items[0]).Items.Cast<PyTuple>().ToList();
+        Assert.Equal([new PyInt(100), PyNone.Instance], victimTimers[0].Items);
+        Assert.Equal([new PyInt(202), new PyLong(FileTime(Start + 900_000))], victimTimers[1].Items);
+        Assert.All(victimTimers.Skip(2), timer => Assert.Equal(PyNone.Instance, timer.Items[1]));
         var flagged = (PyTuple)victim.Items[2];
         Assert.Equal(InventoryWire.Set([new PyInt(1)]), flagged.Items[0]);
         Assert.Equal(InventoryWire.Set([]), flagged.Items[1]);

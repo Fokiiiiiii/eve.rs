@@ -66,7 +66,7 @@ public sealed partial class SpaceSessions
         }
         if (await _ships.LoadAsync(characterId, cancellationToken) is not { } snapshot)
         {
-            return None;
+            throw MachoErrors.ThrowUserError("ShipNotInHangar");
         }
         if (!ignoreContraband && InspectUndockContrabandAsync is { } inspect)
         {
@@ -158,7 +158,7 @@ public sealed partial class SpaceSessions
         if (transition.Moved is null)
         {
             _log?.Invoke($"undock of character {characterId} refused: {transition.Refusal}");
-            return None;
+            throw MachoErrors.ThrowUserError("ShipNotInHangar");
         }
         await NotifyPilotEnteredSystemAsync(characterId, systemId);
         await RefreshTetherPolicyAsync(session, cancellationToken);

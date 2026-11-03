@@ -107,9 +107,9 @@ public sealed class PgJumpCloneStore
     }
 
     /// <summary>
-    /// The clone rows of a jump, inside the caller's transaction. The target clone goes (it becomes the body), and so does the clone at
-    /// old body); a target at the origin keeps its id. The cooldown is checked again in this transaction before any clone row moves.
-    /// The last jump time is set to <paramref name="nowFileTime"/>. Returns the target as it was, or a cooldown refusal or missing-clone result.
+    /// Applies a clone jump inside the caller's transaction. The target becomes the body, while the previous body is recorded at the origin;
+    /// a target already at the origin keeps its id. The cooldown is checked before rows move. A remote jump updates the last-jump time;
+    /// a same-location switch preserves it. Returns the target as it was, or a cooldown refusal or missing-clone result.
     /// </summary>
     public async Task<JumpCloneJumpOutcome> JumpAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long targetCloneId,
         long originLocationId, string originLocationKind, IReadOnlyList<(int Slot, int TypeId)> bodyImplants, int cooldownHours, long nowFileTime,
@@ -164,12 +164,13 @@ public sealed class PgJumpCloneStore
             }
         }
 
-        await using (var time = new NpgsqlCommand(
-            $"UPDATE {_schema}.characters SET time_last_clone_jump_filetime = $1 WHERE id = $2", connection, transaction)
+        if (target.LocationId != originLocationId)
         {
-            Parameters = { new() { Value = nowFileTime }, new() { Value = characterId } },
-        })
-        {
+            await using var time = new NpgsqlCommand(
+                $"UPDATE {_schema}.characters SET time_last_clone_jump_filetime = $1 WHERE id = $2", connection, transaction)
+            {
+                Parameters = { new() { Value = nowFileTime }, new() { Value = characterId } },
+            };
             await time.ExecuteNonQueryAsync(cancellationToken);
         }
         return new(target, false);

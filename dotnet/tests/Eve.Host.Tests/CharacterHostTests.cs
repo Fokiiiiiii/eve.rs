@@ -248,6 +248,39 @@ public sealed class CharacterHostTests
     }
 
     [PgFact]
+    public async Task Same_station_clone_switch_keeps_the_existing_time_last_jump_in_client_state()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var session = new ClientSession { CharacterId = character, Sink = new RecordingPacketSink() };
+        session.Set("stationid", new PyInt(rig.Station));
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
+        var capsule = await GiveItemAsync(rig, character, 670, rig.Station, 4, singleton: true);
+        await SetShipAsync(rig, character, capsule);
+        await FundAsync(rig, character, 1_000_000m);
+        var local = await rig.AddCloneAsync(character, rig.Station, "station", "Local body", []);
+        var remote = await rig.AddCloneAsync(character, 60000611, "station", "Remote body", []);
+        var previousJump = DateTimeOffset.UtcNow.AddHours(-1).ToFileTime();
+        await using (var set = rig.Source.CreateCommand(
+            $"UPDATE {rig.CharactersSchema}.characters SET time_last_clone_jump_filetime = $1 WHERE id = $2"))
+        {
+            set.Parameters.Add(new NpgsqlParameter { Value = previousJump });
+            set.Parameters.Add(new NpgsqlParameter { Value = character });
+            await set.ExecuteNonQueryAsync();
+        }
+
+        var before = await BoundAsync(service, session, "GetCloneState");
+        Assert.Equal(new PyLong(previousJump), Field(before, "timeLastJump"));
+        Assert.IsType<PyNone>(await BoundAsync(service, session, "CloneJump", new PyLong(rig.Station), new PyLong(local), new PyReal(900000.0), PyBool.False));
+        var after = await BoundAsync(service, session, "GetCloneState");
+        Assert.Equal(new PyLong(previousJump), Field(after, "timeLastJump"));
+
+        await Assert.ThrowsAsync<MachoWrappedException>(() => BoundAsync(service, session, "CloneJump", new PyLong(60000611),
+            new PyLong(remote), new PyReal(900000.0), PyBool.False));
+        Assert.Equal(new PyLong(previousJump), Field(await BoundAsync(service, session, "GetCloneState"), "timeLastJump"));
+    }
+
+    [PgFact]
     public async Task Clone_jump_moves_the_body_charges_the_fee_starts_the_cooldown_and_keeps_all_of_it_through_a_restart()
     {
         await using var rig = await CharacterHostRig.CreateAsync();

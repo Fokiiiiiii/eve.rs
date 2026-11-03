@@ -394,7 +394,7 @@ internal sealed partial class CharacterServicesComposition
                 {
 
                     var standing = npcFactionStanding.ApplyAsync(kill.FinalBlowCharacterId, kill.Profile.FactionId, kill.SolarSystemId,
-                        CancellationToken.None, kill.NpcTypeId).GetAwaiter().GetResult();
+                        CancellationToken.None, kill.Profile.CorporationId, kill.NpcTypeId).GetAwaiter().GetResult();
                     if (standing is { } changed && characterSessions?.Of(kill.FinalBlowCharacterId) is { } pilot)
                     {
                         pilot.SendNotification("OnStandingSet", "clientID", new Eve.Marshal.PyList(

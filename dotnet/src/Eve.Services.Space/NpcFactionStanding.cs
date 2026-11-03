@@ -15,7 +15,7 @@ public sealed class NpcFactionStanding(RelationStore relations, Func<long> nowMs
     private readonly object _gate = new();
 
     /// <summary>Applies the loss for one kill. Answers the new standing, or null when nothing changed (no faction, debounced, or at the floor).</summary>
-    public async Task<double?> ApplyAsync(long characterId, int factionId, int systemId, CancellationToken cancellationToken = default)
+    public async Task<double?> ApplyAsync(long characterId, int factionId, int systemId, CancellationToken cancellationToken = default, long npcCorporationId = 0, int npcTypeId = 0)
     {
         if (characterId <= 0 || factionId <= 0)
             return null;
@@ -31,7 +31,10 @@ public sealed class NpcFactionStanding(RelationStore relations, Func<long> nowMs
         var next = UndockContraband.StandingAfter(standing, LossPerKillRaw);
         if (next == standing)
             return null;
-        await relations.SetAsync(RelationKinds.Standing.Name, factionId, characterId, next, Reason, cancellationToken);
+        var reason = npcCorporationId > 0 && npcTypeId > 0
+            ? System.Text.Json.JsonSerializer.Serialize(new { eventTypeID = 77, modification = LossPerKillRaw, msg = "Combat ship kill", int_1 = npcCorporationId, int_2 = systemId, int_3 = npcTypeId })
+            : Reason;
+        await relations.SetAsync(RelationKinds.Standing.Name, factionId, characterId, next, reason, cancellationToken);
         lock (_gate)
         {
             _lastApplied[key] = now;

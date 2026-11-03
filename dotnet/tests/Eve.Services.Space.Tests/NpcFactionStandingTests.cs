@@ -37,18 +37,19 @@ public sealed class NpcFactionStandingTests
             const int npcType = 17720;
             var first = await standing.ApplyAsync(Pilot, Faction, System, npcCorporationId: npcCorporation, npcTypeId: npcType);
             Assert.NotNull(first);
-            await using (var history = source.CreateCommand($"SELECT reason FROM {schemas[2]}.relation_history WHERE kind = 'standing' AND subject = $1 AND object = $2"))
+            var stored = await relations.ValueAsync(RelationKinds.Standing.Name, Faction, Pilot, 0);
+            Assert.Equal(first!.Value, stored, 6);
+            Assert.True(stored < 0);
+            var history = await relations.HistoryAsync(RelationKinds.Standing.Name, Faction, Pilot);
+            using (var reason = global::System.Text.Json.JsonDocument.Parse(Assert.Single(history).Reason!))
             {
-                history.Parameters.AddWithValue((long)Faction); history.Parameters.AddWithValue(Pilot);
-                using var reason = global::System.Text.Json.JsonDocument.Parse((string)(await history.ExecuteScalarAsync())!);
                 Assert.Equal(77, reason.RootElement.GetProperty("eventTypeID").GetInt32());
+                Assert.Equal(NpcFactionStanding.LossPerKillRaw, reason.RootElement.GetProperty("modification").GetDouble());
+                Assert.Equal("Combat ship kill", reason.RootElement.GetProperty("msg").GetString());
                 Assert.Equal(npcCorporation, reason.RootElement.GetProperty("int_1").GetInt64());
                 Assert.Equal(System, reason.RootElement.GetProperty("int_2").GetInt32());
                 Assert.Equal(npcType, reason.RootElement.GetProperty("int_3").GetInt32());
             }
-            var stored = await relations.ValueAsync(RelationKinds.Standing.Name, Faction, Pilot, 0);
-            Assert.Equal(first!.Value, stored, 6);
-            Assert.True(stored < 0);
 
             // another kill inside the ten-minute window moves nothing; a kill in another system is its own window
             now += 60_000;

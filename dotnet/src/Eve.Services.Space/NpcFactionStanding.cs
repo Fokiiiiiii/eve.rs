@@ -8,9 +8,9 @@ public sealed class NpcFactionStanding(RelationStore relations, Func<long> nowMs
 {
 
     public const double LossPerKillRaw = -0.00006875;
+    private const string Reason = "Combat aggression";
 
     private static readonly long DebounceMs = (long)TimeSpan.FromMinutes(10).TotalMilliseconds;
-    private const string Reason = "Combat aggression";
     private readonly Dictionary<(long Character, int Faction, int System), long> _lastApplied = [];
     private readonly object _gate = new();
 

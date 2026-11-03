@@ -13,9 +13,17 @@ public class MigrationsTests
     }
 
     [Fact]
-    public void Embedded_migrations_ignore_other_folders_and_other_files()
+    public void Embedded_migrations_match_the_requested_folder_and_sql_files_only()
     {
-        Assert.Empty(Migrations.Embedded(Assembly.GetExecutingAssembly(), "NoSuchFolder"));
+        var assembly = Assembly.GetExecutingAssembly();
+        var resources = assembly.GetManifestResourceNames();
+        Assert.Contains(resources, name => name.EndsWith(".ContrabandMigrations.0001_sibling.sql", StringComparison.Ordinal));
+        Assert.Contains(resources, name => name.EndsWith(".Migrations.non_sql_resource.txt", StringComparison.Ordinal));
+
+        var set = Migrations.Embedded(assembly, "Migrations");
+        var migration = Assert.Single(set);
+        Assert.Equal("0001_selected", migration.Name);
+        Assert.Equal("CREATE TABLE selected_fixture (id integer NOT NULL);", migration.Sql.Trim());
     }
 
     [PgFact]

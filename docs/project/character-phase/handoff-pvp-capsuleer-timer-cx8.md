@@ -26,3 +26,7 @@
 ## Remaining check
 
 No native graphical client session was launched. The client validators and all of their callers/consumers were checked in V24.01 source, while the database and Host tests verify the active state and expiry sent to that client.
+
+## Main integration
+
+Commit `6dbf3ad1f88790c8dc1d045a4a151b3aa27e7622` was pushed to `main`. Push-triggered CI run `41587422945` and selected regression run `41587439208` both completed successfully with no failed tests or jobs (`ci-status.py failures` was empty).

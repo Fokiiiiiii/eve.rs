@@ -204,6 +204,7 @@ public sealed partial class AccessGroupStore
             var before = members.ToList();
             var membersById = members.ToDictionary(member => member.MemberId);
             var failures = new List<MemberFailure>();
+            var changed = false;
             foreach (var memberId in memberIds.Distinct())
             {
                 if (!membersById.TryGetValue(memberId, out var current)) { failures.Add(new(memberId, "NotAMember")); continue; }
@@ -216,9 +217,9 @@ public sealed partial class AccessGroupStore
                 await Execute(connection, tx, $"UPDATE {_schema}.members SET membership_type=$3 WHERE group_id=$1 AND member_id=$2", token, groupId, memberId, (int)type);
                 await LogAsync(connection, tx, groupId, who.CharacterId, AccessGroupChanges.MemberTypeChanged, memberId, (int)current.Type, (int)type, null, token);
                 membersById[memberId] = current with { Type = type };
-                changed++;
+                changed = true;
             }
-            if (changed > 0)
+            if (changed)
                 for (var index = 0; index < members.Count; index++) members[index] = membersById[members[index].MemberId];
             return Changed(groupId, group, before, members, [who.CharacterId], AccessGroupChanges.MemberTypeChanged, failures);
         }, token);

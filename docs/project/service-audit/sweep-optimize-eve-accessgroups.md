@@ -26,6 +26,7 @@ No wall-clock benchmark was added; the query count and complexity changes are di
 
 ## Local verification
 
+- After merging the main cleanup, the type-change path needs a boolean to gate its final list refresh; the first integration build caught the missing flag, which was restored before the passing builds below.
 - `dotnet build dotnet/src/Eve.AccessGroups/Eve.AccessGroups.csproj -p:UseSharedCompilation=false`: passed, 0 warnings.
 - `dotnet build dotnet/tests/Eve.AccessGroups.Tests/Eve.AccessGroups.Tests.csproj -p:UseSharedCompilation=false`: passed, 0 warnings.
-- `Eve.AccessGroups.Tests` on `eve_p3`: 26 passed, 0 failed, 0 skipped.
+- `Eve.AccessGroups.Tests` on `eve_p3` after the main merge: 26 passed, 0 failed, 0 skipped.

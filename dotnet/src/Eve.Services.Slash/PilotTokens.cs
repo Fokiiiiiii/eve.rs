@@ -19,7 +19,9 @@ public static class PilotTokens
         if (token.Equals("me", StringComparison.OrdinalIgnoreCase))
             return session.CharacterId is { } self ? (self, null) : (null, "Select a character before using me.");
         if (long.TryParse(token, NumberStyles.None, CultureInfo.InvariantCulture, out var id) && id > 0)
-            return await characters.GetAsync(id, cancellationToken) is null ? (null, $"Character not found: {token}.") : (id, null);
+            return await characters.GetAsync(id, cancellationToken) is null
+                ? (null, $"Character not found: {token}. Use me, a character ID, or an exact character name.")
+                : (id, null);
         return await characters.FindIdByNameAsync(token, cancellationToken) is { } named
             ? (named, null)
             : (null, $"Character not found: {token}. Use me, a character ID, or an exact character name.");

@@ -44,6 +44,9 @@ public sealed record TrainingView(QueueState State, IReadOnlyList<ProjectedEntry
 /// </summary>
 public sealed record TrainingUpdate(long CharacterId, long AccountId, IReadOnlyList<CharacterSkill> SkillsBefore, IReadOnlyList<CharacterSkill> Finished, CharacterSkill? Rebased, bool RebaseChanged, TrainingView View, IReadOnlyList<CharacterSkill>? ChangedSkills = null, long? FreeSkillPoints = null, bool WasRunning = false);
 
+/// <summary>A game-master skill change and the queue state that was reconciled with it.</summary>
+public sealed record SkillMutationUpdate(long CharacterId, long AccountId, IReadOnlyList<CharacterSkill> Before, IReadOnlyList<CharacterSkill> ChangedSkills, IReadOnlyList<CharacterSkill> RemovedSkills, TrainingView View, bool QueueChanged, bool QueueCleared);
+
 /// <summary>What became of a queue that was offered.</summary>
 public abstract record SaveOutcome;
 
@@ -421,6 +424,96 @@ public sealed class CharacterTraining(
     }
 
     private static bool Same(QueueEntry? left, QueueEntry? right) => left is not null && right is not null && left.TypeId == right.TypeId && left.ToLevel == right.ToLevel;
+
+    /// <summary>Changes a character's skill rows and reconciles its queue under the same character lock and transaction.</summary>
+    public async Task<SkillMutationUpdate> ApplyAdminMutationAsync(
+        long characterId,
+        long accountId,
+        IReadOnlyList<CharacterSkill> grants,
+        IReadOnlyList<int>? deleteTypes,
+        bool deleteUnwanted,
+        bool clearQueue,
+        CancellationToken cancellationToken = default)
+    {
+        await SettleAsync(characterId, accountId, cancellationToken);
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+
+        var now = Now;
+        var previousQueue = await store.LoadAsync(connection, transaction, characterId, cancellationToken);
+        var beforeRows = await skills.ForCharacterAsync(connection, transaction, characterId, cancellationToken);
+        var before = beforeRows.ToDictionary(skill => skill.TypeId);
+        var wanted = grants.GroupBy(skill => skill.TypeId).ToDictionary(group => group.Key, group => group.Last());
+        var removeIds = deleteTypes?.ToHashSet() ?? [];
+        var removed = beforeRows
+            .Where(skill => deleteUnwanted ? !wanted.ContainsKey(skill.TypeId) : removeIds.Contains(skill.TypeId))
+            .ToList();
+        var changed = wanted.Values
+            .Where(skill => !before.TryGetValue(skill.TypeId, out var current) || current.Level != skill.Level || current.SkillPoints != skill.SkillPoints)
+            .OrderBy(skill => skill.TypeId)
+            .ToList();
+        var lowersSkill = removed.Count > 0 || changed.Any(skill =>
+            before.TryGetValue(skill.TypeId, out var old) && (skill.Level < old.Level || skill.SkillPoints < old.SkillPoints));
+
+        if (removed.Count > 0)
+        {
+            await skills.DeleteAsync(connection, transaction, characterId, removed.Select(skill => skill.TypeId).ToList(), cancellationToken);
+        }
+        if (changed.Count > 0)
+        {
+            await skills.GrantAsync(connection, transaction, characterId, changed, cancellationToken);
+        }
+
+        var owned = new Dictionary<int, CharacterSkill>(before);
+        foreach (var skill in removed)
+        {
+            owned.Remove(skill.TypeId);
+        }
+        foreach (var skill in changed)
+        {
+            owned[skill.TypeId] = skill;
+        }
+
+        var mustClear = clearQueue || lowersSkill;
+        QueueState nextQueue;
+        if (mustClear)
+        {
+            nextQueue = QueueState.Empty;
+        }
+        else
+        {
+            var entries = previousQueue.Entries
+                .Where(entry => entry.TypeId > 0 && entry.ToLevel is > 0 and <= SkillPoints.MaxLevel &&
+                    owned.TryGetValue(entry.TypeId, out var skill) && skill.Level < entry.ToLevel)
+                .ToList();
+            var active = previousQueue.Active && entries.Count > 0;
+            var first = previousQueue.Entries.FirstOrDefault();
+            var firstStillRuns = active && first is not null && entries[0] == first;
+            var currentSkillChanged = firstStillRuns && changed.Any(skill => skill.TypeId == first!.TypeId);
+            long? activeStart = active
+                ? firstStillRuns && !currentSkillChanged ? previousQueue.ActiveStart ?? now : now
+                : null;
+            nextQueue = new QueueState(entries, active, activeStart);
+        }
+
+        var queueChanged = previousQueue.Active != nextQueue.Active || !previousQueue.Entries.SequenceEqual(nextQueue.Entries);
+        if (previousQueue != nextQueue)
+        {
+            await store.SaveAsync(connection, transaction, characterId, nextQueue, cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+
+        return new SkillMutationUpdate(
+            characterId,
+            accountId,
+            [.. beforeRows.OrderBy(skill => skill.TypeId)],
+            changed,
+            [.. removed.OrderBy(skill => skill.TypeId)],
+            BuildView(characterId, accountId, nextQueue, owned, now),
+            queueChanged,
+            mustClear && (previousQueue.Active || previousQueue.Entries.Count > 0));
+    }
 
     /// <summary>
     /// Replaces the character's queue. The first line runs when <paramref name="activate"/> is set and the queue is not empty; a line that was

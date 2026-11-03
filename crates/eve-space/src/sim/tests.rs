@@ -1923,6 +1923,14 @@ fn commands_are_read_from_their_codes_and_arguments() {
         Some(Command::Jump { gate_id: 50_016_630, destination_gate: 0 }),
         "the gate alone is enough"
     );
+    assert_eq!(
+        command_of(crate::scene::DOCKING_DECISION_COMMAND, &[STATION as f64, 1.0]),
+        Some(Command::DockingDecision { station_id: STATION, allowed: true })
+    );
+    assert_eq!(
+        command_of(crate::scene::DOCKING_DECISION_COMMAND, &[STATION as f64, 0.0]),
+        Some(Command::DockingDecision { station_id: STATION, allowed: false })
+    );
     for (code, args) in [
         (1, vec![]),
         (1, vec![1.0, 2.0]),
@@ -1935,6 +1943,9 @@ fn commands_are_read_from_their_codes_and_arguments() {
         (9, vec![1.5]),
         (9, vec![50_016_630.0, f64::NAN]),
         (9, vec![1.0, 2.0, 3.0]),
+        (crate::scene::DOCKING_DECISION_COMMAND, vec![STATION as f64]),
+        (crate::scene::DOCKING_DECISION_COMMAND, vec![STATION as f64, 0.5]),
+        (crate::scene::DOCKING_DECISION_COMMAND, vec![1.5, 1.0]),
         (10, vec![]),
     ] {
         assert_eq!(command_of(code, &args), None, "{code} {args:?}");
@@ -1958,7 +1969,7 @@ fn a_command_the_scene_cannot_take_is_refused_with_the_reason() {
 }
 
 #[test]
-fn a_command_is_answered_with_the_update_and_a_docking_is_finished_by_the_poll() {
+fn a_command_is_answered_with_the_update_and_docking_waits_for_the_host_after_four_seconds() {
     let mut sim = undocked();
     let out =
         sim.handle(Message::Command { session_id: SESSION, command: 1, args: vec![1.0] }, NOON).unwrap();
@@ -1974,6 +1985,23 @@ fn a_command_is_answered_with_the_update_and_a_docking_is_finished_by_the_poll()
     assert!(sim.poll(NOON + 3 * SECOND).is_empty(), "three seconds are not enough");
     assert_eq!(
         sim.poll(NOON + 4 * SECOND),
+        [Message::Accepted {
+            session_id: SESSION,
+            command: crate::scene::DOCKING_READY_COMMAND,
+            at: STATION,
+        }]
+    );
+    assert_eq!(sim.ships(), 1, "the ship stays in space until the host's final checks pass");
+    assert_eq!(
+        sim.handle(
+            Message::Command {
+                session_id: SESSION,
+                command: crate::scene::DOCKING_DECISION_COMMAND,
+                args: vec![STATION as f64, 1.0],
+            },
+            NOON + 4 * SECOND,
+        )
+        .unwrap(),
         [Message::Docked { session_id: SESSION, station_id: STATION, condition: Condition::FULL }]
     );
     assert_eq!((sim.ships(), sim.scenes.len()), (0, 0), "an empty scene is dropped");
@@ -2291,6 +2319,20 @@ fn a_ship_that_has_docked_is_taken_from_the_view_of_the_others_by_the_poll() {
     )
     .unwrap();
     let gone = sim.poll(NOON + 6 * SECOND);
+    assert_eq!(
+        gone,
+        [Message::Accepted { session_id: OTHER, command: crate::scene::DOCKING_READY_COMMAND, at: STATION }]
+    );
+    let gone = sim
+        .handle(
+            Message::Command {
+                session_id: OTHER,
+                command: crate::scene::DOCKING_DECISION_COMMAND,
+                args: vec![STATION as f64, 1.0],
+            },
+            NOON + 6 * SECOND,
+        )
+        .unwrap();
     assert_eq!(recipients(&gone), [(OTHER, "Docked".to_string()), (SESSION, "DoDestinyUpdate".to_string())]);
     assert_eq!(sim.ships(), 1, "the first ship is still there");
 }

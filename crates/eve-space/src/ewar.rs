@@ -581,8 +581,19 @@ impl Scene {
         if pilot.incoming.is_empty() {
             pilot.incoming.base = None;
         }
+        let scan_resolution_changed = changes.iter().any(|(attribute, ..)| *attribute == SCAN_RESOLUTION);
+        let signature_radius_changed = changes.iter().any(|(attribute, ..)| *attribute == SIGNATURE_RADIUS);
+        let targeting_attributes_changed = changes.iter().any(|(attribute, ..)| {
+            matches!(*attribute, MAX_TARGET_RANGE | SCAN_RESOLUTION | SIGNATURE_RADIUS)
+        });
         let mut out: Vec<Out> =
             Self::health_told(session, owner, ship_id, at, &changes).into_iter().collect();
+        if scan_resolution_changed || signature_radius_changed {
+            self.rebase_pending_target_locks(session, scan_resolution_changed, signature_radius_changed, at);
+        }
+        if targeting_attributes_changed {
+            out.extend(self.settle_targets(at));
+        }
         if changes.iter().any(|(attribute, ..)| *attribute == MAX_VELOCITY) {
             let stamp = self.next_stamp(at);
             let action = crate::payload::action(stamp, "SetMaxSpeed", [id(ship_id), real(velocity)]);

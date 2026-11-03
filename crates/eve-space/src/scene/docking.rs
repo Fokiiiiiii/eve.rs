@@ -203,7 +203,7 @@ impl Scene {
         let ship = &mut pilot.ship;
         ship.speed_fraction = 0.0;
         ship.course = Course::Stop;
-        pilot.docking = Some(PendingDock { station_id, accepted_at: now });
+        pilot.docking = Some(PendingDock { station_id, accepted_at: now, ready: false });
         let ship_id = id(ship.spec.ship_id);
         let mut out = vec![Self::notify_charid(session, "OnDockingAccepted", vec![id(station_id)])];
         out.extend(self.tell_all(
@@ -213,6 +213,38 @@ impl Scene {
                 payload::action(stamp, "Stop", [ship_id]),
             ],
         ));
+        out
+    }
+
+    pub(super) fn resolve_docking(
+        &mut self,
+        session: SessionId,
+        station_id: i64,
+        allowed: bool,
+        now: i64,
+    ) -> Vec<Out> {
+        let Some(pending) = self.pilots.get(&session).and_then(|pilot| pilot.docking.as_ref()) else {
+            return Vec::new();
+        };
+        if pending.station_id != station_id || !pending.ready {
+            return Vec::new();
+        }
+
+        if !allowed {
+            let ship_id = self.pilots[&session].ship.spec.ship_id;
+            self.pilots.get_mut(&session).expect("the pilot was checked").docking = None;
+            let stamp = self.next_stamp(now);
+            return self
+                .tell_all(session, vec![payload::action(stamp, "SetBallMassive", [id(ship_id), int(1)])]);
+        }
+
+        let mut out = self.clear_tether_policy(session, now);
+        if let Some(pilot) = self.pilots.remove(&session) {
+            out.push(Out::Docked { session, station_id, condition: Self::condition_of(&pilot, now) });
+            out.extend(self.drop_targeting(pilot.ship.spec.ship_id, &pilot.targeting, None, now));
+            out.extend(self.announce_departure(session, pilot.ship.spec.ship_id, now));
+            out.extend(self.release_drones(session, None, now));
+        }
         out
     }
 

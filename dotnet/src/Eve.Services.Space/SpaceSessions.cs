@@ -814,20 +814,99 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
     private void ForgetLockedTarget(long shipId)
     {
         foreach (var pair in _lockedTargets.ToArray())
-        {
-            if (!pair.Value.Contains(shipId))
-                continue;
+            RemoveLockedTarget(pair.Key, shipId);
+    }
 
-            var remaining = pair.Value.Where(target => target != shipId).ToHashSet();
+    private void AddLockedTargets(ulong sessionId, IEnumerable<long> targets)
+    {
+        var additions = targets.Where(target => target > 0).ToHashSet();
+        if (additions.Count == 0)
+            return;
+
+        _lockedTargets.AddOrUpdate(sessionId, additions, (_, current) =>
+        {
+            if (additions.All(current.Contains))
+                return current;
+            var merged = new HashSet<long>(current);
+            merged.UnionWith(additions);
+            return merged;
+        });
+    }
+
+    private void RemoveLockedTargets(ulong sessionId, IEnumerable<long> targets)
+    {
+        foreach (var target in targets)
+            RemoveLockedTarget(sessionId, target);
+    }
+
+    private void RemoveLockedTarget(ulong sessionId, long shipId)
+    {
+        while (_lockedTargets.TryGetValue(sessionId, out var current))
+        {
+            if (!current.Contains(shipId))
+                return;
+
+            var remaining = current.Where(target => target != shipId).ToHashSet();
             if (remaining.Count == 0)
             {
-                ((ICollection<KeyValuePair<ulong, IReadOnlySet<long>>>)_lockedTargets).Remove(pair);
+                if (((ICollection<KeyValuePair<ulong, IReadOnlySet<long>>>)_lockedTargets).Remove(new(sessionId, current)))
+                    return;
             }
-            else
+            else if (_lockedTargets.TryUpdate(sessionId, remaining, current))
             {
-                _lockedTargets.TryUpdate(pair.Key, remaining, pair.Value);
+                return;
             }
         }
+    }
+
+    private void TrackTargetingNotification(SimNotify notify)
+    {
+        if (notify.Name != "OnTarget"
+            || MarshalCodec.Decode(notify.Args.ToArray()) is not PyTuple tuple
+            || tuple.Items.Count < 2
+            || tuple.Items[1] is not PyTuple envelope
+            || envelope.Items.Count < 2
+            || envelope.Items[1] is not PyTuple args
+            || args.Items.Count == 0)
+        {
+            return;
+        }
+
+        var action = JsSemantics.StringValue(args.Items[0]);
+        if (action is null)
+            return;
+
+        switch (action)
+        {
+            case "add" when args.Items.Count > 1 && TryTargetId(args.Items[1], out var targetId):
+                AddLockedTargets(notify.SessionId, [targetId]);
+                if (_pilots.TryGetValue(notify.SessionId, out var source))
+                    CancelSafeLogoff(source.Session, reasonCode: null, failedConditions: ["UI/Inflight/SafeLogoff/SafeLogoffCantTargetLockBody"]);
+                var target = _pilots.Values.FirstOrDefault(other => other.ShipId == targetId);
+                if (target is not null)
+                    CancelSafeLogoff(target.Session, reasonCode: null, failedConditions: ["UI/Inflight/SafeLogoff/SafeLogoffCantBeTargetLockedBody"]);
+                break;
+            case "lost" when args.Items.Count > 1 && TryTargetId(args.Items[1], out var lostTargetId):
+                RemoveLockedTarget(notify.SessionId, lostTargetId);
+                break;
+            case "clear":
+                _lockedTargets.TryRemove(notify.SessionId, out _);
+                break;
+            case "otheradd" when _pilots.TryGetValue(notify.SessionId, out var targetPilot):
+                CancelSafeLogoff(targetPilot.Session, reasonCode: null, failedConditions: ["UI/Inflight/SafeLogoff/SafeLogoffCantBeTargetLockedBody"]);
+                break;
+        }
+    }
+
+    private static bool TryTargetId(PyValue value, out long targetId)
+    {
+        targetId = value switch
+        {
+            PyInt integer => integer.Value,
+            PyLong integer => integer.Value,
+            _ => 0,
+        };
+        return targetId > 0;
     }
 
     private void OnReceived(SimMessage message)
@@ -861,12 +940,13 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                     Forward(structureObserver, notify);
                     break;
                 case SimNotify notify when _pilots.TryGetValue(notify.SessionId, out var pilot):
+                    TrackTargetingNotification(notify);
                     Forward(pilot.Session, notify);
                     break;
                 case SimServiceNotify serviceNotify when _pilots.TryGetValue(serviceNotify.SessionId, out var servicePilot):
                     Forward(servicePilot.Session, serviceNotify);
                     break;
-                case SimAccepted accepted when !_structureObservers.ContainsKey(accepted.SessionId) && accepted.Command != SimCommands.ControlStructure && _pilots.TryGetValue(accepted.SessionId, out var mover):
+                case SimAccepted accepted when !_structureObservers.ContainsKey(accepted.SessionId) && accepted.Command != SimCommands.ControlStructure && accepted.Command != SimCommands.DockingReady && _pilots.TryGetValue(accepted.SessionId, out var mover):
                     if (accepted.Command == SimCommands.Stop)
                         _warping.TryRemove(accepted.SessionId, out _);
                     if (accepted.Command != SimCommands.Dock)
@@ -888,6 +968,12 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                             _log?.Invoke($"the arrival of session {arrived.SessionId} at belt {arrived.BeltId} could not be dealt with: {error.Message}");
                         }
                     });
+                    break;
+                case SimAccepted ready when ready.Command == SimCommands.DockingReady:
+                    if (_pilots.TryGetValue(ready.SessionId, out var dockingPilot))
+                        Background(() => ResolveDockingAsync(dockingPilot, ready.At));
+                    else
+                        _sim.Command(ready.SessionId, SimCommands.DockingDecision, ready.At, 0);
                     break;
                 case SimDocked docked when _pilots.TryGetValue(docked.SessionId, out var pilot):
                     _warping.TryRemove(docked.SessionId, out _);

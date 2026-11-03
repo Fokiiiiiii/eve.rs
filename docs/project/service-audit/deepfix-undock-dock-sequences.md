@@ -59,5 +59,5 @@ Host commits `CharacterShips.UndockAsync` before entering the simulator; a simul
 
 ## Current branch state (2026-11-03)
 
-- The undock Host fix and PostgreSQL regression are in local commit `e4813423`; the latest local merge commit is `33e51890`, which includes `origin/main` through `fa9b2209`. The merged main history includes store/subscription persistence, Project Discovery, NPC security-status recovery, and a docs-only security verification update. After the merge, the related Host classes passed 170/170 with no skips on `eve_p4`; the touched .NET project built with 0 warnings/errors after the preceding source merge.
-- Main CI run 1454 (`41578995207`) on `31dac370` completed successfully with no failed jobs. Main then advanced to `fa9b2209`; `python3 tools/dev/ci-status.py status --branch main --limit 2 --no-logs` returned no newer completed run. Selected Agent run 1268 on `31dac370` also passed.
+- The undock Host fix and PostgreSQL regression are included in the pushed docking changes. The latest local merge commit is `73651792`, which includes `origin/main` through `0a542793` (jump-clone cooldown preservation). After that merge, the touched .NET project built with 0 warnings/errors, and the related Host classes passed 170/170 with no skips on `eve_p4`.
+- Pre-push main CI run 1454 (`41578995207`) on `31dac370` completed successfully. The docking changes were pushed to main in commit `2849f08a`; push CI run 1455 (`41581982759`) and selected Agent run 1269 (`41582029698`) both completed successfully with no failed jobs.

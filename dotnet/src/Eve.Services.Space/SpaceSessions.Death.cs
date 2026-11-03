@@ -579,7 +579,8 @@ public sealed partial class SpaceSessions
         var concord = _concordDestroyed.TryRemove(pilot.ShipId, out _)
             || (destroyed.KillerShipId != 0
                 && _npcShips.TryGetValue(destroyed.KillerShipId, out var npc)
-                && npc.Profile?.Id.Contains("concord_response", StringComparison.OrdinalIgnoreCase) == true);
+                  && (npc.Profile?.EntityType.Equals("concord", StringComparison.OrdinalIgnoreCase) == true
+                      || npc.Profile?.Id.Contains("concord_response", StringComparison.OrdinalIgnoreCase) == true));
         var cause = _deaths.ContainsKey(pilot.ShipId) ? ShipLossCause.SelfDestruct
             : concord ? ShipLossCause.Concord
             : killer is not null ? ShipLossCause.Player

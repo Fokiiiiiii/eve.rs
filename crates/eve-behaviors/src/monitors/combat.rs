@@ -481,9 +481,8 @@ impl Task for MonitorSecurityStatusLoss {
 
     fn clean_up(&mut self, t: &mut TaskCtx<'_, '_>) {
         t.set_status_to_invalid();
-        // the client unsubscribes from the crimewatch message here, not from the one it subscribed to: the subscription stays
         if let Some(solar_system_id) = self.solar_system_id.filter(|s| *s != 0) {
-            t.unsubscribe_item(solar_system_id, CRIMEWATCH_EVENT_STARTED, 0);
+            t.unsubscribe_item(solar_system_id, SEC_STATUS_LOST_EVENT, 0);
         }
     }
 
@@ -720,6 +719,8 @@ mod tests {
         assert_eq!(combat_set(&mut rig), Value::None, "too far");
         tell(&mut rig, 30000142, SEC_STATUS_LOST_EVENT, &[Value::Int(1), Value::Int(40)]);
         assert_eq!(combat_set(&mut rig), Value::Set(vec![Value::Int(40)]));
+        rig.clean_up_task();
+        assert!(rig.shared.events.subscribers(30000142, SEC_STATUS_LOST_EVENT).is_empty());
     }
 
     #[test]

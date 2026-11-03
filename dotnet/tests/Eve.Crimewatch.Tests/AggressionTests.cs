@@ -94,14 +94,13 @@ public class AggressionTests
     }
 
     [Fact]
-    public void A_timer_that_runs_longer_is_kept_and_a_new_offence_sets_the_kind_of_the_flag_as_the_reference_does()
+    public void A_criminal_flag_overrides_a_suspect_offence_and_the_timer_is_extended()
     {
         var criminal = Aggression.Record(CombatState.Idle, CombatState.Idle, SecurityClass.HighSec, System, false, false, Now).Attacker;
-        // a minute later in low security the criminal shoots a ship: the reference makes it a suspect (setNonTheftPenalty), the timer runs from the new offence
         var later = Now + 60_000;
         var again = Aggression.Record(criminal, CombatState.Idle, SecurityClass.LowSec, System, false, false, later);
         Assert.Equal(AggressionReason.Suspect, again.Reason);
-        Assert.Equal(Flag.Suspect, again.Attacker.FlagAt(later));
+        Assert.Equal(Flag.Criminal, again.Attacker.FlagAt(later));
         Assert.Equal(later + 900_000, again.Attacker.FlagUntilMs);
         // a suspect that commits a crime is made a criminal
         var suspect = Aggression.Record(CombatState.Idle, CombatState.Idle, SecurityClass.LowSec, System, false, false, Now).Attacker;

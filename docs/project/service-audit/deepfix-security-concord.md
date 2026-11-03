@@ -153,3 +153,10 @@ The standard Empire sentry path remains open. A separate NPC combat timer record
 - 最新コード merge 後のテスト全715件が成功。後続 main 変更は handoff 1行の docs-only 更新。
 - 最新完了 main CI #1468（SHA `481bc22c`）は Required CI gate を含め成功。今回の push-triggered Actions は push 後に確認する。
 - GUI クライアント確認は実施していない。これらは自動テスト結果。
+
+## Push verification (2026-11-03)
+
+- `origin/main` at `95319c2f` was merged into this worktree as `64abda11`; the only merge delta after the previous run was the separate NPC timer handoff. Rebuilt `Eve.Crimewatch.Tests`, `Eve.Services.Crimewatch.Tests`, `Eve.Services.Space.Tests`, and `Eve.Host.Tests`; all succeeded with 0 warnings and 0 errors.
+- Re-ran the relevant classes against `eve_p5` through `tools/dev/db-lock.sh`: `AggressionTests` 24/24, Crimewatch `RuntimeTests`/`PenaltyTests` 46/46, Space `ProjectedHost`/`WeaponHost`/`RepairHost`/`SpaceService` 217/217, and Host `HostServer`/`StructureWeaponTargetContext` 407/407. Total 694 passed, 0 skipped.
+- Commit `64abda11` was pushed to `main`; push-triggered CI #1469 (run `41630145918`) completed successfully with no failed tests or jobs.
+- Standard Empire sentry population and response remain incomplete as described above. V24.01 graphical-client behavior is未確認; no EveJS process run was performed.

@@ -95,4 +95,67 @@ public static class HostInventoryServiceFactory
                 divisionFlag,
                 take: operation == Eve.Services.Inventory.CorporationHangarOperation.Take);
         };
+
+    public static Func<ClientSession, IndustryMonitorRequest, Item, CancellationToken, ValueTask<long?>> IndustryMonitorLocationOf(
+        PgItemStore items, ItemTypeCatalog itemTypes, Eve.Corporations.CorporationStore corporations,
+        Eve.Corporations.CorporationOfficeStore? offices) =>
+        async (session, request, blueprint, token) =>
+        {
+            var input = request.InputLocation;
+            var characterId = session.CharacterId.GetValueOrDefault();
+            if (characterId <= 0 || request.FacilityId <= 0 || input is not { ItemId: > 0 })
+                return null;
+
+            if (blueprint.OwnerId == characterId)
+                return await ResolveIndustryInputLocationAsync(items, itemTypes, input, blueprint.OwnerId,
+                    ItemFlags.Hangar, request.FacilityId, request.FacilityId, token);
+
+            if (offices is null || input.FlagId is < ItemFlags.CorpSAG1 or > ItemFlags.CorpSAG7)
+                return null;
+
+            var corporation = await corporations.GetAsync(blueprint.OwnerId, token);
+            var member = await corporations.MemberAsync(characterId, token);
+            if (corporation is not { IsNpc: false, Deleted: false } || member?.CorporationId != blueprint.OwnerId)
+                return null;
+
+            var office = (await offices.ForCorporationAsync(blueprint.OwnerId, token))
+                .FirstOrDefault(row => row.StationId == request.FacilityId);
+            if (office is null)
+                return null;
+
+            var folder = await items.GetAsync(office.OfficeFolderId, token);
+            if (folder is not { TypeId: Eve.Corporations.CorporationOfficeStore.OfficeFolderTypeId }
+                || folder.OwnerId != blueprint.OwnerId || folder.LocationId != request.FacilityId
+                || folder.Flag != ItemFlags.Hangar)
+                return null;
+
+            var roles = Eve.Corporations.CorporationRoles.Session(
+                corporation, member, request.FacilityId,
+                await corporations.TitlesAsync(blueprint.OwnerId, token));
+            // Manufacturing needs both the division's Query and Take roles, plus Factory Manager access.
+            if ((roles.AtAll & Eve.Corporations.CorporationRoles.FactoryManager) == 0
+                || !Eve.Corporations.CorporationRoles.HasHangarAccess(roles, request.FacilityId, input.FlagId, take: false)
+                || !Eve.Corporations.CorporationRoles.HasHangarAccess(roles, request.FacilityId, input.FlagId, take: true))
+                return null;
+
+            return await ResolveIndustryInputLocationAsync(items, itemTypes, input, blueprint.OwnerId,
+                input.FlagId, office.OfficeFolderId, office.OfficeId, token);
+        };
+
+    private static async ValueTask<long?> ResolveIndustryInputLocationAsync(
+        PgItemStore items, ItemTypeCatalog itemTypes, IndustryMonitorLocation input, long ownerId, int flagId,
+        long rootLocationId, long rootItemId, CancellationToken token)
+    {
+        if (input.FlagId != flagId || rootLocationId <= 0 || rootItemId <= 0)
+            return null;
+        if (input.ItemId == rootItemId || input.ItemId == rootLocationId)
+            return rootLocationId;
+
+        var selected = await items.GetAsync(input.ItemId, token);
+        if (selected is null || selected.OwnerId != ownerId || selected.Flag != flagId
+            || selected.LocationId != rootLocationId || !selected.Singleton)
+            return null;
+        var type = await itemTypes.GetAsync(selected.TypeId, token);
+        return type?.GroupId is 12 or 340 or 448 or 649 ? selected.Id : null;
+    }
 }

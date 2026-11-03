@@ -247,6 +247,7 @@ internal sealed class IndustryRig : IAsyncDisposable
     private readonly AdjustedPriceStore _prices;
     private readonly PersistenceIndustryJobOperations _operations;
     private readonly CorporationStore _corporations;
+    private readonly CorporationOfficeStore _offices;
 
     private IndustryRig(NpgsqlDataSource source, SdeReader sde, StationCatalog stations)
     {
@@ -263,6 +264,7 @@ internal sealed class IndustryRig : IAsyncDisposable
         _skills = new PgSkillStore(source, _schemas[4]);
         var corporations = new CorporationStore(source, _characters, _walletStore, _wallets, _skills, () => Now, _schemas[5]);
         _corporations = corporations;
+        _offices = new CorporationOfficeStore(source, _schemas[5]);
         var scheduler = new DurableScheduler(source, () => Now, null, _schemas[6]);
         var events = new EventBus(source, scheduler, null, _schemas[7]);
         Scheduler = scheduler;
@@ -285,6 +287,14 @@ internal sealed class IndustryRig : IAsyncDisposable
     }
 
     public long Now { get; set; } = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+    public NpgsqlDataSource Source => _source;
+    public PgItemStore ItemStore => _items;
+    public SdeReader Sde => _sde;
+    public CorporationStore Corporations => _corporations;
+    public CorporationOfficeStore Offices => _offices;
+    public Station Station => _station;
+    public string CorporationSchema => _schemas[5];
 
     /// <summary>The durable scheduler the readiness jobs wait in (the rig's host, before any restart).</summary>
     public DurableScheduler Scheduler { get; }
@@ -319,7 +329,7 @@ internal sealed class IndustryRig : IAsyncDisposable
         return gates[0].Doc.GetProperty("destination").GetProperty("solarSystemID").GetInt64();
     }
 
-    public static async Task<IndustryRig> CreateAsync()
+    public static async Task<IndustryRig> CreateAsync(bool includeOffices = false)
     {
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
@@ -331,6 +341,8 @@ internal sealed class IndustryRig : IAsyncDisposable
         await PgItemStore.MigrateAsync(source, rig._schemas[3]);
         await PgSkillStore.MigrateAsync(source, rig._schemas[4]);
         await CorporationStore.MigrateAsync(source, rig._schemas[5]);
+        if (includeOffices)
+            await CorporationOfficeStore.MigrateAsync(source, rig._schemas[5]);
         await DurableScheduler.MigrateAsync(source, rig._schemas[6]);
         await EventBus.MigrateAsync(source, rig._schemas[7]);
         await Migrations.ApplyAsync(source, rig._schemas[8], [IndustryJobsSchema.Jobs(rig._schemas[3])]);
@@ -359,6 +371,47 @@ internal sealed class IndustryRig : IAsyncDisposable
             : await _items.CreateAsync(c, tx, new NewItem(typeId, owner, remote ? _station.Id + 1 : _station.Id, ItemFlags.Hangar, quantity));
         await tx.CommitAsync();
         return id;
+    }
+
+    public async Task<long> CreateItem(NewItem item)
+    {
+        await using var connection = await _source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var id = await _items.CreateAsync(connection, transaction, item);
+        await transaction.CommitAsync();
+        return id;
+    }
+
+    public async Task<CorporationOffice> RentOffice(long corporationId, long officeFolderId)
+    {
+        await using var connection = await _source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var station = new CorporationOfficeStation(_station.Id, _station.TypeId, _station.OwnerId,
+            _station.SolarSystemId, 0d);
+        var office = await _offices.RentAsync(connection, transaction, corporationId, officeFolderId,
+            station, CorporationOfficeStore.MinimumRentIsk, Now, creditorId: _station.OwnerId);
+        await transaction.CommitAsync();
+        return office;
+    }
+
+    public async Task SetCorporationRoles(long characterId, long roles, long rolesAtHq)
+    {
+        await using (var connection = await _source.OpenConnectionAsync())
+        await using (var command = new NpgsqlCommand(
+            $"UPDATE {_schemas[5]}.members SET roles=$2,roles_hq=$3 WHERE character_id=$1", connection))
+        {
+            command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+            command.Parameters.Add(new NpgsqlParameter { Value = roles });
+            command.Parameters.Add(new NpgsqlParameter { Value = rolesAtHq });
+            if (await command.ExecuteNonQueryAsync() != 1)
+                throw new InvalidOperationException("The industry test corporation member was not found.");
+        }
+        await using var connectionForSuspension = await _source.OpenConnectionAsync();
+        await using var suspend = new NpgsqlCommand(
+            $"UPDATE {_schemas[5]}.corporations SET ceo_roles_suspended=true WHERE ceo_id=$1", connectionForSuspension);
+        suspend.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        if (await suspend.ExecuteNonQueryAsync() != 1)
+            throw new InvalidOperationException("The industry test corporation CEO was not found.");
     }
 
     public async Task<long> Install(long owner, long blueprintId, int activityId, int blueprintType = BlueprintType, bool copy = false,

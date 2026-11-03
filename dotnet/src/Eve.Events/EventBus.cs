@@ -184,6 +184,29 @@ public sealed class EventBus
         return id;
     }
 
+    /// <summary>Whether this subscriber still has an unprocessed event of this topic through the given occurrence time.</summary>
+    public async Task<bool> HasUnprocessedAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string subscriberName,
+        string topic,
+        long occurredThroughMs,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(subscriberName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(topic);
+        return await Sql.ScalarAsync(connection, transaction, Q("""
+            SELECT EXISTS (
+                SELECT 1
+                FROM {schema}.outbox events
+                JOIN {schema}.subscribers subscribers ON subscribers.name = $1
+                WHERE events.topic = $2
+                  AND events.occurred_ms <= $3
+                  AND events.id > subscribers.cursor_id
+            )
+            """), cancellationToken, subscriberName, topic, occurredThroughMs) is true;
+    }
+
     /// <summary>Publishes one occurrence per topic and publication key, returning the original event ID on retry even after outbox retention.</summary>
     public async Task<long> PublishOnceAsync(string topic, object? payload, string publicationKey, CancellationToken cancellationToken = default)
     {

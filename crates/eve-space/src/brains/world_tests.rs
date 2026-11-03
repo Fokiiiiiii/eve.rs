@@ -178,6 +178,24 @@ fn an_offensive_act_is_told_to_those_who_wait_for_one_on_the_ship_it_was_done_to
 }
 
 #[test]
+fn a_security_status_loss_is_told_once_to_sentries_subscribed_in_its_system() {
+    let (mut scene, _) = scene_with_a_rat();
+    scene.security_status_losses.push((1_000_001, PLAYER_SHIP));
+    with_world(&mut scene, LATER, |world, brains| {
+        brains.shared.events.subscribe_item(30_000_001, message::SEC_STATUS_LOST_EVENT, WATCHER);
+        brains.shared.events.subscribe_item(
+            PLAYER_SHIP,
+            message::SEC_STATUS_LOST_EVENT,
+            Observer { tree: 9, ..WATCHER },
+        );
+        world.tell_what_happened(&mut brains.shared);
+        assert_eq!(heard(brains), [vec![Value::Int(1_000_001), Value::Int(PLAYER_SHIP)]]);
+        world.tell_what_happened(&mut brains.shared);
+        assert!(heard(brains).is_empty(), "a status loss is told once");
+    });
+}
+
+#[test]
 fn the_bubble_is_told_when_the_protection_of_a_ship_ends_by_time_or_by_the_pilot() {
     let (mut scene, _) = scene_with_a_rat();
     let bubble_of_player =

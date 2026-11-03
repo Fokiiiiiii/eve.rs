@@ -478,19 +478,6 @@ public sealed partial class SpaceSessions
                     }
                     if (!_pilots.Values.Any(other => other.SolarSystemId == jumped.ToSystem))
                         ForgetNpcsOf(jumped.ToSystem);
-                    if (_systems.Get(jumped.ToSystem) is { } enteredSystem
-                        && Security.IsHighSecOrHigher(Security.ClassFromLevel(enteredSystem.Security))
-                        && CriminalEnteredSystem is { } criminalEntered)
-                    {
-                        try
-                        {
-                            await criminalEntered(pilot.CharacterId, jumped.ToSystem, enteredSystem.Security, CancellationToken.None);
-                        }
-                        catch (Exception error) when (error is not OperationCanceledException)
-                        {
-                            _log?.Invoke($"criminal timer entry response for character {pilot.CharacterId} could not be dispatched: {error.Message}");
-                        }
-                    }
                 },
                 async (result, _) =>
                 {
@@ -540,6 +527,7 @@ public sealed partial class SpaceSessions
                 _log?.Invoke($"jump of character {pilot.CharacterId} to system {jumped.ToSystem} failed: {transition.Refusal}");
             else
             {
+                await NotifyPilotEnteredSystemAsync(pilot.CharacterId, jumped.ToSystem);
                 if (inspectContraband)
                     await ApplyContrabandAsync(session, pilot.CharacterId, pilot.ShipId, jumped.ToSystem, CancellationToken.None);
                 TellEnteredBuffs((ulong)session.SessionId, pilot.ShipId, _nowUnixMs());

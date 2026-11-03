@@ -142,6 +142,13 @@ public sealed class ConcordResponseDelayTests
     {
         Assert.Equal(expectedMs, CrimewatchRuntime.ConcordResponseDelayMs(security));
     }
+
+    [Fact]
+    public void Response_delay_uses_the_displayed_security_band_for_true_security_values()
+    {
+        Assert.Equal(6_000, CrimewatchRuntime.ConcordResponseDelayMs(0.85));
+        Assert.Equal(7_000, CrimewatchRuntime.ConcordResponseDelayMs(0.75));
+    }
 }
 
 public class RuntimeTests : IAsyncLifetime
@@ -320,6 +327,100 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Equal(AggressionReason.Criminal, capsuleAttack.Outcome.Reason);
         Assert.Equal([(3L, 1L)], grants.Select(request => (request.OwnerCharacterId, request.TargetCharacterId)));
         Assert.Empty(responses);
+    }
+
+    [PgFact]
+    public async Task A_second_high_security_entry_can_schedule_concord_after_the_first_response()
+    {
+        Pilot(1, System);
+        Pilot(2, System);
+        using var runtime = Runtime();
+        var responses = new List<ConcordResponseRequest>();
+        runtime.ConcordResponseDue += response =>
+        {
+            responses.Add(response);
+            return Task.CompletedTask;
+        };
+
+        await runtime.RecordAggressionAsync(Attack(1, 2, SecurityClass.HighSec, System, capsule: false));
+        var firstWait = Assert.Single(_waits.Made, wait => wait.After == TimeSpan.FromMilliseconds(10_005));
+        _now = Start + 10_005;
+        firstWait.Done.TrySetResult();
+        await Settle(() => responses.Count == 1);
+
+        await runtime.OnSystemEnteredAsync(1, System, 0.7);
+        var secondWait = Assert.Single(
+            _waits.Made,
+            wait => wait.After == TimeSpan.FromMilliseconds(10_005) && !wait.Done.Task.IsCompleted);
+        secondWait.Done.TrySetResult();
+        await Settle(() => responses.Count == 2);
+
+        Assert.Equal(2, responses.Count);
+        Assert.Equal(_now, responses[1].CrimeAtUnixMs);
+    }
+
+    [PgFact]
+    public async Task A_criminal_timer_triggers_concord_on_entry_to_pemene()
+    {
+        Pilot(1, System);
+        Pilot(2, System);
+        using var runtime = Runtime();
+        var responses = new List<ConcordResponseRequest>();
+        runtime.ConcordResponseDue += response =>
+        {
+            responses.Add(response);
+            return Task.CompletedTask;
+        };
+
+        var criminal = await runtime.RecordAggressionAsync(Attack(1, 2, SecurityClass.LowSec, System, capsule: true));
+        Assert.Equal(AggressionReason.Criminal, criminal.Outcome.Reason);
+
+        await runtime.OnSystemEnteredAsync(1, 30_004_978, 0.450192);
+
+        var responseWait = Assert.Single(_waits.Made, wait => wait.After == TimeSpan.FromMilliseconds(19_005));
+        responseWait.Done.TrySetResult();
+        await Settle(() => responses.Count == 1);
+        var response = Assert.Single(responses);
+        Assert.Equal((1L, 30_004_978L, 0.450192), (response.AttackerCharacterId, response.SolarSystemId, response.Security));
+    }
+
+    [PgFact]
+    public async Task A_suspect_offense_extends_a_criminal_timer_and_entering_high_security_triggers_concord()
+    {
+        Pilot(1, System);
+        Pilot(2, System);
+        Pilot(3, System);
+        using var runtime = Runtime();
+        var responses = new List<ConcordResponseRequest>();
+        runtime.ConcordResponseDue += response =>
+        {
+            responses.Add(response);
+            return Task.CompletedTask;
+        };
+
+        var criminal = await runtime.RecordAggressionAsync(Attack(1, 2, SecurityClass.LowSec, System, capsule: true));
+        Assert.Equal(AggressionReason.Criminal, criminal.Outcome.Reason);
+        Told(1);
+        Told(2);
+        Told(3);
+
+        _now += 60_000;
+        var suspect = await runtime.RecordAggressionAsync(Attack(1, 3, SecurityClass.LowSec, System, capsule: false));
+        Assert.Equal(AggressionReason.Suspect, suspect.Outcome.Reason);
+        var state = await Store.StateOfAsync(1, CancellationToken.None);
+        Assert.Equal(new TimerView(303, _now + 900_000), state.TimersAt(_now).Criminal);
+        var attackerNotes = Told(1);
+        Assert.Equal(["OnWeaponsTimerUpdate", "OnPvpTimerUpdate", "OnCriminalTimerUpdate"], attackerNotes.Select(note => note.Name));
+        Assert.Equal([new PyInt(303), new PyLong(FileTime(_now + 900_000))], attackerNotes[2].Args);
+        Assert.Empty(Told(2));
+        Assert.Empty(Told(3));
+
+        await runtime.OnSystemEnteredAsync(1, OtherSystem, 0.7);
+        var responseWait = Assert.Single(_waits.Made, wait => wait.After == TimeSpan.FromMilliseconds(10_005));
+        responseWait.Done.TrySetResult();
+        await Settle(() => responses.Count == 1);
+        var response = Assert.Single(responses);
+        Assert.Equal((1L, OtherSystem, 0.7), (response.AttackerCharacterId, response.SolarSystemId, response.Security));
     }
 
     [PgFact]
@@ -580,6 +681,36 @@ public class RuntimeTests : IAsyncLifetime
         replay.Done.TrySetResult();
         await Settle(() => responses.Count == 1);
         Assert.Equal((1L, System), (Assert.Single(responses).AttackerCharacterId, responses[0].SolarSystemId));
+    }
+
+    [PgFact]
+    public async Task A_criminal_timer_replays_in_the_last_system_entered_after_restart()
+    {
+        Pilot(1, System);
+        Pilot(2, System);
+        using (var first = Runtime())
+        {
+            await first.RecordAggressionAsync(Attack(1, 2, SecurityClass.LowSec, System, capsule: true));
+            await first.OnSystemEnteredAsync(1, OtherSystem, 0.7);
+        }
+        _waits.Made.Clear();
+        _now = Start + 20_000;
+        using var resumed = Runtime();
+        resumed.SecurityOfSystem = (system, _) => Task.FromResult<double?>(system == OtherSystem ? 0.7 : 0.1);
+        var responses = new List<ConcordResponseRequest>();
+        resumed.ConcordResponseDue += response =>
+        {
+            responses.Add(response);
+            return Task.CompletedTask;
+        };
+
+        await resumed.ResumeAsync();
+
+        var replay = Assert.Single(_waits.Made, wait => wait.After == TimeSpan.FromMilliseconds(5));
+        replay.Done.TrySetResult();
+        await Settle(() => responses.Count == 1);
+        Assert.Equal(OtherSystem, (await resumed.StateOfAsync(1)).SolarSystemId);
+        Assert.Equal((1L, OtherSystem), (Assert.Single(responses).AttackerCharacterId, responses[0].SolarSystemId));
     }
 
     [PgFact]

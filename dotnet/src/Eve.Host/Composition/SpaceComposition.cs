@@ -113,6 +113,34 @@ internal sealed partial class CharacterServicesComposition
         spaceDrones = null;
         cosmicSites = null;
         siteNpcs = null;
+        var npcAuthority = NpcAuthority.Load();
+        var securityRecovery = new Eve.Services.Crimewatch.NpcSecurityStatusRecoverySubscriber(
+            new Eve.Crimewatch.PgCrimewatchStore(source, crimewatchSchema),
+            foundations.Scheduler,
+            foundations.Events,
+            foundations.Relations,
+            profile => npcAuthority.Profile(profile) is { Bounty: > 0 } npc
+                ? new Eve.Services.Crimewatch.NpcSecurityStatusProfile(
+                    npc.Bounty, npc.CorporationId, npc.FactionId, npc.ShipTypeId,
+                    Eve.Npc.NpcSecurityStatusRecovery.IsEligibleFaction(npc.FactionId))
+                : null,
+            async (connection, transaction, characterId, token) =>
+                1.0 + ((await skills.LevelAsync(connection, transaction, characterId, 3358, token)) * 0.05),
+            (previous, bounty, fastTalk) => Eve.Npc.NpcSecurityStatusRecovery.TryNext(bounty, previous, fastTalk));
+        securityRecovery.Register();
+        foundations.Events.Subscribe("npc.security-status-notifications", ["npc.security_status.recovered"],
+            (context, _) =>
+            {
+                var notice = context.Event.Json();
+                if (notice.TryGetProperty("characterId", out var character) &&
+                    character.TryGetInt64(out var characterId) && characterId > 0 &&
+                    notice.TryGetProperty("status", out var status) &&
+                    status.TryGetDouble(out var securityStatus) && double.IsFinite(securityStatus))
+                {
+                    characterSessions.Of(characterId)?.SendNotification("OnSecurityStatusUpdate", "charid", Py.Number(securityStatus));
+                }
+                return Task.CompletedTask;
+            });
         if (Env("EVE_SIM", "on") is not ("off" or "0" or "false"))
         {
             var socket = Env("EVE_SIM_SOCKET", DefaultSimSocket(OperatingSystem.IsWindows()));
@@ -120,41 +148,6 @@ internal sealed partial class CharacterServicesComposition
                 ? SimClient.ToTcpSocket(socket["tcp:".Length..], message => Console.Error.WriteLine($"eve-host: {message}"))
                 : SimClient.ToUnixSocket(socket, message => Console.Error.WriteLine($"eve-host: {message}"));
             sim.Start();
-            var npcAuthority = NpcAuthority.Load();
-            var securityRecovery = new Eve.Services.Crimewatch.NpcSecurityStatusRecoverySubscriber<Eve.Events.EventContext>(
-                profile => npcAuthority.Profile(profile) is { Bounty: > 0 } npc
-                    ? new Eve.Services.Crimewatch.NpcSecurityStatusProfile(npc.Bounty, npc.CorporationId, npc.FactionId, npc.ShipTypeId)
-                    : null,
-                async (context, characterId, token) =>
-                    1.0 + ((await skills.LevelAsync(context.Connection, context.Transaction, characterId, 3358, token)) * 0.05),
-                (previous, bounty, fastTalk) => Eve.Npc.NpcSecurityStatusRecovery.TryNext(bounty, previous, fastTalk),
-                async (context, characterId, token) =>
-                    await foundations.Relations.ValueAsync(Eve.Relations.RelationKinds.SecurityStatus.Name,
-                        characterId, Eve.Relations.RelationStore.World, 0, context.Connection, context.Transaction, token),
-                async (context, change, token) =>
-                {
-                    await foundations.Relations.SetAsync(context.Connection, context.Transaction,
-                        Eve.Relations.RelationKinds.SecurityStatus.Name, change.CharacterId, Eve.Relations.RelationStore.World,
-                        change.NextStatus, "npc_bounty_recovery",
-                        new Dictionary<string, object?>
-                        {
-                            ["eventTypeID"] = change.EventTypeID,
-                            ["otherOwnerID"] = change.NpcCorporationId,
-                            ["otherTypeID"] = change.NpcTypeId,
-                            ["locationID"] = change.SolarSystemId,
-                            ["modification"] = change.Modification,
-                            ["sourceEventID"] = change.SourceEventId,
-                            ["npcShipID"] = change.NpcShipId,
-                            ["npcFactionID"] = change.NpcFactionId,
-                            ["profileID"] = change.ProfileId,
-                            ["bounty"] = change.Bounty,
-                            ["fastTalkMultiplier"] = change.FastTalkMultiplier,
-                        },
-                        cancellationToken: token);
-                    await context.PublishAsync("npc.security_status.recovered",
-                        new { characterId = change.CharacterId, status = change.NextStatus },
-                        $"character:{change.CharacterId}", token);
-                });
             // a mining cycle's ledger entry: written in the event's transaction, so a replayed event writes nothing (the entry id is the event id)
             // the mining ledger is a table of the space schema (MiningLedgerStore), read through the rowset read side; the rows the game store held before are copied once
             // (the copy adds only the entries that are not there, so a second start adds none)
@@ -202,21 +195,6 @@ internal sealed partial class CharacterServicesComposition
                 items.CreateAsync(connection, transaction, new Eve.Inventory.NewItem(typeId, 0, system, Eve.Ships.CharacterShips.InSpaceFlag, 1, true));
             cosmicSites.ContainerType = (name, relic) => containerTypes.TryGetValue(name, out var found) ? found : relic ? fallbackRelic : fallbackData;
             foundations.Events.Subscribe(DailyGoalRecorder.SubscriberName, [Eve.Ships.OreMinedEvent.Topic, Eve.Ships.SalvageWreckedEvent.Topic], (context, token) => dailyGoals.RecordAsync(context, token));
-            foundations.Events.Subscribe("npc.security-status-recovery", ["npc.killed"],
-                async (context, token) => await securityRecovery.HandleAsync(context, context.Event.Id, context.Event.PayloadJson, token));
-            foundations.Events.Subscribe("npc.security-status-notifications", ["npc.security_status.recovered"],
-                (context, _) =>
-                {
-                    var notice = context.Event.Json();
-                    if (notice.TryGetProperty("characterId", out var character) &&
-                        character.TryGetInt64(out var characterId) && characterId > 0 &&
-                        notice.TryGetProperty("status", out var status) &&
-                        status.TryGetDouble(out var securityStatus) && double.IsFinite(securityStatus))
-                    {
-                        characterSessions.Of(characterId)?.SendNotification("OnSecurityStatusUpdate", "charid", Py.Number(securityStatus));
-                    }
-                    return Task.CompletedTask;
-                });
             var npcWrecks = new NpcWrecks(npcAuthority, () => NpcLoot.LoadAsync(sde), ships);
             spaceSessions = new SpaceSessions(sim, ships, dogma, stations, solarSystems, now, message => Console.Error.WriteLine($"eve-host: space: {message}"), localTimers: foundations.LocalTimers, spaceItems: spaceItemStore) { RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new NpcSelector(npcAuthority), NpcWrecks = npcWrecks, BeltRats = new BeltRats(npcAuthority, BeltRatConfig.FromEnvironment(Environment.GetEnvironmentVariable), type => NpcHull.HasHitPoints(dogma.Type(type))), AutoReloadUsers = AutoReloadUserIds(Env("EVE_AUTO_RELOAD_ACCOUNTS", "")), WarpAcceptedAsync = (characterId, token) => AchievementTracker.RecordWarpAsync(characterId, now(), token) };
             dogmaSync.RefreshSpaceShip = (session, token) => spaceSessions.RefreshShipAsync(session, token);
@@ -304,7 +282,7 @@ internal sealed partial class CharacterServicesComposition
             spaceSessions.Aggression = async (request, token) => await crimewatchRuntime.RecordAggressionAsync(request, token);   // what an attack makes of the attacker
             spaceSessions.SecurityStatusOf = securityStatusOf;   // the ship in space shows it
             spaceSessions.CrimewatchStateOf = crimewatchRuntime.StateOfAsync;
-            spaceSessions.CriminalEnteredSystem = crimewatchRuntime.RespondToCriminalEntryAsync;
+              spaceSessions.PilotEnteredSystem = crimewatchRuntime.OnSystemEnteredAsync;
             spaceSessions.LifecycleBlockers = async (action, session, shipId, token) =>
             {
                 if (session.CharacterId is not { } characterId || characterId <= 0)
@@ -415,7 +393,8 @@ internal sealed partial class CharacterServicesComposition
                 try
                 {
 
-                    var standing = npcFactionStanding.ApplyAsync(kill.FinalBlowCharacterId, kill.Profile.FactionId, kill.SolarSystemId, CancellationToken.None).GetAwaiter().GetResult();
+                    var standing = npcFactionStanding.ApplyAsync(kill.FinalBlowCharacterId, kill.Profile.FactionId, kill.SolarSystemId,
+                        CancellationToken.None, kill.NpcTypeId).GetAwaiter().GetResult();
                     if (standing is { } changed && characterSessions?.Of(kill.FinalBlowCharacterId) is { } pilot)
                     {
                         pilot.SendNotification("OnStandingSet", "clientID", new Eve.Marshal.PyList(

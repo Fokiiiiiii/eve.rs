@@ -1,122 +1,178 @@
 using System.Text.Json;
 using Eve.Crimewatch;
+using Eve.Events;
+using Eve.Relations;
+using Eve.Scheduler;
+using Npgsql;
 
 namespace Eve.Services.Crimewatch;
 
-/// <summary>Values needed to atomically record one NPC security-status recovery.</summary>
-/// <summary>Authoritative NPC profile facts needed to annotate the persisted security-status history.</summary>
-public sealed record NpcSecurityStatusProfile(decimal Bounty, long CorporationId, int FactionId, int ShipTypeId);
+/// <summary>Authoritative NPC facts used to record a security-status recovery.</summary>
+public sealed record NpcSecurityStatusProfile(decimal Bounty, long CorporationId, int FactionId, int ShipTypeId, bool EligibleForRecovery);
 
-public sealed record NpcSecurityStatusRecoveryChange(
-    long CharacterId,
-    double PreviousStatus,
-    double NextStatus,
-    long SourceEventId,
-    long SolarSystemId,
-    long NpcShipId,
-    long NpcTypeId,
-    long NpcCorporationId,
-    int NpcFactionId,
-    string ProfileId,
-    decimal Bounty,
-    double FastTalkMultiplier,
-    double Modification)
-{
-    public int EventTypeID => SecurityStatusEventTypeIds.KillPirateNpc;
-}
+public sealed record NpcSecurityStatusRecoveryWindowDue(long CharacterId, long WindowEndMs);
 
-/// <summary>
-/// Handles the payload of the durable <c>npc.killed</c> event without owning Host or PostgreSQL types.
-/// Host binds the callbacks to EventContext.Connection/Transaction and Eve.Relations, and supplies
-/// the EVE.js calculation from <c>Eve.Npc.NpcSecurityStatusRecovery.TryNext</c>.
-/// </summary>
-public sealed class NpcSecurityStatusRecoverySubscriber<TContext>
+/// <summary>Collects the highest-value NPC kill in each five-minute tick and settles it durably at the tick boundary.</summary>
+public sealed class NpcSecurityStatusRecoverySubscriber
 {
-    public const string SubscriberName = "crimewatch.npc-security-status-recovery";
+    public const string SubscriberName = "npc.security-status-recovery";
     public const string Topic = "npc.killed";
+    public const string JobKind = "npc.security-status-recovery";
+    public const long WindowLengthMs = 5 * 60 * 1000;
     public const string HistoryReason = "npc_bounty_recovery";
 
+    private readonly PgCrimewatchStore _crimewatch;
+    private readonly DurableScheduler _scheduler;
+    private readonly EventBus _events;
+    private readonly RelationStore _relations;
     private readonly Func<string, NpcSecurityStatusProfile?> _profileForId;
-    private readonly Func<TContext, long, CancellationToken, Task<double>> _fastTalkMultiplier;
+    private readonly Func<NpgsqlConnection, NpgsqlTransaction, long, CancellationToken, Task<double>> _fastTalkMultiplier;
     private readonly Func<double, decimal, double, double?> _nextStatus;
-    private readonly Func<TContext, long, CancellationToken, Task<double>> _statusOf;
-    private readonly Func<TContext, NpcSecurityStatusRecoveryChange, CancellationToken, Task> _writeStatus;
 
     public NpcSecurityStatusRecoverySubscriber(
+        PgCrimewatchStore crimewatch,
+        DurableScheduler scheduler,
+        EventBus events,
+        RelationStore relations,
         Func<string, NpcSecurityStatusProfile?> profileForId,
-        Func<TContext, long, CancellationToken, Task<double>> fastTalkMultiplier,
-        Func<double, decimal, double, double?> nextStatus,
-        Func<TContext, long, CancellationToken, Task<double>> statusOf,
-        Func<TContext, NpcSecurityStatusRecoveryChange, CancellationToken, Task> writeStatus)
+        Func<NpgsqlConnection, NpgsqlTransaction, long, CancellationToken, Task<double>> fastTalkMultiplier,
+        Func<double, decimal, double, double?> nextStatus)
     {
+        _crimewatch = crimewatch;
+        _scheduler = scheduler;
+        _events = events;
+        _relations = relations;
         _profileForId = profileForId;
         _fastTalkMultiplier = fastTalkMultiplier;
         _nextStatus = nextStatus;
-        _statusOf = statusOf;
-        _writeStatus = writeStatus;
     }
 
-    /// <summary>
-    /// Processes one EventBus delivery. Register this method for <see cref="Topic"/> under
-    /// <see cref="SubscriberName"/>. The status read and write callbacks must use the event's
-    /// caller-owned transaction; EventBus commits that transaction with its subscriber cursor.
-    /// </summary>
-    public async Task HandleAsync(
-        TContext context,
-        long sourceEventId,
-        string payloadJson,
-        CancellationToken cancellationToken = default)
+    public void Register()
     {
-        using var document = JsonDocument.Parse(payloadJson);
+        _events.Subscribe(SubscriberName, [Topic], HandleAsync);
+        _scheduler.Register(JobKind, SettleAsync);
+    }
+
+    public async Task HandleAsync(EventContext context, CancellationToken cancellationToken = default)
+    {
+        using var document = JsonDocument.Parse(context.Event.PayloadJson);
         var payload = document.RootElement;
         var characterId = ReadInt64(payload, "characterId");
         var profileId = ReadString(payload, "profile");
-        if (characterId <= 0 || string.IsNullOrWhiteSpace(profileId))
+        if (characterId <= 0 || string.IsNullOrWhiteSpace(profileId) || context.Event.OccurredMs <= 0)
         {
             return;
         }
 
         var profile = _profileForId(profileId);
-        if (profile is not { Bounty: > 0 } npc)
+        if (profile is not { Bounty: > 0, EligibleForRecovery: true } npc)
         {
             return;
         }
 
-        var fastTalk = await _fastTalkMultiplier(context, characterId, cancellationToken).ConfigureAwait(false);
-        fastTalk = double.IsFinite(fastTalk) ? Math.Max(0, fastTalk) : 1.0;
-        var previous = await _statusOf(context, characterId, cancellationToken);
-        var next = _nextStatus(previous, npc.Bounty, fastTalk);
-        if (next is not { } value)
-        {
-            return;
-        }
-        if (!double.IsFinite(value) || !double.IsFinite(previous) || previous >= 10)
-        {
-            throw new InvalidOperationException("NPC security-status recovery produced invalid history values");
-        }
-
-        // TryNext returns its unrounded next status; invert its exact formula to recover the multiplier.
-        var modification = (value - previous) / (10 - previous);
+        var latestWindow = await _crimewatch.LatestNpcSecurityStatusRecoveryWindowAsync(
+            context.Connection, context.Transaction, characterId, cancellationToken).ConfigureAwait(false);
+        var windowEndMs = latestWindow is { } active && context.Event.OccurredMs <= active.WindowEndMs
+            ? active.WindowEndMs
+            : checked(Math.Max(context.Event.OccurredMs, latestWindow?.WindowEndMs ?? context.Event.OccurredMs) + WindowLengthMs);
         var npcTypeId = ReadInt64(payload, "typeId");
         if (npcTypeId <= 0)
         {
             npcTypeId = npc.ShipTypeId;
         }
-        await _writeStatus(context, new NpcSecurityStatusRecoveryChange(
+
+        var window = new NpcSecurityStatusRecoveryWindow(
             characterId,
-            previous,
-            value,
-            sourceEventId,
+            windowEndMs,
+            context.Event.Id,
             ReadInt64(payload, "solarSystemId"),
             ReadInt64(payload, "shipId"),
             npcTypeId,
             npc.CorporationId,
             npc.FactionId,
             profileId,
-            npc.Bounty,
-            fastTalk,
-            modification), cancellationToken);
+            npc.Bounty);
+        await _crimewatch.RecordNpcSecurityStatusRecoveryWindowAsync(
+            context.Connection, context.Transaction, window, cancellationToken).ConfigureAwait(false);
+        var due = new NpcSecurityStatusRecoveryWindowDue(characterId, windowEndMs);
+        await _scheduler.ScheduleAsync(context.Connection, context.Transaction,
+            new JobSpec(JobKind, windowEndMs)
+            {
+                Key = WindowKey(due),
+                Payload = due,
+                OnDuplicate = OnDuplicate.Keep,
+            }, cancellationToken).ConfigureAwait(false);
     }
+
+    public async Task SettleAsync(JobContext context, CancellationToken cancellationToken = default)
+    {
+        var due = context.Payload<NpcSecurityStatusRecoveryWindowDue>();
+        if (due is not { CharacterId: > 0, WindowEndMs: > 0 })
+        {
+            throw new InvalidOperationException("NPC security-status recovery job has an invalid window");
+        }
+
+        if (context.NowMs < due.WindowEndMs || await _events.HasUnprocessedAsync(
+                context.Connection, context.Transaction, SubscriberName, Topic, due.WindowEndMs, cancellationToken).ConfigureAwait(false))
+        {
+            context.RunAgainAt(Math.Max(context.NowMs + 1000, due.WindowEndMs), due);
+            return;
+        }
+
+        var window = await _crimewatch.NpcSecurityStatusRecoveryWindowAsync(
+            context.Connection, context.Transaction, due.CharacterId, due.WindowEndMs, cancellationToken).ConfigureAwait(false);
+        if (window is null)
+        {
+            return;
+        }
+
+        var previous = await _relations.ValueAsync(RelationKinds.SecurityStatus.Name,
+            window.CharacterId, RelationStore.World, 0,
+            context.Connection, context.Transaction, cancellationToken).ConfigureAwait(false);
+        if (!double.IsFinite(previous) || previous < -10 || previous > 10)
+        {
+            throw new InvalidOperationException("NPC security-status recovery found invalid persisted status");
+        }
+
+        var fastTalk = await _fastTalkMultiplier(context.Connection, context.Transaction, window.CharacterId, cancellationToken).ConfigureAwait(false);
+        fastTalk = double.IsFinite(fastTalk) ? Math.Max(0, fastTalk) : 1.0;
+        var next = _nextStatus(previous, window.Bounty, fastTalk);
+        if (next is { } value)
+        {
+            if (!double.IsFinite(value) || value <= previous || previous >= 10)
+            {
+                throw new InvalidOperationException("NPC security-status recovery produced invalid history values");
+            }
+
+            var modification = (value - previous) / (10 - previous);
+            await _relations.SetAsync(context.Connection, context.Transaction,
+                RelationKinds.SecurityStatus.Name, window.CharacterId, RelationStore.World, value,
+                HistoryReason,
+                new Dictionary<string, object?>
+                {
+                    ["eventTypeID"] = SecurityStatusEventTypeIds.KillPirateNpc,
+                    ["otherOwnerID"] = window.NpcCorporationId,
+                    ["otherTypeID"] = window.NpcTypeId,
+                    ["locationID"] = window.SolarSystemId,
+                    ["modification"] = modification,
+                    ["sourceEventID"] = window.SourceEventId,
+                    ["npcShipID"] = window.NpcShipId,
+                    ["npcFactionID"] = window.NpcFactionId,
+                    ["profileID"] = window.ProfileId,
+                    ["bounty"] = window.Bounty,
+                    ["fastTalkMultiplier"] = fastTalk,
+                }, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await _events.PublishAsync(context.Connection, context.Transaction,
+                "npc.security_status.recovered",
+                new { characterId = window.CharacterId, status = value },
+                $"character:{window.CharacterId}", cancellationToken).ConfigureAwait(false);
+        }
+
+        await _crimewatch.DeleteNpcSecurityStatusRecoveryWindowAsync(
+            context.Connection, context.Transaction, window.CharacterId, window.WindowEndMs, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static string WindowKey(NpcSecurityStatusRecoveryWindowDue due) => $"{due.CharacterId}:{due.WindowEndMs}";
 
     private static long ReadInt64(JsonElement payload, string name) =>
         payload.TryGetProperty(name, out var value) && value.TryGetInt64(out var number) ? number : 0;

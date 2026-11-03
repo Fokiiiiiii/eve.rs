@@ -21,22 +21,18 @@ public sealed class NpcSecurityStatusRecoveryTests
     }
 
     [Fact]
-    public void A_pirate_kill_can_raise_status_above_five_as_in_the_pinned_EveJS_reference()
+    public void An_NPC_recovery_is_capped_at_five_while_using_ten_as_the_formula_target()
     {
-        var next = NpcSecurityStatusRecovery.TryNext(250_000m, 5.0, 1.0);
+        var next = NpcSecurityStatusRecovery.TryNext(250_000m, 4.99, 1.0);
 
-        Assert.Equal(5.0125, next);
-        Assert.True(next > 5.0);
+        Assert.Equal(5.0, next);
     }
 
     [Fact]
-    public void Each_fresh_kill_in_the_same_five_minute_period_gets_a_separate_reference_recovery()
+    public void Security_status_does_not_gain_from_NPC_kills_at_or_above_five()
     {
-        var first = NpcSecurityStatusRecovery.TryNext(250_000m, 0, 1.0);
-        var second = NpcSecurityStatusRecovery.TryNext(250_000m, first!.Value, 1.0);
-
-        Assert.Equal(0.025, first);
-        Assert.InRange(Math.Abs(second.GetValueOrDefault() - 0.0499375), 0, 1e-12);
+        Assert.Null(NpcSecurityStatusRecovery.TryNext(250_000m, 5.0, 1.0));
+        Assert.Null(NpcSecurityStatusRecovery.TryNext(250_000m, 5.2, 1.0));
     }
 
     [Fact]
@@ -50,7 +46,7 @@ public sealed class NpcSecurityStatusRecoveryTests
     [Fact]
     public void No_change_is_written_when_the_reference_four_digit_value_does_not_change()
     {
-        var next = NpcSecurityStatusRecovery.TryNext(1m, 9.9999, 1.0);
+        var next = NpcSecurityStatusRecovery.TryNext(1m, 4.9999, 1.0);
 
         Assert.Null(next);
     }
@@ -64,14 +60,39 @@ public sealed class NpcSecurityStatusRecoveryTests
     }
 
     [Fact]
-    public void Status_does_not_rise_past_ten()
+    public void Status_does_not_rise_past_five_from_NPC_kills()
     {
-        Assert.Null(NpcSecurityStatusRecovery.TryNext(250_000m, 10.0, 1.25));
+        Assert.Null(NpcSecurityStatusRecovery.TryNext(250_000m, 5.0, 1.25));
     }
 
     [Fact]
     public void The_Fast_Talk_attribute_id_matches_the_reference()
     {
         Assert.Equal(359, NpcSecurityStatusRecovery.FastTalkPercentageAttributeId);
+    }
+
+    [Theory]
+    [InlineData(500010, true)]
+    [InlineData(500011, true)]
+    [InlineData(500012, true)]
+    [InlineData(500019, true)]
+    [InlineData(500020, true)]
+    [InlineData(0, false)]
+    [InlineData(500002, false)]
+    [InlineData(500003, false)]
+    [InlineData(500025, false)]
+    public void Only_pirate_factions_award_NPC_security_status_recovery(int factionId, bool eligible)
+    {
+        Assert.Equal(eligible, NpcSecurityStatusRecovery.IsEligibleFaction(factionId));
+    }
+
+    [Fact]
+    public void A_generic_named_mission_NPC_with_a_bounty_is_not_a_pirate_status_target()
+    {
+        var profile = NpcAuthority.Load().Profile("parity_mission_generic_29917_captain_amiette_barcier");
+
+        Assert.NotNull(profile);
+        Assert.Equal(2_000_000, profile.Bounty);
+        Assert.False(NpcSecurityStatusRecovery.IsEligibleFaction(profile.FactionId));
     }
 }

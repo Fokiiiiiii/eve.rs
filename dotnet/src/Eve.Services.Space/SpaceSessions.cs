@@ -744,6 +744,7 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         session.Closed += () => OnSessionClosed(session);
         await spaceItems.RemoveAsync(snapshot.Ship.Id, cancellationToken);
         SystemEntered?.Invoke(systemId);
+        await NotifyPilotEnteredSystemAsync(characterId, systemId);
     }
 
     private bool HasValidSpaceRestore(ShipSnapshot snapshot, SpaceItem state)

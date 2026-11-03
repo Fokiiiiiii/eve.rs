@@ -291,6 +291,7 @@ internal sealed partial class CharacterServicesComposition
             spaceSessions.Aggression = async (request, token) => await crimewatchRuntime.RecordAggressionAsync(request, token);   // what an attack makes of the attacker
             spaceSessions.SecurityStatusOf = securityStatusOf;   // the ship in space shows it
             spaceSessions.CrimewatchStateOf = crimewatchRuntime.StateOfAsync;
+            spaceSessions.RecordNpcTimerAsync = crimewatchRuntime.RecordNpcTimerAsync;
               spaceSessions.PilotEnteredSystem = crimewatchRuntime.OnSystemEnteredAsync;
             spaceSessions.LifecycleBlockers = async (action, session, shipId, token) =>
             {

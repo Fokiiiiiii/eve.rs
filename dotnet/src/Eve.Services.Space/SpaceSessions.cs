@@ -910,6 +910,64 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         return targetId > 0;
     }
 
+    private void RecordNpcCombatTimer(SimNotify notify, Pilot pilot)
+    {
+        if (notify.Name != "OnDamageMessage")
+        {
+            return;
+        }
+        var decoded = MarshalCodec.Decode(notify.Args.ToArray());
+        if (RecordNpcTimerAsync is not { } recordNpcTimer || _npcShips.IsEmpty
+            || decoded is not PyTuple { Items.Count: 1 } args
+            || args.Items[0] is not PyDict damage)
+        {
+            return;
+        }
+
+        static string? Text(PyValue value) => JsSemantics.StringValue(value);
+
+        long? Number(string name)
+        {
+            foreach (var (key, value) in damage.Entries)
+            {
+                if (Text(key) != name)
+                {
+                    continue;
+                }
+                return value switch
+                {
+                    PyInt integer => integer.Value,
+                    PyLong integer => integer.Value,
+                    _ => null,
+                };
+            }
+            return null;
+        }
+
+        string? AttackType()
+        {
+            foreach (var (key, value) in damage.Entries)
+            {
+                if (Text(key) == "attackType")
+                {
+                    return Text(value);
+                }
+            }
+            return null;
+        }
+
+        var attackType = AttackType();
+        var source = Number("source");
+        var target = Number("target");
+        var playerFiredAtNpc = attackType == "me" && target is { } npcTarget && _npcShips.ContainsKey(npcTarget);
+        var npcFiredAtPlayer = attackType == "otherPlayerWeapons"
+            && target == pilot.ShipId && source is { } npcSource && _npcShips.ContainsKey(npcSource);
+        if (playerFiredAtNpc || npcFiredAtPlayer)
+        {
+            Background(() => recordNpcTimer(pilot.CharacterId, CancellationToken.None));
+        }
+    }
+
     private void OnReceived(SimMessage message)
     {
         if (message is SimDestroyed removedEntity)
@@ -943,6 +1001,7 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                 case SimNotify notify when _pilots.TryGetValue(notify.SessionId, out var pilot):
                     TrackTargetingNotification(notify);
                     Forward(pilot.Session, notify);
+                    RecordNpcCombatTimer(notify, pilot);
                     break;
                 case SimServiceNotify serviceNotify when _pilots.TryGetValue(serviceNotify.SessionId, out var servicePilot):
                     Forward(servicePilot.Session, serviceNotify);

@@ -522,6 +522,9 @@ public sealed partial class SpaceSessions
     /// <summary>Host supplies the persisted Crimewatch state used to enforce criminal movement restrictions.</summary>
     public Func<long, CancellationToken, Task<CombatState>>? CrimewatchStateOf { get; set; }
 
+    /// <summary>Host records the persisted NPC timer when this pilot's ship damages an NPC or an NPC damages this ship.</summary>
+    public Func<long, CancellationToken, Task>? RecordNpcTimerAsync { get; set; }
+
     /// <summary>Host calls this after a criminal with an active timer enters high-security space.</summary>
       public Func<long, long, double, CancellationToken, Task>? PilotEnteredSystem { get; set; }
 

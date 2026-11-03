@@ -749,7 +749,8 @@ impl Scene {
 
     pub fn poll(&mut self, now: i64) -> Vec<Out> {
         self.settle_all(now);
-        let mut told = self.populate_pochven(now);
+        let mut told = self.populate_empire_sentries(now);
+        told.extend(self.populate_pochven(now));
         let arrived: Vec<SessionId> = self
             .pilots
             .iter()

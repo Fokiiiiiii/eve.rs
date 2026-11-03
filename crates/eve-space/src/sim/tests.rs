@@ -2534,6 +2534,17 @@ fn hello_is_answered_with_the_version_and_the_poll_rate() {
 }
 
 #[test]
+fn active_criminal_flag_is_routed_to_the_session_scene() {
+    let mut sim = undocked();
+    let ship = &sim.scenes[&SceneKey::solar_system(SYSTEM)].pilots[&SESSION].ship.spec;
+    let expected = (ship.owner_id, ship.ship_id);
+
+    sim.handle(Message::CriminalFlagActive { session_id: SESSION }, NOON).unwrap();
+
+    assert_eq!(sim.scenes[&SceneKey::solar_system(SYSTEM)].criminal_flag_activations, vec![expected]);
+}
+
+#[test]
 fn an_undock_puts_the_ship_in_space_and_binding_sends_it_the_scene_as_marshalled_notifications() {
     let mut sim = undocked();
     assert_eq!(sim.ships(), 1);
@@ -4695,5 +4706,5 @@ fn tether_host_policy_dispatches_to_the_real_scene_and_transitions_return_to_the
         )
         .unwrap_err();
     assert!(wrong_direction.0.contains("kind 81"));
-    assert_eq!(crate::link::PROTOCOL_VERSION, 90);
+    assert_eq!(crate::link::PROTOCOL_VERSION, 91);
 }

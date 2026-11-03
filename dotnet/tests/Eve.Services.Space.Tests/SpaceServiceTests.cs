@@ -185,6 +185,8 @@ public class SpaceServiceTests
               criminalEntries.Add((characterId, systemId, security));
               return Task.CompletedTask;
           };
+            rig.Space.CrimewatchStateOf = (_, _) => Task.FromResult(
+                new Eve.Crimewatch.CombatState(0, 0, 0, long.MaxValue, Eve.Crimewatch.Flag.Criminal, 0, 0));
 
           await UndockAsync(rig, session);
 
@@ -192,6 +194,8 @@ public class SpaceServiceTests
           Assert.Equal(character.CharacterId, entry.Character);
           Assert.Equal(session.GetInt("solarsystemid"), entry.System);
           Assert.True(entry.Security >= 0.5);
+            Assert.Contains(rig.Sim.Heard, message =>
+                message is Eve.Space.SimCriminalFlagActive active && active.SessionId == (ulong)session.SessionId);
       }
 
       private static async Task<(Rig Rig, Eve.Characters.Created Character, ClientSession Session)> DockedAsync(

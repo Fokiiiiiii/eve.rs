@@ -13,6 +13,7 @@ use std::sync::OnceLock;
 
 use eve_destiny::Vec3;
 
+use crate::brains::EMPIRE_SENTRY;
 use crate::health::{Condition, Resonances, Vitals};
 use crate::npc::NpcPlace;
 use crate::pochven;
@@ -33,6 +34,20 @@ const SENTRY_OFFSET_METRES: f64 = 20_000.0;
 const SKIRMISH_GAP_METRES: f64 = 40_000.0;
 /// The time a turret takes to fire once, ms (the rule of this module).
 const SHOT_CYCLE_MS: f64 = 4_000.0;
+const EMPIRE_SENTRY_CYCLE_MS: f64 = 2_500.0;
+pub(crate) const EMPIRE_SENTRY_GROUP_ID: i32 = 99;
+const EMPIRE_SENTRY_DISTANCE_METRES: f64 = 50_000.0;
+const CONCORD_FACTION_ID: i64 = 500_006;
+const EMPIRE_SENTRY_OFFSETS: [[f64; 3]; 8] = [
+    [-1.0, 1.0, 0.0],
+    [1.0, -1.0, 0.0],
+    [-1.0, -1.0, 0.0],
+    [1.0, 1.0, 0.0],
+    [0.0, 1.0, -1.0],
+    [0.0, -1.0, 1.0],
+    [0.0, -1.0, -1.0],
+    [0.0, 1.0, 1.0],
+];
 /// The effect a turret's shot runs (`crate::brains`: the effect of the belt rat's weapon).
 const TURRET_EFFECT: i32 = 10;
 /// The fitting of the turret's effect, as the belt rat's: the name the client shows.
@@ -67,6 +82,68 @@ pub struct NpcType {
     pub weapon_falloff: f64,
     pub tracking: f64,
     pub shot: [f64; 4],
+}
+
+fn empire_sentry_type(type_id: i32) -> NpcType {
+    NpcType {
+        type_id,
+        group_id: EMPIRE_SENTRY_GROUP_ID,
+        name: "Empire Sentry Gun",
+        corporation_id: 0,
+        radius: 45.0,
+        mass: 1_000.0,
+        max_velocity: 0.0,
+        agility: 0.0,
+        max_target_range: 1_000_000.0,
+        max_locked: 8,
+        scan_resolution: 0.0,
+        signature_radius: 0.0,
+        capacitor_capacity: 1_000.0,
+        capacitor_recharge_s: 500.0,
+        shield_recharge_ms: 500_000.0,
+        shield: 4_800.0,
+        armor: 7_200.0,
+        structure: 7_200.0,
+        shield_resonance: [1.0, 0.8, 0.6, 0.4],
+        armor_resonance: [0.4, 0.65, 0.75, 0.9],
+        structure_resonance: [1.0; 4],
+        weapon_optimal: 500_000.0,
+        weapon_falloff: 50_000.0,
+        tracking: 0.4,
+        shot: [80.0, 140.0, 140.0, 80.0],
+    }
+}
+
+fn empire_sentry_faction_id(faction_id: Option<i64>) -> i64 {
+    match faction_id.unwrap_or(CONCORD_FACTION_ID) {
+        500_001 | 500_002 | 500_003 | 500_004 | CONCORD_FACTION_ID | 500_007 | 500_008 | 500_013 => {
+            faction_id.unwrap_or(CONCORD_FACTION_ID)
+        }
+        _ => CONCORD_FACTION_ID,
+    }
+}
+
+fn empire_sentry_type_ids(faction_id: i64) -> &'static [i32] {
+    match faction_id {
+        500_003 | 500_007 | 500_008 => &[1194],
+        500_002 => &[3743],
+        500_004 => &[3742],
+        _ => &[3740, 3741, 3739],
+    }
+}
+
+fn empire_sentry_count(security: f64) -> usize {
+    let security = if security.is_finite() { security.clamp(0.0, 1.0) } else { 0.0 };
+    let displayed = if security > 0.0 && security < 0.05 { 0.05 } else { (security * 10.0).round() / 10.0 };
+    if displayed >= 0.8 {
+        8
+    } else if displayed >= 0.5 {
+        6
+    } else if displayed > 0.0 {
+        2
+    } else {
+        0
+    }
 }
 
 const TRIGLAVIAN: i64 = pochven::TRIGLAVIAN_CORPORATION_ID;
@@ -396,13 +473,19 @@ fn npc_spec(ship_id: i64, npc_type: &NpcType) -> ShipSpec {
 }
 
 /// The identity of a Pochven NPC: its turret, fitted to its own ship (as the belt rat's), with the aggression range given.
-fn npc_identity(ship_id: i64, npc_type: &NpcType, aggression_range: f64) -> NpcIdentity {
+fn npc_identity(
+    ship_id: i64,
+    npc_type: &NpcType,
+    aggression_range: f64,
+    cycle_ms: f64,
+    signature_resolution: f64,
+) -> NpcIdentity {
     NpcIdentity {
         combat: NpcCombat {
             weapons: vec![NpcWeapon {
                 module_id: ship_id,
                 effect_id: TURRET_EFFECT,
-                cycle_ms: SHOT_CYCLE_MS,
+                cycle_ms,
                 capacitor_need: 0.0,
                 turret: Turret {
                     weapon_type_id: npc_type.type_id,
@@ -411,7 +494,7 @@ fn npc_identity(ship_id: i64, npc_type: &NpcType, aggression_range: f64) -> NpcI
                     optimal_range: npc_type.weapon_optimal,
                     falloff: npc_type.weapon_falloff,
                     tracking_speed: npc_type.tracking,
-                    signature_resolution: 40.0,
+                    signature_resolution,
                     charge: None,
                     missile: None,
                     spool: None,
@@ -437,6 +520,72 @@ fn towards_centre(from: Vec3, distance: f64) -> Vec3 {
 }
 
 impl Scene {
+    /// Place the system's static Empire sentries once, using the same displayed security and layout as EveJS.
+    pub(crate) fn populate_empire_sentries(&mut self, now: i64) -> Vec<Out> {
+        if self.empire_sentries_populated {
+            return Vec::new();
+        }
+        self.empire_sentries_populated = true;
+
+        let count = empire_sentry_count(self.system().security);
+        if count == 0 {
+            return Vec::new();
+        }
+        let faction_id = empire_sentry_faction_id(self.system().faction_id);
+        let type_ids = empire_sentry_type_ids(faction_id);
+        let placements: Vec<(i32, i64, Vec3)> = self
+            .system()
+            .bodies
+            .iter()
+            .filter(|body| body.kind == BodyKind::Stargate || body.kind == BodyKind::Station)
+            .flat_map(|body| {
+                let owner_id = if body.kind == BodyKind::Station && body.owner_id > 0 {
+                    body.owner_id
+                } else {
+                    faction_id
+                };
+                let distance = if body.kind == BodyKind::Station {
+                    body.radius.max(EMPIRE_SENTRY_DISTANCE_METRES)
+                } else {
+                    EMPIRE_SENTRY_DISTANCE_METRES
+                };
+                let diagonal = distance / std::f64::consts::SQRT_2;
+                EMPIRE_SENTRY_OFFSETS.iter().take(count).enumerate().map(move |(index, offset)| {
+                    (
+                        type_ids[index % type_ids.len()],
+                        owner_id,
+                        Vec3::new(
+                            body.position.x + offset[0] * diagonal,
+                            body.position.y + offset[1] * diagonal,
+                            body.position.z + offset[2] * diagonal,
+                        ),
+                    )
+                })
+            })
+            .collect();
+
+        let mut out = Vec::new();
+        for (type_id, owner_id, position) in placements {
+            out.extend(self.spawn_empire_sentry(type_id, owner_id, position, now));
+        }
+        out
+    }
+
+    fn spawn_empire_sentry(&mut self, type_id: i32, owner_id: i64, at: Vec3, now: i64) -> Vec<Out> {
+        let ship_id = 980_100_000_000 + self.npc_sequence as i64;
+        let sentry = empire_sentry_type(type_id);
+        let mut spec = npc_spec(ship_id, &sentry);
+        spec.owner_id = owner_id;
+        let identity = npc_identity(ship_id, &sentry, 0.0, EMPIRE_SENTRY_CYCLE_MS, 100.0);
+        match self.spawn_npc_with_behavior(spec, identity, NpcPlace::at_rest(at), EMPIRE_SENTRY, now) {
+            Ok((_, mut outs)) => {
+                outs.insert(0, self.publish_sim_damageable_entity(ship_id, type_id, owner_id, 0, 0, 0));
+                outs
+            }
+            Err(_) => Vec::new(),
+        }
+    }
+
     /// The Pochven population: the first look at a Pochven system places its sentries and camps, and every look runs the skirmish schedule within the
     /// caps. A system outside Pochven is left alone.
     pub(crate) fn populate_pochven(&mut self, now: i64) -> Vec<Out> {
@@ -540,7 +689,7 @@ impl Scene {
         let at = at.into();
         let ship_id = 980_100_000_000 + self.npc_sequence as i64;
         let place = NpcPlace::at_rest(Vec3::new(at.0, at.1, at.2));
-        let mut identity = npc_identity(ship_id, npc_type, aggression);
+        let mut identity = npc_identity(ship_id, npc_type, aggression, SHOT_CYCLE_MS, 40.0);
         if matches!(behavior, SENTRY_TRIGLAVIAN | CAMP) {
             // A neutral pilot has 0.00 standing to the Triglavians and is hostile at that inclusive boundary.
             // The shared behavior task uses a strict comparison, so move its integer threshold just above zero.
@@ -704,6 +853,14 @@ mod tests {
     const T0: i64 = 134_351_688_000_000_000;
 
     #[test]
+    fn empire_sentry_count_uses_the_displayed_security_thresholds() {
+        assert_eq!(empire_sentry_count(0.0), 0);
+        assert_eq!(empire_sentry_count(0.04), 2);
+        assert_eq!(empire_sentry_count(0.49), 6);
+        assert_eq!(empire_sentry_count(0.79), 8);
+    }
+
+    #[test]
     fn a_held_pochven_system_gets_a_sentry_at_each_gate_and_a_camp_at_its_first_two() {
         let mut scene = pochven_scene(3);
         run(&mut scene, T0, 1);
@@ -805,7 +962,7 @@ mod tests {
         scene
             .spawn_npc_with_behavior(
                 npc_spec(rogue_ship, &LEGIONARY),
-                npc_identity(rogue_ship, &LEGIONARY, 0.0),
+                npc_identity(rogue_ship, &LEGIONARY, 0.0, SHOT_CYCLE_MS, 40.0),
                 rogue_at,
                 crate::brains::POCHVEN_NPC,
                 T0,
@@ -814,7 +971,7 @@ mod tests {
         scene
             .spawn_npc_with_behavior(
                 npc_spec(fellow_ship, &DAMAVIK),
-                npc_identity(fellow_ship, &DAMAVIK, 0.0),
+                npc_identity(fellow_ship, &DAMAVIK, 0.0, SHOT_CYCLE_MS, 40.0),
                 fellow_at,
                 crate::brains::POCHVEN_NPC,
                 T0,

@@ -3,6 +3,7 @@ using Eve.Crimewatch;
 using Eve.Marshal;
 using Eve.Scheduler;
 using Eve.Universe;
+using Npgsql;
 
 namespace Eve.Services.Crimewatch;
 
@@ -591,6 +592,23 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
 
     /// <summary>The pilot's state at this time (what <c>GetClientStates</c> answers from).</summary>
     public Task<CombatState> StateOfAsync(long characterId, CancellationToken cancellationToken = default) => store.StateOfAsync(characterId, cancellationToken);
+
+      internal Task ExtendSecurityStatusPenaltyMemoryAsync(
+          long attackerCharacterId,
+          long expiresAtUnixMs,
+          long nowUnixMs,
+          CancellationToken cancellationToken = default) =>
+          store.ExtendSecurityStatusPenaltyMemoryAsync(attackerCharacterId, expiresAtUnixMs, nowUnixMs, cancellationToken);
+
+      internal Task<bool> TryRememberSecurityStatusPenaltyAsync(
+          long attackerCharacterId,
+          long targetCharacterId,
+          bool targetIsCapsule,
+          long expiresAtUnixMs,
+          long nowUnixMs,
+            Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task> applyPenalty,
+          CancellationToken cancellationToken = default) =>
+            store.TryRememberSecurityStatusPenaltyAsync(attackerCharacterId, targetCharacterId, targetIsCapsule, expiresAtUnixMs, nowUnixMs, applyPenalty, cancellationToken);
 
     /// <summary>Tells the pilot's client the timers that are not what it was told, tells the system the flags that changed, and waits for the next end.</summary>
     public async Task SyncAsync(long characterId, CancellationToken cancellationToken = default)

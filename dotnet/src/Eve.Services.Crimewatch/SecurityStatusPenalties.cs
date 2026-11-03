@@ -1,15 +1,15 @@
-using System.Collections.Concurrent;
 using Eve.Crimewatch;
 using Eve.Marshal;
 using Eve.Services;
+using Npgsql;
 
 namespace Eve.Services.Crimewatch;
 
 /// <summary>
 /// What a crime costs the attacker in security status (<see cref="SecurityPenalty"/>), done when <see cref="CrimewatchRuntime"/> says a crime was committed: the new status is written
 /// (the character's <c>security_status</c> relation, with its history), the pilot is told as the reference tells it (<c>OnModuleAttributeChanges</c> for the pilot's security status attribute on
-/// its ship, then <c>OnSecurityStatusUpdate</c>) and the ship in space is given its new status, which those who see it are shown in its slim item. A pilot that lost for a ship loses nothing more
-/// for the same ship for a minute (the reference's window: a gun that fires at a target all the while costs one penalty, not one per cycle).
+/// its ship, then <c>OnSecurityStatusUpdate</c>) and the ship in space is given its new status, which those who see it are shown in its slim item. It remembers each pilot and ship-or-capsule offense while
+/// the attacker has a suspect or criminal timer, or any limited engagement.
 /// </summary>
 /// <summary>The exact source values the Host writer must persist in relations.relation_history.attrs.</summary>
 public sealed record SecurityStatusPenaltyChange(
@@ -29,7 +29,7 @@ public sealed class SecurityStatusPenalties(
     CharacterSessions sessions,
     Func<long, CancellationToken, Task<double>> statusOf,
     Func<AggressionRequest, CancellationToken, Task<int?>> targetTypeIdOf,
-    Func<SecurityStatusPenaltyChange, CancellationToken, Task> setStatus,
+    Func<SecurityStatusPenaltyChange, NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task> setStatus,
     Func<long> nowUnixMs,
     Func<long, CancellationToken, Task>? changed = null)
 {
@@ -39,7 +39,6 @@ public sealed class SecurityStatusPenalties(
     /// <summary>The reason written to the history of the relation.</summary>
     public const string Reason = "aggression";
 
-    private readonly ConcurrentDictionary<(long Attacker, string Target), long> _recent = new();
     // ponytail: one process-local gate closes read/modify/write races; multiple hosts need atomic persistence.
     private readonly SemaphoreSlim _penaltyGate = new(1, 1);
 
@@ -49,57 +48,64 @@ public sealed class SecurityStatusPenalties(
     /// <summary>A crime was committed: the penalty, if there is one to pay.</summary>
     public async Task OnAggressionAsync(AggressionResult result)
     {
-        if (result.Action != PolicyAction.Attack ||
-            result.Outcome.Reason is not (AggressionReason.Criminal or AggressionReason.Suspect))
-        {
-            return;
-        }
         var request = result.Request;
-        long now;
-        double previous;
-        double next;
         await _penaltyGate.WaitAsync();
         try
         {
-            now = nowUnixMs();
-            foreach (var (key, until) in _recent)
+            var now = nowUnixMs();
+            var engagements = await runtime.LimitedEngagementsOfAsync(request.Attacker, now, CancellationToken.None);
+            var flag = result.Outcome.Attacker.FlagAt(now);
+            var flagUntil = flag is Flag.Criminal or Flag.Suspect ? result.Outcome.Attacker.FlagUntilMs : 0;
+            var memoryUntil = Math.Max(flagUntil, engagements.Values.DefaultIfEmpty(0).Max());
+            if (result.Action != PolicyAction.Attack ||
+                result.Outcome.Reason is not (AggressionReason.Criminal or AggressionReason.Suspect) ||
+                request.Attacker <= 0 || request.Target <= 0 || request.Attacker == request.Target)
             {
-                if (until <= now)
-                {
-                    _recent.TryRemove(new KeyValuePair<(long, string), long>(key, until));
-                }
-            }
-            var target = (request.Attacker, $"{request.TargetShipId}:{(request.TargetIsCapsule ? "capsule" : "ship")}");
-            if (_recent.TryGetValue(target, out var window) && window > now)
-            {
+                await runtime.ExtendSecurityStatusPenaltyMemoryAsync(request.Attacker, memoryUntil, now, CancellationToken.None);
                 return;
             }
-            previous = SecurityPenalty.Clamp(await statusOf(request.Attacker, CancellationToken.None));
-            var theirs = SecurityPenalty.Clamp(await statusOf(request.Target, CancellationToken.None));
-            next = SecurityPenalty.Next(previous, theirs, request.Security, request.TargetIsCapsule);
-            if (next == previous)
+            if (memoryUntil <= now)
             {
-                _recent[target] = now + SecurityPenalty.DuplicateWindowMs;
-                return;
+                throw new InvalidOperationException("A criminal or suspect attack did not have an active Crimewatch memory timer.");
             }
 
-            var modification = (request.TargetIsCapsule ? SecurityPenalty.CapsuleModifier : SecurityPenalty.ShipModifier)
-                * SecurityPenalty.PseudoSecurity(request.Security)
-                * (1 + (theirs - previous) / 100);
-            var typeId = await targetTypeIdOf(request, CancellationToken.None);
-            await setStatus(new SecurityStatusPenaltyChange(
+            var previous = 0d;
+            var next = 0d;
+            var statusChanged = false;
+            var remembered = await runtime.TryRememberSecurityStatusPenaltyAsync(
                 request.Attacker,
-                previous,
-                next,
-                Reason,
-                SecurityStatusEventTypeIds.IllegalAggression,
                 request.Target,
-                typeId,
-                request.SolarSystemId,
-                modification,
-                request.TargetShipId), CancellationToken.None);
-            // Start the duplicate window only once the status history and value were persisted.
-            _recent[target] = now + SecurityPenalty.DuplicateWindowMs;
+                request.TargetIsCapsule,
+                memoryUntil,
+                now,
+                async (connection, transaction, cancellationToken) =>
+                {
+                    previous = SecurityPenalty.Clamp(await statusOf(request.Attacker, cancellationToken));
+                    var theirs = SecurityPenalty.Clamp(await statusOf(request.Target, cancellationToken));
+                    next = SecurityPenalty.Next(previous, theirs, request.Security, request.TargetIsCapsule);
+                    if (next == previous)
+                        return;
+
+                    var modification = (request.TargetIsCapsule ? SecurityPenalty.CapsuleModifier : SecurityPenalty.ShipModifier)
+                        * SecurityPenalty.PseudoSecurity(request.Security)
+                        * (1 + (theirs - previous) / 100);
+                    var typeId = await targetTypeIdOf(request, cancellationToken);
+                    await setStatus(new SecurityStatusPenaltyChange(
+                        request.Attacker,
+                        previous,
+                        next,
+                        Reason,
+                        SecurityStatusEventTypeIds.IllegalAggression,
+                        request.Target,
+                        typeId,
+                        request.SolarSystemId,
+                        modification,
+                        request.TargetShipId), connection, transaction, cancellationToken);
+                    statusChanged = true;
+                },
+                CancellationToken.None);
+            if (!remembered || !statusChanged)
+                return;
             if (changed is not null)
             {
                 await changed(request.Attacker, CancellationToken.None);

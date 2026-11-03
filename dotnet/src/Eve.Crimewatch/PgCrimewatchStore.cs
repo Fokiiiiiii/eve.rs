@@ -209,7 +209,17 @@ public sealed class PgCrimewatchStore
                 DROP CONSTRAINT IF EXISTS npc_security_status_recovery_windows_bounty_check;
             ALTER TABLE npc_security_status_recovery_windows
                 ADD CONSTRAINT npc_security_status_recovery_windows_bounty_nonnegative CHECK (bounty >= 0);
-            """)
+          """),
+          new Migration("0008_security_status_penalty_memory", """
+              CREATE TABLE IF NOT EXISTS security_status_penalty_memory (
+                  attacker_character_id bigint NOT NULL CHECK (attacker_character_id > 0),
+                  target_character_id bigint NOT NULL CHECK (target_character_id > 0),
+                  offense_level smallint NOT NULL CHECK (offense_level IN (0, 1)),
+                  expires_at_ms bigint NOT NULL,
+                  PRIMARY KEY (attacker_character_id, target_character_id, offense_level),
+                  CHECK (attacker_character_id <> target_character_id)
+              );
+          """)
     ];
 
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
@@ -320,6 +330,84 @@ public sealed class PgCrimewatchStore
         await using var row = await command.ExecuteReaderAsync(cancellationToken);
         return await row.ReadAsync(cancellationToken) ? ReadState(row) : CombatState.Idle;
     }
+
+      /// <summary>Extends prior security-status offense memories while this attacker still has a legality timer.</summary>
+      public async Task ExtendSecurityStatusPenaltyMemoryAsync(
+          long attackerCharacterId,
+          long expiresAtUnixMs,
+          long nowUnixMs,
+          CancellationToken cancellationToken = default)
+      {
+          if (attackerCharacterId <= 0)
+          {
+              return;
+          }
+          await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+          await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+          await LockSecurityStatusPenaltyMemoryAsync(connection, transaction, attackerCharacterId, cancellationToken);
+          await Sql.ExecuteAsync(connection, transaction,
+              Q("DELETE FROM {schema}.security_status_penalty_memory WHERE attacker_character_id = $1 AND expires_at_ms <= $2"),
+              cancellationToken, attackerCharacterId, nowUnixMs);
+          if (expiresAtUnixMs > nowUnixMs)
+          {
+              await Sql.ExecuteAsync(connection, transaction,
+                  Q("UPDATE {schema}.security_status_penalty_memory SET expires_at_ms = GREATEST(expires_at_ms, $2) WHERE attacker_character_id = $1"),
+                  cancellationToken, attackerCharacterId, expiresAtUnixMs);
+          }
+          await transaction.CommitAsync(cancellationToken);
+      }
+
+      /// <summary>Reserves one attacker/target/ship-or-capsule penalty until the attacker's legality memory expires.</summary>
+      public async Task<bool> TryRememberSecurityStatusPenaltyAsync(
+          long attackerCharacterId,
+          long targetCharacterId,
+          bool targetIsCapsule,
+          long expiresAtUnixMs,
+            long nowUnixMs,
+            Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task> applyPenalty,
+          CancellationToken cancellationToken = default)
+      {
+          if (attackerCharacterId <= 0 || targetCharacterId <= 0 || attackerCharacterId == targetCharacterId || expiresAtUnixMs <= nowUnixMs)
+          {
+              return false;
+          }
+          await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+          await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+          await LockSecurityStatusPenaltyMemoryAsync(connection, transaction, attackerCharacterId, cancellationToken);
+          await Sql.ExecuteAsync(connection, transaction,
+              Q("DELETE FROM {schema}.security_status_penalty_memory WHERE attacker_character_id = $1 AND expires_at_ms <= $2"),
+              cancellationToken, attackerCharacterId, nowUnixMs);
+          await Sql.ExecuteAsync(connection, transaction,
+              Q("UPDATE {schema}.security_status_penalty_memory SET expires_at_ms = GREATEST(expires_at_ms, $2) WHERE attacker_character_id = $1"),
+              cancellationToken, attackerCharacterId, expiresAtUnixMs);
+          await using var command = Sql.Command(connection, transaction,
+              Q("""
+                  INSERT INTO {schema}.security_status_penalty_memory
+                      (attacker_character_id, target_character_id, offense_level, expires_at_ms)
+                  VALUES ($1, $2, $3, $4)
+                  ON CONFLICT (attacker_character_id, target_character_id, offense_level) DO NOTHING
+                  RETURNING 1
+                  """),
+              attackerCharacterId, targetCharacterId, (short)(targetIsCapsule ? 1 : 0), expiresAtUnixMs);
+          var reserved = await command.ExecuteScalarAsync(cancellationToken);
+            if (reserved is null)
+            {
+                await transaction.CommitAsync(cancellationToken);
+                return false;
+            }
+            await applyPenalty(connection, transaction, cancellationToken);
+          await transaction.CommitAsync(cancellationToken);
+            return true;
+      }
+
+      private async Task LockSecurityStatusPenaltyMemoryAsync(
+          NpgsqlConnection connection,
+          NpgsqlTransaction transaction,
+          long attackerCharacterId,
+          CancellationToken cancellationToken) =>
+          await Sql.ExecuteAsync(connection, transaction,
+              Q("SELECT pg_advisory_xact_lock(hashtextextended('eve.security-status-penalty:' || $1::text, 0))"),
+              cancellationToken, attackerCharacterId);
 
     /// <summary>
     /// Returns what it was and what it is now.

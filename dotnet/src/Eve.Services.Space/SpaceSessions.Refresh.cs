@@ -24,7 +24,7 @@ public sealed partial class SpaceSessions
     /// simulation spends), and what the gun does at the end of a round (whether it reloads from its hold, and the rounds a cycle takes).
     /// </summary>
     private sealed record RunningModule(
-        string EffectName, long TargetId, int Repeat, IReadOnlyList<double>? Aim, IReadOnlyList<double>? AimEnd, byte[] Key, bool Reloads, long PerCycle, int ChargeTypeId)
+        string EffectName, long TargetId, int Repeat, IReadOnlyList<double>? Aim, IReadOnlyList<double>? AimEnd, byte[] Key, bool Reloads, long PerCycle, int ChargeTypeId, Guid Generation)
     {
         public static RunningModule Of(string effectName, long targetId, int repeat, IReadOnlyList<double>? aim, IReadOnlyList<double>? aimEnd, SimEffect effect)
         {
@@ -34,7 +34,7 @@ public sealed partial class SpaceSessions
                 effectName, targetId, repeat, aim, aimEnd, SimCodec.Encode(UpdateOf(0, effect.ModuleId, effect)),
                 turretCharge?.Reloads == true,
                 turretCharge?.PerCycle ?? actionCharge?.ChargePerCycle ?? 0,
-                turretCharge?.TypeId ?? actionCharge?.ChargeTypeId ?? 0);
+                turretCharge?.TypeId ?? actionCharge?.ChargeTypeId ?? 0, Guid.NewGuid());
         }
     }
 
@@ -125,14 +125,15 @@ public sealed partial class SpaceSessions
             }
             var turretCharge = effect.Turret?.Charge;
             var actionCharge = effect.Action as SimAction.Charged;
-            pilot.RunningModules[moduleId] = running with
+            var refreshed = running with
             {
                 Key = key,
                 Reloads = turretCharge?.Reloads == true,
                 PerCycle = turretCharge?.PerCycle ?? actionCharge?.ChargePerCycle ?? 0,
                 ChargeTypeId = turretCharge?.TypeId ?? actionCharge?.ChargeTypeId ?? 0
             };
-            await _sim.UpdateEffectAsync(update, cancellationToken).ConfigureAwait(false);
+            if (pilot.RunningModules.TryUpdate(moduleId, refreshed, running))
+                await _sim.UpdateEffectAsync(update, cancellationToken).ConfigureAwait(false);
         }
     }
 }

@@ -33,7 +33,27 @@ public sealed record GameRpcCallbacks(
     IJumpCloneStore? JumpClones = null,
     Func<long, CancellationToken, ValueTask<ProjectDiscoveryPlayerState?>>? ReadProjectDiscoveryState = null,
     Func<long, string, CancellationToken, ValueTask<ProjectDiscoveryPlayerState?>>? TransitionProjectDiscoveryTutorial = null,
-    JumpCloneSpaceLink? JumpCloneSpace = null);
+    Func<long, long?, CancellationToken, ValueTask>? FixProjectDiscoveryTaskId = null,
+    JumpCloneSpaceLink? JumpCloneSpace = null,
+    RaffleProxyCallbacks? RaffleProxy = null,
+    Func<ServiceCall, ValueTask<PyValue>>? GetProjectDiscoveryTask = null,
+    Func<ServiceCall, ValueTask<PyValue>>? SubmitProjectDiscoveryClassification = null,
+    Func<long, CancellationToken, ValueTask<ProjectDiscoveryPlayerStatistics?>>? ReadProjectDiscoveryStatistics = null,
+    Func<long, CancellationToken, ValueTask<bool>>? ReadProjectDiscoveryRewardEntitlement = null,
+    Func<ServiceCall, ValueTask<ProjectDiscoveryRewardGrant>>? GrantProjectDiscoveryReward = null,
+    Action<long, decimal>? AnnounceProjectDiscoveryRewardWallet = null,
+    Func<long>? ReadProjectDiscoveryTutorialXpReward = null,
+    Func<long, string, CancellationToken, ValueTask<int>>? ReadProjectDiscoveryBonusSamples = null,
+    Func<ServiceCall, ValueTask<PyValue>>? NewProjectDiscoveryTrainingTask = null,
+    Func<ServiceCall, string, ValueTask<ProjectDiscoveryPlayerState?>>? TransitionProjectDiscoveryTutorialCall = null,
+    bool NotifyProjectDiscoveryStateAfterSubmit = false,
+    Func<int>? ReadProjectDiscoveryProjectId = null,
+    Action<ClientSession, long, long>? AnnounceProjectDiscoveryRewardItem = null);
+
+public sealed record RaffleProxyCallbacks(
+    Func<string, ServiceCall, CancellationToken, ValueTask<PyValue>>? InvokeAsync = null);
+
+
 
 [Service("raffleMgr")]
 public sealed partial class RaffleMgrService(Func<int?, CancellationToken, ValueTask<int?>>? seedRafflesAsync = null)
@@ -60,15 +80,31 @@ public sealed partial class RaffleMgrService(Func<int?, CancellationToken, Value
 
 
 [Service("raffleProxy")]
-public sealed partial class RaffleProxyService
+public sealed partial class RaffleProxyService(RaffleProxyCallbacks? callbacks = null)
 {
-    [Method("AmIBanned")]
-    public PyValue AmIBanned(ServiceCall call)
-    {
-        // shortcut: HyperNet account bans are not persisted yet; replace when raffle moderation is modeled.
-        return PyBool.False;
-    }
+    private ValueTask<PyValue> Invoke(string operation, ServiceCall call) =>
+        callbacks?.InvokeAsync is { } invoke
+            ? invoke(operation, call, call.Cancellation)
+            : throw new InvalidOperationException($"raffleProxy.{operation} is not wired");
+
+    [Method("AmIBanned")] public ValueTask<PyValue> AmIBanned(ServiceCall call) => Invoke("AmIBanned", call);
+    [Method("SubscribeToTickets")] public ValueTask<PyValue> SubscribeToTickets(ServiceCall call) => Invoke("SubscribeToTickets", call);
+    [Method("UnSubscribeFromTickets")] public ValueTask<PyValue> UnSubscribeFromTickets(ServiceCall call) => Invoke("UnSubscribeFromTickets", call);
+    [Method("SubscribeToRaffle")] public ValueTask<PyValue> SubscribeToRaffle(ServiceCall call) => Invoke("SubscribeToRaffle", call);
+    [Method("UnsubscribeFromRaffle")] public ValueTask<PyValue> UnsubscribeFromRaffle(ServiceCall call) => Invoke("UnsubscribeFromRaffle", call);
+    [Method("CreateRaffle")] public ValueTask<PyValue> CreateRaffle(ServiceCall call) => Invoke("CreateRaffle", call);
+    [Method("GetCreatedParticipated")] public ValueTask<PyValue> GetCreatedParticipated(ServiceCall call) => Invoke("GetCreatedParticipated", call);
+    [Method("GetActiveHistoricPrices")] public ValueTask<PyValue> GetActiveHistoricPrices(ServiceCall call) => Invoke("GetActiveHistoricPrices", call);
+    [Method("AwardItem")] public ValueTask<PyValue> AwardItem(ServiceCall call) => Invoke("AwardItem", call);
+    [Method("Grab")] public ValueTask<PyValue> Grab(ServiceCall call) => Invoke("Grab", call);
+    [Method("FilteredGrab")] public ValueTask<PyValue> FilteredGrab(ServiceCall call) => Invoke("FilteredGrab", call);
+    [Method("GetMyRaffleHistory")] public ValueTask<PyValue> GetMyRaffleHistory(ServiceCall call) => Invoke("GetMyRaffleHistory", call);
+    [Method("GetMyActiveTickets")] public ValueTask<PyValue> GetMyActiveTickets(ServiceCall call) => Invoke("GetMyActiveTickets", call);
+    [Method("GetRaffle")] public ValueTask<PyValue> GetRaffle(ServiceCall call) => Invoke("GetRaffle", call);
+    [Method("BuyTicket")] public ValueTask<PyValue> BuyTicket(ServiceCall call) => Invoke("BuyTicket", call);
+    [Method("BuyRandomTickets")] public ValueTask<PyValue> BuyRandomTickets(ServiceCall call) => Invoke("BuyRandomTickets", call);
 }
+
 
 
 [Service("contractProxy")]

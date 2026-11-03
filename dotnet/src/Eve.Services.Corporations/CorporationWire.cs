@@ -45,7 +45,7 @@ public static class CorporationWire
             ? factionId
             : null;
 
-    public static (string Key,PyValue Value)[] Fields(Corporation c,int members) =>
+    public static (string Key,PyValue Value)[] Fields(Corporation c,int members,bool allowWar = false) =>
     [
         ("corporationID",new PyInt(c.Id)),("corporationName",new PyStr(c.Name)),
         ("ticker",new PyStr(c.Ticker)),("tickerName",new PyStr(c.Ticker)),
@@ -56,8 +56,7 @@ public static class CorporationWire
         ("taxRate",Py.Number((double)c.TaxRate)),("loyaltyPointTaxRate",Py.Number((double)c.LoyaltyPointTaxRate)),
         ("friendlyFire",new PyInt(c.FriendlyFire ? 1 : 0)),("memberCount",new PyInt(members)),("memberLimit",new PyInt(c.MemberLimit)),
         ("shares",Setting(c,"shares",new PyInt(c.IsNpc ? 0 : 1000))),
-        // Until structure/war eligibility is ported no corporation is eligible to declare war.
-        ("allowWar",PyBool.False),("allowedMemberRaceIDs",Setting(c,"allowedMemberRaceIDs",new PyInt(0))),
+        ("allowWar",PyValue.Of(allowWar)),("allowedMemberRaceIDs",Setting(c,"allowedMemberRaceIDs",new PyInt(0))),
         ("corporationType",Setting(c,"corporationType",new PyInt(0))),("minimumJoinStanding",Setting(c,"minimumJoinStanding",new PyInt(0))),
         ("sendCharTerminationMessage",PyBool.True),("createDate",Time(c.CreatedMs)),
         ("aggressionEnableAfter",None),("aggressionDisableAfter",None),
@@ -73,19 +72,19 @@ public static class CorporationWire
         c.Settings.TryGetProperty("divisionNames",out var names) && names.TryGetProperty(index.ToString(),out var name)
             ? new PyStr(name.GetString() ?? "") : new PyStr(index <= 7 ? $"Division {index}" : $"Wallet Division {index-7}");
 
-    public static PyValue Row(Corporation c,int members)
+    public static PyValue Row(Corporation c,int members,bool allowWar = false)
     {
-        var fields = Fields(c,members);
+        var fields = Fields(c,members,allowWar);
         return new PyObject(new PyStr("util.Row"),Py.Dict(
             ("header",Py.Tuple([.. fields.Select(f => (PyValue)new PyStr(f.Key))])),
             ("line",Py.Tuple([.. fields.Select(f => f.Value)]))));
     }
-    public static PyValue PublicInfo(Corporation c,int members)
+    public static PyValue PublicInfo(Corporation c,int members,bool allowWar = false)
     {
         string[] keys = ["corporationID","corporationName","ticker","tickerName","ceoID","creatorID","allianceID","warFactionID",
             "description","stationID","shares","deleted","url","taxRate","loyaltyPointTaxRate","friendlyFire","allowWar","memberCount",
             "applicationsEnabled","isRecruiting","shape1","shape2","shape3","color1","color2","color3","typeface"];
-        var fields = Fields(c,members).ToDictionary(f => f.Key,f => f.Value);
+        var fields = Fields(c,members,allowWar).ToDictionary(f => f.Key,f => f.Value);
         return Py.KeyVal([.. keys.Select(key => (key,fields[key]))]);
     }
 

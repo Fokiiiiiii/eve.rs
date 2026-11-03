@@ -403,7 +403,7 @@ internal sealed partial class CharacterServicesComposition
                 {
 
                     var standing = npcFactionStanding.ApplyAsync(kill.FinalBlowCharacterId, kill.Profile.FactionId, kill.SolarSystemId,
-                        CancellationToken.None, kill.NpcTypeId).GetAwaiter().GetResult();
+                        CancellationToken.None, kill.Profile.CorporationId, kill.NpcTypeId).GetAwaiter().GetResult();
                     if (standing is { } changed && characterSessions?.Of(kill.FinalBlowCharacterId) is { } pilot)
                     {
                         pilot.SendNotification("OnStandingSet", "clientID", new Eve.Marshal.PyList(
@@ -484,6 +484,28 @@ internal sealed partial class CharacterServicesComposition
             await foundations.Scheduler.EnsureRecurringAsync("space.ess.tick", "tick", TimeSpan.FromSeconds(10));
             spaceContainers = new SpaceContainers(sim, ships, items, new PgSpaceItemStore(source, spaceSchema), new PgWorkCycleLedger(source, spaceSchema), new Eve.Services.Space.EventBusFacts(foundations.Events), dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: cans: {message}"), deployed: new PgDeployedStore(source, spaceSchema), scheduler: foundations.Scheduler, source: source);
 
+            // Tournament beacons are durable deployed items; restore them when their system scene opens.
+            var tournamentSimulation = sim ?? throw new InvalidOperationException("Tournament beacon restoration requires simulation.");
+            var tournamentTypes = new ItemTypeCatalog(sde);
+            spaceContainers.RegisterDeployedKind(Eve.Host.Persistence.PersistenceTournamentArenas.BeaconKind,
+                _ => Task.FromException(new InvalidOperationException("Tournament arena beacons have no timed expiry.")),
+                async (record, _) =>
+                {
+                    var item = await items.GetAsync(record.DeployableId);
+                    var type = await tournamentTypes.GetAsync(record.TypeId);
+                    var rows = await sde.ReadAsync("types", [record.TypeId]);
+                    if (item is null || item.TypeId != record.TypeId || item.LocationId != record.SolarSystemId ||
+                        item.OwnerId != record.OwnerId || item.CustomName != record.Name || !item.Singleton || item.Quantity != 1 || record.ExpiresAtMs != long.MaxValue ||
+                        type is not { CategoryId: 2, GroupId: 310 } || record.GroupId != type.GroupId || rows.Count != 1 ||
+                        !rows[0].Doc.TryGetProperty("graphicID", out var graphic) || !graphic.TryGetInt32(out var graphicId) || graphicId <= 0)
+                        throw new InvalidOperationException($"Tournament beacon {record.DeployableId} is inconsistent with inventory or SDE.");
+                    var requestId = SimClient.NextRequestId();
+                    var error = await tournamentSimulation.EnsureTournamentBeaconAsync(new SimEnsureTournamentBeacon(requestId,
+                        SimSceneKey.SolarSystem(record.SolarSystemId), record.DeployableId, record.TypeId, record.GroupId,
+                        type.CategoryId, record.OwnerId, graphicId, record.Name, record.Position, record.Radius));
+                    if (error is not null) throw new InvalidOperationException($"Tournament beacon restoration failed: {error}");
+                });
+
             spaceContainers.SiteContainers = siteContainers;
             // a Mobile Observatory keeps 1 000 km from the stations, stargates and Upwell structures of its system (EVE.js collectPlacementBlockers)
             var observatoryLandmarks = new ObservatoryLandmarkSource(source, structureStore, stations, await ObservatoryLandmarkSource.LoadStargatesAsync(sde),
@@ -506,10 +528,15 @@ internal sealed partial class CharacterServicesComposition
             foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.ControlTowerFuelJob, async (context, token) =>
                 await spaceContainers.ControlTowerFuelAsync(context.Connection, context.Transaction, context.Payload<Eve.Services.Space.SpaceContainers.ControlTowerFuelDue>()!.DeployableId, context.ScheduledForMs, token));
             foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.ControlTowerUnanchorJob, async (context, token) =>
-                await spaceContainers.CompleteControlTowerUnanchorAsync(context.Payload<Eve.Services.Space.SpaceContainers.ControlTowerUnanchorDue>()!.DeployableId, token));
+                await spaceContainers.CompleteControlTowerUnanchorAsync(context.Payload<Eve.Services.Space.SpaceContainers.ControlTowerUnanchorDue>()!.DeployableId,
+                    context.Connection, context.Transaction, foundations.Events, token));
             spaceSessions.ControlTowerUnanchor = spaceContainers.UnanchorControlTowerAsync;
             foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.AnchorJob, async (context, token) =>
-                await spaceContainers.AnchorAsync(context.Payload<Eve.Services.Space.SpaceContainers.DisruptorAnchorDue>()!.DeployableId, token));
+            {
+                var id = context.Payload<Eve.Services.Space.SpaceContainers.DisruptorAnchorDue>()!.DeployableId;
+                await spaceContainers.AnchorAsync(id, token);
+                await spaceContainers.PublishControlTowerAnchoredAsync(context.Connection, context.Transaction, foundations.Events, id, token);
+            });
             foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.ObservatoryPingJob, async (context, token) =>
             await spaceContainers.PingObservatoryAsync(context.Payload<Eve.Services.Space.SpaceContainers.ObservatoryPingDue>()!.DeployableId, token));
             var containers = spaceContainers;

@@ -40,7 +40,8 @@ internal sealed class HostRuntime(HostServer server, ServiceRegistry registry, L
     SpaceSessions? space, Eve.Services.Crimewatch.CrimewatchRuntime? crimewatch, SimClient? simulation, CharacterSessions? characterSessions = null,
     PublicGateway.PublicGatewayRoutes? publicGateway = null, NpgsqlDataSource? dataSource = null,
     Eve.Host.Xmpp.XmppListener? xmppListener = null,
-    System.Security.Cryptography.X509Certificates.X509Certificate2? xmppCertificate = null)
+    System.Security.Cryptography.X509Certificates.X509Certificate2? xmppCertificate = null,
+    Eve.Host.ProjectDiscovery.ScientificReplayComposition? scientificReplay = null, HttpClient? discoveryHttp = null)
 {
     internal HostServer Server { get; } = server;
 
@@ -70,6 +71,18 @@ internal sealed class HostRuntime(HostServer server, ServiceRegistry registry, L
         {
             xmppCertificate?.Dispose();
         }
+        // Complete detached service cleanup while its persistence and scheduler dependencies are still alive.
+        try
+        {
+            using var cleanupTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await Registry.RetryPendingBoundReleasesAsync(cleanupTimeout.Token);
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine($"eve-host: bound-object cleanup remains pending at shutdown: {error.Message}");
+        }
+        if (scientificReplay is not null) await scientificReplay.DisposeAsync();
+        discoveryHttp?.Dispose();
         if (legacy is not null) await legacy.DisposeAsync();
         if (foundations is not null)
         {

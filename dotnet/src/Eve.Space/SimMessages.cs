@@ -74,6 +74,12 @@ public sealed record SimRefreshAbyssalNpcReply(ulong RequestId, string? Error) :
 public sealed record SimEnsureAbyssalScene(ulong RequestId, SimAbyssalSceneSpec Spec) : SimMessage;
 public sealed record SimEnsureAbyssalSceneReply(ulong RequestId, string? Error) : SimMessage;
 
+public sealed record SimMovePublicParticipant(ulong RequestId, string OperationId, ulong SessionId, long ShipId,
+    SimSceneKey Source, SimSceneKey Destination, bool UseAnchor, IReadOnlyList<double> Position, IReadOnlyList<double> Direction) : SimMessage;
+public sealed record SimMovePublicParticipantReply(ulong RequestId, string? Error) : SimMessage;
+public sealed record SimEnterPublicParticipant(ulong RequestId, string OperationId, SimEnter Enter) : SimMessage;
+public sealed record SimEnterPublicParticipantReply(ulong RequestId, string? Error) : SimMessage;
+
 public sealed record SimMoveAbyssalParticipant(
     ulong RequestId, long ShipId, SimSceneKey Source, SimSceneKey Destination,
     IReadOnlyList<double> Position, IReadOnlyList<double> Direction) : SimMessage
@@ -130,6 +136,31 @@ public sealed record SimRemoveAbyssalParticipant(ulong RequestId, SimSceneKey Sc
 
 public sealed record SimRemoveAbyssalParticipantReply(
     ulong RequestId, bool AlreadyAbsent, string? Error) : SimMessage;
+
+public sealed record SimEnsureTournamentBeacon(ulong RequestId, SimSceneKey Scene, long ItemId, int TypeId, int GroupId,
+    int CategoryId, long OwnerId, int GraphicId, string Name, IReadOnlyList<double> Position, double Radius) : SimMessage;
+public sealed record SimEnsureTournamentBeaconReply(ulong RequestId, string? Error) : SimMessage;
+public sealed record SimRemoveTournamentBeacon(ulong RequestId, SimSceneKey Scene, long ItemId) : SimMessage;
+public sealed record SimRemoveTournamentBeaconReply(ulong RequestId, string? Error) : SimMessage;
+public sealed record SimTournamentCutoffPilot(long CharacterId, long ShipId);
+public enum SimTournamentCutoffStatus : byte { Pending = 0, Ready = 1, Unavailable = 2, Error = 3 }
+public enum SimTournamentCutoffEvidence : byte { Alive = 0, Destroyed = 1, Unknown = 2 }
+public sealed record SimTournamentCutoffItem(long CharacterId, long ShipId, SimTournamentCutoffEvidence Evidence);
+public sealed record SimRegisterTournamentCutoff(ulong RequestId, SimSceneKey Scene, long MatchId, long Generation, long Start, long Deadline, IReadOnlyList<SimTournamentCutoffPilot> Roster) : SimMessage;
+public sealed record SimRegisterTournamentCutoffReply(ulong RequestId, SimSceneKey Scene, long MatchId, long Generation, long Start, long Deadline, SimTournamentCutoffStatus Status, string Error) : SimMessage;
+public sealed record SimReadTournamentCutoff(ulong RequestId, SimSceneKey Scene, long MatchId, long Generation, long Start, long Deadline) : SimMessage;
+public sealed record SimReadTournamentCutoffReply(ulong RequestId, SimSceneKey Scene, long MatchId, long Generation, long Start, long Deadline, SimTournamentCutoffStatus Status, IReadOnlyList<SimTournamentCutoffItem> Evidence, string Error) : SimMessage;
+
+public sealed record SimReleaseTournamentCutoff(ulong RequestId, SimSceneKey Scene, long MatchId, long Generation, long Start, long Deadline) : SimMessage;
+public sealed record SimReleaseTournamentCutoffReply(ulong RequestId, SimSceneKey Scene, long MatchId, long Generation, long Start, long Deadline, SimTournamentCutoffStatus Status, string Error) : SimMessage;
+public sealed record SimQueryTournamentWreck(ulong RequestId, SimSceneKey Scene, long ItemId) : SimMessage;
+public sealed record SimQueryTournamentWreckReply(ulong RequestId, SimSceneKey Scene, long ItemId, bool Present, string? Error) : SimMessage;
+public sealed record SimRemoveTournamentWreck(ulong RequestId, SimSceneKey Scene, long ItemId,
+    long OwnerId, long LauncherId, int TypeId, IReadOnlyList<double> Center, double Radius) : SimMessage;
+public sealed record SimRemoveTournamentWreckReply(ulong RequestId, SimSceneKey Scene, long ItemId, bool Removed, string? Error) : SimMessage;
+public sealed record SimGetSceneBody(ulong RequestId, SimSceneKey Scene, long ItemId) : SimMessage;
+public sealed record SimGetSceneBodyReply(ulong RequestId, SimSceneKey Scene, long ItemId,
+    int TypeId, int GroupId, int CategoryId, IReadOnlyList<double> Position, string? Error) : SimMessage;
 
 public sealed record SimGetAbyssalParticipantPose(
     ulong RequestId, SimSceneKey Scene, long ShipId) : SimMessage;

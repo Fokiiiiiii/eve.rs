@@ -17,6 +17,62 @@ public sealed class UnportedFeatureRpcServicesTests
     };
 
     [Fact]
+    public async Task Tournament_binding_retains_system_and_is_restricted_to_its_session_until_release()
+    {
+        var service = new TourneyMgrService(nowUnixMs: () => 1_700_000_000_000);
+        var session = new ClientSession { SessionId = 11 };
+        var nested = Py.Tuple(new PyStr("GetMatchSystem"), Py.Tuple());
+        var result = Assert.IsType<PyTuple>(await service.MachoBindObject(
+            Call("MachoBindObject", session, new PyLong(30_000_142), nested)));
+        Assert.Equal(new PyInt(30_000_142), result.Items[1]);
+        var oid = Assert.Single(BoundObjects.Registrations(result)).Oid;
+        var call = new ServiceCall { Method = "GetMatchSystem", Args = [], Session = session, BoundObjectId = oid };
+        Assert.Equal(new PyInt(30_000_142), service.GetMatchSystem(call));
+        var other = new ServiceCall { Method = "GetMatchSystem", Args = [], Session = new ClientSession { SessionId = 12 }, BoundObjectId = oid };
+        Assert.ThrowsAny<Exception>(() => service.GetMatchSystem(other));
+        service.OnBoundObjectReleased(oid, session);
+        Assert.ThrowsAny<Exception>(() => service.GetMatchSystem(call));
+    }
+
+    [Fact]
+    public async Task Tournament_match_creation_requires_bound_staff_in_system_and_returns_client_tuple()
+    {
+        var calls = 0;
+        var service = new TourneyMgrService(matches: new TourneyMatchCallbacks(
+            (request, _) =>
+            {
+                calls++;
+                Assert.Equal(0, request.SeriesId);
+                Assert.Equal(540, request.MatchLength);
+                Assert.Equal(0, request.OvertimeLength);
+                return ValueTask.FromResult(new TourneyCreateMatchResult(123, [456, 789], null, null));
+            }, (_, _) => ValueTask.CompletedTask));
+        var owner = new ClientSession { SessionId = 11, CharacterId = 42 };
+        owner.Set("accountRole", new PyLong(GameMasterRoles.Staff));
+        owner.Set("solarsystemid", new PyInt(30_000_142));
+        var result = await service.MachoBindObject(Call("MachoBindObject", owner, new PyInt(30_000_142)));
+        var oid = Assert.Single(BoundObjects.Registrations(result)).Oid;
+        PyValue[] args = [new PyInt(5), new PyInt(0), new PyInt(100), new PyInt(540), new PyInt(0), PyNone.Instance];
+        ServiceCall Create(ClientSession session) => new() { Method = "CreateMatch", Args = args, Session = session, BoundObjectId = oid };
+        var foreign = new ClientSession { SessionId = 12, CharacterId = 43 };
+        foreign.Set("solarsystemid", new PyInt(30_000_142));
+        await Assert.ThrowsAnyAsync<Exception>(() => service.CreateMatch(Create(foreign)).AsTask());
+        owner.Set("accountRole", new PyLong(0));
+        await Assert.ThrowsAnyAsync<Exception>(() => service.CreateMatch(Create(owner)).AsTask());
+        owner.Set("accountRole", new PyLong(GameMasterRoles.Staff));
+        owner.Set("solarsystemid", new PyInt(30_000_143));
+        await Assert.ThrowsAnyAsync<Exception>(() => service.CreateMatch(Create(owner)).AsTask());
+        Assert.Equal(0, calls);
+        owner.Set("solarsystemid", new PyInt(30_000_142));
+        var response = Assert.IsType<PyTuple>(await service.CreateMatch(Create(owner)));
+        Assert.Equal(3, response.Items.Count);
+        Assert.Equal(new PyInt(123), response.Items[0]);
+        Assert.Equal(new PyList([new PyInt(456), new PyInt(789)]), response.Items[1]);
+        Assert.Equal(Py.Tuple(PyNone.Instance, PyNone.Instance), response.Items[2]);
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
     public async Task Direct_service_rows_are_registered_with_reference_fallbacks()
     {
         IService[] services =

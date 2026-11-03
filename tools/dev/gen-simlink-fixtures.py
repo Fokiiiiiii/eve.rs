@@ -31,7 +31,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "RemoveAbyssalParticipant": 110, "RemoveAbyssalParticipantReply": 111, "GetAbyssalParticipantPose": 112, "GetAbyssalParticipantPoseReply": 113,
          "EnsureAbyssalSceneObject": 114, "EnsureAbyssalSceneObjectReply": 115, "EnsureAbyssalRewardCache": 116, "EnsureAbyssalRewardCacheReply": 117,
          "EnsureAbyssalLootContainer": 118, "EnsureAbyssalLootContainerReply": 119, "EnsureAbyssalEnvironmentObject": 120, "EnsureAbyssalEnvironmentObjectReply": 121,
-         "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124, "ServiceNotify": 125}
+         "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124, "ServiceNotify": 125, "GetSceneBody": 126, "GetSceneBodyReply": 127, "EnsureTournamentBeacon": 128, "EnsureTournamentBeaconReply": 129, "RemoveTournamentBeacon": 130, "RemoveTournamentBeaconReply": 131, "QueryTournamentWreck": 132, "QueryTournamentWreckReply": 133, "RemoveTournamentWreck": 134, "RemoveTournamentWreckReply": 135, "MovePublicParticipant": 136, "MovePublicParticipantReply": 137, "EnterPublicParticipant": 138, "EnterPublicParticipantReply": 139, "RegisterTournamentCutoff": 142, "RegisterTournamentCutoffReply": 143, "ReadTournamentCutoff": 144, "ReadTournamentCutoffReply": 145, "ReleaseTournamentCutoff": 146, "ReleaseTournamentCutoffReply": 147, "RegisterTournamentMetrics": 148, "RegisterTournamentMetricsReply": 149, "ReadTournamentMetrics": 150, "ReadTournamentMetricsReply": 151, "ReleaseTournamentMetrics": 152, "ReleaseTournamentMetricsReply": 153}
 
 def slim_value(v):  # a dynamic slim-item field value (protocol 76): a tag (0 none, 1 int, 2 real, 3 bool, 4 text, 5 tuple), then its payload
     tag = v["tag"]
@@ -440,6 +440,54 @@ def build(m):
         return frame(k, u64(m["requestId"]) + scene_key({"scene": m["scene"]}) + i64(m["shipId"]))
     if k == "RemoveAbyssalParticipantReply":
         return frame(k, u64(m["requestId"]) + bytes([1 if m["alreadyAbsent"] else 0]) + s(m.get("error") or ""))
+    if k in ("QueryTournamentWreck", "RemoveTournamentWreck", "QueryTournamentWreckReply", "RemoveTournamentWreckReply"):
+        body = u64(m["requestId"]) + scene_key(m) + i64(m["itemId"])
+        if k == "RemoveTournamentWreck":
+            body += i64(m["ownerId"]) + i64(m["launcherId"]) + struct.pack("<i4d", m["typeId"], *m["center"], m["radius"])
+        if k.endswith("Reply"):
+            body += bytes([2 if m.get("error") is not None else int(m["present"])]) + s(m.get("error") or "")
+        return frame(k, body)
+    if k in ("RegisterTournamentCutoff", "RegisterTournamentCutoffReply", "ReadTournamentCutoff", "ReadTournamentCutoffReply", "ReleaseTournamentCutoff", "ReleaseTournamentCutoffReply"):
+        body = u64(m["requestId"]) + scene_key(m) + i64(m["matchId"]) + i64(m["generation"]) + i64(m["start"]) + i64(m["deadline"])
+        if k == "RegisterTournamentCutoff":
+            body += struct.pack("<H", len(m["roster"]))
+            for character, ship_id in m["roster"]: body += i64(character) + i64(ship_id)
+        if k in ("RegisterTournamentCutoffReply", "ReadTournamentCutoffReply", "ReleaseTournamentCutoffReply"):
+            body += bytes([m["status"]])
+            if k == "ReadTournamentCutoffReply":
+                body += struct.pack("<H", len(m["evidence"]))
+                for character, ship_id, value in m["evidence"]: body += i64(character) + i64(ship_id) + bytes([value])
+            body += s(m.get("error") or "")
+        return frame(k, body)
+    if k == "EnterPublicParticipant":
+        nested = build(m["enter"])
+        return frame(k, u64(m["requestId"]) + s(m["operationId"]) + struct.pack("<I", len(nested)) + nested)
+    if k == "EnterPublicParticipantReply":
+        error = m.get("error")
+        return frame(k, u64(m["requestId"]) + bytes([0 if error is None else 1]) + s(error or ""))
+    if k == "MovePublicParticipant":
+        body = u64(m["requestId"]) + s(m["operationId"]) + u64(m["sessionId"]) + i64(m["shipId"]) + scene_key({"scene": m["source"]}) + scene_key({"scene": m["destination"]}) + bytes([int(m["useAnchor"])])
+        if not m["useAnchor"]: body += struct.pack("<6d", *m["position"], *m["direction"])
+        return frame(k, body)
+    if k == "MovePublicParticipantReply":
+        error = m.get("error")
+        return frame(k, u64(m["requestId"]) + bytes([0 if error is None else 1]) + s(error or ""))
+    if k == "EnsureTournamentBeacon":
+        return frame(k, u64(m["requestId"]) + scene_key(m) + i64(m["itemId"]) + struct.pack("<iiiqi", m["typeId"], m["groupId"], m["categoryId"], int(m["ownerId"]), m["graphicId"]) + s(m["nameValue"]) + struct.pack("<4d", *m["position"], m["radius"]))
+    if k == "RemoveTournamentBeacon":
+        return frame(k, u64(m["requestId"]) + scene_key(m) + i64(m["itemId"]))
+    if k in ("EnsureTournamentBeaconReply", "RemoveTournamentBeaconReply"):
+        error = m.get("error")
+        return frame(k, u64(m["requestId"]) + bytes([0 if error is None else 1]) + s(error or ""))
+    if k == "GetSceneBody":
+        return frame(k, u64(m["requestId"]) + scene_key(m) + i64(m["itemId"]))
+    if k == "GetSceneBodyReply":
+        body = u64(m["requestId"]) + scene_key(m) + i64(m["itemId"])
+        if m.get("error") is None:
+            body += b"\x00" + struct.pack("<iii3d", m["typeId"], m["groupId"], m["categoryId"], *m["position"]) + s("")
+        else:
+            body += b"\x01" + s(m["error"])
+        return frame(k, body)
     if k == "GetAbyssalParticipantPose":
         return frame(k, u64(m["requestId"]) + scene_key({"scene": m["scene"]}) + i64(m["shipId"]))
     if k == "GetAbyssalParticipantPoseReply":
@@ -475,6 +523,19 @@ def build(m):
         for key in ("settledNpcIds", "settledLootIds"):
             ids = m.get(key, [])
             body += struct.pack("<I", len(ids)) + b"".join(i64(value) for value in ids)
+        return frame(k, body)
+    if k in ("RegisterTournamentMetrics", "RegisterTournamentMetricsReply", "ReadTournamentMetrics", "ReadTournamentMetricsReply", "ReleaseTournamentMetrics", "ReleaseTournamentMetricsReply"):
+        roster = m["roster"]
+        body = u64(m["requestId"]) + scene_key(m) + i64(m["matchId"]) + i64(m["generation"]) + i64(m["start"])
+        body += struct.pack("<H", len(roster)) + b"".join(i64(c) + i64(ship) + bytes([team]) for c, ship, team in roster)
+        if k.endswith("Reply"):
+            body += bytes([m["status"]]) + s(m["error"])
+        if k == "ReadTournamentMetricsReply" and m["status"] == 0:
+            body += i64(m["at"]) + bytes([1 if m.get("applied") is not None else 0])
+            if m.get("applied") is not None: body += struct.pack("<2d", *m["applied"])
+            body += struct.pack("<H", len(roster))
+            for c, ship_id, team in roster:
+                body += i64(c) + i64(ship_id) + bytes([team, 0]) + struct.pack("<HHH", 0, 0, 0) + bytes([0])
         return frame(k, body)
     if k == "Hello":
         return frame(k, struct.pack("<H", m["version"]))
@@ -810,6 +871,32 @@ valid = [
      "scene": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 2}, "shipId": "9988400001939"},
     {"name": "participant already absent after retry", "kind": "RemoveAbyssalParticipantReply", "requestId": "49",
      "alreadyAbsent": True, "error": None},
+    {"name": "query tournament wreck", "kind": "QueryTournamentWreck", "requestId": "56", "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000004"},
+    {"name": "tournament wreck exists", "kind": "QueryTournamentWreckReply", "requestId": "56", "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000004", "present": True, "error": None},
+    {"name": "tournament wreck absent", "kind": "QueryTournamentWreckReply", "requestId": "56", "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000004", "present": False, "error": None},
+    {"name": "tournament wreck query refused", "kind": "QueryTournamentWreckReply", "requestId": "56", "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000004", "present": False, "error": "SCENE_NOT_FOUND"},
+    {"name": "tournament wreck already absent", "kind": "RemoveTournamentWreckReply", "requestId": "57", "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000004", "present": False, "error": None},
+    {"name": "tournament wreck removal refused", "kind": "RemoveTournamentWreckReply", "requestId": "57", "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000004", "present": False, "error": "GUARD_MISMATCH"},
+    {"name": "remove guarded tournament wreck", "kind": "RemoveTournamentWreck", "requestId": "57", "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000004", "ownerId": "90000001", "launcherId": "140000001", "typeId": 26557, "center": [1.0, 2.0, 3.0], "radius": 5000.0},
+    {"name": "tournament wreck removed", "kind": "RemoveTournamentWreckReply", "requestId": "57", "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000004", "present": True, "error": None},
+    {"name": "move public pilot to explicit pose", "kind": "MovePublicParticipant", "requestId": "58", "operationId": "01234567-89ab-cdef-0123-456789abcdef", "sessionId": "42", "shipId": "9988400001939", "source": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "destination": {"locationId": 30000144, "instanceId": "0", "roomIndex": 0}, "useAnchor": False, "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0]},
+    {"name": "move public pilot to anchor", "kind": "MovePublicParticipant", "requestId": "59", "operationId": "00000000-0000-0000-0000-000000000000", "sessionId": "42", "shipId": "9988400001939", "source": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "destination": {"locationId": 30000144, "instanceId": "0", "roomIndex": 0}, "useAnchor": True, "position": [0.0, 0.0, 0.0], "direction": [0.0, 0.0, 0.0]},
+    {"name": "public pilot moved", "kind": "MovePublicParticipantReply", "requestId": "58", "error": None},
+    {"name": "public pilot move refused", "kind": "MovePublicParticipantReply", "requestId": "59", "error": "NO_PILOT"},
+    {"name": "ensure tournament beacon", "kind": "EnsureTournamentBeacon", "requestId": "54",
+     "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000003", "typeId": 10645,
+     "groupId": 310, "categoryId": 2, "ownerId": "90000001", "graphicId": 1211, "nameValue": "Celestial Beacon", "position": [1.0, 2.0, 3.0], "radius": 5.0},
+    {"name": "tournament beacon ensured", "kind": "EnsureTournamentBeaconReply", "requestId": "54", "error": None},
+    {"name": "remove tournament beacon", "kind": "RemoveTournamentBeacon", "requestId": "55",
+     "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000003"},
+    {"name": "tournament beacon removed", "kind": "RemoveTournamentBeaconReply", "requestId": "55", "error": None},
+    {"name": "read public scene body", "kind": "GetSceneBody", "requestId": "52",
+     "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000001"},
+    {"name": "public scene body present", "kind": "GetSceneBodyReply", "requestId": "52",
+     "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000001",
+     "typeId": 10645, "groupId": 310, "categoryId": 2, "position": [1.0, 2.0, 3.0], "error": None},
+    {"name": "public scene body absent", "kind": "GetSceneBodyReply", "requestId": "53",
+     "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000002", "error": "SCENE_BODY_NOT_FOUND"},
     {"name": "read a public-system source ship pose", "kind": "GetAbyssalParticipantPose", "requestId": "50",
      "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "shipId": "9988400001940"},
     {"name": "public-system source ship pose receipt", "kind": "GetAbyssalParticipantPoseReply", "requestId": "50",
@@ -1706,6 +1793,43 @@ drone_negative = {"kind": "ShipSpec", "sessionId": "1790646377000015", "ship": d
 def named(name):
     return next(c for c in valid if c["name"] == name)
 
+for entry in [
+    {"name": "public entry at anchor", "kind": "EnterPublicParticipant", "requestId": "60", "operationId": "01234567-89ab-cdef-0123-456789abcdef", "enter": dict(named("enter at the anchor of the system (a game master's relocation, no pose)"))},
+    {"name": "public entry accepted", "kind": "EnterPublicParticipantReply", "requestId": "60", "error": None},
+    {"name": "public entry refused", "kind": "EnterPublicParticipantReply", "requestId": "60", "error": "ALREADY_IN_SPACE"},
+]:
+    entry["hex"] = build(entry).hex()
+    valid.append(entry)
+
+cutoff_identity = {"requestId": "71", "scene": {"locationId": 30000001, "instanceId": "0", "roomIndex": 0}, "matchId": "81", "generation": "2", "start": "133900000000000000", "deadline": "133900006000000000"}
+for name, kind, extra in [
+    ("register cutoff", "RegisterTournamentCutoff", {"roster": [["140000001", "998800001"], ["140000002", "998800002"]]}),
+    ("cutoff registration pending", "RegisterTournamentCutoffReply", {"status": 0, "error": ""}),
+    ("read cutoff", "ReadTournamentCutoff", {}),
+    ("cutoff ready", "ReadTournamentCutoffReply", {"status": 1, "evidence": [["140000001", "998800001", 0], ["140000002", "998800002", 1]], "error": ""}),
+    ("cutoff unavailable", "ReadTournamentCutoffReply", {"status": 2, "evidence": [], "error": ""}),
+    ("release cutoff", "ReleaseTournamentCutoff", {}),
+    ("cutoff released", "ReleaseTournamentCutoffReply", {"status": 0, "error": ""}),
+    ("cutoff release conflict", "ReleaseTournamentCutoffReply", {"status": 3, "error": "CONFLICT"}),
+]:
+    entry = dict(cutoff_identity, name=name, kind=kind, **extra)
+    entry["hex"] = build(entry).hex()
+    valid.append(entry)
+
+metrics_identity = {"requestId":"73", "scene":{"locationId":30000001,"instanceId":"0","roomIndex":0}, "matchId":"81", "generation":"2", "start":"133900000000000000", "roster":[["140000001","998800001",0],["140000002","998800002",1]]}
+for name, kind, extra in [
+    ("register metrics","RegisterTournamentMetrics",{}),
+    ("metrics registered","RegisterTournamentMetricsReply",{"status":0,"error":""}),
+    ("read metrics","ReadTournamentMetrics",{}),
+    ("metrics sample","ReadTournamentMetricsReply",{"status":0,"error":"","at":"133900000010000000","applied":[12.5,0.0]}),
+    ("metrics unavailable","ReadTournamentMetricsReply",{"status":1,"error":""}),
+    ("release metrics","ReleaseTournamentMetrics",{}),
+    ("metrics released","ReleaseTournamentMetricsReply",{"status":0,"error":""}),
+]:
+    entry = dict(metrics_identity, name=name, kind=kind, **extra)
+    entry["hex"] = build(entry).hex()
+    valid.append(entry)
+
 burst = named("activate a command burst (Shield Command Burst I, a Shield Harmonizing charge loaded)")
 burst_cycle = named("module work cycle of a command burst reaching two ships")
 burst_negative = dict(burst, effect=dict(burst["effect"], action=dict(burst["effect"]["action"], action={"kind": "commandBurst", "rangeMeters": -1.0})))
@@ -1903,6 +2027,29 @@ for label, distance, item_id in [("nonfinite distance", float("nan"), "400000001
     invalid.append({"name": "deployment snapshot " + label, "reason": "bad-value", "hex": build(bad).hex()})
 duplicate = dict(deployment_frame, deployment=dict(deployment_frame["deployment"], nearbyObjects=deployment_frame["deployment"]["nearbyObjects"] * 2))
 invalid.append({"name": "deployment snapshot duplicate entity", "reason": "bad-value", "hex": build(duplicate).hex()})
+
+public_entry_frame = named("public entry at anchor")
+invalid.append({"name": "public entry malformed id", "reason": "bad-value", "hex": build(dict(public_entry_frame, operationId="not-a-guid")).hex()})
+nested_bad = bytearray(build(public_entry_frame))
+nested_start = nested_bad.find(build(public_entry_frame["enter"]))
+assert nested_start >= 0
+nested_bad[nested_start + 4] = KINDS["EnterPublicParticipant"]
+invalid.append({"name": "public entry nested non-enter", "reason": "bad-value", "hex": nested_bad.hex()})
+
+wreck_remove_frame = named("remove guarded tournament wreck")
+for label, changes in [("zero owner", {"ownerId": "0"}), ("zero launcher", {"launcherId": "0"}), ("zero type", {"typeId": 0}), ("zero radius", {"radius": 0.0}), ("nonfinite center", {"center": [float("nan"), 2.0, 3.0]})]:
+    invalid.append({"name": "tournament wreck guard " + label, "reason": "bad-value", "hex": build(dict(wreck_remove_frame, **changes)).hex()})
+
+public_move_frame = named("move public pilot to explicit pose")
+for label, operation in [("malformed", "not-a-guid"), ("compact", "0123456789abcdef0123456789abcdef"), ("braced", "{01234567-89ab-cdef-0123-456789abcdef}"), ("whitespace", " 01234567-89ab-cdef-0123-456789abcdef")]:
+    invalid.append({"name": "public move id " + label, "reason": "bad-value", "hex": build(dict(public_move_frame, operationId=operation)).hex()})
+
+cutoff_registration = named("register cutoff")
+for label, roster in [("empty", []), ("duplicate character", [["1", "2"], ["1", "3"]]), ("duplicate ship", [["1", "2"], ["3", "2"]])]:
+    invalid.append({"name": "cutoff roster " + label, "reason": "bad-value", "hex": build(dict(cutoff_registration, roster=roster)).hex()})
+invalid.append({"name": "cutoff unknown status", "reason": "bad-value", "hex": build(dict(named("cutoff registration pending"), status=4)).hex()})
+invalid.append({"name": "cutoff ready without evidence", "reason": "bad-value", "hex": build(dict(named("cutoff ready"), evidence=[])).hex()})
+invalid.append({"name": "cutoff invalid evidence", "reason": "bad-value", "hex": build(dict(named("cutoff ready"), evidence=[["1", "2", 3]])).hex()})
 
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 with open(OUT, "w", encoding="utf-8") as f:

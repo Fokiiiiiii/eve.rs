@@ -73,6 +73,11 @@ impl Scene {
         spec: ShipSpec,
         now: i64,
     ) -> Result<Vec<Out>, SceneError> {
+        let (position, direction) = self.public_anchor_pose(spec.radius);
+        self.enter_in_space(session, spec, position, direction, now)
+    }
+
+    pub(crate) fn public_anchor_pose(&self, radius: f64) -> ([f64; 3], [f64; 3]) {
         let anchor = self
             .system
             .bodies
@@ -80,14 +85,13 @@ impl Scene {
             .find(|body| body.kind == BodyKind::Stargate)
             .or_else(|| self.system.bodies.iter().find(|body| is_dock_body(body)))
             .or_else(|| self.system.bodies.first());
-        let (position, direction) = match anchor {
+        match anchor {
             Some(body) => {
-                let offset = body.radius + spec.radius + ANCHOR_CLEARANCE;
+                let offset = body.radius + radius + ANCHOR_CLEARANCE;
                 ([body.position.x + offset, body.position.y, body.position.z], [-1.0, 0.0, 0.0])
             }
             None => ([1_000_000.0, 0.0, 0.0], [1.0, 0.0, 0.0]),
-        };
-        self.enter_in_space(session, spec, position, direction, now)
+        }
     }
 
     pub fn leave(&mut self, session: SessionId, why: Departure, now: i64) -> Option<Vec<Out>> {
@@ -101,6 +105,13 @@ impl Scene {
             return Some(out);
         }
         let mut pilot = self.pilots.remove(&session)?;
+        self.tournament.departed(
+            super::tournament::TournamentPilot {
+                character_id: pilot.ship.spec.character_id,
+                ship_id: pilot.ship.spec.ship_id,
+            },
+            now,
+        );
         if let Some(brains) = self.brains.as_mut() {
             brains.forget(session);
         }
@@ -240,6 +251,7 @@ impl Scene {
 
         let mut out = self.clear_tether_policy(session, now);
         if let Some(pilot) = self.pilots.remove(&session) {
+            self.tournament_departed(pilot.ship.spec.character_id, pilot.ship.spec.ship_id, now);
             out.push(Out::Docked { session, station_id, condition: Self::condition_of(&pilot, now) });
             out.extend(self.drop_targeting(pilot.ship.spec.ship_id, &pilot.targeting, None, now));
             out.extend(self.announce_departure(session, pilot.ship.spec.ship_id, now));

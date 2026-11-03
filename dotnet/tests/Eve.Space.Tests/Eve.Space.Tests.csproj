@@ -13,6 +13,8 @@
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />
+    <None Include="../../../oracle/fixtures/simlink/tournament-metrics-v89.json" Link="fixtures/simlink/tournament-metrics-v89.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../../oracle/fixtures/simlink/tournament-metrics-v90.json" Link="fixtures/simlink/tournament-metrics-v90.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../../../oracle/fixtures/simlink/messages.json" Link="fixtures/simlink/messages.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

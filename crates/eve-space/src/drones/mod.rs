@@ -205,7 +205,7 @@ pub(crate) struct DroneAi {
     work_control_range: f64,
     work_ready_at: i64,
     work_cycle_id: u64,
-    awaiting_work: bool,
+    pub(crate) awaiting_work: bool,
     auto_salvage: bool,
     work_phase: DroneWorkPhase,
 }

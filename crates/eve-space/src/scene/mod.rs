@@ -21,6 +21,8 @@ mod scan_targets;
 mod session;
 mod structures;
 mod tether;
+pub mod tournament;
+pub(crate) mod tournament_metrics;
 mod warping;
 mod wormholes;
 use self::collision::*;
@@ -764,6 +766,8 @@ pub(crate) struct AbyssalRewardCacheReceipt {
 pub struct Scene {
     system: Arc<SolarSystem>,
     pub(crate) pilots: BTreeMap<SessionId, Pilot>,
+    pub(crate) tournament: tournament::TournamentTracker,
+    pub(crate) tournament_metrics: tournament_metrics::DamageLedger,
     next_stamp: u32,
     /// How many ships have come into the scene.
     pub(crate) entries: u64,
@@ -868,6 +872,8 @@ impl Scene {
         Self {
             system,
             pilots: BTreeMap::new(),
+            tournament: tournament::TournamentTracker::default(),
+            tournament_metrics: tournament_metrics::DamageLedger::default(),
             next_stamp: 0,
             entries: 0,
             boxes: HashMap::new(),

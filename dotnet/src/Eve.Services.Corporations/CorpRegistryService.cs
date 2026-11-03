@@ -8,10 +8,10 @@ namespace Eve.Services.Corporations;
 public sealed record CorpWarDeclarationRequest(long CorporationId,long DeclaredByCharacterId,long AgainstId,long? WarHQId,
     long TimeDeclaredFiletime,long TimeStartedFiletime,long DueFiletime,int BillTypeId,decimal BillAmount,long CreditorId,
     string OperationKey);
-public sealed record CorpWarDeclarationResult(long WarId,long BillId);
+public sealed record CorpWarDeclarationResult(long WarId,long BillId,long DueFiletime = 0,bool Replayed = false);
 
 [Service("corpRegistry")]
-public sealed partial class CorpRegistryService(CorporationStore store,PgCharacterStore characters,Func<long> now,CharacterSessions? characterSessions = null,Eve.Inventory.PgItemStore? items = null,Func<long,bool,int,long?,CancellationToken,ValueTask<IReadOnlyList<PyValue>>>? readRecentCorporationKillmails = null,Func<long,CancellationToken,ValueTask<long>>? readCharacterAllyBaseCost = null,Func<CorpWarDeclarationRequest,CancellationToken,ValueTask<CorpWarDeclarationResult>>? declareWar = null,Func<ServiceCall,long,long,CancellationToken,ValueTask<bool>>? validateWarHQ = null)
+public sealed partial class CorpRegistryService(CorporationStore store,PgCharacterStore characters,Func<long> now,CharacterSessions? characterSessions = null,Eve.Inventory.PgItemStore? items = null,Func<long,bool,int,long?,CancellationToken,ValueTask<IReadOnlyList<PyValue>>>? readRecentCorporationKillmails = null,Func<long,CancellationToken,ValueTask<long>>? readCharacterAllyBaseCost = null,Func<CorpWarDeclarationRequest,CancellationToken,ValueTask<CorpWarDeclarationResult>>? declareWar = null,Func<ServiceCall,long,long,CancellationToken,ValueTask<bool>>? validateWarHQ = null,Func<long,CancellationToken,ValueTask<bool>>? readWarEligibility = null)
 {
     private const int MaxBulkMemberIds = 500;
     private const int MaxBulkCorporationActions = 500;
@@ -30,7 +30,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
             ? await store.GetAsync(c.CorporationId,call.Cancellation) : null;
     [Method("GetCorporation")]
     public async ValueTask<PyValue> GetCorporation(ServiceCall call) => await Current(call) is { } c
-        ? CorporationWire.Row(c,(await store.MembersAsync(c.Id,call.Cancellation)).Count) : PyNone.Instance;
+        ? CorporationWire.Row(c,(await store.MembersAsync(c.Id,call.Cancellation)).Count, readWarEligibility is not null && await readWarEligibility(c.Id,call.Cancellation)) : PyNone.Instance;
 
     private static long Number(PyValue value) => value switch
     {
@@ -151,13 +151,18 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     public async ValueTask<PyValue> GetShareholders(ServiceCall call)
     {
         var corporationId = Number(call.Arg(0));
-        if (corporationId <= 0 ||
-            await Current(call) is not { IsNpc:false,Deleted:false } corporation ||
-            corporation.Id != corporationId ||
-            !await CanAdminister(call))
+        if (corporationId <= 0 || call.Session.CharacterId is not { } actor ||
+            await Current(call) is not { IsNpc:false,Deleted:false } corporation)
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
 
-        var holdings = await store.ShareholdersAsync(corporationId,call.Cancellation);
+        IReadOnlyList<CorporationShareholding> holdings;
+        if (corporation.Id == corporationId)
+        {
+            if (!await CanAdminister(call)) throw new CorporationError("CORPORATION_ACCESS_DENIED");
+            holdings = await store.ShareholdersAsync(corporationId,call.Cancellation);
+        }
+        else
+            holdings = await store.ForeignShareholdersForCeoAsync(corporationId,actor,call.Cancellation);
         return CorporationWire.ShareholdersRowset(holdings.Select(holding =>
             (holding.ShareholderId,holding.CorporationId,holding.Shares)));
     }
@@ -177,7 +182,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
                 !await CanAdminister(call))
                 throw new CorporationError("CORPORATION_ACCESS_DENIED");
             ownerId = corporation.Id;
-            corporationFilter = corporation.Id;
+            corporationFilter = null;
         }
 
         var holdings = await store.SharesByShareholderAsync(ownerId,corporationFilter,call.Cancellation);
@@ -1004,7 +1009,8 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         if (responseText.Length > 1000)
             throw new CorporationError("CORPORATION_APPLICATION_RESPONSE_TOO_LONG");
         var before = await store.MemberAsync(application.CharacterId,call.Cancellation);
-        var updated = await store.RespondAsync(actor,applicationId,status,applicationText,responseText,call.Cancellation);
+        var (updated, changed) = await store.RespondWithOutcomeAsync(actor,applicationId,status,applicationText,responseText,call.Cancellation);
+        if (!changed) return PyNone.Instance;
         var recipients = new HashSet<long> { updated.CharacterId, actor };
         if (await store.GetAsync(corporation,call.Cancellation) is { } corp) recipients.Add(corp.CeoId);
         foreach (var member in await store.MembersAsync(corporation,call.Cancellation))
@@ -1013,7 +1019,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         CorporationNotificationAdapter.ApplicationChanged(characterSessions,call,corporation,updated.CharacterId,
             updated.Id,ApplicationRow(updated),recipients);
         Member? after = status == 2
-            ? new Member(updated.CharacterId,corporation,now(),"",new RoleMasks(),null,0,false,1000)
+            ? await store.MemberAsync(updated.CharacterId,call.Cancellation)
             : before;
         if (before != after)
             CorporationNotificationAdapter.MemberChanged(characterSessions,call,corporation,updated.CharacterId,before,after);
@@ -1945,15 +1951,10 @@ private static int MemberFieldInteger(PyValue value)
           var declaredAt = Number(CorporationWire.Time(now()));
           var startedAt = checked(declaredAt+864_000_000_000L);
           var dueAt = checked(declaredAt+6_048_000_000_000L);
-          long? warHqId = null;
-          if (call.Args.Count > 1 && call.Arg(1) is not PyNone)
-          {
-              var requestedWarHqId = PositiveId(call.Arg(1));
-              if (requestedWarHqId is not { } hqId || validateWarHQ is null ||
-                  !await validateWarHQ(call, corporation.Id, hqId, call.Cancellation))
-                  throw new CorporationError("WAR_HEADQUARTERS_INVALID");
-              warHqId = hqId;
-          }
+          var warHqId = PositiveId(call.Arg(1));
+          if (warHqId is not { } hqId || validateWarHQ is null ||
+              !await validateWarHQ(call, corporation.Id, hqId, call.Cancellation))
+              throw new CorporationError("WAR_HEADQUARTERS_INVALID");
           var callId = Number(call.CallId);
           var operationKey = callId > 0
               ? $"corporation-war:{corporation.Id}:{actor}:{callId}"
@@ -1961,6 +1962,11 @@ private static int MemberFieldInteger(PyValue value)
           var result = await declareWar(new CorpWarDeclarationRequest(
               corporation.Id,actor,againstId.Value,warHqId,declaredAt,startedAt,dueAt,4,100_000_000m,1_000_125,operationKey),
               call.Cancellation);
+          if (result.DueFiletime > 0)
+          {
+              declaredAt = result.DueFiletime - 6_048_000_000_000L;
+              startedAt = declaredAt + 864_000_000_000L;
+          }
           var warRecord = Py.KeyVal(
               ("warID",CorporationMaskValue(result.WarId)),("declaredByID",new PyInt(corporation.Id)),
               ("againstID",new PyInt(againstId.Value)),
@@ -1970,7 +1976,7 @@ private static int MemberFieldInteger(PyValue value)
               ("billID",CorporationMaskValue(result.BillId)),("mutual",new PyInt(0)),
               ("fightingLegalNotified",new PyInt(0)),("openForAllies",new PyInt(0)),
               ("allies",new PyDict([])),("createdFromWarID",PyNone.Instance),("reward",Py.Number(0)));
-          CorporationNotificationAdapter.WarChanged(characterSessions,call,corporation.Id,againstId.Value,warRecord);
+          if (!result.Replayed) CorporationNotificationAdapter.WarChanged(characterSessions,call,corporation.Id,againstId.Value,warRecord);
           return warRecord;
       }
 }

@@ -25,6 +25,7 @@ public sealed partial class SpaceSessions
 
     public async Task<PyValue> DockAsync(ClientSession session, long stationId, CancellationToken cancellationToken)
     {
+        RequirePublicMoveSettled(session);
         var id = (ulong)session.SessionId;
         if (!_pilots.TryGetValue(id, out var pilot))
         {
@@ -220,10 +221,13 @@ public sealed partial class SpaceSessions
         string destination,
         CancellationToken cancellationToken)
     {
+        RequirePublicMoveSettled(session);
         if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
         {
             return None;
         }
+        if (TournamentRestricted?.Invoke(pilot.CharacterId, TournamentRestriction.Warp) == true)
+            throw Notify("Warping is restricted by the tournament referee.");
         if (pilot.SimulationScene.InstanceId > 0) throw Notify(AbyssalWarpBlockedMessage);
         // a ship that its buffs scramble (warpScrambleStatus 104, the warp penalty of a fleet grant) cannot warp: the same refusal as a scrambler's
         if (await ShipAttributeAsync(pilot, Eve.Services.Space.Effects.ModuleAttributes.WarpScrambleStatus, cancellationToken))
@@ -319,6 +323,7 @@ public sealed partial class SpaceSessions
     /// </summary>
     public async Task<PyValue> JumpAsync(ClientSession session, long gateId, long toGateId, long shipId, string? boundObjectId, CancellationToken cancellationToken)
     {
+        RequirePublicMoveSettled(session);
         if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
         {
             throw JumpRefused("NOT_IN_SPACE");
@@ -474,7 +479,7 @@ public sealed partial class SpaceSessions
                     if (!_pilots.Values.Any(other => other.SolarSystemId == jumped.ToSystem))
                         ForgetNpcsOf(jumped.ToSystem);
                 },
-                (result, _) =>
+                async (result, _) =>
                 {
                     var moved = result.Moved!;
                     arrivalFileTime = FileTimeNow();
@@ -482,12 +487,12 @@ public sealed partial class SpaceSessions
                         jumped.ToSystem, arrivalFileTime + JumpCloakTicks, pilot.UndockedFrom, jumpCloak: true)
                     { CynoArrival = pilot.CynoJumpPending };
                     if (!_pilots.TryUpdate((ulong)session.SessionId, arrived, pilot))
-                        return Task.FromResult(false);
+                        return false;
                     pilot.End();
                     ArmProtection(arrived, _jumpCloak);
                     BeginCynoTetherProtection(arrived);
                     SystemEntered?.Invoke(jumped.ToSystem);
-                    ReleaseBoundObjects(session);
+                    await CompleteBoundObjectReleasesAsync(DetachBoundObjects(session), CancellationToken.None);
                     var type = _statics.Type(moved.Ship.TypeId);
                     session.SendNotification(
                         "OnItemChange", "clientID",
@@ -513,7 +518,7 @@ public sealed partial class SpaceSessions
                     // a system with an environment (a wormhole's effects) changes what the ship flies with: the simulation is given it again
                     if (SystemEnvironment is { } environmentOf && (environmentOf(jumped.ToSystem).Count > 0 || environmentOf(pilot.SolarSystemId).Count > 0))
                         Background(() => RefreshEnvironmentAsync(session, pilot.CharacterId, pilot.ShipId));
-                    return Task.FromResult(true);
+                    return true;
                 },
                 null,
                 CancellationToken.None,
@@ -610,13 +615,13 @@ public sealed partial class SpaceSessions
                 },
                 result => result.Moved is not null,
                 applySimulation: null,
-                applySession: (result, token) =>
+                applySession: async (result, token) =>
                 {
                     if (!_pilots.TryRemove((ulong)session.SessionId, out _))
-                        return Task.FromResult(false);
+                        return false;
                     session.SendNotification("OnInvulnCancelled", "shipid", InventoryWire.Id(pilot.ShipId));
                     pilot.End();
-                    ReleaseBoundObjects(session);
+                    await CompleteBoundObjectReleasesAsync(DetachBoundObjects(session), CancellationToken.None);
                     var moved = result.Moved!;
                     var type = _statics.Type(moved.Ship.TypeId);
                     session.SendNotification(
@@ -631,7 +636,7 @@ public sealed partial class SpaceSessions
                         session.Change(("stationid", None), ("structureid", new PyInt(stationId)), ("locationid", new PyInt(pilot.SolarSystemId)), ("solarsystemid", new PyInt(pilot.SolarSystemId)));
                     else
                         session.Change(("stationid", new PyInt(stationId)), ("locationid", new PyInt(stationId)), ("solarsystemid", None));
-                    return Task.FromResult(true);
+                    return true;
                 },
                 notify: (_, _) =>
                 {

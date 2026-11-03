@@ -391,6 +391,10 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
         await using var connection = await _source.OpenConnectionAsync(token);
         return await GetAsync(connection,null,id,false,token);
     }
+    /// <summary>Locks the corporation row within the caller's transaction for membership-sensitive decisions.</summary>
+    public Task<Corporation?> GetForUpdateAsync(NpgsqlConnection connection,NpgsqlTransaction transaction,long id,CancellationToken token = default) =>
+        GetAsync(connection,transaction,id,true,token);
+
     private async Task<Corporation?> GetAsync(NpgsqlConnection connection,NpgsqlTransaction? tx,long id,bool locked,CancellationToken token)
     {
         await using var command = Command(connection,tx,$"SELECT {CorpColumns} FROM {_schema}.corporations WHERE id=$1" + (locked ? " FOR UPDATE" : ""),id);

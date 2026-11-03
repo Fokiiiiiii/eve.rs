@@ -143,7 +143,10 @@ pub fn add_abyssal_scene_object(stamp: u32, system: &SolarSystem, index: usize) 
 pub fn add_abyssal_scene_objects(stamp: u32, system: &SolarSystem) -> Result<Vec<Value>, BallError> {
     (0..system.bodies.len())
         .filter(|&index| {
-            matches!(system.bodies[index].kind, BodyKind::AbyssalConduit | BodyKind::AbyssalEnvironment)
+            matches!(
+                system.bodies[index].kind,
+                BodyKind::AbyssalConduit | BodyKind::AbyssalEnvironment | BodyKind::TournamentBeacon
+            )
         })
         .map(|index| add_abyssal_scene_object(stamp, system, index))
         .collect()

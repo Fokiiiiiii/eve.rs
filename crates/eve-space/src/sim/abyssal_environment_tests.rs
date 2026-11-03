@@ -199,6 +199,7 @@ fn abyssal_suppressor_pulses_at_two_seconds_filters_type_list_and_intercepts_rea
     let shooter = crate::missile_entity::Shooter {
         session: SESSION,
         ship_id: 8_830_001,
+        telemetry_ship_id: 8_830_001,
         module_id: 8_830_007,
         weapon_type_id: 10_629,
         owner_id: 140_000_342,

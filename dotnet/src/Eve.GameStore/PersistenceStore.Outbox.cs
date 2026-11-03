@@ -205,6 +205,8 @@ public sealed partial class PersistenceStore
         {
             RequireTable(operation, expectedTable);
         }
+        if (operation.State == OperationState.Pending && BeforeApplyOperationAsync is { } observer)
+            await observer(connection, tx, operation, ct);
         await ApplyChangesCoreAsync(connection, tx, operation.Table, operation.Upserts, operation.Deletes, ct);
         var appliedAt = await MarkAppliedAsync(connection, tx, operation, ct);
         await tx.CommitAsync(ct);
@@ -257,6 +259,9 @@ public sealed partial class PersistenceStore
     }
 
     /// <summary>Applies a journaled batch and removes it in one transaction. Null when it is already gone.</summary>
+    /// <summary>Optional transaction-bound observer called before a pending journal operation is applied.</summary>
+    public Func<NpgsqlConnection, NpgsqlTransaction, PersistenceOperation, CancellationToken, Task>? BeforeApplyOperationAsync { get; set; }
+
     public async Task<PersistenceOperation?> ReconcileOperationAsync(long operationId, string expectedTable, OwnerFence fence, CancellationToken ct = default)
     {
         await using var connection = await _source.OpenConnectionAsync(ct);
@@ -269,6 +274,8 @@ public sealed partial class PersistenceStore
         }
         RequireOwnedBy(operation, active);
         RequireTable(operation, expectedTable);
+        if (operation.State == OperationState.Pending && BeforeApplyOperationAsync is { } observer)
+            await observer(connection, tx, operation, ct);
         await ApplyChangesCoreAsync(connection, tx, operation.Table, operation.Upserts, operation.Deletes, ct);
         var removed = await ExecuteAsync(
             connection, tx,
@@ -290,6 +297,8 @@ public sealed partial class PersistenceStore
         var recovered = new List<PersistenceOperation>();
         foreach (var operation in await ListOperationsCoreAsync(connection, tx, active, ct))
         {
+            if (operation.State == OperationState.Pending && BeforeApplyOperationAsync is { } observer)
+                await observer(connection, tx, operation, ct);
             await ApplyChangesCoreAsync(connection, tx, operation.Table, operation.Upserts, operation.Deletes, ct);
             var appliedAt = await MarkAppliedAsync(connection, tx, operation, ct);
             recovered.Add(operation with { State = OperationState.Applied, AppliedAt = appliedAt });

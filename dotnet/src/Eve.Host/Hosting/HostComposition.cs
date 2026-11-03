@@ -141,7 +141,8 @@ internal static class HostComposition
             contractWriteModel = new Eve.Host.Persistence.PersistenceContractWriteModel(source, contractItems, contractWallets,
                 clock, contractSchema, contractExpiryJobs, foundations.Events);
             legacy = await LegacyGameStoreComposition.OpenAsync(source);
-            (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks, characterSessions, contractBrokerFeeAdjustment, hasContractManagerRole, canManageCalendarGroupEvent, readCurrentCalendarGroups) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected);
+            var notices = new PublicGateway.NoticeHub();
+            (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks, characterSessions, contractBrokerFeeAdjustment, hasContractManagerRole, canManageCalendarGroupEvent, readCurrentCalendarGroups) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected, notices);
             if (characterSessions is not null)
                 new Eve.Host.Persistence.ContractNotifications(characterSessions).Subscribe(foundations.Events);
             // the public gateway's skill plans: the tables are the skills module's (migration 0009, applied with its store)
@@ -165,7 +166,6 @@ internal static class HostComposition
             // the character titles: the SDE's title ids, and the owned and worn titles of the characters schema
             var titles = await LoadCharacterTitleIdsAsync(source, Eve.Sde.SdeReader.DefaultSchema);
             var titleStore = new Eve.Characters.CharacterTitleStore(source, Env("EVE_CHARACTERS_SCHEMA", Eve.Characters.PgCharacterStore.DefaultSchema));
-            var notices = new PublicGateway.NoticeHub();
             foreach (var (name, handler) in PublicGateway.ShipSkinrGateway.DraftHandlers(source, skinrStore, skinrCatalog, skinrSkills, skinrSkillTypeIds))
                 gateway[name] = handler;
             Eve.Host.PublicGateway.ShipSkinrSequenceJobs.Register(foundations.Scheduler, skinrStore, foundations.Events);

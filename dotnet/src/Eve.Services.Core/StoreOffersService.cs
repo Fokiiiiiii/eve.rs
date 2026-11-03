@@ -7,12 +7,13 @@ using Eve.Services;
 namespace Eve.Services.Core;
 
 /// <summary>
-/// storeManager catalog reads and buy_offer dispatch to an optional settlement provider. The reader returns the existing GameStore
-/// newEdenStore authority snapshot; absent stores use the empty catalog from EVE.js v0.12.9.
+/// storeManager catalog reads and buy_offer dispatch to a settlement provider. The reader returns the existing GameStore
+/// newEdenStore authority snapshot; absent stores use the empty catalog.
 /// </summary>
 public sealed class StoreOffersService(
     Func<CancellationToken, ValueTask<JsonObject?>> readStoreState,
-    Func<StoreOfferPurchaseRequest, CancellationToken, ValueTask<PyValue>>? purchaseOffer = null) : IService
+    Func<StoreOfferPurchaseRequest, CancellationToken, ValueTask<PyValue>>? purchaseOffer = null,
+    Func<long, JsonObject, bool>? supportsPurchase = null) : IService
 {
     private const long DefaultStoreId = 4;
     private readonly Func<CancellationToken, ValueTask<JsonObject?>> readStoreState =
@@ -44,10 +45,10 @@ public sealed class StoreOffersService(
 
         return call.Method switch
         {
-            "get_offers" or "GetOffers" => List(store?["offers"]),
+            "get_offers" or "GetOffers" => Offers(store?["offers"] as JsonArray, storeId, state),
             "get_categories" or "GetCategories" => List(store?["categories"]),
             "get_products" or "GetProducts" => List(store?["products"]),
-            "can_purchase_offer" or "CanPurchaseOffer" => PurchaseAvailability(state, store, call.Arg(0)),
+            "can_purchase_offer" or "CanPurchaseOffer" => PurchaseAvailability(state, store, call.Arg(0), storeId),
             _ => PyNone.Instance,
         };
     }
@@ -62,7 +63,9 @@ public sealed class StoreOffersService(
         var store = (state?["stores"] as JsonObject)?[storeId.ToString(CultureInfo.InvariantCulture)] as JsonObject;
         var offer = FindOffer(store?["offers"] as JsonArray, call.Arg(0));
         if (offer is null || !HasValidProducts(offer))
-            throw new InvalidOperationException("Store offer or product data is unavailable.");
+            return PyNone.Instance;
+        if (!Purchasable(state, storeId, offer))
+            return PyNone.Instance;
 
         if (call.Session.UserId is not { } authenticatedUserId || authenticatedUserId <= 0)
             throw new UnauthorizedAccessException("An authenticated account is required to buy a store offer.");
@@ -82,6 +85,8 @@ public sealed class StoreOffersService(
             AuthenticatedUserId = authenticatedUserId,
             OperationId = call.CallId,
             Products = OfferProducts(offer),
+            OfferData = (JsonObject)offer.DeepClone(),
+            CentsPerPlex = PositiveId((state?["config"] as JsonObject)?["centsPerPlex"], 0),
             ThirdPartyGoodsId = ToPyValue((offer["thirdpartyinfo"] as JsonObject)?["goodsid"]),
         };
         var result = await purchaseOffer(request, call.Cancellation).ConfigureAwait(false);
@@ -110,12 +115,28 @@ public sealed class StoreOffersService(
         ? new PyList([.. values.Select(ToPyValue)])
         : new PyList([]);
 
-    private PyValue PurchaseAvailability(JsonObject? state, JsonObject? store, PyValue requestedValue)
+    private PyValue Offers(JsonArray? offers, long storeId, JsonObject? state)
+    {
+        if (offers is null)
+            return new PyList([]);
+
+        return new PyList([.. offers.Select(node =>
+        {
+            if (node is not JsonObject offer)
+                return ToPyValue(node);
+
+            var visible = (JsonObject)offer.DeepClone();
+            visible["canPurchase"] = Purchasable(state, storeId, offer);
+            return ToPyValue(visible);
+        })]);
+    }
+
+    private PyValue PurchaseAvailability(JsonObject? state, JsonObject? store, PyValue requestedValue, long storeId)
     {
         var storeDisabled = (state?["config"] as JsonObject)?["enabled"] is JsonValue enabledValue &&
             enabledValue.TryGetValue<bool>(out var enabled) && !enabled;
         var offer = storeDisabled ? null : FindOffer(store?["offers"] as JsonArray, requestedValue);
-        var canPurchase = offer is not null && purchaseOffer is not null;
+        var canPurchase = offer is not null && Purchasable(state, storeId, offer);
         var offerId = offer is null ? 0 : PositiveId(offer["id"], 0);
         var storeOfferValue = offer?["storeOfferID"];
         var storeOfferId = JsTruthy(storeOfferValue) ? JsString(storeOfferValue) : null;
@@ -125,6 +146,15 @@ public sealed class StoreOffersService(
             ("offerID", canPurchase ? new PyInt(offerId) : PyNone.Instance),
             ("storeOfferID", canPurchase && storeOfferId is not null ? new PyStr(storeOfferId) : PyNone.Instance),
             ("purchaseLimitedReason", canPurchase ? PyNone.Instance : new PyStr(storeDisabled ? "store_disabled" : offer is null ? "offer_unavailable" : "payment_unavailable")));
+    }
+
+    private bool Purchasable(JsonObject? state, long storeId, JsonObject offer)
+    {
+        var enabled = (state?["config"] as JsonObject)?["enabled"] is not JsonValue enabledValue ||
+            !enabledValue.TryGetValue<bool>(out var value) || value;
+        var offerEnabled = offer["canPurchase"] is JsonValue canPurchaseValue &&
+            canPurchaseValue.TryGetValue<bool>(out var canPurchase) && canPurchase;
+        return enabled && offerEnabled && purchaseOffer is not null && (supportsPurchase?.Invoke(storeId, offer) ?? true);
     }
 
     private static JsonObject? FindOffer(JsonArray? offers, PyValue requestedValue)
@@ -256,6 +286,12 @@ public sealed record StoreOfferPurchaseRequest(
 
     /// <summary>The offer JSON products array, preserved with id, typeId, quantity and optional display fields.</summary>
     public PyValue Products { get; init; } = new PyList([]);
+
+    /// <summary>The trusted catalog offer used to derive price and fulfillment; client-supplied products are display data only.</summary>
+    public JsonObject OfferData { get; init; } = new();
+
+    /// <summary>The catalog's PLEX gateway conversion scale.</summary>
+    public long CentsPerPlex { get; init; }
 
     /// <summary>The optional offer thirdpartyinfo.goodsid value, preserved for the Host fulfillment provider.</summary>
     public PyValue ThirdPartyGoodsId { get; init; } = PyNone.Instance;

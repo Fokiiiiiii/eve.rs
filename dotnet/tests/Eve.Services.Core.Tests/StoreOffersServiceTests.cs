@@ -80,6 +80,7 @@ public sealed class StoreOffersServiceTests
         Assert.Same(call.Kwarg("message"), purchase.Message);
         Assert.Same(call.Kwarg("is_game_time"), purchase.GameTime);
         Assert.Same(call.Kwarg("store_id"), purchase.Store);
+        Assert.Equal(100, (int)purchase.OfferData["id"]!);
         Assert.Equal(new PyStr("cash-sku"), purchase.ThirdPartyGoodsId);
         var products = Assert.IsType<PyList>(purchase.Products);
         Assert.Equal(2, products.Items.Count);
@@ -121,6 +122,18 @@ public sealed class StoreOffersServiceTests
     }
 
     [Fact]
+    public async Task Offer_is_not_advertised_when_the_provider_cannot_settle_it()
+    {
+        var service = Service(StoreState("PLX"), (_, _) => ValueTask.FromResult<PyValue>(new PyStr("granted")), (_, _) => false);
+
+        var offer = Assert.IsType<PyDict>(Assert.Single(Assert.IsType<PyList>(await service.CallAsync(Request("get_offers", new PyInt(4)))).Items));
+        var availability = Assert.IsType<PyDict>(await service.CallAsync(Request("can_purchase_offer", new PyInt(100))));
+
+        Assert.Equal(PyBool.False, offer.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == "canPurchase").Value);
+        Assert.Equal(PyBool.False, availability.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == "canPurchase").Value);
+    }
+
+    [Fact]
     public async Task Buy_offer_fails_when_the_grant_is_rejected()
     {
         var providerCalls = 0;
@@ -135,7 +148,7 @@ public sealed class StoreOffersServiceTests
     }
 
     [Fact]
-    public async Task Buy_offer_rejects_missing_offer_or_invalid_products_before_fulfillment()
+    public async Task Buy_offer_returns_none_for_missing_offer_or_invalid_products_before_fulfillment()
     {
         var providerCalls = 0;
         Func<StoreOfferPurchaseRequest, CancellationToken, ValueTask<PyValue>> provider = (_, _) =>
@@ -144,14 +157,11 @@ public sealed class StoreOffersServiceTests
             return ValueTask.FromResult<PyValue>(new PyStr("redeem-queued"));
         };
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await Service(null, provider).CallAsync(PurchaseCall("USD", storeId: 9)));
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await Service(StoreState("USD", storeId: 9, includeProducts: false), provider)
-                .CallAsync(PurchaseCall("USD", storeId: 9)));
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await Service(StoreState("USD", storeId: 9, validProducts: false), provider)
-                .CallAsync(PurchaseCall("USD", storeId: 9)));
+        Assert.Same(PyNone.Instance, await Service(null, provider).CallAsync(PurchaseCall("USD", storeId: 9)));
+        Assert.Same(PyNone.Instance, await Service(StoreState("USD", storeId: 9, includeProducts: false), provider)
+            .CallAsync(PurchaseCall("USD", storeId: 9)));
+        Assert.Same(PyNone.Instance, await Service(StoreState("USD", storeId: 9, validProducts: false), provider)
+            .CallAsync(PurchaseCall("USD", storeId: 9)));
 
         Assert.Equal(0, providerCalls);
     }
@@ -173,8 +183,9 @@ public sealed class StoreOffersServiceTests
 
     private static StoreOffersService Service(
         JsonObject? state,
-        Func<StoreOfferPurchaseRequest, CancellationToken, ValueTask<PyValue>>? purchaseWriter = null) =>
-        new(_ => ValueTask.FromResult<JsonObject?>(state), purchaseWriter);
+        Func<StoreOfferPurchaseRequest, CancellationToken, ValueTask<PyValue>>? purchaseWriter = null,
+        Func<long, JsonObject, bool>? supportsPurchase = null) =>
+        new(_ => ValueTask.FromResult<JsonObject?>(state), purchaseWriter, supportsPurchase);
 
     private static ServiceCall Request(string method, params PyValue[] args) => new()
     {

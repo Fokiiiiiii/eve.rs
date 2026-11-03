@@ -154,8 +154,14 @@ public sealed partial class AbyssalHostFlowTests
             Assert.Equal(3,Assert.IsType<PyInt>(timer.Items[0]).Value); Assert.Equal(Py.FileTimeFromUnixMs(matchStart),Assert.IsType<PyLong>(timer.Items[1]).Value);
             var bans=Assert.IsType<PyTuple>(early.Items[3]); Assert.Empty(Assert.IsType<PyList>(bans.Items[0]).Items);
             Assert.Single(Assert.IsType<PyList>(bans.Items[1]).Items);
-            await Task.Delay(1500);
-            var details=Assert.IsType<PyTuple>(await Invoke("GetFancyDetails",new PyLong(matchId)));
+            var deadline = System.Diagnostics.Stopwatch.StartNew();
+            PyTuple details;
+            do
+            {
+                details = Assert.IsType<PyTuple>(await Invoke("GetFancyDetails", new PyLong(matchId)));
+                if (details.Items[0] is not PyNone && details.Items[1] is not PyNone) break;
+                await Task.Delay(100);
+            } while (deadline.Elapsed < TimeSpan.FromSeconds(15));
             var red=Assert.IsType<PyTuple>(details.Items[0]); var blue=Assert.IsType<PyTuple>(details.Items[1]);
             Assert.Equal(6,red.Items.Count); Assert.Equal(6,blue.Items.Count);
             var redValues=red.Items.Select(v=>Assert.IsType<PyReal>(v).Value).ToArray();

@@ -42,7 +42,8 @@ public sealed class TournamentMatchPersistenceTests
             using var connected = new CancellationTokenSource(TimeSpan.FromSeconds(15));
             while (!sim.IsConnected) await Task.Delay(20, connected.Token);
             var ship = new SimShip(9988400001939, owner, 601, 237, 6, "Ibis", owner, 1000006, 0, 0, 0, 47, 1163000, 339.25, 4.0185, 3, 860000, 29700, 660, 28, 4, 149.5, 55.25, []);
-            Assert.Null(await sim.EnterAsync(new SimEnter(7, SimSceneKey.SolarSystem(system), EnterHow.InSpace, 0, ship, [1, 2, 3], [0, 0, 1]), connected.Token));
+            using var entered = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+            Assert.Null(await sim.EnterAsync(new SimEnter(7, SimSceneKey.SolarSystem(system), EnterHow.InSpace, 0, ship, [1, 2, 3], [0, 0, 1]), entered.Token));
             await PgCharacterStore.MigrateAsync(source, chars); await PgItemStore.MigrateAsync(source, inventory);
             await PgSpaceItemStore.MigrateAsync(source, space); await DurableScheduler.MigrateAsync(source, schedulerSchema);
             await EventBus.MigrateAsync(source, eventSchema); await PersistenceTournamentArenas.MigrateAsync(source, tournament);

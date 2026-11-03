@@ -20,12 +20,10 @@ EveJS 261028.1 initializes and retains npcTimerExpiresAtMs (src/server/src/servi
 
 ## Checks completed
 
-- dotnet build dotnet/src/Eve.Services.Space/Eve.Services.Space.csproj --no-restore -p:UseSharedCompilation=false — passed.
-- dotnet build dotnet/tests/Eve.Services.Space.Tests/Eve.Services.Space.Tests.csproj --no-restore --no-dependencies -p:UseSharedCompilation=false — passed after building the changed service, updating the test output copy.
-- dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore -p:UseSharedCompilation=false — passed; package restore was needed because this worktree initially had no Host test assets.
-- With eve_p4 and tools/dev/db-lock.sh: the NPC combat Space test, the Host GetClientStates registered-route test, and Npc_and_disapproval_timers_persist_renew_and_expire each passed (1 passed, 0 skipped).
+- After merging origin/main at 08bdb59d, builds of Eve.Services.Space.Tests, Eve.Host.Tests, and Eve.Services.Crimewatch.Tests passed with 0 warnings and 0 errors. These transitively build the changed Space service and Host project.
+- With eve_p4 and tools/dev/db-lock.sh, the NPC combat Space test, the Host GetClientStates registered-route test, and Npc_and_disapproval_timers_persist_renew_and_expire each passed after the merge (1 passed, 0 skipped each).
 - An initial Crimewatch PgFact invocation without EVE_PG_URL skipped; it was rerun with the required eve_p4 URL and passed.
 
 ## Remaining checks
 
-The graphical V24.01 client has not been run. Before push, check python3 tools/dev/ci-status.py status; only push when main is green. After fetch/merge, rerun the touched build and the three DB-locked focused tests, push only HEAD:main, then watch the Actions run and update this handoff with its result.
+The graphical V24.01 client has not been run. At the latest gate check, origin/main was a09f496b4d8e and CI run 1462 had failed `Rust tests` and `Fixtures match their generators`; other jobs were still running. Its fixture failure is in `tools/dev/gen-simlink-fixtures.py` (`ship` referenced before assignment), outside this change. The red gate blocks pushing this work until a newer completed main CI run is green. Then fetch/merge origin/main, rerun the touched builds and three DB-locked focused tests, push only HEAD:main, watch the Actions run to completion, and update this handoff with its result.

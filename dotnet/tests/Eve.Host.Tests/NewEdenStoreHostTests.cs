@@ -6,6 +6,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Core;
+using Eve.Skills;
 using Eve.Sde;
 using Eve.Universe;
 using Eve.Trade;
@@ -87,9 +88,46 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
     {
         private readonly System.Collections.Concurrent.ConcurrentQueue<PyValue> _packets = new();
         public int Count => _packets.Count;
+        public PyValue[] Packets => _packets.ToArray();
         public void Send(PyValue packet) => _packets.Enqueue(packet);
-
     }
+
+    private static List<(string Name, PyValue[] Args)> Notifications(Sink sink)
+    {
+        var result = new List<(string Name, PyValue[] Args)>();
+        foreach (var packet in sink.Packets.OfType<PyObject>())
+        {
+            var state = ((PyTuple)packet.Args).Items;
+            if (state[0] is not PyInt { Value: MachoMessage.Notification }) continue;
+            var address = ((PyTuple)((PyObject)state[2]).Args).Items;
+            var body = (PyBuffer)((PyTuple)((PyTuple)state[4]).Items[0]).Items[1];
+            var inner = (PyTuple)MarshalCodec.Decode(body.Value.ToArray());
+            result.Add((JsSemantics.StringValue(address[1])!,
+                [.. ((PyTuple)((PyTuple)inner.Items[1]).Items[1]).Items]));
+        }
+        return result;
+    }
+
+    private async Task<long> CreateQaRedeemTokenAsync(
+        IService userSvc, ClientSession session, int typeId, params (string Name, PyValue Value)[] values)
+    {
+        session.Set("accountRole", new PyLong(GameMasterRoles.Qa));
+        var fields = new List<KeyValuePair<PyValue, PyValue>>
+        {
+            new(new PyStr("typeID"), new PyInt(typeId)),
+        };
+        fields.AddRange(values.Select(field => new KeyValuePair<PyValue, PyValue>(new PyStr(field.Name), field.Value)));
+        var created = Assert.IsType<PyObject>(await userSvc.CallAsync(
+            Call(session, "CreateRedeemTokenQA", 800, [], new PyDict(fields))));
+        return Integer(ValueField(Assert.IsType<PyDict>(created.Args), "tokenID"));
+    }
+
+    private static long Integer(PyValue value) => value switch
+    {
+        PyInt integer => integer.Value,
+        PyLong integer => integer.Value,
+        _ => throw new InvalidOperationException($"Expected an integer, got {value}."),
+    };
 
     private static HostSettings Settings() => new(
         "", "disabled", new ClusterOptions { NewCharacterExperienceEnabled = false, NewCharacterExperienceMode = "disabled" },
@@ -200,7 +238,14 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
         Assert.Single(Assert.IsType<PyObjectEx>(await userSvc.CallAsync(Call(session, "GetRedeemTokens", 13, []))).List);
 
         session.Set("stationid", new PyLong(station.Id));
+        var notificationCount = Notifications(sink).Count;
         var claimed = Assert.IsType<PyDict>(await userSvc.CallAsync(Call(session, "ClaimRedeemTokens", 14, claimArgs)));
+        Assert.Equal(notificationCount, Notifications(sink).Count);
+        session.RunAfterResponse();
+        var delivered = Assert.Single(Notifications(sink).Skip(notificationCount));
+        Assert.Equal("OnItemChange", delivered.Name);
+        Assert.Empty(Assert.IsType<PyDict>(delivered.Args[1]).Entries);
+        Assert.Same(PyNone.Instance, delivered.Args[2]);
         Assert.Empty(Assert.IsType<PyObjectEx>(await userSvc.CallAsync(Call(session, "GetRedeemTokens", 15, []))).List);
         var created = Assert.IsType<PyDict>(Assert.Single(Assert.IsType<PyList>(ValueField(claimed, "itemsCreated")).Items));
         var claimedItem = await items.GetAsync(((PyLong)ValueField(created, "itemID")).Value);
@@ -210,6 +255,116 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
 
         await userSvc.CallAsync(Call(session, "ReverseRedeem", 16, [new PyLong(plexItemId)]));
         Assert.Empty(Assert.IsType<PyObjectEx>(await userSvc.CallAsync(Call(session, "GetRedeemTokens", 17, []))).List);
+    }
+
+    [PgFact]
+    public async Task Redeeming_a_blueprint_preserves_copy_research_and_notifies_the_online_inventory()
+    {
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var host = await BuildHostAsync();
+        var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
+        var pilot = await CreatePilotAsync(source, station, "Redeem blueprint pilot");
+        var sink = new Sink();
+        var session = new ClientSession(sink) { SessionId = 404, UserId = 1, CharacterId = pilot };
+        session.Set("stationid", new PyLong(station.Id));
+        host.CharacterSessions!.Enter(pilot, session);
+        var userSvc = host.Registry.Lookup("userSvc")!;
+        var tokenId = await CreateQaRedeemTokenAsync(userSvc, session, 681,
+            ("quantity", new PyInt(1)),
+            ("blueprintRuns", new PyInt(5)),
+            ("blueprintMaterialLevel", new PyInt(10)),
+            ("blueprintProductivityLevel", new PyInt(20)),
+            ("label", new PyStr("redeemed blueprint")));
+        var request = new PyList([Py.Dict(
+            ("tokenID", new PyLong(tokenId)),
+            ("massTokenID", new PyLong(tokenId)),
+            ("typeID", new PyInt(681)))]);
+        var result = Assert.IsType<PyDict>(await userSvc.CallAsync(
+            Call(session, "ClaimRedeemTokens", 801, [request, new PyLong(pilot)])));
+        var created = Assert.IsType<PyDict>(Assert.Single(Assert.IsType<PyList>(ValueField(result, "itemsCreated")).Items));
+        var item = await new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"))
+            .GetAsync(Integer(ValueField(created, "itemID")));
+        Assert.NotNull(item);
+        Assert.True(item.Singleton);
+        Assert.True(item.BlueprintCopy);
+        Assert.Equal(5, item.BlueprintRuns);
+        Assert.Equal(10, item.MaterialEfficiency);
+        Assert.Equal(20, item.TimeEfficiency);
+        Assert.Equal("redeemed blueprint", item.CustomInfo);
+        session.RunAfterResponse();
+        Assert.Equal("OnItemChange", Assert.Single(Notifications(sink)).Name);
+    }
+
+    [PgFact]
+    public async Task Redeeming_the_daily_skill_point_type_grants_the_sde_amount_once()
+    {
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var host = await BuildHostAsync();
+        var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
+        var pilot = await CreatePilotAsync(source, station, "Daily skill points pilot");
+        var sink = new Sink();
+        var session = new ClientSession(sink) { SessionId = 405, UserId = 1, CharacterId = pilot };
+        session.Set("stationid", new PyLong(station.Id));
+        host.CharacterSessions!.Enter(pilot, session);
+        var userSvc = host.Registry.Lookup("userSvc")!;
+        var tokenId = await CreateQaRedeemTokenAsync(userSvc, session, 49810);
+        var skills = new PgSkillStore(source, Schema("EVE_SKILLS_SCHEMA"));
+        var items = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
+        var previousBalance = await skills.FreeSkillPointsAsync(pilot);
+        var request = new PyList([Py.Dict(
+            ("tokenID", new PyLong(tokenId)),
+            ("massTokenID", new PyLong(tokenId)),
+            ("typeID", new PyInt(49810)))]);
+        var result = Assert.IsType<PyDict>(await userSvc.CallAsync(
+            Call(session, "ClaimRedeemTokens", 802, [request, new PyLong(pilot)])));
+        Assert.Equal(new PyInt(100_000), ValueField(result, "skillpoints"));
+        Assert.Empty(Assert.IsType<PyList>(ValueField(result, "itemsCreated")).Items);
+        Assert.Equal(previousBalance + 100_000, await skills.FreeSkillPointsAsync(pilot));
+        Assert.DoesNotContain(await items.OwnedByAsync(pilot), item => item.TypeId == 49810);
+        Assert.Empty(Notifications(sink));
+        session.RunAfterResponse();
+        var notification = Assert.Single(Notifications(sink));
+        Assert.Equal("OnFreeSkillPointsChanged", notification.Name);
+        Assert.Equal(new PyInt(checked((int)(previousBalance + 100_000))), notification.Args[0]);
+        var replay = Assert.IsType<PyDict>(await userSvc.CallAsync(
+            Call(session, "ClaimRedeemTokens", 803, [request, new PyLong(pilot)])));
+        Assert.Equal(new PyInt(100_000), ValueField(replay, "skillpoints"));
+        Assert.Equal(previousBalance + 100_000, await skills.FreeSkillPointsAsync(pilot));
+    }
+
+    [PgFact]
+    public async Task Expired_and_unavailable_redeem_tokens_return_the_client_error_rows()
+    {
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var host = await BuildHostAsync();
+        var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
+        var pilot = await CreatePilotAsync(source, station, "Expired redeem pilot");
+        var session = new ClientSession(new Sink()) { SessionId = 406, UserId = 1, CharacterId = pilot };
+        session.Set("stationid", new PyLong(station.Id));
+        host.CharacterSessions!.Enter(pilot, session);
+        var userSvc = host.Registry.Lookup("userSvc")!;
+        var unavailableId = await CreateQaRedeemTokenAsync(userSvc, session, CertificateTypeId,
+            ("available", PyBool.False));
+        var expiredId = await CreateQaRedeemTokenAsync(userSvc, session, CertificateTypeId,
+            ("expiry", new PyLong(1)));
+        var request = new PyList([
+            Py.Dict(("tokenID", new PyLong(unavailableId)), ("massTokenID", new PyLong(unavailableId)), ("typeID", new PyInt(CertificateTypeId))),
+            Py.Dict(("tokenID", new PyLong(expiredId)), ("massTokenID", new PyLong(expiredId)), ("typeID", new PyInt(CertificateTypeId))),
+        ]);
+        var result = Assert.IsType<PyDict>(await userSvc.CallAsync(
+            Call(session, "ClaimRedeemTokens", 804, [request, new PyLong(pilot)])));
+        var errors = Assert.IsType<PyList>(ValueField(result, "errors"));
+        Assert.Equal(2, errors.Items.Count);
+        foreach (var (error, expectedId) in errors.Items.Zip(new[] { unavailableId, expiredId }))
+        {
+            var fields = Assert.IsType<PyTuple>(error).Items;
+            Assert.Equal(expectedId, Integer(fields[0]));
+            var keyval = Assert.IsType<PyDict>(Assert.IsType<PyObject>(fields[1]).Args);
+            Assert.Equal(new PyStr("RedeemTokenNotFound"), ValueField(keyval, "msg"));
+            Assert.Empty(Assert.IsType<PyDict>(ValueField(keyval, "dict")).Entries);
+        }
+        Assert.Empty(Assert.IsType<PyList>(ValueField(result, "itemsCreated")).Items);
+        Assert.Empty(await new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA")).OwnedByAsync(pilot));
     }
 
     [PgFact]

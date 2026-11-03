@@ -278,7 +278,34 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
         Assert.Empty(await QueuesAsync(host, alphaSession, 49));
     }
 
-    private static async Task<long> QaCertificateAsync(IService userSvc, ClientSession session, long callId, long quantity)
+    [PgFact]
+    public async Task Unavailable_and_expired_certificates_cannot_activate_through_the_direct_rpc()
+    {
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var host = await HostComposition.BuildAsync(Settings());
+        var accounts = Accounts(source);
+        var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
+        var accountId = await NewAccountAsync(accounts, "invalid-certificate-holder");
+        var pilot = await CreatePilotAsync(source, station, "Invalid Certificate Pilot", accountId);
+        var sink = new Packets();
+        var session = Enter(host, sink, accountId, pilot, 551);
+        var userSvc = host.Registry.Lookup("userSvc")!;
+        var unavailable = await QaCertificateAsync(userSvc, session, 51, quantity: 1, available: false);
+        var expired = await QaCertificateAsync(userSvc, session, 52, quantity: 1, expiry: DateTimeOffset.UtcNow.AddDays(-1).ToFileTime());
+
+        Assert.Empty(Assert.IsType<PyObjectEx>(await userSvc.CallAsync(Call(session, "GetRedeemTokens", 53, []))).List);
+        var tokens = new PyList(
+        [
+            Py.Tuple(new PyLong(unavailable), PyNone.Instance),
+            Py.Tuple(new PyLong(expired), PyNone.Instance),
+        ]);
+        Assert.Empty(await QueuesAfterActivationAsync(userSvc, session, 54, pilot, tokens));
+        Assert.Empty(await QueuesAsync(host, session, 55));
+        Assert.Equal(0, sink.Count("OnMultipleCharactersTrainingUpdated"));
+    }
+
+    private static async Task<long> QaCertificateAsync(
+        IService userSvc, ClientSession session, long callId, long quantity, bool available = true, long expiry = 0)
     {
         session.Set("accountRole", new PyLong(Eve.Services.GameMasterRoles.Qa)); // the QA token tool is staff-only
         var call = new ServiceCall
@@ -290,6 +317,8 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
                 new(new PyStr("typeID"), new PyInt(34133)),
                 new(new PyStr("quantity"), new PyInt(quantity)),
                 new(new PyStr("soulbound"), PyBool.True),
+                new(new PyStr("available"), available ? PyBool.True : PyBool.False),
+                new(new PyStr("expiry"), new PyLong(expiry)),
                 new(new PyStr("label"), new PyStr("MCT certificate")),
                 new(new PyStr("description"), new PyStr("test")),
             ]),

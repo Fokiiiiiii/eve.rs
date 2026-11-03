@@ -883,7 +883,12 @@ fn a_ship_that_docks_is_lost_when_it_has_docked() {
     let (_, t) = locked(&mut scene, t, B, ship_id(A));
     let accepted = scene.command(A, Command::Dock { station_id: STATION }, t);
     assert!(accepted.iter().any(|o| matches!(o, Out::Accepted { command: 4, .. })), "{accepted:?}");
-    let (out, _) = poll_until(&mut scene, t, 6.0);
+    let (ready, ready_at) = poll_until(&mut scene, t, 6.0);
+    assert!(ready.iter().any(|o| matches!(
+        o,
+        Out::Accepted { command: crate::scene::DOCKING_READY_COMMAND, at: STATION, .. }
+    )));
+    let out = scene.command(A, Command::DockingDecision { station_id: STATION, allowed: true }, ready_at);
     let kinds: Vec<String> = out
         .iter()
         .filter(|o| matches!(o, Out::Docked { .. }) || matches!(o, Out::Notify { name: "OnTarget", .. }))

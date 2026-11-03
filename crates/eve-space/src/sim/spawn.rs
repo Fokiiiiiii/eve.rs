@@ -811,6 +811,16 @@ impl Sim {
     }
 
     /// A player whose ship was destroyed is not in space any more; its scene keeps its ballpark until the host gives it a capsule (`Respawn`) or it leaves.
+    pub(super) fn forget_docked(&mut self, outs: &[Out]) -> Vec<Out> {
+        let mut teardown = Vec::new();
+        for out in outs {
+            if let Out::Docked { session, .. } = out {
+                teardown.extend(self.forget(*session));
+            }
+        }
+        teardown
+    }
+
     pub(super) fn forget_the_destroyed(&mut self, outs: &[Out]) {
         for out in outs {
             if let Out::Destroyed { session, .. } = out
@@ -1024,12 +1034,7 @@ impl Sim {
             outs.extend(scene.advance_abyssal_environment(now));
             outs.extend(scene.advance_abyssal_boundary(now));
         }
-        let mut teardown = Vec::new();
-        for out in &outs {
-            if let Out::Docked { session, .. } = out {
-                teardown.extend(self.forget(*session));
-            }
-        }
+        let teardown = self.forget_docked(&outs);
         self.forget_the_destroyed(&outs);
         outs.extend(teardown);
         let mut messages: Vec<Message> = Self::messages(outs);

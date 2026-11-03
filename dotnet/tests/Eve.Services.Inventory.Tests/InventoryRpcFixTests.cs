@@ -182,6 +182,59 @@ public class InventoryRpcFixTests
     }
 
     [PgFact]
+    public async Task MultiAdd_to_personal_hangar_accepts_the_client_hangar_flag()
+    {
+        await using var rig = await Rig.CreateAsync(activeShip: true);
+        var ship = (await rig.Ships.LoadAsync(Rig.Character))!.Ship.Id;
+        var first = await rig.AddAsync(Rig.Tritanium, Rig.Character, ship, CharacterShips.CargoFlag, quantity: 10);
+        var second = await rig.AddAsync(Rig.Tritanium, Rig.Character, ship, CharacterShips.CargoFlag, quantity: 20);
+        var sink = new Sink();
+        var session = Session(sink);
+        session.Set("shipid", InventoryWire.Id(ship));
+        var bound = await rig.HangarAsync(session);
+        sink.Packets.Clear();
+
+        Assert.Equal(PyBool.True, await Call(rig, session, "MultiAdd", bound,
+            [new PyList([InventoryWire.Id(first), InventoryWire.Id(second)]), InventoryWire.Id(ship)],
+            ("flag", new PyInt(ItemFlags.Hangar))));
+
+        Assert.Equal((Rig.Station, ItemFlags.Hangar, 10L),
+            ((await rig.Items.GetAsync(first))!.LocationId, (await rig.Items.GetAsync(first))!.Flag, (await rig.Items.GetAsync(first))!.Quantity));
+        Assert.Equal((Rig.Station, ItemFlags.Hangar, 20L),
+            ((await rig.Items.GetAsync(second))!.LocationId, (await rig.Items.GetAsync(second))!.Flag, (await rig.Items.GetAsync(second))!.Quantity));
+        var notifications = sink.Packets.Where(packet => Named(packet, "OnItemChange")).ToArray();
+        Assert.Equal(2, notifications.Length);
+        Assert.Equal([first, second], notifications.Select(packet =>
+            Number(Fields(Assert.Single(Descendants(packet).OfType<PyPackedRow>()))["itemID"])));
+    }
+
+    [PgFact]
+    public async Task MultiAdd_rejects_nested_cargo_containers_before_moving_any_items()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var containerType = await ContainerType(rig);
+        var container = await rig.AddAsync(containerType, Rig.Character, Rig.Station, singleton: true);
+        var item = await rig.AddAsync(Rig.Tritanium, Rig.Character, Rig.Station, quantity: 10);
+        var nested = await rig.AddAsync(containerType, Rig.Character, Rig.Station, singleton: true);
+        var sink = new Sink();
+        var session = Session(sink);
+        var bound = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, InventoryWire.Id(container)));
+        sink.Packets.Clear();
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(rig, session, "MultiAdd", bound,
+            [new PyList([InventoryWire.Id(item), InventoryWire.Id(nested)]), InventoryWire.Id(Rig.Station)]));
+
+        Assert.Equal("CustomNotify", refusal.Error.UserErrorMessage);
+        var payload = ((PyTuple)((PyTuple)((PyObjectEx)refusal.Error.Payload).Header).Items[1]).Items;
+        Assert.Equal("A cargo container cannot be placed inside another cargo container.",
+            ((PyStr)((PyDict)payload[1]).Entries.Single().Value).Value);
+        Assert.Empty(sink.Packets);
+        Assert.Empty(await rig.Items.InContainerAsync(container));
+        Assert.Equal(Rig.Station, (await rig.Items.GetAsync(item))!.LocationId);
+        Assert.Equal(Rig.Station, (await rig.Items.GetAsync(nested))!.LocationId);
+    }
+
+    [PgFact]
     public async Task MultiAdd_qty_precedence_null_fallback_and_invalid_amount_keep_existing_authority_rules()
     {
         await using var rig = await Rig.CreateAsync(activeShip: true);

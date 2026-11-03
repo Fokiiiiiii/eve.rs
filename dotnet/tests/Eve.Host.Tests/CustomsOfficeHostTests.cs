@@ -282,7 +282,7 @@ public sealed class CustomsOfficeHostTests : IAsyncLifetime
             Assert.Equal("CustomsOfficeNotFound", invalidTaxShape.Error.UserErrorMessage);
             var invalidTaxRate = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
                 UpdateOrbitalSettingsAsync(host, pilot, corporationId, 1, officeId, 7, Rates(1.01, 0.19), 4, false, true, null));
-            Assert.Equal("CustomsOfficeNotFound", invalidTaxRate.Error.UserErrorMessage);
+            Assert.Equal("CustomsOfficeAccessDenied", invalidTaxRate.Error.UserErrorMessage);
             Assert.Equal(0L, await ScalarAsync<long>(source, $"""
                 SELECT count(*) FROM {Schema("EVE_EVENTS_SCHEMA")}.outbox WHERE topic = 'structure.reinforcement_changed'
                 """));

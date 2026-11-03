@@ -161,7 +161,7 @@ public sealed partial class PlanetOrbitalRegistryService(
             PyLong integer => integer.Value,
             _ => double.NaN,
         } : double.NaN;
-        return double.IsFinite(value) && value is >= 0 and <= 1 ? value : throw InvalidSettings();
+        return double.IsFinite(value) ? value : throw InvalidSettings();
     }
 
     private static Exception InvalidSettings() => MachoErrors.ThrowUserError("CustomsOfficeNotFound");

@@ -2991,10 +2991,13 @@ public class SpaceServiceTests
     [PgFact]
     public async Task A_jump_that_cannot_be_done_is_the_message_the_reference_tells()
     {
-        using var timers = CooldownElapsedTimers();
+        using var timers = new Eve.Scheduler.LocalTimers(delay: (_, token) => Task.Delay(Timeout.InfiniteTimeSpan, token));
         var (rig, character, session) = await DockedAsync(localTimers: timers);
         await using var _ = rig;
         await InSpaceAsync(rig, session);
+        Assert.True(rig.Space.Transitions.SessionChangeActive((ulong)session.SessionId));
+        rig.Space.Transitions.EndSessionChange((ulong)session.SessionId);
+        Assert.False(rig.Space.Transitions.SessionChangeActive((ulong)session.SessionId));
         var oid = await rig.BindBeyonceAsync(session);
         Events.Of(session);
 

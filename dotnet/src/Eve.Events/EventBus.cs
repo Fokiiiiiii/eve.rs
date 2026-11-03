@@ -390,7 +390,7 @@ public sealed class EventBus
                 {
                     return (delivered, outcome);
                 }
-                // dead-lettered: the subscriber goes on with the next event
+                // dead-lettered or already handled by another pump: continue from the current cursor
             }
             finally
             {
@@ -401,15 +401,23 @@ public sealed class EventBus
         return (delivered, null);
     }
 
-    /// <summary>Counts a failed try. Returns when to try again, or <c>null</c> when the event was given up and skipped.</summary>
+    /// <summary>Counts a failed try only while the event is pending. Returns when to try again, or <c>null</c> when no retry is needed.</summary>
     private async Task<long?> RecordFailureAsync(Subscription subscription, DomainEvent @event, Exception error)
     {
         var message = error.Message.Length > 2000 ? error.Message[..2000] : error.Message;
         await using var connection = await _source.OpenConnectionAsync(CancellationToken.None);
         await using var transaction = await connection.BeginTransactionAsync(CancellationToken.None);
-        var failures = (int)(await Sql.ScalarAsync(connection, transaction, Q("""
-            UPDATE {schema}.subscribers SET failures = failures + 1, last_error = $2, updated_ms = $3 WHERE name = $1 RETURNING failures
-            """), CancellationToken.None, subscription.Name, message, Now))!;
+        var failureResult = await Sql.ScalarAsync(connection, transaction, Q("""
+            UPDATE {schema}.subscribers SET failures = failures + 1, last_error = $2, updated_ms = $3
+            WHERE name = $1 AND cursor_id < $4
+            RETURNING failures
+            """), CancellationToken.None, subscription.Name, message, Now, @event.Id);
+        if (failureResult is null)
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            return null;
+        }
+        var failures = (int)failureResult;
         long? retryAt = null;
         if (failures >= _options.MaxAttempts)
         {

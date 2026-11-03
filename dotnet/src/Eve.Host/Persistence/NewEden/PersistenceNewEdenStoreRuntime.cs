@@ -64,7 +64,7 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
 
     private long DeliveryStationId(Eve.Characters.Character recipient, long characterId)
     {
-        var docked = sessions.Of(characterId)?.GetInt("stationid") ?? sessions.Of(characterId)?.GetInt("structureid") ?? 0;
+        var docked = sessions.Of(characterId)?.DockedLocationId ?? 0;
         return docked > 0 ? docked : recipient.HomeStationId;
     }
 
@@ -283,8 +283,7 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
                 ? checked(maximumId + 1)
                 : 700_000_000 + Math.Abs(nowUnixMs() % 100_000_000);
             var tokenKey = tokenId.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            var isAutoInject = soulbound || typeId is 52996 or 73277 or 54652 or 54653 or 63303 or 63304 or
-                54650 or 63305 or 63306 or 63307 or 63308 or 54654 or 63309;
+            var isAutoInject = soulbound || IsAutoInjectRedeemType(typeId);
             var token = new JsonObject
             {
                 ["tokenID"] = tokenId,
@@ -590,6 +589,10 @@ public sealed partial class PersistenceNewEdenStoreRuntime(
                 ? isAvailable ? PyBool.True : PyBool.False : PyBool.True),
             ("isAutoInject", row["isAutoInject"] is JsonValue autoInject && autoInject.TryGetValue<bool>(out var enabled) && enabled
                 ? PyBool.True : PyBool.False));
+
+    private static bool IsAutoInjectRedeemType(long typeId) =>
+        typeId is 52996 or 73277 or 54652 or 54653 or 63303 or 63304 or
+            54650 or 63305 or 63306 or 63307 or 63308 or 54654 or 63309;
 
     private static bool IsRedeemTokenAvailable(JsonObject token, long nowFileTime)
     {

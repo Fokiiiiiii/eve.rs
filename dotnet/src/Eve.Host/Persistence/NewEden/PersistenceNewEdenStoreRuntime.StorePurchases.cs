@@ -78,31 +78,34 @@ public sealed partial class PersistenceNewEdenStoreRuntime
             return PyNone.Instance;
         }
 
-        var accountId = request.AuthenticatedUserId;
+        var payerAccountId = request.AuthenticatedUserId;
         var payer = await characters.GetAsync(payerId, cancellationToken).ConfigureAwait(false);
         var target = await characters.GetAsync(targetId, cancellationToken).ConfigureAwait(false);
-        if (payer is null || target is null || payer.AccountId != accountId || target.AccountId != accountId)
+        if (payer is null || target is null || payer.AccountId != payerAccountId)
             return PyNone.Instance;
+        var fulfillmentAccountId = checked((uint)target.AccountId);
 
-        Eve.Inventory.ItemType? itemType = null;
-        var deliveryLocationId = 0L;
-        if (terms.Kind == "item")
-        {
-            itemType = await itemTypes.GetAsync(terms.TypeId, cancellationToken).ConfigureAwait(false);
-            deliveryLocationId = DeliveryStationId(target, targetId);
-            if (itemType is null || deliveryLocationId <= 0 || itemQuantity <= 0)
-                return PyNone.Instance;
-        }
+        var itemType = terms.Kind == "item"
+            ? await itemTypes.GetAsync(terms.TypeId, cancellationToken).ConfigureAwait(false)
+            : null;
+        if (terms.Kind == "item" && (itemType is null || itemQuantity <= 0))
+            return PyNone.Instance;
+        var giftLocationId = terms.Kind == "item" && targetId != payerId
+            ? DeliveryStationId(target, targetId)
+            : 0;
+        if (terms.Kind == "item" && targetId != payerId && giftLocationId <= 0)
+            return PyNone.Instance;
 
         var fingerprint = RequestFingerprint(
             request, terms, quantity, payerId, targetId, request.CentsPerPlex);
-        var receiptKey = $"{accountId.ToString(CultureInfo.InvariantCulture)}:{callId.ToString(CultureInfo.InvariantCulture)}";
+        var receiptKey = $"{payerAccountId.ToString(CultureInfo.InvariantCulture)}:{callId.ToString(CultureInfo.InvariantCulture)}";
         var now = DateTimeOffset.FromUnixTimeMilliseconds(nowUnixMs());
         var balance = 0L;
         var balanceCents = 0L;
         DateTimeOffset? previousSubscriptionEnd = null;
         DateTimeOffset? subscriptionEnd = null;
-        ItemRow? deliveredItem = null;
+        var redeemGateHeld = false;
+        var giftedItemRows = new List<ItemRow>();
 
         try
         {
@@ -119,48 +122,109 @@ public sealed partial class PersistenceNewEdenStoreRuntime
                 return ToPyValue(savedResponse);
             }
 
-            if (totalCost == 0)
+            var accountCharacters = await characters.ForAccountAsync(checked((int)payerAccountId), cancellationToken).ConfigureAwait(false);
+            var accountCharacterIds = accountCharacters.Select(character => character.Id).ToArray();
+            if (!accountCharacterIds.Contains(payerId))
+                return PyNone.Instance;
+            var plexBalances = await plexWallets.ReadPlexBalancesAsync(
+                connection, transaction, accountCharacterIds, cancellationToken).ConfigureAwait(false);
+            balance = plexBalances.Values.Aggregate(0L, (sum, ownerBalance) => checked(sum + ownerBalance));
+            if (totalCost > balance)
+                return PyNone.Instance;
+
+            var remainingCost = totalCost;
+            foreach (var ownerId in accountCharacterIds.OrderBy(ownerId => ownerId == payerId ? 0 : 1).ThenBy(ownerId => ownerId))
             {
-                var balances = await plexWallets.ReadPlexBalancesAsync(
-                    connection, transaction, [payerId], cancellationToken).ConfigureAwait(false);
-                if (!balances.TryGetValue(payerId, out balance))
-                    return PyNone.Instance;
+                if (remainingCost == 0)
+                    break;
+                if (!plexBalances.TryGetValue(ownerId, out var ownerBalance) || ownerBalance <= 0)
+                    continue;
+                var debit = Math.Min(ownerBalance, remainingCost);
+                await plexWallets.AdjustPlexAsync(
+                    connection, transaction, ownerId, -debit, cancellationToken).ConfigureAwait(false);
+                remainingCost -= debit;
             }
-            else
-            {
-                balance = await plexWallets.AdjustPlexAsync(
-                    connection, transaction, payerId, -totalCost, cancellationToken).ConfigureAwait(false);
-            }
+            if (remainingCost != 0)
+                return PyNone.Instance;
+            balance -= totalCost;
             balanceCents = checked(balance * request.CentsPerPlex);
 
             switch (terms.Kind)
             {
                 case "omega":
                     previousSubscriptionEnd = await ReadSubscriptionEndForUpdateAsync(
-                        connection, transaction, checked((uint)accountId), cancellationToken).ConfigureAwait(false);
+                        connection, transaction, fulfillmentAccountId, cancellationToken).ConfigureAwait(false);
                     if (previousSubscriptionEnd is null)
                         return PyNone.Instance;
                     subscriptionEnd = await accountDirectory.ExtendSubscriptionAsync(
-                        connection, transaction, checked((uint)accountId), subscriptionExtension, now, cancellationToken).ConfigureAwait(false);
+                        connection, transaction, fulfillmentAccountId, subscriptionExtension, now, cancellationToken).ConfigureAwait(false);
                     break;
                 case "mct":
                     previousSubscriptionEnd = await ReadSubscriptionEndForUpdateAsync(
-                        connection, transaction, checked((uint)accountId), cancellationToken).ConfigureAwait(false);
+                        connection, transaction, fulfillmentAccountId, cancellationToken).ConfigureAwait(false);
                     if (previousSubscriptionEnd is not { } mctSubscriptionEnd || mctSubscriptionEnd <= now)
                         return PyNone.Instance;
                     for (var unit = 0L; unit < mctSlotCount; unit++)
                         await GrantTrainingSlotAsync(
-                            connection, transaction, accountId, null, TimeSpan.FromDays(terms.DurationDays), now, cancellationToken).ConfigureAwait(false);
+                            connection, transaction, fulfillmentAccountId, null, TimeSpan.FromDays(terms.DurationDays), now, cancellationToken).ConfigureAwait(false);
                     break;
                 case "item":
                 {
-                    var itemId = await items.CreateAsync(
-                        connection, transaction,
-                        new NewItem(terms.TypeId, targetId, deliveryLocationId, ItemFlags.Hangar, itemQuantity),
-                        cancellationToken).ConfigureAwait(false);
-                    deliveredItem = new ItemRow(
-                        itemId, terms.TypeId, targetId, deliveryLocationId, ItemFlags.Hangar,
-                        itemQuantity, itemType!.GroupId, itemType.CategoryId);
+                    if (targetId != payerId)
+                    {
+                        var giftType = itemType!;
+                        var singleton = giftType.CategoryId is 6 or 9;
+                        var itemCount = singleton ? itemQuantity : 1;
+                        var stackQuantity = singleton ? 1 : itemQuantity;
+                        for (var index = 0L; index < itemCount; index++)
+                        {
+                            var itemId = await items.CreateAsync(
+                                connection, transaction,
+                                new NewItem(terms.TypeId, targetId, giftLocationId, ItemFlags.Hangar,
+                                    stackQuantity, singleton),
+                                cancellationToken).ConfigureAwait(false);
+                            giftedItemRows.Add(new ItemRow(itemId, terms.TypeId, targetId, giftLocationId,
+                                ItemFlags.Hangar, singleton ? -1 : stackQuantity, giftType.GroupId, giftType.CategoryId));
+                        }
+                        break;
+                    }
+
+                    await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    redeemGateHeld = true;
+                    var redeemState = await store.ReadRowAsync(
+                        connection, transaction, RedeemTable, RedeemRow, cancellationToken).ConfigureAwait(false);
+                    var accounts = JsonNode.Parse(redeemState ?? "{}") as JsonObject ?? new JsonObject();
+                    var accountKey = fulfillmentAccountId.ToString(CultureInfo.InvariantCulture);
+                    var accountTokens = accounts[accountKey] as JsonObject ?? new JsonObject();
+                    var tokenId = checked(MaximumRedeemTokenId(accountTokens) + 1);
+                    var tokenKey = tokenId.ToString(CultureInfo.InvariantCulture);
+                    var availableAt = Py.FileTimeFromUnixMs(now.ToUnixTimeMilliseconds());
+                    accountTokens[tokenKey] = new JsonObject
+                    {
+                        ["tokenID"] = tokenId,
+                        ["massTokenID"] = tokenId,
+                        ["typeID"] = terms.TypeId,
+                        ["quantity"] = itemQuantity,
+                        ["stationID"] = 0,
+                        ["dateTime"] = availableAt.ToString(CultureInfo.InvariantCulture),
+                        ["expireDateTime"] = 0,
+                        ["availableDateTime"] = availableAt.ToString(CultureInfo.InvariantCulture),
+                        ["label"] = "",
+                        ["description"] = "",
+                        ["blueprintRuns"] = 0,
+                        ["blueprintMaterialLevel"] = 0,
+                        ["blueprintProductivityLevel"] = 0,
+                        ["soulbound"] = false,
+                        ["available"] = true,
+                        ["addedByContext"] = 0,
+                        ["addedByExtra"] = null,
+                        ["isAutoInject"] = IsAutoInjectRedeemType(terms.TypeId),
+                        ["status"] = "pending",
+                    };
+                    accounts[accountKey] = accountTokens;
+                    await store.ApplyChangesAsync(
+                        connection, transaction, RedeemTable,
+                        [new RowUpsert(RedeemRow, accounts.ToJsonString())], [], ownerFence, cancellationToken).ConfigureAwait(false);
                     break;
                 }
             }
@@ -184,6 +248,11 @@ public sealed partial class PersistenceNewEdenStoreRuntime
         {
             return PyNone.Instance;
         }
+        finally
+        {
+            if (redeemGateHeld)
+                _gate.Release();
+        }
 
         var transactionAt = DateTimeOffset.FromUnixTimeMilliseconds(nowUnixMs());
         var plexDeltaCents = checked(-totalCost * request.CentsPerPlex);
@@ -202,18 +271,27 @@ public sealed partial class PersistenceNewEdenStoreRuntime
             var oldGrade = oldEnd > now ? 1L : 0L;
             var newGrade = newEnd > now ? 1L : 0L;
             var endFileTime = Py.FileTimeFromUnixMs(newEnd.ToUnixTimeMilliseconds());
-            foreach (var session in sessions.OfUser(accountId))
+            foreach (var session in sessions.OfUser(fulfillmentAccountId))
                 SubscriptionMgrService.AnnouncePurchasedSubscription(session, oldGrade, newGrade, endFileTime);
         }
         else if (terms.Kind == "mct")
         {
-            foreach (var session in sessions.OfUser(accountId))
+            foreach (var session in sessions.OfUser(fulfillmentAccountId))
                 SkillNotifications.MultipleCharactersTrainingUpdated(session);
         }
-        else if (deliveredItem is { } item && sessions.Of(targetId) is { } targetSession)
+        else if (terms.Kind == "item" && targetId != payerId)
         {
-            targetSession.SendNotification(
-                "OnItemChange", "clientID", InventoryWire.PackedRow(item), new PyDict([]), PyNone.Instance);
+            if (sessions.Of(targetId) is { } recipientSession)
+            {
+                foreach (var row in giftedItemRows)
+                    recipientSession.SendNotification("OnItemChange", "clientID", InventoryWire.PackedRow(row),
+                        new PyDict([]), PyNone.Instance);
+            }
+        }
+        else if (terms.Kind == "item")
+        {
+            foreach (var session in sessions.OfUser(fulfillmentAccountId))
+                session.SendNotification("OnRedeemingTokensUpdated", "userid");
         }
 
         return ToPyValue(PurchaseResponse(terms, quantity, totalCost, balance, payerId, targetId));

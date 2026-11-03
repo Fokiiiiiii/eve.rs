@@ -1,6 +1,9 @@
+using Eve.Corporations;
 using Eve.Host;
+using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
+using Eve.Sde;
 using Eve.Services;
 
 namespace Eve.Host.Tests;
@@ -40,6 +43,24 @@ public sealed class IndustryMonitorNoticeTests
         ("inputLocation", Py.KeyVal(
             ("itemID", new PyInt(inputLocationId)), ("ownerID", new PyInt(20)),
             ("flagID", new PyInt(4)), ("canTake", PyBool.True))));
+
+    private static PyValue MonitorRequest(long blueprintId, long facilityId, long inputLocationId, int flagId,
+        long? ownerId, bool canTake, long clientCharacterId, long clientCorporationId)
+    {
+        var input = new List<(string, PyValue)>
+        {
+            ("itemID", new PyInt(inputLocationId)),
+            ("flagID", new PyInt(flagId)),
+            ("canTake", canTake ? PyBool.True : PyBool.False),
+        };
+        if (ownerId is { } suppliedOwnerId)
+            input.Add(("ownerID", new PyInt(suppliedOwnerId)));
+        return Py.KeyVal(
+            ("blueprintID", new PyInt(blueprintId)), ("blueprintTypeID", new PyInt(681)),
+            ("activityID", new PyInt(1)), ("facilityID", new PyInt(facilityId)),
+            ("characterID", new PyInt(clientCharacterId)), ("corporationID", new PyInt(clientCorporationId)),
+            ("inputLocation", Py.KeyVal(input.ToArray())));
+    }
 
     private static PyValue Request(long callId, string service, string method, params PyValue[] args)
     {
@@ -104,6 +125,203 @@ public sealed class IndustryMonitorNoticeTests
         registry.Register(monitors);
         registry.Register(inventory);
         return new PacketDispatcher(registry);
+    }
+
+    private static PacketDispatcher DispatcherFor(IndustryMonitorRpcService monitors)
+    {
+        var registry = new ServiceRegistry();
+        registry.Register(monitors);
+        return new PacketDispatcher(registry);
+    }
+
+    private static async Task<PyTuple> ConnectAsync(PacketDispatcher dispatcher, ClientSession session,
+        Capture capture, PyValue request, long callId)
+    {
+        Assert.True(await dispatcher.DispatchAsync(Request(callId, "industryMonitor", "ConnectJob", request), session));
+        return Assert.IsType<PyTuple>(ResponseResult(capture.Packets[^1]));
+    }
+
+    [Fact]
+    public async Task Database_backed_personal_monitor_uses_session_owner_and_facility_for_materials_and_notices()
+    {
+        await using var rig = await IndustryRig.CreateAsync();
+        var owner = await rig.Owner();
+        var anotherCharacter = await rig.Owner();
+        var blueprintId = await rig.Give(owner, 681, 1, blueprint: true);
+        await rig.Give(owner, 34, 5);
+        await rig.CreateItem(new NewItem(34, owner, rig.Station.Id + 1, ItemFlags.Hangar, 13));
+        await rig.CreateItem(new NewItem(35, owner, rig.Station.Id, ItemFlags.Cargo, 17));
+        await rig.Sde.BuildAsync();
+        var itemTypes = new ItemTypeCatalog(rig.Sde);
+        var monitors = new IndustryMonitorRpcService(items: rig.ItemStore, itemTypes: itemTypes,
+            authorizedInputLocation: HostInventoryServiceFactory.IndustryMonitorLocationOf(
+                rig.ItemStore, itemTypes, rig.Corporations, rig.Offices));
+        var dispatcher = DispatcherFor(monitors);
+        var ownerCapture = new Capture();
+        var zeroOwnerCapture = new Capture();
+        var deniedCapture = new Capture();
+        var wrongFacilityCapture = new Capture();
+        var wrongLocationCapture = new Capture();
+        var ownerSession = NewSession(owner, 3001, ownerCapture);
+        var zeroOwnerSession = NewSession(owner, 3002, zeroOwnerCapture);
+        var deniedSession = NewSession(anotherCharacter, 3003, deniedCapture);
+        var wrongFacilitySession = NewSession(owner, 3004, wrongFacilityCapture);
+        var wrongLocationSession = NewSession(owner, 3005, wrongLocationCapture);
+
+        var missingOwner = await ConnectAsync(dispatcher, ownerSession, ownerCapture,
+            MonitorRequest(blueprintId, rig.Station.Id, rig.Station.Id, ItemFlags.Hangar, null, false,
+                anotherCharacter, 98_000_001), 101);
+        var zeroOwner = await ConnectAsync(dispatcher, zeroOwnerSession, zeroOwnerCapture,
+            MonitorRequest(blueprintId, rig.Station.Id, rig.Station.Id, ItemFlags.Hangar, 0, false,
+                anotherCharacter, 98_000_001), 102);
+        foreach (var response in new[] { missingOwner, zeroOwner })
+        {
+            Assert.Equal(2, response.Items.Count);
+            Assert.Contains(Assert.IsType<PyDict>(response.Items[1]).Entries,
+                entry => entry.Key == new PyInt(34) && entry.Value == new PyInt(5));
+        }
+
+        var forgedOwner = await ConnectAsync(dispatcher, deniedSession, deniedCapture,
+            MonitorRequest(blueprintId, rig.Station.Id, rig.Station.Id, ItemFlags.Hangar, 0, true,
+                owner, 98_000_001), 103);
+        Assert.Empty(Assert.IsType<PyDict>(forgedOwner.Items[1]).Entries);
+
+        var wrongFacility = await ConnectAsync(dispatcher, wrongFacilitySession, wrongFacilityCapture,
+            MonitorRequest(blueprintId, rig.Station.Id + 1, rig.Station.Id, ItemFlags.Hangar, owner, true,
+                owner, 0), 104);
+        var wrongLocation = await ConnectAsync(dispatcher, wrongLocationSession, wrongLocationCapture,
+            MonitorRequest(blueprintId, rig.Station.Id, rig.Station.Id, ItemFlags.Cargo, owner, true,
+                owner, 0), 105);
+        Assert.Empty(Assert.IsType<PyDict>(wrongFacility.Items[1]).Entries);
+        Assert.Empty(Assert.IsType<PyDict>(wrongLocation.Items[1]).Entries);
+
+        foreach (var capture in new[] { ownerCapture, zeroOwnerCapture, deniedCapture, wrongFacilityCapture, wrongLocationCapture })
+            capture.Clear();
+        await rig.CreateItem(new NewItem(34, owner, rig.Station.Id, ItemFlags.Hangar, 2));
+        await monitors.InventoryChangedAsync(ownerSession, CancellationToken.None);
+        await monitors.InventoryChangedAsync(zeroOwnerSession, CancellationToken.None);
+        await monitors.InventoryChangedAsync(deniedSession, CancellationToken.None);
+        await monitors.InventoryChangedAsync(wrongFacilitySession, CancellationToken.None);
+        await monitors.InventoryChangedAsync(wrongLocationSession, CancellationToken.None);
+
+        foreach (var (capture, expectedId) in new[]
+        {
+            (ownerCapture, missingOwner.Items[0]),
+            (zeroOwnerCapture, zeroOwner.Items[0]),
+        })
+        {
+            var notice = Notification(Assert.Single(capture.Packets, IsNotification));
+            Assert.Equal("OnIndustryMaterials", notice.Name);
+            Assert.Equal(new PyStr("clientID"), notice.IdType);
+            Assert.Equal(new PyInt(owner), notice.UserId);
+            Assert.Equal(2, notice.Args.Length);
+            Assert.Equal(expectedId, notice.Args[0]);
+            Assert.Contains(Assert.IsType<PyDict>(notice.Args[1]).Entries,
+                entry => entry.Key == new PyInt(34) && entry.Value == new PyInt(7));
+        }
+        Assert.DoesNotContain(deniedCapture.Packets, IsNotification);
+        Assert.DoesNotContain(wrongFacilityCapture.Packets, IsNotification);
+        Assert.DoesNotContain(wrongLocationCapture.Packets, IsNotification);
+    }
+
+    [Fact]
+    public async Task Database_backed_corporation_monitor_requires_factory_manager_and_query_take_for_the_selected_division()
+    {
+        await using var rig = await IndustryRig.CreateAsync(includeOffices: true);
+        var actor = await rig.Owner(5_000_000m);
+        var anotherCharacter = await rig.Owner();
+        var corporationId = await rig.Corporation(actor);
+        var officeFolderId = await rig.CreateItem(new NewItem(CorporationOfficeStore.OfficeFolderTypeId,
+            corporationId, rig.Station.Id, ItemFlags.Hangar, 1, true));
+        var office = await rig.RentOffice(corporationId, officeFolderId);
+        var blueprintId = await rig.CreateItem(new NewItem(681, corporationId, officeFolderId,
+            ItemFlags.CorpSAG1, 1, true));
+        await rig.CreateItem(new NewItem(34, corporationId, officeFolderId, ItemFlags.CorpSAG1, 5));
+        await rig.CreateItem(new NewItem(35, corporationId, officeFolderId, ItemFlags.CorpSAG1, 3));
+        await rig.CreateItem(new NewItem(34, corporationId, officeFolderId, ItemFlags.CorpSAG2, 99));
+        await rig.Sde.BuildAsync();
+        var itemTypes = new ItemTypeCatalog(rig.Sde);
+        var monitors = new IndustryMonitorRpcService(items: rig.ItemStore, itemTypes: itemTypes,
+            authorizedInputLocation: HostInventoryServiceFactory.IndustryMonitorLocationOf(
+                rig.ItemStore, itemTypes, rig.Corporations, rig.Offices));
+        var dispatcher = DispatcherFor(monitors);
+        var queryOnlyCapture = new Capture();
+        var takeOnlyCapture = new Capture();
+        var noManagerCapture = new Capture();
+        var allowedCapture = new Capture();
+        var noMemberCapture = new Capture();
+        var otherDivisionCapture = new Capture();
+        var wrongFacilityCapture = new Capture();
+        var queryOnlySession = NewSession(actor, 3101, queryOnlyCapture);
+        var takeOnlySession = NewSession(actor, 3102, takeOnlyCapture);
+        var noManagerSession = NewSession(actor, 3103, noManagerCapture);
+        var allowedSession = NewSession(actor, 3104, allowedCapture);
+        var noMemberSession = NewSession(anotherCharacter, 3105, noMemberCapture);
+        var otherDivisionSession = NewSession(actor, 3106, otherDivisionCapture);
+        var wrongFacilitySession = NewSession(actor, 3107, wrongFacilityCapture);
+        const long factoryManager = CorporationRoles.FactoryManager;
+        const long queryDivisionOne = 1L << 20;
+        const long takeDivisionOne = 1L << 13;
+
+        await rig.SetCorporationRoles(actor, factoryManager, queryDivisionOne);
+        var queryOnly = await ConnectAsync(dispatcher, queryOnlySession, queryOnlyCapture,
+            MonitorRequest(blueprintId, rig.Station.Id, office.OfficeId, ItemFlags.CorpSAG1,
+                corporationId, true, anotherCharacter, 98_000_002), 201);
+        Assert.Empty(Assert.IsType<PyDict>(queryOnly.Items[1]).Entries);
+
+        await rig.SetCorporationRoles(actor, factoryManager, takeDivisionOne);
+        var takeOnly = await ConnectAsync(dispatcher, takeOnlySession, takeOnlyCapture,
+            MonitorRequest(blueprintId, rig.Station.Id, office.OfficeId, ItemFlags.CorpSAG1,
+                corporationId, true, anotherCharacter, 98_000_002), 202);
+        Assert.Empty(Assert.IsType<PyDict>(takeOnly.Items[1]).Entries);
+
+        await rig.SetCorporationRoles(actor, 0, queryDivisionOne | takeDivisionOne);
+        var noManager = await ConnectAsync(dispatcher, noManagerSession, noManagerCapture,
+            MonitorRequest(blueprintId, rig.Station.Id, office.OfficeId, ItemFlags.CorpSAG1,
+                0, true, anotherCharacter, 98_000_002), 203);
+        Assert.Empty(Assert.IsType<PyDict>(noManager.Items[1]).Entries);
+
+        await rig.SetCorporationRoles(actor, factoryManager, queryDivisionOne | takeDivisionOne);
+        var allowed = await ConnectAsync(dispatcher, allowedSession, allowedCapture,
+            MonitorRequest(blueprintId, rig.Station.Id, office.OfficeId, ItemFlags.CorpSAG1,
+                0, true, anotherCharacter, 98_000_002), 204);
+        var allowedMaterials = Assert.IsType<PyDict>(allowed.Items[1]);
+        Assert.Equal(2, allowedMaterials.Entries.Count);
+        Assert.Contains(allowedMaterials.Entries, entry => entry.Key == new PyInt(34) && entry.Value == new PyInt(5));
+        Assert.Contains(allowedMaterials.Entries, entry => entry.Key == new PyInt(35) && entry.Value == new PyInt(3));
+
+        var noMember = await ConnectAsync(dispatcher, noMemberSession, noMemberCapture,
+            MonitorRequest(blueprintId, rig.Station.Id, office.OfficeId, ItemFlags.CorpSAG1,
+                corporationId, true, actor, corporationId), 205);
+        var otherDivision = await ConnectAsync(dispatcher, otherDivisionSession, otherDivisionCapture,
+            MonitorRequest(blueprintId, rig.Station.Id, office.OfficeId, ItemFlags.CorpSAG2,
+                corporationId, true, actor, corporationId), 206);
+        var wrongFacility = await ConnectAsync(dispatcher, wrongFacilitySession, wrongFacilityCapture,
+            MonitorRequest(blueprintId, rig.Station.Id + 1, office.OfficeId, ItemFlags.CorpSAG1,
+                corporationId, true, actor, corporationId), 207);
+        Assert.Empty(Assert.IsType<PyDict>(noMember.Items[1]).Entries);
+        Assert.Empty(Assert.IsType<PyDict>(otherDivision.Items[1]).Entries);
+        Assert.Empty(Assert.IsType<PyDict>(wrongFacility.Items[1]).Entries);
+
+        foreach (var capture in new[] { queryOnlyCapture, takeOnlyCapture, noManagerCapture, allowedCapture,
+                     noMemberCapture, otherDivisionCapture, wrongFacilityCapture })
+            capture.Clear();
+        await rig.CreateItem(new NewItem(34, corporationId, officeFolderId, ItemFlags.CorpSAG1, 2));
+        await monitors.InventoryChangedAsync(allowedSession, CancellationToken.None);
+        await monitors.InventoryChangedAsync(noMemberSession, CancellationToken.None);
+        var allowedNotice = Notification(Assert.Single(allowedCapture.Packets, IsNotification));
+        Assert.Equal("OnIndustryMaterials", allowedNotice.Name);
+        Assert.Equal(allowed.Items[0], allowedNotice.Args[0]);
+        var notifiedMaterials = Assert.IsType<PyDict>(allowedNotice.Args[1]);
+        Assert.Contains(notifiedMaterials.Entries, entry => entry.Key == new PyInt(34) && entry.Value == new PyInt(7));
+        Assert.Contains(notifiedMaterials.Entries, entry => entry.Key == new PyInt(35) && entry.Value == new PyInt(3));
+        Assert.DoesNotContain(noMemberCapture.Packets, IsNotification);
+
+        await rig.SetCorporationRoles(actor, factoryManager, queryDivisionOne);
+        allowedCapture.Clear();
+        await monitors.InventoryChangedAsync(allowedSession, CancellationToken.None);
+        var revokedNotice = Notification(Assert.Single(allowedCapture.Packets, IsNotification));
+        Assert.Empty(Assert.IsType<PyDict>(revokedNotice.Args[1]).Entries);
     }
 
     [Fact]

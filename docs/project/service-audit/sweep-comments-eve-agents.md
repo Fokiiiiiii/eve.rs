@@ -15,8 +15,9 @@
 
 ## Local verification
 
-- `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/src/Eve.Agents/Eve.Agents.csproj -p:UseSharedCompilation=false -m:1`: passed, 0 warnings and 0 errors.
-- `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Agents.Tests/Eve.Agents.Tests.csproj -p:UseSharedCompilation=false -m:1`: passed, 0 warnings and 0 errors.
-- `Eve.Agents.Tests`: 19 passed, 0 failed, 0 skipped.
-- The referencing `Eve.Services.Core.Tests` classes (`Arc29StepsTests`, `EpicArcDialogueTests`, `AgentResearchDialogueTests`, `StorylineOffersTests`, `AgentLocatorDialogueTests`, `AgentDialogueTests`, `MissionDungeonRuntimeTests`, and `AgentMissionStoreTests`) passed 49/49; `MissionCompletionTransactionTests` and `AgentMissionDispatchTests` passed 13/13 in `Eve.Host.Tests`. All database-backed runs used `eve_p3` through `tools/dev/db-lock.sh`.
+- After merging `origin/main` at `5f804ac193d00c65dd830469962ac4170ed0b9f2`, both project builds passed with 0 warnings and 0 errors. The same database-backed selection passed again: Eve.Agents.Tests 19/19, the eight referencing Eve.Services.Core.Tests classes 49/49, and MissionCompletionTransactionTests plus AgentMissionDispatchTests 13/13. All reported 0 skipped; database runs used `eve_p3` through `tools/dev/db-lock.sh`.
 - No graphical-client session was used for this comment-only cleanup.
+
+## Main CI gate
+
+- The newest completed main workflow is run 1475 for that upstream commit and is red. Its failing steps include the Rust workspace test, generated-fixture comparison (`EnsureAbyssalScene`), and live undock race checks. The red-main gate blocks pushing this unrelated comment cleanup; no push was made.

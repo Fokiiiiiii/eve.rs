@@ -42,8 +42,6 @@ public sealed partial class SpaceSessions
     {
         RequirePublicMoveSettled(session);
         var id = (ulong)session.SessionId;
-        if (order == TargetingOrder.Lock)
-            CancelSafeLogoff(session, reasonCode: null, failedConditions: ["UI/Inflight/SafeLogoff/SafeLogoffCantTargetLockBody"]);
         if (!_pilots.TryGetValue(id, out var pilot))
         {
             return null;
@@ -71,17 +69,29 @@ public sealed partial class SpaceSessions
             return TargetingResult.Refusal(reply.Reason ?? "REFUSED", reply.TargetType, reply.DesiredRange, reply.ActualDistance);
         }
 
-        if (order != TargetingOrder.Targeters)
+        switch (order)
         {
-            if (reply.Targets.Count == 0)
+            case TargetingOrder.Lock:
+                AddLockedTargets(id, reply.Targets);
+                AddLockedTargets(id, targets);
+                CancelSafeLogoff(session, reasonCode: null, failedConditions: ["UI/Inflight/SafeLogoff/SafeLogoffCantTargetLockBody"]);
+                break;
+            case TargetingOrder.Cancel:
+            case TargetingOrder.Remove:
+                RemoveLockedTargets(id, targets);
+                AddLockedTargets(id, reply.Targets);
+                break;
+            case TargetingOrder.Clear:
                 _lockedTargets.TryRemove(id, out _);
-            else
-                _lockedTargets[id] = new HashSet<long>(reply.Targets);
+                break;
+            case TargetingOrder.Targets:
+                AddLockedTargets(id, reply.Targets);
+                break;
         }
 
         if (order == TargetingOrder.Lock)
         {
-            foreach (var targetId in reply.Targets)
+            foreach (var targetId in targets)
             {
                 var target = _pilots.Values.FirstOrDefault(other => other.ShipId == targetId);
                 if (target is not null)

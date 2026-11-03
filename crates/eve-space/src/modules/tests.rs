@@ -766,6 +766,39 @@ fn an_active_cloak_hides_a_ship_from_locking_until_the_module_ends() {
 }
 
 #[test]
+fn a_mwd_signature_increase_retimes_an_incoming_lock_and_finishes_it_at_the_new_deadline() {
+    let (mut scene, t) = crowd();
+    let target_id = scene.pilots[&A].ship.spec.ship_id;
+    let other_id = scene.pilots[&B].ship.spec.ship_id;
+    scene.target_order(B, crate::targeting::Order::Lock(target_id), t);
+
+    let at = t + SECOND;
+    let ship = &scene.pilots[&A].ship.spec;
+    let mut microwarp_drive = afterburner();
+    microwarp_drive.on = Some(Numbers {
+        mass: ship.mass,
+        max_velocity: ship.max_velocity,
+        signature_radius: ship.signature_radius * 6.0,
+    });
+    scene.activate(A, microwarp_drive, at);
+
+    let early = scene.poll(at + SECOND);
+    assert!(!early.iter().any(|out| matches!(out, Out::Notify { name: "OnTarget", .. })), "{early:?}");
+    let out = scene.poll(at + 15_000_000);
+    let says = |session, what: &str, target| {
+        out.iter().any(|event| match event {
+            Out::Notify { session: receiver, name: "OnTarget", args, .. } if *receiver == session => {
+                matches!(args.first(), Some(Value::Str(action)) if action == what)
+                    && args.get(1) == Some(&crate::wire::id(target))
+            }
+            _ => false,
+        })
+    };
+    assert!(says(B, "add", target_id), "{out:?}");
+    assert!(says(A, "otheradd", other_id), "{out:?}");
+}
+
+#[test]
 fn a_crab_link_blocks_new_cloak_activation_until_the_status_tail_clears() {
     let (mut scene, t) = reaching(5_000.0);
     let ship_id = scene.pilots[&A].ship.spec.ship_id;

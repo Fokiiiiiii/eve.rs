@@ -362,6 +362,36 @@ public class ShipEventTests
     }
 
     [PgFact]
+    public async Task Skill_changes_refresh_the_in_space_ship_before_the_client_gets_new_attributes()
+    {
+        var (rig, character, session, _, _) = await ReadyAsync();
+        await using var owned = rig;
+        Events.Of(session);
+        Assert.NotEmpty(await rig.Ships.SkillChangesAsync(character.CharacterId, []));
+        Assert.NotEmpty(await rig.Ships.SkillChangesAsync(character.CharacterId, [], new Dictionary<int, int>()));
+
+        var refreshes = 0;
+        var sync = new CharacterDogmaSync(rig.Statics, rig.Ships, () => Rig.ClockMs)
+        {
+            RefreshSpaceShip = (actual, _) =>
+            {
+                Assert.Same(session, actual);
+                Assert.Empty(Events.Of(session, clear: false));
+                refreshes++;
+                return Task.CompletedTask;
+            }
+        };
+        await sync.SkillsChangedAsync(session, character.CharacterId, []);
+        Assert.Equal(1, refreshes);
+        Assert.Contains(Events.Of(session), notification => notification.Name == "OnModuleAttributeChanges");
+        Events.Of(session);
+
+        await sync.ExpertGrantsChangedAsync(session, character.CharacterId, [], new Dictionary<int, int>());
+        Assert.Equal(2, refreshes);
+        Assert.Contains(Events.Of(session), notification => notification.Name == "OnModuleAttributeChanges");
+    }
+
+    [PgFact]
     public async Task Asking_for_only_the_ship_sends_the_character_events_too_but_asking_for_nothing_sends_none()
     {
         var (rig, _, session, oid, _) = await ReadyAsync();

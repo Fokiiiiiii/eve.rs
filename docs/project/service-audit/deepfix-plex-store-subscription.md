@@ -46,8 +46,8 @@ SDE確認値: type 49810=100,000 Skill Points, group 526; type 44992=PLEX, group
 - StoreOffersServiceのmissing offer回帰は、変更前に`InvalidOperationException`で失敗し、falsey Noneを返す修正後に成功した。Host wireにもmissing offer拒否を追加。
 - `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --no-restore -m:2 -p:UseSharedCompilation=false`: 成功、warning/error 0。
 - `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Services.Core.Tests/Eve.Services.Core.Tests.csproj --no-restore -m:2 -p:UseSharedCompilation=false`: 成功、warning/error 0。
-- eve_p8 + `tools/dev/db-lock.sh`: 最新コードで`NewEdenStoreHostTests` 15 passed / 0 failed / 0 skipped。直前のコード版では`NewEdenEntitlementHostTests` 6、`HostServerTests` 402、`UserSvcRedeemTokenPersistenceTests` 1、`SubscriptionTransitionsTests` 1、`CompatibilityRpcServiceTests` 14も各クラス単独で全件pass。merge後、push前にruntime参照クラスを再実行する。
-- `StoreOffersServiceTests|NewEdenStoreCatalogTests|OmegaStateTests`: 27 passed / 0 failed / 0 skipped。`DispatchGoldenTests`: 200 passed / 0 failed / 0 skipped。
+- After merging main at `f7c0e9e1`, eve_p8 + `tools/dev/db-lock.sh` passed `NewEdenStoreHostTests` 15, `NewEdenEntitlementHostTests` 6, `HostServerTests` 402, `UserSvcRedeemTokenPersistenceTests` 1, `SubscriptionTransitionsTests` 1, and `CompatibilityRpcServiceTests` 14; each had 0 failures and 0 skips.
+- The same post-merge checks passed `StoreOffersServiceTests|NewEdenStoreCatalogTests|OmegaStateTests` (27) and `DispatchGoldenTests` in `Eve.Services.Tests` (200), all with 0 failures and 0 skips. After the docs-only main merge `6a962f9f`, `NewEdenStoreHostTests` passed again (15, 0 failures, 0 skips).
 - 結合Host filterの一括実行はtesthost process crashで完走しなかったため合格に数えず、関連クラスを個別実行した。
 - EveJS 261028.1のstore caller・fulfillment・settlement・notification実装はソースで照合した。配布物にstore用のtest scriptはなく、EveJS runtimeで同一購入シナリオは実行していない。
 - GUIの実V24 client確認はしていない。

@@ -11,7 +11,10 @@ using Xunit.Abstractions;
 
 namespace Eve.Host.Tests;
 
-[Collection("host-composition")]
+[CollectionDefinition("rpc-fuzz", DisableParallelization = true)]
+public sealed class RpcFuzzCollection;
+
+[Collection("rpc-fuzz")]
 public sealed class RpcFuzzTests
 {
     private const int Seed = 0x455645;
@@ -163,21 +166,35 @@ public sealed class RpcFuzzTests
         }
         finally
         {
-            if (snapshotSource is not null)
-                await snapshotSource.DisposeAsync();
-            if (runtime is not null)
-                await runtime.ShutdownAsync();
+            try
+            {
+                if (snapshotSource is not null)
+                    await snapshotSource.DisposeAsync();
+            }
+            finally
+            {
+                try
+                {
+                    if (runtime is not null)
+                        await runtime.ShutdownAsync();
+                }
+                finally
+                {
+                    // These overrides are process-wide; restore them before potentially slow schema teardown.
+                    foreach (var (name, value) in saved)
+                        Environment.SetEnvironmentVariable(name, value);
+                }
+            }
             if (schemas.Count > 0 && Environment.GetEnvironmentVariable("EVE_PG_URL") is { } url)
             {
                 await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
                 foreach (var schema in schemas)
                 {
                     await using var command = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+                    command.CommandTimeout = 120; // The CI Host shard exceeded Npgsql's default during scratch-schema cleanup.
                     await command.ExecuteNonQueryAsync();
                 }
             }
-            foreach (var (name, value) in saved)
-                Environment.SetEnvironmentVariable(name, value);
         }
     }
 

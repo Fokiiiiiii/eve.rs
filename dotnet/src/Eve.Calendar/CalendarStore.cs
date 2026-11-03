@@ -185,8 +185,9 @@ public sealed class CalendarStore : ICalendarStore
         await UpsertResponseAsync(connection, transaction, eventId, input.CreatorId, CalendarResponseStates.Accepted, cancellationToken);
         if (input.Tag == CalendarTags.Personal)
         {
-            foreach (var characterId in invitees.Where(id => id > 0 && id != input.CreatorId).Distinct())
-                await UpsertResponseAsync(connection, transaction, eventId, characterId, CalendarResponseStates.Undecided, cancellationToken);
+            var inviteeIds = invitees.Where(id => id > 0 && id != input.CreatorId).Distinct().ToArray();
+            await UpsertResponsesAsync(connection, transaction, eventId, inviteeIds,
+                CalendarResponseStates.Undecided, cancellationToken);
         }
 
         await transaction.CommitAsync(cancellationToken);
@@ -264,13 +265,14 @@ public sealed class CalendarStore : ICalendarStore
         if (activeInvitees.Count > CalendarLimits.MaxInvitees)
             return CalendarParticipantUpdateResult.TooManyInvitees;
 
-        foreach (var characterId in add.Where(id => id > 0 && id != creatorId).Distinct())
-            await UpsertResponseAsync(connection, transaction, eventId, characterId, CalendarResponseStates.Undecided, cancellationToken);
-        foreach (var characterId in removed)
+        await UpsertResponsesAsync(connection, transaction, eventId,
+            add.Where(id => id > 0 && id != creatorId).Distinct().ToArray(),
+            CalendarResponseStates.Undecided, cancellationToken);
+        if (removed.Count > 0)
         {
             await using var command = Command(connection, transaction,
-                Q("UPDATE {schema}.responses SET status=$1 WHERE event_id=$2 AND character_id=$3"),
-                CalendarResponseStates.Uninvited, eventId, characterId);
+                Q("UPDATE {schema}.responses SET status=$1 WHERE event_id=$2 AND character_id = ANY($3::bigint[])"),
+                CalendarResponseStates.Uninvited, eventId, removed.ToArray());
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
@@ -298,6 +300,17 @@ public sealed class CalendarStore : ICalendarStore
         await using var command = Command(connection, transaction,
             Q("INSERT INTO {schema}.responses (event_id, character_id, status) VALUES ($1,$2,$3) ON CONFLICT (event_id, character_id) DO UPDATE SET status=EXCLUDED.status, updated_at=now()"),
             eventId, characterId, response);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private async Task UpsertResponsesAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long eventId, long[] characterIds, short response,
+        CancellationToken cancellationToken)
+    {
+        if (characterIds.Length == 0) return;
+        await using var command = Command(connection, transaction,
+            Q("INSERT INTO {schema}.responses (event_id, character_id, status) SELECT $1, invitee.character_id, $3 FROM unnest($2::bigint[]) AS invitee(character_id) ON CONFLICT (event_id, character_id) DO UPDATE SET status=EXCLUDED.status, updated_at=now()"),
+            eventId, characterIds, response);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 

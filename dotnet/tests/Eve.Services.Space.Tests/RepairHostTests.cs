@@ -164,6 +164,52 @@ public class ProjectedHostTests
         Assert.Equal([6, 73, 54], effect.OnChanges.Select(c => c.AttributeId));
     }
 
+      [PgFact]
+      public async Task Remote_armor_repair_of_a_suspect_requires_partial_safety_and_records_after_activation()
+      {
+          var (rig, session, _, module) = await ReadyAsync(RemoteArmorRepairer);
+          await using var _ = rig;
+          var targetCharacter = await rig.NewCharacterAsync("Suspect Medic", int.MaxValue);
+          var targetSession = await WeaponHostTests.InSpaceAsync(rig, targetCharacter, 2);
+          var targetId = targetSession.GetInt("shipid")!.Value;
+          var safetyLevel = 2;
+          rig.Space.SafetyLevelOf = (_, _) => Task.FromResult(safetyLevel);
+          List<Eve.Crimewatch.AggressionRequest> recorded = [];
+          var simulationAcceptedBeforeRecording = false;
+          var activationsBefore = rig.Sim.Heard.OfType<SimActivate>().Count();
+          rig.Space.RemoteAssistancePolicyOf = (request, level, _) => Task.FromResult(Eve.Crimewatch.PolicyEngine.Evaluate(
+              new Eve.Crimewatch.PolicyRequest(
+                  Eve.Crimewatch.PolicyAction.RemoteAssistance,
+                  request.Where,
+                  new Eve.Crimewatch.PolicyFacts(
+                      AttackerIsPlayer: true,
+                      TargetIsPlayerProperty: true,
+                      TargetFlag: Eve.Crimewatch.Flag.Suspect),
+                  level)));
+          rig.Space.RecordRemoteAssistance = (request, _) =>
+          {
+              simulationAcceptedBeforeRecording = rig.Sim.Heard.OfType<SimActivate>().Count() > activationsBefore;
+              recorded.Add(request);
+              return Task.CompletedTask;
+          };
+
+          var fullSafety = await rig.Space.ActivateAsync(
+              session, module, "shipModuleRemoteArmorRepairer", targetId, 1000, CancellationToken.None);
+
+          Assert.Equal("SafetyActivated", fullSafety?.Reason);
+          Assert.Equal(activationsBefore, rig.Sim.Heard.OfType<SimActivate>().Count());
+          Assert.Empty(recorded);
+
+          safetyLevel = 1;
+          var partialSafety = await rig.Space.ActivateAsync(
+              session, module, "shipModuleRemoteArmorRepairer", targetId, 1000, CancellationToken.None);
+
+          Assert.Equal(ModuleResult.Done, partialSafety);
+          Assert.True(simulationAcceptedBeforeRecording);
+          Assert.Single(recorded);
+          Assert.Equal(activationsBefore + 1, rig.Sim.Heard.OfType<SimActivate>().Count());
+      }
+
     [PgFact]
     public async Task A_remote_shield_booster_and_a_capacitor_transmitter_give_as_the_cycle_begins()
     {

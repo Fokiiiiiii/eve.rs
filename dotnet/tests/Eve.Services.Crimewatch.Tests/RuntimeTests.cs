@@ -258,8 +258,52 @@ public class RuntimeTests : IAsyncLifetime
         Assert.Equal(Start + 900_000, victimState.PvpUntilMs);
         Assert.Equal(0, victimState.WeaponsUntilMs);
         Assert.Empty(Told(3));
-        Assert.Empty(Told(4));
-    }
+          Assert.Empty(Told(4));
+      }
+
+      [PgFact]
+      public async Task High_security_assistance_to_a_suspect_inherits_timers_flags_the_assistant_and_notifies_in_client_order()
+      {
+          Pilot(1, System);
+          Pilot(2, System);
+          Pilot(3, System);
+          using var runtime = Runtime();
+
+          var offense = await runtime.RecordAggressionAsync(Attack(2, 3, SecurityClass.LowSec, System, capsule: false));
+          Assert.Equal(AggressionReason.Suspect, offense.Outcome.Reason);
+          Told(1);
+          Told(2);
+          Told(3);
+
+          var assistance = await runtime.RecordRemoteAssistanceAsync(Attack(1, 2, SecurityClass.HighSec, System, capsule: false));
+
+          Assert.Equal(Eve.Crimewatch.PolicyAction.RemoteAssistance, assistance.Action);
+          Assert.Equal(AggressionReason.Suspect, assistance.Outcome.Reason);
+          var assistant = await Store.StateOfAsync(1);
+          Assert.Equal(Flag.Suspect, assistant.FlagAt(_now));
+          Assert.Equal(_now + 60_000, assistant.WeaponsUntilMs);
+          Assert.Equal(_now + 900_000, assistant.PvpUntilMs);
+
+          var attackerNotes = Told(1);
+          Assert.Equal(["OnWeaponsTimerUpdate", "OnPvpTimerUpdate", "OnCriminalTimerUpdate", "OnSystemCriminalFlagUpdates"], attackerNotes.Select(note => note.Name));
+          Assert.Equal("charid", attackerNotes[0].IdType);
+          Assert.Equal([new PyInt(102), new PyLong(FileTime(_now + 60_000))], attackerNotes[0].Args);
+          Assert.Equal("charid", attackerNotes[1].IdType);
+          Assert.Equal([new PyInt(202), new PyLong(FileTime(_now + 900_000))], attackerNotes[1].Args);
+          Assert.Equal("charid", attackerNotes[2].IdType);
+          Assert.Equal([new PyInt(304), new PyLong(FileTime(_now + 900_000))], attackerNotes[2].Args);
+          Assert.Equal("solarsystemid2", attackerNotes[3].IdType);
+          Assert.Equal([[], [1L], []], attackerNotes[3].Args.Select(Ids));
+          foreach (var character in new long[] { 2, 3 })
+          {
+              var observerNotes = Told(character);
+              var flagUpdate = Assert.Single(observerNotes);
+              Assert.Equal("OnSystemCriminalFlagUpdates", flagUpdate.Name);
+              Assert.Equal("solarsystemid2", flagUpdate.IdType);
+              Assert.Equal([[], [1L], []], flagUpdate.Args.Select(Ids));
+          }
+          Assert.DoesNotContain(_waits.Made, wait => wait.After == TimeSpan.FromMilliseconds(10_005));
+      }
 
     [PgFact]
     public async Task Criminal_aggression_grants_a_persisted_kill_right_and_schedules_one_concord_response()

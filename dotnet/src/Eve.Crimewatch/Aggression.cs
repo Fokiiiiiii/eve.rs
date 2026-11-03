@@ -194,7 +194,8 @@ public static class PolicyEngine
         var outlawTarget = facts.TargetIsOutlaw && !facts.OtherLegalPermission;
         var consequence = !playerAssistance ? Flag.None
             : Security.IsHighSecOrHigher(request.SecurityClass)
-                ? (criminalTarget || suspectTarget || outlawTarget || interference ? Flag.Criminal : Flag.None)
+                      ? criminalTarget || interference ? Flag.Criminal
+                          : suspectTarget || outlawTarget ? Flag.Suspect : Flag.None
             : Security.IsLowSec(request.SecurityClass)
                 ? (criminalTarget ? Flag.Criminal : suspectTarget || interference ? Flag.Suspect : Flag.None)
             : Flag.None;

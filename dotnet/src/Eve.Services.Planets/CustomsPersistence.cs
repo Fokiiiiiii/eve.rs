@@ -140,9 +140,11 @@ public sealed partial class PlanetMgrService
         if (visitorCorporationId == policy.OwnerCorporationId)
             return policy.Rates.Corporation;
 
+        var corporationsSchema = Environment.GetEnvironmentVariable("EVE_CORPORATIONS_SCHEMA") ?? "corporations";
+        var quotedCorporationsSchema = new NpgsqlCommandBuilder().QuoteIdentifier(corporationsSchema);
         long ownerAllianceId = 0;
         await using (var owner = new NpgsqlCommand(
-            $"SELECT COALESCE(alliance_id, 0) FROM {Environment.GetEnvironmentVariable("EVE_CORPORATIONS_SCHEMA") ?? "corporations"}.corporations WHERE id = $1",
+            $"SELECT COALESCE(alliance_id, 0) FROM {quotedCorporationsSchema}.corporations WHERE id = $1",
             connection, transaction)
         {
             Parameters = { new() { Value = policy.OwnerCorporationId } },
@@ -156,17 +158,17 @@ public sealed partial class PlanetMgrService
             return null;
 
         var standing = 0;
-        await using (var contacts = new NpgsqlCommand("""
-            SELECT relationship_id FROM {Environment.GetEnvironmentVariable("EVE_CORPORATIONS_SCHEMA") ?? "corporations"}.corporation_contacts
+        var contactIds = new[] { characterId, visitorCorporationId, visitorAllianceId }.Where(id => id > 0).ToArray();
+        await using (var contacts = new NpgsqlCommand($"""
+            SELECT relationship_id FROM {quotedCorporationsSchema}.corporation_contacts
             WHERE corporation_id = $1 AND contact_id = ANY($2::bigint[])
-            ORDER BY CASE contact_id WHEN $3 THEN 1 WHEN $4 THEN 2 ELSE 3 END LIMIT 1
+            ORDER BY array_position($2::bigint[], contact_id) LIMIT 1
             """, connection, transaction)
         {
             Parameters =
             {
                 new() { Value = policy.OwnerCorporationId },
-                new() { Value = new[] { characterId, visitorCorporationId, visitorAllianceId }.Where(id => id > 0).ToArray() },
-                new() { Value = characterId }, new() { Value = visitorCorporationId },
+                new() { Value = contactIds },
             },
         })
         {

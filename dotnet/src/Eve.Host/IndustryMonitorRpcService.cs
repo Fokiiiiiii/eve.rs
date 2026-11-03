@@ -8,7 +8,7 @@ using Eve.Services;
 
 namespace Eve.Host;
 
-public sealed record IndustryMonitorLocation(long ItemId, long OwnerId, int FlagId, bool CanTake);
+public sealed record IndustryMonitorLocation(long ItemId, int FlagId);
 public sealed record IndustryMonitorRequest(long BlueprintId, int BlueprintTypeId, int ActivityId, long FacilityId, IndustryMonitorLocation? InputLocation);
 
 public sealed class IndustryMonitorRpcService : IService
@@ -27,6 +27,7 @@ public sealed class IndustryMonitorRpcService : IService
     private readonly PgItemStore? _items;
     private readonly ItemTypeCatalog? _itemTypes;
     private readonly Func<IndustryMonitorRequest, CancellationToken, ValueTask<IReadOnlyDictionary<int, long>>>? _materials;
+    private readonly Func<ClientSession, IndustryMonitorRequest, Item, CancellationToken, ValueTask<long?>>? _authorizedInputLocation;
     private readonly Func<long> _now;
     private readonly object _gate = new();
     private readonly Dictionary<ClientSession, MonitorWatch> _watches = new();
@@ -34,8 +35,11 @@ public sealed class IndustryMonitorRpcService : IService
 
     public IndustryMonitorRpcService(GameStoreCache? store = null, PgItemStore? items = null,
         Func<IndustryMonitorRequest, CancellationToken, ValueTask<IReadOnlyDictionary<int, long>>>? availableMaterials = null,
-        Func<long>? nowUnixMs = null, ItemTypeCatalog? itemTypes = null)
-        => (_store, _items, _itemTypes, _materials, _now) = (store, items, itemTypes, availableMaterials, nowUnixMs ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+        Func<long>? nowUnixMs = null, ItemTypeCatalog? itemTypes = null,
+        Func<ClientSession, IndustryMonitorRequest, Item, CancellationToken, ValueTask<long?>>? authorizedInputLocation = null)
+        => (_store, _items, _itemTypes, _materials, _authorizedInputLocation, _now) =
+            (store, items, itemTypes, availableMaterials, authorizedInputLocation,
+                nowUnixMs ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
 
     public string Name => "industryMonitor";
     public bool HasMethod(string method) => method is "ConnectJob" or "DisconnectJob";
@@ -58,7 +62,7 @@ public sealed class IndustryMonitorRpcService : IService
         }
 
         var request = Parse(call.Arg(0));
-        var materials = await ReadAvailableMaterialsAsync(request, call.Cancellation);
+        var materials = await ReadAvailableMaterialsAsync(call.Session, request, call.Cancellation);
         var monitorId = AllocateId();
         var row = new JsonObject
         {
@@ -95,7 +99,7 @@ public sealed class IndustryMonitorRpcService : IService
             lock (_gate)
                 if (!_watches.TryGetValue(session, out var current) || !ReferenceEquals(current, watch)) return;
 
-            var materials = await ReadAvailableMaterialsAsync(watch.Request, cancellationToken);
+            var materials = await ReadAvailableMaterialsAsync(session, watch.Request, cancellationToken);
             lock (_gate)
             {
                 if (!_watches.TryGetValue(session, out var current) || !ReferenceEquals(current, watch)
@@ -136,19 +140,23 @@ public sealed class IndustryMonitorRpcService : IService
         }
     }
 
-    private async ValueTask<IReadOnlyDictionary<int, long>> ReadAvailableMaterialsAsync(IndustryMonitorRequest request, CancellationToken cancellationToken)
+    private async ValueTask<IReadOnlyDictionary<int, long>> ReadAvailableMaterialsAsync(
+        ClientSession session, IndustryMonitorRequest request, CancellationToken cancellationToken)
     {
-        if (_materials is not null) return await _materials(request, cancellationToken);
-        if (_items is null || _itemTypes is null || request.BlueprintId <= 0 || request.InputLocation is not { CanTake: true, ItemId: > 0 })
+        if (_items is null)
+            return _materials is null
+                ? new Dictionary<int, long>()
+                : await _materials(request, cancellationToken);
+        if (_itemTypes is null || _authorizedInputLocation is null || request.BlueprintId <= 0)
             return new Dictionary<int, long>();
         var blueprint = await _items.GetAsync(request.BlueprintId, cancellationToken);
         if (blueprint is null || (request.BlueprintTypeId > 0 && blueprint.TypeId != request.BlueprintTypeId))
             return new Dictionary<int, long>();
-        var ownerId = blueprint.OwnerId;
-        if (request.InputLocation.OwnerId > 0 && request.InputLocation.OwnerId != ownerId)
+        var inventoryLocationId = await _authorizedInputLocation(session, request, blueprint, cancellationToken);
+        if (inventoryLocationId is not > 0 || request.InputLocation is not { } inputLocation)
             return new Dictionary<int, long>();
-        var contents = (await _items.InLocationAsync(request.InputLocation.ItemId, ownerId, cancellationToken))
-            .Where(item => item.Flag == request.InputLocation.FlagId)
+        var contents = (await _items.InLocationAsync(inventoryLocationId.Value, blueprint.OwnerId, cancellationToken))
+            .Where(item => item.Flag == inputLocation.FlagId)
             .ToArray();
         var itemTypes = await _itemTypes.GetAsync(contents.Select(item => item.TypeId), cancellationToken);
         return contents.Where(item => !itemTypes.TryGetValue(item.TypeId, out var type) || type.CategoryId != BlueprintCategoryId)
@@ -171,8 +179,7 @@ public sealed class IndustryMonitorRpcService : IService
         if (value is null or PyNone) return null;
         var itemId = Long(Field(value, "itemID"));
         if (itemId <= 0) return null;
-        var canTake = Field(value, "canTake") is not { } take || take is PyNone || Boolean(take);
-        return new IndustryMonitorLocation(itemId, Long(Field(value, "ownerID")), Int(Field(value, "flagID")), canTake);
+        return new IndustryMonitorLocation(itemId, Int(Field(value, "flagID")));
     }
 
     private static PyValue? Field(PyValue? value, string name)
@@ -192,5 +199,4 @@ public sealed class IndustryMonitorRpcService : IService
     private static int Int(PyValue? value) => (int)Math.Clamp(Long(value), int.MinValue, int.MaxValue);
     private static long Long(JsonNode? value) => long.TryParse(value?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var number) ? number : 0;
     private static long Long(PyValue? value) => value switch { PyInt i => i.Value, PyLong l => l.Value, PyReal r when double.IsFinite(r.Value) => (long)r.Value, _ => 0 };
-    private static bool Boolean(PyValue value) => value switch { PyBool b => b == PyBool.True, PyInt i => i.Value != 0, PyLong l => l.Value != 0, _ => false };
 }

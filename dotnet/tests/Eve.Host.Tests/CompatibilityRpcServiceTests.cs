@@ -359,14 +359,18 @@ public sealed class CompatibilityRpcServiceTests
             await using (var materialsConnection = await source.OpenConnectionAsync())
             await using (var materialsTransaction = await materialsConnection.BeginTransactionAsync())
             {
-                blueprintItemId = await items.CreateAsync(materialsConnection, materialsTransaction, new NewItem(681, 20, 900, 4, 1, true));
-                await items.CreateAsync(materialsConnection, materialsTransaction, new NewItem(34, 20, 900, 4, 5));
-                await items.CreateAsync(materialsConnection, materialsTransaction, new NewItem(34, 20, 900, 5, 7));
-                await items.CreateAsync(materialsConnection, materialsTransaction, new NewItem(35, 20, 900, 4, 3));
+                blueprintItemId = await items.CreateAsync(materialsConnection, materialsTransaction, new NewItem(681, 20, 20, 4, 1, true));
+                await items.CreateAsync(materialsConnection, materialsTransaction, new NewItem(34, 20, 20, 4, 5));
+                await items.CreateAsync(materialsConnection, materialsTransaction, new NewItem(34, 20, 20, 5, 7));
+                await items.CreateAsync(materialsConnection, materialsTransaction, new NewItem(35, 20, 20, 4, 3));
                 await materialsTransaction.CommitAsync();
             }
-            var industry = new IndustryMonitorRpcService(cache, items, nowUnixMs: () => now, itemTypes: itemTypes);
-            var request = Py.KeyVal(("blueprintID", new PyInt(blueprintItemId)), ("blueprintTypeID", new PyInt(681)), ("activityID", new PyInt(1)), ("facilityID", new PyInt(20)), ("inputLocation", Py.KeyVal(("itemID", new PyInt(900)), ("ownerID", new PyInt(20)), ("flagID", new PyInt(4)), ("canTake", PyBool.True))));
+            var industry = new IndustryMonitorRpcService(cache, items, nowUnixMs: () => now, itemTypes: itemTypes,
+                authorizedInputLocation: (caller, request, blueprint, _) => ValueTask.FromResult<long?>(
+                    caller.CharacterId == blueprint.OwnerId && request.FacilityId == request.InputLocation?.ItemId
+                        ? request.FacilityId
+                        : null));
+            var request = Py.KeyVal(("blueprintID", new PyInt(blueprintItemId)), ("blueprintTypeID", new PyInt(681)), ("activityID", new PyInt(1)), ("facilityID", new PyInt(20)), ("inputLocation", Py.KeyVal(("itemID", new PyInt(20)), ("ownerID", new PyInt(20)), ("flagID", new PyInt(4)), ("canTake", PyBool.True))));
             var connected = Assert.IsType<PyTuple>(await industry.CallAsync(Call("ConnectJob", session, request)));
             Assert.Equal(new PyInt(1), connected.Items[0]);
             var availableMaterials = Assert.IsType<PyDict>(connected.Items[1]);

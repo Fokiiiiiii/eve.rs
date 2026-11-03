@@ -160,6 +160,7 @@ public sealed partial class SpaceSessions
             _log?.Invoke($"undock of character {characterId} refused: {transition.Refusal}");
             throw MachoErrors.ThrowUserError("ShipNotInHangar");
         }
+        await NotifyPilotEnteredSystemAsync(characterId, systemId);
         await RefreshTetherPolicyAsync(session, cancellationToken);
         return Py.Tuple(boundObjectId is null ? None : new PyStr(boundObjectId),
             new PyLong(Py.FileTimeFromUnixMs(_nowUnixMs() + SessionChangeCooldownMs)));
@@ -462,6 +463,7 @@ public sealed partial class SpaceSessions
 
         if (transition is null || simulationFailed)
             return None;
+        await NotifyPilotEnteredSystemAsync(characterId, currentPilot.SolarSystemId);
         var empty = new PyDict([]);
         return Py.Tuple(empty, empty, empty, empty);
     }

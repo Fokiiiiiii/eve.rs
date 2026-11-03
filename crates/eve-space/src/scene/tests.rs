@@ -1488,6 +1488,7 @@ fn a_change_of_the_security_status_shows_the_slim_item_again_to_the_pilot() {
     let mut penalised = spec();
     penalised.security_status = -0.25;
     let out = scene.respec(SESSION, penalised.clone(), NOON);
+    assert_eq!(scene.security_status_losses, [(penalised.character_id, penalised.ship_id)]);
     assert_eq!(out.len(), 1, "only the pilot is in the scene");
     assert_eq!(action_names(&out[0]), ["OnSlimItemChange"]);
     let told = format!("{:?}", out[0]);
@@ -1497,6 +1498,7 @@ fn a_change_of_the_security_status_shows_the_slim_item_again_to_the_pilot() {
     );
     assert!(told.contains(&spec().ship_id.to_string()), "the item is the ship");
     assert!(scene.respec(SESSION, penalised, NOON).is_empty(), "the same status says nothing more");
+    assert_eq!(scene.security_status_losses.len(), 1, "a repeated status does not report another loss");
 }
 
 #[test]

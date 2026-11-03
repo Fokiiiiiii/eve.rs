@@ -174,7 +174,27 @@ public class SpaceServiceTests
         Assert.Equal(new PyLong(116444736000000000L + nowUnixMs * 10_000L), service.GetDirtTimestamp(null!));
     }
 
-    private static async Task<(Rig Rig, Eve.Characters.Created Character, ClientSession Session)> DockedAsync(
+      [PgFact]
+      public async Task A_high_security_undock_checks_for_an_active_criminal_timer_after_success()
+      {
+          var (rig, character, session) = await DockedAsync();
+          await using var _ = rig;
+          var criminalEntries = new List<(long Character, long System, double Security)>();
+          rig.Space.PilotEnteredSystem = (characterId, systemId, security, _) =>
+          {
+              criminalEntries.Add((characterId, systemId, security));
+              return Task.CompletedTask;
+          };
+
+          await UndockAsync(rig, session);
+
+          var entry = Assert.Single(criminalEntries);
+          Assert.Equal(character.CharacterId, entry.Character);
+          Assert.Equal(session.GetInt("solarsystemid"), entry.System);
+          Assert.True(entry.Security >= 0.5);
+      }
+
+      private static async Task<(Rig Rig, Eve.Characters.Created Character, ClientSession Session)> DockedAsync(
         TimeSpan? protection = null, Eve.Scheduler.LocalTimers? localTimers = null)
     {
         var rig = await Rig.CreateAsync(protection, localTimers: localTimers);
@@ -627,6 +647,13 @@ public class SpaceServiceTests
         await InSpaceAsync(rig, ownerSession);
         await InSpaceAsync(rig, outsiderSession);
         await InSpaceAsync(rig, observerSession);
+        var ownerSystemId = ownerSession.GetInt("solarsystemid")!.Value;
+        var systemEntries = new List<(long CharacterId, long SolarSystemId, long ShipId)>();
+        rig.Space.PilotEnteredSystem = (characterId, solarSystemId, _, _) =>
+        {
+            systemEntries.Add((characterId, solarSystemId, ownerSession.GetInt("shipid") ?? 0));
+            return Task.CompletedTask;
+        };
         rig.Space.LifecycleBlockers = (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<string>>([]);
 
         var ownerShipId = owner.ShipId;
@@ -658,6 +685,7 @@ public class SpaceServiceTests
             ownerSession, ownerShipId, ownerCapsuleId, CancellationToken.None);
         Assert.IsType<PyTuple>(ownerBoard);
         Assert.Null(insuranceBoarding);
+        Assert.Equal([(owner.CharacterId, ownerSystemId, ownerShipId)], systemEntries);
         await Task.Delay(25);
 
         Assert.IsType<PyTuple>(await rig.Space.EjectAsync(ownerSession, CancellationToken.None));
@@ -2653,7 +2681,7 @@ public class SpaceServiceTests
     }
 
     [PgFact]
-    public async Task Concord_response_spawns_the_authored_fleet_and_enforces_ship_loss_after_timer()
+    public async Task Concord_response_uses_concord_hulls_and_enforces_ship_loss_after_timer()
     {
         var waits = new List<(TimeSpan After, TaskCompletionSource Done)>();
         using var timers = new Eve.Scheduler.LocalTimers(delay: (after, token) =>
@@ -2662,34 +2690,55 @@ public class SpaceServiceTests
             lock (waits) waits.Add((after, done));
             return done.Task.WaitAsync(token);
         });
-        var responder = new Eve.Npc.NpcProfile(
-            "test-concord-response", "Test CONCORD response", [], "npc", Rig.Cockroach,
-            1000125, 0, 500003, Eve.Npc.NpcAuthority.RetailEmptyLoadoutId, "", "CONCORD response", 0, 0, 0);
-        var authority = new Eve.Npc.NpcAuthority(
-            [responder], [],
-            [new Eve.Npc.NpcPool(
-                "concord_response_fleet", "CONCORD response fleet", [], "npc",
-                [new Eve.Npc.NpcPoolEntry(responder.Id, 1)])]);
+        var authority = Eve.Npc.NpcAuthority.Load();
+        var cruiserLookup = authority.ResolveProfile("concord_police_cruiser");
+        var battleshipLookup = authority.ResolveProfile("concord_police_battleship");
+        Assert.True(cruiserLookup.Found);
+        Assert.True(battleshipLookup.Found);
+        Assert.Equal("concord", cruiserLookup.Match!.Row.EntityType);
+        Assert.Equal("concord", battleshipLookup.Match!.Row.EntityType);
         var rig = await Rig.CreateAsync(localTimers: timers, npcAuthority: authority);
         await using var _ = rig;
+        Assert.Same(authority, rig.Space.Npcs!.Authority);
+        Assert.True(rig.Space.Npcs.Select("concord_police_cruiser").Selection is not null);
         var character = await rig.NewCharacterAsync();
         var session = await rig.SessionAsync(character);
         await InSpaceAsync(rig, session);
+        var victim = await rig.NewCharacterAsync("Sentry Test Victim", account: 2);
+        var victimSession = await rig.SessionAsync(victim, id: 2);
+        await InSpaceAsync(rig, victimSession);
+        var losses = new List<ShipLoss>();
+        rig.Space.ShipLost += losses.Add;
         var systemId = session.GetInt("solarsystemid")!.Value;
         rig.Sim.PositionAnswers[character.ShipId] = [0, 0, 0];
 
         Assert.True(
-            await rig.Space.RespondToCriminalAsync(character.CharacterId, systemId, character.ShipId),
+              await rig.Space.RespondToCriminalAsync(character.CharacterId, systemId, character.ShipId + 1),
             string.Join(Environment.NewLine, rig.Log));
 
         var responders = rig.Sim.Heard.OfType<SimSpawn>().ToArray();
-        Assert.Equal(3, responders.Length);
+        Assert.Equal(2, responders.Length);
+        Assert.All(responders, spawn => Assert.Equal(1904, spawn.Ship.TypeId));
         Assert.All(responders, spawn =>
         {
+            Assert.Equal(1000125, spawn.Ship.OwnerId);
+            Assert.Equal(500006, spawn.Ship.WarFactionId);
             Assert.Equal(0, spawn.Identity.HostileResponseThreshold);
             Assert.True(spawn.Identity.AggressionRange >= 50_000);
             Assert.Equal("belt rat", spawn.Behavior);
         });
+
+        rig.Sim.Say(new SimDestroyed(
+            (ulong)victimSession.SessionId,
+            victim.ShipId,
+            0,
+            [0, 0, 0],
+            [1, 0, 0],
+            47,
+            responders[0].Ship.ShipId,
+            null));
+        await Rig.UntilAsync(() => losses.Count == 1);
+        Assert.Equal(ShipLossCause.Concord, Assert.Single(losses).Cause);
 
         (TimeSpan After, TaskCompletionSource Done) punishment;
         lock (waits)
@@ -2697,7 +2746,11 @@ public class SpaceServiceTests
             punishment = Assert.Single(waits, wait => wait.After == TimeSpan.FromSeconds(15));
         }
         punishment.Done.TrySetResult();
-        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimDestroy>().Any(destroy => destroy.ShipId == character.ShipId));
+        await Rig.UntilAsync(() =>
+            rig.Sim.Heard.OfType<SimSpawn>().Any(spawn => spawn.Ship.TypeId == 1912)
+            && rig.Sim.Heard.OfType<SimDestroy>().Any(destroy => destroy.ShipId == character.ShipId));
+        Assert.Equal(3, rig.Sim.Heard.OfType<SimSpawn>().Count());
+        Assert.Single(rig.Sim.Heard.OfType<SimSpawn>(), spawn => spawn.Ship.TypeId == 1912);
     }
 
     [PgFact]
@@ -2907,10 +2960,16 @@ public class SpaceServiceTests
         var oid = await rig.BindBeyonceAsync(session);
         var from = (int)session.GetInt("solarsystemid2")!.Value;
         var inspections = new List<(long Character, long Ship, int System)>();
+        var criminalEntries = new List<(long Character, long System, double Security)>();
         rig.Space.ApplyContrabandPenaltyAsync = (characterId, shipId, systemId, _) =>
         {
             inspections.Add((characterId, shipId, systemId));
             return Task.FromResult<Eve.Services.Space.ContrabandPenalty?>(null);
+        };
+          rig.Space.PilotEnteredSystem = (characterId, systemId, security, _) =>
+        {
+            criminalEntries.Add((characterId, systemId, security));
+            return Task.CompletedTask;
         };
 
         rig.Sim.JumpAnswer = new CommandReply(false, 0, "TOO_FAR_FROM_STARGATE");
@@ -2923,9 +2982,10 @@ public class SpaceServiceTests
         Assert.Equal(from, session.GetInt("solarsystemid2"));
 
         rig.Sim.Say(new SimJumped((ulong)session.SessionId, from, Gate, NextSystem, NextGate));
-        await Rig.UntilAsync(() => session.GetInt("solarsystemid2") == NextSystem && inspections.Count == 1);
+          await Rig.UntilAsync(() => session.GetInt("solarsystemid2") == NextSystem && inspections.Count == 1 && criminalEntries.Count == 1);
 
         Assert.Equal([(character.CharacterId, character.ShipId, NextSystem)], inspections);
+          Assert.Equal([(character.CharacterId, (long)NextSystem, 1.0)], criminalEntries);
     }
 
     [PgFact]
@@ -3416,6 +3476,12 @@ public class SpaceServiceTests
         var sim = new FakeSim();
         using var space = new SpaceSessions(
             sim, rig.Ships, rig.Statics, rig.Stations, rig.Systems, () => rig.Now, spaceItems: rig.SpaceItems);
+          var crimewatchEntries = new List<(long Character, long System, double Security)>();
+          space.PilotEnteredSystem = (characterId, systemId, security, _) =>
+          {
+              crimewatchEntries.Add((characterId, systemId, security));
+              return Task.CompletedTask;
+          };
 
         async Task SaveSpaceItemAsync(long characterId, IReadOnlyList<double> position)
         {
@@ -3455,6 +3521,10 @@ public class SpaceServiceTests
         previousSession.Change([.. previousAttributes]);
         await space.OnCharacterEnteredAsync(previousSession, previous.CharacterId, CancellationToken.None);
         Assert.True(space.IsInSpace(previousSession));
+          var entry = Assert.Single(crimewatchEntries);
+          Assert.Equal(previous.CharacterId, entry.Character);
+          Assert.Equal(previousSession.GetInt("solarsystemid"), entry.System);
+          Assert.InRange(entry.Security, 0, 1);
         var repeatedAttributes = await space.GetSessionAttributesAsync(previousSession, previous.CharacterId, CancellationToken.None);
         Assert.Equal(PyNone.Instance, Assert.Single(repeatedAttributes, attribute => attribute.Name == "stationid").Value);
         Assert.Equal(Eve.Ships.CharacterShips.InSpaceFlag, (await rig.Ships.LoadAsync(previous.CharacterId, CancellationToken.None))!.Ship.Flag);

@@ -84,11 +84,13 @@ public sealed record CombatState(long WeaponsUntilMs, long PvpUntilMs, long NpcU
         return first;
     }
 
-    /// <summary>Sets the flag kind to the new offence and keeps the longer active timer.</summary>
+    /// <summary>Keeps an active criminal flag from being downgraded and extends it to the later expiry.</summary>
     internal CombatState Flagged(Flag flag, long nowMs)
     {
-        var kept = FlagAt(nowMs) == Flag.None ? 0 : FlagUntilMs;
-        return this with { Flag = flag, FlagUntilMs = Math.Max(kept, nowMs + FlagDurationMs) };
+        var active = FlagAt(nowMs);
+        var kept = active == Flag.None ? 0 : FlagUntilMs;
+        var strongest = active == Flag.Criminal || flag == Flag.Criminal ? Flag.Criminal : flag;
+        return this with { Flag = strongest, FlagUntilMs = Math.Max(kept, nowMs + FlagDurationMs) };
     }
 
     /// <summary>Sets the suspect flag for a kill-right activation, preserving any longer active flag timer.</summary>

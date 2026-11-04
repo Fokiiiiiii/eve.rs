@@ -2,7 +2,7 @@
 
 ## Status
 
-The bounded queue implementation and post-merge local checks are complete. Queue change commit: `fd3524fc`; latest merge commit: `9ce8409c` (includes `origin/main` `a13d088c`). The queue change has not yet been pushed to `main`. Latest completed main CI baseline is run 1517, green on `15e1aa9d12b7`; record the queue commit's Actions result here after the push.
+The bounded queue implementation and post-merge local checks are complete. Queue change commit: `fd3524fc`; latest merge commit: `82e5db18` (includes `origin/main` `68e2db0c`). The queue change has not yet been pushed to `main`. Main CI run 1518 completed successfully on `68e2db0c` (https://github.com/Fokiiiiiii/eve.rs/actions/runs/41919696018); recheck the latest CI status before pushing. Record the queue commit's Actions result here after the push.
 
 ## Change
 
@@ -26,13 +26,13 @@ The bounded queue implementation and post-merge local checks are complete. Queue
 
 - `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/src/Eve.Space/Eve.Space.csproj -p:UseSharedCompilation=false`: passed.
 - `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Space.Tests/Eve.Space.Tests.csproj -p:UseSharedCompilation=false`: passed.
-- After merging `origin/main` `a13d088c`, `SimClientTests`: 28 passed, 0 skipped (includes `A_full_outbound_queue_fails_pending_requests_and_breaks_the_link`).
+- After merging `origin/main` `68e2db0c`, `SimClientTests`: 28 passed, 0 skipped (includes `A_full_outbound_queue_fails_pending_requests_and_breaks_the_link`).
 - After the merge, `SpaceServiceTests.When_the_simulation_is_lost_the_ship_docks_at_the_station_the_character_left` on `eve_p3`: 1 passed, 0 skipped.
 - After the merge, selected Host tests in `AbyssalHostFlowTests` and `TournamentMatchPersistenceTests` on `eve_p3`: 21 passed, 21 skipped, 0 failed. The skipped cases require `EVE_ABYSSAL_SIM_BINARY` and `EVE_ABYSSAL_SIM_SDE`; they are reported separately and are not counted as passes.
 - Change-specific Actions verification: pending push.
 
 ## Main CI gate
 
-The latest completed `CI` workflow on `main` at handoff is run 1517, successful on commit `15e1aa9d12b7`: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41903789842. The current `origin/main` tip `a13d088c` also has a successful selected Agent test run; that workflow is separate from the main CI gate.
+The latest completed `CI` workflow on `main` at handoff is run 1518, successful on commit `68e2db0c03e5`: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41919696018. Recheck the latest CI status before pushing.
 
 Earlier, main CI run 1515 failed on `HostServerTests.Registered_lp_store_and_wallet_routes_return_the_client_consumed_shapes` (`LpStoreRpcHostWireTests.cs:154,165`). That failure was fixed on main at `96d6bb8f2b15`; CI run 1516 completed successfully: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41898752417.

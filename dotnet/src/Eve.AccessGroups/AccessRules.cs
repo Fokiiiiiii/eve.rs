@@ -54,9 +54,9 @@ public sealed class AccessGroupError(string code, string? notice = null) : Excep
 }
 
 /// <summary>
-/// An admin manages every entry; a manager manages member and blocked entries only. Corporation, alliance and everyone entries can only be
-/// members or blocked, and the most specific matching entry decides a character's role (character, corporation, alliance, then everyone).
-/// A corporation's built-in list is fixed: the corporation is its admin, and its members have the member role.
+/// An admin manages every entry; a manager manages member and blocked entries and may change or remove its own manager entry. Corporation,
+/// alliance and everyone entries can only be members or blocked, and the most specific matching entry decides a character's role (character,
+/// corporation, alliance, then everyone). A corporation's built-in list is fixed: the corporation is its admin, and its members have the member role.
 /// </summary>
 public static class AccessRules
 {
@@ -110,12 +110,16 @@ public static class AccessRules
     public static bool MayAdd(MembershipType actor, MembershipType type) =>
         actor == MembershipType.Admin || type is MembershipType.Member or MembershipType.Excluded;
 
-    /// <summary>An admin removes any entry; a manager removes member or blocked entries.</summary>
-    public static bool MayRemove(MembershipType actor, MembershipType current) =>
-        actor == MembershipType.Admin || current is MembershipType.Member or MembershipType.Excluded;
+    /// <summary>An admin removes any entry; a manager removes member or blocked entries and its own manager entry.</summary>
+    public static bool MayRemove(MembershipType actor, MembershipType current, bool isSelf) =>
+        actor == MembershipType.Admin || current is MembershipType.Member or MembershipType.Excluded
+        || (actor == MembershipType.Manager && isSelf && current == MembershipType.Manager);
 
-    /// <summary>An admin changes any entry; a manager changes member or blocked entries to member or blocked.</summary>
-    public static bool MayChange(MembershipType actor, MembershipType current, MembershipType target) =>
-        actor == MembershipType.Admin || (current is MembershipType.Member or MembershipType.Excluded && target is MembershipType.Member or MembershipType.Excluded);
+    /// <summary>An admin changes any entry; a manager changes member or blocked entries and may demote its own manager entry.</summary>
+    public static bool MayChange(MembershipType actor, MembershipType current, MembershipType target, bool isSelf) =>
+        actor == MembershipType.Admin
+        || ((target is MembershipType.Member or MembershipType.Excluded)
+            && ((current is MembershipType.Member or MembershipType.Excluded)
+                || (actor == MembershipType.Manager && isSelf && current == MembershipType.Manager)));
 
 }

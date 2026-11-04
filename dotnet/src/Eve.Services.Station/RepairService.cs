@@ -8,6 +8,7 @@ using Eve.Marshal;
 using Eve.Universe;
 using Eve.Wallet;
 using Eve.Structures;
+using Eve.Services.Ships;
 using Npgsql;
 
 namespace Eve.Services.Station;
@@ -17,7 +18,8 @@ namespace Eve.Services.Station;
 /// </summary>
 [Service("repairSvc")]
 public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore items, ItemTypeCatalog types, StationCatalog stations, DogmaStatic statics,
-    PgModuleStateStore conditions, AdjustedPriceCache prices, WalletTransactions wallets, PgWalletStore balances, Func<long> nowUnixMs, StructureStore? structures = null) : IBoundObjectReleaseHandler
+    PgModuleStateStore conditions, AdjustedPriceCache prices, WalletTransactions wallets, PgWalletStore balances, Func<long> nowUnixMs, StructureStore? structures = null,
+    Func<long, long, CancellationToken, ValueTask<bool>>? structureRepairAccess = null) : IBoundObjectReleaseHandler
 {
     /// <summary>The ESI wallet ref type <c>repair_bill</c> (CCP eve-glue, <c>JournalRefTypeEnumV2</c>).</summary>
     public const int RepairBillRefType = 15;
@@ -112,6 +114,10 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
         var character = CharacterOf(call.Session);
         var payment = isStructure ? null : NumberOrNull(call.Arg(1));
         var now = nowUnixMs();
+        var fileTime = Py.FileTimeFromUnixMs(now);
+        var damageAttributeId = statics.AttributeId("damage") ?? throw new InvalidOperationException("The SDE has no damage attribute.");
+        var armorDamageAttributeId = statics.AttributeId("armorDamage") ?? throw new InvalidOperationException("The SDE has no armorDamage attribute.");
+        var shieldChargeAttributeId = statics.AttributeId("shieldCharge") ?? throw new InvalidOperationException("The SDE has no shieldCharge attribute.");
         var operation = $"repair:{Guid.NewGuid():N}";
 
         await using var connection = await source.OpenConnectionAsync(call.Cancellation).ConfigureAwait(false);
@@ -159,11 +165,21 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
 
         var moduleChanges = new Dictionary<long, ModuleCondition>();
         var repairedItems = new List<Item>();
+        var attributeChanges = new List<PyValue>();
+        void AddAttributeChange(long itemId, int attributeId, double before, double after)
+        {
+            if (before != after)
+                attributeChanges.Add(ShipNotifications.AttributeChange(character, itemId, attributeId, fileTime, before, after));
+        }
+
         foreach (var step in steps)
         {
             var target = targets.First(t => t.Row.Item.Id == step.ItemId);
             var repaired = RepairRules.Apply(target.Row.Health, step.RepairAmount);
             repairedItems.Add(target.Row.Item);
+            AddAttributeChange(target.Row.Item.Id, damageAttributeId, target.Row.Health.StructureDamage, repaired.StructureDamage);
+            AddAttributeChange(target.Row.Item.Id, armorDamageAttributeId, target.Row.Health.ArmorDamage, repaired.ArmorDamage);
+            AddAttributeChange(target.Row.Item.Id, shieldChargeAttributeId, target.Row.Health.ShieldCharge, repaired.ShieldCharge);
             if (target.Row.ShipCondition is { } before)
             {
                 await conditions.SetShipConditionAsync(connection, transaction, target.Row.Item.Id,
@@ -180,6 +196,8 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
         await transaction.CommitAsync(call.Cancellation).ConfigureAwait(false);
         if (charged > 0 && await balances.GetAsync(character, call.Cancellation).ConfigureAwait(false) is { } balance)
             wallets.AnnounceCommitted(new WalletBalanceChange(character, IskAccount, balance.Isk));
+        if (attributeChanges.Count > 0)
+            call.Session.SendNotification("OnModuleAttributeChanges", "clientID", new PyList(attributeChanges));
         foreach (var item in repairedItems)
             await NotifyItemAsync(call.Session, item, call.Cancellation).ConfigureAwait(false);
         return PyNone.Instance;
@@ -198,6 +216,9 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
             var structure = structures is null ? null : await structures.GetAsync(facility.Id, call.Cancellation).ConfigureAwait(false);
             if (structure is null || !structure.Snapshot.CoreInstalled || structure.Snapshot.DestroyedMs != 0)
                 throw Notify("The repair shop is not available in this structure.");
+            if (structureRepairAccess is null ||
+                !await structureRepairAccess(CharacterOf(call.Session), facility.Id, call.Cancellation).ConfigureAwait(false))
+                throw MachoErrors.ThrowUserError("StructureGenericSettingDenied");
         }
         else if (stations.Get(facility.Id) is null)
         {

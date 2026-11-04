@@ -1162,6 +1162,11 @@ public class SkillHandlerTests
         Assert.Equal(new PyInt(835), await Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPointsToSkills", selected));
         Assert.Equal(new PyInt(835), await Rig.CallAsync(rig.Handler, session, "GetFreeSkillPoints"));
         Assert.Equal(new PyInt(1_415), await Rig.CallAsync(rig.Handler, session, "GetSkillPoints"));
+        var history = ((PyList)await Rig.CallAsync(rig.Handler, session, "GetSkillHistory")).Items.Select(Notes.Fields).ToArray();
+        var row = Assert.Single(history);
+        Assert.Equal((SkillEvents.FreeSkillPointsUsed, 3301L, 1_415L, 2L),
+            (Notes.Number(row["eventTypeID"]), Notes.Number(row["skillTypeID"]), Notes.Number(row["absolutePoints"]), Notes.Number(row["level"])));
+        Assert.IsType<PyLong>(row["logDate"]);
 
         var info = ((PyDict)((PyObject)await Rig.CallAsync(rig.Handler, session, "GetMySkillInfo")).Args)
             .Entries.ToDictionary(e => JsSemantics.StringValue(e.Key)!, e => e.Value);
@@ -1217,6 +1222,10 @@ public class SkillHandlerTests
             await Rig.CallAsync(rig.Handler, session, "GetFreeSkillPointsAppliedToQueue"));
 
         Assert.Equal(new PyInt(0), await Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPointsToQueue"));
+        var history = ((PyList)await Rig.CallAsync(rig.Handler, session, "GetSkillHistory")).Items.Select(Notes.Fields).ToArray();
+        Assert.Equal([SkillEvents.FreeSkillPointsUsed, SkillEvents.FreeSkillPointsUsed], history.Select(h => (int)Notes.Number(h["eventTypeID"])));
+        Assert.Equal([3301L, 3300], history.Select(h => Notes.Number(h["skillTypeID"])));
+        Assert.Equal([585L, 1_415], history.Select(h => Notes.Number(h["absolutePoints"])));
         var remainingQueue = (PyList)await Rig.CallAsync(rig.Handler, session, "GetMySkillQueue");
         Assert.Single(remainingQueue.Items);
         var remainingLine = ((PyDict)((PyObject)remainingQueue.Items[0]).Args).Entries
@@ -1353,6 +1362,9 @@ public class SkillHandlerTests
         var partial = Notes.Of(sink);
         Assert.Equal(["OnServerSkillsChanged", "OnNewSkillQueueSaved", "OnFreeSkillPointsChanged"], partial.Select(n => n.Name));
         Assert.Equal(1515, (await rig.Store.ForCharacterAsync(character)).Single(s => s.TypeId == 3301).SkillPoints);
+        var history = ((PyList)await Rig.CallAsync(rig.Handler, session, "GetSkillHistory")).Items.Select(Notes.Fields).ToArray();
+        Assert.Equal([SkillEvents.FreeSkillPointsUsed, SkillEvents.FreeSkillPointsUsed], history.Select(h => (int)Notes.Number(h["eventTypeID"])));
+        Assert.Equal([1_515L, 1_415], history.Select(h => Notes.Number(h["absolutePoints"])));
     }
 
     [PgFact]

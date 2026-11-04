@@ -230,14 +230,14 @@ public class TrainingQueueTests
     }
 
     [Fact]
-    public void A_line_that_has_ended_is_a_trained_level_and_the_next_line_begins_where_it_ended()
+    public void A_line_that_has_ended_uses_its_scheduled_history_time_and_the_next_line_begins_where_it_ended()
     {
         var state = new QueueState([new(3301, 2), new(3301, 3)], true, Start);
         var settlement = Training.Settle(state, Rookie(), Catalog, Rate, Start + 23_300_000_000 + 1);
         Assert.True(settlement.QueueChanged);
         Assert.Equal([new CharacterSkill(3301, 2, 1415)], settlement.Finished);
         Assert.Equal(new QueueState([new(3301, 3)], true, Start + 23_300_000_000), settlement.State);
-        Assert.Equal([new HistoryEntry(Start + 23_300_000_001, SkillEvents.QueueTrainingCompleted, 3301, 1415, 2)], settlement.History); // more lines are waiting
+        Assert.Equal([new HistoryEntry(Start + 23_300_000_000, SkillEvents.QueueTrainingCompleted, 3301, 1415, 2)], settlement.History); // more lines are waiting
     }
 
     [Fact]
@@ -286,6 +286,11 @@ public class TrainingQueueTests
         Assert.Equal([new CharacterSkill(3301, 2, 1415), new CharacterSkill(3301, 3, 8000)], settlement.Finished);
         Assert.Equal(new QueueState([], false, null), settlement.State);
         Assert.Equal([SkillEvents.QueueTrainingCompleted, SkillEvents.TrainingComplete], settlement.History.Select(h => h.EventType));
+        Assert.Equal(
+        [
+            new HistoryEntry(Start + 23_300_000_000, SkillEvents.QueueTrainingCompleted, 3301, 1415, 2),
+            new HistoryEntry(Start + 155_000_000_000, SkillEvents.TrainingComplete, 3301, 8000, 3),
+        ], settlement.History);
         Assert.Equal(new CharacterSkill(3301, 3, 8000), settlement.Skills[3301]);
     }
 

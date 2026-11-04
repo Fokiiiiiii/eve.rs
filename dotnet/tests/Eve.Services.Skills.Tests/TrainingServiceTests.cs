@@ -266,15 +266,14 @@ public class TrainingServiceTests
         await Call(rig, session, "AbortTraining", []);
 
         var history = ((PyList)await Call(rig, session, "GetSkillHistory", [])).Items.Select(Notes.Fields).ToArray();
-        Assert.Equal([38L, 36], history.Select(h => Notes.Number(h["eventTypeID"])));
+        Assert.Equal([38L], history.Select(h => Notes.Number(h["eventTypeID"])));
         Assert.Equal((3301L, 550L, 2L), (Notes.Number(history[0]["skillTypeID"]), Notes.Number(history[0]["absolutePoints"]), Notes.Number(history[0]["level"])));
-        Assert.Equal((3301L, 250L, 2L), (Notes.Number(history[1]["skillTypeID"]), Notes.Number(history[1]["absolutePoints"]), Notes.Number(history[1]["level"])));
         Assert.IsType<PyLong>(history[0]["logDate"]);
         Assert.Equal("util.KeyVal", JsSemantics.StringValue(((PyObject)((PyList)await Call(rig, session, "GetSkillHistory", [])).Items[0]).Name));
         var limited = Assert.IsType<PyList>(await Call(rig, session, "GetSkillHistory", [new PyInt(1)]));
         Assert.Single(limited.Items);
         Assert.Equal(38, Notes.Number(Notes.Fields(limited.Items[0])["eventTypeID"]));
-        Assert.Equal(2, Assert.IsType<PyList>(await Call(rig, session, "GetSkillHistory", [new PyInt(0)])).Items.Count);
+        Assert.Single(Assert.IsType<PyList>(await Call(rig, session, "GetSkillHistory", [new PyInt(0)])).Items);
     }
 
     [PgFact]

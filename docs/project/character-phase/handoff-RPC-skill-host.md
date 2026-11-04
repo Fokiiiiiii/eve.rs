@@ -118,7 +118,7 @@ V24.01 whole-tree evidence: `eve/devtools/script/svc_slash.py:781,798,1017,1034`
 
 Focused PostgreSQL checks on `eve_p7`, all through `tools/dev/db-lock.sh`: `SkillAdminCommandTests`, `SkillBulkCommandTests`, and `SlashCatalogTests` passed 32/32; `GiveSkillTests`, `RemoveSkillTests`, `SkillQueueContractTests`, `TrainingServiceTests`, and `SkillServiceTests` passed 23/23; `CharacterTrainingTests` and `CharacterTrainingLearningTests` passed 23/23; Host skill RPC composition tests passed 2/2. The Host DB check required loading the pinned mission SDE build 3405148 into `sde_mission`; no tests were skipped in the passing runs. `Eve.Host` built with 0 warnings/errors.
 
-The latest completed main CI is run 1489 at `c68cc46a75ed` and is green; runs 1490 (`c872a5b5`) and 1491 (`ce18bc3f`) are still in progress. No graphical-client run has been made.
+The latest completed main CI is run 1492 at `d2f3204e533b` and is green. The docs-only handoff push `d8f84bc4` did not trigger a `ci.yml` run. No graphical-client run has been made.
 
 ## Skill history alignment (2026-11-04)
 

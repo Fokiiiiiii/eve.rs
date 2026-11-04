@@ -429,6 +429,25 @@ public static SkillAugmentationReader CreateAugmentationReader(
 
     private static long AccountOf(ServiceCall call) => call.Session.UserId ?? 0;
 
+    private async ValueTask<(long AccountId, bool IsAlphaClone, int RaceId)> FreeSkillPointStateAsync(
+        long characterId,
+        CancellationToken cancellationToken)
+    {
+        if (isAlphaClone is null)
+        {
+            throw new InvalidOperationException("The account clone-state resolver is unavailable.");
+        }
+
+        var character = await characters.GetAsync(characterId, cancellationToken)
+            ?? throw new InvalidDataException($"Character {characterId} has no stored race for free skill-point rules.");
+        if (character.AccountId <= 0 || character.RaceId <= 0 || !catalog.HasAlphaCloneGrade(character.RaceId))
+        {
+            throw new InvalidDataException($"Character {characterId} has invalid race or pinned SDE clone-grade data.");
+        }
+
+        return (character.AccountId, isAlphaClone(character.AccountId), character.RaceId);
+    }
+
     /// <summary>The character's skills and queue as they are now (what has finished is settled first).</summary>
     private async ValueTask<TrainingView?> ViewOf(ServiceCall call) =>
         CharacterOf(call) is { } id ? await training.ViewAsync(id, AccountOf(call), call.Cancellation) : null;
@@ -663,10 +682,17 @@ public static SkillAugmentationReader CreateAugmentationReader(
     }
 
     [Method("GetFreeSkillPointsAppliedToQueue")]
-    public async ValueTask<PyValue> GetFreeSkillPointsAppliedToQueue(ServiceCall call) =>
-        CharacterOf(call) is { } id
-            ? SkillPointMap(await training.FreeSkillPointsAppliedAsync(id, AccountOf(call), null, call.Cancellation))
-            : new PyDict([]);
+    public async ValueTask<PyValue> GetFreeSkillPointsAppliedToQueue(ServiceCall call)
+    {
+        if (CharacterOf(call) is not { } id)
+        {
+            return new PyDict([]);
+        }
+
+        var state = await FreeSkillPointStateAsync(id, call.Cancellation);
+        return SkillPointMap(await training.FreeSkillPointsAppliedAsync(
+            id, state.AccountId, null, state.IsAlphaClone, state.RaceId, call.Cancellation));
+    }
 
     [Method("GetFreeSkillPointsAppliedToSkills")]
     public async ValueTask<PyValue> GetFreeSkillPointsAppliedToSkills(ServiceCall call)
@@ -676,10 +702,12 @@ public static SkillAugmentationReader CreateAugmentationReader(
             return new PyDict([]);
         }
 
+        var state = await FreeSkillPointStateAsync(id, call.Cancellation);
         var selectedSkills = SkillPointTargets(call.Arg(0));
         return selectedSkills.Count == 0
             ? new PyDict([])
-            : SkillPointMap(await training.FreeSkillPointsAppliedAsync(id, AccountOf(call), selectedSkills, call.Cancellation));
+            : SkillPointMap(await training.FreeSkillPointsAppliedAsync(
+                id, state.AccountId, selectedSkills, state.IsAlphaClone, state.RaceId, call.Cancellation));
     }
 
     [Method("ApplyFreeSkillPointsToQueue")]
@@ -689,7 +717,9 @@ public static SkillAugmentationReader CreateAugmentationReader(
         {
             return None;
         }
-        var (_, remaining) = await training.ApplyFreeSkillPointsAsync(id, AccountOf(call), null, call.Cancellation);
+        var state = await FreeSkillPointStateAsync(id, call.Cancellation);
+        var (_, remaining) = await training.ApplyFreeSkillPointsAsync(
+            id, state.AccountId, null, state.IsAlphaClone, state.RaceId, call.Cancellation);
         return new PyInt(remaining);
     }
 
@@ -700,12 +730,14 @@ public static SkillAugmentationReader CreateAugmentationReader(
         {
             return None;
         }
+        var state = await FreeSkillPointStateAsync(id, call.Cancellation);
         var selectedSkills = SkillPointTargets(call.Arg(0));
         if (selectedSkills.Count == 0)
         {
             return None;
         }
-        var (_, remaining) = await training.ApplyFreeSkillPointsAsync(id, AccountOf(call), selectedSkills, call.Cancellation);
+        var (_, remaining) = await training.ApplyFreeSkillPointsAsync(
+            id, state.AccountId, selectedSkills, state.IsAlphaClone, state.RaceId, call.Cancellation);
         return new PyInt(remaining);
     }
 
@@ -717,13 +749,14 @@ public static SkillAugmentationReader CreateAugmentationReader(
             return None;
         }
 
+        var state = await FreeSkillPointStateAsync(id, call.Cancellation);
         if (IdOf(call.Arg(0)) is not { } skillTypeId || skillTypeId <= 0 || skillTypeId > int.MaxValue ||
             IdOf(call.Arg(1)) is not { } pointsToApply || pointsToApply <= 0)
         {
             return new PyInt(await store.FreeSkillPointsAsync(id, call.Cancellation));
         }
 
-        var view = await training.ViewAsync(id, AccountOf(call), call.Cancellation);
+        var view = await training.ViewAsync(id, state.AccountId, call.Cancellation);
         if (view is { State.Running: true } && view.State.Entries.FirstOrDefault()?.TypeId == (int)skillTypeId)
         {
             throw MachoErrors.ThrowUserError("CannotApplyFreePointsWhileTrainingSkill");
@@ -737,7 +770,8 @@ public static SkillAugmentationReader CreateAugmentationReader(
                 ("skillName", new PyStr(catalog.Get((int)skillTypeId)?.Name ?? skillTypeId.ToString())));
         }
 
-        var points = Math.Min(pointsToApply, Math.Max(0L, Eve.Skills.SkillPoints.ForTraining(type.Rank, 5) - skill.SkillPoints));
+        var maximumLevel = state.IsAlphaClone ? catalog.AlphaMaxLevel(state.RaceId, (int)skillTypeId) : SkillPoints.MaxLevel;
+        var points = Math.Min(pointsToApply, Math.Max(0L, Eve.Skills.SkillPoints.ForTraining(type.Rank, maximumLevel) - skill.SkillPoints));
         if (points > remaining)
         {
             throw MachoErrors.ThrowUserError("CannotApplyFreePointsNotEnoughRemaining",
@@ -748,14 +782,15 @@ public static SkillAugmentationReader CreateAugmentationReader(
             return new PyInt(remaining);
         }
 
-        if (await training.ApplyFreeSkillPointAmountAsync(id, AccountOf(call), (int)skillTypeId, points, call.Cancellation)
+        if (await training.ApplyFreeSkillPointAmountAsync(
+                id, state.AccountId, (int)skillTypeId, points, state.IsAlphaClone, state.RaceId, call.Cancellation)
             is { } updatedRemaining)
         {
             return new PyInt(updatedRemaining);
         }
 
         // The atomic write can lose a race with another queue or point change after the read above.
-        var latestView = await training.ViewAsync(id, AccountOf(call), call.Cancellation);
+        var latestView = await training.ViewAsync(id, state.AccountId, call.Cancellation);
         if (latestView is { State.Running: true } && latestView.State.Entries.FirstOrDefault()?.TypeId == (int)skillTypeId)
         {
             throw MachoErrors.ThrowUserError("CannotApplyFreePointsWhileTrainingSkill");
@@ -768,7 +803,7 @@ public static SkillAugmentationReader CreateAugmentationReader(
                 ("skillName", new PyStr(type.Name)));
         }
         remaining = await store.FreeSkillPointsAsync(id, call.Cancellation);
-        points = Math.Min(pointsToApply, Math.Max(0L, Eve.Skills.SkillPoints.ForTraining(type.Rank, 5) - latestSkill.SkillPoints));
+        points = Math.Min(pointsToApply, Math.Max(0L, Eve.Skills.SkillPoints.ForTraining(type.Rank, maximumLevel) - latestSkill.SkillPoints));
         if (points == 0)
         {
             return new PyInt(remaining);

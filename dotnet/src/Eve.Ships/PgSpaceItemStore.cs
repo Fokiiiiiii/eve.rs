@@ -26,6 +26,7 @@ public sealed class PgSpaceItemStore
 
     private readonly NpgsqlDataSource _source;
     private readonly string _schema;
+    private readonly PgWreckSalvageStore _wreckSalvage;
 
     public PgSpaceItemStore(NpgsqlDataSource source, string schema = DefaultSchema)
     {
@@ -35,7 +36,10 @@ public sealed class PgSpaceItemStore
         }
         _source = source;
         _schema = schema;
+        _wreckSalvage = new PgWreckSalvageStore(source, schema);
     }
+
+    public string Schema => _schema;
 
     public static IReadOnlyList<Migration> MigrationSet() => Migrations.Embedded(typeof(PgSpaceItemStore).Assembly, "Migrations");
 
@@ -93,6 +97,7 @@ public sealed class PgSpaceItemStore
 
     public async Task<bool> RemoveAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long itemId, CancellationToken cancellationToken = default)
     {
+        await _wreckSalvage.DeleteAsync(connection, transaction, itemId, cancellationToken);
         await using var command = new NpgsqlCommand($"DELETE FROM {_schema}.space_items WHERE item_id = $1", connection, transaction);
         command.Parameters.Add(new NpgsqlParameter { Value = itemId });
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;

@@ -50,14 +50,14 @@ internal sealed class Rig : IAsyncDisposable
     private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, IShipInsuranceInvalidator? shipInsuranceInvalidator)
     {
         Source = source;
-        _schemas = [$"sc_{suffix}", $"si_{suffix}", $"ss_{suffix}", $"sw_{suffix}", $"sf_{suffix}", $"pd_{suffix}", $"pe_{suffix}"];
+        _schemas = [$"sc_{suffix}", $"si_{suffix}", $"ss_{suffix}", $"sw_{suffix}", $"sf_{suffix}", $"pd_{suffix}", $"pe_{suffix}", $"sp_{suffix}"];
         Characters = new PgCharacterStore(source, _schemas[0]);
         Items = new PgItemStore(source, _schemas[1], shipInsuranceInvalidator);
         Skills = new PgSkillStore(source, _schemas[2]);
         Modules = new PgModuleStateStore(source, _schemas[4]);
         Statics = statics;
         Creation = creation;
-        Ships = new CharacterShips(source, statics, Characters, Items, Skills, Modules);
+        Ships = new CharacterShips(source, statics, Characters, Items, Skills, Modules, spaceSchema: _schemas[7]);
         Events = new EventBus(source, new DurableScheduler(source, () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), schema: _schemas[5]), schema: _schemas[6]);
         Facts = new BusFacts(Events);
     }
@@ -69,6 +69,8 @@ internal sealed class Rig : IAsyncDisposable
 
     /// <summary>The schema the skills (and the expert systems) are kept in.</summary>
     public string SkillsSchema => _schemas[2];
+
+    public string SpaceSchema => _schemas[7];
 
     public PgCharacterStore Characters { get; }
 
@@ -253,6 +255,7 @@ internal sealed class Rig : IAsyncDisposable
         await PgSkillStore.MigrateAsync(source, $"ss_{suffix}");
         await PgWalletStore.MigrateAsync(source, $"sw_{suffix}");
         await PgModuleStateStore.MigrateAsync(source, $"sf_{suffix}");
+          await PgSpaceItemStore.MigrateAsync(source, $"sp_{suffix}");
         await DurableScheduler.MigrateAsync(source, $"pd_{suffix}");
         await EventBus.MigrateAsync(source, $"pe_{suffix}");
         var creation = new CharacterCreation(

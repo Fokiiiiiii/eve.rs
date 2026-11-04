@@ -18,15 +18,13 @@ The selection proxy is limited to pending NPC bounty kills currently stored per 
 
 ## Tests run locally
 
-Database tests used `eve_p8` through `tools/dev/db-lock.sh`.
+Database tests ran against `eve_p8` through `tools/dev/db-lock.sh`, including after the latest `origin/main` merge.
 
-- Host `NeedlejackActivationHostTests`: 7 passed, 0 skipped.
-- Host `Crimewatch_bound_get_character_security_status_uses_the_registered_host_route`: 1 passed, 0 skipped.
-- `ActivityTravelRpcServicesTests`: 9 passed, 0 skipped.
+- Host filter `NeedlejackActivationHostTests|Crimewatch_bound_get_character_security_status_uses_the_registered_host_route|AbyssalHostFlowTests|Movement_rpcs_use_registered_host_routes_with_client_wire_shapes`: 30 passed, 20 gated skips, 0 failed. All Needlejack and registered-route tests in the filter passed; skips are the pre-existing gated Abyssal cases.
+- Space `ActivityTravelRpcServicesTests|RelocationTests|PlayerDeathTests`: 36 passed, 0 skipped.
 - `PgBountyStoreTests`: 16 passed, 0 skipped.
-- Space `RelocationTests`: 5 passed, 0 skipped.
 - Services Crimewatch `RuntimeTests|PlayerBountyKillsTests|NpcSecurityStatusRecoverySubscriberTests`: 38 passed, 0 skipped.
 - Crimewatch `AggressionTests|SafetyTests`: 45 passed, 0 skipped.
-- A combined Host run included 20 unrelated Abyssal gated cases that were skipped; those skips are not counted as passes.
+- `cargo +1.94.1 fmt --all -- --check`: passed; workspace `clippy --all-targets -- -D warnings` passed.
 
-The Host and test projects compiled as part of these runs. GitHub Actions and the graphical EVE client have not yet checked this change.
+The earlier main red-gate reproduction for `Movement_rpcs_use_registered_host_routes_with_client_wire_shapes` matched main CI 1484 and was fixed upstream in commit `6e73707b`; the test passed in the Host run above. Main CI 1485 for that fix passed. CI 1486 for main `58e0bf4788a0` was still running at the last check. This feature has not been pushed and has no Actions result yet. No graphical EVE client session was run.

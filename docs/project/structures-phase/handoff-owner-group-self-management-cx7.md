@@ -23,4 +23,4 @@ Verified locally on `eve_p7`:
 - Owner-group Host RPC summary and self-management tests: 2 passed, 0 skipped, through `tools/dev/db-lock.sh`.
 - The graphical client was not used. The EveJS server package has no test script or owner-group test file; parity was checked against its `requireMemberChanges` helper and RPC handlers.
 
-Before push, newest completed main CI was green (run 1494); run 1495 was still in progress. Push SHA, selected Actions run, and final CI status are to be added after they are known.
+The newest completed main CI is green: run 1495 for `48178ac5bd42` completed successfully with no failed tests. Four later main commits were merged, including Everyone role/ID handling; after that merge, the focused AccessGroups/Store/Service tests passed 26/26 and the two owner-group Host PostgreSQL tests passed 2/2. The merge resolution is being committed before push; its SHA, selected Actions run, and final CI status will be added once known.

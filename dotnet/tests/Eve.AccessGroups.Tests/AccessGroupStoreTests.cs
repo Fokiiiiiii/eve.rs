@@ -218,8 +218,24 @@ public sealed class AccessGroupStoreTests
         Assert.Contains(Bob, change.Audience.Characters);
         Assert.False(change.Audience.Everyone);
 
+        foreach (var type in new[] { MembershipType.None, MembershipType.Manager, MembershipType.Admin, MembershipType.Excluded })
+        {
+            var refused = await rig.Store.AddMembersAsync(Aff(Alice), group, [new NewMember(0, MemberKind.Everyone, type)]);
+            Assert.Equal([new MemberFailure(0, "NotAllowed")], refused.Result);
+            Assert.Empty(refused.Changes);
+        }
+
         var everyone = await rig.Store.AddMembersAsync(Aff(Alice), group, [new NewMember(0, MemberKind.Everyone, MembershipType.Member)]);
         Assert.True(Assert.Single(everyone.Changes).Audience.Everyone);
+
+        foreach (var type in new[] { MembershipType.None, MembershipType.Manager, MembershipType.Admin, MembershipType.Excluded })
+        {
+            var refused = await rig.Store.ChangeMembershipTypesAsync(Aff(Alice), group, [0], type);
+            Assert.Equal([new MemberFailure(0, "NotAllowed")], refused.Result);
+            Assert.Empty(refused.Changes);
+        }
+        Assert.Contains(new AccessMember(0, MemberKind.Everyone, MembershipType.Member),
+            await rig.Store.MembersAsync(Aff(Alice), group));
     }
 
     [PgFact]

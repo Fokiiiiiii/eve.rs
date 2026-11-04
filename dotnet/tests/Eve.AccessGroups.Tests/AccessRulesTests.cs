@@ -24,13 +24,18 @@ public sealed class AccessRulesTests
     }
 
     [Fact]
-    public void A_corporation_or_alliance_or_everyone_entry_is_member_or_blocked_only()
+    public void Everyone_is_member_only_while_corporations_and_alliances_may_be_blocked()
     {
         Assert.True(AccessRules.ValidForKind(MemberKind.Corporation, MembershipType.Member));
         Assert.True(AccessRules.ValidForKind(MemberKind.Alliance, MembershipType.Excluded));
         Assert.False(AccessRules.ValidForKind(MemberKind.Corporation, MembershipType.Admin));
         Assert.False(AccessRules.ValidForKind(MemberKind.Alliance, MembershipType.Manager));
+        Assert.True(AccessRules.ValidForKind(MemberKind.Everyone, MembershipType.Member));
+        Assert.False(AccessRules.ValidForKind(MemberKind.Everyone, MembershipType.None));
+        Assert.False(AccessRules.ValidForKind(MemberKind.Everyone, MembershipType.Manager));
         Assert.False(AccessRules.ValidForKind(MemberKind.Everyone, MembershipType.Admin));
+        Assert.False(AccessRules.ValidForKind(MemberKind.Everyone, MembershipType.Excluded));
+        Assert.False(AccessRules.ValidForKind((MemberKind)99, MembershipType.Member));
         Assert.True(AccessRules.ValidForKind(MemberKind.Character, MembershipType.Admin));
     }
 

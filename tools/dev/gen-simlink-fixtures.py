@@ -1,0 +1,2064 @@
+#!/usr/bin/env python3
+"""Writes oracle/fixtures/simlink/messages.json: the frames between the host and the simulation of docs/design/adr/0007, byte for byte.
+
+This is the third writer of the wire format (the Rust simulation and the C# host are the other two); both replay the
+file, so a layout change has to be made here first. 64-bit integers are decimal strings in the JSON.
+"""
+import json
+import os
+import struct
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+OUT = os.path.join(HERE, "..", "..", "oracle", "fixtures", "simlink", "messages.json")
+
+KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateState": 6, "CriminalFlagActive": 140, "Command": 7,
+         "ShipSpec": 8, "Notify": 9, "Docked": 10, "Refused": 11, "Accepted": 12, "EnterReply": 13, "Approaching": 14,
+         "Jumping": 15, "Jumped": 16, "Targets": 17, "TargetRefused": 18, "Activate": 19, "Condition": 20,
+         "Destroyed": 21, "Spawn": 22, "SpawnReply": 23, "Destroy": 24, "Respawn": 25, "PlaceWreck": 26, "ChargeSpent": 27,
+         "PlaceContainer": 28, "ContainerPlaced": 29, "ChangeWreck": 30, "RemoveWreck": 31, "Measured": 32,
+         "AdjustCharge": 33, "ChargeAdjusted": 34, "Arrived": 35, "LaunchDrone": 36, "DroneCommand": 37, "DroneResults": 38,
+         "DroneScooped": 39, "DroneReleased": 40, "ModuleWorkCycle": 51, "ModuleWorkResult": 52, "ModuleEnded": 53, "LaunchFighter": 54, "FighterOrder": 55, "FighterResults": 56, "FighterLanded": 57, "FighterReleased": 58, "FighterGotoPoint": 59, "FighterSize": 60, "UpdateEffect": 61, "BuffState": 62, "Deployed": 63, "RemoveDeployed": 64, "PlaceProbe": 65, "RemoveProbe": 66,
+         "EcmBurst": 67, "PlaceDisruptor": 68, "SetDisruptorActive": 69, "PlaceInhibitor": 70, "ScanTargets": 71, "DirectionalTargets": 72,
+         "PlaceCynoBeacon": 73, "PlaceStructure": 74, "RemoveStructure": 75, "SetStructureState": 76, "StructureDamaged": 77,
+         "PlaceAnalysisBeacon": 78, "SetAnalysisBeaconState": 79, "TetherPolicy": 80, "TetherChanged": 81,
+         "PlaceWormhole": 82, "RemoveWormhole": 83, "ControlStructure": 84, "StructureDamageCandidatesRequest": 85,
+         "StructureDamageCandidatesResult": 86, "RemoveCynoBeacon": 87, "DamageableEntityUpserted": 88, "DamageableEntityRemoved": 89,
+         "PlaceObservatory": 90, "RemoteDecloakPing": 91, "PlaceControlTower": 92, "PlaceDeadspacePocket": 93,
+         "PlaceAccelerationGate": 94, "SetSlimField": 95, "PlaceCapturePoint": 96, "PlaceBattlefieldScoreboard": 97,
+         "EnsureAbyssalScene": 98, "EnsureAbyssalSceneReply": 99, "MoveAbyssalParticipant": 100, "MoveAbyssalParticipantReply": 101,
+         "RebindAbyssalSession": 102, "RebindAbyssalSessionReply": 103, "RemoveAbyssalScene": 104, "RemoveAbyssalSceneReply": 105,
+         "EnsureAbyssalTracePublished": 106, "EnsureAbyssalTracePublishedReply": 107, "RemoveAbyssalTrace": 108, "RemoveAbyssalTraceReply": 109,
+         "RemoveAbyssalParticipant": 110, "RemoveAbyssalParticipantReply": 111, "GetAbyssalParticipantPose": 112, "GetAbyssalParticipantPoseReply": 113,
+         "EnsureAbyssalSceneObject": 114, "EnsureAbyssalSceneObjectReply": 115, "EnsureAbyssalRewardCache": 116, "EnsureAbyssalRewardCacheReply": 117,
+         "EnsureAbyssalLootContainer": 118, "EnsureAbyssalLootContainerReply": 119, "EnsureAbyssalEnvironmentObject": 120, "EnsureAbyssalEnvironmentObjectReply": 121,
+         "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124, "ServiceNotify": 125, "GetSceneBody": 126, "GetSceneBodyReply": 127, "EnsureTournamentBeacon": 128, "EnsureTournamentBeaconReply": 129, "RemoveTournamentBeacon": 130, "RemoveTournamentBeaconReply": 131, "QueryTournamentWreck": 132, "QueryTournamentWreckReply": 133, "RemoveTournamentWreck": 134, "RemoveTournamentWreckReply": 135, "MovePublicParticipant": 136, "MovePublicParticipantReply": 137, "EnterPublicParticipant": 138, "EnterPublicParticipantReply": 139, "CriminalFlagActive": 140, "RegisterTournamentCutoff": 142, "RegisterTournamentCutoffReply": 143, "ReadTournamentCutoff": 144, "ReadTournamentCutoffReply": 145, "ReleaseTournamentCutoff": 146, "ReleaseTournamentCutoffReply": 147, "RegisterTournamentMetrics": 148, "RegisterTournamentMetricsReply": 149, "ReadTournamentMetrics": 150, "ReadTournamentMetricsReply": 151, "ReleaseTournamentMetrics": 152, "ReleaseTournamentMetricsReply": 153}
+
+def slim_value(v):  # a dynamic slim-item field value (protocol 76): a tag (0 none, 1 int, 2 real, 3 bool, 4 text, 5 tuple), then its payload
+    tag = v["tag"]
+    if tag == "none":
+        return bytes([0])
+    if tag == "int":
+        return bytes([1]) + i64(v["value"])
+    if tag == "real":
+        return bytes([2]) + struct.pack("<d", v["value"])
+    if tag == "bool":
+        return bytes([3, 1 if v["value"] else 0])
+    if tag == "text":
+        return bytes([4]) + s(v["value"])
+    if tag == "tuple":
+        return bytes([5]) + struct.pack("<H", len(v["items"])) + b"".join(slim_value(item) for item in v["items"])
+    raise ValueError(tag)
+
+def s(text):
+    data = text.encode("utf-8")
+    return struct.pack("<H", len(data)) + data
+
+def b(data):  # u32 length + bytes
+    return struct.pack("<I", len(data)) + data
+
+def frame(kind, body):
+    payload = bytes([KINDS[kind]]) + body
+    return struct.pack("<I", len(payload)) + payload
+
+def i64(value):
+    return struct.pack("<q", int(value))
+
+def u64(value):
+    return struct.pack("<Q", int(value))
+
+def scene_key(value):
+    if "scene" in value:
+        key = value["scene"]
+        return struct.pack("<iqi", key["locationId"], int(key["instanceId"]), key["roomIndex"])
+    return struct.pack("<iqi", value["solarSystemId"], 0, 0)
+
+def abyssal_modifiers(modifiers):
+    return (struct.pack("<I", len(modifiers))
+            + b"".join(struct.pack("<iBd", m["attributeId"], m["operation"], m["value"]) for m in modifiers))
+
+def abyssal_scene_spec(spec):
+    out = scene_key({"scene": spec["scene"]})
+    out += abyssal_modifiers(spec["environment"]["globalModifiers"])
+    out += struct.pack("<I", len(spec["environment"]["fields"]))
+    for field in spec["environment"]["fields"]:
+        out += struct.pack("<4d", *field["center"], field["radiusMeters"])
+        out += abyssal_modifiers(field["modifiers"])
+    boundary = spec["boundary"]
+    out += struct.pack("<3ddqI", *boundary["center"], boundary["radiusMeters"], boundary["tickIntervalMs"], len(boundary["damageCurve"]))
+    for point in boundary["damageCurve"]:
+        out += struct.pack("<2d", point["distanceOutsideMeters"], point["appliedDamagePerSecond"])
+    return out + i64(boundary["terminalExposureMs"]) + i64(spec["expiryFileTime"])
+
+TRACE_STATUSES = {"Created": 0, "AlreadyPresent": 1, "Removed": 2, "AlreadyAbsent": 3, "Failed": 255}
+
+def abyssal_trace_payload(trace):
+    out = struct.pack("<i", trace["solarSystemId"]) + i64(trace["itemId"])
+    out += struct.pack("<iii", trace["typeId"], trace["groupId"], trace["categoryId"])
+    out += i64(trace["ownerId"]) + struct.pack("<d", trace["radius"])
+    out += struct.pack("<9d", *trace["position"], *trace["velocity"], *trace["direction"])
+    target = trace.get("targetPoint")
+    out += b"\x00" if target is None else b"\x01" + struct.pack("<3d", *target)
+    out += struct.pack("<diii", trace["speedFraction"], trace["gameModeId"], trace["filamentTypeId"], trace["difficultyTier"])
+    return out + i64(trace["expiresAtMs"])
+
+def abyssal_result(m):
+    return u64(m["requestId"]) + bytes([0 if m["ok"] else 1]) + s("" if m["ok"] else m["reason"])
+
+def analysis_beacon_state(state):
+    """A CRAB's state (protocol 61): active flag, activate-at and deployed-at FILETIMEs, activation seconds, link state, link-complete FILETIME, linked ship."""
+    return (bytes([1 if state["active"] else 0]) + i64(state["activateAt"]) + i64(state["deployedAt"])
+            + struct.pack("<ii", state["activationSeconds"], state["linkState"]) + i64(state["linkCompleteAt"]) + i64(state["linkedShipId"]))
+
+def ship(m):
+    body = i64(m["shipId"]) + i64(m["characterId"]) + struct.pack("<iii", m["typeId"], m["groupId"], m["categoryId"])
+    body += s(m["name"]) + i64(m["ownerId"]) + struct.pack("<iii", m["corporationId"], m["allianceId"], m["warFactionId"])
+    body += struct.pack("<12d", m["securityStatus"], m["radius"], m["mass"], m["maxVelocity"], m["agility"],
+                        m["warpSpeedAu"], m["shieldRechargeMs"], m["maxTargetRange"], m["scanResolution"],
+                        m["signatureRadius"], m["capacitorCapacity"], m["capacitorRechargeS"])
+    body += struct.pack("<i", m["maxLockedTargets"])
+    body += vitals(m["vitals"]) + condition(m["condition"])
+    body += struct.pack("<I", len(m["modules"]))
+    for module in m["modules"]:
+        body += i64(module["itemId"]) + struct.pack("<iiq", module["typeId"], module["flag"], int(module.get("bankMasterId", 0)))
+    body += struct.pack("<7d", *m["sensorStrength"], m["ecmResistance"], m["energyWarfareResistance"], m.get("droneDamageMultiplier", 1.0))
+    # the stance (protocol 55): a flag, then when there is one the old stance, the switch time (a FILETIME) and the new stance
+    stance = m.get("stance")
+    if stance is None:
+        body += b"\x00"
+    else:
+        body += b"\x01" + struct.pack("<i", stance["oldStance"]) + i64(stance["switchedAt"]) + struct.pack("<i", stance["stance"])
+    return body
+
+def vitals(v):
+    r = v["resonances"]
+    # the armor's pin: a fitted Polarized weapon holds the armor's resonances at one (one byte, 0 or 1)
+    return (struct.pack("<15d", v["shieldCapacity"], v["armorHp"], v["structureHp"], *r["shield"], *r["armor"], *r["structure"])
+            + bytes([int(v.get("armorPinned", False))]))
+
+def condition(c):
+    return struct.pack("<4d", c["damage"], c["armorDamage"], c["shieldCharge"], c["charge"])
+
+def numbers(n):
+    return struct.pack("<3d", n["mass"], n["maxVelocity"], n["signatureRadius"])
+
+def changes(items):
+    return struct.pack("<I", len(items)) + b"".join(
+        i64(c["itemId"]) + struct.pack("<id", c["attributeId"], c["value"]) for c in items)
+
+def dot_bytes(d):
+    # a breacher pod's damage over time (protocol 42): a flag, then its duration, its cap per tick and its percentage per tick
+    return bytes([1]) + struct.pack("<3d", d["durationMs"], d["maxDamagePerTick"], d["maxHpPercentPerTick"]) if d else bytes([0])
+
+def turret(t):
+    body = struct.pack("<i", t["weaponTypeId"]) + s(t["fx"])
+    body += struct.pack("<8d", *t["rawDamage"], t["optimalRange"], t["falloff"], t["trackingSpeed"], t["signatureResolution"])
+    c = t.get("charge")
+    # the charge's reloads byte (protocol 38, FP-C8): the gun reloads from its hold when its rounds run out
+    body += bytes([0]) if not c else bytes([1]) + struct.pack("<iiqq", c["typeId"], c["flag"], c["rounds"], c["perCycle"]) + bytes([1 if c.get("reloads") else 0])
+    m = t.get("missile")
+    body += bytes([0]) if not m else (bytes([1]) + struct.pack("<ii", m["chargeTypeId"], m["groupId"]) + s(m["name"])
+                                      + struct.pack("<10d", m["radius"], m["mass"], m["agility"], m["hitPoints"], m["maxVelocity"], m["flightTimeMs"],
+                                                    m["explosionRadius"], m["explosionVelocity"], m["damageReductionFactor"], m["damageReductionSensitivity"]) + dot_bytes(m.get("dot")))
+    # a precursor weapon's damage ramp: the bonus a cycle adds and the most it reaches (absent for the others)
+    p = t.get("spool")
+    body += bytes([1]) + struct.pack("<2d", p["perCycle"], p["max"]) if p else bytes([0])
+    # a vorton's explosion (its cloud and velocity, the damage reduction) and its arc (the range from the target, the ships in all)
+    a = t.get("aoe")
+    body += bytes([1]) + struct.pack("<4d", a["explosionRadius"], a["explosionVelocity"], a["damageReductionFactor"],
+                                     a["damageReductionSensitivity"]) if a else bytes([0])
+    c = t.get("arc")
+    if c:
+        body += bytes([1]) + struct.pack("<di", c["range"], c["targets"])
+        if c.get("damageLossTarget") is None:
+            body += bytes([0])
+        else:
+            body += bytes([1]) + struct.pack("<d", c["damageLossTarget"])
+    else:
+        body += bytes([0])
+
+    return body + bytes([1 if t.get("requiresGunnery", False) else 0])
+
+LAYERS = {"shield": 0, "armor": 1, "structure": 2}
+FAMILIES = {"ore": 0, "ice": 1, "gas": 2}
+
+def deployable(d):
+    return struct.pack("<ii", d["chargeTypeId"], d["groupId"]) + s(d["name"]) + struct.pack("<d", d["radius"])
+
+def action(a):
+    kind = a["kind"]
+    if kind == "smartbomb":
+        return bytes([2]) + struct.pack("<d", a["range"]) + struct.pack("<4d", *a["damage"]) + bytes([1 if a["hurtsPilots"] else 0])
+    if kind == "pointDefense":
+        return bytes([30]) + struct.pack("<d4d", a["rangeMeters"], *a["damage"])
+    if kind == "repair":
+        return bytes([0, LAYERS[a["layer"]], 1 if a["when"] == "end" else 0]) + struct.pack("<d", a["amount"])
+    if kind == "ecmBurst":
+        return bytes([3]) + struct.pack("<d", a["range"]) + struct.pack("<4d", *a["strength"])
+    # the SimAction tag 5 (protocol 34): a cloak and whether it is warp-safe (a covert ops cloak carries the ship into warp; a standard one holds it);
+    # protocol 66: the cloak's targeting delay after a decloak, in milliseconds (cloakingTargetingDelay, a f64)
+    if kind == "cloak":
+        return bytes([5, 1 if a.get("warpSafe") else 0]) + struct.pack("<d", a.get("targetingDelayMs", 0.0))
+    # the SimAction tags 16 to 20 (protocol 34): a warp disruption bubble on the ship, the immunity of a nullifier, a stabilizer's scramble status, an interdiction
+    # probe in space, and a bomb that goes off where it is (kind 0 damage, 1 ECM, 2 neutralisation); a deployable's ball is its charge, its group, its name and radius
+    if kind == "warpBubble":
+        return bytes([16]) + struct.pack("<d", a["range"])
+    if kind == "warpImmunity":
+        return bytes([17])
+    if kind == "scrambleStatus":
+        return bytes([18]) + struct.pack("<d", a["delta"])
+    # the SimAction tag 22 (protocol 34): a defender launcher's cycle, its defender missile (the charge's flight, as a turret's missile is) and four damages
+    if kind == "defender":
+        m = a["missile"]
+        return (bytes([22]) + struct.pack("<ii", m["chargeTypeId"], m["groupId"]) + s(m["name"])
+                + struct.pack("<10d", m["radius"], m["mass"], m["agility"], m["hitPoints"], m["maxVelocity"], m["flightTimeMs"],
+                              m["explosionRadius"], m["explosionVelocity"], m["damageReductionFactor"], m["damageReductionSensitivity"])
+                + dot_bytes(None) + struct.pack("<4d", *a["damage"]))
+    # the SimAction tag 32 (protocol 71, ST-8b): a controlled structure's burst projector: its reach and duration in metres and milliseconds, then the remote
+    # effect of its family (the same kinds and numbers as the remote action)
+    if kind == "structureBurst":
+        return bytes([32]) + struct.pack("<2d", a["range"], a["durationMs"]) + remote_what(a)
+    if kind == "stasisBurst":
+        return bytes([21]) + struct.pack("<3d", a["range"], a["durationMs"], a["speedFactor"])
+    if kind == "warpProbe":
+        return bytes([19]) + deployable(a["ball"]) + struct.pack("<2d", a["range"], a["lifetimeMs"])
+    # a cynosural field (tag 27): the field's ball and its lifetime (the field type's explosionDelay); it is lit at the end of the generator's cycle
+    # the SimAction tag 28 (protocol 43): a command burst's reach in metres (its buffs are the host's, read from the charge when it settles)
+    if kind == "commandBurst":
+        return bytes([28]) + struct.pack("<d", a["rangeMeters"])
+    # the SimAction tag 29 (protocol 43, track C6): the Pulse Activated Nexus Invulnerability Core's fleet reach, in metres
+    if kind == "panic":
+        return bytes([29]) + struct.pack("<d", a["rangeMeters"])
+    # the SimAction tag 31 (protocol 70): an Entosis Link's cycle, the reach of its link in metres (its target is a structure the pilot holds the lock on)
+    if kind == "entosis":
+        return bytes([31]) + struct.pack("<d", a["rangeMeters"])
+    if kind == "cynoField":
+        return bytes([27]) + deployable(a["ball"]) + struct.pack("<d", a["lifetimeMs"])
+    if kind == "bomb":
+        return (bytes([20]) + deployable(a["ball"]) + bytes([a["bombKind"]]) + struct.pack("<2d", a["lifetimeMs"], a["blastRadius"])
+                + struct.pack("<4d", *a["damage"]) + struct.pack("<4d", *a["ecm"]) + struct.pack("<d", a["neutralize"]))
+    # the SimAction tags 7-11 (ADR 0013): a mining laser's cycle, a salvager's, and three effects whose packages have not landed (refused at activation)
+    if kind == "mining":
+        return bytes([7, FAMILIES[a["family"]]]) + struct.pack("<5d", a["miningAmountM3"], a["wasteMultiplier"], a["wasteProbability"], a["critProbability"], a["critMultiplier"])
+    if kind == "salvage":
+        return bytes([8]) + struct.pack("<d", a["accessBonus"])
+    # the SimAction tag 26 (protocol 40): a scanner's cycle, a cargo (0) or ship (1) scan, and its optimal range and falloff (metres; no falloff for a cargo scan)
+    if kind == "scan":
+        return bytes([26, 0 if a["cargo"] else 1]) + struct.pack("<2d", a["optimalMeters"], a["falloffMeters"])
+    # the SimAction tag 9 (protocol 30): the beam's speed, the hold distance, and the module's reach (the range a target is out of reach past)
+    if kind == "tractor":
+        return bytes([9]) + struct.pack("<3d", a["velocity"], a["hold"], a["range"])
+    if kind == "passiveLock":
+        return bytes([10])
+    if kind == "autoTarget":
+        return bytes([11]) + struct.pack("<d", a["range"])
+    # the SimAction tag 13 (ADR 0013 epoch 25): a doomsday's strike, an area hit pulse by pulse after a warning, with the windows of the ship that fires it
+    if kind == "strike":
+        return (bytes([13, a["shape"]]) + struct.pack("<3d", *a["direction"]) + struct.pack("<4d", a["length"], a["radius"], a["warningMs"], a["pulseMs"])
+                + struct.pack("<i", a["pulses"]) + struct.pack("<4d", *a["damage"])
+                + struct.pack("<6d", a["signatureRadius"], a["immobileMs"], a["noJumpMs"], a["neutAmount"], a["neutRadius"], a["neutSignatureRadius"])
+                # protocol 28: the disruption a pulse leaves (ms), then a sweep: a flag and the end of the axis (zeros without a sweep)
+                + struct.pack("<d", a.get("debuffMs", 0.0))
+                + bytes([1 if a.get("sweepEnd") else 0]) + struct.pack("<3d", *(a.get("sweepEnd") or [0.0, 0.0, 0.0]))
+                # protocol 39: a lance's beacon, a flag then its offset from the firing ship (zeros without a beacon)
+                + bytes([1 if a.get("beacon") else 0]) + struct.pack("<3d", *(a.get("beacon") or [0.0, 0.0, 0.0])))
+    # the SimAction tag 14 (ADR 0013 epoch 26): a titan doomsday, one hit on the locked target after a delay, the ship held for its windows
+    if kind == "doomsday":
+        return bytes([14]) + struct.pack("<d", a["delayMs"]) + struct.pack("<4d", *a["damage"]) + struct.pack("<2d", a["immobileMs"], a["noJumpMs"])
+    # the SimAction tag 23 (protocol 36): a kamikaze squadron's detonation, its damage (four kinds) and the range it detonates at (metres)
+    if kind == "kamikaze":
+        return bytes([23]) + struct.pack("<4d", *a["damage"]) + struct.pack("<d", a["rangeMeters"])
+    # the SimAction tag 24 (protocol 36): a fighter's missiles: the damage (four kinds), the reach (metres) and the explosion (radius, velocity, reduction factor,
+    # reduction sensitivity), scaled by the application factor for the target
+    if kind == "missile":
+        return bytes([24]) + struct.pack("<4d", *a["damage"]) + struct.pack("<5d", a["reachMeters"], a["explosionRadius"], a["explosionVelocity"],
+                                                                              a["reductionFactor"], a["reductionSensitivity"])
+    # the SimAction tag 25 (protocol 37): a fighter's LaunchBomb blast: the centre (metres), the radius (metres) and the four damages (EM, thermal, kinetic, explosive)
+    if kind == "blast":
+        return bytes([25]) + struct.pack("<3d", *a["centre"]) + struct.pack("<d", a["radiusMeters"]) + struct.pack("<4d", *a["damage"])
+    # the SimAction tag 15 (protocol 29): the Gravitational Transportation Field Oscillator's field, a sphere strike (shape 4) whose body follows the tag, then the
+    # offset of the destination from the firing ship, the warp block of the held capitals (ms), and the ship ids moved and held (a u32 count, then each as i64)
+    if kind == "field":
+        strike = action(dict(a["strike"], kind="strike"))[1:]
+        ids = lambda values: struct.pack("<I", len(values)) + b"".join(struct.pack("<q", v) for v in values)
+        return (bytes([15]) + strike + struct.pack("<3d", *a["destination"]) + struct.pack("<d", a["warpBlockMs"])
+                + ids(a["moved"]) + ids(a["held"]))
+    if kind == "resistanceShift":
+        # a reactive armor hardener: the seed (em, thermal, kinetic, explosive), the most a kind gives up a cycle, the attributes it tells
+        return bytes([12]) + struct.pack("<4d", *a["seed"]) + struct.pack("<d", a["shift"]) + struct.pack("<4i", *a["attributeIds"])
+    if kind == "charged":
+        body = bytes([4]) + struct.pack("<iiqq", a["chargeTypeId"], a["chargeFlag"], a["chargePerCycle"], a["charges"])
+        body += action(a["action"])
+        fallback = a.get("fallback")
+        body += bytes([1 if fallback else 0])
+        if fallback:
+            body += action(fallback)
+        return body
+
+    body = bytes([1, 1 if a["when"] == "end" else 0]) + struct.pack("<dd", a["optimal"], a["falloff"]) + s(a["jam"])
+    return body + remote_what(a)
+
+def remote_what(a):
+    """A remote effect's kind and numbers (the tags of the remote action; a structure burst, tag 32, carries the same)."""
+    what = a["what"]
+    body = bytes([{"repair": 0, "transfer": 1, "neutralize": 2, "drain": 3, "web": 4, "paint": 5, "damp": 6, "scramble": 7, "jam": 8, "disrupt": 9, "guidanceDisrupt": 10}[what]])
+    if what == "repair":
+        body += bytes([LAYERS[a["layer"]]])
+    if what in ("repair", "transfer", "neutralize", "drain"):
+        body += struct.pack("<d", a["amount"])
+    if what in ("neutralize", "drain"):
+        body += struct.pack("<d", a["signatureResolution"])
+    if what in ("web", "paint"):
+        body += struct.pack("<d", a["percent"])
+    if what == "damp":
+        body += struct.pack(
+            "<6d",
+            a["rangePercent"], a["resolutionPercent"],
+            a.get("gravimetricStrengthPercent", 0.0), a.get("ladarStrengthPercent", 0.0),
+            a.get("magnetometricStrengthPercent", 0.0), a.get("radarStrengthPercent", 0.0))
+    if what == "scramble":
+        body += struct.pack("<d", a["strength"]) + bytes([1 if a["blocksMwd"] else 0])
+    if what == "jam":
+        body += struct.pack("<4d", *a["strength"])
+    if what == "disrupt":
+        body += struct.pack("<ddd", a["rangePercent"], a["falloffPercent"], a["trackingPercent"])
+    if what == "guidanceDisrupt":
+        body += struct.pack("<dddd", a["velocityPercent"], a["delayPercent"], a["aoeVelocityPercent"], a["aoeCloudPercent"])
+    return body
+
+def effect(e):
+    body = i64(e["moduleId"]) + struct.pack("<ii", e["moduleType"], e["effectId"]) + s(e["fx"])
+    body += struct.pack("<ddi", e["durationMs"], e["capacitorNeed"], e["repeat"]) + i64(e["targetId"])
+    on, off, gun, act, rules = e.get("on"), e.get("off"), e.get("turret"), e.get("action"), e.get("rules")
+    # bit 16: the effect burns fuel (the host is asked for the fuel of each cycle that starts, ModuleWorkCycle with command 9); bit 32: the module rules (protocol 33)
+    body += bytes([(1 if on else 0) | (2 if off else 0) | (4 if gun else 0) | (8 if act else 0) | (16 if e.get("burnsFuel") else 0) | (32 if rules else 0)])
+    for n in (on, off):
+        if n:
+            body += numbers(n)
+    body += changes(e["onChanges"]) + changes(e["offChanges"])
+    body = body + turret(gun) if gun else body
+    if act:
+        body += action(act)
+    if rules:
+        # the module rules, after the action: the group and its limit (763), the rule bits (1 early deactivation 906, 2 needs an active industrial core 3265,
+        # 4 is an industrial core), and the reactivation delay (669, ms)
+        bits = (1 if rules["disallowEarlyDeactivation"] else 0) | (2 if rules["requiresIndustrialCore"] else 0) | (4 if rules["providesIndustrialCore"] else 0)
+        body += struct.pack("<iiBddd", rules["groupId"], rules["maxGroupActive"], bits, rules["reactivationDelayMs"], rules.get("maxVelocityLimit", 0.0), rules.get("minVelocityLimit", 0.0))
+    return body
+
+def weapon(w):
+    return i64(w["moduleId"]) + struct.pack("<idd", w["effectId"], w["cycleMs"], w["capacitorNeed"]) + turret(w)
+
+# what the host sends for a drone with no weapon: no module, no turret
+EMPTY_WEAPON = {"moduleId": 0, "effectId": 0, "cycleMs": 0.0, "capacitorNeed": 0.0, "weaponTypeId": 0, "fx": "", "requiresGunnery": False,
+                "rawDamage": [0.0, 0.0, 0.0, 0.0], "optimalRange": 0.0, "falloff": 0.0, "trackingSpeed": 0.0,
+                "signatureResolution": 0.0}
+
+def identity(i):
+    body = struct.pack("<qqd", i["hostileResponseThreshold"], i["friendlyResponseThreshold"], i["aggressionRange"])
+    body += struct.pack("<I", len(i["weapons"]))
+    for w in i["weapons"]:
+        body += weapon(w)
+    repairs = i.get("selfRepairs", [])
+    body += struct.pack("<I", len(repairs))
+    for repair in repairs:
+        body += struct.pack("<i4d", repair["effectId"], repair["amount"], repair["cycleMs"], repair["capacitorCost"], repair["delayChance"])
+    return body + wreck_kind(i.get("wreck")) + bytes([1 if i.get("hull") else 0, 1 if i.get("hostWreck") else 0])
+
+def wreck_kind(wreck):
+    if wreck:
+        return bytes([1]) + struct.pack("<i", wreck["typeId"]) + s(wreck["name"]) + struct.pack("<i", wreck["graphicId"])
+    return bytes([0])
+
+def structure_status(d):  # protocol 59: state, upkeep, a flagged timer (start, end, a flagged pause), a flagged unanchoring time, repairing (0 none, 1 no, 2 yes)
+    out = struct.pack("<ii", d["state"], d["upkeepState"])
+    timer = d.get("timer")
+    if timer is None:
+        out += b"\0"
+    else:
+        out += b"\1" + i64(timer[0]) + i64(timer[1]) + (b"\0" if timer[2] is None else b"\1" + i64(timer[2]))
+    unanchoring = d.get("unanchoring")
+    out += b"\0" if unanchoring is None else b"\1" + i64(unanchoring)
+    repairing = d.get("repairing")
+    return out + bytes([0 if repairing is None else (2 if repairing else 1)])
+
+def structure_health(m):  # protocol 60: the vitals (points, then the resonances of the shield, armor and hull), the shield's recharge, the per-second limits and the repair pauses
+    v = m["vitals"]
+    out = struct.pack("<3d", v["shieldCapacity"], v["armorHp"], v["structureHp"])
+    for layer in ("shield", "armor", "structure"):
+        out += struct.pack("<4d", *v["resonances"][layer])
+    return out + struct.pack("<d", m["shieldRechargeMs"]) + struct.pack("<6d", *(m["perSecond"] + m["repairPause"]))
+
+def abyssal_static_object(obj):
+    body = scene_key({"scene": obj["scene"]}) + i64(obj["itemId"])
+    body += struct.pack("<iii", obj["typeId"], obj["groupId"], obj["categoryId"]) + i64(obj["ownerId"])
+    body += struct.pack("<di", obj["radius"], obj["graphicId"]) + s(obj["name"])
+    return body + struct.pack("<6d", *obj["position"], *obj["direction"]) + bytes([1 if obj["isOpen"] else 0])
+
+def abyssal_point_defense(pulse):
+    if pulse is None:
+        return bytes([0])
+    body = bytes([1]) + i64(pulse["tickIntervalMs"]) + struct.pack("<4d", *pulse["damage"]) + struct.pack("<i", pulse["typeListId"])
+    for key in ("includedCategories", "includedGroups", "includedTypes", "excludedCategories", "excludedGroups", "excludedTypes"):
+        body += struct.pack("<I", len(pulse[key])) + b"".join(struct.pack("<i", value) for value in pulse[key])
+    return body + s(pulse["effectName"])
+
+def build(m):
+    k = m["kind"]
+    if k == "CriminalFlagActive":
+        return frame(k, u64(m["sessionId"]))
+    if k == "EnsureAbyssalScene":
+        return frame(k, u64(m["requestId"]) + abyssal_scene_spec(m["spec"]))
+    if k == "EnsureAbyssalSceneObject":
+        return frame(k, u64(m["requestId"]) + abyssal_static_object(m["object"]))
+    if k == "EnsureAbyssalEnvironmentObject":
+        obj = m["object"]
+        return frame(k, u64(m["requestId"]) + s(m["contentId"]) + abyssal_static_object(obj["body"])
+                     + struct.pack("<d", obj["effectRadiusMeters"]) + abyssal_point_defense(obj.get("pointDefense")))
+    if k == "AbyssalFieldMembership":
+        return frame(k, scene_key(m) + i64(m["sourceItemId"]) + i64(m["shipId"]) + u64(m["sessionId"]) + bytes([1 if m["inside"] else 0]))
+    if k == "RefreshAbyssalNpc":
+        return frame(k, u64(m["requestId"]) + scene_key(m) + u64(m["sessionId"]) + ship(m["ship"]) + identity(m["identity"]))
+    if k in ("EnsureAbyssalSceneObjectReply", "EnsureAbyssalRewardCacheReply", "EnsureAbyssalLootContainerReply", "EnsureAbyssalEnvironmentObjectReply", "RefreshAbyssalNpcReply"):
+        return frame(k, abyssal_result(m))
+    if k == "EnsureAbyssalRewardCache":
+        return frame(k, u64(m["requestId"]) + s(m["contentId"]) + scene_key(m)
+                     + ship(m["entity"]) + struct.pack("<6d", *m["position"], *m["direction"]))
+    if k == "EnsureAbyssalLootContainer":
+        return frame(k, u64(m["requestId"]) + s(m["contentId"]) + build(m["container"])[5:])
+    if k == "EnsureAbyssalTracePublished":
+        actor = m.get("actorSessionId")
+        body = u64(m["requestId"]) + (b"\x00" if actor is None else b"\x01" + u64(actor))
+        return frame(k, body + abyssal_trace_payload(m["trace"]))
+    if k == "EnsureAbyssalTracePublishedReply":
+        return frame(k, u64(m["requestId"]) + bytes([TRACE_STATUSES[m["status"]]])
+                     + struct.pack("<i", m["recipientCount"]) + bytes([1 if m["actorNotified"] else 0])
+                     + s(m.get("error") or ""))
+    if k == "RemoveAbyssalTrace":
+        return frame(k, u64(m["requestId"]) + struct.pack("<i", m["solarSystemId"]) + i64(m["itemId"]))
+    if k == "RemoveAbyssalTraceReply":
+        return frame(k, u64(m["requestId"]) + bytes([TRACE_STATUSES[m["status"]]])
+                     + struct.pack("<i", m["recipientCount"]) + s(m.get("error") or ""))
+    if k == "RemoveAbyssalParticipant":
+        return frame(k, u64(m["requestId"]) + scene_key({"scene": m["scene"]}) + i64(m["shipId"]))
+    if k == "RemoveAbyssalParticipantReply":
+        return frame(k, u64(m["requestId"]) + bytes([1 if m["alreadyAbsent"] else 0]) + s(m.get("error") or ""))
+    if k in ("QueryTournamentWreck", "RemoveTournamentWreck", "QueryTournamentWreckReply", "RemoveTournamentWreckReply"):
+        body = u64(m["requestId"]) + scene_key(m) + i64(m["itemId"])
+        if k == "RemoveTournamentWreck":
+            body += i64(m["ownerId"]) + i64(m["launcherId"]) + struct.pack("<i4d", m["typeId"], *m["center"], m["radius"])
+        if k.endswith("Reply"):
+            body += bytes([2 if m.get("error") is not None else int(m["present"])]) + s(m.get("error") or "")
+        return frame(k, body)
+    if k in ("RegisterTournamentCutoff", "RegisterTournamentCutoffReply", "ReadTournamentCutoff", "ReadTournamentCutoffReply", "ReleaseTournamentCutoff", "ReleaseTournamentCutoffReply"):
+        body = u64(m["requestId"]) + scene_key(m) + i64(m["matchId"]) + i64(m["generation"]) + i64(m["start"]) + i64(m["deadline"])
+        if k == "RegisterTournamentCutoff":
+            body += struct.pack("<H", len(m["roster"]))
+            for character, ship_id in m["roster"]: body += i64(character) + i64(ship_id)
+        if k in ("RegisterTournamentCutoffReply", "ReadTournamentCutoffReply", "ReleaseTournamentCutoffReply"):
+            body += bytes([m["status"]])
+            if k == "ReadTournamentCutoffReply":
+                body += struct.pack("<H", len(m["evidence"]))
+                for character, ship_id, value in m["evidence"]: body += i64(character) + i64(ship_id) + bytes([value])
+            body += s(m.get("error") or "")
+        return frame(k, body)
+    if k == "EnterPublicParticipant":
+        nested = build(m["enter"])
+        return frame(k, u64(m["requestId"]) + s(m["operationId"]) + struct.pack("<I", len(nested)) + nested)
+    if k == "EnterPublicParticipantReply":
+        error = m.get("error")
+        return frame(k, u64(m["requestId"]) + bytes([0 if error is None else 1]) + s(error or ""))
+    if k == "MovePublicParticipant":
+        body = u64(m["requestId"]) + s(m["operationId"]) + u64(m["sessionId"]) + i64(m["shipId"]) + scene_key({"scene": m["source"]}) + scene_key({"scene": m["destination"]}) + bytes([int(m["useAnchor"])])
+        if not m["useAnchor"]: body += struct.pack("<6d", *m["position"], *m["direction"])
+        return frame(k, body)
+    if k == "MovePublicParticipantReply":
+        error = m.get("error")
+        return frame(k, u64(m["requestId"]) + bytes([0 if error is None else 1]) + s(error or ""))
+    if k == "EnsureTournamentBeacon":
+        return frame(k, u64(m["requestId"]) + scene_key(m) + i64(m["itemId"]) + struct.pack("<iiiqi", m["typeId"], m["groupId"], m["categoryId"], int(m["ownerId"]), m["graphicId"]) + s(m["nameValue"]) + struct.pack("<4d", *m["position"], m["radius"]))
+    if k == "RemoveTournamentBeacon":
+        return frame(k, u64(m["requestId"]) + scene_key(m) + i64(m["itemId"]))
+    if k in ("EnsureTournamentBeaconReply", "RemoveTournamentBeaconReply"):
+        error = m.get("error")
+        return frame(k, u64(m["requestId"]) + bytes([0 if error is None else 1]) + s(error or ""))
+    if k == "GetSceneBody":
+        return frame(k, u64(m["requestId"]) + scene_key(m) + i64(m["itemId"]))
+    if k == "GetSceneBodyReply":
+        body = u64(m["requestId"]) + scene_key(m) + i64(m["itemId"])
+        if m.get("error") is None:
+            body += b"\x00" + struct.pack("<iii3d", m["typeId"], m["groupId"], m["categoryId"], *m["position"]) + s("")
+        else:
+            body += b"\x01" + s(m["error"])
+        return frame(k, body)
+    if k == "GetAbyssalParticipantPose":
+        return frame(k, u64(m["requestId"]) + scene_key({"scene": m["scene"]}) + i64(m["shipId"]))
+    if k == "GetAbyssalParticipantPoseReply":
+        error = m.get("error")
+        body = u64(m["requestId"]) + scene_key({"scene": m["scene"]}) + i64(m["shipId"])
+        if error is None:
+            body += b"\x00" + struct.pack("<6d", *m["position"], *m["direction"]) + s("")
+        else:
+            body += b"\x01" + s(error)
+        deployment = m.get("deployment")
+        body += bytes([1 if deployment else 0])
+        if deployment:
+            body += bytes([int(deployment[key]) for key in ["warping", "cloaked", "cynoActive", "undockInvulnerable", "warpScrambled"]])
+            body += struct.pack("<I", len(deployment["nearbyObjects"]))
+            for obj in deployment["nearbyObjects"]:
+                body += i64(obj["itemId"]) + struct.pack("<id", obj["typeId"], obj["centerDistanceMeters"])
+        return frame(k, body)
+    if k in ("EnsureAbyssalSceneReply", "MoveAbyssalParticipantReply", "RebindAbyssalSessionReply", "RemoveAbyssalSceneReply"):
+        return frame(k, abyssal_result(m))
+    if k == "MoveAbyssalParticipant":
+        preserve_source_pose = bool(m.get("preserveSourcePose", False))
+        session_handoff = bool(m.get("sessionHandoff", False))
+        flags = (1 if preserve_source_pose else 0) | (2 if session_handoff else 0)
+        body = u64(m["requestId"]) + i64(m["shipId"])
+        body += scene_key({"scene": m["source"]}) + scene_key({"scene": m["destination"]}) + bytes([flags])
+        if not preserve_source_pose:
+            body += struct.pack("<6d", *m["position"], *m["direction"])
+        return frame(k, body)
+    if k == "RebindAbyssalSession":
+        return frame(k, u64(m["requestId"]) + u64(m["sessionId"]) + i64(m["shipId"]) + scene_key({"scene": m["scene"]}))
+    if k == "RemoveAbyssalScene":
+        body = u64(m["requestId"]) + scene_key(m)
+        for key in ("settledNpcIds", "settledLootIds"):
+            ids = m.get(key, [])
+            body += struct.pack("<I", len(ids)) + b"".join(i64(value) for value in ids)
+        return frame(k, body)
+    if k in ("RegisterTournamentMetrics", "RegisterTournamentMetricsReply", "ReadTournamentMetrics", "ReadTournamentMetricsReply", "ReleaseTournamentMetrics", "ReleaseTournamentMetricsReply"):
+        roster = m["roster"]
+        body = u64(m["requestId"]) + scene_key(m) + i64(m["matchId"]) + i64(m["generation"]) + i64(m["start"])
+        body += struct.pack("<H", len(roster)) + b"".join(i64(c) + i64(ship) + bytes([team]) for c, ship, team in roster)
+        if k.endswith("Reply"):
+            body += bytes([m["status"]]) + s(m["error"])
+        if k == "ReadTournamentMetricsReply" and m["status"] == 0:
+            body += i64(m["at"]) + bytes([1 if m.get("applied") is not None else 0])
+            if m.get("applied") is not None: body += struct.pack("<2d", *m["applied"])
+            body += struct.pack("<H", len(roster))
+            for c, ship_id, team in roster:
+                body += i64(c) + i64(ship_id) + bytes([team, 0]) + struct.pack("<HHH", 0, 0, 0) + bytes([0])
+        return frame(k, body)
+    if k == "Hello":
+        return frame(k, struct.pack("<H", m["version"]))
+    if k == "CriminalFlagActive":
+        return frame(k, u64(m["sessionId"]))
+    if k == "ModuleWorkCycle":
+        # a mining laser's or a salvager's cycle: the numbers, then the waste, rounding and crit rolls the simulation drew
+        return frame(k, u64(m["sessionId"]) + i64(m["characterId"]) + i64(m["shipId"]) + struct.pack("<i", m["solarSystemId"])
+                     + i64(m["moduleId"]) + i64(m["targetId"]) + u64(m["cycleId"]) + bytes([m["command"]])
+                     + struct.pack("<9d", m["miningAmountM3"], m["wasteMultiplier"], m["wasteProbability"], m["critProbability"],
+                                   m["critMultiplier"], m["accessDifficultyBonus"], m["wasteRoll"], m["roundingRoll"], m["critRoll"])
+                     # protocol 43: the ships a command burst reaches (a count, then each ship's id); empty for every other command
+                      + struct.pack("<I", len(m.get("recipients", []))) + b"".join(i64(ship) for ship in m.get("recipients", []))
+                     + struct.pack("<i", m.get("chargeTypeId", 0)))
+    # protocol 43 (track C6): the timed buffs of a ship of this session (the command burst's), host to simulation
+    if k == "BuffState":
+        return frame(k, u64(m["sessionId"]) + i64(m["shipId"]) + struct.pack("<I", len(m["entries"]))
+                     + b"".join(struct.pack("<idd", e["collectionId"], e["value"], e["remainingMs"]) for e in m["entries"]))
+    if k == "ModuleWorkResult":
+        return frame(k, u64(m["sessionId"]) + i64(m["moduleId"]) + i64(m["targetId"]) + u64(m["cycleId"])
+                     + bytes([1 if m["accepted"] else 0]) + s(m["reason"]) + i64(m["unitsRemaining"]) + i64(m["deliveredUnits"])
+                     + bytes([1 if m["complete"] else 0]))
+    if k == "ModuleEnded":
+        return frame(k, u64(m["sessionId"]) + i64(m["moduleId"]) + bytes([m["reason"]]))
+    if k == "HelloAck":
+        return frame(k, struct.pack("<HI", m["version"], m["pollHz"]))
+    if k == "ServiceNotify":
+        return frame(k, u64(m["sessionId"]) + s(m["service"]) + s(m["method"]) + b(bytes.fromhex(m["args"])))
+    if k == "Enter":
+        return frame(k, u64(m["sessionId"]) + scene_key(m) + bytes([m["how"]]) + i64(m["stationId"])
+                       + ship(m["ship"])
+                       + (b"\x01" + struct.pack("<3d", *m["position"]) + b"\x01" + struct.pack("<3d", *m["direction"]) if m["how"] == 1 else b""))
+    if k == "EnterReply":
+        return frame(k, u64(m["sessionId"]) + bytes([0 if m["ok"] else 1]) + s("" if m["ok"] else m["reason"]))
+    if k == "Leave":
+        return frame(k, u64(m["sessionId"]) + bytes([m["why"]]))
+    if k in ("Bind", "UpdateState"):
+        return frame(k, u64(m["sessionId"]))
+    if k == "Command":
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"], len(m["args"])])
+                     + b"".join(struct.pack("<d", a) for a in m["args"]))
+    if k == "ShipSpec":
+        return frame(k, u64(m["sessionId"]) + ship(m["ship"]))
+    if k == "Notify":
+        return frame(k, u64(m["sessionId"]) + s(m["notification"]) + s(m["idType"]) + b(bytes.fromhex(m["args"])))
+    if k == "Docked":
+        return frame(k, u64(m["sessionId"]) + i64(m["stationId"]) + condition(m["condition"]))
+    if k == "Condition":
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + condition(m["condition"]))
+    if k == "Refused":
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + s(m["reason"]))
+    if k == "Accepted":
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + i64(m["at"]))
+    if k == "Approaching":
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + struct.pack("<d", m["distance"]))
+    if k == "Jumping":
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + struct.pack("<i", m["destinationSystem"])
+                     + i64(m["destinationGate"]))
+    if k == "Activate":
+        return frame(k, u64(m["sessionId"]) + effect(m["effect"]))
+    if k == "Targets":
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"], 1 if m["pending"] else 0])
+                     + struct.pack("<I", len(m["targets"])) + b"".join(i64(t) for t in m["targets"]))
+    if k == "TargetRefused":
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + s(m["reason"])
+                     + struct.pack("<i", m["targetType"]) + struct.pack("<dd", m["desiredRange"], m["actualDistance"]))
+    if k == "Jumped":
+        return frame(k, u64(m["sessionId"]) + struct.pack("<i", m["fromSystem"]) + i64(m["fromGate"])
+                     + struct.pack("<i", m["toSystem"]) + i64(m["toGate"]))
+    if k == "Destroyed":
+        return frame(k, u64(m["sessionId"]) + i64(m["shipId"]) + i64(m["wreckId"]) + struct.pack("<7d", *m["position"], *m["direction"], m["radius"])
+                     + i64(m["killerShipId"]) + wreck_kind(m.get("wreckKind"))
+                     + struct.pack("<ii", m["shipTypeId"], m["corporationId"]))
+    if k == "ChargeSpent":
+        return frame(k, u64(m["sessionId"]) + i64(m["moduleId"]) + i64(m["roundsLeft"]))
+    # protocol 38 (FP-C4b, FP-C5): a refresh of a running effect: the cycle, the capacitor a cycle costs, the turret (a flag, then the turret) and the changes
+    if k == "UpdateEffect":
+        t = m.get("turret")
+        return frame(k, u64(m["sessionId"]) + i64(m["moduleId"]) + struct.pack("<2d", m["durationMs"], m["capacitorNeed"])
+                     + (bytes([0]) if not t else bytes([1]) + turret(t)) + changes(m["changes"]))
+    if k == "AdjustCharge":
+        add = m["op"] == "add"
+        return frame(k, u64(m["requestId"]) + u64(m["sessionId"]) + i64(m["moduleId"]) + struct.pack("<i", m["chargeType"])
+                     + bytes([0 if add else 1]) + i64(m["capacity"] if add else m["quantity"]) + i64(m["available"] if add else "0"))
+    if k == "ChargeAdjusted":
+        return frame(k, u64(m["requestId"]) + bytes([1 if m["running"] else 0]) + i64(m["before"]) + i64(m["after"]))
+    if k == "Respawn":
+        return frame(k, u64(m["sessionId"]) + ship(m["ship"]) + struct.pack("<6d", *m["position"], *m["direction"]))
+    if k == "PlaceWreck":
+        return frame(k, scene_key(m) + i64(m["wreckId"]) + struct.pack("<i", m["groupId"]) + wreck_kind(m["wreck"])
+                     + struct.pack("<7d", *m["position"], *m["direction"], m["radius"]) + i64(m["launcherId"])
+                     + i64(m["characterId"]) + i64(m["corporationId"]) + i64(m["allianceId"]) + i64(m["warFactionId"])
+                     + bytes([1 if m["isEmpty"] else 0]))
+    if k == "PlaceContainer":
+        return frame(k, u64(m["sessionId"]) + i64(m["containerId"]) + wreck_kind(m["container"]) + struct.pack("<d", m["radius"]) + i64(m["launcherId"])
+                     + i64(m["characterId"]) + i64(m["corporationId"]) + i64(m["allianceId"]) + i64(m["warFactionId"]) + struct.pack("<d", m["distance"])
+                     + (bytes([1]) + scene_key({"scene": m["expectedScene"]}) if m.get("expectedScene") else bytes([0])))
+    if k == "ContainerPlaced":
+        return frame(k, u64(m["sessionId"]) + i64(m["containerId"]) + struct.pack("<6d", *m["position"], *m["direction"]))
+    if k == "Arrived":
+        return frame(k, u64(m["sessionId"]) + i64(m["beltId"]) + struct.pack("<3d", *m["position"]))
+    if k == "ChangeWreck":
+        is_empty = m["isEmpty"]
+        abandoned = m["abandoned"]
+        return frame(k, u64(m["sessionId"]) + i64(m["wreckId"])
+                     + bytes([2 if is_empty is None else (1 if is_empty else 0),
+                              2 if abandoned is None else (1 if abandoned else 0)]))
+    if k == "RemoveWreck":
+        return frame(k, i64(m["wreckId"]) + struct.pack("<i", m["effect"]))
+    if k == "Deployed":
+        return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["deployableId"]) + s(m["typeName"])
+                     + struct.pack("<ii", m["typeId"], m["groupId"]) + struct.pack("<3d", *m["position"]) + struct.pack("<d", m["radius"])
+                     + i64(m["ownerId"]) + struct.pack("<ii", m["corporationId"], m["allianceId"]) + i64(m["shipId"]) + struct.pack("<d", m["lifetimeMs"]))
+    if k == "RemoveDeployed":
+        return frame(k, i64(m["deployableId"]))
+    if k == "RemoveCynoBeacon":
+        return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["structureBeaconId"]))
+    if k == "RemoteDecloakPing":  # protocol 72: a Mobile Observatory's ping in its system
+        return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["observatoryId"]))
+    if k == "DamageableEntityUpserted":
+        return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["entityId"]) + struct.pack("<i", m["typeId"])
+                     + i64(m["ownerId"]) + i64(m["corporationId"]) + i64(m["allianceId"]) + i64(m["warFactionId"]))
+    if k == "DamageableEntityRemoved":
+        return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["entityId"]))
+    if k == "PlaceProbe":
+        return frame(k, i64(m["probeId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
+                     + struct.pack("<3d", *m["position"]) + struct.pack("<d", m["radius"]) + i64(m["ownerId"])
+                     + struct.pack("<ii", m["corporationId"], m["allianceId"]) + i64(m["shipId"]))
+    if k == "RemoveProbe":
+        return frame(k, i64(m["probeId"]))
+    if k == "PlaceStructure":
+        return frame(k, i64(m["structureId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
+                     + struct.pack("<3d", *m["position"]) + struct.pack("<d", m["radius"]) + i64(m["ownerId"])
+                     + struct.pack("<ii", m["corporationId"], m["allianceId"]) + structure_health(m) + structure_status(m["status"])
+                     + i64(m["planetId"]))  # protocol 67: the planet whose customs office this is (0 for an Upwell structure)
+    if k == "RemoveStructure":
+        return frame(k, i64(m["structureId"]))
+    if k == "PlaceWormhole":  # protocol 63: the wormhole end, then the far end it leads to (its system, body ID, class, position, radius) and the largest ship
+        return frame(k, i64(m["wormholeId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
+                     + struct.pack("<3d", *m["position"]) + struct.pack("<d", m["radius"])
+                     + struct.pack("<i", m["destinationSystemId"]) + i64(m["destinationEnd"]) + struct.pack("<i", m["destinationClass"])
+                     + struct.pack("<3d", *m["destinationPosition"]) + struct.pack("<dd", m["destinationRadius"], m["maxJumpMass"]))
+    if k == "RemoveWormhole":
+        return frame(k, i64(m["wormholeId"]))
+    if k == "TetherPolicy":
+        candidates = m["candidates"]
+        payload = u64(m["sessionId"]) + u64(m["blockedForMs"]) + u64(m["leaseMs"]) + struct.pack("<I", len(candidates))
+        for candidate in candidates:
+            payload += i64(candidate["structureId"]) + struct.pack("<d", candidate["range"])
+        return frame(k, payload)
+    if k == "ControlStructure":
+        return frame(k, u64(m["sessionId"]) + struct.pack("<i", m["solarSystemId"]) + i64(m["structureId"]) + i64(m["characterId"])
+                     + bytes([1 if m["active"] else 0]) + i64(m["controlLeaseGeneration"]))
+    if k in ("StructureDamageCandidatesRequest", "StructureDamageCandidatesResult"):
+        ids = m["candidateIds"] if k == "StructureDamageCandidatesRequest" else m["allowedTargetIds"]
+        payload = (u64(m["sessionId"]) + i64(m["structureId"]) + i64(m["moduleId"]) + struct.pack("<i", m["effectId"])
+                   + u64(m["activationNonce"]) + i64(m["controlLeaseGeneration"]) + u64(m["cycleId"])
+                   + struct.pack("<I", m["pulseHopOrdinal"]) + struct.pack("<I", len(ids)) + b"".join(i64(item) for item in ids))
+        return frame(k, payload)
+    if k == "TetherChanged":
+        return frame(k, u64(m["sessionId"]) + i64(m["previousStructureId"]) + i64(m["structureId"]) + bytes([1 if m["repairing"] else 0]))
+    if k == "StructureDamaged":  # sent by the simulation: the layer a hit emptied (0 none, 1 shield, 2 armor, 3 hull) and whether a repair is paused
+        return frame(k, i64(m["structureId"]) + bytes([m["depleted"]]) + bytes([1 if m["overThreshold"] else 0]))
+    if k == "PlaceCapturePoint":  # a battlefield's capture point (protocol 77): its ball, its attacker and occupier factions (0 none), its next point time (FILETIME, 0 none)
+        return frame(k, i64(m["deployableId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
+                     + struct.pack("<3d", *m["position"]) + struct.pack("<d", m["radius"]) + struct.pack("<ii", m["attackerFaction"], m["occupierFaction"])
+                     + i64(m["nextPointTime"]))
+    if k == "PlaceBattlefieldScoreboard":  # a battlefield's scoreboard (protocol 78): its ball, no score (the host sets it with SetSlimField)
+        return frame(k, i64(m["deployableId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
+                     + struct.pack("<3d", *m["position"]) + struct.pack("<d", m["radius"]))
+    if k == "SetSlimField":
+        return frame(k, i64(m["itemId"]) + s(m["fieldName"]) + slim_value(m["value"]))
+    if k == "SetStructureState":
+        return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["structureId"]) + structure_status(m["status"]))
+    if k in ("PlaceDisruptor", "PlaceInhibitor", "PlaceCynoBeacon", "PlaceObservatory", "PlaceControlTower", "PlaceDeadspacePocket", "PlaceAccelerationGate"):  # a beacon, an observatory, a tower, a pocket and a gate have no range: they go as 0
+        return frame(k, i64(m["deployableId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
+                     + struct.pack("<3d", *m["position"]) + struct.pack("<dd", m["radius"], m["range"]) + bytes([1 if m["active"] else 0])
+                     + i64(m["ownerId"]) + struct.pack("<ii", m["corporationId"], m["allianceId"]) + i64(m["shipId"]))
+    if k == "SetDisruptorActive":
+        return frame(k, i64(m["deployableId"]) + bytes([1 if m["active"] else 0]))
+    if k == "PlaceAnalysisBeacon":
+        return frame(k, i64(m["deployableId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
+                     + struct.pack("<3d", *m["position"]) + struct.pack("<d", m["radius"]) + i64(m["ownerId"])
+                     + struct.pack("<ii", m["corporationId"], m["allianceId"]) + i64(m["shipId"]) + analysis_beacon_state(m["state"]))
+    if k == "SetAnalysisBeaconState":
+        return frame(k, i64(m["deployableId"]) + analysis_beacon_state(m["state"]))
+    if k == "Measured":
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + (bytes([1]) + struct.pack("<d", m["distance"]) if m.get("distance") is not None else bytes([0])))
+    if k == "Spawn":
+        content_id = m.get("abyssalContentId")
+        content = bytes([0]) if content_id is None else bytes([1]) + s(content_id)
+        return frame(k, u64(m["requestId"]) + content + scene_key(m) + ship(m["ship"]) + i64(m["anchorShipId"])
+                     + struct.pack("<9d", *m["position"], *m["velocity"], *m["direction"]) + s(m["behavior"]) + identity(m["identity"]))
+    if k == "SpawnReply":
+        return frame(k, u64(m["requestId"]) + (bytes([0]) + u64(m["session"]) if m["ok"] else bytes([1]) + s(m["reason"])))
+    if k == "LaunchDrone":
+        # the work profile (mining, salvage) is zero for a drone that does neither; the remote effect (a web, a repair, a jam)
+        # is a flag, then the effect's id, its name in the destiny stream, its cycle and how long it lands, and the action it does
+        work = struct.pack("<5d", m.get("miningAmountM3", 0.0), m.get("workCycleMs", 0.0), m.get("miningWasteMultiplier", 0.0),
+                           m.get("miningWasteProbability", 0.0), m.get("salvageAccessBonus", 0.0))
+        e = m.get("effect")
+        remote = (bytes([1]) + struct.pack("<i", e["effectId"]) + s(e["fx"]) + struct.pack("<dd", e["cycleMs"], e["lastingMs"]) + action(e["action"])
+                  if e else bytes([0]))
+        # a drone without a weapon still carries the empty weapon record (module 0, no turret), as the host sends it
+        weapon_record = weapon(m["weapon"]) if m.get("weapon") else weapon(EMPTY_WEAPON)
+        body = (u64(m["requestId"]) + u64(m["sessionId"]) + ship(m["ship"]) + weapon_record
+                + struct.pack("<iddd", m["graphicId"], m["orbitDistance"], m["attackRange"], m["cruiseFraction"]) + work + remote)
+        return frame(k, body)
+    if k == "DroneCommand":
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + i64(m["targetId"]) + struct.pack("<I", len(m["droneIds"]))
+                     + b"".join(i64(d) for d in m["droneIds"]) + struct.pack("<d", m["controlRange"]))
+    if k == "DroneResults":
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + struct.pack("<I", len(m["results"]))
+                     + b"".join(i64(r["droneId"]) + s(r["reason"]) for r in m["results"]))
+    if k == "DirectionalTargets":  # protocol 53: what a directional scan can see in the scene, the answer to command 28
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + struct.pack("<I", len(m["targets"]))
+                     + b"".join(i64(t["id"]) + bytes([t["kind"]]) + struct.pack("<i", t["typeId"]) + struct.pack("<3d", *t["position"])
+                                + struct.pack("<d", t["radius"]) + bytes([1 if t["cloaked"] else 0, 1 if t["warping"] else 0])
+                                for t in m["targets"]))
+    if k == "ScanTargets":  # protocol 52: the scene's scan targets, the answer to command 27
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + struct.pack("<I", len(m["targets"]))
+                     + b"".join(i64(t["id"]) + bytes([t["kind"]]) + struct.pack("<i", t["typeId"]) + struct.pack("<3d", *t["position"])
+                                for t in m["targets"]))
+    if k == "DroneScooped":
+        return frame(k, u64(m["sessionId"]) + i64(m["droneId"]))
+    if k == "DroneReleased":
+        return frame(k, u64(m["sessionId"]) + i64(m["droneId"]) + struct.pack("<3d", *m["position"]))
+    if k == "LaunchFighter":
+        # the squadron's ship, the graphic of its type, and its cruise fraction (no weapon, no work, no effect: a squadron is not a drone)
+        return frame(k, u64(m["requestId"]) + u64(m["sessionId"]) + ship(m["ship"])
+                     + struct.pack("<idi", m["graphicId"], m["cruiseFraction"], m["squadronSize"]))
+    if k == "FighterOrder":
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + i64(m["targetId"]) + struct.pack("<I", len(m["fighterIds"]))
+                     + b"".join(i64(f) for f in m["fighterIds"]) + struct.pack("<d", m["range"]))
+    if k == "FighterSize":
+        return frame(k, u64(m["sessionId"]) + i64(m["fighterId"]) + struct.pack("<i", m["size"]))
+    if k == "FighterGotoPoint":
+        return frame(k, u64(m["sessionId"]) + struct.pack("<I", len(m["fighterIds"]))
+                     + b"".join(i64(f) for f in m["fighterIds"]) + struct.pack("<3d", *m["point"]))
+    if k == "FighterResults":
+        return frame(k, u64(m["sessionId"]) + bytes([m["command"]]) + struct.pack("<I", len(m["results"]))
+                     + b"".join(i64(r["fighterId"]) + s(r["reason"]) for r in m["results"]))
+    if k == "FighterLanded":
+        return frame(k, u64(m["sessionId"]) + i64(m["fighterId"]))
+    if k == "FighterReleased":
+        return frame(k, u64(m["sessionId"]) + i64(m["fighterId"]) + struct.pack("<3d", *m["position"]))
+    # protocol 39 (FP-C7): an ECM burst's ship and each ship it reached, with whether its roll jammed it (a flag byte, 0 or 1)
+    if k == "EcmBurst":
+        return frame(k, u64(m["sessionId"]) + i64(m["shipId"]) + struct.pack("<I", len(m["reached"]))
+                     + b"".join(i64(r["shipId"]) + bytes([1 if r["jammed"] else 0]) for r in m["reached"]))
+    if k == "Destroy":
+        return frame(k, i64(m["shipId"]) + i64(m["characterId"]) + i64(m["corporationId"]) + i64(m["allianceId"]) + i64(m["warFactionId"]))
+    raise ValueError(k)
+
+IBIS = {"shipId": "9988400001939", "characterId": "140000342", "typeId": 601, "groupId": 237, "categoryId": 6,
+        "name": "Ibis", "ownerId": "140000342", "corporationId": 1000006, "allianceId": 0, "warFactionId": 0,
+        "securityStatus": 0.0, "radius": 47.0, "mass": 1163000.0, "maxVelocity": 339.25, "agility": 4.0185,
+        "warpSpeedAu": 3.0, "shieldRechargeMs": 860000.0, "maxTargetRange": 29700.0, "scanResolution": 660.0,
+        "signatureRadius": 28.0, "maxLockedTargets": 4, "capacitorCapacity": 149.5, "capacitorRechargeS": 55.25,
+        "sensorStrength": [0.0, 0.0, 0.0, 6.0], "ecmResistance": 1.0, "energyWarfareResistance": 0.25,
+        "vitals": {"shieldCapacity": 220.0, "armorHp": 137.5, "structureHp": 201.25,
+                   "resonances": {"shield": [0.0, 0.8, 0.6, 0.5], "armor": [0.5, 0.35, 0.25, 0.1],
+                                  "structure": [0.33, 0.33, 0.33, 0.33]}},
+        "condition": {"damage": 0.35, "armorDamage": 0.6, "shieldCharge": 1.0, "charge": 1.0},
+        "modules": [{"itemId": "9988400001940", "typeId": 21857, "flag": 19},
+                    {"itemId": "9988400001941", "typeId": 3638, "flag": 27}]}
+BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
+            vitals={"shieldCapacity": 0.0, "armorHp": 0.0, "structureHp": 0.0,
+                    "resonances": {"shield": [1.0] * 4, "armor": [1.0] * 4, "structure": [1.0] * 4}},
+            condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
+
+valid = [
+    {"name": "hello", "kind": "Hello", "version": 82},
+    {"name": "hello ack", "kind": "HelloAck", "version": 82, "pollHz": 4},
+    {"name": "active criminal flag", "kind": "CriminalFlagActive", "sessionId": "1001"},
+    {"name": "ensure private Abyssal room scene", "kind": "EnsureAbyssalScene", "requestId": "41",
+     "spec": {"scene": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 1},
+              "environment": {"globalModifiers": [{"attributeId": 37, "operation": 1, "value": 1.25}],
+                              "fields": [{"center": [100.0, 200.0, 300.0], "radiusMeters": 500.0,
+                                          "modifiers": [{"attributeId": 265, "operation": 0, "value": 5.0}]}]},
+              "boundary": {"center": [0.0, 0.0, 0.0], "radiusMeters": 75000.0, "tickIntervalMs": 1000, "terminalExposureMs": 15000,
+                           "damageCurve": [{"distanceOutsideMeters": 0.0, "appliedDamagePerSecond": 12.5},
+                                           {"distanceOutsideMeters": 1000.0, "appliedDamagePerSecond": 22.5}]},
+              "expiryFileTime": "134351527136350000"}},
+    {"name": "Abyssal scene ensured", "kind": "EnsureAbyssalSceneReply", "requestId": "41", "ok": True},
+    {"name": "materialize transfer conduit as a static room object", "kind": "EnsureAbyssalSceneObject", "requestId": "52",
+     "object": {"scene": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 1},
+                "itemId": "9840000000001", "typeId": 47685, "groupId": 366, "categoryId": 2,
+                "ownerId": "140000342", "radius": 5000.0, "graphicId": 22130,
+                "name": "Transfer Conduit (Triglavian)", "position": [100.0, 200.0, 35300.0],
+                "direction": [0.0, 0.0, 1.0], "isOpen": False}},
+    {"name": "static room conduit materialization receipt", "kind": "EnsureAbyssalSceneObjectReply",
+     "requestId": "52", "ok": True},
+    {"name": "move resident participant to another room", "kind": "MoveAbyssalParticipant", "requestId": "42",
+     "shipId": "9988400001939",
+     "source": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 1},
+     "destination": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 2},
+     "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0]},
+    {"name": "move participant from origin into Abyssal room", "kind": "MoveAbyssalParticipant", "requestId": "45",
+     "shipId": "9988400001940",
+     "source": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0},
+     "destination": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 1},
+     "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0], "sessionHandoff": True},
+    {"name": "move participant between private rooms using its source pose", "kind": "MoveAbyssalParticipant", "requestId": "51",
+     "shipId": "9988400001941",
+     "source": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 1},
+     "destination": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 2},
+     "preserveSourcePose": True},
+    {"name": "return resident participant to origin system", "kind": "MoveAbyssalParticipant", "requestId": "43",
+     "shipId": "9988400001939",
+     "source": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 2},
+     "destination": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0},
+     "position": [400.0, 500.0, 600.0], "direction": [1.0, 0.0, 0.0], "sessionHandoff": True},
+    {"name": "Abyssal participant moved", "kind": "MoveAbyssalParticipantReply", "requestId": "42", "ok": True},
+    {"name": "rebind a reconnecting session to the resident ship", "kind": "RebindAbyssalSession", "requestId": "44",
+     "sessionId": "1790646377000025", "shipId": "9988400001939",
+     "scene": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 2}},
+    {"name": "Abyssal session rebound", "kind": "RebindAbyssalSessionReply", "requestId": "44", "ok": True},
+    {"name": "remove empty Abyssal room scene", "kind": "RemoveAbyssalScene", "requestId": "46",
+     "scene": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 2}},
+    {"name": "Abyssal scene removed", "kind": "RemoveAbyssalSceneReply", "requestId": "46", "ok": True},
+    {"name": "publish a persisted trace in a public system", "kind": "EnsureAbyssalTracePublished", "requestId": "47",
+     "actorSessionId": "1790646377000015",
+     "trace": {"solarSystemId": 30000142, "itemId": "840000048964", "typeId": 48964, "groupId": 1991,
+               "categoryId": 2, "ownerId": "140000342", "radius": 500.0,
+               "position": [100.0, 200.0, 300.0], "velocity": [0.0, 0.0, 0.0], "direction": [0.0, 0.0, 1.0],
+               "targetPoint": [400.0, 500.0, 600.0], "speedFraction": 0.5, "gameModeId": 2,
+               "filamentTypeId": 56132, "difficultyTier": 0, "expiresAtMs": "1800000000000"}},
+    {"name": "trace publication receipt", "kind": "EnsureAbyssalTracePublishedReply", "requestId": "47",
+     "status": "Created", "recipientCount": 2, "actorNotified": True, "error": None},
+    {"name": "remove a persisted trace", "kind": "RemoveAbyssalTrace", "requestId": "48",
+     "solarSystemId": 30000142, "itemId": "840000048964"},
+    {"name": "trace removal receipt", "kind": "RemoveAbyssalTraceReply", "requestId": "48",
+     "status": "Removed", "recipientCount": 2, "error": None},
+    {"name": "remove a participant from its private room", "kind": "RemoveAbyssalParticipant", "requestId": "49",
+     "scene": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 2}, "shipId": "9988400001939"},
+    {"name": "participant already absent after retry", "kind": "RemoveAbyssalParticipantReply", "requestId": "49",
+     "alreadyAbsent": True, "error": None},
+    {"name": "query tournament wreck", "kind": "QueryTournamentWreck", "requestId": "56", "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000004"},
+    {"name": "tournament wreck exists", "kind": "QueryTournamentWreckReply", "requestId": "56", "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000004", "present": True, "error": None},
+    {"name": "tournament wreck absent", "kind": "QueryTournamentWreckReply", "requestId": "56", "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000004", "present": False, "error": None},
+    {"name": "tournament wreck query refused", "kind": "QueryTournamentWreckReply", "requestId": "56", "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000004", "present": False, "error": "SCENE_NOT_FOUND"},
+    {"name": "tournament wreck already absent", "kind": "RemoveTournamentWreckReply", "requestId": "57", "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000004", "present": False, "error": None},
+    {"name": "tournament wreck removal refused", "kind": "RemoveTournamentWreckReply", "requestId": "57", "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000004", "present": False, "error": "GUARD_MISMATCH"},
+    {"name": "remove guarded tournament wreck", "kind": "RemoveTournamentWreck", "requestId": "57", "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000004", "ownerId": "90000001", "launcherId": "140000001", "typeId": 26557, "center": [1.0, 2.0, 3.0], "radius": 5000.0},
+    {"name": "tournament wreck removed", "kind": "RemoveTournamentWreckReply", "requestId": "57", "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000004", "present": True, "error": None},
+    {"name": "move public pilot to explicit pose", "kind": "MovePublicParticipant", "requestId": "58", "operationId": "01234567-89ab-cdef-0123-456789abcdef", "sessionId": "42", "shipId": "9988400001939", "source": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "destination": {"locationId": 30000144, "instanceId": "0", "roomIndex": 0}, "useAnchor": False, "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0]},
+    {"name": "move public pilot to anchor", "kind": "MovePublicParticipant", "requestId": "59", "operationId": "00000000-0000-0000-0000-000000000000", "sessionId": "42", "shipId": "9988400001939", "source": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "destination": {"locationId": 30000144, "instanceId": "0", "roomIndex": 0}, "useAnchor": True, "position": [0.0, 0.0, 0.0], "direction": [0.0, 0.0, 0.0]},
+    {"name": "public pilot moved", "kind": "MovePublicParticipantReply", "requestId": "58", "error": None},
+    {"name": "public pilot move refused", "kind": "MovePublicParticipantReply", "requestId": "59", "error": "NO_PILOT"},
+    {"name": "ensure tournament beacon", "kind": "EnsureTournamentBeacon", "requestId": "54",
+     "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000003", "typeId": 10645,
+     "groupId": 310, "categoryId": 2, "ownerId": "90000001", "graphicId": 1211, "nameValue": "Celestial Beacon", "position": [1.0, 2.0, 3.0], "radius": 5.0},
+    {"name": "tournament beacon ensured", "kind": "EnsureTournamentBeaconReply", "requestId": "54", "error": None},
+    {"name": "remove tournament beacon", "kind": "RemoveTournamentBeacon", "requestId": "55",
+     "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000003"},
+    {"name": "tournament beacon removed", "kind": "RemoveTournamentBeaconReply", "requestId": "55", "error": None},
+    {"name": "read public scene body", "kind": "GetSceneBody", "requestId": "52",
+     "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000001"},
+    {"name": "public scene body present", "kind": "GetSceneBodyReply", "requestId": "52",
+     "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000001",
+     "typeId": 10645, "groupId": 310, "categoryId": 2, "position": [1.0, 2.0, 3.0], "error": None},
+    {"name": "public scene body absent", "kind": "GetSceneBodyReply", "requestId": "53",
+     "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000002", "error": "SCENE_BODY_NOT_FOUND"},
+    {"name": "read a public-system source ship pose", "kind": "GetAbyssalParticipantPose", "requestId": "50",
+     "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "shipId": "9988400001940"},
+    {"name": "public-system source ship pose receipt", "kind": "GetAbyssalParticipantPoseReply", "requestId": "50",
+     "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "shipId": "9988400001940",
+     "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0], "error": None},
+    {"name": "public deployment snapshot carries real ship state and center-distance candidates", "kind": "GetAbyssalParticipantPoseReply", "requestId": "51",
+     "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "shipId": "9988400001940",
+     "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0], "error": None,
+     "deployment": {"warping": True, "cloaked": False, "cynoActive": True, "undockInvulnerable": False, "warpScrambled": True,
+        "nearbyObjects": [{"itemId": "400000001", "typeId": 23, "centerDistanceMeters": 1000000.0}]}},
+    {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
+     "how": 0, "stationId": "60015249", "ship": IBIS},
+    {"name": "enter ship with a weapon bank", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
+     "how": 0, "stationId": "60015249", "ship": dict(IBIS, modules=[
+        {"itemId": "9988400001941", "typeId": 900001, "flag": 27, "bankMasterId": "9988400001941"},
+        {"itemId": "9988400001942", "typeId": 900001, "flag": 28, "bankMasterId": "9988400001941"}])},
+    {"name": "enter already in space, no modules, non-ASCII name", "kind": "Enter", "sessionId": "1",
+     "solarSystemId": 30000142, "how": 1, "stationId": "0", "ship": dict(BARE, name="イビス"),
+     "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0]},
+{"name": "enter static-free Abyssal room scene", "kind": "Enter", "sessionId": "2",
+     "scene": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 1}, "how": 1, "stationId": "0",
+     "ship": dict(BARE, shipId="9988400001939", characterId="140000342"),
+     "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0]},
+{"name": "enter at the anchor of the system (a game master's relocation, no pose)", "kind": "Enter", "sessionId": "1",
+     "solarSystemId": 30000142, "how": 2, "stationId": "0", "ship": dict(BARE, name="イビス")},
+    {"name": "enter accepted", "kind": "EnterReply", "sessionId": "1790646377000015", "ok": True},
+    {"name": "enter refused", "kind": "EnterReply", "sessionId": "1790646377000015", "ok": False,
+     "reason": "UNKNOWN_STATION 60015249"},
+    {"name": "leave docked", "kind": "Leave", "sessionId": "1790646377000015", "why": 0},
+    {"name": "leave logged off", "kind": "Leave", "sessionId": "1790646377000015", "why": 1},
+    {"name": "bind", "kind": "Bind", "sessionId": "1790646377000015"},
+    {"name": "update state", "kind": "UpdateState", "sessionId": "1790646377000015"},
+    {"name": "command with one argument", "kind": "Command", "sessionId": "1790646377000015", "command": 1,
+     "args": [0.5]},
+    {"name": "command with three arguments", "kind": "Command", "sessionId": "1790646377000015", "command": 2,
+     "args": [-0.8191520442889917, 0.0, 0.5735764363510462]},
+    {"name": "command with none", "kind": "Command", "sessionId": "1790646377000015", "command": 3, "args": []},
+    {"name": "prime login ballpark visuals", "kind": "Command", "sessionId": "1790646377000015", "command": 24, "args": []},
+    {"name": "dock command", "kind": "Command", "sessionId": "1790646377000015", "command": 4, "args": [60015249.0]},
+    {"name": "follow command", "kind": "Command", "sessionId": "1790646377000015", "command": 5,
+     "args": [60015249.0, 2500.0]},
+    {"name": "orbit command", "kind": "Command", "sessionId": "1790646377000015", "command": 6,
+     "args": [40009076.0, 5000.0]},
+    {"name": "align command", "kind": "Command", "sessionId": "1790646377000015", "command": 7,
+     "args": [60015249.0]},
+    {"name": "warp command", "kind": "Command", "sessionId": "1790646377000015", "command": 8,
+     "args": [40491233.0, 30000.0]},
+    {"name": "jump command", "kind": "Command", "sessionId": "1790646377000015", "command": 9,
+     "args": [50016630.0, 50016839.0]},
+    {"name": "add target command", "kind": "Command", "sessionId": "1790646377000015", "command": 10,
+     "args": [9988400002151.0]},
+    {"name": "cancel add target command", "kind": "Command", "sessionId": "1790646377000015", "command": 11,
+     "args": [9988400002151.0]},
+    {"name": "remove targets command", "kind": "Command", "sessionId": "1790646377000015", "command": 12,
+     "args": [9988400002151.0, 60015249.0]},
+    {"name": "clear targets command", "kind": "Command", "sessionId": "1790646377000015", "command": 13,
+     "args": []},
+    {"name": "get targets command", "kind": "Command", "sessionId": "1790646377000015", "command": 14, "args": []},
+    {"name": "get targeters command", "kind": "Command", "sessionId": "1790646377000015", "command": 15, "args": []},
+    {"name": "deactivate command", "kind": "Command", "sessionId": "1790646377000015", "command": 16,
+     "args": [9988400001941.0]},
+    {"name": "new ship numbers", "kind": "ShipSpec", "sessionId": "1790646377000015", "ship": IBIS},
+    {"name": "new ship numbers with a tactical mode switched", "kind": "ShipSpec", "sessionId": "1790646377000015",
+     "ship": dict(IBIS, stance={"oldStance": 1, "switchedAt": "134000000000000000", "stance": 3})},
+{"name": "new ship whose drones deal no damage (a P.A.N.I.C. grant)", "kind": "ShipSpec", "sessionId": "1790646377000015",
+ "ship": dict(IBIS, droneDamageMultiplier=0.0)},
+    {"name": "notification", "kind": "Notify", "sessionId": "1790646377000015", "notification": "OnSetTimeDilation",
+     "idType": "clientID", "args": "7e0000000004010100"},
+    {"name": "target lock failed service notification", "kind": "ServiceNotify", "sessionId": "1790646377000015",
+     "service": "target", "method": "FailLockTarget", "args": "7e00000000250367b4089b15090000"},
+    {"name": "notification without arguments", "kind": "Notify", "sessionId": "1", "notification": "DoDestinyUpdate",
+     "idType": "clientID", "args": ""},
+    {"name": "heal command", "kind": "Command", "sessionId": "1790646377000015", "command": 18, "args": []},
+    {"name": "get condition command", "kind": "Command", "sessionId": "1790646377000015", "command": 19, "args": []},
+    {"name": "docked", "kind": "Docked", "sessionId": "1790646377000015", "stationId": "60015249",
+     "condition": {"damage": 0.35, "armorDamage": 0.6, "shieldCharge": 0.917525, "charge": 0.65}},
+    {"name": "condition", "kind": "Condition", "sessionId": "1790646377000015", "command": 19,
+     "condition": {"damage": 0.0, "armorDamage": 0.18, "shieldCharge": 0.7, "charge": 0.65}},
+    {"name": "refused", "kind": "Refused", "sessionId": "1790646377000015", "command": 4,
+     "reason": "UNKNOWN_TARGET"},
+    {"name": "accepted", "kind": "Accepted", "sessionId": "1790646377000015", "command": 4,
+     "at": "134351527136350000"},
+    {"name": "a movement command accepted", "kind": "Accepted", "sessionId": "1790646377000015", "command": 5,
+     "at": "134351527136350000"},
+    {"name": "approaching", "kind": "Approaching", "sessionId": "1790646377000015", "command": 4,
+     "distance": 15975.3},
+    {"name": "jumping", "kind": "Jumping", "sessionId": "1790646377000015", "command": 9,
+     "destinationSystem": 30100034, "destinationGate": "50016839"},
+    {"name": "activate an afterburner", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400001940", "moduleType": 21857, "effectId": 6731, "fx": "effects.Afterburner",
+                "durationMs": 10000.0, "capacitorNeed": 5.0, "repeat": 1000, "targetId": "0",
+                "on": {"mass": 1663000.0, "maxVelocity": 522.848918, "signatureRadius": 52.0},
+                "off": {"mass": 1163000.0, "maxVelocity": 339.25, "signatureRadius": 52.0},
+                "onChanges": [{"itemId": "9988400001940", "attributeId": 20, "value": 60.0},
+                              {"itemId": "9988400001939", "attributeId": 37, "value": 522.848918}],
+                "offChanges": [{"itemId": "9988400001940", "attributeId": 20, "value": 60.0},
+                               {"itemId": "9988400001939", "attributeId": 37, "value": 339.25}]}},
+    {"name": "activate an afterburner with its propulsion group's limit", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400001940", "moduleType": 21857, "effectId": 6731, "fx": "effects.Afterburner",
+                "durationMs": 10000.0, "capacitorNeed": 5.0, "repeat": 1000, "targetId": "0",
+                "onChanges": [], "offChanges": [],
+                "rules": {"groupId": 46, "maxGroupActive": 1, "disallowEarlyDeactivation": False, "requiresIndustrialCore": False,
+                          "providesIndustrialCore": False, "reactivationDelayMs": 0.0}}},
+    {"name": "activate a compressor that needs a running industrial core, with a cloak's early deactivation and reactivation", "kind": "Activate",
+     "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400001950", "moduleType": 4174, "effectId": 6731, "fx": "", "durationMs": 300000.0, "capacitorNeed": 0.0,
+                "repeat": 1, "targetId": "0", "onChanges": [], "offChanges": [],
+                "rules": {"groupId": 4174, "maxGroupActive": 0, "disallowEarlyDeactivation": True, "requiresIndustrialCore": True,
+                          "providesIndustrialCore": False, "reactivationDelayMs": 180000.0}}},
+    {"name": "activate a cynosural field generator, which starts up to 500 m/s (WP19)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400001951", "moduleType": 21096, "effectId": 6731, "fx": "", "durationMs": 60000.0, "capacitorNeed": 0.0,
+                "repeat": 1, "targetId": "0", "onChanges": [], "offChanges": [],
+                "rules": {"groupId": 0, "maxGroupActive": 0, "disallowEarlyDeactivation": True, "requiresIndustrialCore": False,
+                          "providesIndustrialCore": False, "reactivationDelayMs": 0.0, "maxVelocityLimit": 500.0, "minVelocityLimit": 0.0}}},
+    {"name": "activate a bomb launcher, which starts only while moving (WP19)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400001952", "moduleType": 4256, "effectId": 6731, "fx": "", "durationMs": 10000.0, "capacitorNeed": 0.0,
+                "repeat": 1, "targetId": "0", "onChanges": [], "offChanges": [],
+                "rules": {"groupId": 0, "maxGroupActive": 0, "disallowEarlyDeactivation": False, "requiresIndustrialCore": False,
+                          "providesIndustrialCore": False, "reactivationDelayMs": 0.0, "maxVelocityLimit": 0.0, "minVelocityLimit": 1.0}}},
+    {"name": "activate an effect that changes nothing of the ship", "kind": "Activate", "sessionId": "1",
+     "effect": {"moduleId": "9988400001941", "moduleType": 3651, "effectId": 67, "fx": "", "durationMs": 3000.0,
+                "capacitorNeed": 0.0, "repeat": 1, "targetId": "9988400002151", "onChanges": [], "offChanges": []}},
+    {"name": "activate a gun at a rat", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002665", "moduleType": 3638, "effectId": 10, "fx": "effects.Laser",
+                "durationMs": 1692.8, "capacitorNeed": 0.9, "repeat": 1000, "targetId": "980050000105",
+                "turret": {"weaponTypeId": 3638, "requiresGunnery": True, "fx": "effects.Laser", "rawDamage": [0.0, 2.5, 3.75, 0.0],
+                           "optimalRange": 5280.0, "falloff": 2000.0, "trackingSpeed": 0.5, "signatureResolution": 40000.0},
+                "onChanges": [{"itemId": "9988400002665", "attributeId": 6, "value": 0.9},
+                              {"itemId": "9988400002665", "attributeId": 51, "value": 1692.8},
+                              {"itemId": "9988400002665", "attributeId": 54, "value": 5280.0}],
+                "offChanges": [{"itemId": "9988400002665", "attributeId": 6, "value": 0.9},
+                               {"itemId": "9988400002665", "attributeId": 51, "value": 1692.8},
+                               {"itemId": "9988400002665", "attributeId": 54, "value": 5280.0}]}},
+    {"name": "activate an armor repairer", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002801", "moduleType": 523, "effectId": 27, "fx": "effects.ArmorRepair",
+                "durationMs": 6000.0, "capacitorNeed": 20.0, "repeat": 1000, "targetId": "0",
+                "action": {"kind": "repair", "layer": "armor", "amount": 69.0, "when": "end"},
+                "onChanges": [{"itemId": "9988400002801", "attributeId": 6, "value": 20.0},
+                              {"itemId": "9988400002801", "attributeId": 73, "value": 6000.0}],
+                "offChanges": [{"itemId": "9988400002801", "attributeId": 6, "value": 20.0},
+                               {"itemId": "9988400002801", "attributeId": 73, "value": 6000.0}]}},
+    {"name": "activate a shield booster", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002802", "moduleType": 399, "effectId": 4, "fx": "effects.ShieldBoosting",
+                "durationMs": 2000.0, "capacitorNeed": 20.0, "repeat": 1000, "targetId": "0",
+                "action": {"kind": "repair", "layer": "shield", "amount": 26.0, "when": "start"},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a remote armor repairer", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002803", "moduleType": 3520, "effectId": 6186, "fx": "effects.RemoteArmorRepair",
+                "durationMs": 5000.0, "capacitorNeed": 12.0, "repeat": 1000, "targetId": "9988400003001",
+                "action": {"kind": "remote", "what": "repair", "layer": "armor", "amount": 66.0, "optimal": 7500.0,
+                           "falloff": 5000.0, "when": "end", "jam": "remoteArmorRepair"},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate an energy neutralizer", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002804", "moduleType": 12076, "effectId": 6187, "fx": "effects.EnergyNeutralizer",
+                "durationMs": 6000.0, "capacitorNeed": 30.0, "repeat": 1000, "targetId": "9988400003001",
+                "action": {"kind": "remote", "what": "neutralize", "amount": 90.0, "signatureResolution": 8000.0,
+                           "optimal": 5000.0, "falloff": 3000.0, "when": "start", "jam": "ewEnergyNeut"},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate an energy nosferatu", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002805", "moduleType": 12263, "effectId": 6188, "fx": "effects.EnergyVampire",
+                "durationMs": 5000.0, "capacitorNeed": 0.0, "repeat": 1000, "targetId": "9988400003001",
+                "action": {"kind": "remote", "what": "drain", "amount": 12.0, "signatureResolution": 0.0,
+                           "optimal": 6000.0, "falloff": 2000.0, "when": "end", "jam": "ewEnergyVampire"},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a remote capacitor transmitter", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002806", "moduleType": 6586, "effectId": 6184, "fx": "effects.EnergyTransfer",
+                "durationMs": 5000.0, "capacitorNeed": 28.0, "repeat": 1000, "targetId": "9988400003001",
+                "action": {"kind": "remote", "what": "transfer", "amount": 60.0, "optimal": 7000.0,
+                           "falloff": 5000.0, "when": "start", "jam": "energyTransfer"},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a stasis webifier", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002807", "moduleType": 526, "effectId": 6426, "fx": "effects.ModifyTargetSpeed",
+                "durationMs": 5000.0, "capacitorNeed": 5.0, "repeat": 1000, "targetId": "9988400003001",
+                "action": {"kind": "remote", "what": "web", "percent": -50.0, "optimal": 10000.0, "falloff": 0.0,
+                           "when": "start", "jam": "webify"},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a target painter", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002808", "moduleType": 12709, "effectId": 6425, "fx": "effects.TargetPaint",
+                "durationMs": 5000.0, "capacitorNeed": 10.0, "repeat": 1000, "targetId": "9988400003001",
+                "action": {"kind": "remote", "what": "paint", "percent": 25.0, "optimal": 30000.0, "falloff": 75000.0,
+                           "when": "start", "jam": "ewTargetPaint"},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a remote sensor dampener", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002809", "moduleType": 1968, "effectId": 6422, "fx": "effects.SensorDampening",
+                "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1000, "targetId": "9988400003001",
+                "action": {"kind": "remote", "what": "damp", "rangePercent": -13.7, "resolutionPercent": -13.7,
+                           "optimal": 25000.0, "falloff": 50000.0, "when": "start", "jam": "ewRemoteSensorDamp"},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a remote sensor booster", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002811", "moduleType": 1963, "effectId": 6427, "fx": "effects.RemoteSensorBoost",
+                "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1000, "targetId": "9988400003001",
+                "action": {"kind": "remote", "what": "damp", "rangePercent": 10.0, "resolutionPercent": 15.0,
+                           "gravimetricStrengthPercent": 20.0, "ladarStrengthPercent": 25.0,
+                           "magnetometricStrengthPercent": 30.0, "radarStrengthPercent": 35.0,
+                           "optimal": 25000.0, "falloff": 50000.0, "when": "start", "jam": "remoteSensorBoost"},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a warp scrambler", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002810", "moduleType": 447, "effectId": 5934, "fx": "effects.WarpScramble",
+                "durationMs": 5000.0, "capacitorNeed": 5.0, "repeat": 1000, "targetId": "9988400003001",
+                "action": {"kind": "remote", "what": "scramble", "strength": 2.0, "blocksMwd": True, "optimal": 7500.0,
+                           "falloff": 0.0, "when": "start", "jam": "warpScramblerMWD"},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a smartbomb", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 1563, "effectId": 38, "fx": "effects.EmpWave",
+                "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1000, "targetId": "0",
+                "action": {"kind": "smartbomb", "range": 3000.0, "damage": [50.0, 0.0, 0.0, 0.0], "hurtsPilots": True},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a cloak that is not warp-safe", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 11577, "effectId": 197, "fx": "effects.Cloaking",
+                "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1000, "targetId": "0",
+                "action": {"kind": "cloak", "warpSafe": False, "targetingDelayMs": 0.0}, "onChanges": [], "offChanges": []}},
+    {"name": "activate a field generator's bubble", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 28654, "effectId": 1,
+                "fx": "effects.WarpDisruptFieldGenerating",
+                "durationMs": 30000.0, "capacitorNeed": 150.0, "repeat": 1000, "targetId": "0",
+                "action": {"kind": "warpBubble", "range": 16000.0}, "onChanges": [], "offChanges": []}},
+    {"name": "activate a nullifier's immunity", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 58919, "effectId": 1, "fx": "",
+                "durationMs": 10000.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "0",
+                "action": {"kind": "warpImmunity"}, "onChanges": [], "offChanges": []}},
+    {"name": "activate a stabilizer's scramble status", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 10998, "effectId": 1, "fx": "",
+                "durationMs": 10000.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "0",
+                "action": {"kind": "scrambleStatus", "delta": -2.0}, "onChanges": [], "offChanges": []}},
+    {"name": "activate a defender launcher", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 44102, "effectId": 1, "fx": "",
+                "durationMs": 10000.0, "capacitorNeed": 50.0, "repeat": 1, "targetId": "0",
+                "action": {"kind": "defender", "missile": {"chargeTypeId": 32782, "groupId": 88, "name": "Defender Missile I", "radius": 1.0,
+                           "mass": 1.0, "agility": 1.0, "hitPoints": 5.0, "maxVelocity": 10000.0, "flightTimeMs": 3000.0,
+                           "explosionRadius": 10.0, "explosionVelocity": 400.0, "damageReductionFactor": 0.1, "damageReductionSensitivity": 5.5},
+                           "damage": [200.0, 200.0, 200.0, 200.0]},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a stasis webification burst", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 22782, "effectId": 1, "fx": "effects.TorpedoDeployment",
+                "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1, "targetId": "0",
+                "action": {"kind": "stasisBurst", "range": 15000.0, "durationMs": 30000.0, "speedFactor": -20.0},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a structure ecm burst projector", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 47069, "effectId": 1, "fx": "",
+                "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1, "targetId": "0",
+                "action": {"kind": "structureBurst", "range": 15000.0, "durationMs": 10000.0, "what": "jam", "strength": [3.6, 0.0, 0.0, 0.0]},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate an interdiction probe", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 22782, "effectId": 1, "fx": "effects.TorpedoDeployment",
+                "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1, "targetId": "0",
+                "action": {"kind": "warpProbe", "ball": {"chargeTypeId": 22778, "groupId": 548, "name": "Warp Disrupt Probe", "radius": 40.0}, "range": 20000.0, "lifetimeMs": 120000.0},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a bomb", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 4256, "effectId": 1, "fx": "effects.MissileDeployment",
+                "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1, "targetId": "0",
+                "action": {"kind": "bomb", "ball": {"chargeTypeId": 27920, "groupId": 90, "name": "Electron Bomb", "radius": 40.0}, "bombKind": 0, "lifetimeMs": 12000.0, "blastRadius": 400.0,
+                           "damage": [5800.0, 0.0, 0.0, 0.0], "ecm": [0.0, 0.0, 0.0, 0.0], "neutralize": 0.0},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a cynosural field generator (a field of 21094, lit at the end of its cycle, ten minutes)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 21096, "effectId": 2857, "fx": "effects.CynoGenerator",
+                "durationMs": 600000.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "0",
+                "action": {"kind": "cynoField", "ball": {"chargeTypeId": 21094, "groupId": 2020, "name": "Cynosural Field", "radius": 250.0}, "lifetimeMs": 600000.0},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate an ECM burst", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 580, "effectId": 38, "fx": "effects.EcmBurstJammer",
+                "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1000, "targetId": "0",
+                "action": {"kind": "ecmBurst", "range": 3000.0, "strength": [6.0, 6.0, 6.0, 6.0]},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a charged ancillary repair", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 580, "effectId": 38, "fx": "effects.EcmBurstJammer",
+                "durationMs": 10000.0, "capacitorNeed": 30.0, "repeat": 1000, "targetId": "0",
+                "action": {"kind": "charged", "chargeTypeId": 91001, "chargeFlag": 27,
+                           "chargePerCycle": 1, "charges": 2,
+                           "action": {"kind": "repair", "layer": "armor", "amount": 10.0, "when": "end"},
+                           "fallback": {"kind": "repair", "layer": "armor", "amount": 5.0, "when": "end"}},
+                "onChanges": [], "offChanges": []}},
+    # protocol 43 (track C6): a Shield Command Burst I (42529) with a Shield Harmonizing charge (42695): its cycle is charged, one round a cycle, and reaches 15 km
+    {"name": "activate a command burst (Shield Command Burst I, a Shield Harmonizing charge loaded)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 42529, "effectId": 6733, "fx": "",
+                "durationMs": 60000.0, "capacitorNeed": 25.0, "repeat": 1000, "targetId": "0",
+                "action": {"kind": "charged", "chargeTypeId": 42695, "chargeFlag": 27, "chargePerCycle": 1, "charges": 2,
+                           "action": {"kind": "commandBurst", "rangeMeters": 15000.0}},
+                "onChanges": [], "offChanges": []}},
+    # protocol 43 (track C6): the Pulse Activated Nexus Invulnerability Core (42522): one cycle of 240 s, its fleet within 200 km; no charge, no capacitor
+    {"name": "activate the invulnerability core (Pulse Activated Nexus Invulnerability Core, 200 km)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 42522, "effectId": 6719, "fx": "",
+                "durationMs": 240000.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "0",
+                "action": {"kind": "panic", "rangeMeters": 200000.0},
+                "onChanges": [], "offChanges": []}},
+
+    {"name": "activate an entosis link (Entosis Link I, 20 km, a locked structure)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 34593, "effectId": 6063, "fx": "",
+                "durationMs": 300000.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "1040000000777",
+                "action": {"kind": "entosis", "rangeMeters": 20000.0},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a tracking disruptor", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002812", "moduleType": 2108, "effectId": 6424, "fx": "effects.TrackingDisruption",
+                "durationMs": 10000.0, "capacitorNeed": 15.0, "repeat": 1000, "targetId": "9988400003001",
+                "action": {"kind": "remote", "what": "disrupt", "rangePercent": -15.3, "falloffPercent": -15.3,
+                           "trackingPercent": -15.3, "optimal": 40000.0, "falloff": 20000.0, "when": "start",
+                           "jam": "ewTrackingDisrupt"},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a guidance disruptor", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002810", "moduleType": 5321, "effectId": 6423, "fx": "effects.ElectronicAttributeModifyTarget",
+                "durationMs": 10000.0, "capacitorNeed": 15.0, "repeat": 1000, "targetId": "9988400003001",
+                "action": {"kind": "remote", "what": "guidanceDisrupt", "velocityPercent": -8.5, "delayPercent": -8.5,
+                           "aoeVelocityPercent": -11.0, "aoeCloudPercent": 11.0, "optimal": 40000.0, "falloff": 20000.0,
+                           "when": "start", "jam": "ewGuidanceDisrupt"},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate an ECM jammer", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002811", "moduleType": 1957, "effectId": 6470, "fx": "effects.ElectronicAttributeModifyTarget",
+                "durationMs": 20000.0, "capacitorNeed": 40.0, "repeat": 1000, "targetId": "9988400003001",
+                "action": {"kind": "remote", "what": "jam", "strength": [3.6, 0.0, 0.0, 0.0], "optimal": 20000.0,
+                           "falloff": 20000.0, "when": "start", "jam": ""},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a railgun that fires antimatter", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002719", "moduleType": 10678, "effectId": 34, "fx": "effects.ProjectileFired",
+                "durationMs": 2750.8, "capacitorNeed": 1.3545, "repeat": 1000, "targetId": "980050000108",
+                "turret": {"weaponTypeId": 10678, "requiresGunnery": True, "fx": "effects.ProjectileFired", "rawDamage": [0.0, 9.05, 12.67, 0.0],
+                           "optimalRange": 5940.0, "falloff": 5250.0, "trackingSpeed": 0.098, "signatureResolution": 40000.0,
+                           "charge": {"typeId": 222, "flag": 28, "rounds": 80, "perCycle": 1}},
+                "onChanges": [{"itemId": "9988400002719", "attributeId": 6, "value": 1.3545},
+                              {"itemId": "9988400002719", "attributeId": 51, "value": 2750.8},
+                              {"itemId": "9988400002719", "attributeId": 54, "value": 5940.0}],
+                "offChanges": [{"itemId": "9988400002719", "attributeId": 6, "value": 1.3545},
+                               {"itemId": "9988400002719", "attributeId": 51, "value": 2750.8},
+                               {"itemId": "9988400002719", "attributeId": 54, "value": 5940.0}]}},
+    {"name": "activate a rocket launcher that fires scourge rockets", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400003564", "moduleType": 10629, "effectId": 101, "fx": "effects.MissileDeployment",
+                "durationMs": 4900.0, "capacitorNeed": 0.0, "repeat": 1000, "targetId": "980050000111",
+                "turret": {"weaponTypeId": 10629, "requiresGunnery": False, "fx": "effects.MissileDeployment", "rawDamage": [0.0, 0.0, 38.115, 0.0],
+                           "optimalRange": 4500.0, "falloff": 0.0, "trackingSpeed": 0.0, "signatureResolution": 40000.0,
+                           "charge": {"typeId": 266, "flag": 28, "rounds": 3, "perCycle": 1},
+                           "missile": {"chargeTypeId": 266, "groupId": 387, "name": "Scourge Rocket", "radius": 300.0, "mass": 100.0,
+                                       "agility": 5.220125693558398, "hitPoints": 90.0, "maxVelocity": 2250.0, "flightTimeMs": 2000.0,
+                                       "explosionRadius": 20.0, "explosionVelocity": 150.0, "damageReductionFactor": 0.644,
+                                       "damageReductionSensitivity": 5.5}},
+                "onChanges": [{"itemId": "9988400003564", "attributeId": 51, "value": 4900.0}],
+                "offChanges": [{"itemId": "9988400003564", "attributeId": 51, "value": 4900.0}]}},
+    {"name": "activate a breacher pod launcher whose pod starts a damage over time", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400003600", "moduleType": 85084, "effectId": 101, "fx": "effects.MissileDeployment",
+                "durationMs": 20000.0, "capacitorNeed": 0.0, "repeat": 1000, "targetId": "980050000111",
+                "turret": {"weaponTypeId": 85084, "requiresGunnery": False, "fx": "effects.MissileDeployment", "rawDamage": [0.0, 0.0, 0.0, 0.0],
+                           "optimalRange": 4000.0, "falloff": 0.0, "trackingSpeed": 0.0, "signatureResolution": 40000.0,
+                           "charge": {"typeId": 85088, "flag": 28, "rounds": 4, "perCycle": 1},
+                           "missile": {"chargeTypeId": 85088, "groupId": 4808, "name": "SCARAB Breacher Pod S", "radius": 1.0, "mass": 1.0,
+                                       "agility": 1.0, "hitPoints": 0.0, "maxVelocity": 2000.0, "flightTimeMs": 2000.0,
+                                       "explosionRadius": 35.0, "explosionVelocity": 2000.0, "damageReductionFactor": 1.0,
+                                       "damageReductionSensitivity": 5.5,
+                                       "dot": {"durationMs": 40000.0, "maxDamagePerTick": 200.0, "maxHpPercentPerTick": 0.6}}},
+                "onChanges": [{"itemId": "9988400003600", "attributeId": 51, "value": 20000.0}],
+                "offChanges": [{"itemId": "9988400003600", "attributeId": 51, "value": 20000.0}]}},
+    {"name": "activate a precursor weapon that builds its damage up", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002720", "moduleType": 47272, "effectId": 6995, "fx": "effects.Laser",
+                "durationMs": 3500.0, "capacitorNeed": 4.5, "repeat": 1000, "targetId": "980050000108",
+                "turret": {"weaponTypeId": 47272, "requiresGunnery": True, "fx": "effects.Laser", "rawDamage": [0.0, 0.0, 2.5, 0.0],
+                           "optimalRange": 6000.0, "falloff": 0.0, "trackingSpeed": 410.0, "signatureResolution": 40000.0,
+                           "spool": {"perCycle": 0.07, "max": 2.125}},
+                "onChanges": [{"itemId": "9988400002720", "attributeId": 6, "value": 4.5},
+                              {"itemId": "9988400002720", "attributeId": 51, "value": 3500.0},
+                              {"itemId": "9988400002720", "attributeId": 54, "value": 6000.0}],
+                "offChanges": [{"itemId": "9988400002720", "attributeId": 6, "value": 4.5},
+                               {"itemId": "9988400002720", "attributeId": 51, "value": 3500.0},
+                               {"itemId": "9988400002720", "attributeId": 54, "value": 6000.0}]}},
+    {"name": "activate a vorton projector whose explosion needs no roll and whose arc reaches ten ships", "kind": "Activate",
+     "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002721", "moduleType": 54739, "effectId": 8037, "fx": "effects.AttackMode",
+                "durationMs": 6000.0, "capacitorNeed": 7.0, "repeat": 1000, "targetId": "980050000108",
+                "turret": {"weaponTypeId": 54739, "requiresGunnery": False, "fx": "effects.AttackMode", "rawDamage": [116.0, 0.0, 17.0, 0.0],
+                           "optimalRange": 22464.0, "falloff": 0.0, "trackingSpeed": 0.0, "signatureResolution": 40000.0,
+                           "charge": {"typeId": 54769, "flag": 11, "rounds": 1000, "perCycle": 1},
+                           "aoe": {"explosionRadius": 43.0, "explosionVelocity": 190.0, "damageReductionFactor": 0.4,
+                                   "damageReductionSensitivity": 5.5},
+                           "arc": {"range": 10000.0, "targets": 10}},
+                "onChanges": [{"itemId": "9988400002721", "attributeId": 6, "value": 7.0},
+                              {"itemId": "9988400002721", "attributeId": 51, "value": 6000.0},
+                              {"itemId": "9988400002721", "attributeId": 54, "value": 22464.0}],
+                "offChanges": [{"itemId": "9988400002721", "attributeId": 6, "value": 7.0},
+                               {"itemId": "9988400002721", "attributeId": 51, "value": 6000.0},
+                               {"itemId": "9988400002721", "attributeId": 54, "value": 22464.0}]}},
+    {"name": "rounds spent", "kind": "ChargeSpent", "sessionId": "1790646377000015", "moduleId": "9988400002719", "roundsLeft": "79"},
+    {"name": "rounds loaded into a gun that runs", "kind": "AdjustCharge", "requestId": "41", "sessionId": "1790646377000015", "moduleId": "9988400002719",
+     "chargeType": 222, "op": "add", "capacity": "80", "available": "40"},
+    {"name": "rounds taken out of a gun that runs", "kind": "AdjustCharge", "requestId": "42", "sessionId": "1790646377000015", "moduleId": "9988400002719",
+     "chargeType": 0, "op": "remove", "quantity": "75"},
+    {"name": "all the rounds taken out of a gun", "kind": "AdjustCharge", "requestId": "43", "sessionId": "1790646377000015", "moduleId": "9988400002719",
+     "chargeType": 0, "op": "remove", "quantity": "0"},
+    {"name": "a refresh of a running gun: its cycle, its capacitor and its numbers, with the attributes told", "kind": "UpdateEffect", "sessionId": "1790646377000015",
+     "moduleId": "9988400002719", "durationMs": 4500.0, "capacitorNeed": 2.5,
+     "turret": {"weaponTypeId": 3638, "fx": "effects.Laser", "rawDamage": [0.0, 3.0, 4.5, 0.0], "optimalRange": 5000.0, "falloff": 1200.0,
+                "trackingSpeed": 0.1, "signatureResolution": 40000.0, "requiresGunnery": True,
+                "charge": {"typeId": 222, "flag": 28, "rounds": 80, "perCycle": 1, "reloads": True}},
+     "changes": [{"itemId": "9988400002719", "attributeId": 6, "value": 2.5}, {"itemId": "9988400002719", "attributeId": 51, "value": 4500.0}]},
+    {"name": "a refresh of a running module with no gun", "kind": "UpdateEffect", "sessionId": "1790646377000015",
+     "moduleId": "9988400002721", "durationMs": 3000.0, "capacitorNeed": 0.0, "changes": []},
+    {"name": "rounds of a gun that runs changed", "kind": "ChargeAdjusted", "requestId": "41", "running": True, "before": "3", "after": "80"},
+    {"name": "rounds of a gun that does not run", "kind": "ChargeAdjusted", "requestId": "44", "running": False, "before": "0", "after": "0"},
+    {"name": "targets with a lock going", "kind": "Targets", "sessionId": "1790646377000015", "command": 10,
+     "pending": True, "targets": ["60015249"]},
+    {"name": "targets none", "kind": "Targets", "sessionId": "1790646377000015", "command": 14, "pending": False,
+     "targets": []},
+    {"name": "target refused out of range", "kind": "TargetRefused", "sessionId": "1790646377000015", "command": 10,
+     "reason": "TARGET_OUT_OF_RANGE", "targetType": 92885, "desiredRange": 29700.0, "actualDistance": 306288156879.55023},
+    {"name": "target refused without figures", "kind": "TargetRefused", "sessionId": "1790646377000015", "command": 10,
+     "reason": "TARGET_SELF", "targetType": 0, "desiredRange": 0.0, "actualDistance": 0.0},
+    {"name": "jumped", "kind": "Jumped", "sessionId": "1790646377000015", "fromSystem": 30100032,
+     "fromGate": "50016630", "toSystem": 30100034, "toGate": "50016839"},
+    {"name": "destroyed with a wreck of the scene's own", "kind": "Destroyed", "sessionId": "4611686018427387905",
+     "shipId": "980050000077", "wreckId": "4300000000000001", "position": [311989835983.1308, -13069154020.916222, 156646308895.76187],
+     "direction": [0.6159, 0.01306, 0.78769], "radius": 47.0, "killerShipId": "9988400001939",
+     "wreckKind": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 3117}, "shipTypeId": 601, "corporationId": 1000125},
+    {"name": "destroyed Triglavian NPC (a Liminal Damavik) in Pochven, no wreck", "kind": "Destroyed", "sessionId": "4611686018427387906",
+     "shipId": "980060000001", "wreckId": "0", "position": [3932160.0, 3932160.0, 3932160.0], "direction": [0.0, 0.0, 1.0],
+     "radius": 34.0, "killerShipId": "9988400001939", "shipTypeId": 52182, "corporationId": 1000298},
+    {"name": "new ship numbers with the armor pinned by a polarized weapon", "kind": "ShipSpec", "sessionId": "1790646377000015",
+     "ship": dict(IBIS, vitals=dict(IBIS["vitals"], armorPinned=True,
+                                    resonances={"shield": [0.0, 0.8, 0.6, 0.5], "armor": [1.0, 1.0, 1.0, 1.0],
+                                                "structure": [0.33, 0.33, 0.33, 0.33]}))},
+    {"name": "activate a reactive armor hardener", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002810", "moduleType": 4403, "effectId": 4928, "fx": "effects.AdaptiveArmorHardener",
+                "durationMs": 10000.0, "capacitorNeed": 42.0, "repeat": 1, "targetId": "0",
+                "action": {"kind": "resistanceShift", "seed": [0.85, 0.85, 0.85, 0.85], "shift": 0.06,
+                           "attributeIds": [267, 270, 269, 268]},
+                "onChanges": [{"itemId": "9988400002810", "attributeId": 6, "value": 42.0},
+                              {"itemId": "9988400002810", "attributeId": 73, "value": 10000.0},
+                              {"itemId": "9988400002810", "attributeId": 267, "value": 0.425},
+                              {"itemId": "9988400002810", "attributeId": 270, "value": 0.2975}],
+                "offChanges": [{"itemId": "9988400002810", "attributeId": 6, "value": 42.0},
+                               {"itemId": "9988400002810", "attributeId": 73, "value": 10000.0}]}},
+    {"name": "destroyed player's ship, nobody to blame, no wreck", "kind": "Destroyed", "sessionId": "1790646377000015",
+     "shipId": "9988400001939", "wreckId": "0", "position": [0.0, 0.0, 0.0], "direction": [1.0, 0.0, 0.0],
+     "radius": 47.0, "killerShipId": "0", "wreckKind": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 0},
+     "shipTypeId": 601, "corporationId": 1000006},
+    {"name": "destroyed with no kind of wreck to leave", "kind": "Destroyed", "sessionId": "1790646377000016",
+     "shipId": "9988400001940", "wreckId": "0", "position": [1.0, 2.0, 3.0], "direction": [0.0, 1.0, 0.0],
+     "radius": 12.5, "killerShipId": "0", "shipTypeId": 601, "corporationId": 1000006},
+    {"name": "spawn of an NPC with a laser, a wreck and a tree", "kind": "Spawn", "requestId": "7", "solarSystemId": 30100032,
+     "ship": dict(BARE, shipId="980050000077", characterId="0", ownerId="1000125", categoryId=11, groupId=25, typeId=597),
+     "anchorShipId": "0", "position": [1000500.0, 100.0, 100.0], "velocity": [0.0, 0.0, 0.0], "direction": [1.0, 0.0, 0.0], "behavior": "belt rat",
+     "identity": {"hostileResponseThreshold": -11, "friendlyResponseThreshold": 11, "aggressionRange": 15000.0,
+                  "weapons": [{"moduleId": "980050000077", "effectId": 10, "cycleMs": 4000.0, "capacitorNeed": 0.0,
+                               "weaponTypeId": 5678, "fx": "effects.Laser", "requiresGunnery": True, "rawDamage": [0.0, 0.0, 6.0, 4.0],
+                               "optimalRange": 20000.0, "falloff": 10000.0, "trackingSpeed": 0.4, "signatureResolution": 40.0}],
+                  "selfRepairs": [{"effectId": 6884, "amount": 91.5, "cycleMs": 5500.0, "capacitorCost": 0.25, "delayChance": 0.1},
+                               {"effectId": 6990, "amount": 123.5, "cycleMs": 4000.0, "capacitorCost": 0.5, "delayChance": 0.2}],
+                  "wreck": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 3117}}},
+    {"name": "spawn of a bare NPC: no tree, no weapons, no wreck", "kind": "Spawn", "requestId": "8", "solarSystemId": 30000142,
+     "ship": dict(BARE, shipId="980050000078", characterId="0"), "anchorShipId": "9988400001939", "position": [1.0, 2.0, 3.0], "velocity": [4.0, 5.0, 6.0],
+     "direction": [0.0, 0.0, 1.0], "behavior": "",
+     "identity": {"hostileResponseThreshold": -11, "friendlyResponseThreshold": 11, "aggressionRange": 0.0, "weapons": [], "hull": True}},
+    {"name": "spawn of an NPC whose wreck the host makes", "kind": "Spawn", "requestId": "9", "solarSystemId": 30100032,
+     "ship": dict(BARE, shipId="980050000079", characterId="0", ownerId="1000125", categoryId=11, groupId=25, typeId=597),
+     "anchorShipId": "0", "position": [1000500.0, 100.0, 100.0], "velocity": [0.0, 0.0, 0.0], "direction": [1.0, 0.0, 0.0], "behavior": "",
+     "identity": {"hostileResponseThreshold": -11, "friendlyResponseThreshold": 11, "aggressionRange": 0.0, "weapons": [],
+                  "wreck": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 3117}, "hostWreck": True}},
+    {"name": "spawn NPC in an Abyssal room scene", "kind": "Spawn", "requestId": "10",
+     "abyssalContentId": "b9294d3a-924f-4a73-9b8c-38713db70101",
+     "scene": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 1},
+     "ship": dict(BARE, shipId="980050000080", characterId="0", ownerId="1000125", categoryId=11, groupId=25, typeId=597),
+     "anchorShipId": "0", "position": [1000500.0, 100.0, 100.0], "velocity": [0.0, 0.0, 0.0],
+     "direction": [1.0, 0.0, 0.0], "behavior": "abyssal rat",
+     "identity": {"hostileResponseThreshold": -11, "friendlyResponseThreshold": 11, "aggressionRange": 15000.0,
+                  "weapons": [], "hull": True, "hostWreck": False}},
+    {"name": "spawn done", "kind": "SpawnReply", "requestId": "7", "ok": True, "session": "4611686018427387905"},
+    {"name": "spawn refused", "kind": "SpawnReply", "requestId": "8", "ok": False, "reason": "NO_SCENE 30000142"},
+    {"name": "launch of a drone", "kind": "LaunchDrone", "requestId": "11", "sessionId": "1790646377000015",
+     "ship": dict(BARE, shipId="9988400003716", characterId="0", ownerId="140000342", categoryId=18, groupId=100, typeId=2454, name="Hobgoblin I"),
+     "weapon": {"moduleId": "9988400003716", "effectId": 10, "cycleMs": 4000.0, "capacitorNeed": 0.0, "weaponTypeId": 2454, "fx": "effects.Laser", "requiresGunnery": True,
+                "rawDamage": [0.0, 32.0, 0.0, 0.0], "optimalRange": 2100.0, "falloff": 2000.0, "trackingSpeed": 1.815, "signatureResolution": 25.0},
+     "graphicId": 1099, "orbitDistance": 700.0, "attackRange": 2800.0, "cruiseFraction": 0.2357142857142857},
+    {"name": "launch of a web drone", "kind": "LaunchDrone", "requestId": "12", "sessionId": "1790646377000015",
+     "ship": dict(BARE, shipId="9988400003720", characterId="0", ownerId="140000342", categoryId=18, groupId=641, typeId=23731, name="Warrior SW-300"),
+     "weapon": None, "graphicId": 1124, "orbitDistance": 500.0, "attackRange": 10000.0, "cruiseFraction": 0.25,
+     "effect": {"effectId": 6690, "fx": "effects.ModifyTargetSpeed", "cycleMs": 5000.0, "lastingMs": 5000.0,
+                "action": {"kind": "remote", "what": "web", "percent": -5.0, "optimal": 5000.0, "falloff": 0.0, "when": "start", "jam": "webify"}}},
+    {"name": "order to engage", "kind": "DroneCommand", "sessionId": "1790646377000015", "command": 1, "targetId": "980050000077",
+     "droneIds": ["9988400003716", "9988400003717"], "controlRange": 40_000.0},
+    {"name": "order to go home", "kind": "DroneCommand", "sessionId": "1790646377000015", "command": 2, "targetId": "0", "droneIds": ["9988400003716"], "controlRange": 20_000.0},
+    {"name": "what the drones did with an order", "kind": "DroneResults", "sessionId": "1790646377000015", "command": 1,
+     "results": [{"droneId": "9988400003716", "reason": ""}, {"droneId": "9988400003717", "reason": "NOT_CONTROLLED"}]},
+    {"name": "what a directional scan can see in the cone", "kind": "DirectionalTargets", "sessionId": "1790646377000015", "command": 28, "targets": [{"id": "9988400003716", "kind": 1, "typeId": 586, "position": [1200.5, -300.0, 45000.25], "radius": 38.0, "cloaked": False, "warping": False}, {"id": "9988400003717", "kind": 7, "typeId": 3802, "position": [-5000.0, 0.0, 9000.0], "radius": 6000.0, "cloaked": False, "warping": True}]},
+    {"name": "what a probe scan can find in the system", "kind": "ScanTargets", "sessionId": "1790646377000015", "command": 27, "targets": [{"id": "9988400003716", "kind": 1, "typeId": 586, "position": [1200.5, -300.0, 45000.25]}, {"id": "9988400003717", "kind": 4, "typeId": 12198, "position": [-5000.0, 0.0, 9000.0]}]},
+    {"name": "a drone scooped into the bay", "kind": "DroneScooped", "sessionId": "1790646377000015", "droneId": "9988400003716"},
+    {"name": "a drone let go", "kind": "DroneReleased", "sessionId": "1790646377000015", "droneId": "9988400003716",
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187]},
+    {"name": "launch of a fighter squadron", "kind": "LaunchFighter", "requestId": "13", "sessionId": "1790646377000015",
+     "ship": dict(IBIS, shipId="9988400004100", typeId=23055, groupId=1652, name="Templar I", modules=[]),
+     "graphicId": 1200, "cruiseFraction": 0.5, "squadronSize": 6},
+    {"name": "a squadron of the pilot's fighter tube lost a member", "kind": "FighterSize", "sessionId": "1790646377000015",
+     "fighterId": "9988400004100", "size": 5},
+    {"name": "a fighter order to orbit a ship", "kind": "FighterOrder", "sessionId": "1790646377000015", "command": 1,
+     "targetId": "980050000077", "fighterIds": ["9988400004100"], "range": 800.0},
+    {"name": "what the fighters did with an order", "kind": "FighterResults", "sessionId": "1790646377000015", "command": 4,
+     "results": [{"fighterId": "9988400004100", "reason": ""}, {"fighterId": "9988400004101", "reason": "NOT_CONTROLLED"}]},
+    {"name": "a fighter landed in its tube", "kind": "FighterLanded", "sessionId": "1790646377000015", "fighterId": "9988400004100"},
+    {"name": "a fighter let go", "kind": "FighterReleased", "sessionId": "1790646377000015", "fighterId": "9988400004100",
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187]},
+    {"name": "a fighter sent to a point", "kind": "FighterGotoPoint", "sessionId": "1790646377000015",
+     "fighterIds": ["9988400004100"], "point": [311989835983.1308, -13069154020.916222, 156646308895.76187]},
+    {"name": "an ECM burst that jammed one ship it reached and not another", "kind": "EcmBurst", "sessionId": "1790646377000015",
+     "shipId": "9988400001939", "reached": [{"shipId": "9988400004100", "jammed": True}, {"shipId": "9988400004101", "jammed": False}]},
+    {"name": "destroy for a pilot to loot", "kind": "Destroy", "shipId": "980050000077", "characterId": "140000001",
+     "corporationId": "1000006", "allianceId": "0", "warFactionId": "500001"},
+    {"name": "respawn of a capsule where the ship was", "kind": "Respawn", "sessionId": "1790646377000015",
+     "ship": dict(IBIS, shipId="9988400002416", typeId=670, groupId=29, name="Capsule", modules=[]),
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "direction": [0.6159, 0.01306, 0.78769]},
+    {"name": "wreck the host made, to put in space", "kind": "PlaceWreck", "solarSystemId": 30100032,
+     "wreckId": "9988400002417", "groupId": 186, "wreck": {"typeId": 26506, "name": "Caldari Frigate Wreck", "graphicId": 3117},
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "direction": [0.6159, 0.01306, 0.78769],
+     "radius": 47.0, "launcherId": "9988400002411", "characterId": "140000394", "corporationId": "1000006",
+     "allianceId": "0", "warFactionId": "500001", "isEmpty": False},
+    {"name": "wreck of no kind of the reference's graphic", "kind": "PlaceWreck", "solarSystemId": 30000142,
+     "wreckId": "9988400002420", "groupId": 14, "wreck": {"typeId": 26507, "name": "Amarr Frigate Wreck", "graphicId": 0},
+     "position": [0.0, 0.0, 0.0], "direction": [1.0, 0.0, 0.0], "radius": 30.0, "launcherId": "9988400002400",
+     "characterId": "0", "corporationId": "0", "allianceId": "0", "warFactionId": "0", "isEmpty": True},
+    {"name": "targetable loot container in an Abyssal room", "kind": "PlaceWreck",
+     "scene": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 2},
+     "wreckId": "9988400002421", "groupId": 12, "wreck": {"typeId": 23, "name": "Cargo Container", "graphicId": 1176},
+     "position": [200.0, 300.0, 400.0], "direction": [0.0, 0.0, 1.0], "radius": 14.0, "launcherId": "9988400001939",
+     "characterId": "140000342", "corporationId": "1000006", "allianceId": "0", "warFactionId": "0", "isEmpty": False},
+    {"name": "can for cargo a pilot jettisons", "kind": "PlaceContainer", "sessionId": "1790646377000015", "containerId": "9988400002948",
+     "container": {"typeId": 23, "name": "Cargo Container", "graphicId": 1176}, "radius": 14.0, "launcherId": "9988400002940",
+     "characterId": "140000431", "corporationId": "1000006", "allianceId": "0", "warFactionId": "0", "distance": 275.0},
+    {"name": "jettison placement fenced to the persisted private room", "kind": "PlaceContainer", "sessionId": "1790646377000015", "containerId": "9988400002948",
+     "container": {"typeId": 23, "name": "Cargo Container", "graphicId": 1176}, "radius": 14.0, "launcherId": "9988400002940",
+     "characterId": "140000431", "corporationId": "1000006", "allianceId": "0", "warFactionId": "0", "distance": 275.0,
+     "expectedScene": {"locationId": 32000010, "instanceId": "887", "roomIndex": 1}},
+    {"name": "public jettison placement fenced to its source system", "kind": "PlaceContainer", "sessionId": "1790646377000015", "containerId": "9988400002948",
+     "container": {"typeId": 23, "name": "Cargo Container", "graphicId": 1176}, "radius": 14.0, "launcherId": "9988400002940",
+     "characterId": "140000431", "corporationId": "1000006", "allianceId": "0", "warFactionId": "0", "distance": 275.0,
+     "expectedScene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}},
+    {"name": "can that is in space", "kind": "ContainerPlaced", "sessionId": "1790646377000015", "containerId": "9988400002948",
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "direction": [0.6159, 0.01306, 0.78769]},
+    {"name": "player's warp ended at a belt", "kind": "Arrived", "sessionId": "1790646377000015", "beltId": "40009256",
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187]},
+    {"name": "wreck with something to take", "kind": "ChangeWreck", "sessionId": "1790646377000015", "wreckId": "9988400002948", "isEmpty": False, "abandoned": None},
+    {"name": "wreck with nothing to take", "kind": "ChangeWreck", "sessionId": "1790646377000015", "wreckId": "9988400002417", "isEmpty": True, "abandoned": None},
+    {"name": "wreck loot rights abandoned", "kind": "ChangeWreck", "sessionId": "1790646377000015", "wreckId": "9988400002948", "isEmpty": None, "abandoned": True},
+    {"name": "can taken out of space with the destruction effect", "kind": "RemoveWreck", "wreckId": "9988400002948", "effect": 3},
+    {"name": "wreck taken out of space without one", "kind": "RemoveWreck", "wreckId": "9988400002417", "effect": 0},
+    {"name": "cynosural field lit by a generator, told with its life", "kind": "Deployed", "solarSystemId": 30100032,
+     "deployableId": "4250000000000003", "typeName": "Cynosural Field", "typeId": 21094, "groupId": 2020,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 250.0, "ownerId": "1790646377000015",
+     "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943", "lifetimeMs": 600000.0},
+    {"name": "cynosural field put back after a restart, with what is left of its life", "kind": "Deployed", "solarSystemId": 30100032,
+     "deployableId": "4250000000000007", "typeName": "Cynosural Field", "typeId": 21094, "groupId": 2020,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 250.0, "ownerId": "1790646377000015",
+     "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943", "lifetimeMs": 120000.0},
+    {"name": "cynosural field taken out of space by the host", "kind": "RemoveDeployed", "deployableId": "4250000000000003"},
+    {"name": "scanner probe launched from a probe launcher and put in space", "kind": "PlaceProbe", "probeId": "990000000000001", "solarSystemId": 30100032,
+     "typeName": "Scanner Probe I", "typeId": 19415, "groupId": 479,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 40.0, "ownerId": "1790646377000015",
+     "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943"},
+    {"name": "scanner probe recalled by its pilot", "kind": "RemoveProbe", "probeId": "990000000000001"},
+    {"name": "structure put in space by the host with a running timer", "kind": "PlaceStructure", "structureId": "1040000000000001", "solarSystemId": 30100032,
+     "typeName": "Astrahus", "typeId": 35832, "groupId": 1657, "planetId": 0,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 60000.0, "ownerId": "98000001",
+     "corporationId": 98000001, "allianceId": 0,
+     "vitals": {"shieldCapacity": 200000000.0, "armorHp": 4000000.0, "structureHp": 6000000.0,
+                "resonances": {"shield": [1.0, 1.0, 1.0, 1.0], "armor": [1.0, 1.0, 1.0, 1.0], "structure": [1.0, 1.0, 1.0, 1.0]}},
+     "shieldRechargeMs": 110000.0, "perSecond": [14400000.0, 5000.0, 5000.0], "repairPause": [500.0, 500.0, 500.0],
+     "status": {"state": 110, "upkeepState": 3, "timer": [132000000000000000, 132000860000000000, None], "unanchoring": None, "repairing": None}},
+    {"name": "customs office of a planet put in orbit by the host (protocol 67)", "kind": "PlaceStructure", "structureId": "1200000040486618", "solarSystemId": 30100032, "typeName": "Customs Office", "typeId": 2233, "groupId": 1025, "planetId": 40486618, "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 8000.0, "ownerId": "1000125", "corporationId": 0, "allianceId": 0, "vitals": {"shieldCapacity": 0.0, "armorHp": 0.0, "structureHp": 0.0, "resonances": {"shield": [1.0, 1.0, 1.0, 1.0], "armor": [1.0, 1.0, 1.0, 1.0], "structure": [1.0, 1.0, 1.0, 1.0]}}, "shieldRechargeMs": 0.0, "perSecond": [0.0, 0.0, 0.0], "repairPause": [0.0, 0.0, 0.0], "status": {"state": 110, "upkeepState": 3, "timer": None, "unanchoring": None, "repairing": None}},
+    {"name": "host sets a text slim field of a deployable (fwAttackMethod)", "kind": "SetSlimField", "itemId": "4250000000000016", "fieldName": "fwAttackMethod", "value": {"tag": "text", "value": "attackFwAllEnemies"}},
+    {"name": "host sets a capture point's faction tuple (attacker, occupier)", "kind": "SetSlimField", "itemId": "4250000000000016", "fieldName": "component_fwCapturePoint_factionInfo", "value": {"tag": "tuple", "items": [{"tag": "int", "value": "500003"}, {"tag": "int", "value": "500001"}]}},
+    {"name": "host sets a real threshold slim field", "kind": "SetSlimField", "itemId": "4250000000000016", "fieldName": "hostile_response_threshold", "value": {"tag": "real", "value": -5.0}},
+    {"name": "host sets a bool slim field", "kind": "SetSlimField", "itemId": "4250000000000016", "fieldName": "group_standings_disabled", "value": {"tag": "bool", "value": True}},
+    {"name": "host clears a slim field to none", "kind": "SetSlimField", "itemId": "4250000000000016", "fieldName": "fwAttackMethod", "value": {"tag": "none"}},
+    {"name": "host sets a tuple nested four deep (the limit)", "kind": "SetSlimField", "itemId": "4250000000000016", "fieldName": "nested", "value": {"tag": "tuple", "items": [{"tag": "tuple", "items": [{"tag": "tuple", "items": [{"tag": "tuple", "items": [{"tag": "none"}]}]}]}]}},
+    {"name": "capture point with an attacker and an occupier, and its next point time (protocol 77)", "kind": "PlaceCapturePoint", **json.loads('{"kind": "PlaceCapturePoint", "deployableId": "4250000000000020", "solarSystemId": 30100032, "typeName": "Caldari Control Zone A", "typeId": 73445, "groupId": 4494, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 231.0, "attackerFaction": 500004, "occupierFaction": 500001, "nextPointTime": "133900000000000000"}')},
+    {"name": "capture point with no faction yet and no next point time", "kind": "PlaceCapturePoint", **dict(json.loads('{"kind": "PlaceCapturePoint", "deployableId": "4250000000000020", "solarSystemId": 30100032, "typeName": "Caldari Control Zone A", "typeId": 73445, "groupId": 4494, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 231.0, "attackerFaction": 500004, "occupierFaction": 500001, "nextPointTime": "133900000000000000"}'), attackerFaction=0, occupierFaction=0, nextPointTime="0")},
+    {"name": "capture point with only an occupier", "kind": "PlaceCapturePoint", **dict(json.loads('{"kind": "PlaceCapturePoint", "deployableId": "4250000000000020", "solarSystemId": 30100032, "typeName": "Caldari Control Zone A", "typeId": 73445, "groupId": 4494, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 231.0, "attackerFaction": 500004, "occupierFaction": 500001, "nextPointTime": "133900000000000000"}'), attackerFaction=0)},
+    {"name": "battlefield scoreboard placed in a system (protocol 78): its ball, no score yet", "kind": "PlaceBattlefieldScoreboard", "deployableId": "4300000000000008", "solarSystemId": 30100032, "typeName": "Caldari Scoreboard", "typeId": 73449, "groupId": 227, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 0.0},
+    {"name": "structure state set by the host: paused timer, unanchoring, repairing", "kind": "SetStructureState", "solarSystemId": 30100032,
+     "structureId": "1040000000000001",
+     "status": {"state": 111, "upkeepState": 3, "timer": [132000000000000000, 132000860000000000, 132000100000000000], "unanchoring": 132000900000000000, "repairing": True}},
+    {"name": "a hit empties a structure's shield and pauses its repair", "kind": "StructureDamaged", "structureId": "1040000000000001", "depleted": 1, "overThreshold": True},
+    {"name": "bind a structure control observer", "kind": "ControlStructure", "sessionId": "77", "solarSystemId": 30000142, "structureId": "1040000000000001", "characterId": "90000001", "active": True, "controlLeaseGeneration": "19"},
+    {"name": "release a structure control observer", "kind": "ControlStructure", "sessionId": "77", "solarSystemId": 30000142, "structureId": "0", "characterId": "0", "active": False, "controlLeaseGeneration": "20"},
+    {"name": "structure-damage candidate request for one pulse (candidate IDs may be ships or other damageable entities)", "kind": "StructureDamageCandidatesRequest",
+     "sessionId": "77", "structureId": "1040000000000001", "moduleId": "9988400002813", "effectId": 6443,
+     "activationNonce": "31", "controlLeaseGeneration": "20", "cycleId": "4300", "pulseHopOrdinal": 0,
+     "candidateIds": ["9988400001939", "9988400001940"]},
+    {"name": "Host authorization for the same pulse allows one candidate", "kind": "StructureDamageCandidatesResult",
+     "sessionId": "77", "structureId": "1040000000000001", "moduleId": "9988400002813", "effectId": 6443,
+     "activationNonce": "31", "controlLeaseGeneration": "20", "cycleId": "4300", "pulseHopOrdinal": 0,
+     "allowedTargetIds": ["9988400001940"]},
+    {"name": "remove a structure-owned cyno beacon from its solar system", "kind": "RemoveCynoBeacon", "solarSystemId": 30000142, "structureBeaconId": "1040000000000003"},
+    {"name": "register a Sim-created damageable Pochven NPC from its SDE type and corporation", "kind": "DamageableEntityUpserted",
+     "solarSystemId": 30000142, "entityId": "980100000000", "typeId": 52182, "ownerId": "1000298", "corporationId": "1000298", "allianceId": "0", "warFactionId": "0"},
+    {"name": "remove a Sim-created damageable entity on non-death despawn", "kind": "DamageableEntityRemoved",
+     "solarSystemId": 30000142, "entityId": "980100000000"},
+    {"name": "host tether policy grants a leased range", "kind": "TetherPolicy", "sessionId": "77", "blockedForMs": "1000", "leaseMs": "3000", "candidates": [{"structureId": "1040000000000001", "range": 10000.0}]},
+    {"name": "host tether policy clears all rights", "kind": "TetherPolicy", "sessionId": "77", "blockedForMs": "0", "leaseMs": "0", "candidates": []},
+    {"name": "tether engages and repairs the ship", "kind": "TetherChanged", "sessionId": "77", "previousStructureId": "0", "structureId": "1040000000000001", "repairing": True},
+    {"name": "tether breaks", "kind": "TetherChanged", "sessionId": "77", "previousStructureId": "1040000000000001", "structureId": "0", "repairing": False},
+    {"name": "structure taken out of space by the host", "kind": "RemoveStructure", "structureId": "1040000000000001"},
+    {"name": "wormhole end put in space by the host (far end in another system)", "kind": "PlaceWormhole", "wormholeId": "1050000001", "solarSystemId": 30100032,
+     "typeName": "Wormhole E004", "typeId": 34134, "groupId": 988, "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 3000.0,
+     "destinationSystemId": 31000001, "destinationEnd": "1050000002", "destinationClass": 14,
+     "destinationPosition": [-5610823557120.0, 7676706201600.0, -2034779136000.0], "destinationRadius": 5000.0, "maxJumpMass": 5000000.0},
+    {"name": "wormhole end taken out of space by the host", "kind": "RemoveWormhole", "wormholeId": "1050000001"},
+    {"name": "mobile warp disruptor dropped from a ship and not yet anchored", "kind": "PlaceDisruptor", "deployableId": "4250000000000009",
+     "solarSystemId": 30100032, "typeName": "Mobile Small Warp Disruptor I", "typeId": 12198, "groupId": 361,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 50.0, "range": 5000.0, "active": False,
+     "ownerId": "1790646377000015", "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943"},
+    {"name": "mobile warp disruptor anchored", "kind": "SetDisruptorActive", "deployableId": "4250000000000009", "active": True},
+    {"name": "CRAB dropped from a ship, not yet active (20 s wait), no link", "kind": "PlaceAnalysisBeacon", "deployableId": "4250000000000012",
+     "solarSystemId": 30100032, "typeName": "CONCORD Rogue Analysis Beacon", "typeId": 60244, "groupId": 4137,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 100.0,
+     "ownerId": "1790646377000015", "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943",
+     "state": {"active": False, "activateAt": "133900000000000000", "deployedAt": "133899999000000000", "activationSeconds": 20,
+               "linkState": 1, "linkCompleteAt": "0", "linkedShipId": "0"}},
+    {"name": "CRAB active with a carrier linked (running, complete later)", "kind": "SetAnalysisBeaconState", "deployableId": "4250000000000012",
+     "state": {"active": True, "activateAt": "0", "deployedAt": "133899999000000000", "activationSeconds": 20,
+               "linkState": 2, "linkCompleteAt": "133900240000000000", "linkedShipId": "9988400001944"}},
+    {"name": "mobile cynosural inhibitor dropped and not yet anchored", "kind": "PlaceInhibitor", "deployableId": "4250000000000010",
+     "solarSystemId": 30100032, "typeName": "Mobile Cynosural Inhibitor", "typeId": 33476, "groupId": 1249,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 100.0, "range": 100000.0, "active": False,
+     "ownerId": "1790646377000015", "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943"},
+    {"name": "mobile cynosural beacon dropped and not yet anchored", "kind": "PlaceCynoBeacon", "deployableId": "4250000000000011",
+     "solarSystemId": 30100032, "typeName": "Mobile Cynosural Beacon", "typeId": 57319, "groupId": 4093,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 100.0, "range": 0.0, "active": False,
+     "ownerId": "1790646377000015", "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943"},
+    {"name": "mobile observatory dropped and not yet anchored", "kind": "PlaceObservatory", "deployableId": "4250000000000012",
+     "solarSystemId": 30100032, "typeName": "Mobile Observatory", "typeId": 58904, "groupId": 4107,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 100.0, "range": 0.0, "active": False,
+     "ownerId": "1790646377000015", "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943"},
+    {"name": "mobile observatory anchored", "kind": "SetDisruptorActive", "deployableId": "4250000000000012", "active": True},
+    {"name": "mobile observatory decloaking ping in its system", "kind": "RemoteDecloakPing", "solarSystemId": 30100032,
+     "observatoryId": "4250000000000012"},
+    {"name": "control tower dropped and not yet anchored", "kind": "PlaceControlTower", "deployableId": "4250000000000013",
+     "solarSystemId": 30100032, "typeName": "Amarr Control Tower", "typeId": 12235, "groupId": 365,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 3394.0, "range": 0.0, "active": False,
+     "ownerId": "1790646377000015", "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943"},
+    {"name": "control tower anchored", "kind": "SetDisruptorActive", "deployableId": "4250000000000013", "active": True},
+    {"name": "deadspace pocket of a mission placed (no client ball)", "kind": "PlaceDeadspacePocket", "deployableId": "4250000000000014",
+     "solarSystemId": 30100032, "typeName": "Deadspace Pocket", "typeId": 0, "groupId": 0,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 1000000000.0, "range": 0.0, "active": True,
+     "ownerId": "0", "corporationId": 0, "allianceId": 0, "shipId": "0"},
+    {"name": "acceleration gate of a room placed (a stargate ball)", "kind": "PlaceAccelerationGate", "deployableId": "4250000000000015",
+     "solarSystemId": 30100032, "typeName": "Acceleration Gate", "typeId": 17831, "groupId": 366,
+     "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 0.0, "range": 0.0, "active": True,
+     "ownerId": "0", "corporationId": 0, "allianceId": 0, "shipId": "0"},
+    {"name": "how far a can is", "kind": "Measured", "sessionId": "1790646377000015", "command": 20, "distance": 261.0},
+    {"name": "how far a can that is not there is", "kind": "Measured", "sessionId": "1790646377000015", "command": 20, "distance": None},
+    {"name": "destroy for nobody", "kind": "Destroy", "shipId": "4200000000000001", "characterId": "0",
+     "corporationId": "0", "allianceId": "0", "warFactionId": "0"},
+    {"name": "module work cycle of a mining laser", "kind": "ModuleWorkCycle", "sessionId": "1790646377000015",
+     "characterId": "140000342", "shipId": "9988400001939", "solarSystemId": 30100032, "moduleId": "9988400002813",
+     "targetId": "1000000000001", "cycleId": "7301444403200000001", "command": 7, "miningAmountM3": 20.0,
+     "wasteMultiplier": 1.0, "wasteProbability": 0.1, "critProbability": 0.05, "critMultiplier": 2.0,
+     "accessDifficultyBonus": 0.0, "wasteRoll": 0.25, "roundingRoll": 0.5, "critRoll": 0.75},
+    {"name": "module work cycle of a salvager", "kind": "ModuleWorkCycle", "sessionId": "1790646377000015",
+     "characterId": "140000342", "shipId": "9988400001939", "solarSystemId": 30100032, "moduleId": "9988400002813",
+     "targetId": "1000000000002", "cycleId": "7301444403200000002", "command": 8, "miningAmountM3": 0.0,
+     "wasteMultiplier": 0.0, "wasteProbability": 0.0, "critProbability": 0.0, "critMultiplier": 0.0,
+     "accessDifficultyBonus": 5.0, "wasteRoll": 0.0, "roundingRoll": 0.0, "critRoll": 0.9},
+    {"name": "module work cycle asking the fuel of a cycle", "kind": "ModuleWorkCycle", "sessionId": "1790646377000015",
+     "characterId": "140000342", "shipId": "9988400001939", "solarSystemId": 30100032, "moduleId": "9988400002810",
+     "targetId": "0", "cycleId": "7301444403200000003", "command": 9, "miningAmountM3": 0.0,
+     "wasteMultiplier": 0.0, "wasteProbability": 0.0, "critProbability": 0.0, "critMultiplier": 0.0,
+     "accessDifficultyBonus": 0.0, "wasteRoll": 0.0, "roundingRoll": 0.0, "critRoll": 0.0},
+    # protocol 43 (track C6): a command burst's cycle asks the host with the ships of the scene in reach (the host decides the fleet); a cargo scan's cycle carries no numbers
+    {"name": "module work cycle of a command burst reaching two ships", "kind": "ModuleWorkCycle", "sessionId": "1790646377000015",
+     "characterId": "140000342", "shipId": "9988400001939", "solarSystemId": 30100032, "moduleId": "9988400002813",
+     "targetId": "0", "cycleId": "7301444403200000004", "command": 12, "chargeTypeId": 1131, "miningAmountM3": 0.0,
+     "wasteMultiplier": 0.0, "wasteProbability": 0.0, "critProbability": 0.0, "critMultiplier": 0.0,
+     "accessDifficultyBonus": 0.0, "wasteRoll": 0.25, "roundingRoll": 0.5, "critRoll": 0.75,
+     "recipients": ["9988400001939", "9988400001940"]},
+
+    {"name": "module work cycle of an entosis link's cycle (command 14), no numbers", "kind": "ModuleWorkCycle", "sessionId": "1790646377000015",
+     "characterId": "140000342", "shipId": "9988400001939", "solarSystemId": 30100032, "moduleId": "9988400002813",
+     "targetId": "1040000000777", "cycleId": "7301444403200000006", "command": 14, "miningAmountM3": 0.0,
+     "wasteMultiplier": 0.0, "wasteProbability": 0.0, "critProbability": 0.0, "critMultiplier": 0.0,
+     "accessDifficultyBonus": 0.0, "wasteRoll": 0.0, "roundingRoll": 0.0, "critRoll": 0.0},
+    {"name": "module work cycle of a command burst reaching only its own ship", "kind": "ModuleWorkCycle", "sessionId": "1790646377000015",
+     "characterId": "140000342", "shipId": "9988400001939", "solarSystemId": 30100032, "moduleId": "9988400002813",
+     "targetId": "0", "cycleId": "7301444403200000005", "command": 12, "chargeTypeId": 1131, "miningAmountM3": 0.0,
+     "wasteMultiplier": 0.0, "wasteProbability": 0.0, "critProbability": 0.0, "critMultiplier": 0.0,
+     "accessDifficultyBonus": 0.0, "wasteRoll": 0.0, "roundingRoll": 0.0, "critRoll": 0.0, "recipients": ["9988400001939"]},
+    {"name": "module work cycle of a cargo scan (command 10) carrying no numbers", "kind": "ModuleWorkCycle", "sessionId": "1790646377000015",
+     "characterId": "140000342", "shipId": "9988400001939", "solarSystemId": 30100032, "moduleId": "9988400002813",
+     "targetId": "1000000000003", "cycleId": "7301444403200000006", "command": 10, "miningAmountM3": 0.0,
+     "wasteMultiplier": 0.0, "wasteProbability": 0.0, "critProbability": 0.0, "critMultiplier": 0.0,
+     "accessDifficultyBonus": 0.0, "wasteRoll": 0.0, "roundingRoll": 0.0, "critRoll": 0.0},
+    # protocol 43: the timed buffs of a ship of this session, after each change (an empty list clears them)
+    # protocol 43 (track C6): the invulnerability core's grant asks the host with the ships in reach (command 13, no mining numbers)
+    {"name": "module work cycle of the invulnerability core's grant, two ships in reach", "kind": "ModuleWorkCycle", "sessionId": "1790646377000015",
+     "characterId": "140000342", "shipId": "9988400001939", "solarSystemId": 30100032, "moduleId": "9988400002813",
+     "targetId": "0", "cycleId": "7301444403200000007", "command": 13, "miningAmountM3": 0.0,
+     "wasteMultiplier": 0.0, "wasteProbability": 0.0, "critProbability": 0.0, "critMultiplier": 0.0,
+     "accessDifficultyBonus": 0.0, "wasteRoll": 0.0, "roundingRoll": 0.0, "critRoll": 0.0,
+     "recipients": ["9988400001939", "9988400001940"]},
+    {"name": "buff state of a ship: a shield resistance buff and a repair buff", "kind": "BuffState", "sessionId": "1790646377000015",
+     "shipId": "9988400001939", "entries": [{"collectionId": 10, "value": -10.0, "remainingMs": 60000.0},
+                                             {"collectionId": 11, "value": -6.0, "remainingMs": 45000.0}]},
+    {"name": "buff state cleared (no buff left on the ship)", "kind": "BuffState", "sessionId": "1790646377000015",
+     "shipId": "9988400001939", "entries": []},
+    {"name": "module work result accepted", "kind": "ModuleWorkResult", "sessionId": "1790646377000015",
+     "moduleId": "9988400002813", "targetId": "1000000000001", "cycleId": "7301444403200000001", "accepted": True,
+     "reason": "", "unitsRemaining": "980", "deliveredUnits": "20", "complete": False},
+    {"name": "module work result refused", "kind": "ModuleWorkResult", "sessionId": "1790646377000015",
+     "moduleId": "9988400002813", "targetId": "1000000000001", "cycleId": "7301444403200000003", "accepted": False,
+     "reason": "NO_TARGET", "unitsRemaining": "0", "deliveredUnits": "0", "complete": True},
+    {"name": "module ended when its cycles are done", "kind": "ModuleEnded", "sessionId": "1790646377000015",
+     "moduleId": "9988400002813", "reason": 1},
+    {"name": "module ended when its target is lost", "kind": "ModuleEnded", "sessionId": "1790646377000015",
+     "moduleId": "9988400002813", "reason": 2},
+    {"name": "activate a mining laser", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 17912, "effectId": 4025, "fx": "effects.MiningLaser",
+                "durationMs": 2000.0, "capacitorNeed": 5.0, "repeat": 1000, "targetId": "1000000000001",
+                "action": {"kind": "mining", "family": "ore", "miningAmountM3": 20.0, "wasteMultiplier": 1.0,
+                           "wasteProbability": 0.1, "critProbability": 0.05, "critMultiplier": 2.0},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a Standup Point Defense Battery I (wire action sentinel)", "kind": "Activate", "sessionId": "77",
+     "effect": {"moduleId": "9988400002813", "moduleType": 35926, "effectId": 6443, "fx": "effects.PointDefense",
+                "durationMs": 1.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "0",
+                "action": {"kind": "pointDefense", "rangeMeters": 1.0, "damage": [1.0, 2.0, 3.0, 4.0]},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a siege module that burns fuel", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002810", "moduleType": 20280, "effectId": 6582, "fx": "effects.SiegeMode",
+                "durationMs": 300000.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "0",
+                "burnsFuel": True, "onChanges": [], "offChanges": []}},
+    {"name": "activate a salvager", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 25861, "effectId": 6, "fx": "effects.Salvaging",
+                "durationMs": 10000.0, "capacitorNeed": 20.0, "repeat": 1000, "targetId": "1000000000002",
+                "action": {"kind": "salvage", "accessBonus": 10.0}, "onChanges": [], "offChanges": []}},
+    {"name": "activate a tractor beam", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 24348, "effectId": 9, "fx": "effects.TractorBeam",
+                "durationMs": 5000.0, "capacitorNeed": 5.0, "repeat": 1000, "targetId": "1000000000002",
+                "action": {"kind": "tractor", "velocity": 500.0, "hold": 500.0, "range": 20000.0}, "onChanges": [], "offChanges": []}},
+    # the SimAction tag 26 (protocol 40): a Cargo Scanner I (50 km, a hard cutoff) and a Ship Scanner I (50 km, 30 km of falloff), each locked on a ship
+    {"name": "activate a cargo scanner (Cargo Scanner I: 50 km, no falloff)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 442, "effectId": 47, "fx": "effects.CargoScan",
+                "durationMs": 5000.0, "capacitorNeed": 4.0, "repeat": 1, "targetId": "1000000000002", "burnsFuel": False,
+                "action": {"kind": "scan", "cargo": True, "optimalMeters": 50000.0, "falloffMeters": 0.0}, "onChanges": [], "offChanges": []}},
+    {"name": "activate a ship scanner (Ship Scanner I: 50 km, 30 km falloff)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 443, "effectId": 46, "fx": "effects.ShipScan",
+                "durationMs": 2000.0, "capacitorNeed": 5.0, "repeat": 1, "targetId": "1000000000002", "burnsFuel": False,
+                "action": {"kind": "scan", "cargo": False, "optimalMeters": 50000.0, "falloffMeters": 30000.0}, "onChanges": [], "offChanges": []}},
+    {"name": "activate a passive targeter", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 1100, "effectId": 10, "fx": "effects.TargetPassively",
+                "durationMs": 1000.0, "capacitorNeed": 0.0, "repeat": 1000, "targetId": "1000000000002",
+                "action": {"kind": "passiveLock"}, "onChanges": [], "offChanges": []}},
+    {"name": "activate a kamikaze squadron (Shadow: four kinds, detonates at 500 m)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400004102", "moduleType": 2948, "effectId": 6554, "fx": "",
+                "durationMs": 10000.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "980050000077", "burnsFuel": False,
+                "action": {"kind": "kamikaze", "damage": [4000.0, 0.0, 6000.0, 0.0], "rangeMeters": 500.0},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a fighter's missiles (Templar: a missile reaching 20 km)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400004103", "moduleType": 23055, "effectId": 6441, "fx": "",
+                "durationMs": 6000.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "980050000077", "burnsFuel": False,
+                "action": {"kind": "missile", "damage": [1500.0, 0.0, 1500.0, 0.0], "reachMeters": 20000.0, "explosionRadius": 40.0,
+                           "explosionVelocity": 135.0, "reductionFactor": 0.4, "reductionSensitivity": 5.5},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a fighter's bomb (a Hornet-class squadron's Micro Electron Bomb, 15 km, a minute)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400004104", "moduleType": 40362, "effectId": 6485, "fx": "",
+                "durationMs": 60000.0, "capacitorNeed": 0.0, "repeat": 1, "targetId": "0", "burnsFuel": False,
+                "action": {"kind": "blast", "centre": [12000.0, -3000.0, 45000.0], "radiusMeters": 15000.0, "damage": [640.0, 0.0, 0.0, 0.0]},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a doomsday strike (Bosonic Field Generator)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002814", "moduleType": 40633, "effectId": 6473, "fx": "",
+                "durationMs": 300000.0, "capacitorNeed": 30000.0, "repeat": 1, "targetId": "0", "burnsFuel": True,
+                "action": {"kind": "strike", "shape": 3, "direction": [0.6, 0.0, 0.8], "length": 30000.0, "radius": 0.0,
+                           "warningMs": 10000.0, "pulseMs": 1000.0, "pulses": 21, "damage": [10000.0, 10000.0, 10000.0, 10000.0],
+                           "signatureRadius": 10000.0, "immobileMs": 30000.0, "noJumpMs": 300000.0,
+                           "neutAmount": 30000.0, "neutRadius": 10000.0, "neutSignatureRadius": 20000.0},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a reaper sweep (Divine Harvest)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002816", "moduleType": 40632, "effectId": 6201, "fx": "",
+                "durationMs": 300000.0, "capacitorNeed": 35000.0, "repeat": 1, "targetId": "0", "burnsFuel": True,
+                "action": {"kind": "strike", "shape": 1, "direction": [0.6, 0.0, 0.8], "length": 30000.0, "radius": 5000.0,
+                           "warningMs": 10000.0, "pulseMs": 1000.0, "pulses": 11, "damage": [100000.0, 0.0, 0.0, 0.0],
+                           "signatureRadius": 10000.0, "immobileMs": 30000.0, "noJumpMs": 300000.0,
+                           "neutAmount": 35000.0, "neutRadius": 10000.0, "neutSignatureRadius": 20000.0,
+                           "debuffMs": 0.0, "sweepEnd": [-20000.0, 0.0, 28000.0]},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a disruptive lance (Atgeir)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002817", "moduleType": 77398, "effectId": 11691, "fx": "",
+                "durationMs": 300000.0, "capacitorNeed": 30000.0, "repeat": 1, "targetId": "0", "burnsFuel": True,
+                "action": {"kind": "strike", "shape": 1, "direction": [1.0, 0.0, 0.0], "length": 50000.0, "radius": 2500.0,
+                           "warningMs": 15000.0, "pulseMs": 1000.0, "pulses": 16, "damage": [0.0, 0.0, 0.0, 17000.0],
+                           "signatureRadius": 20000.0, "immobileMs": 30000.0, "noJumpMs": 120000.0,
+                           "neutAmount": 31000.0, "neutRadius": 10000.0, "neutSignatureRadius": 20000.0,
+                           "debuffMs": 60000.0, "beacon": [4000.0, 0.0, 0.0]},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate a titan doomsday (Judgment)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002815", "moduleType": 24550, "effectId": 4489, "fx": "",
+                "durationMs": 300000.0, "capacitorNeed": 35000.0, "repeat": 1, "targetId": "1000000000002", "burnsFuel": True,
+                "action": {"kind": "doomsday", "delayMs": 9000.0, "damage": [2400000.0, 0.0, 0.0, 0.0],
+                           "immobileMs": 30000.0, "noJumpMs": 300000.0},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate the Gravitational Transportation Field Oscillator (HOG)", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002818", "moduleType": 40634, "effectId": 6474, "fx": "",
+                "durationMs": 300000.0, "capacitorNeed": 30000.0, "repeat": 1, "targetId": "0", "burnsFuel": True,
+                "action": {"kind": "field",
+                           "strike": {"shape": 4, "direction": [0.6, 0.0, 0.8], "length": 40000.0, "radius": 10000.0,
+                                      "warningMs": 15000.0, "pulseMs": 1000.0, "pulses": 1, "damage": [0.0, 0.0, 0.0, 0.0],
+                                      "signatureRadius": 0.0, "immobileMs": 30000.0, "noJumpMs": 300000.0,
+                                      "neutAmount": 30000.0, "neutRadius": 10000.0, "neutSignatureRadius": 20000.0},
+                           "destination": [1000.0, 0.0, -2000.0], "warpBlockMs": 60000.0,
+                           "moved": [1000000000003], "held": [1000000000004]},
+                "onChanges": [], "offChanges": []}},
+    {"name": "activate an auto-targeting system", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002813", "moduleType": 1101, "effectId": 11, "fx": "effects.TargetHostiles",
+                "durationMs": 1000.0, "capacitorNeed": 0.0, "repeat": 1000, "targetId": "0",
+                "action": {"kind": "autoTarget", "range": 50000.0}, "onChanges": [], "offChanges": []}},
+]
+
+CACHE_ENTITY = dict(BARE, shipId="9840000000101", characterId="0", ownerId="140000342",
+                    typeId=47951, groupId=2009, categoryId=11, name="Triglavian Bioadaptive Cache",
+                    maxVelocity=0.0, signatureRadius=1000.0, shieldRechargeMs=86400000.0,
+                    vitals={"shieldCapacity": 100.0, "armorHp": 100.0, "structureHp": 100.0,
+                            "resonances": {"shield": [1.0] * 4, "armor": [1.0] * 4, "structure": [1.0] * 4}})
+CACHE_ROOM = {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 2}
+CACHE_CONTENT = "12345678-1234-1234-1234-123456789abc"
+valid += [
+    {"name": "ensure SDE damageable non-NPC Abyssal reward cache", "kind": "EnsureAbyssalRewardCache",
+     "requestId": "53", "contentId": CACHE_CONTENT, "scene": CACHE_ROOM, "entity": CACHE_ENTITY,
+     "position": [200.0, 300.0, 400.0], "direction": [0.0, 0.0, 1.0]},
+    {"name": "confirmed reward cache ensure receipt", "kind": "EnsureAbyssalRewardCacheReply", "requestId": "53", "ok": True},
+    {"name": "confirmed domain-owned loot container upsert", "kind": "EnsureAbyssalLootContainer",
+     "requestId": "54", "contentId": CACHE_CONTENT,
+     "container": dict(next(m for m in valid if m["name"] == "targetable loot container in an Abyssal room"))},
+    {"name": "confirmed domain-owned loot upsert receipt", "kind": "EnsureAbyssalLootContainerReply", "requestId": "54", "ok": True},
+]
+
+ENV_BODY = {"scene": CACHE_ROOM, "itemId": "9840000000201", "typeId": 47440, "groupId": 1971, "categoryId": 2,
+            "ownerId": "140000342", "radius": 0.0, "graphicId": 22080, "name": "Medium Bioluminescence Cloud",
+            "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0], "isOpen": False}
+ENV_CLOUD_CASE = {"name": "ensure active room-local cloud geometry", "kind": "EnsureAbyssalEnvironmentObject",
+                  "requestId": "55", "contentId": CACHE_CONTENT,
+                  "object": {"body": ENV_BODY, "effectRadiusMeters": 10000.0, "pointDefense": None}}
+ENV_PULSE_CASE = {"name": "ensure suppressor with six SDE type-list masks and four distinct wire damage channels", "kind": "EnsureAbyssalEnvironmentObject",
+                 "requestId": "56", "contentId": CACHE_CONTENT,
+                 "object": {"body": dict(ENV_BODY, itemId="9840000000202", typeId=47437, groupId=1981, radius=7500.0, graphicId=22035,
+                                          name="Short-Range Deviant Automata Suppressor"),
+                            "effectRadiusMeters": 15000.0,
+                            "pointDefense": {"tickIntervalMs": 2000, "damage": [1.0, 2.0, 3.0, 4.0], "typeListId": 46,
+                                             "includedCategories": [87, 18, 8], "includedGroups": [1997], "includedTypes": [],
+                                             "excludedCategories": [], "excludedGroups": [], "excludedTypes": [48265, 48264, 48263, 48262],
+                                             "effectName": "effects.TriGlavianBS01a"}}}
+PRIVATE_NPC = next(case for case in valid if case.get("abyssalContentId"))
+REFRESH_NPC_CASE = {"name": "refresh a private NPC from its baseline without resetting pose or health", "kind": "RefreshAbyssalNpc",
+                    "requestId": "57", "scene": CACHE_ROOM, "sessionId": "4611686018427387905", "ship": PRIVATE_NPC["ship"],
+                    "identity": dict(PRIVATE_NPC["identity"], wreck=None, hostWreck=False)}
+valid += [
+    ENV_CLOUD_CASE, ENV_PULSE_CASE,
+    {"name": "same cloud type as presentation-only with a source-bounded radius", "kind": "EnsureAbyssalEnvironmentObject",
+     "requestId": "58", "contentId": CACHE_CONTENT,
+     "object": {"body": dict(ENV_BODY, itemId="9840000000203", radius=75000.0), "effectRadiusMeters": 0.0, "pointDefense": None}},
+    {"name": "confirmed environment-object receipt", "kind": "EnsureAbyssalEnvironmentObjectReply", "requestId": "55", "ok": True},
+    {"name": "a pilot enters one source field", "kind": "AbyssalFieldMembership", "scene": CACHE_ROOM,
+     "sourceItemId": "9840000000201", "shipId": "9988400001939", "sessionId": "1790646377000015", "inside": True},
+    {"name": "a pilot leaves one source field", "kind": "AbyssalFieldMembership", "scene": CACHE_ROOM,
+     "sourceItemId": "9840000000201", "shipId": "9988400001939", "sessionId": "1790646377000015", "inside": False},
+    REFRESH_NPC_CASE,
+    {"name": "confirmed private NPC environment refresh", "kind": "RefreshAbyssalNpcReply", "requestId": "57", "ok": True},
+    {"name": "confirmed no-death scene cleanup of settled NPC and cache-wreck IDs", "kind": "RemoveAbyssalScene", "requestId": "59",
+     "scene": CACHE_ROOM, "settledNpcIds": [PRIVATE_NPC["ship"]["shipId"]], "settledLootIds": ["9988400002421"]},
+]
+
+for case in valid:
+    case["hex"] = build(case).hex()
+
+# each of these is refused for the stated reason
+good = build(next(case for case in valid if case["name"] == "enter by undocking"))
+precursor = next(c for c in valid if c["name"] == "activate a precursor weapon that builds its damage up")
+negative_spool = dict(precursor, effect=dict(precursor["effect"], turret=dict(precursor["effect"]["turret"], spool={"perCycle": -0.07, "max": 2.125})))
+vorton = next(c for c in valid if c["name"].startswith("activate a vorton projector"))
+standup_vorton = dict(vorton, name="wire fixture: Standup Vorton SDE arc and per-hop loss attributes", effect=dict(
+    vorton["effect"], moduleType=35928, effectId=6447, fx="effects.Laser",
+    turret=dict(vorton["effect"]["turret"], weaponTypeId=35928, fx="effects.Laser",
+               arc={"range": 20000.0, "targets": 5, "damageLossTarget": 0.85})))
+valid.append(standup_vorton)
+standup_vorton["hex"] = build(standup_vorton).hex()
+negative_standup_vorton_loss = dict(standup_vorton, effect=dict(standup_vorton["effect"], turret=dict(standup_vorton["effect"]["turret"],
+    arc=dict(standup_vorton["effect"]["turret"]["arc"], damageLossTarget=-0.1))))
+nan_standup_vorton_loss = dict(
+    standup_vorton,
+    effect=dict(
+        standup_vorton["effect"],
+        turret=dict(
+            standup_vorton["effect"]["turret"],
+            arc=dict(standup_vorton["effect"]["turret"]["arc"], damageLossTarget=float("nan")),
+        ),
+    ),
+)
+negative_radius = dict(vorton, effect=dict(vorton["effect"], turret=dict(vorton["effect"]["turret"],
+                                                                         aoe=dict(vorton["effect"]["turret"]["aoe"], explosionRadius=-43.0))))
+negative_targets = dict(vorton, effect=dict(vorton["effect"], turret=dict(vorton["effect"]["turret"],
+                                                                          arc={"range": 10000.0, "targets": -1})))
+hardener = next(c for c in valid if c["name"] == "activate a reactive armor hardener")
+hardener_seed_high = dict(hardener, effect=dict(hardener["effect"], action=dict(hardener["effect"]["action"], seed=[0.85, 1.5, 0.85, 0.85])))
+hardener_shift_none = dict(hardener, effect=dict(hardener["effect"], action=dict(hardener["effect"]["action"], shift=0.0)))
+pinned_flag_two = {"kind": "ShipSpec", "sessionId": "1790646377000015", "ship": dict(IBIS, vitals=dict(IBIS["vitals"], armorPinned=2))}
+drone_negative = {"kind": "ShipSpec", "sessionId": "1790646377000015", "ship": dict(IBIS, droneDamageMultiplier=-0.5)}
+def named(name):
+    return next(c for c in valid if c["name"] == name)
+
+for entry in [
+    {"name": "public entry at anchor", "kind": "EnterPublicParticipant", "requestId": "60", "operationId": "01234567-89ab-cdef-0123-456789abcdef", "enter": dict(named("enter at the anchor of the system (a game master's relocation, no pose)"))},
+    {"name": "public entry accepted", "kind": "EnterPublicParticipantReply", "requestId": "60", "error": None},
+    {"name": "public entry refused", "kind": "EnterPublicParticipantReply", "requestId": "60", "error": "ALREADY_IN_SPACE"},
+]:
+    entry["hex"] = build(entry).hex()
+    valid.append(entry)
+
+cutoff_identity = {"requestId": "71", "scene": {"locationId": 30000001, "instanceId": "0", "roomIndex": 0}, "matchId": "81", "generation": "2", "start": "133900000000000000", "deadline": "133900006000000000"}
+for name, kind, extra in [
+    ("register cutoff", "RegisterTournamentCutoff", {"roster": [["140000001", "998800001"], ["140000002", "998800002"]]}),
+    ("cutoff registration pending", "RegisterTournamentCutoffReply", {"status": 0, "error": ""}),
+    ("read cutoff", "ReadTournamentCutoff", {}),
+    ("cutoff ready", "ReadTournamentCutoffReply", {"status": 1, "evidence": [["140000001", "998800001", 0], ["140000002", "998800002", 1]], "error": ""}),
+    ("cutoff unavailable", "ReadTournamentCutoffReply", {"status": 2, "evidence": [], "error": ""}),
+    ("release cutoff", "ReleaseTournamentCutoff", {}),
+    ("cutoff released", "ReleaseTournamentCutoffReply", {"status": 0, "error": ""}),
+    ("cutoff release conflict", "ReleaseTournamentCutoffReply", {"status": 3, "error": "CONFLICT"}),
+]:
+    entry = dict(cutoff_identity, name=name, kind=kind, **extra)
+    entry["hex"] = build(entry).hex()
+    valid.append(entry)
+
+metrics_identity = {"requestId":"73", "scene":{"locationId":30000001,"instanceId":"0","roomIndex":0}, "matchId":"81", "generation":"2", "start":"133900000000000000", "roster":[["140000001","998800001",0],["140000002","998800002",1]]}
+for name, kind, extra in [
+    ("register metrics","RegisterTournamentMetrics",{}),
+    ("metrics registered","RegisterTournamentMetricsReply",{"status":0,"error":""}),
+    ("read metrics","ReadTournamentMetrics",{}),
+    ("metrics sample","ReadTournamentMetricsReply",{"status":0,"error":"","at":"133900000010000000","applied":[12.5,0.0]}),
+    ("metrics unavailable","ReadTournamentMetricsReply",{"status":1,"error":""}),
+    ("release metrics","ReleaseTournamentMetrics",{}),
+    ("metrics released","ReleaseTournamentMetricsReply",{"status":0,"error":""}),
+]:
+    entry = dict(metrics_identity, name=name, kind=kind, **extra)
+    entry["hex"] = build(entry).hex()
+    valid.append(entry)
+
+burst = named("activate a command burst (Shield Command Burst I, a Shield Harmonizing charge loaded)")
+burst_cycle = named("module work cycle of a command burst reaching two ships")
+burst_negative = dict(burst, effect=dict(burst["effect"], action=dict(burst["effect"]["action"], action={"kind": "commandBurst", "rangeMeters": -1.0})))
+panic = named("activate the invulnerability core (Pulse Activated Nexus Invulnerability Core, 200 km)")
+panic_negative = dict(panic, effect=dict(panic["effect"], action={"kind": "panic", "rangeMeters": -1.0}))
+entosis = named("activate an entosis link (Entosis Link I, 20 km, a locked structure)")
+entosis_negative = dict(entosis, effect=dict(entosis["effect"], action={"kind": "entosis", "rangeMeters": 0.0}))
+grant = named("module work cycle of the invulnerability core's grant, two ships in reach")
+buff_state = named("buff state of a ship: a shield resistance buff and a repair buff")
+point_defense = named("activate a Standup Point Defense Battery I (wire action sentinel)")
+point_defense_bad_range = dict(point_defense, effect=dict(point_defense["effect"], action={"kind": "pointDefense", "rangeMeters": 0.0, "damage": [1.0, 2.0, 3.0, 4.0]}))
+point_defense_bad_channel = dict(point_defense, effect=dict(point_defense["effect"], action={"kind": "pointDefense", "rangeMeters": 1.0, "damage": [1.0, -1.0, 3.0, 4.0]}))
+damage_request = named("structure-damage candidate request for one pulse (candidate IDs may be ships or other damageable entities)")
+damage_zero_id = dict(damage_request, candidateIds=["0"])
+damage_duplicate_id = dict(damage_request, candidateIds=["9988400001939", "9988400001939"])
+damage_over_limit = dict(damage_request, candidateIds=[str(500000 + index) for index in range(4097)])
+damage_bad_generation = dict(damage_request, controlLeaseGeneration="0")
+damage_result = named("Host authorization for the same pulse allows one candidate")
+damage_duplicate_grant = dict(damage_result, allowedTargetIds=["9988400001940", "9988400001940"])
+deep_tuple = {"tag": "none"}
+for _ in range(5):
+    deep_tuple = {"tag": "tuple", "items": [deep_tuple]}
+invalid = [
+{"name": "environment presentation radius is negative", "reason": "bad-value", "hex": build(dict(ENV_CLOUD_CASE, object=dict(ENV_CLOUD_CASE["object"], body=dict(ENV_BODY, radius=-1.0)))).hex()},
+    {"name": "environment effect radius is not finite", "reason": "bad-value", "hex": build(dict(ENV_CLOUD_CASE, object=dict(ENV_CLOUD_CASE["object"], effectRadiusMeters=float("nan")))).hex()},
+    {"name": "point defense target IDs are duplicated", "reason": "bad-value", "hex": build(dict(ENV_PULSE_CASE, object=dict(ENV_PULSE_CASE["object"], pointDefense=dict(ENV_PULSE_CASE["object"]["pointDefense"], includedCategories=[18,18])))).hex()},
+    {"name": "point defense has a negative raw channel", "reason": "bad-value", "hex": build(dict(ENV_PULSE_CASE, object=dict(ENV_PULSE_CASE["object"], pointDefense=dict(ENV_PULSE_CASE["object"]["pointDefense"], damage=[-1.0,2.0,3.0,4.0])))).hex()},
+    {"name": "scene cleanup cannot overlap NPC and loot IDs", "reason": "bad-value", "hex": build({"kind": "RemoveAbyssalScene", "requestId": "59", "scene": CACHE_ROOM, "settledNpcIds": ["9988400001939"], "settledLootIds": ["9988400001939"]}).hex()},
+    {"name": "scene cleanup cannot contain a zero entity ID", "reason": "bad-value", "hex": build({"kind": "RemoveAbyssalScene", "requestId": "59", "scene": CACHE_ROOM, "settledNpcIds": ["0"], "settledLootIds": []}).hex()},
+{"name": "battlefield scoreboard with a negative radius", "reason": "bad-value", "hex": build(dict(json.loads('{"kind": "PlaceBattlefieldScoreboard", "deployableId": "4300000000000008", "solarSystemId": 30100032, "typeName": "Caldari Scoreboard", "typeId": 73449, "groupId": 227, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 0.0}'), radius=-1.0)).hex()},
+    {"name": "battlefield scoreboard cut short", "reason": "truncated", "hex": build(json.loads('{"kind": "PlaceBattlefieldScoreboard", "deployableId": "4300000000000008", "solarSystemId": 30100032, "typeName": "Caldari Scoreboard", "typeId": 73449, "groupId": 227, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 0.0}')).hex()[:-20]},
+    {"name": "capture point with a negative attacker faction", "reason": "bad-value", "hex": build(dict(json.loads('{"kind": "PlaceCapturePoint", "deployableId": "4250000000000020", "solarSystemId": 30100032, "typeName": "Caldari Control Zone A", "typeId": 73445, "groupId": 4494, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 231.0, "attackerFaction": 500004, "occupierFaction": 500001, "nextPointTime": "133900000000000000"}'), attackerFaction=-1)).hex()},
+    {"name": "capture point with a negative next point time", "reason": "bad-value", "hex": build(dict(json.loads('{"kind": "PlaceCapturePoint", "deployableId": "4250000000000020", "solarSystemId": 30100032, "typeName": "Caldari Control Zone A", "typeId": 73445, "groupId": 4494, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 231.0, "attackerFaction": 500004, "occupierFaction": 500001, "nextPointTime": "133900000000000000"}'), nextPointTime="-1")).hex()},
+    {"name": "capture point with a negative radius", "reason": "bad-value", "hex": build(dict(json.loads('{"kind": "PlaceCapturePoint", "deployableId": "4250000000000020", "solarSystemId": 30100032, "typeName": "Caldari Control Zone A", "typeId": 73445, "groupId": 4494, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 231.0, "attackerFaction": 500004, "occupierFaction": 500001, "nextPointTime": "133900000000000000"}'), radius=-1.0)).hex()},
+    {"name": "capture point cut short before its next point time", "reason": "truncated", "hex": build(json.loads('{"kind": "PlaceCapturePoint", "deployableId": "4250000000000020", "solarSystemId": 30100032, "typeName": "Caldari Control Zone A", "typeId": 73445, "groupId": 4494, "position": [1.0e9, 2.0e8, -3.0e8], "radius": 231.0, "attackerFaction": 500004, "occupierFaction": 500001, "nextPointTime": "133900000000000000"}')).hex()[:-16]},
+    {"name": "slim field with an empty name", "reason": "bad-value", "hex": frame("SetSlimField", i64("4250000000000016") + s("") + bytes([0])).hex()},
+    {"name": "slim field name of 65 bytes", "reason": "bad-value", "hex": frame("SetSlimField", i64("4250000000000016") + s("x" * 65) + bytes([0])).hex()},
+    {"name": "slim field real that is not finite", "reason": "bad-value", "hex": frame("SetSlimField", i64("4250000000000016") + s("hostile_response_threshold") + bytes([2]) + struct.pack("<d", float("nan"))).hex()},
+    {"name": "slim field value with an unknown tag", "reason": "bad-value", "hex": frame("SetSlimField", i64("4250000000000016") + s("fwAttackMethod") + bytes([9])).hex()},
+    {"name": "slim field tuple nested five deep (over the limit)", "reason": "bad-value", "hex": frame("SetSlimField", i64("4250000000000016") + s("nested") + slim_value(deep_tuple)).hex()},
+    {"name": "slim field tuple of 17 items (over the limit)", "reason": "bad-value", "hex": frame("SetSlimField", i64("4250000000000016") + s("nested") + bytes([5]) + struct.pack("<H", 17) + bytes([0]) * 17).hex()},
+    {"name": "slim field text of 257 bytes (over the limit)", "reason": "bad-value", "hex": frame("SetSlimField", i64("4250000000000016") + s("fwAttackMethod") + bytes([4]) + s("x" * 257)).hex()},
+    {"name": "slim field text cut short", "reason": "truncated", "hex": frame("SetSlimField", i64("4250000000000016") + s("fwAttackMethod") + bytes([4]) + struct.pack("<H", 5) + b"ab").hex()},
+    {"name": "structure control active flag is not boolean", "reason": "bad-value", "hex": frame("ControlStructure", u64("77") + struct.pack("<i", 30000142) + i64("1040000000000001") + i64("90000001") + bytes([2]) + i64("19")).hex()},
+    {"name": "structure control cannot bind a zero structure", "reason": "bad-value", "hex": frame("ControlStructure", u64("77") + struct.pack("<i", 30000142) + i64("0") + i64("90000001") + bytes([1]) + i64("19")).hex()},
+    {"name": "structure control cannot use a negative character", "reason": "bad-value", "hex": frame("ControlStructure", u64("77") + struct.pack("<i", 30000142) + i64("1040000000000001") + i64("-1") + bytes([0]) + i64("19")).hex()},
+    {"name": "active structure control has no Host lease generation", "reason": "bad-value", "hex": build(dict(named("bind a structure control observer"), controlLeaseGeneration="0")).hex()},
+    {"name": "structure control generation is negative", "reason": "bad-value", "hex": build(dict(named("release a structure control observer"), controlLeaseGeneration="-1")).hex()},
+    {"name": "structure-damage request has a zero candidate ID", "reason": "bad-value", "hex": build(damage_zero_id).hex()},
+    {"name": "structure-damage request has duplicate candidate IDs", "reason": "bad-value", "hex": build(damage_duplicate_id).hex()},
+    {"name": "structure-damage candidate count exceeds 4096", "reason": "bad-value", "hex": build(damage_over_limit).hex()},
+    {"name": "structure-damage correlation has no control generation", "reason": "bad-value", "hex": build(damage_bad_generation).hex()},
+    {"name": "structure-damage result has duplicate allowed IDs", "reason": "bad-value", "hex": build(damage_duplicate_grant).hex()},
+    {"name": "point-defense action has zero range", "reason": "bad-value", "hex": build(point_defense_bad_range).hex()},
+    {"name": "point-defense action has a negative channel", "reason": "bad-value", "hex": build(point_defense_bad_channel).hex()},
+    {"name": "damageable entity registration has a zero system", "reason": "bad-value", "hex": build(dict(named("register a Sim-created damageable Pochven NPC from its SDE type and corporation"), solarSystemId=0)).hex()},
+    {"name": "damageable entity registration has a zero entity ID", "reason": "bad-value", "hex": build(dict(named("register a Sim-created damageable Pochven NPC from its SDE type and corporation"), entityId="0")).hex()},
+    {"name": "damageable entity registration has a zero type ID", "reason": "bad-value", "hex": build(dict(named("register a Sim-created damageable Pochven NPC from its SDE type and corporation"), typeId=0)).hex()},
+    {"name": "damageable entity registration has negative owner ID", "reason": "bad-value", "hex": build(dict(named("register a Sim-created damageable Pochven NPC from its SDE type and corporation"), ownerId="-1")).hex()},
+    {"name": "damageable entity removal has a zero entity ID", "reason": "bad-value", "hex": build(dict(named("remove a Sim-created damageable entity on non-death despawn"), entityId="0")).hex()},
+    {"name": "tether candidate count exceeds its frame", "reason": "truncated", "hex": frame("TetherPolicy", u64("77") + u64("0") + u64("3000") + struct.pack("<I", 0xffffffff)).hex()},
+    {"name": "tether candidate has zero range", "reason": "bad-value", "hex": frame("TetherPolicy", u64("77") + u64("0") + u64("3000") + struct.pack("<I", 1) + i64("1040000000000001") + struct.pack("<d", 0.0)).hex()},
+    {"name": "tether candidate has NaN range", "reason": "bad-value", "hex": frame("TetherPolicy", u64("77") + u64("0") + u64("3000") + struct.pack("<I", 1) + i64("1040000000000001") + struct.pack("<d", float("nan"))).hex()},
+    {"name": "tether repair flag is not boolean", "reason": "bad-value", "hex": frame("TetherChanged", u64("77") + i64("0") + i64("1040000000000001") + bytes([2])).hex()},
+    {"name": "tether candidate has negative structure ID", "reason": "bad-value", "hex": frame("TetherPolicy", u64("77") + u64("0") + u64("3000") + struct.pack("<I", 1) + i64("-1") + struct.pack("<d", 10000.0)).hex()},
+    {"name": "tether change has negative previous structure ID", "reason": "bad-value", "hex": frame("TetherChanged", u64("77") + i64("-1") + i64("1040000000000001") + bytes([0])).hex()},
+    {"name": "tether change has negative current structure ID", "reason": "bad-value", "hex": frame("TetherChanged", u64("77") + i64("0") + i64("-1") + bytes([0])).hex()},
+    {"name": "detached tether cannot repair", "reason": "bad-value", "hex": frame("TetherChanged", u64("77") + i64("1040000000000001") + i64("0") + bytes([1])).hex()},
+    {"name": "unknown kind", "reason": "unknown-kind", "hex": "01000000ff"},
+    {"name": "kind zero", "reason": "unknown-kind", "hex": "0100000000"},
+    {"name": "empty frame", "reason": "empty", "hex": "00000000"},
+    {"name": "hello truncated", "reason": "truncated", "hex": "02000000" + "0101"},
+    {"name": "hello trailing bytes", "reason": "trailing", "hex": "04000000" + "01" + "0100" + "00"},
+    {"name": "enter with an unknown way in", "reason": "bad-value",
+     "hex": (good[:4] + good[4:17] + bytes([7]) + good[18:]).hex()},
+    {"name": "enter cut short", "reason": "truncated", "hex": (struct.pack("<I", 20) + good[4:24]).hex()},
+    {"name": "precursor spool with a negative bonus per cycle", "reason": "bad-value", "hex": build(negative_spool).hex()},
+    {"name": "vorton explosion with a negative radius", "reason": "bad-value", "hex": build(negative_radius).hex()},
+    {"name": "vorton arc with a negative number of targets", "reason": "bad-value", "hex": build(negative_targets).hex()},
+    {"name": "Standup Vorton arc has negative damage loss per target", "reason": "bad-value", "hex": build(negative_standup_vorton_loss).hex()},
+    {"name": "Standup Vorton arc has nonfinite damage loss per target", "reason": "bad-value", "hex": build(nan_standup_vorton_loss).hex()},
+    {"name": "reactive armor hardener with a seed above one", "reason": "bad-value", "hex": build(hardener_seed_high).hex()},
+    {"name": "reactive armor hardener that shifts by nothing", "reason": "bad-value", "hex": build(hardener_shift_none).hex()},
+    {"name": "armor pinned flag that is not a flag", "reason": "bad-value", "hex": build(pinned_flag_two).hex()},
+{"name": "drone damage multiplier that is negative", "reason": "bad-value", "hex": build(drone_negative).hex()},
+    {"name": "kamikaze with a negative range", "reason": "bad-value",
+     "hex": build(dict(named("activate a kamikaze squadron (Shadow: four kinds, detonates at 500 m)"), effect=dict(named("activate a kamikaze squadron (Shadow: four kinds, detonates at 500 m)")["effect"],
+                       action=dict(named("activate a kamikaze squadron (Shadow: four kinds, detonates at 500 m)")["effect"]["action"], rangeMeters=-1.0)))).hex()},
+    {"name": "fighter missile with a negative explosion radius", "reason": "bad-value",
+     "hex": build(dict(named("activate a fighter's missiles (Templar: a missile reaching 20 km)"), effect=dict(named("activate a fighter's missiles (Templar: a missile reaching 20 km)")["effect"],
+                       action=dict(named("activate a fighter's missiles (Templar: a missile reaching 20 km)")["effect"]["action"], explosionRadius=-40.0)))).hex()},
+    {"name": "fighter bomb with no radius", "reason": "bad-value",
+     "hex": build(dict(named("activate a fighter's bomb (a Hornet-class squadron's Micro Electron Bomb, 15 km, a minute)"), effect=dict(named("activate a fighter's bomb (a Hornet-class squadron's Micro Electron Bomb, 15 km, a minute)")["effect"],
+                       action=dict(named("activate a fighter's bomb (a Hornet-class squadron's Micro Electron Bomb, 15 km, a minute)")["effect"]["action"], radiusMeters=0.0)))).hex()},
+    {"name": "fighter bomb with a negative damage", "reason": "bad-value",
+     "hex": build(dict(named("activate a fighter's bomb (a Hornet-class squadron's Micro Electron Bomb, 15 km, a minute)"), effect=dict(named("activate a fighter's bomb (a Hornet-class squadron's Micro Electron Bomb, 15 km, a minute)")["effect"],
+                       action=dict(named("activate a fighter's bomb (a Hornet-class squadron's Micro Electron Bomb, 15 km, a minute)")["effect"]["action"], damage=[-640.0, 0.0, 0.0, 0.0])))).hex()},
+    {"name": "strike with an aim that is not a unit vector", "reason": "bad-value",
+     "hex": build(dict(named("activate a doomsday strike (Bosonic Field Generator)"), effect=dict(named("activate a doomsday strike (Bosonic Field Generator)")["effect"],
+                       action=dict(named("activate a doomsday strike (Bosonic Field Generator)")["effect"]["action"], direction=[0.6, 0.0, 0.9])))).hex()},
+    {"name": "a sweep that ends on the firing ship", "reason": "bad-value",
+     "hex": build(dict(named("activate a reaper sweep (Divine Harvest)"), effect=dict(named("activate a reaper sweep (Divine Harvest)")["effect"],
+                       action=dict(named("activate a reaper sweep (Divine Harvest)")["effect"]["action"], sweepEnd=[0.0, 0.0, 0.0])))).hex()},
+    {"name": "strike in a shape the simulation does not run", "reason": "bad-value",
+     "hex": build(dict(named("activate a doomsday strike (Bosonic Field Generator)"), effect=dict(named("activate a doomsday strike (Bosonic Field Generator)")["effect"],
+                       action=dict(named("activate a doomsday strike (Bosonic Field Generator)")["effect"]["action"], shape=2)))).hex()},
+    {"name": "titan doomsday with a negative delay", "reason": "bad-value",
+     "hex": build(dict(named("activate a titan doomsday (Judgment)"), effect=dict(named("activate a titan doomsday (Judgment)")["effect"],
+                       action=dict(named("activate a titan doomsday (Judgment)")["effect"]["action"], delayMs=-1.0)))).hex()},
+    {"name": "enter reply with an unknown status", "reason": "bad-value",
+     "hex": (struct.pack("<I", 12) + bytes([13]) + u64(1) + bytes([2]) + s("")).hex()},
+    {"name": "text that is not UTF-8", "reason": "utf8",
+     "hex": (struct.pack("<I", 1 + 8 + 1 + 2 + 1) + bytes([11]) + u64(1) + bytes([4]) + struct.pack("<H", 1) + b"\xff").hex()},
+    {"name": "command that promises more arguments than it carries", "reason": "truncated",
+     "hex": (struct.pack("<I", 1 + 8 + 2) + bytes([7]) + u64(1) + bytes([1, 2])).hex()},
+    {"name": "refresh of a running effect with no cycle", "reason": "bad-value",
+     "hex": build(dict(named("a refresh of a running gun: its cycle, its capacitor and its numbers, with the attributes told"), durationMs=0.0)).hex()},
+    {"name": "refresh of a running effect with a negative capacitor need", "reason": "bad-value",
+     "hex": build(dict(named("a refresh of a running gun: its cycle, its capacitor and its numbers, with the attributes told"), capacitorNeed=-1.0)).hex()},
+    {"name": "module work cycle with no cycle", "reason": "bad-value",
+     "hex": build(dict(named("module work cycle of a mining laser"), cycleId="0")).hex()},
+    {"name": "module work cycle with a roll of one", "reason": "bad-value",
+     "hex": build(dict(named("module work cycle of a mining laser"), wasteRoll=1.0)).hex()},
+    {"name": "module work cycle of an unknown command", "reason": "bad-value",
+     "hex": build(dict(named("module work cycle of a mining laser"), command=12)).hex()},
+    {"name": "scan with no optimal range", "reason": "bad-value",
+     "hex": build(dict(named("activate a cargo scanner (Cargo Scanner I: 50 km, no falloff)"), effect=dict(named("activate a cargo scanner (Cargo Scanner I: 50 km, no falloff)")["effect"],
+                       action=dict(named("activate a cargo scanner (Cargo Scanner I: 50 km, no falloff)")["effect"]["action"], optimalMeters=0.0)))).hex()},
+    {"name": "ship scan with a negative falloff", "reason": "bad-value",
+     "hex": build(dict(named("activate a ship scanner (Ship Scanner I: 50 km, 30 km falloff)"), effect=dict(named("activate a ship scanner (Ship Scanner I: 50 km, 30 km falloff)")["effect"],
+                       action=dict(named("activate a ship scanner (Ship Scanner I: 50 km, 30 km falloff)")["effect"]["action"], falloffMeters=-1.0)))).hex()},
+    {"name": "module work cycle with a probability above one", "reason": "bad-value",
+     "hex": build(dict(named("module work cycle of a mining laser"), critProbability=1.5)).hex()},
+    {"name": "module work cycle cut short", "reason": "truncated",
+     "hex": (struct.pack("<I", 1 + 8 + 8) + bytes([51]) + u64(1) + u64(2)).hex()},
+    {"name": "fuel cycle with mining numbers", "reason": "bad-value",
+     "hex": build(dict(named("module work cycle asking the fuel of a cycle"), miningAmountM3=20.0)).hex()},
+    {"name": "module ended with an unknown reason", "reason": "bad-value",
+     "hex": build(dict(named("module ended when its target is lost"), reason=9)).hex()},
+    {"name": "scanner probe with a radius that is negative", "reason": "bad-value",
+     "hex": build(dict(named("scanner probe launched from a probe launcher and put in space"), radius=-1.0)).hex()},
+    {"name": "cynosural field with no life left", "reason": "bad-value",
+     "hex": build(dict(named("cynosural field lit by a generator, told with its life"), lifetimeMs=-1.0)).hex()},
+    {"name": "cynosural field with a radius that is not a number", "reason": "bad-value",
+     "hex": build(dict(named("cynosural field lit by a generator, told with its life"), radius=float("nan"))).hex()},
+    {"name": "ECM burst with a jam flag that is neither 0 nor 1", "reason": "bad-value",
+     "hex": frame("EcmBurst", u64(1) + i64(9) + struct.pack("<I", 1) + i64(10) + bytes([2])).hex()},
+    {"name": "ECM burst that promises two ships and carries one", "reason": "truncated",
+     "hex": frame("EcmBurst", u64(1) + i64(9) + struct.pack("<I", 2) + i64(10) + bytes([1])).hex()},
+    {"name": "ECM burst cut short before its ship", "reason": "truncated",
+     "hex": frame("EcmBurst", u64(1) + bytes([0, 0, 0])).hex()},    {"name": "warp probe with no lifetime", "reason": "bad-value",
+     "hex": build(dict(named("activate an interdiction probe"), effect=dict(named("activate an interdiction probe")["effect"],
+                       action=dict(named("activate an interdiction probe")["effect"]["action"], lifetimeMs=0.0)))).hex()},
+    {"name": "bomb of an unknown kind", "reason": "bad-value",
+     "hex": build(dict(named("activate a bomb"), effect=dict(named("activate a bomb")["effect"],
+                       action=dict(named("activate a bomb")["effect"]["action"], bombKind=7)))).hex()},
+    {"name": "mining action with a crit chance above one", "reason": "bad-value",
+     "hex": build(dict(named("activate a mining laser"), effect=dict(named("activate a mining laser")["effect"],
+                       action=dict(named("activate a mining laser")["effect"]["action"], critProbability=1.5)))).hex()},
+    {"name": "mining action with an unknown family", "reason": "bad-value",
+     "hex": (lambda frame: frame[:len(frame) - 41] + bytes([9]) + frame[len(frame) - 40:])(build(named("activate a mining laser")))
+            .hex()},    {"name": "command burst with a negative reach", "reason": "bad-value", "hex": build(burst_negative).hex()},
+    {"name": "fuel ask carrying recipients", "reason": "bad-value",
+     "hex": build(dict(named("module work cycle asking the fuel of a cycle"), recipients=["9988400001939"])).hex()},
+    {"name": "cargo scan carrying mining numbers", "reason": "bad-value",
+     "hex": build(dict(named("module work cycle of a cargo scan (command 10) carrying no numbers"), miningAmountM3=20.0)).hex()},
+    {"name": "invulnerability core with a negative reach", "reason": "bad-value", "hex": build(panic_negative).hex()},
+    {"name": "entosis link with a zero reach", "reason": "bad-value", "hex": build(entosis_negative).hex()},
+    {"name": "invulnerability core's grant carrying mining numbers", "reason": "bad-value",
+     "hex": build(dict(grant, miningAmountM3=20.0)).hex()},
+    {"name": "burst recipients with a count the frame cannot hold", "reason": "truncated",
+     "hex": (lambda frame: frame[:len(frame) - 24] + struct.pack("<I", 1000) + frame[len(frame) - 20:])(build(burst_cycle)).hex()},
+    {"name": "buff state with a negative time left", "reason": "bad-value",
+     "hex": build(dict(buff_state, entries=[{"collectionId": 10, "value": -10.0, "remainingMs": -1.0}])).hex()},
+    {"name": "buff state with a value that is not a number", "reason": "bad-value",
+     "hex": build(dict(buff_state, entries=[{"collectionId": 10, "value": float("nan"), "remainingMs": 1000.0}])).hex()},
+]
+
+npc_repair_case = named("spawn of an NPC with a laser, a wreck and a tree")
+valid_repairs = npc_repair_case["identity"]["selfRepairs"]
+for label, repairs in [
+    ("unknown effect", [dict(valid_repairs[0], effectId=12345)]),
+    ("duplicate effect", [valid_repairs[0], valid_repairs[0]]),
+    ("nonfinite amount", [dict(valid_repairs[0], amount=float("nan"))]),
+    ("invalid duration", [dict(valid_repairs[0], cycleMs=0.0)]),
+    ("invalid delay chance", [dict(valid_repairs[0], delayChance=1.1)]),
+    ("too many effects", valid_repairs + [dict(valid_repairs[0], effectId=6990)]),
+]:
+    bad = dict(npc_repair_case, identity=dict(npc_repair_case["identity"], selfRepairs=repairs))
+    invalid.append({"name": "NPC self-repair " + label, "reason": "bad-value", "hex": build(bad).hex()})
+
+deployment_frame = named("public deployment snapshot carries real ship state and center-distance candidates")
+for label, distance, item_id in [("nonfinite distance", float("nan"), "400000001"), ("outside distance", 1000000.01, "400000001"), ("self included", 1.0, deployment_frame["shipId"])]:
+    bad = dict(deployment_frame, deployment=dict(deployment_frame["deployment"], nearbyObjects=[{"itemId": item_id, "typeId": 23, "centerDistanceMeters": distance}]))
+    invalid.append({"name": "deployment snapshot " + label, "reason": "bad-value", "hex": build(bad).hex()})
+duplicate = dict(deployment_frame, deployment=dict(deployment_frame["deployment"], nearbyObjects=deployment_frame["deployment"]["nearbyObjects"] * 2))
+invalid.append({"name": "deployment snapshot duplicate entity", "reason": "bad-value", "hex": build(duplicate).hex()})
+
+public_entry_frame = named("public entry at anchor")
+invalid.append({"name": "public entry malformed id", "reason": "bad-value", "hex": build(dict(public_entry_frame, operationId="not-a-guid")).hex()})
+nested_bad = bytearray(build(public_entry_frame))
+nested_start = nested_bad.find(build(public_entry_frame["enter"]))
+assert nested_start >= 0
+nested_bad[nested_start + 4] = KINDS["EnterPublicParticipant"]
+invalid.append({"name": "public entry nested non-enter", "reason": "bad-value", "hex": nested_bad.hex()})
+
+wreck_remove_frame = named("remove guarded tournament wreck")
+for label, changes in [("zero owner", {"ownerId": "0"}), ("zero launcher", {"launcherId": "0"}), ("zero type", {"typeId": 0}), ("zero radius", {"radius": 0.0}), ("nonfinite center", {"center": [float("nan"), 2.0, 3.0]})]:
+    invalid.append({"name": "tournament wreck guard " + label, "reason": "bad-value", "hex": build(dict(wreck_remove_frame, **changes)).hex()})
+
+public_move_frame = named("move public pilot to explicit pose")
+for label, operation in [("malformed", "not-a-guid"), ("compact", "0123456789abcdef0123456789abcdef"), ("braced", "{01234567-89ab-cdef-0123-456789abcdef}"), ("whitespace", " 01234567-89ab-cdef-0123-456789abcdef")]:
+    invalid.append({"name": "public move id " + label, "reason": "bad-value", "hex": build(dict(public_move_frame, operationId=operation)).hex()})
+
+cutoff_registration = named("register cutoff")
+for label, roster in [("empty", []), ("duplicate character", [["1", "2"], ["1", "3"]]), ("duplicate ship", [["1", "2"], ["3", "2"]])]:
+    invalid.append({"name": "cutoff roster " + label, "reason": "bad-value", "hex": build(dict(cutoff_registration, roster=roster)).hex()})
+invalid.append({"name": "cutoff unknown status", "reason": "bad-value", "hex": build(dict(named("cutoff registration pending"), status=4)).hex()})
+invalid.append({"name": "cutoff ready without evidence", "reason": "bad-value", "hex": build(dict(named("cutoff ready"), evidence=[])).hex()})
+invalid.append({"name": "cutoff invalid evidence", "reason": "bad-value", "hex": build(dict(named("cutoff ready"), evidence=[["1", "2", 3]])).hex()})
+
+os.makedirs(os.path.dirname(OUT), exist_ok=True)
+with open(OUT, "w", encoding="utf-8") as f:
+    json.dump({"note": "Generated by tools/dev/gen-simlink-fixtures.py. Frames include their u32 length prefix.",
+               "valid": valid, "invalid": invalid}, f, indent=1, ensure_ascii=False)
+    f.write("\n")
+print(f"{len(valid)} valid, {len(invalid)} invalid -> {OUT}")

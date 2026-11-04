@@ -1,0 +1,376 @@
+using System.Net;
+using System.Net.Sockets;
+using Eve.Characters;
+using Eve.Data;
+using Eve.Host;
+using Eve.Identity;
+using Eve.Dogma;
+using Eve.Fitting;
+using Eve.GameStore;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using Eve.Inventory;
+using Eve.Ships;
+using Eve.Marshal;
+using Eve.Npc;
+using Eve.Sde;
+using Eve.Skills;
+using Eve.Universe;
+using Eve.Wallet;
+using Npgsql;
+using Sentry;
+using Eve.Services;
+using Eve.Services.CharacterSelect;
+using Eve.Services.Core;
+using Eve.Services.Dogma;
+using Eve.Services.Inventory;
+using Eve.Services.CharacterInfo;
+using Eve.Services.Skills;
+using Eve.Services.Slash;
+using Eve.Services.Space;
+using Eve.Space;
+using Eve.Services.Station;
+using Eve.Services.Wallet;
+using static Eve.Host.HostConfiguration;
+
+namespace Eve.Host;
+
+internal sealed partial class CharacterServicesComposition
+{
+    private async Task ItemMutationsOmegaTraining()
+    {
+        // the abyssal mutation authority (ADR 0016): the mutaplasmid catalog of the static data, the item store and its provenance, the event bus
+        itemMutations = new Eve.Inventory.Mutation.ItemMutationService(
+            source, items, items.Mutations, await Eve.Inventory.Mutation.MutatorCatalog.LoadAsync(sde), dogma, new BusItemMutationEvents(foundations.Events), now);
+        learningBonus = new PilotLearningBonus(dogma, characters, items, skills, now);
+        expertSystems = new ExpertSystems(ExpertSystemCatalog.LoadEmbedded(), new PgExpertSystemStore(source, skillsSchema), now);
+        training = new CharacterTraining(
+            source, skillCatalog, skills, new PgTrainingStore(source, skillsSchema),
+            new TrainingSettings
+            {
+                Speed = double.Parse(Env("EVE_SKILL_TRAINING_SPEED", "1"), System.Globalization.CultureInfo.InvariantCulture),
+                HasOmega = account => omega.Resolve(new PyInt(account)).HasLicense,
+                // each running extra queue (Multiple Character Training) lets one more of the account's characters train
+                AdditionalTrainingSlots = account => accounts.ActiveTrainingSlotCount(checked((uint)account), DateTimeOffset.FromUnixTimeMilliseconds(now())),
+                Attribute = skills.LearningAttribute,
+                // implants and active boosters add to the learning attributes the rate reads (dogma's modifiers)
+                LearningBonus = (character, attribute) => learningBonus.Of(character, attribute),
+                RefreshLearningBonus = (character, token) => learningBonus.RefreshAsync(character, token),
+                RefreshLearningBonusAt = (character, atFileTime, token) => learningBonus.RefreshAtAsync(character, atFileTime, token),
+            },
+            now);
+        pilotImplants = new PilotImplants(source, dogma, characters, items, skills, training,
+            accountId => omega.Resolve(new PyInt(accountId)).HasLicense);
+    }
+
+        static bool ContactWatchlisted(JsonNode? node)
+        {
+            if (node is not JsonValue value)
+                return false;
+            return value.GetValueKind() switch
+            {
+                JsonValueKind.True => true,
+                JsonValueKind.Number => double.TryParse(value.ToJsonString(), System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var number) && double.IsFinite(number) && number != 0,
+                JsonValueKind.String => value.GetValue<string>() is "1" or "true",
+                _ => false,
+            };
+        }
+
+        async ValueTask<IReadOnlyCollection<long>> ReadWatchlistAsync(long characterId, CancellationToken cancellationToken)
+        {
+            var state = await ReadGameStoreTableAsync("characters", cancellationToken);
+            var contacts = (state[characterId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject)?["personalContacts"];
+            var ids = new HashSet<long>();
+            if (contacts is JsonObject byId)
+            {
+                foreach (var (key, value) in byId)
+                {
+                    if (value is JsonObject row && ContactWatchlisted(row["inWatchlist"]))
+                    {
+                        var id = long.TryParse(row["contactID"]?.ToString(), System.Globalization.NumberStyles.Integer,
+                            System.Globalization.CultureInfo.InvariantCulture, out var storedId) ? storedId :
+                            long.TryParse(key, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var keyedId) ? keyedId : 0;
+                        if (id > 0) ids.Add(id);
+                    }
+                }
+            }
+            else if (contacts is JsonArray rows)
+            {
+                foreach (var row in rows.OfType<JsonObject>())
+                {
+                    if (ContactWatchlisted(row["inWatchlist"]) &&
+                        long.TryParse(row["contactID"]?.ToString(), System.Globalization.NumberStyles.Integer,
+                            System.Globalization.CultureInfo.InvariantCulture, out var id) && id > 0)
+                        ids.Add(id);
+                }
+            }
+            return ids;
+        }
+
+    private Task PrepareCharacterHelpers()
+    {
+            // The service re-reads saved contacts for both sides of its mutual-watchlist check.
+        // the combat timers and flags: kept in crimewatch's schema, told to the clients as they change (Eve.Services.Crimewatch)
+        securityStatusOf = (id, token) => foundations.Relations.ValueAsync(Eve.Relations.RelationKinds.SecurityStatus.Name, id, Eve.Relations.RelationStore.World, 0, null, null, token);
+        return Task.CompletedTask;
+    }
+
+    private async Task TrainingSkillsAndCreation()
+    {
+        announcer = new TrainingAnnouncer(training, skillCatalog, characterSessions, dogmaSync, now, localTimers: foundations.LocalTimers);
+        announcer.Attach();
+        multipleTrainingExpiry = new MultipleTrainingSlotExpiry(
+            foundations.Scheduler, training, announcer, characterSessions,
+            async (accountId, token) => [.. (await characters.ForAccountAsync(checked((int)accountId), token)).Select(c => c.Id)],
+            async token =>
+            {
+                if (accounts is not Eve.Identity.PgAccountDirectory pgAccounts)
+                    return Array.Empty<(long AccountId, DateTimeOffset EndsAt)>();
+                return (await pgAccounts.TrainingSlotExpiriesAsync(token))
+                    .Select(slot => (AccountId: (long)slot.AccountId, slot.EndsAt))
+                    .ToArray();
+            });
+        multipleTrainingExpiry.Register();
+        await multipleTrainingExpiry.ReconcileSavedSlotsAsync(CancellationToken.None);
+        readAugmentations = SkillHandlerService.CreateAugmentationReader(items, dogma, skills, now);
+        skillHandler = new SkillHandlerService(
+            skills, skillCatalog, training, characters, items, dogma, announcer, now, readAugmentations,
+            walletTransactions: economyWallets,
+            isAlphaClone: accountId => !omega.Resolve(new PyInt(accountId)).HasLicense,
+            expertSystems: expertSystems);
+        expertSystemMgr = new Eve.Services.Skills.ExpertSystemMgrService(expertSystems, skills, skillCatalog, items, source, characterSessions, dogmaSync, dogma,
+            // the persistent notice of a lapse (type 253, the misc group), written whether or not the pilot is online
+            async (characterId, typeId, token) =>
+            {
+                if (notificationMailbox is { } mailbox)
+                    await mailbox.WriteNotificationsAsync(0, 253, 4, [characterId], $"expert-expired:{typeId}:{now()}",
+                        new System.Text.Json.Nodes.JsonObject { ["typeID"] = typeId }, token);
+            });
+        // a skill booster ends at its expiry: a durable job per activation (SkillBoosterLapse)
+        boosterLapse = new Eve.Services.Skills.SkillBoosterLapse(foundations.Scheduler, skills, items, source, training, announcer, characters, characterSessions, now);
+        skillHandler.BoosterLapse = boosterLapse;
+        boosterLapse.Register();
+        // installed expert systems lapse on their own: the expiry runs as a recurring job of the durable scheduler
+        foundations.Scheduler.Register("skills.expert-systems.expire", async (_, token) => await expertSystemMgr.ExpireDueAsync(token));
+        await foundations.Scheduler.EnsureRecurringAsync("skills.expert-systems.expire", "expire", TimeSpan.FromSeconds(10));
+        startingWallet = new StartingWallet(
+            decimal.Parse(Env("EVE_START_ISK", "100000"), System.Globalization.CultureInfo.InvariantCulture),
+            long.Parse(Env("EVE_START_PLEX", "2222"), System.Globalization.CultureInfo.InvariantCulture));
+        Console.Error.WriteLine($"eve-host: characters in PostgreSQL, schemas {characterSchema}, {inventorySchema}, {skillsSchema} and {walletSchema}; {stations.Count} stations; dogma of {dogma.AttributeCount} attributes and {dogma.EffectCount} effects; static data build {build}; new characters start at {(startStation is { } id ? $"station {id}" : "their school's headquarters")}");
+        creation = new CharacterCreation(
+            source, characters, items, skills, skillCatalog, wallets, startingWallet, catalog, modules,
+            newCharacterExperienceMode == "tutorial", newCharacterExperienceMode,
+            (connection, transaction, characterId, corporationId, token) => foundations.Relations.SetAsync(
+                connection, transaction, Eve.Relations.RelationKinds.CorporationMember.Name, characterId, corporationId, 1,
+                "corporation membership", cancellationToken: token));
+    }
+
+    /// <summary>The login milestone: its progress in the characters schema, its timer in this process. One instance serves the entry hook and the service.</summary>
+    private MilestoneMgrService? milestoneMgr;
+    private MilestoneMgrService MilestoneManager => milestoneMgr ??= new MilestoneMgrService(
+        new Eve.Characters.LoginMilestoneStore(source, characterSchema, economyWallets), foundations.LocalTimers, now);
+
+    /// <summary>The achievement tracker of each character (the characters schema).</summary>
+    private Eve.Services.Skills.SkillBoosterLapse boosterLapse = default!;
+    private AchievementTrackerStore? achievementTracker;
+    private AchievementTrackerStore AchievementTracker => achievementTracker ??= new AchievementTrackerStore(source, characterSchema);
+
+    /// <summary>The Project Discovery tutorial of each character (the characters schema).</summary>
+    private Eve.Characters.ProjectDiscoveryTutorialStore? projectDiscoveryTutorials;
+    private Eve.Characters.ProjectDiscoveryTutorialStore ProjectDiscoveryTutorials => projectDiscoveryTutorials ??= new Eve.Characters.ProjectDiscoveryTutorialStore(source, characterSchema);
+
+    private Eve.Characters.ProjectDiscoveryTaskPinStore? projectDiscoveryTaskPins;
+    private Eve.Characters.ProjectDiscoveryTaskPinStore ProjectDiscoveryTaskPins => projectDiscoveryTaskPins ??= new Eve.Characters.ProjectDiscoveryTaskPinStore(source, characterSchema);
+
+    /// <summary>The tutorial the client's Project Discovery reads: a character with no stored tutorial has not started (the service default).</summary>
+    private async ValueTask<ProjectDiscoveryPlayerState?> ReadProjectDiscoveryStateAsync(long characterId, CancellationToken cancellationToken)
+    {
+        var tutorial = await ProjectDiscoveryTutorials.ReadAsync(characterId, cancellationToken);
+        var xp = await ProjectDiscoveryTutorials.ReadExperienceAsync(characterId, cancellationToken);
+        var rank = Math.Floor((1 + Math.Sqrt(1 + xp / 12.5)) / 2);
+        return tutorial is null && xp == 0 ? null : new ProjectDiscoveryPlayerState(Rank: rank, Experience: xp, FinishedTutorial: tutorial?.Finished ?? false, TutorialLevel: tutorial?.Level ?? 0);
+    }
+
+    private async ValueTask<ProjectDiscoveryPlayerState?> TransitionProjectDiscoveryTutorialAsync(long characterId, string action, CancellationToken cancellationToken)
+    {
+        var tutorial = await ProjectDiscoveryTutorials.TransitionAsync(characterId, action, now(), cancellationToken);
+        var xp = await ProjectDiscoveryTutorials.ReadExperienceAsync(characterId, cancellationToken);
+        return new ProjectDiscoveryPlayerState(Rank: Math.Floor((1 + Math.Sqrt(1 + xp / 12.5)) / 2), Experience: xp, FinishedTutorial: tutorial.Finished, TutorialLevel: tutorial.Level);
+    }
+
+    private ValueTask FixProjectDiscoveryTaskIdAsync(long characterId, long? taskId, CancellationToken cancellationToken) =>
+        new(ProjectDiscoveryTaskPins.SetAsync(characterId, taskId, now(), cancellationToken));
+
+    private Task EconomyAndInsurance()
+    {
+        economyWallets = new WalletTransactions(source, walletSchema);
+        economyAnnouncer = new WalletAnnouncer(economyWallets, characterSessions);
+        loyaltyPoints = new LoyaltyPointStore(source, walletSchema);
+        // the loyalty store offers: ESI's official offers, refreshed daily; EVE_LP_STORE_SEED=skip answers what is stored and calls nothing
+        lpStoreCache = new Eve.Wallet.LpStoreOfferCache(
+            new Eve.Wallet.LpStoreOfferStore(source, walletSchema),
+            Env("EVE_LP_STORE_SEED", "auto") == "skip" ? null : new Eve.Wallet.EsiLpStoreOffers(lpStoreHttp, Eve.Wallet.EsiLpStoreOffers.DefaultBase),
+            () => DateTimeOffset.UtcNow,
+            message => Console.Error.WriteLine($"eve-host: lp store: {message}"));
+        lpStorePurchases = new Eve.Services.Wallet.LpStorePurchases(source, walletSchema, economyWallets, loyaltyPoints, items,
+            (typeId, token) => itemTypes.GetAsync(typeId, token), lpStoreCache);
+        loyaltyAnnouncer = new LoyaltyPointAnnouncer(loyaltyPoints, characterSessions);
+        insuranceReadModel = new PersistenceInsuranceReadModel(mailStore);
+        insuranceWriteModel = new PersistenceInsuranceWriteModel(
+            source, items, mailStore, mailStoreOwner.Fence, economyWallets, insuranceReadModel,
+            (recipientId, shipId, amount, defaultPayout, lossId, token) =>
+                mailSendWriter.WriteInsurancePayoutNotificationAsync(
+                    recipientId, shipId, amount, defaultPayout, lossId, token),
+            now);
+        items.ShipInsuranceInvalidator = insuranceWriteModel;
+        insuranceService = new Eve.Services.Core.InsuranceService(
+            insuranceReadModel, now, insuranceWriteModel,
+            async (characterId, corporationId, cancellationToken) =>
+                await corporations.HasRoleAsync(characterId, corporationId,
+                    Eve.Corporations.CorporationRoles.Accountant, cancellationToken) ||
+                await corporations.HasRoleAsync(characterId, corporationId,
+                    Eve.Corporations.CorporationRoles.JuniorAccountant, cancellationToken));
+        storeRuntime = new PersistenceNewEdenStoreRuntime(
+            source, mailStore, mailStoreOwner.Fence, wallets, characters, items, skills, itemTypes,
+            characterSessions, now, accounts,
+            (typeName, payload, characterId) => notices.Publish(typeName, payload, character: characterId));
+        // a slot's end pauses the queues it no longer covers: the job is scheduled with the grant (multipleTrainingExpiry is set by TrainingSkillsAndCreation)
+        storeRuntime.ScheduleSlotExpiry = (connection, transaction, accountId, endsAt, token) =>
+            multipleTrainingExpiry.ScheduleAsync(connection, transaction, accountId, endsAt, token);
+        return Task.CompletedTask;
+    }
+
+    private async Task CharacterEntryHooks()
+    {
+        publicQaSlashService = null;
+        jumpCloneSpace.CloneDeletedNotification = mailSendWriter.WriteJumpCloneDeletedNotificationAsync;
+        Eve.Host.ProjectDiscovery.ProjectDiscoveryParticipationRewards? participationRewards = null;
+        Eve.Host.ProjectDiscovery.SubcellTrainingCatalog? trainingCatalog = null;
+        var catalogPath = Env("EVE_PROJECT_DISCOVERY_TRAINING_CATALOG", "");
+        if (catalogPath.Length > 0)
+        {
+            if (Env("EVE_PROJECT_DISCOVERY_MODE", "scientific-replay") != "disabled" && !(Env("EVE_PROJECT_DISCOVERY_MODE", "scientific-replay") == "remote" && Env("EVE_PROJECT_DISCOVERY_REMOTE_PROTOCOL", "covid") == "subcellular"))
+                throw new InvalidOperationException("A Subcellular catalog requires a disabled or Subcellular remote provider.");
+            trainingCatalog = await Eve.Host.ProjectDiscovery.SubcellTrainingCatalog.LoadAsync(source, characterSchema, catalogPath);
+        }
+        long? tutorialRewardXp = null;
+        var rewardPolicy = Env("EVE_PROJECT_DISCOVERY_TUTORIAL_REWARD_POLICY", "disabled");
+        if (rewardPolicy == "subcell-levels")
+        {
+            if (Env("EVE_PROJECT_DISCOVERY_MODE", "scientific-replay") != "disabled" && !(Env("EVE_PROJECT_DISCOVERY_MODE", "scientific-replay") == "remote" && Env("EVE_PROJECT_DISCOVERY_REMOTE_PROTOCOL", "covid") == "subcellular"))
+                throw new InvalidOperationException("Subcellular participation policy requires a disabled or Subcellular remote provider.");
+            long xp = long.Parse(Env("EVE_PROJECT_DISCOVERY_TUTORIAL_XP", ""), System.Globalization.CultureInfo.InvariantCulture);
+            if (xp <= 0) throw new InvalidOperationException("Invalid Project Discovery tutorial XP policy.");
+            tutorialRewardXp = xp;
+            participationRewards = new(source, characterSchema, economyWallets, xp, 0, 0, now);
+        }
+        else if (rewardPolicy == "exoplanet-local-finish")
+        {
+            if (Env("EVE_PROJECT_DISCOVERY_MODE", "scientific-replay") != "disabled" && !(Env("EVE_PROJECT_DISCOVERY_MODE", "scientific-replay") == "remote" && Env("EVE_PROJECT_DISCOVERY_REMOTE_PROTOCOL", "covid") == "exoplanet"))
+                throw new InvalidOperationException("Exoplanet participation requires a disabled or Exoplanet remote provider.");
+            int crateType = int.Parse(Env("EVE_PROJECT_DISCOVERY_TUTORIAL_CRATE_TYPE", ""), System.Globalization.CultureInfo.InvariantCulture);
+            int refType = int.Parse(Env("EVE_PROJECT_DISCOVERY_TUTORIAL_WALLET_REF_TYPE", ""), System.Globalization.CultureInfo.InvariantCulture);
+            var crate = crateType > 0 ? await itemTypes.GetAsync(crateType) : null;
+            if (crate is null || refType <= 0)
+                throw new InvalidOperationException("Exoplanet tutorial requires a valid SDE crate type and wallet reference type.");
+            tutorialRewardXp = 900;
+            participationRewards = new(source, characterSchema, economyWallets, 900, 250000m, refType, now, "exoplanet-local-finish", items, crate);
+        }
+        else if (rewardPolicy != "disabled") throw new InvalidOperationException("Unsupported Project Discovery tutorial reward policy.");
+        async ValueTask<ProjectDiscoveryPlayerState?> TransitionParticipationAsync(ServiceCall call, string action)
+        {
+            long character = call.Session.CharacterId.GetValueOrDefault();
+            long account = call.Session.UserId.GetValueOrDefault();
+            var ct = call.Cancellation;
+            if (rewardPolicy == "exoplanet-local-finish" && action == "increase")
+            {
+                await ProjectDiscoveryTutorials.MarkFinishedAsync(character, now(), ct);
+                return await ReadProjectDiscoveryStateAsync(character, ct);
+            }
+            if (rewardPolicy == "subcell-levels" && action == "increase")
+            {
+                if (trainingCatalog is null) throw Eve.Services.MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TRAINING_UNAVAILABLE");
+                if (account <= 0) throw Eve.Services.MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TRAINING_UNAVAILABLE");
+                await trainingCatalog.AdvanceAsync(character, account, ct);
+                return await ReadProjectDiscoveryStateAsync(character, ct);
+            }
+            if (rewardPolicy == "subcell-levels" && action == "reset" && trainingCatalog is not null)
+            {
+                await trainingCatalog.ResetAsync(character, ct);
+                return await ReadProjectDiscoveryStateAsync(character, ct);
+            }
+            return await TransitionProjectDiscoveryTutorialAsync(character, action, ct);
+        }
+        gameRpcCallbacks = new Eve.Services.Core.GameRpcCallbacks(
+            ReadSharedSettings: () => mailCache.Read("sharedSettings", "/").Data as JsonObject,
+                    ReadOverviewPresets: () => mailCache.Read("overviewSharedPresets", "/").Data as JsonObject,
+                    WriteOverviewPresets: state => mailCache.Write("overviewSharedPresets", "/", state).Success,
+            WriteSharedSettingsAsync: async (state, cancellationToken) =>
+            {
+                var write = mailCache.Write("sharedSettings", "/", state);
+                if (!write.Success)
+                    return false;
+                await mailCache.FlushTableAsync("sharedSettings", cancellationToken);
+                return true;
+            },
+            SetShipStanceAsync: SetShipStanceAsync,
+            ReadInterferenceTableAsync: async cancellationToken =>
+                await ReadGameStoreTableAsync("solarSystemInterferenceState", cancellationToken),
+            ReadKillmailAsync: ReadKillmailAsync,
+            ReadMiningScanResultsAsync: spaceSessions is null
+                ? null
+                : new Eve.Host.MiningScanRpcReadModel(spaceSessions, items, spaceItemStore, dogma).ReadAsync,
+            ReadPeaceTreaties: async (ownerId, cancellationToken) =>
+            {
+                var state = await ReadGameStoreTableAsync("corporationRuntime", cancellationToken);
+                var nowFiletime = DateTimeOffset.FromUnixTimeMilliseconds(now()).ToFileTime();
+                return PersistencePeaceTreatyReadModel.Read(state, ownerId, nowFiletime);
+            },
+            PublicQaTools: new Eve.Services.Core.PublicQaToolsRpcCallbacks(
+                IsStaff: Eve.Services.Core.PublicQaToolsServerService.HasStaffAccountRole,
+                SlashCmdAsync: async (request, cancellationToken) =>
+                {
+                    if (publicQaSlashService is null)
+                        return null;
+                    return await publicQaSlashService.SlashCmd(new ServiceCall
+                    {
+                        Method = "SlashCmd",
+                        Args = request.Arguments,
+                        Kwargs = request.KeywordArguments,
+                        Session = request.Session,
+                        CallId = request.CallId,
+                        Cancellation = cancellationToken,
+                    });
+                }),
+            JumpClones: new HostJumpCloneStore(new Eve.Characters.PgJumpCloneStore(source, characterSchema), source, skills, economyWallets, wallets,
+                characters, items, dogma, stations, structureStore, solarSystems, boosterLapse),
+            ReadProjectDiscoveryState: ReadProjectDiscoveryStateAsync,
+            TransitionProjectDiscoveryTutorialCall: TransitionParticipationAsync,
+            NewProjectDiscoveryTrainingTask: trainingCatalog is null ? null : trainingCatalog.IssueAsync,
+            ReadProjectDiscoveryProjectId: trainingCatalog is null ? null : () => trainingCatalog.ProjectId,
+            FixProjectDiscoveryTaskId: FixProjectDiscoveryTaskIdAsync,
+            ReadProjectDiscoveryRewardEntitlement: participationRewards is null ? null : participationRewards.IsEntitledAsync,
+            GrantProjectDiscoveryReward: participationRewards is null ? null : participationRewards.GrantAsync,
+            AnnounceProjectDiscoveryRewardWallet: participationRewards is null ? null : participationRewards.Announce,
+            AnnounceProjectDiscoveryRewardItem: participationRewards is null ? null : participationRewards.AnnounceItem,
+            ReadProjectDiscoveryTutorialXpReward: tutorialRewardXp is { } configuredXp ? () => configuredXp : null,
+            JumpCloneSpace: jumpCloneSpace);
+
+        stationGuestLedger = new Eve.Services.Station.StationGuestLedger();
+        characterEntryHooks = new List<ICharacterEntryHook>();
+        if (spaceSessions is not null)
+            characterEntryHooks.Add(spaceSessions);
+        mapTelemetry = new MapTelemetry(mailCache, now, message => Console.Error.WriteLine($"eve-host: {message}"));
+        characterEntryHooks.Add(mapTelemetry);
+        characterEntryHooks.Add(new SkillsLoginHook(training, skillCatalog, characterSessions, announcer, now));
+        characterEntryHooks.Add(MilestoneManager);
+        characterEntryHooks.Add(corporationLogin);
+        characterEntryHooks.Add(new FleetLoginHook(fleetStore.MemberForCharacterAsync));
+        characterEntryHooks.Add(dogmaSync);
+        var guests = new Eve.Services.Station.GuestLoginHook(characterSessions, stationGuestLedger);
+        characterEntryHooks.Add(guests);
+        if (spaceSessions is not null)
+            spaceSessions.DockedLocationChanged = guests.OnLocationChanged;
+    }
+}

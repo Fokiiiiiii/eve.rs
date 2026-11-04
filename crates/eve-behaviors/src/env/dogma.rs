@@ -1,0 +1,264 @@
+//! The server's `dogmaLM` (and its `dogmaStaticMgr`) as the tasks see it: the numbers of items and of types, effects that run, targets.
+
+use super::WorldResult;
+use crate::value::Value;
+
+/// A dogma effect's static data: the attributes that give its duration, range and falloff (`dogmaStaticMgr.GetEffect(effectId)`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct EffectInfo {
+    pub duration_attribute_id: Option<i64>,
+    pub range_attribute_id: Option<i64>,
+    pub falloff_attribute_id: Option<i64>,
+}
+
+/// A running effect's cycle (`GetActiveEffectData`): when it started (the clock's ticks) and how long it is (milliseconds).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct EffectCycle {
+    pub start_time: i64,
+    pub duration_ms: f64,
+}
+
+/// The dogma engine's answers and what it is asked to do.
+pub trait Dogma {
+    /// `dogmaLM.GetAttributeValue(itemId, attributeId)`.
+    fn attribute_value(&self, _item_id: i64, _attribute_id: i64) -> WorldResult<f64> {
+        Ok(0.0)
+    }
+
+    /// `dogmaLM.dogmaStaticMgr.GetTypeAttribute2(typeId, attributeId)`.
+    fn type_attribute(&self, _type_id: i64, _attribute_id: i64) -> f64 {
+        0.0
+    }
+
+    /// `dogmaLM.dogmaStaticMgr.TypeHasEffect(typeId, effectId)`.
+    fn type_has_effect(&self, _type_id: i64, _effect_id: i64) -> bool {
+        false
+    }
+
+    /// `dogmaLM.GetActiveEffectData(itemId, effectId) is not None`.
+    fn is_effect_active(&self, _item_id: i64, _effect_id: i64) -> bool {
+        false
+    }
+
+    /// `dogmaLM.GetTargets(itemId)`.
+    fn targets(&self, _item_id: i64) -> Vec<i64> {
+        Vec::new()
+    }
+
+    /// `dogmaLM.GetTargetsEx(itemId)`: the targets, and those being locked.
+    fn targets_ex(&self, _item_id: i64) -> Vec<i64> {
+        Vec::new()
+    }
+
+    /// `dogmaLM.HasPendingTarget(itemId, targetId)`.
+    fn has_pending_target(&self, _item_id: i64, _target_id: Option<i64>) -> bool {
+        false
+    }
+
+    /// `dogmaLM.IsTargeting(itemId, targetId)`.
+    fn is_targeting(&self, _item_id: i64, _target_id: Option<i64>) -> bool {
+        false
+    }
+
+    /// `dogmaLM.IsItemActive(itemId)`.
+    fn is_item_active(&self, _item_id: i64) -> bool {
+        false
+    }
+
+    /// `dogmaLM.GetFittedModulesGroupIdsForShip(shipId)`.
+    fn fitted_module_group_ids(&self, _ship_id: i64) -> Vec<i64> {
+        Vec::new()
+    }
+
+    /// `dogmaLM.GetItemIdTypeIdAndFlagIdForOnlineFittedModules(itemId)`: `(module id, type id, flag id)`.
+    fn online_fitted_modules(&self, _item_id: i64) -> Vec<(i64, i64, i64)> {
+        Vec::new()
+    }
+
+    /// `dogmaLM.IsShipAbandoned(shipId)`.
+    fn is_ship_abandoned(&self, _ship_id: i64) -> bool {
+        false
+    }
+
+    /// `dogmaLM.GetActiveEffectEnvironment(itemId, effectId).targetID`: `None` when the effect is not active, else its target (which may be none).
+    fn active_effect_target_id(&self, _item_id: i64, _effect_id: i64) -> Option<Option<i64>> {
+        None
+    }
+
+    /// `dogmaStaticMgr.GetEffect(effectId)` and `effectId in dogmaStaticMgr.effects`.
+    fn effect_info(&self, _effect_id: i64) -> Option<EffectInfo> {
+        None
+    }
+
+    /// `dogmaStaticMgr.GetDefaultEffect(typeId)`: the effect id of the type's default effect.
+    fn default_effect_id(&self, _type_id: i64) -> Option<i64> {
+        None
+    }
+
+    /// `get_effect_range_falloff_modifier_at_distance(dogmaLM, effectId, sourceId, distance)`.
+    fn range_falloff_modifier_at_distance(&self, _effect_id: i64, _source_id: i64, _distance: f64) -> f64 {
+        1.0
+    }
+
+    fn activate_with_context(
+        &mut self,
+        _owner_id: i64,
+        _module_id: i64,
+        _effect_id: Option<i64>,
+        _target_id: Option<i64>,
+        _repeat: i64,
+        _context: &Value,
+    ) -> WorldResult<()> {
+        Ok(())
+    }
+
+    /// `dogmaLM.StopEffect(effectId, moduleId, forceStopRepeating=True)`.
+    fn stop_effect_force_repeating(&mut self, _effect_id: i64, _module_id: i64) -> WorldResult<()> {
+        Ok(())
+    }
+
+    /// `dogmaLM.StopEffect(effectId, itemId, forced=)`.
+    fn stop_effect(&mut self, _effect_id: i64, _item_id: i64, _forced: bool) -> WorldResult<()> {
+        Ok(())
+    }
+
+    /// `dogmaLM.RemoveTarget(itemId, targetId)`.
+    fn remove_target(&mut self, _item_id: i64, _target_id: i64) {}
+
+    /// `get_effect_range_with_falloff_multiplier(dogmaLM, effectId, itemId, factor)`.
+    fn effect_range_with_falloff_multiplier(&self, _effect_id: i64, _item_id: i64, _factor: f64) -> f64 {
+        0.0
+    }
+
+    /// `get_effect_range_and_falloff_values_for_item(dogmaLM, itemId, effectId)`: `(optimal, falloff)`.
+    fn effect_range_and_falloff_for_item(
+        &self,
+        _item_id: i64,
+        _effect_id: i64,
+    ) -> (Option<f64>, Option<f64>) {
+        (None, None)
+    }
+
+    /// `dogmaLM.AddTargetEx(itemId, targetId)`.
+    fn add_target_ex(&mut self, _item_id: i64, _target_id: i64) -> WorldResult<()> {
+        Ok(())
+    }
+
+    /// `dogmaLM.IsShipPiloted(shipId)`.
+    fn is_ship_piloted(&self, _ship_id: i64) -> bool {
+        false
+    }
+    /// `dogmaLM.GetCloudFactor(targetId, cloudSize)`.
+    fn cloud_factor(&self, _target_id: i64, _cloud_size: f64) -> f64 {
+        1.0
+    }
+
+    /// `sm.GetService('dogma').ApplyDamage(None, sourceItemId, targetId, amount, indirectDogmaLM=, splash=False, damageShieldOnly=False,
+    /// sourceID=, weaponDamages=)`: the damage of each kind (attribute id and amount).
+    fn apply_damage(
+        &mut self,
+        _source_item_id: i64,
+        _target_id: i64,
+        _damage_amount: f64,
+        _source_id: i64,
+        _weapon_damages: &[(i64, f64)],
+    ) {
+    }
+    /// `sm.GetService('dogma').ApplyDamage(None, sourceItemId, targetId, damageMultiplier=, indirectDogmaLM=, weaponDamages=)`.
+    fn apply_damage_with_multiplier(
+        &mut self,
+        _source_item_id: i64,
+        _target_id: i64,
+        _damage_multiplier: f64,
+        _weapon_damages: &[(i64, f64)],
+    ) {
+    }
+
+    /// `dogmaLM.dogmaItems.get(itemId).GetFittedItems()`: the keys of what is fitted (an item id, or a tuple that starts with it); nothing for an
+    /// item the dogma engine does not have.
+    fn fitted_item_keys(&self, _item_id: i64) -> Option<Vec<Value>> {
+        None
+    }
+    /// `dogmaLM.SetAttributeValue(itemId, attributeId, value)`.
+    fn set_attribute_value(&mut self, _item_id: i64, _attribute_id: i64, _value: &Value) {}
+    /// `dogmaLM.ballpark.IsExploding(itemId)`.
+    fn is_exploding(&self, _item_id: i64) -> WorldResult<bool> {
+        Ok(false)
+    }
+    /// `dogmaLM.GetActiveEffectData(itemId, effectId)`: when the cycle started and how long it is; nothing for an effect that is not active.
+    fn active_effect_data(&self, _item_id: i64, _effect_id: i64) -> Option<EffectCycle> {
+        None
+    }
+
+    /// `get_effect_max_effective_range_with_falloff(dogmaLM, effectId, itemId)` of `dogma.effects.restricted.util` (not in the client's files).
+    fn effect_max_effective_range_with_falloff(&self, _effect_id: i64, _item_id: i64) -> f64 {
+        0.0
+    }
+
+    /// `dogmaLM.GetTargets(itemId)`.
+    fn locked_targets(&self, _item_id: i64) -> Vec<i64> {
+        Vec::new()
+    }
+}
+
+/// `dogma.attributes.health`: the ratios of what a ship has left, from the dogma engine's numbers.
+pub mod health {
+    use super::{Dogma, WorldResult};
+    use crate::consts::*;
+    use crate::value::Value;
+
+    /// `GetCurrentArmorRatio`.
+    pub fn current_armor_ratio(dogma: &dyn Dogma, item_id: i64) -> WorldResult<f64> {
+        let max_armor_hp = dogma.attribute_value(item_id, ATTRIBUTE_ARMOR_HP)?;
+        let current_armor_damage = dogma.attribute_value(item_id, ATTRIBUTE_ARMOR_DAMAGE)?;
+        if max_armor_hp == 0.0 {
+            return Err(crate::env::WorldError::ZeroDivision);
+        }
+        Ok((max_armor_hp - current_armor_damage) / max_armor_hp)
+    }
+
+    /// `GetCurrentShieldRatio`.
+    pub fn current_shield_ratio(dogma: &dyn Dogma, item_id: i64) -> WorldResult<f64> {
+        let charge = dogma.attribute_value(item_id, ATTRIBUTE_SHIELD_CHARGE)?;
+        let capacity = dogma.attribute_value(item_id, ATTRIBUTE_SHIELD_CAPACITY)?;
+        if capacity == 0.0 {
+            return Err(crate::env::WorldError::ZeroDivision);
+        }
+        Ok(charge / capacity)
+    }
+
+    /// `GetCurrentStructureDamage`.
+    pub fn current_structure_damage(dogma: &dyn Dogma, item_id: i64) -> WorldResult<f64> {
+        dogma.attribute_value(item_id, ATTRIBUTE_DAMAGE)
+    }
+
+    /// `GetMaxStructureAmount`.
+    pub fn max_structure_amount(dogma: &dyn Dogma, item_id: i64) -> WorldResult<f64> {
+        dogma.attribute_value(item_id, ATTRIBUTE_HP)
+    }
+
+    /// `SetArmorRatio`: the armor damage is what the ratio leaves of the maximum.
+    pub fn set_armor_ratio(dogma: &mut dyn Dogma, item_id: i64, ratio: f64) -> WorldResult<()> {
+        let max_armor_hp = dogma.attribute_value(item_id, ATTRIBUTE_ARMOR_HP)?;
+        dogma.set_attribute_value(
+            item_id,
+            ATTRIBUTE_ARMOR_DAMAGE,
+            &Value::Float(max_armor_hp * (1.0 - ratio)),
+        );
+        Ok(())
+    }
+
+    /// `SetShieldRatio`: the client sets the shield capacity (not the charge) to the ratio of the capacity.
+    pub fn set_shield_ratio(dogma: &mut dyn Dogma, item_id: i64, ratio: f64) -> WorldResult<()> {
+        let max_shield_hp = dogma.attribute_value(item_id, ATTRIBUTE_SHIELD_CAPACITY)?;
+        dogma.set_attribute_value(item_id, ATTRIBUTE_SHIELD_CAPACITY, &Value::Float(max_shield_hp * ratio));
+        Ok(())
+    }
+
+    /// `SetStructureRatio`: the damage is what the ratio leaves of the hit points.
+    pub fn set_structure_ratio(dogma: &mut dyn Dogma, item_id: i64, ratio: f64) -> WorldResult<()> {
+        let max_structure_hp = dogma.attribute_value(item_id, ATTRIBUTE_HP)?;
+        dogma.set_attribute_value(item_id, ATTRIBUTE_DAMAGE, &Value::Float(max_structure_hp * (1.0 - ratio)));
+        Ok(())
+    }
+}

@@ -1,0 +1,31 @@
+//! The NPC behavior trees of the EVE client's `behaviors` package (V24.01), ported to Rust as they are: the runtime (`tree`), the blackboards the
+//! tasks talk through (`blackboards`), the messages about items (`events`), the timers (`timers`), the composites and decorators, and the tasks and
+//! trees built on them. What the tasks ask of the server (the client's package calls the server's `ballpark` and the like) is the `env::World`
+//! trait.
+
+#[macro_use]
+mod macros;
+
+pub mod actions;
+pub mod blackboards;
+pub mod composites;
+pub mod conditions;
+pub mod constants;
+pub mod consts;
+pub mod debugging;
+pub mod decorators;
+pub mod entity;
+pub mod env;
+pub mod evemath;
+pub mod events;
+pub mod groups;
+pub mod loaders;
+pub mod monitors;
+pub mod registry;
+pub mod storage;
+pub mod target_evaluation;
+pub mod timers;
+pub mod tree;
+pub mod trees;
+pub mod utility;
+pub mod value;

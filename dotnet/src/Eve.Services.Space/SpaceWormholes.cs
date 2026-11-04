@@ -1,0 +1,204 @@
+using System.Collections.Concurrent;
+using Eve.Crimewatch;
+using Eve.Events;
+using Eve.Inventory;
+using Eve.Scheduler;
+using Eve.Dogma;
+using Eve.Fitting;
+using Eve.Macho;
+using Eve.Marshal;
+using Eve.Npc;
+using Eve.Services.Ships;
+using Eve.Ships;
+using Eve.Space;
+using Eve.Services.Space.Pochven;
+using Eve.Universe;
+using ModuleAttributes = Eve.Services.Space.Effects.ModuleAttributes;
+using Eve.Wormholes;
+
+namespace Eve.Services.Space;
+
+/// <summary>
+/// starts or a ship arrives in it, publishes the opening and collapse of a connection, and runs a pilot's jump through a wormhole end: the mass
+/// of the ship is checked and taken from the wormhole (<see cref="WormholeWorld.TransitAsync"/>), and the simulation takes the jump as it takes a stargate's.
+/// </summary>
+public sealed partial class SpaceSessions
+{
+
+    public Func<int, IReadOnlyList<Eve.Dogma.EffectDef>>? SystemEnvironment { get; set; }
+
+    /// <summary>The environment effects of the system the ship is in, from the pilot that flies it (no pilot, no environment).</summary>
+    private IReadOnlyList<Eve.Dogma.EffectDef> EnvironmentOf(long shipId)
+    {
+        var flown = _pilots.Values.FirstOrDefault(pilot => pilot.ShipId == shipId);
+        var offline = _abyssalOfflineResidents.GetValueOrDefault(shipId);
+        var scene = flown?.SimulationScene ?? offline?.Scene;
+        if (scene is null) return [];
+        if (scene.Value.InstanceId > 0)
+        {
+            var contentId = flown?.AbyssalContentId ?? offline?.ContentId;
+            var weather = _abyssalEnvironmentByScene.TryGetValue(scene.Value, out var effects)
+                ? effects : contentId is not null ? AbyssalEnvironmentEffects?.Invoke(contentId, scene.Value.LocationId) ?? [] : [];
+            return [.. weather, .. LocalAbyssalEffects(scene.Value, shipId)];
+        }
+        return SystemEnvironment?.Invoke(scene.Value.LocationId) ?? [];
+    }
+
+    /// <summary>
+    /// The ship is given to the simulation again after it changes system: its buffs are synced to the system it is in now (the environment of its
+    /// wormhole), and the simulation flies it with the ship's attributes from then on (its spec is kept from when it entered).
+    /// </summary>
+    private async Task RefreshEnvironmentAsync(ClientSession session, long characterId, long shipId)
+    {
+        try
+        {
+            if (await _ships.LoadAsync(characterId, CancellationToken.None) is not { } flown || flown.Ship.Id != shipId)
+                return;
+            await SyncBuffsAsync(flown.World, shipId, CancellationToken.None);
+            _sim.ShipChanged((ulong)session.SessionId, SimShips.Of(flown, _statics, await SecurityStatusAsync(characterId, CancellationToken.None)));
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            _log?.Invoke($"the environment of ship {shipId} could not be given to the simulation: {error.Message}");
+        }
+    }
+
+    private static readonly long PolarizationMs = (long)WormholeRules.Polarization.TotalMilliseconds;
+
+    /// <summary>The wormhole world, or null when the host has no client data for it (then no wormhole exists).</summary>
+    public WormholeWorld? Wormholes { get; set; }
+
+    /// <summary>Until when each pilot of a character may not go into a wormhole end again (in memory; the rule is the pilot's, not the account's).</summary>
+    private readonly Dictionary<(long Character, long EndId), long> _polarizedUntil = new();
+
+    private readonly ConcurrentDictionary<long, SemaphoreSlim> _wormholeTransitGates = new();
+
+    public static SimPlaceWormhole ToSim(WormholeEnd end) => new(end.BodyId, end.SolarSystemId, end.Name, end.TypeId, end.GroupId, end.Position, end.Radius,
+        end.DestinationSystemId, end.DestinationEnd, end.DestinationClass, end.DestinationPosition, end.DestinationRadius, end.MaxJumpMass);
+
+    /// <summary>Places the ends of every active connection with an end in the system (the simulation makes the system's scene for them when it has none).</summary>
+    internal async Task PlaceWormholeEndsAsync(int systemId, CancellationToken cancellationToken)
+    {
+        if (Wormholes is null || _sim is null)
+            return;
+        foreach (var end in await Wormholes.EndsInSystemAsync(systemId, cancellationToken))
+            _sim.PlaceWormhole(ToSim(end));
+    }
+
+    /// <summary>A connection opened: both ends are placed; a connection collapsed: both ends are taken out (the simulation ignores an end it does not have).</summary>
+    public void PublishWormholeChange(WormholeChange change)
+    {
+        if (_sim is null || Wormholes is null)
+            return;
+        if (change.Opened is { } stored)
+        {
+            _sim.PlaceWormhole(ToSim(Wormholes.EndOf(stored, far: false)));
+            _sim.PlaceWormhole(ToSim(Wormholes.EndOf(stored, far: true)));
+        }
+        else
+        {
+            _sim.RemoveWormhole(change.ConnectionId * 2);
+            _sim.RemoveWormhole(change.ConnectionId * 2 + 1);
+        }
+    }
+
+    /// <summary>The polarization of an end for a character, or null when it has none (<c>GetWormholePolarization</c>).</summary>
+    public WormholePolarization? PolarizationOf(long endId, long characterId)
+    {
+        var now = _nowUnixMs();
+        lock (_polarizedUntil)
+        {
+            return _polarizedUntil.TryGetValue((characterId, endId), out var until) && until > now
+                ? new WormholePolarization(until, (int)Math.Ceiling((until - now) / 1000.0))
+                : null;
+        }
+    }
+
+    /// <summary>
+    /// <c>wormholeMgr.WormholeJump(itemID)</c>: the pilot goes into the wormhole end it picked. The ship's mass is checked against the wormhole (refused
+    /// over its individual limit) and taken from it when the simulation takes the jump; a wormhole that empties collapses behind the ship, and both its
+    /// ends are taken out. The simulation takes the jump as it takes a stargate's (<see cref="JumpAsync"/>).
+    /// Jumps through this connection are serialized until the accepted jump's mass debit and collapse state are committed.
+    /// </summary>
+    public async Task<PyValue> WormholeJumpAsync(ClientSession session, long endId, string? boundObjectId, CancellationToken cancellationToken)
+    {
+        RequirePublicMoveSettled(session);
+        if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
+        {
+            throw JumpRefused("NOT_IN_SPACE");
+        }
+        if (await ShipAttributeAsync(pilot, Eve.Services.Space.Effects.ModuleAttributes.DisallowDriveJumping, cancellationToken))
+        {
+            throw Notify("You cannot jump at this time.");
+        }
+        var policy = await MovementPolicyAsync(pilot, PolicyAction.GateJump, cancellationToken);
+        if (!policy.Allowed)
+        {
+            throw MovementRefused(policy, "jump");
+        }
+        var world = Wormholes ?? throw JumpRefused("STARGATE_NOT_FOUND");
+        var connectionId = endId / 2;
+        var transitGate = _wormholeTransitGates.GetOrAdd(connectionId, static _ => new SemaphoreSlim(1, 1));
+        // The simulation accepts before PostgreSQL commits the mass debit, so serialize this whole interval per connection.
+        // shortcut: this gate covers one Host process; use a store reservation if wormhole jumps run across multiple Hosts.
+        await transitGate.WaitAsync(cancellationToken);
+        try
+        {
+            var end = await world.EndAsync(endId, cancellationToken) ?? throw JumpRefused("STARGATE_NOT_FOUND");
+            if (end.SolarSystemId != pilot.SolarSystemId)
+            {
+                throw JumpRefused("STARGATE_NOT_FOUND");
+            }
+            var now = _nowUnixMs();
+            if (PolarizationOf(endId, pilot.CharacterId) is not null)
+            {
+                throw Notify("You are polarized to this wormhole: you cannot go into it from this side yet.");
+            }
+            var mass = await ShipMassAsync(pilot, cancellationToken);
+            var preview = await world.PreviewAsync(connectionId, mass, cancellationToken) ?? throw JumpRefused("STARGATE_NOT_FOUND");
+            if (preview.Outcome == TransitOutcome.Refused)
+            {
+                throw Notify("Your ship is too large for this wormhole.");
+            }
+
+            CommandReply reply;
+            try
+            {
+                reply = await _sim.CommandAsync((ulong)session.SessionId, SimCommands.Jump, [endId, 0], cancellationToken);
+            }
+            catch (SimUnavailableException error)
+            {
+                _log?.Invoke($"wormhole jump of session {session.SessionId}: {error.Message}");
+                throw JumpRefused("SCENE_NOT_FOUND");
+            }
+            if (!reply.Accepted || reply.DestinationSystem is not { } destination)
+            {
+                _log?.Invoke($"wormhole jump of session {session.SessionId} through {endId} refused: {reply.Reason}");
+                throw JumpRefused(reply.Reason);
+            }
+
+            await CancelShipSelfDestructAsync(pilot.ShipId, cancellationToken);
+            var changes = new List<WormholeChange>();
+            var transit = await world.TransitAsync(connectionId, mass, now, changes.Add, cancellationToken);
+            if (transit.Outcome == TransitOutcome.Refused)
+            {
+                _log?.Invoke($"wormhole {connectionId}: the transit of session {session.SessionId} was refused after the simulation accepted the jump");
+            }
+            foreach (var change in changes)
+            {
+                PublishWormholeChange(change);
+            }
+            lock (_polarizedUntil)
+            {
+                _polarizedUntil[(pilot.CharacterId, endId)] = now + PolarizationMs;
+            }
+            await PlaceWormholeEndsAsync(destination, cancellationToken);
+            SendJumpQueueUpdate(session, pilot.CharacterId, destination);
+            return Py.Tuple(boundObjectId is null ? None : new PyStr(boundObjectId), new PyLong(Py.FileTimeFromUnixMs(now + SessionChangeCooldownMs)));
+        }
+        finally
+        {
+            transitGate.Release();
+        }
+    }
+}

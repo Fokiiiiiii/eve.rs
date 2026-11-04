@@ -1,0 +1,69 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Unicode normalization (character names) needs ICU; the repository default is invariant globalization. -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>eve-host</AssemblyName>
+    <RootNamespace>Eve.Host</RootNamespace>
+    <ServerGarbageCollector>false</ServerGarbageCollector>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <TieredPGO>true</TieredPGO>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Migrations/*.sql" />
+    <EmbeddedResource Include="SkinrMigrations/*.sql" />
+    <EmbeddedResource Include="Assets/ProjectDiscovery/*.gz;Assets/ProjectDiscovery/*.json" />
+    <EmbeddedResource Include="Assets/ProjectDiscovery/*.png">
+      <LogicalName>Eve.Host.Assets.ProjectDiscovery.%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Eve.GameStore/Eve.GameStore.csproj" />
+    <ProjectReference Include="../Eve.Trade/Eve.Trade.csproj" />
+    <ProjectReference Include="../Eve.Bookmarks/Eve.Bookmarks.csproj" />
+    <ProjectReference Include="../Eve.AccessGroups/Eve.AccessGroups.csproj" />
+    <ProjectReference Include="../Eve.Identity/Eve.Identity.csproj" />
+    <ProjectReference Include="../Eve.Scheduler/Eve.Scheduler.csproj" />
+    <ProjectReference Include="../Eve.Events/Eve.Events.csproj" />
+    <ProjectReference Include="../Eve.Structures/Eve.Structures.csproj" />
+    <ProjectReference Include="../Eve.Insurgency/Eve.Insurgency.csproj" />
+    <ProjectReference Include="../Eve.Services.Planets/Eve.Services.Planets.csproj" />
+    <ProjectReference Include="../Eve.Relations/Eve.Relations.csproj" />
+    <ProjectReference Include="../Eve.Content/Eve.Content.csproj" />
+    <ProjectReference Include="../Eve.Crimewatch/Eve.Crimewatch.csproj" />
+    <ProjectReference Include="../Eve.Services.Crimewatch/Eve.Services.Crimewatch.csproj" />
+    <ProjectReference Include="../Eve.ReadSide/Eve.ReadSide.csproj" />
+    <ProjectReference Include="../Eve.Characters/Eve.Characters.csproj" />
+    <ProjectReference Include="../Eve.Inventory/Eve.Inventory.csproj" />
+    <ProjectReference Include="../Eve.Sde/Eve.Sde.csproj" />
+    <ProjectReference Include="../Eve.Skills/Eve.Skills.csproj" />
+    <ProjectReference Include="../Eve.Wallet/Eve.Wallet.csproj" />
+    <ProjectReference Include="../Eve.Universe/Eve.Universe.csproj" />
+    <ProjectReference Include="../Eve.Dogma/Eve.Dogma.csproj" />
+    <ProjectReference Include="../Eve.Fitting/Eve.Fitting.csproj" />
+    <ProjectReference Include="../Eve.Ships/Eve.Ships.csproj" />
+    <ProjectReference Include="../Eve.Services.Skills/Eve.Services.Skills.csproj" />
+    <ProjectReference Include="../Eve.Services.CharacterInfo/Eve.Services.CharacterInfo.csproj" />
+    <ProjectReference Include="../Eve.Services.Wallet/Eve.Services.Wallet.csproj" />
+    <ProjectReference Include="../Eve.Services.Corporations/Eve.Services.Corporations.csproj" />
+    <ProjectReference Include="../Eve.Services.Market/Eve.Services.Market.csproj" />
+    <ProjectReference Include="../Eve.Services.Station/Eve.Services.Station.csproj" />
+    <ProjectReference Include="../Eve.Services.Inventory/Eve.Services.Inventory.csproj" />
+    <ProjectReference Include="../Eve.Services.Space/Eve.Services.Space.csproj" />
+    <ProjectReference Include="../Eve.Services.Slash/Eve.Services.Slash.csproj" />
+    <ProjectReference Include="../Eve.Space/Eve.Space.csproj" />
+    <ProjectReference Include="../Eve.Services.Dogma/Eve.Services.Dogma.csproj" />
+    <ProjectReference Include="../Eve.Services.CharacterSelect/Eve.Services.CharacterSelect.csproj" />
+    <ProjectReference Include="../Eve.Services.Core/Eve.Services.Core.csproj" />
+    <ProjectReference Include="../Eve.Services.Generator/Eve.Services.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Eve.Host.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Sentry" />
+  </ItemGroup>
+</Project>

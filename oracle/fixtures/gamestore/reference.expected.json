@@ -1,0 +1,31 @@
+{
+  "comment": "Rows an importer must reproduce, as stored (row key -> JSON text). skillsWithJournal is skills after applying the journaled batch.",
+  "operationId": 1,
+  "tables": {
+    "characters": {
+      "90000001": "{\"characterName\":\"Ünï Cödé 日本語\",\"corporationID\":98000001,\"balance\":1234.5,\"skills\":{\"3300\":5,\"3301\":4}}",
+      "90000002": "{\"characterName\":\"second\",\"corporationID\":98000001,\"notes\":null,\"tags\":[\"a\",\"b\"]}",
+      "90000003": "{\"characterName\":\"big\",\"id\":9007199254740991}"
+    },
+    "mail": {
+      "messages": "{}",
+      "messages\u001f10": "{\"subject\":\"hi\",\"body\":\"line1\\nline2\",\"to\":[90000001]}",
+      "messages\u001f11": "{\"subject\":\"yo\"}",
+      "mailboxes": "{}",
+      "mailboxes\u001f90000001": "{\"unread\":2,\"ids\":[10,11]}",
+      "mailingLists": "{}",
+      "nextMessageID": "12"
+    },
+    "skills": {
+      "90000001": "{\"3300\":{\"level\":5}}",
+      "90000002": "{}"
+    }
+  },
+  "skillsWithJournal": {
+    "90000001": "{\"3300\":{\"level\":6}}",
+    "90000003": "{\"3301\":{\"level\":1}}"
+  },
+  "migrated": [
+    "characters"
+  ]
+}

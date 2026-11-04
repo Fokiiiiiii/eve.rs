@@ -1,0 +1,5249 @@
+{
+  "version": 1,
+  "source": {
+    "authority": "Matching native client resources and loaders",
+    "build": 3396210,
+    "resources": [
+      {
+        "resource": "res:/staticdata/pvpfilamentmatchtypes.fsdbinary",
+        "md5": "411f9990cd6a41ece7390625c0c391e8",
+        "sha256": "45573a326f325019629ef396224ca8db0f5b236c3665131fe8a80efbd063799a",
+        "size": 14104
+      },
+      {
+        "resource": "res:/staticdata/pvpfilamenteventdates.fsdbinary",
+        "md5": "c0697866a62786a0bc03770e1ebb84b2",
+        "sha256": "23a52fb2542bb80db0ea0d8ea37fd8b194f7311890d78e928ba4434b25adb449",
+        "size": 10715
+      }
+    ],
+    "scope": "Historical event catalog and restrictions only. QA schedules never authorize production queues. No matchmaking, arena, scoring, rewards or filament consumption."
+  },
+  "matchTypes": [
+    {
+      "matchTypeID": 1,
+      "shipRestrictionsHintID": 567503,
+      "restrictionsDescriptionID": 567496,
+      "filamentDescriptionID": 567495,
+      "fleetSize": 2,
+      "maxOfShipGroupRestriction": 1,
+      "eventNameID": 567371,
+      "moduleAndImplantMetaLevelRestrictions": 0,
+      "rewardsHintID": 567502,
+      "maxOfShipTypeRestriction": 1,
+      "rulesHintID": 567504,
+      "rewards": [
+        {
+          "typeID": 54951,
+          "amount": 1
+        },
+        {
+          "typeID": 52996,
+          "amount": 1
+        },
+        {
+          "typeID": 54650,
+          "amount": 1
+        },
+        {
+          "typeID": 34604,
+          "amount": 1
+        },
+        {
+          "typeID": 34639,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 41,
+      "eventDescriptionID": 567372,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 54951,
+      "minimumQueueSizeMultiplier": 1,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 4,
+      "shipRestrictionsHintID": 567541,
+      "restrictionsDescriptionID": 567544,
+      "filamentDescriptionID": 567543,
+      "fleetSize": 1,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 567538,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 567540,
+      "maxOfShipTypeRestriction": 0,
+      "rulesHintID": 567542,
+      "rewards": [
+        {
+          "typeID": 53965,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 41,
+      "eventDescriptionID": 567539,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 53965,
+      "minimumQueueSizeMultiplier": 1,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 6,
+      "shipRestrictionsHintID": 567588,
+      "restrictionsDescriptionID": 567591,
+      "filamentDescriptionID": 567590,
+      "fleetSize": 1,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 567585,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 567587,
+      "maxOfShipTypeRestriction": 0,
+      "rulesHintID": 567589,
+      "rewards": [
+        {
+          "typeID": 55820,
+          "amount": 5
+        }
+      ],
+      "shipRestrictions": 41,
+      "eventDescriptionID": 567586,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 55820,
+      "minimumQueueSizeMultiplier": 1,
+      "numberOfFleets": 5
+    },
+    {
+      "matchTypeID": 7,
+      "shipRestrictionsHintID": 567631,
+      "restrictionsDescriptionID": 567634,
+      "filamentDescriptionID": 567633,
+      "fleetSize": 3,
+      "maxOfShipGroupRestriction": 2,
+      "eventNameID": 567628,
+      "moduleAndImplantMetaLevelRestrictions": 8,
+      "rewardsHintID": 567630,
+      "maxOfShipTypeRestriction": 1,
+      "rulesHintID": 567632,
+      "rewards": [
+        {
+          "typeID": 55808,
+          "amount": 3
+        }
+      ],
+      "shipRestrictions": 41,
+      "eventDescriptionID": 567629,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 55808,
+      "minimumQueueSizeMultiplier": 1,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 8,
+      "shipRestrictionsHintID": 567638,
+      "restrictionsDescriptionID": 567641,
+      "filamentDescriptionID": 567640,
+      "fleetSize": 5,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 567635,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 567637,
+      "maxOfShipTypeRestriction": 0,
+      "rulesHintID": 567639,
+      "rewards": [
+        {
+          "typeID": 55819,
+          "amount": 2
+        },
+        {
+          "typeID": 48121,
+          "amount": 5000
+        }
+      ],
+      "shipRestrictions": 41,
+      "eventDescriptionID": 567636,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 55819,
+      "minimumQueueSizeMultiplier": 1,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 9,
+      "shipRestrictionsHintID": 567645,
+      "restrictionsDescriptionID": 567648,
+      "filamentDescriptionID": 567647,
+      "fleetSize": 2,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 567642,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 567644,
+      "maxOfShipTypeRestriction": 0,
+      "rulesHintID": 567646,
+      "rewards": [
+        {
+          "typeID": 55822,
+          "amount": 50
+        },
+        {
+          "typeID": 55848,
+          "amount": 1
+        },
+        {
+          "typeID": 55849,
+          "amount": 1
+        },
+        {
+          "typeID": 55851,
+          "amount": 1
+        },
+        {
+          "typeID": 55853,
+          "amount": 1
+        },
+        {
+          "typeID": 52269,
+          "amount": 1
+        },
+        {
+          "typeID": 52996,
+          "amount": 200000000
+        },
+        {
+          "typeID": 55823,
+          "amount": 20
+        }
+      ],
+      "shipRestrictions": 215,
+      "eventDescriptionID": 567643,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 55821,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 11,
+      "shipRestrictionsHintID": 567652,
+      "restrictionsDescriptionID": 567655,
+      "filamentDescriptionID": 567654,
+      "fleetSize": 1,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 567649,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 567651,
+      "maxOfShipTypeRestriction": 0,
+      "rulesHintID": 567653,
+      "rewards": [
+        {
+          "typeID": 55823,
+          "amount": 25
+        },
+        {
+          "typeID": 55825,
+          "amount": 10
+        },
+        {
+          "typeID": 55852,
+          "amount": 1
+        },
+        {
+          "typeID": 55850,
+          "amount": 1
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 218,
+      "eventDescriptionID": 567650,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 55822,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 5
+    },
+    {
+      "matchTypeID": 14,
+      "shipRestrictionsHintID": 568808,
+      "restrictionsDescriptionID": 568811,
+      "filamentDescriptionID": 568810,
+      "fleetSize": 3,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 568805,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 568807,
+      "maxOfShipTypeRestriction": 0,
+      "rulesHintID": 568809,
+      "rewards": [
+        {
+          "typeID": 55825,
+          "amount": 25
+        },
+        {
+          "typeID": 55982,
+          "amount": 10
+        },
+        {
+          "typeID": 55848,
+          "amount": 1
+        },
+        {
+          "typeID": 55847,
+          "amount": 1
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 219,
+      "eventDescriptionID": 568806,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 55823,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 15,
+      "shipRestrictionsHintID": 569208,
+      "restrictionsDescriptionID": 569211,
+      "filamentDescriptionID": 569210,
+      "fleetSize": 2,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 569205,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 569207,
+      "maxOfShipTypeRestriction": 0,
+      "rulesHintID": 569209,
+      "rewards": [
+        {
+          "typeID": 55982,
+          "amount": 25
+        },
+        {
+          "typeID": 55983,
+          "amount": 10
+        },
+        {
+          "typeID": 55851,
+          "amount": 1
+        },
+        {
+          "typeID": 55853,
+          "amount": 1
+        },
+        {
+          "typeID": 55854,
+          "amount": 1
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 220,
+      "eventDescriptionID": 569206,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 55825,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 16,
+      "shipRestrictionsHintID": 569216,
+      "restrictionsDescriptionID": 569219,
+      "filamentDescriptionID": 569218,
+      "fleetSize": 5,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 569213,
+      "moduleAndImplantMetaLevelRestrictions": 4,
+      "rewardsHintID": 569215,
+      "maxOfShipTypeRestriction": 2,
+      "rulesHintID": 569217,
+      "rewards": [
+        {
+          "typeID": 55983,
+          "amount": 25
+        },
+        {
+          "typeID": 56092,
+          "amount": 10
+        },
+        {
+          "typeID": 55847,
+          "amount": 1
+        },
+        {
+          "typeID": 55852,
+          "amount": 1
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 232,
+      "eventDescriptionID": 569214,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 55982,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 17,
+      "shipRestrictionsHintID": 569224,
+      "restrictionsDescriptionID": 569227,
+      "filamentDescriptionID": 569226,
+      "fleetSize": 2,
+      "maxOfShipGroupRestriction": 1,
+      "eventNameID": 569221,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 569223,
+      "maxOfShipTypeRestriction": 0,
+      "rulesHintID": 569225,
+      "rewards": [
+        {
+          "typeID": 56092,
+          "amount": 25
+        },
+        {
+          "typeID": 56093,
+          "amount": 10
+        },
+        {
+          "typeID": 55849,
+          "amount": 1
+        },
+        {
+          "typeID": 55850,
+          "amount": 1
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 222,
+      "eventDescriptionID": 569222,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 55983,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 19,
+      "shipRestrictionsHintID": 570179,
+      "restrictionsDescriptionID": 570182,
+      "filamentDescriptionID": 570181,
+      "fleetSize": 1,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 570176,
+      "moduleAndImplantMetaLevelRestrictions": 4,
+      "rewardsHintID": 570178,
+      "maxOfShipTypeRestriction": 0,
+      "rulesHintID": 570180,
+      "rewards": [
+        {
+          "typeID": 56093,
+          "amount": 25
+        },
+        {
+          "typeID": 56094,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 55848,
+          "amount": 1
+        },
+        {
+          "typeID": 55851,
+          "amount": 1
+        },
+        {
+          "typeID": 55854,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 215,
+      "eventDescriptionID": 570177,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 56092,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 4
+    },
+    {
+      "matchTypeID": 20,
+      "shipRestrictionsHintID": 570211,
+      "restrictionsDescriptionID": 570214,
+      "filamentDescriptionID": 570213,
+      "fleetSize": 1,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 570208,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 570210,
+      "maxOfShipTypeRestriction": 0,
+      "rulesHintID": 570212,
+      "rewards": [
+        {
+          "typeID": 56094,
+          "amount": 25
+        },
+        {
+          "typeID": 56353,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 55847,
+          "amount": 1
+        },
+        {
+          "typeID": 55854,
+          "amount": 1
+        },
+        {
+          "typeID": 55850,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 236,
+      "eventDescriptionID": 570209,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 56093,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 21,
+      "shipRestrictionsHintID": 570218,
+      "restrictionsDescriptionID": 570221,
+      "filamentDescriptionID": 570220,
+      "fleetSize": 2,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 570215,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 570217,
+      "maxOfShipTypeRestriction": 1,
+      "rulesHintID": 570219,
+      "rewards": [
+        {
+          "typeID": 56353,
+          "amount": 25
+        },
+        {
+          "typeID": 56354,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 55853,
+          "amount": 1
+        },
+        {
+          "typeID": 55849,
+          "amount": 1
+        },
+        {
+          "typeID": 55852,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 215,
+      "eventDescriptionID": 570216,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 56094,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 22,
+      "shipRestrictionsHintID": 571845,
+      "restrictionsDescriptionID": 571848,
+      "filamentDescriptionID": 571847,
+      "fleetSize": 1,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 571842,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 571844,
+      "maxOfShipTypeRestriction": 0,
+      "rulesHintID": 571846,
+      "rewards": [
+        {
+          "typeID": 56354,
+          "amount": 25
+        },
+        {
+          "typeID": 56355,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 56777,
+          "amount": 1
+        },
+        {
+          "typeID": 56774,
+          "amount": 1
+        },
+        {
+          "typeID": 56780,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 238,
+      "eventDescriptionID": 571843,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 56353,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 4
+    },
+    {
+      "matchTypeID": 23,
+      "shipRestrictionsHintID": 572694,
+      "restrictionsDescriptionID": 572697,
+      "filamentDescriptionID": 572696,
+      "fleetSize": 2,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 572691,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 572693,
+      "maxOfShipTypeRestriction": 1,
+      "rulesHintID": 572695,
+      "rewards": [
+        {
+          "typeID": 56355,
+          "amount": 25
+        },
+        {
+          "typeID": 56356,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 56779,
+          "amount": 1
+        },
+        {
+          "typeID": 56778,
+          "amount": 1
+        },
+        {
+          "typeID": 56776,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 241,
+      "eventDescriptionID": 572692,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 56354,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 25,
+      "shipRestrictionsHintID": 573256,
+      "restrictionsDescriptionID": 573259,
+      "filamentDescriptionID": 573258,
+      "fleetSize": 1,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 573253,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 573255,
+      "maxOfShipTypeRestriction": 0,
+      "rulesHintID": 573257,
+      "rewards": [
+        {
+          "typeID": 56356,
+          "amount": 25
+        },
+        {
+          "typeID": 56357,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 56773,
+          "amount": 1
+        },
+        {
+          "typeID": 56775,
+          "amount": 1
+        },
+        {
+          "typeID": 56780,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 215,
+      "eventDescriptionID": 573254,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 56355,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 27,
+      "shipRestrictionsHintID": 573482,
+      "restrictionsDescriptionID": 573485,
+      "filamentDescriptionID": 573484,
+      "fleetSize": 2,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 573479,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 573481,
+      "maxOfShipTypeRestriction": 1,
+      "rulesHintID": 573483,
+      "rewards": [
+        {
+          "typeID": 56357,
+          "amount": 25
+        },
+        {
+          "typeID": 56358,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 56777,
+          "amount": 1
+        },
+        {
+          "typeID": 56775,
+          "amount": 1
+        },
+        {
+          "typeID": 56774,
+          "amount": 1
+        },
+        {
+          "typeID": 56776,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 218,
+      "eventDescriptionID": 573480,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 56356,
+      "minimumQueueSizeMultiplier": 1,
+      "numberOfFleets": 4
+    },
+    {
+      "matchTypeID": 28,
+      "shipRestrictionsHintID": 573489,
+      "restrictionsDescriptionID": 573492,
+      "filamentDescriptionID": 573491,
+      "fleetSize": 3,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 573486,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 573488,
+      "maxOfShipTypeRestriction": 1,
+      "rulesHintID": 573490,
+      "rewards": [
+        {
+          "typeID": 56358,
+          "amount": 25
+        },
+        {
+          "typeID": 56359,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 56773,
+          "amount": 1
+        },
+        {
+          "typeID": 56779,
+          "amount": 1
+        },
+        {
+          "typeID": 56778,
+          "amount": 1
+        },
+        {
+          "typeID": 56780,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 221,
+      "eventDescriptionID": 573487,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 56357,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 29,
+      "shipRestrictionsHintID": 573790,
+      "restrictionsDescriptionID": 573793,
+      "filamentDescriptionID": 573792,
+      "fleetSize": 1,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 573787,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 573789,
+      "maxOfShipTypeRestriction": 0,
+      "rulesHintID": 573791,
+      "rewards": [
+        {
+          "typeID": 56359,
+          "amount": 25
+        },
+        {
+          "typeID": 56360,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 56779,
+          "amount": 1
+        },
+        {
+          "typeID": 56775,
+          "amount": 1
+        },
+        {
+          "typeID": 56776,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 215,
+      "eventDescriptionID": 573788,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 56358,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 4
+    },
+    {
+      "matchTypeID": 30,
+      "shipRestrictionsHintID": 573831,
+      "restrictionsDescriptionID": 573834,
+      "filamentDescriptionID": 573833,
+      "fleetSize": 1,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 573828,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 573830,
+      "maxOfShipTypeRestriction": 0,
+      "rulesHintID": 573832,
+      "rewards": [
+        {
+          "typeID": 56360,
+          "amount": 25
+        },
+        {
+          "typeID": 56361,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 56773,
+          "amount": 1
+        },
+        {
+          "typeID": 56777,
+          "amount": 1
+        },
+        {
+          "typeID": 56774,
+          "amount": 1
+        },
+        {
+          "typeID": 56778,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 220,
+      "eventDescriptionID": 573829,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 56359,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 31,
+      "shipRestrictionsHintID": 574631,
+      "restrictionsDescriptionID": 574634,
+      "filamentDescriptionID": 574633,
+      "fleetSize": 2,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 574628,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 574630,
+      "maxOfShipTypeRestriction": 1,
+      "rulesHintID": 574632,
+      "rewards": [
+        {
+          "typeID": 56361,
+          "amount": 25
+        },
+        {
+          "typeID": 57367,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 57377,
+          "amount": 1
+        },
+        {
+          "typeID": 57382,
+          "amount": 1
+        },
+        {
+          "typeID": 57380,
+          "amount": 1
+        },
+        {
+          "typeID": 57376,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 215,
+      "eventDescriptionID": 574629,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 56360,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 32,
+      "shipRestrictionsHintID": 574908,
+      "restrictionsDescriptionID": 574911,
+      "filamentDescriptionID": 574910,
+      "fleetSize": 1,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 574905,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 574907,
+      "maxOfShipTypeRestriction": 0,
+      "rulesHintID": 574909,
+      "rewards": [
+        {
+          "typeID": 57367,
+          "amount": 25
+        },
+        {
+          "typeID": 57368,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 57377,
+          "amount": 1
+        },
+        {
+          "typeID": 57375,
+          "amount": 1
+        },
+        {
+          "typeID": 57378,
+          "amount": 1
+        },
+        {
+          "typeID": 57380,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 238,
+      "eventDescriptionID": 574906,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 56361,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 4
+    },
+    {
+      "matchTypeID": 33,
+      "shipRestrictionsHintID": 575645,
+      "restrictionsDescriptionID": 575648,
+      "filamentDescriptionID": 575647,
+      "fleetSize": 1,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 575642,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 575644,
+      "maxOfShipTypeRestriction": 0,
+      "rulesHintID": 575646,
+      "rewards": [
+        {
+          "typeID": 57368,
+          "amount": 25
+        },
+        {
+          "typeID": 57369,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 57382,
+          "amount": 1
+        },
+        {
+          "typeID": 57379,
+          "amount": 1
+        },
+        {
+          "typeID": 57376,
+          "amount": 1
+        },
+        {
+          "typeID": 57383,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 244,
+      "eventDescriptionID": 575643,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 57367,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 34,
+      "shipRestrictionsHintID": 576017,
+      "restrictionsDescriptionID": 576020,
+      "filamentDescriptionID": 576019,
+      "fleetSize": 1,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 576014,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 576016,
+      "maxOfShipTypeRestriction": 0,
+      "rulesHintID": 576018,
+      "rewards": [
+        {
+          "typeID": 57369,
+          "amount": 25
+        },
+        {
+          "typeID": 57370,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 57378,
+          "amount": 1
+        },
+        {
+          "typeID": 57376,
+          "amount": 1
+        },
+        {
+          "typeID": 57383,
+          "amount": 1
+        },
+        {
+          "typeID": 57380,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 243,
+      "eventDescriptionID": 576015,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 57368,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 4
+    },
+    {
+      "matchTypeID": 35,
+      "shipRestrictionsHintID": 576024,
+      "restrictionsDescriptionID": 576027,
+      "filamentDescriptionID": 576026,
+      "fleetSize": 3,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 576021,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 576023,
+      "maxOfShipTypeRestriction": 1,
+      "rulesHintID": 576025,
+      "rewards": [
+        {
+          "typeID": 57370,
+          "amount": 25
+        },
+        {
+          "typeID": 57372,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 57375,
+          "amount": 1
+        },
+        {
+          "typeID": 57379,
+          "amount": 1
+        },
+        {
+          "typeID": 57378,
+          "amount": 1
+        },
+        {
+          "typeID": 57382,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 218,
+      "eventDescriptionID": 576022,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 57369,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 36,
+      "shipRestrictionsHintID": 577649,
+      "restrictionsDescriptionID": 577652,
+      "filamentDescriptionID": 577651,
+      "fleetSize": 2,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 577646,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 577648,
+      "maxOfShipTypeRestriction": 1,
+      "rulesHintID": 577650,
+      "rewards": [
+        {
+          "typeID": 57372,
+          "amount": 25
+        },
+        {
+          "typeID": 57373,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 57377,
+          "amount": 1
+        },
+        {
+          "typeID": 57375,
+          "amount": 1
+        },
+        {
+          "typeID": 57379,
+          "amount": 1
+        },
+        {
+          "typeID": 57383,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 247,
+      "eventDescriptionID": 577647,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 57370,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 38,
+      "shipRestrictionsHintID": 580737,
+      "restrictionsDescriptionID": 580740,
+      "filamentDescriptionID": 580739,
+      "fleetSize": 1,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 580734,
+      "moduleAndImplantMetaLevelRestrictions": 4,
+      "rewardsHintID": 580736,
+      "maxOfShipTypeRestriction": 0,
+      "rulesHintID": 580738,
+      "rewards": [
+        {
+          "typeID": 57373,
+          "amount": 25
+        },
+        {
+          "typeID": 57374,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 58779,
+          "amount": 1
+        },
+        {
+          "typeID": 58784,
+          "amount": 1
+        },
+        {
+          "typeID": 58782,
+          "amount": 1
+        },
+        {
+          "typeID": 58789,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 215,
+      "eventDescriptionID": 580735,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 57372,
+      "minimumQueueSizeMultiplier": 1,
+      "numberOfFleets": 18
+    },
+    {
+      "matchTypeID": 39,
+      "shipRestrictionsHintID": 582127,
+      "restrictionsDescriptionID": 582130,
+      "filamentDescriptionID": 582129,
+      "fleetSize": 2,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 582124,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 582126,
+      "maxOfShipTypeRestriction": 0,
+      "rulesHintID": 582128,
+      "rewards": [
+        {
+          "typeID": 57374,
+          "amount": 25
+        },
+        {
+          "typeID": 58843,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 58779,
+          "amount": 1
+        },
+        {
+          "typeID": 58790,
+          "amount": 1
+        },
+        {
+          "typeID": 58782,
+          "amount": 1
+        },
+        {
+          "typeID": 58783,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 269,
+      "eventDescriptionID": 582125,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 57373,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 40,
+      "shipRestrictionsHintID": 582323,
+      "restrictionsDescriptionID": 582326,
+      "filamentDescriptionID": 582325,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "eventNameID": 582320,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 582322,
+      "maxOfShipTypeRestriction": 0,
+      "rulesHintID": 582324,
+      "rewards": [
+        {
+          "typeID": 58843,
+          "amount": 25
+        },
+        {
+          "typeID": 58844,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 58781,
+          "amount": 1
+        },
+        {
+          "typeID": 58780,
+          "amount": 1
+        },
+        {
+          "typeID": 58789,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 270,
+      "eventDescriptionID": 582321,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 57374,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 41,
+      "shipRestrictionsHintID": 582560,
+      "restrictionsDescriptionID": 582563,
+      "filamentDescriptionID": 582562,
+      "fleetSize": 2,
+      "maxOfShipGroupRestriction": 1,
+      "eventNameID": 582557,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 582559,
+      "maxOfShipTypeRestriction": 0,
+      "rulesHintID": 582561,
+      "rewards": [
+        {
+          "typeID": 58844,
+          "amount": 25
+        },
+        {
+          "typeID": 58845,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 58783,
+          "amount": 1
+        },
+        {
+          "typeID": 58784,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 277,
+      "eventDescriptionID": 582558,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 58843,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 3
+    },
+    {
+      "matchTypeID": 42,
+      "shipRestrictionsHintID": 583283,
+      "restrictionsDescriptionID": 583286,
+      "filamentDescriptionID": 583285,
+      "fleetSize": 2,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 583280,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 583282,
+      "maxOfShipTypeRestriction": 1,
+      "rulesHintID": 583284,
+      "rewards": [
+        {
+          "typeID": 58845,
+          "amount": 25
+        },
+        {
+          "typeID": 58846,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 58781,
+          "amount": 1
+        },
+        {
+          "typeID": 58780,
+          "amount": 1
+        },
+        {
+          "typeID": 58782,
+          "amount": 1
+        },
+        {
+          "typeID": 58783,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 218,
+      "eventDescriptionID": 583281,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 58844,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 43,
+      "shipRestrictionsHintID": 583802,
+      "restrictionsDescriptionID": 583805,
+      "filamentDescriptionID": 583804,
+      "fleetSize": 1,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 583799,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 583801,
+      "maxOfShipTypeRestriction": 0,
+      "rulesHintID": 583803,
+      "rewards": [
+        {
+          "typeID": 58790,
+          "amount": 1
+        },
+        {
+          "typeID": 58789,
+          "amount": 1
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 58846,
+          "amount": 25
+        },
+        {
+          "typeID": 58847,
+          "amount": 10
+        }
+      ],
+      "shipRestrictions": 280,
+      "eventDescriptionID": 583800,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 58845,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 4
+    },
+    {
+      "matchTypeID": 44,
+      "shipRestrictionsHintID": 585347,
+      "bannedModulesTypeListID": 281,
+      "filamentDescriptionID": 585349,
+      "fleetSize": 1,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 585344,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 585346,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 585350,
+      "rulesHintID": 585348,
+      "rewards": [
+        {
+          "typeID": 58781,
+          "amount": 1
+        },
+        {
+          "typeID": 58784,
+          "amount": 1
+        },
+        {
+          "typeID": 58790,
+          "amount": 1
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 58847,
+          "amount": 25
+        },
+        {
+          "typeID": 58848,
+          "amount": 10
+        }
+      ],
+      "shipRestrictions": 283,
+      "eventDescriptionID": 585345,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 12300,
+      "filamentTypeID": 58846,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 45,
+      "shipRestrictionsHintID": 585377,
+      "bannedModulesTypeListID": 282,
+      "filamentDescriptionID": 585379,
+      "fleetSize": 1,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 585374,
+      "moduleAndImplantMetaLevelRestrictions": 4,
+      "rewardsHintID": 585376,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 585380,
+      "rulesHintID": 585378,
+      "rewards": [
+        {
+          "typeID": 58779,
+          "amount": 1
+        },
+        {
+          "typeID": 58780,
+          "amount": 1
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 58848,
+          "amount": 25
+        },
+        {
+          "typeID": 58849,
+          "amount": 10
+        }
+      ],
+      "shipRestrictions": 284,
+      "eventDescriptionID": 585375,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 58847,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 4
+    },
+    {
+      "matchTypeID": 50,
+      "shipRestrictionsHintID": 586033,
+      "bannedModulesTypeListID": 295,
+      "filamentDescriptionID": 586035,
+      "fleetSize": 1,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 586030,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 586032,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 586036,
+      "rulesHintID": 586034,
+      "rewards": [
+        {
+          "typeID": 60087,
+          "amount": 1
+        },
+        {
+          "typeID": 60084,
+          "amount": 1
+        },
+        {
+          "typeID": 60086,
+          "amount": 1
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 58849,
+          "amount": 25
+        },
+        {
+          "typeID": 58850,
+          "amount": 10
+        }
+      ],
+      "shipRestrictions": 293,
+      "eventDescriptionID": 586031,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 58848,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 51,
+      "shipRestrictionsHintID": 586083,
+      "bannedModulesTypeListID": 296,
+      "filamentDescriptionID": 586085,
+      "fleetSize": 2,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "eventNameID": 586080,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 586082,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 586086,
+      "rulesHintID": 586084,
+      "rewards": [
+        {
+          "typeID": 60081,
+          "amount": 1
+        },
+        {
+          "typeID": 60082,
+          "amount": 1
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 58850,
+          "amount": 25
+        },
+        {
+          "typeID": 59369,
+          "amount": 10
+        }
+      ],
+      "shipRestrictions": 294,
+      "eventDescriptionID": 586081,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 58849,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 52,
+      "shipRestrictionsHintID": 587309,
+      "restrictionsDescriptionID": 587312,
+      "filamentDescriptionID": 587311,
+      "fleetSize": 1,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 587306,
+      "moduleAndImplantMetaLevelRestrictions": 4,
+      "rewardsHintID": 587308,
+      "maxOfShipTypeRestriction": 0,
+      "rulesHintID": 587310,
+      "rewards": [
+        {
+          "typeID": 60085,
+          "amount": 1
+        },
+        {
+          "typeID": 60088,
+          "amount": 1
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 59369,
+          "amount": 25
+        },
+        {
+          "typeID": 60076,
+          "amount": 10
+        },
+        {
+          "typeID": 60083,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 232,
+      "eventDescriptionID": 587307,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 58850,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 4
+    },
+    {
+      "matchTypeID": 53,
+      "shipRestrictionsHintID": 587821,
+      "restrictionsDescriptionID": 587824,
+      "filamentDescriptionID": 587823,
+      "fleetSize": 2,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 587818,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 587820,
+      "maxOfShipTypeRestriction": 1,
+      "rulesHintID": 587822,
+      "rewards": [
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 60076,
+          "amount": 25
+        },
+        {
+          "typeID": 60077,
+          "amount": 10
+        },
+        {
+          "typeID": 60084,
+          "amount": 1
+        },
+        {
+          "typeID": 60082,
+          "amount": 1
+        },
+        {
+          "typeID": 60088,
+          "amount": 1
+        },
+        {
+          "typeID": 60086,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 244,
+      "eventDescriptionID": 587819,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 59369,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 54,
+      "shipRestrictionsHintID": 587828,
+      "bannedModulesTypeListID": 302,
+      "filamentDescriptionID": 587830,
+      "fleetSize": 3,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 587825,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 587827,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 587831,
+      "rulesHintID": 587829,
+      "rewards": [
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 60077,
+          "amount": 1
+        },
+        {
+          "typeID": 60078,
+          "amount": 1
+        },
+        {
+          "typeID": 60085,
+          "amount": 1
+        },
+        {
+          "typeID": 60082,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 301,
+      "eventDescriptionID": 587826,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 60076,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 63,
+      "shipRestrictionsHintID": 588481,
+      "bannedModulesTypeListID": 296,
+      "filamentDescriptionID": 588483,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "eventNameID": 588478,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 588480,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 588484,
+      "rulesHintID": 588482,
+      "rewards": [
+        {
+          "typeID": 60078,
+          "amount": 25
+        },
+        {
+          "typeID": 60079,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 60081,
+          "amount": 1
+        },
+        {
+          "typeID": 60087,
+          "amount": 1
+        },
+        {
+          "typeID": 60086,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 270,
+      "eventDescriptionID": 588479,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 60077,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 73,
+      "shipRestrictionsHintID": 588759,
+      "bannedModulesTypeListID": 295,
+      "filamentDescriptionID": 588761,
+      "fleetSize": 1,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 588756,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 588758,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 588762,
+      "rulesHintID": 588760,
+      "rewards": [
+        {
+          "typeID": 60079,
+          "amount": 25
+        },
+        {
+          "typeID": 60080,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 60083,
+          "amount": 1
+        },
+        {
+          "typeID": 60085,
+          "amount": 1
+        },
+        {
+          "typeID": 60084,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 293,
+      "eventDescriptionID": 588757,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 60078,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 4
+    },
+    {
+      "matchTypeID": 74,
+      "shipRestrictionsHintID": 588772,
+      "restrictionsDescriptionID": 588775,
+      "filamentDescriptionID": 588774,
+      "fleetSize": 2,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 588769,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 588771,
+      "maxOfShipTypeRestriction": 1,
+      "rulesHintID": 588773,
+      "rewards": [
+        {
+          "typeID": 60080,
+          "amount": 25
+        },
+        {
+          "typeID": 60598,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 60083,
+          "amount": 1
+        },
+        {
+          "typeID": 60081,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 215,
+      "eventDescriptionID": 588770,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 60079,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 75,
+      "shipRestrictionsHintID": 588779,
+      "bannedModulesTypeListID": 313,
+      "filamentDescriptionID": 588781,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "eventNameID": 588776,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 588778,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 588782,
+      "rulesHintID": 588780,
+      "rewards": [
+        {
+          "typeID": 60598,
+          "amount": 25
+        },
+        {
+          "typeID": 60599,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 60087,
+          "amount": 1
+        },
+        {
+          "typeID": 60088,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 241,
+      "eventDescriptionID": 588777,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 12345,
+      "filamentTypeID": 60080,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 80,
+      "shipRestrictionsHintID": 589359,
+      "restrictionsDescriptionID": 589362,
+      "filamentDescriptionID": 589361,
+      "fleetSize": 1,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 589356,
+      "moduleAndImplantMetaLevelRestrictions": 4,
+      "rewardsHintID": 589358,
+      "maxOfShipTypeRestriction": 0,
+      "rulesHintID": 589360,
+      "rewards": [
+        {
+          "typeID": 60599,
+          "amount": 25
+        },
+        {
+          "typeID": 60600,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 60786,
+          "amount": 1
+        },
+        {
+          "typeID": 60788,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 238,
+      "eventDescriptionID": 589357,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 60598,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 4
+    },
+    {
+      "matchTypeID": 81,
+      "shipRestrictionsHintID": 589369,
+      "bannedModulesTypeListID": 315,
+      "filamentDescriptionID": 589371,
+      "fleetSize": 1,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 589366,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 589368,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 589372,
+      "rulesHintID": 589370,
+      "rewards": [
+        {
+          "typeID": 60600,
+          "amount": 25
+        },
+        {
+          "typeID": 60601,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 60791,
+          "amount": 1
+        },
+        {
+          "typeID": 60793,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 220,
+      "eventDescriptionID": 589367,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 60599,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 82,
+      "shipRestrictionsHintID": 589557,
+      "bannedModulesTypeListID": 315,
+      "filamentDescriptionID": 589559,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "eventNameID": 589554,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 589556,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 589560,
+      "rulesHintID": 589558,
+      "rewards": [
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 60601,
+          "amount": 25
+        },
+        {
+          "typeID": 60602,
+          "amount": 10
+        },
+        {
+          "typeID": 60787,
+          "amount": 1
+        },
+        {
+          "typeID": 60789,
+          "amount": 1
+        },
+        {
+          "typeID": 60790,
+          "amount": 1
+        },
+        {
+          "typeID": 60792,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 316,
+      "eventDescriptionID": 589555,
+      "numberOfLimitedModules": 2,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 60600,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 4
+    },
+    {
+      "matchTypeID": 83,
+      "shipRestrictionsHintID": 591638,
+      "bannedModulesTypeListID": 318,
+      "filamentDescriptionID": 591640,
+      "fleetSize": 2,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 591635,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 591637,
+      "maxOfShipTypeRestriction": 1,
+      "restrictionsDescriptionID": 591641,
+      "rulesHintID": 591639,
+      "rewards": [
+        {
+          "typeID": 60602,
+          "amount": 25
+        },
+        {
+          "typeID": 60603,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 60789,
+          "amount": 1
+        },
+        {
+          "typeID": 60793,
+          "amount": 1
+        },
+        {
+          "typeID": 60786,
+          "amount": 1
+        },
+        {
+          "typeID": 60790,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 243,
+      "eventDescriptionID": 591636,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 12345,
+      "filamentTypeID": 60601,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 84,
+      "shipRestrictionsHintID": 591888,
+      "bannedModulesTypeListID": 320,
+      "filamentDescriptionID": 591890,
+      "fleetSize": 1,
+      "maxOfShipGroupRestriction": 0,
+      "eventNameID": 591885,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "rewardsHintID": 591887,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 591891,
+      "rulesHintID": 591889,
+      "rewards": [
+        {
+          "typeID": 60603,
+          "amount": 25
+        },
+        {
+          "typeID": 60604,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 60787,
+          "amount": 1
+        },
+        {
+          "typeID": 60791,
+          "amount": 1
+        },
+        {
+          "typeID": 60788,
+          "amount": 1
+        },
+        {
+          "typeID": 60792,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 247,
+      "eventDescriptionID": 591886,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 60602,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 85,
+      "shipRestrictionsHintID": 591899,
+      "bannedModulesTypeListID": 313,
+      "filamentDescriptionID": 591901,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "eventNameID": 591896,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 591898,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 591902,
+      "rulesHintID": 591900,
+      "rewards": [
+        {
+          "typeID": 60604,
+          "amount": 25
+        },
+        {
+          "typeID": 60605,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 60787,
+          "amount": 1
+        },
+        {
+          "typeID": 60793,
+          "amount": 1
+        },
+        {
+          "typeID": 60788,
+          "amount": 1
+        },
+        {
+          "typeID": 60790,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 215,
+      "eventDescriptionID": 591897,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 60603,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 4
+    },
+    {
+      "matchTypeID": 86,
+      "shipRestrictionsHintID": 591907,
+      "bannedModulesTypeListID": 321,
+      "filamentDescriptionID": 591909,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "eventNameID": 591904,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 591906,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 591910,
+      "rulesHintID": 591908,
+      "rewards": [
+        {
+          "typeID": 60605,
+          "amount": 25
+        },
+        {
+          "typeID": 60606,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 60789,
+          "amount": 1
+        },
+        {
+          "typeID": 60791,
+          "amount": 1
+        },
+        {
+          "typeID": 60786,
+          "amount": 1
+        },
+        {
+          "typeID": 60792,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 270,
+      "eventDescriptionID": 591905,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 60604,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 88,
+      "shipRestrictionsHintID": 594008,
+      "bannedModulesTypeListID": 320,
+      "filamentDescriptionID": 594010,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 0,
+      "eventNameID": 594005,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 594007,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 594011,
+      "rulesHintID": 594009,
+      "rewards": [
+        {
+          "typeID": 60606,
+          "amount": 25
+        },
+        {
+          "typeID": 60607,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 62287,
+          "amount": 1
+        },
+        {
+          "typeID": 62291,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 327,
+      "eventDescriptionID": 594006,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 60605,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 4
+    },
+    {
+      "matchTypeID": 89,
+      "shipRestrictionsHintID": 594023,
+      "bannedModulesTypeListID": 295,
+      "filamentDescriptionID": 594025,
+      "fleetSize": 2,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 0,
+      "eventNameID": 594020,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 594022,
+      "maxOfShipTypeRestriction": 1,
+      "restrictionsDescriptionID": 594026,
+      "rulesHintID": 594024,
+      "rewards": [
+        {
+          "typeID": 60607,
+          "amount": 25
+        },
+        {
+          "typeID": 62273,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 62288,
+          "amount": 1
+        },
+        {
+          "typeID": 62292,
+          "amount": 1
+        },
+        {
+          "typeID": 62293,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 215,
+      "eventDescriptionID": 594021,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 60606,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 90,
+      "shipRestrictionsHintID": 594753,
+      "bannedModulesTypeListID": 295,
+      "filamentDescriptionID": 594755,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "eventNameID": 594750,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 594752,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 594756,
+      "rulesHintID": 594754,
+      "rewards": [
+        {
+          "typeID": 62273,
+          "amount": 25
+        },
+        {
+          "typeID": 62274,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 62290,
+          "amount": 1
+        },
+        {
+          "typeID": 62294,
+          "amount": 1
+        },
+        {
+          "typeID": 62289,
+          "amount": 1
+        },
+        {
+          "typeID": 62291,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 218,
+      "eventDescriptionID": 594751,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 60607,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 91,
+      "shipRestrictionsHintID": 595402,
+      "bannedModulesTypeListID": 339,
+      "filamentDescriptionID": 595404,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "eventNameID": 595399,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 595401,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 595405,
+      "rulesHintID": 595403,
+      "rewards": [
+        {
+          "typeID": 62274,
+          "amount": 25
+        },
+        {
+          "typeID": 62275,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 62290,
+          "amount": 1
+        },
+        {
+          "typeID": 62294,
+          "amount": 1
+        },
+        {
+          "typeID": 62288,
+          "amount": 1
+        },
+        {
+          "typeID": 62292,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 270,
+      "eventDescriptionID": 595400,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 62273,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 93,
+      "shipRestrictionsHintID": 596020,
+      "bannedModulesTypeListID": 315,
+      "filamentDescriptionID": 596022,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 4,
+      "eventNameID": 596017,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 596019,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 596023,
+      "rulesHintID": 596021,
+      "rewards": [
+        {
+          "typeID": 62275,
+          "amount": 25
+        },
+        {
+          "typeID": 62276,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 62288,
+          "amount": 1
+        },
+        {
+          "typeID": 62294,
+          "amount": 1
+        },
+        {
+          "typeID": 62289,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 340,
+      "eventDescriptionID": 596018,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 62274,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 4
+    },
+    {
+      "matchTypeID": 96,
+      "shipRestrictionsHintID": 597069,
+      "bannedModulesTypeListID": 295,
+      "filamentDescriptionID": 597071,
+      "fleetSize": 2,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 0,
+      "eventNameID": 597066,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 597068,
+      "maxOfShipTypeRestriction": 1,
+      "restrictionsDescriptionID": 597072,
+      "rulesHintID": 597070,
+      "rewards": [
+        {
+          "typeID": 62276,
+          "amount": 25
+        },
+        {
+          "typeID": 62277,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 62287,
+          "amount": 1
+        },
+        {
+          "typeID": 62289,
+          "amount": 1
+        },
+        {
+          "typeID": 62291,
+          "amount": 1
+        },
+        {
+          "typeID": 62293,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 238,
+      "eventDescriptionID": 597067,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 62275,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 97,
+      "shipRestrictionsHintID": 597783,
+      "bannedModulesTypeListID": 315,
+      "filamentDescriptionID": 597785,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 0,
+      "eventNameID": 597780,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 597782,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 597786,
+      "rulesHintID": 597784,
+      "rewards": [
+        {
+          "typeID": 62277,
+          "amount": 25
+        },
+        {
+          "typeID": 62278,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 62290,
+          "amount": 1
+        },
+        {
+          "typeID": 62292,
+          "amount": 1
+        },
+        {
+          "typeID": 62287,
+          "amount": 1
+        },
+        {
+          "typeID": 62293,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 323,
+      "eventDescriptionID": 597781,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 62276,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 4
+    },
+    {
+      "matchTypeID": 98,
+      "shipRestrictionsHintID": 599411,
+      "bannedModulesTypeListID": 350,
+      "filamentDescriptionID": 599413,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "eventNameID": 599408,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 599410,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 599414,
+      "rulesHintID": 599412,
+      "rewards": [
+        {
+          "typeID": 62278,
+          "amount": 25
+        },
+        {
+          "typeID": 62279,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 63181,
+          "amount": 1
+        },
+        {
+          "typeID": 63180,
+          "amount": 1
+        },
+        {
+          "typeID": 63186,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 243,
+      "eventDescriptionID": 599409,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 62277,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 99,
+      "shipRestrictionsHintID": 599421,
+      "bannedModulesTypeListID": 350,
+      "filamentDescriptionID": 599423,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "eventNameID": 599418,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 599420,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 599424,
+      "rulesHintID": 599422,
+      "rewards": [
+        {
+          "typeID": 62279,
+          "amount": 25
+        },
+        {
+          "typeID": 63714,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 63179,
+          "amount": 1
+        },
+        {
+          "typeID": 63183,
+          "amount": 1
+        },
+        {
+          "typeID": 63182,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 351,
+      "eventDescriptionID": 599419,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 62278,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 100,
+      "shipRestrictionsHintID": 600123,
+      "bannedModulesTypeListID": 350,
+      "filamentDescriptionID": 600125,
+      "fleetSize": 2,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 4,
+      "eventNameID": 600120,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 600122,
+      "maxOfShipTypeRestriction": 1,
+      "restrictionsDescriptionID": 600126,
+      "rulesHintID": 600124,
+      "rewards": [
+        {
+          "typeID": 63714,
+          "amount": 25
+        },
+        {
+          "typeID": 63715,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 63180,
+          "amount": 1
+        },
+        {
+          "typeID": 63182,
+          "amount": 1
+        },
+        {
+          "typeID": 63184,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 247,
+      "eventDescriptionID": 600121,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 12345,
+      "filamentTypeID": 62279,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 101,
+      "shipRestrictionsHintID": 600987,
+      "bannedModulesTypeListID": 350,
+      "filamentDescriptionID": 600989,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 0,
+      "eventNameID": 600984,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 600986,
+      "maxOfShipTypeRestriction": 1,
+      "restrictionsDescriptionID": 600990,
+      "rulesHintID": 600988,
+      "rewards": [
+        {
+          "typeID": 63715,
+          "amount": 25
+        },
+        {
+          "typeID": 63716,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 63179,
+          "amount": 1
+        },
+        {
+          "typeID": 63181,
+          "amount": 1
+        },
+        {
+          "typeID": 63185,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 356,
+      "eventDescriptionID": 600985,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 63714,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 4
+    },
+    {
+      "matchTypeID": 105,
+      "shipRestrictionsHintID": 606786,
+      "bannedModulesTypeListID": 350,
+      "filamentDescriptionID": 606788,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 4,
+      "eventNameID": 606783,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 606785,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 606789,
+      "rulesHintID": 606787,
+      "rewards": [
+        {
+          "typeID": 63716,
+          "amount": 25
+        },
+        {
+          "typeID": 63717,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 63183,
+          "amount": 1
+        },
+        {
+          "typeID": 63186,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 323,
+      "eventDescriptionID": 606784,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 63715,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 106,
+      "shipRestrictionsHintID": 609454,
+      "bannedModulesTypeListID": 350,
+      "filamentDescriptionID": 609456,
+      "fleetSize": 2,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "eventNameID": 609451,
+      "maxOfShipGroupRestriction": 1,
+      "rewardsHintID": 609453,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 609457,
+      "rulesHintID": 609455,
+      "rewards": [
+        {
+          "typeID": 63717,
+          "amount": 25
+        },
+        {
+          "typeID": 63718,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 63181,
+          "amount": 1
+        },
+        {
+          "typeID": 592,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 489,
+      "eventDescriptionID": 609452,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 12531,
+      "filamentTypeID": 63716,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 107,
+      "shipRestrictionsHintID": 609447,
+      "bannedModulesTypeListID": 350,
+      "filamentDescriptionID": 609449,
+      "fleetSize": 2,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 0,
+      "eventNameID": 609443,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 609446,
+      "maxOfShipTypeRestriction": 1,
+      "restrictionsDescriptionID": 609450,
+      "rulesHintID": 609448,
+      "rewards": [
+        {
+          "typeID": 63718,
+          "amount": 25
+        },
+        {
+          "typeID": 63719,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 63185,
+          "amount": 1
+        },
+        {
+          "typeID": 63180,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 232,
+      "eventDescriptionID": 609445,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 63717,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 108,
+      "shipRestrictionsHintID": 609440,
+      "bannedModulesTypeListID": 339,
+      "filamentDescriptionID": 609442,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "eventNameID": 609437,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 609439,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 609444,
+      "rulesHintID": 609441,
+      "rewards": [
+        {
+          "typeID": 63719,
+          "amount": 25
+        },
+        {
+          "typeID": 63720,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 63179,
+          "amount": 1
+        },
+        {
+          "typeID": 63182,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 270,
+      "eventDescriptionID": 609438,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 12531,
+      "filamentTypeID": 63718,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 109,
+      "shipRestrictionsHintID": 610051,
+      "bannedModulesTypeListID": 315,
+      "filamentDescriptionID": 610053,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 4,
+      "eventNameID": 610048,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 610050,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 610054,
+      "rulesHintID": 610052,
+      "rewards": [
+        {
+          "typeID": 63720,
+          "amount": 25
+        },
+        {
+          "typeID": 63721,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 63183,
+          "amount": 1
+        },
+        {
+          "typeID": 63184,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 490,
+      "eventDescriptionID": 610049,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 63719,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 4
+    },
+    {
+      "matchTypeID": 110,
+      "shipRestrictionsHintID": 611366,
+      "bannedModulesTypeListID": 350,
+      "filamentDescriptionID": 611368,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "eventNameID": 611363,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 611365,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 611369,
+      "rulesHintID": 611367,
+      "rewards": [
+        {
+          "typeID": 63721,
+          "amount": 25
+        },
+        {
+          "typeID": 63722,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 63185,
+          "amount": 1
+        },
+        {
+          "typeID": 63186,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 493,
+      "eventDescriptionID": 611364,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 63720,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 111,
+      "shipRestrictionsHintID": 611373,
+      "bannedModulesTypeListID": 350,
+      "filamentDescriptionID": 611375,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "eventNameID": 611370,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 611372,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 611376,
+      "rulesHintID": 611374,
+      "rewards": [
+        {
+          "typeID": 63722,
+          "amount": 25
+        },
+        {
+          "typeID": 63723,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 65089,
+          "amount": 1
+        },
+        {
+          "typeID": 65093,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 220,
+      "eventDescriptionID": 611371,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 63721,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 113,
+      "shipRestrictionsHintID": 624446,
+      "bannedModulesTypeListID": 496,
+      "filamentDescriptionID": 624448,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 0,
+      "eventNameID": 624443,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 624445,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 624449,
+      "rulesHintID": 624447,
+      "rewards": [
+        {
+          "typeID": 63723,
+          "amount": 25
+        },
+        {
+          "typeID": 63724,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 65081,
+          "amount": 1
+        },
+        {
+          "typeID": 65080,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 495,
+      "eventDescriptionID": 624444,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 63722,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 4
+    },
+    {
+      "matchTypeID": 114,
+      "shipRestrictionsHintID": 628879,
+      "bannedModulesTypeListID": 350,
+      "filamentDescriptionID": 628881,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "eventNameID": 628876,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 628878,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 628882,
+      "rulesHintID": 628880,
+      "rewards": [
+        {
+          "typeID": 63724,
+          "amount": 25
+        },
+        {
+          "typeID": 63725,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 65081,
+          "amount": 1
+        },
+        {
+          "typeID": 65089,
+          "amount": 1
+        },
+        {
+          "typeID": 65088,
+          "amount": 1
+        },
+        {
+          "typeID": 65092,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 218,
+      "eventDescriptionID": 628877,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 63723,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 115,
+      "shipRestrictionsHintID": 628887,
+      "bannedModulesTypeListID": 496,
+      "filamentDescriptionID": 628889,
+      "fleetSize": 2,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 0,
+      "eventNameID": 628884,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 628886,
+      "maxOfShipTypeRestriction": 1,
+      "restrictionsDescriptionID": 628890,
+      "rulesHintID": 628888,
+      "rewards": [
+        {
+          "typeID": 63725,
+          "amount": 25
+        },
+        {
+          "typeID": 63726,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 65085,
+          "amount": 1
+        },
+        {
+          "typeID": 65084,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 501,
+      "eventDescriptionID": 628885,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 63724,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 116,
+      "shipRestrictionsHintID": 628894,
+      "bannedModulesTypeListID": 350,
+      "filamentDescriptionID": 628896,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "eventNameID": 628891,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 628893,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 628897,
+      "rulesHintID": 628895,
+      "rewards": [
+        {
+          "typeID": 63726,
+          "amount": 25
+        },
+        {
+          "typeID": 63727,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 65081,
+          "amount": 1
+        },
+        {
+          "typeID": 65085,
+          "amount": 1
+        },
+        {
+          "typeID": 65093,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 502,
+      "eventDescriptionID": 628892,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 63725,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 117,
+      "shipRestrictionsHintID": 631863,
+      "bannedModulesTypeListID": 350,
+      "filamentDescriptionID": 631865,
+      "fleetSize": 2,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 4,
+      "eventNameID": 631860,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 631862,
+      "maxOfShipTypeRestriction": 1,
+      "restrictionsDescriptionID": 631866,
+      "rulesHintID": 631864,
+      "rewards": [
+        {
+          "typeID": 63727,
+          "amount": 25
+        },
+        {
+          "typeID": 63728,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 65085,
+          "amount": 1
+        },
+        {
+          "typeID": 65093,
+          "amount": 1
+        },
+        {
+          "typeID": 65080,
+          "amount": 1
+        },
+        {
+          "typeID": 65088,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 215,
+      "eventDescriptionID": 631861,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 63726,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 118,
+      "shipRestrictionsHintID": 636104,
+      "bannedModulesTypeListID": 496,
+      "filamentDescriptionID": 636106,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "eventNameID": 636101,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 636103,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 636107,
+      "rulesHintID": 636105,
+      "rewards": [
+        {
+          "typeID": 63728,
+          "amount": 25
+        },
+        {
+          "typeID": 72976,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 65089,
+          "amount": 1
+        },
+        {
+          "typeID": 65084,
+          "amount": 1
+        },
+        {
+          "typeID": 65092,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 301,
+      "eventDescriptionID": 636102,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 63727,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 119,
+      "shipRestrictionsHintID": 637199,
+      "bannedModulesTypeListID": 350,
+      "filamentDescriptionID": 637201,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 0,
+      "eventNameID": 637196,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 637198,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 637202,
+      "rulesHintID": 637200,
+      "rewards": [
+        {
+          "typeID": 72976,
+          "amount": 25
+        },
+        {
+          "typeID": 72977,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 65080,
+          "amount": 1
+        },
+        {
+          "typeID": 65084,
+          "amount": 1
+        },
+        {
+          "typeID": 65088,
+          "amount": 1
+        },
+        {
+          "typeID": 65092,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 238,
+      "eventDescriptionID": 637197,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 63728,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 4
+    },
+    {
+      "matchTypeID": 120,
+      "shipRestrictionsHintID": 638959,
+      "bannedModulesTypeListID": 350,
+      "filamentDescriptionID": 638961,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "eventNameID": 638956,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 638958,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 638962,
+      "rulesHintID": 638960,
+      "rewards": [
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 72977,
+          "amount": 25
+        },
+        {
+          "typeID": 72978,
+          "amount": 10
+        },
+        {
+          "typeID": 65083,
+          "amount": 1
+        },
+        {
+          "typeID": 65095,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 523,
+      "eventDescriptionID": 638957,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 72976,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 121,
+      "shipRestrictionsHintID": 639617,
+      "bannedModulesTypeListID": 350,
+      "filamentDescriptionID": 639619,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "eventNameID": 639614,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 639616,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 639620,
+      "rulesHintID": 639618,
+      "rewards": [
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 72978,
+          "amount": 25
+        },
+        {
+          "typeID": 72979,
+          "amount": 10
+        },
+        {
+          "typeID": 65086,
+          "amount": 1
+        },
+        {
+          "typeID": 65090,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 238,
+      "eventDescriptionID": 639615,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 12531,
+      "filamentTypeID": 72977,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 122,
+      "shipRestrictionsHintID": 640020,
+      "bannedModulesTypeListID": 339,
+      "filamentDescriptionID": 640022,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "eventNameID": 640017,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 640019,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 640023,
+      "rulesHintID": 640021,
+      "rewards": [
+        {
+          "typeID": 72979,
+          "amount": 25
+        },
+        {
+          "typeID": 72980,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 65087,
+          "amount": 1
+        },
+        {
+          "typeID": 65091,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 270,
+      "eventDescriptionID": 640018,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 72978,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 123,
+      "shipRestrictionsHintID": 640027,
+      "bannedModulesTypeListID": 350,
+      "filamentDescriptionID": 640029,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "eventNameID": 640024,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 640026,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 640030,
+      "rulesHintID": 640028,
+      "rewards": [
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 72980,
+          "amount": 25
+        },
+        {
+          "typeID": 72981,
+          "amount": 10
+        },
+        {
+          "typeID": 65082,
+          "amount": 1
+        },
+        {
+          "typeID": 65094,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 524,
+      "eventDescriptionID": 640025,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 12531,
+      "filamentTypeID": 72979,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 124,
+      "shipRestrictionsHintID": 640460,
+      "bannedModulesTypeListID": 315,
+      "filamentDescriptionID": 640462,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "eventNameID": 640457,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 640459,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 640463,
+      "rulesHintID": 640461,
+      "rewards": [
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 72981,
+          "amount": 25
+        },
+        {
+          "typeID": 72982,
+          "amount": 10
+        },
+        {
+          "typeID": 65083,
+          "amount": 1
+        },
+        {
+          "typeID": 65091,
+          "amount": 1
+        },
+        {
+          "typeID": 65082,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 316,
+      "eventDescriptionID": 640458,
+      "numberOfLimitedModules": 2,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 72980,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 4
+    },
+    {
+      "matchTypeID": 125,
+      "shipRestrictionsHintID": 640745,
+      "bannedModulesTypeListID": 350,
+      "filamentDescriptionID": 640747,
+      "fleetSize": 2,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "eventNameID": 640742,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 640744,
+      "maxOfShipTypeRestriction": 1,
+      "restrictionsDescriptionID": 640748,
+      "rulesHintID": 640746,
+      "rewards": [
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 72982,
+          "amount": 25
+        },
+        {
+          "typeID": 72983,
+          "amount": 10
+        },
+        {
+          "typeID": 65086,
+          "amount": 1
+        },
+        {
+          "typeID": 65090,
+          "amount": 1
+        },
+        {
+          "typeID": 65094,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 247,
+      "eventDescriptionID": 640743,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 72981,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 126,
+      "shipRestrictionsHintID": 642447,
+      "bannedModulesTypeListID": 350,
+      "filamentDescriptionID": 642449,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 0,
+      "eventNameID": 642444,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 642446,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 642450,
+      "rulesHintID": 642448,
+      "rewards": [
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 72983,
+          "amount": 25
+        },
+        {
+          "typeID": 72984,
+          "amount": 10
+        },
+        {
+          "typeID": 65083,
+          "amount": 1
+        },
+        {
+          "typeID": 65087,
+          "amount": 1
+        },
+        {
+          "typeID": 65095,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 323,
+      "eventDescriptionID": 642445,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 72982,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 127,
+      "shipRestrictionsHintID": 642591,
+      "bannedModulesTypeListID": 350,
+      "filamentDescriptionID": 642593,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 0,
+      "eventNameID": 642588,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 642590,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 642594,
+      "rulesHintID": 642592,
+      "rewards": [
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 72984,
+          "amount": 25
+        },
+        {
+          "typeID": 72985,
+          "amount": 10
+        },
+        {
+          "typeID": 65091,
+          "amount": 1
+        },
+        {
+          "typeID": 65082,
+          "amount": 1
+        },
+        {
+          "typeID": 65086,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 293,
+      "eventDescriptionID": 642589,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 12531,
+      "filamentTypeID": 72983,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 4
+    },
+    {
+      "matchTypeID": 128,
+      "shipRestrictionsHintID": 642612,
+      "bannedModulesTypeListID": 525,
+      "filamentDescriptionID": 642614,
+      "fleetSize": 2,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "eventNameID": 642609,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 642611,
+      "maxOfShipTypeRestriction": 1,
+      "restrictionsDescriptionID": 642615,
+      "rulesHintID": 642613,
+      "rewards": [
+        {
+          "typeID": 72985,
+          "amount": 25
+        },
+        {
+          "typeID": 72986,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 65087,
+          "amount": 1
+        },
+        {
+          "typeID": 65094,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 270,
+      "eventDescriptionID": 642610,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 12675,
+      "filamentTypeID": 72984,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    },
+    {
+      "matchTypeID": 129,
+      "shipRestrictionsHintID": 644748,
+      "bannedModulesTypeListID": 350,
+      "filamentDescriptionID": 644750,
+      "fleetSize": 1,
+      "limitedAmountOfModulesTypeListID": 271,
+      "moduleAndImplantMetaLevelRestrictions": 5,
+      "eventNameID": 644745,
+      "maxOfShipGroupRestriction": 0,
+      "rewardsHintID": 644747,
+      "maxOfShipTypeRestriction": 0,
+      "restrictionsDescriptionID": 644751,
+      "rulesHintID": 644749,
+      "rewards": [
+        {
+          "typeID": 72986,
+          "amount": 25
+        },
+        {
+          "typeID": 72987,
+          "amount": 10
+        },
+        {
+          "typeID": 52996,
+          "amount": 100000000
+        },
+        {
+          "typeID": 43680,
+          "amount": 1
+        },
+        {
+          "typeID": 65095,
+          "amount": 1
+        },
+        {
+          "typeID": 65090,
+          "amount": 1
+        }
+      ],
+      "shipRestrictions": 527,
+      "eventDescriptionID": 644746,
+      "numberOfLimitedModules": 1,
+      "provingGroundLootTableID": 10479,
+      "filamentTypeID": 72985,
+      "minimumQueueSizeMultiplier": 2,
+      "numberOfFleets": 2
+    }
+  ],
+  "eventSchedules": [
+    {
+      "scheduleID": 1,
+      "startDate": "2020-06-30",
+      "endDate": "2020-07-13",
+      "region": "ccp",
+      "QA": 1,
+      "matchTypeID": 1
+    },
+    {
+      "scheduleID": 11,
+      "startDate": "2020-06-30",
+      "endDate": "2020-07-10",
+      "region": "ccp",
+      "QA": 1,
+      "matchTypeID": 4
+    },
+    {
+      "scheduleID": 12,
+      "startDate": "2020-06-30",
+      "endDate": "2020-07-13",
+      "region": "ccp",
+      "QA": 1,
+      "matchTypeID": 7
+    },
+    {
+      "scheduleID": 13,
+      "startDate": "2020-06-30",
+      "endDate": "2020-07-13",
+      "region": "ccp",
+      "QA": 1,
+      "matchTypeID": 8
+    },
+    {
+      "scheduleID": 14,
+      "startDate": "2020-06-30",
+      "endDate": "2020-07-13",
+      "region": "ccp",
+      "QA": 1,
+      "matchTypeID": 6
+    },
+    {
+      "scheduleID": 15,
+      "startDate": "2020-06-30",
+      "endDate": "2020-07-09",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 9
+    },
+    {
+      "scheduleID": 16,
+      "startDate": "2020-07-09",
+      "endDate": "2020-07-14",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 11
+    },
+    {
+      "scheduleID": 20,
+      "startDate": "2020-07-16",
+      "endDate": "2020-07-28",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 9
+    },
+    {
+      "scheduleID": 21,
+      "startDate": "2020-07-23",
+      "endDate": "2020-08-03",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 9
+    },
+    {
+      "scheduleID": 22,
+      "startDate": "2020-07-31",
+      "endDate": "2020-08-04",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 11
+    },
+    {
+      "scheduleID": 23,
+      "startDate": "2020-08-07",
+      "endDate": "2020-08-11",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 14
+    },
+    {
+      "scheduleID": 24,
+      "startDate": "2020-08-06",
+      "endDate": "2020-08-10",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 11
+    },
+    {
+      "scheduleID": 25,
+      "startDate": "2020-08-13",
+      "endDate": "2020-08-17",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 14
+    },
+    {
+      "scheduleID": 26,
+      "startDate": "2020-08-21",
+      "endDate": "2020-08-25",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 15
+    },
+    {
+      "scheduleID": 27,
+      "startDate": "2020-08-28",
+      "endDate": "2020-09-01",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 16
+    },
+    {
+      "scheduleID": 28,
+      "startDate": "2020-09-04",
+      "endDate": "2020-09-08",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 17
+    },
+    {
+      "scheduleID": 29,
+      "startDate": "2020-08-27",
+      "endDate": "2020-08-31",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 15
+    },
+    {
+      "scheduleID": 30,
+      "startDate": "2020-09-03",
+      "endDate": "2020-09-07",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 16
+    },
+    {
+      "scheduleID": 31,
+      "startDate": "2020-09-10",
+      "endDate": "2020-09-14",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 17
+    },
+    {
+      "scheduleID": 34,
+      "startDate": "2020-09-18",
+      "endDate": "2020-09-22",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 19
+    },
+    {
+      "scheduleID": 35,
+      "startDate": "2020-09-25",
+      "endDate": "2020-09-29",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 20
+    },
+    {
+      "scheduleID": 36,
+      "startDate": "2020-10-02",
+      "endDate": "2020-10-06",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 21
+    },
+    {
+      "scheduleID": 38,
+      "startDate": "2020-09-24",
+      "endDate": "2020-09-28",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 19
+    },
+    {
+      "scheduleID": 39,
+      "startDate": "2020-10-01",
+      "endDate": "2020-10-08",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 20
+    },
+    {
+      "scheduleID": 40,
+      "startDate": "2020-10-15",
+      "endDate": "2020-10-19",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 21
+    },
+    {
+      "scheduleID": 44,
+      "startDate": "2020-10-30",
+      "endDate": "2020-11-03",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 22
+    },
+    {
+      "scheduleID": 45,
+      "startDate": "2020-11-05",
+      "endDate": "2020-11-09",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 22
+    },
+    {
+      "scheduleID": 46,
+      "startDate": "2020-11-20",
+      "endDate": "2020-11-24",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 23
+    },
+    {
+      "scheduleID": 47,
+      "startDate": "2020-11-26",
+      "endDate": "2020-11-30",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 23
+    },
+    {
+      "scheduleID": 50,
+      "startDate": "2020-12-04",
+      "endDate": "2020-12-08",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 25
+    },
+    {
+      "scheduleID": 53,
+      "startDate": "2020-12-18",
+      "endDate": "2020-12-22",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 27
+    },
+    {
+      "scheduleID": 54,
+      "startDate": "2021-01-01",
+      "endDate": "2021-01-05",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 28
+    },
+    {
+      "scheduleID": 55,
+      "startDate": "2020-12-17",
+      "endDate": "2020-12-21",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 25
+    },
+    {
+      "scheduleID": 56,
+      "startDate": "2020-12-24",
+      "endDate": "2020-12-28",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 27
+    },
+    {
+      "scheduleID": 57,
+      "startDate": "2021-01-07",
+      "endDate": "2021-01-11",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 28
+    },
+    {
+      "scheduleID": 58,
+      "startDate": "2021-01-15",
+      "endDate": "2021-01-19",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 29
+    },
+    {
+      "scheduleID": 59,
+      "startDate": "2021-01-29",
+      "endDate": "2021-02-02",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 30
+    },
+    {
+      "scheduleID": 60,
+      "startDate": "2021-01-28",
+      "endDate": "2021-01-31",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 29
+    },
+    {
+      "scheduleID": 61,
+      "startDate": "2021-02-04",
+      "endDate": "2021-02-07",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 30
+    },
+    {
+      "scheduleID": 62,
+      "startDate": "2021-02-12",
+      "endDate": "2021-02-16",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 31
+    },
+    {
+      "scheduleID": 63,
+      "startDate": "2021-02-26",
+      "endDate": "2021-03-02",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 32
+    },
+    {
+      "scheduleID": 64,
+      "startDate": "2021-02-25",
+      "endDate": "2021-02-28",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 31
+    },
+    {
+      "scheduleID": 65,
+      "startDate": "2021-03-04",
+      "endDate": "2021-03-07",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 32
+    },
+    {
+      "scheduleID": 66,
+      "startDate": "2021-03-12",
+      "endDate": "2021-03-16",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 33
+    },
+    {
+      "scheduleID": 67,
+      "startDate": "2021-03-26",
+      "endDate": "2021-03-30",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 34
+    },
+    {
+      "scheduleID": 68,
+      "startDate": "2021-04-09",
+      "endDate": "2021-04-13",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 35
+    },
+    {
+      "scheduleID": 69,
+      "startDate": "2021-03-19",
+      "endDate": "2021-03-22",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 33
+    },
+    {
+      "scheduleID": 70,
+      "startDate": "2021-04-02",
+      "endDate": "2021-04-06",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 34
+    },
+    {
+      "scheduleID": 71,
+      "startDate": "2021-04-23",
+      "endDate": "2021-04-27",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 35
+    },
+    {
+      "scheduleID": 72,
+      "startDate": "2021-04-23",
+      "endDate": "2021-04-27",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 36
+    },
+    {
+      "scheduleID": 73,
+      "startDate": "2021-04-30",
+      "endDate": "2021-05-06",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 36
+    },
+    {
+      "scheduleID": 74,
+      "startDate": "2021-05-07",
+      "endDate": "2021-05-11",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 38
+    },
+    {
+      "scheduleID": 75,
+      "startDate": "2021-05-21",
+      "endDate": "2021-05-25",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 39
+    },
+    {
+      "scheduleID": 76,
+      "startDate": "2021-05-28",
+      "endDate": "2021-06-01",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 39
+    },
+    {
+      "scheduleID": 78,
+      "startDate": "2021-06-18",
+      "endDate": "2021-06-22",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 41
+    },
+    {
+      "scheduleID": 79,
+      "startDate": "2021-06-05",
+      "endDate": "2021-06-06",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 40
+    },
+    {
+      "scheduleID": 83,
+      "startDate": "2021-06-25",
+      "endDate": "2021-06-29",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 41
+    },
+    {
+      "scheduleID": 84,
+      "startDate": "2021-06-19",
+      "endDate": "2021-06-20",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 40
+    },
+    {
+      "scheduleID": 85,
+      "startDate": "2021-07-02",
+      "endDate": "2021-07-06",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 42
+    },
+    {
+      "scheduleID": 86,
+      "startDate": "2021-07-16",
+      "endDate": "2021-07-20",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 43
+    },
+    {
+      "scheduleID": 87,
+      "startDate": "2021-07-23",
+      "endDate": "2021-07-27",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 43
+    },
+    {
+      "scheduleID": 88,
+      "startDate": "2021-07-31",
+      "endDate": "2021-08-01",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 44
+    },
+    {
+      "scheduleID": 89,
+      "startDate": "2021-08-06",
+      "endDate": "2021-08-10",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 45
+    },
+    {
+      "scheduleID": 90,
+      "startDate": "2021-08-07",
+      "endDate": "2021-08-08",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 44
+    },
+    {
+      "scheduleID": 91,
+      "startDate": "2021-08-13",
+      "endDate": "2021-08-17",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 45
+    },
+    {
+      "scheduleID": 93,
+      "startDate": "2021-08-27",
+      "endDate": "2021-08-31",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 50
+    },
+    {
+      "scheduleID": 95,
+      "startDate": "2021-08-27",
+      "endDate": "2021-08-31",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 50
+    },
+    {
+      "scheduleID": 96,
+      "startDate": "2021-09-03",
+      "endDate": "2021-09-07",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 51
+    },
+    {
+      "scheduleID": 97,
+      "startDate": "2021-09-10",
+      "endDate": "2021-09-14",
+      "region": "optic",
+      "QA": 0,
+      "matchTypeID": 51
+    },
+    {
+      "scheduleID": 99,
+      "startDate": "2021-09-17",
+      "endDate": "2021-09-21",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 52
+    },
+    {
+      "scheduleID": 104,
+      "startDate": "2021-10-01",
+      "endDate": "2021-10-05",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 53
+    },
+    {
+      "scheduleID": 105,
+      "startDate": "2021-10-09",
+      "endDate": "2021-10-10",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 54
+    },
+    {
+      "scheduleID": 106,
+      "startDate": "2021-10-16",
+      "endDate": "2021-10-17",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 63
+    },
+    {
+      "scheduleID": 118,
+      "startDate": "2021-10-29",
+      "endDate": "2021-11-02",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 73
+    },
+    {
+      "scheduleID": 119,
+      "startDate": "2021-11-06",
+      "endDate": "2021-11-07",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 74
+    },
+    {
+      "scheduleID": 120,
+      "startDate": "2021-11-07",
+      "endDate": "2021-11-08",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 75
+    },
+    {
+      "scheduleID": 122,
+      "startDate": "2021-11-13",
+      "endDate": "2021-11-14",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 80
+    },
+    {
+      "scheduleID": 123,
+      "startDate": "2021-11-14",
+      "endDate": "2021-11-15",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 81
+    },
+    {
+      "scheduleID": 124,
+      "startDate": "2021-11-26",
+      "endDate": "2021-11-30",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 82
+    },
+    {
+      "scheduleID": 125,
+      "startDate": "2021-12-10",
+      "endDate": "2021-12-14",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 83
+    },
+    {
+      "scheduleID": 126,
+      "startDate": "2021-12-18",
+      "endDate": "2021-12-19",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 84
+    },
+    {
+      "scheduleID": 127,
+      "startDate": "2021-12-31",
+      "endDate": "2022-01-04",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 85
+    },
+    {
+      "scheduleID": 128,
+      "startDate": "2022-01-08",
+      "endDate": "2022-01-09",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 86
+    },
+    {
+      "scheduleID": 129,
+      "startDate": "2022-01-22",
+      "endDate": "2022-01-23",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 88
+    },
+    {
+      "scheduleID": 130,
+      "startDate": "2022-01-28",
+      "endDate": "2022-02-01",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 89
+    },
+    {
+      "scheduleID": 131,
+      "startDate": "2022-02-11",
+      "endDate": "2022-02-15",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 90
+    },
+    {
+      "scheduleID": 132,
+      "startDate": "2022-02-26",
+      "endDate": "2022-02-28",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 91
+    },
+    {
+      "scheduleID": 133,
+      "startDate": "2022-03-12",
+      "endDate": "2022-03-14",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 93
+    },
+    {
+      "scheduleID": 137,
+      "startDate": "2022-03-18",
+      "endDate": "2022-03-22",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 96
+    },
+    {
+      "scheduleID": 138,
+      "startDate": "2022-04-01",
+      "endDate": "2022-04-05",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 97
+    },
+    {
+      "scheduleID": 140,
+      "startDate": "2022-04-15",
+      "endDate": "2022-04-18",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 98
+    },
+    {
+      "scheduleID": 141,
+      "startDate": "2022-04-23",
+      "endDate": "2022-04-24",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 99
+    },
+    {
+      "scheduleID": 142,
+      "startDate": "2022-05-06",
+      "endDate": "2022-05-09",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 100
+    },
+    {
+      "scheduleID": 144,
+      "startDate": "2022-05-20",
+      "endDate": "2022-05-23",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 101
+    },
+    {
+      "scheduleID": 145,
+      "startDate": "2022-06-04",
+      "endDate": "2022-06-05",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 105
+    },
+    {
+      "scheduleID": 147,
+      "startDate": "2022-06-05",
+      "endDate": "2022-06-06",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 106
+    },
+    {
+      "scheduleID": 148,
+      "startDate": "2022-06-11",
+      "endDate": "2022-06-12",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 107
+    },
+    {
+      "scheduleID": 149,
+      "startDate": "2022-06-12",
+      "endDate": "2022-06-13",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 108
+    },
+    {
+      "scheduleID": 150,
+      "startDate": "2022-06-24",
+      "endDate": "2022-06-27",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 109
+    },
+    {
+      "scheduleID": 151,
+      "startDate": "2022-07-15",
+      "endDate": "2022-07-18",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 110
+    },
+    {
+      "scheduleID": 154,
+      "startDate": "2022-07-23",
+      "endDate": "2022-07-25",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 111
+    },
+    {
+      "scheduleID": 155,
+      "startDate": "2022-08-05",
+      "endDate": "2022-08-08",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 113
+    },
+    {
+      "scheduleID": 156,
+      "startDate": "2022-08-19",
+      "endDate": "2022-08-22",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 114
+    },
+    {
+      "scheduleID": 157,
+      "startDate": "2022-09-02",
+      "endDate": "2022-09-05",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 115
+    },
+    {
+      "scheduleID": 158,
+      "startDate": "2022-09-10",
+      "endDate": "2022-09-12",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 116
+    },
+    {
+      "scheduleID": 159,
+      "startDate": "2022-09-24",
+      "endDate": "2022-09-26",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 117
+    },
+    {
+      "scheduleID": 160,
+      "startDate": "2022-10-15",
+      "endDate": "2022-10-16",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 118
+    },
+    {
+      "scheduleID": 161,
+      "startDate": "2022-10-28",
+      "endDate": "2022-10-31",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 119
+    },
+    {
+      "scheduleID": 162,
+      "startDate": "2022-11-12",
+      "endDate": "2022-11-13",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 120
+    },
+    {
+      "scheduleID": 163,
+      "startDate": "2022-11-13",
+      "endDate": "2022-11-14",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 121
+    },
+    {
+      "scheduleID": 164,
+      "startDate": "2022-11-19",
+      "endDate": "2022-11-20",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 122
+    },
+    {
+      "scheduleID": 165,
+      "startDate": "2022-11-20",
+      "endDate": "2022-11-21",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 123
+    },
+    {
+      "scheduleID": 166,
+      "startDate": "2022-11-25",
+      "endDate": "2022-11-28",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 124
+    },
+    {
+      "scheduleID": 167,
+      "startDate": "2022-12-10",
+      "endDate": "2022-12-12",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 125
+    },
+    {
+      "scheduleID": 168,
+      "startDate": "2022-12-16",
+      "endDate": "2022-12-19",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 126
+    },
+    {
+      "scheduleID": 169,
+      "startDate": "2022-12-30",
+      "endDate": "2023-01-02",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 127
+    },
+    {
+      "scheduleID": 170,
+      "startDate": "2023-01-07",
+      "endDate": "2023-01-08",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 128
+    },
+    {
+      "scheduleID": 171,
+      "startDate": "2023-01-14",
+      "endDate": "2023-01-16",
+      "region": "ccp",
+      "QA": 0,
+      "matchTypeID": 129
+    }
+  ]
+}

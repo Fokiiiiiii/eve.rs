@@ -1,0 +1,89 @@
+using Eve.Marshal;
+
+namespace Eve.Services;
+
+/// <summary>A game service: a named set of methods the client can call.</summary>
+public interface IService
+{
+    string Name { get; }
+
+    /// <summary>
+    /// Calls <paramref name="call"/>.Method. The dispatcher only calls a method the service reports in
+    /// <see cref="HasMethod"/>; for any other method it answers the client with an error, not with this call.
+    /// </summary>
+    ValueTask<PyValue> CallAsync(ServiceCall call);
+
+    /// <summary>True when the service has a method of this name.</summary>
+    bool HasMethod(string method);
+}
+
+/// <summary>Maps a service failure to a client-visible Macho error when the service knows its meaning.</summary>
+public interface IServiceExceptionMapper
+{
+    MachoError? MapException(Exception exception);
+}
+
+/// <summary>Implemented by services that clean up when the client releases one of their bound objects.</summary>
+public interface IBoundObjectReleaseHandler
+{
+    void OnBoundObjectReleased(string oid, ClientSession? session);
+}
+
+/// <summary>Durable cleanup awaited after a bound object has been detached.</summary>
+public interface IAsyncBoundObjectReleaseHandler
+{
+    ValueTask OnBoundObjectReleasedAsync(string oid, ClientSession? session, CancellationToken cancellationToken);
+}
+
+/// <summary>Captures immutable release identity before the synchronous detach handler runs.</summary>
+public interface ICapturedBoundObjectReleaseHandler
+{
+    Func<CancellationToken, ValueTask>? CaptureBoundObjectRelease(string oid, ClientSession? session);
+}
+
+/// <summary>Implemented by services that hand the same bound object to a session on every bind.</summary>
+public interface IReusableBoundObject
+{
+    bool ReuseBoundObjectForSession { get; }
+}
+
+/// <summary>
+/// A call result that answers later: the dispatcher hands it a callback and does not send a response
+/// itself. It is never encoded.
+/// </summary>
+public sealed record PyDeferred(Func<DeferredContext, Task> Start) : PyValue;
+
+/// <summary>What a deferred response needs to reply once its work is done.</summary>
+public sealed class DeferredContext(Eve.Macho.MachoPacket packet, ClientSession session, string? responseServiceName, Action<PyValue> reply, Action provisional)
+{
+    public Eve.Macho.MachoPacket Packet { get; } = packet;
+
+    public ClientSession Session { get; } = session;
+
+    public string? ResponseServiceName { get; } = responseServiceName;
+
+    /// <summary>Sends the call response.</summary>
+    public void Reply(PyValue result) => reply(result);
+
+    /// <summary>Tells the client the call is still in progress and the answer follows (the reference's OnAgentProvisionalResponse).</summary>
+    public void Provisional() => provisional();
+}
+
+/// <summary>
+/// Something to do for a session when it has chosen a character and the session has been told (the client wants its
+/// skill cache primed, its ...): each module that owns login state gives one.
+/// </summary>
+public interface ICharacterEntryHook
+{
+    /// <summary>Attributes to merge into character selection's single session change, before any login notification.</summary>
+    ValueTask<IReadOnlyList<(string Name, PyValue Value)>> GetSessionAttributesAsync(ClientSession session, long characterId, CancellationToken cancellationToken) =>
+        ValueTask.FromResult<IReadOnlyList<(string Name, PyValue Value)>>([]);
+
+    ValueTask OnCharacterLeavingAsync(ClientSession session, long characterId, CancellationToken cancellationToken) =>
+        ValueTask.CompletedTask;
+
+    ValueTask OnCharacterEnteredAsync(ClientSession session, long characterId, CancellationToken cancellationToken);
+
+    ValueTask OnInventoryRpcAsync(ClientSession session, string method, bool stationHangar, bool activeSpaceShipInventoryList, CancellationToken cancellationToken) =>
+        ValueTask.CompletedTask;
+}

@@ -1,0 +1,10 @@
+[package]
+name = "eve-behaviors"
+description = "The NPC behavior trees of the EVE client's `behaviors` package (V24.01), ported to Rust: the runtime, its nodes and the trees"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]

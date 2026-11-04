@@ -1,0 +1,168 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace Eve.Services.Space.Beacons;
+
+/// <summary>One Rogue Drone wave of a beacon: the scan progress (a fraction of the scan) it comes at, the NPC pool (an exact name of the NPC authority) and how many NPCs it makes.</summary>
+public sealed record BeaconWaveRule(double AtScanProgress, string SpawnPool, int Amount);
+
+public sealed record BeaconRewardRule(int TypeId, int Quantity);
+
+public sealed record BeaconTypeRule(int BeaconTypeId, IReadOnlyList<BeaconWaveRule> Waves, IReadOnlyList<BeaconRewardRule> Rewards);
+
+/// <summary>
+/// The CONCORD Rogue Analysis Beacon (CRAB) rules of eve.rs. CCP patch notes and the SDE supply beacon type ids, activation delay, lifetime, link and scan durations, hit points,
+/// deployment space and linkable ship lists (SDE type lists 300 and 946). The report-sourced approximate daily usage rates determine the CEQ and interference costs; CCP gives
+/// </summary>
+public sealed class AnalysisBeaconRules
+{
+    public const string Schema = "eve.rs/analysis-beacon-rules/v1";
+
+    /// <summary>The group of the CRAB types (SDE group 4137 "Mobile Analysis Beacon"); the category of its deployable is 22.</summary>
+    public const int Group = 4137;
+    public const int DeployableCategory = 22;
+
+    /// <summary>The standard CRAB (SDE 60244).</summary>
+    public const int StandardType = 60244;
+
+    public const int CarrierType = 92183;
+
+    /// <summary>The SDE type list of the ships a standard CRAB links (typeList 300, "LinkWithShip valid ships").</summary>
+    public const int StandardLinkTypeList = 300;
+
+    /// <summary>The SDE type list of the ships a Carrier CRAB links (typeList 946, "CONCORD Rogue Analysis Beacon (Carrier) - Allowed Ships").</summary>
+    public const int CarrierLinkTypeList = 946;
+
+    public static readonly TimeSpan ActivationDelay = TimeSpan.FromSeconds(20);
+
+    public static readonly TimeSpan Lifetime = TimeSpan.FromHours(1);
+
+    public static readonly TimeSpan LinkDuration = TimeSpan.FromMinutes(4);
+
+    public static readonly TimeSpan StandardScan = TimeSpan.FromMinutes(10);
+
+    public static readonly TimeSpan CarrierScan = TimeSpan.FromMinutes(16);
+
+    public static readonly TimeSpan ScanTick = TimeSpan.FromSeconds(10);
+
+    /// <summary>A character starts with 100 Complex Encryption Qubits and regenerates to full in about 22 hours (CCP CRAB support article).</summary>
+    public const double MaximumCharacterEnergy = 100;
+    public static readonly TimeSpan CharacterEnergyFullRegeneration = TimeSpan.FromHours(22);
+
+    /// <summary>The report's approximate three standard and four Carrier links per day, expressed against the 100-point pool.</summary>
+    public static double CharacterEnergyCostOf(int typeId) => typeId == CarrierType ? MaximumCharacterEnergy / 4 : MaximumCharacterEnergy / 3;
+
+    /// <summary>A system starts without interference; its full pool decays in about 25 hours (CCP CRAB support article).</summary>
+    public const double MaximumSignalInterference = 100;
+    public static readonly TimeSpan SignalInterferenceFullDecay = TimeSpan.FromHours(25);
+
+    /// <summary>Approximate daily-use rates from report 1 section 9; Carrier use produces less interference.</summary>
+    public static double SignalInterferenceCostOf(int typeId) => typeId == CarrierType ? 2.5 : 3;
+
+    public static double RegenerateResource(double amount, long updatedAtMs, long nowMs, double maximum, TimeSpan fullDuration, bool decays = false)
+    {
+        var elapsed = Math.Max(0, nowMs - updatedAtMs);
+        var change = elapsed * maximum / fullDuration.TotalMilliseconds;
+        return decays ? Math.Max(0, Math.Max(0, amount) - change) : Math.Min(maximum, Math.Max(0, amount) + change);
+    }
+
+    public const double DeployDistanceMeters = 2_500;
+
+    public const double SecurityCutoff = 0.45;
+
+    private AnalysisBeaconRules(IReadOnlyDictionary<int, BeaconTypeRule> types) => Types = types;
+
+    public IReadOnlyDictionary<int, BeaconTypeRule> Types { get; }
+
+    /// <summary>Whether the type is a CRAB (standard or Carrier).</summary>
+    public static bool IsBeacon(int typeId) => typeId is StandardType or CarrierType;
+
+    /// <summary>The scan of a beacon type: 10 minutes, or 16 for the Carrier.</summary>
+    public static TimeSpan ScanOf(int typeId) => typeId == CarrierType ? CarrierScan : StandardScan;
+
+    /// <summary>The SDE type list that names the ships a beacon type links.</summary>
+    public static int LinkTypeListOf(int typeId) => typeId == CarrierType ? CarrierLinkTypeList : StandardLinkTypeList;
+
+    /// <summary>The figures of a beacon type, or null when the type is not a CRAB.</summary>
+    public BeaconTypeRule? For(int typeId) => Types.GetValueOrDefault(typeId);
+
+    /// <summary>The rules embedded in the assembly (<c>Beacons/Data/analysis-beacon-rules.json</c>).</summary>
+    public static AnalysisBeaconRules LoadEmbedded() => Load(name => typeof(AnalysisBeaconRules).Assembly.GetManifestResourceStream(name)
+        ?? throw new InvalidDataException($"the analysis beacon rules resource '{name}' is not embedded"));
+
+    /// <summary>
+    /// Reads the rules: the schema, exactly the two beacon types, their waves (the first at scan progress 0, then later ones in order, each before the scan ends), a pool
+    /// and an amount for each, and rewards with a positive quantity. Anything else refuses the file.
+    /// </summary>
+    public static AnalysisBeaconRules Load(Func<string, Stream> open)
+    {
+        using Stream stream = open("analysis-beacon-rules.json");
+        var file = JsonSerializer.Deserialize<RuleFile>(stream, new JsonSerializerOptions { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow })
+            ?? throw new InvalidDataException("the analysis beacon rules are empty");
+        if (file.Schema != Schema)
+        {
+            throw new InvalidDataException($"the analysis beacon rules have schema '{file.Schema}', expected '{Schema}'");
+        }
+        var types = new Dictionary<int, BeaconTypeRule>();
+        foreach (var entry in file.Beacons ?? [])
+        {
+            if (!IsBeacon(entry.TypeId) || types.ContainsKey(entry.TypeId))
+            {
+                throw new InvalidDataException($"the analysis beacon rules name type {entry.TypeId}, which is not a CRAB type once");
+            }
+            if (entry.Waves is not { Count: > 0 } entries || entries[0].AtScanProgress != 0)
+            {
+                throw new InvalidDataException($"beacon {entry.TypeId}: its first wave must be at scan progress 0");
+            }
+            var waves = new List<BeaconWaveRule>();
+            foreach (var wave in entries)
+            {
+                if (string.IsNullOrWhiteSpace(wave.SpawnPool) || wave.Amount < 1)
+                {
+                    throw new InvalidDataException($"beacon {entry.TypeId}: a wave needs a spawn pool and an amount of one or more");
+                }
+                if (wave.AtScanProgress < 0 || wave.AtScanProgress >= 1 || (waves.Count > 0 && wave.AtScanProgress <= waves[^1].AtScanProgress))
+                {
+                    throw new InvalidDataException($"beacon {entry.TypeId}: the waves must come at rising scan progress below the end of the scan");
+                }
+                waves.Add(new BeaconWaveRule(wave.AtScanProgress, wave.SpawnPool, wave.Amount));
+            }
+            var rewards = (entry.Rewards ?? []).Select(reward => reward.TypeId > 0 && reward.Quantity > 0
+                ? new BeaconRewardRule(reward.TypeId, reward.Quantity)
+                : throw new InvalidDataException($"beacon {entry.TypeId}: a reward needs a type and a quantity above zero")).ToList();
+            types[entry.TypeId] = new BeaconTypeRule(entry.TypeId, waves, rewards);
+        }
+        if (!types.ContainsKey(StandardType) || !types.ContainsKey(CarrierType))
+        {
+            throw new InvalidDataException("the analysis beacon rules must give a wave and rewards for both CRAB types");
+        }
+        return new AnalysisBeaconRules(types);
+    }
+
+    private sealed class RuleFile
+    {
+        [JsonPropertyName("schema")] public string? Schema { get; init; }
+        [JsonPropertyName("owner")] public string? Owner { get; init; }
+        [JsonPropertyName("beacons")] public List<BeaconEntry>? Beacons { get; init; }
+    }
+
+    private sealed class BeaconEntry
+    {
+        [JsonPropertyName("typeId")] public int TypeId { get; init; }
+        [JsonPropertyName("waves")] public List<WaveEntry>? Waves { get; init; }
+        [JsonPropertyName("rewards")] public List<RewardEntry>? Rewards { get; init; }
+    }
+
+    private sealed class WaveEntry
+    {
+        [JsonPropertyName("atScanProgress")] public double AtScanProgress { get; init; }
+        [JsonPropertyName("spawnPool")] public string? SpawnPool { get; init; }
+        [JsonPropertyName("amount")] public int Amount { get; init; }
+    }
+
+    private sealed class RewardEntry
+    {
+        [JsonPropertyName("typeId")] public int TypeId { get; init; }
+        [JsonPropertyName("quantity")] public int Quantity { get; init; }
+    }
+}

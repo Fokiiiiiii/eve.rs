@@ -1,0 +1,461 @@
+using Eve.Fitting;
+using Eve.Macho;
+using Eve.Marshal;
+using Eve.Services;
+using Eve.Services.Core;
+using Npgsql;
+using Eve.Data;
+
+namespace Eve.Services.Core.Tests;
+
+/// <summary>Skips a test, loudly, when there is no PostgreSQL (see tools/dev/pg18.sh); a skipped test is not a pass.</summary>
+public sealed class FittingPgFactAttribute : FactAttribute
+{
+    public FittingPgFactAttribute()
+    {
+        if (Environment.GetEnvironmentVariable("EVE_PG_URL") is null)
+        {
+            Skip = "EVE_PG_URL is not set (see tools/dev/pg18.sh)";
+        }
+    }
+}
+
+/// <summary>
+/// The fitting managers end to end on the real saved-fitting store: the client's calls and their KeyVal shapes, the refusals the client shows, the
+/// </summary>
+public sealed class FittingMgrServicesTests : IAsyncLifetime
+{
+    private readonly List<NpgsqlDataSource> _sources = [];
+    private readonly List<string> _schemas = [];
+
+    private const long Character = 140_300_001, OtherCharacter = 140_300_002, Corporation = 98_300_001, Alliance = 99_300_001, Executor = 98_300_002;
+    private const int Tengu = 29984, Ibis = 601, DamageControl = 2046;
+
+    private sealed class Host : IFittingHost
+    {
+        public bool FittingManager { get; set; }
+        public bool OwnerAccess { get; set; } = true;
+        public long? Executor { get; set; } = FittingMgrServicesTests.Executor;
+        public int CategoryReads { get; private set; }
+        public List<ClientSession> Sessions { get; } = [];
+
+        public Task<IReadOnlyDictionary<int, int>> CategoriesAsync(IReadOnlyCollection<int> typeIds, CancellationToken cancellationToken)
+        {
+            CategoryReads++;
+            return Task.FromResult<IReadOnlyDictionary<int, int>>(typeIds.Where(id => id is Tengu or Ibis or DamageControl)
+                .ToDictionary(id => id, id => id == DamageControl ? 7 : 6));
+        }
+        public Task<bool> HasFittingManagerRoleAsync(long characterId, CancellationToken cancellationToken) => Task.FromResult(FittingManager);
+        public Task<bool> CanAccessOwnerAsync(long characterId, long ownerId, FittingOwnerScope scope, CancellationToken cancellationToken) => Task.FromResult(OwnerAccess);
+        public Task<long?> AllianceExecutorAsync(long allianceId, CancellationToken cancellationToken) => Task.FromResult(Executor);
+        public IReadOnlyList<ClientSession> SessionsOf(FittingOwnerScope scope, long ownerId) => Sessions;
+    }
+
+    /// <summary>Records the packets a session sends, so a notification can be looked for by its name.</summary>
+    private sealed class Sink : IPacketSink
+    {
+        public List<byte[]> Packets { get; } = [];
+        public void Send(PyValue packet) => Packets.Add(MarshalCodec.Encode(packet));
+        public bool Sent(string name) => Packets.Any(bytes => System.Text.Encoding.ASCII.GetString(bytes).Contains(name, StringComparison.Ordinal));
+        public int IndexOf(string name) => Packets.FindIndex(bytes => System.Text.Encoding.ASCII.GetString(bytes).Contains(name, StringComparison.Ordinal));
+    }
+
+    private async Task<(PgSavedFittingStore Store, Host Host, FittingMgrCalls Calls)> SetUpAsync()
+    {
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        _sources.Add(source);
+        var schema = "sfsvc_" + Guid.NewGuid().ToString("N")[..12];
+        _schemas.Add(schema);
+        await PgModuleStateStore.MigrateAsync(source, schema);
+        var store = new PgSavedFittingStore(source, schema);
+        var host = new Host();
+        return (store, host, new FittingMgrCalls(store, host, () => 1_700_000_000_000));
+    }
+
+    /// <summary>Drops this test's scratch schemas (a failed drop does not fail the test), then closes its sources.</summary>
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
+    {
+        foreach (var schema in _schemas)
+        {
+            try
+            {
+                await using var drop = _sources[0].CreateCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+                await drop.ExecuteNonQueryAsync();
+            }
+            catch (NpgsqlException)
+            {
+                // Leaving a scratch schema behind is better than failing the test.
+            }
+        }
+        foreach (var source in _sources)
+        {
+            await source.DisposeAsync();
+        }
+    }
+
+    private static ClientSession SessionOf(Sink sink, long character, long corporation = 0, long alliance = 0)
+    {
+        var session = new ClientSession(sink) { ClientId = character };
+        session.Set("charid", new PyInt(character));
+        if (corporation > 0) session.Set("corpid", new PyInt(corporation));
+        if (alliance > 0) session.Set("allianceid", new PyInt(alliance));
+        return session;
+    }
+
+    private static PyValue Fitting(string name = "Tengu PvE", int flag = 11) => Py.KeyVal(
+        ("name", new PyStr(name)),
+        ("description", new PyStr("text")),
+        ("shipTypeID", new PyInt(Tengu)),
+        ("fitData", new PyList([Py.Tuple(new PyInt(DamageControl), new PyInt(flag), new PyInt(1))])));
+
+    private static PyValue FittingWithRows(string name, params PyValue[] rows) => Py.KeyVal(
+        ("name", new PyStr(name)),
+        ("description", new PyStr("text")),
+        ("shipTypeID", new PyInt(Tengu)),
+        ("fitData", new PyList(rows)));
+
+    private static PyValue FittingRow() => Py.Tuple(new PyInt(DamageControl), new PyInt(11), new PyInt(1));
+
+    private static ServiceCall Call(string method, ClientSession session, params PyValue[] args) =>
+        new() { Method = method, Args = args, Session = session };
+
+    [FittingPgFact]
+    public async Task A_character_saves_lists_renames_and_deletes_its_fittings_and_is_told_of_each_change()
+    {
+        var (_, host, calls) = await SetUpAsync();
+        var sink = new Sink();
+        var session = SessionOf(sink, Character);
+        host.Sessions.Add(session);
+        IService service = new CharFittingMgrService(calls);
+
+        var saved = (PyLong)await service.CallAsync(Call("SaveFitting", session, new PyInt(Character), Fitting()));
+        Assert.True(saved.Value > 0);
+        Assert.True(sink.Sent("OnFittingAdded"));
+
+        var listed = Assert.IsType<PyDict>(await service.CallAsync(Call("GetFittings", session, new PyInt(Character))));
+        Assert.Single(listed.Entries);
+        Assert.Equal(saved.Value, ((PyLong)listed.Entries[0].Key).Value);
+
+        await service.CallAsync(Call("UpdateNameAndDescription", session, new PyLong(saved.Value), new PyInt(Character), new PyStr("Renamed"), new PyStr("d")));
+        await service.CallAsync(Call("DeleteFitting", session, new PyInt(Character), new PyLong(saved.Value)));
+        Assert.True(sink.Sent("OnFittingDeleted"));
+        Assert.Empty(Assert.IsType<PyDict>(await service.CallAsync(Call("GetFittings", session, new PyInt(Character)))).Entries);
+    }
+
+    [FittingPgFact]
+    public async Task A_refused_fitting_names_the_reference_user_error_and_saves_nothing()
+    {
+        var (_, host, calls) = await SetUpAsync();
+        var session = SessionOf(new Sink(), Character);
+        IService service = new CharFittingMgrService(calls);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(Call("SaveFitting", session, new PyInt(Character), Fitting(flag: 2))).AsTask());
+        Assert.Equal(MachoErrors.UserErrorClass, error.Error.ClassName);
+        Assert.Equal("InvalidFittingDataInvalidFlag", error.Error.UserErrorMessage);
+        Assert.Empty(Assert.IsType<PyDict>(await service.CallAsync(Call("GetFittings", session, new PyInt(Character)))).Entries);
+    }
+
+    [FittingPgFact]
+    public async Task Saving_refuses_short_and_non_sequence_rows_without_partial_data_or_notifications()
+    {
+        var (_, _, calls) = await SetUpAsync();
+        var sink = new Sink();
+        var session = SessionOf(sink, Character);
+        IService service = new CharFittingMgrService(calls);
+        var malformed = new[]
+        {
+            (FittingWithRows("short row", FittingRow(), Py.Tuple(new PyInt(DamageControl), new PyInt(11))),
+                "InvalidFittingDataInvalidQuantity"),
+            (FittingWithRows("non-sequence row", FittingRow(), new PyStr("not a tuple or list")),
+                "InvalidFittingDataTypeID"),
+        };
+
+        foreach (var (fitting, message) in malformed)
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+                service.CallAsync(Call("SaveFitting", session, new PyInt(Character), fitting)).AsTask());
+
+            Assert.Equal(MachoErrors.UserErrorClass, error.Error.ClassName);
+            Assert.Equal(message, error.Error.UserErrorMessage);
+            Assert.Empty(Assert.IsType<PyDict>(await service.CallAsync(Call("GetFittings", session, new PyInt(Character)))).Entries);
+        }
+
+        Assert.False(sink.Sent("OnFittingAdded"));
+    }
+
+    [FittingPgFact]
+    public async Task Updating_refuses_malformed_rows_and_keeps_the_existing_data_without_notifications()
+    {
+        var (_, _, calls) = await SetUpAsync();
+        var sink = new Sink();
+        var session = SessionOf(sink, Character);
+        IService service = new CharFittingMgrService(calls);
+        var fittingId = ((PyLong)await service.CallAsync(Call("SaveFitting", session, new PyInt(Character), Fitting()))).Value;
+        var before = Convert.ToHexString(MarshalCodec.Encode(await service.CallAsync(
+            Call("GetFittings", session, new PyInt(Character)))));
+        sink.Packets.Clear();
+        var malformed = new[]
+        {
+            (FittingWithRows("short row", FittingRow(), Py.Tuple(new PyInt(DamageControl), new PyInt(11))),
+                "InvalidFittingDataInvalidQuantity"),
+            (FittingWithRows("non-sequence row", FittingRow(), new PyStr("not a tuple or list")),
+                "InvalidFittingDataTypeID"),
+        };
+
+        foreach (var (fitting, message) in malformed)
+        {
+            var update = new ServiceCall
+            {
+                Method = "UpdateFitting",
+                Args = [new PyInt(Character), fitting],
+                Kwargs = new PyDict([new KeyValuePair<PyValue, PyValue>(new PyStr("fittingID"), new PyLong(fittingId))]),
+                Session = session,
+            };
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(update).AsTask());
+
+            Assert.Equal(MachoErrors.UserErrorClass, error.Error.ClassName);
+            Assert.Equal(message, error.Error.UserErrorMessage);
+            var after = Convert.ToHexString(MarshalCodec.Encode(await service.CallAsync(
+                Call("GetFittings", session, new PyInt(Character)))));
+            Assert.Equal(before, after);
+        }
+
+        Assert.False(sink.Sent("OnFittingAdded"));
+    }
+
+    [FittingPgFact]
+    public async Task Bulk_saving_refuses_malformed_rows_without_persisting_any_fit_or_notifying()
+    {
+        var (_, _, calls) = await SetUpAsync();
+        var sink = new Sink();
+        var session = SessionOf(sink, Character);
+        IService service = new CharFittingMgrService(calls);
+        var malformedRows = new (PyValue Row, string Message)[]
+        {
+            (Py.Tuple(new PyInt(DamageControl), new PyInt(11)), "InvalidFittingDataInvalidQuantity"),
+            (new PyStr("not a tuple or list"), "InvalidFittingDataTypeID"),
+        };
+
+        foreach (var (row, message) in malformedRows)
+        {
+            var entries = new PyDict([
+                new KeyValuePair<PyValue, PyValue>(new PyInt(-1), Fitting("valid batch entry")),
+                new KeyValuePair<PyValue, PyValue>(new PyInt(-2), FittingWithRows("malformed batch entry", FittingRow(), row)),
+            ]);
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+                service.CallAsync(Call("SaveManyFittings", session, new PyInt(Character), entries)).AsTask());
+
+            Assert.Equal(MachoErrors.UserErrorClass, error.Error.ClassName);
+            Assert.Equal(message, error.Error.UserErrorMessage);
+            Assert.Empty(Assert.IsType<PyDict>(await service.CallAsync(Call("GetFittings", session, new PyInt(Character)))).Entries);
+        }
+
+        Assert.False(sink.Sent("OnFittingAdded"));
+    }
+
+    [FittingPgFact]
+    public async Task Delete_fitting_refuses_missing_or_foreign_ids_without_a_false_notification()
+    {
+        var (_, host, calls) = await SetUpAsync();
+        var sink = new Sink();
+        var session = SessionOf(sink, Character);
+        IService service = new CharFittingMgrService(calls);
+        var fittingId = ((PyLong)await service.CallAsync(Call("SaveFitting", session, new PyInt(Character), Fitting()))).Value;
+        var packetCount = sink.Packets.Count;
+
+        var missing = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call("DeleteFitting", session, new PyInt(Character), new PyInt(-1))).AsTask());
+        var foreign = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call("DeleteFitting", session, new PyInt(Character), new PyLong(fittingId + 1))).AsTask());
+
+        Assert.Equal("CustomNotify", missing.Error.UserErrorMessage);
+        Assert.Equal("CustomNotify", foreign.Error.UserErrorMessage);
+        Assert.Equal(packetCount, sink.Packets.Count);
+        Assert.Single(Assert.IsType<PyDict>(await service.CallAsync(Call("GetFittings", session, new PyInt(Character)))).Entries);
+    }
+
+    [FittingPgFact]
+    public async Task A_character_cannot_read_or_change_another_characters_fittings()
+    {
+        var (_, _, calls) = await SetUpAsync();
+        var session = SessionOf(new Sink(), Character);
+        IService service = new CharFittingMgrService(calls);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(Call("GetFittings", session, new PyInt(OtherCharacter))).AsTask());
+        Assert.Equal(MachoErrors.UserErrorClass, error.Error.ClassName);
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+    }
+
+
+    [Fact]
+    public async Task Fitting_identifiers_outside_int32_are_refused_before_storage()
+    {
+        using var source = NpgsqlDataSource.Create(
+            PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var store = new PgSavedFittingStore(source, "sfsvc_test");
+        var calls = new FittingMgrCalls(store, new Host(), () => 1_700_000_000_000);
+        var member = SessionOf(new Sink(), Character, Corporation);
+        IService service = new CharFittingMgrService(calls);
+        var overflow = (long)int.MaxValue + 1;
+        var invalidShip = Py.KeyVal(
+            ("name", new PyStr("overflow")),
+            ("description", new PyStr("text")),
+            ("shipTypeID", new PyLong(overflow)),
+            ("fitData", new PyList([Py.Tuple(new PyInt(DamageControl), new PyInt(11), new PyInt(1))])));
+        var invalidItem = Py.KeyVal(
+            ("name", new PyStr("overflow")),
+            ("description", new PyStr("text")),
+            ("shipTypeID", new PyInt(Tengu)),
+            ("fitData", new PyList([Py.Tuple(new PyLong(overflow), new PyInt(11), new PyInt(1))])));
+
+        await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(
+            Call("SaveFitting", member, new PyInt(Character), invalidShip)).AsTask());
+        await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(
+            Call("SaveFitting", member, new PyInt(Character), invalidItem)).AsTask());
+    }
+
+
+    [FittingPgFact]
+    public async Task A_corporation_fitting_needs_the_fitting_manager_role_to_change_and_is_announced_to_the_corporation()
+    {
+        var (_, host, calls) = await SetUpAsync();
+        var sink = new Sink();
+        var member = SessionOf(sink, Character, Corporation);
+        host.Sessions.Add(member);
+        IService corp = new CorpFittingMgrService(calls);
+
+        await Assert.ThrowsAsync<MachoWrappedException>(() => corp.CallAsync(Call("SaveFitting", member, new PyInt(Corporation), Fitting())).AsTask());
+
+        host.FittingManager = true;
+        var id = (PyLong)await corp.CallAsync(Call("SaveFitting", member, new PyInt(Corporation), Fitting()));
+        Assert.True(id.Value > 0);
+        Assert.True(sink.Sent("OnFittingAdded"));
+    }
+
+    [FittingPgFact]
+    public async Task A_departed_member_cannot_read_fittings_through_stale_corporation_or_alliance_session_ids()
+    {
+        var (_, host, calls) = await SetUpAsync();
+        var formerMember = SessionOf(new Sink(), Character, Corporation, Alliance);
+        host.OwnerAccess = false;
+        IService corporation = new CorpFittingMgrService(calls);
+        IService alliance = new AllianceFittingMgrService(calls);
+
+        var corporationError = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            corporation.CallAsync(Call("GetFittings", formerMember, new PyInt(Corporation))).AsTask());
+        var allianceError = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            alliance.CallAsync(Call("GetFittings", formerMember, new PyInt(Alliance))).AsTask());
+
+        Assert.Equal("CustomNotify", corporationError.Error.UserErrorMessage);
+        Assert.Equal("CustomNotify", allianceError.Error.UserErrorMessage);
+    }
+
+    [FittingPgFact]
+    public async Task An_alliance_fitting_can_be_changed_only_by_the_executor_corporation()
+    {
+        var (_, host, calls) = await SetUpAsync();
+        host.FittingManager = true;
+        var notExecutor = SessionOf(new Sink(), Character, Corporation, Alliance);
+        IService alliance = new AllianceFittingMgrService(calls);
+
+        await Assert.ThrowsAsync<MachoWrappedException>(() => alliance.CallAsync(Call("SaveFitting", notExecutor, new PyInt(Alliance), Fitting())).AsTask());
+
+        var executor = SessionOf(new Sink(), Character, Executor, Alliance);
+        Assert.True(((PyLong)await alliance.CallAsync(Call("SaveFitting", executor, new PyInt(Alliance), Fitting()))).Value > 0);
+    }
+
+[FittingPgFact]
+    public async Task Fitting_bulk_batches_refuse_raw_counts_before_validation_or_deletion()
+    {
+        var (_, host, calls) = await SetUpAsync();
+        var sink = new Sink();
+        var session = SessionOf(sink, Character);
+        IService service = new CharFittingMgrService(calls);
+        var entries = new PyDict([.. Enumerable.Range(0, 501).Select(i =>
+            new KeyValuePair<PyValue, PyValue>(new PyInt(i + 1), Fitting($"fit {i}")))]);
+
+        var saveError = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call("SaveManyFittings", session, new PyInt(Character), entries)).AsTask());
+        Assert.Equal("CustomNotify", saveError.Error.UserErrorMessage);
+        Assert.Equal(0, host.CategoryReads);
+
+        var malformedSave = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call("SaveManyFittings", session, new PyInt(Character), new PyStr("not-a-dictionary"))).AsTask());
+        Assert.Equal("CustomNotify", malformedSave.Error.UserErrorMessage);
+        var malformedSaveKey = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call("SaveManyFittings", session, new PyInt(Character), new PyDict([
+                new KeyValuePair<PyValue, PyValue>(new PyStr("not-a-temp-id"), Fitting())]))).AsTask());
+        Assert.Equal("CustomNotify", malformedSaveKey.Error.UserErrorMessage);
+        Assert.Equal(0, host.CategoryReads);
+
+        var saved = (PyLong)await service.CallAsync(Call("SaveFitting", session, new PyInt(Character), Fitting()));
+        var repeatedIds = new PyList([.. Enumerable.Repeat<PyValue>(new PyLong(saved.Value), 501)]);
+        var deleteError = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call("DeleteManyFittings", session, new PyInt(Character), repeatedIds)).AsTask());
+        Assert.Equal("CustomNotify", deleteError.Error.UserErrorMessage);
+        var malformedDelete = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call("DeleteManyFittings", session, new PyInt(Character), PyNone.Instance)).AsTask());
+        Assert.Equal("CustomNotify", malformedDelete.Error.UserErrorMessage);
+        var mixedDelete = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call("DeleteManyFittings", session, new PyInt(Character), new PyList([
+                new PyLong(saved.Value), new PyInt(-1)]))).AsTask());
+        Assert.Equal("CustomNotify", mixedDelete.Error.UserErrorMessage);
+        Assert.Single(Assert.IsType<PyDict>(await service.CallAsync(Call("GetFittings", session, new PyInt(Character)))).Entries);
+    }
+
+    [FittingPgFact]
+    public async Task Deleting_many_answers_the_ids_that_were_there_and_announces_them()
+    {
+        var (_, host, calls) = await SetUpAsync();
+        var sink = new Sink();
+        var session = SessionOf(sink, Character);
+        host.Sessions.Add(session);
+        IService service = new CharFittingMgrService(calls);
+        var first = ((PyLong)await service.CallAsync(Call("SaveFitting", session, new PyInt(Character), Fitting("a")))).Value;
+        var second = ((PyLong)await service.CallAsync(Call("SaveFitting", session, new PyInt(Character), Fitting("b")))).Value;
+
+        var deleted = Assert.IsType<PyList>(await service.CallAsync(Call("DeleteManyFittings", session, new PyInt(Character), new PyList([new PyLong(first), new PyLong(second), new PyLong(first)]))));
+        Assert.Equal(2, deleted.Items.Count);
+        Assert.True(sink.Sent("OnManyFittingsDeleted"));
+    }
+
+    [FittingPgFact]
+    public async Task A_corporation_list_is_cached_for_fifteen_minutes_and_each_change_drops_the_clients_copy_before_it_is_announced()
+    {
+        var (_, host, calls) = await SetUpAsync();
+        host.FittingManager = true;
+        var sink = new Sink();
+        var member = SessionOf(sink, Character, Corporation);
+        host.Sessions.Add(member);
+        IService corp = new CorpFittingMgrService(calls);
+
+        var listed = await corp.CallAsync(Call("GetFittings", member, new PyInt(Corporation)));
+        var listedBytes = System.Text.Encoding.ASCII.GetString(MarshalCodec.Encode(listed));
+        Assert.Contains("CachedMethodCallResult", listedBytes, StringComparison.Ordinal);
+        Assert.Contains("15 minutes", listedBytes, StringComparison.Ordinal);
+
+        sink.Packets.Clear();
+        await corp.CallAsync(Call("SaveFitting", member, new PyInt(Corporation), Fitting()));
+        var invalidated = sink.IndexOf("InvalidateCachedMethodCall");
+        var announced = sink.IndexOf("OnFittingAdded");
+        Assert.True(invalidated >= 0, "the client's cached list is dropped");
+        Assert.True(announced > invalidated, "the drop comes before the change is announced");
+        Assert.Contains("GetFittings", System.Text.Encoding.ASCII.GetString(sink.Packets[invalidated]), StringComparison.Ordinal);
+    }
+
+    [FittingPgFact]
+    public async Task A_character_list_is_not_cached_and_its_changes_send_no_cache_drop()
+    {
+        var (_, host, calls) = await SetUpAsync();
+        var sink = new Sink();
+        var session = SessionOf(sink, Character);
+        host.Sessions.Add(session);
+        IService service = new CharFittingMgrService(calls);
+        var listed = await service.CallAsync(Call("GetFittings", session, new PyInt(Character)));
+        Assert.IsType<PyDict>(listed);
+        await service.CallAsync(Call("SaveFitting", session, new PyInt(Character), Fitting()));
+        Assert.Equal(-1, sink.IndexOf("InvalidateCachedMethodCall"));
+    }
+}

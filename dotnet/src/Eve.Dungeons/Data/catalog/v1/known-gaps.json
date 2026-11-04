@@ -1,0 +1,108 @@
+{
+ "schema": "eve.dungeon-catalog.known-gaps.v1",
+ "missingDungeonTemplates": [
+  {
+   "dungeonID": 13341,
+   "missionIDs": [
+    17135
+   ],
+   "reason": "the official dungeons table lists this id, but the owner data has no client dungeon template for it"
+  },
+  {
+   "dungeonID": 13342,
+   "missionIDs": [
+    17134
+   ],
+   "reason": "the official dungeons table lists this id, but the owner data has no client dungeon template for it"
+  },
+  {
+   "dungeonID": 14097,
+   "missionIDs": [
+    17183
+   ],
+   "reason": "the owner data has no client dungeon template for this id, and the official dungeons table does not list it; the mission is an official epic arc step"
+  },
+  {
+   "dungeonID": 14098,
+   "missionIDs": [
+    17184
+   ],
+   "reason": "the owner data has no client dungeon template for this id, and the official dungeons table does not list it; the mission is an official epic arc step"
+  },
+  {
+   "dungeonID": 14099,
+   "missionIDs": [
+    17185
+   ],
+   "reason": "the owner data has no client dungeon template for this id, and the official dungeons table does not list it; the mission is an official epic arc step"
+  },
+  {
+   "dungeonID": 14100,
+   "missionIDs": [
+    17186
+   ],
+   "reason": "the official dungeons table lists this id, but the owner data has no client dungeon template for it; the mission is an official epic arc step"
+  },
+  {
+   "dungeonID": 14222,
+   "missionIDs": [
+    17192
+   ],
+   "reason": "the owner data has no client dungeon template for this id, and the official dungeons table does not list it"
+  }
+ ],
+ "missionDefects": [
+  {
+   "missionID": 14555,
+   "reason": "killMission is a stored Python object repr with no dungeonID in the owner data; the official mission has no killMission"
+  },
+  {
+   "missionID": 14560,
+   "reason": "killMission is a stored Python object repr with no dungeonID in the owner data; the official mission has no killMission"
+  }
+ ],
+ "missionsWithoutDungeon": [
+  {
+   "missionID": 16414,
+   "reason": "killMission has an objective quantity but no dungeonID; the official mission has the same record, so the mission has no dungeon"
+  }
+ ],
+ "epicLikeMissionsWithoutOfficialArc": [
+  {
+   "missionID": 14497,
+   "reason": "the owner data marks it as an epic arc mission, but no official epic arc (epicArcs.jsonl) lists it"
+  },
+  {
+   "missionID": 14549,
+   "reason": "the owner data marks it as an epic arc mission, but no official epic arc (epicArcs.jsonl) lists it"
+  },
+  {
+   "missionID": 14555,
+   "reason": "the owner data marks it as an epic arc mission, but no official epic arc (epicArcs.jsonl) lists it"
+  },
+  {
+   "missionID": 14560,
+   "reason": "the owner data marks it as an epic arc mission, but no official epic arc (epicArcs.jsonl) lists it"
+  },
+  {
+   "missionID": 14608,
+   "reason": "the owner data marks it as an epic arc mission, but no official epic arc (epicArcs.jsonl) lists it"
+  },
+  {
+   "missionID": 14615,
+   "reason": "the owner data marks it as an epic arc mission, but no official epic arc (epicArcs.jsonl) lists it"
+  },
+  {
+   "missionID": 14949,
+   "reason": "the owner data marks it as an epic arc mission, but no official epic arc (epicArcs.jsonl) lists it"
+  },
+  {
+   "missionID": 17134,
+   "reason": "the owner data marks it as an epic arc mission, but no official epic arc (epicArcs.jsonl) lists it"
+  },
+  {
+   "missionID": 17135,
+   "reason": "the owner data marks it as an epic arc mission, but no official epic arc (epicArcs.jsonl) lists it"
+  }
+ ]
+}

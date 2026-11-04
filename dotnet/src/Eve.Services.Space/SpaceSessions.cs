@@ -52,6 +52,10 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
 
         /// <summary>The exact most recent Abyssal scene move, retained for Host receipt retries.</summary>
         public AbyssalMoveReceipt? LastAbyssalMove { get; set; }
+        public PublicMoveReceipt? LastPublicMove { get; set; }
+        public PendingDockedEntry? LastPublicEntry { get; set; }
+        public PublicMoveReceipt? PendingPublicMove { get; set; }
+        public int PublicMoveInFlight;
 
         public Task? StructureControlDeath { get; set; }
 
@@ -100,6 +104,7 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
 
         /// <summary>The effects the pilot's modules run, as asked and as the simulation holds them (<see cref="RunningModule"/>): a refresh rebuilds them.</summary>
         public ConcurrentDictionary<long, RunningModule> RunningModules { get; } = new();
+        public object ModuleLifecycleSync { get; } = new();
 
         /// <summary>The module repairs under way (nanite paste): what each began with. Ended by a stop, or by the pilot leaving the ship (<see cref="CancelRepairsAsync"/>).</summary>
         public ConcurrentDictionary<long, ModuleRepairRecord> Repairs { get; } = new();
@@ -433,10 +438,23 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
     private long FileTimeNow() => Py.FileTimeFromUnixMs(_nowUnixMs());
 
     /// <summary>Whether the session's ship is in space.</summary>
-    public bool IsInSpace(ClientSession session) => _pilots.ContainsKey((ulong)session.SessionId);
+    public bool IsInSpace(ClientSession session) => !_pendingDockedEntries.ContainsKey((ulong)session.SessionId) && _pilots.TryGetValue((ulong)session.SessionId, out var pilot) && pilot.PendingPublicMove is null;
+
+    /// <summary>Whether this exact live pilot occupies the public scene of the requested system.</summary>
+    public bool IsInPublicSystem(ClientSession session, long systemId) =>
+        systemId is > 0 and <= int.MaxValue && _pilots.TryGetValue((ulong)session.SessionId, out var pilot) &&
+        ReferenceEquals(pilot.Session, session) && session.CharacterId == pilot.CharacterId &&
+        session.GetInt("shipid") == pilot.ShipId && pilot.PendingPublicMove is null &&
+        pilot.SimulationScene == SimSceneKey.SolarSystem((int)systemId);
+
+    public void RequirePublicMoveSettled(ClientSession session)
+    {
+        if (_pendingDockedEntries.ContainsKey((ulong)session.SessionId) || (_pilots.TryGetValue((ulong)session.SessionId, out var pilot) && pilot.PendingPublicMove is not null))
+            throw Notify("A space relocation is still being resolved.");
+    }
 
     /// <summary>The solar system the session's ship is in, or null when it is not in space.</summary>
-    public int? SolarSystemOf(ClientSession session) => _pilots.TryGetValue((ulong)session.SessionId, out var pilot) ? pilot.SolarSystemId : null;
+    public int? SolarSystemOf(ClientSession session) => !_pendingDockedEntries.ContainsKey((ulong)session.SessionId) && _pilots.TryGetValue((ulong)session.SessionId, out var pilot) && pilot.PendingPublicMove is null ? pilot.SolarSystemId : null;
 
     public long? ShipIdOf(ClientSession session) =>
         _pilots.TryGetValue((ulong)session.SessionId, out var pilot) ? pilot.ShipId : null;
@@ -446,6 +464,15 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         _pilots.TryGetValue((ulong)session.SessionId, out var pilot) ? pilot.TypeId : null;
 
     public bool IsWarping(ClientSession session) => _warping.ContainsKey((ulong)session.SessionId);
+
+    public bool IsSessionChanging(ClientSession session) => _transitions.SessionChangeActive((ulong)session.SessionId);
+
+    public bool IsInvulnerable(ClientSession session) =>
+        _pilots.TryGetValue((ulong)session.SessionId, out var pilot) && ReferenceEquals(pilot.Session, session) &&
+        !pilot.ProtectionEnded && pilot.InvulnerableUntil > FileTimeNow();
+
+    public bool IsModuleActive(ClientSession session, long moduleId) =>
+        moduleId > 0 && _pilots.TryGetValue((ulong)session.SessionId, out var pilot) && pilot.ActiveModules.ContainsKey(moduleId);
 
     public ClientSession? ClientSessionOf(ulong sessionId) =>
         _pilots.TryGetValue(sessionId, out var pilot) ? pilot.Session : null;
@@ -726,6 +753,7 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         session.Closed += () => OnSessionClosed(session);
         await spaceItems.RemoveAsync(snapshot.Ship.Id, cancellationToken);
         SystemEntered?.Invoke(systemId);
+            await NotifyPilotEnteredSystemAsync(characterId, (ulong)session.SessionId, systemId);
     }
 
     private bool HasValidSpaceRestore(ShipSnapshot snapshot, SpaceItem state)
@@ -814,19 +842,156 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
     private void ForgetLockedTarget(long shipId)
     {
         foreach (var pair in _lockedTargets.ToArray())
-        {
-            if (!pair.Value.Contains(shipId))
-                continue;
+            RemoveLockedTarget(pair.Key, shipId);
+    }
 
-            var remaining = pair.Value.Where(target => target != shipId).ToHashSet();
+    private void AddLockedTargets(ulong sessionId, IEnumerable<long> targets)
+    {
+        var additions = targets.Where(target => target > 0).ToHashSet();
+        if (additions.Count == 0)
+            return;
+
+        _lockedTargets.AddOrUpdate(sessionId, additions, (_, current) =>
+        {
+            if (additions.All(current.Contains))
+                return current;
+            var merged = new HashSet<long>(current);
+            merged.UnionWith(additions);
+            return merged;
+        });
+    }
+
+    private void RemoveLockedTargets(ulong sessionId, IEnumerable<long> targets)
+    {
+        foreach (var target in targets)
+            RemoveLockedTarget(sessionId, target);
+    }
+
+    private void RemoveLockedTarget(ulong sessionId, long shipId)
+    {
+        while (_lockedTargets.TryGetValue(sessionId, out var current))
+        {
+            if (!current.Contains(shipId))
+                return;
+
+            var remaining = current.Where(target => target != shipId).ToHashSet();
             if (remaining.Count == 0)
             {
-                ((ICollection<KeyValuePair<ulong, IReadOnlySet<long>>>)_lockedTargets).Remove(pair);
+                if (((ICollection<KeyValuePair<ulong, IReadOnlySet<long>>>)_lockedTargets).Remove(new(sessionId, current)))
+                    return;
             }
-            else
+            else if (_lockedTargets.TryUpdate(sessionId, remaining, current))
             {
-                _lockedTargets.TryUpdate(pair.Key, remaining, pair.Value);
+                return;
             }
+        }
+    }
+
+    private void TrackTargetingNotification(SimNotify notify)
+    {
+        if (notify.Name != "OnTarget"
+            || MarshalCodec.Decode(notify.Args.ToArray()) is not PyTuple tuple
+            || tuple.Items.Count < 2
+            || tuple.Items[1] is not PyTuple envelope
+            || envelope.Items.Count < 2
+            || envelope.Items[1] is not PyTuple args
+            || args.Items.Count == 0)
+        {
+            return;
+        }
+
+        var action = JsSemantics.StringValue(args.Items[0]);
+        if (action is null)
+            return;
+
+        switch (action)
+        {
+            case "add" when args.Items.Count > 1 && TryTargetId(args.Items[1], out var targetId):
+                AddLockedTargets(notify.SessionId, [targetId]);
+                if (_pilots.TryGetValue(notify.SessionId, out var source))
+                    CancelSafeLogoff(source.Session, reasonCode: null, failedConditions: ["UI/Inflight/SafeLogoff/SafeLogoffCantTargetLockBody"]);
+                var target = _pilots.Values.FirstOrDefault(other => other.ShipId == targetId);
+                if (target is not null)
+                    CancelSafeLogoff(target.Session, reasonCode: null, failedConditions: ["UI/Inflight/SafeLogoff/SafeLogoffCantBeTargetLockedBody"]);
+                break;
+            case "lost" when args.Items.Count > 1 && TryTargetId(args.Items[1], out var lostTargetId):
+                RemoveLockedTarget(notify.SessionId, lostTargetId);
+                break;
+            case "clear":
+                _lockedTargets.TryRemove(notify.SessionId, out _);
+                break;
+            case "otheradd" when _pilots.TryGetValue(notify.SessionId, out var targetPilot):
+                CancelSafeLogoff(targetPilot.Session, reasonCode: null, failedConditions: ["UI/Inflight/SafeLogoff/SafeLogoffCantBeTargetLockedBody"]);
+                break;
+        }
+    }
+
+    private static bool TryTargetId(PyValue value, out long targetId)
+    {
+        targetId = value switch
+        {
+            PyInt integer => integer.Value,
+            PyLong integer => integer.Value,
+            _ => 0,
+        };
+        return targetId > 0;
+    }
+
+    private void RecordNpcCombatTimer(SimNotify notify, Pilot pilot)
+    {
+        if (notify.Name != "OnDamageMessage")
+        {
+            return;
+        }
+        var decoded = MarshalCodec.Decode(notify.Args.ToArray());
+        if (RecordNpcTimerAsync is not { } recordNpcTimer || _npcShips.IsEmpty
+            || decoded is not PyTuple { Items.Count: 1 } args
+            || args.Items[0] is not PyDict damage)
+        {
+            return;
+        }
+
+        static string? Text(PyValue value) => JsSemantics.StringValue(value);
+
+        long? Number(string name)
+        {
+            foreach (var (key, value) in damage.Entries)
+            {
+                if (Text(key) != name)
+                {
+                    continue;
+                }
+                return value switch
+                {
+                    PyInt integer => integer.Value,
+                    PyLong integer => integer.Value,
+                    _ => null,
+                };
+            }
+            return null;
+        }
+
+        string? AttackType()
+        {
+            foreach (var (key, value) in damage.Entries)
+            {
+                if (Text(key) == "attackType")
+                {
+                    return Text(value);
+                }
+            }
+            return null;
+        }
+
+        var attackType = AttackType();
+        var source = Number("source");
+        var target = Number("target");
+        var playerFiredAtNpc = attackType == "me" && target is { } npcTarget && _npcShips.ContainsKey(npcTarget);
+        var npcFiredAtPlayer = attackType == "otherPlayerWeapons"
+            && target == pilot.ShipId && source is { } npcSource && _npcShips.ContainsKey(npcSource);
+        if (playerFiredAtNpc || npcFiredAtPlayer)
+        {
+            Background(() => recordNpcTimer(pilot.CharacterId, CancellationToken.None));
         }
     }
 
@@ -861,12 +1026,14 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                     Forward(structureObserver, notify);
                     break;
                 case SimNotify notify when _pilots.TryGetValue(notify.SessionId, out var pilot):
+                    TrackTargetingNotification(notify);
                     Forward(pilot.Session, notify);
+                    RecordNpcCombatTimer(notify, pilot);
                     break;
                 case SimServiceNotify serviceNotify when _pilots.TryGetValue(serviceNotify.SessionId, out var servicePilot):
                     Forward(servicePilot.Session, serviceNotify);
                     break;
-                case SimAccepted accepted when !_structureObservers.ContainsKey(accepted.SessionId) && accepted.Command != SimCommands.ControlStructure && _pilots.TryGetValue(accepted.SessionId, out var mover):
+                case SimAccepted accepted when !_structureObservers.ContainsKey(accepted.SessionId) && accepted.Command != SimCommands.ControlStructure && accepted.Command != SimCommands.DockingReady && _pilots.TryGetValue(accepted.SessionId, out var mover):
                     if (accepted.Command == SimCommands.Stop)
                         _warping.TryRemove(accepted.SessionId, out _);
                     if (accepted.Command != SimCommands.Dock)
@@ -888,6 +1055,12 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                             _log?.Invoke($"the arrival of session {arrived.SessionId} at belt {arrived.BeltId} could not be dealt with: {error.Message}");
                         }
                     });
+                    break;
+                case SimAccepted ready when ready.Command == SimCommands.DockingReady:
+                    if (_pilots.TryGetValue(ready.SessionId, out var dockingPilot))
+                        Background(() => ResolveDockingAsync(dockingPilot, ready.At));
+                    else
+                        _sim.Command(ready.SessionId, SimCommands.DockingDecision, ready.At, 0);
                     break;
                 case SimDocked docked when _pilots.TryGetValue(docked.SessionId, out var pilot):
                     _warping.TryRemove(docked.SessionId, out _);
@@ -974,11 +1147,19 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                     break;
                 // an effect the simulation ended on its own account (the cycles done, the capacitor short, the target gone): the module is taken out of the
                 // numbers the ship is sent with, and the ship is sent again so the simulation drops the module's modifiers (FP-C1)
-                case SimModuleEnded ended when _pilots.TryGetValue(ended.SessionId, out var endedPilot) && endedPilot.ActiveModules.TryRemove(ended.ModuleId, out _):
-                    Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.Reset(ended.ModuleId);
-                    endedPilot.RunningModules.TryRemove(ended.ModuleId, out _);
-                    Background(() => SendShipAsync(ended.SessionId, endedPilot, null, CancellationToken.None));
-                    Background(() => RefreshRunningAsync(endedPilot, ended.SessionId, CancellationToken.None));
+                case SimModuleEnded ended when _pilots.TryGetValue(ended.SessionId, out var endedPilot):
+                    bool moduleRemoved;
+                    lock (endedPilot.ModuleLifecycleSync)
+                    {
+                        moduleRemoved = endedPilot.ActiveModules.TryRemove(ended.ModuleId, out _);
+                        if (moduleRemoved) endedPilot.RunningModules.TryRemove(ended.ModuleId, out _);
+                    }
+                    if (moduleRemoved)
+                    {
+                        Eve.Services.Space.Effects.ProjectedEffect.MutadaptiveSpool.Reset(ended.ModuleId);
+                        Background(() => SendShipAsync(ended.SessionId, endedPilot, null, CancellationToken.None));
+                        Background(() => RefreshRunningAsync(endedPilot, ended.SessionId, CancellationToken.None));
+                    }
                     break;
                 case SimRefused { Command: SimCommands.Stop, Reason: "IN_WARP" } inWarp when _pilots.TryGetValue(inWarp.SessionId, out var warping):
                     _warping[inWarp.SessionId] = 0;

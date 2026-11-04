@@ -2,12 +2,13 @@
 //!
 //! Nothing here reads a socket or a clock. [`Sim::handle`] takes a message and the time (a FILETIME) and answers with the
 //! messages to send back; [`Sim::poll`] finishes what is due. `eve-sim` puts sockets and a timer around it.
+pub mod clock;
 mod dispatch;
 mod spawn;
 #[cfg(test)]
 use self::dispatch::*;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use std::sync::{Arc, Mutex};
 
@@ -92,6 +93,28 @@ impl std::fmt::Display for ProtocolError {
 
 impl std::error::Error for ProtocolError {}
 
+#[derive(Clone, PartialEq)]
+struct PublicMoveFingerprint {
+    session_id: SessionId,
+    ship_id: i64,
+    source: SceneKey,
+    destination: SceneKey,
+    use_anchor: bool,
+    position: [f64; 3],
+    direction: [f64; 3],
+}
+
+/// A cutoff pauses later host input until pre-cutoff external work settles.
+struct CutoffFence {
+    epoch: u64,
+    deadline: i64,
+    scenes: BTreeSet<SceneKey>,
+    scene_bytes: BTreeMap<SceneKey, usize>,
+    started_wall: i64,
+    deferred: Vec<(Message, i64, usize)>,
+    deferred_bytes: usize,
+}
+
 /// The scenes of one host connection.
 pub struct Sim {
     universe: Arc<Universe>,
@@ -99,11 +122,30 @@ pub struct Sim {
     sessions: HashMap<SessionId, SceneKey>,
     /// The sessions whose ship was destroyed and have none yet: the system whose scene keeps their ballpark until the host gives them a capsule.
     widowed: HashMap<SessionId, SceneKey>,
+    public_moves: HashMap<String, PublicMoveFingerprint>,
+    public_enters: HashMap<String, Enter>,
+    scene_clocks: clock::SceneClocks,
+    cutoff_fence: Option<CutoffFence>,
+    next_cutoff_epoch: u64,
+    last_wall: i64,
+    deferred_error: Option<ProtocolError>,
 }
 
 impl Sim {
     pub fn new(universe: Arc<Universe>) -> Self {
-        Self { universe, scenes: BTreeMap::new(), sessions: HashMap::new(), widowed: HashMap::new() }
+        Self {
+            universe,
+            scenes: BTreeMap::new(),
+            sessions: HashMap::new(),
+            widowed: HashMap::new(),
+            public_moves: HashMap::new(),
+            public_enters: HashMap::new(),
+            scene_clocks: clock::SceneClocks::default(),
+            cutoff_fence: None,
+            next_cutoff_epoch: 0,
+            last_wall: i64::MIN,
+            deferred_error: None,
+        }
     }
 
     /// The ships in space.
@@ -118,6 +160,22 @@ impl Sim {
             .filter(|out| !is_npc_session(out.session()) || matches!(out, Out::Destroyed { .. }))
             .map(Self::out_message)
             .collect()
+    }
+
+    /// Track external wall observations. Once any tournament identity is
+    /// registered, a wall-clock correction cannot replay inputs before it.
+    fn observe_wall(&mut self, now: i64, registering: bool) -> i64 {
+        self.last_wall = self.last_wall.max(now);
+        if registering
+            || self
+                .scenes
+                .values()
+                .any(|scene| scene.tournament_has_tracking() || scene.tournament_has_metrics())
+        {
+            self.last_wall
+        } else {
+            now
+        }
     }
 
     fn scene_of(&mut self, session: SessionId) -> Option<&mut Scene> {

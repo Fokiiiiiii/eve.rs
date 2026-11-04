@@ -26,9 +26,9 @@ public class DroneHostTests
     /// <summary>A pilot in space with a Hobgoblin I in the drone bay of its ship, and the Drones skill at level 1 unless <paramref name="skill"/> is 0.</summary>
     internal static async Task<Flying> FlyingWithADroneAsync(
         Rig rig, int skill = 1, bool withDroneDamageAmplifier = false, bool withDroneLinkAugmentor = false, int? droneTypeId = null, int? minerTypeId = null,
-        int? solarSystemId = null, string characterName = "Space Tester", int? mutatorTypeId = null, long sessionId = 1)
+        int? solarSystemId = null, string characterName = "Space Tester", int? mutatorTypeId = null, long sessionId = 1, int? shipTypeId = null)
     {
-        var character = await rig.NewCharacterAsync(characterName);
+        var character = await rig.NewCharacterAsync(characterName, shipTypeId: shipTypeId ?? Rig.Cockroach);
         if (solarSystemId is { } system)
         {
             // the pilot lives in that system from the start: its location is the system's constellation and region (the static data's)

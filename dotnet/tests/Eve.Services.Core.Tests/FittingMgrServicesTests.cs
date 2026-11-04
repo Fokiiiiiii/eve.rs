@@ -110,6 +110,14 @@ public sealed class FittingMgrServicesTests : IAsyncLifetime
         ("shipTypeID", new PyInt(Tengu)),
         ("fitData", new PyList([Py.Tuple(new PyInt(DamageControl), new PyInt(flag), new PyInt(1))])));
 
+    private static PyValue FittingWithRows(string name, params PyValue[] rows) => Py.KeyVal(
+        ("name", new PyStr(name)),
+        ("description", new PyStr("text")),
+        ("shipTypeID", new PyInt(Tengu)),
+        ("fitData", new PyList(rows)));
+
+    private static PyValue FittingRow() => Py.Tuple(new PyInt(DamageControl), new PyInt(11), new PyInt(1));
+
     private static ServiceCall Call(string method, ClientSession session, params PyValue[] args) =>
         new() { Method = method, Args = args, Session = session };
 
@@ -147,6 +155,104 @@ public sealed class FittingMgrServicesTests : IAsyncLifetime
         Assert.Equal(MachoErrors.UserErrorClass, error.Error.ClassName);
         Assert.Equal("InvalidFittingDataInvalidFlag", error.Error.UserErrorMessage);
         Assert.Empty(Assert.IsType<PyDict>(await service.CallAsync(Call("GetFittings", session, new PyInt(Character)))).Entries);
+    }
+
+    [FittingPgFact]
+    public async Task Saving_refuses_short_and_non_sequence_rows_without_partial_data_or_notifications()
+    {
+        var (_, _, calls) = await SetUpAsync();
+        var sink = new Sink();
+        var session = SessionOf(sink, Character);
+        IService service = new CharFittingMgrService(calls);
+        var malformed = new[]
+        {
+            (FittingWithRows("short row", FittingRow(), Py.Tuple(new PyInt(DamageControl), new PyInt(11))),
+                "InvalidFittingDataInvalidQuantity"),
+            (FittingWithRows("non-sequence row", FittingRow(), new PyStr("not a tuple or list")),
+                "InvalidFittingDataTypeID"),
+        };
+
+        foreach (var (fitting, message) in malformed)
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+                service.CallAsync(Call("SaveFitting", session, new PyInt(Character), fitting)).AsTask());
+
+            Assert.Equal(MachoErrors.UserErrorClass, error.Error.ClassName);
+            Assert.Equal(message, error.Error.UserErrorMessage);
+            Assert.Empty(Assert.IsType<PyDict>(await service.CallAsync(Call("GetFittings", session, new PyInt(Character)))).Entries);
+        }
+
+        Assert.False(sink.Sent("OnFittingAdded"));
+    }
+
+    [FittingPgFact]
+    public async Task Updating_refuses_malformed_rows_and_keeps_the_existing_data_without_notifications()
+    {
+        var (_, _, calls) = await SetUpAsync();
+        var sink = new Sink();
+        var session = SessionOf(sink, Character);
+        IService service = new CharFittingMgrService(calls);
+        var fittingId = ((PyLong)await service.CallAsync(Call("SaveFitting", session, new PyInt(Character), Fitting()))).Value;
+        var before = Convert.ToHexString(MarshalCodec.Encode(await service.CallAsync(
+            Call("GetFittings", session, new PyInt(Character)))));
+        sink.Packets.Clear();
+        var malformed = new[]
+        {
+            (FittingWithRows("short row", FittingRow(), Py.Tuple(new PyInt(DamageControl), new PyInt(11))),
+                "InvalidFittingDataInvalidQuantity"),
+            (FittingWithRows("non-sequence row", FittingRow(), new PyStr("not a tuple or list")),
+                "InvalidFittingDataTypeID"),
+        };
+
+        foreach (var (fitting, message) in malformed)
+        {
+            var update = new ServiceCall
+            {
+                Method = "UpdateFitting",
+                Args = [new PyInt(Character), fitting],
+                Kwargs = new PyDict([new KeyValuePair<PyValue, PyValue>(new PyStr("fittingID"), new PyLong(fittingId))]),
+                Session = session,
+            };
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(update).AsTask());
+
+            Assert.Equal(MachoErrors.UserErrorClass, error.Error.ClassName);
+            Assert.Equal(message, error.Error.UserErrorMessage);
+            var after = Convert.ToHexString(MarshalCodec.Encode(await service.CallAsync(
+                Call("GetFittings", session, new PyInt(Character)))));
+            Assert.Equal(before, after);
+        }
+
+        Assert.False(sink.Sent("OnFittingAdded"));
+    }
+
+    [FittingPgFact]
+    public async Task Bulk_saving_refuses_malformed_rows_without_persisting_any_fit_or_notifying()
+    {
+        var (_, _, calls) = await SetUpAsync();
+        var sink = new Sink();
+        var session = SessionOf(sink, Character);
+        IService service = new CharFittingMgrService(calls);
+        var malformedRows = new (PyValue Row, string Message)[]
+        {
+            (Py.Tuple(new PyInt(DamageControl), new PyInt(11)), "InvalidFittingDataInvalidQuantity"),
+            (new PyStr("not a tuple or list"), "InvalidFittingDataTypeID"),
+        };
+
+        foreach (var (row, message) in malformedRows)
+        {
+            var entries = new PyDict([
+                new KeyValuePair<PyValue, PyValue>(new PyInt(-1), Fitting("valid batch entry")),
+                new KeyValuePair<PyValue, PyValue>(new PyInt(-2), FittingWithRows("malformed batch entry", FittingRow(), row)),
+            ]);
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+                service.CallAsync(Call("SaveManyFittings", session, new PyInt(Character), entries)).AsTask());
+
+            Assert.Equal(MachoErrors.UserErrorClass, error.Error.ClassName);
+            Assert.Equal(message, error.Error.UserErrorMessage);
+            Assert.Empty(Assert.IsType<PyDict>(await service.CallAsync(Call("GetFittings", session, new PyInt(Character)))).Entries);
+        }
+
+        Assert.False(sink.Sent("OnFittingAdded"));
     }
 
     [FittingPgFact]

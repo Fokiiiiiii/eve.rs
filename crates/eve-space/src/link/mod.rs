@@ -10,9 +10,15 @@ mod encode;
 mod field_partition_tests;
 mod payload;
 mod reader;
+mod tournament_cutoff;
+pub(crate) mod tournament_metrics;
 use self::decode::*;
 use self::decode_action::*;
 use self::encode::*;
+pub use tournament_cutoff::CutoffIdentity;
+pub use tournament_metrics::{
+    MetricsCompanion, MetricsFitted, MetricsIdentity, MetricsPilot, MetricsRunning, MetricsSample,
+};
 
 use crate::death::Credit;
 
@@ -37,7 +43,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 84;
+pub const PROTOCOL_VERSION: u16 = 91;
 
 /// A battlefield's capture point the host puts in space (protocol 77): a ball the pilots of its system see. Its factions (the attacker and the
 /// occupier, 0 for none) and its next point time (a FILETIME, 0 for none) are the dynamic slim fields the client reads from it.
@@ -526,6 +532,14 @@ pub struct AbyssalRewardCachePlacement {
     pub direction: [f64; 3],
 }
 
+pub(crate) fn valid_public_move_id(value: &str) -> bool {
+    value.len() == 36
+        && value
+            .bytes()
+            .enumerate()
+            .all(|(i, b)| if matches!(i, 8 | 13 | 18 | 23) { b == b'-' } else { b.is_ascii_hexdigit() })
+}
+
 pub(crate) fn valid_abyssal_content_id(value: &str) -> bool {
     let bytes = value.as_bytes();
     bytes.len() == 36
@@ -760,6 +774,90 @@ pub enum Message {
         request_id: u64,
         outcome: Result<(), String>,
     },
+    MovePublicParticipant {
+        request_id: u64,
+        operation_id: String,
+        session_id: u64,
+        ship_id: i64,
+        source: SceneKey,
+        destination: SceneKey,
+        use_anchor: bool,
+        position: [f64; 3],
+        direction: [f64; 3],
+    },
+    MovePublicParticipantReply {
+        request_id: u64,
+        outcome: Result<(), String>,
+    },
+    RegisterTournamentMetrics {
+        identity: MetricsIdentity,
+    },
+    RegisterTournamentMetricsReply {
+        identity: MetricsIdentity,
+        status: u8,
+        error: String,
+    },
+    ReadTournamentMetrics {
+        identity: MetricsIdentity,
+    },
+    ReadTournamentMetricsV2 {
+        identity: MetricsIdentity,
+    },
+    ReadTournamentMetricsV2Reply {
+        identity: MetricsIdentity,
+        status: u8,
+        error: String,
+        sample: Option<MetricsSample>,
+    },
+    ReadTournamentMetricsReply {
+        identity: MetricsIdentity,
+        status: u8,
+        error: String,
+        sample: Option<MetricsSample>,
+    },
+    ReleaseTournamentMetrics {
+        identity: MetricsIdentity,
+    },
+    ReleaseTournamentMetricsReply {
+        identity: MetricsIdentity,
+        status: u8,
+        error: String,
+    },
+    ReleaseTournamentCutoff {
+        identity: CutoffIdentity,
+    },
+    ReleaseTournamentCutoffReply {
+        identity: CutoffIdentity,
+        status: u8,
+        error: String,
+    },
+    RegisterTournamentCutoff {
+        identity: CutoffIdentity,
+        roster: Vec<(i64, i64)>,
+    },
+    RegisterTournamentCutoffReply {
+        identity: CutoffIdentity,
+        status: u8,
+        error: String,
+    },
+    ReadTournamentCutoff {
+        identity: CutoffIdentity,
+    },
+    ReadTournamentCutoffReply {
+        identity: CutoffIdentity,
+        status: u8,
+        evidence: Vec<(i64, i64, u8)>,
+        error: String,
+    },
+    EnterPublicParticipant {
+        request_id: u64,
+        operation_id: String,
+        enter: Box<Enter>,
+    },
+    EnterPublicParticipantReply {
+        request_id: u64,
+        outcome: Result<(), String>,
+    },
     MoveAbyssalParticipant {
         request_id: u64,
         ship_id: i64,
@@ -829,6 +927,70 @@ pub enum Message {
         already_absent: bool,
         error: Option<String>,
     },
+    EnsureTournamentBeacon {
+        request_id: u64,
+        scene: SceneKey,
+        item_id: i64,
+        type_id: i32,
+        group_id: i32,
+        category_id: i32,
+        owner_id: i64,
+        graphic_id: i32,
+        name: String,
+        position: [f64; 3],
+        radius: f64,
+    },
+    EnsureTournamentBeaconReply {
+        request_id: u64,
+        outcome: Result<(), String>,
+    },
+    RemoveTournamentBeacon {
+        request_id: u64,
+        scene: SceneKey,
+        item_id: i64,
+    },
+    RemoveTournamentBeaconReply {
+        request_id: u64,
+        outcome: Result<(), String>,
+    },
+    QueryTournamentWreck {
+        request_id: u64,
+        scene: SceneKey,
+        item_id: i64,
+    },
+    QueryTournamentWreckReply {
+        request_id: u64,
+        scene: SceneKey,
+        item_id: i64,
+        outcome: Result<bool, String>,
+    },
+    RemoveTournamentWreck {
+        request_id: u64,
+        scene: SceneKey,
+        item_id: i64,
+        owner_id: i64,
+        launcher_id: i64,
+        type_id: i32,
+        center: [f64; 3],
+        radius: f64,
+    },
+    RemoveTournamentWreckReply {
+        request_id: u64,
+        scene: SceneKey,
+        item_id: i64,
+        outcome: Result<bool, String>,
+    },
+    GetSceneBody {
+        request_id: u64,
+        scene: SceneKey,
+        item_id: i64,
+    },
+    GetSceneBodyReply {
+        request_id: u64,
+        scene: SceneKey,
+        item_id: i64,
+        outcome: Result<(i32, i32, i32, [f64; 3]), String>,
+    },
     GetAbyssalParticipantPose {
         request_id: u64,
         scene: SceneKey,
@@ -856,6 +1018,10 @@ pub enum Message {
         session_id: u64,
     },
     UpdateState {
+        session_id: u64,
+    },
+    /// The Host says the session entered space with an active criminal timer (protocol 91).
+    CriminalFlagActive {
         session_id: u64,
     },
     /// The host makes a session observe a structure in this system; generation is the Host's StructurePilotRecord.Version (protocol 68).
@@ -1469,6 +1635,24 @@ impl Message {
             Self::EnsureAbyssalRewardCacheReply { .. } => kind::ENSURE_ABYSSAL_REWARD_CACHE_REPLY,
             Self::EnsureAbyssalLootContainer { .. } => kind::ENSURE_ABYSSAL_LOOT_CONTAINER,
             Self::EnsureAbyssalLootContainerReply { .. } => kind::ENSURE_ABYSSAL_LOOT_CONTAINER_REPLY,
+            Self::MovePublicParticipant { .. } => kind::MOVE_PUBLIC_PARTICIPANT,
+            Self::MovePublicParticipantReply { .. } => kind::MOVE_PUBLIC_PARTICIPANT_REPLY,
+            Self::RegisterTournamentMetrics { .. } => kind::REGISTER_TOURNAMENT_METRICS,
+            Self::RegisterTournamentMetricsReply { .. } => kind::REGISTER_TOURNAMENT_METRICS_REPLY,
+            Self::ReadTournamentMetrics { .. } => kind::READ_TOURNAMENT_METRICS,
+            Self::ReadTournamentMetricsReply { .. } => kind::READ_TOURNAMENT_METRICS_REPLY,
+            Self::ReadTournamentMetricsV2 { .. } => kind::READ_TOURNAMENT_METRICS_V2,
+            Self::ReadTournamentMetricsV2Reply { .. } => kind::READ_TOURNAMENT_METRICS_V2_REPLY,
+            Self::ReleaseTournamentMetrics { .. } => kind::RELEASE_TOURNAMENT_METRICS,
+            Self::ReleaseTournamentMetricsReply { .. } => kind::RELEASE_TOURNAMENT_METRICS_REPLY,
+            Self::ReleaseTournamentCutoff { .. } => kind::RELEASE_TOURNAMENT_CUTOFF,
+            Self::ReleaseTournamentCutoffReply { .. } => kind::RELEASE_TOURNAMENT_CUTOFF_REPLY,
+            Self::RegisterTournamentCutoff { .. } => kind::REGISTER_TOURNAMENT_CUTOFF,
+            Self::RegisterTournamentCutoffReply { .. } => kind::REGISTER_TOURNAMENT_CUTOFF_REPLY,
+            Self::ReadTournamentCutoff { .. } => kind::READ_TOURNAMENT_CUTOFF,
+            Self::ReadTournamentCutoffReply { .. } => kind::READ_TOURNAMENT_CUTOFF_REPLY,
+            Self::EnterPublicParticipant { .. } => kind::ENTER_PUBLIC_PARTICIPANT,
+            Self::EnterPublicParticipantReply { .. } => kind::ENTER_PUBLIC_PARTICIPANT_REPLY,
             Self::MoveAbyssalParticipant { .. } => kind::MOVE_ABYSSAL_PARTICIPANT,
             Self::MoveAbyssalParticipantReply { .. } => kind::MOVE_ABYSSAL_PARTICIPANT_REPLY,
             Self::RebindAbyssalSession { .. } => kind::REBIND_ABYSSAL_SESSION,
@@ -1481,6 +1665,16 @@ impl Message {
             Self::RemoveAbyssalTraceReply { .. } => kind::REMOVE_ABYSSAL_TRACE_REPLY,
             Self::RemoveAbyssalParticipant { .. } => kind::REMOVE_ABYSSAL_PARTICIPANT,
             Self::RemoveAbyssalParticipantReply { .. } => kind::REMOVE_ABYSSAL_PARTICIPANT_REPLY,
+            Self::EnsureTournamentBeacon { .. } => kind::ENSURE_TOURNAMENT_BEACON,
+            Self::EnsureTournamentBeaconReply { .. } => kind::ENSURE_TOURNAMENT_BEACON_REPLY,
+            Self::RemoveTournamentBeacon { .. } => kind::REMOVE_TOURNAMENT_BEACON,
+            Self::RemoveTournamentBeaconReply { .. } => kind::REMOVE_TOURNAMENT_BEACON_REPLY,
+            Self::QueryTournamentWreck { .. } => kind::QUERY_TOURNAMENT_WRECK,
+            Self::QueryTournamentWreckReply { .. } => kind::QUERY_TOURNAMENT_WRECK_REPLY,
+            Self::RemoveTournamentWreck { .. } => kind::REMOVE_TOURNAMENT_WRECK,
+            Self::RemoveTournamentWreckReply { .. } => kind::REMOVE_TOURNAMENT_WRECK_REPLY,
+            Self::GetSceneBody { .. } => kind::GET_SCENE_BODY,
+            Self::GetSceneBodyReply { .. } => kind::GET_SCENE_BODY_REPLY,
             Self::GetAbyssalParticipantPose { .. } => kind::GET_ABYSSAL_PARTICIPANT_POSE,
             Self::GetAbyssalParticipantPoseReply { .. } => kind::GET_ABYSSAL_PARTICIPANT_POSE_REPLY,
             Self::Enter(_) => kind::ENTER,
@@ -1488,6 +1682,7 @@ impl Message {
             Self::Leave { .. } => kind::LEAVE,
             Self::Bind { .. } => kind::BIND,
             Self::UpdateState { .. } => kind::UPDATE_STATE,
+            Self::CriminalFlagActive { .. } => kind::CRIMINAL_FLAG_ACTIVE,
             Self::ControlStructure { .. } => kind::CONTROL_STRUCTURE,
             Self::Command { .. } => kind::COMMAND,
             Self::ShipSpec { .. } => kind::SHIP_SPEC,

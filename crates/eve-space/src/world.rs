@@ -21,6 +21,8 @@ pub enum BodyKind {
     Structure,
     /// A wormhole end the host puts in space (protocol 63): a body of its system whose far end is in another system.
     Wormhole,
+    /// A durable public tournament arena beacon placed by the host.
+    TournamentBeacon,
     /// A static transfer or origin conduit in one isolated Abyssal room.
     AbyssalConduit,
     AbyssalEnvironment,

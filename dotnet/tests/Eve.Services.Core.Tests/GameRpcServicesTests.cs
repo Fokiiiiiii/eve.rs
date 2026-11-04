@@ -69,7 +69,12 @@ public sealed class GameRpcServicesTests
             {
                 seededQuantity = quantity ?? -1;
                 return ValueTask.FromResult<int?>(quantity ?? 8);
-            });
+            },
+            RaffleProxy: new RaffleProxyCallbacks((operation, _, _) =>
+            {
+                Assert.Equal("AmIBanned", operation);
+                return ValueTask.FromResult<PyValue>(PyBool.False);
+            }));
         var services = CoreServices.Create(new NoAccounts(), () => 1_700_000_000_000,
             gameRpcCallbacks: callbacks);
         var staff = Session(1);

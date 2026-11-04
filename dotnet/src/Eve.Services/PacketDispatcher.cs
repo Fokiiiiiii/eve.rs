@@ -80,7 +80,7 @@ public sealed class PacketDispatcher
             case MachoMessage.ErrorResponse:
                 return true;
             case MachoMessage.Notification:
-                HandleNotification(packet, session);
+                await HandleNotificationAsync(packet, session, ct).ConfigureAwait(false);
                 return true;
             case MachoMessage.PingReq:
                 session.Send(ResponseBuilder.PingResponse(packet, _nowUnixMs()));
@@ -629,7 +629,7 @@ public sealed class PacketDispatcher
 
     // ── notifications ───────────────────────────────────────────────────────
 
-    private void HandleNotification(MachoPacket packet, ClientSession session)
+    private async Task HandleNotificationAsync(MachoPacket packet, ClientSession session, CancellationToken cancellationToken)
     {
         var carriers = new[] { packet.NamedPayload, packet.Oob };
         var hasReleaseMetadata = carriers.Any(carrier =>
@@ -663,9 +663,11 @@ public sealed class PacketDispatcher
         }
 
         var refIds = ReleasedRefIds(carriers);
+        var owned = session.BoundOids.ToHashSet(StringComparer.Ordinal);
         foreach (var oid in ordered)
         {
-            _registry.UnregisterBoundObject(oid, session, refIds.GetValueOrDefault(oid));
+            if (!owned.Contains(oid)) continue;
+            await _registry.UnregisterBoundObjectAsync(oid, session, refIds.GetValueOrDefault(oid), cancellationToken).ConfigureAwait(false);
         }
     }
 

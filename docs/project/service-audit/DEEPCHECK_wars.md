@@ -66,3 +66,10 @@ Client calls は `war_cso.py`; UI actions は `warWindows.py`。成功時 client
 - negotiation では persistence、subsequent read、通知順、再起動後の state を Host tests で確認する必要がある。EveJS は `warNegotiationRuntimeState.js` と `warNotificationCenter.js` を使う。
 - negotiationのint/long両形、None/message optional、UserError/exception envelope、bound kwargs、再起動後の状態、GUI clientはこの作業で実行確認していない。
 - GetPublicWarInfoのPostgreSQL Host wire回帰はfocused runでpass。Graphical client検証は未実施。
+## GetPublicWarInfo merge evidence (2026-11-02)
+
+The pinned V24.01 client passes `structureInfo.wars` from `structureEntryController.py:195-196` at `eve/client/script/ui/structure/structureIcon.py:44`; the consumer iterates/slices the result and reads `againstID` / `declaredByID` (`structureIcon.py:50-65`). This collection contract is why the Host accepts list/tuple war IDs and returns an ordered PyList of existing KeyVals, omitting unknown IDs, while retaining scalar known/unknown compatibility.
+
+Both registered-wire test records are retained: mainline `Wars_info_rpcs_keep_client_shapes_through_registered_host_with_transport_kwargs`, and `WarsInfoMgrPublicBatchHostWireTests.Public_war_info_accepts_structure_war_id_batches_through_registered_host_wire` (PostgreSQL; ordered list/tuple, unknown omission, scalar compatibility). At pinned EveJS commit `7cc6f323c7c5c92c2738476a62768318799d8077`, `server/src/services/corporation/warsInfoMgrService.js` still parses a single numeric `args[0]` and returns one KeyVal or null, so the Host collection behavior follows the pinned client caller contract rather than that scalar EveJS implementation.
+
+The Python-set marshal path for `GetWarsByOwners`, negotiation persistence/notifications, bound nested calls, and graphical-client execution remain unverified.

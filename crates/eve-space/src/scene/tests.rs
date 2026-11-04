@@ -27,7 +27,7 @@ pub(crate) fn system() -> Arc<SolarSystem> {
         constellation_id: 20_000_001,
         region_id: 10_000_001,
         faction_id: None,
-        security: 0.9,
+        security: 0.0,
         bodies: vec![station],
     })
 }
@@ -83,6 +83,79 @@ fn scene() -> Scene {
     let mut scene = Scene::new(system());
     scene.undock(SESSION, spec(), STATION, NOON).unwrap();
     scene
+}
+
+#[test]
+fn tournament_damage_ledger_records_real_area_damage_and_preserves_unknown_history() {
+    use super::tournament_metrics::Participant;
+    let mut scene = Scene::new(system());
+    let first = spec();
+    let mut second = spec();
+    second.ship_id += 100;
+    second.character_id += 100;
+    scene.enter_in_space(SESSION, first.clone(), [1_000.0, 0.0, 0.0], [1.0, 0.0, 0.0], NOON).unwrap();
+    scene.enter_in_space(SESSION + 1, second.clone(), [2_000.0, 0.0, 0.0], [1.0, 0.0, 0.0], NOON).unwrap();
+    let roster = vec![
+        Participant { character: first.character_id, ship: first.ship_id, team: 0 },
+        Participant { character: second.character_id, ship: second.ship_id, team: 1 },
+    ];
+    scene.tournament_metrics_register(1, 1, NOON + SECOND, NOON, roster.clone()).unwrap();
+    assert_eq!(scene.tournament_metrics.snapshot(1, 1, NOON), Some([0.0, 0.0]));
+    let at = NOON + SECOND;
+    scene.damage_ship(SESSION, 1, (SESSION + 1, second.ship_id), [0.0, 20.0, 0.0, 0.0], at);
+    let measured = scene.tournament_metrics.snapshot(1, 1, at).unwrap();
+    assert!((measured[0] - 16.0).abs() < 1e-6, "{measured:?}");
+    assert_eq!(measured[1], 0.0);
+    let sample = scene.tournament_metrics_sample(1, 1, NOON + SECOND, at, &roster).unwrap();
+    assert_eq!(sample.at, at);
+    assert_eq!(sample.applied, Some(measured));
+    assert_eq!(sample.pilots.len(), 2);
+    assert_eq!(sample.pilots[0].fitted[0].item_id, first.modules[0].item_id);
+    assert_eq!(sample.pilots[0].fitted[0].overloaded, None);
+    assert!(scene.tournament_metrics_sample(1, 2, NOON + SECOND, at, &roster).is_none());
+    assert!(scene.tournament_metrics_sample(1, 1, NOON, at, &roster).is_none());
+    assert!(scene.tournament_metrics_sample(1, 1, NOON + SECOND, at, &roster[..1]).is_none());
+    assert_eq!(scene.tournament_metrics.snapshot(1, 1, at + SECOND), Some([0.0, 0.0]));
+    scene.tournament_metrics.register(2, 1, NOON, at, roster.clone()).unwrap();
+    assert_eq!(scene.tournament_metrics.snapshot(2, 1, at), None);
+    assert_eq!(scene.tournament_metrics.snapshot(2, 1, at + SECOND - 1), None);
+    assert_eq!(scene.tournament_metrics.snapshot(2, 1, at + SECOND), Some([0.0, 0.0]));
+    scene.tournament_departed(first.character_id, first.ship_id, at + SECOND);
+    assert_eq!(scene.tournament_metrics.snapshot(1, 1, at + SECOND), None);
+    assert!(scene.tournament_has_metrics());
+    assert!(scene.tournament_metrics.release(1, 1, NOON, roster.clone()).is_err());
+    scene.tournament_metrics.release(1, 1, NOON + SECOND, roster.clone()).unwrap();
+    scene.tournament_metrics.release(1, 1, NOON + SECOND, roster.clone()).unwrap();
+    assert!(scene.tournament_metrics.register(1, 1, NOON + SECOND, at, roster.clone()).is_err());
+    assert_eq!(scene.tournament_metrics.snapshot(1, 1, at + SECOND), None);
+}
+
+#[test]
+fn tournament_damage_ledger_fails_closed_on_overflow_unknown_source_and_clock_regression() {
+    use super::tournament_metrics::{Participant, Source};
+    let mut scene = Scene::new(system());
+    let first = spec();
+    scene.enter_in_space(SESSION, first.clone(), [1_000.0, 0.0, 0.0], [1.0, 0.0, 0.0], NOON).unwrap();
+    let hit = scene.damage(first.ship_id, [0.0, 1.0, 0.0, 0.0], NOON).1;
+    assert!(hit.is_some());
+    let roster = vec![Participant { character: first.character_id, ship: first.ship_id, team: 0 }];
+    for id in 1..=3 {
+        scene.tournament_metrics.register(id, 1, NOON + 1, NOON, roster.clone()).unwrap();
+    }
+    scene.tournament_metrics.record(Source::Ship(777), first.ship_id, NOON + 1, hit);
+    assert_eq!(scene.tournament_metrics.snapshot(1, 1, NOON + 1), None);
+    for id in 1..=3 {
+        scene.tournament_metrics.release(id, 1, NOON + 1, roster.clone()).unwrap();
+    }
+    scene.tournament_metrics.register(4, 1, NOON + 1, NOON, roster.clone()).unwrap();
+    for _ in 0..=4096 {
+        scene.tournament_metrics.record(Source::Ship(first.ship_id), first.ship_id, NOON + 1, hit);
+    }
+    assert_eq!(scene.tournament_metrics.snapshot(4, 1, NOON + 1), None);
+    scene.tournament_metrics.register(5, 1, NOON + 1, NOON, roster).unwrap();
+    assert_eq!(scene.tournament_metrics.snapshot(5, 1, NOON + 2), Some([0.0, 0.0]));
+    scene.tournament_metrics.record(Source::Ship(first.ship_id), first.ship_id, NOON + 1, hit);
+    assert_eq!(scene.tournament_metrics.snapshot(5, 1, NOON + 3), None);
 }
 
 #[test]
@@ -272,7 +345,7 @@ fn binding_sends_the_time_the_ship_then_the_state_then_the_ship_numbers() {
         ]
     );
     assert_eq!(action_names(&out[4]), ["SetState"]);
-    assert_eq!(action_names(&out[5]), ["SetBallAgility", "SetMaxSpeed"]);
+    assert!(action_names(&out[5]).is_empty());
     // the ship comes at the stamp of the moment and the state a stamp after (the reference's 102 and 103)
     let now_stamp = i64::from(stamp_at(NOON));
     assert_eq!(stamps(&out[2]), [now_stamp]);
@@ -814,10 +887,69 @@ fn an_accepted_docking_stops_the_ship_and_takes_four_seconds() {
     assert!(scene.contains(SESSION));
     assert_eq!(
         scene.poll(NOON + seconds(4)),
+        [Out::Accepted { session: SESSION, command: DOCKING_READY_COMMAND, at: STATION }]
+    );
+    assert!(scene.contains(SESSION), "the host decides after the docking delay");
+    assert_eq!(
+        scene.command(
+            SESSION,
+            Command::DockingDecision { station_id: STATION, allowed: true },
+            NOON + seconds(4),
+        ),
         [Out::Docked { session: SESSION, station_id: STATION, condition: Condition::FULL }]
     );
     assert!(!scene.contains(SESSION));
     assert!(scene.poll(NOON + seconds(9)).is_empty(), "docked once");
+}
+
+#[test]
+fn a_denied_docking_decision_releases_the_ship_and_cannot_be_replayed() {
+    let mut scene = near_the_station();
+    scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);
+
+    assert_eq!(
+        scene.command(
+            SESSION,
+            Command::DockingDecision { station_id: STATION, allowed: true },
+            NOON + seconds(1),
+        ),
+        [],
+        "the host cannot finish a docking before the four second delay"
+    );
+    assert!(scene.contains(SESSION));
+    assert_eq!(
+        scene.poll(NOON + seconds(4)),
+        [Out::Accepted { session: SESSION, command: DOCKING_READY_COMMAND, at: STATION }]
+    );
+    assert_eq!(
+        scene.command(
+            SESSION,
+            Command::DockingDecision { station_id: STATION + 1, allowed: true },
+            NOON + seconds(4),
+        ),
+        [],
+        "the decision must name the pending dock target"
+    );
+    assert!(scene.contains(SESSION));
+
+    let denied = scene.command(
+        SESSION,
+        Command::DockingDecision { station_id: STATION, allowed: false },
+        NOON + seconds(4),
+    );
+    assert_eq!(action_names(&denied[0]), ["SetBallMassive"]);
+    assert!(scene.contains(SESSION), "a denied dock leaves the ship in space");
+    assert!(
+        scene
+            .command(
+                SESSION,
+                Command::DockingDecision { station_id: STATION, allowed: true },
+                NOON + seconds(4),
+            )
+            .is_empty(),
+        "a later decision cannot reuse the denied docking"
+    );
+    assert!(scene.contains(SESSION));
 }
 
 #[test]
@@ -827,7 +959,20 @@ fn a_ship_that_docks_leaves_the_station_with_no_rack_heat() {
     let mut scene = near_the_station();
     scene.pilots.get_mut(&SESSION).unwrap().heat.levels = [40.0, 10.0, 5.0];
     scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);
-    assert!(matches!(scene.poll(NOON + seconds(4)).first(), Some(Out::Docked { .. })));
+    assert_eq!(
+        scene.poll(NOON + seconds(4)),
+        [Out::Accepted { session: SESSION, command: DOCKING_READY_COMMAND, at: STATION }]
+    );
+    assert!(matches!(
+        scene
+            .command(
+                SESSION,
+                Command::DockingDecision { station_id: STATION, allowed: true },
+                NOON + seconds(4),
+            )
+            .first(),
+        Some(Out::Docked { .. })
+    ));
     scene.undock(SESSION, spec(), STATION, NOON + seconds(10)).unwrap();
     assert_eq!(scene.pilots[&SESSION].heat.levels, [0.0, 0.0, 0.0]);
 }
@@ -919,7 +1064,7 @@ fn a_ship_told_to_follow_says_so_and_a_repeat_says_nothing() {
 fn a_ship_that_stands_still_is_set_going_by_the_command_that_follows_orbits_or_aligns() {
     let stopped = || {
         let mut scene = scene();
-        scene.command(SESSION, Command::Stop, NOON);
+        scene.command(SESSION, Command::SetSpeedFraction(0.0), NOON);
         scene
     };
     let later = NOON + seconds(120);
@@ -940,6 +1085,13 @@ fn a_ship_that_stands_still_is_set_going_by_the_command_that_follows_orbits_or_a
     let align = stopped().command(SESSION, Command::AlignTo { target_id: STATION }, later);
     assert_eq!(action_names(&align[0]), ["GotoDirection", "SetSpeedFraction"]);
     assert_eq!(speed_set(&align), Some(vec![Value::Real(0.75)]));
+
+    let mut retained = scene();
+    retained.command(SESSION, Command::SetSpeedFraction(0.5), NOON);
+    retained.command(SESSION, Command::Stop, NOON + seconds(1));
+    let follow = retained.command(SESSION, Command::FollowBall { target_id: STATION, range: 1_000.0 }, later);
+    assert_eq!(action_names(&follow[0]), ["FollowBall"]);
+    assert_eq!(retained.ship(SESSION, later).unwrap().speed_fraction, 0.5);
 
     // a ship already moving keeps its speed and says nothing of it
     let moving = scene().command(SESSION, Command::AlignTo { target_id: STATION }, later);
@@ -1270,9 +1422,10 @@ fn a_ship_that_stands_still_is_not_told_to_stop_again() {
     assert_eq!(action_names(&scene.command(SESSION, Command::Stop, NOON + seconds(1))[0]), ["Stop"]);
     let later = scene.command(SESSION, Command::Stop, NOON + seconds(120));
     assert_eq!(later, [accepted(3, NOON + seconds(120))]);
-    // an order to go at no speed at all is an order to stop
-    let none = scene.command(SESSION, Command::SetSpeedFraction(0.0), NOON + seconds(121));
-    assert_eq!(none, [accepted(1, NOON + seconds(121))]);
+    let zero = scene.command(SESSION, Command::SetSpeedFraction(0.0), NOON + seconds(121));
+    assert_eq!(action_names(&zero[0]), ["SetSpeedFraction"]);
+    assert_eq!(zero.last(), Some(&accepted(1, NOON + seconds(121))));
+    assert_eq!(scene.ship(SESSION, NOON + seconds(121)).unwrap().speed_fraction, 0.0);
 }
 
 #[test]
@@ -1286,7 +1439,7 @@ fn a_direction_given_to_a_ship_that_stands_sets_it_going_and_the_same_direction_
 
     scene.command(SESSION, Command::Stop, NOON + seconds(2));
     let restart = scene.command(SESSION, Command::GotoDirection(west), NOON + seconds(3));
-    assert_eq!(action_names(&restart[0]), ["GotoDirection", "SetSpeedFraction"]);
+    assert_eq!(action_names(&restart[0]), ["GotoDirection"]);
     assert_eq!(scene.ship(SESSION, NOON + seconds(3)).unwrap().speed_fraction, 1.0);
 }
 
@@ -1301,7 +1454,12 @@ fn a_speed_fraction_keeps_the_course_but_wakes_a_stopped_ship() {
         (Course::Orbit { target: STATION, distance: 5_000.0 }, 0.5)
     );
 
-    scene.command(SESSION, Command::Stop, NOON + seconds(2));
+    let stopped = scene.command(SESSION, Command::Stop, NOON + seconds(2));
+    assert_eq!(action_names(&stopped[0]), ["Stop"]);
+    assert_eq!(scene.ship(SESSION, NOON + seconds(2)).unwrap().speed_fraction, 0.5);
+    let zero = scene.command(SESSION, Command::SetSpeedFraction(0.0), NOON + seconds(2));
+    assert_eq!(action_names(&zero[0]), ["Stop", "SetSpeedFraction"]);
+    assert_eq!(scene.ship(SESSION, NOON + seconds(2)).unwrap().speed_fraction, 0.0);
     scene.command(SESSION, Command::SetSpeedFraction(0.5), NOON + seconds(3));
     assert_eq!(scene.ship(SESSION, NOON + seconds(3)).unwrap().course, Course::Goto);
 }
@@ -1337,7 +1495,13 @@ fn a_dock_request_from_out_of_range_stops_in_range_until_asked_again() {
     assert!(accepted.iter().any(|out| matches!(out, Out::Accepted { command: 4, .. })));
     assert!(scene.pilots[&SESSION].docking.is_some());
 
-    let completed = scene.poll(arrived_at + seconds(4));
+    let ready = scene.poll(arrived_at + seconds(4));
+    assert_eq!(ready, [Out::Accepted { session: SESSION, command: DOCKING_READY_COMMAND, at: STATION }]);
+    let completed = scene.command(
+        SESSION,
+        Command::DockingDecision { station_id: STATION, allowed: true },
+        arrived_at + seconds(4),
+    );
     assert!(
         completed.iter().any(|out| matches!(out, Out::Docked { session: SESSION, station_id: STATION, .. }))
     );
@@ -1410,6 +1574,7 @@ fn a_change_of_the_security_status_shows_the_slim_item_again_to_the_pilot() {
     let mut penalised = spec();
     penalised.security_status = -0.25;
     let out = scene.respec(SESSION, penalised.clone(), NOON);
+    assert_eq!(scene.security_status_losses, [(penalised.character_id, penalised.ship_id)]);
     assert_eq!(out.len(), 1, "only the pilot is in the scene");
     assert_eq!(action_names(&out[0]), ["OnSlimItemChange"]);
     let told = format!("{:?}", out[0]);
@@ -1419,6 +1584,7 @@ fn a_change_of_the_security_status_shows_the_slim_item_again_to_the_pilot() {
     );
     assert!(told.contains(&spec().ship_id.to_string()), "the item is the ship");
     assert!(scene.respec(SESSION, penalised, NOON).is_empty(), "the same status says nothing more");
+    assert_eq!(scene.security_status_losses.len(), 1, "a repeated status does not report another loss");
 }
 
 #[test]
@@ -1479,6 +1645,10 @@ fn gate(id: i64, position: Vec3, radius: f64, to: (i32, i64), facing: Option<[f6
 }
 
 /// The test system with a gate a few kilometres from the station and another a very long way off, and the system they lead to.
+pub(crate) fn set_test_system(scene: &mut Scene, system: SolarSystem) {
+    scene.system = Arc::new(system);
+}
+
 pub(crate) fn gated_systems() -> (SolarSystem, SolarSystem) {
     let mut here = (*system()).clone();
     // a few kilometres from where a ship comes out of the station
@@ -2863,6 +3033,14 @@ fn a_structure_in_a_state_that_takes_ships_docks_a_ship_as_a_station_does() {
     );
     assert_eq!(
         scene.poll(NOON + seconds(4)),
+        [Out::Accepted { session: SESSION, command: DOCKING_READY_COMMAND, at: STRUCTURE }]
+    );
+    assert_eq!(
+        scene.command(
+            SESSION,
+            Command::DockingDecision { station_id: STRUCTURE, allowed: true },
+            NOON + seconds(4),
+        ),
         [Out::Docked { session: SESSION, station_id: STRUCTURE, condition: Condition::FULL }]
     );
 }
@@ -3536,7 +3714,15 @@ fn tether_docking_reports_disengage_before_the_docked_condition() {
         scene.is_tethered(spec().ship_id, NOON + SECOND),
         "docking keeps tether until the ship leaves space"
     );
-    let docked = scene.poll(NOON + 4 * SECOND);
+    assert_eq!(
+        scene.poll(NOON + 4 * SECOND),
+        [Out::Accepted { session: SESSION, command: DOCKING_READY_COMMAND, at: STRUCTURE }]
+    );
+    let docked = scene.command(
+        SESSION,
+        Command::DockingDecision { station_id: STRUCTURE, allowed: true },
+        NOON + 4 * SECOND,
+    );
     assert_eq!(tether_changes(&docked), [(SESSION, STRUCTURE, 0, false)]);
     let off =
         docked.iter().position(|out| matches!(out, Out::TetherChanged { structure_id: 0, .. })).unwrap();

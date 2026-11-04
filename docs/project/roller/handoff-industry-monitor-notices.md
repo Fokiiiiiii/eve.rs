@@ -44,3 +44,18 @@ Added Host reads for `facilityManager.GetMaxActivityModifiers` from the shared c
 ## CI follow-up for `da6d90a8`
 
 Focused Host and Core checks passed on Actions. Push CI's .NET build, all .NET test shards, and Rust format/clippy passed. The overall run failed in three jobs: Windows SDE/Rust workspace, Linux Rust workspace, and the fast live client at `tests/test_skinr_live.py:389` (`ConsumeRequest` returned HTTP 401 instead of 200). The run also reported eight skipped headless tests (skill training speed and slow movement/warp/jump/others/target/module/health cases); these are not passes. The failures concern Rust and SKINR paths untouched by this industry change; run `40001866034` remains red.
+
+
+## Material authorization update (2026-11-03)
+
+The current EveJS reference is 261028.1. Its `industryRuntimeState.resolveMonitorAvailableMaterials` resolves the blueprint owner and facility locations before aggregating (`industryRuntimeState.js:5621-5672`), while its raw-request fallback at `5653-5666` is intentionally not copied. The V24 caller sends `job.dump()` (`industrySvc.py:304-307`); that dump includes client-provided character/corporation identifiers and input-location fields (`job.py:624-640`). The client-side `canTake` check (`job.py:577-578`) is not trusted by Host. The returned `(monitorID, materials)` tuple and `OnIndustryMaterials(jobID, materials)` map remain unchanged (`industrySvc.py:304-307,323-327`).
+
+Production `IndustryMonitorRpcService` now requires a policy callback backed by persisted blueprint ownership, the authenticated character session, corporation membership, the current office and its folder, Factory Manager role, and effective per-division Query plus Take access. It canonicalizes personal hangar/corporate office roots and allows direct industry-container children only for the supported container groups; it does not accept client owner IDs or raw location claims. The same authorization check runs before notification material reads.
+
+- Local Host build: passed, 0 warnings and 0 errors.
+- Focused PostgreSQL-backed `IndustryMonitorNoticeTests`: passed, 5/5, 0 skipped.
+- Relevant Host regression classes: passed, 50/50, 0 skipped.
+- `HostServerTests.Inventory_registration_injects_the_drone_bay_port_for_capacity_and_return`: passed, 1/1, 0 skipped.
+- Tests used the pinned SDE copied into the task database `eve_p3` and ran through `tools/dev/db-lock.sh`.
+- No graphical-client session was performed.
+- Pushed to `main` as `481bc22c09338964f2730ed74976878a0caa25a4`. Push CI run `41621572957` (CI 1468) completed successfully with no failed tests or jobs. Selected Host tests run `41621627080` (agent test 1283) completed successfully with no failures reported; the wait summary did not include a skip count. The local relevant Host selection passed 51/51 with 0 skipped tests after the final upstream merge.

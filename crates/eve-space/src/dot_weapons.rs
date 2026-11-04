@@ -153,6 +153,12 @@ impl Scene {
         let mut out = Vec::new();
         if damage > 0.0 {
             let (told, applied) = self.damage_unresisted(ship, [damage, 0.0, 0.0, 0.0], at);
+            self.tournament_metrics.record(
+                crate::scene::tournament_metrics::Source::Ship(shooter.telemetry_ship_id),
+                ship,
+                at,
+                applied,
+            );
             out.extend(told);
             if applied.is_some_and(|applied| applied.destroyed) {
                 self.dots.remove(&ship);

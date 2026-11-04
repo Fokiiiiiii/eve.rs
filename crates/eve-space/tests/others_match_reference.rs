@@ -80,6 +80,18 @@ fn blank_times(value: &mut Value) {
     }
 }
 
+fn absent_affiliations(items: &mut Value) {
+    for item in items.as_array_mut().unwrap() {
+        let fields = item["$tuple"][0]["$dict"].as_array_mut().unwrap();
+        for field in fields {
+            let pair = field.as_array_mut().unwrap();
+            if matches!(pair[0].as_str(), Some("allianceID" | "warFactionID")) && pair[1] == 0 {
+                pair[1] = Value::Null;
+            }
+        }
+    }
+}
+
 fn names(out: &Out) -> Vec<String> {
     let Out::Notify { .. } = out else { return Vec::new() };
     action_names_of(&out_args(out))
@@ -133,7 +145,9 @@ fn the_watcher_is_shown_the_actor_that_undocks_as_the_reference_showed_it() {
     blank_times(&mut mine);
     blank_times(&mut recorded_args);
     let added = |v: &Value| v["$tuple"][0][0]["$tuple"][1]["$tuple"][1]["$tuple"][0]["$tuple"][1].clone();
-    assert_eq!(added(&mine), added(&recorded_args), "the slim item and the damage state");
+    let mut expected_added = added(&recorded_args);
+    absent_affiliations(&mut expected_added);
+    assert_eq!(added(&mine), expected_added, "the slim item and the damage state");
     let ball = |v: &Value| {
         v["$tuple"][0][0]["$tuple"][1]["$tuple"][1]["$tuple"][0]["$tuple"][0]["$buffer"]
             .as_str()
@@ -168,9 +182,12 @@ fn the_actor_that_binds_is_given_both_ships_and_the_numbers_of_both_as_the_refer
         })
         .collect();
     assert_eq!(&notification_names[..2], ["OnSetTimeDilation", "DoSimClockRebase"]);
-    for (index, expected) in recorded.iter().take(4).enumerate() {
-        assert_eq!(names(&out[index + 2]), recorded_names(expected), "update {index}");
-    }
+    assert_eq!(names(&out[2]), recorded_names(&recorded[0]));
+    let previous_pose = recorded_names(&recorded[1]);
+    assert_eq!(&previous_pose[..2], ["OnSpecialFX", "SetBallPosition"]);
+    assert_eq!(names(&out[3]), previous_pose[2..]);
+    assert_eq!(names(&out[4]), recorded_names(&recorded[2]));
+    assert_eq!(names(&out[5]), ["SetBallAgility", "SetBallMass", "SetMaxSpeed"]);
 
     // the ships of the first update, watcher then actor, with their slim items
     let (ours, theirs) = (out_args(&out[2]), event_args(&recorded[0]));
@@ -178,13 +195,16 @@ fn the_actor_that_binds_is_given_both_ships_and_the_numbers_of_both_as_the_refer
     let (mut mine, mut recorded_slims) = (slims(&ours), slims(&theirs));
     blank_times(&mut mine);
     blank_times(&mut recorded_slims);
+    absent_affiliations(&mut recorded_slims);
     assert_eq!(mine, recorded_slims);
     assert_eq!(theirs["$tuple"][1], ours["$tuple"][1], "wait");
 
-    // the numbers: the watcher's three, then the actor's own two (the mass came with its start)
+    // The watcher is primed separately; the actor's numbers are in its ball.
     let numbers = |args: &Value| without_stamps(args);
-    assert_eq!(numbers(&out_args(&out[5])), numbers(&event_args(&recorded[3])));
-    assert_eq!(stamps_of(&out_args(&out[5])).len(), 5);
+    let old_numbers = numbers(&event_args(&recorded[3]));
+    assert_eq!(old_numbers.len(), 5);
+    assert_eq!(numbers(&out_args(&out[5])), old_numbers[..3]);
+    assert_eq!(stamps_of(&out_args(&out[5])).len(), 3);
 }
 
 #[test]
@@ -276,7 +296,17 @@ fn a_ship_that_docks_is_shown_as_the_reference_showed_it_and_is_gone_when_it_has
     assert_eq!(action_names_of(&out_args(told[0])), recorded_names(&seen[0]));
     assert_eq!(without_stamps(&out_args(told[0])), without_stamps(&event_args(&seen[0])));
 
-    let gone = scene.poll(at + 4 * SECOND);
+    let ready = scene.poll(at + 4 * SECOND);
+    assert!(ready.iter().any(|out| matches!(
+        out,
+        Out::Accepted { session: ACTOR, command: eve_space::scene::DOCKING_READY_COMMAND, at: ready_station }
+            if *ready_station == station
+    )));
+    let gone = scene.command(
+        ACTOR,
+        Command::DockingDecision { station_id: station, allowed: true },
+        at + 4 * SECOND,
+    );
     let removal: Vec<&Out> =
         gone.iter().filter(|o| matches!(o, Out::Notify { session: WATCHER, .. })).collect();
     assert_eq!(removal.len(), 1);

@@ -327,6 +327,154 @@ impl Message {
                 out.push(u8::from(*already_absent));
                 put_text(&mut out, error.as_deref().unwrap_or(""));
             }
+            Self::EnsureTournamentBeacon {
+                request_id,
+                scene,
+                item_id,
+                type_id,
+                group_id,
+                category_id,
+                owner_id,
+                graphic_id,
+                name,
+                position,
+                radius,
+            } => {
+                assert!(
+                    *request_id > 0
+                        && scene.is_valid()
+                        && scene.instance_id == 0
+                        && *item_id > 0
+                        && *type_id > 0
+                        && *group_id > 0
+                        && *category_id > 0
+                        && *owner_id > 0
+                        && *graphic_id > 0
+                        && !name.is_empty()
+                        && name.len() <= u16::MAX as usize
+                        && position.iter().all(|v| v.is_finite())
+                        && radius.is_finite()
+                        && *radius > 0.0
+                        && (*radius as f32).is_finite()
+                        && *radius as f32 != 0.0
+                );
+                out.extend_from_slice(&request_id.to_le_bytes());
+                put_scene_key(&mut out, *scene);
+                out.extend_from_slice(&item_id.to_le_bytes());
+                out.extend_from_slice(&type_id.to_le_bytes());
+                out.extend_from_slice(&group_id.to_le_bytes());
+                out.extend_from_slice(&category_id.to_le_bytes());
+                out.extend_from_slice(&owner_id.to_le_bytes());
+                out.extend_from_slice(&graphic_id.to_le_bytes());
+                put_text(&mut out, name);
+                for value in position {
+                    out.extend_from_slice(&value.to_le_bytes());
+                }
+                out.extend_from_slice(&radius.to_le_bytes());
+            }
+            Self::RemoveTournamentBeacon { request_id, scene, item_id } => {
+                assert!(*request_id > 0 && scene.is_valid() && scene.instance_id == 0 && *item_id > 0);
+                out.extend_from_slice(&request_id.to_le_bytes());
+                put_scene_key(&mut out, *scene);
+                out.extend_from_slice(&item_id.to_le_bytes());
+            }
+            Self::EnsureTournamentBeaconReply { request_id, outcome }
+            | Self::RemoveTournamentBeaconReply { request_id, outcome } => {
+                assert!(outcome.as_ref().err().is_none_or(|error| !error.is_empty()));
+                put_abyssal_result(&mut out, *request_id, outcome);
+            }
+            Self::QueryTournamentWreck { request_id, scene, item_id } => {
+                assert!(*request_id > 0 && scene.is_valid() && scene.instance_id == 0 && *item_id > 0);
+                out.extend_from_slice(&request_id.to_le_bytes());
+                put_scene_key(&mut out, *scene);
+                out.extend_from_slice(&item_id.to_le_bytes());
+            }
+            Self::RemoveTournamentWreck {
+                request_id,
+                scene,
+                item_id,
+                owner_id,
+                launcher_id,
+                type_id,
+                center,
+                radius,
+            } => {
+                assert!(
+                    *request_id > 0
+                        && scene.is_valid()
+                        && scene.instance_id == 0
+                        && *item_id > 0
+                        && *owner_id > 0
+                        && *launcher_id > 0
+                        && *type_id > 0
+                        && radius.is_finite()
+                        && *radius > 0.0
+                        && center.iter().all(|v| v.is_finite())
+                );
+                out.extend_from_slice(&request_id.to_le_bytes());
+                put_scene_key(&mut out, *scene);
+                out.extend_from_slice(&item_id.to_le_bytes());
+                out.extend_from_slice(&owner_id.to_le_bytes());
+                out.extend_from_slice(&launcher_id.to_le_bytes());
+                out.extend_from_slice(&type_id.to_le_bytes());
+                for value in center {
+                    out.extend_from_slice(&value.to_le_bytes());
+                }
+                out.extend_from_slice(&radius.to_le_bytes());
+            }
+            Self::QueryTournamentWreckReply { request_id, scene, item_id, outcome }
+            | Self::RemoveTournamentWreckReply { request_id, scene, item_id, outcome } => {
+                assert!(*request_id > 0 && scene.is_valid() && scene.instance_id == 0 && *item_id > 0);
+                out.extend_from_slice(&request_id.to_le_bytes());
+                put_scene_key(&mut out, *scene);
+                out.extend_from_slice(&item_id.to_le_bytes());
+                match outcome {
+                    Ok(present) => {
+                        out.push(u8::from(*present));
+                        put_text(&mut out, "");
+                    }
+                    Err(error) => {
+                        assert!(!error.is_empty());
+                        out.push(2);
+                        put_text(&mut out, error);
+                    }
+                }
+            }
+            Self::GetSceneBody { request_id, scene, item_id } => {
+                assert!(*request_id > 0 && scene.is_valid() && scene.instance_id == 0 && *item_id > 0);
+                out.extend_from_slice(&request_id.to_le_bytes());
+                put_scene_key(&mut out, *scene);
+                out.extend_from_slice(&item_id.to_le_bytes());
+            }
+            Self::GetSceneBodyReply { request_id, scene, item_id, outcome } => {
+                assert!(*request_id > 0 && scene.is_valid() && scene.instance_id == 0 && *item_id > 0);
+                out.extend_from_slice(&request_id.to_le_bytes());
+                put_scene_key(&mut out, *scene);
+                out.extend_from_slice(&item_id.to_le_bytes());
+                match outcome {
+                    Ok((type_id, group_id, category_id, position)) => {
+                        assert!(
+                            *type_id > 0
+                                && *group_id > 0
+                                && *category_id > 0
+                                && position.iter().all(|v| v.is_finite())
+                        );
+                        out.push(0);
+                        out.extend_from_slice(&type_id.to_le_bytes());
+                        out.extend_from_slice(&group_id.to_le_bytes());
+                        out.extend_from_slice(&category_id.to_le_bytes());
+                        for v in position {
+                            out.extend_from_slice(&v.to_le_bytes());
+                        }
+                        put_text(&mut out, "");
+                    }
+                    Err(error) => {
+                        assert!(!error.is_empty());
+                        out.push(1);
+                        put_text(&mut out, error);
+                    }
+                }
+            }
             Self::GetAbyssalParticipantPose { request_id, scene, ship_id } => {
                 assert!(*request_id > 0 && scene.is_valid() && *ship_id > 0, "invalid resident pose request");
                 out.extend_from_slice(&request_id.to_le_bytes());
@@ -388,6 +536,141 @@ impl Message {
                         out.extend_from_slice(&object.center_distance_meters.to_le_bytes());
                     }
                 }
+            }
+            Self::MovePublicParticipant {
+                request_id,
+                operation_id,
+                session_id,
+                ship_id,
+                source,
+                destination,
+                use_anchor,
+                position,
+                direction,
+            } => {
+                assert!(
+                    *request_id > 0
+                        && valid_public_move_id(operation_id)
+                        && *session_id > 0
+                        && *ship_id > 0
+                        && source.is_valid()
+                        && destination.is_valid()
+                        && source.instance_id == 0
+                        && destination.instance_id == 0
+                );
+                assert!(
+                    position.iter().chain(direction).all(|v| v.is_finite())
+                        && (*use_anchor || direction.iter().any(|v| *v != 0.0))
+                );
+                out.extend_from_slice(&request_id.to_le_bytes());
+                put_text(&mut out, operation_id);
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&ship_id.to_le_bytes());
+                put_scene_key(&mut out, *source);
+                put_scene_key(&mut out, *destination);
+                out.push(u8::from(*use_anchor));
+                if !*use_anchor {
+                    put_vector(&mut out, position);
+                    put_vector(&mut out, direction);
+                }
+            }
+            Self::MovePublicParticipantReply { request_id, outcome } => {
+                put_abyssal_result(&mut out, *request_id, outcome)
+            }
+            Self::RegisterTournamentMetrics { identity }
+            | Self::ReadTournamentMetrics { identity }
+            | Self::ReadTournamentMetricsV2 { identity }
+            | Self::ReleaseTournamentMetrics { identity } => {
+                tournament_metrics::write_identity(&mut out, identity)
+            }
+            Self::RegisterTournamentMetricsReply { identity, status, error }
+            | Self::ReleaseTournamentMetricsReply { identity, status, error } => {
+                assert!(tournament_metrics::valid_status(*status, error));
+                tournament_metrics::write_identity(&mut out, identity);
+                out.push(*status);
+                put_text(&mut out, error);
+            }
+            Self::ReadTournamentMetricsReply { identity, status, error, sample }
+            | Self::ReadTournamentMetricsV2Reply { identity, status, error, sample } => {
+                assert!(
+                    tournament_metrics::valid_status(*status, error) && (*status == 0) == sample.is_some()
+                );
+                tournament_metrics::write_identity(&mut out, identity);
+                out.push(*status);
+                put_text(&mut out, error);
+                if let Some(sample) = sample {
+                    tournament_metrics::write_sample(
+                        &mut out,
+                        sample,
+                        identity,
+                        matches!(self, Self::ReadTournamentMetricsV2Reply { .. }),
+                    );
+                }
+                assert!(out.len() <= 1 << 20);
+            }
+            Self::ReleaseTournamentCutoff { identity } => {
+                tournament_cutoff::write_identity(&mut out, identity)
+            }
+            Self::ReleaseTournamentCutoffReply { identity, status, error } => {
+                assert!((*status == 0 || *status == 3) && tournament_cutoff::valid_status(*status, error));
+                tournament_cutoff::write_identity(&mut out, identity);
+                out.push(*status);
+                put_text(&mut out, error);
+            }
+            Self::RegisterTournamentCutoff { identity, roster } => {
+                assert!(tournament_cutoff::valid_roster(roster));
+                tournament_cutoff::write_identity(&mut out, identity);
+                out.extend_from_slice(&(roster.len() as u16).to_le_bytes());
+                for (character, ship) in roster {
+                    out.extend_from_slice(&character.to_le_bytes());
+                    out.extend_from_slice(&ship.to_le_bytes());
+                }
+            }
+            Self::RegisterTournamentCutoffReply { identity, status, error } => {
+                assert!(tournament_cutoff::valid_status(*status, error));
+                tournament_cutoff::write_identity(&mut out, identity);
+                out.push(*status);
+                put_text(&mut out, error);
+            }
+            Self::ReadTournamentCutoff { identity } => tournament_cutoff::write_identity(&mut out, identity),
+            Self::ReadTournamentCutoffReply { identity, status, evidence, error } => {
+                let roster: Vec<_> =
+                    evidence.iter().map(|(character, ship, _)| (*character, *ship)).collect();
+                assert!(
+                    tournament_cutoff::valid_status(*status, error)
+                        && if *status == 1 {
+                            tournament_cutoff::valid_roster(&roster)
+                                && evidence.iter().all(|(_, _, value)| *value <= 2)
+                        } else {
+                            evidence.is_empty()
+                        }
+                );
+                tournament_cutoff::write_identity(&mut out, identity);
+                out.push(*status);
+                out.extend_from_slice(&(evidence.len() as u16).to_le_bytes());
+                for (character, ship, value) in evidence {
+                    out.extend_from_slice(&character.to_le_bytes());
+                    out.extend_from_slice(&ship.to_le_bytes());
+                    out.push(*value);
+                }
+                put_text(&mut out, error);
+            }
+            Self::EnterPublicParticipant { request_id, operation_id, enter } => {
+                assert!(
+                    *request_id > 0
+                        && valid_public_move_id(operation_id)
+                        && enter.session_id > 0
+                        && enter.ship.ship_id > 0
+                        && enter.scene.is_valid()
+                        && enter.scene.instance_id == 0
+                        && matches!(enter.how, How::Anchor | How::InSpace)
+                );
+                out.extend_from_slice(&request_id.to_le_bytes());
+                put_text(&mut out, operation_id);
+                put_bytes(&mut out, &Message::Enter(enter.clone()).encode());
+            }
+            Self::EnterPublicParticipantReply { request_id, outcome } => {
+                put_abyssal_result(&mut out, *request_id, outcome)
             }
             Self::MoveAbyssalParticipant {
                 request_id,
@@ -495,9 +778,9 @@ impl Message {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.push(*why);
             }
-            Self::Bind { session_id } | Self::UpdateState { session_id } => {
-                out.extend_from_slice(&session_id.to_le_bytes())
-            }
+            Self::Bind { session_id }
+            | Self::UpdateState { session_id }
+            | Self::CriminalFlagActive { session_id } => out.extend_from_slice(&session_id.to_le_bytes()),
             Self::ControlStructure {
                 session_id,
                 solar_system_id,

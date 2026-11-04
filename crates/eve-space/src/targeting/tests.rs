@@ -11,6 +11,8 @@ use crate::world::{Body, BodyKind, Detail};
 const A: SessionId = 7;
 const B: SessionId = 8;
 const C: SessionId = 9;
+const D: SessionId = 10;
+const E: SessionId = 11;
 const SECOND: i64 = 10_000_000;
 const PLANET: i64 = 40_000_001;
 
@@ -199,6 +201,119 @@ fn an_instant_lock_is_pending_until_its_add_notification_arrives() {
     assert_eq!(answer(&asked), (true, vec![]));
     assert_eq!(
         on_target(&asked),
+        vec![
+            (B, words(&["add", &ship_id(A).to_string()])),
+            (A, words(&["otheradd", &ship_id(B).to_string()])),
+        ]
+    );
+}
+
+#[test]
+fn a_scan_resolution_change_rebases_a_pending_lock_without_losing_progress() {
+    let (mut scene, t) = crowd(3);
+    scene.pilots.get_mut(&C).unwrap().ship.spec.scan_resolution = 1.0e12;
+    scene.target_order(C, Order::Lock(ship_id(B)), t);
+    let old_deadline = match scene.target_order(B, Order::Lock(ship_id(A)), t).as_slice() {
+        [Out::Targets { pending: true, .. }] => scene.pilots[&B].targeting.pending[0].complete_at,
+        other => panic!("{other:?}"),
+    };
+    let at = t + SECOND;
+    scene.hold_for(
+        C,
+        B,
+        123,
+        crate::ewar::Lasting::Damp {
+            range_percent: 0.0,
+            resolution_percent: -50.0,
+            gravimetric_percent: 0.0,
+            ladar_percent: 0.0,
+            magnetometric_percent: 0.0,
+            radar_percent: 0.0,
+        },
+        20_000.0,
+        at,
+    );
+    assert!(scene.pilots[&B].targeting.pending[0].complete_at > old_deadline);
+
+    let (before_completion, t2) = poll_until(&mut scene, at, 5.0);
+    assert!(on_target(&before_completion).is_empty(), "{before_completion:?}");
+    let (completed, _) = poll_until(&mut scene, t2, 1.0);
+    assert_eq!(
+        on_target(&completed),
+        vec![
+            (B, words(&["add", &ship_id(A).to_string()])),
+            (A, words(&["otheradd", &ship_id(B).to_string()])),
+        ]
+    );
+}
+
+#[test]
+fn a_target_painter_rebases_an_incoming_pending_lock_without_losing_progress() {
+    let (mut scene, t) = crowd(3);
+    scene.pilots.get_mut(&C).unwrap().ship.spec.scan_resolution = 1.0e12;
+    scene.target_order(C, Order::Lock(ship_id(A)), t);
+    let old_deadline = match scene.target_order(B, Order::Lock(ship_id(A)), t).as_slice() {
+        [Out::Targets { pending: true, .. }] => scene.pilots[&B].targeting.pending[0].complete_at,
+        other => panic!("{other:?}"),
+    };
+    let at = t + SECOND;
+    scene.hold_for(C, A, 124, crate::ewar::Lasting::Paint { percent: 100.0 }, 20_000.0, at);
+    assert!(scene.pilots[&B].targeting.pending[0].complete_at < old_deadline);
+
+    let (completed, _) = poll_until(&mut scene, at, 2.5);
+    assert_eq!(
+        on_target(&completed),
+        vec![
+            (B, words(&["add", &ship_id(A).to_string()])),
+            (A, words(&["otheradd", &ship_id(B).to_string()])),
+        ]
+    );
+}
+
+#[test]
+fn a_ship_spec_scan_resolution_change_rebases_a_pending_lock_without_losing_progress() {
+    let (mut scene, t) = crowd(3);
+    scene.pilots.get_mut(&C).unwrap().ship.spec.scan_resolution = 1.0e12;
+    scene.target_order(C, Order::Lock(ship_id(B)), t);
+    let old_deadline = match scene.target_order(B, Order::Lock(ship_id(A)), t).as_slice() {
+        [Out::Targets { pending: true, .. }] => scene.pilots[&B].targeting.pending[0].complete_at,
+        other => panic!("{other:?}"),
+    };
+    let at = t + SECOND;
+    let mut changed = scene.pilots[&B].ship.spec.clone();
+    changed.scan_resolution /= 2.0;
+    scene.respec(B, changed, at);
+    let new_deadline = scene.pilots[&B].targeting.pending[0].complete_at;
+    assert!(new_deadline > old_deadline);
+
+    assert!(on_target(&scene.poll(old_deadline)).is_empty());
+    assert_eq!(
+        on_target(&scene.poll(new_deadline)),
+        vec![
+            (B, words(&["add", &ship_id(A).to_string()])),
+            (A, words(&["otheradd", &ship_id(B).to_string()])),
+        ]
+    );
+}
+
+#[test]
+fn a_ship_spec_signature_radius_change_rebases_incoming_locks_without_losing_progress() {
+    let (mut scene, t) = crowd(3);
+    scene.pilots.get_mut(&C).unwrap().ship.spec.scan_resolution = 1.0e12;
+    scene.target_order(C, Order::Lock(ship_id(A)), t);
+    let old_deadline = match scene.target_order(B, Order::Lock(ship_id(A)), t).as_slice() {
+        [Out::Targets { pending: true, .. }] => scene.pilots[&B].targeting.pending[0].complete_at,
+        other => panic!("{other:?}"),
+    };
+    let at = t + SECOND;
+    let mut changed = scene.pilots[&A].ship.spec.clone();
+    changed.signature_radius *= 2.0;
+    scene.respec(A, changed, at);
+    let new_deadline = scene.pilots[&B].targeting.pending[0].complete_at;
+    assert!(new_deadline < old_deadline);
+
+    assert_eq!(
+        on_target(&scene.poll(new_deadline)),
         vec![
             (B, words(&["add", &ship_id(A).to_string()])),
             (A, words(&["otheradd", &ship_id(B).to_string()])),
@@ -447,6 +562,153 @@ fn range_is_measured_between_surfaces_and_the_range_itself_is_out() {
 }
 
 #[test]
+fn targeting_range_caps_apply_to_ships_and_structures_but_not_carrier_hulls() {
+    let (mut scene, t) = crowd(2);
+    scene.pilots.get_mut(&B).unwrap().ship.spec.max_target_range = 600_000.0;
+
+    let position_target = |scene: &mut Scene, distance: f64| {
+        let source = scene.pilots[&B].ship.position;
+        scene.pilots.get_mut(&A).unwrap().ship.position = Vec3::new(source.x + distance, source.y, source.z);
+    };
+    position_target(&mut scene, 350_000.0);
+    let ordinary = refusal(&scene.target_order(B, Order::Lock(ship_id(A)), t));
+    assert_eq!(ordinary.reason, "TARGET_OUT_OF_RANGE");
+    assert_eq!(ordinary.desired_range, 300_000.0);
+
+    scene.pilots.get_mut(&B).unwrap().ship.spec.category_id = 65;
+    position_target(&mut scene, 500_000.0);
+    let structure = refusal(&scene.target_order(B, Order::Lock(ship_id(A)), t));
+    assert_eq!(structure.reason, "TARGET_OUT_OF_RANGE");
+    assert_eq!(structure.desired_range, 490_000.0);
+
+    scene.pilots.get_mut(&B).unwrap().ship.spec.category_id = 6;
+    for (index, group_id) in [(0, 547), (1, 659)] {
+        scene.pilots.get_mut(&B).unwrap().ship.spec.group_id = group_id;
+        position_target(&mut scene, 350_000.0);
+        let at = t + index * SECOND;
+        assert!(answer(&scene.target_order(B, Order::Lock(ship_id(A)), at)).0, "group {group_id}");
+        scene.target_order(B, Order::Cancel(ship_id(A)), at + SECOND / 10);
+    }
+}
+
+#[test]
+fn a_ship_spec_target_limit_change_cancels_newest_pending_then_releases_newest_locked_targets() {
+    let (mut scene, t) = crowd(5);
+    let normal_scan_resolution = scene.pilots[&A].ship.spec.scan_resolution;
+    scene.pilots.get_mut(&A).unwrap().ship.spec.scan_resolution = 1.0e12;
+    let (_, t) = locked(&mut scene, t, A, ship_id(B));
+    let (_, t) = locked(&mut scene, t, A, ship_id(C));
+    let pilot = scene.pilots.get_mut(&A).unwrap();
+    pilot.ship.spec.scan_resolution = normal_scan_resolution;
+    pilot.ship.spec.max_locked_targets = 4;
+    assert!(answer(&scene.target_order(A, Order::Lock(ship_id(D)), t)).0);
+    assert!(answer(&scene.target_order(A, Order::Lock(ship_id(E)), t)).0);
+
+    let mut changed = scene.pilots[&A].ship.spec.clone();
+    changed.max_locked_targets = 1;
+    let out = scene.respec(A, changed, t + SECOND / 4);
+    let failed: Vec<_> = out
+        .iter()
+        .filter_map(|event| match event {
+            Out::ServiceNotify { session, service: "target", method: "FailLockTarget", args } => {
+                Some((*session, args.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(failed, [(A, vec![crate::wire::id(ship_id(E))]), (A, vec![crate::wire::id(ship_id(D))])]);
+    assert_eq!(
+        on_target(&out),
+        vec![
+            (A, words(&["lost", &ship_id(C).to_string()])),
+            (C, words(&["otherlost", &ship_id(A).to_string()])),
+        ]
+    );
+    assert_eq!(answer(&scene.target_order(A, Order::Targets, t)).1, [ship_id(B)]);
+}
+
+#[test]
+fn a_ship_spec_range_change_immediately_drops_pending_and_held_targets() {
+    let (mut scene, t) = crowd(3);
+    scene.command(A, Command::Stop, t);
+    scene.command(B, Command::Stop, t);
+    scene.command(C, Command::Stop, t);
+    let (_, t) = poll_until(&mut scene, t, 60.0);
+    let (held, t) = locked(&mut scene, t, A, ship_id(B));
+    assert_eq!(on_target(&held).len(), 2);
+    scene.target_order(A, Order::Lock(ship_id(C)), t);
+
+    let mut changed = scene.pilots[&A].ship.spec.clone();
+    changed.max_target_range = 1.0;
+    let out = scene.respec(A, changed, t + SECOND / 4);
+    let failed: Vec<_> = out
+        .iter()
+        .filter_map(|event| match event {
+            Out::ServiceNotify { session, service: "target", method: "FailLockTarget", args } => {
+                Some((*session, args.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(failed, [(A, vec![crate::wire::id(ship_id(C))])]);
+    assert_eq!(
+        on_target(&out),
+        vec![
+            (A, words(&["lost", &ship_id(B).to_string()])),
+            (B, words(&["otherlost", &ship_id(A).to_string()])),
+        ]
+    );
+    assert!(answer(&scene.target_order(A, Order::Targets, t)).1.is_empty());
+}
+
+#[test]
+fn a_sensor_damp_immediately_drops_a_held_target_outside_the_new_lock_range() {
+    let (mut scene, t) = crowd(3);
+    scene.command(A, Command::Stop, t);
+    scene.command(B, Command::Stop, t);
+    scene.command(C, Command::Stop, t);
+    let (_, t) = poll_until(&mut scene, t, 60.0);
+    scene.pilots.get_mut(&B).unwrap().ship.spec.max_target_range = 30_000.0;
+    let radii = scene.pilots[&B].ship.spec.radius + scene.pilots[&C].ship.spec.radius;
+    scene.pilots.get_mut(&A).unwrap().ship.position = Vec3::new(-100_000.0, 0.0, 0.0);
+    scene.pilots.get_mut(&B).unwrap().ship.position = Vec3::ZERO;
+    scene.pilots.get_mut(&C).unwrap().ship.position = Vec3::new(20_000.0 + radii, 0.0, 0.0);
+    for session in [A, B, C] {
+        let pilot = scene.pilots.get_mut(&session).unwrap();
+        pilot.ship.velocity = Vec3::ZERO;
+        pilot.ship.speed_fraction = 0.0;
+        pilot.ship.course = crate::ship::Course::Stop;
+        scene.bind(session, t);
+    }
+    let (held, t) = locked(&mut scene, t, B, ship_id(C));
+    assert_eq!(on_target(&held).len(), 2);
+
+    let out = scene.hold_for(
+        A,
+        B,
+        99,
+        crate::ewar::Lasting::Damp {
+            range_percent: -50.0,
+            resolution_percent: 0.0,
+            gravimetric_percent: 0.0,
+            ladar_percent: 0.0,
+            magnetometric_percent: 0.0,
+            radar_percent: 0.0,
+        },
+        5_000.0,
+        t,
+    );
+    assert_eq!(
+        on_target(&out),
+        vec![
+            (B, words(&["lost", &ship_id(C).to_string()])),
+            (C, words(&["otherlost", &ship_id(B).to_string()])),
+        ]
+    );
+    assert!(scene.pilots[&B].targeting.is_empty());
+}
+
+#[test]
 fn a_ship_that_has_just_undocked_cannot_be_locked_and_the_reason_comes_before_the_one_for_locking_itself() {
     let mut scene = Scene::new(world());
     scene.undock(A, spec_of(0), STATION, NOON).unwrap();
@@ -575,6 +837,30 @@ fn a_ship_that_leaves_lets_go_of_what_it_locked_and_the_ship_that_was_locked_is_
 }
 
 #[test]
+fn an_exploding_ship_sends_target_loss_events_before_it_is_removed() {
+    let (mut scene, t) = crowd(2);
+    let (_, t) = locked(&mut scene, t, A, ship_id(B));
+    let (_, t) = locked(&mut scene, t, B, ship_id(A));
+    let out = scene.destroy(A, None, t);
+
+    assert_eq!(
+        on_target(&out),
+        vec![
+            (B, words(&["otherlost", &ship_id(A).to_string(), "Exploding"])),
+            (B, words(&["lost", &ship_id(A).to_string(), "Exploding"])),
+        ]
+    );
+    let destroyed =
+        out.iter().position(|event| matches!(event, Out::Destroyed { ship_id: id, .. } if *id == ship_id(A)));
+    let losses =
+        out.iter().enumerate().filter(|(_, event)| matches!(event, Out::Notify { name: "OnTarget", .. }));
+    assert!(
+        destroyed.is_some_and(|destroyed| losses.into_iter().all(|(index, _)| index < destroyed)),
+        "{out:?}"
+    );
+}
+
+#[test]
 fn a_ship_that_docks_is_lost_when_it_has_docked() {
     let mut world = (*world()).clone();
     world.bodies[0].radius = 70_000.0;
@@ -597,7 +883,12 @@ fn a_ship_that_docks_is_lost_when_it_has_docked() {
     let (_, t) = locked(&mut scene, t, B, ship_id(A));
     let accepted = scene.command(A, Command::Dock { station_id: STATION }, t);
     assert!(accepted.iter().any(|o| matches!(o, Out::Accepted { command: 4, .. })), "{accepted:?}");
-    let (out, _) = poll_until(&mut scene, t, 6.0);
+    let (ready, ready_at) = poll_until(&mut scene, t, 6.0);
+    assert!(ready.iter().any(|o| matches!(
+        o,
+        Out::Accepted { command: crate::scene::DOCKING_READY_COMMAND, at: STATION, .. }
+    )));
+    let out = scene.command(A, Command::DockingDecision { station_id: STATION, allowed: true }, ready_at);
     let kinds: Vec<String> = out
         .iter()
         .filter(|o| matches!(o, Out::Docked { .. }) || matches!(o, Out::Notify { name: "OnTarget", .. }))

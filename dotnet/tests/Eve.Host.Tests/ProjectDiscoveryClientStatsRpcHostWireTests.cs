@@ -16,7 +16,7 @@ public partial class HostServerTests
 
         var readCharacterIds = new List<long>();
         var state = new ProjectDiscoveryPlayerState(
-            Rank: 3.7, Experience: 250.9, AnalysisKredits: 12.8, FinishedTutorial: true, TutorialLevel: 8.4);
+            Rank: 3.7, Experience: 250, AnalysisKredits: 12.8, FinishedTutorial: true, TutorialLevel: 8.4);
         ClientSession? openedSession = null;
         Start(
             sessionOpened: session => openedSession = session,
@@ -56,6 +56,11 @@ public partial class HostServerTests
         Assert.Equal(PyBool.True, await Call(3, "get_tutorial_completion_status", new PyTuple([]), transportKwargs));
         Assert.Equal(PyBool.True, await Call(4, "is_enabled", new PyTuple([]), transportKwargs));
         Assert.All(readCharacterIds, characterId => Assert.Equal(42, characterId));
+        const long largeExperience = 9_007_199_254_740_993L;
+        state = state with { Experience = largeExperience };
+        var largeState = Assert.IsType<PyObject>(await Call(9, "get_player_state", new PyTuple([]), transportKwargs));
+        var experience = Assert.Single(Assert.IsType<PyDict>(largeState.Args).Entries, pair => JsSemantics.StringValue(pair.Key) == "experience").Value;
+        Assert.Equal(largeExperience, experience switch { PyInt number => number.Value, PyLong number => number.Value, _ => throw new InvalidDataException("Experience was not an integer.") });
 
         var expectedStatistics = new PyDict(
         [

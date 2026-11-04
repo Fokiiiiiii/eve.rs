@@ -961,6 +961,12 @@ pub(crate) struct PendingUpdate {
     pub(crate) changes: Vec<Change>,
 }
 
+impl Running {
+    pub(crate) fn telemetry_rounds(&self) -> Option<i64> {
+        self.rounds
+    }
+}
+
 /// The modules of a ship that run, and its capacitor.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Modules {
@@ -977,6 +983,30 @@ pub(crate) struct Modules {
 }
 
 impl Modules {
+    /// An unresolved repair whose original cycle belongs to this cutoff.
+    pub(crate) fn tournament_has_pending_remote_repair(&self, cutoff: i64) -> bool {
+        self.running.iter().any(|run| run.pending_remote_repair.is_some_and(|work| work.at <= cutoff))
+    }
+
+    /// Work whose ordered completion is not yet supported by the production fence.
+    pub(crate) fn tournament_has_unsupported_host_work(&self) -> bool {
+        !self.pending_starts.is_empty()
+            || self.running.iter().any(|run| {
+                run.pending_work.is_some() || run.pending_structure_damage.is_some() || run.pending_reload
+            })
+    }
+
+    /// Conservative cutoff fence: unresolved work can still affect the scene.
+    pub(crate) fn tournament_has_pending_host_work(&self, cutoff: i64) -> bool {
+        !self.pending_starts.is_empty()
+            || self.running.iter().any(|run| {
+                run.pending_remote_repair.is_some_and(|work| work.at <= cutoff)
+                    || run.pending_work.is_some()
+                    || run.pending_structure_damage.is_some()
+                    || run.pending_reload
+            })
+    }
+
     fn allocate_remote_repair_cycle_id(&mut self) -> u64 {
         self.next_remote_repair_cycle_id = self.next_remote_repair_cycle_id.wrapping_add(1).max(1);
         self.next_remote_repair_cycle_id

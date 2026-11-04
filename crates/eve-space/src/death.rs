@@ -59,6 +59,14 @@ impl Scene {
             told_of_it.insert(0, session);
         }
         let Some(pilot) = self.pilots.remove(&session) else { return Vec::new() };
+        self.tournament.destroyed(
+            crate::scene::tournament::TournamentPilot {
+                character_id: pilot.ship.spec.character_id,
+                ship_id: pilot.ship.spec.ship_id,
+            },
+            now,
+        );
+        self.tournament_metrics.destroyed(pilot.ship.spec.character_id, pilot.ship.spec.ship_id, now);
         let unpiloted = self.unpiloted.values().any(|candidate| *candidate == session);
         if self.abyssal.is_some() && !is_npc_session(session) && !unpiloted {
             self.abyssal_participant_deaths.insert(pilot.ship.spec.ship_id, session);

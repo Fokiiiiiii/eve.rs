@@ -23,8 +23,7 @@ public sealed partial class SpaceSessions
 
     /// <summary>
     /// Sends the session's ship out of its station. The client is told in the order the reference tells it (the ship moved, the objects
-    /// bound to the station let go, the session changed, the undocking protection started) and the answer is the object it called and the time
-    /// from which it may go on. Returns None when there is nothing to undock.
+    /// bound to the station let go, the session changed, the undocking protection started). The bound call answers None.
     /// </summary>
     public Task<PyValue> UndockAsync(ClientSession session, string? boundObjectId, CancellationToken cancellationToken, bool ignoreContraband = false) =>
         UndockFromAsync(session, "stationid", boundObjectId, cancellationToken, ignoreContraband);
@@ -66,7 +65,7 @@ public sealed partial class SpaceSessions
         }
         if (await _ships.LoadAsync(characterId, cancellationToken) is not { } snapshot)
         {
-            return None;
+            throw MachoErrors.ThrowUserError("ShipNotInHangar");
         }
         if (!ignoreContraband && InspectUndockContrabandAsync is { } inspect)
         {
@@ -132,7 +131,7 @@ public sealed partial class SpaceSessions
                 ArmProtection(pilot, _protection);
                 return Task.FromResult(true);
             },
-            (result, _) =>
+            async (result, _) =>
             {
                 var moved = result.Moved!;
                 var type = _statics.Type(moved.Ship.TypeId);
@@ -140,7 +139,7 @@ public sealed partial class SpaceSessions
                     "OnItemsChanged", "charid",
                     new PyList([InventoryWire.PackedRow(ShipRow(moved.Ship, type), new PyStr(inStructure ? "UndockingStructure:" : $"Undocking:{placeId}"))]),
                     ChangedFrom(moved), None);
-                ReleaseBoundObjects(session);
+                await CompleteBoundObjectReleasesAsync(DetachBoundObjects(session), CancellationToken.None);
 
                 // server value is cleared (characterState: session.stationid2 = null); a later docking announces it from nothing (a pod's death does)
                 session.Set("stationid2", None);
@@ -151,18 +150,17 @@ public sealed partial class SpaceSessions
                 DockedLocationChanged?.Invoke(session, previousStationId, previousStructureId);
                 session.SendNotification("OnInvulunOnUndockingUpdated", "shipid", InventoryWire.Id(pilot!.ShipId),
                     new PyLong(pilot.InvulnerableUntil), new PyLong(UndockInvulnerabilityTicks));
-                return Task.CompletedTask;
             },
             cancellationToken,
             sessionId);
         if (transition.Moved is null)
         {
             _log?.Invoke($"undock of character {characterId} refused: {transition.Refusal}");
-            return None;
+            throw MachoErrors.ThrowUserError("ShipNotInHangar");
         }
+            await NotifyPilotEnteredSystemAsync(characterId, (ulong)session.SessionId, systemId);
         await RefreshTetherPolicyAsync(session, cancellationToken);
-        return Py.Tuple(boundObjectId is null ? None : new PyStr(boundObjectId),
-            new PyLong(Py.FileTimeFromUnixMs(_nowUnixMs() + SessionChangeCooldownMs)));
+        return None;
     }
 
     /// <summary>Boards another ship from the current station hangar and updates the active session ship.</summary>
@@ -462,6 +460,7 @@ public sealed partial class SpaceSessions
 
         if (transition is null || simulationFailed)
             return None;
+            await NotifyPilotEnteredSystemAsync(characterId, (ulong)session.SessionId, currentPilot.SolarSystemId);
         var empty = new PyDict([]);
         return Py.Tuple(empty, empty, empty, empty);
     }
@@ -503,7 +502,7 @@ public sealed partial class SpaceSessions
     {
         foreach (var oid in session.BoundOids)
         {
-            session.SendNotification("OnMachoObjectDisconnect", "+clientID", new PyStr(oid), InventoryWire.Id(session.ClientId), None);
+            session.SendNotification("OnMachoObjectDisconnect", "+clientID", new PyStr(oid), new PyLong(session.ClientId), None);
             if (Registry is not null)
             {
                 Registry.UnregisterBoundObject(oid, session);
@@ -513,6 +512,23 @@ public sealed partial class SpaceSessions
                 session.ForgetBoundObject(oid);
             }
         }
+    }
+
+    private List<Func<CancellationToken, ValueTask>> DetachBoundObjects(ClientSession session)
+    {
+        var receipts = new List<Func<CancellationToken, ValueTask>>();
+        foreach (var oid in session.BoundOids)
+        {
+            session.SendNotification("OnMachoObjectDisconnect", "+clientID", new PyStr(oid), new PyLong(session.ClientId), None);
+            if (Registry is null) session.ForgetBoundObject(oid);
+            else if (Registry.DetachBoundObject(oid, session) is { } receipt) receipts.Add(receipt);
+        }
+        return receipts;
+    }
+
+    private static async Task CompleteBoundObjectReleasesAsync(IEnumerable<Func<CancellationToken, ValueTask>> receipts, CancellationToken ct)
+    {
+        foreach (var receipt in receipts) await receipt(ct).ConfigureAwait(false);
     }
 
     // ── what the pilot does ──────────────────────────────────────────────────
@@ -541,6 +557,7 @@ public sealed partial class SpaceSessions
     /// </summary>
     public void Command(ClientSession session, byte code, params double[] args)
     {
+        RequirePublicMoveSettled(session);
         if (IsStructureObserver(session))
         {
             if (IsMovementOrder(code, args)) throw Notify("A controlled structure cannot move.");
@@ -551,6 +568,8 @@ public sealed partial class SpaceSessions
         if (_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
         {
 
+            if (IsMovementOrder(code, args) && TournamentRestricted?.Invoke(pilot.CharacterId, TournamentRestriction.Move) == true)
+                throw Notify("Movement is restricted by the tournament referee.");
             if (IsMovementOrder(code, args) && Buffs.IsImmobile(pilot.ShipId, _nowUnixMs()))
             {
                 _log?.Invoke($"movement command {code} of session {session.SessionId} refused: the ship is held still by a fleet grant");

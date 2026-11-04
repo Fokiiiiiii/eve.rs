@@ -25,9 +25,16 @@ public sealed partial class SpaceSessions
 
     public async Task<PyValue> DockAsync(ClientSession session, long stationId, CancellationToken cancellationToken)
     {
+        RequirePublicMoveSettled(session);
         var id = (ulong)session.SessionId;
         if (!_pilots.TryGetValue(id, out var pilot))
         {
+            return None;
+        }
+        if (_stations.Get(stationId) is null)
+        {
+            if (await IsStructureAsync(stationId, cancellationToken))
+                await DockStructureAsync(session, stationId, pilot.ShipId, cancellationToken);
             return None;
         }
         // a ship that its buffs keep from docking (disallowDocking 2354 on the ship, a fleet grant of the invulnerability core); the wording is the module's (see below)
@@ -214,10 +221,13 @@ public sealed partial class SpaceSessions
         string destination,
         CancellationToken cancellationToken)
     {
+        RequirePublicMoveSettled(session);
         if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
         {
             return None;
         }
+        if (TournamentRestricted?.Invoke(pilot.CharacterId, TournamentRestriction.Warp) == true)
+            throw Notify("Warping is restricted by the tournament referee.");
         if (pilot.SimulationScene.InstanceId > 0) throw Notify(AbyssalWarpBlockedMessage);
         // a ship that its buffs scramble (warpScrambleStatus 104, the warp penalty of a fleet grant) cannot warp: the same refusal as a scrambler's
         if (await ShipAttributeAsync(pilot, Eve.Services.Space.Effects.ModuleAttributes.WarpScrambleStatus, cancellationToken))
@@ -285,6 +295,10 @@ public sealed partial class SpaceSessions
     private async Task<bool> ShipAttributeAsync(Pilot pilot, int attributeId, CancellationToken cancellationToken) =>
         await FlownShipAsync(pilot, cancellationToken) is { } flown && flown.World.Get(flown.Ship.Id, attributeId) > 0;
 
+    public async ValueTask<bool> IsWarpScrambledAsync(ClientSession session, CancellationToken cancellationToken) =>
+        _pilots.TryGetValue((ulong)session.SessionId, out var pilot) &&
+        await ShipAttributeAsync(pilot, Eve.Services.Space.Effects.ModuleAttributes.WarpScrambleStatus, cancellationToken).ConfigureAwait(false);
+
     private async Task<PolicyDecision> MovementPolicyAsync(Pilot pilot, PolicyAction action, CancellationToken cancellationToken)
     {
         var securityClass = _systems.Get(pilot.SolarSystemId) is { } system
@@ -313,6 +327,7 @@ public sealed partial class SpaceSessions
     /// </summary>
     public async Task<PyValue> JumpAsync(ClientSession session, long gateId, long toGateId, long shipId, string? boundObjectId, CancellationToken cancellationToken)
     {
+        RequirePublicMoveSettled(session);
         if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
         {
             throw JumpRefused("NOT_IN_SPACE");
@@ -467,21 +482,8 @@ public sealed partial class SpaceSessions
                     }
                     if (!_pilots.Values.Any(other => other.SolarSystemId == jumped.ToSystem))
                         ForgetNpcsOf(jumped.ToSystem);
-                    if (_systems.Get(jumped.ToSystem) is { } enteredSystem
-                        && Security.IsHighSecOrHigher(Security.ClassFromLevel(enteredSystem.Security))
-                        && CriminalEnteredSystem is { } criminalEntered)
-                    {
-                        try
-                        {
-                            await criminalEntered(pilot.CharacterId, jumped.ToSystem, enteredSystem.Security, CancellationToken.None);
-                        }
-                        catch (Exception error) when (error is not OperationCanceledException)
-                        {
-                            _log?.Invoke($"criminal timer entry response for character {pilot.CharacterId} could not be dispatched: {error.Message}");
-                        }
-                    }
                 },
-                (result, _) =>
+                async (result, _) =>
                 {
                     var moved = result.Moved!;
                     arrivalFileTime = FileTimeNow();
@@ -489,12 +491,12 @@ public sealed partial class SpaceSessions
                         jumped.ToSystem, arrivalFileTime + JumpCloakTicks, pilot.UndockedFrom, jumpCloak: true)
                     { CynoArrival = pilot.CynoJumpPending };
                     if (!_pilots.TryUpdate((ulong)session.SessionId, arrived, pilot))
-                        return Task.FromResult(false);
+                        return false;
                     pilot.End();
                     ArmProtection(arrived, _jumpCloak);
                     BeginCynoTetherProtection(arrived);
                     SystemEntered?.Invoke(jumped.ToSystem);
-                    ReleaseBoundObjects(session);
+                    await CompleteBoundObjectReleasesAsync(DetachBoundObjects(session), CancellationToken.None);
                     var type = _statics.Type(moved.Ship.TypeId);
                     session.SendNotification(
                         "OnItemChange", "clientID",
@@ -520,7 +522,7 @@ public sealed partial class SpaceSessions
                     // a system with an environment (a wormhole's effects) changes what the ship flies with: the simulation is given it again
                     if (SystemEnvironment is { } environmentOf && (environmentOf(jumped.ToSystem).Count > 0 || environmentOf(pilot.SolarSystemId).Count > 0))
                         Background(() => RefreshEnvironmentAsync(session, pilot.CharacterId, pilot.ShipId));
-                    return Task.FromResult(true);
+                    return true;
                 },
                 null,
                 CancellationToken.None,
@@ -529,6 +531,7 @@ public sealed partial class SpaceSessions
                 _log?.Invoke($"jump of character {pilot.CharacterId} to system {jumped.ToSystem} failed: {transition.Refusal}");
             else
             {
+                        await NotifyPilotEnteredSystemAsync(pilot.CharacterId, (ulong)session.SessionId, jumped.ToSystem);
                 if (inspectContraband)
                     await ApplyContrabandAsync(session, pilot.CharacterId, pilot.ShipId, jumped.ToSystem, CancellationToken.None);
                 TellEnteredBuffs((ulong)session.SessionId, pilot.ShipId, _nowUnixMs());
@@ -541,6 +544,51 @@ public sealed partial class SpaceSessions
     }
 
     // ── docking ──────────────────────────────────────────────────────────────
+
+    private async Task ResolveDockingAsync(Pilot pilot, long stationId)
+    {
+        var sessionId = (ulong)pilot.Session.SessionId;
+        var allowed = false;
+        var shouldEndClientDocking = false;
+        try
+        {
+            if (_pilots.TryGetValue(sessionId, out var current) && ReferenceEquals(current, pilot))
+            {
+                shouldEndClientDocking = true;
+                if (!await ShipAttributeAsync(pilot, Eve.Services.Space.Effects.ModuleAttributes.DisallowDocking, CancellationToken.None))
+                {
+                    var policy = await MovementPolicyAsync(pilot, PolicyAction.Dock, CancellationToken.None);
+                    if (policy.Allowed)
+                    {
+                        if (_stations.Get(stationId) is not null)
+                        {
+                            allowed = true;
+                        }
+                        else if (await IsStructureAsync(stationId, CancellationToken.None))
+                        {
+                            allowed = StructureDockingAllowedAsync is not { } check
+                                || await check(pilot.CharacterId, stationId, CancellationToken.None);
+                        }
+                    }
+                    else
+                    {
+                        _log?.Invoke($"docking of character {pilot.CharacterId} at {stationId} was no longer allowed: {policy.BlockReason}");
+                    }
+                }
+            }
+        }
+        catch (Exception error)
+        {
+            _log?.Invoke($"final docking checks for character {pilot.CharacterId} at {stationId} failed: {error.Message}");
+        }
+
+        _sim.Command(sessionId, SimCommands.DockingDecision, stationId, allowed ? 1 : 0);
+        if (!allowed && shouldEndClientDocking)
+        {
+            // The V24 client clears its docking travel state only on this terminal notification; location remains in space.
+            pilot.Session.SendNotification("OnDockingFinished", "charid", InventoryWire.Id(stationId));
+        }
+    }
 
     /// <summary>
     /// The ship has docked (or is being brought home): what the reference tells the client at the end of a docking, in its order, with the
@@ -571,13 +619,13 @@ public sealed partial class SpaceSessions
                 },
                 result => result.Moved is not null,
                 applySimulation: null,
-                applySession: (result, token) =>
+                applySession: async (result, token) =>
                 {
                     if (!_pilots.TryRemove((ulong)session.SessionId, out _))
-                        return Task.FromResult(false);
+                        return false;
                     session.SendNotification("OnInvulnCancelled", "shipid", InventoryWire.Id(pilot.ShipId));
                     pilot.End();
-                    ReleaseBoundObjects(session);
+                    await CompleteBoundObjectReleasesAsync(DetachBoundObjects(session), CancellationToken.None);
                     var moved = result.Moved!;
                     var type = _statics.Type(moved.Ship.TypeId);
                     session.SendNotification(
@@ -592,7 +640,7 @@ public sealed partial class SpaceSessions
                         session.Change(("stationid", None), ("structureid", new PyInt(stationId)), ("locationid", new PyInt(pilot.SolarSystemId)), ("solarsystemid", new PyInt(pilot.SolarSystemId)));
                     else
                         session.Change(("stationid", new PyInt(stationId)), ("locationid", new PyInt(stationId)), ("solarsystemid", None));
-                    return Task.FromResult(true);
+                    return true;
                 },
                 notify: (_, _) =>
                 {

@@ -20,6 +20,7 @@ public sealed partial class SpaceSessions
     public async Task OpenBridgeAsync(
         ClientSession session, long shipId, long fieldId, int destinationSystem, long lifetimeMs, long immobileMs, double rangeMeters, double capacitor, CancellationToken cancellationToken)
     {
+        RequirePublicMoveSettled(session);
         if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
         {
             throw JumpRefused("NOT_IN_SPACE");
@@ -56,6 +57,7 @@ public sealed partial class SpaceSessions
     public async Task<PyValue> BridgeJumpAsync(
         ClientSession session, long shipId, long bridgeShipId, long fieldId, int destinationSystem, string? boundObjectId, CancellationToken cancellationToken)
     {
+        RequirePublicMoveSettled(session);
         if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
         {
             throw JumpRefused("NOT_IN_SPACE");
@@ -108,6 +110,7 @@ public sealed partial class SpaceSessions
     public async Task<PyValue> ConduitJumpAsync(
         ClientSession session, long shipId, long fieldId, int destinationSystem, IReadOnlyList<long> passengers, string? boundObjectId, CancellationToken cancellationToken)
     {
+        RequirePublicMoveSettled(session);
         if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
         {
             throw JumpRefused("NOT_IN_SPACE");
@@ -121,6 +124,7 @@ public sealed partial class SpaceSessions
             throw Notify("You cannot jump at this time.");
         }
         var jumpingPilots = _pilots.Values.Where(p => ReferenceEquals(p, pilot) || passengers.Contains(p.ShipId)).ToArray();
+        foreach (var jumper in jumpingPilots) RequirePublicMoveSettled(jumper.Session);
         var args = new List<double> { fieldId, destinationSystem, JumpDriveRules.ConduitRangeMeters };
         args.AddRange(passengers.Select(ship => (double)ship));
         CommandReply reply;
@@ -182,6 +186,7 @@ public sealed partial class SpaceSessions
     public async Task<PyValue> CynoJumpAsync(
         ClientSession session, long shipId, long fieldId, int destinationSystem, long spoolMs, double capacitorShare, string? boundObjectId, CancellationToken cancellationToken)
     {
+        RequirePublicMoveSettled(session);
         if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
         {
             throw JumpRefused("NOT_IN_SPACE");

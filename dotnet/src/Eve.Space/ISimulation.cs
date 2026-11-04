@@ -78,6 +78,43 @@ public interface ISimulation
         Action<SimMoveAbyssalParticipantReply> beforeFollowingMessages,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Ensures or removes a persisted tournament beacon in a loaded public scene.</summary>
+    Task<SimRegisterTournamentMetricsReply> RegisterTournamentMetricsAsync(SimRegisterTournamentMetrics request, CancellationToken cancellationToken = default) =>
+        Task.FromException<SimRegisterTournamentMetricsReply>(new NotSupportedException("Tournament metrics registration is unavailable."));
+    Task<SimReadTournamentMetricsReply> ReadTournamentMetricsAsync(SimReadTournamentMetrics request, CancellationToken cancellationToken = default) =>
+        Task.FromException<SimReadTournamentMetricsReply>(new NotSupportedException("Tournament metrics sample is unavailable."));
+    Task<SimReadTournamentMetricsV2Reply> ReadTournamentMetricsV2Async(SimReadTournamentMetricsV2 request, CancellationToken cancellationToken = default) =>
+        Task.FromException<SimReadTournamentMetricsV2Reply>(new NotSupportedException("Tournament metrics V2 sample is unavailable."));
+    Task<SimReleaseTournamentMetricsReply> ReleaseTournamentMetricsAsync(SimReleaseTournamentMetrics request, CancellationToken cancellationToken = default) =>
+        Task.FromException<SimReleaseTournamentMetricsReply>(new NotSupportedException("Tournament metrics release is unavailable."));
+    Task<SimReleaseTournamentCutoffReply> ReleaseTournamentCutoffAsync(SimReleaseTournamentCutoff request, CancellationToken cancellationToken = default) =>
+        Task.FromException<SimReleaseTournamentCutoffReply>(new NotSupportedException("Tournament cutoff release is unavailable."));
+    Task<SimRegisterTournamentCutoffReply> RegisterTournamentCutoffAsync(SimRegisterTournamentCutoff request, CancellationToken cancellationToken = default) =>
+        Task.FromException<SimRegisterTournamentCutoffReply>(new NotSupportedException("Tournament cutoff registration is unavailable."));
+    Task<SimReadTournamentCutoffReply> ReadTournamentCutoffAsync(SimReadTournamentCutoff request, CancellationToken cancellationToken = default) =>
+        Task.FromException<SimReadTournamentCutoffReply>(new NotSupportedException("Tournament cutoff evidence is unavailable."));
+    Task<string?> EnsureTournamentBeaconAsync(SimEnsureTournamentBeacon request, CancellationToken cancellationToken = default) =>
+        Task.FromException<string?>(new NotSupportedException("Tournament beacon placement is unavailable."));
+    Task<string?> RemoveTournamentBeaconAsync(SimRemoveTournamentBeacon request, CancellationToken cancellationToken = default) =>
+        Task.FromException<string?>(new NotSupportedException("Tournament beacon removal is unavailable."));
+
+    Task<SimEnterPublicParticipantReply> EnterPublicParticipantInOrderAsync(SimEnterPublicParticipant request,
+        Action<SimEnterPublicParticipantReply> beforeFollowingMessages, CancellationToken cancellationToken = default) =>
+        Task.FromException<SimEnterPublicParticipantReply>(new NotSupportedException("Public participant entry is unavailable."));
+
+    Task<SimMovePublicParticipantReply> MovePublicParticipantInOrderAsync(SimMovePublicParticipant request,
+        Action<SimMovePublicParticipantReply> beforeFollowingMessages, CancellationToken cancellationToken = default) =>
+        Task.FromException<SimMovePublicParticipantReply>(new NotSupportedException("Public participant moves are unavailable."));
+
+    Task<SimQueryTournamentWreckReply> QueryTournamentWreckAsync(SimQueryTournamentWreck request, CancellationToken cancellationToken = default) =>
+        Task.FromException<SimQueryTournamentWreckReply>(new NotSupportedException("Tournament wreck queries are unavailable."));
+    Task<SimRemoveTournamentWreckReply> RemoveTournamentWreckAsync(SimRemoveTournamentWreck request, CancellationToken cancellationToken = default) =>
+        Task.FromException<SimRemoveTournamentWreckReply>(new NotSupportedException("Tournament wreck removal is unavailable."));
+
+    /// <summary>Reads a body from a loaded public solar-system scene.</summary>
+    Task<SimGetSceneBodyReply> GetSceneBodyAsync(SimGetSceneBody request, CancellationToken cancellationToken = default) =>
+        Task.FromException<SimGetSceneBodyReply>(new NotSupportedException("Scene body queries are unavailable."));
+
     /// <summary>Reads the authoritative pose of a resident ship from its expected private scene.</summary>
     Task<SimGetAbyssalParticipantPoseReply> GetAbyssalParticipantPoseAsync(
         SimGetAbyssalParticipantPose request, CancellationToken cancellationToken = default);
@@ -124,6 +161,8 @@ public interface ISimulation
     Task<CommandReply> ActivateAsync(ulong sessionId, SimEffect effect, CancellationToken cancellationToken = default);
 
     void ShipChanged(ulong sessionId, SimShip ship);
+
+    void CriminalFlagActive(ulong sessionId);
 
     /// <summary>Spawns an NPC in the scene of a system and waits for the answer (the session it is known by, or why it could not be done).</summary>
     Task<SimSpawnReply> SpawnAsync(SimSpawn spawn, CancellationToken cancellationToken = default);

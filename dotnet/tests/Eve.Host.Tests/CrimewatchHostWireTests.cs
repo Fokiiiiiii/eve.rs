@@ -1,4 +1,5 @@
 using Eve.Crimewatch;
+using Eve.Data;
 using Eve.Host;
 using Eve.Macho;
 using Eve.Marshal;
@@ -9,12 +10,38 @@ namespace Eve.Host.Tests;
 
 public partial class HostServerTests
 {
+    private sealed class CrimewatchWirePersistence : ICrimewatchPersistenceCallbacks
+    {
+        public Task<IReadOnlyList<SecurityStatusTransaction>> SecurityStatusTransactionsOfAsync(long characterId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<long?> StartDuelChallengeAsync(long challengerCharacterId, long targetCharacterId, long challengerCorporationId, long challengerAllianceId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<LimitedEngagement>> LimitedEngagementsAsync(long nowUnixMs, long? characterId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<LimitedEngagement>>([]);
+
+        public Task UpsertLimitedEngagementAsync(long firstCharacterId, long secondCharacterId, long expiresAtUnixMs, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<bool> ExpireLimitedEngagementAsync(long firstCharacterId, long secondCharacterId, long expectedExpiresAtUnixMs, long nowUnixMs, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<bool> RespondToDuelChallengeAsync(long responderCharacterId, long challengerCharacterId, long challengeExpiresAtFileTime, bool accept, long? engagementExpiresAtUnixMs, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    private static NpgsqlDataSource CrimewatchTestDataSource() => NpgsqlDataSource.Create(
+        PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL") ??
+            "Host=127.0.0.1;Database=eve;Username=postgres;Timeout=1;Command Timeout=1"));
+
     [Fact]
     public async Task Crimewatch_bound_get_character_security_status_uses_the_registered_host_route()
     {
         const long characterId = 90000001;
         const long targetId = 90000002;
-        await using var dataSource = NpgsqlDataSource.Create("Host=127.0.0.1;Database=eve;Username=postgres;Timeout=1;Command Timeout=1");
+        await using var dataSource = CrimewatchTestDataSource();
+        await PgCrimewatchStore.MigrateAsync(dataSource);
         var service = new CrimewatchService(
             new PgCrimewatchStore(dataSource), null!, () => 1_800_000_000_000,
             (id, _) => Task.FromResult(id == targetId ? 2.5 : 0d));
@@ -46,9 +73,42 @@ public partial class HostServerTests
     }
 
     [Fact]
+    public async Task Crimewatch_bound_get_my_security_status_returns_fractional_recovery_over_the_wire()
+    {
+        const long characterId = 90000001;
+        await using var dataSource = CrimewatchTestDataSource();
+        await PgCrimewatchStore.MigrateAsync(dataSource);
+        var service = new CrimewatchService(
+            new PgCrimewatchStore(dataSource), null!, () => 1_800_000_000_000,
+            (id, _) => Task.FromResult(id == characterId ? 0.03125 : 0d));
+        Start(strictRpc: true,
+            configure: registry => registry.Register(service),
+            sessionOpened: session => session.CharacterId = characterId);
+
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+        var kwargs = new PyDict([new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1))]);
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.CallWithKwargs(open, 1, "crimewatch", "MachoBindObject",
+                new PyTuple([new PyTuple([new PyInt(30000142), new PyInt(1)]), PyNone.Instance]), kwargs))));
+        var bind = MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
+        var binding = Assert.IsType<PyTuple>(Result(bind));
+        var oid = BoundObjects.ExtractName(Assert.IsType<PySubStruct>(binding.Items[0]))!;
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.BoundCall(open, 2, oid, "GetMySecurityStatus", new PyTuple([]), kwargs))));
+        var reply = MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
+        Assert.Equal(MachoMessage.CallRsp, Assert.IsType<MachoPacket>(MachoPacket.Decode(reply)).Type);
+        Assert.Equal(new PyReal(0.03125), Result(reply));
+    }
+
+    [Fact]
     public async Task Crimewatch_bound_rpcs_return_the_client_shapes_through_the_registered_host_route()
     {
-        await using var dataSource = NpgsqlDataSource.Create("Host=127.0.0.1;Database=eve;Username=postgres;Timeout=1;Command Timeout=1");
+        await using var dataSource = CrimewatchTestDataSource();
+        await PgCrimewatchStore.MigrateAsync(dataSource);
         var service = new CrimewatchService(
             new PgCrimewatchStore(dataSource), null!, () => 1_800_000_000_000,
             (id, _) => Task.FromResult(id == 90000002 ? 2.5 : 0d));
@@ -92,6 +152,48 @@ public partial class HostServerTests
         Assert.Equal(new PyInt(2), await Call("SetSafetyLevel", new PyInt(0)));
         Assert.Equal(PyNone.Instance, await Call("StartDuelChallenge", new PyLong(90000002)));
         Assert.Equal(PyNone.Instance, await Call("RespondToDuelChallenge", new PyLong(90000002), new PyLong(0), PyBool.True));
+    }
+
+    [Fact]
+    public async Task Crimewatch_bound_get_client_states_returns_a_persisted_active_receiver_timer()
+    {
+        const long characterId = 90000001;
+        const long now = 1_800_000_000_000;
+        const long pvpExpiry = now + 900_000;
+        await using var dataSource = CrimewatchTestDataSource();
+        await PgCrimewatchStore.MigrateAsync(dataSource);
+        var store = new PgCrimewatchStore(dataSource);
+        await store.UpdateAsync(characterId, state => state with { PvpUntilMs = pvpExpiry }, now);
+        using var runtime = new CrimewatchRuntime(store, new Eve.Services.CharacterSessions(), () => now, new CrimewatchWirePersistence());
+        var service = new CrimewatchService(store, runtime, () => now);
+        Start(strictRpc: true,
+            configure: registry => registry.Register(service),
+            sessionOpened: session =>
+            {
+                session.CharacterId = characterId;
+                session.Set("charid", new PyLong(characterId));
+            });
+
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+        var kwargs = new PyDict([new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1))]);
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.CallWithKwargs(open, 1, "crimewatch", "MachoBindObject",
+                new PyTuple([new PyTuple([new PyInt(30000142), new PyInt(1)]), PyNone.Instance]), kwargs))));
+        var bind = MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
+        var binding = Assert.IsType<PyTuple>(Result(bind));
+        var oid = BoundObjects.ExtractName(Assert.IsType<PySubStruct>(binding.Items[0]))!;
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.BoundCall(open, 2, oid, "GetClientStates", new PyTuple([]), kwargs))));
+        var reply = MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
+        Assert.Equal(MachoMessage.CallRsp, Assert.IsType<MachoPacket>(MachoPacket.Decode(reply)).Type);
+        var states = Assert.IsType<PyTuple>(Result(reply));
+        var timers = Assert.IsType<PyTuple>(states.Items[0]);
+        Assert.Equal([new PyInt(100), PyNone.Instance], Assert.IsType<PyTuple>(timers.Items[0]).Items);
+        Assert.Equal([new PyInt(202), new PyLong(Eve.Services.Py.FileTimeFromUnixMs(pvpExpiry))], Assert.IsType<PyTuple>(timers.Items[1]).Items);
     }
 
     [Fact]

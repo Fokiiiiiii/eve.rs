@@ -104,6 +104,8 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
 
     public bool IsInSpace(ClientSession session) => _space.IsInSpace(session);
 
+    public void RequirePublicMoveSettled(ClientSession session) => _space.RequirePublicMoveSettled(session);
+
     public int? SolarSystemOf(ClientSession session) => _space.SolarSystemOf(session);
 
     private static MachoWrappedException Unavailable() => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Space is not available right now. Try again in a moment.")));

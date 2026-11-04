@@ -77,7 +77,7 @@ public sealed class PersistenceWeaponTargetContextReadModel(
             SamePilot: attackerCharacterId == targetCharacterId,
             TargetIsCriminal: targetState.IsCriminal(now),
             TargetIsSuspect: targetState.IsSuspect(now),
-            TargetIsOutlaw: targetSecurity <= -5.0,
+              TargetIsOutlaw: targetSecurity <= -4.95,
             ActiveWar: activeWarState,
             ActiveLimitedEngagement: activeLimitedEngagement,
             LegalFriendlyFire: legalFriendlyFire);

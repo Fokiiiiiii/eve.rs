@@ -66,5 +66,6 @@ internal sealed partial class CharacterServicesComposition
         spaceSchema = Env("EVE_SPACE_SCHEMA", PgSpaceItemStore.DefaultSchema);
         await PgSpaceItemStore.MigrateAsync(source, spaceSchema);
         await PgShipConfigurationStore.MigrateAsync(source, spaceSchema);
+        await NeedlejackActivation.MigrateAsync(source, spaceSchema);
     }
 }

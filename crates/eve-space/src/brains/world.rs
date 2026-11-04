@@ -52,6 +52,8 @@ impl<'a> SceneWorld<'a> {
         self.tell_locks(shared);
         self.tell_proximity(shared);
         self.tell_aggressions(shared);
+        self.tell_security_status_losses(shared);
+        self.tell_criminal_flags(shared);
         self.tell_protection(shared);
         self.tell_destroyed(shared);
     }
@@ -157,6 +159,44 @@ impl<'a> SceneWorld<'a> {
                 message::CRIMEWATCH_EVENT_STARTED,
                 &[key, info],
             );
+        }
+    }
+
+    fn tell_security_status_losses(&mut self, shared: &mut Shared) {
+        let pending = std::mem::take(&mut self.scene.pending_security_status_losses);
+        let losses = std::mem::take(&mut self.scene.security_status_losses);
+        let solar_system_id = i64::from(self.scene.solar_system_id());
+        let has_subscribers =
+            !shared.events.subscribers(solar_system_id, message::SEC_STATUS_LOST_EVENT).is_empty();
+        for (owner_id, ship_id) in pending.into_iter().chain(losses) {
+            if has_subscribers {
+                shared.tell_subscribers(
+                    Subject::Item(solar_system_id),
+                    message::SEC_STATUS_LOST_EVENT,
+                    &[Value::Int(owner_id), Value::Int(ship_id)],
+                );
+            } else {
+                self.scene.pending_security_status_losses.push((owner_id, ship_id));
+            }
+        }
+    }
+
+    fn tell_criminal_flags(&mut self, shared: &mut Shared) {
+        let pending = std::mem::take(&mut self.scene.pending_criminal_flag_activations);
+        let activations = std::mem::take(&mut self.scene.criminal_flag_activations);
+        let solar_system_id = i64::from(self.scene.solar_system_id());
+        let has_subscribers =
+            !shared.events.subscribers(solar_system_id, message::CRIMINAL_FLAG_ACTIVE).is_empty();
+        for (owner_id, ship_id) in pending.into_iter().chain(activations) {
+            if has_subscribers {
+                shared.tell_subscribers(
+                    Subject::Item(solar_system_id),
+                    message::CRIMINAL_FLAG_ACTIVE,
+                    &[Value::Int(owner_id), Value::Int(ship_id)],
+                );
+            } else {
+                self.scene.pending_criminal_flag_activations.push((owner_id, ship_id));
+            }
         }
     }
 

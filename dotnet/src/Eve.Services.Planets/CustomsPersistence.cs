@@ -6,7 +6,7 @@ namespace Eve.Services.Planets;
 
 public sealed partial class PlanetMgrService
 {
-    private sealed record CustomsPolicy(long OwnerCorporationId, bool AllowAlliance, bool AllowStandings, int StandingLevel, Customs.OwnerTaxRates Rates);
+    private sealed record CustomsPolicy(long OwnerCorporationId, bool AllowAlliance, bool AllowStandings, int StandingLevel, int ReinforceHour, Customs.OwnerTaxRates Rates);
 
     private static readonly JsonSerializerOptions CustomsJson = new(JsonSerializerDefaults.Web);
 
@@ -35,7 +35,7 @@ public sealed partial class PlanetMgrService
         await insert.ExecuteNonQueryAsync(cancellationToken);
 
         await using var read = new NpgsqlCommand($"""
-            SELECT owner_corporation_id, allow_alliance, allow_standings, standing_level, tax_rates::text
+            SELECT owner_corporation_id, allow_alliance, allow_standings, standing_level, reinforce_hour, tax_rates::text
             FROM {store.Schema}.customs_offices WHERE office_id = $1
             """, connection, transaction)
         {
@@ -44,8 +44,8 @@ public sealed partial class PlanetMgrService
         await using var reader = await read.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
             throw new InvalidOperationException($"customs office policy {officeId} was not stored");
-        var rates = ReadOwnerRates(reader.GetString(4));
-        return new CustomsPolicy(reader.GetInt64(0), reader.GetBoolean(1), reader.GetBoolean(2), reader.GetInt32(3), rates);
+        var rates = ReadOwnerRates(reader.GetString(5));
+        return new CustomsPolicy(reader.GetInt64(0), reader.GetBoolean(1), reader.GetBoolean(2), reader.GetInt32(3), reader.GetInt32(4), rates);
     }
 
     private static Customs.OwnerTaxRates ReadOwnerRates(string json)
@@ -75,11 +75,11 @@ public sealed partial class PlanetMgrService
         ["standingHorrible"] = rates.Terrible,
     });
 
-    public async Task UpdateOfficeSettingsAsync(
-        ClientSession session, long officeId, Customs.OwnerTaxRates rates, int standingLevel,
-        bool allowAlliance, bool allowStandings, CancellationToken cancellationToken)
+    public async Task UpdateOfficeSettingsAsync(ClientSession session, long officeId, OrbitalSettings settings, CancellationToken cancellationToken)
     {
-        if (Customs.PlanetOf(officeId) is not { } planetId || standingLevel is < -10 or > 10)
+        var rates = settings.TaxRates;
+        if (Customs.PlanetOf(officeId) is not { } planetId || settings.StandingLevel is < -10 or > 10 ||
+            settings.ReinforceHour is < 0 or > 23 || settings.AccessGroupId is not null)
             throw MachoErrors.ThrowUserError("CustomsOfficeNotFound");
         var corporationId = session.GetInt("corpid") ?? 0;
         if (corporationId <= 0 || canManageCustomsOffice is null ||
@@ -99,15 +99,15 @@ public sealed partial class PlanetMgrService
         await CustomsPolicyAsync(connection, transaction, officeId, office.OwnerId, cancellationToken);
         await using var update = new NpgsqlCommand($"""
             UPDATE {store.Schema}.customs_offices
-            SET allow_alliance = $3, allow_standings = $4, standing_level = $5, tax_rates = $6::jsonb, updated_ms = $7
+            SET allow_alliance = $3, allow_standings = $4, standing_level = $5, reinforce_hour = $6, tax_rates = $7::jsonb, updated_ms = $8
             WHERE office_id = $1 AND owner_corporation_id = $2
             """, connection, transaction)
         {
             Parameters =
             {
-                new() { Value = officeId }, new() { Value = corporationId }, new() { Value = allowAlliance },
-                new() { Value = allowStandings }, new() { Value = standingLevel }, new() { Value = WriteOwnerRates(rates) },
-                new() { Value = nowMs() },
+                new() { Value = officeId }, new() { Value = corporationId }, new() { Value = settings.AllowAlliance },
+                new() { Value = settings.AllowStandings }, new() { Value = settings.StandingLevel }, new() { Value = settings.ReinforceHour },
+                new() { Value = WriteOwnerRates(rates) }, new() { Value = nowMs() },
             },
         };
         if (await update.ExecuteNonQueryAsync(cancellationToken) != 1)
@@ -140,9 +140,11 @@ public sealed partial class PlanetMgrService
         if (visitorCorporationId == policy.OwnerCorporationId)
             return policy.Rates.Corporation;
 
+        var corporationsSchema = Environment.GetEnvironmentVariable("EVE_CORPORATIONS_SCHEMA") ?? "corporations";
+        var quotedCorporationsSchema = new NpgsqlCommandBuilder().QuoteIdentifier(corporationsSchema);
         long ownerAllianceId = 0;
         await using (var owner = new NpgsqlCommand(
-            $"SELECT COALESCE(alliance_id, 0) FROM {Environment.GetEnvironmentVariable("EVE_CORPORATIONS_SCHEMA") ?? "corporations"}.corporations WHERE id = $1",
+            $"SELECT COALESCE(alliance_id, 0) FROM {quotedCorporationsSchema}.corporations WHERE id = $1",
             connection, transaction)
         {
             Parameters = { new() { Value = policy.OwnerCorporationId } },
@@ -156,17 +158,17 @@ public sealed partial class PlanetMgrService
             return null;
 
         var standing = 0;
-        await using (var contacts = new NpgsqlCommand("""
-            SELECT relationship_id FROM {Environment.GetEnvironmentVariable("EVE_CORPORATIONS_SCHEMA") ?? "corporations"}.corporation_contacts
+        var contactIds = new[] { characterId, visitorCorporationId, visitorAllianceId }.Where(id => id > 0).ToArray();
+        await using (var contacts = new NpgsqlCommand($"""
+            SELECT relationship_id FROM {quotedCorporationsSchema}.corporation_contacts
             WHERE corporation_id = $1 AND contact_id = ANY($2::bigint[])
-            ORDER BY CASE contact_id WHEN $3 THEN 1 WHEN $4 THEN 2 ELSE 3 END LIMIT 1
+            ORDER BY array_position($2::bigint[], contact_id) LIMIT 1
             """, connection, transaction)
         {
             Parameters =
             {
                 new() { Value = policy.OwnerCorporationId },
-                new() { Value = new[] { characterId, visitorCorporationId, visitorAllianceId }.Where(id => id > 0).ToArray() },
-                new() { Value = characterId }, new() { Value = visitorCorporationId },
+                new() { Value = contactIds },
             },
         })
         {

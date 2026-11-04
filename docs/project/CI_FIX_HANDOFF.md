@@ -2,7 +2,15 @@
 
 The current status below is authoritative. Dated entries that follow are historical checkpoints from their stated time.
 
-## Current status (2026-10-29, 3748c507)
+## Current status (2026-11-03, run 1476)
+
+- `python3 tools/dev/gen-simlink-fixtures.py` now generates the missing `CriminalFlagActive` sample (kind 140, session ID 1001); `oracle/fixtures/simlink/messages.json` is regenerated. Both fixture generators reran and `git diff --exit-code -- oracle/` passed.
+- Local checks passed: `dotnet build dotnet/tests/Eve.Space.Tests -p:UseSharedCompilation=false`; `dotnet test dotnet/tests/Eve.Space.Tests --filter FullyQualifiedName~SimCodecTests` (474 passed); `cargo +1.94.1 check -p eve-space`; `cargo +1.94.1 test -p eve-space --test simlink_fixtures` (13 passed).
+- Run 1476 also failed the Rust `a_ship_is_sent_out_bound_told_to_dock_and_reported_docked` test and headless undock calls (`macho error 2` / space unavailable). The fixture correction does not address those failures; verify their root cause before another push.
+- A whole-repository V24 client search found no `CriminalFlagActive` or `EnsureAbyssalScene` client RPC names; these are host-to-simulation protocol messages. Client crimewatch consumes `OnCriminalTimerUpdate` and `OnSystemCriminalFlagUpdates` in `eve/client/script/ui/services/crimewatchSvc.py:239-254`; Abyssal entry uses `abyss/client/abyssal_service.py:74-94`.
+- Push-triggered CI for this fixture correction remains to be checked.
+
+## Historical status (2026-10-29, 3748c507)
 
 - `3786dea9` pushed the station insufficient-funds fix. Focused Station run `40833460734` and full `Eve.Services.Station.Tests` run `40833482780` passed. Push-triggered `ci.yml` run `40833436694` completed red on the skill oracle values from before `aa199629`.
 - Run `40837554806` for `c9e996a5` passed every job except the headless E2E job. The only remaining differences were bound `GetSkillPoints` replies, whose method tuple is in positional argument 2. `efa8aff0` reads that nested call and adjusts the returned total.

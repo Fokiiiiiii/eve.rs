@@ -131,9 +131,7 @@ public sealed partial class FleetStore
                 if (result is null) return PyNone.Instance;
                 var actualMemberCount = checked((int)await CountAsync(writeConnection, transaction,
                     $"SELECT count(*) FROM {_schema}.fleet_members WHERE fleet_id = $1", cancellationToken, mutationFleetId));
-                result.NumMembers = args.Count > 0 && TryReadLong(args[0], out var requestedCount)
-                    ? checked((int)Math.Clamp(requestedCount, 0, int.MaxValue))
-                    : actualMemberCount;
+                result.NumMembers = actualMemberCount;
                 result.SolarSystemId = SessionSolarSystemId(session);
                 var diffInput = args.Count > 1 ? args[1] : PyNone.Instance;
                 if (!TryReadAdvertEntityDiff(diffInput, out var diff)) return PyNone.Instance;
@@ -229,18 +227,20 @@ public sealed partial class FleetStore
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         var adverts = new List<FleetAdvert>();
         await using var command = Command(connection, null,
-            $@"SELECT fleet_id, advert_payload::text
-               FROM {_schema}.fleets
-               WHERE ($1::bigint IS NULL OR fleet_id = $1)
-                 AND ($2::boolean OR advert_active)
-                 AND advert_payload IS NOT NULL
-               ORDER BY fleet_id",
+            $@"SELECT f.fleet_id, f.advert_payload::text,
+                      (SELECT count(*)::integer FROM {_schema}.fleet_members m WHERE m.fleet_id = f.fleet_id)
+               FROM {_schema}.fleets f
+               WHERE ($1::bigint IS NULL OR f.fleet_id = $1)
+                 AND ($2::boolean OR f.advert_active)
+                 AND f.advert_payload IS NOT NULL
+               ORDER BY f.fleet_id",
             fleetId, includeInactive);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
             var payload = System.Text.Json.JsonSerializer.Deserialize<FleetAdvertPayload>(reader.GetString(1))
                 ?? throw new InvalidOperationException($"Fleet {reader.GetInt64(0)} has an invalid advert payload.");
+            payload.NumMembers = reader.GetInt32(2);
             adverts.Add(new FleetAdvert(reader.GetInt64(0), payload));
         }
         return adverts;
@@ -264,8 +264,11 @@ public sealed partial class FleetStore
             $"SELECT advert_payload::text FROM {_schema}.fleets WHERE fleet_id = $1 AND advert_active",
             cancellationToken, fleetId);
         if (value is not string json) return null;
-        return System.Text.Json.JsonSerializer.Deserialize<FleetAdvertPayload>(json)
+        var advert = System.Text.Json.JsonSerializer.Deserialize<FleetAdvertPayload>(json)
             ?? throw new InvalidOperationException($"Fleet {fleetId} has an invalid advert payload.");
+        advert.NumMembers = checked((int)await CountAsync(connection, transaction,
+            $"SELECT count(*) FROM {_schema}.fleet_members WHERE fleet_id = $1", cancellationToken, fleetId));
+        return advert;
     }
 
     private async Task SaveFleetAdvertPayloadAsync(System.Data.Common.DbConnection connection,

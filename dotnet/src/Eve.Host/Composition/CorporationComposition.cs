@@ -162,6 +162,7 @@ internal sealed partial class CharacterServicesComposition
             corporations, characters, foundations.Scheduler, foundations.Relations, foundations.Events,
             allianceAffiliationNotify, characterSessions);
         await allianceDue.RegisterAsync();
+        SubscribeWarEligibilityChanges(foundations.Events, structureStore, PrepareWarEligibilityNotificationAsync);
         var officeStore = new Eve.Corporations.CorporationOfficeStore(source, corporationSchema);
         var warInheritance = new Eve.Services.Corporations.AllianceWarInheritanceWorker(
             source, corporations, officeStore, foundations.Relations, foundations.Scheduler, now, characterSessions);
@@ -186,7 +187,8 @@ internal sealed partial class CharacterServicesComposition
             readSovSnapshot: ReadAllianceSovSnapshotAsync,
             readStaticOwners: ReadAllianceStaticOwnersAsync,
             validateWarHQ: (call, ownerId, structureId, token) =>
-                structureDirectoryReadModel.IsValidWarHQAsync(call, ownerId, structureId, token));
+                structureDirectoryReadModel.IsValidWarHQAsync(call, ownerId, structureId, token),
+            readWarEligibility: ReadWarEligibilityBatchAsync);
     }
 
     private async Task<Eve.Services.Corporations.AllianceSovSnapshot?> ReadAllianceSovSnapshotAsync(

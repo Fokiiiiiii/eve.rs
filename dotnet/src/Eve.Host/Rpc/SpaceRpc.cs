@@ -63,11 +63,20 @@ internal sealed partial class CharacterServicesComposition
         hackingSite.Ended = (session, target, won, cancellationToken) => spaceSessions?.HackableContainers is { } hacks
             ? hacks.EndedAsync(target, won, session.CharacterId ?? 0, cancellationToken)
             : ValueTask.CompletedTask;
+        var randomJump = spaceSessions is null ? null : new NeedlejackActivation(
+            source, spaceSchema, items, itemTypes, ships, fleetStore, characterSessions, spaceSessions, solarSystems, stations,
+            dogma, crimewatchStore, crimewatchRuntime, structureStore, deployedStore, bountyStore, now);
+        Func<ServiceCall, SpaceRpcItem, CancellationToken, ValueTask<PyValue?>>? activateRandomJump =
+            randomJump is null ? null : randomJump.ActivateAsync;
+        Func<ServiceCall, long, CancellationToken, ValueTask<PyValue?>>? replayRandomJump =
+            randomJump is null ? null : randomJump.ReplayAsync;
         return
     [
             hackingMgr,
-            new Eve.Services.Space.PvpFilamentMgrService(),
-            new Eve.Services.Space.RandomJumpMgrService(ReadTravelRpcItemAsync),
+            new Eve.Services.Space.PvpFilamentMgrService(
+                admit: AdmitPvpFilamentQueueAsync,
+                utcNow: () => DateTimeOffset.FromUnixTimeMilliseconds(now())),
+            new Eve.Services.Space.RandomJumpMgrService(ReadTravelRpcItemAsync, activateRandomJump, replayRandomJump),
             new Eve.Services.Space.WarpVectorMgrService(ReadTravelRpcItemAsync),
             new Eve.Services.Space.WormholeMgrService(
                 spaceSessions,

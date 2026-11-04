@@ -97,6 +97,15 @@ owners = Recordset(EveOwners, "ownerID", "GetOwnersEx", "GetMultiOwnersEx")
         self.assertEqual("CLIENT-LOCAL", status)
         self.assertIn("invCache.py:855-859", evidence)
 
+    def test_client_local_planet_pin_getter_is_not_reported_as_missing(self):
+        contract = service_audit.audit.load_contract()
+        pair = ("planetMgr", "GetPin")
+        status, evidence = current_service_audit.audit.status_for(pair, set(), {}, contract)
+        self.assertEqual("CLIENT-LOCAL", status)
+        self.assertIn("BasePinContainer.py:607-610", evidence)
+        self.assertIn("eve/client/script/ui/shared/planet/planetUIPins.py:471-475", evidence)
+        self.assertIn("no planetMgr RPC or bound-object call", evidence)
+
     def test_host_route_extraction_resolves_registered_string_constants(self):
         contract = service_audit.audit.load_contract()
         with tempfile.TemporaryDirectory() as temporary:

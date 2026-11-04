@@ -115,7 +115,7 @@ def test_a_docked_character_reads_the_market_as_the_client_does():
 def _dock_at_market_structure(client, character: int, ship_id: int, fitted: list, structure_id: int) -> None:
     structures._reenter(client, character)
     structures._undock(client, ship_id, fitted, station=structures.STATION, system=structures.SYSTEM)
-    seen = timed_events(client, 30.0, until=lambda events: structures._structure_slim(events, structure_id) is not None)
+    seen = structures._structure_ready_for_docking(client, structure_id)
     assert structures._structure_slim(seen, structure_id) is not None, f"Fortizar {structure_id} did not enter the ballpark"
     ballpark = client.call("beyonce", "MachoBindObject", structures.SYSTEM, None)
     client.call_bound(ballpark[0], "CmdWarpToStuff", "item", structure_id, minRange=0)
@@ -136,7 +136,7 @@ def _dock_at_market_structure(client, character: int, ship_id: int, fitted: list
             break
         except p.MachoError as failure:
             if structures._refusal(failure)[0] != "DockingApproach" or time.time() > deadline:
-                raise
+                pytest.fail(f"the docking was refused: {structures._refusal(failure)}")
             timed_events(client, 5.0)
     finished = timed_events(client, 60.0, until=lambda events: any(
         _plain_name(event.get("name")) == "OnDockingFinished" for event in events

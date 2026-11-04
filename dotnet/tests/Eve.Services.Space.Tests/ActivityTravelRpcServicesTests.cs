@@ -9,16 +9,49 @@ public sealed class ActivityTravelRpcServicesTests
     [Fact]
     public async Task Pvp_catalog_and_event_details_keep_the_EveJS_wire_shapes()
     {
-        var service = new PvpFilamentMgrService();
+        var catalog = PvpFilamentEventCatalog.LoadDefault();
+        var now = new DateTimeOffset(2022, 6, 4, 10, 59, 59, TimeSpan.Zero);
+        var service = new PvpFilamentMgrService(catalog, utcNow: () => now);
+        Assert.NotNull(catalog.GetEvent(105, 145));
+        Assert.Null(catalog.GetEvent(105, 99999));
+        Assert.Null(catalog.GetEvent(99999, 145));
         var session = new ClientSession(new PacketSink()) { ClientId = 20 };
         session.UserId = 10;
 
         Assert.Equal("pvpFilamentMgr", service.Name);
         Assert.True(service.HasMethod("AbyssalPVPEndGateActivation"));
-        Assert.Equal(new PyDict([]), await service.CallAsync(Call("GetAllEvents", session)));
-        Assert.Equal(new PyDict([]), await service.CallAsync(Call("GetActiveEvents", session)));
-        Assert.Equal(PyNone.Instance, await service.CallAsync(Call("GetMostRecentEvent", session)));
-        Assert.Equal(PyNone.Instance, await service.CallAsync(Call("GetNextEventDate", session)));
+        var allEvents = Assert.IsType<PyDict>(await service.CallAsync(Call("GetAllEvents", session)));
+        Assert.Equal(88, allEvents.Entries.Count);
+        var sourcedEvent = Assert.IsType<PyObject>(Assert.Single(allEvents.Entries,
+            entry => entry.Key == new PyStr("105_145")).Value);
+        Assert.Equal(new PyStr("util.KeyVal"), sourcedEvent.Name);
+        var eventFields = Assert.IsType<PyDict>(sourcedEvent.Args);
+        Assert.Equal(new PyInt(105), Field(eventFields, "matchTypeID"));
+        Assert.Equal(new PyInt(145), Field(eventFields, "scheduleID"));
+        Assert.Equal(new PyInt(63715), Field(eventFields, "filamentTypeID"));
+        Assert.Equal(25, eventFields.Entries.Count);
+        Assert.Equal(ExpectedDate(2022, 6, 4), Field(eventFields, "startDate"));
+        Assert.Equal(ExpectedDate(2022, 6, 5), Field(eventFields, "endDate"));
+        Assert.DoesNotContain(Assert.IsType<PyDict>(await service.CallAsync(Call("GetActiveEvents", session))).Entries,
+            entry => entry.Key == new PyStr("105_145"));
+
+        now = new DateTimeOffset(2022, 6, 4, 11, 0, 0, TimeSpan.Zero);
+        var active = Assert.IsType<PyDict>(await service.CallAsync(Call("GetActiveEvents", session)));
+        Assert.Contains(active.Entries, entry => entry.Key == new PyStr("105_145"));
+        Assert.Equal(ExpectedDate(2022, 6, 4), await service.CallAsync(Call("GetNextEventDate", session)));
+        now = new DateTimeOffset(2022, 6, 5, 11, 0, 0, TimeSpan.Zero);
+        Assert.DoesNotContain(Assert.IsType<PyDict>(await service.CallAsync(Call("GetActiveEvents", session))).Entries,
+            entry => entry.Key == new PyStr("105_145"));
+
+        now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var recent = Assert.IsType<PyObject>(await service.CallAsync(Call("GetMostRecentEvent", session)));
+        var recentFields = Assert.IsType<PyDict>(recent.Args);
+        Assert.Equal(new PyInt(129), Field(recentFields, "matchTypeID"));
+        Assert.Equal(new PyInt(171), Field(recentFields, "scheduleID"));
+        Assert.Same(PyNone.Instance, await service.CallAsync(Call("GetNextEventDate", session)));
+        now = new DateTimeOffset(2020, 7, 1, 12, 0, 0, TimeSpan.Zero);
+        Assert.DoesNotContain(Assert.IsType<PyDict>(await service.CallAsync(Call("GetActiveEvents", session))).Entries,
+            entry => entry.Key == new PyStr("1_1"));
 
         var sink = (PacketSink)session.Sink!;
         var leaderboard = new PyDict([
@@ -44,6 +77,139 @@ public sealed class ActivityTravelRpcServicesTests
         Assert.Equal(ClientNotification.Build(10, session.NodeId, "OnPVPFilamentsCharacterStatistics", "clientID", [stats], 1),
             sink.Packets[1]);
         Assert.Equal(PyNone.Instance, await service.CallAsync(Call("LeavePVPQueue", session, new PyInt(44), new PyInt(55))));
+    }
+
+    [Fact]
+    public async Task Pvp_queue_rejects_invalid_ids_and_only_admits_an_active_sourced_filament()
+    {
+        var session = new ClientSession { CharacterId = 123 };
+        var callbackCount = 0;
+        var service = new PvpFilamentMgrService(
+            admit: (call, _, _) =>
+            {
+                callbackCount++;
+                var error = TravelRpcWire.Integer(call.Arg(0)) > 0
+                    ? null
+                    : new PvpFilamentQueueError(PvpFilamentJumpErrorCodes.KeyNotFound, []);
+                return ValueTask.FromResult(error is null
+                    ? new PvpFilamentAdmissionResult([new PvpFilamentQueueParticipant(123, session)], [])
+                    : new PvpFilamentAdmissionResult([], [error]));
+            },
+            utcNow: () => new DateTimeOffset(2022, 6, 4, 11, 0, 0, TimeSpan.Zero));
+
+        var invalidType = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await service.CallAsync(Call("JoinPVPQueue", session, new PyInt(44), new PyInt(99999))));
+        Assert.Equal(PyList.Of(PyList.Of(new PyInt(33), new PyList([]))), ErrorValue(invalidType, "errors"));
+        Assert.Equal(0, callbackCount);
+
+        var invalidItem = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await service.CallAsync(Call("JoinPVPQueue", session, new PyInt(0), new PyInt(63715))));
+        Assert.Equal(PyList.Of(PyList.Of(new PyInt(6), new PyList([]))), ErrorValue(invalidItem, "errors"));
+        Assert.Equal(1, callbackCount);
+
+        Assert.Equal(new PyInt(0), await service.CallAsync(Call("JoinPVPQueue", session, new PyInt(44), new PyInt(63715))));
+        Assert.Equal(2, callbackCount);
+    }
+
+    [Fact]
+    public async Task Pvp_queue_rechecks_the_schedule_after_async_admission()
+    {
+        var now = new DateTimeOffset(2022, 6, 4, 11, 0, 0, TimeSpan.Zero);
+        var session = new ClientSession { CharacterId = 123 };
+        var service = new PvpFilamentMgrService(
+            admit: (_, _, _) =>
+            {
+                now = new DateTimeOffset(2022, 6, 5, 11, 0, 0, TimeSpan.Zero);
+                return ValueTask.FromResult(new PvpFilamentAdmissionResult(
+                    [new PvpFilamentQueueParticipant(123, session)], []));
+            },
+            utcNow: () => now);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await service.CallAsync(Call("JoinPVPQueue", session, new PyInt(44), new PyInt(63715))));
+        Assert.Equal(PyList.Of(PyList.Of(new PyInt(33), new PyList([]))), ErrorValue(error, "errors"));
+    }
+
+    [Fact]
+    public async Task Pvp_queue_duplicate_leave_retry_and_notifications_keep_reference_shapes()
+    {
+        var ownerSink = new PacketSink();
+        var memberSink = new PacketSink();
+        var owner = new ClientSession(ownerSink) { CharacterId = 123, ClientId = 20 };
+        var member = new ClientSession(memberSink) { CharacterId = 456, ClientId = 21 };
+        owner.UserId = 10;
+        member.UserId = 11;
+        var participants = new[]
+        {
+            new PvpFilamentQueueParticipant(owner.CharacterId!.Value, owner),
+            new PvpFilamentQueueParticipant(member.CharacterId!.Value, member),
+        };
+        var service = new PvpFilamentMgrService(
+            admit: (_, _, _) => ValueTask.FromResult(new PvpFilamentAdmissionResult(participants, [])),
+            utcNow: () => new DateTimeOffset(2022, 6, 4, 11, 0, 0, TimeSpan.Zero));
+
+        Assert.Equal(new PyInt(0), await service.CallAsync(Call("JoinPVPQueue", owner, new PyInt(44), new PyInt(63715))));
+        var duplicate = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await service.CallAsync(Call("JoinPVPQueue", owner, new PyInt(44), new PyInt(63715))));
+        Assert.Equal(PyList.Of(PyList.Of(new PyInt(32), new PyList([]))), ErrorValue(duplicate, "errors"));
+
+        Assert.Equal(PyNone.Instance, await service.CallAsync(Call("LeavePVPQueue", member)));
+        var failure = PyList.Of(PyList.Of(new PyInt(22), new PyList([])));
+        Assert.Equal(ClientNotification.Build(10, owner.NodeId, "OnMatchMakingFailure", "clientID", [failure], 0),
+            Assert.Single(ownerSink.Packets));
+        Assert.Equal(ClientNotification.Build(11, member.NodeId, "OnMatchMakingFailure", "clientID", [failure], 0),
+            Assert.Single(memberSink.Packets));
+
+        Assert.Equal(PyNone.Instance, await service.CallAsync(Call("LeavePVPQueue", owner)));
+        Assert.Single(ownerSink.Packets);
+        Assert.Single(memberSink.Packets);
+        Assert.Equal(new PyInt(0), await service.CallAsync(Call("JoinPVPQueue", owner, new PyInt(44), new PyInt(63715))));
+
+        owner.Close();
+        var disconnected = PyList.Of(PyList.Of(new PyInt(21), new PyList([])));
+        Assert.Equal(ClientNotification.Build(10, owner.NodeId, "OnMatchMakingFailure", "clientID", [disconnected], 1),
+            ownerSink.Packets[1]);
+        Assert.Equal(ClientNotification.Build(11, member.NodeId, "OnMatchMakingFailure", "clientID", [disconnected], 1),
+            memberSink.Packets[1]);
+    }
+
+    [Fact]
+    public async Task Pvp_queue_concurrent_joins_admit_only_one_record()
+    {
+        var session = new ClientSession { CharacterId = 123 };
+        var bothAdmitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseAdmission = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var admissionCount = 0;
+        async ValueTask<PvpFilamentAdmissionResult> Admit(ServiceCall call, PvpFilamentEvent eventInfo, CancellationToken cancellationToken)
+        {
+            if (Interlocked.Increment(ref admissionCount) == 2)
+                bothAdmitted.TrySetResult();
+            await releaseAdmission.Task;
+            return new PvpFilamentAdmissionResult([new PvpFilamentQueueParticipant(123, session)], []);
+        }
+
+        var service = new PvpFilamentMgrService(admit: Admit,
+            utcNow: () => new DateTimeOffset(2022, 6, 4, 11, 0, 0, TimeSpan.Zero));
+        async Task<object> JoinAsync()
+        {
+            try
+            {
+                return await service.CallAsync(Call("JoinPVPQueue", session, new PyInt(44), new PyInt(63715)));
+            }
+            catch (MachoWrappedException error)
+            {
+                return error;
+            }
+        }
+
+        var first = Task.Run(JoinAsync);
+        var second = Task.Run(JoinAsync);
+        await bothAdmitted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        releaseAdmission.TrySetResult();
+        var results = await Task.WhenAll(first, second);
+        Assert.Single(results.OfType<PyInt>(), result => result.Value == 0);
+        var duplicate = Assert.IsType<MachoWrappedException>(Assert.Single(results.OfType<MachoWrappedException>()));
+        Assert.Equal(PyList.Of(PyList.Of(new PyInt(32), new PyList([]))), ErrorValue(duplicate, "errors"));
     }
 
     [Fact]
@@ -94,7 +260,7 @@ public sealed class ActivityTravelRpcServicesTests
         session.CharacterId = 123;
         SpaceRpcItem? activated = null;
         var service = new RandomJumpMgrService(
-            (id, _) => ValueTask.FromResult<SpaceRpcItem?>(new SpaceRpcItem(id, 123, 5001, 4087, 2)),
+            (id, _) => ValueTask.FromResult<SpaceRpcItem?>(new SpaceRpcItem(id, 123, 5001, 4041, 2)),
             (_, item, _) =>
             {
                 activated = item;
@@ -102,7 +268,25 @@ public sealed class ActivityTravelRpcServicesTests
             });
 
         Assert.Equal(PyNone.Instance, await service.CallAsync(Call("ActivateRandomJumpFilament", session, new PyInt(51))));
-        Assert.Equal(new SpaceRpcItem(51, 123, 5001, 4087, 2), activated);
+        Assert.Equal(new SpaceRpcItem(51, 123, 5001, 4041, 2), activated);
+    }
+
+    [Fact]
+    public async Task Random_jump_replay_is_checked_before_the_consumed_item_is_read()
+    {
+        var session = new ClientSession();
+        session.CharacterId = 123;
+        var reads = 0;
+        var service = new RandomJumpMgrService(
+            (id, _) =>
+            {
+                reads++;
+                return ValueTask.FromResult<SpaceRpcItem?>(null);
+            },
+            replay: (_, itemId, _) => ValueTask.FromResult<PyValue?>(itemId == 51 ? PyNone.Instance : null));
+
+        Assert.Equal(PyNone.Instance, await service.CallAsync(Call("ActivateRandomJumpFilament", session, new PyInt(51))));
+        Assert.Equal(0, reads);
     }
 
     [Fact]
@@ -224,6 +408,18 @@ public sealed class ActivityTravelRpcServicesTests
     };
 
     private static KeyValuePair<PyValue, PyValue> Entry(string name, PyValue value) => new(new PyStr(name), value);
+
+    private static PyValue Field(PyDict dictionary, string name) =>
+        Assert.Single(dictionary.Entries, entry => entry.Key == new PyStr(name)).Value;
+
+    private static PyObjectEx ExpectedDate(int year, byte month, byte day) => new(
+        ObjectExKind.Ex1,
+        new PyTuple([
+            new PyToken("datetime.date"),
+            new PyTuple([new PyBytes(new byte[] { (byte)(year >> 8), (byte)year, month, day })]),
+        ]),
+        [],
+        []);
 
     private static PyValue ErrorValue(MachoWrappedException error, string name)
     {

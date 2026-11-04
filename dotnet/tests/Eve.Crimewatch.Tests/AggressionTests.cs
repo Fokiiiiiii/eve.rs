@@ -32,6 +32,8 @@ public class AggressionTests
         Assert.Equal(new TimerView(303, Now + 900_000), timers.Criminal);
         Assert.Equal(new TimerView(400, null), timers.Npc);
         Assert.Equal(System, outcome.Attacker.SolarSystemId);
+        Assert.Equal(Now + 900_000, outcome.Target!.PvpUntilMs);
+        Assert.Equal(0, outcome.Target!.WeaponsUntilMs);
     }
 
     [Theory]
@@ -90,18 +92,29 @@ public class AggressionTests
             Assert.Equal(AggressionReason.Legal, outcome.Reason);
             Assert.Equal(Now + 60_000, outcome.Attacker.WeaponsUntilMs);
             Assert.Equal(Flag.None, outcome.Attacker.FlagAt(Now));
+            Assert.Equal(Now + 900_000, outcome.Target!.PvpUntilMs);
+            Assert.Equal(0, outcome.Target!.WeaponsUntilMs);
         }
     }
 
     [Fact]
-    public void A_timer_that_runs_longer_is_kept_and_a_new_offence_sets_the_kind_of_the_flag_as_the_reference_does()
+    public void A_later_receiver_pvp_expiry_is_kept_without_a_weapon_timer_change()
+    {
+        var target = CombatState.Idle with { PvpUntilMs = Now + 1_200_000, WeaponsUntilMs = Now + 60_000 };
+        var outcome = Aggression.Record(CombatState.Idle, target, SecurityClass.HighSec, System, false, true, Now);
+
+        Assert.Equal(Now + 1_200_000, outcome.Target!.PvpUntilMs);
+        Assert.Equal(target.WeaponsUntilMs, outcome.Target!.WeaponsUntilMs);
+    }
+
+    [Fact]
+    public void A_criminal_flag_overrides_a_suspect_offence_and_the_timer_is_extended()
     {
         var criminal = Aggression.Record(CombatState.Idle, CombatState.Idle, SecurityClass.HighSec, System, false, false, Now).Attacker;
-        // a minute later in low security the criminal shoots a ship: the reference makes it a suspect (setNonTheftPenalty), the timer runs from the new offence
         var later = Now + 60_000;
         var again = Aggression.Record(criminal, CombatState.Idle, SecurityClass.LowSec, System, false, false, later);
         Assert.Equal(AggressionReason.Suspect, again.Reason);
-        Assert.Equal(Flag.Suspect, again.Attacker.FlagAt(later));
+        Assert.Equal(Flag.Criminal, again.Attacker.FlagAt(later));
         Assert.Equal(later + 900_000, again.Attacker.FlagUntilMs);
         // a suspect that commits a crime is made a criminal
         var suspect = Aggression.Record(CombatState.Idle, CombatState.Idle, SecurityClass.LowSec, System, false, false, Now).Attacker;
@@ -226,7 +239,7 @@ public class AggressionTests
         Assert.False(safetyDisabled.Lawful);
 
         var outcome = Aggression.Record(CombatState.Idle, CombatState.Idle, SecurityClass.HighSec, System, false, facts, Now);
-        Assert.Equal(Flag.Criminal, outcome.Attacker.FlagAt(Now));
+                Assert.Equal(Flag.Criminal, outcome.Attacker.FlagAt(Now));
     }
 
     [Fact]
@@ -259,10 +272,12 @@ public class AggressionTests
             LimitedEngagementInterference: true);
         var authorizedFight = interference with { OtherLegalPermission = true };
 
-        Assert.Equal(Flag.Criminal, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.HighSec, suspect)).Consequence);
+        Assert.Equal(Flag.Suspect, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.HighSec, suspect)).Consequence);
         Assert.Equal(Flag.Suspect, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.LowSec, suspect)).Consequence);
         Assert.Equal(Flag.None, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.LowSec, outlaw)).Consequence);
+        Assert.Equal(Flag.Suspect, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.HighSec, outlaw)).Consequence);
         Assert.Equal(Flag.Criminal, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.LowSec, criminal)).Consequence);
+        Assert.Equal(Flag.Criminal, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.HighSec, criminal)).Consequence);
         Assert.Equal(Flag.Criminal, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.HighSec, interference)).Consequence);
         Assert.Equal(Flag.Suspect, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.LowSec, interference)).Consequence);
         Assert.Equal(Flag.None, PolicyEngine.Evaluate(new PolicyRequest(PolicyAction.RemoteAssistance, SecurityClass.HighSec, authorizedFight)).Consequence);
@@ -310,7 +325,7 @@ public class AggressionTests
         Assert.Equal(Now + 20_000, outcome.Attacker.PvpUntilMs);
         Assert.Equal(Now + 30_000, outcome.Attacker.NpcUntilMs);
         Assert.Equal(Now + 40_000, outcome.Attacker.DisapprovalUntilMs);
-        Assert.Equal(Flag.Criminal, outcome.Attacker.FlagAt(Now));
+              Assert.Equal(Flag.Suspect, outcome.Attacker.FlagAt(Now));
     }
 
     [Fact]

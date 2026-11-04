@@ -39,10 +39,8 @@ fn scene_at(now: i64) -> Option<(Scene, Recorded)> {
     let world = World::load(sde).expect("the static data loads");
     let recorded = Recorded { recording: fixture("undock.json") };
     let race = recorded.race().clone();
-    let bind = step(&race, "bind the ballpark");
-    let added = destiny_actions(bind).into_iter().find(|(_, name, _)| name == "AddBalls2").unwrap().2;
-    let buffer = unhex(added["$tuple"][0]["$tuple"][0]["$buffer"].as_str().unwrap());
-    let spec = recorded_ship(&race, &buffer[5..], recorded_direction(&race)).spec;
+    let (_, _, ball) = initial_ship_addition(&race);
+    let spec = recorded_ship(&race, &ball, recorded_direction(&race)).spec;
     let mut scene = Scene::new(Arc::new(world.system(SYSTEM).unwrap()));
     scene.undock(SESSION, spec, race["stationID"].as_i64().unwrap(), now).unwrap();
     Some((scene, recorded))
@@ -56,34 +54,37 @@ fn binding_says_what_the_reference_said() {
     let events: Vec<&Value> = bind["events"].as_array().unwrap().iter().collect();
     assert_eq!(out.len(), 6, "what the reference sent, without the props it adds");
 
-    // the clock and the dilation are exactly the reference's
+    // The clock uses the simulation time supplied to this scene.
     assert_eq!(out_args(&out[0]), event_args(events[0]));
-    assert_eq!(out_args(&out[1]), event_args(events[1]));
-
-    // the ship and its numbers: the same actions at the same stamps; the place it is put at is ours
-    let added = event_args(events[2]);
-    assert_eq!(shape(&out_args(&out[2])), shape(&added));
     assert_eq!(
-        out_args(&out[2])["$tuple"][0][0]["$tuple"][0],
-        added["$tuple"][0][0]["$tuple"][0],
-        "the stamp"
+        out_args(&out[1]),
+        json!({"$tuple": [{"$tuple": [{"$long": SIM_TIME}, {"$long": SIM_TIME}]}]})
     );
-    let placed = event_args(events[3]);
+
+    assert_eq!(action_names_of(&out_args(&out[2])), ["AddBalls2"]);
+    assert_eq!(out_args(&out[2])["$tuple"][0][0]["$tuple"][0], json!(i64::from(stamp_at(SIM_TIME))));
+    let undock_step = step(recorded.race(), "undock");
+    let undock_events = events_named(undock_step, "DoDestinyUpdate");
+    assert_eq!(out_args(&out[2])["$tuple"][1], event_args(undock_events[0])["$tuple"][1]);
     let mine = out_args(&out[3]);
-    assert_eq!(action_names_of(&mine), action_names_of(&placed));
-    assert_eq!(shape(&mine), shape(&placed));
-    for (ours, theirs) in
-        mine["$tuple"][0].as_array().unwrap().iter().zip(placed["$tuple"][0].as_array().unwrap())
-    {
-        let name = ours["$tuple"][1]["$tuple"][0].as_str().unwrap();
-        assert_eq!(ours["$tuple"][0], theirs["$tuple"][0], "the stamp of {name}");
-        if !["SetBallPosition", "SetBallVelocity", "GotoDirection"].contains(&name) {
-            assert_eq!(ours, theirs, "{name}");
-        }
+    assert_eq!(action_names_of(&mine), ["SetBallMassive", "SetBallMass", "SetBallVelocity", "GotoDirection"]);
+    assert_eq!(shape(&mine), shape(&event_args(undock_events[1])));
+    let stamp = json!(i64::from(stamp_at(SIM_TIME)));
+    assert!(mine["$tuple"][0].as_array().unwrap().iter().all(|action| action["$tuple"][0] == stamp));
+    let undock = destiny_actions(undock_step);
+    for name in ["SetBallMassive", "SetBallMass"] {
+        let actual = mine["$tuple"][0]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|action| action["$tuple"][1]["$tuple"][0] == name)
+            .unwrap();
+        let expected = undock.iter().find(|(_, action, _)| action == name).unwrap();
+        assert_eq!(actual["$tuple"][1]["$tuple"][1], expected.2, "{name}");
     }
 
     // the state: the same fields at the same stamp
-    let state = event_args(events[4]);
+    let state = event_args(events[2]);
     let mine = out_args(&out[4]);
     let key_names = |args: &Value| -> Vec<String> {
         args["$tuple"][0][0]["$tuple"][1]["$tuple"][1]["$tuple"][0]["args"]["$dict"]
@@ -95,12 +96,12 @@ fn binding_says_what_the_reference_said() {
     };
     assert_eq!(key_names(&mine), key_names(&state));
     assert_eq!(
-        mine["$tuple"][0][0]["$tuple"][0], state["$tuple"][0][0]["$tuple"][0],
-        "the stamp of the state"
+        mine["$tuple"][0][0]["$tuple"][0],
+        json!(i64::from(stamp_at(SIM_TIME)) + 1),
+        "the scene's state stamp"
     );
 
-    // the ship's numbers come exactly as the reference gave them
-    assert_eq!(out_args(&out[5]), event_args(events[5]));
+    assert!(action_names_of(&out_args(&out[5])).is_empty());
 }
 
 #[test]
@@ -109,12 +110,8 @@ fn the_ship_comes_out_where_the_reference_put_its_ship() {
     // (the reference's had been flying for about a second when it was first seen), and faces the same way to the last digits
     let Some((mut scene, recorded)) = scene_at(SIM_TIME) else { return };
     let race = recorded.race();
-    let (_, _, placed) = destiny_actions(step(race, "bind the ballpark"))
-        .into_iter()
-        .find(|(_, name, _)| name == "SetBallPosition")
-        .expect("the bind places the ship");
-    let at = |i: usize| placed["$tuple"][i].as_f64().unwrap();
-    let seen = Vec3::new(at(1), at(2), at(3));
+    let (_, _, ball) = initial_ship_addition(race);
+    let seen = vec_at(&ball, 13);
     let facing = recorded_direction(race);
     let ship = scene.ship(SESSION, SIM_TIME).unwrap().clone();
 
@@ -427,6 +424,9 @@ fn a_docking_is_accepted_and_finished_as_the_reference_did() {
     let now = at_stamp(stamp);
     let Some((mut scene, recorded)) = scene_at(now) else { return };
     let station = recorded.race()["stationID"].as_i64().unwrap();
+    let sentries = scene.poll(now);
+    assert_eq!(sentries.len(), 64);
+    assert!(sentries.iter().all(|out| matches!(out, Out::SimDamageableEntityUpserted { .. })));
     let out = scene.command(SESSION, Command::Dock { station_id: station }, now);
 
     let accepted = events_named(&dock, "OnDockingAccepted")[0];
@@ -438,6 +438,14 @@ fn a_docking_is_accepted_and_finished_as_the_reference_did() {
 
     assert_eq!(
         scene.poll(now + 40_000_000),
+        [Out::Accepted { session: SESSION, command: eve_space::scene::DOCKING_READY_COMMAND, at: station }]
+    );
+    assert_eq!(
+        scene.command(
+            SESSION,
+            Command::DockingDecision { station_id: station, allowed: true },
+            now + 40_000_000,
+        ),
         [Out::Docked { session: SESSION, station_id: station, condition: Condition::FULL }]
     );
     assert_eq!(json!(scene.contains(SESSION)), json!(false));

@@ -32,6 +32,9 @@ public sealed class StructureDockingTests
     private static IEnumerable<SimCommand> Docks(Rig rig) =>
         rig.Sim.Heard.OfType<SimCommand>().Where(command => command.Code == SimCommands.Dock);
 
+    private static IEnumerable<SimCommand> DockingDecisions(Rig rig) =>
+        rig.Sim.Heard.OfType<SimCommand>().Where(command => command.Code == SimCommands.DockingDecision);
+
     /// <summary>The argument of a user error's payload, by its name.</summary>
     private static PyValue ErrorArgument(MachoWrappedException error, string name)
     {
@@ -63,6 +66,68 @@ public sealed class StructureDockingTests
     }
 
     [PgFact]
+    public async Task CmdDock_cannot_bypass_structure_docking_access()
+    {
+        var (rig, _, session) = await InSpaceAsync();
+        await using var _ = rig;
+        var ship = session.GetInt("shipid")!.Value;
+        var oid = await rig.BindBeyonceAsync(session);
+        rig.Space.StructureDockingAllowedAsync = (_, _, _) => Task.FromResult(false);
+
+        var denied = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            rig.BeyonceCallAsync(session, "CmdDock", oid, new PyInt(Structure), new PyLong(ship)));
+        Assert.Equal("DockingRequestDenied", denied.Error.UserErrorMessage);
+        Assert.Equal("Structure docking access denied.", JsSemantics.StringValue(ErrorArgument(denied, "reason")));
+        Assert.Empty(Docks(rig));
+        Assert.True(rig.Space.IsInSpace(session), "a denied docking leaves the ship in space");
+
+        rig.Space.StructureDockingAllowedAsync = (_, _, _) => Task.FromResult(true);
+        rig.Sim.DockAnswer = new CommandReply(true, 134351527136350000, null);
+        Assert.Equal(PyNone.Instance, await rig.BeyonceCallAsync(session, "CmdDock", oid, new PyInt(Structure), new PyLong(ship)));
+        Assert.Single(Docks(rig));
+        Assert.True(rig.Space.IsInSpace(session), "accepted, the ship remains in space until the simulation reports docking");
+    }
+
+    [PgFact]
+    public async Task Structure_access_revoked_after_acceptance_is_rechecked_before_docking()
+    {
+        var (rig, _, session) = await InSpaceAsync();
+        await using var _ = rig;
+        await rig.Space.DockStructureAsync(session, Structure, session.GetInt("shipid")!.Value, CancellationToken.None);
+        Events.Of(session);
+        ((Sink)session.Sink!).Sent.Clear();
+
+        rig.Space.StructureDockingAllowedAsync = (_, _, _) => Task.FromResult(false);
+        rig.Sim.Say(new SimAccepted((ulong)session.SessionId, SimCommands.DockingReady, Structure));
+        await rig.Space.QuiesceAsync();
+
+        Assert.Equal([ (double)Structure, 0d ], Assert.Single(DockingDecisions(rig)).Args);
+        Assert.True(rig.Space.IsInSpace(session), "losing access during the docking delay leaves the ship in space");
+        Assert.Contains(Events.Of(session), e => e.Name == "OnDockingFinished");
+    }
+
+    [PgFact]
+    public async Task A_weapons_timer_started_during_the_docking_delay_prevents_completion()
+    {
+        var (rig, _, session) = await InSpaceAsync();
+        await using var _ = rig;
+        await rig.Space.DockStructureAsync(session, Structure, session.GetInt("shipid")!.Value, CancellationToken.None);
+        Events.Of(session);
+        ((Sink)session.Sink!).Sent.Clear();
+
+        rig.Space.CrimewatchStateOf = (_, _) => Task.FromResult(Eve.Crimewatch.CombatState.Idle with
+        {
+            WeaponsUntilMs = rig.Now + Eve.Crimewatch.CombatState.WeaponsDurationMs
+        });
+        rig.Sim.Say(new SimAccepted((ulong)session.SessionId, SimCommands.DockingReady, Structure));
+        await rig.Space.QuiesceAsync();
+
+        Assert.Equal([ (double)Structure, 0d ], Assert.Single(DockingDecisions(rig)).Args);
+        Assert.True(rig.Space.IsInSpace(session));
+        Assert.Contains(Events.Of(session), e => e.Name == "OnDockingFinished");
+    }
+
+    [PgFact]
     public async Task A_docking_the_simulation_reports_puts_the_ship_in_the_structure_hangar_and_the_session_in_the_structure()
     {
         var (rig, character, session) = await InSpaceAsync();
@@ -77,6 +142,9 @@ public sealed class StructureDockingTests
         var locationChanged = new TaskCompletionSource<(long OldStation, long OldStructure, long? NewStation, long? NewStructure)>(TaskCreationOptions.RunContinuationsAsynchronously);
         rig.Space.DockedLocationChanged = (changedSession, oldStation, oldStructure) =>
             locationChanged.TrySetResult((oldStation, oldStructure, changedSession.GetInt("stationid"), changedSession.GetInt("structureid")));
+        rig.Sim.Say(new SimAccepted((ulong)session.SessionId, SimCommands.DockingReady, Structure));
+        await rig.Space.QuiesceAsync();
+        Assert.Equal([ (double)Structure, 1d ], Assert.Single(DockingDecisions(rig)).Args);
         rig.Sim.Say(new SimDocked((ulong)session.SessionId, Structure));
         await rig.Space.QuiesceAsync();
         await Rig.UntilAsync(() => locationChanged.Task.IsCompleted);

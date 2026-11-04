@@ -55,6 +55,9 @@ public enum ShipRefusal
 
     /// <summary>Removing an online cargo-capacity modifier would leave cargo above the resulting hold capacity.</summary>
     CargoWouldOverflow,
+
+    /// <summary>A cargo container cannot be moved inside another cargo container.</summary>
+    ContainerNesting,
 }
 
 public abstract record ShipOutcome;

@@ -12,6 +12,509 @@ mod abyssal_cleanup_tests;
 const SYSTEM: i32 = 30_000_001;
 const SECOND: i64 = 10_000_000;
 
+fn sim_with_pending_cutoff() -> (Sim, crate::modules::tests::PendingRepairFixture, crate::link::CutoffIdentity)
+{
+    let mut fixture = crate::modules::tests::pending_repair_fixture();
+    let identity = crate::link::CutoffIdentity {
+        request_id: 71,
+        scene: SceneKey::solar_system(SYSTEM),
+        match_id: 81,
+        generation: 1,
+        start: fixture.at - SECOND,
+        deadline: fixture.at,
+    };
+    let pilot = &fixture.scene.pilots[&fixture.session];
+    let roster = vec![crate::scene::tournament::TournamentPilot {
+        character_id: pilot.ship.spec.character_id,
+        ship_id: pilot.ship.spec.ship_id,
+    }];
+    assert!(matches!(
+        fixture.scene.tournament_register(
+            identity.match_id,
+            identity.generation,
+            identity.start,
+            identity.deadline,
+            identity.start - 1,
+            roster
+        ),
+        Ok(crate::scene::tournament::TournamentCutoff::Pending)
+    ));
+    let mut sim = sim();
+    sim.sessions.insert(fixture.session, identity.scene);
+    // Keep the actual scene available to the caller only through Sim.
+    let scene = std::mem::replace(&mut fixture.scene, Scene::new(system()));
+    sim.scenes.insert(identity.scene, scene);
+    (sim, fixture, identity)
+}
+
+#[test]
+fn cutoff_remote_repair_with_unsupported_reload_fails_closed() {
+    let (mut sim, fixture, identity) = sim_with_pending_cutoff();
+    let run = sim
+        .scenes
+        .get_mut(&identity.scene)
+        .unwrap()
+        .pilots
+        .get_mut(&fixture.session)
+        .unwrap()
+        .modules
+        .running
+        .iter_mut()
+        .find(|run| run.effect.module_id == fixture.module_id)
+        .unwrap();
+    run.pending_reload = true;
+    sim.poll(fixture.at);
+    assert!(sim.cutoff_fence.is_none());
+    let snapshot = sim.handle(Message::ReadTournamentCutoff { identity }, fixture.at + 1).unwrap();
+    assert!(
+        matches!(&snapshot[..], [Message::ReadTournamentCutoffReply { status: 2, evidence, .. }] if evidence.is_empty())
+    );
+}
+
+#[test]
+fn cutoff_fence_waits_for_matching_repair_ack_and_replays_commands() {
+    let (mut sim, fixture, identity) = sim_with_pending_cutoff();
+    sim.poll(fixture.at);
+    assert!(sim.cutoff_fence.is_some());
+    let command = Message::Command { session_id: fixture.session, command: 19, args: vec![] };
+    assert!(sim.handle(command, fixture.at + 1).unwrap().is_empty());
+    let reply =
+        sim.handle(Message::ReadTournamentCutoff { identity: identity.clone() }, fixture.at + 2).unwrap();
+    assert!(matches!(&reply[..], [Message::ReadTournamentCutoffReply { status: 0, .. }]));
+    let result = |cycle_id| Message::RemoteRepairCycleResult {
+        session_id: fixture.session,
+        module_id: fixture.module_id,
+        target_id: fixture.target_ship_id,
+        cycle_id,
+        accepted: true,
+        reason: String::new(),
+        amount: 11.0,
+    };
+    sim.handle(result(fixture.cycle_id + 1), fixture.at + 3).unwrap();
+    assert!(sim.cutoff_fence.is_some());
+    let messages = sim.handle(result(fixture.cycle_id), fixture.at + 4).unwrap();
+    assert!(sim.cutoff_fence.is_none());
+    let scene = &sim.scenes[&identity.scene];
+    let target = scene.session_of(fixture.target_ship_id).unwrap();
+    let armor = scene.pilots[&target].ship.health.layers_at(fixture.at).armor;
+    assert!((armor - fixture.armor_before - 11.0).abs() < 1e-3);
+    assert!(
+        messages
+            .iter()
+            .any(|m| matches!(m, Message::Condition { session_id, .. } if *session_id == fixture.session))
+    );
+    let reply =
+        sim.handle(Message::ReadTournamentCutoff { identity: identity.clone() }, fixture.at + 5).unwrap();
+    assert!(
+        matches!(&reply[..], [Message::ReadTournamentCutoffReply { status: 1, evidence, .. }] if evidence.len() == 1 && evidence[0].2 == 0)
+    );
+    // A duplicate ACK carrying an older timestamp cannot apply repair again
+    // or revise the already frozen cutoff evidence.
+    sim.handle(result(fixture.cycle_id), fixture.at - SECOND).unwrap();
+    let scene = &sim.scenes[&identity.scene];
+    let target = scene.session_of(fixture.target_ship_id).unwrap();
+    assert!(
+        (scene.pilots[&target].ship.health.layers_at(fixture.at).armor - fixture.armor_before - 11.0).abs()
+            < 1e-3
+    );
+    let replay = sim.handle(Message::ReadTournamentCutoff { identity }, fixture.at + 6).unwrap();
+    assert_eq!(replay, reply);
+}
+
+#[test]
+fn cutoff_fence_timeout_makes_snapshot_unavailable_and_replays_commands() {
+    let (mut sim, fixture, identity) = sim_with_pending_cutoff();
+    sim.poll(fixture.at);
+    sim.handle(Message::Command { session_id: fixture.session, command: 19, args: vec![] }, fixture.at + 1)
+        .unwrap();
+    let messages = sim.poll(fixture.at + 5 * SECOND);
+    assert!(sim.cutoff_fence.is_none());
+    assert!(
+        messages
+            .iter()
+            .any(|m| matches!(m, Message::Condition { session_id, .. } if *session_id == fixture.session))
+    );
+    let reply = sim.handle(Message::ReadTournamentCutoff { identity }, fixture.at + 5 * SECOND + 1).unwrap();
+    assert!(matches!(&reply[..], [Message::ReadTournamentCutoffReply { status: 2, .. }]));
+}
+
+#[test]
+fn cutoff_fence_does_not_block_private_scene_command() {
+    let (mut sim, fixture, _) = sim_with_pending_cutoff();
+    let private = SceneKey { location_id: SYSTEM, instance_id: 880, room_index: 1 };
+    ensure_abyssal(&mut sim, private, fixture.at - 2 * SECOND, 75_000.0, 0.0);
+    sim.handle(abyssal_enter(994, private, 8_800_001, [0.0, 0.0, 0.0]), fixture.at - 2 * SECOND).unwrap();
+    let scene = sim.scenes.get_mut(&private).unwrap();
+    scene.command(994, Command::GotoDirection(Vec3::new(1.0, 0.0, 0.0)), fixture.at - SECOND);
+    scene.command(994, Command::SetSpeedFraction(1.0), fixture.at - SECOND);
+    sim.poll(fixture.at);
+    assert!(sim.cutoff_fence.is_some());
+    let before = sim.scenes[&private].pilots[&994].ship.position.x;
+    sim.poll(fixture.at + SECOND);
+    let after = sim.scenes[&private].pilots[&994].ship.position.x;
+    assert!(after > before, "private movement did not progress: {before} -> {after}");
+    let reply = sim
+        .handle(Message::Command { session_id: 994, command: 19, args: vec![] }, fixture.at + SECOND)
+        .unwrap();
+    assert!(reply.iter().any(|m| matches!(m, Message::Condition { session_id: 994, .. })));
+    assert!(sim.cutoff_fence.is_some());
+}
+
+#[test]
+fn cutoff_fence_does_not_block_other_public_system_command() {
+    let (mut sim, fixture, _) = sim_with_pending_cutoff();
+    let mut other_system = (*system()).clone();
+    other_system.id = SYSTEM + 1;
+    let other = SceneKey::solar_system(other_system.id);
+    let mut scene = Scene::new(std::sync::Arc::new(other_system));
+    let mut ship = spec();
+    ship.ship_id += 100;
+    ship.character_id += 100;
+    ship.owner_id += 100;
+    scene.enter_in_space(995, ship, [10_000.0, 0.0, 0.0], [1.0, 0.0, 0.0], fixture.at - SECOND).unwrap();
+    scene.command(995, Command::GotoDirection(Vec3::new(1.0, 0.0, 0.0)), fixture.at - SECOND);
+    scene.command(995, Command::SetSpeedFraction(1.0), fixture.at - SECOND);
+    sim.scenes.insert(other, scene);
+    sim.sessions.insert(995, other);
+    sim.poll(fixture.at);
+    assert!(sim.cutoff_fence.is_some());
+    let before = sim.scenes[&other].pilots[&995].ship.position.x;
+    sim.poll(fixture.at + SECOND);
+    let after = sim.scenes[&other].pilots[&995].ship.position.x;
+    assert!(after > before, "other system movement did not progress: {before} -> {after}");
+    let reply = sim
+        .handle(Message::Command { session_id: 995, command: 19, args: vec![] }, fixture.at + SECOND)
+        .unwrap();
+    assert!(reply.iter().any(|m| matches!(m, Message::Condition { session_id: 995, .. })));
+    assert!(sim.cutoff_fence.is_some());
+}
+
+#[test]
+fn cutoff_fence_aborts_before_cross_system_transfer() {
+    let (mut sim, fixture, identity) = sim_with_pending_cutoff();
+    let mut other_system = (*system()).clone();
+    other_system.id = SYSTEM + 1;
+    let destination = SceneKey::solar_system(other_system.id);
+    sim.universe = Arc::new(Universe::with_systems([(*system()).clone(), other_system.clone()]));
+    let mut scene = Scene::new(Arc::new(other_system));
+    let mut spectator = spec();
+    spectator.ship_id += 1_000;
+    spectator.character_id += 1_000;
+    spectator.owner_id += 1_000;
+    scene.enter_in_space(996, spectator, [50_000.0, 0.0, 0.0], [1.0, 0.0, 0.0], fixture.at - SECOND).unwrap();
+    scene.command(996, Command::GotoDirection(Vec3::new(1.0, 0.0, 0.0)), fixture.at - SECOND);
+    scene.command(996, Command::SetSpeedFraction(1.0), fixture.at - SECOND);
+    sim.scenes.insert(destination, scene);
+    sim.sessions.insert(996, destination);
+    sim.poll(fixture.at);
+    assert!(sim.cutoff_fence.is_some());
+    let before = sim.scenes[&destination].pilots[&996].ship.position.x;
+    sim.poll(fixture.at + SECOND);
+    let advanced = sim.scenes[&destination].pilots[&996].ship.position.x;
+    assert!(advanced > before, "destination must progress while source is fenced");
+    assert!(
+        sim.handle(
+            Message::Command { session_id: fixture.session, command: 19, args: vec![] },
+            fixture.at + 1
+        )
+        .unwrap()
+        .is_empty()
+    );
+    let ship_id = sim.scenes[&identity.scene].pilots[&fixture.session].ship.spec.ship_id;
+    let request = Message::MovePublicParticipant {
+        request_id: 84,
+        operation_id: "01234567-89ab-cdef-0123-456789abcdef".into(),
+        session_id: fixture.session,
+        ship_id,
+        source: identity.scene,
+        destination,
+        use_anchor: false,
+        position: [10_000.0, 0.0, 0.0],
+        direction: [1.0, 0.0, 0.0],
+    };
+    sim.poll(fixture.at + 2 * SECOND);
+    let at_move = sim.scenes[&destination].pilots[&996].ship.position.x;
+    assert!(at_move > advanced, "destination must reach the transfer time");
+    let reply = sim.handle(request.clone(), fixture.at + 2 * SECOND).unwrap();
+    assert!(sim.cutoff_fence.is_none());
+    let after_move = sim.scenes[&destination].pilots[&996].ship.position.x;
+    assert!(after_move >= at_move, "transfer must not rewind destination movement");
+    sim.poll(fixture.at + 3 * SECOND);
+    let after_poll = sim.scenes[&destination].pilots[&996].ship.position.x;
+    assert!(after_poll > after_move, "destination must continue advancing after transfer");
+    let queued_index = reply
+        .iter()
+        .position(|m| matches!(m, Message::Condition { session_id, .. } if *session_id == fixture.session))
+        .unwrap();
+    let move_index = reply
+        .iter()
+        .position(|m| matches!(m, Message::MovePublicParticipantReply { request_id: 84, outcome: Ok(()) }))
+        .unwrap();
+    assert!(queued_index < move_index);
+    assert_eq!(sim.sessions.get(&fixture.session), Some(&destination));
+    assert_eq!(sim.scenes[&destination].session_of(ship_id), Some(fixture.session));
+    assert!(sim.scenes[&identity.scene].session_of(ship_id).is_none());
+    let replay = sim.handle(request, fixture.at + 3 * SECOND + 1).unwrap();
+    assert!(matches!(&replay[..], [Message::MovePublicParticipantReply { request_id: 84, outcome: Ok(()) }]));
+    assert_eq!(sim.scenes[&destination].session_of(ship_id), Some(fixture.session));
+    let result = sim.handle(Message::ReadTournamentCutoff { identity }, fixture.at + 3 * SECOND + 2).unwrap();
+    assert!(matches!(&result[..], [Message::ReadTournamentCutoffReply { status: 2, .. }]));
+}
+
+#[test]
+fn cutoff_inbound_transfer_aborts_and_late_repair_ack_cannot_revive_evidence() {
+    let (mut sim, fixture, identity) = sim_with_pending_cutoff();
+    let mut other_system = (*system()).clone();
+    other_system.id = SYSTEM + 1;
+    let other = SceneKey::solar_system(other_system.id);
+    sim.universe = Arc::new(Universe::with_systems([(*system()).clone(), other_system.clone()]));
+    let mut scene = Scene::new(Arc::new(other_system));
+    let mut ship = spec();
+    ship.ship_id += 1_000;
+    ship.character_id += 1_000;
+    ship.owner_id += 1_000;
+    let other_ship = ship.ship_id;
+    scene.enter_in_space(996, ship, [50_000.0, 0.0, 0.0], [1.0, 0.0, 0.0], fixture.at - SECOND).unwrap();
+    sim.scenes.insert(other, scene);
+    sim.sessions.insert(996, other);
+    let target_scene = sim.scenes.get_mut(&identity.scene).unwrap();
+    target_scene.command(fixture.session, Command::GotoDirection(Vec3::new(1.0, 0.0, 0.0)), fixture.at);
+    target_scene.command(fixture.session, Command::SetSpeedFraction(1.0), fixture.at);
+    sim.poll(fixture.at);
+    assert!(sim.cutoff_fence.is_some());
+    let before = sim.scenes[&identity.scene].pilots[&fixture.session].ship.position.x;
+    let request = Message::MovePublicParticipant {
+        request_id: 85,
+        operation_id: "11234567-89ab-cdef-0123-456789abcdef".into(),
+        session_id: 996,
+        ship_id: other_ship,
+        source: other,
+        destination: identity.scene,
+        use_anchor: false,
+        position: [50_000.0, 0.0, 0.0],
+        direction: [1.0, 0.0, 0.0],
+    };
+    let moved = sim.handle(request.clone(), fixture.at + SECOND).unwrap();
+    assert!(sim.cutoff_fence.is_none());
+    assert!(
+        moved
+            .iter()
+            .any(|m| matches!(m, Message::MovePublicParticipantReply { request_id: 85, outcome: Ok(()) }))
+    );
+    assert_eq!(sim.scenes[&identity.scene].session_of(other_ship), Some(996));
+    let after_move = sim.scenes[&identity.scene].pilots[&fixture.session].ship.position.x;
+    assert!(after_move >= before, "destination movement must not rewind");
+    let ack = Message::RemoteRepairCycleResult {
+        session_id: fixture.session,
+        module_id: fixture.module_id,
+        target_id: fixture.target_ship_id,
+        cycle_id: fixture.cycle_id,
+        accepted: true,
+        reason: String::new(),
+        amount: 11.0,
+    };
+    sim.handle(ack.clone(), fixture.at + SECOND + 1).unwrap();
+    sim.handle(ack, fixture.at - SECOND).unwrap();
+    let target_scene = &sim.scenes[&identity.scene];
+    let target_session = target_scene.session_of(fixture.target_ship_id).unwrap();
+    assert!(
+        (target_scene.pilots[&target_session].ship.health.layers_at(fixture.at).armor
+            - fixture.armor_before
+            - 11.0)
+            .abs()
+            < 1e-3
+    );
+    sim.poll(fixture.at + 2 * SECOND);
+    let after_poll = sim.scenes[&identity.scene].pilots[&fixture.session].ship.position.x;
+    assert!(after_poll > after_move, "destination movement must continue");
+    let replay = sim.handle(request, fixture.at + 2 * SECOND).unwrap();
+    assert!(matches!(&replay[..], [Message::MovePublicParticipantReply { request_id: 85, outcome: Ok(()) }]));
+    let snapshot =
+        sim.handle(Message::ReadTournamentCutoff { identity }, fixture.at + 2 * SECOND + 1).unwrap();
+    assert!(matches!(&snapshot[..], [Message::ReadTournamentCutoffReply { status: 2, .. }]));
+}
+
+#[test]
+fn cutoff_inbound_gate_jump_aborts_before_arrival_and_late_ack_stays_unavailable() {
+    use crate::scene::tests::{ARRIVAL_GATE, NEAR_GATE, OTHER_SYSTEM};
+    let (mut sim, fixture, identity) = sim_with_pending_cutoff();
+    let (here, there) = crate::scene::tests::gated_systems();
+    crate::scene::tests::set_test_system(sim.scenes.get_mut(&identity.scene).unwrap(), here.clone());
+    sim.universe = Arc::new(Universe::with_systems([here, there.clone()]));
+    let other = SceneKey::solar_system(OTHER_SYSTEM);
+    let mut scene = Scene::new(Arc::new(there));
+    let mut ship = spec();
+    ship.ship_id += 2_000;
+    ship.character_id += 2_000;
+    ship.owner_id += 2_000;
+    let other_ship = ship.ship_id;
+    scene
+        .enter_in_space(997, ship, [2.0e9 + 11_000.0, 1.0e8, 5.0e8], [1.0, 0.0, 0.0], fixture.at - 3 * SECOND)
+        .unwrap();
+    sim.scenes.insert(other, scene);
+    sim.sessions.insert(997, other);
+    let jump = sim
+        .handle(
+            Message::Command {
+                session_id: 997,
+                command: 9,
+                args: vec![ARRIVAL_GATE as f64, NEAR_GATE as f64],
+            },
+            fixture.at - 2 * SECOND,
+        )
+        .unwrap();
+    assert!(jump.iter().any(|m| matches!(m, Message::Jumping { session_id: 997, .. })));
+    let tracked = sim.scenes.get_mut(&identity.scene).unwrap();
+    tracked.command(fixture.session, Command::GotoDirection(Vec3::new(1.0, 0.0, 0.0)), fixture.at);
+    tracked.command(fixture.session, Command::SetSpeedFraction(1.0), fixture.at);
+    sim.poll(fixture.at);
+    assert!(sim.cutoff_fence.is_some());
+    let before = sim.scenes[&identity.scene].pilots[&fixture.session].ship.position.x;
+    assert!(
+        sim.handle(
+            Message::Command { session_id: fixture.session, command: 19, args: vec![] },
+            fixture.at + 1
+        )
+        .unwrap()
+        .is_empty()
+    );
+    let arrived = sim.poll(fixture.at + 2 * SECOND);
+    assert!(sim.cutoff_fence.is_none());
+    let queued = arrived
+        .iter()
+        .position(|m| matches!(m, Message::Condition { session_id, .. } if *session_id == fixture.session))
+        .unwrap();
+    let jumped = arrived.iter().position(|m| matches!(m, Message::Jumped { session_id: 997, .. })).unwrap();
+    assert!(queued < jumped);
+    assert_eq!(sim.sessions.get(&997), Some(&identity.scene));
+    assert_eq!(sim.scenes[&identity.scene].session_of(other_ship), Some(997));
+    let after_arrival = sim.scenes[&identity.scene].pilots[&fixture.session].ship.position.x;
+    assert!(after_arrival >= before, "gate arrival must not rewind destination movement");
+    sim.poll(fixture.at + 3 * SECOND);
+    let after_poll = sim.scenes[&identity.scene].pilots[&fixture.session].ship.position.x;
+    assert!(after_poll > after_arrival, "destination movement must continue");
+    let ack = Message::RemoteRepairCycleResult {
+        session_id: fixture.session,
+        module_id: fixture.module_id,
+        target_id: fixture.target_ship_id,
+        cycle_id: fixture.cycle_id,
+        accepted: true,
+        reason: String::new(),
+        amount: 11.0,
+    };
+    sim.handle(ack.clone(), fixture.at + 3 * SECOND + 1).unwrap();
+    sim.handle(ack, fixture.at - SECOND).unwrap();
+    let scene = &sim.scenes[&identity.scene];
+    let target = scene.session_of(fixture.target_ship_id).unwrap();
+    assert!(
+        (scene.pilots[&target].ship.health.layers_at(fixture.at).armor - fixture.armor_before - 11.0).abs()
+            < 1e-3
+    );
+    let snapshot =
+        sim.handle(Message::ReadTournamentCutoff { identity }, fixture.at + 3 * SECOND + 2).unwrap();
+    assert!(matches!(&snapshot[..], [Message::ReadTournamentCutoffReply { status: 2, .. }]));
+}
+
+#[test]
+fn cutoff_fence_byte_overflow_marks_unavailable_and_replays() {
+    let (mut sim, fixture, identity) = sim_with_pending_cutoff();
+    sim.poll(fixture.at);
+    for _ in 0..8 {
+        assert!(
+            sim.handle(
+                Message::Command { session_id: fixture.session, command: 19, args: vec![] },
+                fixture.at + 1
+            )
+            .unwrap()
+            .is_empty()
+        );
+    }
+    let messages = sim
+        .handle(Message::Command { session_id: fixture.session, command: 19, args: vec![] }, fixture.at + 1)
+        .unwrap();
+    assert!(sim.cutoff_fence.is_none());
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|m| matches!(m, Message::Condition { session_id, .. } if *session_id == fixture.session))
+            .count(),
+        9
+    );
+    let reply = sim.handle(Message::ReadTournamentCutoff { identity }, fixture.at + 2).unwrap();
+    assert!(matches!(&reply[..], [Message::ReadTournamentCutoffReply { status: 2, .. }]));
+}
+
+#[test]
+fn cutoff_fence_release_does_not_wait_for_pending_host_ack() {
+    let (mut sim, fixture, identity) = sim_with_pending_cutoff();
+    sim.poll(fixture.at);
+    sim.handle(Message::Command { session_id: fixture.session, command: 19, args: vec![] }, fixture.at + 1)
+        .unwrap();
+    let messages =
+        sim.handle(Message::ReleaseTournamentCutoff { identity: identity.clone() }, fixture.at + 2).unwrap();
+    assert!(messages.iter().any(|m| matches!(m, Message::ReleaseTournamentCutoffReply { status: 0, .. })));
+    assert!(
+        messages
+            .iter()
+            .any(|m| matches!(m, Message::Condition { session_id, .. } if *session_id == fixture.session))
+    );
+    assert!(sim.cutoff_fence.is_none());
+    let reply =
+        sim.handle(Message::ReadTournamentCutoff { identity: identity.clone() }, fixture.at + 3).unwrap();
+    assert!(matches!(&reply[..], [Message::ReadTournamentCutoffReply { status: 2 | 3, .. }]));
+    let pilot = &sim.scenes[&identity.scene].pilots[&fixture.session];
+    let roster = vec![(pilot.ship.spec.character_id, pilot.ship.spec.ship_id)];
+    let newer = crate::link::CutoffIdentity {
+        request_id: 72,
+        generation: identity.generation + 1,
+        start: fixture.at + SECOND,
+        deadline: fixture.at + 2 * SECOND,
+        ..identity.clone()
+    };
+    let registered = sim
+        .handle(Message::RegisterTournamentCutoff { identity: newer.clone(), roster }, fixture.at + 4)
+        .unwrap();
+    assert!(matches!(&registered[..], [Message::RegisterTournamentCutoffReply { status: 0, .. }]));
+    sim.handle(Message::ReleaseTournamentCutoff { identity }, fixture.at + 5).unwrap();
+    let still_pending =
+        sim.handle(Message::ReadTournamentCutoff { identity: newer }, fixture.at + 6).unwrap();
+    assert!(matches!(&still_pending[..], [Message::ReadTournamentCutoffReply { status: 0, .. }]));
+}
+
+#[test]
+fn tournament_cutoff_is_frozen_before_a_later_command_and_release_is_final() {
+    let mut sim = undocked();
+    let identity = crate::link::CutoffIdentity {
+        request_id: 31,
+        scene: SceneKey::solar_system(SYSTEM),
+        match_id: 41,
+        generation: 1,
+        start: NOON + SECOND,
+        deadline: NOON + 3 * SECOND,
+    };
+    let registration = Message::RegisterTournamentCutoff {
+        identity: identity.clone(),
+        roster: vec![(spec().character_id, spec().ship_id)],
+    };
+    assert!(matches!(
+        &sim.handle(registration.clone(), NOON).unwrap()[..],
+        [Message::RegisterTournamentCutoffReply { status: 0, .. }]
+    ));
+    sim.handle(Message::Command { session_id: SESSION, command: 19, args: vec![] }, NOON + 4 * SECOND)
+        .unwrap();
+    let reply =
+        sim.handle(Message::ReadTournamentCutoff { identity: identity.clone() }, NOON + 4 * SECOND).unwrap();
+    assert!(
+        matches!(&reply[..], [Message::ReadTournamentCutoffReply { status: 1, evidence, .. }] if evidence == &vec![(spec().character_id, spec().ship_id, 0)])
+    );
+    let released = sim
+        .handle(Message::ReleaseTournamentCutoff { identity: identity.clone() }, NOON + 4 * SECOND)
+        .unwrap();
+    assert!(matches!(&released[..], [Message::ReleaseTournamentCutoffReply { status: 0, .. }]));
+    let replay = sim.handle(registration, NOON + 4 * SECOND).unwrap();
+    assert!(matches!(&replay[..], [Message::RegisterTournamentCutoffReply { status: 2 | 3, .. }]));
+}
+
 #[test]
 fn abyssal_reward_cache_is_non_npc_damageable_and_retries_replay_confirmed_destruction() {
     let mut sim = sim();
@@ -318,6 +821,64 @@ fn big_station() -> SolarSystem {
     big
 }
 
+#[test]
+fn public_moves_keep_live_condition_and_replay_only_matching_operation() {
+    let mut other = big_station();
+    other.id = SYSTEM + 1;
+    let mut sim = Sim::new(Arc::new(Universe::with_systems([big_station(), other])));
+    let Message::Enter(mut initial) = enter(SESSION, STATION, SYSTEM) else { panic!("enter fixture") };
+    initial.ship.condition = Condition { damage: 0.2, armor_damage: 0.3, shield_charge: 0.4, charge: 0.5 };
+    let ship_id = initial.ship.ship_id;
+    sim.handle(Message::Enter(initial), NOON).unwrap();
+    let source = SceneKey::solar_system(SYSTEM);
+    let destination = SceneKey::solar_system(SYSTEM + 1);
+    let before = sim.scenes.get_mut(&source).unwrap().condition(SESSION, NOON);
+    let request = Message::MovePublicParticipant {
+        request_id: 100,
+        operation_id: "00000000-0000-0000-0000-000000000001".to_string(),
+        session_id: SESSION,
+        ship_id,
+        source,
+        destination,
+        use_anchor: false,
+        position: [100.0, 200.0, 300.0],
+        direction: [1.0, 0.0, 0.0],
+    };
+    assert_eq!(Message::decode(&request.payload()).unwrap(), request);
+    let moved = sim.handle(request.clone(), NOON).unwrap();
+    assert!(matches!(moved.first(), Some(Message::MovePublicParticipantReply { outcome: Ok(()), .. })));
+    assert_eq!(before, sim.scenes.get_mut(&destination).unwrap().condition(SESSION, NOON));
+    assert!(sim.scenes[&source].session_of(ship_id).is_none());
+    assert_eq!(
+        sim.handle(request.clone(), NOON).unwrap(),
+        [Message::MovePublicParticipantReply { request_id: 100, outcome: Ok(()) }]
+    );
+    let mut conflict = request.clone();
+    if let Message::MovePublicParticipant { position, .. } = &mut conflict {
+        position[0] = 101.0;
+    }
+    assert!(
+        matches!(sim.handle(conflict, NOON).unwrap().first(), Some(Message::MovePublicParticipantReply { outcome: Err(reason), .. }) if reason == "PUBLIC_MOVE_OPERATION_CONFLICT")
+    );
+    let within = Message::MovePublicParticipant {
+        request_id: 101,
+        operation_id: "00000000-0000-0000-0000-000000000002".to_string(),
+        session_id: SESSION,
+        ship_id,
+        source: destination,
+        destination,
+        use_anchor: false,
+        position: [400.0, 500.0, 600.0],
+        direction: [0.0, 1.0, 0.0],
+    };
+    assert!(matches!(
+        sim.handle(within, NOON).unwrap().first(),
+        Some(Message::MovePublicParticipantReply { outcome: Ok(()), .. })
+    ));
+    assert_eq!(before, sim.scenes.get_mut(&destination).unwrap().condition(SESSION, NOON));
+    assert_eq!(sim.scenes[&destination].session_of(ship_id), Some(SESSION));
+}
+
 fn sim() -> Sim {
     Sim::new(Arc::new(Universe::with_systems([big_station()])))
 }
@@ -368,6 +929,103 @@ fn undocked() -> Sim {
     let reply = sim.handle(enter(SESSION, STATION, SYSTEM), NOON).unwrap();
     assert_eq!(reply, [Message::EnterReply { session_id: SESSION, outcome: Ok(()) }]);
     sim
+}
+
+#[test]
+fn tournament_beacon_placement_is_idempotent_rejects_conflicts_and_removes_only_its_own_body() {
+    let mut sim = sim();
+    let scene = SceneKey::solar_system(SYSTEM);
+    let original = big_station().bodies[0].clone();
+    sim.handle(
+        Message::Enter(Box::new(Enter {
+            session_id: SESSION,
+            scene,
+            how: How::InSpace,
+            station_id: 0,
+            ship: spec(),
+            position: Some([100.0, 200.0, 300.0]),
+            direction: Some([0.0, 0.0, 1.0]),
+        })),
+        NOON,
+    )
+    .unwrap();
+    let beacon = |request_id, item_id, radius| Message::EnsureTournamentBeacon {
+        request_id,
+        scene,
+        item_id,
+        type_id: 10645,
+        group_id: 310,
+        category_id: 2,
+        owner_id: 90000001,
+        graphic_id: 1211,
+        name: "Celestial Beacon".to_string(),
+        position: [1.0, 2.0, 3.0],
+        radius,
+    };
+    let id = 8_900_000_002;
+    let first = sim.handle(beacon(71, id, 5.0), NOON).unwrap();
+    assert!(first.iter().any(|m| matches!(m, Message::EnsureTournamentBeaconReply { outcome: Ok(()), .. })));
+    let again = sim.handle(beacon(72, id, 5.0), NOON).unwrap();
+    assert!(matches!(&again[..], [Message::EnsureTournamentBeaconReply { outcome: Ok(()), .. }]));
+    let conflict = sim.handle(beacon(73, id, 6.0), NOON).unwrap();
+    assert!(
+        matches!(&conflict[..], [Message::EnsureTournamentBeaconReply { outcome: Err(error), .. }] if error == "TOURNAMENT_BEACON_ID_CONFLICT")
+    );
+    let forbidden = sim
+        .handle(Message::RemoveTournamentBeacon { request_id: 74, scene, item_id: original.id }, NOON)
+        .unwrap();
+    assert!(
+        matches!(&forbidden[..], [Message::RemoveTournamentBeaconReply { outcome: Err(error), .. }] if error == "TOURNAMENT_BEACON_ID_CONFLICT")
+    );
+    let removed =
+        sim.handle(Message::RemoveTournamentBeacon { request_id: 75, scene, item_id: id }, NOON).unwrap();
+    assert!(
+        removed.iter().any(|m| matches!(m, Message::RemoveTournamentBeaconReply { outcome: Ok(()), .. }))
+    );
+    let absent = sim.handle(Message::GetSceneBody { request_id: 76, scene, item_id: id }, NOON).unwrap();
+    assert!(
+        matches!(&absent[..], [Message::GetSceneBodyReply { outcome: Err(error), .. }] if error == "SCENE_BODY_NOT_FOUND")
+    );
+    let retry =
+        sim.handle(Message::RemoveTournamentBeacon { request_id: 77, scene, item_id: id }, NOON).unwrap();
+    assert!(matches!(&retry[..], [Message::RemoveTournamentBeaconReply { outcome: Ok(()), .. }]));
+}
+
+#[test]
+fn public_scene_body_query_uses_loaded_scene_and_reports_absence() {
+    let mut sim = sim();
+    let scene = SceneKey::solar_system(SYSTEM);
+    let body = big_station().bodies[0].clone();
+    let ship = spec();
+    sim.handle(
+        Message::Enter(Box::new(Enter {
+            session_id: SESSION,
+            scene,
+            how: How::InSpace,
+            station_id: 0,
+            ship,
+            position: Some([100.0, 200.0, 300.0]),
+            direction: Some([0.0, 0.0, 1.0]),
+        })),
+        NOON,
+    )
+    .unwrap();
+    let result = sim.handle(Message::GetSceneBody { request_id: 7, scene, item_id: body.id }, NOON).unwrap();
+    assert!(
+        matches!(&result[..], [Message::GetSceneBodyReply { outcome: Ok((type_id, group_id, category_id, position)), .. }]
+        if *type_id == body.type_id && *group_id == body.group_id && *category_id == body.category_id
+        && *position == [body.position.x, body.position.y, body.position.z])
+    );
+    let absent = sim.handle(Message::GetSceneBody { request_id: 8, scene, item_id: i64::MAX }, NOON).unwrap();
+    assert!(
+        matches!(&absent[..], [Message::GetSceneBodyReply { outcome: Err(error), .. }] if error == "SCENE_BODY_NOT_FOUND")
+    );
+    let private = SceneKey { location_id: SYSTEM, instance_id: 5, room_index: 1 };
+    let denied =
+        sim.handle(Message::GetSceneBody { request_id: 9, scene: private, item_id: body.id }, NOON).unwrap();
+    assert!(
+        matches!(&denied[..], [Message::GetSceneBodyReply { outcome: Err(error), .. }] if error == "BAD_SCENE_BODY_REQUEST")
+    );
 }
 
 #[test]
@@ -1414,6 +2072,103 @@ fn wreck_placement(system: i32, id: i64, at: [f64; 3]) -> Message {
 }
 
 #[test]
+fn tournament_wreck_query_and_removal_confirm_actual_scene_and_preserve_other_objects() {
+    let mut sim = undocked();
+    let scene = SceneKey::solar_system(SYSTEM);
+    let target = 8_900_101_001;
+    let other = 8_900_101_002;
+    let beacon = 8_900_101_003;
+    sim.handle(wreck_placement(SYSTEM, target, [100.0, 200.0, 300.0]), NOON).unwrap();
+    sim.handle(wreck_placement(SYSTEM, other, [300.0, 200.0, 100.0]), NOON).unwrap();
+    sim.handle(
+        Message::EnsureTournamentBeacon {
+            request_id: 100,
+            scene,
+            item_id: beacon,
+            type_id: 10645,
+            group_id: 310,
+            category_id: 2,
+            owner_id: 90000001,
+            graphic_id: 1211,
+            name: "Arena".to_string(),
+            position: [1.0, 2.0, 3.0],
+            radius: 5.0,
+        },
+        NOON,
+    )
+    .unwrap();
+    let query = Message::QueryTournamentWreck { request_id: 101, scene, item_id: target };
+    assert_eq!(Message::decode(&query.payload()).unwrap(), query);
+    let before = sim.handle(query, NOON).unwrap();
+    assert!(matches!(&before[..], [Message::QueryTournamentWreckReply { outcome: Ok(true), .. }]));
+    assert_eq!(Message::decode(&before[0].payload()).unwrap(), before[0]);
+    let outside = Message::RemoveTournamentWreck {
+        request_id: 107,
+        scene,
+        item_id: target,
+        owner_id: 140_000_342,
+        launcher_id: spec().ship_id,
+        type_id: 26_506,
+        center: [1000.0, 200.0, 300.0],
+        radius: 10.0,
+    };
+    let denied = sim.handle(outside, NOON).unwrap();
+    assert!(
+        matches!(&denied[..], [Message::RemoveTournamentWreckReply { outcome: Err(error), .. }] if error == "TOURNAMENT_WRECK_GUARD_MISMATCH")
+    );
+    let wrong_owner = Message::RemoveTournamentWreck {
+        request_id: 108,
+        scene,
+        item_id: target,
+        owner_id: 140_000_343,
+        launcher_id: spec().ship_id,
+        type_id: 26_506,
+        center: [100.0, 200.0, 300.0],
+        radius: 10.0,
+    };
+    let denied = sim.handle(wrong_owner, NOON).unwrap();
+    assert!(
+        matches!(&denied[..], [Message::RemoveTournamentWreckReply { outcome: Err(error), .. }] if error == "TOURNAMENT_WRECK_GUARD_MISMATCH")
+    );
+    let removal = Message::RemoveTournamentWreck {
+        request_id: 102,
+        scene,
+        item_id: target,
+        owner_id: 140_000_342,
+        launcher_id: spec().ship_id,
+        type_id: 26_506,
+        center: [100.0, 200.0, 300.0],
+        radius: 10.0,
+    };
+    assert_eq!(Message::decode(&removal.payload()).unwrap(), removal);
+    let removed = sim.handle(removal, NOON).unwrap();
+    let acknowledgement = removed
+        .iter()
+        .find(|m| matches!(m, Message::RemoveTournamentWreckReply { outcome: Ok(true), .. }))
+        .unwrap();
+    assert_eq!(Message::decode(&acknowledgement.payload()).unwrap(), *acknowledgement);
+    let after =
+        sim.handle(Message::QueryTournamentWreck { request_id: 103, scene, item_id: target }, NOON).unwrap();
+    assert!(matches!(&after[..], [Message::QueryTournamentWreckReply { outcome: Ok(false), .. }]));
+    let other_check =
+        sim.handle(Message::QueryTournamentWreck { request_id: 104, scene, item_id: other }, NOON).unwrap();
+    assert!(matches!(&other_check[..], [Message::QueryTournamentWreckReply { outcome: Ok(true), .. }]));
+    let beacon_check =
+        sim.handle(Message::GetSceneBody { request_id: 105, scene, item_id: beacon }, NOON).unwrap();
+    assert!(matches!(&beacon_check[..], [Message::GetSceneBodyReply { outcome: Ok(_), .. }]));
+    let missing_scene = SceneKey::solar_system(SYSTEM + 1);
+    let unloaded = sim
+        .handle(
+            Message::QueryTournamentWreck { request_id: 106, scene: missing_scene, item_id: target },
+            NOON,
+        )
+        .unwrap();
+    assert!(
+        matches!(&unloaded[..], [Message::QueryTournamentWreckReply { outcome: Err(error), .. }] if error == "SCENE_NOT_LOADED")
+    );
+}
+
+#[test]
 fn a_wreck_the_host_made_is_put_in_space_with_its_id_for_whoever_can_see_it_and_kept_for_two_hours() {
     let mut sim = undocked();
     sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
@@ -1779,6 +2534,17 @@ fn hello_is_answered_with_the_version_and_the_poll_rate() {
 }
 
 #[test]
+fn active_criminal_flag_is_routed_to_the_session_scene() {
+    let mut sim = undocked();
+    let ship = &sim.scenes[&SceneKey::solar_system(SYSTEM)].pilots[&SESSION].ship.spec;
+    let expected = (ship.owner_id, ship.ship_id);
+
+    sim.handle(Message::CriminalFlagActive { session_id: SESSION }, NOON).unwrap();
+
+    assert_eq!(sim.scenes[&SceneKey::solar_system(SYSTEM)].criminal_flag_activations, vec![expected]);
+}
+
+#[test]
 fn an_undock_puts_the_ship_in_space_and_binding_sends_it_the_scene_as_marshalled_notifications() {
     let mut sim = undocked();
     assert_eq!(sim.ships(), 1);
@@ -1923,6 +2689,14 @@ fn commands_are_read_from_their_codes_and_arguments() {
         Some(Command::Jump { gate_id: 50_016_630, destination_gate: 0 }),
         "the gate alone is enough"
     );
+    assert_eq!(
+        command_of(crate::scene::DOCKING_DECISION_COMMAND, &[STATION as f64, 1.0]),
+        Some(Command::DockingDecision { station_id: STATION, allowed: true })
+    );
+    assert_eq!(
+        command_of(crate::scene::DOCKING_DECISION_COMMAND, &[STATION as f64, 0.0]),
+        Some(Command::DockingDecision { station_id: STATION, allowed: false })
+    );
     for (code, args) in [
         (1, vec![]),
         (1, vec![1.0, 2.0]),
@@ -1935,6 +2709,9 @@ fn commands_are_read_from_their_codes_and_arguments() {
         (9, vec![1.5]),
         (9, vec![50_016_630.0, f64::NAN]),
         (9, vec![1.0, 2.0, 3.0]),
+        (crate::scene::DOCKING_DECISION_COMMAND, vec![STATION as f64]),
+        (crate::scene::DOCKING_DECISION_COMMAND, vec![STATION as f64, 0.5]),
+        (crate::scene::DOCKING_DECISION_COMMAND, vec![1.5, 1.0]),
         (10, vec![]),
     ] {
         assert_eq!(command_of(code, &args), None, "{code} {args:?}");
@@ -1958,7 +2735,507 @@ fn a_command_the_scene_cannot_take_is_refused_with_the_reason() {
 }
 
 #[test]
-fn a_command_is_answered_with_the_update_and_a_docking_is_finished_by_the_poll() {
+fn tournament_cutoff_without_pending_work_returns_ready_at_exact_deadline() {
+    let mut sim = undocked();
+    let identity = crate::link::CutoffIdentity {
+        request_id: 91,
+        scene: SceneKey::solar_system(SYSTEM),
+        match_id: 92,
+        generation: 1,
+        start: NOON + SECOND,
+        deadline: NOON + 4 * SECOND,
+    };
+    let registration = sim
+        .handle(
+            Message::RegisterTournamentCutoff {
+                identity: identity.clone(),
+                roster: vec![(spec().character_id, spec().ship_id)],
+            },
+            NOON,
+        )
+        .unwrap();
+    assert!(matches!(&registration[..], [Message::RegisterTournamentCutoffReply { status: 0, .. }]));
+    sim.poll(identity.deadline);
+    let snapshot = sim
+        .handle(Message::ReadTournamentCutoff { identity: identity.clone() }, NOON + 4 * SECOND + 1)
+        .unwrap();
+    assert!(
+        matches!(&snapshot[..], [Message::ReadTournamentCutoffReply { status: 1, evidence, .. }] if evidence == &vec![(spec().character_id, spec().ship_id, 0)])
+    );
+    let scene = sim.scenes.get_mut(&identity.scene).unwrap();
+    let (_, hit) = scene.damage(spec().ship_id, [1.0e12, 0.0, 0.0, 0.0], NOON + 5 * SECOND);
+    assert!(hit.unwrap().destroyed);
+    let destroyed = scene.destroy(SESSION, None, NOON + 5 * SECOND);
+    sim.forget_the_destroyed(&destroyed);
+    let replay = sim.handle(Message::ReadTournamentCutoff { identity }, NOON + 5 * SECOND + 1).unwrap();
+    assert_eq!(replay, snapshot, "a later destruction cannot change a frozen result");
+}
+
+#[test]
+fn tournament_cutoff_preserves_explicit_ship_destruction_as_ready_evidence() {
+    let mut sim = undocked();
+    let identity = crate::link::CutoffIdentity {
+        request_id: 93,
+        scene: SceneKey::solar_system(SYSTEM),
+        match_id: 94,
+        generation: 1,
+        start: NOON + SECOND,
+        deadline: NOON + 4 * SECOND,
+    };
+    let registration = sim
+        .handle(
+            Message::RegisterTournamentCutoff {
+                identity: identity.clone(),
+                roster: vec![(spec().character_id, spec().ship_id)],
+            },
+            NOON,
+        )
+        .unwrap();
+    assert!(matches!(&registration[..], [Message::RegisterTournamentCutoffReply { status: 0, .. }]));
+    let scene = sim.scenes.get_mut(&identity.scene).unwrap();
+    let (_, hit) = scene.damage(spec().ship_id, [1.0e12, 0.0, 0.0, 0.0], NOON + 2 * SECOND);
+    assert!(hit.unwrap().destroyed);
+    let destroyed = scene.destroy(SESSION, None, NOON + 2 * SECOND);
+    assert!(destroyed.iter().any(|out| matches!(out, Out::Destroyed { session: SESSION, .. })));
+    sim.forget_the_destroyed(&destroyed);
+    sim.poll(identity.deadline);
+    let snapshot = sim.handle(Message::ReadTournamentCutoff { identity }, NOON + 4 * SECOND + 1).unwrap();
+    assert!(
+        matches!(&snapshot[..], [Message::ReadTournamentCutoffReply { status: 1, evidence, .. }] if evidence == &vec![(spec().character_id, spec().ship_id, 1)])
+    );
+}
+
+#[test]
+fn tournament_tracker_clamps_regressed_wall_input_without_changing_untracked_scenes() {
+    use crate::scene::tournament::{TournamentCutoff, TournamentPilot};
+    let mut sim = undocked();
+    let key = SceneKey::solar_system(SYSTEM);
+    let pilot = TournamentPilot { character_id: spec().character_id, ship_id: spec().ship_id };
+    assert_eq!(
+        sim.scenes.get_mut(&key).unwrap().tournament_register(
+            902,
+            1,
+            NOON + SECOND,
+            NOON + 10 * SECOND,
+            NOON,
+            vec![pilot]
+        ),
+        Ok(TournamentCutoff::Pending)
+    );
+    let command = || Message::Command { session_id: SESSION, command: 1, args: vec![1.0] };
+    sim.handle(command(), NOON + 3 * SECOND).unwrap();
+    let regressed = sim.handle(command(), NOON + 2 * SECOND).unwrap();
+    assert!(regressed.iter().any(
+        |m| matches!(m, Message::Accepted { session_id: SESSION, command: 1, at } if *at == NOON + 3 * SECOND)
+    ));
+    sim.handle(
+        Message::Command { session_id: SESSION, command: 2, args: vec![1.0, 0.0, 0.0] },
+        NOON + 3 * SECOND,
+    )
+    .unwrap();
+    let before = sim.scenes[&key].pilots[&SESSION].ship.position.x;
+    sim.poll(NOON + 4 * SECOND);
+    let advanced = sim.scenes[&key].pilots[&SESSION].ship.position.x;
+    assert!(advanced > before, "normal forward poll must advance the ship");
+    sim.poll(NOON + 2 * SECOND);
+    assert_eq!(
+        sim.scenes[&key].pilots[&SESSION].ship.position.x, advanced,
+        "regressed wall poll must not rewind the ship"
+    );
+    let mut ordinary = undocked();
+    ordinary.handle(command(), NOON + 3 * SECOND).unwrap();
+    let old = ordinary.handle(command(), NOON + 2 * SECOND).unwrap();
+    assert!(old.iter().any(
+        |m| matches!(m, Message::Accepted { session_id: SESSION, command: 1, at } if *at == NOON + 2 * SECOND)
+    ));
+}
+
+#[test]
+fn tournament_metrics_dispatch_round_trips_live_sample_and_release() {
+    use crate::link::MetricsIdentity;
+    let mut sim = undocked();
+    let key = SceneKey::solar_system(SYSTEM);
+    let id = MetricsIdentity {
+        request_id: 33,
+        scene: key,
+        match_id: 91,
+        generation: 2,
+        start: NOON + SECOND,
+        roster: vec![(spec().character_id, spec().ship_id, 0)],
+    };
+    let registered = sim.handle(Message::RegisterTournamentMetrics { identity: id.clone() }, NOON).unwrap();
+    assert!(
+        registered.iter().any(|m| matches!(m, Message::RegisterTournamentMetricsReply { status: 0, .. }))
+    );
+    sim.scenes.get_mut(&key).unwrap().damage_ship(
+        SESSION,
+        1,
+        (SESSION, spec().ship_id),
+        [0.0, 20.0, 0.0, 0.0],
+        NOON + SECOND,
+    );
+    let reply = sim.handle(Message::ReadTournamentMetrics { identity: id.clone() }, NOON + SECOND).unwrap();
+    let sample = reply
+        .iter()
+        .find_map(|m| {
+            if let Message::ReadTournamentMetricsReply { identity, status: 0, sample: Some(s), .. } = m {
+                assert_eq!(identity, &id);
+                Some(s)
+            } else {
+                None
+            }
+        })
+        .expect("available live sample");
+    assert!((sample.applied.unwrap()[0] - 16.0).abs() < 1e-6);
+    assert_eq!(sample.pilots.len(), 1);
+    let pilot = sim.scenes.get_mut(&key).unwrap().pilots.get_mut(&SESSION).unwrap();
+    let module = pilot.ship.spec.modules[0].clone();
+    pilot.ship.spec.modules = (0..257)
+        .map(|i| {
+            let mut m = module.clone();
+            m.item_id += i;
+            m
+        })
+        .collect();
+    let oversized =
+        sim.handle(Message::ReadTournamentMetrics { identity: id.clone() }, NOON + SECOND + 1).unwrap();
+    assert!(
+        oversized
+            .iter()
+            .any(|m| matches!(m, Message::ReadTournamentMetricsReply { status: 1, sample: None, .. }))
+    );
+    let released =
+        sim.handle(Message::ReleaseTournamentMetrics { identity: id.clone() }, NOON + 2 * SECOND).unwrap();
+    assert!(released.iter().any(|m| matches!(m, Message::ReleaseTournamentMetricsReply { status: 0, .. })));
+    let old = sim.handle(Message::RegisterTournamentMetrics { identity: id }, NOON + 3 * SECOND).unwrap();
+    assert!(old.iter().any(|m| matches!(m, Message::RegisterTournamentMetricsReply { status: 2, .. })));
+}
+
+#[test]
+fn tournament_metrics_late_observer_reuses_only_matching_proven_death() {
+    use crate::link::MetricsIdentity;
+    use crate::scene::tournament::{TournamentCutoff, TournamentPilot};
+    let mut sim = undocked();
+    let key = SceneKey::solar_system(SYSTEM);
+    let a = spec();
+    let mut b = spec();
+    b.ship_id += 100;
+    b.character_id += 100;
+    sim.scenes
+        .get_mut(&key)
+        .unwrap()
+        .enter_in_space(SESSION + 1, b.clone(), [2000.0, 0.0, 0.0], [1.0, 0.0, 0.0], NOON)
+        .unwrap();
+    let roster = vec![
+        TournamentPilot { character_id: a.character_id, ship_id: a.ship_id },
+        TournamentPilot { character_id: b.character_id, ship_id: b.ship_id },
+    ];
+    assert_eq!(
+        sim.scenes.get_mut(&key).unwrap().tournament_register(
+            93,
+            1,
+            NOON + SECOND,
+            NOON + 30 * SECOND,
+            NOON,
+            roster
+        ),
+        Ok(TournamentCutoff::Pending)
+    );
+    sim.scenes.get_mut(&key).unwrap().damage_ship(
+        SESSION,
+        1,
+        (SESSION + 1, b.ship_id),
+        [0.0, 100000.0, 0.0, 0.0],
+        NOON + 2 * SECOND,
+    );
+    let id = MetricsIdentity {
+        request_id: 45,
+        scene: key,
+        match_id: 93,
+        generation: 2,
+        start: NOON + SECOND,
+        roster: vec![(a.character_id, a.ship_id, 0), (b.character_id, b.ship_id, 1)],
+    };
+    let bad = MetricsIdentity { match_id: 94, ..id.clone() };
+    assert!(
+        sim.handle(Message::RegisterTournamentMetrics { identity: bad }, NOON + 3 * SECOND)
+            .unwrap()
+            .iter()
+            .any(|m| matches!(m, Message::RegisterTournamentMetricsReply { status: 2, .. }))
+    );
+    assert!(
+        sim.handle(Message::RegisterTournamentMetrics { identity: id.clone() }, NOON + 3 * SECOND)
+            .unwrap()
+            .iter()
+            .any(|m| matches!(m, Message::RegisterTournamentMetricsReply { status: 0, .. }))
+    );
+    let early =
+        sim.handle(Message::ReadTournamentMetrics { identity: id.clone() }, NOON + 3 * SECOND).unwrap();
+    assert!(early.iter().any(|m|matches!(m,Message::ReadTournamentMetricsReply {status:0,sample:Some(s),..} if s.applied.is_none() && s.pilots[1].state==1)));
+    let ready = sim.handle(Message::ReadTournamentMetrics { identity: id }, NOON + 4 * SECOND).unwrap();
+    assert!(ready.iter().any(|m|matches!(m,Message::ReadTournamentMetricsReply {status:0,sample:Some(s),..} if s.applied==Some([0.0,0.0]) && s.pilots[1].state==1)));
+}
+
+#[test]
+fn tournament_metrics_dispatch_reports_proven_death_and_surviving_damage() {
+    use crate::link::MetricsIdentity;
+    let mut sim = undocked();
+    let key = SceneKey::solar_system(SYSTEM);
+    let a = spec();
+    let mut b = spec();
+    b.ship_id += 100;
+    b.character_id += 100;
+    sim.scenes
+        .get_mut(&key)
+        .unwrap()
+        .enter_in_space(SESSION + 1, b.clone(), [2000.0, 0.0, 0.0], [1.0, 0.0, 0.0], NOON)
+        .unwrap();
+    let id = MetricsIdentity {
+        request_id: 44,
+        scene: key,
+        match_id: 92,
+        generation: 1,
+        start: NOON + SECOND,
+        roster: vec![(a.character_id, a.ship_id, 0), (b.character_id, b.ship_id, 1)],
+    };
+    assert!(
+        sim.handle(Message::RegisterTournamentMetrics { identity: id.clone() }, NOON)
+            .unwrap()
+            .iter()
+            .any(|m| matches!(m, Message::RegisterTournamentMetricsReply { status: 0, .. }))
+    );
+    sim.scenes.get_mut(&key).unwrap().damage_ship(
+        SESSION,
+        1,
+        (SESSION + 1, b.ship_id),
+        [0.0, 100000.0, 0.0, 0.0],
+        NOON + SECOND,
+    );
+    let reply = sim.handle(Message::ReadTournamentMetrics { identity: id }, NOON + SECOND).unwrap();
+    let s = reply
+        .iter()
+        .find_map(|m| {
+            if let Message::ReadTournamentMetricsReply { status: 0, sample: Some(s), .. } = m {
+                Some(s)
+            } else {
+                None
+            }
+        })
+        .expect("sample after real death");
+    assert!(s.applied.unwrap()[0] > 0.0);
+    assert_eq!(s.pilots[0].state, 0);
+    assert_eq!(s.pilots[1].state, 1);
+    assert!(
+        s.pilots[1].fitted.is_empty() && s.pilots[1].running.is_empty() && s.pilots[1].companions.is_empty()
+    );
+    assert_eq!((s.pilots[1].ehp_status, s.pilots[1].ehp), (1, Some(0.0)));
+}
+
+#[test]
+fn tournament_damage_ledger_retains_gap_and_tombstone_across_dock_reentry() {
+    use crate::scene::tournament_metrics::Participant;
+    let mut sim = undocked();
+    let key = SceneKey::solar_system(SYSTEM);
+    let roster = vec![Participant { character: spec().character_id, ship: spec().ship_id, team: 0 }];
+    sim.scenes
+        .get_mut(&key)
+        .unwrap()
+        .tournament_metrics_register(901, 1, NOON + SECOND, NOON, roster.clone())
+        .unwrap();
+    sim.handle(
+        Message::Command { session_id: SESSION, command: 4, args: vec![STATION as f64] },
+        NOON + 2 * SECOND,
+    )
+    .unwrap();
+    let ready = sim.poll(NOON + 6 * SECOND);
+    assert!(ready.iter().any(|m| matches!(
+        m,
+        Message::Accepted { session_id: SESSION, command: crate::scene::DOCKING_READY_COMMAND, .. }
+    )));
+    let docked = sim
+        .handle(
+            Message::Command {
+                session_id: SESSION,
+                command: crate::scene::DOCKING_DECISION_COMMAND,
+                args: vec![STATION as f64, 1.0],
+            },
+            NOON + 6 * SECOND,
+        )
+        .unwrap();
+    assert!(docked.iter().any(|m| matches!(m, Message::Docked { session_id: SESSION, .. })));
+    assert!(sim.scenes.get(&key).is_some_and(|scene| scene.tournament_has_metrics()));
+    assert!(
+        sim.handle(enter(SESSION, STATION, SYSTEM), NOON + 7 * SECOND)
+            .unwrap()
+            .iter()
+            .any(|m| matches!(m, Message::EnterReply { session_id: SESSION, outcome: Ok(()) }))
+    );
+    let scene = sim.scenes.get_mut(&key).unwrap();
+    assert!(
+        scene
+            .tournament_metrics_sample(901, 1, NOON + SECOND, NOON + 7 * SECOND, &roster)
+            .unwrap()
+            .applied
+            .is_none()
+    );
+    scene.tournament_metrics.release(901, 1, NOON + SECOND, roster.clone()).unwrap();
+    assert!(scene.tournament_metrics_register(901, 1, NOON + SECOND, NOON + 7 * SECOND, roster).is_err());
+}
+
+#[test]
+fn tournament_cutoff_cannot_claim_continuous_presence_after_dock_and_reentry() {
+    use crate::scene::tournament::{TournamentCutoff, TournamentPilot};
+    let mut sim = undocked();
+    let key = SceneKey::solar_system(SYSTEM);
+    let pilot = TournamentPilot { character_id: spec().character_id, ship_id: spec().ship_id };
+    assert_eq!(
+        sim.scenes.get_mut(&key).unwrap().tournament_register(
+            901,
+            1,
+            NOON + SECOND,
+            NOON + 10 * SECOND,
+            NOON,
+            vec![pilot]
+        ),
+        Ok(TournamentCutoff::Pending)
+    );
+    sim.handle(
+        Message::Command { session_id: SESSION, command: 4, args: vec![STATION as f64] },
+        NOON + 2 * SECOND,
+    )
+    .unwrap();
+    let ready = sim.poll(NOON + 6 * SECOND);
+    assert!(ready.iter().any(|m| matches!(
+        m,
+        Message::Accepted { session_id: SESSION, command: crate::scene::DOCKING_READY_COMMAND, .. }
+    )));
+    let docked = sim
+        .handle(
+            Message::Command {
+                session_id: SESSION,
+                command: crate::scene::DOCKING_DECISION_COMMAND,
+                args: vec![STATION as f64, 1.0],
+            },
+            NOON + 6 * SECOND,
+        )
+        .unwrap();
+    assert!(docked.iter().any(|m| matches!(m, Message::Docked { session_id: SESSION, .. })));
+    assert!(
+        sim.scenes.get(&key).is_some_and(|scene| scene.tournament_has_tracking()),
+        "docking must retain the match tracker"
+    );
+    let entered = sim.handle(enter(SESSION, STATION, SYSTEM), NOON + 7 * SECOND).unwrap();
+    assert!(
+        entered.iter().any(|m| matches!(m, Message::EnterReply { session_id: SESSION, outcome: Ok(()) }))
+    );
+    assert_eq!(
+        sim.scenes.get_mut(&key).unwrap().tournament_freeze(901, 1, NOON + 10 * SECOND),
+        TournamentCutoff::Unavailable
+    );
+}
+
+#[test]
+fn tournament_cutoff_keeps_a_pilot_present_when_docking_is_denied() {
+    let mut sim = undocked();
+    let identity = crate::link::CutoffIdentity {
+        request_id: 913,
+        scene: SceneKey::solar_system(SYSTEM),
+        match_id: 914,
+        generation: 1,
+        start: NOON + SECOND,
+        deadline: NOON + 10 * SECOND,
+    };
+    sim.handle(
+        Message::RegisterTournamentCutoff {
+            identity: identity.clone(),
+            roster: vec![(spec().character_id, spec().ship_id)],
+        },
+        NOON,
+    )
+    .unwrap();
+    sim.handle(
+        Message::Command { session_id: SESSION, command: 4, args: vec![STATION as f64] },
+        NOON + 2 * SECOND,
+    )
+    .unwrap();
+    let ready = sim.poll(NOON + 6 * SECOND);
+    assert!(ready.iter().any(|m| matches!(
+        m,
+        Message::Accepted { session_id: SESSION, command: crate::scene::DOCKING_READY_COMMAND, .. }
+    )));
+    sim.handle(
+        Message::Command {
+            session_id: SESSION,
+            command: crate::scene::DOCKING_DECISION_COMMAND,
+            args: vec![STATION as f64, 0.0],
+        },
+        NOON + 6 * SECOND,
+    )
+    .unwrap();
+    assert_eq!(sim.ships(), 1);
+    sim.poll(identity.deadline);
+    let snapshot = sim.handle(Message::ReadTournamentCutoff { identity }, NOON + 10 * SECOND + 1).unwrap();
+    assert!(matches!(&snapshot[..], [Message::ReadTournamentCutoffReply { status: 1, evidence, .. }]
+        if evidence == &vec![(spec().character_id, spec().ship_id, 0)]));
+}
+
+#[test]
+fn tournament_tombstone_capacity_does_not_block_normal_docking_or_undocking() {
+    let mut sim = undocked();
+    let key = SceneKey::solar_system(SYSTEM);
+    let scene = sim.scenes.get_mut(&key).unwrap();
+    for id in 1..=crate::scene::tournament::TournamentTracker::MAX_TOMBSTONES as i64 {
+        scene.tournament_release(id, 1, NOON + SECOND, NOON + 10 * SECOND).unwrap();
+    }
+    assert!(scene.tournament_release(9000, 1, NOON + SECOND, NOON + 10 * SECOND).is_err());
+    let accepted = sim
+        .handle(Message::Command { session_id: SESSION, command: 4, args: vec![STATION as f64] }, NOON)
+        .unwrap();
+    assert!(accepted.iter().any(|m| matches!(m, Message::Accepted { session_id: SESSION, command: 4, .. })));
+    let ready = sim.poll(NOON + 4 * SECOND);
+    assert!(ready.iter().any(|m| matches!(
+        m,
+        Message::Accepted { session_id: SESSION, command: crate::scene::DOCKING_READY_COMMAND, .. }
+    )));
+    let docked = sim
+        .handle(
+            Message::Command {
+                session_id: SESSION,
+                command: crate::scene::DOCKING_DECISION_COMMAND,
+                args: vec![STATION as f64, 1.0],
+            },
+            NOON + 4 * SECOND,
+        )
+        .unwrap();
+    assert!(docked.iter().any(|m| matches!(m, Message::Docked { session_id: SESSION, .. })));
+    assert!(sim.scenes.get(&key).is_some_and(|scene| scene.tournament_has_tracking()));
+    let trace = sim
+        .handle(
+            Message::RemoveAbyssalTrace { request_id: 19, solar_system_id: SYSTEM, item_id: 123_456 },
+            NOON + 5 * SECOND,
+        )
+        .unwrap();
+    assert!(trace.iter().any(|m| matches!(m, Message::RemoveAbyssalTraceReply { request_id: 19, .. })));
+    assert!(
+        sim.scenes.get(&key).is_some_and(|scene| scene.tournament_has_tracking()),
+        "trace cleanup must retain tombstones"
+    );
+    let refused = sim.handle(enter(SESSION, 123_456, SYSTEM), NOON + 5 * SECOND).unwrap();
+    assert!(
+        refused.iter().any(|m| matches!(m, Message::EnterReply { session_id: SESSION, outcome: Err(_) }))
+    );
+    assert!(
+        sim.scenes.get(&key).is_some_and(|scene| scene.tournament_has_tracking()),
+        "failed enter must retain tombstones"
+    );
+    let entered = sim.handle(enter(SESSION, STATION, SYSTEM), NOON + 6 * SECOND).unwrap();
+    assert!(
+        entered.iter().any(|m| matches!(m, Message::EnterReply { session_id: SESSION, outcome: Ok(()) }))
+    );
+}
+
+#[test]
+fn a_command_is_answered_with_the_update_and_docking_waits_for_the_host_after_four_seconds() {
     let mut sim = undocked();
     let out =
         sim.handle(Message::Command { session_id: SESSION, command: 1, args: vec![1.0] }, NOON).unwrap();
@@ -1974,6 +3251,23 @@ fn a_command_is_answered_with_the_update_and_a_docking_is_finished_by_the_poll()
     assert!(sim.poll(NOON + 3 * SECOND).is_empty(), "three seconds are not enough");
     assert_eq!(
         sim.poll(NOON + 4 * SECOND),
+        [Message::Accepted {
+            session_id: SESSION,
+            command: crate::scene::DOCKING_READY_COMMAND,
+            at: STATION,
+        }]
+    );
+    assert_eq!(sim.ships(), 1, "the ship stays in space until the host's final checks pass");
+    assert_eq!(
+        sim.handle(
+            Message::Command {
+                session_id: SESSION,
+                command: crate::scene::DOCKING_DECISION_COMMAND,
+                args: vec![STATION as f64, 1.0],
+            },
+            NOON + 4 * SECOND,
+        )
+        .unwrap(),
         [Message::Docked { session_id: SESSION, station_id: STATION, condition: Condition::FULL }]
     );
     assert_eq!((sim.ships(), sim.scenes.len()), (0, 0), "an empty scene is dropped");
@@ -2291,6 +3585,20 @@ fn a_ship_that_has_docked_is_taken_from_the_view_of_the_others_by_the_poll() {
     )
     .unwrap();
     let gone = sim.poll(NOON + 6 * SECOND);
+    assert_eq!(
+        gone,
+        [Message::Accepted { session_id: OTHER, command: crate::scene::DOCKING_READY_COMMAND, at: STATION }]
+    );
+    let gone = sim
+        .handle(
+            Message::Command {
+                session_id: OTHER,
+                command: crate::scene::DOCKING_DECISION_COMMAND,
+                args: vec![STATION as f64, 1.0],
+            },
+            NOON + 6 * SECOND,
+        )
+        .unwrap();
     assert_eq!(recipients(&gone), [(OTHER, "Docked".to_string()), (SESSION, "DoDestinyUpdate".to_string())]);
     assert_eq!(sim.ships(), 1, "the first ship is still there");
 }
@@ -3398,5 +4706,5 @@ fn tether_host_policy_dispatches_to_the_real_scene_and_transitions_return_to_the
         )
         .unwrap_err();
     assert!(wrong_direction.0.contains("kind 81"));
-    assert_eq!(crate::link::PROTOCOL_VERSION, 84);
+    assert_eq!(crate::link::PROTOCOL_VERSION, 91);
 }

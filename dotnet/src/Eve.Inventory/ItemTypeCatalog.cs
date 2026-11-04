@@ -4,7 +4,10 @@ using Eve.Sde;
 namespace Eve.Inventory;
 
 /// <summary>An item type as the client sorts it: the group and category it belongs to.</summary>
-public sealed record ItemType(int TypeId, int GroupId, int CategoryId, decimal BasePrice = 0m);
+public sealed record ItemType(int TypeId, int GroupId, int CategoryId, decimal BasePrice = 0m)
+{
+    public string Name { get; init; } = "";
+}
 
 /// <summary>
 /// The group and category of item types, read from the static data when first asked for and kept. A type the data does not
@@ -30,7 +33,10 @@ public sealed class ItemTypeCatalog(SdeReader sde)
                 if (groups.TryGetValue(group, out var category))
                 {
                     var basePrice = row.Doc.TryGetProperty("basePrice", out var price) && price.TryGetDecimal(out var amount) ? amount : 0m;
-                    _types[(int)row.Key] = new ItemType((int)row.Key, group, category, basePrice);
+                    var name = row.Doc.TryGetProperty("name", out var names) && names.TryGetProperty("en", out var englishName)
+                        ? englishName.GetString() ?? ""
+                        : "";
+                    _types[(int)row.Key] = new ItemType((int)row.Key, group, category, basePrice) { Name = name };
                 }
             }
         }

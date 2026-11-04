@@ -40,7 +40,9 @@ internal sealed partial class CharacterServicesComposition
     /// <summary>Inventory broker, crates, ship cosmetics, dynamic items, energy, dogma and planets.</summary>
     private IReadOnlyList<IService> InventoryRpc()
     {
-        var industryMonitor = new IndustryMonitorRpcService(mailCache, items, nowUnixMs: now, itemTypes: itemTypes);
+        var industryMonitor = new IndustryMonitorRpcService(mailCache, items, nowUnixMs: now, itemTypes: itemTypes,
+            authorizedInputLocation: HostInventoryServiceFactory.IndustryMonitorLocationOf(
+                items, itemTypes, corporations, corporationOfficeStore));
         var inventoryBroker = new IndustryInventoryChangePublisher(
             WithCustoms(HostInventoryServiceFactory.CreateInvBroker(items, itemTypes, stations, ships, dogma, now, spaceContainers, spaceDrones, corporations, characterEntryHooks,
                 controlledStructureInventory: structureControlReadModel.InventoryAsync, officeStore: corporationOfficeStore)),

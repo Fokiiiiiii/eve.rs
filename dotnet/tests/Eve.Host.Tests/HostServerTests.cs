@@ -4039,6 +4039,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         const long target = 90000002;
         const long corporation = 98000001;
         const long alliance = 99000001;
+          var targetSecurity = -4.95;
         var tables = new Dictionary<string, System.Text.Json.Nodes.JsonObject>
         {
             ["crimewatchRuntime"] = new()
@@ -4077,7 +4078,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
                 Flag = Eve.Crimewatch.Flag.Criminal,
                 FlagUntilMs = now + 1_000,
             }),
-            (_, _) => Task.FromResult(-5.0),
+              (_, _) => Task.FromResult(targetSecurity),
             ReadTable,
             () => now);
 
@@ -4092,6 +4093,10 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         Assert.True(context.ActiveWar);
         Assert.True(context.ActiveLimitedEngagement);
         Assert.True(context.LegalFriendlyFire);
+
+          targetSecurity = -4.94;
+          var aboveOutlawThreshold = await model.ReadAsync(attacker, target, CancellationToken.None);
+          Assert.False(aboveOutlawThreshold.TargetIsOutlaw);
     }
 
     [Fact]

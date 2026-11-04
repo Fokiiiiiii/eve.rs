@@ -115,6 +115,66 @@ public class WeaponHostTests
         Assert.True(one.Security > 0.9, "the system the pilots are in is safe: the security is what the penalty reads");
     }
 
+      [PgFact]
+      public async Task Host_simulation_keeps_one_ship_penalty_after_the_weapon_timer_but_reapplies_after_crimewatch_expires()
+      {
+          await using var rig = await Rig.CreateAsync();
+          var attacker = await rig.NewCharacterAsync("Space Tester", 1);
+          var victim = await rig.NewCharacterAsync("Space Victim", 2);
+          var session = await InSpaceAsync(rig, attacker, 1);
+          var other = await InSpaceAsync(rig, victim, 2);
+          var gun = await GunOfAsync(rig, attacker);
+          var schema = "cw_" + Guid.NewGuid().ToString("N")[..12];
+          await Eve.Crimewatch.PgCrimewatchStore.MigrateAsync(rig.Source, schema);
+          try
+          {
+              var sessions = new Eve.Services.CharacterSessions();
+              sessions.Enter(attacker.CharacterId, session);
+              using var timers = new Eve.Scheduler.LocalTimers(delay: static (_, token) => Task.Delay(System.Threading.Timeout.InfiniteTimeSpan, token));
+              using var crimewatch = new Eve.Services.Crimewatch.CrimewatchRuntime(
+                  new Eve.Crimewatch.PgCrimewatchStore(rig.Source, schema), sessions, () => rig.Now,
+                  new EmptyCrimewatchPersistence(), localTimers: timers);
+              var status = new Dictionary<long, double>();
+              var penalties = new List<Eve.Services.Crimewatch.SecurityStatusPenaltyChange>();
+              new Eve.Services.Crimewatch.SecurityStatusPenalties(
+                  crimewatch, sessions,
+                  (id, _) => Task.FromResult(status.GetValueOrDefault(id)),
+                  (request, _) => Task.FromResult<int?>(request.TargetIsCapsule ? 670 : 587),
+                    (change, _, _, _) =>
+                  {
+                      status[change.CharacterId] = change.NextStatus;
+                      penalties.Add(change);
+                      return Task.CompletedTask;
+                  },
+                  () => rig.Now).Attach();
+              rig.Space.SafetyLevelOf = (_, _) => Task.FromResult(0);
+              rig.Space.Aggression = async (request, token) => await crimewatch.RecordAggressionAsync(request, token);
+                rig.Space.SecurityStatusOf = (id, _) => Task.FromResult(status.GetValueOrDefault(id));
+              var targetShip = other.GetInt("shipid")!.Value;
+
+              Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, gun, "targetAttack", targetShip, 1000, CancellationToken.None));
+              Assert.Single(penalties);
+                var lostStatus = status[attacker.CharacterId];
+                Assert.Contains(rig.Sim.Heard.OfType<Eve.Space.SimShipChanged>(), change =>
+                    change.SessionId == (ulong)session.SessionId && change.Ship.SecurityStatus == lostStatus);
+              Assert.Equal(ModuleResult.Done, await rig.Space.DeactivateAsync(session, gun, "targetAttack", CancellationToken.None));
+
+              rig.Now += Eve.Crimewatch.CombatState.WeaponsDurationMs + 1;
+              Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, gun, "targetAttack", targetShip, 1000, CancellationToken.None));
+              Assert.Single(penalties);
+
+              rig.Now += Eve.Crimewatch.CombatState.FlagDurationMs + 1;
+              await rig.Space.DeactivateAsync(session, gun, "targetAttack", CancellationToken.None);
+              Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, gun, "targetAttack", targetShip, 1000, CancellationToken.None));
+              Assert.Equal(2, penalties.Count);
+          }
+          finally
+          {
+              await using var drop = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+              await drop.ExecuteNonQueryAsync();
+          }
+      }
+
     [PgFact]
     public async Task A_failure_of_crimewatch_does_not_stop_a_gun_the_simulation_started()
     {
@@ -301,4 +361,24 @@ public class WeaponHostTests
         Assert.True(decision.Lawful);
         Assert.Equal(Eve.Crimewatch.Flag.None, decision.Consequence);
     }
+
+      private sealed class EmptyCrimewatchPersistence : Eve.Services.Crimewatch.ICrimewatchPersistenceCallbacks
+      {
+          public Task<IReadOnlyList<Eve.Services.Crimewatch.SecurityStatusTransaction>> SecurityStatusTransactionsOfAsync(long characterId, CancellationToken cancellationToken) =>
+              Task.FromResult<IReadOnlyList<Eve.Services.Crimewatch.SecurityStatusTransaction>>([]);
+
+          public Task<long?> StartDuelChallengeAsync(long challengerCharacterId, long targetCharacterId, long challengerCorporationId, long challengerAllianceId, CancellationToken cancellationToken) =>
+              Task.FromResult<long?>(null);
+
+          public Task<IReadOnlyList<Eve.Services.Crimewatch.LimitedEngagement>> LimitedEngagementsAsync(long nowUnixMs, long? characterId, CancellationToken cancellationToken) =>
+              Task.FromResult<IReadOnlyList<Eve.Services.Crimewatch.LimitedEngagement>>([]);
+
+          public Task UpsertLimitedEngagementAsync(long firstCharacterId, long secondCharacterId, long expiresAtUnixMs, CancellationToken cancellationToken) => Task.CompletedTask;
+
+          public Task<bool> ExpireLimitedEngagementAsync(long firstCharacterId, long secondCharacterId, long expectedExpiresAtUnixMs, long nowUnixMs, CancellationToken cancellationToken) =>
+              Task.FromResult(false);
+
+          public Task<bool> RespondToDuelChallengeAsync(long responderCharacterId, long challengerCharacterId, long challengeExpiresAtFileTime, bool accept, long? engagementExpiresAtUnixMs, CancellationToken cancellationToken) =>
+              Task.FromResult(false);
+      }
 }

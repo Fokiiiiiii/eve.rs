@@ -355,14 +355,19 @@ impl Scene {
             ]);
         }
         if !pilot.jumped_in {
-            // A ship that undocked moves as it is bound; an in-space arrival is already at rest.
-            told.push(update(vec![
-                payload::uncloak(first, ship.spec.ship_id),
-                payload::action(
-                    first,
-                    "SetBallPosition",
-                    with_id(&ship_id, vector(ship.position.x, ship.position.y, ship.position.z)),
-                ),
+            // Station undocks already receive their movement prime with AddBalls2; structures need their own entry pose.
+            let mut actions = Vec::new();
+            if pilot.leaving_station.is_none() {
+                actions.extend([
+                    payload::uncloak(first, ship.spec.ship_id),
+                    payload::action(
+                        first,
+                        "SetBallPosition",
+                        with_id(&ship_id, vector(ship.position.x, ship.position.y, ship.position.z)),
+                    ),
+                ]);
+            }
+            actions.extend([
                 payload::action(first, "SetBallMassive", [ship_id.clone(), int(0)]),
                 payload::action(first, "SetBallMass", [ship_id.clone(), real(ship.spec.mass)]),
                 payload::action(
@@ -371,22 +376,15 @@ impl Scene {
                     with_id(&ship_id, vector(ship.velocity.x, ship.velocity.y, ship.velocity.z)),
                 ),
                 heading(first),
-            ]));
+            ]);
+            told.push(update(actions));
         }
         told.push(update(vec![state]));
-        // The numbers of every ship in view; the pilot's own lack the mass when the bind has sent it already.
         let mut numbers = Vec::new();
         for other in &ships {
-            if other.spec.ship_id != ship.spec.ship_id || pilot.jumped_in {
+            // The undocked ego is primed above, and fixed SDE sentries have no movement numbers to prime.
+            if (other.spec.ship_id != ship.spec.ship_id || pilot.jumped_in) && other.spec.max_velocity > 0.0 {
                 numbers.extend(Self::numbers_of(other, second));
-            } else {
-                let own = id(ship.spec.ship_id);
-                numbers.push(payload::action(
-                    second,
-                    "SetBallAgility",
-                    [own.clone(), real(ship.spec.agility)],
-                ));
-                numbers.push(payload::action(second, "SetMaxSpeed", [own, real(ship.spec.max_velocity)]));
             }
         }
         told.push(update(numbers));
@@ -540,6 +538,9 @@ impl Scene {
         self.settle_pilot(session, now);
         let told = match command {
             Command::Dock { station_id } => self.dock(session, station_id, now),
+            Command::DockingDecision { station_id, allowed } => {
+                self.resolve_docking(session, station_id, allowed, now)
+            }
             Command::WarpTo { target_id, range } => self.warp_to(session, target_id, range, now),
             Command::WarpToPoint { destination, range } => {
                 self.warp_to_point(session, destination, range, now)
@@ -650,6 +651,15 @@ impl Scene {
             now.old_stance = before.stance;
         }
         let new = &pilot.ship.spec;
+        let scan_resolution_changed = new.scan_resolution != old.scan_resolution;
+        let signature_radius_changed = new.signature_radius != old.signature_radius;
+        let max_locked_targets_changed = new.max_locked_targets != old.max_locked_targets;
+        let targeting_attributes_changed = scan_resolution_changed
+            || signature_radius_changed
+            || max_locked_targets_changed
+            || new.max_target_range != old.max_target_range
+            || new.category_id != old.category_id
+            || new.group_id != old.group_id;
         pilot.ship.health.respec(new.vitals, new.shield_recharge_ms, now);
         // a reactive armor hardener that runs is shown the armor's resonances as they now are (a pin, or a new base, moves them)
         let armor_changes = shift_attributes
@@ -658,6 +668,8 @@ impl Scene {
             })
             .unwrap_or_default();
         let security_changed = new.security_status != old.security_status;
+        let security_status_loss = (new.character_id > 0 && new.security_status < old.security_status)
+            .then_some((new.character_id, new.ship_id));
         // a stance that changed is in the slim item too (`shipStance`, the reference's slim update after a switch)
         let stance_changed = new.stance != old.stance;
         let name_changed = new.name != old.name;
@@ -718,12 +730,25 @@ impl Scene {
                 war_faction_id,
             ));
         }
+        if let Some(loss) = security_status_loss {
+            self.security_status_losses.push(loss);
+        }
+        if scan_resolution_changed || signature_radius_changed {
+            self.rebase_pending_target_locks(session, scan_resolution_changed, signature_radius_changed, now);
+        }
+        if max_locked_targets_changed {
+            out.extend(self.enforce_target_limit(session, now));
+        }
+        if targeting_attributes_changed {
+            out.extend(self.settle_targets(now));
+        }
         out
     }
 
     pub fn poll(&mut self, now: i64) -> Vec<Out> {
         self.settle_all(now);
-        let mut told = self.populate_pochven(now);
+        let mut told = self.populate_empire_sentries(now);
+        told.extend(self.populate_pochven(now));
         let arrived: Vec<SessionId> = self
             .pilots
             .iter()
@@ -747,18 +772,19 @@ impl Scene {
                 pilot
                     .docking
                     .as_ref()
-                    .filter(|d| now - d.accepted_at >= DOCKING_DELAY)
+                    .filter(|d| !d.ready && now - d.accepted_at >= DOCKING_DELAY)
                     .map(|d| (*session, d.station_id))
             })
             .collect();
         for (session, station_id) in due {
-            told.extend(self.clear_tether_policy(session, now));
-            if let Some(pilot) = self.pilots.remove(&session) {
-                told.push(Out::Docked { session, station_id, condition: Self::condition_of(&pilot, now) });
-                told.extend(self.drop_targeting(pilot.ship.spec.ship_id, &pilot.targeting, None, now));
-                told.extend(self.announce_departure(session, pilot.ship.spec.ship_id, now));
-                told.extend(self.release_drones(session, None, now));
+            let Some(pending) = self.pilots.get_mut(&session).and_then(|pilot| pilot.docking.as_mut()) else {
+                continue;
+            };
+            if pending.station_id != station_id || pending.ready {
+                continue;
             }
+            pending.ready = true;
+            told.push(Out::Accepted { session, command: DOCKING_READY_COMMAND, at: station_id });
         }
         told.extend(self.note_drone_threats(now));
         told.extend(self.tick_brains(now));

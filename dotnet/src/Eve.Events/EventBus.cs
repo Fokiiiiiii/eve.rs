@@ -90,6 +90,18 @@ public sealed class EventBus
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
         await _scheduler.EnsureRecurringAsync(PurgeKind, "purge", TimeSpan.FromHours(1), cancellationToken: cancellationToken);
+        // Establish every registered cursor before the host can accept a publisher. Otherwise a
+        // StartAt.Now subscriber's first background pump can skip the first live notification.
+        Subscription[] subscriptions;
+        lock (_gate) subscriptions = [.. _subscriptions.Values];
+        if (subscriptions.Length != 0)
+        {
+            long? horizon;
+            while ((horizon = await HorizonAsync(cancellationToken)) is null)
+                await Task.Delay((int)RetryHorizonMs, cancellationToken);
+            foreach (var subscription in subscriptions)
+                await EnsureSubscriberAsync(subscription, horizon.Value, cancellationToken);
+        }
         lock (_gate)
         {
             if (_loop is not null)
@@ -170,6 +182,29 @@ public sealed class EventBus
         await transaction.CommitAsync(cancellationToken);
         Wake();
         return id;
+    }
+
+    /// <summary>Whether this subscriber still has an unprocessed event of this topic through the given occurrence time.</summary>
+    public async Task<bool> HasUnprocessedAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string subscriberName,
+        string topic,
+        long occurredThroughMs,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(subscriberName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(topic);
+        return await Sql.ScalarAsync(connection, transaction, Q("""
+            SELECT EXISTS (
+                SELECT 1
+                FROM {schema}.outbox events
+                JOIN {schema}.subscribers subscribers ON subscribers.name = $1
+                WHERE events.topic = $2
+                  AND events.occurred_ms <= $3
+                  AND events.id > subscribers.cursor_id
+            )
+            """), cancellationToken, subscriberName, topic, occurredThroughMs) is true;
     }
 
     /// <summary>Publishes one occurrence per topic and publication key, returning the original event ID on retry even after outbox retention.</summary>
@@ -355,7 +390,7 @@ public sealed class EventBus
                 {
                     return (delivered, outcome);
                 }
-                // dead-lettered: the subscriber goes on with the next event
+                // dead-lettered or already handled by another pump: continue from the current cursor
             }
             finally
             {
@@ -366,15 +401,23 @@ public sealed class EventBus
         return (delivered, null);
     }
 
-    /// <summary>Counts a failed try. Returns when to try again, or <c>null</c> when the event was given up and skipped.</summary>
+    /// <summary>Counts a failed try only while the event is pending. Returns when to try again, or <c>null</c> when no retry is needed.</summary>
     private async Task<long?> RecordFailureAsync(Subscription subscription, DomainEvent @event, Exception error)
     {
         var message = error.Message.Length > 2000 ? error.Message[..2000] : error.Message;
         await using var connection = await _source.OpenConnectionAsync(CancellationToken.None);
         await using var transaction = await connection.BeginTransactionAsync(CancellationToken.None);
-        var failures = (int)(await Sql.ScalarAsync(connection, transaction, Q("""
-            UPDATE {schema}.subscribers SET failures = failures + 1, last_error = $2, updated_ms = $3 WHERE name = $1 RETURNING failures
-            """), CancellationToken.None, subscription.Name, message, Now))!;
+        var failureResult = await Sql.ScalarAsync(connection, transaction, Q("""
+            UPDATE {schema}.subscribers SET failures = failures + 1, last_error = $2, updated_ms = $3
+            WHERE name = $1 AND cursor_id < $4
+            RETURNING failures
+            """), CancellationToken.None, subscription.Name, message, Now, @event.Id);
+        if (failureResult is null)
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            return null;
+        }
+        var failures = (int)failureResult;
         long? retryAt = null;
         if (failures >= _options.MaxAttempts)
         {

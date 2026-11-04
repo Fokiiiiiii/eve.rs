@@ -23,8 +23,180 @@ using Xunit;
 
 namespace Eve.Host.Tests;
 
-public sealed class AbyssalHostFlowTests
+public sealed partial class AbyssalHostFlowTests
 {
+    [RealAbyssalSimPgFact]
+    public async Task Referee_travel_restores_real_space_origin_and_survives_bound_release()
+    {
+        var start = new System.Diagnostics.ProcessStartInfo(Environment.GetEnvironmentVariable("EVE_ABYSSAL_SIM_BINARY")!)
+        { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true };
+        start.Environment["EVE_SIM_LISTEN"] = "127.0.0.1:0";
+        start.Environment["EVE_SDE_DIR"] = Environment.GetEnvironmentVariable("EVE_ABYSSAL_SIM_SDE")!;
+        using var process = System.Diagnostics.Process.Start(start) ?? throw new InvalidOperationException("Simulation failed to start.");
+        var schema = "ref_" + Guid.NewGuid().ToString("N")[..10];
+        try
+        {
+            string? endpoint = null; using var ready = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+            while (await process.StandardError.ReadLineAsync(ready.Token) is { } line)
+                if (line.StartsWith("eve-sim: listening on ", StringComparison.Ordinal)) { endpoint = line["eve-sim: listening on ".Length..]; break; }
+            Assert.NotNull(endpoint); _ = process.StandardError.ReadToEndAsync(); _ = process.StandardOutput.ReadToEndAsync();
+            await using var simulation = SimClient.ToTcpSocket(endpoint); simulation.Start();
+            using var connected = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            while (!simulation.IsConnected) await Task.Delay(20, connected.Token);
+            await using var rig = await Rig.Create(simulation);
+            rig.Now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var run = await rig.CreateRun(enter: false); var session = await rig.ConnectPublic(run);
+            var original = await rig.Space.PilotPoseAsync(session, CancellationToken.None);
+            Assert.NotNull(original); Assert.NotNull(original.Value.Position);
+            var ship = session.GetInt("shipid")!.Value;
+            // This fitting-owned flag is outside simulator damage and must survive the conditional save.
+            await new PgModuleStateStore(rig.Source,rig.Schemas[3]).SetShipConditionAsync(ship, ShipCondition.Full with { Incapacitated=true });
+            // A second ship fires in the real simulator; do not seed damage in PostgreSQL.
+            const ulong attackerSession = 987654321;
+            var attacker = new SimShip(9988400001939, 140000801, 601, 237, 6, "Attacker", 140000801, 1000006,
+                0, 0, 0, 47, 1163000, 339.25, 4.0185, 3, 860000, 29700, 660, 28, 4, 149.5, 55.25, []);
+            Assert.Null(await simulation.EnterAsync(new SimEnter(attackerSession, SimSceneKey.SolarSystem(original.Value.SolarSystemId),
+                EnterHow.InSpace, 0, attacker, [original.Value.Position[0] + 1000, original.Value.Position[1], original.Value.Position[2]], [0,0,1])));
+            var initial = (await simulation.CommandAsync((ulong)session.SessionId, SimCommands.GetCondition, [], CancellationToken.None)).Condition!;
+            var locking = await simulation.CommandAsync(attackerSession, SimCommands.AddTarget, [ship], CancellationToken.None);
+            Assert.True(locking.Accepted, locking.Reason);
+            using (var targetWait = new CancellationTokenSource(TimeSpan.FromSeconds(25)))
+            {
+                while (!(await simulation.CommandAsync(attackerSession, SimCommands.GetTargets, [], targetWait.Token)).Targets.Contains(ship))
+                    await Task.Delay(100, targetWait.Token);
+            }
+            var weapon = new SimEffect(9988400001940, 21857, 6731, "effects.Laser", 10000, 0, 1, ship, null, null, [], [],
+                Turret: new SimTurret(21857, "effects.Laser", [100,0,0,0], 100000, 10000, 10, 40));
+            var fired = await simulation.ActivateAsync(attackerSession, weapon);
+            Assert.True(fired.Accepted, fired.Reason);
+            SimCondition damaged;
+            using (var damageWait = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+            {
+                do
+                {
+                    damaged = (await simulation.CommandAsync((ulong)session.SessionId, SimCommands.GetCondition, [], damageWait.Token)).Condition!;
+                    if (damaged.ShieldCharge < initial.ShieldCharge || damaged.ArmorDamage > initial.ArmorDamage || damaged.Damage > initial.Damage) break;
+                    await Task.Delay(100, damageWait.Token);
+                } while (true);
+            }
+            const int target = 30000144;
+            var destinationEntries = 0;
+            rig.Space.SystemEntered += system => { if (system == target) destinationEntries++; };
+            var deployed = new PgDeployedStore(rig.Source, rig.Schemas[4]);
+            await Eve.Host.Persistence.PersistenceTournamentArenas.MigrateAsync(rig.Source, schema);
+            await Eve.Host.Persistence.PersistenceTournamentMatches.MigrateRefereeTravelAsync(rig.Source, schema);
+            await Eve.Host.Persistence.PersistenceTournamentMatches.MigrateRefereeDirectionAsync(rig.Source, schema);
+            await Eve.Host.Persistence.PersistenceTournamentMatches.MigrateRefereeMoveIdsAsync(rig.Source, schema);
+            var arenas = new Eve.Host.Persistence.PersistenceTournamentArenas(rig.Source, rig.Sde, rig.Characters, rig.Items, deployed, rig.Foundations.Events, schema);
+            await arenas.ImportIfMissingAsync(new Eve.Host.Persistence.TournamentArenaImport(target, run.Data.CreatorCharacterId,
+                [new Eve.Host.Persistence.TournamentBeaconImport(10645, "Referee Arena", [1000,2000,3000], 5)]));
+            var store = new Eve.Host.Persistence.PersistenceTournamentMatches(rig.Source, arenas, rig.Items, deployed,
+                rig.Foundations.Events, simulation, rig.Sde, schema, rig.Foundations.Scheduler, rig.Sessions, space: rig.Space);
+            var outbound = new TourneyRefTravelRequest(TourneyRefTravelOperation.TeleportToArena,target,"N=1:travel",session);
+            session.RememberBoundObject("N=1:travel");
+            var statics = await DogmaStatic.LoadAsync(rig.Sde);
+            using var containers = new SpaceContainers((ISimulation)rig.Simulator, rig.Ships, rig.Items, rig.SpaceItems,
+                new PgWorkCycleLedger(rig.Source, rig.Schemas[4]), new EventBusFacts(rig.Foundations.Events), statics, rig.Space, () => rig.Now);
+            var inventory = new Eve.Services.Inventory.InvBrokerService(rig.Items, new ItemTypeCatalog(rig.Sde), rig.Stations,
+                rig.Ships, statics, () => rig.Now, containers);
+            var nameBefore = (await rig.Items.GetAsync(ship))!.CustomName;
+            rig.Simulator.DropNextPublicMoveReply = true;
+            await Assert.ThrowsAsync<InvalidOperationException>(async () => await store.RefTravelAsync(outbound,CancellationToken.None));
+            await Assert.ThrowsAsync<MachoWrappedException>(async () => await inventory.SetLabel(new ServiceCall
+                { Session = session, Method = "SetLabel", Args = [InventoryWire.Id(ship), new PyStr("Pending rename")] }));
+            await Assert.ThrowsAsync<MachoWrappedException>(async () => await inventory.Add(new ServiceCall
+                { Session = session, Method = "Add", Args = [] }));
+            Assert.Equal(nameBefore, (await rig.Items.GetAsync(ship))!.CustomName);
+            Assert.ThrowsAny<Exception>(() => rig.Space.Command(session,SimCommands.Stop));
+            await Assert.ThrowsAnyAsync<Exception>(async () => await rig.Space.OrderAsync(session,TargetingOrder.Lock,[9988400001939],CancellationToken.None));
+            rig.Now += 31000; // Expire the operation lease; the durable move ID must not change.
+            await using (var failSave = rig.Source.CreateCommand($"""
+                CREATE FUNCTION {rig.Schemas[3]}.reject_condition_save() RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN RAISE EXCEPTION 'injected condition save failure'; END $$;
+                CREATE TRIGGER reject_condition_save BEFORE INSERT OR UPDATE ON {rig.Schemas[3]}.ship_condition_revision
+                FOR EACH ROW EXECUTE FUNCTION {rig.Schemas[3]}.reject_condition_save();
+                """)) await failSave.ExecuteNonQueryAsync();
+            await Assert.ThrowsAnyAsync<Exception>(async () => await store.RefTravelAsync(outbound,CancellationToken.None));
+            Assert.Equal(0, destinationEntries);
+            await using (var restoreSave = rig.Source.CreateCommand($"DROP TRIGGER reject_condition_save ON {rig.Schemas[3]}.ship_condition_revision"))
+                await restoreSave.ExecuteNonQueryAsync();
+            rig.Now += 31000;
+            try { await store.RefTravelAsync(outbound,CancellationToken.None); }
+            catch (Exception error) { throw new InvalidOperationException($"Outbound retry failed: {string.Join(" | ", rig.Problems)}", error); }
+            Assert.DoesNotContain("N=1:travel",session.BoundOids);
+            Assert.Equal(target,rig.Space.SolarSystemOf(session));
+            Assert.Equal(1, destinationEntries);
+            var afterMove = (await simulation.CommandAsync((ulong)session.SessionId, SimCommands.GetCondition, [], CancellationToken.None)).Condition!;
+            Assert.True(afterMove.ShieldCharge <= damaged.ShieldCharge + 0.01, $"Shield healed during relocation: {damaged.ShieldCharge} -> {afterMove.ShieldCharge}");
+            Assert.True(afterMove.ArmorDamage >= damaged.ArmorDamage - 0.001 && afterMove.Damage >= damaged.Damage - 0.001);
+            await using (var row = rig.Source.CreateCommand($"SELECT original_system_id,ship_id,original_position,original_direction FROM {schema}.referee_travel"))
+            await using (var reader = await row.ExecuteReaderAsync())
+            {
+                Assert.True(await reader.ReadAsync()); Assert.Equal(original.Value.SolarSystemId,reader.GetInt32(0)); Assert.Equal(ship,reader.GetInt64(1));
+                Assert.Equal(original.Value.Position,reader.GetFieldValue<double[]>(2)); Assert.Equal(original.Value.Direction,reader.GetFieldValue<double[]>(3));
+            }
+            await store.RefTravelAsync(outbound with { BoundObjectId="N=1:rebind" },CancellationToken.None);
+            Assert.Equal(1, destinationEntries);
+            await using (var row = rig.Source.CreateCommand($"SELECT original_system_id FROM {schema}.referee_travel"))
+                Assert.Equal(original.Value.SolarSystemId,Convert.ToInt32(await row.ExecuteScalarAsync()));
+            await store.RefTravelAsync(new TourneyRefTravelRequest(TourneyRefTravelOperation.TeleportToStation,target,"N=1:home",session),CancellationToken.None);
+            var returned = await rig.Space.PilotPoseAsync(session,CancellationToken.None);
+            Assert.NotNull(returned); Assert.Equal(original.Value.SolarSystemId,returned.Value.SolarSystemId);
+            Assert.Equal(original.Value.Position,returned.Value.Position); Assert.Equal(original.Value.Direction,returned.Value.Direction); Assert.Equal(ship,session.GetInt("shipid"));
+            var afterReturn = (await simulation.CommandAsync((ulong)session.SessionId, SimCommands.GetCondition, [], CancellationToken.None)).Condition!;
+            Assert.True(afterReturn.ShieldCharge <= damaged.ShieldCharge + 0.02, $"Shield healed on return: {damaged.ShieldCharge} -> {afterReturn.ShieldCharge}");
+            Assert.True(afterReturn.ArmorDamage >= damaged.ArmorDamage - 0.001 && afterReturn.Damage >= damaged.Damage - 0.001);
+            await using (var persisted = rig.Source.CreateCommand($"SELECT shield_charge,armor_damage,damage,incapacitated FROM {rig.Schemas[3]}.ship_condition WHERE item_id=$1"))
+            {
+                persisted.Parameters.AddWithValue(ship); await using var reader = await persisted.ExecuteReaderAsync();
+                Assert.True(await reader.ReadAsync());
+                Assert.True(reader.GetDouble(0) <= damaged.ShieldCharge + 0.02);
+                Assert.True(reader.GetDouble(1) >= damaged.ArmorDamage - 0.001 && reader.GetDouble(2) >= damaged.Damage - 0.001);
+                Assert.True(reader.GetBoolean(3));
+            }
+            await using (var count = rig.Source.CreateCommand($"SELECT count(*) FROM {schema}.referee_travel")) Assert.Equal(0L,(long)(await count.ExecuteScalarAsync())!);
+
+            // A second, docked character enters the real simulator; the proxy discards only its successful reply.
+            var dockedRun = await rig.CreateRun(enter: false);
+            const long stationId = 60003760;
+            Assert.NotNull(rig.Stations.Get(stationId));
+            var dockedCharacter = dockedRun.Data.CreatorCharacterId;
+            var dockedShip = dockedRun.Data.CreatorShipId;
+            await rig.Transaction(async (c, tx) =>
+            {
+                await rig.Characters.SetStationAsync(c, tx, dockedCharacter, stationId);
+                await rig.Items.MoveAsync(c, tx, dockedShip, stationId, ItemFlags.Hangar);
+            });
+            var dockedSession = new ClientSession(new RecordingSink(rig.Order)) { SessionId = dockedCharacter + 100, ClientId = dockedCharacter + 200 };
+            dockedSession.Set("charid", new PyLong(dockedCharacter)); dockedSession.Set("shipid", new PyLong(dockedShip));
+            dockedSession.Set("stationid", new PyLong(stationId)); dockedSession.Set("stationid2", new PyLong(stationId));
+            dockedSession.Set("solarsystemid2", new PyInt(30000142)); dockedSession.Set("locationid", new PyLong(stationId));
+            rig.Simulator.DropNextEnterReply = true;
+            var dockedOperation = Guid.NewGuid().ToString("D");
+            var dockedRefusal = await rig.Space.RelocateAsync(dockedSession, target, [100000,200000,300000], [0,0,1], CancellationToken.None, dockedOperation);
+            Assert.NotNull(dockedRefusal);
+            var live = await simulation.GetAbyssalParticipantPoseAsync(new SimGetAbyssalParticipantPose(
+                SimClient.NextRequestId(), SimSceneKey.SolarSystem(target), dockedShip), CancellationToken.None);
+            Assert.Null(live.Error);
+            var storedShip = (await rig.Items.GetAsync(dockedShip))!;
+            Assert.Equal(target, storedShip.LocationId);
+            Assert.Equal(CharacterShips.InSpaceFlag, storedShip.Flag);
+            Assert.False(rig.Space.IsInSpace(dockedSession));
+            Assert.Throws<MachoWrappedException>(() => rig.Space.Command(dockedSession, SimCommands.Stop));
+            Assert.Null(await rig.Space.RelocateAsync(dockedSession, target, [100000,200000,300000], [0,0,1], CancellationToken.None, dockedOperation));
+            Assert.True(rig.Space.IsInSpace(dockedSession));
+            Assert.Null(await rig.Space.RelocateAsync(dockedSession, target, [100000,200000,300000], [0,0,1], CancellationToken.None, dockedOperation));
+        }
+        finally
+        {
+            await using var cleanupSource = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+            await using var cleanup = cleanupSource.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await cleanup.ExecuteNonQueryAsync();
+            if (!process.HasExited) process.Kill(entireProcessTree:true);
+            await process.WaitForExitAsync();
+        }
+    }
+
     [RealAbyssalSimPgFact]
     public async Task Saved_origin_gate_open_update_passes_the_real_rust_scene_guard()
     {
@@ -126,6 +298,12 @@ public sealed class AbyssalHostFlowTests
             Assert.True(publicPose.Found, publicPose.Error);
             Assert.NotNull(publicPose.Deployment);
             await rig.Disconnect(publicSession);
+            Assert.Equal(new[]
+            {
+                $"pilot {publicSetup.Data.CreatorCharacterId} entered space in system {publicSetup.Data.SourceSolarSystemId} (session {publicSession.SessionId})",
+                $"pilot {publicSetup.Data.CreatorCharacterId} left space in system {publicSetup.Data.SourceSolarSystemId} (session {publicSession.SessionId}): position saved True",
+            }, rig.Problems);
+            rig.Problems.Clear();
             var run = await rig.CreateRun();
             var other = await rig.CreateRun();
             await rig.Materialize(run, 1);
@@ -902,7 +1080,7 @@ public sealed class AbyssalHostFlowTests
         Assert.Empty(rig.Problems);
     }
 
-    private sealed class Rig : IAsyncDisposable
+    internal sealed class Rig : IAsyncDisposable
     {
         public required NpgsqlDataSource Source { get; init; }
         public required Foundations Foundations { get; init; }
@@ -924,6 +1102,7 @@ public sealed class AbyssalHostFlowTests
         public required string[] Schemas { get; init; }
         public List<string> Order { get; } = [];
         public List<string> ClientNotifications { get; } = [];
+        public List<string> MessageOrder { get; } = [];
         public List<string> Problems { get; } = [];
         public long Now { get; set; } = 1_790_000_000_000;
 
@@ -932,10 +1111,10 @@ public sealed class AbyssalHostFlowTests
             var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
             var cs = new NpgsqlConnectionStringBuilder(PgConnection.ForTest(url));
             Assert.Equal(new NpgsqlConnectionStringBuilder(PgConnection.ToConnectionString(url)).Database, cs.Database);
-            Assert.Contains(cs.Database, new[] { "eve", "eve_p2", "eve_p3", "eve_p4" });
+            Assert.Matches(@"^eve(?:_p\d+)?$", cs.Database);
             var source = NpgsqlDataSource.Create(cs.ConnectionString);
             var suffix = Guid.NewGuid().ToString("N");
-            var schemas = Enumerable.Range(0, 11).Select(index => $"abyss_hf_{index}_{suffix}").ToArray();
+            var schemas = Enumerable.Range(0, 13).Select(index => $"abyss_hf_{index}_{suffix}").ToArray();
             await PgCharacterStore.MigrateAsync(source, schemas[0]);
             await PgItemStore.MigrateAsync(source, schemas[1]);
             await PgSkillStore.MigrateAsync(source, schemas[2]);
@@ -944,10 +1123,11 @@ public sealed class AbyssalHostFlowTests
             await Eve.Crimewatch.PgCrimewatchStore.MigrateAsync(source, schemas[10]);
             await using (var fleet = source.CreateCommand($"""
                 CREATE SCHEMA {schemas[9]};
+                CREATE TABLE {schemas[9]}.fleets (fleet_id bigint PRIMARY KEY);
                 CREATE TABLE {schemas[9]}.fleet_members (
                     fleet_id bigint, character_id bigint UNIQUE, wing_id bigint, squad_id bigint,
                     role smallint, job smallint, accepts_fleet_warp boolean, accepts_conduit_jumps boolean,
-                    accepts_fleet_regroups boolean, ship_type_id bigint);
+                    accepts_fleet_regroups boolean, ship_type_id bigint, joined_at bigint NOT NULL DEFAULT 0);
                 """)) await fleet.ExecuteNonQueryAsync();
             Rig? rig = null;
             var mapping = new Dictionary<string, string>
@@ -976,7 +1156,7 @@ public sealed class AbyssalHostFlowTests
             fake.Inner = realSimulation;
             var sessions = new CharacterSessions();
             var space = new SpaceSessions(simulation, ships, statics, stations, systems,
-                () => rig?.Now ?? 1_790_000_000_000, spaceItems: spaces);
+                () => rig?.Now ?? 1_790_000_000_000, log: text => rig?.Problems.Add(text), spaceItems: spaces);
             space.AbyssalEnvironmentEffects = (_, _) => [];
             space.RookieShipOfRace = raceId => creation.Race(raceId)?.ShipTypeId;
             var runtime = new AbyssalContentRuntime(foundations.Content, foundations.Events, foundations.Scheduler);
@@ -987,7 +1167,7 @@ public sealed class AbyssalHostFlowTests
             Field("source", source); Field("foundations", foundations); Field("sde", sde);
             Field("characters", characters); Field("items", items); Field("itemTypes", itemTypes);
             Field("spaceItemStore", spaces); Field("spaceSessions", space); Field("ships", ships); Field("dogma", statics);
-            Field("catalog", creation); Field("stations", stations); Field("characterSessions", sessions);
+            Field("catalog", creation); Field("stations", stations); Field("solarSystems", systems); Field("characterSessions", sessions);
             Field("abyssalRuntime", runtime); Field("abyssalCatalog", catalog);
             Field("fleetStore", new FleetStore(source, schemas[9]));
             Field("crimewatchStore", new Eve.Crimewatch.PgCrimewatchStore(source, schemas[10]));
@@ -1045,7 +1225,7 @@ public sealed class AbyssalHostFlowTests
             return rig;
         }
 
-        public async Task<AbyssalRunState> CreateRun(bool enter = true, AbyssalPosition? shipDirection = null)
+        public async Task<AbyssalRunState> CreateRun(bool enter = true, AbyssalPosition? shipDirection = null, int? shipTypeId = null)
         {
             var initialDirection = shipDirection ?? new AbyssalPosition(0, 0, 1);
             const int origin = 30000142;
@@ -1054,7 +1234,7 @@ public sealed class AbyssalHostFlowTests
             var bloodline = Creation.Bloodlines.First(value => value.RaceId == race.Id);
             var school = CreationCatalog.Schools.First(value => value.RaceId == race.Id);
             var home = Stations.Get(Creation.StarterFor(school.CorporationId)!.StationId)!;
-            var type = Catalog.AllowedShipTypeIdsByMode[AbyssalGameMode.SoloCruiser].Order().First();
+            var type = shipTypeId ?? Catalog.AllowedShipTypeIdsByMode[AbyssalGameMode.SoloCruiser].Order().First();
             var filament = Catalog.FilamentsByTypeId.Values.First(value => value.Tier == 0);
             var shipRadius = (await Sde.ReadAsync("types", [type])).Single().Doc.GetProperty("radius").GetDouble();
             AbyssalRunState? run = null;
@@ -1114,7 +1294,7 @@ public sealed class AbyssalHostFlowTests
         public async Task<ClientSession> Connect(AbyssalRunState run, long sessionOffset = 100)
         {
             var p = Assert.Single(run.Data.Participants);
-            var session = new ClientSession(new RecordingSink(Order, ClientNotifications))
+            var session = new ClientSession(new RecordingSink(Order, ClientNotifications, MessageOrder))
             { SessionId = p.CharacterId + sessionOffset, ClientId = p.CharacterId + sessionOffset + 100 };
             session.Set("charid", new PyLong(p.CharacterId)); session.Set("shipid", new PyLong(p.ShipId));
             session.Set("solarsystemid", new PyInt(run.Data.SpaceLocationId));
@@ -1134,7 +1314,7 @@ public sealed class AbyssalHostFlowTests
             var radius = (await Sde.ReadAsync("types", [ship.TypeId])).Single().Doc.GetProperty("radius").GetDouble();
             await Transaction((c, tx) => SpaceItems.SaveAsync(c, tx, new SpaceItem(ship.Id, character.SolarSystemId,
                 [10, 20, 30], [0, 0, 1], radius, type.GroupId, 0, character.Id, character.CorporationId, 0, 0, long.MaxValue)));
-            var session = new ClientSession(new RecordingSink(Order)) { SessionId = character.Id + 100, ClientId = character.Id + 200 };
+            var session = new ClientSession(new RecordingSink(Order, ClientNotifications, MessageOrder)) { SessionId = character.Id + 100, ClientId = character.Id + 200 };
             session.Set("charid", new PyLong(character.Id)); session.Set("shipid", new PyLong(ship.Id));
             session.Set("solarsystemid", new PyInt(character.SolarSystemId)); session.Set("solarsystemid2", new PyInt(character.SolarSystemId));
             session.Set("locationid", new PyInt(character.SolarSystemId));
@@ -1200,6 +1380,33 @@ public sealed class AbyssalHostFlowTests
     public class FlowSim : DispatchProxy
     {
         public ISimulation? Inner { get; set; }
+        public Action<SimCondition>? ConditionObserved { get; set; }
+        private async Task<CommandReply> ObserveConditionAsync(ulong sessionId, byte code, double[] args, CancellationToken ct)
+        {
+            var reply = await Inner!.CommandAsync(sessionId, code, args, ct);
+            if (reply.Condition is { } condition) ConditionObserved?.Invoke(condition);
+            return reply;
+        }
+        public List<SimEnter> Enters { get; } = [];
+        public List<SimEnterPublicParticipant> PublicEnters { get; } = [];
+        public bool DropNextPublicMoveReply { get; set; }
+        public bool DropNextEnterReply { get; set; }
+        public bool HoldNextRemoteRepairResult { get; set; }
+        public TaskCompletionSource<SimRemoteRepairCycleResult> HeldRemoteRepairResult { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public void ReleaseHeldRemoteRepairResult() => (Inner ?? throw new InvalidOperationException("No simulator"))
+            .RemoteRepairCycleResult(HeldRemoteRepairResult.Task.GetAwaiter().GetResult());
+        private static async Task<SimEnterPublicParticipantReply> DropEnterReplyAsync(ISimulation inner, SimEnterPublicParticipant entry, CancellationToken ct)
+        {
+            var reply = await inner.EnterPublicParticipantInOrderAsync(entry, _ => { }, ct);
+            if (reply.Error is not null) throw new InvalidOperationException($"Real simulator refused fault-injected entry: {reply.Error}");
+            throw new SimUnavailableException("Test lost a successful enter reply.");
+        }
+        private static async Task<SimMovePublicParticipantReply> DropMoveReplyAsync(ISimulation inner, SimMovePublicParticipant request, CancellationToken ct)
+        {
+            var actual = await inner.MovePublicParticipantInOrderAsync(request, _ => { }, ct);
+            if (actual.Error is not null) throw new InvalidOperationException($"Real simulator refused fault-injected move: {actual.Error}");
+            throw new SimUnavailableException("Test lost a successful public move reply.");
+        }
         public List<SimRemoveAbyssalParticipant> Removals { get; } = [];
         public List<SimSceneKey> RemovedScenes { get; } = [];
         public HashSet<SimSceneKey> LiveScenes { get; } = [];
@@ -1227,6 +1434,26 @@ public sealed class AbyssalHostFlowTests
             ArgumentNullException.ThrowIfNull(method);
             if (Inner is not null)
             {
+                if (ConditionObserved is not null && method.Name == nameof(ISimulation.CommandAsync) && (byte)args![1]! == SimCommands.GetCondition)
+                    return ObserveConditionAsync((ulong)args[0]!, (byte)args[1]!, (double[])args[2]!, (CancellationToken)args[3]!);
+                if (method.Name == nameof(ISimulation.RemoteRepairCycleResult) && HoldNextRemoteRepairResult)
+                {
+                    HoldNextRemoteRepairResult = false;
+                    HeldRemoteRepairResult.TrySetResult((SimRemoteRepairCycleResult)args![0]!);
+                    return null;
+                }
+                if (method.Name == nameof(ISimulation.EnterAsync)) Enters.Add((SimEnter)args![0]!);
+                if (method.Name == nameof(ISimulation.EnterPublicParticipantInOrderAsync)) PublicEnters.Add((SimEnterPublicParticipant)args![0]!);
+                if (method.Name == nameof(ISimulation.EnterPublicParticipantInOrderAsync) && DropNextEnterReply)
+                {
+                    DropNextEnterReply = false;
+                    return DropEnterReplyAsync(Inner, (SimEnterPublicParticipant)args![0]!, (CancellationToken)args[2]!);
+                }
+                if (method.Name == nameof(ISimulation.MovePublicParticipantInOrderAsync) && DropNextPublicMoveReply)
+                {
+                    DropNextPublicMoveReply = false;
+                    return DropMoveReplyAsync(Inner, (SimMovePublicParticipant)args![0]!, (CancellationToken)args[2]!);
+                }
                 if (method.Name == nameof(ISimulation.EnsureAbyssalSceneObjectAsync))
                     SceneObjects.Add((SimEnsureAbyssalSceneObject)args![0]!);
                 return method.Invoke(Inner, args);
@@ -1320,18 +1547,25 @@ public sealed class AbyssalHostFlowTests
         }
     }
 
-    private sealed class RecordingSink(List<string> order, List<string>? notifications = null) : IPacketSink
+    private sealed class RecordingSink(List<string> order, List<string>? notifications = null, List<string>? messageOrder = null) : IPacketSink
     {
         public void Send(PyValue packet)
         {
             if (packet is not PyObject obj || obj.Args is not PyTuple tuple) return;
             var fields = tuple.Items;
-            if (fields[0] is PyInt { Value: MachoMessage.SessionChangeNotification }) { order.Add("SessionChange"); return; }
+            if (fields[0] is PyInt { Value: MachoMessage.SessionChangeNotification })
+            {
+                order.Add("SessionChange");
+                messageOrder?.Add("SessionChange");
+                return;
+            }
             if (fields[0] is not PyInt { Value: MachoMessage.Notification }) return;
             var address = MachoAddress.Decode(fields[2]);
             if (address.BroadcastId is { } broadcastId)
             {
                 notifications?.Add(broadcastId);
+                if (broadcastId is "OnItemChange" or "OnPvpTimerUpdate")
+                    messageOrder?.Add(broadcastId);
             }
             if (address.BroadcastId is "OnItemChange" or "OnExitingDungeon" or "OnAbyssalLocationExited" or "OnAbyssalContentFinished")
                 order.Add(address.BroadcastId);

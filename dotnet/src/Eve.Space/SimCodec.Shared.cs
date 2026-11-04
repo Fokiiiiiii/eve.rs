@@ -5,6 +5,14 @@ namespace Eve.Space;
 
 public static partial class SimCodec
 {
+    private static bool IsPublicMoveId(string? value) => value is { Length: 36 } &&
+        value.Select((c, i) => i is 8 or 13 or 18 or 23 ? c == '-' : char.IsAsciiHexDigit(c)).All(valid => valid);
+
+    private static bool ValidCutoffIdentity(ulong id, SimSceneKey scene, long match, long generation, long start, long deadline) => id != 0 && scene.IsValid && scene.InstanceId == 0 && match > 0 && generation > 0 && start > 0 && deadline > start;
+    private static bool ValidCutoffStatus(SimTournamentCutoffStatus status, string error) => (byte)status <= 3 && error is not null && ((status == SimTournamentCutoffStatus.Error) == (error.Length > 0));
+    private static bool ValidCutoffRoster(IReadOnlyList<SimTournamentCutoffPilot> roster) => roster is { Count: > 0 and <= 256 } && roster.All(p => p.CharacterId > 0 && p.ShipId > 0) && roster.Select(p => p.CharacterId).Distinct().Count() == roster.Count && roster.Select(p => p.ShipId).Distinct().Count() == roster.Count;
+    private static bool ValidCutoffEvidence(SimTournamentCutoffStatus status, IReadOnlyList<SimTournamentCutoffItem> items) => items is not null && items.Count <= 256 && ((status == SimTournamentCutoffStatus.Ready) == (items.Count > 0)) && items.All(p => p.CharacterId > 0 && p.ShipId > 0 && (byte)p.Evidence <= 2) && items.Select(p => p.CharacterId).Distinct().Count() == items.Count && items.Select(p => p.ShipId).Distinct().Count() == items.Count;
+
     private static class Kind
     {
         public const byte Hello = 1;
@@ -15,8 +23,29 @@ public static partial class SimCodec
         public const byte UpdateState = 6;
         public const byte Command = 7;
         public const byte ShipChanged = 8;
+        public const byte CriminalFlagActive = 140;
         public const byte Notify = 9;
         public const byte ServiceNotify = 125;
+        public const byte GetSceneBody = 126;
+        public const byte GetSceneBodyReply = 127;
+        public const byte EnsureTournamentBeacon = 128;
+        public const byte EnsureTournamentBeaconReply = 129;
+        public const byte RemoveTournamentBeacon = 130;
+        public const byte RemoveTournamentBeaconReply = 131;
+        public const byte QueryTournamentWreck = 132;
+        public const byte QueryTournamentWreckReply = 133;
+        public const byte RemoveTournamentWreck = 134;
+        public const byte RemoveTournamentWreckReply = 135;
+        public const byte MovePublicParticipant = 136;
+        public const byte MovePublicParticipantReply = 137;
+        public const byte EnterPublicParticipant = 138;
+        public const byte EnterPublicParticipantReply = 139;
+        public const byte RegisterTournamentCutoff = 142;
+        public const byte RegisterTournamentCutoffReply = 143;
+        public const byte ReadTournamentCutoff = 144;
+        public const byte ReadTournamentCutoffReply = 145;
+        public const byte ReleaseTournamentCutoff = 146;
+        public const byte ReleaseTournamentCutoffReply = 147;
         public const byte Docked = 10;
         public const byte Refused = 11;
         public const byte Accepted = 12;
@@ -154,6 +183,12 @@ public const byte UpdateEffect = 61;
         vector.Count == 3 && vector.All(double.IsFinite);
 
     private static bool IsSceneKey(SimSceneKey scene) => scene.IsValid;
+
+    private static bool IsTournamentBeacon(SimEnsureTournamentBeacon m) =>
+        m.RequestId > 0 && m.Scene.IsValid && m.Scene.InstanceId == 0 && m.ItemId > 0 && m.TypeId > 0 &&
+        m.GroupId > 0 && m.CategoryId > 0 && m.OwnerId > 0 && m.GraphicId > 0 && !string.IsNullOrEmpty(m.Name) &&
+        System.Text.Encoding.UTF8.GetByteCount(m.Name) <= ushort.MaxValue && IsVector(m.Position) &&
+        double.IsFinite(m.Radius) && m.Radius > 0 && float.IsFinite((float)m.Radius) && (float)m.Radius != 0;
 
     private static bool IsAbyssalSceneSpec(SimAbyssalSceneSpec spec)
     {
@@ -363,9 +398,13 @@ public const byte UpdateEffect = 61;
 
         public double F64() => BinaryPrimitives.ReadDoubleLittleEndian(Take(8));
 
-        public string Text()
+        public string Text() => BoundedText(ushort.MaxValue);
+
+        public string BoundedText(int maximum)
         {
-            var bytes = Take(U16());
+            var length = U16();
+            if (length > maximum) throw new SimLinkException(SimLinkError.BadValue, "text exceeds its limit");
+            var bytes = Take(length);
             try
             {
                 return Strict.GetString(bytes);
@@ -440,6 +479,8 @@ public const byte UpdateEffect = 61;
             U32((uint)bytes.Length);
             _out.Write(bytes);
         }
+
+        public void Raw(ReadOnlySpan<byte> bytes) => _out.Write(bytes);
 
         public byte[] ToArray() => _out.ToArray();
     }

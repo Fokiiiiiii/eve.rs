@@ -47,6 +47,19 @@ public sealed class PgBountyStoreTests
     }
 
     [PgFact]
+    public async Task Pending_kill_activity_is_aggregated_by_solar_system()
+    {
+        await using var rig = await BountyRig.CreateAsync();
+        await rig.Store.RecordAsync(Kill(1), Now);
+        await rig.Store.RecordAsync(Kill(2), Now + 1_000);
+        await rig.Store.RecordAsync(Kill(3, system: 30000144), Now + 2_000);
+        await rig.Store.RecordAsync(Kill(4, character: 140_000_002), Now + 3_000);
+
+        Assert.Equal(new Dictionary<int, long> { [Jita] = 3, [30000144] = 1 },
+            await rig.Store.PendingKillsBySystemAsync());
+    }
+
+    [PgFact]
     public async Task A_victim_that_is_in_a_bucket_is_not_paid_twice()
     {
         await using var rig = await BountyRig.CreateAsync();

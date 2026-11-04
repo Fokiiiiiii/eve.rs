@@ -7,6 +7,23 @@ internal sealed class FakeSim : ISimulation
 {
     public bool IsConnected { get; set; } = true;
 
+    public bool DropPublicMoveReply { get; set; }
+
+    public TaskCompletionSource? PublicMoveStarted { get; set; }
+    public TaskCompletionSource? PublicMoveRelease { get; set; }
+
+    public async Task<SimMovePublicParticipantReply> MovePublicParticipantInOrderAsync(SimMovePublicParticipant move,
+        Action<SimMovePublicParticipantReply> beforeFollowingMessages, CancellationToken cancellationToken = default)
+    {
+        Heard.Enqueue(move);
+        PublicMoveStarted?.TrySetResult();
+        if (PublicMoveRelease is { } release) await release.Task.WaitAsync(cancellationToken);
+        if (DropPublicMoveReply) throw new SimUnavailableException("test dropped public move reply");
+        var reply = new SimMovePublicParticipantReply(move.RequestId, null);
+        beforeFollowingMessages(reply);
+        return reply;
+    }
+
     public event Action<SimMessage>? Received;
 
     /// <summary>A message the simulation sends to the host (a test's stand-in for the link's receive loop).</summary>
@@ -508,6 +525,8 @@ internal sealed class FakeSim : ISimulation
     public void Command(ulong sessionId, byte code, params double[] args) => Heard.Enqueue(new SimCommand(sessionId, code, args));
 
     public void ShipChanged(ulong sessionId, SimShip ship) => Heard.Enqueue(new SimShipChanged(sessionId, ship));
+
+    public void CriminalFlagActive(ulong sessionId) => Heard.Enqueue(new SimCriminalFlagActive(sessionId));
 
     public void Say(SimMessage message) => Received?.Invoke(message);
 

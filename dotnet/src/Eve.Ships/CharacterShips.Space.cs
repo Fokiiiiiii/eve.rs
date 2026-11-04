@@ -23,6 +23,8 @@ public sealed record ShipBoarding(long ShipId, long PreviousOwnerId, long Boarde
 
 public sealed record SpaceMove(Item Ship, long PreviousLocationId, int PreviousFlag, Character Character);
 
+public sealed record SpaceRelocationRequest(long CharacterId, long ShipId, int FromSolarSystemId, int ToSolarSystemId, int ToConstellationId, int ToRegionId);
+
 /// <summary>What happened to an undock or a dock: the move, or why the ship stayed where it was.</summary>
 public sealed record SpaceTransition(SpaceMove? Moved, string? Refusal)
 {
@@ -266,6 +268,27 @@ public Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, ShipTransitionEve
     /// or from space, and the character is in that system. The station the character last docked at stays (it is where the ship is recovered to if the
     /// simulation loses it). No gate, range or fuel rule applies: the relocation is the game master's.
     /// </summary>
+    public Task<long> ShipConditionRevisionAsync(long shipId, CancellationToken cancellationToken = default) =>
+        modules.ShipConditionRevisionAsync(shipId, cancellationToken);
+
+    public async Task<bool> TrySaveSpaceConditionAsync(long characterId, long shipId, int solarSystemId, long expectedRevision, ShipCondition condition, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+        if (await characters.GetAsync(characterId, cancellationToken) is not { ShipId: { } activeShipId } character ||
+            activeShipId != shipId || character.SolarSystemId != solarSystemId ||
+            await items.LockAndGetAsync(connection, transaction, shipId, cancellationToken) is not { } ship ||
+            ship.OwnerId != characterId || ship.LocationId != solarSystemId || ship.Flag != InSpaceFlag)
+            return false;
+        var existing = await modules.ShipConditionAsync(connection, transaction, shipId, cancellationToken);
+        if (!await modules.TrySetShipConditionAsync(connection, transaction, shipId, expectedRevision,
+            condition with { Incapacitated = existing.Incapacitated }, cancellationToken))
+            return false;
+        await transaction.CommitAsync(cancellationToken);
+        return true;
+    }
+
     public async Task<SpaceTransition> RelocateAsync(long characterId, int solarSystemId, int constellationId, int regionId, CancellationToken cancellationToken = default)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
@@ -290,6 +313,46 @@ public Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, ShipTransitionEve
         await transaction.CommitAsync(cancellationToken);
         return SpaceTransition.Done(new SpaceMove(ship with { LocationId = solarSystemId, Flag = InSpaceFlag }, ship.LocationId, ship.Flag,
             character with { SolarSystemId = solarSystemId, ConstellationId = constellationId, RegionId = regionId }));
+    }
+
+    /// <summary>Moves a set of already-validated public-space ships in the caller's transaction.</summary>
+    public async Task<IReadOnlyList<SpaceMove>?> RelocateFleetInTransactionAsync(
+        Npgsql.NpgsqlConnection connection, Npgsql.NpgsqlTransaction transaction,
+        IReadOnlyList<SpaceRelocationRequest> requests, CancellationToken cancellationToken = default)
+    {
+        if (requests.Count == 0 || requests.Select(request => request.CharacterId).Distinct().Count() != requests.Count ||
+            requests.Any(request => request.CharacterId <= 0 || request.ShipId <= 0 || request.FromSolarSystemId <= 0 ||
+                request.ToSolarSystemId <= 0 || request.ToConstellationId <= 0 || request.ToRegionId <= 0))
+            throw new ArgumentException("A fleet relocation needs distinct characters and valid public-system ships.", nameof(requests));
+
+        var ordered = requests.OrderBy(request => request.CharacterId).ToArray();
+        foreach (var request in ordered)
+            await LockAsync(connection, transaction, request.CharacterId, cancellationToken);
+
+        var loaded = new List<(SpaceRelocationRequest Request, Character Character, Item Ship)>(ordered.Length);
+        foreach (var request in ordered)
+        {
+            if (await characters.GetAsync(request.CharacterId, cancellationToken) is not { ShipId: { } activeShipId } character ||
+                activeShipId != request.ShipId ||
+                await items.LockAndGetAsync(connection, transaction, request.ShipId, cancellationToken) is not { } ship ||
+                ship.OwnerId != request.CharacterId || ship.LocationId != request.FromSolarSystemId || ship.Flag != InSpaceFlag)
+                return null;
+            loaded.Add((request, character, ship));
+        }
+
+        var moved = new List<SpaceMove>(loaded.Count);
+        foreach (var (request, character, ship) in loaded)
+        {
+            await items.MoveAsync(connection, transaction, ship.Id, request.ToSolarSystemId, InSpaceFlag, cancellationToken);
+            await characters.SetLocationAsync(connection, transaction, request.CharacterId, request.ToSolarSystemId,
+                request.ToConstellationId, request.ToRegionId, cancellationToken);
+            await WriteTransitionAsync(connection, transaction,
+                new ShipTransitionEvent("needlejack", request.CharacterId, ship.Id, null, ship.LocationId, ship.Flag,
+                    request.ToSolarSystemId, InSpaceFlag), cancellationToken);
+            moved.Add(new SpaceMove(ship with { LocationId = request.ToSolarSystemId, Flag = InSpaceFlag }, ship.LocationId, ship.Flag,
+                character with { SolarSystemId = request.ToSolarSystemId, ConstellationId = request.ToConstellationId, RegionId = request.ToRegionId }));
+        }
+        return moved;
     }
 
     /// <summary>

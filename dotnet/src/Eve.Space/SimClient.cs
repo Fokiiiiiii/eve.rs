@@ -11,6 +11,10 @@ namespace Eve.Space;
 /// </summary>
 public sealed class SimClient : ISimulation, IAsyncDisposable
 {
+    private static long _nextCorrelatedRequestId;
+
+    /// <summary>Allocates a process-wide ID for correlated simulation requests.</summary>
+    public static ulong NextRequestId() => checked((ulong)Interlocked.Increment(ref _nextCorrelatedRequestId));
     private static readonly TimeSpan RetryDelay = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan HelloTimeout = TimeSpan.FromSeconds(5);
 
@@ -24,6 +28,20 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimRemoveAbyssalTraceReply>> _removingAbyssalTraces = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimRemoveAbyssalParticipantReply>> _removingAbyssalParticipants = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimGetAbyssalParticipantPoseReply>> _abyssalParticipantPoses = new();
+    private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimGetSceneBodyReply>> _sceneBodies = new();
+    private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimReleaseTournamentCutoffReply>> _cutoffReleases = new();
+    private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimRegisterTournamentCutoffReply>> _cutoffRegistrations = new();
+    private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimReadTournamentCutoffReply>> _cutoffReads = new();
+    private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimRegisterTournamentMetricsReply>> _metricsRegistrations = new();
+    private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimReadTournamentMetricsReply>> _metricsReads = new();
+    private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimReadTournamentMetricsV2Reply>> _metricsV2Reads = new();
+    private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimReleaseTournamentMetricsReply>> _metricsReleases = new();
+    private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimQueryTournamentWreckReply>> _tournamentWreckQueries = new();
+    private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimRemoveTournamentWreckReply>> _tournamentWreckRemovals = new();
+    private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimEnterPublicParticipantReply>> _publicEnters = new();
+    private readonly ConcurrentDictionary<ulong, Action<SimEnterPublicParticipantReply>> _publicEnterInOrder = new();
+    private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimMovePublicParticipantReply>> _publicMoves = new();
+    private readonly ConcurrentDictionary<ulong, Action<SimMovePublicParticipantReply>> _publicMoveInOrder = new();
     private readonly ConcurrentDictionary<ulong, Action<SimMoveAbyssalParticipantReply>> _abyssalMoveInOrder = new();
     private readonly ConcurrentDictionary<(ulong Session, byte Code), TaskCompletionSource<CommandReply>> _answered = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimSpawnReply>> _spawning = new();
@@ -259,6 +277,48 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                 break;
             case SimRemoveAbyssalParticipantReply:
                 break;
+            case SimEnsureTournamentBeaconReply reply:
+                CompleteAbyssal(reply.RequestId, typeof(SimEnsureTournamentBeaconReply), reply.Error); break;
+            case SimRemoveTournamentBeaconReply reply:
+                CompleteAbyssal(reply.RequestId, typeof(SimRemoveTournamentBeaconReply), reply.Error); break;
+            case SimReleaseTournamentCutoffReply reply when _cutoffReleases.TryRemove(reply.RequestId, out var release):
+                release.TrySetResult(reply); break;
+            case SimReleaseTournamentCutoffReply: break;
+            case SimRegisterTournamentCutoffReply reply when _cutoffRegistrations.TryRemove(reply.RequestId, out var registration):
+                registration.TrySetResult(reply); break;
+            case SimRegisterTournamentCutoffReply: break;
+            case SimReadTournamentCutoffReply reply when _cutoffReads.TryRemove(reply.RequestId, out var cutoff):
+                cutoff.TrySetResult(reply); break;
+            case SimReadTournamentCutoffReply: break;
+            case SimRegisterTournamentMetricsReply reply when _metricsRegistrations.TryRemove(reply.RequestId, out var metricRegistration): metricRegistration.TrySetResult(reply); break;
+            case SimRegisterTournamentMetricsReply: break;
+            case SimReadTournamentMetricsReply reply when _metricsReads.TryRemove(reply.RequestId, out var metricRead): metricRead.TrySetResult(reply); break;
+            case SimReadTournamentMetricsReply: break;
+            case SimReadTournamentMetricsV2Reply reply when _metricsV2Reads.TryRemove(reply.RequestId, out var metricV2Read): metricV2Read.TrySetResult(reply); break;
+            case SimReadTournamentMetricsV2Reply: break;
+            case SimReleaseTournamentMetricsReply reply when _metricsReleases.TryRemove(reply.RequestId, out var metricRelease): metricRelease.TrySetResult(reply); break;
+            case SimReleaseTournamentMetricsReply: break;
+            case SimQueryTournamentWreckReply reply when _tournamentWreckQueries.TryRemove(reply.RequestId, out var wreckQuery):
+                wreckQuery.TrySetResult(reply); break;
+            case SimQueryTournamentWreckReply: break;
+            case SimRemoveTournamentWreckReply reply when _tournamentWreckRemovals.TryRemove(reply.RequestId, out var wreckRemoval):
+                wreckRemoval.TrySetResult(reply); break;
+            case SimRemoveTournamentWreckReply: break;
+            case SimEnterPublicParticipantReply reply when _publicEnters.TryRemove(reply.RequestId, out var publicEnter):
+                if (_publicEnterInOrder.TryRemove(reply.RequestId, out var beforeEntryMessages)) beforeEntryMessages(reply);
+                publicEnter.TrySetResult(reply); break;
+            case SimEnterPublicParticipantReply: break;
+            case SimMovePublicParticipantReply reply when _publicMoves.TryRemove(reply.RequestId, out var publicMove):
+                if (_publicMoveInOrder.TryRemove(reply.RequestId, out var beforeFollowing)) beforeFollowing(reply);
+                publicMove.TrySetResult(reply);
+                break;
+            case SimMovePublicParticipantReply:
+                break;
+            case SimGetSceneBodyReply reply when _sceneBodies.TryRemove(reply.RequestId, out var bodyRequest):
+                bodyRequest.TrySetResult(reply);
+                break;
+            case SimGetSceneBodyReply:
+                break;
             case SimGetAbyssalParticipantPoseReply reply when _abyssalParticipantPoses.TryRemove(reply.RequestId, out var poseRequest):
                 poseRequest.TrySetResult(reply);
                 break;
@@ -345,6 +405,33 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     private void FailPending()
     {
+        foreach (var request in _publicEnters.Keys)
+            if (_publicEnters.TryRemove(request, out var entry)) entry.TrySetException(new SimUnavailableException("the link to the simulation broke"));
+        foreach (var request in _publicMoves.Keys)
+            if (_publicMoves.TryRemove(request, out var move)) move.TrySetException(new SimUnavailableException("the link to the simulation broke"));
+        foreach (var request in _cutoffReleases.Keys)
+            if (_cutoffReleases.TryRemove(request, out var release)) release.TrySetException(new SimUnavailableException("the link to the simulation broke"));
+        foreach (var request in _cutoffRegistrations.Keys)
+            if (_cutoffRegistrations.TryRemove(request, out var registration)) registration.TrySetException(new SimUnavailableException("the link to the simulation broke"));
+        foreach (var request in _cutoffReads.Keys)
+            if (_cutoffReads.TryRemove(request, out var cutoff)) cutoff.TrySetException(new SimUnavailableException("the link to the simulation broke"));
+        foreach (var request in _metricsRegistrations.Keys)
+            if (_metricsRegistrations.TryRemove(request, out var registration)) registration.TrySetException(new SimUnavailableException("the link to the simulation broke"));
+        foreach (var request in _metricsReads.Keys)
+            if (_metricsReads.TryRemove(request, out var read)) read.TrySetException(new SimUnavailableException("the link to the simulation broke"));
+        foreach (var request in _metricsV2Reads.Keys)
+            if (_metricsV2Reads.TryRemove(request, out var readV2)) readV2.TrySetException(new SimUnavailableException("the link to the simulation broke"));
+        foreach (var request in _metricsReleases.Keys)
+            if (_metricsReleases.TryRemove(request, out var release)) release.TrySetException(new SimUnavailableException("the link to the simulation broke"));
+        foreach (var request in _tournamentWreckQueries.Keys)
+            if (_tournamentWreckQueries.TryRemove(request, out var query)) query.TrySetException(new SimUnavailableException("the link to the simulation broke"));
+        foreach (var request in _tournamentWreckRemovals.Keys)
+            if (_tournamentWreckRemovals.TryRemove(request, out var removal)) removal.TrySetException(new SimUnavailableException("the link to the simulation broke"));
+        foreach (var request in _sceneBodies.Keys)
+        {
+            if (_sceneBodies.TryRemove(request, out var pending))
+                pending.TrySetException(new SimUnavailableException("the link to the simulation broke"));
+        }
         foreach (var session in _entering.Keys)
         {
             if (_entering.TryRemove(session, out var pending))
@@ -525,6 +612,114 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         SimRemoveAbyssalParticipant participant, CancellationToken cancellationToken = default) =>
         AwaitAsync(_removingAbyssalParticipants, participant.RequestId, participant, cancellationToken);
 
+    public Task<string?> EnsureTournamentBeaconAsync(SimEnsureTournamentBeacon request, CancellationToken cancellationToken = default) =>
+        AwaitAbyssalAsync(request.RequestId, typeof(SimEnsureTournamentBeaconReply), request, cancellationToken);
+
+    public Task<string?> RemoveTournamentBeaconAsync(SimRemoveTournamentBeacon request, CancellationToken cancellationToken = default) =>
+        AwaitAbyssalAsync(request.RequestId, typeof(SimRemoveTournamentBeaconReply), request, cancellationToken);
+
+    public async Task<SimEnterPublicParticipantReply> EnterPublicParticipantInOrderAsync(
+        SimEnterPublicParticipant request, Action<SimEnterPublicParticipantReply> beforeFollowingMessages,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(beforeFollowingMessages);
+        if (!_publicEnterInOrder.TryAdd(request.RequestId, beforeFollowingMessages))
+            throw new InvalidOperationException($"entry {request.RequestId} already has a handoff");
+        try { return await AwaitAsync(_publicEnters, request.RequestId, request, cancellationToken).ConfigureAwait(false); }
+        finally { _publicEnterInOrder.TryRemove(request.RequestId, out _); }
+    }
+
+    public async Task<SimMovePublicParticipantReply> MovePublicParticipantInOrderAsync(
+        SimMovePublicParticipant request, Action<SimMovePublicParticipantReply> beforeFollowingMessages,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(beforeFollowingMessages);
+        if (!_publicMoveInOrder.TryAdd(request.RequestId, beforeFollowingMessages))
+            throw new InvalidOperationException($"move {request.RequestId} already has a handoff");
+        try { return await AwaitAsync(_publicMoves, request.RequestId, request, cancellationToken).ConfigureAwait(false); }
+        finally { _publicMoveInOrder.TryRemove(request.RequestId, out _); }
+    }
+
+    public async Task<SimRegisterTournamentMetricsReply> RegisterTournamentMetricsAsync(SimRegisterTournamentMetrics request, CancellationToken cancellationToken = default)
+    {
+        var reply=await AwaitAsync(_metricsRegistrations,request.RequestId,request,cancellationToken).ConfigureAwait(false);
+        if(reply.RequestId!=request.RequestId || reply.Scene!=request.Scene || reply.MatchId!=request.MatchId || reply.Generation!=request.Generation || reply.Start!=request.Start || !reply.Roster.SequenceEqual(request.Roster))
+            throw new SimLinkException(SimLinkError.BadValue,"metrics registration reply does not match its request");
+        return reply;
+    }
+
+    public async Task<SimReadTournamentMetricsReply> ReadTournamentMetricsAsync(SimReadTournamentMetrics request, CancellationToken cancellationToken = default)
+    {
+        var reply=await AwaitAsync(_metricsReads,request.RequestId,request,cancellationToken).ConfigureAwait(false);
+        if(reply.RequestId!=request.RequestId || reply.Scene!=request.Scene || reply.MatchId!=request.MatchId || reply.Generation!=request.Generation || reply.Start!=request.Start || !reply.Roster.SequenceEqual(request.Roster))
+            throw new SimLinkException(SimLinkError.BadValue,"metrics sample reply does not match its request");
+        return reply;
+    }
+
+    public async Task<SimReadTournamentMetricsV2Reply> ReadTournamentMetricsV2Async(SimReadTournamentMetricsV2 request, CancellationToken cancellationToken = default)
+    {
+        var reply=await AwaitAsync(_metricsV2Reads,request.RequestId,request,cancellationToken).ConfigureAwait(false);
+        if(reply.RequestId!=request.RequestId || reply.Scene!=request.Scene || reply.MatchId!=request.MatchId || reply.Generation!=request.Generation || reply.Start!=request.Start || !reply.Roster.SequenceEqual(request.Roster))
+            throw new SimLinkException(SimLinkError.BadValue,"metrics V2 sample reply does not match its request");
+        return reply;
+    }
+
+    public async Task<SimReleaseTournamentMetricsReply> ReleaseTournamentMetricsAsync(SimReleaseTournamentMetrics request, CancellationToken cancellationToken = default)
+    {
+        var reply=await AwaitAsync(_metricsReleases,request.RequestId,request,cancellationToken).ConfigureAwait(false);
+        if(reply.RequestId!=request.RequestId || reply.Scene!=request.Scene || reply.MatchId!=request.MatchId || reply.Generation!=request.Generation || reply.Start!=request.Start || !reply.Roster.SequenceEqual(request.Roster))
+            throw new SimLinkException(SimLinkError.BadValue,"metrics release reply does not match its request");
+        return reply;
+    }
+
+    public async Task<SimReleaseTournamentCutoffReply> ReleaseTournamentCutoffAsync(SimReleaseTournamentCutoff request, CancellationToken cancellationToken = default)
+    {
+        var reply = await AwaitAsync(_cutoffReleases, request.RequestId, request, cancellationToken).ConfigureAwait(false);
+        if (reply.RequestId != request.RequestId || reply.Scene != request.Scene || reply.MatchId != request.MatchId || reply.Generation != request.Generation || reply.Start != request.Start || reply.Deadline != request.Deadline)
+            throw new SimLinkException(SimLinkError.BadValue, "cutoff release reply does not match its request");
+        return reply;
+    }
+
+    public async Task<SimRegisterTournamentCutoffReply> RegisterTournamentCutoffAsync(SimRegisterTournamentCutoff request, CancellationToken cancellationToken = default)
+    {
+        var reply = await AwaitAsync(_cutoffRegistrations, request.RequestId, request, cancellationToken).ConfigureAwait(false);
+        if (reply.RequestId != request.RequestId || reply.Scene != request.Scene || reply.MatchId != request.MatchId || reply.Generation != request.Generation || reply.Start != request.Start || reply.Deadline != request.Deadline)
+            throw new SimLinkException(SimLinkError.BadValue, "cutoff registration reply does not match its request");
+        return reply;
+    }
+
+    public async Task<SimReadTournamentCutoffReply> ReadTournamentCutoffAsync(SimReadTournamentCutoff request, CancellationToken cancellationToken = default)
+    {
+        var reply = await AwaitAsync(_cutoffReads, request.RequestId, request, cancellationToken).ConfigureAwait(false);
+        if (reply.RequestId != request.RequestId || reply.Scene != request.Scene || reply.MatchId != request.MatchId || reply.Generation != request.Generation || reply.Start != request.Start || reply.Deadline != request.Deadline)
+            throw new SimLinkException(SimLinkError.BadValue, "cutoff evidence reply does not match its request");
+        return reply;
+    }
+
+    public async Task<SimQueryTournamentWreckReply> QueryTournamentWreckAsync(SimQueryTournamentWreck request, CancellationToken cancellationToken = default)
+    {
+        var reply = await AwaitAsync(_tournamentWreckQueries, request.RequestId, request, cancellationToken).ConfigureAwait(false);
+        if (reply.RequestId != request.RequestId || reply.Scene != request.Scene || reply.ItemId != request.ItemId)
+            throw new SimLinkException(SimLinkError.BadValue, "tournament wreck reply does not match its request");
+        return reply;
+    }
+
+    public async Task<SimRemoveTournamentWreckReply> RemoveTournamentWreckAsync(SimRemoveTournamentWreck request, CancellationToken cancellationToken = default)
+    {
+        var reply = await AwaitAsync(_tournamentWreckRemovals, request.RequestId, request, cancellationToken).ConfigureAwait(false);
+        if (reply.RequestId != request.RequestId || reply.Scene != request.Scene || reply.ItemId != request.ItemId)
+            throw new SimLinkException(SimLinkError.BadValue, "tournament wreck reply does not match its request");
+        return reply;
+    }
+
+    public async Task<SimGetSceneBodyReply> GetSceneBodyAsync(SimGetSceneBody request, CancellationToken cancellationToken = default)
+    {
+        var reply = await AwaitAsync(_sceneBodies, request.RequestId, request, cancellationToken).ConfigureAwait(false);
+        if (reply.RequestId != request.RequestId || reply.Scene != request.Scene || reply.ItemId != request.ItemId)
+            throw new SimLinkException(SimLinkError.BadValue, "scene body reply does not match its request");
+        return reply;
+    }
+
     public Task<SimGetAbyssalParticipantPoseReply> GetAbyssalParticipantPoseAsync(
         SimGetAbyssalParticipantPose request, CancellationToken cancellationToken = default) =>
         AwaitAsync(_abyssalParticipantPoses, request.RequestId, request, cancellationToken);
@@ -695,6 +890,8 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     public void Command(ulong sessionId, byte code, params double[] args) => Send(new SimCommand(sessionId, code, args));
 
     public void ShipChanged(ulong sessionId, SimShip ship) => Send(new SimShipChanged(sessionId, ship));
+
+    public void CriminalFlagActive(ulong sessionId) => Send(new SimCriminalFlagActive(sessionId));
 
     public async ValueTask DisposeAsync()
     {

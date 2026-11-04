@@ -439,7 +439,7 @@ internal sealed partial class CharacterServicesComposition
             ? new[] { Eve.Services.Core.IndustryRules.CorporationDeliveriesFlag }.Concat(
                 Enumerable.Range(Eve.Services.Core.IndustryRules.CorporationHangarFirstFlag,
                     Eve.Services.Core.IndustryRules.CorporationHangarLastFlag - Eve.Services.Core.IndustryRules.CorporationHangarFirstFlag + 1))
-            : [ItemFlags.Hangar];
+            : [Eve.Services.Core.IndustryRules.PersonalStationHangarFlag];
         return new PyList(flags.Select(flag => (PyValue)new PyObjectEx(
             ObjectExKind.Ex1,
             new PyStr("util.KeyVal"),

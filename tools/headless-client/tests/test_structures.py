@@ -125,7 +125,7 @@ def _reenter(client, character: int) -> None:
 def _undock(client, ship_id: int, fitted: list, station: int = STATION, system: int = SYSTEM) -> None:
     """The pilot leaves its station with its ship and is bound to the system's ballpark."""
     ship = client.call("ship", "MachoBindObject", (station, 15), None)
-    assert client.call_bound(ship[0], "Undock", ship_id, False, onlineModules=m.List(fitted)) is not None, "the ship did not undock"
+    assert client.call_bound(ship[0], "Undock", ship_id, False, onlineModules=m.List(fitted)) is None, "undock returned a value"
     client.call("beyonce", "MachoBindObject", system, None)
 
 def _undocked_pilot(client) -> tuple[int, int]:

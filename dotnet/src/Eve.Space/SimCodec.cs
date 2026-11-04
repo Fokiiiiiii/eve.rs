@@ -23,7 +23,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// <summary>The wire uses little-endian integers and length-prefixed text and byte strings.</summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 84;
+    public const ushort ProtocolVersion = 91;
 
     /// <summary>The longest name of a dynamic slim-item field, in bytes (protocol 76).</summary>
     public const int SlimFieldNameMax = 64;
@@ -121,6 +121,39 @@ public static partial class SimCodec
                     var (requestId, error) = ReadAbyssalResult(ref r);
                     message = new SimEnsureAbyssalSceneObjectReply(requestId, error);
                     break;
+                }
+            case Kind.EnterPublicParticipant:
+                {
+                    var id = r.U64(); var operation = r.Text(); var frame = r.Bytes();
+                    if (id == 0 || !IsPublicMoveId(operation) || frame.Length < 5 || frame.Span[4] != Kind.Enter ||
+                        BinaryPrimitives.ReadUInt32LittleEndian(frame.Span) != frame.Length - 4 || Decode(frame[4..]) is not SimEnter enter ||
+                        enter.SessionId == 0 || enter.Ship.ShipId <= 0 || !enter.Scene.IsValid || enter.Scene.InstanceId != 0 || enter.How is not (EnterHow.Anchor or EnterHow.InSpace))
+                        throw new SimLinkException(SimLinkError.BadValue, "bad public entry");
+                    message = new SimEnterPublicParticipant(id, operation, enter); break;
+                }
+            case Kind.EnterPublicParticipantReply:
+                {
+                    var (requestId, error) = ReadAbyssalResult(ref r);
+                    message = new SimEnterPublicParticipantReply(requestId, error); break;
+                }
+            case Kind.MovePublicParticipant:
+                {
+                    var id = r.U64(); var operation = r.Text(); var session = r.U64(); var ship = r.I64();
+                    var source = ReadSceneKey(ref r); var destination = ReadSceneKey(ref r); var flag = r.U8();
+                    if (flag > 1) throw new SimLinkException(SimLinkError.BadValue, "bad public move anchor flag");
+                    var anchor = flag == 1;
+                    var move = new SimMovePublicParticipant(id, operation, session, ship, source, destination, anchor,
+                        anchor ? [] : ReadVector(ref r), anchor ? [] : ReadVector(ref r));
+                    if (move.RequestId == 0 || !IsPublicMoveId(move.OperationId) || move.SessionId == 0 || move.ShipId <= 0 ||
+                        !move.Source.IsValid || !move.Destination.IsValid || move.Source.InstanceId != 0 || move.Destination.InstanceId != 0 ||
+                        (!move.UseAnchor && (!IsVector(move.Position) || !IsVector(move.Direction) || move.Direction.All(v => v == 0))))
+                        throw new SimLinkException(SimLinkError.BadValue, "bad public participant move");
+                    message = move; break;
+                }
+            case Kind.MovePublicParticipantReply:
+                {
+                    var (requestId, error) = ReadAbyssalResult(ref r);
+                    message = new SimMovePublicParticipantReply(requestId, error); break;
                 }
             case Kind.MoveAbyssalParticipant:
                 {
@@ -288,6 +321,134 @@ public static partial class SimCodec
                         requestId, absentFlag != 0, errorText.Length == 0 ? null : errorText);
                     break;
                 }
+            case Kind.EnsureTournamentBeacon:
+                {
+                    var beacon = new SimEnsureTournamentBeacon(r.U64(), ReadSceneKey(ref r), r.I64(), r.I32(), r.I32(), r.I32(),
+                        r.I64(), r.I32(), r.Text(), ReadVector(ref r), r.F64());
+                    if (!IsTournamentBeacon(beacon)) throw new SimLinkException(SimLinkError.BadValue, "bad tournament beacon");
+                    message = beacon; break;
+                }
+            case Kind.EnsureTournamentBeaconReply:
+                {
+                    var id = r.U64(); var status = r.U8(); var reason = r.Text();
+                    if (id == 0 || status > 1 || (status == 0 && reason.Length != 0) || (status == 1 && reason.Length == 0))
+                        throw new SimLinkException(SimLinkError.BadValue, "bad tournament beacon result");
+                    message = new SimEnsureTournamentBeaconReply(id, status == 0 ? null : reason); break;
+                }
+            case Kind.RemoveTournamentBeacon:
+                {
+                    var remove = new SimRemoveTournamentBeacon(r.U64(), ReadSceneKey(ref r), r.I64());
+                    if (remove.RequestId == 0 || !remove.Scene.IsValid || remove.Scene.InstanceId != 0 || remove.ItemId <= 0)
+                        throw new SimLinkException(SimLinkError.BadValue, "bad tournament beacon removal");
+                    message = remove; break;
+                }
+            case Kind.RemoveTournamentBeaconReply:
+                {
+                    var id = r.U64(); var status = r.U8(); var reason = r.Text();
+                    if (id == 0 || status > 1 || (status == 0 && reason.Length != 0) || (status == 1 && reason.Length == 0))
+                        throw new SimLinkException(SimLinkError.BadValue, "bad tournament beacon result");
+                    message = new SimRemoveTournamentBeaconReply(id, status == 0 ? null : reason); break;
+                }
+            case 148: case 149: case 150: case 151: case 152: case 153: case 154: case 155:
+                message = ReadMetrics(ref r, payload.Span[0]); break;
+            case Kind.ReleaseTournamentCutoff:
+            case Kind.ReleaseTournamentCutoffReply:
+                {
+                    var id = r.U64(); var scene = ReadSceneKey(ref r); var match = r.I64(); var generation = r.I64(); var start = r.I64(); var deadline = r.I64();
+                    if (!ValidCutoffIdentity(id,scene,match,generation,start,deadline)) throw new SimLinkException(SimLinkError.BadValue,"bad cutoff release identity");
+                    if (payload.Span[0] == Kind.ReleaseTournamentCutoff) message = new SimReleaseTournamentCutoff(id,scene,match,generation,start,deadline);
+                    else
+                    {
+                        var status = (SimTournamentCutoffStatus)r.U8(); var error = r.Text();
+                        if (status is not (SimTournamentCutoffStatus.Pending or SimTournamentCutoffStatus.Error) || !ValidCutoffStatus(status,error)) throw new SimLinkException(SimLinkError.BadValue,"bad cutoff release status");
+                        message = new SimReleaseTournamentCutoffReply(id,scene,match,generation,start,deadline,status,error);
+                    }
+                    break;
+                }
+            case Kind.RegisterTournamentCutoff:
+            case Kind.RegisterTournamentCutoffReply:
+            case Kind.ReadTournamentCutoff:
+            case Kind.ReadTournamentCutoffReply:
+                {
+                    var id = r.U64(); var scene = ReadSceneKey(ref r); var match = r.I64(); var generation = r.I64(); var start = r.I64(); var deadline = r.I64();
+                    if (!ValidCutoffIdentity(id,scene,match,generation,start,deadline)) throw new SimLinkException(SimLinkError.BadValue,"bad cutoff identity");
+                    var kind = payload.Span[0];
+                    if (kind == Kind.RegisterTournamentCutoff)
+                    {
+                        var count = r.U16(); if (count == 0 || count > 256) throw new SimLinkException(SimLinkError.BadValue,"bad cutoff roster count");
+                        var roster = new SimTournamentCutoffPilot[count]; for (var i = 0; i < count; i++) roster[i] = new(r.I64(),r.I64());
+                        if (!ValidCutoffRoster(roster)) throw new SimLinkException(SimLinkError.BadValue,"bad cutoff roster");
+                        message = new SimRegisterTournamentCutoff(id,scene,match,generation,start,deadline,roster);
+                    }
+                    else if (kind == Kind.ReadTournamentCutoff) message = new SimReadTournamentCutoff(id,scene,match,generation,start,deadline);
+                    else
+                    {
+                        var status = (SimTournamentCutoffStatus)r.U8();
+                        if (kind == Kind.RegisterTournamentCutoffReply)
+                        {
+                            var error = r.Text(); if (!ValidCutoffStatus(status,error)) throw new SimLinkException(SimLinkError.BadValue,"bad cutoff status");
+                            message = new SimRegisterTournamentCutoffReply(id,scene,match,generation,start,deadline,status,error);
+                        }
+                        else
+                        {
+                            var count = r.U16(); if (count > 256) throw new SimLinkException(SimLinkError.BadValue,"bad cutoff evidence count");
+                            var evidence = new SimTournamentCutoffItem[count]; for (var i = 0; i < count; i++) evidence[i] = new(r.I64(),r.I64(),(SimTournamentCutoffEvidence)r.U8());
+                            var error = r.Text(); if (!ValidCutoffStatus(status,error) || !ValidCutoffEvidence(status,evidence)) throw new SimLinkException(SimLinkError.BadValue,"bad cutoff evidence");
+                            message = new SimReadTournamentCutoffReply(id,scene,match,generation,start,deadline,status,evidence,error);
+                        }
+                    }
+                    break;
+                }
+            case Kind.QueryTournamentWreck:
+            case Kind.RemoveTournamentWreck:
+                {
+                    var id = r.U64(); var scene = ReadSceneKey(ref r); var item = r.I64();
+                    if (id == 0 || !scene.IsValid || scene.InstanceId != 0 || item <= 0)
+                        throw new SimLinkException(SimLinkError.BadValue, "bad tournament wreck request");
+                    if (payload.Span[0] == Kind.QueryTournamentWreck) message = new SimQueryTournamentWreck(id, scene, item);
+                    else
+                    {
+                        var owner = r.I64(); var launcher = r.I64(); var type = r.I32(); var center = ReadVector(ref r); var radius = r.F64();
+                        if (owner <= 0 || launcher <= 0 || type <= 0 || !IsVector(center) || !double.IsFinite(radius) || radius <= 0)
+                            throw new SimLinkException(SimLinkError.BadValue, "bad tournament wreck guard");
+                        message = new SimRemoveTournamentWreck(id, scene, item, owner, launcher, type, center, radius);
+                    }
+                    break;
+                }
+            case Kind.QueryTournamentWreckReply:
+            case Kind.RemoveTournamentWreckReply:
+                {
+                    var id = r.U64(); var scene = ReadSceneKey(ref r); var item = r.I64(); var status = r.U8(); var error = r.Text();
+                    if (id == 0 || !scene.IsValid || scene.InstanceId != 0 || item <= 0 || status > 2 ||
+                        (status == 2 && error.Length == 0) || (status != 2 && error.Length != 0))
+                        throw new SimLinkException(SimLinkError.BadValue, "bad tournament wreck reply");
+                    message = payload.Span[0] == Kind.QueryTournamentWreckReply
+                        ? new SimQueryTournamentWreckReply(id, scene, item, status == 1, status == 2 ? error : null)
+                        : new SimRemoveTournamentWreckReply(id, scene, item, status == 1, status == 2 ? error : null);
+                    break;
+                }
+            case Kind.GetSceneBody:
+                {
+                    var request = new SimGetSceneBody(r.U64(), ReadSceneKey(ref r), r.I64());
+                    if (request.RequestId == 0 || !request.Scene.IsValid || request.Scene.InstanceId != 0 || request.ItemId <= 0)
+                        throw new SimLinkException(SimLinkError.BadValue, "bad scene body request");
+                    message = request; break;
+                }
+            case Kind.GetSceneBodyReply:
+                {
+                    var id = r.U64(); var scene = ReadSceneKey(ref r); var item = r.I64(); var status = r.U8();
+                    if (id == 0 || !scene.IsValid || scene.InstanceId != 0 || item <= 0 || status > 1)
+                        throw new SimLinkException(SimLinkError.BadValue, "bad scene body reply identity");
+                    var type = status == 0 ? r.I32() : 0; var group = status == 0 ? r.I32() : 0;
+                    var category = status == 0 ? r.I32() : 0;
+                    var position = status == 0 ? ReadVector(ref r) : Array.Empty<double>();
+                    var error = r.Text();
+                    if ((status == 0 && (type <= 0 || group <= 0 || category <= 0 || !IsVector(position) || error.Length > 0)) ||
+                        (status == 1 && error.Length == 0))
+                        throw new SimLinkException(SimLinkError.BadValue, "bad scene body reply");
+                    message = new SimGetSceneBodyReply(id, scene, item, type, group, category, position, status == 0 ? null : error);
+                    break;
+                }
             case Kind.GetAbyssalParticipantPose:
                 {
                     var request = new SimGetAbyssalParticipantPose(r.U64(), ReadSceneKey(ref r), r.I64());
@@ -429,6 +590,9 @@ public static partial class SimCodec
             case Kind.ShipChanged:
                 message = new SimShipChanged(r.U64(), ReadShip(ref r));
                 break;
+                    case Kind.CriminalFlagActive:
+                        message = new SimCriminalFlagActive(r.U64());
+                        break;
             case Kind.Notify:
                 message = new SimNotify(r.U64(), r.Text(), r.Text(), r.Bytes());
                 break;

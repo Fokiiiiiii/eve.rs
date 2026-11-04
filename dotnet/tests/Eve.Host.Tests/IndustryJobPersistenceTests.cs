@@ -27,6 +27,32 @@ public sealed class IndustryJobPersistenceTests
     private const int ManufacturingTimeSeconds = 600;
 
     [Fact]
+    public async Task Personal_station_jobs_reject_locations_outside_the_facility_without_side_effects()
+    {
+        await using var rig = await IndustryRig.CreateAsync();
+        var owner = await rig.Owner();
+        var localBlueprint = await rig.Give(owner, Blueprint, 1, blueprint: true);
+        var remoteBlueprint = await rig.Give(owner, Blueprint, 1, blueprint: true, remote: true);
+        await rig.Give(owner, Material, 86);
+        await rig.Give(owner, Material, 86, remote: true);
+        var balance = await rig.Balance(owner);
+
+        await Assert.ThrowsAsync<IndustryJobUserErrorException>(() =>
+            rig.Install(owner, localBlueprint, IndustryRules.Manufacturing, remoteOutput: true));
+        await Assert.ThrowsAsync<IndustryJobUserErrorException>(() =>
+            rig.Install(owner, localBlueprint, IndustryRules.Manufacturing, remoteInput: true));
+        await Assert.ThrowsAsync<IndustryJobUserErrorException>(() =>
+            rig.Install(owner, remoteBlueprint, IndustryRules.Manufacturing, remoteBlueprint: true));
+        Assert.Equal(balance, await rig.Balance(owner));
+        Assert.Equal(86, await rig.Quantity(owner, Material));
+        Assert.Equal(86, await rig.Quantity(owner, Material, remote: true));
+        Assert.Equal(0, await rig.JobCount());
+        Assert.False((await rig.Blueprint(localBlueprint)).BlueprintLocked);
+        Assert.False((await rig.Blueprint(remoteBlueprint)).BlueprintLocked);
+        Assert.True(await rig.Install(owner, localBlueprint, IndustryRules.Manufacturing) > 0);
+    }
+
+    [Fact]
     public async Task Manufacturing_charges_consumes_locks_and_delivers_the_product_after_completion()
     {
         await using var rig = await IndustryRig.CreateAsync();
@@ -221,6 +247,7 @@ internal sealed class IndustryRig : IAsyncDisposable
     private readonly AdjustedPriceStore _prices;
     private readonly PersistenceIndustryJobOperations _operations;
     private readonly CorporationStore _corporations;
+    private readonly CorporationOfficeStore _offices;
 
     private IndustryRig(NpgsqlDataSource source, SdeReader sde, StationCatalog stations)
     {
@@ -237,6 +264,7 @@ internal sealed class IndustryRig : IAsyncDisposable
         _skills = new PgSkillStore(source, _schemas[4]);
         var corporations = new CorporationStore(source, _characters, _walletStore, _wallets, _skills, () => Now, _schemas[5]);
         _corporations = corporations;
+        _offices = new CorporationOfficeStore(source, _schemas[5]);
         var scheduler = new DurableScheduler(source, () => Now, null, _schemas[6]);
         var events = new EventBus(source, scheduler, null, _schemas[7]);
         Scheduler = scheduler;
@@ -259,6 +287,14 @@ internal sealed class IndustryRig : IAsyncDisposable
     }
 
     public long Now { get; set; } = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+    public NpgsqlDataSource Source => _source;
+    public PgItemStore ItemStore => _items;
+    public SdeReader Sde => _sde;
+    public CorporationStore Corporations => _corporations;
+    public CorporationOfficeStore Offices => _offices;
+    public Station Station => _station;
+    public string CorporationSchema => _schemas[5];
 
     /// <summary>The durable scheduler the readiness jobs wait in (the rig's host, before any restart).</summary>
     public DurableScheduler Scheduler { get; }
@@ -293,7 +329,7 @@ internal sealed class IndustryRig : IAsyncDisposable
         return gates[0].Doc.GetProperty("destination").GetProperty("solarSystemID").GetInt64();
     }
 
-    public static async Task<IndustryRig> CreateAsync()
+    public static async Task<IndustryRig> CreateAsync(bool includeOffices = false)
     {
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
@@ -305,6 +341,8 @@ internal sealed class IndustryRig : IAsyncDisposable
         await PgItemStore.MigrateAsync(source, rig._schemas[3]);
         await PgSkillStore.MigrateAsync(source, rig._schemas[4]);
         await CorporationStore.MigrateAsync(source, rig._schemas[5]);
+        if (includeOffices)
+            await CorporationOfficeStore.MigrateAsync(source, rig._schemas[5]);
         await DurableScheduler.MigrateAsync(source, rig._schemas[6]);
         await EventBus.MigrateAsync(source, rig._schemas[7]);
         await Migrations.ApplyAsync(source, rig._schemas[8], [IndustryJobsSchema.Jobs(rig._schemas[3])]);
@@ -323,25 +361,66 @@ internal sealed class IndustryRig : IAsyncDisposable
         return id;
     }
 
-    public async Task<long> Give(long owner, int typeId, long quantity, bool blueprint = false, bool copy = false, int runs = -1, int me = 0, int te = 0)
+    public async Task<long> Give(long owner, int typeId, long quantity, bool blueprint = false, bool copy = false, int runs = -1, int me = 0, int te = 0, bool remote = false)
     {
         await using var c = await _source.OpenConnectionAsync();
         await using var tx = await c.BeginTransactionAsync();
         var id = blueprint
-            ? await _items.CreateAsync(c, tx, new NewItem(typeId, owner, _station.Id, ItemFlags.Hangar, 1, true,
+            ? await _items.CreateAsync(c, tx, new NewItem(typeId, owner, remote ? _station.Id + 1 : _station.Id, ItemFlags.Hangar, 1, true,
                 BlueprintCopy: copy, BlueprintRuns: runs, MaterialEfficiency: me, TimeEfficiency: te))
-            : await _items.CreateAsync(c, tx, new NewItem(typeId, owner, _station.Id, ItemFlags.Hangar, quantity));
+            : await _items.CreateAsync(c, tx, new NewItem(typeId, owner, remote ? _station.Id + 1 : _station.Id, ItemFlags.Hangar, quantity));
         await tx.CommitAsync();
         return id;
     }
 
+    public async Task<long> CreateItem(NewItem item)
+    {
+        await using var connection = await _source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var id = await _items.CreateAsync(connection, transaction, item);
+        await transaction.CommitAsync();
+        return id;
+    }
+
+    public async Task<CorporationOffice> RentOffice(long corporationId, long officeFolderId)
+    {
+        await using var connection = await _source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var station = new CorporationOfficeStation(_station.Id, _station.TypeId, _station.OwnerId,
+            _station.SolarSystemId, 0d);
+        var office = await _offices.RentAsync(connection, transaction, corporationId, officeFolderId,
+            station, CorporationOfficeStore.MinimumRentIsk, Now, creditorId: _station.OwnerId);
+        await transaction.CommitAsync();
+        return office;
+    }
+
+    public async Task SetCorporationRoles(long characterId, long roles, long rolesAtHq)
+    {
+        await using (var connection = await _source.OpenConnectionAsync())
+        await using (var command = new NpgsqlCommand(
+            $"UPDATE {_schemas[5]}.members SET roles=$2,roles_hq=$3 WHERE character_id=$1", connection))
+        {
+            command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+            command.Parameters.Add(new NpgsqlParameter { Value = roles });
+            command.Parameters.Add(new NpgsqlParameter { Value = rolesAtHq });
+            if (await command.ExecuteNonQueryAsync() != 1)
+                throw new InvalidOperationException("The industry test corporation member was not found.");
+        }
+        await using var connectionForSuspension = await _source.OpenConnectionAsync();
+        await using var suspend = new NpgsqlCommand(
+            $"UPDATE {_schemas[5]}.corporations SET ceo_roles_suspended=true WHERE ceo_id=$1", connectionForSuspension);
+        suspend.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        if (await suspend.ExecuteNonQueryAsync() != 1)
+            throw new InvalidOperationException("The industry test corporation CEO was not found.");
+    }
+
     public async Task<long> Install(long owner, long blueprintId, int activityId, int blueprintType = BlueprintType, bool copy = false,
-        int runs = 1, int licensedRuns = 1, int? productTypeId = null, int? optionalTypeId = null, bool alphaClone = false)
+        int runs = 1, int licensedRuns = 1, int? productTypeId = null, int? optionalTypeId = null, bool alphaClone = false, bool remoteInput = false, bool remoteOutput = false, bool remoteBlueprint = false)
     {
         var job = new IndustryJobInstallSubmission(
-            activityId, blueprintId, blueprintType, copy, _station.Id, ItemFlags.Hangar,
+            activityId, blueprintId, blueprintType, copy, remoteBlueprint ? _station.Id + 1 : _station.Id, ItemFlags.Hangar,
             _station.Id, owner, _station.SolarSystemId, _station.Id,
-            new IndustryJobLocation(_station.Id, ItemFlags.Hangar), new IndustryJobLocation(_station.Id, ItemFlags.Hangar),
+            new IndustryJobLocation(remoteInput ? _station.Id + 1 : _station.Id, ItemFlags.Hangar), new IndustryJobLocation(remoteOutput ? _station.Id + 1 : _station.Id, ItemFlags.Hangar),
             runs, licensedRuns, productTypeId, optionalTypeId, null, new IndustryJobWallet(owner, 1000), IsAlphaClone: alphaClone);
         var request = new IndustryJobInstallRequest(
             new IndustryJobOperationContext(new IndustryJobActor(owner, 0, 0, 1000), "op-" + Guid.NewGuid().ToString("N")), job);
@@ -462,11 +541,11 @@ internal sealed class IndustryRig : IAsyncDisposable
         return items.Where(item => item.TypeId == typeId).Sum(item => item.Quantity);
     }
 
-    public async Task<long> Quantity(long owner, int typeId)
+    public async Task<long> Quantity(long owner, int typeId, bool remote = false)
     {
         await using var c = await _source.OpenConnectionAsync();
         await using var tx = await c.BeginTransactionAsync();
-        var items = await _items.LockInLocationAsync(c, tx, _station.Id, owner, ItemFlags.Hangar, [typeId]);
+        var items = await _items.LockInLocationAsync(c, tx, remote ? _station.Id + 1 : _station.Id, owner, ItemFlags.Hangar, [typeId]);
         await tx.CommitAsync();
         return items.Where(item => item.TypeId == typeId).Sum(item => item.Quantity);
     }

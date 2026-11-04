@@ -933,6 +933,33 @@ fn message_of(case: &Value) -> Message {
             .unwrap_or_else(|| panic!("{field} in {case}"))
     };
     let session_id = || wide(case, "sessionId") as u64;
+    let cutoff = || eve_space::link::CutoffIdentity {
+        request_id: number("requestId"),
+        scene: scene_key(&case["scene"]),
+        match_id: wide(case, "matchId"),
+        generation: wide(case, "generation"),
+        start: wide(case, "start"),
+        deadline: wide(case, "deadline"),
+    };
+    let metrics = || eve_space::link::MetricsIdentity {
+        request_id: number("requestId"),
+        scene: scene_key(&case["scene"]),
+        match_id: wide(case, "matchId"),
+        generation: wide(case, "generation"),
+        start: wide(case, "start"),
+        roster: case["roster"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| {
+                (
+                    v[0].as_str().unwrap().parse().unwrap(),
+                    v[1].as_str().unwrap().parse().unwrap(),
+                    v[2].as_u64().unwrap() as u8,
+                )
+            })
+            .collect(),
+    };
     match case["kind"].as_str().unwrap() {
         "Hello" => Message::Hello { version: number("version") as u16 },
         "HelloAck" => {
@@ -1049,6 +1076,191 @@ fn message_of(case: &Value) -> Message {
             already_absent: case["alreadyAbsent"].as_bool().unwrap(),
             error: case.get("error").and_then(Value::as_str).map(str::to_owned),
         },
+        "RegisterTournamentMetrics" => Message::RegisterTournamentMetrics { identity: metrics() },
+        "RegisterTournamentMetricsReply" => Message::RegisterTournamentMetricsReply {
+            identity: metrics(),
+            status: number("status") as u8,
+            error: text(case, "error"),
+        },
+        "ReadTournamentMetrics" => Message::ReadTournamentMetrics { identity: metrics() },
+        "ReadTournamentMetricsReply" => Message::ReadTournamentMetricsReply {
+            identity: metrics(),
+            status: number("status") as u8,
+            error: text(case, "error"),
+            sample: (number("status") == 0).then(|| eve_space::link::MetricsSample {
+                at: wide(case, "at"),
+                applied: case
+                    .get("applied")
+                    .and_then(Value::as_array)
+                    .map(|v| [v[0].as_f64().unwrap(), v[1].as_f64().unwrap()]),
+                pilots: metrics()
+                    .roster
+                    .into_iter()
+                    .map(|(character, ship, team)| eve_space::link::MetricsPilot {
+                        character,
+                        ship,
+                        team,
+                        state: 0,
+                        fitted: vec![],
+                        running: vec![],
+                        companions: vec![],
+                        ehp_status: 0,
+                        ehp: None,
+                    })
+                    .collect(),
+            }),
+        },
+        "ReleaseTournamentMetrics" => Message::ReleaseTournamentMetrics { identity: metrics() },
+        "ReleaseTournamentMetricsReply" => Message::ReleaseTournamentMetricsReply {
+            identity: metrics(),
+            status: number("status") as u8,
+            error: text(case, "error"),
+        },
+        "RegisterTournamentCutoff" => Message::RegisterTournamentCutoff {
+            identity: cutoff(),
+            roster: case["roster"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| (v[0].as_str().unwrap().parse().unwrap(), v[1].as_str().unwrap().parse().unwrap()))
+                .collect(),
+        },
+        "RegisterTournamentCutoffReply" => Message::RegisterTournamentCutoffReply {
+            identity: cutoff(),
+            status: number("status") as u8,
+            error: text(case, "error"),
+        },
+        "ReadTournamentCutoff" => Message::ReadTournamentCutoff { identity: cutoff() },
+        "ReadTournamentCutoffReply" => Message::ReadTournamentCutoffReply {
+            identity: cutoff(),
+            status: number("status") as u8,
+            evidence: case["evidence"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| {
+                    (
+                        v[0].as_str().unwrap().parse().unwrap(),
+                        v[1].as_str().unwrap().parse().unwrap(),
+                        v[2].as_u64().unwrap() as u8,
+                    )
+                })
+                .collect(),
+            error: text(case, "error"),
+        },
+        "ReleaseTournamentCutoff" => Message::ReleaseTournamentCutoff { identity: cutoff() },
+        "ReleaseTournamentCutoffReply" => Message::ReleaseTournamentCutoffReply {
+            identity: cutoff(),
+            status: number("status") as u8,
+            error: text(case, "error"),
+        },
+        "EnterPublicParticipant" => {
+            let Message::Enter(enter) = message_of(&case["enter"]) else { panic!("expected nested enter") };
+            Message::EnterPublicParticipant {
+                request_id: number("requestId"),
+                operation_id: text(case, "operationId"),
+                enter,
+            }
+        }
+        "EnterPublicParticipantReply" => Message::EnterPublicParticipantReply {
+            request_id: number("requestId"),
+            outcome: case.get("error").and_then(Value::as_str).map_or(Ok(()), |e| Err(e.to_owned())),
+        },
+        "QueryTournamentWreck" => Message::QueryTournamentWreck {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            item_id: wide(case, "itemId"),
+        },
+        "QueryTournamentWreckReply" => Message::QueryTournamentWreckReply {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            item_id: wide(case, "itemId"),
+            outcome: case
+                .get("error")
+                .and_then(Value::as_str)
+                .map_or_else(|| Ok(case["present"].as_bool().unwrap()), |e| Err(e.to_owned())),
+        },
+        "RemoveTournamentWreck" => Message::RemoveTournamentWreck {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            item_id: wide(case, "itemId"),
+            owner_id: wide(case, "ownerId"),
+            launcher_id: wide(case, "launcherId"),
+            type_id: case["typeId"].as_i64().unwrap() as i32,
+            center: vector3(&case["center"]),
+            radius: case["radius"].as_f64().unwrap(),
+        },
+        "RemoveTournamentWreckReply" => Message::RemoveTournamentWreckReply {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            item_id: wide(case, "itemId"),
+            outcome: case
+                .get("error")
+                .and_then(Value::as_str)
+                .map_or_else(|| Ok(case["present"].as_bool().unwrap()), |e| Err(e.to_owned())),
+        },
+        "MovePublicParticipant" => Message::MovePublicParticipant {
+            request_id: number("requestId"),
+            operation_id: text(case, "operationId"),
+            session_id: number("sessionId"),
+            ship_id: wide(case, "shipId"),
+            source: scene_key(&case["source"]),
+            destination: scene_key(&case["destination"]),
+            use_anchor: case["useAnchor"].as_bool().unwrap(),
+            position: vector3(&case["position"]),
+            direction: vector3(&case["direction"]),
+        },
+        "MovePublicParticipantReply" => Message::MovePublicParticipantReply {
+            request_id: number("requestId"),
+            outcome: case.get("error").and_then(Value::as_str).map_or(Ok(()), |e| Err(e.to_owned())),
+        },
+        "EnsureTournamentBeacon" => Message::EnsureTournamentBeacon {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            item_id: wide(case, "itemId"),
+            type_id: case["typeId"].as_i64().unwrap() as i32,
+            group_id: case["groupId"].as_i64().unwrap() as i32,
+            category_id: case["categoryId"].as_i64().unwrap() as i32,
+            owner_id: wide(case, "ownerId"),
+            graphic_id: case["graphicId"].as_i64().unwrap() as i32,
+            name: text(case, "nameValue").to_owned(),
+            position: vector3(&case["position"]),
+            radius: case["radius"].as_f64().unwrap(),
+        },
+        "EnsureTournamentBeaconReply" => Message::EnsureTournamentBeaconReply {
+            request_id: number("requestId"),
+            outcome: case.get("error").and_then(Value::as_str).map_or(Ok(()), |e| Err(e.to_owned())),
+        },
+        "RemoveTournamentBeacon" => Message::RemoveTournamentBeacon {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            item_id: wide(case, "itemId"),
+        },
+        "RemoveTournamentBeaconReply" => Message::RemoveTournamentBeaconReply {
+            request_id: number("requestId"),
+            outcome: case.get("error").and_then(Value::as_str).map_or(Ok(()), |e| Err(e.to_owned())),
+        },
+        "GetSceneBody" => Message::GetSceneBody {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            item_id: wide(case, "itemId"),
+        },
+        "GetSceneBodyReply" => Message::GetSceneBodyReply {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            item_id: wide(case, "itemId"),
+            outcome: case.get("error").and_then(Value::as_str).map_or_else(
+                || {
+                    Ok((
+                        case["typeId"].as_i64().unwrap() as i32,
+                        case["groupId"].as_i64().unwrap() as i32,
+                        case["categoryId"].as_i64().unwrap() as i32,
+                        vector3(&case["position"]),
+                    ))
+                },
+                |error| Err(error.to_owned()),
+            ),
+        },
         "GetAbyssalParticipantPose" => Message::GetAbyssalParticipantPose {
             request_id: number("requestId"),
             scene: scene_key(&case["scene"]),
@@ -1158,6 +1370,7 @@ fn message_of(case: &Value) -> Message {
             command: number("command") as u8,
             args: case["args"].as_array().unwrap().iter().map(|a| a.as_f64().unwrap()).collect(),
         },
+        "CriminalFlagActive" => Message::CriminalFlagActive { session_id: session_id() },
         "ShipSpec" => Message::ShipSpec { session_id: session_id(), ship: Box::new(ship_of(&case["ship"])) },
         "Notify" => Message::Notify {
             session_id: session_id(),
@@ -1905,6 +2118,67 @@ fn reason_of(error: DecodeError) -> &'static str {
         DecodeError::Trailing => "trailing",
         DecodeError::Utf8 => "utf8",
         DecodeError::BadValue(_) => "bad-value",
+    }
+}
+
+#[test]
+fn public_scene_body_frames_match_shared_fixtures() {
+    let fixtures = fixtures();
+    let cases: Vec<_> = fixtures["valid"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|case| {
+            matches!(
+                case["kind"].as_str(),
+                Some(
+                    "GetSceneBody"
+                        | "GetSceneBodyReply"
+                        | "EnsureTournamentBeacon"
+                        | "EnsureTournamentBeaconReply"
+                        | "RemoveTournamentBeacon"
+                        | "RemoveTournamentBeaconReply"
+                )
+            )
+        })
+        .collect();
+    assert_eq!(cases.len(), 7);
+    for case in cases {
+        let expected = hex(case["hex"].as_str().unwrap());
+        let message = message_of(case);
+        assert_eq!(message.encode(), expected);
+        assert_eq!(Message::decode(&expected[4..]).unwrap(), message);
+    }
+}
+
+#[test]
+fn public_move_encoder_requires_guid_d_form() {
+    let data = fixtures();
+    let case = data["valid"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["name"] == "move public pilot to explicit pose")
+        .unwrap();
+    let message = message_of(case);
+    for invalid in [
+        "not-a-guid",
+        "0123456789abcdef0123456789abcdef",
+        "{01234567-89ab-cdef-0123-456789abcdef}",
+        " 01234567-89ab-cdef-0123-456789abcdef",
+    ] {
+        let mut invalid_message = message.clone();
+        if let Message::MovePublicParticipant { operation_id, .. } = &mut invalid_message {
+            *operation_id = invalid.to_string();
+        }
+        assert!(std::panic::catch_unwind(|| invalid_message.encode()).is_err());
+    }
+    for valid in ["01234567-89AB-CDEF-0123-456789ABCDEF", "00000000-0000-0000-0000-000000000000"] {
+        let mut valid_message = message.clone();
+        if let Message::MovePublicParticipant { operation_id, .. } = &mut valid_message {
+            *operation_id = valid.to_string();
+        }
+        assert!(!valid_message.encode().is_empty());
     }
 }
 

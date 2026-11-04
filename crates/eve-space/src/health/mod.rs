@@ -5,10 +5,12 @@
 //! shield, then the armor, then the hull, each layer's resonances taken off the four kinds of damage; whatever a hit does not use in one layer goes
 //! on to the next. The shield recharges along CCP's curve while it is below full. The reference rounds what it keeps of a hit to six places (the
 //! stored fractions, not the points it tells), and this does the same, so the numbers a client is told are the same to the last digit.
+mod metrics;
 mod scene_api;
 mod shift;
 mod structure;
 
+pub use self::metrics::{EffectiveHpUnknown, HpLayer, RemainingEffectiveHp, remaining_effective_hp};
 pub use self::structure::{StructureHealth, StructureHit, StructureLimits};
 
 use crate::scene::TICKS_PER_SECOND;

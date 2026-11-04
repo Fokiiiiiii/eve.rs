@@ -26,6 +26,14 @@ public sealed partial class SpaceSessions
 
     private static string ShipSelfDestructJobKey(long shipId) => $"self-destruct:{shipId}";
 
+    public async ValueTask<bool> IsSelfDestructingAsync(long shipId, CancellationToken cancellationToken)
+    {
+        if (shipId <= 0 || TimedActions is not { } scheduler)
+            return false;
+        return await scheduler.FindAsync(ShipSelfDestructJobKind, ShipSelfDestructJobKey(shipId), cancellationToken)
+            .ConfigureAwait(false) is not null;
+    }
+
     private static long FileTimeOfUnixMs(long unixMs) => checked(116444736000000000L + unixMs * 10_000L);
 
     private static void TellSelfDestruct(ClientSession session, string message) =>
@@ -33,6 +41,14 @@ public sealed partial class SpaceSessions
 
     private static MachoWrappedException SelfDestructError(string message) =>
         MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(message)));
+
+    public async Task<bool> IsSelfDestructingAsync(ClientSession session, CancellationToken cancellationToken = default)
+    {
+        if (TimedActions is not { } scheduler || !_pilots.TryGetValue((ulong)session.SessionId, out var pilot) ||
+            !ReferenceEquals(pilot.Session, session) || session.CharacterId != pilot.CharacterId)
+            return false;
+        return await scheduler.FindAsync(ShipSelfDestructJobKind, ShipSelfDestructJobKey(pilot.ShipId), cancellationToken) is { State: "pending" };
+    }
 
     public async ValueTask<PyValue> StartSelfDestructAsync(ClientSession session, long? requestedShipId, CancellationToken cancellationToken)
     {
@@ -494,7 +510,7 @@ public sealed partial class SpaceSessions
                 async (result, transitionToken) =>
                 {
                     var lost = result!;
-                    ReleaseBoundObjects(session);
+                    await CompleteBoundObjectReleasesAsync(DetachBoundObjects(session), CancellationToken.None);
                     if (simulationFailed)
                     {
                         if (await _ships.LoadAsync(pilot.CharacterId, transitionToken) is not { } recovered
@@ -566,7 +582,9 @@ public sealed partial class SpaceSessions
         finally
         {
             if (!handedOver && _pilots.TryRemove(id, out _))
+            {
                 _sim.Leave(id, LeaveWhy.LoggedOff);
+            }
             _dying.TryRemove(pilot.ShipId, out _);
             if (_deaths.TryRemove(pilot.ShipId, out var waiting))
                 waiting.TrySetResult(done);
@@ -579,7 +597,8 @@ public sealed partial class SpaceSessions
         var concord = _concordDestroyed.TryRemove(pilot.ShipId, out _)
             || (destroyed.KillerShipId != 0
                 && _npcShips.TryGetValue(destroyed.KillerShipId, out var npc)
-                && npc.Profile?.Id.Contains("concord_response", StringComparison.OrdinalIgnoreCase) == true);
+                  && (npc.Profile?.EntityType.Equals("concord", StringComparison.OrdinalIgnoreCase) == true
+                      || npc.Profile?.Id.Contains("concord_response", StringComparison.OrdinalIgnoreCase) == true));
         var cause = _deaths.ContainsKey(pilot.ShipId) ? ShipLossCause.SelfDestruct
             : concord ? ShipLossCause.Concord
             : killer is not null ? ShipLossCause.Player
@@ -681,12 +700,12 @@ public sealed partial class SpaceSessions
                 }
                 return Task.CompletedTask;
             },
-            (result, _) =>
+            async (result, _) =>
             {
                 var death = result!;
-                ReleaseBoundObjects(session);
+                await CompleteBoundObjectReleasesAsync(DetachBoundObjects(session), CancellationToken.None);
                 CharacterSessionRelocation.Docked(session, station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId, death.Ship.Id);
-                return Task.FromResult(true);
+                return true;
             },
             (result, _) =>
             {

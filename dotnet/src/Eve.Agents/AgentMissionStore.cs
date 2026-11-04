@@ -31,7 +31,7 @@ public sealed record AgentMissionRecord(
     DateTimeOffset? QuitAt,
     bool ObjectiveCompleted = false);
 
-/// <summary>A transition that committed: the states before and after, the action the client is told, and the reference it applied under.</summary>
+/// <summary>A mission state transition and its identifying reference.</summary>
 public sealed record AgentMissionChange(
     long CharacterId,
     long AgentId,
@@ -44,14 +44,14 @@ public sealed record AgentMissionChange(
 /// <summary>A transition the state does not allow (for example an accept with no offer). Nothing is changed.</summary>
 public sealed class AgentMissionRefusedException(string reason, string message) : Exception(message)
 {
-    /// <summary>A stable name for the refusal: not_offered, offer_expired, already_offered, already_accepted, replay_wait, not_accepted.</summary>
+    /// <summary>A refused mission transition with a stable reason string.</summary>
     public string Reason { get; } = reason;
 }
 
 /// <summary>
-/// locked, the transition is checked against the state it leaves, the row and one journal row are written, and then the
-/// change is announced through <see cref="Committed"/>. A transition names its reference; a reference that is already in the
-/// journal applies nothing and returns null, so a replayed request changes nothing and announces nothing.
+/// Each transition locks the mission row and writes its state and journal entry in one transaction. Reusing a journal reference
+/// does not add a second transition. Methods that own the transaction announce after commit; caller-transaction methods return
+/// a change for the caller to announce after committing.
 /// </summary>
 public sealed class AgentMissionStore
 {
@@ -101,9 +101,7 @@ public sealed class AgentMissionStore
         return rows;
     }
 
-    /// <summary>
-    /// The missions the character has completed, with the time of each completion, from the journal (the transitions into
-    /// </summary>
+    /// <summary>The character's completed mission transitions, with their times, in journal order.</summary>
     public Task<IReadOnlyList<(long MissionId, DateTimeOffset CompletedAt)>> ReadCompletedAsync(long characterId, CancellationToken cancellationToken = default) =>
         ReadJournalAsync(characterId, [(int)AgentMissionState.Completed], cancellationToken);
 
@@ -142,8 +140,7 @@ public sealed class AgentMissionStore
         return await reader.ReadAsync(cancellationToken) ? ReadRecord(reader) : null;
     }
 
-    /// <summary>
-    /// </summary>
+    /// <summary>Offers the given mission content to the character through this agent.</summary>
     public Task<AgentMissionChange?> OfferAsync(
         long characterId, long agentId, AgentMissionContent content, DateTimeOffset now, string reference, CancellationToken cancellationToken = default) =>
         ChangeAsync(characterId, agentId, reference, "offered", now, cancellationToken, current =>
@@ -186,9 +183,7 @@ public sealed class AgentMissionStore
             return current with { State = AgentMissionState.Quit, QuitAt = now };
         });
 
-    /// <summary>
-    /// is refused (nothing to reset).
-    /// </summary>
+    /// <summary>Resets a non-allocated mission to Allocated; refuses when the agent has no mission to reset.</summary>
     public Task<AgentMissionChange?> ResetAsync(long characterId, long agentId, DateTimeOffset now, string reference, CancellationToken cancellationToken = default) =>
         ChangeAsync(characterId, agentId, reference, "reset", now, cancellationToken, current =>
         {
@@ -204,7 +199,7 @@ public sealed class AgentMissionStore
             return current with { State = AgentMissionState.Failed };
         });
 
-    /// <summary>Removes the current offer from the journal. A repeated request has no second transition or notice.</summary>
+    /// <summary>Resets the current offer to Allocated. Repeated requests produce no additional transition or notice.</summary>
     public async Task<AgentMissionChange?> RemoveOfferAsync(
         long characterId, long agentId, DateTimeOffset now, CancellationToken cancellationToken = default)
     {
@@ -246,7 +241,7 @@ public sealed class AgentMissionStore
         return rows;
     }
 
-    /// <summary>The accepted mission is completed (the mission runtime calls this when its objectives are done).</summary>
+    /// <summary>Completes an accepted mission in a store-owned transaction. Use <see cref="CompleteInAsync"/> to join another transaction.</summary>
     public Task<AgentMissionChange?> CompleteAsync(
         long characterId, long agentId, DateTimeOffset now, string reference, CancellationToken cancellationToken = default) =>
         ChangeAsync(characterId, agentId, reference, "completed", now, cancellationToken, current =>
@@ -344,9 +339,7 @@ public sealed class AgentMissionStore
 
     private static AgentMissionRefusedException Refused(string reason, string message) => new(reason, message);
 
-    /// <summary>
-    /// row and the journal row. Returns null when the reference is already in the journal.
-    /// </summary>
+    /// <summary>Applies a transition and writes its journal entry in a store-owned transaction; returns null when the reference is already in the journal.</summary>
     private async Task<AgentMissionChange?> ChangeAsync(
         long characterId,
         long agentId,
@@ -479,8 +472,8 @@ public sealed class AgentMissionStore
     }
 
     /// <summary>
-    /// The accepted mission is completed inside the caller's transaction (the caller's commit makes it, and then <see cref="Announce"/> tells the
-    /// session). Refused as <see cref="CompleteAsync"/> is.
+    /// Completes an accepted mission in the caller's transaction. Announce the returned change after commit; the same refusal as
+    /// <see cref="CompleteAsync"/> is raised when the mission is not accepted.
     /// </summary>
     public async Task<AgentMissionChange?> CompleteInAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long agentId, DateTimeOffset now, string reference,

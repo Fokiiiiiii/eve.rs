@@ -1142,7 +1142,18 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
         },token);
     }
 
-    public Task<(long WarId,long BillId)> CreateWarDeclarationAsync(
+    public async Task<(long WarId,long BillId)> CreateWarDeclarationAsync(
+        long corporationId,long declaredByCharacterId,long againstId,long? warHqId,long declaredAtFiletime,
+        long startedAtFiletime,long dueFiletime,int billTypeId,decimal amount,long creditorId,string operationKey,
+        Func<NpgsqlConnection,NpgsqlTransaction,long,CancellationToken,Task<long>> createWar,
+        CancellationToken token = default)
+    {
+        var result = await CreateWarDeclarationWithOutcomeAsync(corporationId,declaredByCharacterId,againstId,warHqId,
+            declaredAtFiletime,startedAtFiletime,dueFiletime,billTypeId,amount,creditorId,operationKey,createWar,token);
+        return (result.WarId,result.BillId);
+    }
+
+    public Task<(long WarId,long BillId,long DueFiletime,bool Replayed)> CreateWarDeclarationWithOutcomeAsync(
         long corporationId,long declaredByCharacterId,long againstId,long? warHqId,long declaredAtFiletime,
         long startedAtFiletime,long dueFiletime,int billTypeId,decimal amount,long creditorId,string operationKey,
         Func<NpgsqlConnection,NpgsqlTransaction,long,CancellationToken,Task<long>> createWar,
@@ -1165,7 +1176,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
                 if (!await reader.ReadAsync(token) || reader.GetBoolean(0) || reader.GetBoolean(1))
                     throw new CorporationError("CORPORATION_NOT_FOUND");
             }
-            await using (var prior = Command(connection,tx,$"SELECT bill_id,war_id,request_fingerprint FROM {_schema}.corporation_bills WHERE operation_key=$1 FOR UPDATE",operationKey))
+            await using (var prior = Command(connection,tx,$"SELECT bill_id,war_id,request_fingerprint,due_filetime FROM {_schema}.corporation_bills WHERE operation_key=$1 FOR UPDATE",operationKey))
             await using (var reader = await prior.ExecuteReaderAsync(token))
             {
                 if (await reader.ReadAsync(token))
@@ -1174,7 +1185,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
                     var priorWarId = reader.IsDBNull(1) ? 0 : reader.GetInt64(1);
                     if (reader.GetString(2) != fingerprint || priorWarId <= 0)
                         throw new CorporationError("CORPORATION_WAR_OPERATION_CONFLICT");
-                    return (priorWarId,priorBillId);
+                    return (priorWarId,priorBillId,reader.GetInt64(3),true);
                 }
             }
             await using var insert = Command(connection,tx,$"""
@@ -1193,7 +1204,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
                 throw new CorporationError("CORPORATION_WAR_DECLARATION_LINK_FAILED");
             if (WarBillDueWriter is { } scheduleWarBill)
                 await scheduleWarBill(connection, tx, billId, dueFiletime, token);
-            return (warId,billId);
+            return (warId,billId,dueFiletime,false);
         },token);
     }
 
@@ -1692,7 +1703,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
             ? _wallets.AccountBalanceAsync(new Eve.Wallet.WalletAccount(corporationId,accountKey),token)
             : Task.FromResult<decimal?>(null);
 
-    public Task<(long WarId,long BillId,bool Replayed)> CreateAllianceWarDeclarationAsync(
+    public Task<(long WarId,long BillId,long DueFiletime,bool Replayed)> CreateAllianceWarDeclarationAsync(
         long allianceId,long declaredByCharacterId,long againstId,long? warHqId,long declaredAtFiletime,
         long startedAtFiletime,long dueFiletime,int billTypeId,decimal amount,long creditorId,string operationKey,
         Func<NpgsqlConnection,NpgsqlTransaction,long,CancellationToken,Task<long>> createWar,
@@ -1719,7 +1730,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
             if (corporation.AllianceId != allianceId || alliance.ActiveExecutorId != corporation.Id)
                 throw new CorporationError("ALLIANCE_ACCESS_DENIED");
             await using (var prior = Command(connection,tx,$"""
-                SELECT bill_id,war_id,request_fingerprint FROM {_schema}.alliance_bills
+                SELECT bill_id,war_id,request_fingerprint,due_filetime FROM {_schema}.alliance_bills
                 WHERE operation_key=$1 FOR UPDATE
                 """,operationKey))
             await using (var reader = await prior.ExecuteReaderAsync(token))
@@ -1730,7 +1741,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
                     var priorWarId = reader.IsDBNull(1) ? 0 : reader.GetInt64(1);
                     if (reader.GetString(2) != fingerprint || priorWarId <= 0)
                         throw new CorporationError("ALLIANCE_WAR_OPERATION_CONFLICT");
-                    return (priorWarId,priorBillId,true);
+                    return (priorWarId,priorBillId,reader.GetInt64(3),true);
                 }
             }
             await using var insert = Command(connection,tx,$"""
@@ -1749,7 +1760,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
                 throw new CorporationError("ALLIANCE_WAR_DECLARATION_LINK_FAILED");
             if (WarBillDueWriter is { } scheduleWarBill)
                 await scheduleWarBill(connection, tx, billId, dueFiletime, token);
-            return (warId,billId,false);
+            return (warId,billId,dueFiletime,false);
         },token);
     }
 

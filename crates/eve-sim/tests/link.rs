@@ -123,6 +123,25 @@ impl Host {
         Message::decode(&payload).unwrap()
     }
 
+    async fn recv_response(&mut self) -> (Message, bool) {
+        let mut saw_destiny_update = false;
+        loop {
+            let message = self.recv().await;
+            match &message {
+                Message::Notify { name, id_type, session_id, .. } if name == "DoDestinyUpdate" => {
+                    assert_eq!((id_type.as_str(), *session_id), ("clientID", SESSION));
+                    saw_destiny_update = true;
+                }
+                Message::DamageableEntityUpserted { solar_system_id, entity_id, .. }
+                | Message::DamageableEntityRemoved { solar_system_id, entity_id } => {
+                    assert_eq!(*solar_system_id, SYSTEM);
+                    assert!(*entity_id > 0);
+                }
+                _ => return (message, saw_destiny_update),
+            }
+        }
+    }
+
     async fn hello(&mut self) {
         self.send(Message::Hello { version: PROTOCOL_VERSION }).await;
         assert_eq!(self.recv().await, Message::HelloAck { version: PROTOCOL_VERSION, poll_hz: POLL_HZ });
@@ -181,27 +200,58 @@ async fn a_ship_is_sent_out_bound_told_to_dock_and_reported_docked() {
 
     host.send(Message::Bind { session_id: SESSION }).await;
     let mut names = Vec::new();
-    for _ in 0..6 {
-        let Message::Notify { name, id_type, session_id, .. } = host.recv().await else {
-            panic!("a notification")
-        };
-        assert_eq!((id_type.as_str(), session_id), ("clientID", SESSION));
-        names.push(name);
+    while names.len() < 6 {
+        match host.recv().await {
+            Message::Notify { name, id_type, session_id, .. } => {
+                assert_eq!((id_type.as_str(), session_id), ("clientID", SESSION));
+                names.push(name);
+            }
+            Message::DamageableEntityUpserted { solar_system_id, entity_id, .. }
+            | Message::DamageableEntityRemoved { solar_system_id, entity_id } => {
+                assert_eq!(solar_system_id, SYSTEM);
+                assert!(entity_id > 0);
+            }
+            other => panic!("expected a notification or scene update, got {other:?}"),
+        }
     }
     assert_eq!(names[..2], ["OnSetTimeDilation", "DoSimClockRebase"]);
     assert!(names[2..].iter().all(|n| n == "DoDestinyUpdate"));
 
     host.send(Message::Command { session_id: SESSION, command: 4, args: vec![STATION as f64] }).await;
-    assert!(
-        matches!(host.recv().await, Message::Notify { name, id_type, .. } if name == "OnDockingAccepted" && id_type == "charid")
-    );
-    assert!(matches!(host.recv().await, Message::Notify { name, .. } if name == "DoDestinyUpdate"));
-    assert_eq!(host.recv().await, Message::Accepted { session_id: SESSION, command: 4, at: NOON });
+    // Periodic simulation updates can arrive before the command's reply.
+    let (message, _) = host.recv_response().await;
+    match message {
+        Message::Notify { name, id_type, session_id, .. } if name == "OnDockingAccepted" => {
+            assert_eq!((id_type.as_str(), session_id), ("charid", SESSION));
+        }
+        other => panic!("expected a docking notification, got {other:?}"),
+    }
 
-    // the ship is docked once four seconds have gone by, which the simulation notices at its next poll
+    let (message, saw_docking_update) = host.recv_response().await;
+    match message {
+        Message::Accepted { session_id: SESSION, command: 4, at: NOON } => {}
+        other => panic!("expected the dock command reply, got {other:?}"),
+    }
+    assert!(saw_docking_update, "docking must send the ship's stop update before its reply");
+
+    // after four seconds the simulation asks the host to run its final docking checks
     host.clock.store(NOON + 5 * SECOND, Ordering::SeqCst);
     assert_eq!(
-        host.recv().await,
+        host.recv_response().await.0,
+        Message::Accepted {
+            session_id: SESSION,
+            command: eve_space::scene::DOCKING_READY_COMMAND,
+            at: STATION,
+        }
+    );
+    host.send(Message::Command {
+        session_id: SESSION,
+        command: eve_space::scene::DOCKING_DECISION_COMMAND,
+        args: vec![STATION as f64, 1.0],
+    })
+    .await;
+    assert_eq!(
+        host.recv_response().await.0,
         Message::Docked {
             session_id: SESSION,
             station_id: STATION,

@@ -17,7 +17,11 @@ public partial class HostServerTests
         var planetMgr = new PlanetMgrService(
             null!, null!, null!, null!, null!, null!, null!, () => FixedNowMs,
             (_, _) => Task.CompletedTask, _ => Task.CompletedTask, "eve");
-        var taxRates = new PlanetOrbitalRegistryService(null!, () => FixedNowMs);
+        var taxRates = new PlanetOrbitalRegistryService(
+            null!, () => FixedNowMs,
+            (_, _) => Task.FromResult<OrbitalSettings?>(null),
+            (_, _, _, _) => Task.FromException(new InvalidOperationException("Orbital settings are not part of this route test.")),
+            (_, _, _) => Task.FromResult(false));
         Start(configure: registry =>
         {
             registry.Register(planetMgr);

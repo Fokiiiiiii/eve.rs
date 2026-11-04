@@ -1,6 +1,24 @@
 use super::*;
 
 impl Scene {
+    /// The current remaining EHP for a pilot's ship, including the same active CRAB resistance
+    /// multiplier used by the damage path. This is a local health metric, not Fancy telemetry.
+    pub(crate) fn remaining_effective_hp_at(
+        &self,
+        session: SessionId,
+        now: i64,
+    ) -> super::RemainingEffectiveHp {
+        let Some(pilot) = self.pilots.get(&session) else {
+            return super::RemainingEffectiveHp::Unknown(super::EffectiveHpUnknown::NoShip);
+        };
+        let multiplier = if self.link_effects_active(session, now) {
+            1.0 - crate::deployable::CRAB_LINK_RESISTANCE_BONUS
+        } else {
+            1.0
+        };
+        pilot.ship.health.remaining_effective_hp_at(now, multiplier)
+    }
+
     /// The pilot is told which of its ship's attributes changed (one notification for all of them), or nothing when none did.
     pub(crate) fn health_told(
         session: SessionId,
@@ -108,6 +126,11 @@ impl Scene {
         else {
             return (Vec::new(), None);
         };
+        if self.pilots.get(&session).is_some_and(|pilot| {
+            pilot.ship.spec.group_id == crate::pochven_population::EMPIRE_SENTRY_GROUP_ID
+        }) {
+            return (Vec::new(), None);
+        }
         let resistance_bonus = resisted && self.link_effects_active(session, now);
         let pilot = self.pilots.get_mut(&session).expect("the pilot is in the scene");
         let owner = pilot.ship.spec.character_id;

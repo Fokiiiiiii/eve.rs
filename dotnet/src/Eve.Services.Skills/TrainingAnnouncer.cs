@@ -92,6 +92,57 @@ public sealed class TrainingAnnouncer(CharacterTraining training, SkillCatalog c
             await dogma.SkillsChangedAsync(session, characterId, before);
     }
 
+    /// <summary>Publishes a game-master skill change to the target and reschedules its reconciled queue.</summary>
+    public async Task AnnounceAdminMutationAsync(ClientSession? session, SkillMutationUpdate update)
+    {
+        Reschedule(update.CharacterId, update.AccountId, update.View);
+        if (session is null)
+        {
+            return;
+        }
+
+        var changed = update.ChangedSkills;
+        var removed = update.RemovedSkills;
+        var fileTime = NowFileTime;
+        if (changed.Count > 0)
+        {
+            SkillNotifications.ServerSkillsChanged(session,
+                SkillWire.EntryDictionary(update.CharacterId, catalog, changed), null, fileTime);
+        }
+        if (removed.Count > 0)
+        {
+            SkillNotifications.ServerSkillsRemoved(session,
+                SkillWire.EntryDictionary(update.CharacterId, catalog,
+                    removed.Select(skill => skill with { Level = 0, SkillPoints = -1 })), fileTime);
+        }
+
+        var scattered = changed.Concat(removed.Select(skill => skill with { Level = 0, SkillPoints = 0 })).ToList();
+        if (scattered.Count > 0)
+        {
+            var before = update.Before.ToDictionary(skill => skill.TypeId);
+            var trained = changed.Where(skill => skill.Level > 0 &&
+                (!before.TryGetValue(skill.TypeId, out var old) || skill.Level > old.Level)).ToList();
+            if (trained.Count > 0)
+            {
+                SkillNotifications.LevelsTrained(session, trained);
+            }
+            SkillNotifications.SkillsChanged(session, SkillWire.EntryDictionary(update.CharacterId, catalog, scattered));
+        }
+
+        if (scattered.Count > 0 || update.QueueChanged)
+        {
+            SkillNotifications.QueueSaved(session, update.View.Queue);
+            if (!update.View.State.Running)
+            {
+                SkillNotifications.QueuePaused(session);
+            }
+        }
+        if (scattered.Count > 0 && dogma is not null)
+        {
+            await dogma.SkillsChangedAsync(session, update.CharacterId, update.Before);
+        }
+    }
+
     /// <summary>The consumed injector's committed item change precedes the new free-SP balance.</summary>
     public void AnnounceInjectedPoints(ClientSession session, ItemRow before, ItemRow after, long remaining)
     {

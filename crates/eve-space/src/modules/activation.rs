@@ -129,7 +129,13 @@ impl Scene {
     }
 
     /// The ship's numbers become `numbers`; what the client is told: `SetBallMass` and `SetMaxSpeed` (the ones that changed).
-    pub(super) fn renumber(&mut self, session: SessionId, numbers: Numbers, stamp: u32) -> Vec<Value> {
+    pub(super) fn renumber(
+        &mut self,
+        session: SessionId,
+        numbers: Numbers,
+        at: i64,
+        stamp: u32,
+    ) -> Vec<Value> {
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
         // what other ships' modules do to this ship is worked on the numbers its own effects give it
         let held = pilot.incoming.base.map(|mut base| {
@@ -141,6 +147,7 @@ impl Scene {
         let wanted_velocity = held.map_or(numbers.max_velocity, |worked| worked.max_velocity);
         let wanted_signature = held.map_or(numbers.signature_radius, |worked| worked.signature_radius);
         let spec = &mut pilot.ship.spec;
+        let signature_changed = wanted_signature != spec.signature_radius;
         let ship = id(spec.ship_id);
         let mut actions = Vec::new();
         if numbers.mass != spec.mass {
@@ -152,6 +159,9 @@ impl Scene {
             actions.push(payload::action(stamp, "SetMaxSpeed", [ship, real(wanted_velocity)]));
         }
         spec.signature_radius = wanted_signature;
+        if signature_changed {
+            self.rebase_pending_target_locks(session, false, true, at);
+        }
         actions
     }
 
@@ -688,7 +698,7 @@ impl Scene {
         let stamp = self.next_stamp(now);
         let ship = id(ship_id);
         if let Some(numbers) = run.effect.on {
-            let actions = self.renumber(session, numbers, stamp);
+            let actions = self.renumber(session, numbers, now, stamp);
             if !actions.is_empty() {
                 out.extend(self.tell_all(session, actions));
             }

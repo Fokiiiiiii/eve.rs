@@ -51,6 +51,10 @@ public static class SkillNotifications
     public static void ServerSkillsChanged(ClientSession session, PyValue skills, string? reason, long fileTime) =>
         session.SendNotification("OnServerSkillsChanged", "charid", skills, reason is null ? PyNone.Instance : new PyStr(reason), new PyLong(fileTime));
 
+    /// <summary>The character's removed skill rows (negative trained points make the client drop its cached entry).</summary>
+    public static void ServerSkillsRemoved(ClientSession session, PyValue skills, long fileTime) =>
+        session.SendNotification("OnServerSkillsRemoved", "clientID", skills, new PyLong(fileTime));
+
     /// <summary>Levels were trained: which skill reached which level. (<c>clientID</c>)</summary>
     public static void LevelsTrained(ClientSession session, IEnumerable<CharacterSkill> skills) =>
         session.SendNotification("OnSkillLevelsTrained", "clientID", new PyList([.. skills.Select(s => (PyValue)Py.Tuple(new PyInt(s.TypeId), new PyInt(s.Level)))]));

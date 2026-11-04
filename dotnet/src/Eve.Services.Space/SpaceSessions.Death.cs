@@ -26,6 +26,14 @@ public sealed partial class SpaceSessions
 
     private static string ShipSelfDestructJobKey(long shipId) => $"self-destruct:{shipId}";
 
+    public async ValueTask<bool> IsSelfDestructingAsync(long shipId, CancellationToken cancellationToken)
+    {
+        if (shipId <= 0 || TimedActions is not { } scheduler)
+            return false;
+        return await scheduler.FindAsync(ShipSelfDestructJobKind, ShipSelfDestructJobKey(shipId), cancellationToken)
+            .ConfigureAwait(false) is not null;
+    }
+
     private static long FileTimeOfUnixMs(long unixMs) => checked(116444736000000000L + unixMs * 10_000L);
 
     private static void TellSelfDestruct(ClientSession session, string message) =>

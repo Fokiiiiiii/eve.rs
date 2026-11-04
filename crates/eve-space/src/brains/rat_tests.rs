@@ -29,7 +29,7 @@ pub(crate) fn system() -> Arc<SolarSystem> {
         constellation_id: 20_000_001,
         region_id: 10_000_001,
         faction_id: None,
-        security: 0.9,
+        security: 0.0,
         bodies: vec![Body {
             id: STATION,
             type_id: 1531,

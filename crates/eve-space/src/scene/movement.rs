@@ -305,7 +305,16 @@ pub(super) fn steer(ship: &mut Ship, target: Option<Target>, command: Command) -
         Command::SetSpeedFraction(fraction) => {
             let fraction = if fraction.is_finite() { fraction.clamp(0.0, 1.0) } else { 0.0 };
             if fraction <= 0.0 {
-                return stop(ship);
+                let stopped = stop(ship);
+                ship.speed_fraction = 0.0;
+                return match stopped {
+                    Steering::Actions(mut actions) => {
+                        actions.push(("SetSpeedFraction", vec![real(0.0)]));
+                        Steering::Actions(actions)
+                    }
+                    Steering::Nothing => Steering::Actions(vec![("SetSpeedFraction", vec![real(0.0)])]),
+                    refused => refused,
+                };
             }
             ship.speed_fraction = fraction;
             if matches!(ship.course, Course::Stop) {
@@ -315,20 +324,18 @@ pub(super) fn steer(ship: &mut Ship, target: Option<Target>, command: Command) -
         }
         Command::GotoDirection(direction) => {
             let Some(unit) = motion::unit(direction) else { return Steering::Refused("NO_DIRECTION") };
-            let stopped = ship.speed_fraction <= 0.0 || matches!(ship.course, Course::Stop);
+            let (speed, changed) = resumed_speed(ship, 1.0);
             let same = matches!(ship.course, Course::Goto)
                 && ship.direction.x * unit.x + ship.direction.y * unit.y + ship.direction.z * unit.z
                     >= 0.999_999;
-            if same && !stopped {
+            if same && !changed {
                 return Steering::Nothing;
             }
             ship.direction = unit;
             ship.course = Course::Goto;
-            if stopped {
-                ship.speed_fraction = 1.0;
-            }
+            ship.speed_fraction = speed;
             let mut actions = vec![("GotoDirection", vector(unit.x, unit.y, unit.z).to_vec())];
-            speed_action(ship, stopped, &mut actions);
+            speed_action(ship, changed, &mut actions);
             Steering::Actions(actions)
         }
         Command::Stop => stop(ship),
@@ -405,11 +412,9 @@ pub(super) fn steer(ship: &mut Ship, target: Option<Target>, command: Command) -
     }
 }
 
-/// A ship told to stop: it says so unless it stands still already.
+/// A ship told to stop keeps its speed fraction and says so unless it already stands still.
 pub(super) fn stop(ship: &mut Ship) -> Steering {
-    let standing =
-        matches!(ship.course, Course::Stop) && ship.speed_fraction <= 0.0 && speed_of(ship.velocity) < 0.1;
+    let standing = matches!(ship.course, Course::Stop) && speed_of(ship.velocity) < 0.1;
     ship.course = Course::Stop;
-    ship.speed_fraction = 0.0;
     if standing { Steering::Nothing } else { Steering::Actions(vec![("Stop", Vec::new())]) }
 }

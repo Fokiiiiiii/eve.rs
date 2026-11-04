@@ -15,7 +15,7 @@ namespace Eve.Host;
 /// a Director or the CEO. A refusal is a named user error and changes nothing (all structures of one request are checked before any is changed).
 
 /// </summary>
-public sealed class StructureDeploymentAuthority
+public sealed partial class StructureDeploymentAuthority
 {
     private const long DirectorRole = 1, StationManagerRole = 2048;
     private const int MinimumNameLength = 3, MaximumNameLength = 256;

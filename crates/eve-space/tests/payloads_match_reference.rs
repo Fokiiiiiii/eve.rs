@@ -8,7 +8,6 @@ use serde_json::{Value, json};
 use support::*;
 
 const SYSTEM: i32 = 30100032;
-const SIM_TIME: i64 = 134351527024310000;
 
 fn world() -> Option<World> {
     let Some(sde) = Sde::locate() else {
@@ -22,14 +21,26 @@ fn world() -> Option<World> {
 fn the_ship_is_added_as_the_reference_added_it() {
     let recording = fixture("undock.json");
     let race = &recording["races"][0];
-    let (stamp, _, added) = destiny_actions(step(race, "bind the ballpark"))
-        .into_iter()
-        .find(|(_, name, _)| name == "AddBalls2")
-        .unwrap();
-    let buffer = unhex(added["$tuple"][0]["$tuple"][0]["$buffer"].as_str().unwrap());
-    let ship = recorded_ship(race, &buffer[5..], recorded_direction(race));
+    let (stamp, mut added, ball) = initial_ship_addition(race);
+    let ship = recorded_ship(race, &ball, recorded_direction(race));
+    let extras = added["$tuple"][0]["$tuple"][1].as_array().unwrap();
+    let ego = extras
+        .iter()
+        .find(|entry| {
+            entry["$tuple"][0]["$dict"].as_array().is_some_and(|fields| {
+                fields.iter().any(|pair| pair[0] == "itemID" && number(&pair[1]) == ship.spec.ship_id)
+            })
+        })
+        .unwrap()
+        .clone();
+    let now = number(&ego["$tuple"][1]["$tuple"][0]["$tuple"][2]);
+    let buffer = added["$tuple"][0]["$tuple"][0]["$buffer"].as_str().unwrap();
+    let ego_buffer =
+        format!("{}{}", &buffer[..10], ball.iter().map(|b| format!("{b:02x}")).collect::<String>());
+    added["$tuple"][0]["$tuple"][0]["$buffer"] = json!(ego_buffer);
+    added["$tuple"][0]["$tuple"][1] = json!([ego]);
 
-    let mine = payload::add_ship(stamp as u32, &ship, SIM_TIME).unwrap();
+    let mine = payload::add_ship(stamp as u32, &ship, now).unwrap();
     let mut mine = describe(&mine);
     let recorded = recorded_action(stamp, "AddBalls2", &added);
     let ours =
@@ -51,12 +62,18 @@ fn the_state_is_what_the_reference_sent_apart_from_what_only_it_adds() {
         destiny_actions(bind).into_iter().find(|(_, name, _)| name == "SetState").unwrap();
     let state = &recorded["$tuple"][0]["args"]["$dict"];
     let buffer = unhex(field(state, "state")["$buffer"].as_str().unwrap());
-    let (rigid, tail) = split_state(&buffer);
+    let (rigid, _) = split_state(&buffer);
+    let ego_id = number(&race["shipID"]);
+    let offset = buffer.windows(8).position(|part| part == ego_id.to_le_bytes()).unwrap();
+    let tail = &buffer[offset..];
     let ship = recorded_ship(race, tail, recorded_direction(race));
+    let damage = field(state, "damageState");
+    let ego_damage =
+        damage["$dict"].as_array().unwrap().iter().find(|entry| number(&entry[0]) == ego_id).unwrap();
+    let now = number(&ego_damage[1]["$tuple"][0]["$tuple"][2]);
 
     let mine =
-        payload::set_state(stamp as u32, &world.system(SYSTEM).unwrap(), &ship, &[&ship], &[], SIM_TIME)
-            .unwrap();
+        payload::set_state(stamp as u32, &world.system(SYSTEM).unwrap(), &ship, &[&ship], &[], now).unwrap();
     let mine = describe(&mine);
     let mine_state = &mine["$tuple"][1]["$tuple"][1]["$tuple"][0]["args"]["$dict"];
 

@@ -91,7 +91,7 @@ internal sealed partial class CharacterServicesComposition
                 hasLoyaltyStoreService: (characterId, structureId, token) => structureDirectoryReadModel.CharacterHasServiceAsync(
                     characterId, structureId, Eve.Structures.StructureServiceIds.LoyaltyStore, token)),
             allianceRegistry,
-            publicQaSlashService = new SlashService(new ShipHealthCommands(ships, dogma, now, spaceSessions), spaceSessions is null ? null : new DeathTestCommands(spaceSessions, new ShipTypeNames(sde)), spaceSessions is null ? null : new SuicideCommands(spaceSessions), spaceSessions is null ? null : new NpcCommands(spaceSessions), new ItemCommands(new ItemTypeNames(sde), ships, dogma, now, spaceSessions), new SkillCommands(skillCatalog, skills, source, dogmaSync, now), new IskCommands(economyWallets, source, now, wallets, loyaltyPoints),
+            publicQaSlashService = new SlashService(new ShipHealthCommands(ships, dogma, now, spaceSessions), spaceSessions is null ? null : new DeathTestCommands(spaceSessions, new ShipTypeNames(sde)), spaceSessions is null ? null : new SuicideCommands(spaceSessions), spaceSessions is null ? null : new NpcCommands(spaceSessions), new ItemCommands(new ItemTypeNames(sde), ships, dogma, now, spaceSessions), new SkillCommands(skillCatalog, characters, training, announcer, characterSessions.Of), new IskCommands(economyWallets, source, now, wallets, loyaltyPoints),
                 new LoyaltyCommands(loyaltyPoints, new HostStandingDirectory(dogma, corporations, agentMissionAgentById, characters), now),
                 new StandingCommands(new HostStandingDirectory(dogma, corporations, agentMissionAgentById, characters), foundations.Relations,
                     (character, owner, standing) => characterSessions.Of(character)?.SendNotification("OnStandingSet", "clientID", new PyList(
@@ -102,7 +102,7 @@ internal sealed partial class CharacterServicesComposition
                 planetMgr is null ? null : new PiCommands(new HostPiControl(planetMgr)),
                 new IndustryCommands(new ItemTypeNames(sde), sde, new HostGmIndustry(ReadOwnedBlueprintsAsync, industryJobOperations.ReadJobsAsync)),
                 spaceSessions is null ? null : new SpawnCommands(new ItemTypeNames(sde), spaceSessions),
-                new SkillBulkCommands(skillCatalog, skills, source, characters, dogmaSync, now, characterSessions.Of),
+                new SkillBulkCommands(skillCatalog, skills, characters, training, announcer, characterSessions.Of),
                 new DogmaUpdateCommands(dogma, (session, character, token) => dogmaSync!.ShipAttributesChangedAsync(session, character, token)),
                 new KillRightCommands(characters, (owner, target, system, when, token) => crimewatchRuntime.GrantKillRightAsync(owner, target, system, when, token), now),
                 spaceSessions is null || spaceContainers is null ? null : new AsteroidCommands(async (session, token) => spaceSessions.SolarSystemOf(session) is { } system

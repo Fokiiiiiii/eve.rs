@@ -69,6 +69,16 @@ public sealed partial class AccessGroupStore
             return AccessRules.CanSee(role, group) ? new GroupView(group, role, AdminsOf(group, members)) : null;
         }, token);
 
+    /// <summary>The group summary visible to any reader: the reader's role and only the admins shown to the client.</summary>
+    public Task<GroupView?> GroupSummaryAsync(Affiliation who, long groupId, CancellationToken token = default) =>
+        InTransactionAsync(0, async (connection, tx) =>
+        {
+            var group = await GroupAsync(connection, tx, groupId, token);
+            if (group is null) return null;
+            var members = await SummaryMembersOfAsync(connection, tx, groupId, who, token);
+            return new GroupView(group, AccessRules.RoleOf(group, members, who), AdminsOf(group, members));
+        }, token);
+
     public Task<IReadOnlyList<AccessMember>> MembersAsync(Affiliation who, long groupId, CancellationToken token = default) =>
         InTransactionAsync(0, async (connection, tx) =>
         {
@@ -324,6 +334,24 @@ public sealed partial class AccessGroupStore
     {
         await using var command = Command(connection, tx,
             $"SELECT member_id, member_kind, membership_type FROM {_schema}.members WHERE group_id=$1 ORDER BY member_id", groupId);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        var members = new List<AccessMember>();
+        while (await reader.ReadAsync(token))
+            members.Add(new AccessMember(reader.GetInt64(0), (MemberKind)reader.GetInt16(1), (MembershipType)reader.GetInt16(2)));
+        return members;
+    }
+
+    private async Task<List<AccessMember>> SummaryMembersOfAsync(NpgsqlConnection connection, NpgsqlTransaction tx, long groupId,
+        Affiliation who, CancellationToken token)
+    {
+        // RoleOf needs only this reader's effective entries; the client summary also lists admins, not other member rows.
+        await using var command = Command(connection, tx,
+            $"SELECT member_id, member_kind, membership_type FROM {_schema}.members WHERE group_id=$1 AND " +
+            "((member_kind=$2 AND member_id=$3) OR (member_kind=$4 AND $5>0 AND member_id=$5) OR " +
+            "(member_kind=$6 AND $7>0 AND member_id=$7) OR (member_kind=$8 AND member_id=0) OR " +
+            "(member_kind=$9 AND membership_type=$10)) ORDER BY member_id",
+            groupId, (short)MemberKind.Character, who.CharacterId, (short)MemberKind.Corporation, who.CorporationId,
+            (short)MemberKind.Alliance, who.AllianceId, (short)MemberKind.Everyone, (short)MemberKind.Character, (short)MembershipType.Admin);
         await using var reader = await command.ExecuteReaderAsync(token);
         var members = new List<AccessMember>();
         while (await reader.ReadAsync(token))

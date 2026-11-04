@@ -46,6 +46,7 @@ public static class SkillEvents
     public const int TrainingStarted = 36;
     public const int TrainingComplete = 37;
     public const int TrainingCancelled = 38;
+    public const int FreeSkillPointsUsed = 307;
 
     /// <summary>A level finished with more lines waiting behind it.</summary>
     public const int QueueTrainingCompleted = 53;
@@ -225,7 +226,7 @@ public static class Training
             var trained = new CharacterSkill(line.TypeId, SkillPoints.LevelAt(rank, line.DestinationPoints), line.DestinationPoints);
             current[line.TypeId] = trained;
             finished.Add(trained);
-            history.Add(new HistoryEntry(now, queue.Count > 1 ? SkillEvents.QueueTrainingCompleted : SkillEvents.TrainingComplete, line.TypeId, line.DestinationPoints, line.ToLevel));
+            history.Add(new HistoryEntry(end, queue.Count > 1 ? SkillEvents.QueueTrainingCompleted : SkillEvents.TrainingComplete, line.TypeId, line.DestinationPoints, line.ToLevel));
             queue.RemoveAt(0);
             active = queue.Count > 0;
             activeStart = active ? end : null;

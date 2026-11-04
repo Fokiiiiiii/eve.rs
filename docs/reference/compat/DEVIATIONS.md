@@ -4814,9 +4814,17 @@ cannot see the list or its members; every change is logged. EveJS `ownerGroupMan
 - **Choice: rename, description and delete are admin only.** The wiki says "Admins can edit and delete the list" and does not give
   managers that right. EveJS let a manager rename (`UpdateName` required the manager type); the wiki is the higher source, so the
   manager is refused.
-- **Choice: who sees a list.** `GetMyGroups`, `GetGroup`, `GetGroupsMany` and the member and log reads show a list to its admins and
-  managers only (the wiki: members cannot see the list). A member of a list gets no list in its group reads, and its members and logs
-  answer empty or are refused. The picker's own groups are therefore the lists the character manages.
+- **Choice: read-only group summaries.** `GetGroup` and `GetGroupsMany` return the six client fields (`groupID`, `creatorID`, `name`,
+  `description`, the reader's `membershipType`, and admin ids) for any existing group. The published-link client calls `GetGroup` and
+  dereferences `creatorID`, `name`, `description`, and `admins` (`ownergroups/client/link.py:24-57`,
+  `eve/client/script/ui/structure/accessGroups/groupInfoWnd.py:34-57`). Structure profile editing fetches `GetGroupsMany` and omits
+  a setting from `SaveProfile(toSave)` when the summary is absent (`accessGroupsController.py:197`,
+  `structureSettingsWnd.py:83-103`). UniWiki's "Publish" section says a link shows the list name, description, and admins, not managers
+  (https://wiki.eveuniversity.org/Access_Lists). EveJS 261028.1 differs: `Handle_GetGroup` calls `getGroupForCharacter`, which filters
+  by membership (`ownerGroupManagerService.js:190-198`, `bookmarkRuntimeState.js:850-858`). The id-only client link and profile callsites
+  need these summaries for readers who do not manage the group, so this server returns only those fields and never member rows or logs.
+  `GetMyGroups` remains the list used for management; member and log reads and every write retain their existing role checks. The
+  registered Host regression covers managers, members, unrelated readers, missing ids, and denied member, log, and write calls.
 - **Choice: the corporation's built-in list.** The wiki says each corporation has a built-in list named after it, with the
   corporation as admin, that cannot be modified and that all corporation members may use. It takes the corporation's id as its group id
   (no sequence value; the sequence starts at 2000000001 above every character, corporation and alliance id), is created on the first

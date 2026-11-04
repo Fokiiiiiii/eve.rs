@@ -111,9 +111,15 @@ internal sealed class RepairRig : IAsyncDisposable
 
 public sealed class RepairServiceTests
 {
-    private static ClientSession Session(long character, long station)
+    private sealed class Sink : IPacketSink
     {
-        var session = new ClientSession { CharacterId = character };
+        public List<PyValue> Packets { get; } = [];
+        public void Send(PyValue packet) => Packets.Add(packet);
+    }
+
+    private static ClientSession Session(long character, long station, IPacketSink? sink = null)
+    {
+        var session = new ClientSession(sink) { CharacterId = character };
         session.Set("stationid", new PyInt(station));
         return session;
     }
@@ -247,14 +253,16 @@ public sealed class RepairServiceTests
         await rig.OpenWalletAsync(RepairRig.Character, 1m);
         var ship = await rig.CreateAsync(RepairRig.Character, RepairRig.Rifter);
         await rig.SetShipAsync(ship, Damaged);
+        var sink = new Sink();
 
         var refused = await Assert.ThrowsAsync<MachoWrappedException>(() =>
-            CallShop(rig.Service(), Session(RepairRig.Character, RepairRig.Station), RepairRig.Station, "RepairItemsInStation", Ids(ship), PyNone.Instance));
+            CallShop(rig.Service(), Session(RepairRig.Character, RepairRig.Station, sink), RepairRig.Station, "RepairItemsInStation", Ids(ship), PyNone.Instance));
 
         Assert.Equal("NotEnoughMoney", refused.Error.UserErrorMessage);
         Assert.Equal(Damaged, await rig.Modules.ShipConditionAsync(ship));
         Assert.Equal(1m, await rig.IskAsync(RepairRig.Character));
         Assert.Equal(0, await rig.JournalCountAsync(RepairService.RepairBillRefType, RepairRig.Character));
+        Assert.Empty(sink.Packets);
     }
 
     [RepairPgFact]

@@ -3345,21 +3345,30 @@ Status: the server side is implemented for NPC stations. The client has not been
   here); the wiki gives 30%–50% by station equipment (EVE University, "Refining"). Skill bonuses are the SDE's `refiningYieldMutator`
   (dogma attribute 379): Reprocessing (3385) 3% per level, Reprocessing Efficiency (3389), the ore skill named by the item's
   `reprocessingSkillType` (attribute 790), and Scrapmetal Processing (12196) for items without one; the wiki gives 3%, 2% and 2% per
-  level. The tax is the station's `reprocessingStationsTake` (0.05), reduced by the standing toward the station's owner to zero at
-  6.67 (wiki). The reduced rate is rounded to two decimals, as `round2` in `reprocessingRuntime.js` does.
+  level. The tax keeps the SDE `reprocessingStationsTake` and falls to zero at standing 6.67. It uses the higher of a recorded personal
+  standing after the eligible Connections, Criminal Connections or Diplomacy bonus and the player's corporation standing; a missing
+  personal standing row is ineligible for social-skill bonuses (EVE University, [Reprocessing](https://wiki.eveuniversity.org/Reprocessing),
+  [NPC standings](https://wiki.eveuniversity.org/NPC_standings)). The reduced rate is rounded to two decimals, as `round2` does.
 - **Quotes and reprocess.** A quote processes whole portions (`types.portionSize`); the leftovers stay. Each material yields its
   quantity times the portions times the efficiency, rounded down after removing binary noise (`floorAfterNormalizing` in
   `reprocessingRuntime.js`). The tax is charged on the yield at the material's adjusted price. `Reprocess` consumes the portions in
   one transaction with the output and the tax; the tax is a wallet entry with ref type 127 (`reprocessing_tax`, CCP eve-glue
   `JournalRefTypeEnumV2`). The answer is `[processedItemIDs, {typeID: quantity}]`, as `reprocessingService.js` returns it.
 - **Client contract.** `GetQuotes(itemIDs, activeShipID)` answers `[tax, {typeID: efficiency, None: fallback}, {itemID: quote}]`
-  (`reprocessingService.js` `Handle_GetQuotes`; the client reads `quotes.py:19-21`). The quote fields are the reference's.
+  (`reprocessingService.js` `Handle_GetQuotes`; `reprocessing/ui/quotes.py:18-29`). The client reuses that tax in the controller and
+  window (`reprocessing/ui/controller.py:101-103`, `reprocessing/ui/reprocessingWnd.py:619-621,822-824`). `Reprocess` returns
+  `[processedItemIDs, {typeID: quantity}]`; its controller unpacks the two values (`reprocessing/ui/controller.py:77-82`).
+  The output selector offers `(None, None)`, the docked station hangar, and divisions from the office at that station
+  (`reprocessing/ui/reprocessingWnd.py:343-366`); `itemReprocessor.py:17-46,69-70` derives the owner and sends those values.
 
 Differences and cuts, all listed:
 1. Sources: the caller's items rooted at this station: its hangar, its containers and the cargo of its ships (`RootAtStationAsync`).
    Corporation hangars are not quoted.
-2. Outputs: the sample item's place by default (EVE.js does the same); another personal place must be rooted at this station. Corporation
-   division output requires an active office at this station and the caller's scoped Hangar Query role; yielded items are owned by the corporation.
+2. Outputs: `(None, None)` keeps the sample item's owner/location/flag; explicit personal output is limited to the docked station hangar,
+   matching the client selector. Other personal flag/location pairs are refused before opening the mutation transaction. Corporation division
+   output requires an active office at this station, a selectable division flag and the caller's scoped Hangar Query access; yielded items are
+   owned by the corporation. EveJS 261028.1 uses the same-location default and checks the station hangar, office and accessible division
+   (`server/src/services/reprocessing/reprocessingRuntime.js:949-1048`).
 3. Structures: refused with a named notice (`Reprocessing is available in the NPC station you are docked in.`). The structure rigs and
    profiles of `reprocessingRuntime.js` are not built.
 4. Implants: the implants plugged in the character (flags 89 to 98) add their refining yield mutator to the skill multiplier of the
@@ -3372,10 +3381,18 @@ Differences and cuts, all listed:
 6. The active ship is refused on the server: the character's `ShipId` is checked (the reference checks it in `reprocessItems`).
 7. Randomized outputs (`typeHasRandomizedMaterials`) are not produced; an item with only randomized materials yields nothing here. Not built.
 8. Adjusted prices: from ESI (DEVIATIONS "Reprocessing", item 7). A type with no stored price has a tax of zero on its materials.
-9. The standing is the higher of the character's own and its corporation's standing toward the owner (the wiki's rule).
+9. Tax uses the higher of the effective eligible personal standing and raw player-corporation standing toward the NPC station owner. The
+   station owner's faction comes from its SDE record; the trained social skill level comes from `PgSkillStore`, and `AgentAccessRule`
+   selects Connections, Criminal Connections, Diplomacy or no bonus for that faction and standing. Without a personal standing relation,
+   the personal skill bonus is not applied. This follows the wiki's no-standing eligibility rule and the client's `standingUtil.py:14-42`
+   formula; no SDE base tax or wire field changed.
 10. Notices: a consumed stack is announced as `OnItemChange` with quantity 0 (a removed row) or with its new size; an output is announced
    as a new row. The same convention as the direct trade (DEVIATIONS "Direct trade"). Not checked against a client capture.
 11. `GetQuotes` skips items the station cannot reprocess (no materials, fewer than one portion) rather than answering a quote with an error.
+12. EveJS 261028.1's reprocessing context reads `standingRuntime.resolveBestStandingValue` (`server/src/services/reprocessing/reprocessingRuntime.js:355-411`),
+    which selects a personal standing source ahead of a corporation source (`server/src/services/character/standingRuntime.js:882-951`),
+    and `getStationTaxRate` uses that raw value (`server/src/services/reprocessing/reprocessingRuntime.js:536-586`). Eve.rs follows the wiki's
+    higher-standing rule and applies the eligible personal social skill because that is the stated NPC reprocessing-tax mechanic.
 
 
 ## Corporation station door (corpStationMgr, 37a)
@@ -3402,35 +3419,36 @@ Status: implemented. Tests: `Eve.Corporations.Tests` (`CorpStationMgrTests`, 4, 
 
 ## Repair (repairSvc, 37a)
 
-Status: the NPC station repair is implemented and tested in PostgreSQL (`RepairServiceTests`, 6 tests). The client has not been driven through a repair.
+Status: NPC station and Upwell structure repair are implemented and covered by PostgreSQL service and Host wire tests (`RepairServiceTests`, `RepairStructureHostWireTests`). The graphical client has not been driven through the repair shop.
 
-- **Damage and state.** The damage is the module state store's (`ship_condition`, `module_condition`), keyed by item id; the fractions are
-  the store's. Health is in HP: shield capacity, armor HP and structure HP are the dogma attributes `shieldCapacity`, `armorHP` and `hp`
-  (SDE attribute ids 263, 265 and 9). The damage is shield damage plus armor damage plus structure damage, as `getItemHealthSnapshot`
-  computes it in `repairRuntime.js`.
-- **Cost.** One unit of damage costs the adjusted price x 0.1 (`STATION_REPAIR_COST_MULTIPLIER`) divided by the maximum HP, rounded to
-  six decimals. The adjusted price is the ESI one (DEVIATIONS "Reprocessing", item 7). The full cost is the damage rounded up times the unit
-  cost, rounded to cents.
-- **Repair and payment.** A payment (or the full cost when None) is spent in the order given: each item is charged the part it can take up
-  to its full cost and repaired by what that buys (`executeRepairPlan`). The damage is repaired in the order structure, armor, shield
-  (`applyRepairToHealthSnapshot`). A repair with a fitted module is paid in full (`MODULE_PARTIAL_REPAIR`, as the notice).
-- **One transaction.** The charge (wallet ref type 15, `repair_bill`, CCP eve-glue) and the new condition are written in one PostgreSQL
-  transaction. The module store gained transaction-taking overloads for the reads and writes. The notices go out after the commit.
-- **Which items.** Items the caller owns, singleton, of a repairable group or category (`REPAIRABLE_GROUP_IDS` and
-  `REPAIRABLE_CATEGORY_IDS`), in this station through their containers. Anything else is skipped, as the reference skips it.
+- **Damage and state.** Hull and fitted-module damage fractions are stored by item in `ship_condition` and `module_condition`. Health is
+  calculated from the SDE dogma attributes `shieldCapacity`, `armorHP` and `hp`; repair writes the resulting condition in the same transaction.
+- **Cost.** NPC station repair uses the adjusted price x 0.1 divided by maximum HP, rounds unit cost to six decimals and charges the rounded
+  full cost (or a partial payment). Upwell structure repair quotes and repairs are free, with zero unit cost and zero structure tax; this
+  matches EveJS `repairRuntime.js:431-469` and its free structure repair plan.
+- **Access.** V24.01 maps `SERVICE_REPAIR` to `SETTING_HOUSING_CAN_DOCK` (`structures/services.py:119-127`) and checks service availability
+  before opening the UI (`eveCommands.py:2501-2509`). The server rechecks that profile setting for each structure quote and repair RPC, and
+  requires the structure core and a live structure. EVE University’s [Structure Browser](https://wiki.eveuniversity.org/Structure_Browser)
+  says repair is available with the required core. There is no online-service-module requirement: EveJS’s shared
+  `characterHasStructureService` also checks the service state (`structurePayloads.js:211-253`), which is intentionally not applied here.
+- **Repair and payment.** NPC wallet changes and condition changes commit together. Structure condition changes commit without a wallet charge.
+  Successful changes are announced after commit: any wallet update, then one `OnModuleAttributeChanges` carrying the changed SDE damage
+  attributes, then the existing `OnItemChange` for each repaired item. The V24.01 client unpacks new and old values and updates loaded damage
+  attributes in `clientDogmaLocation.py:309-336`; its `OnItemChange` path at `569-623` updates inventory state but not those damage
+  attributes. The UI’s `hangarView.py:800-803` consumes the resulting `OnDamageStateChanged` event.
+- **Wire and item selection.** The client binds `repairSvc` with a dock-session check, requests `GetRepairQuotes`, then calls
+  `RepairItemsInStructure(itemIDs)` or `RepairItemsInStation(itemIDs, payment)` (`base_repairshop.py:46-71`). Successful repair RPC replies
+  remain `None`; quote dictionaries retain their existing item-ID grouping and row fields.
 
 Differences and cuts:
-1. Structures: refused with a named notice (`Repair in structures is not available.`). The structure tax and the structure rules are not built.
-2. No price: an item with damage and no adjusted price is refused (`No repair price is known for that item.`). EVE.js invents a base
+1. Station repair still refuses a damaged item when no adjusted price is known; EveJS can invent a
    price from the volume (`getFallbackRepairBasePrice`) and repairs at that price; this server does not invent prices. An item with no damage
    is skipped.
-3. The reference's aliasing of a docked ship's module ids (`DOCKED_SHIP_REPAIR_ALIAS_OFFSET`) is not used: the quote rows carry the real
+2. Docked ship module IDs are not aliased; quote rows carry the real
    item ids. The client accepts them because the execution reads them back.
-4. No durable settlement (`repair.settle`): the charge is in the same transaction as the repair, so a settlement that fails midway is rolled back, not queued.
-5. The notice to the client is an `OnItemChange` for each repaired item (the same rows the docked heal sends); the damage itself is read from
-   the item's dogma. The reference sends attribute notices (`syncDamageStateAttributesForSession`). Not checked against a client capture.
-6. The fitted modules of a ship in the hangar are quoted with the ship (`CATEGORY_SHIP` in the hangar, fitted slots and the drone bay).
-   The station-side contents are read outside the repair's transaction; a fitting changed during the repair is not seen by that repair.
+3. Durable settlement is not used: NPC wallet and condition writes share one transaction, so failures roll back instead of queuing settlement.
+4. Fitted modules and drone-bay items are quoted with a ship in the hangar (`CATEGORY_SHIP` in the hangar, fitted slots and the drone bay).
+   Those contents are read outside the repair transaction, so a fitting change during repair is not seen by that repair.
 
 
 ## Bookmarks: personal folders (accessGroupBookmarkMgr, 37a)

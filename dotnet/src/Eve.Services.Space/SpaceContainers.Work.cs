@@ -449,4 +449,15 @@ public sealed partial class SpaceContainers
             new(new PyStr("notify"), new PyStr(notice))])));
     }
 
+    internal static string ClassifySalvageFaction(string source) => CharacterShips.ClassifySalvageFaction(source);
+
+    internal static bool IsLargeSalvageWreck(string source) => CharacterShips.IsLargeSalvageWreck(source);
+
+    internal static IReadOnlyList<(int TypeId, double Weight)> BuildSalvagePool(
+        string faction, bool isLarge, IReadOnlyList<(int TypeId, string Name)> products) =>
+        CharacterShips.BuildSalvagePool(faction, isLarge, products);
+
+    internal static int? SelectWeightedSalvageProductTypeId(
+        IReadOnlyList<(int TypeId, double Weight)> pool, double roll) =>
+        CharacterShips.SelectWeightedSalvageProductTypeId(pool, roll);
 }

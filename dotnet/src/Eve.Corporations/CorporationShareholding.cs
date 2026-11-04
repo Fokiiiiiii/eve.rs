@@ -9,5 +9,5 @@ using Npgsql;
 
 namespace Eve.Corporations;
 
-/// <summary>Corporations and alliances own their schema. A membership change and its fee share one PostgreSQL transaction.</summary>
+/// <summary>A shareholder's number of shares in a corporation.</summary>
 public sealed record CorporationShareholding(long ShareholderId,long CorporationId,long Shares);

@@ -486,9 +486,8 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
     }
 
     /// <summary>
-    /// The wallet read rule of the market transactions tab (EVE.js corporationAuthority.js, V24.01 ValidateCorpWalletDivisionReadAccess):
-    /// an Accountant or a Junior Accountant reads every division; any other member reads only the division whose Account Take role it holds,
-    /// so a null division (every division) needs the accountant role. Nothing is changed.
+    /// Accountants and junior accountants can read every wallet division; other members need the selected division's Account Take role.
+    /// An omitted division therefore requires one of the accountant roles. This check is read-only.
     /// </summary>
     public async Task<bool> CanReadWalletDivisionAsync(long characterId,int? accountKey,CancellationToken token = default)
     {

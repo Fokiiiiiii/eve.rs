@@ -17,7 +17,7 @@ public sealed record CorporationOffice(long OfficeId, long OfficeFolderId, long 
 public sealed record CorporationOfficeStation(long Id, int TypeId, long OwnerId, long SolarSystemId,
     double Security, int OfficeCapacity = 24);
 
-/// <summary>Durable corporation office rentals, daily rental quotes, and the next-cycle bill.</summary>
+/// <summary>A rent bill issued for a corporation office.</summary>
 public sealed record CorporationOfficeRentBill(
     long BillId,
     long OfficeId,

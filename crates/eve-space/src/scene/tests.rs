@@ -1064,7 +1064,7 @@ fn a_ship_told_to_follow_says_so_and_a_repeat_says_nothing() {
 fn a_ship_that_stands_still_is_set_going_by_the_command_that_follows_orbits_or_aligns() {
     let stopped = || {
         let mut scene = scene();
-        scene.command(SESSION, Command::Stop, NOON);
+        scene.command(SESSION, Command::SetSpeedFraction(0.0), NOON);
         scene
     };
     let later = NOON + seconds(120);
@@ -1085,6 +1085,13 @@ fn a_ship_that_stands_still_is_set_going_by_the_command_that_follows_orbits_or_a
     let align = stopped().command(SESSION, Command::AlignTo { target_id: STATION }, later);
     assert_eq!(action_names(&align[0]), ["GotoDirection", "SetSpeedFraction"]);
     assert_eq!(speed_set(&align), Some(vec![Value::Real(0.75)]));
+
+    let mut retained = scene();
+    retained.command(SESSION, Command::SetSpeedFraction(0.5), NOON);
+    retained.command(SESSION, Command::Stop, NOON + seconds(1));
+    let follow = retained.command(SESSION, Command::FollowBall { target_id: STATION, range: 1_000.0 }, later);
+    assert_eq!(action_names(&follow[0]), ["FollowBall"]);
+    assert_eq!(retained.ship(SESSION, later).unwrap().speed_fraction, 0.5);
 
     // a ship already moving keeps its speed and says nothing of it
     let moving = scene().command(SESSION, Command::AlignTo { target_id: STATION }, later);

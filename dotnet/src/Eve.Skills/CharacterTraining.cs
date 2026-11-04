@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using Npgsql;
 
 namespace Eve.Skills;
@@ -72,7 +71,14 @@ public sealed class CharacterTraining(
 {
     private const long UnixEpochInFileTime = 116_444_736_000_000_000;
     private const int SlotsPerAccount = 1;
-    private readonly ConcurrentDictionary<long, SemaphoreSlim> settleGates = new();
+
+    private sealed class SettleGate
+    {
+        public SemaphoreSlim Semaphore { get; } = new(1, 1);
+        public int References { get; set; }
+    }
+
+    private readonly Dictionary<long, SettleGate> settleGates = new();
 
     public TrainingSettings Settings => settings;
 
@@ -395,22 +401,56 @@ public sealed class CharacterTraining(
         return SettleAtFileTimeAsync(characterId, accountId, maxFinished, at, at, cancellationToken);
     }
 
+    // Keep queued callers registered so one character cannot split across gates during eviction.
+    private SettleGate AcquireSettleGate(long characterId)
+    {
+        lock (settleGates)
+        {
+            if (!settleGates.TryGetValue(characterId, out var gate))
+            {
+                gate = new SettleGate();
+                settleGates.Add(characterId, gate);
+            }
+            gate.References++;
+            return gate;
+        }
+    }
+
+    private void ReleaseSettleGateReference(long characterId, SettleGate gate)
+    {
+        lock (settleGates)
+        {
+            if (--gate.References == 0)
+            {
+                settleGates.Remove(characterId);
+                gate.Semaphore.Dispose();
+            }
+        }
+    }
+
     private async Task<TrainingUpdate?> SettleAtFileTimeAsync(long characterId, long accountId, int maxFinished, long atFileTime, long bonusAtFileTime, CancellationToken cancellationToken)
     {
-        var gate = settleGates.GetOrAdd(characterId, static _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync(cancellationToken);
-        TrainingUpdate? update;
+        var gate = AcquireSettleGate(characterId);
         try
         {
-            update = await SettleCoreAsync(characterId, accountId, maxFinished, atFileTime, bonusAtFileTime, cancellationToken);
+            await gate.Semaphore.WaitAsync(cancellationToken);
+            TrainingUpdate? update;
+            try
+            {
+                update = await SettleCoreAsync(characterId, accountId, maxFinished, atFileTime, bonusAtFileTime, cancellationToken);
+            }
+            finally
+            {
+                gate.Semaphore.Release();
+            }
+            if (update is not null)
+                await RaiseSettledAsync(update);
+            return update;
         }
         finally
         {
-            gate.Release();
+            ReleaseSettleGateReference(characterId, gate);
         }
-        if (update is not null)
-            await RaiseSettledAsync(update);
-        return update;
     }
 
     private async Task<TrainingUpdate?> SettleCoreAsync(long characterId, long accountId, int maxFinished, long atFileTime, long bonusAtFileTime, CancellationToken cancellationToken)

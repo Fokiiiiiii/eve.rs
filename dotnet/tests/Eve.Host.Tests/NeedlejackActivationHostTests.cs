@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using Eve.Crimewatch;
+using Eve.Content;
 using Eve.Dogma;
 using Eve.Host;
 using Eve.Inventory;
@@ -25,6 +26,7 @@ public sealed class NeedlejackActivationHostTests
     private const int NeedlejackGroupId = 4041;
     private const int CapacityAttributeId = 2832;
     private const int ActivityAttributeId = 3025;
+    private const int CapitalSizeAttributeId = 1785;
 
     [PgFact]
     public async Task Host_registration_uses_noise_and_signal_activity_and_moves_the_consumed_stack_once()
@@ -143,6 +145,56 @@ public sealed class NeedlejackActivationHostTests
         AssertErrorCode(activeTimer, 8);
         Assert.Equal(2, (await rig.Items.GetAsync(filamentId))!.Quantity);
         Assert.Equal(0, await ActivationCountAsync(rig));
+    }
+
+    [PgFact]
+    public async Task Host_rejects_capital_hulls_and_fleets_above_the_sde_candidate_limit()
+    {
+        await using var rig = await AbyssalHostFlowTests.Rig.Create();
+        using var fixture = await SetupAsync(rig);
+
+        var capitalTypeId = await CapitalShipTypeAsync(rig, fixture.Dogma);
+        var capitalRun = await rig.CreateRun(enter: false, shipTypeId: capitalTypeId);
+        var capitalSession = await rig.ConnectPublic(capitalRun);
+        var capitalCharacterId = capitalRun.Data.CreatorCharacterId;
+        var capitalFilamentTypeId = await FilamentTypeAsync(rig, fixture.Dogma, 0);
+        var capitalFilamentId = await CreateFilamentAsync(rig, capitalCharacterId, capitalRun.Data.CreatorShipId, capitalFilamentTypeId, 1);
+        await fixture.CrimewatchStore.SetSafetyAsync(capitalCharacterId, SafetyLevel.Partial, rig.Now);
+        await AddFleetMemberAsync(rig, capitalCharacterId, capitalRun.Data.CreatorShipId);
+
+        var capital = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            fixture.Service.CallAsync(ActivateCall(capitalSession, capitalFilamentId, 42)).AsTask());
+
+        AssertErrorCode(capital, 4);
+        Assert.Equal(1, (await rig.Items.GetAsync(capitalFilamentId))!.Quantity);
+
+        var filamentTypeId = await FilamentTypeAsync(rig, fixture.Dogma, 0);
+        var maximumShips = checked((int)fixture.Dogma.Type(filamentTypeId)!.Attributes[CapacityAttributeId]);
+        var fleet = new List<(AbyssalRunState Run, ClientSession Session)>();
+        for (var i = 0; i <= maximumShips; i++)
+        {
+            var run = await rig.CreateRun(enter: false);
+            fleet.Add((run, await rig.ConnectPublic(run)));
+        }
+        for (var i = 0; i < fleet.Count; i++)
+        {
+            var run = fleet[i].Run;
+            await fixture.CrimewatchStore.SetSafetyAsync(run.Data.CreatorCharacterId, SafetyLevel.Partial, rig.Now);
+            await AddFleetMemberAsync(rig, run.Data.CreatorCharacterId, run.Data.CreatorShipId, 2,
+                i == 0 ? FleetStore.Leader : FleetStore.Member);
+        }
+
+        var filamentId = await CreateFilamentAsync(rig, fleet[0].Run.Data.CreatorCharacterId,
+            fleet[0].Run.Data.CreatorShipId, filamentTypeId, 1);
+        var overCapacity = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            fixture.Service.CallAsync(ActivateCall(fleet[0].Session, filamentId, 43)).AsTask());
+
+        Assert.Equal(PyList.Of(PyList.Of(new PyInt(24), PyList.Of(new PyInt(maximumShips)))), ErrorValue(overCapacity, "errors"));
+        Assert.Equal(1, (await rig.Items.GetAsync(filamentId))!.Quantity);
+        Assert.Equal(0, await ActivationCountAsync(rig));
+        Assert.Empty(fixture.Simulation!.Moves);
+        foreach (var (run, _) in fleet)
+            Assert.Equal(0, (await fixture.CrimewatchStore.StateOfAsync(run.Data.CreatorCharacterId)).PvpUntilMs);
     }
 
     [PgFact]
@@ -353,6 +405,22 @@ public sealed class NeedlejackActivationHostTests
                 return (int)row.Key;
         }
         throw new InvalidOperationException($"The pinned SDE has no Needlejack type for activity mode {mode}.");
+    }
+
+    private static async Task<int> CapitalShipTypeAsync(AbyssalHostFlowTests.Rig rig, DogmaStatic dogma)
+    {
+        var groups = await rig.Sde.ReadAsync("groups", cancellationToken: CancellationToken.None);
+        var shipGroupIds = groups.Where(row => row.Doc.TryGetProperty("categoryID", out var category) && category.GetInt32() == 6)
+            .Select(row => (int)row.Key).ToHashSet();
+        var rows = await rig.Sde.ReadAsync("types", cancellationToken: CancellationToken.None);
+        var shipTypeIds = rows.Where(row => row.Doc.TryGetProperty("groupID", out var group) && shipGroupIds.Contains(group.GetInt32()))
+            .Select(row => (int)row.Key).ToArray();
+        await dogma.EnsureTypesAsync(shipTypeIds);
+        var capitalTypeId = shipTypeIds.FirstOrDefault(typeId => dogma.Type(typeId) is { CategoryId: 6 } hull &&
+            hull.Attributes.TryGetValue(CapitalSizeAttributeId, out var capitalSize) && capitalSize > 0);
+        if (capitalTypeId <= 0)
+            throw new InvalidOperationException("The pinned SDE has no ship with a positive capital-size attribute.");
+        return capitalTypeId;
     }
 
     private static async Task<long> CreateFilamentAsync(AbyssalHostFlowTests.Rig rig, long characterId, long shipId, int typeId, long quantity)

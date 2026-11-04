@@ -224,6 +224,32 @@ fn an_active_criminal_flag_is_told_once_to_sentries_subscribed_in_its_system() {
 }
 
 #[test]
+fn pending_crime_events_wait_for_sentry_subscribers_across_multiple_ticks() {
+    let (mut scene, _) = scene_with_a_rat();
+    scene.security_status_losses.push((1_000_001, PLAYER_SHIP));
+    scene.criminal_flag_activations.push((1_000_002, PLAYER_SHIP + 1));
+    with_world(&mut scene, LATER, |world, brains| {
+        world.tell_what_happened(&mut brains.shared);
+        assert!(heard(brains).is_empty());
+        world.tell_what_happened(&mut brains.shared);
+        assert!(heard(brains).is_empty());
+
+        brains.shared.events.subscribe_item(30_000_001, message::SEC_STATUS_LOST_EVENT, WATCHER);
+        brains.shared.events.subscribe_item(30_000_001, message::CRIMINAL_FLAG_ACTIVE, WATCHER);
+        world.tell_what_happened(&mut brains.shared);
+        assert_eq!(
+            heard(brains),
+            [
+                vec![Value::Int(1_000_001), Value::Int(PLAYER_SHIP)],
+                vec![Value::Int(1_000_002), Value::Int(PLAYER_SHIP + 1)],
+            ]
+        );
+        world.tell_what_happened(&mut brains.shared);
+        assert!(heard(brains).is_empty());
+    });
+}
+
+#[test]
 fn the_bubble_is_told_when_the_protection_of_a_ship_ends_by_time_or_by_the_pilot() {
     let (mut scene, _) = scene_with_a_rat();
     let bubble_of_player =

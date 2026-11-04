@@ -23,7 +23,7 @@ public interface IWeaponBankStore
 /// </summary>
 public sealed partial class CharacterShips(
     NpgsqlDataSource source, DogmaStatic statics, PgCharacterStore characters, PgItemStore items, PgSkillStore skills, PgModuleStateStore modules,
-    CharacterTraining? training = null, ExpertSystems? expertSystems = null) : IWeaponBankStore
+    CharacterTraining? training = null, ExpertSystems? expertSystems = null, string spaceSchema = PgSpaceItemStore.DefaultSchema) : IWeaponBankStore
 {
     /// <summary>The inventory flags a ship's contents can be in besides its slots: the cargo hold.</summary>
     public const int CargoFlag = 5;

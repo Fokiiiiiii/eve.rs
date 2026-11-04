@@ -670,7 +670,7 @@ public class DroneHostTests
     public async Task A_salvage_drone_cycle_consumes_a_wreck_and_persists_an_sde_salvage_product()
     {
         await using var rig = await Rig.CreateAsync();
-        rig.Containers.SalvageRewardRoll = () => 0.99;
+        rig.Ships.SalvageRewardRoll = () => 0.99;
         var types = await new Eve.Sde.SdeReader(rig.Source).ReadTypeSummariesAsync();
         var droneTypeId = SdeTypeId(types, "Salvage Drone I");
         var wreckTypeId = Assert.Single(types, type => type.Name == "Amarr Frigate Wreck").TypeId;
@@ -681,17 +681,11 @@ public class DroneHostTests
 
         var flying = await FlyingWithADroneAsync(rig, droneTypeId: droneTypeId);
         await LaunchAsync(flying);
-        long wreckId;
-        await using (var connection = await rig.Source.OpenConnectionAsync())
-        await using (var transaction = await connection.BeginTransactionAsync())
-        {
-            wreckId = await rig.Items.CreateAsync(connection, transaction,
-                new NewItem(wreckTypeId, flying.Character, flying.System, CharacterShips.InSpaceFlag, 1, true));
-            await rig.SpaceItems.SaveAsync(connection, transaction,
-                new SpaceItem(wreckId, flying.System, [0d, 0d, 0d], [0d, 0d, 1d], 10d, wreckType.GroupId,
-                    0, flying.Character, 0, 0, 0, long.MaxValue));
-            await transaction.CommitAsync();
-        }
+        var made = await rig.Ships.LeaveWreckAsync(wreckTypeId, flying.Character, flying.System, []);
+        var wreckId = made.Wreck.Id;
+        await rig.SpaceItems.SaveAsync(new SpaceItem(
+            wreckId, flying.System, [0d, 0d, 0d], [0d, 0d, 1d], 10d, wreckType.GroupId,
+            0, flying.Character, 0, 0, 0, long.MaxValue));
 
         var order = await rig.EntityCallAsync(
             flying.Session, "CmdSalvage", flying.Entity, new PyList([InventoryWire.Id(flying.Drone)]), new PyLong(wreckId));

@@ -9,9 +9,8 @@ public sealed record ItemLockChange(long ItemId, long CorporationId, long Locati
 public sealed record LockedCorporationItem(long ItemId, int TypeId, long CorporationId, long LocationId);
 
 /// <summary>
-/// Corporation item locks. The V24.01 client sets none: a blueprint vote (lockdown) locks a corporation's blueprint for the
-/// vote and an unlock vote releases it. Industry jobs also set the blueprint's lock flag, so the locks the client sees are kept
-/// here, apart from the job locks, and written in the same transaction as the flag.
+/// Tracks blueprint locks created by corporation votes for the V24.01 <c>itemLocking</c> reads.
+/// Vote outcomes update this index with the item's lock flag in one transaction.
 /// </summary>
 public sealed partial class CorporationStore
 {

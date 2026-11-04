@@ -4,8 +4,7 @@ using Xunit;
 
 namespace Eve.Corporations.Tests;
 
-/// <summary>
-/// </summary>
+/// <summary>Checks that uncredited station rent bills are assigned to the station owner exactly once.</summary>
 public sealed class StationBillCreditorMigrationTests
 {
     private const long LegacyCorporation = 80_000_001, ChargedCorporation = 80_000_002;

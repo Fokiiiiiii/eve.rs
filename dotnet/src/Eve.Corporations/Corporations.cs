@@ -1,4 +1,3 @@
-// Domain shapes for EVE.js corporationRuntimeState, corpRegistryRuntime and allianceRegistryRuntime (828823a), ADR 0009.
 using System.Text.Json;
 
 namespace Eve.Corporations;
@@ -48,7 +47,7 @@ public sealed record AllianceMember(long AllianceId, long CorporationId, long St
 
 public sealed record AllianceDepartureMutation(AllianceMember? Member, Alliance? Before, Alliance? After, bool Duplicate);
 
-/// <summary>Rules and numeric masks ported from corporationRuntimeState.js. No protocol or database dependency.</summary>
+/// <summary>Pure corporation role-mask rules, independent of persistence and protocol state.</summary>
 public static class CorporationRoles
 {
     public const long Director = 1;

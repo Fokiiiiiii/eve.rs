@@ -10,6 +10,10 @@ internal sealed class TrainingRig : IAsyncDisposable
     private static readonly SkillType Turret = new(3301, "Small Hybrid Turret", 255, "Gunnery", true, 1, 167, 168);
     private static readonly SkillType Command = new(3327, "Spaceship Command", 257, "Spaceship Command", true, 1, 167, 168);
     private static readonly SkillType Rank5 = new(3317, "Rank Five", 257, "Spaceship Command", true, 5, 167, 168);
+    private static readonly SkillType CapRank16 = new(4001, "Rank 16 cap filler", 257, "Spaceship Command", true, 16, 167, 168);
+    private static readonly SkillType CapRank3 = new(4002, "Rank 3 cap filler", 257, "Spaceship Command", true, 3, 167, 168);
+    private static readonly SkillType CapRank15 = new(4003, "Rank 15 cap filler", 257, "Spaceship Command", true, 15, 167, 168);
+    private static readonly SkillType CapRank2 = new(4004, "Rank 2 cap filler", 257, "Spaceship Command", true, 2, 167, 168);
 
     private readonly PgSchema _schema;
 
@@ -20,7 +24,9 @@ internal sealed class TrainingRig : IAsyncDisposable
     private TrainingRig(PgSchema schema, TrainingSettings settings)
     {
         _schema = schema;
-        Catalog = new SkillCatalog([Turret, Command, Rank5], new Dictionary<int, IReadOnlyList<StartingSkill>>());
+        Catalog = new SkillCatalog([Turret, Command, Rank5, CapRank16, CapRank3, CapRank15, CapRank2],
+            new Dictionary<int, IReadOnlyList<StartingSkill>>(),
+            alphaMaxLevelsByRace: new Dictionary<int, IReadOnlyDictionary<int, int>> { [1] = new Dictionary<int, int> { [3301] = 5 } });
         Store = new PgTrainingStore(schema.Source, schema.Name);
         Training = new CharacterTraining(schema.Source, Catalog, schema.Store, Store, new TrainingSettings
         {
@@ -56,6 +62,18 @@ internal sealed class TrainingRig : IAsyncDisposable
     /// <summary>A new character's skills: Small Hybrid Turret I, Spaceship Command III and Rank Five I.</summary>
     public Task GiveAsync(long character) => _schema.GrantAsync(character, [new CharacterSkill(3301, 1, 250), new CharacterSkill(3327, 3, 8000), new CharacterSkill(3317, 1, 1250)]);
 
+    public Task GiveAlphaCapSkillPointsAsync(long character, long totalSkillPoints)
+    {
+        var rank15Points = totalSkillPoints - 9_500 - SkillPoints.ForTraining(16, 5) - SkillPoints.ForTraining(3, 5) - SkillPoints.ForTraining(2, 1);
+        return _schema.GrantAsync(character,
+        [
+            new CharacterSkill(4001, 5, SkillPoints.ForTraining(16, 5)),
+            new CharacterSkill(4002, 5, SkillPoints.ForTraining(3, 5)),
+            new CharacterSkill(4003, 3, rank15Points),
+            new CharacterSkill(4004, 1, SkillPoints.ForTraining(2, 1)),
+        ]);
+    }
+
     public void Wait(TimeSpan time) => ClockMs += (long)time.TotalMilliseconds;
 
     public static IReadOnlyList<long> Alone => [Character];
@@ -67,6 +85,16 @@ internal sealed class TrainingRig : IAsyncDisposable
 
     public Task<SaveOutcome> SaveAsync(bool activate, params (int Type, int Level)[] entries) =>
         Training.SaveQueueAsync(Character, Account, [.. entries.Select(e => new QueueEntry(e.Type, e.Level))], activate, Alone);
+
+    public Task<SaveOutcome> SaveAlphaAsync(bool activate, params (int Type, int Level)[] entries) =>
+        Training.SaveQueueAsync(Character, Account, [.. entries.Select(e => new QueueEntry(e.Type, e.Level))], activate, Alone, isAlphaClone: true, raceId: 1);
+
+    public async Task<long> PersistedSkillPointsAsync(long character)
+    {
+        await using var connection = await _schema.Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        return await _schema.Store.TotalPointsAsync(connection, transaction, character);
+    }
 
     public async ValueTask DisposeAsync() => await _schema.DisposeAsync();
 }
@@ -277,6 +305,47 @@ public class CharacterTrainingTests
         var empty = await rig.SavedAsync(await rig.SaveAsync(true));
         Assert.True(empty.Paused);
         Assert.Empty(empty.Update.View.Queue);
+    }
+
+    [PgFact]
+    public async Task Saving_an_alpha_queue_with_an_unchanged_running_head_counts_elapsed_points_once()
+    {
+        await using var rig = await TrainingRig.CreateAsync();
+        var started = await rig.SavedAsync(await rig.SaveAsync(true, (3301, 2)));
+        var activeStart = started.Update.View.State.ActiveStart;
+        rig.Wait(22 * Minute);
+
+        const long persistedPoints = 4_999_000;
+        await rig.GiveAlphaCapSkillPointsAsync(TrainingRig.Character, persistedPoints);
+        var view = await rig.Training.ViewAsync(TrainingRig.Character, TrainingRig.Account);
+        var head = Assert.Single(view.Queue);
+        Assert.Equal((3301, 2), (head.TypeId, head.ToLevel));
+        Assert.Equal(activeStart, view.State.ActiveStart);
+
+        var elapsed = Training.PointsAt(head.StartPoints, head.DestinationPoints, head.Start!.Value, rig.Training.Now, head.PointsPerMinute) - head.StartPoints;
+        var fullQueueIncrement = view.Queue.Sum(line => line.DestinationPoints - line.StartPoints);
+        Assert.Equal(persistedPoints, await rig.PersistedSkillPointsAsync(TrainingRig.Character));
+        Assert.Equal(1_165, fullQueueIncrement);
+        var overCap = persistedPoints + fullQueueIncrement - Training.AlphaMaxTrainingSkillPoints;
+        Assert.True(overCap > 0 && overCap < elapsed);
+
+        var refused = Assert.IsType<QueueRefused>(await rig.SaveAlphaAsync(true, (3301, 2)));
+        Assert.Equal(QueueError.OverAlphaSpTrainingSize, refused.Error);
+
+        foreach (var total in new[] { Training.AlphaMaxTrainingSkillPoints - fullQueueIncrement - 1, Training.AlphaMaxTrainingSkillPoints - fullQueueIncrement })
+        {
+            await rig.GiveAlphaCapSkillPointsAsync(TrainingRig.Character, total);
+            Assert.Equal(total, await rig.PersistedSkillPointsAsync(TrainingRig.Character));
+            var saved = Assert.IsType<QueueSaved>(await rig.SaveAlphaAsync(true, (3301, 2)));
+            Assert.False(saved.Paused);
+            Assert.Equal(activeStart, saved.Update.View.State.ActiveStart);
+        }
+
+        await rig.GiveAlphaCapSkillPointsAsync(TrainingRig.Character, persistedPoints);
+        var paused = Assert.IsType<QueueSaved>(await rig.SaveAlphaAsync(false, (3301, 2)));
+        Assert.True(paused.Paused);
+        Assert.False(paused.Update.View.State.Running);
+        Assert.Equal(head.StartPoints + elapsed, paused.Update.Rebased!.SkillPoints);
     }
 
     [PgFact]

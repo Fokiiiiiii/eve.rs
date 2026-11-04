@@ -177,7 +177,8 @@ public static class Training
                 return QueueError.RequiresOmegaCloneState;
             }
             var additionalPoints = whole.Entries.Sum(entry => entry.DestinationPoints - entry.StartPoints) - pointsAlreadyTrainedInCurrentLine;
-            if (skills.Values.Sum(skill => skill.SkillPoints) + freeSkillPoints + additionalPoints > AlphaMaxTrainingSkillPoints)
+            var trainedPoints = skills.Values.Sum(skill => skill.SkillPoints) + freeSkillPoints + pointsAlreadyTrainedInCurrentLine;
+            if (trainedPoints + additionalPoints > AlphaMaxTrainingSkillPoints)
             {
                 return QueueError.OverAlphaSpTrainingSize;
             }

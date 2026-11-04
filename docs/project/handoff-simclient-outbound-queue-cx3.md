@@ -34,6 +34,14 @@ The bounded queue implementation and post-merge local checks are complete. Queue
 
 ## Main CI gate
 
-The latest green `CI` workflow before the `4fe2df93` push was run 1518 on `68e2db0c03e5`: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41919696018. Push-triggered run 1519 for `4fe2df93` completed with the Host RPC fuzz cleanup timeout above. The next push is permitted only for the fix to `Registered_rpcs_refuse_seeded_hostile_arguments_through_dispatcher`; recheck the current main status and branch before pushing.
+The RPC fuzz cleanup timeout fix reached `main` in `2178010953f5`. CI run 1520 completed successfully: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41929981873. Selected Agent test run 1329 also passed: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41930004669. Recheck the gate and fetch `origin/main` before the next push.
 
 Earlier, main CI run 1515 failed on `HostServerTests.Registered_lp_store_and_wallet_routes_return_the_client_consumed_shapes` (`LpStoreRpcHostWireTests.cs:154,165`). That failure was fixed on main at `96d6bb8f2b15`; CI run 1516 completed successfully: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41898752417.
+
+## Cancellation and retry follow-up (CX10)
+
+- Generic requests and charge adjustments register exact-entry cancellation cleanup and enqueue through the bounded outbound queue while holding `_pendingGate`. A pre-cancelled token removes its pending completion before enqueue; when enqueue wins the gate, a later cancellation affects the waiter while preserving the accepted frame. Late cleanup cannot remove a retry that reused the same key.
+- Abyssal requests keep the cancelled-task return behavior before request validation, then check connection loss under `_pendingGate` and use the same generic enqueue path.
+- The touched `SimClient` is the internal Host-to-simulation link (`dotnet/src/Eve.Space/SimClient.cs:5-8`). Whole-tree searches of `/home/user/eve-logic` found no `SimClient`, `SimAdjustCharge`, or `SimHello` symbols, so no EVE client RPC, reply, notification, or session-field shape changed.
+- After merging `origin/main` at `2178010953f5`, `Eve.Space`, `Eve.Space.Tests`, `Eve.Host.Tests`, and `Eve.Services.Space.Tests` builds passed with 0 warnings and 0 errors. On `eve_p10`, `SimClientTests` passed 33/33; the 21 selected real-simulation Host DB tests passed 21/21; `When_the_simulation_is_lost_the_ship_docks_at_the_station_the_character_left` passed 1/1. All reported 0 skipped. The `eve-sim` Rust binary build also succeeded to run the real-simulation cases.
+- The cancellation changes are in local commit `9bf04318`; the tested merge resolution is `be78f4aa`. This handoff was updated before pushing the combined history to `main`.

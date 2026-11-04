@@ -78,7 +78,8 @@ public class LoyaltyPointsServiceTests
         await store.ApplyAndCommitAsync(new LoyaltyHolder(LoyaltyHolderKind.Character, PilotId), IssuerId, 240, "mission", "char-1");
         await store.ApplyAndCommitAsync(new LoyaltyHolder(LoyaltyHolderKind.Corporation, CorporationId), IssuerId, 880, "donation", "corp-1");
         var service = new LoyaltyPointsService(store,
-            (characterId, _) => Task.FromResult<long?>(characterId == PilotId ? CorporationId : null));
+            (characterId, _) => Task.FromResult<long?>(characterId == PilotId ? CorporationId : null),
+            isDirector: (characterId, corporationId, _) => ValueTask.FromResult(characterId == PilotId && corporationId == CorporationId));
         var session = Pilot(new Sink());
 
         var character = await service.CallAsync(Call("GetAllMyCharacterWalletLPBalances", session));
@@ -89,13 +90,30 @@ public class LoyaltyPointsServiceTests
     }
 
     [LpPgFact]
-    public async Task A_stale_session_corporation_id_cannot_read_the_former_corporations_loyalty_balances()
+    public async Task A_stale_session_corporation_id_reads_only_the_current_directors_corporation_balance()
     {
         await using var db = new Db();
         var store = await db.StoreAsync();
         await store.ApplyAndCommitAsync(new LoyaltyHolder(LoyaltyHolderKind.Corporation, CorporationId), IssuerId, 880, "donation", "corp-stale");
+        await store.ApplyAndCommitAsync(new LoyaltyHolder(LoyaltyHolderKind.Corporation, CorporationId + 1), IssuerId, 660, "donation", "corp-current");
         var service = new LoyaltyPointsService(store,
-            (_, _) => Task.FromResult<long?>(CorporationId + 1));
+            (_, _) => Task.FromResult<long?>(CorporationId + 1),
+            isDirector: (_, corporationId, _) => ValueTask.FromResult(corporationId == CorporationId + 1));
+        var session = Pilot(new Sink());
+
+        Assert.Equal(new[] { (IssuerId, 660L) }, Lines(await service.CallAsync(Call("GetAllMyCorporationWalletLPBalances", session)))
+            .Select(row => (((PyInt)row.Items[0]).Value, ((PyInt)row.Items[1]).Value)));
+    }
+
+    [LpPgFact]
+    public async Task A_non_director_receives_no_corporation_loyalty_balance()
+    {
+        await using var db = new Db();
+        var store = await db.StoreAsync();
+        await store.ApplyAndCommitAsync(new LoyaltyHolder(LoyaltyHolderKind.Corporation, CorporationId), IssuerId, 880, "donation", "corp-no-director");
+        var service = new LoyaltyPointsService(store,
+            (_, _) => Task.FromResult<long?>(CorporationId),
+            isDirector: (_, _, _) => ValueTask.FromResult(false));
         var session = Pilot(new Sink());
 
         Assert.Empty(Lines(await service.CallAsync(Call("GetAllMyCorporationWalletLPBalances", session))));

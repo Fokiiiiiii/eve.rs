@@ -90,6 +90,7 @@ public sealed class AccountWalletHostRpcTests
                 CharacterId = sender,
             };
             session.Set("corpid", new PyLong(corporation.Id));
+            session.Set("rolesAtAll", new PyLong(Eve.Corporations.CorporationRoles.Director));
             session.Set("corporationID", new PyLong(corporation.Id));
             var sessions = new CharacterSessions();
             sessions.Enter(sender, session);

@@ -120,6 +120,9 @@ public sealed class LoyaltyPointsService(
         var corporationId = characterId > 0 && corporationOfCharacter is not null
             ? await corporationOfCharacter(characterId, call.Cancellation) ?? 0
             : 0;
+        if (characterId <= 0 || corporationId <= 0 || isDirector is null ||
+            !await isDirector(characterId, corporationId, call.Cancellation))
+            return Py.Rowset(BalanceColumns, Array.Empty<PyValue>());
         var holder = new LoyaltyHolder(LoyaltyHolderKind.Corporation, corporationId);
         return await BalanceRowsAsync(holder, call.Cancellation);
     }

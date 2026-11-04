@@ -1,3 +1,4 @@
+using Eve.Corporations;
 using Eve.Marshal;
 using Eve.Wallet;
 
@@ -24,7 +25,11 @@ public sealed class WalletAnnouncer : IDisposable
             return;
         }
         foreach(var session in _sessions.OfCorporation(change.OwnerId))
+        {
+            var roles = session.GetInt("rolesAtAll") ?? 0;
+            if (!CorporationRoles.CanReadWalletBalanceChange(roles, change.AccountKey)) continue;
             session.SendNotification("OnAccountChange","*corpid&corpAccountKey",new PyStr(key),new PyInt(change.OwnerId),new PyReal((double)change.Balance));
+        }
     }
     public void Dispose() => _transactions.BalanceCommitted -= Changed;
 }

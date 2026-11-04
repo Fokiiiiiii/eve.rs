@@ -64,6 +64,7 @@ public partial class HostServerTests
             },
             readOffers: ReadOffers,
             takePurchase: TakePurchase);
+        var loyaltyDirectorChecks = new List<(long CharacterId, long CorporationId)>();
         var lpService = new LoyaltyPointsService(
             null!,
             (buyerCharacterId, _) =>
@@ -71,7 +72,12 @@ public partial class HostServerTests
                 corporationLookups.Add(buyerCharacterId);
                 return Task.FromResult<long?>(memberCorporationId);
             },
-            ReadBalances);
+            ReadBalances,
+            (buyerCharacterId, corporationId, _) =>
+            {
+                loyaltyDirectorChecks.Add((buyerCharacterId, corporationId));
+                return ValueTask.FromResult(true);
+            });
 
         Start(
             configure: registry =>
@@ -167,6 +173,7 @@ public partial class HostServerTests
             [new LoyaltyHolder(LoyaltyHolderKind.Character, characterId), new LoyaltyHolder(LoyaltyHolderKind.Corporation, memberCorporationId)],
             walletReads);
         Assert.Equal([characterId], corporationLookups);
+        Assert.Equal([(characterId, memberCorporationId)], loyaltyDirectorChecks);
     }
 
     [Fact]

@@ -39,4 +39,34 @@ Point defense must enumerate current in-radius damageable entities every cycle. 
 - Added Space Host-path tests for neutral-player and capsule refusals, active-war and non-player acceptance, no controller crimewatch, and no `SimChargeSpent` after range/capacitor refusals and retry.
 - Added a Host read-model test asserting `ReadStructureAsync` uses owner corporation for its war callback rather than the ACL controller corporation.
 - Existing `StructureControlReadModelTests` covers structure fitted/online state and the four structure-specific skills.
-- Serena LSP reported no errors for all changed source files and both added tests. No .NET build or tests were run here; the parent must run them serially after this handoff.
+- Earlier handoff: Serena LSP reported no errors for the then-changed source and tests. The CX9 verification below supersedes its pending-build note.
+
+## Upwell service-module Dogma lifecycle (CX9)
+
+### Implementation
+- DogmaIM online/offline calls keep the existing ship path and dispatch structure-bound service modules through StructureServiceModuleAuthority.
+- The structure route validates the bound/docked structure, pilot and corporation ownership, module owner/type, and service slot. Taking an online service module offline requires the structure corporation's station-manager role.
+- ServiceFuelRulesSource maps module names and reads fuel attributes from pinned SDE build 3396210. Dogma evaluation applies structure hull/service modifiers; the Host wire test verifies Astrahus market fuel at 30/hour and 2160 to online.
+- Fuel debit, module state, service state, module cycle, timer and outbox events share the PostgreSQL transaction. Duplicate toggles do not charge again; offline removes the cycle without charge. The persisted OnStructureServiceChanged notification feeds CharacterGetServices and the lobby refresh path.
+- No intentional behavior difference from the current EveJS reference was found; no compatibility deviation was added.
+
+### Evidence
+- V24 client local effect and RPC rollback: eve/client/script/dogma/clientDogmaLocation.py:698-723.
+- Structure fitting and offline authority: eve/client/script/ui/shared/fittingScreen/structureFittingController.py:38-62; eve/client/script/ui/services/structure/structureControl.py:106-109.
+- Client service refresh and consumer: eve/client/script/ui/services/structure/structureServices.py:29-58; eve/client/script/ui/shared/dockedUI/lobbyWnd.py:302-304.
+- EveJS module ownership/toggle/fuel/notification flow: evejs-261028.1/src/server/src/services/dogma/dogmaService/moduleOperation.js:2499-2525, 2560-2640, 2770+; service fuel and persisted service state: evejs-261028.1/src/server/src/services/structure/structureServiceModules.js:449-505, 791-929; offline authority: evejs-261028.1/src/server/src/services/structure/structureServiceAuthority.js:334-357.
+- The equivalent source-level case is Astrahus + Standup Market Hub I: 2159 fuel refuses without state/event changes; 2160 succeeds once, duplicate online is free, unauthorized offline refuses, and authorized offline is free. These outcomes follow EveJS's first-online fuel guard and previous-state checks in moduleOperation.js:2560-2640.
+- Mechanics reference: [EVE University Upwell Structure Services](https://wiki.eveuniversity.org/Structure_Browser#Upwell_Structure_Services) and [Upwell Structures](https://wiki.eveuniversity.org/Structure_Browser#Upwell_Structures).
+
+### Verification (2026-11-04)
+- After fast-forwarding to main 2178010953f5, Host service-module wire, compression and notification tests: 14 passed, 0 skipped. This includes the PostgreSQL lifecycle case.
+- Host composition tests: 18 passed, 0 skipped.
+- Eve.Structures.Tests.StructureFuelTests: 10 passed, 0 skipped, including no-charge refusal, retry, duplicate, restart and fractional hourly cycles.
+- Eve.Structures, Eve.Services.Dogma, and Eve.Host built successfully after the merge; Host.Tests and Structures.Tests also built during their test runs.
+- eve_p9 needed the official mission-pinned 3405148 sde_mission catalog for unrelated Host startup tests; service fuel values continue to use the pinned 3396210 sde.
+- EveJS behavior was compared at source level. Its package has no test script and the existing headless live tests have no focused service-module scenario, so no executable EveJS differential was run.
+- The real graphical V24 client was not run.
+
+### Push gate
+- Latest completed main CI is run 1520 on 2178010953f5 and is green: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41929981873.
+- origin/main was fast-forwarded to 2178010953f5, and the changed project builds and focused PostgreSQL test classes passed afterward. The CX9 feature commit and push are pending.

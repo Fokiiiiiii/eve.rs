@@ -41,6 +41,7 @@ internal sealed partial class CharacterServicesComposition
     private Eve.Structures.StructureStore structureStore = default!;
     private Eve.Structures.StructurePilotStore structurePilots = default!;
     private StructureControlReadModel structureControlReadModel = default!;
+    private StructureServiceModuleAuthority structureServiceModuleAuthority = default!;
     private readonly ConnectedSessions connected;
     private StructureControlBackend? structureControl;
     private StructureDeliveryBackend structureDelivery = default!;
@@ -294,8 +295,17 @@ internal sealed partial class CharacterServicesComposition
                 });
         }
 
-        structureFuel = new Eve.Structures.StructureFuel(structureStore, foundations.Scheduler, structureTimers, await ServiceFuelRulesSource.LoadAsync(dogma,sde), new InventoryStructureFuelBay(items, dogma, foundations.Events));
+        var serviceFuelRules = await ServiceFuelRulesSource.LoadAsync(dogma, sde);
+        structureFuel = new Eve.Structures.StructureFuel(
+            structureStore,
+            foundations.Scheduler,
+            structureTimers,
+            serviceFuelRules,
+            new InventoryStructureFuelBay(items, dogma, foundations.Events),
+            new PgStructureServiceModuleStates(modules));
         structureFuel.Register();
+        structureServiceModuleAuthority = new StructureServiceModuleAuthority(
+            source, structureStore, structurePilots, structureControlReadModel, items, modules, dogma, structureFuel);
         SetupStructureCynoBeaconRuntime();
 
         new Eve.Host.Persistence.Structures.StructureCynoJammerNotifications(JammerStateAsync, characterSessions).Subscribe(foundations.Events);
@@ -364,7 +374,9 @@ internal sealed partial class CharacterServicesComposition
             Eve.Host.HostInventoryServiceFactory.HangarAccessOf(corporations),
             async (connection, transaction, corporationId, stationId, token) =>
                 await corporationOfficeStore.GetAsync(connection, transaction, corporationId, stationId, false, token) is not null,
-            characterSessions);
+            characterSessions,
+            serviceFuelRules.ModuleTypeOf(Eve.Structures.StructureServiceIds.Reprocessing)
+                ?? throw new InvalidOperationException("the pinned SDE has no reprocessing service module"));
 
         structureDeployment = new StructureDeploymentAuthority(source, structureStore, structureTimers, foundations.Scheduler, foundations.Events);
 

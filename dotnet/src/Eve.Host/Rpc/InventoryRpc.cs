@@ -93,7 +93,8 @@ internal sealed partial class CharacterServicesComposition
                 log: message => Console.Error.WriteLine($"eve-host: ammo: {message}"),
                 localTimers: foundations.LocalTimers,
                 augmentations: new PilotAugmentationRpc(pilotImplants, skillHandler.UseBoosterAsync, announcer, dogma),
-                prepareSpaceDogma: spaceSessions is null ? null : spaceSessions.PrepareSpaceDogmaAsync).ListeningForDryGuns(),
+                prepareSpaceDogma: spaceSessions is null ? null : spaceSessions.PrepareSpaceDogmaAsync,
+                structureServiceModuleToggle: structureServiceModuleAuthority.ToggleAsync).ListeningForDryGuns(),
         ];
     }
 }

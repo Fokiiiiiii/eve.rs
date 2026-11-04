@@ -975,6 +975,18 @@ impl TaskCtx<'_, '_> {
         self.cx.raise(error);
     }
 
+    /// Select an inclusive random integer, turning Python's empty-range error into a task failure.
+    pub fn random_int(&mut self, a: i64, b: i64) -> Option<i64> {
+        match self.world().random_int(a, b) {
+            Ok(value) => Some(value),
+            Err(error) => {
+                self.set_status_to_failed();
+                self.raise(BehaviorError::Task(error.to_string()));
+                None
+            }
+        }
+    }
+
     /// `try: ... except (SomeErrors)`: what `f` raised is given back (and is not raised) for the task to say which of it it catches; what it
     /// raised before stays.
     pub fn catch_exceptions(&mut self, f: impl FnOnce(&mut TaskCtx<'_, '_>)) -> Option<BehaviorError> {

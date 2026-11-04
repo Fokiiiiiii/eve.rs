@@ -9,7 +9,7 @@ enter_task!(
     |t| {
         t.set_status_to_success();
         let (Some(min), Some(max)) = (t.required_int("minValue"), t.required_int("maxValue")) else { return };
-        let value = t.world().random_int(min, max);
+        let Some(value) = t.random_int(min, max) else { return };
         let Some(address) = t.required_address("blackboardAddress") else { return };
         t.send_blackboard_value(&address, Value::Int(value));
     }
@@ -63,5 +63,26 @@ mod tests {
                 .with("valueAddress", Address::new(ScopeType::Item, "V").to_value()),
         );
         assert_eq!(rig.last(ScopeType::Item, "V"), Value::Float(20.0));
+    }
+
+    #[test]
+    fn a_reversed_random_integer_range_fails_with_the_client_value_error() {
+        let mut rig = Rig::new();
+        let address = Address::new(ScopeType::Item, "R");
+        assert_eq!(
+            rig.run(
+                Box::new(PostRandomIntegerToBlackboard),
+                Attrs::new()
+                    .with("minValue", 2i64)
+                    .with("maxValue", 1i64)
+                    .with("blackboardAddress", address.to_value()),
+            ),
+            crate::tree::Status::Failure
+        );
+        assert_eq!(rig.last(ScopeType::Item, "R"), Value::None, "no value was posted");
+        assert_eq!(
+            rig.last_error,
+            Some(BehaviorError::Task("ValueError: empty range for randrange() (2, 2, 0)".to_string()))
+        );
     }
 }

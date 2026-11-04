@@ -120,6 +120,22 @@ impl PythonRandom {
         let b = f64::from(self.next_u32() >> 6);
         (a * 67_108_864.0 + b) / 9_007_199_254_740_992.0
     }
+
+    /// The next `bits` from `getrandbits`, matching CPython's word order.
+    pub fn getrandbits(&mut self, bits: u32) -> u64 {
+        assert!(bits <= 64);
+        match bits {
+            0 => 0,
+            1..=32 => (self.next_u32() >> (32 - bits)) as u64,
+            33..=64 => {
+                let low = self.next_u32() as u64;
+                let high_bits = bits - 32;
+                let high = (self.next_u32() >> (32 - high_bits)) as u64;
+                low | (high << 32)
+            }
+            _ => unreachable!(),
+        }
+    }
 }
 
 // ─── where a warp ends ──────────────────────────────────────────────────────
@@ -335,6 +351,12 @@ mod tests {
             [random.random(), random.random(), random.random()],
             [0.6982988071690184, 0.43264158720392076, 0.08769548440226826]
         );
+    }
+
+    #[test]
+    fn python_s_getrandbits_keeps_cpython_integer_word_order() {
+        assert_eq!(PythonRandom::new(1).getrandbits(32), 577_090_037);
+        assert_eq!(PythonRandom::new(1).getrandbits(64), 10_499_958_131_665_514_997);
     }
 
     fn planet() -> Body {

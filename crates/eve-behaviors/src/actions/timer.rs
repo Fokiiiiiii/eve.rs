@@ -211,7 +211,8 @@ impl Task for BlockWhileTimeout {
                 t.raise(BehaviorError::Task("TypeError: randint needs whole numbers".to_string()));
                 return;
             };
-            t.world().random_int(low, high) as f64
+            let Some(seconds) = t.random_int(low, high) else { return };
+            seconds as f64
         } else {
             timeout_seconds.as_float().unwrap_or(0.0)
         };
@@ -409,6 +410,21 @@ mod tests {
         rig.tick().unwrap();
         let now = rig.shared.now;
         assert_eq!(rig.shared.timers.next_due(), Some(now + crate::env::seconds_to_ticks(10.0)));
+    }
+
+    #[test]
+    fn a_reversed_random_timeout_fails_without_starting_a_timer() {
+        let attrs = Attrs::new()
+            .with("timerAddress", item("Timer"))
+            .with("timeoutSeconds", 10i64)
+            .with("maxRandomTimeoutSeconds", 4i64);
+        let mut rig = Rig::new();
+        assert_eq!(rig.run(Box::new(BlockWhileTimeout), attrs), Status::Failure);
+        assert_eq!(
+            rig.last_error,
+            Some(BehaviorError::Task("ValueError: empty range for randrange() (10, 5, -5)".to_string()))
+        );
+        assert_eq!(rig.shared.timers.active_count(), 0);
     }
 
     #[test]

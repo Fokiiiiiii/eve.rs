@@ -788,6 +788,7 @@ public sealed class CorporationOfficeTests
             CharacterId = actor,
         };
         session.Set("corpid", new PyLong(corporation.Id));
+        session.Set("rolesAtAll", new PyLong(CorporationRoles.Accountant));
         session.Set("corporationID", new PyLong(corporation.Id));
         session.Set("stationid", new PyLong(Station.Id));
         var sessions = new CharacterSessions();
@@ -802,12 +803,8 @@ public sealed class CorporationOfficeTests
         Assert.True(await dispatcher.DispatchAsync(MarshalCodec.Decode(MarshalCodec.Encode(request)), session));
         var replies = capture.Sent.Select(packet =>
             Assert.IsType<MachoPacket>(MachoPacket.Decode(packet))).ToArray();
-        Assert.Equal(2, replies.Length);
-        Assert.Equal(MachoMessage.Notification, replies[0].Type);
-        Assert.Equal("OnAccountChange", replies[0].Dest.BroadcastId);
-        Assert.Equal("*corpid&corpAccountKey", replies[0].Dest.IdType);
-        Assert.Equal(MachoMessage.CallRsp, replies[1].Type);
-        Assert.Equal(PyNone.Instance, CallResult(capture.Sent[1]));
+        Assert.Equal(MachoMessage.CallRsp, Assert.Single(replies).Type);
+        Assert.Equal(PyNone.Instance, CallResult(capture.Sent[0]));
         Assert.Equal(beforePayment - quote, (await rig.Wallets.GetAsync(corporation.Id))!.Isk);
         Assert.Equal(new WalletBalanceChange(corporation.Id, 1000, beforePayment - quote), announced[0]);
         Assert.Equal(new WalletBalanceChange(Station.OwnerId, 1000,

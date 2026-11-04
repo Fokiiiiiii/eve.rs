@@ -161,7 +161,7 @@ Cut (not built), with the reason:
   (the existing TODO line on `map.GetEdencomFortressSystems` stays open).
 - Filament entry and the 6.0 standing gate for Home systems: needs the filament item and jump rules, which are not published
   beyond the counts above.
-- Local chat delay, docking and standing thresholds in Pochven (-0.05, 0.01, 3.00): not built here; listed for later.
+- NPC-station LP Store access uses the published `-0.01` Triglavian standing threshold for listing and both purchase RPCs. Docking (`-0.05`), manufacturing and offices (`3.00`), and local chat delay remain open.
 
 Decisions (owner-visible):
 - The Pochven NPC factions are the four with SDE faction ids (Triglavian, EDENCOM, Rogue Drones, Drifters). Sleepers are left

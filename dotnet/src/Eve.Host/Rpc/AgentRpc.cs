@@ -63,6 +63,20 @@ internal sealed partial class CharacterServicesComposition
         return (roles.AtAll & Eve.Corporations.CorporationRoles.Director) != 0;
     }
 
+    private async ValueTask<bool> HasPochvenLpStoreStandingAsync(long characterId, long stationId, CancellationToken token)
+    {
+        var station = stations.Get(stationId);
+        if (station is null || !Eve.Services.Space.Pochven.PochvenRules.IsPochvenRegion(station.RegionId)) return true;
+        if (characterId <= 0) return false;
+
+        var standing = await foundations.Relations.ValueAsync(
+            Eve.Relations.RelationKinds.Standing.Name,
+            Eve.Services.Space.Pochven.PochvenRules.TriglavianFactionId,
+            characterId,
+            cancellationToken: token);
+        return Eve.Services.Space.Pochven.PochvenRules.HasLoyaltyStoreStanding(standing);
+    }
+
     private async Task<WarpCoordinates?> LaunchWarpTargetForCharacterAsync(
         long characterId, long launchId, int currentSystemId, CancellationToken cancellationToken)
     {
@@ -88,6 +102,7 @@ internal sealed partial class CharacterServicesComposition
                         (await corporations.MembersAsync(corporationId, token)).Count > 0;
                 }),
             new Eve.Services.Wallet.LpStoreMgrService(lpStoreCache, lpStorePurchases, IsCorporationDirectorAsync,
+                HasPochvenLpStoreStandingAsync,
                 hasLoyaltyStoreService: (characterId, structureId, token) => structureDirectoryReadModel.CharacterHasServiceAsync(
                     characterId, structureId, Eve.Structures.StructureServiceIds.LoyaltyStore, token)),
             allianceRegistry,

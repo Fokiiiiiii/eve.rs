@@ -1,3 +1,6 @@
+using System.Collections;
+using System.Reflection;
+
 namespace Eve.Skills.Tests;
 
 /// <summary>Training against PostgreSQL with a clock the test moves.</summary>
@@ -102,6 +105,12 @@ internal sealed class TrainingRig : IAsyncDisposable
 public class CharacterTrainingTests
 {
     private static readonly TimeSpan Minute = TimeSpan.FromMinutes(1);
+
+    private static int SettlementGateCount(CharacterTraining training)
+    {
+        var gates = typeof(CharacterTraining).GetField("settleGates", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        return ((IDictionary)gates.GetValue(training)!).Count;
+    }
 
     [PgFact]
     public async Task A_new_character_has_an_empty_queue_and_its_skills_as_stored()
@@ -406,17 +415,93 @@ public class CharacterTrainingTests
     }
 
     [PgFact]
-    public async Task Several_calls_that_find_the_same_level_finished_settle_it_once()
+    public async Task Idle_settlement_gates_are_evicted_after_high_cardinality_churn()
     {
         await using var rig = await TrainingRig.CreateAsync();
+        for (var characterId = 10_000L; characterId < 10_128; characterId++)
+        {
+            await rig.GiveAsync(characterId);
+            Assert.Null(await rig.Training.SettleAsync(characterId, TrainingRig.Account));
+        }
+
+        Assert.Equal(0, SettlementGateCount(rig.Training));
+    }
+
+    [PgFact]
+    public async Task Concurrent_settlements_for_same_character_share_a_gate_and_settle_it_once()
+    {
+        var holdFirstRefresh = 0;
+        var held = 0;
+        var activeRefreshes = 0;
+        var overlappingRefreshes = 0;
+        var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var rig = await TrainingRig.CreateAsync(new TrainingSettings
+        {
+            RefreshLearningBonus = async (_, cancellationToken) =>
+            {
+                if (Interlocked.Increment(ref activeRefreshes) > 1)
+                    Interlocked.Exchange(ref overlappingRefreshes, 1);
+                try
+                {
+                    if (Volatile.Read(ref holdFirstRefresh) != 0 && Interlocked.CompareExchange(ref held, 1, 0) == 0)
+                    {
+                        entered.TrySetResult(true);
+                        await release.Task.WaitAsync(cancellationToken);
+                    }
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref activeRefreshes);
+                }
+            },
+        });
         var started = await rig.SavedAsync(await rig.StartAsync(3301));
         var scheduledEnd = started.Update.View.Queue.Single().End!.Value;
         rig.Wait(TimeSpan.FromMinutes(60));
-        var runs = Enumerable.Range(0, 8).Select(_ => rig.Training.SettleAsync(TrainingRig.Character, TrainingRig.Account)).ToArray();
-        var updates = await Task.WhenAll(runs);
-        Assert.Single(updates, u => u is not null);
-        Assert.Single(rig.Settlements);
-        Assert.Equal([new HistoryEntry(scheduledEnd, SkillEvents.TrainingComplete, 3301, 1415, 2)], await rig.Training.HistoryAsync(TrainingRig.Character));
+        Volatile.Write(ref holdFirstRefresh, 1);
+
+        using var firstCancellation = new CancellationTokenSource();
+        using var queuedCancellation = new CancellationTokenSource();
+        var first = rig.Training.SettleAsync(TrainingRig.Character, TrainingRig.Account, firstCancellation.Token);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var cancelledWaiter = rig.Training.SettleAsync(TrainingRig.Character, TrainingRig.Account, queuedCancellation.Token);
+            var waiter = rig.Training.SettleAsync(TrainingRig.Character, TrainingRig.Account);
+
+            queuedCancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await cancelledWaiter);
+            firstCancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await first);
+
+            Assert.NotNull(await waiter.WaitAsync(TimeSpan.FromSeconds(15)));
+            Assert.Equal(0, overlappingRefreshes);
+            Assert.Single(rig.Settlements);
+            Assert.Equal([new HistoryEntry(scheduledEnd, SkillEvents.TrainingComplete, 3301, 1415, 2)], await rig.Training.HistoryAsync(TrainingRig.Character));
+        }
+        finally
+        {
+            firstCancellation.Cancel();
+            queuedCancellation.Cancel();
+            release.TrySetResult(true);
+        }
+    }
+
+    [PgFact]
+    public async Task A_failed_settlement_releases_its_gate()
+    {
+        var failFirstRefresh = 1;
+        await using var rig = await TrainingRig.CreateAsync(new TrainingSettings
+        {
+            RefreshLearningBonus = (_, _) => Interlocked.Exchange(ref failFirstRefresh, 0) == 1
+                ? Task.FromException(new InvalidOperationException("refresh failed"))
+                : Task.CompletedTask,
+        });
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => rig.Training.SettleAsync(TrainingRig.Character, TrainingRig.Account));
+        Assert.Null(await rig.Training.SettleAsync(TrainingRig.Character, TrainingRig.Account).WaitAsync(TimeSpan.FromSeconds(15)));
+        Assert.Equal(0, SettlementGateCount(rig.Training));
     }
 
     [PgFact]

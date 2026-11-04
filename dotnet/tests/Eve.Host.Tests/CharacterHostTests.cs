@@ -635,12 +635,13 @@ public sealed class CharacterHostTests
         Assert.Contains("OnServerBoostersChanged", Notifications(sink).Select(n => n.Name));
     }
 
-    [PgFact]
-    public async Task Cerebral_accelerator_expiry_settles_both_rates_and_retry_survives_a_restart()
+    [Theory]
+    [InlineData(1)]
+    [InlineData(10)]
+    public async Task Cerebral_accelerator_expiry_settles_partial_and_completed_lines_across_both_rates_after_restart_and_retry(long afterExpiryMinutes)
     {
         const long startUnixMs = 1_800_000_000_000;
         const long beforeExpiryMs = 4 * 60_000;
-        const long afterExpiryMs = 10 * 60_000;
         const int boosterTypeId = 49539;
         await using var rig = await CharacterHostRig.CreateAsync(startUnixMs);
         Assert.Equal(1, await rig.CreateAccountAsync());
@@ -656,7 +657,7 @@ public sealed class CharacterHostTests
 
         var expiryUnixMs = startUnixMs + beforeExpiryMs;
         var expiryFileTime = DateTimeOffset.FromUnixTimeMilliseconds(expiryUnixMs).ToFileTime();
-        var nowUnixMs = expiryUnixMs + afterExpiryMs;
+        var nowUnixMs = expiryUnixMs + afterExpiryMinutes * 60_000;
         var nowFileTime = DateTimeOffset.FromUnixTimeMilliseconds(nowUnixMs).ToFileTime();
         var handler = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillHandler"));
         const int targetLevel = 2;
@@ -716,32 +717,54 @@ public sealed class CharacterHostTests
         var boostedPoints = Training.PointsAt(0, firstDestination, startedAt, expiryFileTime, boostedRate);
         Assert.True(boostedPoints < firstDestination);
         var completedAt = expiryFileTime + Training.DurationTicks(firstDestination - boostedPoints, normalRate);
-        Assert.True(completedAt > expiryFileTime && completedAt <= nowFileTime);
-        var expectedPoints = Training.PointsAt(firstDestination, destination, completedAt, nowFileTime, normalRate);
-        Assert.True(expectedPoints < destination);
+        var completesAcrossExpiry = completedAt <= nowFileTime;
+        var targetLevelAfterExpiry = completesAcrossExpiry ? targetLevel : 1;
+        var expectedDestination = SkillPoints.ForTraining(type.Rank, targetLevelAfterExpiry);
+        var expectedPoints = completesAcrossExpiry
+            ? Training.PointsAt(firstDestination, destination, completedAt, nowFileTime, normalRate)
+            : Training.PointsAt(boostedPoints, firstDestination, expiryFileTime, nowFileTime, normalRate);
+        Assert.True(expectedPoints < expectedDestination);
         Assert.Equal(expectedPoints, durable.SkillPoints);
 
         var persisted = Assert.Single(await skills.ForCharacterAsync(characterId), skill => skill.TypeId == type.TypeId);
         Assert.Equal(expectedPoints, persisted.SkillPoints);
         var queue = Assert.IsType<PyList>(Assert.IsType<PyTuple>(await BoundAsync(handler, session, "GetSkillQueueAndFreePoints")).Items[0]);
-        var line = Assert.IsType<PyObject>(Assert.Single(queue.Items));
-        Assert.Equal(2, Integer(Field(line, "trainingToLevel")));
+        var line = Assert.IsType<PyObject>(queue.Items[0]);
+        Assert.Equal(targetLevelAfterExpiry, Integer(Field(line, "trainingToLevel")));
         Assert.Equal(expectedPoints, Integer(Field(line, "trainingStartSP")));
-        var expectedQueueEnd = nowFileTime + Training.DurationTicks(destination - expectedPoints, normalRate);
+        var expectedQueueEnd = nowFileTime + Training.DurationTicks(expectedDestination - expectedPoints, normalRate);
         Assert.Equal(expectedQueueEnd, Integer(Field(line, "trainingEndTime")));
         var history = await trainingStore.HistoryAsync(characterId, 20);
-        var completed = Assert.Single(history, entry => entry.EventType == SkillEvents.QueueTrainingCompleted);
-        Assert.Equal(completedAt, completed.LogDate);
-        Assert.Equal(firstDestination, completed.Points);
-        Assert.Equal(1, completed.Level);
+        var completedEvents = history.Where(entry => entry.EventType == SkillEvents.QueueTrainingCompleted).ToArray();
+        if (completesAcrossExpiry)
+        {
+            var completed = Assert.Single(completedEvents);
+            Assert.Equal(completedAt, completed.LogDate);
+            Assert.Equal(firstDestination, completed.Points);
+            Assert.Equal(1, completed.Level);
+        }
+        else
+        {
+            Assert.Empty(completedEvents);
+        }
         Assert.DoesNotContain(history, entry => entry.EventType == SkillEvents.TrainingComplete);
+
+        var notificationsAtLapse = Notifications(sink);
+        var boosterChangedIndex = notificationsAtLapse.FindIndex(notification => notification.Name == "OnServerBoostersChanged");
+        var queueSavedIndex = notificationsAtLapse.FindLastIndex(notification => notification.Name == "OnNewSkillQueueSaved");
+        Assert.True(boosterChangedIndex >= 0);
+        Assert.True(queueSavedIndex > boosterChangedIndex);
+        var savedQueue = Assert.IsType<PyList>(Assert.Single(notificationsAtLapse[queueSavedIndex].Args));
+        var savedLine = Assert.IsType<PyObject>(savedQueue.Items[0]);
+        Assert.Equal(expectedQueueEnd, Integer(Field(savedLine, "trainingEndTime")));
+        Assert.Equal(targetLevelAfterExpiry, Integer(Field(savedLine, "trainingToLevel")));
 
         await rig.RestartAsync();
         handler = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillHandler"));
         rig.Sessions.Enter(characterId, session);
         Assert.Equal(expectedPoints, Assert.Single(await skills.ForCharacterAsync(characterId), skill => skill.TypeId == type.TypeId).SkillPoints);
         var restartedQueue = Assert.IsType<PyList>(Assert.IsType<PyTuple>(await BoundAsync(handler, session, "GetSkillQueueAndFreePoints")).Items[0]);
-        var restartedLine = Assert.IsType<PyObject>(Assert.Single(restartedQueue.Items));
+        var restartedLine = Assert.IsType<PyObject>(restartedQueue.Items[0]);
         Assert.Equal(expectedQueueEnd, Integer(Field(restartedLine, "trainingEndTime")));
         Assert.Equal(history, await trainingStore.HistoryAsync(characterId, 20));
 

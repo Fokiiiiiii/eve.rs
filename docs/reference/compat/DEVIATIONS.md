@@ -4831,8 +4831,22 @@ cannot see the list or its members; every change is logged. EveJS `ownerGroupMan
   list read by one of its members, answers `membershipType` member to its corporation's members, and refuses changes with the notice
   "This access group cannot be changed." Its `admins` list is the corporation.
 - **Choice: precedence and kinds.** The role is the most specific entry that names the character: character, then corporation, then
-  alliance, then everyone (id 0, a member entry for every character). A blocked (excluded) role gives no access. A corporation,
-  alliance or everyone entry is member or blocked only (the wiki: alliances and corporations cannot be admin or manager).
+  alliance, then everyone (id 0, a member entry for every character). A blocked (excluded) role gives no access. A corporation or
+  alliance entry is member or blocked; Everyone is member only.
+- **Choice: Everyone's role.** EVE University Wiki, "Access Lists" / "Types of members" (https://wiki.eveuniversity.org/Access_Lists)
+  allows Everyone only as Member. V24.01's public-member action sends `{0: MEMBER}` (`accessGroupsController.py:203-205`), and its
+  role menu skips public entries (`menuProvider.py:69-71`). EveJS 261028.1's `accessGroupStore.addMembers` stores supplied membership
+  types without kind validation (`accessGroupStore.js:185-210`) and `updateMembershipTypes` accepts arbitrary new types
+  (`accessGroupStore.js:244-260`). eve.rs follows the wiki at the shared `AccessRules.ValidForKind` boundary and returns the existing
+  per-entry `NotAllowed` refusal for Everyone roles other than Member; corporation and alliance Member/Excluded behavior is unchanged.
+- **Choice: preserve zero in member RPCs.** V24.01 defines `PUBLIC_MEMBER_ID = 0` (`ownergroupConst.py:18`); the controller sends zero
+  to `AddMembers` and forwards existing member IDs to `UpdateMembershipTypes` and `DeleteMembers` (`accessGroupsController.py:204-205,
+  240-241, 260-271`). It uses failure tuple IDs to update or retain its member cache (`217-224, 241-247, 265-271`) and invalidates
+  caches from `OnOwnerGroupsUpdated` (`317-338`). EveJS maps these member keys and arrays through `Number` without a positive-only filter
+  (`ownerGroupManagerService.js:353-391,395-409,417-436`); its runtime also accepts zero in add/remove (`bookmarkRuntimeState.js:758-813`).
+  eve.rs now keeps zero only for member arguments, while group-ID lists stay positive-only. Negative member IDs receive per-entry
+  refusals; non-integral values and duplicate dictionary keys are rejected, and repeated IDs in member lists are processed once. The
+  registered Host PostgreSQL regression checks persistence, refusal tuples and the Everyone notification.
 - **Choice: manager limits.** A manager adds only member or blocked entries, removes only member or blocked entries and changes
   only member or blocked entries to member or blocked (the wiki). An admin does any of these, including demoting and removing itself.
   The creator is an admin entry, removable like any other admin entry (the wiki gives no lock on the last admin).

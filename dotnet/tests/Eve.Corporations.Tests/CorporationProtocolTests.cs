@@ -2598,6 +2598,98 @@ private static PyValue RowField(PyValue value,string key)
     }
 
     [PgFact]
+    public async Task Vote_access_is_restricted_and_unauthorized_reads_do_not_resolve_votes()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var schema = "vote_access_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            await CorporationStore.MigrateAsync(rig.Source,schema);
+            var store = new CorporationStore(rig.Source,rig.Characters,rig.Wallets,rig.Transactions,rig.Skills,
+                () => rig.Now,schema);
+            await store.SeedNpcAsync(new Eve.Sde.SdeReader(rig.Source));
+            var ceo = await rig.CharacterAsync("Vote Access CEO");
+            var member = await rig.CharacterAsync("Vote Access Member");
+            var corporation = await store.CreateAsync(ceo,new("Vote Access","VACC","","",0m),
+                "vote-access-" + Guid.NewGuid().ToString("N"));
+            var application = await store.ApplyAsync(member,corporation.Id,"");
+            await store.RespondAsync(ceo,application,6,"","");
+            await store.RespondAsync(member,application,2,"","");
+            var memberState = (await store.MemberAsync(member))!;
+            await store.UpdateMemberAsync(ceo,memberState with
+            {
+                Masks = new RoleMasks(CorporationRoles.PersonnelManager)
+            });
+
+            var service = (IService)new VoteManagerService(store);
+            ClientSession Session(long characterId)
+            {
+                var session = new ClientSession { CharacterId = characterId };
+                session.Set("corporationID",new PyInt(corporation.Id));
+                session.Set("corpid",new PyInt(corporation.Id));
+                return session;
+            }
+            ValueTask<PyValue> VoteRpc(ClientSession session,string method,params PyValue[] args) =>
+                service.CallAsync(Call(session,method,args));
+            var ceoSession = Session(ceo);
+            var session = Session(member);
+            var voteArguments = new PyValue[]
+            {
+                new PyWString("Manager vote"),
+                new PyWString(""),
+                new PyInt(4),
+                new PyList([new PyWString("For"),new PyWString("Against")]),
+                new PyInt(1)
+            };
+
+            var voteCaseId = Assert.IsType<PyInt>(await VoteRpc(ceoSession,"InsertVoteCase",voteArguments)).Value;
+            Assert.True(voteCaseId > 0);
+            rig.Now += 86_400_001L;
+
+            Assert.Equal(PyBool.False,await VoteRpc(session,"CanViewVotes",new PyInt(corporation.Id)));
+            var deniedCases = Assert.IsType<PyDict>(await VoteRpc(session,"GetVoteCasesByCorporation",new PyInt(corporation.Id)));
+            Assert.All(deniedCases.Entries,entry => Assert.Empty(Lines(entry.Value)));
+            async Task<long> ResolutionCountAsync()
+            {
+                await using var command = rig.Source.CreateCommand(
+                    $"SELECT COUNT(*) FROM {schema}.vote_case_resolutions WHERE vote_case_id=$1");
+                command.Parameters.AddWithValue(voteCaseId);
+                return Convert.ToInt64(await command.ExecuteScalarAsync());
+            }
+            Assert.Equal(0,await ResolutionCountAsync());
+            Assert.IsType<PyNone>(await VoteRpc(session,"GetVoteCase",new PyInt(corporation.Id),new PyInt(voteCaseId)));
+            Assert.Empty(Lines(await VoteRpc(session,"GetVoteCaseOptions",new PyInt(corporation.Id),new PyInt(voteCaseId))));
+            Assert.Empty(Lines(await VoteRpc(session,"GetVotes",new PyInt(voteCaseId))));
+            Assert.Equal(0,await ResolutionCountAsync());
+            await Assert.ThrowsAsync<CorporationError>(async () =>
+            {
+                _ = await VoteRpc(session,"InsertVote",new PyInt(corporation.Id),new PyInt(voteCaseId),new PyInt(0));
+            });
+            await Assert.ThrowsAsync<CorporationError>(async () =>
+            {
+                _ = await VoteRpc(session,"InsertVoteCase",voteArguments);
+            });
+            Assert.Equal(0,await ResolutionCountAsync());
+
+            await store.UpdateMemberAsync(ceo,memberState with
+            {
+                Masks = new RoleMasks(CorporationRoles.Director | CorporationRoles.PersonnelManager)
+            });
+            Assert.Equal(PyBool.True,await VoteRpc(session,"CanViewVotes",new PyInt(corporation.Id)));
+            var allowedCases = Assert.IsType<PyDict>(await VoteRpc(session,"GetVoteCasesByCorporation",new PyInt(corporation.Id)));
+            var closedCases = Assert.Single(allowedCases.Entries,entry => entry.Key == new PyInt(1)).Value;
+            Assert.Equal(new PyInt(voteCaseId),RowValues(Assert.Single(Lines(closedCases)))[0]);
+            Assert.Equal(1,await ResolutionCountAsync());
+            Assert.True(Assert.IsType<PyInt>(await VoteRpc(session,"InsertVoteCase",voteArguments)).Value > 0);
+        }
+        finally
+        {
+            await using var command = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await command.ExecuteNonQueryAsync();
+        }
+    }
+
+    [PgFact]
     public async Task Corporation_votes_apply_official_sanctions_and_restore_roles_after_failed_votes()
     {
         await using var rig = await Rig.CreateAsync();

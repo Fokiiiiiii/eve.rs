@@ -185,6 +185,8 @@ public class SpaceServiceTests
               criminalEntries.Add((characterId, systemId, security));
               return Task.CompletedTask;
           };
+            rig.Space.CrimewatchStateOf = (_, _) => Task.FromResult(
+                new Eve.Crimewatch.CombatState(0, 0, 0, long.MaxValue, Eve.Crimewatch.Flag.Criminal, 0, 0));
 
           await UndockAsync(rig, session);
 
@@ -192,6 +194,8 @@ public class SpaceServiceTests
           Assert.Equal(character.CharacterId, entry.Character);
           Assert.Equal(session.GetInt("solarsystemid"), entry.System);
           Assert.True(entry.Security >= 0.5);
+            Assert.Contains(rig.Sim.Heard, message =>
+                message is Eve.Space.SimCriminalFlagActive active && active.SessionId == (ulong)session.SessionId);
       }
 
       private static async Task<(Rig Rig, Eve.Characters.Created Character, ClientSession Session)> DockedAsync(
@@ -1077,20 +1081,25 @@ public class SpaceServiceTests
     }
 
     [PgFact]
-    public async Task Undocking_tells_the_client_in_the_reference_order_and_answers_with_the_object_and_the_time()
+    public async Task Undocking_tells_the_client_in_the_reference_order_and_answers_none()
     {
         var (rig, _, session) = await DockedAsync();
         await using var _ = rig;
         // the client holds another object bound to the station too (dogma, an inventory)
         session.RememberBoundObject("N=65450:900");
 
-        var (oid, answer) = await UndockAsync(rig, session);
+        var (_, answer) = await UndockAsync(rig, session);
 
         Assert.Equal(["OnItemsChanged", "OnMachoObjectDisconnect", "OnMachoObjectDisconnect", "$sessionchange", "OnInvulunOnUndockingUpdated"], Sequence.Of(session, clear: false));
+        var disconnects = Events.Of(session, clear: false).Where(message => message.Name == "OnMachoObjectDisconnect").ToArray();
+        Assert.Equal(2, disconnects.Length);
+        Assert.All(disconnects, message =>
+        {
+            Assert.IsType<PyLong>(message.Args[1]);
+            Assert.Equal(session.ClientId, Events.Number(message.Args[1]));
+        });
         Assert.Equal(["stationid", "locationid", "solarsystemid"], Sequence.LastChange(session).Select(change => change.Name));
-        var tuple = Assert.IsType<PyTuple>(answer);
-        Assert.Equal(oid, JsSemantics.StringValue(tuple.Items[0]));
-        Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(Rig.ClockMs + 10_000)), tuple.Items[1]);
+        Assert.Equal(PyNone.Instance, answer);
         Assert.Empty(session.BoundOids); // every object of the station was let go
     }
 
@@ -3566,7 +3575,7 @@ public class SpaceServiceTests
         await Rig.UntilAsync(() => session.GetInt("stationid") == Rig.Station);
 
         var (_, answer) = await UndockAsync(rig, session);
-        Assert.IsType<PyTuple>(answer);
+        Assert.Equal(PyNone.Instance, answer);
         Assert.True(rig.Space.IsInSpace(session));
     }
 

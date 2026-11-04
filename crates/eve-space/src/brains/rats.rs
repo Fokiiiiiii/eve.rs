@@ -16,6 +16,8 @@ use crate::pochven_population::{CAMP, CAMP_EDENCOM, Owners, SENTRY_EDENCOM, SENT
 
 /// The name the tree is given an NPC by (`Scene::spawn_npc_with_behavior`).
 pub const BELT_RAT: &str = "belt rat";
+/// The behavior assigned to invulnerable Empire sentry guns.
+pub const EMPIRE_SENTRY: &str = "empire sentry";
 
 /// The tag of the proximity sensor of a rat: what the rat's combat behavior listens to.
 pub const RAT_TAG: &str = "belt_rat";
@@ -35,6 +37,23 @@ pub fn create_belt_rat_behavior_tree() -> BehaviorTree {
             ..Combat::default()
         },
     )
+}
+
+/// Empire sentries only acquire a ship after its security status falls in their system.
+pub fn create_empire_sentry_behavior_tree() -> BehaviorTree {
+    selector()
+        .named("Empire Sentry")
+        .add(Node::class("ForceFailure").add(create_register_entity_role(ROLE_DPS)))
+        .add(create_combat_behavior(Combat {
+            orbit_velocity: Value::Int(0),
+            orbit_range: Value::Float(0.0),
+            attack_range: Value::Float(550_000.0),
+            proximity_sensor_tags: Value::Tuple(Vec::new()),
+            security_status_loss_only: true,
+            ..Combat::default()
+        }))
+        .add(Node::class("WaitAction").named("Do nothing"))
+        .into_tree()
 }
 
 /// The name the tree of a Pochven fighting NPC is given by (`Scene::spawn_npc_with_behavior`): a fighter of one of the four Pochven factions, which attacks

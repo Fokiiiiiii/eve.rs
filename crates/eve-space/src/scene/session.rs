@@ -355,14 +355,19 @@ impl Scene {
             ]);
         }
         if !pilot.jumped_in {
-            // A ship that undocked moves as it is bound; an in-space arrival is already at rest.
-            told.push(update(vec![
-                payload::uncloak(first, ship.spec.ship_id),
-                payload::action(
-                    first,
-                    "SetBallPosition",
-                    with_id(&ship_id, vector(ship.position.x, ship.position.y, ship.position.z)),
-                ),
+            // Station undocks already receive their movement prime with AddBalls2; structures need their own entry pose.
+            let mut actions = Vec::new();
+            if pilot.leaving_station.is_none() {
+                actions.extend([
+                    payload::uncloak(first, ship.spec.ship_id),
+                    payload::action(
+                        first,
+                        "SetBallPosition",
+                        with_id(&ship_id, vector(ship.position.x, ship.position.y, ship.position.z)),
+                    ),
+                ]);
+            }
+            actions.extend([
                 payload::action(first, "SetBallMassive", [ship_id.clone(), int(0)]),
                 payload::action(first, "SetBallMass", [ship_id.clone(), real(ship.spec.mass)]),
                 payload::action(
@@ -371,22 +376,15 @@ impl Scene {
                     with_id(&ship_id, vector(ship.velocity.x, ship.velocity.y, ship.velocity.z)),
                 ),
                 heading(first),
-            ]));
+            ]);
+            told.push(update(actions));
         }
         told.push(update(vec![state]));
-        // The numbers of every ship in view; the pilot's own lack the mass when the bind has sent it already.
         let mut numbers = Vec::new();
         for other in &ships {
-            if other.spec.ship_id != ship.spec.ship_id || pilot.jumped_in {
+            // The undocked ego is primed above, and fixed SDE sentries have no movement numbers to prime.
+            if (other.spec.ship_id != ship.spec.ship_id || pilot.jumped_in) && other.spec.max_velocity > 0.0 {
                 numbers.extend(Self::numbers_of(other, second));
-            } else {
-                let own = id(ship.spec.ship_id);
-                numbers.push(payload::action(
-                    second,
-                    "SetBallAgility",
-                    [own.clone(), real(ship.spec.agility)],
-                ));
-                numbers.push(payload::action(second, "SetMaxSpeed", [own, real(ship.spec.max_velocity)]));
             }
         }
         told.push(update(numbers));
@@ -749,7 +747,8 @@ impl Scene {
 
     pub fn poll(&mut self, now: i64) -> Vec<Out> {
         self.settle_all(now);
-        let mut told = self.populate_pochven(now);
+        let mut told = self.populate_empire_sentries(now);
+        told.extend(self.populate_pochven(now));
         let arrived: Vec<SessionId> = self
             .pilots
             .iter()

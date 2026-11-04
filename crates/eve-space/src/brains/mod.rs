@@ -29,7 +29,7 @@ use crate::scene::{Out, Scene, SessionId, TICKS_PER_SECOND};
 use crate::ship::Ship;
 use crate::warp::PythonRandom;
 
-pub use rats::{BELT_RAT, POCHVEN_NPC, POCHVEN_NPC_TAG, RAT_TAG};
+pub use rats::{BELT_RAT, EMPIRE_SENTRY, POCHVEN_NPC, POCHVEN_NPC_TAG, RAT_TAG};
 pub use world::SceneWorld;
 
 /// How often the trees are ticked, in FILETIME ticks.
@@ -235,6 +235,8 @@ impl Brains {
     ) -> Result<(), GiveError> {
         let tree = if behavior == BELT_RAT {
             rats::create_belt_rat_behavior_tree()
+        } else if behavior == rats::EMPIRE_SENTRY {
+            rats::create_empire_sentry_behavior_tree()
         } else if let Some(stationary) = rats::pochven_tree_kind(behavior) {
             rats::create_pochven_behavior_tree(stationary, &owners)
         } else {

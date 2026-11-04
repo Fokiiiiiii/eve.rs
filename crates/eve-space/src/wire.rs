@@ -20,6 +20,10 @@ pub fn id(value: i64) -> Value {
     if i32::try_from(value).is_ok() { Value::Int(value) } else { Value::Long(value) }
 }
 
+pub fn optional_id(value: i64) -> Value {
+    if value == 0 { Value::None } else { id(value) }
+}
+
 pub fn int(value: i64) -> Value {
     Value::Int(value)
 }

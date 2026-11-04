@@ -173,19 +173,52 @@ pub fn vec_at(bytes: &[u8], at: usize) -> Vec3 {
 }
 
 /// A number the reference sent the client about the ship in an action of the bind (mass, top speed, agility).
-fn number_of(race: &Value, action: &str) -> f64 {
-    let (_, _, args) = destiny_actions(step(race, "bind the ballpark"))
+fn number_of(race: &Value, action: &str) -> Option<f64> {
+    destiny_actions(step(race, "bind the ballpark"))
         .into_iter()
         .find(|(_, name, _)| name == action)
-        .unwrap();
-    args["$tuple"][1].as_f64().unwrap()
+        .and_then(|(_, _, args)| args["$tuple"][1].as_f64())
+}
+
+pub fn initial_ship_addition(race: &Value) -> (i64, Value, Vec<u8>) {
+    let (stamp, added) = if let Some((stamp, _, added)) =
+        destiny_actions(step(race, "bind the ballpark")).into_iter().find(|(_, name, _)| name == "AddBalls2")
+    {
+        (stamp, added)
+    } else {
+        let (_, _, package) = destiny_actions(step(race, "undock"))
+            .into_iter()
+            .find(|(_, name, _)| name == "PackagedAction")
+            .expect("undock has a packaged action");
+        let actions = package["$marshalled"]["$tuple"].as_array().unwrap();
+        let pair = actions.iter().find(|a| a["$tuple"][1]["$tuple"][0] == "AddBalls2").unwrap();
+        (number(&pair["$tuple"][0]), pair["$tuple"][1]["$tuple"][1].clone())
+    };
+    let bytes = unhex(added["$tuple"][0]["$tuple"][0]["$buffer"].as_str().unwrap());
+    let ship_id = if race["shipID"].is_null() {
+        i64::from_le_bytes(bytes[5..13].try_into().unwrap())
+    } else {
+        number(&race["shipID"])
+    };
+    let offset = bytes.windows(8).position(|part| part == ship_id.to_le_bytes()).unwrap();
+    (stamp, added, bytes[offset..].to_vec())
 }
 
 /// The ship the reference undocked, put together from what it sent (the slim item and the ball).
 pub fn recorded_ship(race: &Value, ball: &[u8], direction: Vec3) -> Ship {
-    let bind = step(race, "bind the ballpark");
-    let added = destiny_actions(bind).into_iter().find(|(_, name, _)| name == "AddBalls2").unwrap().2;
-    let extra = &added["$tuple"][0]["$tuple"][1][0]["$tuple"];
+    let (_, added, _) = initial_ship_addition(race);
+    let extras = added["$tuple"][0]["$tuple"][1].as_array().unwrap();
+    let extra = &extras
+        .iter()
+        .find(|entry| {
+            entry["$tuple"][0]["$dict"].as_array().is_some_and(|fields| {
+                fields.iter().any(|pair| {
+                    pair[0] == "itemID"
+                        && number(&pair[1]) == i64::from_le_bytes(ball[..8].try_into().unwrap())
+                })
+            })
+        })
+        .unwrap()["$tuple"];
     let slim = &extra[0]["$dict"];
     let modules = field(slim, "modules")
         .as_array()
@@ -214,13 +247,21 @@ pub fn recorded_ship(race: &Value, ball: &[u8], direction: Vec3) -> Ship {
         name: field(slim, "name").as_str().unwrap().to_string(),
         owner_id: number(&field(slim, "ownerID")),
         corporation_id: number(&field(slim, "corpID")) as i32,
-        alliance_id: number(&field(slim, "allianceID")) as i32,
-        war_faction_id: number(&field(slim, "warFactionID")) as i32,
+        alliance_id: if field(slim, "allianceID").is_null() {
+            0
+        } else {
+            number(&field(slim, "allianceID")) as i32
+        },
+        war_faction_id: if field(slim, "warFactionID").is_null() {
+            0
+        } else {
+            number(&field(slim, "warFactionID")) as i32
+        },
         security_status: 0.0,
         radius: f32_at(9),
-        mass: number_of(race, "SetBallMass"),
-        max_velocity: number_of(race, "SetMaxSpeed"),
-        agility: number_of(race, "SetBallAgility"),
+        mass: number_of(race, "SetBallMass").unwrap_or_else(|| f64_at(ball, 38)),
+        max_velocity: number_of(race, "SetMaxSpeed").unwrap_or_else(|| f32_at(63)),
+        agility: number_of(race, "SetBallAgility").unwrap_or_else(|| f32_at(91)),
         warp_speed_au: 0.0,
         shield_recharge_ms: shield_tau * 5.0,
         max_target_range: 29_700.0,
@@ -251,10 +292,11 @@ pub fn recorded_ship(race: &Value, ball: &[u8], direction: Vec3) -> Ship {
 }
 
 pub fn recorded_direction(race: &Value) -> Vec3 {
-    let (_, _, args) = destiny_actions(step(race, "bind the ballpark"))
-        .into_iter()
-        .find(|(_, name, _)| name == "GotoDirection")
-        .unwrap();
+    let mut actions = destiny_actions(step(race, "bind the ballpark"));
+    if let Some(undock) = race["steps"].as_array().unwrap().iter().find(|s| s["label"] == "undock") {
+        actions.extend(destiny_actions(undock));
+    }
+    let (_, _, args) = actions.into_iter().find(|(_, name, _)| name == "GotoDirection").unwrap();
     let a = args["$tuple"].as_array().unwrap();
     Vec3::new(a[1].as_f64().unwrap(), a[2].as_f64().unwrap(), a[3].as_f64().unwrap())
 }

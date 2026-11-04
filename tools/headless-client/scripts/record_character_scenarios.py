@@ -47,6 +47,27 @@ def first_ancestry(sde: str) -> dict[int, int]:
         found.setdefault(row["bloodlineID"], row["_key"])
     return found
 
+def hangar_rows(who, hangar) -> list[m.PackedRow]:
+    rows = who.call_bound(hangar, "List")
+    if isinstance(rows, m.ObjectEx):
+        header = rows.header
+        if (
+            rows.kind != 1
+            or not isinstance(header, tuple)
+            or len(header) != 2
+            or header[0] != "__builtin__.set"
+            or not isinstance(header[1], tuple)
+            or len(header[1]) != 1
+        ):
+            raise TypeError("inventory List returned an unexpected object")
+        rows = header[1][0]
+    if not isinstance(rows, list) or any(not isinstance(row, m.PackedRow) for row in rows):
+        raise TypeError("inventory List did not return packed rows")
+    return rows
+
+def hangar_ship_id(who, hangar) -> int:
+    return int(hangar_rows(who, hangar)[0].fields()["itemID"])
+
 class Recorder:
     def __init__(self, host: str, port: int, run: str) -> None:
         self.host, self.port, self.run = host, port, run
@@ -302,7 +323,7 @@ def record_inventory(rec: Recorder, out: str, meta: dict, ancestry: dict, run: s
         descriptor = rec.call(who, "invbroker", "GetItemDescriptor")
 
         hangar = who.call("invbroker", "GetInventory", 10004)
-        ship_id = who.call_bound(hangar, "List")[0].fields()["itemID"]
+        ship_id = hangar_ship_id(who, hangar)
         inventories = {}
         for label, opener, argument in (("hangar", "GetInventory", 10004), ("station", "GetInventoryFromId", 60015249), ("ship", "GetInventoryFromId", int(ship_id))):
             handle = who.call(("invbroker"), opener, argument)
@@ -358,7 +379,7 @@ def record_fitting(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str
         rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
         mgr = who.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
         hangar = who.call_bound(mgr, "GetInventory", 10004)
-        ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+        ship_id = hangar_ship_id(who, hangar)
         before = hangar_and_ship(who, mgr, ship_id)
         ids = [int(x["itemID"]["$long"] if isinstance(x["itemID"], dict) else x["itemID"]) for x in before["shipInfo"]]
         dogma = who.call("dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))[0]
@@ -523,7 +544,7 @@ def record_undock(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
         rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
         manager = who.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
         hangar = who.call_bound(manager, "GetInventory", 10004)
-        ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+        ship_id = hangar_ship_id(who, hangar)
         who.call("dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))
         events_of(who)
 
@@ -570,7 +591,7 @@ def record_approach(rec: Recorder, out: str, meta: dict, ancestry: dict, run: st
     rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
     manager = who.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
     hangar = who.call_bound(manager, "GetInventory", 10004)
-    ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+    ship_id = hangar_ship_id(who, hangar)
     who.call("dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))
     events_of(who)
 
@@ -648,7 +669,7 @@ def record_movement(rec: Recorder, out: str, meta: dict, ancestry: dict, run: st
     rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
     manager = who.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
     hangar = who.call_bound(manager, "GetInventory", 10004)
-    ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+    ship_id = hangar_ship_id(who, hangar)
     who.call("dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))
     events_of(who)
 
@@ -697,7 +718,7 @@ def record_warp(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -
     rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
     manager = who.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
     hangar = who.call_bound(manager, "GetInventory", 10004)
-    ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+    ship_id = hangar_ship_id(who, hangar)
     who.call("dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))
     events_of(who)
 
@@ -766,7 +787,7 @@ def record_jump(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -
     rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
     manager = who.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
     hangar = who.call_bound(manager, "GetInventory", 10004)
-    ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+    ship_id = hangar_ship_id(who, hangar)
     who.call("dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))
     events_of(who)
 
@@ -841,7 +862,7 @@ def record_others(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
         rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
         manager = who.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
         hangar = who.call_bound(manager, "GetInventory", 10004)
-        ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+        ship_id = hangar_ship_id(who, hangar)
         who.call("dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))
         events_of(who)
         return who, created, char_id, ship_id
@@ -932,7 +953,7 @@ def record_target(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
         rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
         manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
         hangar = who.call_bound(manager, "GetInventory", 10004)
-        ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+        ship_id = hangar_ship_id(who, hangar)
         who.call("dogmaIM", "MachoBindObject", (station, 15), ("GetAllInfo", (True, True, None), None))
         events_of(who)
         return who, created, char_id, ship_id
@@ -1041,7 +1062,7 @@ def record_module(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
         rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
         manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
         hangar = who.call_bound(manager, "GetInventory", 10004)
-        ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+        ship_id = hangar_ship_id(who, hangar)
         who.call("dogmaIM", "MachoBindObject", (station, 15), ("GetAllInfo", (True, True, None), None))
         events_of(who)
         return who, created, char_id, ship_id
@@ -1127,7 +1148,7 @@ def record_weapon(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
     rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
     manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
     hangar = who.call_bound(manager, "GetInventory", 10004)
-    ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+    ship_id = hangar_ship_id(who, hangar)
     who.call("dogmaIM", "MachoBindObject", (station, 15), ("GetAllInfo", (True, True, None), None))
     events_of(who)
     only = {"events": who}
@@ -1199,7 +1220,7 @@ def record_ammo(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -
     rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
     manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
     hangar = who.call_bound(manager, "GetInventory", 10004)
-    ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+    ship_id = hangar_ship_id(who, hangar)
     who.call("dogmaIM", "MachoBindObject", (station, 15), ("GetAllInfo", (True, True, None), None))
     events_of(who)
     only = {"events": who}
@@ -1221,7 +1242,7 @@ def record_ammo(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -
     step("the pilot fits a railgun", slash("/fit me 125mm Railgun I"))
 
     def hangar_rows():
-        return [row.fields() for row in who.call_bound(hangar, "List")]
+        return [row.fields() for row in hangar_rows(who, hangar)]
 
     def ids_by_type() -> dict:
         return {int(row["typeID"]): int(row["itemID"]) for row in hangar_rows()}
@@ -1292,7 +1313,7 @@ def record_missile(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str
     rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
     manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
     hangar = who.call_bound(manager, "GetInventory", 10004)
-    ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+    ship_id = hangar_ship_id(who, hangar)
     who.call("dogmaIM", "MachoBindObject", (station, 15), ("GetAllInfo", (True, True, None), None))
     events_of(who)
     only = {"events": who}
@@ -1316,7 +1337,7 @@ def record_missile(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str
     step("the pilot fits a launcher", slash("/fit me Rocket Launcher I"))
 
     def ids_by_type() -> dict:
-        return {int(row.fields()["typeID"]): int(row.fields()["itemID"]) for row in who.call_bound(hangar, "List")}
+        return {int(row.fields()["typeID"]): int(row.fields()["itemID"]) for row in hangar_rows(who, hangar)}
 
     docked = who.call("dogmaIM", "MachoBindObject", (station, 15), None)
 
@@ -1390,7 +1411,7 @@ def record_drones(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
     rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
     manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
     hangar = who.call_bound(manager, "GetInventory", 10004)
-    ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+    ship_id = hangar_ship_id(who, hangar)
     who.call("dogmaIM", "MachoBindObject", (station, 15), ("GetAllInfo", (True, True, None), None))
     events_of(who)
     only = {"events": who}
@@ -1465,7 +1486,7 @@ def record_drone_flight(rec: Recorder, out: str, meta: dict, ancestry: dict, run
     rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
     manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
     hangar = who.call_bound(manager, "GetInventory", 10004)
-    ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+    ship_id = hangar_ship_id(who, hangar)
     who.call("dogmaIM", "MachoBindObject", (station, 15), ("GetAllInfo", (True, True, None), None))
     events_of(who)
     only = {"events": who}
@@ -1484,7 +1505,7 @@ def record_drone_flight(rec: Recorder, out: str, meta: dict, ancestry: dict, run
     slash = lambda command: (lambda: who.call("slash", "SlashCmd", command))  # noqa: E731
     step("the pilot is given Drones", slash("/giveskill me Drones 1"))
     step("the pilot is given a drone", slash("/giveitem Hobgoblin I 1"), 1.5)
-    drone_stack = next(int(row.fields()["itemID"]) for row in who.call_bound(hangar, "List") if int(row.fields()["typeID"]) == 2454)
+    drone_stack = next(int(row.fields()["itemID"]) for row in hangar_rows(who, hangar) if int(row.fields()["typeID"]) == 2454)
     docked = who.call("invbroker", "MachoBindObject", (station, 15), ("GetInventoryFromId", (ship_id, 0), None))[1]
     step("the pilot puts the drone in the drone bay", lambda: who.call_bound(docked, "Add", drone_stack, station, qty=1, flag=87), 1.5)
     service = who.call("ship", "MachoBindObject", (station, 15), None)
@@ -1544,7 +1565,7 @@ def record_reload(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
     rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
     manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
     hangar = who.call_bound(manager, "GetInventory", 10004)
-    ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+    ship_id = hangar_ship_id(who, hangar)
     who.call("dogmaIM", "MachoBindObject", (station, 15), ("GetAllInfo", (True, True, None), None))
     events_of(who)
     only = {"events": who}
@@ -1646,7 +1667,7 @@ def record_cargo(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) 
     rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
     manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
     hangar = who.call_bound(manager, "GetInventory", 10004)
-    ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+    ship_id = hangar_ship_id(who, hangar)
     who.call("dogmaIM", "MachoBindObject", (station, 15), ("GetAllInfo", (True, True, None), None))
     events_of(who)
     only = {"events": who}
@@ -1736,7 +1757,7 @@ def record_crimewatch(rec: Recorder, out: str, meta: dict, ancestry: dict, run: 
     rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
     manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
     hangar = who.call_bound(manager, "GetInventory", 10004)
-    ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+    ship_id = hangar_ship_id(who, hangar)
     who.call("dogmaIM", "MachoBindObject", (station, 15), ("GetAllInfo", (True, True, None), None))
     events_of(who)
     only = {"events": who}
@@ -1793,7 +1814,7 @@ def record_aggression(rec: Recorder, out: str, meta: dict, ancestry: dict, run: 
         rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
         manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
         hangar = who.call_bound(manager, "GetInventory", 10004)
-        ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+        ship_id = hangar_ship_id(who, hangar)
         who.call("dogmaIM", "MachoBindObject", (station, 15), ("GetAllInfo", (True, True, None), None))
         events_of(who)
         return who, created, char_id, ship_id
@@ -1869,7 +1890,7 @@ def record_loot(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -
     rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
     manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
     hangar = who.call_bound(manager, "GetInventory", 10004)
-    ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+    ship_id = hangar_ship_id(who, hangar)
     who.call("dogmaIM", "MachoBindObject", (station, 15), ("GetAllInfo", (True, True, None), None))
     events_of(who)
     only = {"events": who}
@@ -1944,7 +1965,7 @@ def record_health(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
     rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
     manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
     hangar = who.call_bound(manager, "GetInventory", 10004)
-    ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+    ship_id = hangar_ship_id(who, hangar)
     who.call("dogmaIM", "MachoBindObject", (station, 15), ("GetAllInfo", (True, True, None), None))
     events_of(who)
     only = {"events": who}
@@ -2003,7 +2024,7 @@ def record_death(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) 
         rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
         manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
         hangar = who.call_bound(manager, "GetInventory", 10004)
-        ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+        ship_id = hangar_ship_id(who, hangar)
         who.call("dogmaIM", "MachoBindObject", (station, 15), ("GetAllInfo", (True, True, None), None))
         events_of(who)
         return who, created, char_id, ship_id

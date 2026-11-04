@@ -29,7 +29,7 @@ pub(crate) fn system() -> Arc<SolarSystem> {
         constellation_id: 20_000_001,
         region_id: 10_000_001,
         faction_id: None,
-        security: 0.9,
+        security: 0.0,
         bodies: vec![Body {
             id: STATION,
             type_id: 1531,
@@ -142,6 +142,18 @@ pub(crate) fn actions_named(told: &[Out], wanted: &str) -> Vec<Vec<Value>> {
     found
 }
 
+fn destiny_action_index(told: &[Out], wanted: &str) -> Option<usize> {
+    told.iter().position(|out| {
+        let Out::Notify { name: "DoDestinyUpdate", args, .. } = out else { return false };
+        let Some(Value::List(actions)) = args.first() else { return false };
+        actions.iter().any(|action| {
+            let Value::Tuple(pair) = action else { return false };
+            let Some(Value::Tuple(inner)) = pair.get(1) else { return false };
+            matches!(inner.first(), Some(Value::Str(name)) if name == wanted)
+        })
+    })
+}
+
 fn field<'a>(message: &'a Value, key: &str) -> &'a Value {
     let Value::Dict(entries) = message else { panic!("not a dict: {message:?}") };
     entries
@@ -229,6 +241,123 @@ fn a_player_who_has_just_undocked_is_not_attacked_while_the_protection_lasts_and
     assert_eq!(scene.brains().unwrap().faults(rat), []);
     assert!(!notified(&after, "OnTarget").is_empty(), "{after:?}");
     assert!(!notified(&after, "OnDamageMessage").is_empty(), "{after:?}");
+}
+
+#[test]
+fn lowsec_security_status_loss_makes_station_sentries_lock_and_fire() {
+    let mut lowsec = (*system()).clone();
+    lowsec.security = 0.4;
+    let mut scene = Scene::new(Arc::new(lowsec));
+    let mut player_spec = spec();
+    player_spec.vitals.shield_capacity = 20_000.0;
+    scene.undock(PLAYER, player_spec, STATION, NOON).unwrap();
+    scene.bind(PLAYER, NOON);
+    scene.poll(NOON);
+    let subscribers = scene
+        .brains
+        .as_ref()
+        .unwrap()
+        .shared
+        .events
+        .subscribers(30_000_001, eve_behaviors::events::message::SEC_STATUS_LOST_EVENT);
+    assert_eq!(subscribers.len(), 2, "{subscribers:?}");
+
+    let sentry = scene.pilots.values().find(|pilot| pilot.ship.spec.group_id == 99).unwrap();
+    let sentry_id = sentry.ship.spec.ship_id;
+    let sentry_session = scene
+        .pilots
+        .iter()
+        .find(|(_, pilot)| pilot.ship.spec.group_id == 99)
+        .map(|(session, _)| *session)
+        .unwrap();
+    let weapon = &sentry.ship.npc.as_ref().unwrap().combat.weapons[0];
+    assert_eq!(sentry.ship.spec.max_target_range, 1_000_000.0);
+    assert_eq!(weapon.cycle_ms, 2_500.0);
+    assert_eq!(weapon.turret.raw_damage, [80.0, 140.0, 140.0, 80.0]);
+    assert_eq!(weapon.turret.optimal_range, 500_000.0);
+    assert_eq!(weapon.turret.falloff, 50_000.0);
+    assert_eq!(weapon.turret.signature_resolution, 100.0);
+
+    let refused = scene.target_order(PLAYER, Order::Lock(sentry_id), NOON);
+    assert!(
+        refused.iter().any(|out| matches!(out, Out::TargetRefused { reason: "TARGET_INVULNERABLE", .. })),
+        "{refused:?}"
+    );
+    let (outs, applied) = scene.damage(sentry_id, [500.0; 4], NOON);
+    assert!(outs.is_empty());
+    assert!(applied.is_none());
+
+    let mut criminal = scene.pilots[&PLAYER].ship.spec.clone();
+    criminal.security_status = -1.0;
+    scene.respec(PLAYER, criminal, LATER);
+    assert_eq!(scene.security_status_losses.len(), 1);
+
+    let told = run(&mut scene, LATER, 8);
+    let sentries = scene.pilots.values().filter(|pilot| pilot.ship.spec.group_id == 99).count();
+    assert_eq!(sentries, 2);
+    assert!(scene.brains().unwrap().faults(sentry_session).is_empty());
+    assert!(!notified(&told, "OnTarget").is_empty(), "{told:?}");
+    assert!(!actions_named(&told, "OnSpecialFX").is_empty());
+    assert!(!notified(&told, "OnDamageMessage").is_empty());
+    assert!(
+        notified(&told, "OnDamageMessage")
+            .iter()
+            .any(|message| { field(&message[0], "source") == &Value::Long(sentry_id) })
+    );
+    let target_at = told.iter().position(|out| matches!(out, Out::Notify { name: "OnTarget", .. })).unwrap();
+    let fx_at = destiny_action_index(&told, "OnSpecialFX").unwrap();
+    let damage_at =
+        told.iter().position(|out| matches!(out, Out::Notify { name: "OnDamageMessage", .. })).unwrap();
+    assert!(target_at < fx_at && fx_at < damage_at, "{told:?}");
+
+    let original_position = scene.pilots[&PLAYER].ship.position;
+    scene.pilots.get_mut(&PLAYER).unwrap().ship.position = Vec3::new(
+        original_position.x + crate::visibility::GRID_BOX,
+        original_position.y,
+        original_position.z,
+    );
+    run(&mut scene, LATER + 9 * SECOND, 2);
+    scene.pilots.get_mut(&PLAYER).unwrap().ship.position = original_position;
+    let returned = run(&mut scene, LATER + 11 * SECOND, 4);
+    assert!(notified(&returned, "OnTarget").is_empty(), "{returned:?}");
+    assert!(notified(&returned, "OnDamageMessage").is_empty(), "{returned:?}");
+}
+
+#[test]
+fn a_lowsec_status_loss_before_the_first_scene_poll_reaches_sentries() {
+    let mut lowsec = (*system()).clone();
+    lowsec.security = 0.4;
+    let mut scene = Scene::new(Arc::new(lowsec));
+    let mut player_spec = spec();
+    player_spec.vitals.shield_capacity = 20_000.0;
+    scene.undock(PLAYER, player_spec, STATION, NOON).unwrap();
+    scene.bind(PLAYER, NOON);
+
+    let mut criminal = scene.pilots[&PLAYER].ship.spec.clone();
+    criminal.security_status = -1.0;
+    scene.respec(PLAYER, criminal, LATER);
+    assert_eq!(scene.security_status_losses.len(), 1);
+
+    let told = run(&mut scene, LATER, 12);
+    assert!(!notified(&told, "OnTarget").is_empty(), "{told:?}");
+    assert!(!notified(&told, "OnDamageMessage").is_empty(), "{told:?}");
+}
+
+#[test]
+fn an_active_criminal_flag_before_the_first_scene_poll_reaches_sentries() {
+    let mut lowsec = (*system()).clone();
+    lowsec.security = 0.4;
+    let mut scene = Scene::new(Arc::new(lowsec));
+    let mut player_spec = spec();
+    player_spec.vitals.shield_capacity = 20_000.0;
+    scene.undock(PLAYER, player_spec, STATION, NOON).unwrap();
+    scene.bind(PLAYER, NOON);
+    let ship = &scene.pilots[&PLAYER].ship.spec;
+    scene.criminal_flag_activations.push((ship.owner_id, ship.ship_id));
+
+    let told = run(&mut scene, LATER, 12);
+    assert!(!notified(&told, "OnTarget").is_empty(), "{told:?}");
+    assert!(!notified(&told, "OnDamageMessage").is_empty(), "{told:?}");
 }
 
 #[test]

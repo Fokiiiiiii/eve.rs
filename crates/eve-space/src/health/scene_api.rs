@@ -126,6 +126,11 @@ impl Scene {
         else {
             return (Vec::new(), None);
         };
+        if self.pilots.get(&session).is_some_and(|pilot| {
+            pilot.ship.spec.group_id == crate::pochven_population::EMPIRE_SENTRY_GROUP_ID
+        }) {
+            return (Vec::new(), None);
+        }
         let resistance_bonus = resisted && self.link_effects_active(session, now);
         let pilot = self.pilots.get_mut(&session).expect("the pilot is in the scene");
         let owner = pilot.ship.spec.character_id;

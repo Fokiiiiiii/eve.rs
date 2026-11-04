@@ -531,7 +531,7 @@ public sealed partial class SpaceSessions
                 _log?.Invoke($"jump of character {pilot.CharacterId} to system {jumped.ToSystem} failed: {transition.Refusal}");
             else
             {
-                await NotifyPilotEnteredSystemAsync(pilot.CharacterId, jumped.ToSystem);
+                        await NotifyPilotEnteredSystemAsync(pilot.CharacterId, (ulong)session.SessionId, jumped.ToSystem);
                 if (inspectContraband)
                     await ApplyContrabandAsync(session, pilot.CharacterId, pilot.ShipId, jumped.ToSystem, CancellationToken.None);
                 TellEnteredBuffs((ulong)session.SessionId, pilot.ShipId, _nowUnixMs());

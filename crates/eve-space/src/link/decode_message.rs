@@ -1135,6 +1135,7 @@ impl Message {
             kind::LEAVE => Message::Leave { session_id: r.u64()?, why: r.u8()? },
             kind::BIND => Message::Bind { session_id: r.u64()? },
             kind::UPDATE_STATE => Message::UpdateState { session_id: r.u64()? },
+            kind::CRIMINAL_FLAG_ACTIVE => Message::CriminalFlagActive { session_id: r.u64()? },
             kind::CONTROL_STRUCTURE => {
                 let session_id = r.u64()?;
                 let solar_system_id = r.i32()?;

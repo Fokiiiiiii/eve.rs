@@ -778,9 +778,9 @@ impl Message {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.push(*why);
             }
-            Self::Bind { session_id } | Self::UpdateState { session_id } => {
-                out.extend_from_slice(&session_id.to_le_bytes())
-            }
+            Self::Bind { session_id }
+            | Self::UpdateState { session_id }
+            | Self::CriminalFlagActive { session_id } => out.extend_from_slice(&session_id.to_le_bytes()),
             Self::ControlStructure {
                 session_id,
                 solar_system_id,

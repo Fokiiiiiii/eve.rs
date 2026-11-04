@@ -27,7 +27,7 @@ pub(crate) fn system() -> Arc<SolarSystem> {
         constellation_id: 20_000_001,
         region_id: 10_000_001,
         faction_id: None,
-        security: 0.9,
+        security: 0.0,
         bodies: vec![station],
     })
 }
@@ -345,7 +345,7 @@ fn binding_sends_the_time_the_ship_then_the_state_then_the_ship_numbers() {
         ]
     );
     assert_eq!(action_names(&out[4]), ["SetState"]);
-    assert_eq!(action_names(&out[5]), ["SetBallAgility", "SetMaxSpeed"]);
+    assert!(action_names(&out[5]).is_empty());
     // the ship comes at the stamp of the moment and the state a stamp after (the reference's 102 and 103)
     let now_stamp = i64::from(stamp_at(NOON));
     assert_eq!(stamps(&out[2]), [now_stamp]);
@@ -1064,7 +1064,7 @@ fn a_ship_told_to_follow_says_so_and_a_repeat_says_nothing() {
 fn a_ship_that_stands_still_is_set_going_by_the_command_that_follows_orbits_or_aligns() {
     let stopped = || {
         let mut scene = scene();
-        scene.command(SESSION, Command::Stop, NOON);
+        scene.command(SESSION, Command::SetSpeedFraction(0.0), NOON);
         scene
     };
     let later = NOON + seconds(120);
@@ -1085,6 +1085,13 @@ fn a_ship_that_stands_still_is_set_going_by_the_command_that_follows_orbits_or_a
     let align = stopped().command(SESSION, Command::AlignTo { target_id: STATION }, later);
     assert_eq!(action_names(&align[0]), ["GotoDirection", "SetSpeedFraction"]);
     assert_eq!(speed_set(&align), Some(vec![Value::Real(0.75)]));
+
+    let mut retained = scene();
+    retained.command(SESSION, Command::SetSpeedFraction(0.5), NOON);
+    retained.command(SESSION, Command::Stop, NOON + seconds(1));
+    let follow = retained.command(SESSION, Command::FollowBall { target_id: STATION, range: 1_000.0 }, later);
+    assert_eq!(action_names(&follow[0]), ["FollowBall"]);
+    assert_eq!(retained.ship(SESSION, later).unwrap().speed_fraction, 0.5);
 
     // a ship already moving keeps its speed and says nothing of it
     let moving = scene().command(SESSION, Command::AlignTo { target_id: STATION }, later);
@@ -1415,9 +1422,10 @@ fn a_ship_that_stands_still_is_not_told_to_stop_again() {
     assert_eq!(action_names(&scene.command(SESSION, Command::Stop, NOON + seconds(1))[0]), ["Stop"]);
     let later = scene.command(SESSION, Command::Stop, NOON + seconds(120));
     assert_eq!(later, [accepted(3, NOON + seconds(120))]);
-    // an order to go at no speed at all is an order to stop
-    let none = scene.command(SESSION, Command::SetSpeedFraction(0.0), NOON + seconds(121));
-    assert_eq!(none, [accepted(1, NOON + seconds(121))]);
+    let zero = scene.command(SESSION, Command::SetSpeedFraction(0.0), NOON + seconds(121));
+    assert_eq!(action_names(&zero[0]), ["SetSpeedFraction"]);
+    assert_eq!(zero.last(), Some(&accepted(1, NOON + seconds(121))));
+    assert_eq!(scene.ship(SESSION, NOON + seconds(121)).unwrap().speed_fraction, 0.0);
 }
 
 #[test]
@@ -1431,7 +1439,7 @@ fn a_direction_given_to_a_ship_that_stands_sets_it_going_and_the_same_direction_
 
     scene.command(SESSION, Command::Stop, NOON + seconds(2));
     let restart = scene.command(SESSION, Command::GotoDirection(west), NOON + seconds(3));
-    assert_eq!(action_names(&restart[0]), ["GotoDirection", "SetSpeedFraction"]);
+    assert_eq!(action_names(&restart[0]), ["GotoDirection"]);
     assert_eq!(scene.ship(SESSION, NOON + seconds(3)).unwrap().speed_fraction, 1.0);
 }
 
@@ -1446,7 +1454,12 @@ fn a_speed_fraction_keeps_the_course_but_wakes_a_stopped_ship() {
         (Course::Orbit { target: STATION, distance: 5_000.0 }, 0.5)
     );
 
-    scene.command(SESSION, Command::Stop, NOON + seconds(2));
+    let stopped = scene.command(SESSION, Command::Stop, NOON + seconds(2));
+    assert_eq!(action_names(&stopped[0]), ["Stop"]);
+    assert_eq!(scene.ship(SESSION, NOON + seconds(2)).unwrap().speed_fraction, 0.5);
+    let zero = scene.command(SESSION, Command::SetSpeedFraction(0.0), NOON + seconds(2));
+    assert_eq!(action_names(&zero[0]), ["Stop", "SetSpeedFraction"]);
+    assert_eq!(scene.ship(SESSION, NOON + seconds(2)).unwrap().speed_fraction, 0.0);
     scene.command(SESSION, Command::SetSpeedFraction(0.5), NOON + seconds(3));
     assert_eq!(scene.ship(SESSION, NOON + seconds(3)).unwrap().course, Course::Goto);
 }

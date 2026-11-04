@@ -15,6 +15,12 @@
    "hex": "0700000002520004000000"
   },
   {
+   "name": "active criminal flag",
+   "kind": "CriminalFlagActive",
+   "sessionId": "1001",
+   "hex": "090000008ce903000000000000"
+  },
+  {
    "name": "ensure private Abyssal room scene",
    "kind": "EnsureAbyssalScene",
    "requestId": "41",

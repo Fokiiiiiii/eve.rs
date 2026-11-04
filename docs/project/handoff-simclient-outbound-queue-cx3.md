@@ -2,7 +2,7 @@
 
 ## Status
 
-The bounded queue implementation and post-merge local checks are complete. Queue change commit: `fd3524fc`; latest merge commit: `82e5db18` (includes `origin/main` `68e2db0c`). The queue change was pushed to `main` in commit `4fe2df93`. Main CI run 1518 was green before that push. Push-triggered CI run 1519 failed in `Eve.Host.Tests.RpcFuzzTests.Registered_rpcs_refuse_seeded_hostile_arguments_through_dispatcher` during scratch-schema cleanup; its PostgreSQL command timeout is now raised from 120 to 300 seconds. Selected Agent test run 1328 passed. The CI fix must be pushed alone after the red-gate checks.
+The bounded queue implementation and post-merge local checks are complete. Queue change commit: `fd3524fc`; latest merge commit: `82e5db18` (includes `origin/main` `68e2db0c`). The queue change was pushed to `main` in commit `4fe2df93`. Main CI run 1518 was green before that push. Push-triggered CI run 1519 failed in `Eve.Host.Tests.RpcFuzzTests.Registered_rpcs_refuse_seeded_hostile_arguments_through_dispatcher` during scratch-schema cleanup; its PostgreSQL command timeout was raised from 120 to 300 seconds in CI fix commit `21780109`. Selected Agent test run 1329 and push-triggered CI run 1520 both passed.
 
 ## Change
 
@@ -30,10 +30,12 @@ The bounded queue implementation and post-merge local checks are complete. Queue
 - After the merge, `SpaceServiceTests.When_the_simulation_is_lost_the_ship_docks_at_the_station_the_character_left` on `eve_p3`: 1 passed, 0 skipped.
 - After the merge, selected Host tests in `AbyssalHostFlowTests` and `TournamentMatchPersistenceTests` on `eve_p3`: 21 passed, 21 skipped, 0 failed. The skipped cases require `EVE_ABYSSAL_SIM_BINARY` and `EVE_ABYSSAL_SIM_SDE`; they are reported separately and are not counted as passes.
 - Change-specific Actions verification: selected Agent test run 1328 passed: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41923162574. Push-triggered CI run 1519 failed on scratch-schema teardown in the unrelated Host RPC fuzz test: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41923134723.
+- CI-fix Actions verification: selected Agent test run 1329 passed: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41930004669. Push-triggered CI run 1520 passed: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41929981873. `ci-status.py failures 21780109` reports no failed tests or jobs.
 - CI-fix evidence: `ci-status.py failures 4fe2df93` reports an Npgsql stream timeout at `RpcFuzzTests.cs:195`, the `DROP SCHEMA ... CASCADE` command with a 120-second timeout. The failing test passed locally before the change (1 passed, 0 skipped) and the full `RpcFuzzTests` filter passed after the timeout increase (2 passed, 0 skipped) on `eve_p3` via `db-lock.sh`. `Eve.Host.Tests` builds with 0 warnings and errors.
+- Post-merge recheck after fetching and merging `origin/main`: `RpcFuzzTests` filter passed on `eve_p3` via `db-lock.sh` (2 passed, 0 skipped).
 
 ## Main CI gate
 
-The latest green `CI` workflow before the `4fe2df93` push was run 1518 on `68e2db0c03e5`: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41919696018. Push-triggered run 1519 for `4fe2df93` completed with the Host RPC fuzz cleanup timeout above. The next push is permitted only for the fix to `Registered_rpcs_refuse_seeded_hostile_arguments_through_dispatcher`; recheck the current main status and branch before pushing.
+The latest completed `CI` workflow on `main` is run 1520, successful on `2178010953f5`: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41929981873. The focused Agent test 1329 also passed on `21780109`: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41930004669. The prior run 1519 failure was addressed by the cleanup timeout adjustment in `21780109`.
 
 Earlier, main CI run 1515 failed on `HostServerTests.Registered_lp_store_and_wallet_routes_return_the_client_consumed_shapes` (`LpStoreRpcHostWireTests.cs:154,165`). That failure was fixed on main at `96d6bb8f2b15`; CI run 1516 completed successfully: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41898752417.

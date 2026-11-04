@@ -118,4 +118,12 @@ V24.01 whole-tree evidence: `eve/devtools/script/svc_slash.py:781,798,1017,1034`
 
 Focused PostgreSQL checks on `eve_p7`, all through `tools/dev/db-lock.sh`: `SkillAdminCommandTests`, `SkillBulkCommandTests`, and `SlashCatalogTests` passed 32/32; `GiveSkillTests`, `RemoveSkillTests`, `SkillQueueContractTests`, `TrainingServiceTests`, and `SkillServiceTests` passed 23/23; `CharacterTrainingTests` and `CharacterTrainingLearningTests` passed 23/23; Host skill RPC composition tests passed 2/2. The Host DB check required loading the pinned mission SDE build 3405148 into `sde_mission`; no tests were skipped in the passing runs. `Eve.Host` built with 0 warnings/errors.
 
-The latest main CI was run 1477 at `1d8779b2c07d` and is red in unrelated Rust and headless jobs, so this change has not been pushed. No graphical-client run has been made.
+The latest main CI before this history update was run 1487 at `f0bff6925c8d` and is green. No graphical-client run has been made.
+
+## Skill history alignment (2026-11-04)
+
+- Completed entries now use each projected queue line's scheduled end time. Multi-line settlement appends rows in queue order; `PgTrainingStore.AppendHistoryAsync` inserts in that order and `HistoryAsync` reads by descending row ID. Starting or replacing an active queue adds no `TrainingStarted` row. Free skill point allocations record event 307 and the resulting absolute skill points in the same transaction as the skill and balance update.
+- The existing `GetSkillHistory` wire fields remain `logDate`, `eventTypeID`, `skillTypeID`, `absolutePoints`, and `level` (`dotnet/src/Eve.Services.Skills/SkillNotifications.cs:29-35`).
+- EveJS 261028.1 passes each scheduled `trainingEndTime` into completion history (`src/server/src/services/skills/training/skillQueueRuntime.js:727-737`), records no start row (`:1414-1422`), and writes event 307 for applied free points (`:1605-1615`).
+- V24.01 whole-tree evidence: `skillsvc.py:360-364` fetches and caches `GetSkillHistory`; `skillHistoryPanel.py:17-21,53,67,71` maps `TrainingStarted`, fetches the rows, displays `logDate`, and sorts on it; `skillHistoryProvider.py:31,41-42` fetches history and uses `objectRow.logDate` for notification `created`. `appConst.py:1536` assigns free-SP use event 307.
+- Local verification on `eve_p7` through `tools/dev/db-lock.sh`: `TrainingQueueTests`, `CharacterTrainingTests`, and `CharacterTrainingLearningTests` passed 48/48; `SkillHandlerTests` and `TrainingServiceTests` passed 64/64. Builds of `Eve.Skills`, `Eve.Skills.Tests`, and `Eve.Services.Skills.Tests` each passed with zero warnings and errors. The graphical client was not exercised.

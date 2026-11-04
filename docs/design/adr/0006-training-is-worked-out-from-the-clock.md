@@ -18,7 +18,9 @@ computes points from the time the running line began, and settles finished lines
 2. **Settling writes what the clock finished.** `CharacterTraining.SettleAsync` turns finished lines into trained levels, moves
    the queue on and adds to the history, in one transaction under the character's lock. Every read that shows skills
    (`skillHandler`, the ship for dogma) settles first, so a level is never late for the person who looks. It raises
-   `Settled` afterwards; a handler that fails does not undo the settlement.
+   `Settled` afterwards; a handler that fails does not undo the settlement. A completed history row uses the line's scheduled end time,
+   saving or replacing a running queue adds no `TrainingStarted` row, and applying free skill points records event 307 with the updated
+   absolute skill points in the same transaction as the mutation.
 3. **Changes carry the points.** Saving a queue whose first line differs, or stopping, writes the points the running skill has
    gained into the skill (its level follows from them), so the skill resumes from where it was.
 4. **Telling the client is the adapter's job** (`Eve.Services.Skills`): `TrainingAnnouncer` sends the events in the reference's

@@ -195,6 +195,10 @@ public sealed class CharacterTraining(
             await store.SaveAsync(connection, transaction, characterId, nextState, cancellationToken);
         }
 
+        var historyTime = Now;
+        await store.AppendHistoryAsync(connection, transaction, characterId,
+            [.. plan.After.Select(skill => new HistoryEntry(historyTime, SkillEvents.FreeSkillPointsUsed, skill.TypeId, skill.SkillPoints, skill.Level))],
+            cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         await RaiseSettledAsync(new TrainingUpdate(
             characterId,
@@ -276,6 +280,9 @@ public sealed class CharacterTraining(
             await store.SaveAsync(connection, transaction, characterId, nextState, cancellationToken);
         }
 
+        await store.AppendHistoryAsync(connection, transaction, characterId,
+            [new HistoryEntry(Now, SkillEvents.FreeSkillPointsUsed, updatedSkill.TypeId, updatedSkill.SkillPoints, updatedSkill.Level)],
+            cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         await RaiseSettledAsync(new TrainingUpdate(
             characterId,
@@ -577,10 +584,6 @@ public sealed class CharacterTraining(
         var keepsStart = previous.Running && requestedActive && Same(previous.Entries[0], entries[0]) && state.ActiveStart is not null;
         var next = new QueueState(entries, requestedActive, requestedActive ? (keepsStart ? state.ActiveStart : now) : null);
         await store.SaveAsync(connection, transaction, characterId, next, cancellationToken);
-        if (requestedActive && Training.Project(next, owned, catalog, rate, now).Entries.FirstOrDefault() is { } first && !keepsStart)
-        {
-            await store.AppendHistoryAsync(connection, transaction, characterId, [new HistoryEntry(now, SkillEvents.TrainingStarted, first.TypeId, first.StartPoints, first.ToLevel)], cancellationToken);
-        }
         await transaction.CommitAsync(cancellationToken);
 
         var update = new TrainingUpdate(characterId, accountId, before, [], rebased, rebaseChanged, BuildView(characterId, accountId, next, owned, now));

@@ -23,7 +23,16 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     private readonly object _pendingGate = new();
     private readonly Action? _afterConnectionCheck;
     private readonly CancellationTokenSource _stop = new();
-    private readonly Channel<byte[]> _outbox = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions { SingleReader = true });
+    // MaxFrame bounds each frame; 64 queued frames cap retained payload at about 64 MiB.
+    internal const int OutboundQueueCapacity = 64;
+    private readonly Channel<byte[]> _outbox = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(OutboundQueueCapacity)
+    {
+        SingleReader = true,
+        FullMode = BoundedChannelFullMode.Wait,
+    });
+    private CancellationTokenSource? _activeSession;
+    private SimUnavailableException? _outboundFailure;
+    private bool _overloadedLinkLostPending;
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<string?>> _entering = new();
     private readonly ConcurrentDictionary<(Type ReplyType, ulong RequestId), TaskCompletionSource<string?>> _abyssal = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimEnsureAbyssalTracePublishedReply>> _publishingAbyssalTraces = new();
@@ -133,9 +142,8 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
             {
                 _log?.Invoke($"the simulation link: {error.Message}");
             }
-            if (_connected)
+            if (FailPendingAfterLinkLoss())
             {
-                FailPending();
                 Lost?.Invoke();
             }
             try
@@ -177,13 +185,18 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
             }
         }
         _log?.Invoke("connected to the simulation");
-        // whatever was queued for a link that broke is stale
-        while (_outbox.Reader.TryRead(out _))
-        {
-        }
-        lock (_pendingGate) _connected = true;
-
         using var session = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        lock (_pendingGate)
+        {
+            // whatever was queued for a link that broke is stale
+            while (_outbox.Reader.TryRead(out _))
+            {
+            }
+            _outboundFailure = null;
+            _overloadedLinkLostPending = false;
+            _activeSession = session;
+            _connected = true;
+        }
         var writer = Task.Run(async () =>
         {
             await foreach (var frame in _outbox.Reader.ReadAllAsync(session.Token))
@@ -416,7 +429,22 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         lock (_pendingGate)
         {
             _connected = false;
+            _activeSession = null;
             FailPendingLocked();
+        }
+    }
+
+    private bool FailPendingAfterLinkLoss()
+    {
+        lock (_pendingGate)
+        {
+            if (!_connected && !_overloadedLinkLostPending)
+                return false;
+            _connected = false;
+            _activeSession = null;
+            _overloadedLinkLostPending = false;
+            FailPendingLocked();
+            return true;
         }
     }
 
@@ -494,13 +522,72 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         }
     }
 
+    private static byte[] EncodeOutbound(SimMessage message)
+    {
+        var frame = SimCodec.Encode(message);
+        var payloadLength = frame.Length - sizeof(uint);
+        if (payloadLength > SimCodec.MaxFrame)
+            throw new ArgumentException($"outbound frame of {payloadLength} bytes exceeds {SimCodec.MaxFrame}", nameof(message));
+        return frame;
+    }
+
+    private SimUnavailableException? TryEnqueueLocked(
+        SimMessage message,
+        out CancellationTokenSource? sessionToCancel,
+        out bool overloaded)
+    {
+        sessionToCancel = null;
+        overloaded = false;
+        if (_outboundFailure is { } failed)
+            return failed;
+        if (_outbox.Writer.TryWrite(EncodeOutbound(message)))
+            return null;
+
+        var failure = new SimUnavailableException($"outbound queue is full ({OutboundQueueCapacity} frames)");
+        _outboundFailure = failure;
+        _connected = false;
+        _overloadedLinkLostPending = true;
+        sessionToCancel = _activeSession;
+        overloaded = true;
+        return failure;
+    }
+
+    private void FailOverloadedLink(SimUnavailableException failure, CancellationTokenSource? sessionToCancel)
+    {
+        FailPending();
+        try
+        {
+            sessionToCancel?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        _log?.Invoke($"the simulation link: {failure.Message}");
+    }
+
     private void Send(SimMessage message)
     {
-        if (!_connected)
+        SimUnavailableException? failure;
+        CancellationTokenSource? sessionToCancel;
+        bool overloaded;
+        lock (_pendingGate)
         {
-            return; // nobody is there to hear it
+            if (_outboundFailure is { } linkFailure)
+            {
+                failure = linkFailure;
+                sessionToCancel = null;
+                overloaded = false;
+            }
+            else if (!_connected)
+                return; // nobody is there to hear it
+            else
+                failure = TryEnqueueLocked(message, out sessionToCancel, out overloaded);
         }
-        _outbox.Writer.TryWrite(SimCodec.Encode(message));
+        if (failure is null)
+            return;
+        if (overloaded)
+            FailOverloadedLink(failure, sessionToCancel);
+        throw failure;
     }
 
     private static void TryEnqueue<T>(
@@ -548,10 +635,15 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     {
         var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
         CancellationTokenRegistration registration = default;
+        SimUnavailableException? failure = null;
+        CancellationTokenSource? sessionToCancel = null;
+        var overloaded = false;
         try
         {
             lock (_pendingGate)
             {
+                if (_outboundFailure is { } linkFailure)
+                    throw linkFailure;
                 if (!_connected)
                 {
                     throw new SimUnavailableException("the simulation is not running");
@@ -572,8 +664,9 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                         () => CancelPending(_pendingGate, pending, session, completion, completion, cancellationToken),
                         () =>
                         {
-                            if (!_outbox.Writer.TryWrite(SimCodec.Encode(request)))
-                                throw new SimUnavailableException("the simulation link is not accepting requests");
+                            failure = TryEnqueueLocked(request, out sessionToCancel, out overloaded);
+                            if (failure is not null)
+                                TryRemoveExact(pending, session, completion);
                         });
                 }
                 catch
@@ -581,6 +674,12 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                     TryRemoveExact(pending, session, completion);
                     throw;
                 }
+            }
+            if (failure is not null)
+            {
+                if (overloaded)
+                    FailOverloadedLink(failure, sessionToCancel);
+                throw failure;
             }
             return await completion.Task.ConfigureAwait(false);
         }
@@ -613,7 +712,11 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     private Task<string?> AwaitAbyssalAsync(ulong requestId, Type replyType, SimMessage request, CancellationToken cancellationToken)
     {
         if (cancellationToken.IsCancellationRequested) return Task.FromCanceled<string?>(cancellationToken);
-        if (!_connected) throw new SimUnavailableException("the simulation is not running");
+        lock (_pendingGate)
+        {
+            if (!_connected)
+                throw _outboundFailure ?? new SimUnavailableException("the simulation is not running");
+        }
         if (requestId == 0) throw new ArgumentOutOfRangeException(nameof(requestId));
         return AwaitAsync(
             _abyssal,
@@ -848,10 +951,14 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         var completion = new TaskCompletionSource<SimChargeAdjusted>(TaskCreationOptions.RunContinuationsAsynchronously);
         var pending = (Completion: completion, InOrder: inOrder);
         CancellationTokenRegistration registration = default;
+        SimUnavailableException? failure = null;
+        CancellationTokenSource? sessionToCancel = null;
+        var overloaded = false;
         try
         {
             lock (_pendingGate)
             {
+                if (_outboundFailure is { } linkFailure) throw linkFailure;
                 if (!_connected) throw new SimUnavailableException("the simulation is not running");
                 _afterConnectionCheck?.Invoke();
                 if (!_adjusting.TryAdd(request.RequestId, pending))
@@ -867,8 +974,9 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                         () => CancelPending(_pendingGate, _adjusting, request.RequestId, pending, completion, cancellationToken),
                         () =>
                         {
-                            if (!_outbox.Writer.TryWrite(SimCodec.Encode(request)))
-                                throw new SimUnavailableException("the simulation link is not accepting requests");
+                            failure = TryEnqueueLocked(request, out sessionToCancel, out overloaded);
+                            if (failure is not null)
+                                TryRemoveExact(_adjusting, request.RequestId, pending);
                         });
                 }
                 catch
@@ -876,6 +984,12 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                     TryRemoveExact(_adjusting, request.RequestId, pending);
                     throw;
                 }
+            }
+            if (failure is not null)
+            {
+                if (overloaded)
+                    FailOverloadedLink(failure, sessionToCancel);
+                throw failure;
             }
             return await completion.Task.ConfigureAwait(false);
         }

@@ -63,16 +63,20 @@ public partial class HostServerTests
     [Fact]
     public async Task Pvp_filament_reads_and_notifications_keep_v24_shapes_over_host_wire()
     {
-        Start(configure: registry => registry.Register(new PvpFilamentMgrService()));
+        var service = new PvpFilamentMgrService(
+            utcNow: () => new DateTimeOffset(2022, 6, 4, 11, 0, 0, TimeSpan.Zero));
+        Start(configure: registry => registry.Register(service));
         var (front, open) = await OpenFrontAsync();
 
-        Assert.Empty(Assert.IsType<PyDict>(await HostRpcAsync(
-            front, open, 1, "pvpFilamentMgr", "GetAllEvents")).Entries);
-        Assert.Empty(Assert.IsType<PyDict>(await HostRpcAsync(
-            front, open, 2, "pvpFilamentMgr", "GetActiveEvents")).Entries);
-        Assert.Same(PyNone.Instance, await HostRpcAsync(
+        var all = Assert.IsType<PyDict>(await HostRpcAsync(
+            front, open, 1, "pvpFilamentMgr", "GetAllEvents"));
+        Assert.Equal(88, all.Entries.Count);
+        var active = Assert.IsType<PyDict>(await HostRpcAsync(
+            front, open, 2, "pvpFilamentMgr", "GetActiveEvents"));
+        Assert.Contains(active.Entries, entry => entry.Key == new PyBytes(Encoding.UTF8.GetBytes("105_145")));
+        Assert.IsType<PyObject>(await HostRpcAsync(
             front, open, 3, "pvpFilamentMgr", "GetMostRecentEvent"));
-        Assert.Same(PyNone.Instance, await HostRpcAsync(
+        Assert.IsType<PyObjectEx>(await HostRpcAsync(
             front, open, 4, "pvpFilamentMgr", "GetNextEventDate"));
 
         void AssertDictionary(PyDict expected, PyDict actual)

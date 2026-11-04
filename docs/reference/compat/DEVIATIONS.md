@@ -1,5 +1,13 @@
 # Deviations from the reference server
 
+## PvP Filament schedule expiry during admission (2026-11-04)
+
+Host rechecks that the same event schedule remains active after awaited ship, fleet, inventory, and SDE admission reads (`ActivityTravelRpcServices.cs:127-132`). EveJS validates synchronously against its in-memory event catalog before inserting the transient queue record (`pvpFilamentMgrService.js:134-145`, `pvpFilamentQueueRuntime.js`). The recheck rejects admission with the client event-not-active error when a real schedule ends during those reads, instead of creating a queue entry for an expired event. V24.01 displays this as a failed join through `pvpFilamentController.py:194,305-307`; it uses the sourced event dates from `pvpFilamentSvc.py:92-119`.
+
+## PvP Filament queue lifetime without a match runtime (2026-11-04)
+
+EveJS calls `pvpFilamentQueueRuntime.tickScene` from `space/runtime/scene/tick.js:2424`. With its match runtime unavailable, that tick revalidates and clears an admitted record with `PVPJumpError.UNKNOWN_ERROR` (22), then notifies each participant (`pvpFilamentQueueRuntime.js:118-132,154-175`, `pvpJumpErrors.js:10`). The Host port retains its transient, cancellable queue record until leave or disconnect; it does not synthesize a match or result. This keeps duplicate detection and explicit leave/retry usable without adding timer-based match behavior; a future match runtime should own periodic revalidation and queue completion.
+
 ## Fleet Finder advert member count (2026-11-02)
 
 eve.rs derives `numMembers` from persisted fleet membership when updating and reading adverts, instead of trusting the client-supplied value as EveJS 261028.1 does (`src/server/src/services/fleets/fleetRuntime.js:2832-2861`). The V24.01 client normally supplies its local member count (`eve/client/script/parklife/fleetSvc.py:1730-1747`), but updates are delayed 60 seconds (`:55-57`), and Fleet Finder displays the count and compares it with the join limit (`eve/client/script/ui/shared/fleet/fleetFinderEntry.py:84-87`). Persisted membership is authoritative during that delay and after membership transitions. See `docs/project/service-audit/deepfix-fleet-finder.md` for the regression coverage and remaining audit work.

@@ -2,6 +2,8 @@
 
 ## Project status
 
+PvP Filament catalog and queue admission are wired from the matching V24.01 static schedules and Host state. The catalog currently contains 88 CCP schedules; this build has no active/future CCP schedule. See [the CX7 handoff](character-phase/handoff-pvp-filaments-cx7.md) for source hashes, V24.01 callsites, regressions, and the graphical-client check.
+
 Cross-system headless walk coverage and remaining integration gaps are tracked in [WALKS.md](WALKS.md).
 RPC malformed-argument fuzz coverage and its execution record are tracked in [RPC_FUZZING.md](RPC_FUZZING.md).
 Market expiry notification tokens and partially filled order volumes are tracked in [market-wallet-defect-handoff.md](market-wallet-defect-handoff.md).

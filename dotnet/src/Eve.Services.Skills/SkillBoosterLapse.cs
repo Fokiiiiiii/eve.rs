@@ -44,16 +44,14 @@ public sealed class SkillBoosterLapse(
     public async Task LapseAsync(BoosterJob job, CancellationToken cancellationToken)
     {
         var nowFileTime = DateTimeOffset.FromUnixTimeMilliseconds(nowUnixMs()).ToFileTime();
-        bool lapsed;
+        IReadOnlyList<StoredSkillBooster> expired;
         await using (var connection = await source.OpenConnectionAsync(cancellationToken))
         await using (var transaction = await connection.BeginTransactionAsync(cancellationToken))
         {
-            lapsed = (await skillStore.ExpiredSkillBoostersAsync(connection, transaction, job.CharacterId, nowFileTime, cancellationToken)).Count > 0;
-            if (lapsed)
-                await SkillHandlerService.PruneExpiredBoosterRowsAsync(skillStore, items, connection, transaction, job.CharacterId, nowFileTime, cancellationToken);
+            expired = await skillStore.ExpiredSkillBoostersAsync(connection, transaction, job.CharacterId, nowFileTime, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
         }
-        if (!lapsed)
+        if (expired.Count == 0)
         {
             if (await skillStore.ActiveSkillBoosterAsync(job.CharacterId, job.ItemId, nowFileTime, cancellationToken) is { } active)
             {
@@ -66,6 +64,22 @@ public sealed class SkillBoosterLapse(
         }
 
         var character = await characters.GetAsync(job.CharacterId, cancellationToken);
+        if (character is not null)
+        {
+            foreach (var expiry in expired.Select(booster => booster.ExpiryFileTime).Distinct().Order())
+                await training.RebaseRunningAtAsync(job.CharacterId, character.AccountId, expiry, expiry - 1, cancellationToken);
+        }
+
+        int lapsed;
+        await using (var connection = await source.OpenConnectionAsync(cancellationToken))
+        await using (var transaction = await connection.BeginTransactionAsync(cancellationToken))
+        {
+            lapsed = await SkillHandlerService.PruneExpiredBoosterRowsAsync(skillStore, items, connection, transaction, job.CharacterId, nowFileTime, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        if (lapsed == 0)
+            return;
+
         var update = character is null ? null : await training.RebaseRunningAsync(job.CharacterId, character.AccountId, cancellationToken);
         sessions.Of(job.CharacterId)?.SendNotification("OnServerBoostersChanged", "clientID", new PyList([]));
         await announcer.AnnounceLearningChangedAsync(job.CharacterId, update);

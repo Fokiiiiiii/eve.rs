@@ -26,6 +26,9 @@ public sealed class TrainingSettings
 
     /// <summary>Brings the learning bonus of a character up to date. Every call that reads a rate runs it first, so a bonus is never read stale.</summary>
     public Func<long, CancellationToken, Task> RefreshLearningBonus { get; init; } = (_, _) => Task.CompletedTask;
+
+    /// <summary>Refreshes implants and boosters as they were at a supplied FILETIME; used to settle at an expiry boundary.</summary>
+    public Func<long, long, CancellationToken, Task>? RefreshLearningBonusAt { get; init; }
 }
 
 /// <summary>The queue and skills of a character as they are at a moment: the running skill has the points it has gained by then.</summary>
@@ -77,7 +80,9 @@ public sealed class CharacterTraining(
     public event Func<TrainingUpdate, Task>? Settled;
 
     /// <summary>The time now as a FILETIME.</summary>
-    public long Now => UnixEpochInFileTime + (nowUnixMs() * 10_000);
+    public long Now => FileTimeAt(nowUnixMs());
+
+    private static long FileTimeAt(long unixMs) => UnixEpochInFileTime + (unixMs * 10_000);
 
     private Func<SkillType, double> RateOf(long characterId, long accountId)
     {
@@ -359,27 +364,41 @@ public sealed class CharacterTraining(
     public Task<TrainingUpdate?> SettleAsync(long characterId, long accountId, CancellationToken cancellationToken = default)
         => SettleAsync(characterId, accountId, int.MaxValue, cancellationToken);
 
-    public async Task<TrainingUpdate?> SettleAsync(long characterId, long accountId, int maxFinished, CancellationToken cancellationToken = default)
+    public Task<TrainingUpdate?> SettleAsync(long characterId, long accountId, int maxFinished, CancellationToken cancellationToken = default)
+    {
+        var at = Now;
+        return SettleAtFileTimeAsync(characterId, accountId, maxFinished, at, at, cancellationToken);
+    }
+
+    private async Task<TrainingUpdate?> SettleAtFileTimeAsync(long characterId, long accountId, int maxFinished, long atFileTime, long bonusAtFileTime, CancellationToken cancellationToken)
     {
         var gate = settleGates.GetOrAdd(characterId, static _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(cancellationToken);
+        TrainingUpdate? update;
         try
         {
-            return await SettleCoreAsync(characterId, accountId, maxFinished, cancellationToken);
+            update = await SettleCoreAsync(characterId, accountId, maxFinished, atFileTime, bonusAtFileTime, cancellationToken);
         }
         finally
         {
             gate.Release();
         }
+        if (update is not null)
+            await RaiseSettledAsync(update);
+        return update;
     }
 
-    private async Task<TrainingUpdate?> SettleCoreAsync(long characterId, long accountId, int maxFinished, CancellationToken cancellationToken)
+    private async Task<TrainingUpdate?> SettleCoreAsync(long characterId, long accountId, int maxFinished, long atFileTime, long bonusAtFileTime, CancellationToken cancellationToken)
     {
         await skills.NeuralRemapAsync(characterId, cancellationToken);
-        await settings.RefreshLearningBonus(characterId, cancellationToken);
+        if (settings.RefreshLearningBonusAt is { } refreshAt)
+            await refreshAt(characterId, bonusAtFileTime, cancellationToken);
+        else
+            await settings.RefreshLearningBonus(characterId, cancellationToken);
         var probeRate = RateOf(characterId, accountId);
         var probe = await store.LoadAsync(characterId, cancellationToken);
-        if (probe.Entries.Count == 0 || !Training.Settle(probe, await SkillsOfAsync(characterId, cancellationToken), catalog, probeRate, Now, maxFinished).QueueChanged)
+        var at = atFileTime;
+        if (probe.Entries.Count == 0 || !Training.Settle(probe, await SkillsOfAsync(characterId, cancellationToken), catalog, probeRate, at, maxFinished).QueueChanged)
         {
             return null;
         }
@@ -392,7 +411,7 @@ public sealed class CharacterTraining(
             var remap = await skills.ReadNeuralRemapAsync(connection, transaction, characterId, forUpdate: true, cancellationToken);
             skills.CacheNeuralRemap(characterId, remap);
             var rate = RateOf(characterId, accountId);
-            var now = Now;
+            var now = at;
             var state = await store.LoadAsync(connection, transaction, characterId, cancellationToken);
             var before = (await skills.ForCharacterAsync(connection, transaction, characterId, cancellationToken))
                 .ToDictionary(skill => skill.TypeId);
@@ -407,7 +426,6 @@ public sealed class CharacterTraining(
             await transaction.CommitAsync(cancellationToken);
             update = new TrainingUpdate(characterId, accountId, [.. before.Values.OrderBy(s => s.TypeId)], settled.Finished, null, false, BuildView(characterId, accountId, settled.State, settled.Skills, now));
         }
-        await RaiseSettledAsync(update);
         return update;
     }
 
@@ -632,13 +650,20 @@ public sealed class CharacterTraining(
     /// </summary>
     public async Task<TrainingUpdate?> RebaseRunningAsync(long characterId, long accountId, CancellationToken cancellationToken = default)
     {
-        await SettleAsync(characterId, accountId, cancellationToken);
+        var now = Now;
+        return await RebaseRunningAtAsync(characterId, accountId, now, now, cancellationToken);
+    }
+
+    /// <summary>Settles and rebases a running line at a rate evaluated at <paramref name="bonusAtFileTime"/>.</summary>
+    public async Task<TrainingUpdate?> RebaseRunningAtAsync(long characterId, long accountId, long atFileTime, long bonusAtFileTime, CancellationToken cancellationToken = default)
+    {
+        await SettleAtFileTimeAsync(characterId, accountId, int.MaxValue, atFileTime, bonusAtFileTime, cancellationToken);
 
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await LockAsync(connection, transaction, characterId, cancellationToken);
         var rate = RateOf(characterId, accountId);
-        var now = Now;
+        var now = atFileTime;
         var state = await store.LoadAsync(connection, transaction, characterId, cancellationToken);
         if (!state.Running)
         {

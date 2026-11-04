@@ -3,37 +3,78 @@ using Eve.Services;
 
 namespace Eve.Services.Station;
 
-public delegate void SeedObserverGuestLedgerCallback(
+public delegate StationGuestLedger.SnapshotSeed? BeginObserverGuestLedgerSeedCallback(
     ClientSession observerSession,
-    long locationId,
-    IReadOnlySet<long> guestCharacterIds);
+    long locationId);
 
 public sealed class StationGuestLedger
 {
+    private readonly record struct GuestDelta(long Revision, bool Joined);
+
     private sealed class Entry(long locationId)
     {
         public long LocationId = locationId;
+        public long Generation;
+        public long Revision;
+        public long NextSeedId;
         public readonly HashSet<long> GuestCharacterIds = [];
+        public readonly HashSet<long> PendingSeeds = [];
+        public readonly Dictionary<long, GuestDelta> Deltas = [];
+    }
+
+    public sealed class SnapshotSeed : IDisposable
+    {
+        private readonly Action<IReadOnlySet<long>> _complete;
+        private readonly Action _cancel;
+        private int _finished;
+
+        internal SnapshotSeed(Action<IReadOnlySet<long>> complete, Action cancel)
+        {
+            _complete = complete;
+            _cancel = cancel;
+        }
+
+        public void Complete(IReadOnlySet<long> guestCharacterIds)
+        {
+            if (Interlocked.Exchange(ref _finished, 1) == 0)
+                _complete(guestCharacterIds);
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _finished, 1) == 0)
+                _cancel();
+        }
     }
 
     private readonly ConditionalWeakTable<ClientSession, Entry> _entries = new();
+
+    public SnapshotSeed? BeginObserverGuestLedgerSeed(ClientSession observerSession, long locationId)
+    {
+        if (locationId <= 0)
+            return null;
+
+        var entry = _entries.GetValue(observerSession, _ => new Entry(locationId));
+        lock (entry)
+        {
+            ResetForLocation(entry, locationId);
+            var seedId = ++entry.NextSeedId;
+            var generation = entry.Generation;
+            var revision = entry.Revision;
+            entry.PendingSeeds.Add(seedId);
+            return new SnapshotSeed(
+                guestCharacterIds => CompleteSnapshot(entry, locationId, generation, seedId, revision, guestCharacterIds),
+                () => CancelSnapshot(entry, locationId, generation, seedId));
+        }
+    }
 
     public void SeedObserverGuestLedger(
         ClientSession observerSession,
         long locationId,
         IReadOnlySet<long> guestCharacterIds)
     {
-        if (locationId <= 0)
-            return;
-
-        var guests = guestCharacterIds.Where(characterId => characterId > 0).ToHashSet();
-        var entry = _entries.GetValue(observerSession, _ => new Entry(locationId));
-        lock (entry)
-        {
-            entry.LocationId = locationId;
-            entry.GuestCharacterIds.Clear();
-            entry.GuestCharacterIds.UnionWith(guests);
-        }
+        using var seed = BeginObserverGuestLedgerSeed(observerSession, locationId);
+        seed?.Complete(guestCharacterIds);
     }
 
     /// <summary>Returns true once per observer/location for a new guest join.</summary>
@@ -42,9 +83,16 @@ public sealed class StationGuestLedger
         if (locationId <= 0 || guestCharacterId <= 0)
             return false;
 
-        var entry = Resolve(observerSession, locationId);
+        var entry = _entries.GetValue(observerSession, _ => new Entry(locationId));
         lock (entry)
-            return entry.GuestCharacterIds.Add(guestCharacterId);
+        {
+            ResetForLocation(entry, locationId);
+            if (!entry.GuestCharacterIds.Add(guestCharacterId))
+                return false;
+
+            RecordDelta(entry, guestCharacterId, joined: true);
+            return true;
+        }
     }
 
     /// <summary>Returns true only when the observer was previously told about the guest.</summary>
@@ -53,23 +101,88 @@ public sealed class StationGuestLedger
         if (locationId <= 0 || guestCharacterId <= 0)
             return false;
 
-        var entry = Resolve(observerSession, locationId);
-        lock (entry)
-            return entry.GuestCharacterIds.Remove(guestCharacterId);
-    }
-
-    private Entry Resolve(ClientSession observerSession, long locationId)
-    {
         var entry = _entries.GetValue(observerSession, _ => new Entry(locationId));
         lock (entry)
         {
-            if (entry.LocationId != locationId)
-            {
-                entry.LocationId = locationId;
-                entry.GuestCharacterIds.Clear();
-            }
+            ResetForLocation(entry, locationId);
+            if (!entry.GuestCharacterIds.Remove(guestCharacterId))
+                return false;
+
+            RecordDelta(entry, guestCharacterId, joined: false);
+            return true;
         }
-        return entry;
+    }
+
+    private static void CompleteSnapshot(
+        Entry entry,
+        long locationId,
+        long generation,
+        long seedId,
+        long revision,
+        IReadOnlySet<long> guestCharacterIds)
+    {
+        var guests = guestCharacterIds.Where(characterId => characterId > 0).ToHashSet();
+        lock (entry)
+        {
+            if (entry.LocationId != locationId ||
+                entry.Generation != generation ||
+                !entry.PendingSeeds.Remove(seedId))
+                return;
+
+            entry.GuestCharacterIds.Clear();
+            entry.GuestCharacterIds.UnionWith(guests);
+            // Replay transitions observed after this snapshot began over its older result.
+            foreach (var (characterId, delta) in entry.Deltas)
+            {
+                if (delta.Revision <= revision)
+                    continue;
+                if (delta.Joined)
+                    entry.GuestCharacterIds.Add(characterId);
+                else
+                    entry.GuestCharacterIds.Remove(characterId);
+            }
+
+            ClearPendingDeltasWhenIdle(entry);
+        }
+    }
+
+    private static void CancelSnapshot(Entry entry, long locationId, long generation, long seedId)
+    {
+        lock (entry)
+        {
+            if (entry.LocationId == locationId && entry.Generation == generation)
+                entry.PendingSeeds.Remove(seedId);
+            ClearPendingDeltasWhenIdle(entry);
+        }
+    }
+
+    private static void RecordDelta(Entry entry, long guestCharacterId, bool joined)
+    {
+        var revision = ++entry.Revision;
+        if (entry.PendingSeeds.Count == 0)
+            return;
+
+        entry.Deltas[guestCharacterId] = new GuestDelta(revision, joined);
+    }
+
+    private static void ResetForLocation(Entry entry, long locationId)
+    {
+        if (entry.LocationId == locationId)
+            return;
+
+        entry.LocationId = locationId;
+        entry.Generation++;
+        entry.GuestCharacterIds.Clear();
+        entry.PendingSeeds.Clear();
+        entry.Deltas.Clear();
+    }
+
+    private static void ClearPendingDeltasWhenIdle(Entry entry)
+    {
+        if (entry.PendingSeeds.Count != 0)
+            return;
+
+        entry.Deltas.Clear();
     }
 }
 

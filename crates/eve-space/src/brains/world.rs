@@ -233,6 +233,10 @@ impl Random for SceneWorld<'_> {
     fn random(&mut self) -> f64 {
         self.state.rng.random()
     }
+
+    fn random_bits(&mut self, bits: u32) -> u64 {
+        self.state.rng.getrandbits(bits)
+    }
 }
 
 impl Entities for SceneWorld<'_> {

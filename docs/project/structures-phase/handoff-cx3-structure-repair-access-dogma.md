@@ -2,7 +2,7 @@
 
 ## Status
 
-Implementation and focused PostgreSQL tests are complete on the cx3 worktree, based on `965af3dc`. The worktree has not yet been pushed. Main CI status and the Actions result are to be recorded after the push. No graphical-client repair walkthrough has been performed.
+Implementation commit `7a25d0fe` is merged with `origin/main` at `e86a8721` in merge commit `c3967e13`. Post-merge builds and focused PostgreSQL tests passed. The current change has not yet been pushed; the newest completed main CI run before push was run 1506 and green. Push-triggered Actions results will be recorded after the push. No graphical-client repair walkthrough has been performed.
 
 ## Behavior and decisions
 

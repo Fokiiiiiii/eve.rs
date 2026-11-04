@@ -3419,35 +3419,36 @@ Status: implemented. Tests: `Eve.Corporations.Tests` (`CorpStationMgrTests`, 4, 
 
 ## Repair (repairSvc, 37a)
 
-Status: the NPC station repair is implemented and tested in PostgreSQL (`RepairServiceTests`, 6 tests). The client has not been driven through a repair.
+Status: NPC station and Upwell structure repair are implemented and covered by PostgreSQL service and Host wire tests (`RepairServiceTests`, `RepairStructureHostWireTests`). The graphical client has not been driven through the repair shop.
 
-- **Damage and state.** The damage is the module state store's (`ship_condition`, `module_condition`), keyed by item id; the fractions are
-  the store's. Health is in HP: shield capacity, armor HP and structure HP are the dogma attributes `shieldCapacity`, `armorHP` and `hp`
-  (SDE attribute ids 263, 265 and 9). The damage is shield damage plus armor damage plus structure damage, as `getItemHealthSnapshot`
-  computes it in `repairRuntime.js`.
-- **Cost.** One unit of damage costs the adjusted price x 0.1 (`STATION_REPAIR_COST_MULTIPLIER`) divided by the maximum HP, rounded to
-  six decimals. The adjusted price is the ESI one (DEVIATIONS "Reprocessing", item 7). The full cost is the damage rounded up times the unit
-  cost, rounded to cents.
-- **Repair and payment.** A payment (or the full cost when None) is spent in the order given: each item is charged the part it can take up
-  to its full cost and repaired by what that buys (`executeRepairPlan`). The damage is repaired in the order structure, armor, shield
-  (`applyRepairToHealthSnapshot`). A repair with a fitted module is paid in full (`MODULE_PARTIAL_REPAIR`, as the notice).
-- **One transaction.** The charge (wallet ref type 15, `repair_bill`, CCP eve-glue) and the new condition are written in one PostgreSQL
-  transaction. The module store gained transaction-taking overloads for the reads and writes. The notices go out after the commit.
-- **Which items.** Items the caller owns, singleton, of a repairable group or category (`REPAIRABLE_GROUP_IDS` and
-  `REPAIRABLE_CATEGORY_IDS`), in this station through their containers. Anything else is skipped, as the reference skips it.
+- **Damage and state.** Hull and fitted-module damage fractions are stored by item in `ship_condition` and `module_condition`. Health is
+  calculated from the SDE dogma attributes `shieldCapacity`, `armorHP` and `hp`; repair writes the resulting condition in the same transaction.
+- **Cost.** NPC station repair uses the adjusted price x 0.1 divided by maximum HP, rounds unit cost to six decimals and charges the rounded
+  full cost (or a partial payment). Upwell structure repair quotes and repairs are free, with zero unit cost and zero structure tax; this
+  matches EveJS `repairRuntime.js:431-469` and its free structure repair plan.
+- **Access.** V24.01 maps `SERVICE_REPAIR` to `SETTING_HOUSING_CAN_DOCK` (`structures/services.py:119-127`) and checks service availability
+  before opening the UI (`eveCommands.py:2501-2509`). The server rechecks that profile setting for each structure quote and repair RPC, and
+  requires the structure core and a live structure. EVE University’s [Structure Browser](https://wiki.eveuniversity.org/Structure_Browser)
+  says repair is available with the required core. There is no online-service-module requirement: EveJS’s shared
+  `characterHasStructureService` also checks the service state (`structurePayloads.js:211-253`), which is intentionally not applied here.
+- **Repair and payment.** NPC wallet changes and condition changes commit together. Structure condition changes commit without a wallet charge.
+  Successful changes are announced after commit: any wallet update, then one `OnModuleAttributeChanges` carrying the changed SDE damage
+  attributes, then the existing `OnItemChange` for each repaired item. The V24.01 client unpacks new and old values and updates loaded damage
+  attributes in `clientDogmaLocation.py:309-336`; its `OnItemChange` path at `569-623` updates inventory state but not those damage
+  attributes. The UI’s `hangarView.py:800-803` consumes the resulting `OnDamageStateChanged` event.
+- **Wire and item selection.** The client binds `repairSvc` with a dock-session check, requests `GetRepairQuotes`, then calls
+  `RepairItemsInStructure(itemIDs)` or `RepairItemsInStation(itemIDs, payment)` (`base_repairshop.py:46-71`). Successful repair RPC replies
+  remain `None`; quote dictionaries retain their existing item-ID grouping and row fields.
 
 Differences and cuts:
-1. Structures: refused with a named notice (`Repair in structures is not available.`). The structure tax and the structure rules are not built.
-2. No price: an item with damage and no adjusted price is refused (`No repair price is known for that item.`). EVE.js invents a base
+1. Station repair still refuses a damaged item when no adjusted price is known; EveJS can invent a
    price from the volume (`getFallbackRepairBasePrice`) and repairs at that price; this server does not invent prices. An item with no damage
    is skipped.
-3. The reference's aliasing of a docked ship's module ids (`DOCKED_SHIP_REPAIR_ALIAS_OFFSET`) is not used: the quote rows carry the real
+2. Docked ship module IDs are not aliased; quote rows carry the real
    item ids. The client accepts them because the execution reads them back.
-4. No durable settlement (`repair.settle`): the charge is in the same transaction as the repair, so a settlement that fails midway is rolled back, not queued.
-5. The notice to the client is an `OnItemChange` for each repaired item (the same rows the docked heal sends); the damage itself is read from
-   the item's dogma. The reference sends attribute notices (`syncDamageStateAttributesForSession`). Not checked against a client capture.
-6. The fitted modules of a ship in the hangar are quoted with the ship (`CATEGORY_SHIP` in the hangar, fitted slots and the drone bay).
-   The station-side contents are read outside the repair's transaction; a fitting changed during the repair is not seen by that repair.
+3. Durable settlement is not used: NPC wallet and condition writes share one transaction, so failures roll back instead of queuing settlement.
+4. Fitted modules and drone-bay items are quoted with a ship in the hangar (`CATEGORY_SHIP` in the hangar, fitted slots and the drone bay).
+   Those contents are read outside the repair transaction, so a fitting change during repair is not seen by that repair.
 
 
 ## Bookmarks: personal folders (accessGroupBookmarkMgr, 37a)

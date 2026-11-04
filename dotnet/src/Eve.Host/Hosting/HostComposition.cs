@@ -50,7 +50,7 @@ internal static class HostComposition
         return titles;
     }
 
-    internal static async Task<HostRuntime> BuildAsync(HostSettings settings)
+    internal static async Task<HostRuntime> BuildAsync(HostSettings settings, Func<long>? clockOverride = null)
     {
         var accountOptions = settings.AccountOptions;
         var options = settings.Options;
@@ -147,7 +147,7 @@ internal static class HostComposition
             var configSchema = Env("EVE_GLOBAL_CONFIG_SCHEMA", PgGlobalConfigPersistence.DefaultSchema);
             await PgGlobalConfigPersistence.MigrateAsync(source, configSchema);
             globalConfigPersistence = new PgGlobalConfigPersistence(source, configSchema);
-            Func<long> clock = () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            Func<long> clock = clockOverride ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
             foundations = await Foundations.CreateAsync(source, clock, Env, message => Console.Error.WriteLine($"eve-host: {message}"));
               if (raffleProxyStore is { } raffleStore)
               {

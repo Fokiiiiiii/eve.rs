@@ -56,6 +56,7 @@ internal sealed partial class CharacterServicesComposition
                 // implants and active boosters add to the learning attributes the rate reads (dogma's modifiers)
                 LearningBonus = (character, attribute) => learningBonus.Of(character, attribute),
                 RefreshLearningBonus = (character, token) => learningBonus.RefreshAsync(character, token),
+                RefreshLearningBonusAt = (character, atFileTime, token) => learningBonus.RefreshAtAsync(character, atFileTime, token),
             },
             now);
         pilotImplants = new PilotImplants(source, dogma, characters, items, skills, training,

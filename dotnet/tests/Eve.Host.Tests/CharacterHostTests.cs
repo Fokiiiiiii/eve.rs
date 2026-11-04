@@ -635,6 +635,197 @@ public sealed class CharacterHostTests
         Assert.Contains("OnServerBoostersChanged", Notifications(sink).Select(n => n.Name));
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(10)]
+    public async Task Cerebral_accelerator_expiry_settles_partial_and_completed_lines_across_both_rates_after_restart_and_retry(long afterExpiryMinutes)
+    {
+        const long startUnixMs = 1_800_000_000_000;
+        const long beforeExpiryMs = 4 * 60_000;
+        const int boosterTypeId = 49539;
+        await using var rig = await CharacterHostRig.CreateAsync(startUnixMs);
+        Assert.Equal(1, await rig.CreateAccountAsync());
+        var characterId = await rig.CreateCharacterAsync();
+        var catalog = await SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        var skills = new PgSkillStore(rig.Source, rig.SkillsSchema);
+        var owned = (await skills.ForCharacterAsync(characterId)).Select(skill => skill.TypeId).ToHashSet();
+        var type = catalog.Skills
+            .Where(skill => skill.Published && skill.Rank == 1 && skill.Needs.Count == 0 && !owned.Contains(skill.TypeId))
+            .OrderBy(skill => skill.TypeId)
+            .First();
+        await rig.SetSkillLevelAsync(characterId, type.TypeId, 0);
+
+        var expiryUnixMs = startUnixMs + beforeExpiryMs;
+        var expiryFileTime = DateTimeOffset.FromUnixTimeMilliseconds(expiryUnixMs).ToFileTime();
+        var nowUnixMs = expiryUnixMs + afterExpiryMinutes * 60_000;
+        var nowFileTime = DateTimeOffset.FromUnixTimeMilliseconds(nowUnixMs).ToFileTime();
+        var handler = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillHandler"));
+        const int targetLevel = 2;
+        var booster = await GiveItemAsync(rig, characterId, boosterTypeId, characterId, 88, singleton: true);
+        await InsertBoosterAsync(rig, booster, characterId, boosterTypeId, expiryFileTime);
+        var snapshots = new List<DurableTrainingSnapshot>();
+        var sink = new RecordingPacketSink(packet =>
+        {
+            if (NotificationName(packet) != "OnServerBoostersChanged")
+                return;
+            using var connection = rig.Source.OpenConnection();
+            using var query = new NpgsqlCommand(
+                $"SELECT COALESCE((SELECT skill_points FROM {rig.SkillsSchema}.character_skills WHERE character_id = $1 AND type_id = $2), 0), " +
+                $"(SELECT count(*) FROM {rig.SkillsSchema}.active_skill_boosters WHERE character_id = $1)", connection);
+            query.Parameters.Add(new NpgsqlParameter { Value = characterId });
+            query.Parameters.Add(new NpgsqlParameter { Value = type.TypeId });
+            using var reader = query.ExecuteReader();
+            Assert.True(reader.Read());
+            snapshots.Add(new DurableTrainingSnapshot(reader.GetInt64(0), reader.GetInt64(1)));
+        });
+        var session = new ClientSession { CharacterId = characterId, UserId = 1, Sink = sink };
+        rig.Sessions.Enter(characterId, session);
+        await BoundAsync(handler, session, "CharStartTrainingSkill",
+            new PyLong(Eve.Services.Skills.SkillWire.ItemId(characterId, type.TypeId)), new PyInt(1));
+        await BoundAsync(handler, session, "SaveNewQueue", new PyList(
+        [
+            Py.Tuple(new PyInt(type.TypeId), new PyInt(1)),
+            Py.Tuple(new PyInt(type.TypeId), new PyInt(2)),
+        ]));
+
+        var attributesBeforeExpiry = await BoundAsync(handler, session, "GetAttributes");
+        var boostedRate = SkillRate(type, attributesBeforeExpiry);
+        var queueBeforeExpiry = Assert.IsType<PyTuple>(await BoundAsync(handler, session, "GetSkillQueueAndFreePoints"));
+        var firstLine = Assert.IsType<PyObject>(Assert.IsType<PyList>(queueBeforeExpiry.Items[0]).Items[0]);
+        Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(startUnixMs).ToFileTime(), Integer(Field(firstLine, "trainingStartTime")));
+        var key = $"{characterId}:{booster}";
+        await rig.Scheduler.ScheduleAsync(new Eve.Scheduler.JobSpec(Eve.Services.Skills.SkillBoosterLapse.JobKind, expiryUnixMs)
+        {
+            Key = key,
+            Payload = new Eve.Services.Skills.SkillBoosterLapse.BoosterJob(characterId, booster),
+        });
+
+        rig.AdvanceTo(nowUnixMs);
+        var trainingStore = new PgTrainingStore(rig.Source, rig.SkillsSchema);
+        await RunBoosterJobAsync(rig, key);
+        Assert.Equal(1, Notifications(sink).Count(notification => notification.Name == "OnServerBoostersChanged"));
+        var durable = Assert.Single(snapshots);
+        Assert.Equal(0, durable.ActiveBoosters);
+
+        // V24 refreshes attributes before it redraws the queue after this notification.
+        var attributesAfterExpiry = await BoundAsync(handler, session, "GetAttributes");
+        var normalRate = SkillRate(type, attributesAfterExpiry);
+        Assert.True(boostedRate > normalRate);
+        var firstDestination = SkillPoints.ForTraining(type.Rank, 1);
+        var destination = SkillPoints.ForTraining(type.Rank, targetLevel);
+        var startedAt = DateTimeOffset.FromUnixTimeMilliseconds(startUnixMs).ToFileTime();
+        var boostedPoints = Training.PointsAt(0, firstDestination, startedAt, expiryFileTime, boostedRate);
+        Assert.True(boostedPoints < firstDestination);
+        var completedAt = expiryFileTime + Training.DurationTicks(firstDestination - boostedPoints, normalRate);
+        var completesAcrossExpiry = completedAt <= nowFileTime;
+        var targetLevelAfterExpiry = completesAcrossExpiry ? targetLevel : 1;
+        var expectedDestination = SkillPoints.ForTraining(type.Rank, targetLevelAfterExpiry);
+        var expectedPoints = completesAcrossExpiry
+            ? Training.PointsAt(firstDestination, destination, completedAt, nowFileTime, normalRate)
+            : Training.PointsAt(boostedPoints, firstDestination, expiryFileTime, nowFileTime, normalRate);
+        Assert.True(expectedPoints < expectedDestination);
+        Assert.Equal(expectedPoints, durable.SkillPoints);
+
+        var persisted = Assert.Single(await skills.ForCharacterAsync(characterId), skill => skill.TypeId == type.TypeId);
+        Assert.Equal(expectedPoints, persisted.SkillPoints);
+        var queue = Assert.IsType<PyList>(Assert.IsType<PyTuple>(await BoundAsync(handler, session, "GetSkillQueueAndFreePoints")).Items[0]);
+        var line = Assert.IsType<PyObject>(queue.Items[0]);
+        Assert.Equal(targetLevelAfterExpiry, Integer(Field(line, "trainingToLevel")));
+        Assert.Equal(expectedPoints, Integer(Field(line, "trainingStartSP")));
+        var expectedQueueEnd = nowFileTime + Training.DurationTicks(expectedDestination - expectedPoints, normalRate);
+        Assert.Equal(expectedQueueEnd, Integer(Field(line, "trainingEndTime")));
+        var history = await trainingStore.HistoryAsync(characterId, 20);
+        var completedEvents = history.Where(entry => entry.EventType == SkillEvents.QueueTrainingCompleted).ToArray();
+        if (completesAcrossExpiry)
+        {
+            var completed = Assert.Single(completedEvents);
+            Assert.Equal(completedAt, completed.LogDate);
+            Assert.Equal(firstDestination, completed.Points);
+            Assert.Equal(1, completed.Level);
+        }
+        else
+        {
+            Assert.Empty(completedEvents);
+        }
+        Assert.DoesNotContain(history, entry => entry.EventType == SkillEvents.TrainingComplete);
+
+        var notificationsAtLapse = Notifications(sink);
+        var boosterChangedIndex = notificationsAtLapse.FindIndex(notification => notification.Name == "OnServerBoostersChanged");
+        var queueSavedIndex = notificationsAtLapse.FindLastIndex(notification => notification.Name == "OnNewSkillQueueSaved");
+        Assert.True(boosterChangedIndex >= 0);
+        Assert.True(queueSavedIndex > boosterChangedIndex);
+        var savedQueue = Assert.IsType<PyList>(Assert.Single(notificationsAtLapse[queueSavedIndex].Args));
+        var savedLine = Assert.IsType<PyObject>(savedQueue.Items[0]);
+        Assert.Equal(expectedQueueEnd, Integer(Field(savedLine, "trainingEndTime")));
+        Assert.Equal(targetLevelAfterExpiry, Integer(Field(savedLine, "trainingToLevel")));
+
+        await rig.RestartAsync();
+        handler = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillHandler"));
+        rig.Sessions.Enter(characterId, session);
+        Assert.Equal(expectedPoints, Assert.Single(await skills.ForCharacterAsync(characterId), skill => skill.TypeId == type.TypeId).SkillPoints);
+        var restartedQueue = Assert.IsType<PyList>(Assert.IsType<PyTuple>(await BoundAsync(handler, session, "GetSkillQueueAndFreePoints")).Items[0]);
+        var restartedLine = Assert.IsType<PyObject>(restartedQueue.Items[0]);
+        Assert.Equal(expectedQueueEnd, Integer(Field(restartedLine, "trainingEndTime")));
+        Assert.Equal(history, await trainingStore.HistoryAsync(characterId, 20));
+
+        var notificationNamesBeforeRetry = Notifications(sink).Select(notification => notification.Name).ToArray();
+        await rig.Scheduler.ScheduleAsync(new Eve.Scheduler.JobSpec(Eve.Services.Skills.SkillBoosterLapse.JobKind, expiryUnixMs)
+        {
+            Key = key,
+            Payload = new Eve.Services.Skills.SkillBoosterLapse.BoosterJob(characterId, booster),
+        });
+        await RunBoosterJobAsync(rig, key);
+        Assert.Equal(1, Notifications(sink).Count(notification => notification.Name == "OnServerBoostersChanged"));
+        Assert.Equal(notificationNamesBeforeRetry, Notifications(sink).Select(notification => notification.Name));
+        Assert.Single(snapshots);
+        Assert.Equal(0, await ScalarAsync(rig, $"SELECT count(*) FROM {rig.SkillsSchema}.active_skill_boosters WHERE item_id = {booster}"));
+        Assert.Equal(expectedPoints, Assert.Single(await skills.ForCharacterAsync(characterId), skill => skill.TypeId == type.TypeId).SkillPoints);
+        Assert.Equal(history, await trainingStore.HistoryAsync(characterId, 20));
+    }
+
+    private static async Task RunBoosterJobAsync(CharacterHostRig rig, string key)
+    {
+        var kind = Eve.Services.Skills.SkillBoosterLapse.JobKind;
+        await rig.Scheduler.RunNowAsync(kind, key);
+        var deadline = DateTime.UtcNow.AddSeconds(20);
+        Eve.Scheduler.JobInfo? job;
+        while ((job = await rig.Scheduler.FindAsync(kind, key)) is not null && DateTime.UtcNow < deadline)
+            await Task.Delay(20);
+        Assert.Null(job);
+    }
+
+    private sealed record DurableTrainingSnapshot(long SkillPoints, long ActiveBoosters);
+
+    private static long Integer(PyValue value) => value switch
+    {
+        PyInt number => number.Value,
+        PyLong number => number.Value,
+        _ => throw new Xunit.Sdk.XunitException($"Expected an integer, got {value.GetType().Name}"),
+    };
+
+    private static double SkillRate(SkillType skill, PyValue attributes) =>
+        Attribute(attributes, skill.PrimaryAttribute) + Attribute(attributes, skill.SecondaryAttribute) / 2d;
+
+    private static double Attribute(PyValue values, int attributeId)
+    {
+        var value = Assert.IsType<PyDict>(values).Entries.Single(entry => Integer(entry.Key) == attributeId).Value;
+        return value switch
+        {
+            PyReal number => number.Value,
+            PyInt number => number.Value,
+            PyLong number => number.Value,
+            _ => throw new Xunit.Sdk.XunitException($"Expected an attribute number, got {value.GetType().Name}"),
+        };
+    }
+
+    private static string? NotificationName(PyValue packet)
+    {
+        if (packet is not PyObject { Args: PyTuple state } || state.Items.Count < 3 || state.Items[0] is not PyInt { Value: MachoMessage.Notification })
+            return null;
+        var address = Assert.IsType<PyTuple>(Assert.IsType<PyObject>(state.Items[2]).Args);
+        return Assert.IsType<PyStr>(address.Items[1]).Value;
+    }
+
     [PgFact]
     public async Task An_expert_system_that_lapses_while_the_pilot_is_offline_leaves_the_persistent_notice_once()
     {
@@ -1568,14 +1759,21 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         return events;
     }
 
-    private sealed class RecordingPacketSink(Action? onSend = null) : IPacketSink
+    private sealed class RecordingPacketSink : IPacketSink
     {
+        private readonly Action? _onSend;
+        private readonly Action<PyValue>? _observePacket;
+
+        public RecordingPacketSink(Action? onSend = null) => _onSend = onSend;
+        public RecordingPacketSink(Action<PyValue> observePacket) => _observePacket = observePacket;
+
         public List<PyValue> Sent { get; } = [];
 
         public void Send(PyValue packet)
         {
             Sent.Add(packet);
-            onSend?.Invoke();
+            _onSend?.Invoke();
+            _observePacket?.Invoke(packet);
         }
     }
 
@@ -1592,16 +1790,18 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
 
         private const long CorporationId = 900_001_001;
         private readonly IReadOnlyDictionary<string, string> _schemas;
+        private readonly ManualClock? _clock;
         private HostRuntime _runtime;
         private Func<Task> _shutdown;
 
-        private CharacterHostRig(NpgsqlDataSource source, IReadOnlyDictionary<string, string> schemas, HostRuntime runtime, Func<Task> shutdown, long station)
+        private CharacterHostRig(NpgsqlDataSource source, IReadOnlyDictionary<string, string> schemas, HostRuntime runtime, Func<Task> shutdown, long station, ManualClock? clock)
         {
             Source = source;
             _schemas = schemas;
             _runtime = runtime;
             _shutdown = shutdown;
             Station = station;
+            _clock = clock;
         }
 
         public NpgsqlDataSource Source { get; }
@@ -1620,6 +1820,8 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         public string GameStoreSchema => _schemas["EVE_GAMESTORE_SCHEMA"];
         public string SchedulerSchema => _schemas["EVE_SCHEDULER_SCHEMA"];
         public string StructuresSchema => _schemas["EVE_STRUCTURES_SCHEMA"];
+        public long NowUnixMs => _clock?.Read() ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        public void AdvanceTo(long unixMs) => (_clock ?? throw new InvalidOperationException("This rig uses the system clock.")).Set(unixMs);
 
         /// <summary>A structure of the rig's corporation, with the given services online (the clone bay reads them).</summary>
         public async Task AddStructureAsync(long structureId, params int[] onlineServices)
@@ -1662,7 +1864,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
                 await cache.FlushTableAsync("structures");
             }
 
-            (_runtime, _shutdown) = await BuildHostAsync(_schemas);
+            (_runtime, _shutdown) = await BuildHostAsync(_schemas, _clock is null ? null : _clock.Read);
         }
 
         /// <summary>Sets a character's ISK balance (the wallet row is opened here if the character has none yet).</summary>
@@ -1686,7 +1888,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             return (int)(await command.ExecuteScalarAsync())!;
         }
 
-        public static async Task<CharacterHostRig> CreateAsync()
+        public static async Task<CharacterHostRig> CreateAsync(long? nowUnixMs = null)
         {
             var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL")
                 ?? throw new InvalidOperationException("EVE_PG_URL is not set.");
@@ -1694,13 +1896,14 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             var schemas = SchemaVariables.ToDictionary(
                 variable => variable,
                 variable => $"jc_{suffix}_{variable[4..^7].ToLowerInvariant()}");
+            var clock = nowUnixMs is long startUnixMs ? new ManualClock(startUnixMs) : null;
             var source = new NpgsqlDataSourceBuilder(new NpgsqlConnectionStringBuilder(Eve.Data.PgConnection.ForTest(pgUrl)).ConnectionString).Build();
             try
             {
-                var (runtime, shutdown) = await BuildHostAsync(schemas);
+                var (runtime, shutdown) = await BuildHostAsync(schemas, clock is null ? null : clock.Read);
                 var stations = await StationCatalog.LoadAsync(new Eve.Sde.SdeReader(source));
                 var station = stations.All.OrderBy(s => s.Id).First().Id;
-                return new CharacterHostRig(source, schemas, runtime, shutdown, station);
+                return new CharacterHostRig(source, schemas, runtime, shutdown, station, clock);
             }
             catch
             {
@@ -1713,7 +1916,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         public async Task RestartAsync()
         {
             await _shutdown();
-            (_runtime, _shutdown) = await BuildHostAsync(_schemas);
+            (_runtime, _shutdown) = await BuildHostAsync(_schemas, _clock is null ? null : _clock.Read);
         }
 
         public async Task<long> CreateCharacterAsync(string tutorialEntryMode = "disabled", int airNpeState = 2)
@@ -1795,7 +1998,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             }
         }
 
-        private static async Task<(HostRuntime Runtime, Func<Task> Shutdown)> BuildHostAsync(IReadOnlyDictionary<string, string> schemas)
+        private static async Task<(HostRuntime Runtime, Func<Task> Shutdown)> BuildHostAsync(IReadOnlyDictionary<string, string> schemas, Func<long>? clockOverride = null)
         {
             var previous = SchemaVariables.Concat(["EVE_MARKET_SEED", "EVE_SIM", "EVE_WORMHOLES"])
                 .ToDictionary(variable => variable, variable => Environment.GetEnvironmentVariable(variable));
@@ -1806,7 +2009,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
                 Environment.SetEnvironmentVariable("EVE_MARKET_SEED", "skip");
                 Environment.SetEnvironmentVariable("EVE_SIM", "off");
                 Environment.SetEnvironmentVariable("EVE_WORMHOLES", "off");
-                var host = await HostComposition.BuildAsync(HostConfiguration.Read());
+                var host = await HostComposition.BuildAsync(HostConfiguration.Read(), clockOverride);
                 return (host, host.ShutdownAsync);
             }
             finally
@@ -1824,6 +2027,14 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
                 await using var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE", connection);
                 await command.ExecuteNonQueryAsync();
             }
+        }
+
+        private sealed class ManualClock(long initialUnixMs)
+        {
+            private long _unixMs = initialUnixMs;
+
+            public long Read() => Interlocked.Read(ref _unixMs);
+            public void Set(long unixMs) => Interlocked.Exchange(ref _unixMs, unixMs);
         }
     }
 }

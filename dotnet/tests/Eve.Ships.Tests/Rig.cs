@@ -39,7 +39,11 @@ internal sealed class Rig : IAsyncDisposable
 {
     public static readonly string? Url = Environment.GetEnvironmentVariable("EVE_PG_URL");
 
+    public const long PinnedSdeBuild = 3396210;
     public const long Station = 60015249;
+
+    public static void AssertPinnedSdeBuild(long? actualBuild) =>
+        Assert.True(actualBuild == PinnedSdeBuild, $"Expected SDE build {PinnedSdeBuild}, actual was {actualBuild?.ToString() ?? "null"}.");
 
     // module types of the static data
     public const int Afterburner = 21857, Railgun = 3638, Miner = 3651, DamageControlI = 2046, DamageControlII = 2048;
@@ -241,7 +245,7 @@ internal sealed class Rig : IAsyncDisposable
         CharacterNames.EnsureUnicodeSupport();
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
         var sde = new SdeReader(source);
-        Assert.True(await sde.BuildAsync() is not null, "no SDE is loaded: run `cargo run -p eve-sde -- ensure --pg $EVE_PG_URL`");
+        AssertPinnedSdeBuild(await sde.BuildAsync());
         var suffix = Guid.NewGuid().ToString("N")[..12];
         var characters = new PgCharacterStore(source, $"sc_{suffix}");
         var items = new PgItemStore(source, $"si_{suffix}");

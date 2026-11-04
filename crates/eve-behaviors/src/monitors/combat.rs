@@ -495,6 +495,7 @@ impl Task for MonitorSecurityStatusLoss {
         t.set_status_to_invalid();
         if let Some(solar_system_id) = self.solar_system_id.filter(|s| *s != 0) {
             t.unsubscribe_item(solar_system_id, SEC_STATUS_LOST_EVENT, 0);
+            t.unsubscribe_item(solar_system_id, CRIMINAL_FLAG_ACTIVE, 0);
         }
     }
 
@@ -772,6 +773,7 @@ mod tests {
         assert_eq!(combat_set(&mut rig), Value::Set(vec![Value::Int(40)]));
         rig.clean_up_task();
         assert!(rig.shared.events.subscribers(30000142, SEC_STATUS_LOST_EVENT).is_empty());
+        assert!(rig.shared.events.subscribers(30000142, CRIMINAL_FLAG_ACTIVE).is_empty());
     }
 
     #[test]

@@ -166,23 +166,18 @@ impl<'a> SceneWorld<'a> {
         let pending = std::mem::take(&mut self.scene.pending_security_status_losses);
         let losses = std::mem::take(&mut self.scene.security_status_losses);
         let solar_system_id = i64::from(self.scene.solar_system_id());
-        for (owner_id, ship_id) in pending {
-            shared.tell_subscribers(
-                Subject::Item(solar_system_id),
-                message::SEC_STATUS_LOST_EVENT,
-                &[Value::Int(owner_id), Value::Int(ship_id)],
-            );
-        }
-        for (owner_id, ship_id) in losses {
-            if shared.events.subscribers(solar_system_id, message::SEC_STATUS_LOST_EVENT).is_empty() {
+        let has_subscribers =
+            !shared.events.subscribers(solar_system_id, message::SEC_STATUS_LOST_EVENT).is_empty();
+        for (owner_id, ship_id) in pending.into_iter().chain(losses) {
+            if has_subscribers {
+                shared.tell_subscribers(
+                    Subject::Item(solar_system_id),
+                    message::SEC_STATUS_LOST_EVENT,
+                    &[Value::Int(owner_id), Value::Int(ship_id)],
+                );
+            } else {
                 self.scene.pending_security_status_losses.push((owner_id, ship_id));
-                continue;
             }
-            shared.tell_subscribers(
-                Subject::Item(solar_system_id),
-                message::SEC_STATUS_LOST_EVENT,
-                &[Value::Int(owner_id), Value::Int(ship_id)],
-            );
         }
     }
 
@@ -190,23 +185,18 @@ impl<'a> SceneWorld<'a> {
         let pending = std::mem::take(&mut self.scene.pending_criminal_flag_activations);
         let activations = std::mem::take(&mut self.scene.criminal_flag_activations);
         let solar_system_id = i64::from(self.scene.solar_system_id());
-        for (owner_id, ship_id) in pending {
-            shared.tell_subscribers(
-                Subject::Item(solar_system_id),
-                message::CRIMINAL_FLAG_ACTIVE,
-                &[Value::Int(owner_id), Value::Int(ship_id)],
-            );
-        }
-        for (owner_id, ship_id) in activations {
-            if shared.events.subscribers(solar_system_id, message::CRIMINAL_FLAG_ACTIVE).is_empty() {
+        let has_subscribers =
+            !shared.events.subscribers(solar_system_id, message::CRIMINAL_FLAG_ACTIVE).is_empty();
+        for (owner_id, ship_id) in pending.into_iter().chain(activations) {
+            if has_subscribers {
+                shared.tell_subscribers(
+                    Subject::Item(solar_system_id),
+                    message::CRIMINAL_FLAG_ACTIVE,
+                    &[Value::Int(owner_id), Value::Int(ship_id)],
+                );
+            } else {
                 self.scene.pending_criminal_flag_activations.push((owner_id, ship_id));
-                continue;
             }
-            shared.tell_subscribers(
-                Subject::Item(solar_system_id),
-                message::CRIMINAL_FLAG_ACTIVE,
-                &[Value::Int(owner_id), Value::Int(ship_id)],
-            );
         }
     }
 

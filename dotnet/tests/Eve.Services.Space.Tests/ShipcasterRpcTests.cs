@@ -71,12 +71,7 @@ public sealed class ShipcasterRpcTests
         var factions = Assert.IsType<PyList>(await launchers.CallAsync(Call("GetFactionsWithShipcaster")));
 
         Assert.Equal([LandingPadWire(9005, 30_000_001, 500_001, false, PyNone.Instance, false), LandingPadWire(9002, 30_000_002, 500_001, true, PyNone.Instance, false)], factionPads.Items);
-        Assert.Equal(
-        [
-            LandingPadWire(9005, 30_000_001, 500_001, false, PyNone.Instance, false),
-            LandingPadWire(9002, 30_000_002, 500_001, true, PyNone.Instance, false),
-            LandingPadWire(9001, 30_000_001, 500_003, false, PyNone.Instance, false),
-        ], unknownFactionPads.Items);
+        Assert.Empty(unknownFactionPads.Items);
         Assert.Equal([new PyInt(500_001), new PyInt(500_003), new PyInt(500_004)], factions.Items);
     }
 
@@ -109,14 +104,15 @@ public sealed class ShipcasterRpcTests
     }
 
     [Fact]
-    public async Task Starter_jump_check_returns_a_boolean_for_wired_and_unseeded_characters()
+    public async Task Starter_jump_check_returns_a_boolean_when_wired_and_reports_a_missing_policy()
     {
         var session = new ClientSession { CharacterId = 42 };
         var service = new ShipcasterRpcService("starterShipcasterTravelMgr", Systems, canCharacterJump: call => call.Session.CharacterId == 42);
         var defaultService = new ShipcasterRpcService("starterShipcasterTravelMgr", Systems);
 
         Assert.Equal(PyBool.True, await service.CallAsync(Call("CanCharacterJump", session: session)));
-        Assert.Equal(PyBool.False, await defaultService.CallAsync(Call("CanCharacterJump", session: session)));
+        await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await defaultService.CallAsync(Call("CanCharacterJump", session: session)));
     }
 
     [Fact]

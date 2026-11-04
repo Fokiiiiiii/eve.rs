@@ -8,10 +8,17 @@ using Npgsql;
 namespace Eve.Ships;
 
 /// <summary>
-/// Plugging an implant into the pilot and destroying one (the dogma service's <c>InjectImplant</c> and <c>DestroyImplant</c>). An implant is an item at
-/// implant, its slot is free and the pilot has the skills the implant needs. Plugging in takes the implant from the station hangar or the cargo of the
+/// Plugging an implant into the pilot and destroying one (the dogma service's <c>InjectImplant</c> and <c>DestroyImplant</c>). Plugging in moves an implant
+/// from the station hangar or active ship cargo when its slot, skills and clone grade allow it.
 /// </summary>
-public sealed class PilotImplants(NpgsqlDataSource source, DogmaStatic statics, PgCharacterStore characters, PgItemStore items, PgSkillStore skills, CharacterTraining training)
+public sealed class PilotImplants(
+    NpgsqlDataSource source,
+    DogmaStatic statics,
+    PgCharacterStore characters,
+    PgItemStore items,
+    PgSkillStore skills,
+    CharacterTraining training,
+    Func<int, bool> hasOmegaAccount)
 {
     private const int HangarFlag = 4;
     private const int CargoFlag = 5;
@@ -38,7 +45,7 @@ public sealed class PilotImplants(NpgsqlDataSource source, DogmaStatic statics, 
         {
             return new Outcome("NOT_AN_IMPLANT");
         }
-        if (await PlugInRefusalAsync(characterId, item, cancellationToken) is { } refusal)
+        if (await PlugInRefusalAsync(character, item, cancellationToken) is { } refusal)
         {
             return new Outcome(refusal);
         }
@@ -56,7 +63,7 @@ public sealed class PilotImplants(NpgsqlDataSource source, DogmaStatic statics, 
         {
             return new Outcome("ITEM_LOCATION_MISMATCH", Training: rebased);
         }
-        if (await PlugInRefusalAsync(characterId, locked, cancellationToken) is { } raced)
+        if (await PlugInRefusalAsync(character, locked, cancellationToken) is { } raced)
         {
             return new Outcome(raced, Training: rebased);
         }
@@ -91,25 +98,66 @@ public sealed class PilotImplants(NpgsqlDataSource source, DogmaStatic statics, 
         return new Outcome(null, worn, null, rebased);
     }
 
-    /// <summary>The reason an implant cannot be plugged in now (its slot is taken, or the pilot lacks a skill it needs), or null.</summary>
-    private async Task<string?> PlugInRefusalAsync(long characterId, Item item, CancellationToken cancellationToken)
+    /// <summary>The reason an implant cannot be plugged in now (its slot is taken, or the pilot lacks the skills or clone grade), or null.</summary>
+    private async Task<string?> PlugInRefusalAsync(Character character, Item item, CancellationToken cancellationToken)
     {
-        var worn = (await items.InLocationAsync(characterId, characterId, cancellationToken)).Where(i => i.Flag == PilotAugmentations.ImplantFlag && i.Id != item.Id).ToList();
+        var worn = (await items.InLocationAsync(character.Id, character.Id, cancellationToken)).Where(i => i.Flag == PilotAugmentations.ImplantFlag && i.Id != item.Id).ToList();
         await statics.EnsureTypesAsync([item.TypeId, .. worn.Select(i => i.TypeId)], cancellationToken);
-        var slot = PilotAugmentations.SlotOf(statics.Type(item.TypeId));
+        var implantType = statics.Type(item.TypeId);
+        var slot = PilotAugmentations.SlotOf(implantType);
         if (worn.Any(other => PilotAugmentations.SlotOf(statics.Type(other.TypeId)) == slot))
         {
             return "IMPLANT_SLOT_OCCUPIED";
         }
-        var trained = (await skills.ForCharacterAsync(characterId, cancellationToken)).ToDictionary(skill => skill.TypeId);
-        foreach (var (skill, level) in FittingRules.RequiredSkills(statics.Type(item.TypeId)!))
+        var trained = (await skills.ForCharacterAsync(character.Id, cancellationToken)).ToDictionary(skill => skill.TypeId);
+        foreach (var (skill, level) in FittingRules.RequiredSkills(implantType!))
         {
             if ((trained.TryGetValue(skill, out var owned) ? owned.Level : 0) < level)
             {
                 return "SKILL_REQUIRED";
             }
         }
+        if (!hasOmegaAccount(character.AccountId) && await RequiresOmegaAsync(implantType!, character.RaceId, cancellationToken))
+        {
+            return "OMEGA_REQUIRED";
+        }
         return null;
+    }
+
+    private async Task<bool> RequiresOmegaAsync(TypeDef implantType, int raceId, CancellationToken cancellationToken)
+    {
+        var alphaSkills = await statics.AlphaCloneSkillLevelsAsync(raceId, cancellationToken);
+        var pending = new Stack<int>();
+        var visited = new HashSet<int>();
+        foreach (var (skill, level) in FittingRules.RequiredSkills(implantType))
+        {
+            if (alphaSkills.GetValueOrDefault(skill) < level)
+            {
+                return true;
+            }
+            pending.Push(skill);
+        }
+        while (pending.TryPop(out var skillId))
+        {
+            if (!visited.Add(skillId))
+            {
+                continue;
+            }
+            await statics.EnsureTypesAsync([skillId], cancellationToken);
+            if (statics.Type(skillId) is not { } skillType)
+            {
+                return true;
+            }
+            foreach (var (prerequisite, level) in FittingRules.RequiredSkills(skillType))
+            {
+                if (alphaSkills.GetValueOrDefault(prerequisite) < level)
+                {
+                    return true;
+                }
+                pending.Push(prerequisite);
+            }
+        }
+        return false;
     }
 
     private async Task<bool> IsImplantAsync(Item item, CancellationToken cancellationToken)

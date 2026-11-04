@@ -70,6 +70,7 @@ public sealed class PilotAugmentationRpc(
             "NOT_AN_IMPLANT" => "That item cannot be plugged in as an implant.",
             "IMPLANT_SLOT_OCCUPIED" => "You already have an implant in that slot.",
             "SKILL_REQUIRED" => "You do not have the required skills to plug in that implant.",
+            "OMEGA_REQUIRED" => "This implant requires an Omega clone.",
             _ => "The implant could not be plugged in.",
         };
         throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(notify)));

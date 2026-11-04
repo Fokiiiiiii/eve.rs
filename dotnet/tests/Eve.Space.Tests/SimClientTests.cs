@@ -549,4 +549,85 @@ public class SimClientTests
         var again = client.EnterAsync(Enter());
         Assert.False(again.IsCompleted);
     }
+
+    [Fact]
+    public async Task A_full_outbound_queue_fails_pending_requests_and_breaks_the_link()
+    {
+        var stream = new BlockingWriteStream();
+        await using var client = new SimClient(_ => Task.FromResult<Stream>(stream));
+        client.RetryAfter = TimeSpan.FromMinutes(1);
+        var lost = 0;
+        client.Lost += () => Interlocked.Increment(ref lost);
+        client.Start();
+        await Until(() => client.IsConnected);
+
+        var pending = new List<Task<string?>> { client.EnterAsync(Enter(100)) };
+        await stream.WriteStarted.Task.WaitAsync(Patience);
+
+        var oversizedCandidates = Enumerable.Repeat(new SimTetherCandidate(1, 1), ushort.MaxValue).ToArray();
+        Assert.Throws<ArgumentException>(() => client.SetTetherPolicy(new(7, 0, 0, oversizedCandidates)));
+        Assert.True(client.IsConnected);
+
+        for (var i = 0; i < SimClient.OutboundQueueCapacity; i++)
+            pending.Add(client.EnterAsync(Enter((ulong)(101 + i))));
+        Assert.All(pending, request => Assert.False(request.IsCompleted));
+
+        var overflow = client.EnterAsync(Enter((ulong)(101 + SimClient.OutboundQueueCapacity)));
+        Assert.True(overflow.IsCompleted);
+        var overload = await Assert.ThrowsAsync<SimUnavailableException>(() => Within(overflow));
+        Assert.Contains("outbound queue is full", overload.Message);
+        Assert.Throws<SimUnavailableException>(() => client.Bind(200));
+        foreach (var request in pending)
+            await Assert.ThrowsAsync<SimUnavailableException>(() => Within(request));
+
+        await Until(() => !client.IsConnected && Volatile.Read(ref lost) == 1);
+    }
+
+    private sealed class BlockingWriteStream : Stream
+    {
+        private readonly byte[] _helloAck = SimCodec.Encode(new SimHelloAck(SimCodec.ProtocolVersion, 4));
+        private int _helloAckOffset;
+        private int _writeCount;
+
+        public TaskCompletionSource WriteStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (_helloAckOffset < _helloAck.Length)
+            {
+                var count = Math.Min(buffer.Length, _helloAck.Length - _helloAckOffset);
+                _helloAck.AsMemory(_helloAckOffset, count).CopyTo(buffer);
+                _helloAckOffset += count;
+                return count;
+            }
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return 0;
+        }
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _writeCount) == 1)
+                return;
+            WriteStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            WriteAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Flush() { }
+    }
 }

@@ -2,7 +2,7 @@
 
 ## Status
 
-Implementation and local checks are complete. The change is in the cx3 worktree and has not been pushed. Recheck the main CI gate before pushing and record the commit-specific Actions results here afterward.
+Implementation and local checks are complete after merging green main. Queue change commit: `fd3524fc`; merge commit: `a429d85a`. The change has not been pushed. Recheck the newest completed main CI run before pushing and record the commit-specific Actions results here afterward.
 
 ## Change
 
@@ -35,4 +35,4 @@ Implementation and local checks are complete. The change is in the cx3 worktree 
 
 ## Main CI gate at handoff
 
-Main CI run 1515 was red on `HostServerTests.Registered_lp_store_and_wallet_routes_return_the_client_consumed_shapes` (`LpStoreRpcHostWireTests.cs:154,165`). That failure was fixed on main at `96d6bb8f2b15`; CI run 1516 completed successfully: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41898752417. Fetch and merge the current green main, then rerun the touched local checks before pushing this change.
+Main CI run 1515 was red on `HostServerTests.Registered_lp_store_and_wallet_routes_return_the_client_consumed_shapes` (`LpStoreRpcHostWireTests.cs:154,165`). That failure was fixed on main at `96d6bb8f2b15`; CI run 1516 completed successfully: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41898752417. Green main was merged at `a429d85a`, then the focused, SimClient, and database-backed local checks listed above were rerun.

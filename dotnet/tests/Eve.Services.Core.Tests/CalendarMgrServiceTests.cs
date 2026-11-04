@@ -189,8 +189,9 @@ public class CalendarMgrServiceTests
         Assert.IsType<PyNone>(await manager.CallAsync(Request(
             "DeleteEvent", Session(), new PyLong(created.Value), new PyLong(CharacterId))));
         Assert.True(store.Events.Single().IsDeleted);
-        Assert.All(store.Responses.Where(row => row.EventId == created.Value),
-            row => Assert.Equal(CalendarResponseStates.Deleted, row.Status));
+        Assert.Equal(CalendarResponseStates.Deleted, ResponseStatus(store, created.Value, CharacterId));
+        Assert.Equal(CalendarResponseStates.Uninvited, ResponseStatus(store, created.Value, OtherCharacterId));
+        Assert.Equal(CalendarResponseStates.Deleted, ResponseStatus(store, created.Value, nextAttendee));
     }
 
     [Fact]
@@ -483,7 +484,7 @@ public class CalendarMgrServiceTests
             if (index < 0) return Task.FromResult(false);
             Events[index] = Events[index] with { IsDeleted = true, DateModified = dateModified };
             for (var i = 0; i < Responses.Count; i++)
-                if (Responses[i].EventId == eventId)
+                if (Responses[i].EventId == eventId && Responses[i].Status != CalendarResponseStates.Uninvited)
                     Responses[i] = Responses[i] with { Status = CalendarResponseStates.Deleted };
             return Task.FromResult(true);
         }

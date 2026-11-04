@@ -1,7 +1,7 @@
 # calendar Host サービス深掘り監査
 
 調査日: 2026-10-27
-対象: V24.01 eve-logic 全体、eve.rs Host、EveJS 261018.1
+対象: V24.01 eve-logic 全体、eve.rs Host、EveJS 261028.1
 
 ## サービス名と呼び出し経路
 
@@ -13,7 +13,7 @@ eve-logic の RPC 引数は全て位置引数です。UI の `CreateNewEvent(...
 
 ## メソッド別結果
 
-各行のクライアント位置は RPC の実呼び出し箇所です。返却列は同じ client の直後の消費箇所です。EveJS の manager/proxy ルートは `evejs-261018.1/src/services/calendar/calendarMgrService.js:24-162`、`calendarProxyService.js:9-27` です。
+各行のクライアント位置は RPC の実呼び出し箇所です。返却列は同じ client の直後の消費箇所です。EveJS 261028.1 の manager/proxy ルートは `/home/user/evejs-261028.1/src/server/src/services/calendar/calendarMgrService.js:24-162`、`calendarProxyService.js:9-27` です。
 
 | RPC | eve-logic 呼び出しと戻り値消費 | Host wire / state / error / notification |
 |---|---|---|
@@ -31,20 +31,28 @@ eve-logic の RPC 引数は全て位置引数です。UI の `CreateNewEvent(...
 | `calendarProxy.GetEventList(month,year)` | `eveCalendarsvc.py:238`; client は tuple の全slotを走査し None を飛ばし、row ごと `utillib.KeyVal` 化（同:239-241）。それから `ownerID/autoEventType` から flag を補う。 | route: `CalendarMgrService.cs:349`; 3つの PyList を持つ PyTuple（personal/CCP/automated、corp、alliance）、行は PyDict。DB から月内の可視イベントを読む。wire test は 3 slot、row fields、corp/alliance を確認。通知なし。EveJS payload は2,3番目を null にする (`calendarPayloads.js:70-78`); client が None を許容するため Host は保存済み group rows を返す意図的差分。記録: `docs/reference/compat/DEVIATIONS.md` の Calendar mutation notifications 段落。 |
 | `calendarProxy.GetEventDetails(eventID,ownerID)` | `eveCalendarsvc.py:260`; UI は `eveCalendar.py:1106-1111` で `eventText/creatorID` を読む。通知 formatter も facade を呼ぶ (`notifications/common/formatters/calendar.py:25`)。 | route: `CalendarMgrService.cs:368`; Py.KeyVal object の `eventID/ownerID/creatorID/eventText`。missing/owner mismatch/access denied は個別 CustomNotify。wire test は attribute access、更新後 text、outsider access、missing event を確認。read のため通知なし。EveJS: `calendarRuntimeState.js:282-302`。 |
 
+## 削除済みpersonal eventのアクセス
+
+`CalendarStore.DeleteEventAsync` は response status が `Deleted` または `Uninvited` の行を維持し、実際の招待者と creator の既存応答を `Deleted` にする。`ListMonthAsync` は status 0 (`Uninvited`) を可視条件から除き、`CalendarWire.CanViewAsync` も同 status を拒否するため、削除前に明示的に uninvite された character は削除後の月一覧と詳細の両方から除外される。owner と残る招待者は tombstone event と `eventText` を引き続き取得できる (`CalendarStore.cs:98-117,218-232`; `CalendarMgrService.cs:371-386,539-550`)。
+
+これは EveJS 261028.1 と同じアクセス結果である。`updateEventParticipants` が invitee ID を削除し、response を Uninvited にする (`calendarRuntimeState.js:665-710`); `deleteEventRecord` は event を tombstone 化して invitee list を変更せず (`:712-730`)、`canViewEvent` と `getEventDetails` がその list を照合して詳細を拒否する (`calendarAccess.js:226-257`; `calendarRuntimeState.js:282-302`)。
+
+V24.01 は `GetEventList` の返却 tuple を走査し `None` slot を飛ばして row を `KeyVal` 化する (`eveCalendarsvc.py:235-248`); 月表示は `isDeleted` 行を隠す一方 (`eveCalendar.py:607-615`)、今後の変更一覧は deleted event を canceled として残す (`eveCalendarsvc.py:518-555,576-586`; `eveCalendar.py:1719-1731`). 詳細画面は `eventText` と `creatorID` を読む (`eveCalendar.py:1106-1111`); uninvite 通知は当該 event row を cache から外し、開いている詳細 window を閉じる (`eveCalendarsvc.py:378-394`; `eveCalendar.py:1672-1675`)。
+
 ## 永続化・通知の根拠
 
 実 Host は `MailComposition` で PostgreSQL schema を migrate し `CalendarStore` を作成します（`MailComposition.cs:252-255`）。作成・編集・soft delete・参加者更新・response 更新は各 transaction 内で commit します（`dotnet/src/Eve.Calendar/CalendarStore.cs:159-260`）。月別 list は DB から読み出し audience/group 条件で絞ります（同:98-117）。manager/proxy は同 store を共有して `CoreServices.Create` から route されます。
 
-Host wire tests はサービス単体直呼びではなく strict RPC Host listener、registry、wire packet を使います。永続化インターフェースはテスト用 in-memory store で、後続 RPC からの状態可視性と通知 packet の引数型/個数を検査します（`CalendarRpcHostWireTests.cs:13-203`）。error test は UserError 名と CustomNotify 内容を検査します（同:205-235,419-441）。通知 client 側 consumer は `eveCalendarsvc.py:332-409`（New/Edit/Remove/External response）です。EveJS の通知 wire shapes は `calendarNotifications.js:78-138`。Host は store mutation 完了後に通知を発行し、RPC handler return 前に通知 helper を終えます。
+Host wire tests はサービス単体直呼びではなく strict RPC Host listener、registry、wire packet を使います。削除後の list/detail regression は PostgreSQL `CalendarStore` を使い、後続 RPC と persisted response status を検査する（`CalendarRpcHostWireTests.cs:13-241`）。個別の拒否 wire ケースは別の Host test method と `WireCalendarStore` で UserError 名と CustomNotify 内容を検査する（同:243,490-503）。通知 client 側 consumer は `eveCalendarsvc.py:332-409`（New/Edit/Remove/External response）です。EveJS の通知 wire shapes は `calendarNotifications.js:78-138`。Host は store mutation 完了後に通知を発行し、RPC handler return 前に通知 helper を終えます。
 
-## 検証状況
+## 検証状況 (2026-11-04)
 
 確認済み:
-- eve-logic 全体を検索し、facade、remote/proxy endpoint、直接 RPC call sites、reply/notification consumers を追跡。
-- Focused Host wire tests: 2 passed, 0 skipped.
-- Host 全 shard: 503 passed, 227 skipped, 101 failed。確認できた失敗例は `EVE_PG_URL` に assigned PostgreSQL lane が必要な DB test。DB 禁止のため PostgreSQL 接続はしていない。
-- Host route / persistence composition と CalendarStore transaction implementation をソースで確認。
+- `Eve.Calendar`, `Eve.Services.Core.Tests`, `Eve.Host.Tests` の build はそれぞれ 0 warning / 0 error。
+- `CalendarMgrServiceTests`: 10 passed, 0 failed, 0 skipped。
+- PostgreSQL `eve_p8` の Host focus: 5 passed, 0 failed, 0 skipped。削除前に招待解除した character の status、fresh `GetEventList`、`GetEventDetails` 拒否と、owner/残る招待者の tombstone/details access を実 store/Host wire で確認。既存の success/failure notification assertions も同じ focus で通過。
+- V24.01 client の全ソース検索で `GetEventList` / `GetEventDetails` の callsites と consumers を確認。EveJS 261028.1 の runtime/access source を比較し、この scenario の tombstone invitee semantics が一致することを確認。
+- EveJS `package.json` に test script はないため、比較は current runtime source を追跡して行った。
 
 今回確認していない:
-- 実 PostgreSQL による restart 後の永続状態、実際の V24.01 graphical client、EveJS 実行時の end-to-end 対照。
-- 全 Host shard は合格していない。CI push gate と指定された事前条件を満たせないため、push はしない。
+- 実際の V24.01 graphical client session。

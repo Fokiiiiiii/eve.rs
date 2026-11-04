@@ -227,8 +227,8 @@ public sealed class CalendarStore : ICalendarStore
             dateModified, eventId, ownerId);
         if (await command.ExecuteNonQueryAsync(cancellationToken) == 0) return false;
         await using var responses = Command(connection, transaction,
-            Q("UPDATE {schema}.responses SET status=$1 WHERE event_id=$2 AND status <> $1"),
-            CalendarResponseStates.Deleted, eventId);
+            Q("UPDATE {schema}.responses SET status=$1 WHERE event_id=$2 AND status <> $1 AND status <> $3"),
+            CalendarResponseStates.Deleted, eventId, CalendarResponseStates.Uninvited);
         await responses.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return true;

@@ -2824,6 +2824,13 @@ Security review follow-up: `officeManager.GetMyCorporationsOffices` now consumes
 - Host now maps every V24.01 `SERVICES_ACCESS_SETTINGS` entry and treats `SETTING_NONE` as unconditional, matching EveJS. The registered-Host regression verifies all mapped IDs, the structure-list `services` field, and repair/insurance/reprocessing service checks. See [cx4 handoff](handoff-cx4-structure-service-access.md) for whole-client evidence and exact source locations.
 - The non-owner `GetStructureInfo` basic payload intentionally omits `services`, as in EveJS. Structure-browser rows receive `services` from `GetMyCharacterStructures` or `GetMyCorporationStructures`; `GetStructureInfos` is an internal Host name lookup, not a client RPC.
 
+## Character expert-system deletion purge (2026-11-04)
+
+- `PgSkillStore.ClearCharacterAsync` now removes persisted `character_expert_systems` rows on the same connection and transaction used by `HostCharacterDeletionPurge`.
+- `CharacterHostTests.Character_deletion_queues_waits_cancels_and_deletes_and_the_deleted_character_is_refused` seeds unexpired grants for the deleted and a retained character, then verifies only the deleted character's row is removed. `Character_deletion_rolls_back_expert_system_purge_when_a_later_cleanup_step_fails` makes the subsequent neural-remap cleanup fail and verifies the grant is restored by rollback. The existing offline expiry test remains unchanged.
+- Local checks: `Eve.Skills`, `Eve.Host.Tests`, and `Eve.Services.Space.Tests` builds passed; focused deletion/rollback/expiry tests passed 3/3; all `CharacterHostTests` passed 33/33; all `SpaceServiceTests` passed 160/160. The graphical client was not exercised.
+- V24.01 deletion caller: `eve/client/script/ui/login/charSelection/characterSelection.py:822-870`. EveJS 261028.1 clears this state in `src/server/src/services/character/characterDeletionRuntime.js:619-670`.
+
 ## Undock and delayed docking sequence audit (2026-11-02)
 
 - Generic `CmdDock` structure IDs now pass through Host structure access checks. The simulation waits four seconds, asks Host to recheck timers, module restrictions and ACL, and only then removes the pilot and reports `Docked`.

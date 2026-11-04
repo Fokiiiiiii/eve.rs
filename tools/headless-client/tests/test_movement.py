@@ -22,7 +22,7 @@ import pytest
 from evecli.describe import describe, shape
 from evecli.observe import ego_state, timed_events, wait_quietly
 from tests import test_login_to_character as base
-from tests.test_undock import STATION, SYSTEM, arrive, compare_answer, compare_events, outcome
+from tests.test_undock import STATION, SYSTEM, arrive, compare_answer, compare_destiny_updates, compare_events, outcome
 
 MOVEMENT = base.load("movement.json")
 APPROACH = base.load("approach.json")
@@ -60,6 +60,8 @@ def test_orders_in_space_make_the_updates_the_reference_sent(race):
     with base.connect(f"walk-movement-{run}") as who:
         _, ship_id, _, mapping = arrive(who, race, run)
         ship = ballpark = None
+        expected_destiny_updates = []
+        actual_destiny_updates = []
         for step in race["steps"]:
             label = step["label"]
             where = f"race {race['raceID']} {label}"
@@ -80,7 +82,15 @@ def test_orders_in_space_make_the_updates_the_reference_sent(race):
             events = wait_quietly(who, WAITS.get(label, 1.5))
             if "ok" in step:
                 problems += compare_answer(label, step["ok"], describe(raw), where)
-            problems += compare_events(step["events"], events, where, mapping)
+            expected_destiny_updates.extend(event for event in step["events"] if event["name"] == "DoDestinyUpdate")
+            actual_destiny_updates.extend(event for event in events if event["name"] == "DoDestinyUpdate")
+            problems += compare_events(
+                [event for event in step["events"] if event["name"] != "DoDestinyUpdate"],
+                [event for event in events if event["name"] != "DoDestinyUpdate"],
+                where,
+                mapping,
+            )
+        problems += compare_destiny_updates(expected_destiny_updates, actual_destiny_updates, f"race {race['raceID']} destiny updates", mapping)
     assert problems == [], "\n".join(problems[:40])
 
 def distance_from_surface(events: list, ship_id: int):

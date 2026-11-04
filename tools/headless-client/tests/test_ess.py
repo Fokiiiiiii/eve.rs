@@ -132,7 +132,7 @@ def test_a_linkable_hull_starts_and_cancels_an_in_space_main_bank_link():
         wait_quietly(client, 1.0)
 
         undocked = client.call_bound(ship_service, "Undock", hull_id, False, onlineModules=m.List([]))
-        assert isinstance(undocked, tuple) and len(undocked) == 2, f"the granted ESS hull did not undock: {undocked!r}"
+        assert undocked is None, f"Undock returned a value: {undocked!r}"
         wait_quietly(client, 5.0)
         solar_system_id, ess_id = placed
         if client.session.session_init.get("solarsystemid2") != solar_system_id:

@@ -11,7 +11,7 @@ import struct
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "..", "..", "oracle", "fixtures", "simlink", "messages.json")
 
-KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateState": 6, "Command": 7,
+KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateState": 6, "CriminalFlagActive": 140, "Command": 7,
          "ShipSpec": 8, "Notify": 9, "Docked": 10, "Refused": 11, "Accepted": 12, "EnterReply": 13, "Approaching": 14,
          "Jumping": 15, "Jumped": 16, "Targets": 17, "TargetRefused": 18, "Activate": 19, "Condition": 20,
          "Destroyed": 21, "Spawn": 22, "SpawnReply": 23, "Destroy": 24, "Respawn": 25, "PlaceWreck": 26, "ChargeSpent": 27,
@@ -31,7 +31,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "RemoveAbyssalParticipant": 110, "RemoveAbyssalParticipantReply": 111, "GetAbyssalParticipantPose": 112, "GetAbyssalParticipantPoseReply": 113,
          "EnsureAbyssalSceneObject": 114, "EnsureAbyssalSceneObjectReply": 115, "EnsureAbyssalRewardCache": 116, "EnsureAbyssalRewardCacheReply": 117,
          "EnsureAbyssalLootContainer": 118, "EnsureAbyssalLootContainerReply": 119, "EnsureAbyssalEnvironmentObject": 120, "EnsureAbyssalEnvironmentObjectReply": 121,
-         "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124, "ServiceNotify": 125, "GetSceneBody": 126, "GetSceneBodyReply": 127, "EnsureTournamentBeacon": 128, "EnsureTournamentBeaconReply": 129, "RemoveTournamentBeacon": 130, "RemoveTournamentBeaconReply": 131, "QueryTournamentWreck": 132, "QueryTournamentWreckReply": 133, "RemoveTournamentWreck": 134, "RemoveTournamentWreckReply": 135, "MovePublicParticipant": 136, "MovePublicParticipantReply": 137, "EnterPublicParticipant": 138, "EnterPublicParticipantReply": 139, "RegisterTournamentCutoff": 142, "RegisterTournamentCutoffReply": 143, "ReadTournamentCutoff": 144, "ReadTournamentCutoffReply": 145, "ReleaseTournamentCutoff": 146, "ReleaseTournamentCutoffReply": 147, "RegisterTournamentMetrics": 148, "RegisterTournamentMetricsReply": 149, "ReadTournamentMetrics": 150, "ReadTournamentMetricsReply": 151, "ReleaseTournamentMetrics": 152, "ReleaseTournamentMetricsReply": 153}
+         "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124, "ServiceNotify": 125, "GetSceneBody": 126, "GetSceneBodyReply": 127, "EnsureTournamentBeacon": 128, "EnsureTournamentBeaconReply": 129, "RemoveTournamentBeacon": 130, "RemoveTournamentBeaconReply": 131, "QueryTournamentWreck": 132, "QueryTournamentWreckReply": 133, "RemoveTournamentWreck": 134, "RemoveTournamentWreckReply": 135, "MovePublicParticipant": 136, "MovePublicParticipantReply": 137, "EnterPublicParticipant": 138, "EnterPublicParticipantReply": 139, "CriminalFlagActive": 140, "RegisterTournamentCutoff": 142, "RegisterTournamentCutoffReply": 143, "ReadTournamentCutoff": 144, "ReadTournamentCutoffReply": 145, "ReleaseTournamentCutoff": 146, "ReleaseTournamentCutoffReply": 147, "RegisterTournamentMetrics": 148, "RegisterTournamentMetricsReply": 149, "ReadTournamentMetrics": 150, "ReadTournamentMetricsReply": 151, "ReleaseTournamentMetrics": 152, "ReleaseTournamentMetricsReply": 153}
 
 def slim_value(v):  # a dynamic slim-item field value (protocol 76): a tag (0 none, 1 int, 2 real, 3 bool, 4 text, 5 tuple), then its payload
     tag = v["tag"]
@@ -404,6 +404,8 @@ def abyssal_point_defense(pulse):
 
 def build(m):
     k = m["kind"]
+    if k == "CriminalFlagActive":
+        return frame(k, u64(m["sessionId"]))
     if k == "EnsureAbyssalScene":
         return frame(k, u64(m["requestId"]) + abyssal_scene_spec(m["spec"]))
     if k == "EnsureAbyssalSceneObject":
@@ -539,6 +541,8 @@ def build(m):
         return frame(k, body)
     if k == "Hello":
         return frame(k, struct.pack("<H", m["version"]))
+    if k == "CriminalFlagActive":
+        return frame(k, u64(m["sessionId"]))
     if k == "ModuleWorkCycle":
         # a mining laser's or a salvager's cycle: the numbers, then the waste, rounding and crit rolls the simulation drew
         return frame(k, u64(m["sessionId"]) + i64(m["characterId"]) + i64(m["shipId"]) + struct.pack("<i", m["solarSystemId"])
@@ -808,6 +812,7 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
 valid = [
     {"name": "hello", "kind": "Hello", "version": 82},
     {"name": "hello ack", "kind": "HelloAck", "version": 82, "pollHz": 4},
+    {"name": "active criminal flag", "kind": "CriminalFlagActive", "sessionId": "1001"},
     {"name": "ensure private Abyssal room scene", "kind": "EnsureAbyssalScene", "requestId": "41",
      "spec": {"scene": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 1},
               "environment": {"globalModifiers": [{"attributeId": 37, "operation": 1, "value": 1.25}],

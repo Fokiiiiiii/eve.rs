@@ -2,7 +2,7 @@ use eve_marshal::{Descriptor, PackedColumn, PackedRow, Value, dbtype};
 
 use crate::security;
 use crate::ship::{DroneLink, NpcIdentity, Ship, ShipSpec};
-use crate::wire::{filetime, id, int, list, real, text, tuple, word};
+use crate::wire::{filetime, id, int, list, optional_id, real, text, tuple, word};
 use crate::world::{Body, BodyKind, Detail, SolarSystem};
 
 type Entries = Vec<(&'static str, Value)>;
@@ -105,8 +105,8 @@ pub fn body_entries(system: &SolarSystem, body: &Body) -> Entries {
                 _ => body.owner_id,
             };
             entries.push(("corpID", id(corporation)));
-            entries.push(("allianceID", int(0)));
-            entries.push(("warFactionID", int(0)));
+            entries.push(("allianceID", optional_id(0)));
+            entries.push(("warFactionID", optional_id(0)));
             entries.push(("online", int(1)));
             entries.push(("incapacitated", int(0)));
             entries.push(("activityLevel", Value::None));
@@ -153,7 +153,7 @@ fn structure_fields(body: &Body, entries: &mut Entries) {
         entries.push(("level", int(1)));
     }
     entries.push(("corpID", id(*corporation_id)));
-    entries.push(("allianceID", int(*alliance_id)));
+    entries.push(("allianceID", optional_id(*alliance_id)));
     entries.push(("state", int(i64::from(status.state))));
     entries.push(("upkeepState", int(i64::from(status.upkeep_state))));
     let timer = match status.timer {
@@ -205,8 +205,8 @@ fn npc_ship_entries(spec: &ShipSpec, npc: &NpcIdentity) -> Entries {
         ("groupID", int(i64::from(spec.group_id))),
         ("categoryID", int(i64::from(spec.category_id))),
         ("corpID", id(i64::from(spec.corporation_id))),
-        ("allianceID", id(i64::from(spec.alliance_id))),
-        ("warFactionID", id(i64::from(spec.war_faction_id))),
+        ("allianceID", optional_id(i64::from(spec.alliance_id))),
+        ("warFactionID", optional_id(i64::from(spec.war_faction_id))),
         ("charID", id(spec.character_id)),
         ("kills", int(0)),
         ("skinMaterialSetID", Value::None),
@@ -232,8 +232,8 @@ fn pilot_ship_entries(spec: &ShipSpec) -> Entries {
         ("groupID", int(i64::from(spec.group_id))),
         ("categoryID", int(i64::from(spec.category_id))),
         ("corpID", id(i64::from(spec.corporation_id))),
-        ("allianceID", id(i64::from(spec.alliance_id))),
-        ("warFactionID", id(i64::from(spec.war_faction_id))),
+        ("allianceID", optional_id(i64::from(spec.alliance_id))),
+        ("warFactionID", optional_id(i64::from(spec.war_faction_id))),
         ("charID", id(spec.character_id)),
         ("kills", int(0)),
         ("skinMaterialSetID", Value::None),

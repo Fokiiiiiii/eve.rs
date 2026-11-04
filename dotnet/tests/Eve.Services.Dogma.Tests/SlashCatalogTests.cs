@@ -15,7 +15,7 @@ public class SlashCatalogTests
             suicide ? new SuicideCommands(null!) : null,
             npcs ? new NpcCommands(null!) : null,
             items ? new ItemCommands(null!, null!, null!, () => 0) : null,
-            skills ? new SkillCommands(null!, null!, null!, null, () => 0) : null,
+            skills ? new SkillCommands(null!, null!, null!, null!, null!) : null,
             ess: ess ? new EssCommands(null!, null!, null!, (_, _) =>
             {
                 essLinkAttempted?.Invoke();
@@ -132,14 +132,11 @@ public class SlashCatalogTests
     }
 
     [Fact]
-    public async Task Registered_commands_keep_the_existing_dispatch_and_self_target_guards()
+    public async Task Registered_commands_keep_the_existing_dispatch_guards()
     {
         var service = Service(skills: true);
         Assert.Equal("Select a character before using /dmg.",
             Assert.IsType<PyStr>(await CallAsync(service, "/DMG Heavy")).Value);
-        var session = Gm(new ClientSession { CharacterId = 90000001 });
-        Assert.Equal("Character not found: 90000002. Use me, a character ID, or an exact character name.",
-            Assert.IsType<PyStr>(await CallAsync(service, "/giveskill 90000002 3300 5", session)).Value);
     }
 
     [Fact]

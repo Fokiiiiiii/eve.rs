@@ -8,9 +8,73 @@ public sealed record SpaceRpcItem(long ItemId, long OwnerId, int TypeId, int Gro
 
 public sealed record WormholePolarization(long EndAtUnixMs, int DurationSeconds);
 
-public sealed class PvpFilamentMgrService(
-    Func<ServiceCall, CancellationToken, ValueTask<PyValue?>>? dispatch = null) : IService
+public sealed record PvpFilamentQueueError(int Code, IReadOnlyList<PyValue> Arguments);
+
+public sealed record PvpFilamentQueueParticipant(long CharacterId, ClientSession Session);
+
+public sealed record PvpFilamentAdmissionResult(
+    IReadOnlyList<PvpFilamentQueueParticipant> Participants,
+    IReadOnlyList<PvpFilamentQueueError> Errors)
 {
+    public static PvpFilamentAdmissionResult Reject(int code, params PyValue[] arguments) =>
+        new([], [new PvpFilamentQueueError(code, arguments)]);
+}
+
+public static class PvpFilamentJumpErrorCodes
+{
+    public const int InAbyssSystem = 1;
+    public const int InvalidKeyType = 2;
+    public const int InvalidOwner = 3;
+    public const int InvalidShipType = 4;
+    public const int ItemNotReachable = 5;
+    public const int KeyNotFound = 6;
+    public const int ProximityRestriction = 7;
+    public const int PvpTimerActive = 8;
+    public const int SafetyEngaged = 9;
+    public const int SessionChangeInProgress = 10;
+    public const int InvalidKeyAmount = 11;
+    public const int ShipInDungeon = 12;
+    public const int ShipInForceField = 13;
+    public const int ShipInWarp = 14;
+    public const int ShipIsCloaked = 15;
+    public const int ShipIsDocked = 16;
+    public const int ShipIsInvulnerable = 17;
+    public const int ShipIsSelfDestructing = 18;
+    public const int ShipIsTethered = 19;
+    public const int ShipIsWarpScrambled = 20;
+    public const int ShipNotFound = 21;
+    public const int UnknownError = 22;
+    public const int ShipNotInFleet = 23;
+    public const int TooManyInFleet = 24;
+    public const int FleetMemberNotInRange = 25;
+    public const int DisableModuleBeforeJumping = 26;
+    public const int OverloadedCargo = 27;
+    public const int FleetRolesNeeded = 28;
+    public const int TooFewInFleet = 29;
+    public const int ProximityTraceAnchor = 30;
+    public const int FleetSizeChanged = 31;
+    public const int AlreadyInQueue = 32;
+    public const int EventNotActive = 33;
+    public const int CongestionBan = 34;
+    public const int ModuleAndImplantRestrictions = 35;
+    public const int MaxOfShipTypeRestrictions = 36;
+    public const int MaxOfShipGroupRestrictions = 37;
+    public const int FrigateEscapebayRestrictions = 38;
+    public const int BannedModulesRestrictions = 39;
+    public const int LimitedNumberOfModulesRestriction = 40;
+}
+
+public sealed class PvpFilamentMgrService(
+    PvpFilamentEventCatalog? catalog = null,
+    Func<ServiceCall, PvpFilamentEvent, CancellationToken, ValueTask<PvpFilamentAdmissionResult>>? admit = null,
+    Func<DateTimeOffset>? utcNow = null) : IService
+{
+    private readonly PvpFilamentEventCatalog _catalog = catalog ?? PvpFilamentEventCatalog.LoadDefault();
+    private readonly Func<DateTimeOffset> _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
+    private readonly object _queueLock = new();
+    // shortcut: no match runtime or scene-tick hook, queue membership lasts until leave or disconnect; add tick revalidation with the match runtime.
+    private readonly Dictionary<long, QueueRecord> _queuedByCharacter = [];
+
     public string Name => "pvpFilamentMgr";
 
     public bool HasMethod(string method) => method is
@@ -23,18 +87,16 @@ public sealed class PvpFilamentMgrService(
         if (!HasMethod(call.Method))
             return PyNone.Instance;
 
-        if (dispatch is not null && await dispatch(call, call.Cancellation).ConfigureAwait(false) is { } response)
-            return response;
-
         switch (call.Method)
         {
             case "GetAllEvents":
+                return EventDictionary(_catalog.ListAllEvents());
             case "GetActiveEvents":
-                return new PyDict([]);
+                return EventDictionary(_catalog.ListActiveEvents(_utcNow()));
             case "GetMostRecentEvent":
+                return _catalog.GetMostRecentEvent(_utcNow()) is { } recent ? EventPayload(recent) : PyNone.Instance;
             case "GetNextEventDate":
-            case "LeavePVPQueue":
-                return PyNone.Instance;
+                return _catalog.GetNextEventDate(_utcNow()) is { } next ? PythonDate(next) : PyNone.Instance;
             case "GetLeaderboard":
                 call.Session.SendNotification("OnPVPFilamentsLeaderboard", "clientID", Leaderboard(call));
                 return PyNone.Instance;
@@ -42,13 +104,107 @@ public sealed class PvpFilamentMgrService(
                 call.Session.SendNotification("OnPVPFilamentsCharacterStatistics", "clientID", CharacterStatistics(call));
                 return PyNone.Instance;
             case "JoinPVPQueue":
-                throw MachoErrors.ThrowUserError("PVPJumpError", ("errors", ErrorList(33)));
+                return await JoinQueueAsync(call).ConfigureAwait(false);
+            case "LeavePVPQueue":
+                LeaveQueue(call);
+                return PyNone.Instance;
             case "AbyssalPVPEndGateActivation":
                 throw MachoErrors.ThrowUserError("DeniedTargetAttemptFailed");
             default:
                 return PyNone.Instance;
         }
     }
+
+    private async ValueTask<PyValue> JoinQueueAsync(ServiceCall call)
+    {
+        var typeId = TravelRpcWire.Integer(call.Arg(1));
+        var activeEvent = typeId is > 0 and <= int.MaxValue
+            ? _catalog.GetActiveEventByFilamentTypeId((int)typeId, _utcNow())
+            : null;
+        if (activeEvent is null)
+            throw PvpError([new PvpFilamentQueueError(PvpFilamentJumpErrorCodes.EventNotActive, [])]);
+
+        var admission = admit is null
+            ? PvpFilamentAdmissionResult.Reject(PvpFilamentJumpErrorCodes.ShipNotFound)
+            : await admit(call, activeEvent, call.Cancellation).ConfigureAwait(false);
+        if (admission.Errors.Count != 0)
+            throw PvpError(admission.Errors);
+        if (!ReferenceEquals(_catalog.GetActiveEventByFilamentTypeId((int)typeId, _utcNow()), activeEvent))
+            throw PvpError([new PvpFilamentQueueError(PvpFilamentJumpErrorCodes.EventNotActive, [])]);
+
+        var characterId = TravelRpcWire.CharacterId(call.Session);
+        if (admission.Participants.Count == 0 ||
+            !admission.Participants.Any(participant => participant.CharacterId == characterId && ReferenceEquals(participant.Session, call.Session)) ||
+            admission.Participants.Any(participant => participant.CharacterId <= 0 || participant.Session.CharacterId != participant.CharacterId) ||
+            admission.Participants.Select(participant => participant.CharacterId).Distinct().Count() != admission.Participants.Count)
+            throw PvpError([new PvpFilamentQueueError(PvpFilamentJumpErrorCodes.ShipNotFound, [])]);
+
+        var record = new QueueRecord(admission.Participants);
+        lock (_queueLock)
+        {
+            if (admission.Participants.Any(participant => _queuedByCharacter.ContainsKey(participant.CharacterId)))
+                throw PvpError([new PvpFilamentQueueError(PvpFilamentJumpErrorCodes.AlreadyInQueue, [])]);
+            foreach (var participant in admission.Participants)
+            {
+                _queuedByCharacter.Add(participant.CharacterId, record);
+                Action handler = () => OnSessionClosed(participant.Session);
+                record.CloseHandlers.Add(participant.Session, handler);
+                participant.Session.Closed += handler;
+            }
+        }
+        return new PyInt(0);
+    }
+
+    private void LeaveQueue(ServiceCall call)
+    {
+        var characterId = TravelRpcWire.CharacterId(call.Session);
+        QueueRecord? record;
+        lock (_queueLock)
+        {
+            if (!_queuedByCharacter.TryGetValue(characterId, out record) ||
+                !record.Participants.Any(participant => participant.CharacterId == characterId && ReferenceEquals(participant.Session, call.Session)))
+                return;
+            RemoveQueueRecord(record);
+        }
+
+        var failure = ErrorList([new PvpFilamentQueueError(PvpFilamentJumpErrorCodes.UnknownError, [])]);
+        foreach (var participant in record.Participants)
+            participant.Session.SendNotification("OnMatchMakingFailure", "clientID", failure);
+    }
+
+    private void OnSessionClosed(ClientSession session)
+    {
+        var characterId = TravelRpcWire.CharacterId(session);
+        QueueRecord? record;
+        lock (_queueLock)
+        {
+            if (!_queuedByCharacter.TryGetValue(characterId, out record) ||
+                !record.Participants.Any(participant => ReferenceEquals(participant.Session, session)))
+                return;
+            RemoveQueueRecord(record);
+        }
+
+        var failure = ErrorList([new PvpFilamentQueueError(PvpFilamentJumpErrorCodes.ShipNotFound, [])]);
+        foreach (var participant in record.Participants)
+            participant.Session.SendNotification("OnMatchMakingFailure", "clientID", failure);
+    }
+
+    private void RemoveQueueRecord(QueueRecord record)
+    {
+        foreach (var participant in record.Participants)
+        {
+            if (_queuedByCharacter.TryGetValue(participant.CharacterId, out var queued) && ReferenceEquals(queued, record))
+                _queuedByCharacter.Remove(participant.CharacterId);
+            if (record.CloseHandlers.Remove(participant.Session, out var handler))
+                participant.Session.Closed -= handler;
+        }
+    }
+
+    private static MachoWrappedException PvpError(IReadOnlyList<PvpFilamentQueueError> errors) =>
+        MachoErrors.ThrowUserError("PVPJumpError", ("errors", ErrorList(errors)));
+
+    private static PyList ErrorList(IReadOnlyList<PvpFilamentQueueError> errors) => new(
+        [.. errors.Select(error => (PyValue)PyList.Of(new PyInt(error.Code), new PyList(error.Arguments)))]);
 
     private static PyDict Leaderboard(ServiceCall call) => Dict(
         ("matchTypeID", new PyInt(TravelRpcWire.Integer(call.Arg(0)))),
@@ -64,11 +220,58 @@ public sealed class PvpFilamentMgrService(
             ("losses", new PyInt(0)),
             ("draws", new PyInt(0)))));
 
+    private static PyDict EventDictionary(IReadOnlyList<PvpFilamentEvent> events) => new(
+        [.. events.Select(entry => new KeyValuePair<PyValue, PyValue>(
+            new PyStr($"{entry.MatchTypeId}_{entry.ScheduleId}"), EventPayload(entry)))]);
+
+    private static PyObject EventPayload(PvpFilamentEvent entry) => KeyVal(
+        ("matchTypeID", new PyInt(entry.MatchTypeId)),
+        ("scheduleID", new PyInt(entry.ScheduleId)),
+        ("filamentTypeID", new PyInt(entry.FilamentTypeId)),
+        ("numberOfFleets", new PyInt(entry.NumberOfFleets)),
+        ("fleetSize", new PyInt(entry.FleetSize)),
+        ("shipRestrictions", new PyInt(entry.ShipRestrictions)),
+        ("eventNameID", new PyInt(entry.EventNameId)),
+        ("eventDescriptionID", new PyInt(entry.EventDescriptionId)),
+        ("filamentDescriptionID", new PyInt(entry.FilamentDescriptionId)),
+        ("restrictionsDescriptionID", new PyInt(entry.RestrictionsDescriptionId)),
+        ("rewardsHintID", new PyInt(entry.RewardsHintId)),
+        ("shipRestrictionsHintID", new PyInt(entry.ShipRestrictionsHintId)),
+        ("rulesHintID", new PyInt(entry.RulesHintId)),
+        ("QA", new PyInt(entry.Qa)),
+        ("moduleAndImplantMetaLevelRestrictions", new PyInt(entry.ModuleAndImplantMetaLevelRestrictions)),
+        ("maxOfShipTypeRestriction", new PyInt(entry.MaxOfShipTypeRestriction)),
+        ("maxOfShipGroupRestriction", new PyInt(entry.MaxOfShipGroupRestriction)),
+        ("minimumQueueSizeMultiplier", new PyInt(entry.MinimumQueueSizeMultiplier)),
+        ("provingGroundLootTableID", new PyInt(entry.ProvingGroundLootTableId)),
+        ("bannedModulesTypeListID", entry.BannedModulesTypeListId is { } banned ? new PyInt(banned) : PyNone.Instance),
+        ("limitedAmountOfModulesTypeListID", entry.LimitedAmountOfModulesTypeListId is { } limited ? new PyInt(limited) : PyNone.Instance),
+        ("numberOfLimitedModules", new PyInt(entry.NumberOfLimitedModules)),
+        ("rewards", new PyList([.. entry.Rewards.Select(reward => (PyValue)KeyVal(
+            ("typeID", new PyInt(reward.TypeId)), ("amount", new PyInt(reward.Amount))))])),
+        ("startDate", PythonDate(entry.StartDate)),
+        ("endDate", PythonDate(entry.EndDate)));
+
+    private static PyObject KeyVal(params (string Key, PyValue Value)[] pairs) =>
+        new(new PyStr("util.KeyVal"), Dict(pairs));
+
     private static PyDict Dict(params (string Key, PyValue Value)[] pairs) => new(
         [.. pairs.Select(pair => new KeyValuePair<PyValue, PyValue>(new PyStr(pair.Key), pair.Value))]);
 
-    private static PyList ErrorList(int code) => PyList.Of(
-        PyList.Of(new PyInt(code), new PyList([])));
+    private static PyObjectEx PythonDate(DateOnly date) => new(
+        ObjectExKind.Ex1,
+        new PyTuple([
+            new PyToken("datetime.date"),
+            new PyTuple([new PyBytes(new byte[] { (byte)(date.Year >> 8), (byte)date.Year, (byte)date.Month, (byte)date.Day })]),
+        ]),
+        [],
+        []);
+
+    private sealed class QueueRecord(IReadOnlyList<PvpFilamentQueueParticipant> participants)
+    {
+        public IReadOnlyList<PvpFilamentQueueParticipant> Participants { get; } = participants;
+        public Dictionary<ClientSession, Action> CloseHandlers { get; } = [];
+    }
 }
 
 public sealed class RandomJumpMgrService(

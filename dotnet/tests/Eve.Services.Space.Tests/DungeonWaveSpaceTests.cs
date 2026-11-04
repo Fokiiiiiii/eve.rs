@@ -48,9 +48,7 @@ public sealed class DungeonWaveSpaceTests
         var boundShip = await rig.BindShipAsync(session);
         var answer = await rig.RegisteredCallAsync(session, boundShip, "Undock",
             new Eve.Marshal.PyLong(session.GetInt("shipid")!.Value), Eve.Marshal.PyBool.False);
-        var undock = Assert.IsType<Eve.Marshal.PyTuple>(answer);
-        Assert.Equal(new Eve.Marshal.PyStr(boundShip), undock.Items[0]);
-        Assert.IsType<Eve.Marshal.PyLong>(undock.Items[1]);
+        Assert.IsType<Eve.Marshal.PyNone>(answer);
         Assert.Null(session.GetInt("stationid"));
         Assert.Equal(systemId, session.GetInt("locationid"));
         Assert.True(rig.Space.HasPilotsIn(systemId));

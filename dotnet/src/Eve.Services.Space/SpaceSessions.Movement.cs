@@ -295,6 +295,10 @@ public sealed partial class SpaceSessions
     private async Task<bool> ShipAttributeAsync(Pilot pilot, int attributeId, CancellationToken cancellationToken) =>
         await FlownShipAsync(pilot, cancellationToken) is { } flown && flown.World.Get(flown.Ship.Id, attributeId) > 0;
 
+    public async ValueTask<bool> IsWarpScrambledAsync(ClientSession session, CancellationToken cancellationToken) =>
+        _pilots.TryGetValue((ulong)session.SessionId, out var pilot) &&
+        await ShipAttributeAsync(pilot, Eve.Services.Space.Effects.ModuleAttributes.WarpScrambleStatus, cancellationToken).ConfigureAwait(false);
+
     private async Task<PolicyDecision> MovementPolicyAsync(Pilot pilot, PolicyAction action, CancellationToken cancellationToken)
     {
         var securityClass = _systems.Get(pilot.SolarSystemId) is { } system

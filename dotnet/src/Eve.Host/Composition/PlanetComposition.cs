@@ -28,7 +28,16 @@ internal sealed partial class CharacterServicesComposition
         // a pilot that enters a system brings its offices back into the simulation's scene (as the cans and the structures are)
         if (spaceSessions is not null)
             spaceSessions.SystemEntered += system => _ = planetMgr.PlaceOfficesAsync(system);
-        planetRegistry = new PlanetOrbitalRegistryService(planetMgr, now);
+        planetRegistry = new PlanetOrbitalRegistryService(planetMgr, now,
+            structureDeployment.SkyhookOrbitalSettingsAsync,
+            structureDeployment.UpdateSkyhookOrbitalSettingsAsync,
+            async (session, groupId, token) =>
+            {
+                if (session.CharacterId is not { } characterId || session.GetInt("corpid") is not { } corporationId || corporationId <= 0)
+                    return false;
+                return await accessGroups.VisibleGroupAsync(
+                    new Eve.AccessGroups.Affiliation(characterId, corporationId, session.GetInt("allianceid") ?? 0), groupId, token) is not null;
+            });
     }
 
     /// <summary>The inventory broker, opened with the planetary customs offices (their import and export runs in the planets' transaction).</summary>

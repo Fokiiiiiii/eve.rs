@@ -73,7 +73,9 @@ internal sealed partial class CharacterServicesComposition
         return
     [
             hackingMgr,
-            new Eve.Services.Space.PvpFilamentMgrService(),
+            new Eve.Services.Space.PvpFilamentMgrService(
+                admit: AdmitPvpFilamentQueueAsync,
+                utcNow: () => DateTimeOffset.FromUnixTimeMilliseconds(now())),
             new Eve.Services.Space.RandomJumpMgrService(ReadTravelRpcItemAsync, activateRandomJump, replayRandomJump),
             new Eve.Services.Space.WarpVectorMgrService(ReadTravelRpcItemAsync),
             new Eve.Services.Space.WormholeMgrService(

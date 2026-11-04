@@ -1,16 +1,15 @@
-using Eve.Marshal;
+using Eve.Characters;
+using Eve.Services;
 using Eve.Services.Skills;
 using Eve.Skills;
-using Npgsql;
 
 namespace Eve.Services.Slash;
 
 /// <summary>
-/// The game master's skill command: <c>/giveskill me &lt;skill name|typeID|all|super&gt; [level]</c> sets a skill of the pilot (all the published ones, or every one) to a level
-/// (5 when none is given; 0 to 5). Its words are the reference's (<c>services/chat/commands/skills.js</c>, ADR 0009). The reference also serves another character, and
-/// mends the training queue and the skill session of a character that is online: here the target is the pilot, and the client is told what training tells it when a level
+/// The game master's skill command: <c>/giveskill &lt;target&gt; &lt;skill name|typeID|all|super&gt; [level]</c> sets a target's skill level
+/// (5 when none is given; 0 to 5). It also reconciles that character's queue and tells its active client what changed.
 /// </summary>
-public sealed class SkillCommands(SkillCatalog catalog, PgSkillStore store, NpgsqlDataSource source, ICharacterDogmaSync? dogma, Func<long> nowUnixMs)
+public sealed class SkillCommands(SkillCatalog catalog, PgCharacterStore characters, CharacterTraining training, TrainingAnnouncer announcer, Func<long, ClientSession?> sessionOf)
 {
     private const string Usage = "Usage: /giveskill <target> <skill name|typeID|all|super> [level]";
     private const string RemoveUsage = "Usage: /removeskill <target> <skill name|typeID|all>";
@@ -20,9 +19,22 @@ public sealed class SkillCommands(SkillCatalog catalog, PgSkillStore store, Npgs
 
     private static string Suggestions(IEnumerable<string> names) => names.Any() ? $" Suggestions: {string.Join(", ", names)}" : "";
 
+    private async Task<(Character? Pilot, string? Error)> ResolveTargetAsync(ClientSession session, string token, string command, CancellationToken cancellationToken)
+    {
+        var (id, error) = await PilotTokens.ResolveAsync(characters, session, token, cancellationToken);
+        if (id is null)
+        {
+            return (null, error == "Select a character before using me." ? $"Select a character before using {command} me." : error);
+        }
+        var pilot = await characters.GetAsync(id.Value, cancellationToken);
+        return pilot is null
+            ? (null, $"Character not found: {token}. Use me, a character ID, or an exact character name.")
+            : (pilot, null);
+    }
+
     public async Task<string> GiveAsync(ClientSession session, string argument, CancellationToken cancellationToken)
     {
-        var tokens = argument.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Select(t => t.Trim('"', '\'')).Where(t => t.Length > 0).ToList();
+        var tokens = PilotTokens.Operands(argument);
         if (tokens.Count < 2)
         {
             return Usage;
@@ -41,14 +53,9 @@ public sealed class SkillCommands(SkillCatalog catalog, PgSkillStore store, Npgs
         {
             return Usage;
         }
-        if (session.CharacterId is not { } character)
-        {
-            return "Select a character before using /giveskill me.";
-        }
-        if (!tokens[0].Equals("me", StringComparison.OrdinalIgnoreCase) && tokens[0] != character.ToString(System.Globalization.CultureInfo.InvariantCulture))
-        {
-            return $"Character not found: {tokens[0]}. Use me, a character ID, or an exact character name.";
-        }
+        var (pilot, targetError) = await ResolveTargetAsync(session, tokens[0], "/giveskill", cancellationToken);
+        if (pilot is null) return targetError!;
+        var character = pilot.Id;
 
         var query = Normalize(skillToken);
         var all = query == "all";
@@ -56,33 +63,12 @@ public sealed class SkillCommands(SkillCatalog catalog, PgSkillStore store, Npgs
         SkillType? single = null;
         if (!all && !super && Resolve(skillToken, out single) is { } error) return error;
 
-        var before = await store.ForCharacterAsync(character, cancellationToken);
-        var have = before.ToDictionary(skill => skill.TypeId);
         var targets = single is not null ? [single] : catalog.Skills.Where(skill => super || skill.Published).ToList();
-        var changed = new List<CharacterSkill>();
-        foreach (var skill in targets)
-        {
-            if (have.TryGetValue(skill.TypeId, out var owned) && owned.Level == level)
-            {
-                continue;
-            }
-            changed.Add(new CharacterSkill(skill.TypeId, level, SkillPoints.At(skill.Rank, level)));
-        }
-        if (changed.Count > 0)
-        {
-            await using var connection = await source.OpenConnectionAsync(cancellationToken);
-            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-            await store.GrantAsync(connection, transaction, character, changed, cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-            var skills = SkillWire.EntryDictionary(character, catalog, changed);
-            SkillNotifications.ServerSkillsChanged(session, skills, null, Py.FileTimeFromUnixMs(nowUnixMs()));
-            SkillNotifications.LevelsTrained(session, changed);
-            SkillNotifications.SkillsChanged(session, skills);
-            if (dogma is not null)
-            {
-                await dogma.SkillsChangedAsync(session, character, before, cancellationToken);
-            }
-        }
+        var update = await training.ApplyAdminMutationAsync(character, pilot.AccountId, targets
+            .Select(skill => new CharacterSkill(skill.TypeId, level, SkillPoints.At(skill.Rank, level))).ToList(), [],
+            deleteUnwanted: false, clearQueue: false, cancellationToken);
+        await announcer.AnnounceAdminMutationAsync(character == session.CharacterId ? session : sessionOf(character), update);
+        var changed = update.ChangedSkills;
 
         var target = $"character({character})";
         var label = LevelLabels[level];
@@ -152,35 +138,24 @@ public sealed class SkillCommands(SkillCatalog catalog, PgSkillStore store, Npgs
         return null;
     }
 
-    /// <summary>
-    /// the skills are gone with the zeroed records EveJS sends. shortcut: the skill queue is not cleared (EveJS clears it), upgrade when a queue row survives a removal.
-    /// </summary>
+    /// <summary>Removes a target character's skill rows and clears its persisted training queue.</summary>
     public async Task<string> RemoveAsync(ClientSession session, string argument, CancellationToken cancellationToken)
     {
-        var tokens = argument.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Select(t => t.Trim('"', '\'')).Where(t => t.Length > 0).ToList();
+        var tokens = PilotTokens.Operands(argument);
         if (tokens.Count < 2) return RemoveUsage;
         var skillToken = string.Join(' ', tokens.Skip(1)).Trim();
-        if (session.CharacterId is not { } character) return "Select a character before using /removeskill me.";
-        if (!tokens[0].Equals("me", StringComparison.OrdinalIgnoreCase) && tokens[0] != character.ToString(System.Globalization.CultureInfo.InvariantCulture))
-            return $"Character not found: {tokens[0]}. Use me, a character ID, or an exact character name.";
+        var (pilot, targetError) = await ResolveTargetAsync(session, tokens[0], "/removeskill", cancellationToken);
+        if (pilot is null) return targetError!;
+        var character = pilot.Id;
 
         var all = Normalize(skillToken) == "all";
         SkillType? single = null;
         if (!all && Resolve(skillToken, out single) is { } error) return error;
 
-        var before = await store.ForCharacterAsync(character, cancellationToken);
-        var removed = before.Where(skill => all || skill.TypeId == single!.TypeId).Select(skill => new CharacterSkill(skill.TypeId, 0, 0)).ToList();
-        if (removed.Count > 0)
-        {
-            await using var connection = await source.OpenConnectionAsync(cancellationToken);
-            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-            await store.DeleteAsync(connection, transaction, character, all ? null : [single!.TypeId], cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-            var skills = SkillWire.EntryDictionary(character, catalog, removed);
-            SkillNotifications.ServerSkillsChanged(session, skills, null, Py.FileTimeFromUnixMs(nowUnixMs()));
-            SkillNotifications.SkillsChanged(session, skills);
-            if (dogma is not null) await dogma.SkillsChangedAsync(session, character, before, cancellationToken);
-        }
+        var update = await training.ApplyAdminMutationAsync(character, pilot.AccountId, [],
+            all ? null : [single!.TypeId], deleteUnwanted: all, clearQueue: true, cancellationToken);
+        await announcer.AnnounceAdminMutationAsync(character == session.CharacterId ? session : sessionOf(character), update);
+        var removed = update.RemovedSkills;
 
         var target = $"character({character})";
         if (all)

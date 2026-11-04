@@ -21,7 +21,7 @@ public sealed record NewStructure(
 /// caller's connection and transaction, so a change, its event and its deadline job commit together (FOUNDATIONS rule 1). <see cref="ReadLegacyTableAsync"/> gives the directory
 /// read models the row shape EVE.js kept in the game store's <c>structures</c> table; <see cref="ImportAsync"/> copies those rows in once.
 /// </summary>
-public sealed class StructureStore
+public sealed partial class StructureStore
 {
     public const string DefaultSchema = "structures";
 

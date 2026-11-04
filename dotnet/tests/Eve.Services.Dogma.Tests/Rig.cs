@@ -7,6 +7,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Sde;
 using Eve.Services.Inventory;
+using Eve.Services.Skills;
 using Eve.Services.Slash;
 using Eve.Ships;
 using Eve.Skills;
@@ -73,8 +74,9 @@ internal sealed class Rig : IAsyncDisposable
     public const long Station = 60015249;
 
     private readonly string[] _schemas;
+    private readonly Dictionary<long, ClientSession> _sessions = [];
 
-    private Rig(NpgsqlDataSource source, string suffix, SdeReader sde, DogmaStatic statics, CharacterCreation creation, PgModuleStateStore modules, SkillBoosterActivationHandler? activateBooster, SkillCatalog catalog)
+    private Rig(NpgsqlDataSource source, string suffix, SdeReader sde, DogmaStatic statics, CharacterCreation creation, PgModuleStateStore modules, SkillBoosterActivationHandler? activateBooster, SkillCatalog catalog, Random? skillRandom)
     {
         Source = source;
         Catalog = catalog;
@@ -82,6 +84,9 @@ internal sealed class Rig : IAsyncDisposable
         Characters = new PgCharacterStore(source, _schemas[0]);
         Items = new PgItemStore(source, _schemas[1]);
         Skills = new PgSkillStore(source, _schemas[2]);
+        Training = new CharacterTraining(source, catalog, Skills, new PgTrainingStore(source, _schemas[2]),
+            new TrainingSettings { Attribute = Skills.LearningAttribute }, () => ClockMs);
+        Announcer = new TrainingAnnouncer(Training, catalog, new CharacterSessions(), null, () => ClockMs, schedule: false);
         Statics = statics;
         Creation = creation;
         Modules = modules;
@@ -96,10 +101,12 @@ internal sealed class Rig : IAsyncDisposable
         Bus = new Eve.Events.EventBus(source, Scheduler, null, _schemas[6]);
         Relations = new Eve.Relations.RelationStore(source, Scheduler, Bus, _schemas[7]);
         Crimewatch = new Eve.Crimewatch.PgCrimewatchStore(source, _schemas[8]);
-        Slash = new SlashService(new ShipHealthCommands(Ships, statics, () => ClockMs, Health), items: new ItemCommands(new ItemTypeNames(sde), Ships, statics, () => ClockMs), isk: new IskCommands(Transactions, source, () => ClockMs, Wallets, Loyalty),
+        Slash = new SlashService(new ShipHealthCommands(Ships, statics, () => ClockMs, Health), items: new ItemCommands(new ItemTypeNames(sde), Ships, statics, () => ClockMs),
+            skills: new SkillCommands(catalog, Characters, Training, Announcer, SessionFor),
+            isk: new IskCommands(Transactions, source, () => ClockMs, Wallets, Loyalty),
             loyalty: new LoyaltyCommands(Loyalty, StandingDirectory, () => ClockMs),
             standings: new StandingCommands(StandingDirectory, Relations, (character, owner, standing) => StandingNotices.Add((character, owner, standing))),
-            skillBulk: new SkillBulkCommands(catalog, Skills, source, Characters, null, () => ClockMs, _ => null),
+            skillBulk: new SkillBulkCommands(catalog, Skills, Characters, Training, Announcer, SessionFor, skillRandom),
             dogmaUpdate: new DogmaUpdateCommands(statics),
             killRight: new KillRightCommands(Characters, (owner, target, system, when, token) => Crimewatch.CreateKillRightAsync(owner, target, system, when, token), () => ClockMs));
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(sde), new Eve.Universe.StationCatalog([]), Ships, statics, () => ClockMs);
@@ -148,6 +155,22 @@ internal sealed class Rig : IAsyncDisposable
 
     public PgSkillStore Skills { get; }
 
+    public CharacterTraining Training { get; }
+
+    public TrainingAnnouncer Announcer { get; }
+
+    private ClientSession? SessionFor(long characterId) => _sessions.GetValueOrDefault(characterId);
+
+    public void SetOnline(ClientSession session)
+    {
+        if (session.CharacterId is { } characterId)
+        {
+            _sessions[characterId] = session;
+        }
+    }
+
+    public void SetOffline(long characterId) => _sessions.Remove(characterId);
+
     public Eve.Crimewatch.PgCrimewatchStore Crimewatch { get; }
 
     /// <summary>The SDE skill catalog the rig was built with (the starting sets and the published skills).</summary>
@@ -175,7 +198,7 @@ internal sealed class Rig : IAsyncDisposable
             source.Bloodlines,
             CreationCatalog.Schools.Select(s => source.StarterFor(s.CorporationId)!));
 
-    public static async Task<Rig> CreateAsync(SkillBoosterActivationHandler? activateBooster = null)
+    public static async Task<Rig> CreateAsync(SkillBoosterActivationHandler? activateBooster = null, Random? skillRandom = null)
     {
         CharacterNames.EnsureUnicodeSupport();
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
@@ -199,7 +222,7 @@ internal sealed class Rig : IAsyncDisposable
         var catalog = await SkillCatalog.LoadAsync(sde);
         var creation = new CharacterCreation(
             source, characters, items, skills, catalog, wallets, new StartingWallet(), CockroachCatalog(await CreationCatalog.LoadAsync(sde, Station)), modules);
-        return new Rig(source, suffix, sde, await DogmaStatic.LoadAsync(sde), creation, modules, activateBooster, catalog);
+        return new Rig(source, suffix, sde, await DogmaStatic.LoadAsync(sde), creation, modules, activateBooster, catalog, skillRandom);
     }
 
     /// <summary>A new character of a race (Caldari by default), on the Cockroach test hull.</summary>

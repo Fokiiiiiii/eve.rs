@@ -23,8 +23,7 @@ public sealed partial class SpaceSessions
 
     /// <summary>
     /// Sends the session's ship out of its station. The client is told in the order the reference tells it (the ship moved, the objects
-    /// bound to the station let go, the session changed, the undocking protection started) and the answer is the object it called and the time
-    /// from which it may go on. Returns None when there is nothing to undock.
+    /// bound to the station let go, the session changed, the undocking protection started). The bound call answers None.
     /// </summary>
     public Task<PyValue> UndockAsync(ClientSession session, string? boundObjectId, CancellationToken cancellationToken, bool ignoreContraband = false) =>
         UndockFromAsync(session, "stationid", boundObjectId, cancellationToken, ignoreContraband);
@@ -161,8 +160,7 @@ public sealed partial class SpaceSessions
         }
             await NotifyPilotEnteredSystemAsync(characterId, (ulong)session.SessionId, systemId);
         await RefreshTetherPolicyAsync(session, cancellationToken);
-        return Py.Tuple(boundObjectId is null ? None : new PyStr(boundObjectId),
-            new PyLong(Py.FileTimeFromUnixMs(_nowUnixMs() + SessionChangeCooldownMs)));
+        return None;
     }
 
     /// <summary>Boards another ship from the current station hangar and updates the active session ship.</summary>
@@ -504,7 +502,7 @@ public sealed partial class SpaceSessions
     {
         foreach (var oid in session.BoundOids)
         {
-            session.SendNotification("OnMachoObjectDisconnect", "+clientID", new PyStr(oid), InventoryWire.Id(session.ClientId), None);
+            session.SendNotification("OnMachoObjectDisconnect", "+clientID", new PyStr(oid), new PyLong(session.ClientId), None);
             if (Registry is not null)
             {
                 Registry.UnregisterBoundObject(oid, session);
@@ -521,7 +519,7 @@ public sealed partial class SpaceSessions
         var receipts = new List<Func<CancellationToken, ValueTask>>();
         foreach (var oid in session.BoundOids)
         {
-            session.SendNotification("OnMachoObjectDisconnect", "+clientID", new PyStr(oid), InventoryWire.Id(session.ClientId), None);
+            session.SendNotification("OnMachoObjectDisconnect", "+clientID", new PyStr(oid), new PyLong(session.ClientId), None);
             if (Registry is null) session.ForgetBoundObject(oid);
             else if (Registry.DetachBoundObject(oid, session) is { } receipt) receipts.Add(receipt);
         }

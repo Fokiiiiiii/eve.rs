@@ -42,7 +42,7 @@ public sealed partial class CorporationStore
         durationDays = Math.Clamp(durationDays,1,30);
         return await WriteAsync(async (connection,tx) =>
         {
-            await ResolveExpiredVotesInTransactionAsync(connection,tx,corporationId,token);
+            await ResolveExpiredVotesInTransactionAsync(connection,tx,corporationId,token,creatorId);
             var corporation = await GetAsync(connection,tx,corporationId,true,token)
                 ?? throw new CorporationError("CORPORATION_NOT_FOUND");
             if (corporation.IsNpc || corporation.Deleted ||
@@ -147,7 +147,7 @@ public sealed partial class CorporationStore
 
     public async Task<IReadOnlyList<CorporationVoteCase>> VoteCasesAsync(long corporationId,long actorId,CancellationToken token = default)
     {
-        await ResolveExpiredVotesAsync(corporationId,token);
+        await ResolveExpiredVotesAsync(corporationId,actorId,token);
         if (!await CanViewVotesAsync(corporationId,actorId,token)) return [];
         await using var connection = await _source.OpenConnectionAsync(token);
         await using var command = Command(connection,null,$"SELECT {VoteCaseColumns} FROM {_schema}.vote_cases WHERE corporation_id=$1 ORDER BY id DESC",corporationId);
@@ -159,7 +159,7 @@ public sealed partial class CorporationStore
 
     public async Task<CorporationVoteCase?> VoteCaseAsync(long corporationId,long voteCaseId,long actorId,CancellationToken token = default)
     {
-        await ResolveExpiredVotesAsync(corporationId,token);
+        await ResolveExpiredVotesAsync(corporationId,actorId,token);
         if (!await CanViewVotesAsync(corporationId,actorId,token)) return null;
         await using var connection = await _source.OpenConnectionAsync(token);
         await using var command = Command(connection,null,$"SELECT {VoteCaseColumns} FROM {_schema}.vote_cases WHERE corporation_id=$1 AND id=$2",corporationId,voteCaseId);
@@ -188,7 +188,7 @@ public sealed partial class CorporationStore
         }
         if (expectedCorporationId is { } expected && expected != issuerCorporationId) return null;
 
-        await ResolveExpiredVotesAsync(issuerCorporationId,token);
+        await ResolveExpiredVotesAsync(issuerCorporationId,actorId,token);
         if (!await CanViewVotesAsync(issuerCorporationId,actorId,token)) return null;
 
         await using var connection = await _source.OpenConnectionAsync(token);
@@ -210,7 +210,7 @@ public sealed partial class CorporationStore
         if (optionId < 0) throw new CorporationError("CORPORATION_INVALID_VOTE_OPTION");
         await WriteAsync(async (connection,tx) =>
         {
-            await ResolveExpiredVotesInTransactionAsync(connection,tx,corporationId,token);
+            await ResolveExpiredVotesInTransactionAsync(connection,tx,corporationId,token,actorId);
             var corporation = await GetAsync(connection,tx,corporationId,true,token) ??
                 throw new CorporationError("CORPORATION_NOT_FOUND");
             var character = await _characters.LockAndGetAsync(connection,tx,actorId,token);
@@ -327,7 +327,7 @@ private async Task<(long OptionId,decimal WinningWeight,decimal TotalCastWeight)
     {
         await WriteAsync<bool>(async (connection,tx) =>
         {
-            await ResolveExpiredVotesInTransactionAsync(connection,tx,corporationId,token);
+            await ResolveExpiredVotesInTransactionAsync(connection,tx,corporationId,token,actorId);
             var corporation = await GetAsync(connection,tx,corporationId,true,token) ??
                 throw new CorporationError("CORPORATION_NOT_FOUND");
             if (corporation.CeoId != actorId || corporation.CeoRolesSuspended)
@@ -450,16 +450,20 @@ public async Task ResolveAllExpiredVotesAsync(CancellationToken token = default)
     }
 
 private Task<bool> ResolveExpiredVotesAsync(long corporationId,CancellationToken token = default) =>
+        ResolveExpiredVotesAsync(corporationId,null,token);
+
+    private Task<bool> ResolveExpiredVotesAsync(long corporationId,long? actorId,CancellationToken token) =>
         WriteAsync(async (connection,tx) =>
         {
-            await ResolveExpiredVotesInTransactionAsync(connection,tx,corporationId,token);
+            await ResolveExpiredVotesInTransactionAsync(connection,tx,corporationId,token,actorId);
             return true;
         },token);
 
     private async Task ResolveExpiredVotesInTransactionAsync(NpgsqlConnection connection,NpgsqlTransaction tx,
-        long corporationId,CancellationToken token)
+        long corporationId,CancellationToken token,long? actorId = null)
     {
         if (corporationId <= 0 || await GetAsync(connection,tx,corporationId,true,token) is null) return;
+        if (actorId is { } actor && !await CanViewVotesAsync(connection,tx,corporationId,actor,token)) return;
         var now = checked(VoteFiletimeEpoch + _now() * 10_000L);
         var due = new List<(long Id,int Type,long Creator,long? Parameter,long? Parameter1,long? Parameter2,long End)>();
         await using (var command = Command(connection,tx,$"""

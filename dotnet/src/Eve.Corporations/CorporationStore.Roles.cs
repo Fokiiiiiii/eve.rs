@@ -1,4 +1,3 @@
-// Role and title updates ported from EVE.js corpRegistryRuntime.js / corporationRuntimeState.js (828823a).
 using System.Text.Json;
 using Npgsql;
 

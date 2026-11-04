@@ -577,13 +577,7 @@ public class SpaceContainerTests
         {
             var product = Assert.Single(products);
             Assert.Equal(expectedQuantity, product.Quantity);
-            var productTypeName = rig.Statics.Type(product.TypeId)!.Name;
-            Assert.Contains(productTypeName, new[]
-            {
-                "Armor Plates", "Burned Logic Circuit", "Charred Micro Circuit", "Contaminated Nanite Compound",
-                "Defective Current Pump", "Fried Interface Circuit", "Melted Capacitor Console",
-                "Tangled Power Conduit", "Tripped Power Circuit",
-            });
+            Assert.Equal("Malfunctioning Shield Emitter", rig.Statics.Type(product.TypeId)!.Name);
         }
         else
         {

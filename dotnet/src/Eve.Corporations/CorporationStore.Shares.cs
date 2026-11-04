@@ -397,7 +397,7 @@ public async Task<bool> CanViewVotesAsync(long corporationId,long actorId,Cancel
         await using var access = Command(connection,tx,$"""
             SELECT EXISTS(
                 SELECT 1 FROM {_schema}.members
-                WHERE character_id=$1 AND corporation_id=$2 AND roles<>0)
+                WHERE character_id=$1 AND corporation_id=$2 AND (roles & $3)<>0)
                OR EXISTS(
                 SELECT 1 FROM {_schema}.vote_shareholders
                 WHERE corporation_id=$2 AND shareholder_id=$1 AND shares>0)
@@ -407,7 +407,7 @@ public async Task<bool> CanViewVotesAsync(long corporationId,long actorId,Cancel
                 JOIN {_schema}.corporations owned ON owned.id=m.corporation_id AND owned.ceo_id=$1 AND NOT owned.ceo_roles_suspended
                 JOIN {_schema}.vote_shareholders s ON s.corporation_id=$2 AND s.shareholder_id=owned.id AND s.shares>0
                 WHERE m.character_id=$1)
-            """,actorId,corporationId);
+            """,actorId,corporationId,CorporationRoles.Director);
         return (bool)(await access.ExecuteScalarAsync(token) ?? false);
     }
 }

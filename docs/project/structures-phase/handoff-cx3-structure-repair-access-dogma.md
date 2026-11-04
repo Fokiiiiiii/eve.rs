@@ -2,7 +2,7 @@
 
 ## Status
 
-Implementation commit `7a25d0fe` is merged with `origin/main` at `e86a8721` in merge commit `c3967e13`. Post-merge builds and focused PostgreSQL tests passed. The current change has not yet been pushed; the newest completed main CI run before push was run 1506 and green. Push-triggered Actions results will be recorded after the push. No graphical-client repair walkthrough has been performed.
+Implementation commit `7a25d0fe` is on `main` via merge commit `b395ea3a`. Post-merge builds and focused PostgreSQL tests passed. Focused Agent test run `41853409850` succeeded. Push CI run 1507 (`41853285092`) failed in `test_a_moon_chunk_is_refused_until_ready_then_fractured_and_completed_and_its_owners_are_told` when `structureControl.TakeControl` timed out. I reproduced that exact live test locally on `eve_p3`; it passed. Subsequent main CI run 1508 on `c9b26d4891cd` passed, including end-to-end. A selected `test_structures.py` Actions rerun on `b395ea3a` is queued as run 1314. No graphical-client repair walkthrough has been performed.
 
 ## Behavior and decisions
 

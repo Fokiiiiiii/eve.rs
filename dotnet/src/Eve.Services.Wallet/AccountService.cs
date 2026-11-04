@@ -235,7 +235,8 @@ public sealed partial class AccountService(PgWalletStore wallets, Eve.Corporatio
         }
         catch (Exception error) when (error is WalletNotFoundException or WalletOperationConflictException)
         {
-            return PyNone.Instance;
+            throw MachoErrors.ThrowUserError("CustomInfo",
+                ("info", new PyStr("This transfer could not be completed. Please try again.")));
         }
     }
 
@@ -295,7 +296,8 @@ public sealed partial class AccountService(PgWalletStore wallets, Eve.Corporatio
         }
         catch (Exception error) when (error is WalletNotFoundException or WalletOperationConflictException)
         {
-            return PyNone.Instance;
+            throw MachoErrors.ThrowUserError("CustomInfo",
+                ("info", new PyStr("This transfer could not be completed. Please try again.")));
         }
     }
 

@@ -526,7 +526,7 @@ public class SpaceContainerTests
     public async Task Salvage_cycles_retry_failed_access_and_replace_the_wreck_without_losing_its_contents(string wreckName, double rewardRoll, long expectedQuantity)
     {
         await using var rig = await Rig.CreateAsync();
-        rig.Containers.SalvageRewardRoll = () => rewardRoll;
+        rig.Ships.SalvageRewardRoll = () => rewardRoll;
         var flying = await FlyingWithCargoAsync(rig);
         var system = (int)flying.Session.GetInt("solarsystemid")!.Value;
         var sde = new Eve.Sde.SdeReader(rig.Source);
@@ -539,19 +539,18 @@ public class SpaceContainerTests
         var salvageDroneI = Assert.Single(types, type => type.Published && type.Name == "Salvage Drone I").TypeId;
         await rig.Statics.EnsureTypesAsync([wreckTypeId, Tritanium, salvageDroneI]);
         var wreckType = rig.Statics.Type(wreckTypeId)!;
-        long wreckId, lootId;
-        await using (var connection = await rig.Source.OpenConnectionAsync())
-        await using (var transaction = await connection.BeginTransactionAsync())
-        {
-            wreckId = await rig.Items.CreateAsync(connection, transaction,
-                new Eve.Inventory.NewItem(wreckTypeId, flying.Character.CharacterId, system, Eve.Ships.CharacterShips.InSpaceFlag, 1, true));
-            lootId = await rig.Items.CreateAsync(connection, transaction,
-                new Eve.Inventory.NewItem(Tritanium, flying.Character.CharacterId, wreckId, 0, 5, false));
-            await transaction.CommitAsync();
-        }
+        var made = await rig.Ships.LeaveWreckAsync(
+            wreckTypeId, flying.Character.CharacterId, system, [new Eve.Ships.WreckContent(Tritanium, 5, false)],
+            warFactionId: amarrFactionId);
+        var wreckId = made.Wreck.Id;
+        var lootId = Assert.Single(made.Contents).Id;
         await rig.SpaceItems.SaveAsync(new Eve.Ships.SpaceItem(
             wreckId, system, [1000, 2000, 3000], [1, 0, 0], 14, wreckType.GroupId, flying.Character.ShipId,
             flying.Character.CharacterId, 0, 0, amarrFactionId, long.MaxValue));
+        var savedRewards = await new Eve.Ships.PgWreckSalvageStore(rig.Source, rig.SpaceSchema).GetAsync(wreckId);
+        Assert.NotNull(savedRewards);
+        Assert.Equal(expectedQuantity, savedRewards!.Sum(reward => reward.Quantity));
+        rig.Ships.SalvageRewardRoll = () => 0.0;
         var drone = await DroneInSpaceAsync(rig, flying.Character.CharacterId, system, salvageDroneI);
         Eve.Space.SimDroneWorkCycle Cycle(ulong cycleId, double roll) => new(
             (ulong)flying.Session.SessionId, flying.Character.CharacterId, flying.Character.ShipId, system, drone, wreckId, cycleId,
@@ -563,11 +562,43 @@ public class SpaceContainerTests
         Assert.True(missed.Accepted);
         Assert.False(missed.Complete);
         Assert.NotNull(await rig.Items.GetAsync(wreckId));
+        Assert.Equal(savedRewards, await new Eve.Ships.PgWreckSalvageStore(rig.Source, rig.SpaceSchema).GetAsync(wreckId));
+
+        ulong successCycleId = 21;
+        if (expectedQuantity > 0)
+        {
+            var rewardType = rig.Statics.Type(savedRewards[0].TypeId)!;
+            var room = (await rig.Ships.RoomAsync(flying.Character.CharacterId, flying.Character.ShipId, Eve.Ships.CharacterShips.CargoFlag))!.Value;
+            var unitVolume = rewardType.Attributes[rig.Statics.AttributeId("volume")!.Value];
+            var fillerQuantity = (long)Math.Ceiling(room.Capacity / unitVolume) + 1;
+            long fillerId;
+            await using (var connection = await rig.Source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                fillerId = await rig.Items.CreateAsync(connection, transaction, new NewItem(
+                    rewardType.TypeId, flying.Character.CharacterId, flying.Character.ShipId,
+                    Eve.Ships.CharacterShips.CargoFlag, fillerQuantity, false));
+                await transaction.CommitAsync();
+            }
+            rig.Sim.Say(Cycle(21, 0.0));
+            await Rig.UntilAsync(() => rig.Sim.Heard.OfType<Eve.Space.SimDroneWorkResult>().Any(r => r.CycleId == 21));
+            var full = rig.Sim.Heard.OfType<Eve.Space.SimDroneWorkResult>().Single(r => r.CycleId == 21);
+            Assert.False(full.Accepted);
+            Assert.Equal("CARGO_FULL", full.Reason);
+            Assert.Equal(savedRewards, await new Eve.Ships.PgWreckSalvageStore(rig.Source, rig.SpaceSchema).GetAsync(wreckId));
+            await using (var connection = await rig.Source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await rig.Items.DeleteAsync(connection, transaction, fillerId);
+                await transaction.CommitAsync();
+            }
+            successCycleId = 22;
+        }
 
         var heard = rig.Sim.Heard.Count;
-        rig.Sim.Say(Cycle(21, 0.0));
-        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<Eve.Space.SimDroneWorkResult>().Any(r => r.CycleId == 21));
-        var salvaged = rig.Sim.Heard.OfType<Eve.Space.SimDroneWorkResult>().Single(r => r.CycleId == 21);
+        rig.Sim.Say(Cycle(successCycleId, 0.0));
+        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<Eve.Space.SimDroneWorkResult>().Any(r => r.CycleId == successCycleId));
+        var salvaged = rig.Sim.Heard.OfType<Eve.Space.SimDroneWorkResult>().Single(r => r.CycleId == successCycleId);
         Assert.True(salvaged.Accepted);
         Assert.True(salvaged.Complete);
         Assert.Equal(1L, salvaged.DeliveredUnits);
@@ -590,6 +621,7 @@ public class SpaceContainerTests
                 Eve.Macho.JsSemantics.StringValue(entry.Key) == "notify"
                 && Eve.Macho.JsSemantics.StringValue(entry.Value) == "Salvaging succeeded, but no salvage materials were recovered.");
         }
+        Assert.Null(await new Eve.Ships.PgWreckSalvageStore(rig.Source, rig.SpaceSchema).GetAsync(wreckId));
         Assert.Null(await rig.Items.GetAsync(wreckId));
         Assert.Null(await rig.SpaceItems.GetAsync(wreckId));
         var replacement = Assert.IsType<Eve.Space.SimPlaceWreck>(Assert.Single(rig.Sim.Heard.Skip(heard).OfType<Eve.Space.SimPlaceWreck>()));

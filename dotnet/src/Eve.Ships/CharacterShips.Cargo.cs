@@ -49,7 +49,9 @@ public sealed record SalvageFailedEvent(long CharacterId, int SolarSystemId, lon
 {
     public const string Topic = "salvage.salvage_failed";
 }
-public sealed record DroneSalvageCommit(bool Accepted, string Reason, ShipChanged? Change, Item? Container, SpaceItem? ContainerSpaceItem, bool Replayed = false);
+public sealed record DroneSalvageCommit(
+    bool Accepted, string Reason, ShipChanged? Change, Item? Container, SpaceItem? ContainerSpaceItem, bool Replayed = false,
+    IReadOnlyList<(int TypeId, long Quantity)>? Rewards = null);
 
 /// <summary>
 /// The numbers of a mining cycle, read from the dogma of the item that mines (a drone or a module) by attribute name, so every source reads them the
@@ -511,7 +513,7 @@ private sealed record ShipHoldRule(
     /// is left in the wreck goes to a can; the miner checks are the ones of <see cref="MineAsteroidAsync"/>.
     /// </summary>
     public async Task<DroneSalvageCommit> SalvageWreckAsync(
-        long characterId, long shipId, int solarSystemId, MiningSource kind, long minerId, long wreckId, IReadOnlyList<(int TypeId, long Quantity)> salvageRewards,
+        long characterId, long shipId, int solarSystemId, MiningSource kind, long minerId, long wreckId,
         SpaceItem wreckSpace, long containerExpiresAtMs, PgSpaceItemStore spaceItems, long cycleId, PgWorkCycleLedger ledger, IFactBus events,
         CancellationToken cancellationToken = default)
     {
@@ -540,6 +542,11 @@ private sealed record ShipHoldRule(
             || wreckSpace.SolarSystemId != solarSystemId)
         {
             return new(false, "NO_WRECK", null, null, null);
+        }
+        var salvageRewards = await _wreckSalvage.GetAsync(connection, transaction, wreckId, cancellationToken);
+        if (salvageRewards is null)
+        {
+            return new(false, "NO_SALVAGE_OUTCOME", null, null, null);
         }
         if (salvageRewards.Any(reward => reward.Quantity <= 0))
         {
@@ -611,7 +618,7 @@ private sealed record ShipHoldRule(
         await transaction.CommitAsync(cancellationToken);
         events.Wake();
         var change = moved.Count == 0 ? null : new ShipChanged(moved[0].After.Id, shipId, [], [], moved);
-        return new(true, "", change, container, containerSpace);
+        return new(true, "", change, container, containerSpace, Rewards: salvageRewards);
     }
 
     /// <summary>What is moved into a hold of the ship the character flies when <paramref name="quantity"/> of the item goes there: refused when it does not fit.</summary>

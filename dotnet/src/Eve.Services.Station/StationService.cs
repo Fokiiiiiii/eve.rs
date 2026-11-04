@@ -7,7 +7,7 @@ namespace Eve.Services.Station;
 public sealed record StationGuest(long CharacterId, long CorporationId, long AllianceId, long WarFactionId);
 
 [Service("stationSvc", Aliases = ["station"])]
-public sealed partial class StationService(StationCatalog stations, PgCharacterStore characters, OnlineCharacters online, Func<long> nowUnixMs, Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? sovereigntySystemsForAlliance = null, Eve.Services.Corporations.OfficeManagerService? officeManager = null, SeedObserverGuestLedgerCallback? seedObserverGuestLedger = null, CharacterSessions? characterSessions = null, Func<CancellationToken, ValueTask<IReadOnlyList<(long SolarSystemId, long AllianceId)>>>? allAllianceSystems = null, Func<long, CancellationToken, ValueTask<IReadOnlyList<StationGuest>>>? getStationGuests = null, SolarSystemCatalog? solarSystems = null)
+public sealed partial class StationService(StationCatalog stations, PgCharacterStore characters, OnlineCharacters online, Func<long> nowUnixMs, Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? sovereigntySystemsForAlliance = null, Eve.Services.Corporations.OfficeManagerService? officeManager = null, BeginObserverGuestLedgerSeedCallback? beginObserverGuestLedgerSeed = null, CharacterSessions? characterSessions = null, Func<CancellationToken, ValueTask<IReadOnlyList<(long SolarSystemId, long AllianceId)>>>? allAllianceSystems = null, Func<long, CancellationToken, ValueTask<IReadOnlyList<StationGuest>>>? getStationGuests = null, SolarSystemCatalog? solarSystems = null)
 {
     /// <summary>The station services (repair, reprocessing, market, ...) every NPC station offers, as the client's bit mask.</summary>
     public const long AllServicesMask = 1_143_312;
@@ -102,11 +102,18 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
         if (stationId <= 0)
             return new PyList([]);
 
+        using var guestSeed = beginObserverGuestLedgerSeed?.Invoke(call.Session, stationId);
+        void SeedIfStillAtStation(IEnumerable<long> guestIds)
+        {
+            if (guestSeed is not null &&
+                (call.Session.GetInt("stationid") ?? call.Session.GetInt("stationID") ?? 0) == stationId)
+                guestSeed.Complete(guestIds.Where(id => id > 0).ToHashSet());
+        }
+
         if (getStationGuests is { } readGuests)
         {
             var snapshot = await readGuests(stationId, call.Cancellation);
-            seedObserverGuestLedger?.Invoke(call.Session, stationId,
-                snapshot.Select(guest => guest.CharacterId).Where(id => id > 0).ToHashSet());
+            SeedIfStillAtStation(snapshot.Select(guest => guest.CharacterId));
             return new PyList([.. snapshot.Select(guest => (PyValue)Py.Tuple(
                 new PyInt(guest.CharacterId),
                 new PyInt(guest.CorporationId),
@@ -127,10 +134,7 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
             .Where(character => character.StationId == stationId)
             .OrderBy(character => character.Id)
             .ToArray();
-        seedObserverGuestLedger?.Invoke(
-            call.Session,
-            stationId,
-            guests.Select(character => character.Id).Where(characterId => characterId > 0).ToHashSet());
+        SeedIfStillAtStation(guests.Select(character => character.Id));
         return new PyList([.. guests
             .Select(character => (PyValue)Py.Tuple(
                 new PyInt(character.Id),

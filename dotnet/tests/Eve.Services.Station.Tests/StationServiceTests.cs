@@ -547,7 +547,7 @@ public class GuestTests
                 store,
                 online,
                 () => Data.ClockMs,
-                seedObserverGuestLedger: guestLedger.SeedObserverGuestLedger);
+                beginObserverGuestLedgerSeed: guestLedger.BeginObserverGuestLedgerSeed);
             var (session, _) = Data.Session(60015249, here1);
             var (secondSession, _) = Data.Session(60015249, here2);
             var observers = new[] { session, secondSession };

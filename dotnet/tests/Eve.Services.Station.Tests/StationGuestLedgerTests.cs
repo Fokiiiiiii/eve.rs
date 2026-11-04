@@ -1,3 +1,4 @@
+using Eve.Characters;
 using Eve.Services;
 using Eve.Services.Station;
 
@@ -24,6 +25,84 @@ public sealed class StationGuestLedgerTests
 
         var otherObserver = new ClientSession();
         Assert.True(ledger.TryRecordGuestJoined(otherObserver, 60015249, 1001));
+    }
+
+    [Fact]
+    public async Task Delayed_guest_snapshot_replays_interleaved_station_deltas()
+    {
+        const long stationId = 60015249;
+        const long observerId = 1001;
+        const long joiningId = 2001;
+        const long leavingId = 2002;
+        const long existingId = 2003;
+
+        var ledger = new StationGuestLedger();
+        var sessions = new CharacterSessions();
+        var observerSink = new RecordingSink();
+        var observer = CreateSession(observerSink, observerId, stationId);
+        sessions.Enter(observerId, observer);
+        ledger.SeedObserverGuestLedger(observer, stationId, new HashSet<long> { observerId, leavingId });
+        var leavingSession = CreateSession(new RecordingSink(), leavingId, stationId);
+        sessions.Enter(leavingId, leavingSession);
+
+        var snapshot = new TaskCompletionSource<IReadOnlyList<StationGuest>>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var providerStarted = false;
+        var service = new StationService(
+            Data.Stations,
+            characters: null!,
+            online: new OnlineCharacters(),
+            nowUnixMs: () => 0,
+            beginObserverGuestLedgerSeed: ledger.BeginObserverGuestLedgerSeed,
+            getStationGuests: (_, _) =>
+            {
+                providerStarted = true;
+                return new ValueTask<IReadOnlyList<StationGuest>>(snapshot.Task);
+            });
+        var getGuests = service.GetGuests(new ServiceCall
+        {
+            Method = "GetGuests",
+            Args = [],
+            Session = observer,
+        });
+
+        Assert.True(providerStarted);
+        Assert.False(getGuests.IsCompleted);
+
+        var hook = new GuestLoginHook(sessions, ledger);
+        var joiningSession = CreateSession(new RecordingSink(), joiningId, stationId);
+        joiningSession.Set("corpid", new Eve.Marshal.PyInt(3001));
+        sessions.Enter(joiningId, joiningSession);
+        await hook.OnCharacterEnteredAsync(joiningSession, joiningId, CancellationToken.None);
+        await hook.OnCharacterEnteredAsync(joiningSession, joiningId, CancellationToken.None);
+
+        leavingSession.Set("stationid", new Eve.Marshal.PyInt(0));
+        hook.OnLocationChanged(leavingSession, stationId, 0);
+        hook.OnLocationChanged(leavingSession, stationId, 0);
+        Assert.Equal(
+            ["OnCharNowInStation", "OnCharNoLongerInStation"],
+            observerSink.Sent.Select(NotificationName));
+
+        snapshot.SetResult(
+        [
+            new StationGuest(observerId, 2001, 0, 0),
+            new StationGuest(leavingId, 3002, 0, 0),
+            new StationGuest(existingId, 3003, 0, 0),
+        ]);
+        var guests = Assert.IsType<Eve.Marshal.PyList>(await getGuests);
+        Assert.Equal(3, guests.Items.Count);
+
+        await hook.OnCharacterEnteredAsync(joiningSession, joiningId, CancellationToken.None);
+        hook.OnLocationChanged(leavingSession, stationId, 0);
+        Assert.Equal(
+            ["OnCharNowInStation", "OnCharNoLongerInStation"],
+            observerSink.Sent.Select(NotificationName));
+        Assert.Equal([joiningId, leavingId], observerSink.Sent.Select(StationGuestCharacterId));
+
+        Assert.False(ledger.TryRecordGuestJoined(observer, stationId, observerId));
+        Assert.False(ledger.TryRecordGuestJoined(observer, stationId, joiningId));
+        Assert.False(ledger.TryRecordGuestJoined(observer, stationId, existingId));
+        Assert.False(ledger.TryRecordGuestLeft(observer, stationId, leavingId));
     }
 
     [Fact]

@@ -42,22 +42,25 @@ public sealed class AccountWalletHostRpcTests
             var transactions = new WalletTransactions(source, walletSchema);
             long sender;
             long recipient;
+            long walletlessRecipient;
             var historicalMonth = DateTimeOffset.UtcNow.AddDays(-15);
             await using (var connection = await source.OpenConnectionAsync())
             await using (var transaction = await connection.BeginTransactionAsync())
             {
-                async Task<long> CreatePilot(string name, decimal initialCash = 5_000m)
+                async Task<long> CreatePilot(string name, decimal initialCash = 5_000m, bool openWallet = true)
                 {
                     var id = await characters.InsertAsync(connection, transaction,
                         new NewCharacter(1, name, 0, 1, 1, 1, 11, 1376, 1000044, null,
                             60000001, 30000001, 20000001, 10000001, null, null));
-                    await wallets.OpenAsync(connection, transaction, id, initialCash, 0);
+                    if (openWallet)
+                        await wallets.OpenAsync(connection, transaction, id, initialCash, 0);
                     return id;
                 }
 
                 sender = await CreatePilot($"Wallet RPC Sender {suffix}",
                     CorporationStore.CorporationFoundingCost + 4_875m);
                 recipient = await CreatePilot($"Wallet RPC Recipient {suffix}");
+                walletlessRecipient = await CreatePilot($"Wallet RPC Missing Wallet {suffix}", openWallet: false);
                 await transaction.CommitAsync();
             }
 
@@ -122,6 +125,28 @@ public sealed class AccountWalletHostRpcTests
                 var response = Assert.IsType<MachoPacket>(MachoPacket.Decode(Assert.Single(capture.Sent)));
                 Assert.Equal(MachoMessage.ErrorResponse, response.Type);
                 return Encoding.ASCII.GetString(MarshalCodec.Encode(capture.Sent[0]));
+            }
+
+            async Task<(decimal? Balance, IReadOnlyList<JournalEntry> Journal)> WalletState(WalletAccount account) =>
+                (await transactions.AccountBalanceAsync(account),
+                    await transactions.JournalForAccountAsync(account.OwnerId, account.AccountKey));
+
+            async Task AssertWalletStateUnchanged(
+                WalletAccount account,
+                (decimal? Balance, IReadOnlyList<JournalEntry> Journal) before)
+            {
+                var after = await WalletState(account);
+                Assert.Equal(before.Balance, after.Balance);
+                Assert.Equal(before.Journal, after.Journal);
+            }
+
+            async Task DeleteWallet(WalletAccount account)
+            {
+                await using var command = source.CreateCommand(
+                    $"DELETE FROM {walletSchema}.balances WHERE owner_id = $1 AND account_key = $2");
+                command.Parameters.Add(new NpgsqlParameter { Value = account.OwnerId });
+                command.Parameters.Add(new NpgsqlParameter { Value = account.AccountKey });
+                Assert.Equal(1, await command.ExecuteNonQueryAsync());
             }
 
             void AssertNotifications(params string[] expectedIdTypes)
@@ -225,6 +250,64 @@ public sealed class AccountWalletHostRpcTests
             var personalDivision = Assert.Single(personalDivisions.Items);
             Assert.Equal(new PyInt(1000), Field(personalDivision, "key"));
             Assert.Equal(new PyReal(4_834), Field(personalDivision, "balance"));
+
+            const string personalReason = "idempotent personal transfer";
+            Assert.Equal(PyBool.True, await Call(50, "GiveCash", Py.Number(recipient),
+                new PyReal(5), new PyStr(personalReason)));
+            var personalSource = new WalletAccount(sender);
+            var personalDestination = new WalletAccount(recipient);
+            var personalSourceBeforeConflict = await WalletState(personalSource);
+            var personalDestinationBeforeConflict = await WalletState(personalDestination);
+            var changesBeforeConflict = changes.Count;
+            var personalConflict = await CallError(50, "GiveCash", Py.Number(recipient),
+                new PyReal(6), new PyStr(personalReason));
+            Assert.Contains("CustomInfo", personalConflict);
+            Assert.Contains("This transfer could not be completed.", personalConflict);
+            await AssertWalletStateUnchanged(personalSource, personalSourceBeforeConflict);
+            await AssertWalletStateUnchanged(personalDestination, personalDestinationBeforeConflict);
+            Assert.Equal(changesBeforeConflict, changes.Count);
+
+            const string corporationReason = "idempotent corporation transfer";
+            Assert.Equal(PyNone.Instance, await Call(51, "GiveCashFromCorpAccount", Py.Number(recipient),
+                new PyReal(5), new PyInt(1000), new PyStr(corporationReason)));
+            var corporationAccount = new WalletAccount(corporation.Id, 1000);
+            var corporationSourceBeforeConflict = await WalletState(corporationAccount);
+            var corporationDestinationBeforeConflict = await WalletState(personalDestination);
+            changesBeforeConflict = changes.Count;
+            var corporationConflict = await CallError(51, "GiveCashFromCorpAccount", Py.Number(recipient),
+                new PyReal(6), new PyInt(1000), new PyStr(corporationReason));
+            Assert.Contains("CustomInfo", corporationConflict);
+            Assert.Contains("This transfer could not be completed.", corporationConflict);
+            await AssertWalletStateUnchanged(corporationAccount, corporationSourceBeforeConflict);
+            await AssertWalletStateUnchanged(personalDestination, corporationDestinationBeforeConflict);
+            Assert.Equal(changesBeforeConflict, changes.Count);
+
+            var missingCorporationAccount = new WalletAccount(corporation.Id, 1001);
+            await DeleteWallet(missingCorporationAccount);
+            var missingCorporationSource = await WalletState(missingCorporationAccount);
+            var corporationDestinationBeforeMissing = await WalletState(personalDestination);
+            Assert.Null(missingCorporationSource.Balance);
+            changesBeforeConflict = changes.Count;
+            var missingCorporationWallet = await CallError(52, "GiveCashFromCorpAccount", Py.Number(recipient),
+                new PyReal(1), new PyInt(1001), new PyStr("missing source wallet"));
+            Assert.Contains("CustomInfo", missingCorporationWallet);
+            Assert.Contains("This transfer could not be completed.", missingCorporationWallet);
+            await AssertWalletStateUnchanged(missingCorporationAccount, missingCorporationSource);
+            await AssertWalletStateUnchanged(personalDestination, corporationDestinationBeforeMissing);
+            Assert.Equal(changesBeforeConflict, changes.Count);
+
+            var missingPersonalDestinationAccount = new WalletAccount(walletlessRecipient);
+            var missingPersonalDestination = await WalletState(missingPersonalDestinationAccount);
+            var personalSourceBeforeMissing = await WalletState(personalSource);
+            Assert.Null(missingPersonalDestination.Balance);
+            changesBeforeConflict = changes.Count;
+            var missingPersonalWallet = await CallError(53, "GiveCash", Py.Number(walletlessRecipient),
+                new PyReal(1), new PyStr("missing destination wallet"));
+            Assert.Contains("CustomInfo", missingPersonalWallet);
+            Assert.Contains("This transfer could not be completed.", missingPersonalWallet);
+            await AssertWalletStateUnchanged(missingPersonalDestinationAccount, missingPersonalDestination);
+            await AssertWalletStateUnchanged(personalSource, personalSourceBeforeMissing);
+            Assert.Equal(changesBeforeConflict, changes.Count);
         }
         finally
         {

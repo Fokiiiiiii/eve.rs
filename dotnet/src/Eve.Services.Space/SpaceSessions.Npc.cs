@@ -410,7 +410,9 @@ public sealed partial class SpaceSessions
         {
             var character = killer is null ? null : await _ships.CharacterAsync(killer.CharacterId);
             var profile = npc.Profile ?? throw new InvalidOperationException("A non-Abyssal NPC has no catalog profile.");
-            var made = await wrecks.LeaveAsync(kind.TypeId, profile.LootTableId, character?.Id ?? profile.CorporationId, npc.SolarSystemId);
+            var made = await wrecks.LeaveAsync(
+                kind.TypeId, profile.LootTableId, character?.Id ?? profile.CorporationId, npc.SolarSystemId,
+                warFactionId: profile.FactionId);
             var credit = character is null ? new SimCredit(0, 0, 0, 0) : new SimCredit(character.Id, character.CorporationId, character.AllianceId ?? 0, character.FactionId ?? 0);
             PlaceWreck(new SimPlaceWreck(SimSceneKey.SolarSystem(npc.SolarSystemId), made.Wreck.Id, WreckGroup, kind, destroyed.Position, destroyed.Direction, destroyed.Radius, destroyed.ShipId, credit, made.Contents.Count == 0));
         }

@@ -1,4 +1,3 @@
-// Membership workflow ported from EVE.js corpRegistryRuntime.js and corporationRuntimeState.js (828823a).
 using Eve.Characters;
 using Npgsql;
 

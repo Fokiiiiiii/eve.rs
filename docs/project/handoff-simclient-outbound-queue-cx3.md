@@ -2,7 +2,7 @@
 
 ## Status
 
-The bounded queue implementation and post-merge local checks are complete. Queue change commit: `fd3524fc`; latest merge commit: `82e5db18` (includes `origin/main` `68e2db0c`). The queue change has not yet been pushed to `main`. Main CI run 1518 completed successfully on `68e2db0c` (https://github.com/Fokiiiiiii/eve.rs/actions/runs/41919696018); recheck the latest CI status before pushing. Record the queue commit's Actions result here after the push.
+The bounded queue implementation and post-merge local checks are complete. Queue change commit: `fd3524fc`; latest merge commit: `82e5db18` (includes `origin/main` `68e2db0c`). The queue change was pushed to `main` in commit `4fe2df93`. Main CI run 1518 was green before that push. Push-triggered CI run 1519 failed in `Eve.Host.Tests.RpcFuzzTests.Registered_rpcs_refuse_seeded_hostile_arguments_through_dispatcher` during scratch-schema cleanup; its PostgreSQL command timeout is now raised from 120 to 300 seconds. Selected Agent test run 1328 passed. The CI fix must be pushed alone after the red-gate checks.
 
 ## Change
 
@@ -29,10 +29,11 @@ The bounded queue implementation and post-merge local checks are complete. Queue
 - After merging `origin/main` `68e2db0c`, `SimClientTests`: 28 passed, 0 skipped (includes `A_full_outbound_queue_fails_pending_requests_and_breaks_the_link`).
 - After the merge, `SpaceServiceTests.When_the_simulation_is_lost_the_ship_docks_at_the_station_the_character_left` on `eve_p3`: 1 passed, 0 skipped.
 - After the merge, selected Host tests in `AbyssalHostFlowTests` and `TournamentMatchPersistenceTests` on `eve_p3`: 21 passed, 21 skipped, 0 failed. The skipped cases require `EVE_ABYSSAL_SIM_BINARY` and `EVE_ABYSSAL_SIM_SDE`; they are reported separately and are not counted as passes.
-- Change-specific Actions verification: pending push.
+- Change-specific Actions verification: selected Agent test run 1328 passed: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41923162574. Push-triggered CI run 1519 failed on scratch-schema teardown in the unrelated Host RPC fuzz test: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41923134723.
+- CI-fix evidence: `ci-status.py failures 4fe2df93` reports an Npgsql stream timeout at `RpcFuzzTests.cs:195`, the `DROP SCHEMA ... CASCADE` command with a 120-second timeout. The failing test passed locally before the change (1 passed, 0 skipped) and the full `RpcFuzzTests` filter passed after the timeout increase (2 passed, 0 skipped) on `eve_p3` via `db-lock.sh`. `Eve.Host.Tests` builds with 0 warnings and errors.
 
 ## Main CI gate
 
-The latest completed `CI` workflow on `main` at handoff is run 1518, successful on commit `68e2db0c03e5`: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41919696018. Recheck the latest CI status before pushing.
+The latest green `CI` workflow before the `4fe2df93` push was run 1518 on `68e2db0c03e5`: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41919696018. Push-triggered run 1519 for `4fe2df93` completed with the Host RPC fuzz cleanup timeout above. The next push is permitted only for the fix to `Registered_rpcs_refuse_seeded_hostile_arguments_through_dispatcher`; recheck the current main status and branch before pushing.
 
 Earlier, main CI run 1515 failed on `HostServerTests.Registered_lp_store_and_wallet_routes_return_the_client_consumed_shapes` (`LpStoreRpcHostWireTests.cs:154,165`). That failure was fixed on main at `96d6bb8f2b15`; CI run 1516 completed successfully: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41898752417.

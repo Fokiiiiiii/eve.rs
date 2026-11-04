@@ -2,7 +2,7 @@
 
 ## Status
 
-Implementation and local checks are complete after merging green main. Queue change commit: `fd3524fc`; merge commit: `a429d85a`. The change has not been pushed. Recheck the newest completed main CI run before pushing and record the commit-specific Actions results here afterward.
+The bounded queue implementation and post-merge local checks are complete. Queue change commit: `fd3524fc`; latest merge commit: `9ce8409c` (includes `origin/main` `a13d088c`). The queue change has not yet been pushed to `main`. Latest completed main CI baseline is run 1517, green on `15e1aa9d12b7`; record the queue commit's Actions result here after the push.
 
 ## Change
 
@@ -19,20 +19,20 @@ Implementation and local checks are complete after merging green main. Queue cha
 - Whole-tree searches in `/home/user/eve-logic` found no `SimHello`, `SimHelloAck`, `SimClient`, or `simlink` client symbols. No client RPC, reply, notification, or session field shape changed.
 - Whole-tree searches in EveJS 261028.1 likewise found no simulation-process client or `SimHello` symbols; its `ClientSession._enqueueOutbound` promise chain (`src/server/src/network/clientSession.js:462-475`) is not the separate Host-to-simulation link this change handles.
 - The existing dock transition's client consumers include `dockingHeroNotificationService.py:85,114` and `tacticalNavigationService.py:491` for `OnDockingFinished`; `invCache.py:218`, `shipSkinSequencingSvc.py:43,100`, and `missionObjectivesTracker.py:103` consume `OnItemsChanged`. Their observed inputs and order are unchanged.
-- The unchanged `OnInvulnCancelled(shipID)` notification has client consumers at `void_space_activation_controller.py:189`, `pvpFilamentController.py:250`, `baseActivationController.py:136`, `crimewatchTimers.py:493`, and `randomJumpController.py:180`.
-- Client session-change handling uses `session.stationid` when updating station inventory state (`eve/client/script/environment/invCache.py:142`); the existing `stationid`/`locationid` transition values are unchanged.
-- The unchanged `OnInvulnCancelled(shipID)` notification has client consumers at `void_space_activation_controller.py:189`, `pvpFilamentController.py:250`, `baseActivationController.py:136`, `crimewatchTimers.py:493`, and `randomJumpController.py:180`.
+- `OnInvulnCancelled(shipID)` has five existing consumers that clear the current ship's invulnerability state or timer: `voidspace/client/void_space_activation_controller.py:189`, `pvpFilaments/client/activation_window/pvpFilamentController.py:250`, `eve/client/script/ui/shared/abyss/baseActivationController.py:136`, `eve/client/script/ui/crimewatch/crimewatchTimers.py:493`, and `randomJump/client/randomJumpController.py:180`. The notification shape is unchanged.
+- Client-side station inventory reads `session.locationid` and selects the station manager from `session.stationid` (`eve/client/script/environment/invCache.py:198,207,211`); the existing `stationid`/`locationid` transition values are unchanged.
 
 ## Local verification
 
-- `dotnet build dotnet/src/Eve.Space/Eve.Space.csproj -p:UseSharedCompilation=false`: passed.
-- `dotnet build dotnet/tests/Eve.Space.Tests/Eve.Space.Tests.csproj -p:UseSharedCompilation=false`: passed.
-- Focused test `A_full_outbound_queue_fails_pending_requests_and_breaks_the_link`: 1 passed, 0 skipped.
-- `SimClientTests`: 28 passed, 0 skipped.
-- PostgreSQL-backed `SpaceServiceTests.When_the_simulation_is_lost_the_ship_docks_at_the_station_the_character_left` on `eve_p3`: 1 passed, 0 skipped.
-- Selected Host tests referencing `SimClient` (`AbyssalHostFlowTests` and `TournamentMatchPersistenceTests`) on `eve_p3`: 21 passed, 21 skipped. The skipped cases use `RealAbyssalSimPgFact` and need `EVE_ABYSSAL_SIM_BINARY` plus `EVE_ABYSSAL_SIM_SDE`; these skips are reported separately and do not count as passes.
+- `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/src/Eve.Space/Eve.Space.csproj -p:UseSharedCompilation=false`: passed.
+- `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Space.Tests/Eve.Space.Tests.csproj -p:UseSharedCompilation=false`: passed.
+- After merging `origin/main` `a13d088c`, `SimClientTests`: 28 passed, 0 skipped (includes `A_full_outbound_queue_fails_pending_requests_and_breaks_the_link`).
+- After the merge, `SpaceServiceTests.When_the_simulation_is_lost_the_ship_docks_at_the_station_the_character_left` on `eve_p3`: 1 passed, 0 skipped.
+- After the merge, selected Host tests in `AbyssalHostFlowTests` and `TournamentMatchPersistenceTests` on `eve_p3`: 21 passed, 21 skipped, 0 failed. The skipped cases require `EVE_ABYSSAL_SIM_BINARY` and `EVE_ABYSSAL_SIM_SDE`; they are reported separately and are not counted as passes.
 - Change-specific Actions verification: pending push.
 
-## Main CI gate at handoff
+## Main CI gate
 
-Main CI run 1515 was red on `HostServerTests.Registered_lp_store_and_wallet_routes_return_the_client_consumed_shapes` (`LpStoreRpcHostWireTests.cs:154,165`). That failure was fixed on main at `96d6bb8f2b15`; CI run 1516 completed successfully: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41898752417. Green main was merged at `a429d85a`, then the focused, SimClient, and database-backed local checks listed above were rerun.
+The latest completed `CI` workflow on `main` at handoff is run 1517, successful on commit `15e1aa9d12b7`: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41903789842. The current `origin/main` tip `a13d088c` also has a successful selected Agent test run; that workflow is separate from the main CI gate.
+
+Earlier, main CI run 1515 failed on `HostServerTests.Registered_lp_store_and_wallet_routes_return_the_client_consumed_shapes` (`LpStoreRpcHostWireTests.cs:154,165`). That failure was fixed on main at `96d6bb8f2b15`; CI run 1516 completed successfully: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41898752417.

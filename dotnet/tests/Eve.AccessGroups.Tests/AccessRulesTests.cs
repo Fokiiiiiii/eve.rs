@@ -44,11 +44,17 @@ public sealed class AccessRulesTests
     {
         Assert.True(AccessRules.MayAdd(MembershipType.Manager, MembershipType.Member));
         Assert.False(AccessRules.MayAdd(MembershipType.Manager, MembershipType.Manager));
-        Assert.True(AccessRules.MayRemove(MembershipType.Manager, MembershipType.Excluded));
-        Assert.False(AccessRules.MayRemove(MembershipType.Manager, MembershipType.Admin));
-        Assert.True(AccessRules.MayChange(MembershipType.Manager, MembershipType.Member, MembershipType.Excluded));
-        Assert.False(AccessRules.MayChange(MembershipType.Manager, MembershipType.Member, MembershipType.Manager));
-        Assert.True(AccessRules.MayChange(MembershipType.Admin, MembershipType.Admin, MembershipType.Member));
+        Assert.True(AccessRules.MayRemove(MembershipType.Manager, MembershipType.Excluded, false));
+        Assert.False(AccessRules.MayRemove(MembershipType.Manager, MembershipType.Admin, true));
+        Assert.False(AccessRules.MayRemove(MembershipType.Manager, MembershipType.Manager, false));
+        Assert.True(AccessRules.MayRemove(MembershipType.Manager, MembershipType.Manager, true));
+        Assert.True(AccessRules.MayChange(MembershipType.Manager, MembershipType.Member, MembershipType.Excluded, false));
+        Assert.False(AccessRules.MayChange(MembershipType.Manager, MembershipType.Member, MembershipType.Manager, false));
+        Assert.True(AccessRules.MayChange(MembershipType.Manager, MembershipType.Manager, MembershipType.Member, true));
+        Assert.True(AccessRules.MayChange(MembershipType.Manager, MembershipType.Manager, MembershipType.Excluded, true));
+        Assert.False(AccessRules.MayChange(MembershipType.Manager, MembershipType.Manager, MembershipType.Admin, true));
+        Assert.False(AccessRules.MayChange(MembershipType.Manager, MembershipType.Manager, MembershipType.Member, false));
+        Assert.True(AccessRules.MayChange(MembershipType.Admin, MembershipType.Admin, MembershipType.Member, false));
     }
 
     [Fact]

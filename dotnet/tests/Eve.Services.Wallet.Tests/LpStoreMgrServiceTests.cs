@@ -21,6 +21,7 @@ public class LpStoreMgrServiceTests
     private const int Reward = 1234;
     private const int Required = 34;
     private const long Offer = 20001;
+    private const double PochvenMinimumStanding = -0.01;
 
     private static readonly ItemType RewardType = new(Reward, 1, 4);
     private static readonly ItemType RequiredType = new(Required, 2, 16);
@@ -120,6 +121,96 @@ public class LpStoreMgrServiceTests
     }
 
     [LpPgFact]
+    public async Task Pochven_station_standing_gates_listing_and_both_purchase_paths_at_the_boundary()
+    {
+        foreach (var standing in new[] { -0.0101, PochvenMinimumStanding, 0.0 })
+        {
+            await using var rig = await Rig.CreateAsync();
+            await rig.SeedOffer(lpCost: 100, iskCost: 50, required: 1);
+            var characterHolder = new LoyaltyHolder(LoyaltyHolderKind.Character, Character);
+            var corporationHolder = new LoyaltyHolder(LoyaltyHolderKind.Corporation, PayerCorporation);
+            await rig.Loyalty.ApplyAndCommitAsync(characterHolder, Corporation, 1000, "seed", "pochven:char-lp");
+            await rig.Loyalty.ApplyAndCommitAsync(corporationHolder, Corporation, 1000, "seed", "pochven:corp-lp");
+            await rig.SeedIsk(Character, 1000m);
+            await rig.SeedIsk(PayerCorporation, 1000m, accountKey: 1001);
+            await rig.SeedItem(Character, Required, 10);
+            var lpJournalRowsBefore = await rig.LpJournalRows();
+            var walletJournalRowsBefore = await rig.WalletJournalRows();
+
+            var standingChecks = new List<(long CharacterId, long StationId)>();
+            var offersRead = 0;
+            var service = rig.Service((_, _, _) => ValueTask.FromResult(true),
+                (characterId, stationId, _) =>
+                {
+                    standingChecks.Add((characterId, stationId));
+                    return ValueTask.FromResult(standing >= PochvenMinimumStanding);
+                },
+                async (corporationId, token) =>
+                {
+                    offersRead++;
+                    return await rig.Offers.GetAsync(corporationId, token);
+                });
+            var listingSink = new Sink();
+            var characterSink = new Sink();
+            var corporationSink = new Sink();
+            var corporationSession = rig.Pilot(corporationSink, PayerCorporation);
+            corporationSession.Set("corpAccountKey", new PyInt(1001));
+
+            async Task AssertDenied(Task<PyValue> call)
+            {
+                var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => call);
+                Assert.Equal("CustomNotify", refusal.Error.UserErrorMessage);
+            }
+
+            if (standing < PochvenMinimumStanding)
+            {
+                await AssertDenied(service.CallAsync(Call("GetAvailableOffersFromCorp", rig.Pilot(listingSink), new PyInt(Corporation))).AsTask());
+                await AssertDenied(service.CallAsync(Call("TakeOfferForCharacter", rig.Pilot(characterSink), new PyInt(Corporation), new PyInt(Offer))).AsTask());
+                await AssertDenied(service.CallAsync(Call("TakeOfferForCorporation", corporationSession, new PyInt(Corporation), new PyInt(Offer))).AsTask());
+
+                Assert.Equal(0, offersRead);
+                Assert.Equal(1000L, await rig.LpBalance(characterHolder, Corporation));
+                Assert.Equal(1000L, await rig.LpBalance(corporationHolder, Corporation));
+                Assert.Equal(1000m, await rig.Isk(Character, 1000));
+                Assert.Equal(1000m, await rig.Isk(PayerCorporation, 1001));
+                Assert.Equal(10L, Assert.Single(await rig.ItemsAt(Character, Required)).Quantity);
+                Assert.Empty(await rig.ItemsAt(Character, Reward));
+                Assert.Equal(0, await rig.PurchaseRows(Character));
+                Assert.Equal(lpJournalRowsBefore, await rig.LpJournalRows());
+                Assert.Equal(walletJournalRowsBefore, await rig.WalletJournalRows());
+                Assert.Empty(listingSink.Packets);
+                Assert.Empty(characterSink.Packets);
+                Assert.Empty(corporationSink.Packets);
+            }
+            else
+            {
+                var rows = await service.CallAsync(Call("GetAvailableOffersFromCorp", rig.Pilot(listingSink), new PyInt(Corporation)));
+                Assert.Single(Assert.IsType<PyList>(rows).Items);
+                Assert.True(Assert.IsType<PyBool>(await service.CallAsync(Call("TakeOfferForCharacter", rig.Pilot(characterSink),
+                    new PyInt(Corporation), new PyInt(Offer)))).Value);
+                Assert.True(Assert.IsType<PyBool>(await service.CallAsync(Call("TakeOfferForCorporation", corporationSession,
+                    new PyInt(Corporation), new PyInt(Offer)))).Value);
+
+                Assert.Equal(1, offersRead);
+                Assert.Equal(900L, await rig.LpBalance(characterHolder, Corporation));
+                Assert.Equal(900L, await rig.LpBalance(corporationHolder, Corporation));
+                Assert.Equal(950m, await rig.Isk(Character, 1000));
+                Assert.Equal(950m, await rig.Isk(PayerCorporation, 1001));
+                Assert.Equal(8L, Assert.Single(await rig.ItemsAt(Character, Required)).Quantity);
+                var rewards = await rig.ItemsAt(Character, Reward);
+                Assert.Equal(2, rewards.Count);
+                Assert.All(rewards, reward => Assert.Equal(1L, reward.Quantity));
+                Assert.Equal(2, await rig.PurchaseRows(Character));
+                Assert.NotEmpty(characterSink.Packets);
+                Assert.NotEmpty(corporationSink.Packets);
+            }
+
+            Assert.Equal(3, standingChecks.Count);
+            Assert.All(standingChecks, check => Assert.Equal((Character, Station), check));
+        }
+    }
+
+    [LpPgFact]
     public async Task A_singleton_offer_cannot_expand_into_an_unbounded_item_grant()
     {
         await using var rig = await Rig.CreateAsync(new ItemType(Reward, 4, 6));
@@ -182,8 +273,13 @@ public class LpStoreMgrServiceTests
             return new Rig(source, wallet, inventory, rewardType ?? RewardType);
         }
 
-        public LpStoreMgrService Service(Func<long, long, CancellationToken, ValueTask<bool>> isDirector) =>
-            new(Offers, _purchases, isDirector);
+        public LpStoreMgrService Service(
+            Func<long, long, CancellationToken, ValueTask<bool>> isDirector,
+            Func<long, long, CancellationToken, ValueTask<bool>>? hasPochvenLpStoreStanding = null,
+            Func<long, CancellationToken, Task<IReadOnlyList<LpStoreOffer>>>? readOffers = null) =>
+            new(Offers, _purchases, isDirector,
+                hasPochvenLpStoreStanding ?? ((_, _, _) => ValueTask.FromResult(true)),
+                readOffers: readOffers);
 
         public ClientSession Pilot(Sink sink, long corporation = Corporation)
         {
@@ -248,6 +344,20 @@ public class LpStoreMgrServiceTests
             {
                 Parameters = { new() { Value = character } },
             };
+            return (int)(long)(await command.ExecuteScalarAsync())!;
+        }
+
+        public async Task<int> LpJournalRows()
+        {
+            await using var connection = await _source.OpenConnectionAsync();
+            await using var command = new NpgsqlCommand($"SELECT count(*) FROM {_wallet}.lp_journal", connection);
+            return (int)(long)(await command.ExecuteScalarAsync())!;
+        }
+
+        public async Task<int> WalletJournalRows()
+        {
+            await using var connection = await _source.OpenConnectionAsync();
+            await using var command = new NpgsqlCommand($"SELECT count(*) FROM {_wallet}.journal", connection);
             return (int)(long)(await command.ExecuteScalarAsync())!;
         }
 

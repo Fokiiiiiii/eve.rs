@@ -118,7 +118,7 @@ V24.01 whole-tree evidence: `eve/devtools/script/svc_slash.py:781,798,1017,1034`
 
 Focused PostgreSQL checks on `eve_p7`, all through `tools/dev/db-lock.sh`: `SkillAdminCommandTests`, `SkillBulkCommandTests`, and `SlashCatalogTests` passed 32/32; `GiveSkillTests`, `RemoveSkillTests`, `SkillQueueContractTests`, `TrainingServiceTests`, and `SkillServiceTests` passed 23/23; `CharacterTrainingTests` and `CharacterTrainingLearningTests` passed 23/23; Host skill RPC composition tests passed 2/2. The Host DB check required loading the pinned mission SDE build 3405148 into `sde_mission`; no tests were skipped in the passing runs. `Eve.Host` built with 0 warnings/errors.
 
-The latest completed main CI is run 1487 at `f0bff6925c8d` and is green. Main CI run 1488 for `b300de8b` is still running; selected agent-test run 1296 passed. No graphical-client run has been made.
+The latest completed main CI is run 1488 at `b300de8b6a85` and is green. Selected agent-test run 1296 also passed. No graphical-client run has been made.
 
 ## Skill history alignment (2026-11-04)
 
@@ -135,4 +135,4 @@ V24.01 whole-client evidence: `eve/client/script/ui/skillPlan/skillQueuePanel/sk
 
 `CharacterTrainingTests.Saving_an_alpha_queue_with_an_unchanged_running_head_counts_elapsed_points_once` proves that persisted SP plus the full projected queue exceeds 5,000,000 by less than elapsed SP and is refused when active; totals just under and exactly at the cap save successfully, and `activate=false` pauses and rebases the head. `TrainingServiceTests.Alpha_queue_refusals_use_client_errors_and_allow_pausing_a_blocked_queue` also checks the existing client error name and paused retry behavior.
 
-Local verification on PostgreSQL `eve_p3`, all database runs through `tools/dev/db-lock.sh`: focused regression 1/1; skill training neighbors 172/172; service training neighbors 15/15; no skips. `Eve.Skills`, `Eve.Skills.Tests` and `Eve.Services.Skills.Tests` builds passed with 0 warnings and 0 errors. EveJS has no server test script or queue-specific test file, so its flow was source-traced but not executed. No graphical-client run was made. Before this push, the newest completed main CI was run 1487 at `f0bff6925c8d` and all jobs passed. Selected agent-test run 1296 passed; main CI run 1488 is still in progress.
+Local verification on PostgreSQL `eve_p3`, all database runs through `tools/dev/db-lock.sh`: focused regression 1/1; skill training neighbors 172/172; service training neighbors 15/15; no skips. `Eve.Skills`, `Eve.Skills.Tests` and `Eve.Services.Skills.Tests` builds passed with 0 warnings and 0 errors. EveJS has no server test script or queue-specific test file, so its flow was source-traced but not executed. No graphical-client run was made. Before this push, main CI run 1488 at `b300de8b6a85` completed successfully. Selected agent-test run 1296 passed.

@@ -69,6 +69,9 @@ private readonly Dictionary<string, int> _itemTypes;
             ? levels.GetValueOrDefault(typeId)
             : 0;
 
+    public bool HasAlphaCloneGrade(int raceId) =>
+        _alphaMaxLevelsByRace.TryGetValue(raceId, out var levels) && levels.Count > 0;
+
     /// <summary>The skills a new character of <paramref name="raceId"/> has, at the levels it has them (some at 0).</summary>
 public int? ItemTypeId(string name) => _itemTypes.TryGetValue(name, out var typeId) ? typeId : null;
 

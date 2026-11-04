@@ -58,7 +58,8 @@ internal sealed partial class CharacterServicesComposition
                 RefreshLearningBonus = (character, token) => learningBonus.RefreshAsync(character, token),
             },
             now);
-        pilotImplants = new PilotImplants(source, dogma, characters, items, skills, training);
+        pilotImplants = new PilotImplants(source, dogma, characters, items, skills, training,
+            accountId => omega.Resolve(new PyInt(accountId)).HasLicense);
     }
 
         static bool ContactWatchlisted(JsonNode? node)

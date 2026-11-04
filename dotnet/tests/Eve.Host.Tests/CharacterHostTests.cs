@@ -1,5 +1,6 @@
 using Eve.Characters;
 using Eve.Host;
+using Eve.Identity;
 using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
@@ -459,6 +460,149 @@ public sealed class CharacterHostTests
         // the restarted host answers the pilot's list through its registry
         var manager = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("expertSystemMgr"));
         Assert.IsType<PyDict>(await CallAsync(manager, "GetMyExpertSystems", new ClientSession { CharacterId = character, Sink = new RecordingPacketSink() }));
+    }
+
+    [PgFact]
+    public async Task Alpha_cannot_inject_an_Omega_implant_but_can_retry_after_an_account_upgrade()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var accountId = await rig.CreateAccountAsync();
+        Assert.Equal(1, accountId);
+        var character = await rig.CreateCharacterAsync();
+        await rig.SetSkillLevelAsync(character, 3411, 4);
+        var accounts = new PgAccountDirectory(rig.Source, new AccountOptions(), rig.IdentitySchema);
+        accounts.SetSubscriptionEndsAt((uint)accountId, DateTimeOffset.UtcNow.AddDays(-1));
+        var implant = await GiveItemAsync(rig, character, 10208, rig.Station, 4, singleton: true);
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, Sink = sink };
+        session.Set("stationid", new PyInt(rig.Station));
+        var dogma = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("dogmaIM"));
+
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => CallAsync(dogma, "InjectImplant", session, new PyLong(implant)));
+        Assert.Equal("This implant requires an Omega clone.", NotifyText(refused));
+        Assert.Empty(Notifications(sink));
+        Assert.Empty(await BodyImplantTypesAsync(rig, character));
+        var stored = await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(implant);
+        Assert.Equal((rig.Station, 4), (stored!.LocationId, stored.Flag));
+
+        accounts.SetSubscriptionEndsAt((uint)accountId, DateTimeOffset.UtcNow.AddDays(1));
+        Assert.IsType<PyNone>(await CallAsync(dogma, "InjectImplant", session, new PyLong(implant)));
+        Assert.Equal(["OnItemChange", "OnServerImplantsChanged", "OnJumpCloneCacheInvalidated"], Notifications(sink).Select(notification => notification.Name));
+        Assert.Equal([10208], await BodyImplantTypesAsync(rig, character));
+
+        var retried = await Assert.ThrowsAsync<MachoWrappedException>(() => CallAsync(dogma, "InjectImplant", session, new PyLong(implant)));
+        Assert.Equal("That implant is no longer available.", NotifyText(retried));
+        Assert.Equal(3, Notifications(sink).Count);
+        Assert.Equal([10208], await BodyImplantTypesAsync(rig, character));
+    }
+
+    [PgFact]
+    public async Task Alpha_can_inject_an_unrestricted_implant_after_the_existing_skill_gate_is_met()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var accountId = await rig.CreateAccountAsync();
+        Assert.Equal(1, accountId);
+        var character = await rig.CreateCharacterAsync();
+        var accounts = new PgAccountDirectory(rig.Source, new AccountOptions(), rig.IdentitySchema);
+        accounts.SetSubscriptionEndsAt((uint)accountId, DateTimeOffset.UtcNow.AddDays(-1));
+        var implant = await GiveItemAsync(rig, character, 9941, rig.Station, 4, singleton: true);
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, Sink = sink };
+        session.Set("stationid", new PyInt(rig.Station));
+        var dogma = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("dogmaIM"));
+
+        var missingSkill = await Assert.ThrowsAsync<MachoWrappedException>(() => CallAsync(dogma, "InjectImplant", session, new PyLong(implant)));
+        Assert.Equal("You do not have the required skills to plug in that implant.", NotifyText(missingSkill));
+        Assert.Empty(Notifications(sink));
+        Assert.Empty(await BodyImplantTypesAsync(rig, character));
+
+        await rig.SetSkillLevelAsync(character, 3411, 1);
+        Assert.IsType<PyNone>(await CallAsync(dogma, "InjectImplant", session, new PyLong(implant)));
+        Assert.Equal(["OnItemChange", "OnServerImplantsChanged", "OnJumpCloneCacheInvalidated"], Notifications(sink).Select(notification => notification.Name));
+        Assert.Equal([9941], await BodyImplantTypesAsync(rig, character));
+    }
+
+    [PgFact]
+    public async Task An_Omega_implant_stays_worn_and_active_after_the_account_lapses()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var accountId = await rig.CreateAccountAsync();
+        Assert.Equal(1, accountId);
+        var character = await rig.CreateCharacterAsync();
+        await rig.SetSkillLevelAsync(character, 3411, 4);
+        var accounts = new PgAccountDirectory(rig.Source, new AccountOptions(), rig.IdentitySchema);
+        accounts.SetSubscriptionEndsAt((uint)accountId, DateTimeOffset.UtcNow.AddDays(1));
+        var capsule = await GiveItemAsync(rig, character, 670, rig.Station, 4, singleton: true);
+        await SetShipAsync(rig, character, capsule);
+        var implant = await GiveItemAsync(rig, character, 10208, rig.Station, 4, singleton: true);
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, Sink = sink };
+        session.Set("stationid", new PyInt(rig.Station));
+        var dogma = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("dogmaIM"));
+
+        Assert.IsType<PyNone>(await CallAsync(dogma, "InjectImplant", session, new PyLong(implant)));
+        Assert.Equal(["OnItemChange", "OnServerImplantsChanged", "OnJumpCloneCacheInvalidated"], Notifications(sink).Select(notification => notification.Name));
+        accounts.SetSubscriptionEndsAt((uint)accountId, DateTimeOffset.UtcNow.AddDays(-1));
+
+        Assert.Equal([10208], await BodyImplantTypesAsync(rig, character));
+        var nested = Py.Tuple(new PyStr("GetAllInfo"), Py.Tuple(PyBool.True, PyBool.True, PyNone.Instance), PyNone.Instance);
+        var response = Assert.IsType<PyTuple>(await CallAsync(dogma, "MachoBindObject", session,
+            Py.Tuple(new PyInt(rig.Station), new PyInt(3)), nested));
+        var characters = Assert.IsType<PyDict>(((PyTuple)Field(response.Items[1], "charInfo")).Items[0]);
+        var characterInfo = Assert.Single(characters.Entries).Value;
+        var attributes = Assert.IsType<PyDict>(Field(characterInfo, "attributes"));
+        var memory = Assert.Single(attributes.Entries, entry => ((PyInt)entry.Key).Value == 166).Value;
+        Assert.Equal(new PyInt(24), memory);
+    }
+
+    [PgFact]
+    public async Task Concurrent_Omega_implant_injections_for_the_same_slot_only_install_one()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var accountId = await rig.CreateAccountAsync();
+        Assert.Equal(1, accountId);
+        var character = await rig.CreateCharacterAsync();
+        await rig.SetSkillLevelAsync(character, 3411, 5);
+        var accounts = new PgAccountDirectory(rig.Source, new AccountOptions(), rig.IdentitySchema);
+        accounts.SetSubscriptionEndsAt((uint)accountId, DateTimeOffset.UtcNow.AddDays(1));
+        var first = await GiveItemAsync(rig, character, 10208, rig.Station, 4, singleton: true);
+        var second = await GiveItemAsync(rig, character, 10209, rig.Station, 4, singleton: true);
+        var firstSink = new RecordingPacketSink();
+        var secondSink = new RecordingPacketSink();
+        var firstSession = new ClientSession { CharacterId = character, Sink = firstSink };
+        var secondSession = new ClientSession { CharacterId = character, Sink = secondSink };
+        firstSession.Set("stationid", new PyInt(rig.Station));
+        secondSession.Set("stationid", new PyInt(rig.Station));
+        var dogma = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("dogmaIM"));
+
+        async Task<MachoWrappedException?> TryInjectAsync(long itemId, ClientSession session)
+        {
+            try
+            {
+                await CallAsync(dogma, "InjectImplant", session, new PyLong(itemId));
+                return null;
+            }
+            catch (MachoWrappedException error)
+            {
+                return error;
+            }
+        }
+
+        var results = await Task.WhenAll(TryInjectAsync(first, firstSession), TryInjectAsync(second, secondSession));
+        var refused = Assert.Single(results, error => error is not null);
+        Assert.Equal("You already have an implant in that slot.", NotifyText(refused!));
+        Assert.Single(results, error => error is null);
+        var wornImplants = await BodyImplantTypesAsync(rig, character);
+        Assert.Contains(Assert.Single(wornImplants), new[] { 10208, 10209 });
+        var items = new PgItemStore(rig.Source, rig.InventorySchema);
+        var firstItem = (await items.GetAsync(first))!;
+        var secondItem = (await items.GetAsync(second))!;
+        Assert.Equal(1, new[] { firstItem, secondItem }.Count(item => item.Flag == 89));
+        Assert.Equal(1, new[] { firstItem, secondItem }.Count(item => item.LocationId == rig.Station && item.Flag == 4));
+        var successSink = results[0] is null ? firstSink : secondSink;
+        var failedSink = results[0] is null ? secondSink : firstSink;
+        Assert.Equal(["OnItemChange", "OnServerImplantsChanged", "OnJumpCloneCacheInvalidated"], Notifications(successSink).Select(notification => notification.Name));
+        Assert.Empty(Notifications(failedSink));
     }
 
     [PgFact]

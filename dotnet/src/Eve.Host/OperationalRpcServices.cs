@@ -1,0 +1,263 @@
+using Eve.Inventory;
+using Eve.Macho;
+using Eve.Marshal;
+using Eve.Services;
+using System.Text.Json;
+
+namespace Eve.Host;
+
+public sealed record DevelopmentIndexRecord(
+    long SolarSystemId,
+    long MilitaryPoints,
+    long IndustrialPoints,
+    long ClaimedFor);
+
+public sealed record DevelopmentIndexValue(long AttributeId, long Points, bool Increasing);
+
+public sealed record SpaceCompressionResult(
+    long SourceItemId,
+    int SourceTypeId,
+    long SourceQuantity,
+    long OutputItemId,
+    int OutputTypeId,
+    long OutputQuantity);
+
+[Service("devIndexManager")]
+public sealed partial class DevIndexManagerRpcService(
+    Func<CancellationToken, ValueTask<IReadOnlyList<DevelopmentIndexRecord>>> readAll,
+    Func<long, CancellationToken, ValueTask<IReadOnlyList<DevelopmentIndexValue>>>? readForSystem = null)
+{
+    [Method("GetAllDevelopmentIndices")]
+    public async ValueTask<PyValue> GetAllDevelopmentIndices(ServiceCall call)
+    {
+        var records = await readAll(call.Cancellation);
+        var rows = new List<PyValue>(records.Count);
+        foreach (var record in records.OrderBy(record => record.SolarSystemId))
+        {
+            rows.Add(Py.KeyVal(
+                ("solarSystemID", new PyInt(record.SolarSystemId)),
+                ("militaryPoints", new PyInt(Math.Max(0, record.MilitaryPoints))),
+                ("industrialPoints", new PyInt(Math.Max(0, record.IndustrialPoints))),
+                ("claimedFor", new PyInt(Math.Max(0, record.ClaimedFor)))));
+        }
+        return new PyList(rows);
+    }
+
+    [Method("GetDevelopmentIndicesForSystem")]
+    public async ValueTask<PyValue> GetDevelopmentIndicesForSystem(ServiceCall call)
+    {
+        if (call.Args.Count > 1 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("DEV_INDEX_ARGUMENTS_INVALID");
+
+        var systemId = call.Args.Count == 0
+            ? call.Session.GetInt("solarsystemid2") ?? call.Session.GetInt("solarsystemid") ?? 0
+            : call.Arg(0) switch
+            {
+                PyInt value => value.Value,
+                PyLong value => value.Value,
+                _ => 0,
+            };
+        if (systemId <= 0)
+            throw MachoErrors.ThrowUserError("DEV_INDEX_SYSTEM_INVALID");
+        if (readForSystem is null)
+            throw new InvalidOperationException("Development index reads are not wired.");
+
+        var indices = await readForSystem(systemId, call.Cancellation);
+        return new PyDict(indices.Select(index => new KeyValuePair<PyValue, PyValue>(
+            Py.Number(index.AttributeId),
+            Py.KeyVal(
+                ("points", Py.Number(Math.Max(0, index.Points))),
+                ("increasing", index.Increasing ? PyBool.True : PyBool.False)))).ToArray());
+    }
+}
+
+[Service("eject")]
+public sealed partial class EjectRpcService(
+    Func<ServiceCall, long, long, CancellationToken, ValueTask>? launch = null)
+{
+    [Method("LaunchShipOrContainerFromWreckOrContainer")]
+    public async ValueTask<PyValue> LaunchShipOrContainerFromWreckOrContainer(ServiceCall call)
+    {
+        var sourceId = OperationalRpcIds.Of(call.Arg(0));
+        var itemId = OperationalRpcIds.Of(call.Arg(1));
+        if (call.Session.GetInt("charid") is not > 0 || sourceId is not > 0 || itemId is not > 0)
+        {
+            throw MachoErrors.ThrowUserError("FakeItemNotFound");
+        }
+        if (launch is null)
+        {
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Space is not available right now. Try again in a moment.")));
+        }
+        await launch(call, sourceId.Value, itemId.Value, call.Cancellation);
+        return PyNone.Instance;
+    }
+}
+
+[Service("encodedItems")]
+public sealed partial class EncodedItemsRpcService(
+    Func<long, CancellationToken, ValueTask<Item?>> getItem,
+    Func<ServiceCall, Item, CancellationToken, ValueTask<bool>>? isDecodableType = null)
+{
+    private static readonly string[] ResourceUrlKeys = ["evejsEncodedItemUrl", "encodedItemUrl"];
+
+    [Method("DecodeItem")]
+    public async ValueTask<PyValue> DecodeItem(ServiceCall call)
+    {
+        var itemId = OperationalRpcIds.Of(call.Arg(0));
+        if (itemId is not > 0 or > 9_000_000_000_000_000_000L)
+        {
+            return PyNone.Instance;
+        }
+
+        var item = await getItem(itemId.Value, call.Cancellation);
+        if (item is null || item.Id != itemId || item.Quantity < 1)
+        {
+            return PyNone.Instance;
+        }
+
+        var characterId = call.Session.GetInt("charid") ?? 0;
+        var corporationId = call.Session.GetInt("corpid") ?? 0;
+        if (item.OwnerId > 0 &&
+            (characterId <= 0 ||
+             (item.OwnerId != characterId && item.OwnerId != corporationId)))
+        {
+            return PyNone.Instance;
+        }
+
+        // A missing type-list provider fails closed.
+        if (isDecodableType is null || !await isDecodableType(call, item, call.Cancellation))
+        {
+            return PyNone.Instance;
+        }
+
+        var url = ResourceUrl(item.CustomInfo);
+        return url is not null && (url.EndsWith(".png", StringComparison.Ordinal) ||
+                                   url.EndsWith(".webm", StringComparison.Ordinal))
+            ? new PyStr(url)
+            : PyNone.Instance;
+    }
+
+    internal static bool IsInTypeList(JsonElement list, ItemType type)
+    {
+        static bool Contains(JsonElement row, string property, int id)
+        {
+            if (id <= 0 || !row.TryGetProperty(property, out var values) ||
+                values.ValueKind != JsonValueKind.Array)
+                return false;
+            foreach (var value in values.EnumerateArray())
+                if (value.TryGetInt32(out var candidate) && candidate == id)
+                    return true;
+            return false;
+        }
+
+        var included = Contains(list, "includedTypeIDs", type.TypeId) ||
+                       Contains(list, "includedGroupIDs", type.GroupId) ||
+                       Contains(list, "includedCategoryIDs", type.CategoryId);
+        var excluded = Contains(list, "excludedTypeIDs", type.TypeId) ||
+                       Contains(list, "excludedGroupIDs", type.GroupId) ||
+                       Contains(list, "excludedCategoryIDs", type.CategoryId);
+        return included && !excluded;
+    }
+
+    private static string? ResourceUrl(string? customInfo)
+    {
+        if (string.IsNullOrWhiteSpace(customInfo))
+            return null;
+        try
+        {
+            using var document = JsonDocument.Parse(customInfo);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+                return null;
+            foreach (var key in ResourceUrlKeys)
+                if (document.RootElement.TryGetProperty(key, out var value) &&
+                    value.ValueKind == JsonValueKind.String)
+                    return value.GetString()?.Trim();
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+        return null;
+    }
+}
+
+[Service("inSpaceCompressionMgr")]
+public sealed partial class InSpaceCompressionMgrRpcService(
+    Func<long, CancellationToken, ValueTask<Item?>> getItem,
+    Func<ServiceCall, Item, long, CancellationToken, ValueTask<SpaceCompressionResult?>>? compress = null)
+{
+    /// <summary>
+    /// Shown to the pilot when no compression authority is attached (the space host is not running). In-space compression is done by a ship's compressor module and
+    /// needs no structure; the request is refused by name instead of answering None, which would look like a silent success.
+    /// </summary>
+    public const string UnavailableNotice = "In-space compression is not available right now. Try again in a moment.";
+
+    /// <summary>Shown when the request names no usable item, facility or active ship. Never answered with None (a silent success).</summary>
+    public const string InvalidRequestNotice = "That item cannot be compressed here: pick an item in your active ship and a valid facility.";
+
+    /// <summary>Shown when the item is not in the pilot's active ship (or no longer has the quantity asked for).</summary>
+    public const string NotInActiveShipNotice = "That item is not in your active ship.";
+
+    /// <summary>Shown when the compression backend returns no result or a result that does not describe the request.</summary>
+    public const string FailedNotice = "In-space compression did not complete.";
+
+    [Method("CompressItemInSpace")]
+    public async ValueTask<PyValue> CompressItemInSpace(ServiceCall call)
+    {
+        var itemId = OperationalRpcIds.Of(call.Arg(0));
+        var facilityId = OperationalRpcIds.Of(call.Arg(1));
+        var characterId = call.Session.GetInt("charid") ?? 0;
+        var shipId = call.Session.GetInt("shipid") ?? 0;
+        var systemId = call.Session.GetInt("solarsystemid2") ??
+                       call.Session.GetInt("solarsystemid") ?? 0;
+        if (itemId is not > 0 || facilityId is not > 0 ||
+            characterId <= 0 || shipId <= 0 || systemId <= 0)
+        {
+            throw Refuse(InvalidRequestNotice);
+        }
+
+        var item = await getItem(itemId.Value, call.Cancellation);
+        if (item is null || item.Id != itemId || item.OwnerId != characterId ||
+            item.LocationId != shipId || item.Quantity < 1)
+        {
+            throw Refuse(NotInActiveShipNotice);
+        }
+        if (compress is null)
+            throw Refuse(UnavailableNotice);
+
+        var result = await compress(call, item, facilityId.Value, call.Cancellation);
+        if (result is null ||
+            result.SourceItemId != item.Id ||
+            result.SourceTypeId != item.TypeId ||
+            result.SourceQuantity != item.Quantity ||
+            result.SourceTypeId <= 0 ||
+            result.SourceQuantity <= 0 ||
+            result.OutputItemId <= 0 ||
+            result.OutputTypeId <= 0 ||
+            result.OutputQuantity <= 0)
+        {
+            throw Refuse(FailedNotice);
+        }
+
+        return Py.Tuple(
+            new PyLong(result.SourceItemId),
+            new PyInt(result.SourceTypeId),
+            new PyLong(result.SourceQuantity),
+            new PyLong(result.OutputItemId),
+            new PyInt(result.OutputTypeId),
+            new PyLong(result.OutputQuantity));
+    }
+
+    private static MachoWrappedException Refuse(string notice) =>
+        MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(notice)));
+}
+
+internal static class OperationalRpcIds
+{
+    public static long? Of(PyValue value) => value switch
+    {
+        PyInt number => number.Value,
+        PyLong number => number.Value,
+        _ => null,
+    };
+}

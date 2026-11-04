@@ -1,0 +1,54 @@
+{
+  "source": "EVE Online ESS reserve key quadrants: the 2021 CCP ESS reserve bank key article as reproduced at tagn.wordpress.com (2021-07-27): ten systems per quadrant (SW, SE, NE, NW)",
+  "quadrants": {
+    "SW": [
+      "Feythabolis",
+      "Impass",
+      "Delve",
+      "Period Basis",
+      "Querious",
+      "Catch",
+      "Esoteria",
+      "Paragon Soul",
+      "Providence",
+      "Stain"
+    ],
+    "SE": [
+      "Geminate",
+      "Curse",
+      "Detorid",
+      "Great Wildlands",
+      "Immensea",
+      "Insmother",
+      "Omist",
+      "Scalding Pass",
+      "Tenerifis",
+      "Wicked Creek"
+    ],
+    "NE": [
+      "Cobalt Edge",
+      "Etherium Reach",
+      "The Kalevala Expanse",
+      "Malpais",
+      "Oasa",
+      "Outer Passage",
+      "Perrigen Falls",
+      "The Spire",
+      "Vale of the Silent",
+      "Cache"
+    ],
+    "NW": [
+      "Branch",
+      "Deklein",
+      "Pure Blind",
+      "Tenal",
+      "Tribute",
+      "Venal",
+      "Cloud Ring",
+      "Fade",
+      "Fountain",
+      "Outer Ring",
+      "Syndicate"
+    ]
+  }
+}

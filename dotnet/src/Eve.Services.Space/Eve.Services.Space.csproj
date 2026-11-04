@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Eve.Services/Eve.Services.csproj" />
+    <ProjectReference Include="../Eve.Services.Core/Eve.Services.Core.csproj" />
+    <ProjectReference Include="../Eve.Services.Ships/Eve.Services.Ships.csproj" />
+    <ProjectReference Include="../Eve.Services.Dogma/Eve.Services.Dogma.csproj" />
+    <ProjectReference Include="../Eve.Planets/Eve.Planets.csproj" />
+    <ProjectReference Include="../Eve.Ships/Eve.Ships.csproj" />
+    <ProjectReference Include="../Eve.Inventory/Eve.Inventory.csproj" />
+    <ProjectReference Include="../Eve.Characters/Eve.Characters.csproj" />
+    <ProjectReference Include="../Eve.Space/Eve.Space.csproj" />
+    <ProjectReference Include="../Eve.Dogma/Eve.Dogma.csproj" />
+    <ProjectReference Include="../Eve.Universe/Eve.Universe.csproj" />
+    <ProjectReference Include="../Eve.Npc/Eve.Npc.csproj" />
+    <ProjectReference Include="../Eve.Dungeons/Eve.Dungeons.csproj" />
+    <ProjectReference Include="../Eve.Scheduler/Eve.Scheduler.csproj" />
+    <ProjectReference Include="../Eve.Relations/Eve.Relations.csproj" />
+    <ProjectReference Include="../Eve.Crimewatch/Eve.Crimewatch.csproj" />
+    <ProjectReference Include="../Eve.Events/Eve.Events.csproj" />
+    <ProjectReference Include="../Eve.Content/Eve.Content.csproj" />
+    <ProjectReference Include="../Eve.Hacking/Eve.Hacking.csproj" />
+    <ProjectReference Include="../Eve.Services.Generator/Eve.Services.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../Eve.Structures/Eve.Structures.csproj" />
+    <ProjectReference Include="../Eve.Wormholes/Eve.Wormholes.csproj" />
+    <ProjectReference Include="../Eve.Insurgency/Eve.Insurgency.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Effects/Data/fighter-abilities.json" LogicalName="fighter-abilities.json" />
+    <EmbeddedResource Include="Sites/Data/site-templates.json" LogicalName="site-templates.json" />
+    <EmbeddedResource Include="Sites/Data/wormhole-site-templates.json" LogicalName="wormhole-site-templates.json" />
+    <EmbeddedResource Include="clientPvpFilaments.json" LogicalName="clientPvpFilaments.json" />
+    <EmbeddedResource Include="Migrations/*.sql" />
+    <EmbeddedResource Include="ContrabandMigrations/*.sql" />
+    <EmbeddedResource Include="Ess/Data/ess-reserve-keys.json" LogicalName="ess-reserve-keys.json" />
+    <EmbeddedResource Include="Ess/Data/ess-quadrants.json" LogicalName="ess-quadrants.json" />
+    <EmbeddedResource Include="Ess/EssMigrations/*.sql" />
+    <EmbeddedResource Include="Entosis/EntosisMigrations/*.sql" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Eve.Services.Space.Tests" />
+    <InternalsVisibleTo Include="Eve.Host.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Beacons/Data/*.json" LogicalName="%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

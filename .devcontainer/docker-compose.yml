@@ -1,0 +1,29 @@
+# The services of the dev container: the workspace and the PostgreSQL 18 its tests and server use.
+services:
+  app:
+    image: mcr.microsoft.com/devcontainers/base:ubuntu-24.04
+    command: sleep infinity
+    volumes:
+      # the checkout's parent, so that /workspaces/<the folder's name> is the workspace whatever the folder is called
+      - ../..:/workspaces:cached
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: eve
+    volumes:
+      # PostgreSQL 18's image keeps its data in a versioned directory under /var/lib/postgresql
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d eve"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  pgdata:

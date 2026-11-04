@@ -1,0 +1,27 @@
+# Host coverage batch: RPC-02453–RPC-02488
+
+## Status
+
+Partial. Push bbb7b6f1b916b272859ad71047f642e4b473fe1b includes 173d933b fix: accept transport metadata on ship kill counter. Three shipcaster reads have a Host-dispatch regression from earlier commits; kill-counter has a Host-dispatch wire regression. Production shipcaster registration still has no authoritative landing-pad/faction provider. Ship stance now has a real-Host wire regression in MovementRpcHostWireTests.cs:14-49. Cosmetics still need a successful Host-wire regression.
+
+## V24.01 client callers and consumers
+
+- Shipcaster calls: eve/client/script/parklife/shipcasterSvc.py:23-30. Consumers: warzoneMapPanel.py:397,424, shipCasterVisualization.py:57,60, warzoneInfoSideCont.py:228; rows expose faction/system and built/linked/disruption state. shipcaster/landingPadData.py:9-77 defines the six-field client row.
+- Cosmetics callers: eve/client/script/ui/cosmetics/ship/shipUtil.py:27-28, cosmetics/client/cosmeticsSvc.py:160-162, ui/shared/skins/devMenuFunctions.py:8-27,35-36,77-84, skinPanel.py:633,651-652. Notification consumers: nodegraph/client/events/cosmetic.py:9-13, cosmetics/client/shipSkinStateController.py:72, ui/shared/neocom/charsheet/skinsPanel.py:152-155, ui/shared/skins/controller.py:236-238, cosmeticFittingCenter.py:107, hangarView.py:769-776, shipSceneContainer.py:116-121.
+- Kill counter callers: ui/services/menusvc.py:869-870, ui/view/hangarBehaviours/baseHangarBehaviours.py:94-95, ui/shared/info/shipInfoPanels/panelOverview.py:275-276. They consume a numeric count; hangar caps display at 999 and overview suppresses zero.
+- Stance caller: ui/inflight/shipstance.py:30-32 ignores the RPC return. Notification consumers: ui/inflight/ship_stance_button.py:53-55, fittingController.py:429-431, hangarView.py:707-713.
+
+## EveJS reference
+
+- Shipcaster reads serialize in-memory list/faction state in server/src/services/shipcaster/shipcasterRuntime.js:155-188; producer evidence is limited to test seed helpers.
+- Cosmetics RPCs use stateful logic in server/src/services/ship/shipCosmeticsMgrService.js:308-389 and shipCosmeticsState.js:327-384,440-460,484-556.
+- Kill counter returns persisted player count in shipKillCounterService.js:19-31.
+- Stance returns the previous stance (shipStanceMgrService.js:35-49) and updates/refreshes runtime ship state (shipStanceRuntime.js:424-572).
+
+## eve.rs and checks
+
+- Production shipcaster names are registered in dotnet/src/Eve.Host/Rpc/AgentRpc.cs:110 without state callbacks; docs/project/TODO.md retains that gap. Existing ShipcasterHostWireTests sends all three methods through real Host dispatch with test fixture providers.
+- The current ShipcasterRpcService change returns an empty faction-filtered result for an invalid faction instead of leaking all pads, filters faction rows through SDE-derived FwFactions, and reports a missing starter eligibility provider. ShipcasterRpcTests passed locally (16 passed, 0 skipped); the loopback Host dispatch wire test passed locally (1 passed, 0 skipped).
+- Successful starter travel still needs an authoritative source for its destination: V24.01 StarterShipcaster reads `destinationID` and `landingPadID` from component data (shipcaster/client/components/starterShipCaster.py:55-64), but its travel RPC sends only `shipcasterID` (eve/client/script/parklife/shipcasterSvc.py:35-37). The pinned SDE types expose faction identity but not this component destination, and the embedded spacecomponentsbytype copy contains only nine rows for unrelated gate rules. No production provider supplies runtime launcher/pad item placements, so travel remains unwired rather than inventing a destination.
+- Kill-counter production registration reads persisted shipKillCounters in dotnet/src/Eve.Host/Rpc/CoreRpc.cs:147. The wire test sends GetItemKillCountPlayer(9001) through a loopback Host and asserts persisted player count 23 as PyInt. It accepts only the transport-added machoVersion keyword.
+- Selected kill-counter Actions run 40242203372 passed. Push-triggered CI 40242192488 and selected insurance runs 40243583086/40244085447/40245860424 exposed fixture issues. The final root cause was storing the price under the wrong GameStore row key: RowCodec needs byTypeID to reassemble the shape consumed by PersistenceInsuranceReadModel. The fixture now seeds the quoted table/byTypeID row and checks price using Cents. Host.Tests build passed locally (0 warnings, 0 errors). Insurance focused Actions run 40246465004 passed (1 passed, 0 failed, 0 skipped); the latest merged tree was rechecked by 40247036763 with no failed tests or jobs. No local database or graphical-client check was used.

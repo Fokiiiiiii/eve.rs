@@ -1,0 +1,3 @@
+#!/bin/sh
+# The MITM proxy: see tools/mitm/README.md. Needs python3 (Windows: python tools\mitm\mitm.py).
+exec python3 "$(dirname "$0")/mitm.py" "$@"

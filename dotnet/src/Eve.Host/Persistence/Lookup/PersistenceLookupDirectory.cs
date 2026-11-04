@@ -1,0 +1,214 @@
+namespace Eve.Host;
+
+public sealed class PersistenceLookupDirectory(
+    Eve.Characters.PgCharacterStore characters,
+    Eve.Corporations.CorporationStore corporations,
+    Eve.Sde.SdeReader sde,
+    Eve.Universe.StationCatalog stations,
+    Func<IReadOnlyList<long>,CancellationToken,ValueTask<IReadOnlyDictionary<long,bool>>>? readWarEligibility = null) : Eve.Services.Core.ILookupDirectory
+{
+    private readonly Lazy<Task<IReadOnlyList<Eve.Services.Core.LookupFaction>>> _factions =
+        new(() => LoadFactionsAsync(sde, CancellationToken.None));
+    private readonly Lazy<Task<IReadOnlyDictionary<long, long>>> _npcFactionIds =
+        new(() => LoadNpcFactionIdsAsync(sde, CancellationToken.None));
+    private readonly Lazy<Task<IReadOnlyDictionary<int, IReadOnlyList<Eve.Services.Core.LookupLocation>>>> _locations =
+        new(() => LoadLocationsAsync(sde, stations, CancellationToken.None));
+    private readonly Lazy<Task<IReadOnlyList<Eve.Services.Core.LookupType>>> _types =
+        new(() => LoadTypesAsync(sde, CancellationToken.None));
+
+    public async ValueTask<IReadOnlyList<Eve.Services.Core.LookupCharacter>> CharactersAsync(CancellationToken cancellationToken)
+    {
+        var rows = await characters.AllAsync(cancellationToken);
+        return rows.Select(character => new Eve.Services.Core.LookupCharacter(
+            character.Id,
+            character.Name,
+            Gender: character.Gender,
+            CorporationId: character.CorporationId,
+            AllianceId: character.AllianceId ?? 0)).ToArray();
+    }
+
+    public async ValueTask<IReadOnlyList<Eve.Services.Core.LookupCorporation>> CorporationsAsync(CancellationToken cancellationToken)
+    {
+        var npcFactionIds = await _npcFactionIds.Value.WaitAsync(cancellationToken);
+        var rows = await corporations.AllAsync(cancellationToken);
+        var eligibility = readWarEligibility is null ? null :
+            await readWarEligibility(rows.Select(c => c.Id).ToArray(), cancellationToken);
+        return rows.Select(corporation => MapCorporation(corporation, npcFactionIds.GetValueOrDefault(corporation.Id)) with
+        {
+            WarPermit = eligibility is null ? (corporation.IsNpc ? 0 : null) : eligibility.GetValueOrDefault(corporation.Id) ? 1 : 0
+        }).ToArray();
+    }
+
+    internal static Eve.Services.Core.LookupCorporation MapCorporation(
+        Eve.Corporations.Corporation corporation,
+        long? factionId) =>
+        new(
+            corporation.Id,
+            corporation.Name,
+            corporation.Ticker,
+            factionId,
+            corporation.IsNpc,
+            AllowWar: JsonNullableTruthy(corporation.Settings, "allowWar"),
+            WarPermit: corporation.IsNpc ? 0 : null);
+
+    public async ValueTask<IReadOnlyList<Eve.Services.Core.LookupAlliance>> AlliancesAsync(CancellationToken cancellationToken)
+    {
+        var rows = await corporations.AllAlliancesAsync(cancellationToken);
+        return rows.Select(alliance => new Eve.Services.Core.LookupAlliance(
+            alliance.Id,
+            alliance.Name,
+            alliance.ShortName,
+            IsNpc: false,
+            ExecutorCorporationId: alliance.ActiveExecutorId ?? 0)).ToArray();
+    }
+
+    public async ValueTask<IReadOnlyList<Eve.Services.Core.LookupFaction>> FactionsAsync(CancellationToken cancellationToken)
+    {
+        return await _factions.Value.WaitAsync(cancellationToken);
+    }
+
+    public async ValueTask<IReadOnlyList<Eve.Services.Core.LookupLocation>> LocationsByGroupAsync(
+        int groupId,
+        CancellationToken cancellationToken)
+    {
+        var locations = await _locations.Value.WaitAsync(cancellationToken);
+        return locations.GetValueOrDefault(groupId) ?? Array.Empty<Eve.Services.Core.LookupLocation>();
+    }
+
+    public async ValueTask<IReadOnlyList<Eve.Services.Core.LookupType>> TypesAsync(CancellationToken cancellationToken) =>
+        await _types.Value.WaitAsync(cancellationToken);
+
+    private static async Task<IReadOnlyList<Eve.Services.Core.LookupFaction>> LoadFactionsAsync(
+        Eve.Sde.SdeReader sde,
+        CancellationToken cancellationToken) =>
+        (await sde.ReadAsync("factions", cancellationToken: cancellationToken))
+            .Select(row => new Eve.Services.Core.LookupFaction(
+                row.Key,
+                Eve.Sde.SdeReader.English(row.Doc.GetProperty("name"))))
+            .Where(faction => faction.Id > 0 && faction.Name.Length > 0)
+            .ToArray();
+
+    private static async Task<IReadOnlyList<Eve.Services.Core.LookupType>> LoadTypesAsync(
+        Eve.Sde.SdeReader sde,
+        CancellationToken cancellationToken) =>
+        (await sde.ReadTypeSummariesAsync(cancellationToken))
+            .Where(type => type.TypeId > 0 && !string.IsNullOrWhiteSpace(type.Name))
+            .Select(type => new Eve.Services.Core.LookupType(type.TypeId, type.Name))
+            .ToArray();
+
+    private static async Task<IReadOnlyDictionary<long, long>> LoadNpcFactionIdsAsync(
+        Eve.Sde.SdeReader sde,
+        CancellationToken cancellationToken) =>
+        (await sde.ReadAsync("npcCorporations", cancellationToken: cancellationToken))
+            .Where(row => row.Doc.TryGetProperty("factionID", out var faction) && faction.ValueKind == System.Text.Json.JsonValueKind.Number)
+            .ToDictionary(row => row.Key, row => row.Doc.GetProperty("factionID").GetInt64());
+
+    private static async Task<IReadOnlyDictionary<int, IReadOnlyList<Eve.Services.Core.LookupLocation>>> LoadLocationsAsync(
+        Eve.Sde.SdeReader sde,
+        Eve.Universe.StationCatalog stations,
+        CancellationToken cancellationToken)
+    {
+        var typeGroups = (await sde.ReadTypeSummariesAsync(cancellationToken))
+            .ToDictionary(type => type.TypeId, type => type.GroupId);
+        var systemRows = await sde.ReadAsync("mapSolarSystems", cancellationToken: cancellationToken);
+        var systems = systemRows.ToDictionary(
+            row => checked((int)row.Key),
+            row => new
+            {
+                Id = row.Key,
+                Name = Eve.Sde.SdeReader.English(row.Doc.GetProperty("name")),
+                ConstellationId = Integer(row.Doc, "constellationID"),
+                RegionId = Integer(row.Doc, "regionID"),
+            });
+
+        var grouped = new Dictionary<int, Dictionary<long, Eve.Services.Core.LookupLocation>>();
+        void Add(Eve.Services.Core.LookupLocation location)
+        {
+            if (location.Id <= 0 || string.IsNullOrWhiteSpace(location.Name))
+                return;
+            if (!grouped.TryGetValue(location.GroupId, out var rows))
+            {
+                rows = new Dictionary<long, Eve.Services.Core.LookupLocation>();
+                grouped.Add(location.GroupId, rows);
+            }
+            rows.TryAdd(location.Id, location);
+        }
+
+        foreach (var system in systems.Values)
+            Add(new(system.Id, system.Name, 5, 5, system.Id, system.ConstellationId, system.RegionId));
+        foreach (var station in stations.All)
+            Add(new(station.Id, station.Name, station.TypeId, 15, station.SolarSystemId, station.ConstellationId, station.RegionId));
+        foreach (var row in await sde.ReadAsync("mapRegions", cancellationToken: cancellationToken))
+            Add(new(row.Key, Eve.Sde.SdeReader.English(row.Doc.GetProperty("name")), 3, 3, RegionId: row.Key));
+        foreach (var row in await sde.ReadAsync("mapConstellations", cancellationToken: cancellationToken))
+            Add(new(row.Key, Eve.Sde.SdeReader.English(row.Doc.GetProperty("name")), 4, 4,
+                ConstellationId: row.Key, RegionId: Long(row.Doc, "regionID")));
+
+        foreach (var table in new[] { "mapAsteroidBelts", "mapMoons", "mapPlanets", "mapStars", "mapStargates", "mapSecondarySuns" })
+        {
+            foreach (var row in await sde.ReadAsync(table, cancellationToken: cancellationToken))
+            {
+                var typeId = Integer(row.Doc, "typeID");
+                if (typeId <= 0 || !typeGroups.TryGetValue(typeId, out var groupId) || groupId <= 0 || groupId is 3 or 4 or 5 or 15)
+                    continue;
+
+                var solarSystemId = Long(row.Doc, "solarSystemID");
+                systems.TryGetValue(checked((int)Math.Clamp(solarSystemId, 0, int.MaxValue)), out var system);
+                var name = Text(row.Doc, "uniqueName");
+                if (name.Length == 0)
+                    name = table switch
+                    {
+                        "mapAsteroidBelts" => $"{system?.Name ?? "Unknown System"} - Asteroid Belt {Integer(row.Doc, "orbitIndex")}",
+                        "mapStars" => $"{system?.Name ?? "Unknown System"} - Sun",
+                        "mapStargates" => $"{system?.Name ?? "Unknown System"} Stargate {row.Key}",
+                        "mapSecondarySuns" => $"{system?.Name ?? "Unknown System"} - Secondary Sun",
+                        _ => "",
+                    };
+                if (name.Length == 0)
+                    continue;
+
+                Add(new(
+                    row.Key,
+                    name,
+                    typeId,
+                    groupId,
+                    solarSystemId > 0 ? solarSystemId : null,
+                    system?.ConstellationId > 0 ? system.ConstellationId : null,
+                    system?.RegionId > 0 ? system.RegionId : null));
+            }
+        }
+
+        return grouped.ToDictionary(pair => pair.Key, pair => (IReadOnlyList<Eve.Services.Core.LookupLocation>)pair.Value.Values.ToArray());
+    }
+
+    private static bool? JsonNullableTruthy(System.Text.Json.JsonElement settings, string property)
+    {
+        if (settings.ValueKind != System.Text.Json.JsonValueKind.Object ||
+            !settings.TryGetProperty(property, out var value) ||
+            value.ValueKind == System.Text.Json.JsonValueKind.Null)
+        {
+            return null;
+        }
+
+        return value.ValueKind switch
+        {
+            System.Text.Json.JsonValueKind.False => false,
+            System.Text.Json.JsonValueKind.Number => value.GetDouble() != 0,
+            System.Text.Json.JsonValueKind.String => !string.IsNullOrEmpty(value.GetString()),
+            _ => true,
+        };
+    }
+
+    private static int Integer(System.Text.Json.JsonElement row, string property) =>
+        row.TryGetProperty(property, out var value) && value.ValueKind == System.Text.Json.JsonValueKind.Number
+            ? value.GetInt32()
+            : 0;
+
+    private static long Long(System.Text.Json.JsonElement row, string property) =>
+        row.TryGetProperty(property, out var value) && value.ValueKind == System.Text.Json.JsonValueKind.Number
+            ? value.GetInt64()
+            : 0;
+
+    private static string Text(System.Text.Json.JsonElement row, string property) =>
+        row.TryGetProperty(property, out var value) ? Eve.Sde.SdeReader.English(value) : "";
+}

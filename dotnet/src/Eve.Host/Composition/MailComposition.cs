@@ -1,0 +1,336 @@
+using System.Net;
+using System.Net.Sockets;
+using Eve.Characters;
+using Eve.Data;
+using Eve.Host;
+using Eve.Identity;
+using Eve.Dogma;
+using Eve.Fitting;
+using Eve.GameStore;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using Eve.Inventory;
+using Eve.Ships;
+using Eve.Marshal;
+using Eve.Npc;
+using Eve.Sde;
+using Eve.Skills;
+using Eve.Universe;
+using Eve.Wallet;
+using Npgsql;
+using Sentry;
+using Eve.Services;
+using Eve.Services.CharacterSelect;
+using Eve.Services.Core;
+using Eve.Services.Dogma;
+using Eve.Services.Inventory;
+using Eve.Services.CharacterInfo;
+using Eve.Services.Skills;
+using Eve.Services.Slash;
+using Eve.Services.Space;
+using Eve.Space;
+using Eve.Services.Station;
+using Eve.Services.Wallet;
+using static Eve.Host.HostConfiguration;
+
+namespace Eve.Host;
+
+public static class MailOrganizationAuthorization
+{
+    public const int MaxExpandedMailRecipients = 5_000;
+
+    public static bool TryAddRecipient(
+        List<long> recipientIds,
+        Dictionary<long, int> recipientLabelMasks,
+        long characterId,
+        int labelMask,
+        int maximum = MaxExpandedMailRecipients)
+    {
+        if (characterId <= 0)
+            return true;
+        if (recipientLabelMasks.TryGetValue(characterId, out var prior))
+        {
+            recipientLabelMasks[characterId] = prior | labelMask;
+            return true;
+        }
+        if (maximum <= 0 || recipientIds.Count >= maximum)
+            return false;
+        recipientIds.Add(characterId);
+        recipientLabelMasks.Add(characterId, labelMask);
+        return true;
+    }
+
+    public static bool CanSendOrganizationMail(
+        long recipientId,
+        Eve.Corporations.Corporation senderCorporation,
+        long? currentCorpRoleMask)
+    {
+        if (recipientId <= 0 || senderCorporation.IsNpc || senderCorporation.Deleted ||
+            currentCorpRoleMask is null)
+            return false;
+        if (recipientId == senderCorporation.Id)
+            return true;
+        return senderCorporation.AllianceId == recipientId &&
+            (currentCorpRoleMask.Value & Eve.Corporations.CorporationRoles.ChatManager) ==
+                Eve.Corporations.CorporationRoles.ChatManager;
+    }
+}
+
+internal sealed partial class CharacterServicesComposition
+{
+    async Task<PersistenceMailSendRecipients?> ResolveMailSendRecipientsAsync(
+        Eve.Services.Core.MailSendRequest request,
+        Eve.Services.ClientSession session,
+        CancellationToken cancellationToken)
+    {
+        if (request.SenderCharacterId == Eve.Services.Core.GmChatPokeMailRequest.SystemSenderId &&
+            !request.SaveSenderCopy && Eve.Services.GameMasterRoles.Has(session, Eve.Services.GameMasterRoles.Gml))
+        {
+            if (request.CharacterRecipientIds.Count != 1 || request.MailingListId is not null ||
+                request.CorporationOrAllianceRecipientIds is { Count: > 0 } ||
+                request.ReplyToMessageId is not null || request.ForwardedFromMessageId is not null ||
+                request.Title != "GM chat request")
+                return null;
+
+            var recipientId = request.CharacterRecipientIds[0];
+            if (recipientId <= 0 || await characters.GetAsync(recipientId, cancellationToken) is null)
+                return null;
+            return new PersistenceMailSendRecipients(
+                [recipientId], Eve.Services.Core.GmChatPokeMailRequest.SystemSenderName, 2,
+                new Dictionary<long, int> { [recipientId] = 1 });
+        }
+
+        if (request.MailingListWelcomeRecipientId is { } welcomeRecipientId)
+        {
+            if (request.MailingListId is not { } welcomeListId ||
+                request.SenderCharacterId != welcomeRecipientId || session.CharacterId != welcomeRecipientId ||
+                request.CharacterRecipientIds.Count != 0 || request.CorporationOrAllianceRecipientIds is { Count: > 0 } ||
+                request.SaveSenderCopy || request.ReplyToMessageId is not null || request.ForwardedFromMessageId is not null)
+                return null;
+
+            var list = mailCache.Read("mail", $"/mailingLists/{welcomeListId}").Data as JsonObject;
+            var welcome = list?["welcomeMail"] as JsonObject;
+            var memberKey = welcomeRecipientId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (list is null ||
+                list["deleted"] is JsonValue deleted && deleted.TryGetValue<bool>(out var isDeleted) && isDeleted ||
+                (list["members"] as JsonObject)?.ContainsKey(memberKey) != true ||
+                !string.Equals(MailingListJsonText(welcome?["title"]), request.Title, StringComparison.Ordinal) ||
+                !string.Equals(MailingListJsonText(welcome?["body"]), request.Body, StringComparison.Ordinal))
+                return null;
+
+            return new PersistenceMailSendRecipients(
+                [welcomeRecipientId], MailingListJsonText(list["displayName"]), 0,
+                new Dictionary<long, int> { [welcomeRecipientId] = 1 });
+        }
+
+        if (request.SenderCharacterId <= 0 || session.CharacterId != request.SenderCharacterId)
+            return null;
+        var sender = await characters.GetAsync(request.SenderCharacterId, cancellationToken);
+        if (sender is null)
+            return null;
+
+        if (request.CorporationOrAllianceRecipientIds is { Count: > 0 } requestedOrganizationIds)
+        {
+            var senderMembership = await corporations.MemberAsync(request.SenderCharacterId, cancellationToken);
+            if (senderMembership is null)
+                return null;
+            var senderCorporation = await corporations.GetAsync(senderMembership.CorporationId, cancellationToken);
+            if (senderCorporation is null)
+                return null;
+            var currentCorpRoleMask = await corporations.MemberCorpRolesAsync(
+                senderCorporation.Id, request.SenderCharacterId, cancellationToken);
+            if (currentCorpRoleMask is null ||
+                requestedOrganizationIds.Distinct().Any(recipientId =>
+                    !MailOrganizationAuthorization.CanSendOrganizationMail(recipientId, senderCorporation, currentCorpRoleMask.Value)))
+                return null;
+        }
+
+        var recipientIds = new List<long>();
+        var recipientLabelMasks = new Dictionary<long, int>();
+        void AddRecipient(long characterId, int labelMask)
+        {
+            if (!MailOrganizationAuthorization.TryAddRecipient(
+                    recipientIds, recipientLabelMasks, characterId, labelMask))
+                throw Eve.Services.MachoErrors.ThrowUserError("MAIL_RECIPIENT_LIMIT_EXCEEDED");
+        }
+
+        var senderLabelMask = 2;
+        foreach (var characterId in request.CharacterRecipientIds.Distinct())
+        {
+            if (characterId <= 0 || await characters.GetAsync(characterId, cancellationToken) is null)
+                return null;
+            AddRecipient(characterId, 1);
+            if (characterId == request.SenderCharacterId)
+                senderLabelMask |= 1;
+        }
+
+        if (request.MailingListId is { } mailingListId)
+        {
+            var listKey = mailingListId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var list = mailCache.Read("mail", $"/mailingLists/{listKey}").Data as JsonObject;
+            if (list is null || (list["deleted"] is JsonValue deleted && deleted.TryGetValue<bool>(out var isDeleted) && isDeleted))
+                return null;
+            var members = list["members"] as JsonObject;
+            var ownerId = long.TryParse(list["ownerID"]?.ToString(),
+                System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var parsedOwner)
+                ? parsedOwner : 0;
+            var senderRole = 0d;
+            if (members?[request.SenderCharacterId.ToString(System.Globalization.CultureInfo.InvariantCulture)] is { } storedRole)
+                double.TryParse(storedRole.ToString(), System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out senderRole);
+            if (ownerId != request.SenderCharacterId && Math.Truncate(senderRole) <= 0)
+                return null;
+            if (members is not null)
+            {
+                foreach (var (key, value) in members)
+                {
+                    if (!long.TryParse(key, System.Globalization.NumberStyles.Integer,
+                            System.Globalization.CultureInfo.InvariantCulture, out var characterId) || characterId <= 0 ||
+                        !double.TryParse(value?.ToString(), System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out var role) || Math.Truncate(role) == 0)
+                        continue;
+                    if (await characters.GetAsync(characterId, cancellationToken) is not null)
+                        AddRecipient(characterId, 1);
+                }
+            }
+            if (ownerId > 0 && await characters.GetAsync(ownerId, cancellationToken) is not null)
+                AddRecipient(ownerId, 1);
+        }
+
+        if (request.CorporationOrAllianceRecipientIds is { Count: > 0 } organizationIds)
+        {
+            foreach (var organizationId in organizationIds.Distinct())
+            {
+                if (organizationId <= 0)
+                    return null;
+                if (await corporations.AllianceAsync(organizationId, cancellationToken) is not null)
+                {
+                    senderLabelMask |= 8;
+                    foreach (var memberCorporation in await corporations.AllianceMembersAsync(organizationId, cancellationToken))
+                        foreach (var member in await corporations.MembersAsync(memberCorporation.CorporationId, cancellationToken))
+                            AddRecipient(member.CharacterId, 1 | 8);
+                }
+                else if (await corporations.GetAsync(organizationId, cancellationToken) is not null)
+                {
+                    senderLabelMask |= 4;
+                    foreach (var member in await corporations.MembersAsync(organizationId, cancellationToken))
+                        AddRecipient(member.CharacterId, 1 | 4);
+                }
+                else
+                    return null;
+            }
+        }
+
+        return recipientIds.Count == 0
+            ? null
+            : new PersistenceMailSendRecipients(recipientIds, sender.Name, senderLabelMask, recipientLabelMasks);
+    }
+
+    int ReadUnreadMailCount(long characterId)
+    {
+        var mailState = mailCache.Read("mail", null).Data as JsonObject;
+        var messages = mailState?["messages"] as JsonObject;
+        var statuses = (mailState?["mailboxes"] as JsonObject)?[
+            characterId.ToString(System.Globalization.CultureInfo.InvariantCulture)] is JsonObject mailbox
+            ? mailbox["statuses"] as JsonObject
+            : null;
+        if (messages is null || statuses is null)
+            return 0;
+
+        var unread = 0;
+        const long readMask = 1;
+        const long trashedMask = 8;
+        foreach (var (messageId, statusNode) in statuses)
+        {
+            if (!messages.ContainsKey(messageId) || statusNode is not JsonObject status)
+                continue;
+            var statusMask = long.TryParse(status["statusMask"]?.ToString(),
+                System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture,
+                out var parsedMask) ? parsedMask : 0;
+            if ((statusMask & readMask) == 0 && (statusMask & trashedMask) == 0)
+                unread++;
+        }
+        return unread;
+    }
+
+    async Task SendNewCharacterWelcomeMailAsync(long characterId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var character = await characters.GetAsync(characterId, cancellationToken);
+            var corporation = character is null
+                ? null
+                : await corporations.GetAsync(character.CorporationId, cancellationToken);
+            if (character is null || corporation is null ||
+                await mailSendWriter.SendWelcomeMailAsync(
+                    corporation.Id, corporation.Name, character.Id, character.Name, cancellationToken) is not > 0)
+                throw new InvalidOperationException("The new character or starter corporation is unavailable.");
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine($"[CharacterCreation] Welcome mail failed for character {characterId}: {error.Message}");
+        }
+    }
+
+    private async Task MailSend()
+    {
+        await Eve.Calendar.CalendarStore.MigrateAsync(source, CancellationToken.None);
+        calendarStore = new Eve.Calendar.CalendarStore(source);
+        calendarAudience = new PersistenceCalendarAudienceReader(
+            async (corporationId, ct) =>
+                (await corporations.MembersAsync(corporationId, ct)).Select(member => member.CharacterId).ToArray(),
+            async (allianceId, ct) =>
+                (await corporations.AllianceMembersAsync(allianceId, ct)).Select(member => member.CorporationId).ToArray());
+
+        mailSendWriter = new PersistenceMailSendHostAdapter(
+            table => mailCache.Read(table, null).Data as JsonObject ?? new JsonObject(),
+            (table, path, data) => mailCache.Write(table, path, data),
+            (table, cancellationToken) => mailCache.FlushTableAsync(table, cancellationToken),
+            (table, cancellationToken) => mailStore.LoadTableAsync(table, createIfMissing: false, cancellationToken),
+            ResolveMailSendRecipientsAsync,
+            now,
+            (characterId, args) => characterSessions.Of(characterId)?.SendNotification("OnNotificationReceived", "clientID", args),
+            (characterId, args, requestingSession) =>
+            {
+                var recipientSession = characterSessions.Of(characterId);
+                if (recipientSession is null)
+                    return;
+                if (ReferenceEquals(recipientSession, requestingSession))
+                    requestingSession.AfterResponse(() =>
+                        requestingSession.SendNotification("OnMailSent", "clientID", args));
+                else
+                    recipientSession.SendNotification("OnMailSent", "clientID", args);
+            });
+        SubscribeMoonOwnerNotifications();
+        if (allianceMaintenanceBillWorker is { } maintenanceWorker)
+        {
+            maintenanceWorker.BillNotificationWriter = mailSendWriter.WriteAllianceMaintenanceBillNotificationAsync;
+            await maintenanceWorker.ReconcileAsync();
+        }
+    }
+
+
+    private Eve.Host.Persistence.Mail.PersistenceTransactionMailbox? notificationMailbox;
+
+    private void SubscribeMoonOwnerNotifications()
+    {
+        var mailbox = new Eve.Host.Persistence.Mail.PersistenceTransactionMailbox(
+            source, mailStore, mailCache, mailStoreOwner, mailSendWriter.MutationGate, now,
+            (characterId, args) => characterSessions.Of(characterId)?.SendNotification("OnNotificationReceived", "clientID", args));
+        notificationMailbox = mailbox;
+        new Eve.Host.Persistence.Structures.MoonOwnerNotifications(
+            source, structureStore, moonExtractionStore, characters, mailbox).Subscribe(foundations.Events);
+        new Eve.Host.Persistence.Structures.ReinforcementChangedNotifications(characters, mailbox)
+            .Subscribe(foundations.Events);
+        new Eve.Host.Persistence.Sovereignty.EntosisOwnerNotifications(
+            async (allianceId, ct) => (await corporations.AllianceMembersAsync(allianceId, ct)).Select(member => member.CorporationId).ToArray(),
+            characters, mailbox).Subscribe(foundations.Events);
+        sovClaimNotifications = new Eve.Host.Persistence.Sovereignty.SovereigntyClaimNotifications(
+            async (allianceId, ct) => (await corporations.AllianceMembersAsync(allianceId, ct)).Select(member => member.CorporationId).ToArray(),
+            characters, mailbox);
+        new Eve.Host.Persistence.Structures.StructureFuelOwnerNotifications(structureStore, characters, characterSessions, dogma,
+            Eve.Host.Persistence.Structures.StructureFuelOwnerNotifications.ToMailbox(mailbox))
+            .Subscribe(foundations.Events);
+    }
+
+}

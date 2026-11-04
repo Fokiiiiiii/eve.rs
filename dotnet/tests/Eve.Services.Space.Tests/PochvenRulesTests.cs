@@ -44,6 +44,15 @@ public sealed class PochvenRulesTests
     }
 
     [Fact]
+    public void A_Pochven_LP_store_accepts_standing_at_minus_point_zero_one_or_higher()
+    {
+        Assert.Equal(-0.01, PochvenRules.LoyaltyStoreMinimumStanding);
+        Assert.False(PochvenRules.HasLoyaltyStoreStanding(-0.0101));
+        Assert.True(PochvenRules.HasLoyaltyStoreStanding(-0.01));
+        Assert.True(PochvenRules.HasLoyaltyStoreStanding(0.0));
+    }
+
+    [Fact]
     public void NPC_bounty_payout_is_disabled_only_in_Pochven()
     {
         Assert.False(PochvenRules.PaysNpcBounty(PochvenRules.RegionId));

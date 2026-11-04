@@ -24,11 +24,14 @@ public class SimClientTests
         }
     }
 
-    private static async Task<(FakeSimulation Sim, SimClient Client)> ConnectedAsync(Func<SimMessage, IEnumerable<SimMessage>>? reply = null)
+    private static async Task<(FakeSimulation Sim, SimClient Client)> ConnectedAsync(
+        Func<SimMessage, IEnumerable<SimMessage>>? reply = null,
+        Action<string>? log = null,
+        Action? afterConnectionCheck = null)
     {
         var sim = new FakeSimulation { Reply = reply ?? (_ => []) };
         sim.Listen();
-        var client = SimClient.ToUnixSocket(sim.Path);
+        var client = SimClient.ToUnixSocket(sim.Path, log, afterConnectionCheck);
         client.RetryAfter = TimeSpan.FromMilliseconds(20);
         client.Start();
         await Until(() => client.IsConnected);
@@ -404,6 +407,89 @@ public class SimClientTests
         await Assert.ThrowsAsync<SimUnavailableException>(() => client.EnterAsync(Enter()));
         await Assert.ThrowsAsync<SimUnavailableException>(() => client.CommandAsync(7, SimCommands.Dock, [1]));
         client.Bind(7); // said to nobody: nothing happens
+    }
+
+    [Fact]
+    public async Task Every_abyssal_reply_map_fails_when_the_link_breaks()
+    {
+        var (sim, client) = await ConnectedAsync();
+        await using var _ = sim;
+        await using var __ = client;
+        var scene = new SimSceneKey(31_000_201, 42, 1);
+        var trace = new SimAbyssalTrace(
+            31_000_201, 8_400_000_489, 48_964, 1_991, 2, 90_001, 500.0,
+            [1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [0.0, 0.0, 1.0], [7.0, 8.0, 9.0],
+            0.5, 2, 56_132, 0, 1_800_000_000_000);
+        var requests = new Task[]
+        {
+            ExpectUnavailable(client.EnsureAbyssalTracePublishedAsync(new(1, 7, trace))),
+            ExpectUnavailable(client.RemoveAbyssalTraceAsync(new(2, scene.LocationId, trace.ItemId))),
+            ExpectUnavailable(client.RemoveAbyssalParticipantAsync(new(3, scene, 8_400_000_193))),
+            ExpectUnavailable(client.GetAbyssalParticipantPoseAsync(new(4, scene, 8_400_000_193))),
+        };
+
+        await Until(() => sim.HeardNow().Count(message => message is
+            SimEnsureAbyssalTracePublished or SimRemoveAbyssalTrace or
+            SimRemoveAbyssalParticipant or SimGetAbyssalParticipantPose) == requests.Length);
+        sim.Drop();
+        await Task.WhenAll(requests);
+
+        static async Task ExpectUnavailable<T>(Task<T> request) =>
+            await Assert.ThrowsAsync<SimUnavailableException>(() => Within(request));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task A_link_break_after_the_connection_check_cannot_strand_a_request(int requestKind)
+    {
+        using var continueRegistration = new ManualResetEventSlim();
+        var checkedConnection = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var linkBroken = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (sim, client) = await ConnectedAsync(
+            log: message =>
+            {
+                if (message.StartsWith("the simulation link:", StringComparison.Ordinal))
+                    linkBroken.TrySetResult(true);
+            },
+            afterConnectionCheck: () =>
+            {
+                checkedConnection.TrySetResult(true);
+                if (!continueRegistration.Wait(Patience))
+                    throw new TimeoutException("request registration was not released");
+            });
+        await using var _ = sim;
+        await using var __ = client;
+        var scene = SimSceneKey.SolarSystem(30_000_142);
+        Task request = Task.Run(async () =>
+        {
+            switch (requestKind)
+            {
+                case 0:
+                    await client.EnterAsync(Enter());
+                    break;
+                case 1:
+                    await client.RemoveTournamentBeaconAsync(new(2, scene, 8_400_000_193));
+                    break;
+                default:
+                    await client.AdjustChargeAsync(new(3, 7, 101, 34, new SimChargeOp.Remove(1)));
+                    break;
+            }
+        });
+
+        try
+        {
+            await checkedConnection.Task.WaitAsync(Patience);
+            sim.Drop();
+            await linkBroken.Task.WaitAsync(Patience);
+            continueRegistration.Set();
+            await Assert.ThrowsAsync<SimUnavailableException>(() => request.WaitAsync(Patience));
+        }
+        finally
+        {
+            continueRegistration.Set();
+        }
     }
 
     [Fact]

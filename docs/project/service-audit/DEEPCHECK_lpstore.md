@@ -93,6 +93,16 @@ EveJS 261028.1 returns None after a successful corporation-to-corporation transf
 
 Both transfer methods reject Evermark issuer `1000419`. The V24.01 generic wallet balance lists omit `corpHeraldry` (`loyaltyPointsWalletSvc.py:80,91`; constant `appConst.py:637`), and the dedicated Evermark panels inherit the base donation stub (`panels/donateLPPanel.py:382-384`). EveJS 261028.1 shares its normal transfer RPCs with Evermarks and enforces additional brand-manager and destination rules (`lpService.js:116-148`, `lpWalletState.js:615-769`). The V24.01 path exposes no Evermark donation caller, so eve.rs refuses that issuer at the ordinary LP boundary until its dedicated rules and client path are implemented. This compatibility choice is recorded in `docs/reference/compat/DEVIATIONS.md`.
 
+## Pochven NPC station standing gate (2026-11-04)
+
+V24.01 calls `GetAvailableOffersFromCorp` for listing (`eve/client/script/ui/station/loyaltyPointStore/lpStoreSvc.py:96-104`) and calls `TakeOfferForCharacter` / `TakeOfferForCorporation` in `AcceptOffer` (`lpStoreSvc.py:240-266`). The panels consume cached offer rows (`lpStorePanel.py:209,247`; `paragonLpStorePanel.py:72`; `lpOfferEntry.py:42-59`; `lpOfferEntry2.py:44-48`). A successful purchase invalidates the local offer cache, and `OnItemChange` refreshes inventory state (`lpStoreSvc.py:253-265,424-432`).
+
+The production callback resolves the station in `StationCatalog`, loaded from pinned SDE `npcStations` and `mapSolarSystems` (`dotnet/src/Eve.Host/Composition/CharacterStores.cs:78`; `dotnet/src/Eve.Universe/StationCatalog.cs:37-83`). For region `10000070`, it reads the personal Triglavian standing from `foundations.Relations` and compares it with `-0.01` (`dotnet/src/Eve.Host/Rpc/AgentRpc.cs:63-78`; `dotnet/src/Eve.Relations/RelationStore.cs:300-301`; `dotnet/src/Eve.Services.Space/Pochven/PochvenRules.cs`). The service checks before it reads offers or invokes either purchase provider. A refusal is a `CustomNotify`; the DB regression confirmed unchanged LP/ISK, items, both journals and purchase rows, with no item notifications. Standing at the threshold and above remains eligible. The existing structure-service check runs first, and structure calls bypass this NPC-station check. The pinned station region also leaves other-region NPC station behavior unchanged.
+
+EveJS 261028.1 checks structure service access (`server/src/services/evermarks/lpStoreMgrService.js:103-122,360-421`) but does not enforce this NPC-station threshold. eve.rs follows the published EVE University [Pochven rule](https://wiki.eveuniversity.org/Pochven) for all three client RPCs.
+
+Local checks on `eve_p4`: `LpStoreMgrServiceTests` passed 6/6, including below/equal/above standing on listing and both purchases; the two LP Store Host wire tests passed 2/2; `PochvenRulesTests` passed 6/6. The graphical EVE client was not exercised.
+
 ## Checks and limits
 
 Verified by source and Host wire tests:
@@ -101,7 +111,7 @@ Verified by source and Host wire tests:
 - Structure offer access, structure-based purchase location, `PyInt`/`PyLong` inputs, `machoVersion`, `None` handling, director denial, structure denial, purchase quantity denial, and item-notification-before-reply order.
 
 Source-reviewed only:
-- PostgreSQL purchase transaction, journal writes, balance notifications after commit, and storage across restart. This audit did not connect to a database.
+- Purchase persistence across a server restart; this task's focused `eve_p4` run covers the Pochven gate and its database mutation boundary, not restart recovery.
 - Real graphical-client behavior. The wire tests use the Host TCP test front, not the graphical EVE client.
 
 The focused Host wire run passed 3/3 tests with no skips. On the required local PostgreSQL lane `eve_p6`, `LoyaltyPointStoreTests` passed 8/8 and `LoyaltyPointsServiceTests|AnnouncementsTests` passed 8/8, with no skips. These cover atomic balance updates, replay, insufficient funds, concurrent overspending, notification order, and the LPSvc DB path. The Host wire route test also rejects Evermark issuer `1000419` with `CustomNotify` before invoking the transfer provider. A graphical-client run was not performed.

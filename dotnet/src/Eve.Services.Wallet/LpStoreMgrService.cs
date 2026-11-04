@@ -9,6 +9,7 @@ public sealed class LpStoreMgrService(
     LpStoreOfferCache offers,
     LpStorePurchases purchases,
     Func<long, long, CancellationToken, ValueTask<bool>> isDirector,
+    Func<long, long, CancellationToken, ValueTask<bool>> hasPochvenLpStoreStanding,
     Func<long, CancellationToken, Task<IReadOnlyList<LpStoreOffer>>>? readOffers = null,
     Func<LpStorePurchaseRequest, CancellationToken, Task<LpStorePurchaseReceipt>>? takePurchase = null,
     Func<long, long, CancellationToken, ValueTask<bool>>? hasLoyaltyStoreService = null) : IService
@@ -27,6 +28,7 @@ public sealed class LpStoreMgrService(
         ["INVALID_QUANTITY"] = "That offer quantity is not valid.",
         ["INVALID_STORE"] = "That LP store is not available.",
         ["LOYALTY_STORE_UNAVAILABLE"] = "That loyalty store service is not available.",
+        ["POCHVEN_STANDING_REQUIRED"] = "You need a standing of -0.01 or higher with the Triglavian Collective to use this loyalty store.",
         ["ITEM_GRANT_FAILED"] = "LP store purchase delivery failed.",
         ["OFFER_NOT_FOUND"] = "That offer is no longer available.",
         ["REQ_ITEMS_UNSUPPORTED"] = "That offer requires unsupported extra items.",
@@ -52,6 +54,7 @@ public sealed class LpStoreMgrService(
     private async ValueTask<PyValue> OffersAsync(ServiceCall call)
     {
         await RequireStructureLoyaltyStoreAccessAsync(call);
+        await RequirePochvenStationStandingAsync(call);
         var corporationId = Positive(call.Args.Count > 0 ? call.Args[0] : null);
         if (corporationId == 0) return new PyList([]);
         var rows = readOffers is null
@@ -63,6 +66,7 @@ public sealed class LpStoreMgrService(
     private async ValueTask<PyValue> TakeForCharacterAsync(ServiceCall call)
     {
         await RequireStructureLoyaltyStoreAccessAsync(call);
+        await RequirePochvenStationStandingAsync(call);
         var characterId = call.Session.CharacterId ?? 0;
         var request = new LpStorePurchaseRequest(characterId, PayerCorporationId: 0, AccountKey: (int)DefaultAccountKey,
             StoreCorporationId: Positive(Arg(call, 0)), OfferId: Positive(Arg(call, 1)), NumberOfOffers: Quantity(call),
@@ -73,6 +77,7 @@ public sealed class LpStoreMgrService(
     private async ValueTask<PyValue> TakeForCorporationAsync(ServiceCall call)
     {
         await RequireStructureLoyaltyStoreAccessAsync(call);
+        await RequirePochvenStationStandingAsync(call);
         var storeCorporationId = Positive(Arg(call, 0));
         if (storeCorporationId == 0) throw Refusal("INVALID_STORE");
         var characterId = call.Session.CharacterId ?? 0;
@@ -125,6 +130,17 @@ public sealed class LpStoreMgrService(
         if (characterId <= 0 || hasLoyaltyStoreService is null ||
             !await hasLoyaltyStoreService(characterId, structureId, call.Cancellation))
             throw Refusal("LOYALTY_STORE_UNAVAILABLE");
+    }
+
+    private async ValueTask RequirePochvenStationStandingAsync(ServiceCall call)
+    {
+        if (StructureOf(call.Session) > 0) return;
+        var stationId = Positive(call.Session.Get("stationid") ?? call.Session.Get("stationID"));
+        if (stationId <= 0) return;
+
+        var characterId = call.Session.CharacterId ?? Positive(call.Session.Get("charid"));
+        if (characterId <= 0 || !await hasPochvenLpStoreStanding(characterId, stationId, call.Cancellation))
+            throw Refusal("POCHVEN_STANDING_REQUIRED");
     }
 
     private static long StructureOf(ClientSession session) =>

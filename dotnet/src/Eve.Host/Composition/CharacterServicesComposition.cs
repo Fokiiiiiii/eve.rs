@@ -180,6 +180,8 @@ internal sealed partial class CharacterServicesComposition
     private PgCharacterStore characters = default!;
     private PgItemStore items = default!;
     private PgSpaceItemStore spaceItemStore = default!;
+    private Eve.Ships.PgDeployedStore deployedStore = default!;
+    private Eve.Npc.PgBountyStore bountyStore = default!;
     private ItemTypeCatalog itemTypes = default!;
     private PgSkillStore skills = default!;
     private SkillCatalog skillCatalog = default!;

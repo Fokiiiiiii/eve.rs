@@ -468,7 +468,8 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
     public bool IsSessionChanging(ClientSession session) => _transitions.SessionChangeActive((ulong)session.SessionId);
 
     public bool IsInvulnerable(ClientSession session) =>
-        _pilots.TryGetValue((ulong)session.SessionId, out var pilot) && !pilot.ProtectionEnded && pilot.InvulnerableUntil > FileTimeNow();
+        _pilots.TryGetValue((ulong)session.SessionId, out var pilot) && ReferenceEquals(pilot.Session, session) &&
+        !pilot.ProtectionEnded && pilot.InvulnerableUntil > FileTimeNow();
 
     public bool IsModuleActive(ClientSession session, long moduleId) =>
         moduleId > 0 && _pilots.TryGetValue((ulong)session.SessionId, out var pilot) && pilot.ActiveModules.ContainsKey(moduleId);

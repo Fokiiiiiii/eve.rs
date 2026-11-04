@@ -1080,7 +1080,7 @@ public sealed partial class AbyssalHostFlowTests
         Assert.Empty(rig.Problems);
     }
 
-    private sealed class Rig : IAsyncDisposable
+    internal sealed class Rig : IAsyncDisposable
     {
         public required NpgsqlDataSource Source { get; init; }
         public required Foundations Foundations { get; init; }
@@ -1102,6 +1102,7 @@ public sealed partial class AbyssalHostFlowTests
         public required string[] Schemas { get; init; }
         public List<string> Order { get; } = [];
         public List<string> ClientNotifications { get; } = [];
+        public List<string> MessageOrder { get; } = [];
         public List<string> Problems { get; } = [];
         public long Now { get; set; } = 1_790_000_000_000;
 
@@ -1113,7 +1114,7 @@ public sealed partial class AbyssalHostFlowTests
             Assert.Matches(@"^eve(?:_p\d+)?$", cs.Database);
             var source = NpgsqlDataSource.Create(cs.ConnectionString);
             var suffix = Guid.NewGuid().ToString("N");
-            var schemas = Enumerable.Range(0, 11).Select(index => $"abyss_hf_{index}_{suffix}").ToArray();
+            var schemas = Enumerable.Range(0, 13).Select(index => $"abyss_hf_{index}_{suffix}").ToArray();
             await PgCharacterStore.MigrateAsync(source, schemas[0]);
             await PgItemStore.MigrateAsync(source, schemas[1]);
             await PgSkillStore.MigrateAsync(source, schemas[2]);
@@ -1122,10 +1123,11 @@ public sealed partial class AbyssalHostFlowTests
             await Eve.Crimewatch.PgCrimewatchStore.MigrateAsync(source, schemas[10]);
             await using (var fleet = source.CreateCommand($"""
                 CREATE SCHEMA {schemas[9]};
+                CREATE TABLE {schemas[9]}.fleets (fleet_id bigint PRIMARY KEY);
                 CREATE TABLE {schemas[9]}.fleet_members (
                     fleet_id bigint, character_id bigint UNIQUE, wing_id bigint, squad_id bigint,
                     role smallint, job smallint, accepts_fleet_warp boolean, accepts_conduit_jumps boolean,
-                    accepts_fleet_regroups boolean, ship_type_id bigint);
+                    accepts_fleet_regroups boolean, ship_type_id bigint, joined_at bigint NOT NULL DEFAULT 0);
                 """)) await fleet.ExecuteNonQueryAsync();
             Rig? rig = null;
             var mapping = new Dictionary<string, string>
@@ -1165,7 +1167,7 @@ public sealed partial class AbyssalHostFlowTests
             Field("source", source); Field("foundations", foundations); Field("sde", sde);
             Field("characters", characters); Field("items", items); Field("itemTypes", itemTypes);
             Field("spaceItemStore", spaces); Field("spaceSessions", space); Field("ships", ships); Field("dogma", statics);
-            Field("catalog", creation); Field("stations", stations); Field("characterSessions", sessions);
+            Field("catalog", creation); Field("stations", stations); Field("solarSystems", systems); Field("characterSessions", sessions);
             Field("abyssalRuntime", runtime); Field("abyssalCatalog", catalog);
             Field("fleetStore", new FleetStore(source, schemas[9]));
             Field("crimewatchStore", new Eve.Crimewatch.PgCrimewatchStore(source, schemas[10]));
@@ -1292,7 +1294,7 @@ public sealed partial class AbyssalHostFlowTests
         public async Task<ClientSession> Connect(AbyssalRunState run, long sessionOffset = 100)
         {
             var p = Assert.Single(run.Data.Participants);
-            var session = new ClientSession(new RecordingSink(Order, ClientNotifications))
+            var session = new ClientSession(new RecordingSink(Order, ClientNotifications, MessageOrder))
             { SessionId = p.CharacterId + sessionOffset, ClientId = p.CharacterId + sessionOffset + 100 };
             session.Set("charid", new PyLong(p.CharacterId)); session.Set("shipid", new PyLong(p.ShipId));
             session.Set("solarsystemid", new PyInt(run.Data.SpaceLocationId));
@@ -1312,7 +1314,7 @@ public sealed partial class AbyssalHostFlowTests
             var radius = (await Sde.ReadAsync("types", [ship.TypeId])).Single().Doc.GetProperty("radius").GetDouble();
             await Transaction((c, tx) => SpaceItems.SaveAsync(c, tx, new SpaceItem(ship.Id, character.SolarSystemId,
                 [10, 20, 30], [0, 0, 1], radius, type.GroupId, 0, character.Id, character.CorporationId, 0, 0, long.MaxValue)));
-            var session = new ClientSession(new RecordingSink(Order)) { SessionId = character.Id + 100, ClientId = character.Id + 200 };
+            var session = new ClientSession(new RecordingSink(Order, ClientNotifications, MessageOrder)) { SessionId = character.Id + 100, ClientId = character.Id + 200 };
             session.Set("charid", new PyLong(character.Id)); session.Set("shipid", new PyLong(ship.Id));
             session.Set("solarsystemid", new PyInt(character.SolarSystemId)); session.Set("solarsystemid2", new PyInt(character.SolarSystemId));
             session.Set("locationid", new PyInt(character.SolarSystemId));
@@ -1545,18 +1547,25 @@ public sealed partial class AbyssalHostFlowTests
         }
     }
 
-    private sealed class RecordingSink(List<string> order, List<string>? notifications = null) : IPacketSink
+    private sealed class RecordingSink(List<string> order, List<string>? notifications = null, List<string>? messageOrder = null) : IPacketSink
     {
         public void Send(PyValue packet)
         {
             if (packet is not PyObject obj || obj.Args is not PyTuple tuple) return;
             var fields = tuple.Items;
-            if (fields[0] is PyInt { Value: MachoMessage.SessionChangeNotification }) { order.Add("SessionChange"); return; }
+            if (fields[0] is PyInt { Value: MachoMessage.SessionChangeNotification })
+            {
+                order.Add("SessionChange");
+                messageOrder?.Add("SessionChange");
+                return;
+            }
             if (fields[0] is not PyInt { Value: MachoMessage.Notification }) return;
             var address = MachoAddress.Decode(fields[2]);
             if (address.BroadcastId is { } broadcastId)
             {
                 notifications?.Add(broadcastId);
+                if (broadcastId is "OnItemChange" or "OnPvpTimerUpdate")
+                    messageOrder?.Add(broadcastId);
             }
             if (address.BroadcastId is "OnItemChange" or "OnExitingDungeon" or "OnAbyssalLocationExited" or "OnAbyssalContentFinished")
                 order.Add(address.BroadcastId);

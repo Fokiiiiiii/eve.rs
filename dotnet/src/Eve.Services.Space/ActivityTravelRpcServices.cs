@@ -276,7 +276,8 @@ public sealed class PvpFilamentMgrService(
 
 public sealed class RandomJumpMgrService(
     Func<long, CancellationToken, ValueTask<SpaceRpcItem?>>? readItem = null,
-    Func<ServiceCall, SpaceRpcItem, CancellationToken, ValueTask<PyValue?>>? activate = null) : IService
+    Func<ServiceCall, SpaceRpcItem, CancellationToken, ValueTask<PyValue?>>? activate = null,
+    Func<ServiceCall, long, CancellationToken, ValueTask<PyValue?>>? replay = null) : IService
 {
     private static readonly HashSet<int> RandomJumpKeyGroups = [4041, 4087];
 
@@ -291,6 +292,10 @@ public sealed class RandomJumpMgrService(
 
         var itemId = TravelRpcWire.Integer(call.Arg(0));
         var characterId = TravelRpcWire.CharacterId(call.Session);
+        if (itemId > 0 && replay is not null &&
+            await replay(call, itemId, call.Cancellation).ConfigureAwait(false) is { } replayed)
+            return replayed;
+
         List<PyValue> errors = [];
         SpaceRpcItem? item = null;
 

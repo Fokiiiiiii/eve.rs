@@ -1,6 +1,7 @@
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Space;
+using Npgsql;
 
 namespace Eve.Services.Space;
 
@@ -139,6 +140,30 @@ public sealed partial class FleetStore(System.Data.Common.DbDataSource source, s
         await using var command = Command(connection, null,
             $"SELECT EXISTS (SELECT 1 FROM {_schema}.fleets WHERE fleet_id = $1)", fleetId);
         return Convert.ToBoolean(await command.ExecuteScalarAsync(cancellationToken), System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>Locks the fleet while reading its current members for an all-or-nothing fleet action.</summary>
+    public async Task<IReadOnlyList<FleetMemberSnapshot>> LockMembersInTransactionAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long fleetId, CancellationToken cancellationToken = default)
+    {
+        if (fleetId <= 0)
+            return [];
+        await using (var fleet = Command(connection, transaction,
+            $"SELECT fleet_id FROM {_schema}.fleets WHERE fleet_id = $1 FOR UPDATE", fleetId))
+        await using (var reader = await fleet.ExecuteReaderAsync(cancellationToken))
+            if (!await reader.ReadAsync(cancellationToken))
+                return [];
+
+        var members = new List<FleetMemberSnapshot>();
+        await using var query = Command(connection, transaction,
+            $"SELECT character_id, wing_id, squad_id, role, job, accepts_fleet_warp, accepts_conduit_jumps, accepts_fleet_regroups, ship_type_id FROM {_schema}.fleet_members WHERE fleet_id = $1 ORDER BY joined_at, character_id",
+            fleetId);
+        await using var rows = await query.ExecuteReaderAsync(cancellationToken);
+        while (await rows.ReadAsync(cancellationToken))
+            members.Add(new FleetMemberSnapshot(rows.GetInt64(0), rows.GetInt64(1), rows.GetInt64(2),
+                rows.GetInt16(3), rows.GetInt16(4), rows.GetBoolean(5), rows.GetBoolean(6), rows.GetBoolean(7),
+                rows.IsDBNull(8) ? null : rows.GetInt64(8)) { FleetId = fleetId });
+        return members;
     }
 
     public async Task<FleetSnapshot?> SnapshotAsync(long fleetId, CancellationToken cancellationToken = default)

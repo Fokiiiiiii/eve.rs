@@ -32,6 +32,8 @@ public abstract class ObjectiveType
 
     public virtual ObjectiveEffect Evaluate(ObjectiveState objective, DomainEvent @event) => ObjectiveEffect.None;
 
+    internal virtual ObjectiveEffect Evaluate(ObjectiveState objective, DomainEvent @event, JsonElement payload) => Evaluate(objective, @event);
+
     /// <summary>The objective has just become the one to do (at the start of the content, or when the one before it was done). A timer schedules its job here.</summary>
     public virtual Task ActivatedAsync(ActivationContext context, CancellationToken cancellationToken) => Task.CompletedTask;
 }
@@ -63,25 +65,44 @@ public sealed class CounterObjective : ObjectiveType
     public override string? TopicOf(JsonElement parameters) =>
         parameters.ValueKind == JsonValueKind.Object && parameters.TryGetProperty("topic", out var topic) ? topic.GetString() : null;
 
-    public override ObjectiveEffect Evaluate(ObjectiveState objective, DomainEvent @event) =>
-        Matches(objective, @event) ? ObjectiveEffect.Advance(Amount(objective, @event)) : ObjectiveEffect.None;
+    public override ObjectiveEffect Evaluate(ObjectiveState objective, DomainEvent @event)
+    {
+        using var document = JsonDocument.Parse(@event.PayloadJson);
+        return Evaluate(objective, @event, document.RootElement);
+    }
 
-    internal static bool Matches(ObjectiveState objective, DomainEvent @event)
+    internal override ObjectiveEffect Evaluate(ObjectiveState objective, DomainEvent @event, JsonElement payload) =>
+        Matches(objective, payload) ? ObjectiveEffect.Advance(Amount(objective, payload)) : ObjectiveEffect.None;
+
+    internal static bool Matches(ObjectiveState objective, JsonElement payload)
     {
         if (!objective.Params.TryGetProperty("where", out var where) || where.ValueKind != JsonValueKind.Object)
         {
             return true;
         }
-        using var document = JsonDocument.Parse(@event.PayloadJson);
-        var payload = document.RootElement;
         foreach (var condition in where.EnumerateObject())
         {
             if (payload.ValueKind != JsonValueKind.Object || !payload.TryGetProperty(condition.Name, out var actual))
             {
                 return false;
             }
-            var wanted = condition.Value.ValueKind == JsonValueKind.Array ? condition.Value.EnumerateArray().ToArray() : [condition.Value];
-            if (!wanted.Any(w => Same(Resolve(w, objective), actual)))
+            if (condition.Value.ValueKind == JsonValueKind.Array)
+            {
+                var matched = false;
+                foreach (var wanted in condition.Value.EnumerateArray())
+                {
+                    if (Same(wanted, actual, objective))
+                    {
+                        matched = true;
+                        break;
+                    }
+                }
+                if (!matched)
+                {
+                    return false;
+                }
+            }
+            else if (!Same(condition.Value, actual, objective))
             {
                 return false;
             }
@@ -89,29 +110,26 @@ public sealed class CounterObjective : ObjectiveType
         return true;
     }
 
-    private static JsonElement Resolve(JsonElement wanted, ObjectiveState objective)
+    private static bool Same(JsonElement wanted, JsonElement actual, ObjectiveState objective)
     {
         if (wanted.ValueKind == JsonValueKind.String)
         {
-            return wanted.GetString() switch
+            switch (wanted.GetString())
             {
-                "$owner" => JsonDocument.Parse(objective.Owner.ToString()).RootElement,
-                "$instance" => JsonDocument.Parse(objective.InstanceId.ToString()).RootElement,
-                _ => wanted,
-            };
+                case "$owner": return actual.ValueKind == JsonValueKind.Number && actual.GetDouble() == objective.Owner;
+                case "$instance": return actual.ValueKind == JsonValueKind.Number && actual.GetDouble() == objective.InstanceId;
+            }
         }
-        return wanted;
+        return wanted.ValueKind == JsonValueKind.Number && actual.ValueKind == JsonValueKind.Number
+            ? wanted.GetDouble() == actual.GetDouble()
+            : wanted.ValueKind == actual.ValueKind && wanted.GetRawText() == actual.GetRawText();
     }
 
-    private static bool Same(JsonElement a, JsonElement b) =>
-        a.ValueKind == JsonValueKind.Number && b.ValueKind == JsonValueKind.Number ? a.GetDouble() == b.GetDouble() : a.ValueKind == b.ValueKind && a.GetRawText() == b.GetRawText();
-
-    private static double Amount(ObjectiveState objective, DomainEvent @event)
+    private static double Amount(ObjectiveState objective, JsonElement payload)
     {
         if (objective.Params.TryGetProperty("amountField", out var field) && field.ValueKind == JsonValueKind.String)
         {
-            using var document = JsonDocument.Parse(@event.PayloadJson);
-            if (document.RootElement.TryGetProperty(field.GetString()!, out var amount) && amount.ValueKind == JsonValueKind.Number)
+            if (payload.TryGetProperty(field.GetString()!, out var amount) && amount.ValueKind == JsonValueKind.Number)
             {
                 return Math.Max(0, amount.GetDouble());
             }
@@ -131,8 +149,14 @@ public sealed class ForbidObjective : ObjectiveType
 
     public override string? TopicOf(JsonElement parameters) => new CounterObjective().TopicOf(parameters);
 
-    public override ObjectiveEffect Evaluate(ObjectiveState objective, DomainEvent @event) =>
-        CounterObjective.Matches(objective, @event) ? ObjectiveEffect.FailContent : ObjectiveEffect.None;
+    public override ObjectiveEffect Evaluate(ObjectiveState objective, DomainEvent @event)
+    {
+        using var document = JsonDocument.Parse(@event.PayloadJson);
+        return Evaluate(objective, @event, document.RootElement);
+    }
+
+    internal override ObjectiveEffect Evaluate(ObjectiveState objective, DomainEvent @event, JsonElement payload) =>
+        CounterObjective.Matches(objective, payload) ? ObjectiveEffect.FailContent : ObjectiveEffect.None;
 }
 
 public sealed class ManualObjective : ObjectiveType

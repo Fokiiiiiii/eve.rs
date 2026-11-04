@@ -394,7 +394,10 @@ public sealed class ContentRuntime
     }
 
     private ObjectiveState StateOf(Row row, ObjectiveRow objective) =>
-        new(row.Info.Id, row.Info.Owner, objective.Index, objective.Id, JsonDocument.Parse(objective.ParamsJson).RootElement.Clone(), objective.Progress, objective.Target, JsonDocument.Parse(row.Info.DataJson).RootElement.Clone());
+        StateOf(row, objective, JsonDocument.Parse(row.Info.DataJson).RootElement.Clone());
+
+    private static ObjectiveState StateOf(Row row, ObjectiveRow objective, JsonElement instanceData) =>
+        new(row.Info.Id, row.Info.Owner, objective.Index, objective.Id, JsonDocument.Parse(objective.ParamsJson).RootElement.Clone(), objective.Progress, objective.Target, instanceData);
 
     private async Task OnEventAsync(EventContext context, CancellationToken cancellationToken)
     {
@@ -411,7 +414,11 @@ public sealed class ContentRuntime
         }
         var instanceIds = new List<long>();
         await using (var command = Sql.Command(context.Connection, context.Transaction, Q("""
-            SELECT DISTINCT instance_id FROM {schema}.objectives WHERE state = 'active' AND topic = $1 AND scope_id = ANY($2) ORDER BY instance_id
+            SELECT i.id FROM {schema}.instances i
+            WHERE i.state = 'active' AND i.id IN (
+                SELECT o.instance_id FROM {schema}.objectives o WHERE o.state = 'active' AND o.topic = $1 AND o.scope_id = ANY($2)
+            )
+            ORDER BY i.id FOR UPDATE OF i
             """), @event.Topic, candidates))
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
         {
@@ -420,20 +427,55 @@ public sealed class ContentRuntime
                 instanceIds.Add(reader.GetInt64(0));
             }
         }
-        foreach (var instanceId in instanceIds)
+        if (instanceIds.Count == 0)
         {
-            var row = await LoadAsync(context.Connection, context.Transaction, instanceId, true, cancellationToken);
-            if (row is null || row.Info.State != "active")
+            return;
+        }
+
+        var instances = new List<(Row Row, List<ObjectiveRow> Objectives)>();
+        await using (var command = Sql.Command(context.Connection, context.Transaction, Q("""
+            SELECT i.id, i.kind, i.definition, i.owner, i.state, i.data::text, i.created_ms, i.expires_ms, i.finished_ms, i.result, i.order_mode, i.on_complete::text, i.on_fail::text,
+                   o.idx, o.id, o.type, o.params::text, o.topic, o.scope_field, o.scope_id, o.target, o.required, o.progress, o.state
+            FROM {schema}.instances i JOIN {schema}.objectives o ON o.instance_id = i.id
+            WHERE i.id = ANY($1) AND i.state = 'active' AND o.state = 'active' AND o.topic = $2
+            ORDER BY i.id, o.idx
+            """), instanceIds.ToArray(), @event.Topic))
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            Row? row = null;
+            List<ObjectiveRow>? objectives = null;
+            while (await reader.ReadAsync(cancellationToken))
             {
-                continue;
+                var instanceId = reader.GetInt64(0);
+                if (row is null || row.Info.Id != instanceId)
+                {
+                    if (row is not null)
+                    {
+                        instances.Add((row, objectives!));
+                    }
+                    var info = new ContentInstance(instanceId, reader.GetString(1), reader.GetString(2), reader.GetInt64(3), reader.GetString(4), reader.GetString(5), reader.GetInt64(6),
+                        reader.IsDBNull(7) ? null : reader.GetInt64(7), reader.IsDBNull(8) ? null : reader.GetInt64(8), reader.IsDBNull(9) ? null : reader.GetString(9));
+                    row = new Row(info, reader.GetString(10), reader.GetString(11), reader.GetString(12));
+                    objectives = [];
+                }
+                objectives!.Add(new ObjectiveRow(reader.GetInt32(13), reader.GetString(14), reader.GetString(15), reader.GetString(16), reader.GetString(17), reader.GetString(18),
+                    reader.GetInt64(19), reader.GetDouble(20), reader.GetBoolean(21), reader.GetDouble(22), reader.GetString(23)));
             }
-            foreach (var objective in (await ObjectivesAsync(context.Connection, context.Transaction, instanceId, cancellationToken)).Where(o => o.State == "active" && o.Topic == @event.Topic))
+            if (row is not null)
+            {
+                instances.Add((row, objectives!));
+            }
+        }
+        foreach (var (row, objectives) in instances)
+        {
+            var instanceData = JsonDocument.Parse(row.Info.DataJson).RootElement.Clone();
+            foreach (var objective in objectives)
             {
                 if (!document.RootElement.TryGetProperty(objective.ScopeField, out var scope) || !scope.TryGetInt64(out var scopeId) || scopeId != objective.ScopeId)
                 {
                     continue;
                 }
-                var effect = _types[objective.Type].Evaluate(StateOf(row, objective), @event);
+                var effect = _types[objective.Type].Evaluate(StateOf(row, objective, instanceData), @event, document.RootElement);
                 if (effect.Fail)
                 {
                     await FinishAsync(context.Connection, context.Transaction, row, "failed", $"objective:{objective.Id}", cancellationToken);

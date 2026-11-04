@@ -655,7 +655,7 @@ def test_a_moon_chunk_is_refused_until_ready_then_fractured_and_completed_and_it
 def test_a_corporation_unanchors_and_scoops_its_control_tower():
     """V24 ship.Drop, posMgr.UnanchorStructure and ship.Scoop walk: reject an online tower, then unanchor, drop and recover its hull."""
     run = uuid.uuid4().hex[:10]
-    with base.connect(f"walk-tower-{run}") as client:
+    with base.connect(f"walk-tower-{run}", timeout=60.0) as client:
         character, ship_id, fitted, _ = arrive(client, RACE, run)
         corporation = dbseed.found_corporation(LEGAL_STATION, LEGAL_SYSTEM, character, run)
         dbseed.join_corporation(character, corporation, DIRECTOR)

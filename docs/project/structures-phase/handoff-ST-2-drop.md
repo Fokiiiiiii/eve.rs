@@ -66,3 +66,13 @@ Serena diagnostics are clean for the new drop authority, timer, scoop backend, a
 ## Focused Actions rerun on 2026-10-24
 
 - Agent test run 238 on `4930fd25` passed 3 of 4 Space cases and the Host Eject case passed 1 of 1. The remaining custody test passed no business assertion because its test session had no `corpid` field; it now reads the pilot's corporation from the authoritative character store. Focused rerun pending.
+
+
+## 2026-11-04 tower walk timeout margin
+
+- Main CI run 1498 timed out during `ship.Drop`; run 1499 on the next main revision timed out during `_undock`, before the unanchor timer or scoop steps. Run 1500 on that revision passed. Both failures were on the test client's 30-second socket timeout: `Client.login` forwards `Client.timeout` to `handshake.connect` (`tools/headless-client/evecli/client.py:35-45`, `handshake.py:62-66`).
+- `tests.test_login_to_character.connect` now accepts a keyword timeout that defaults to 30 seconds; only the tower walk passes 60 seconds. The drop, unanchor refusal/success, scheduler transition, space/inventory mutations, `OnItemChange`, and cargo assertions remain unchanged (`tools/headless-client/tests/test_structures.py:603-743`).
+- Focused live pytest passed twice with PostgreSQL database `eve_p3` through `tools/dev/db-lock.sh`, including once after merging `origin/main`; the CI timeout itself did not reproduce locally. The configured pytest `timeout` options emitted warnings because the plugin is absent in this environment. No test was skipped.
+- Whole-client call paths checked: the menu offers and invokes `UnanchorStructure` (`eve/client/script/ui/services/menusvc.py:1907-1908, 2468-2488`), and moon-mining uses the same menu method (`eve/client/script/ui/inflight/moonmining.py:1013-1018`). Normal scoop checks safety then calls bound `ship.Scoop` (`menusvc.py:3237-3272`); GM grid tools also call menu scoop (`eve/devtools/script/svc_gridutils.py:219-236`). The client’s ship-drop helper calls bound `Drop` (`eve/client/script/util/eveMisc.py:30`). EveJS handles unanchor as a transition returning null (`posMgrService.js:566-584`) and `Drop` returns a dictionary (`shipService.js:1569-1590`).
+- The transient server delay itself was not isolated. The 60-second limit still fails a stalled RPC; it adds headroom to this multi-step live walk without changing its assertions or wire calls.
+- Fix commit `02b716bc` was pushed to `main`; GitHub Actions CI run 1502 completed successfully, including the server-stack/headless-client E2E job and Windows job. No jobs or tests failed.

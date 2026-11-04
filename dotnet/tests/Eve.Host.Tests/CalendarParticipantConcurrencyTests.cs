@@ -55,12 +55,118 @@ public sealed class CalendarParticipantConcurrencyTests
         }
     }
 
+    [PgFact]
+    public async Task Personal_response_and_invite_removal_serialize_without_reviving_a_revoked_invitee()
+    {
+        var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL");
+        Assert.False(string.IsNullOrWhiteSpace(pgUrl));
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(pgUrl!));
+        await CalendarStore.MigrateAsync(source);
+        var store = new CalendarStore(source);
+        var inviteeId = CreatorId + 1;
+        var eventId = await store.CreateEventAsync(
+            new CalendarEventInput(CreatorId, CreatorId, CalendarTags.Personal,
+                DateTime.UtcNow.AddDays(2).ToFileTimeUtc(), 60, "Fleet form-up", "Meet at the undock", 0),
+            [inviteeId]);
+        var ownerSink = new RecordingSink();
+        var ownerSession = new ClientSession(ownerSink) { CharacterId = CreatorId };
+        var inviteeSession = new ClientSession { CharacterId = inviteeId };
+        var sessions = new CharacterSessions();
+        sessions.Enter(CreatorId, ownerSession);
+        sessions.Enter(inviteeId, inviteeSession);
+        var gatedStore = new FirstConcurrentReadStore(store, synchronizeFirstTwoReads: false);
+        IService service = new CalendarMgrService(gatedStore, sessions: sessions);
+        Task<PyValue>? pendingResponse = null;
+
+        try
+        {
+            var inFlightResponse = service.CallAsync(ResponseCall(inviteeSession, eventId, CreatorId,
+                CalendarResponseStates.Accepted)).AsTask();
+            pendingResponse = inFlightResponse;
+            await gatedStore.ResponseReached.WaitAsync(TimeSpan.FromSeconds(10));
+
+            await service.CallAsync(ParticipantsCall(ownerSession, eventId, [], [inviteeId]));
+            gatedStore.ReleaseResponse();
+
+            var rejected = await Assert.ThrowsAsync<MachoWrappedException>(() => inFlightResponse);
+            pendingResponse = null;
+            Assert.Equal("CustomNotify", rejected.Error.UserErrorMessage);
+            Assert.Equal(CalendarResponseStates.Uninvited,
+                Assert.Single(await store.GetResponsesToEventAsync(eventId, CreatorId), row =>
+                    row.CharacterId == inviteeId).Status);
+            Assert.DoesNotContain("OnEventResponseByExternal", NotificationNames(ownerSink));
+
+            var proxy = new CalendarProxyService(store);
+            var detailsError = await Assert.ThrowsAsync<MachoWrappedException>(() => proxy.GetEventDetails(new ServiceCall
+            {
+                Method = "GetEventDetails",
+                Args = [new PyLong(eventId), new PyLong(CreatorId)],
+                Session = inviteeSession,
+            }));
+            Assert.Equal("CustomNotify", detailsError.Error.UserErrorMessage);
+
+            await service.CallAsync(ParticipantsCall(ownerSession, eventId, [inviteeId], []));
+            ownerSink.Packets.Clear();
+            Assert.IsType<PyNone>(await service.CallAsync(ResponseCall(inviteeSession, eventId, CreatorId,
+                CalendarResponseStates.Maybe)));
+            Assert.Contains("OnEventResponseByExternal", NotificationNames(ownerSink));
+
+            await service.CallAsync(ParticipantsCall(ownerSession, eventId, [], [inviteeId]));
+            Assert.Equal(CalendarResponseStates.Uninvited,
+                Assert.Single(await store.GetResponsesToEventAsync(eventId, CreatorId), row =>
+                    row.CharacterId == inviteeId).Status);
+        }
+        finally
+        {
+            gatedStore.ReleaseResponse();
+            if (pendingResponse is not null)
+            {
+                try { await pendingResponse; }
+                catch { }
+            }
+            await using var connection = await source.OpenConnectionAsync();
+            await using var command = new NpgsqlCommand(
+                "DELETE FROM calendar.responses WHERE event_id = $1",
+                connection);
+            command.Parameters.AddWithValue(eventId);
+            await command.ExecuteNonQueryAsync();
+            await using var deleteEvent = new NpgsqlCommand(
+                "DELETE FROM calendar.events WHERE event_id = $1", connection);
+            deleteEvent.Parameters.AddWithValue(eventId);
+            await deleteEvent.ExecuteNonQueryAsync();
+        }
+    }
+
     private static ServiceCall Call(ClientSession session, long eventId, long inviteeId) => new()
     {
         Method = "UpdateEventParticipants",
         Args = [new PyLong(eventId), new PyList([new PyLong(inviteeId)]), new PyList([])],
         Session = session,
     };
+
+    private static ServiceCall ParticipantsCall(
+        ClientSession session, long eventId, long[] add, long[] remove) => new()
+    {
+        Method = "UpdateEventParticipants",
+        Args = [new PyLong(eventId), new PyList(add.Select(id => (PyValue)new PyLong(id)).ToArray()),
+            new PyList(remove.Select(id => (PyValue)new PyLong(id)).ToArray())],
+        Session = session,
+    };
+
+    private static ServiceCall ResponseCall(ClientSession session, long eventId, long ownerId, short response) => new()
+    {
+        Method = "SendEventResponse",
+        Args = [new PyLong(eventId), new PyLong(ownerId), new PyInt(response)],
+        Session = session,
+    };
+
+    private static string[] NotificationNames(RecordingSink sink) => sink.Packets.OfType<PyObject>().Select(packet =>
+    {
+        var fields = Assert.IsType<PyTuple>(packet.Args).Items;
+        Assert.Equal(MachoMessage.Notification, Assert.IsType<PyInt>(fields[0]).Value);
+        var address = Assert.IsType<PyTuple>(Assert.IsType<PyObject>(fields[2]).Args).Items;
+        return Assert.IsType<PyStr>(address[1]).Value;
+    }).ToArray();
 
     private static async Task<bool> CaptureResult(Task<PyValue> call)
     {
@@ -76,10 +182,15 @@ public sealed class CalendarParticipantConcurrencyTests
         }
     }
 
-    private sealed class FirstConcurrentReadStore(ICalendarStore inner) : ICalendarStore
+    private sealed class FirstConcurrentReadStore(ICalendarStore inner, bool synchronizeFirstTwoReads = true) : ICalendarStore
     {
         private readonly TaskCompletionSource _firstTwoReads = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _responseReached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseResponse = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _reads;
+
+        public Task ResponseReached => _responseReached.Task;
+        public void ReleaseResponse() => _releaseResponse.TrySetResult();
 
         public Task<IReadOnlyList<CalendarEvent>> ListMonthAsync(long characterId, long corporationId, long allianceId,
             int month, int year, CancellationToken cancellationToken = default) =>
@@ -99,7 +210,7 @@ public sealed class CalendarParticipantConcurrencyTests
             CancellationToken cancellationToken = default)
         {
             var rows = await inner.GetResponsesToEventAsync(eventId, ownerId, cancellationToken);
-            if (Interlocked.Increment(ref _reads) <= 2)
+            if (synchronizeFirstTwoReads && Interlocked.Increment(ref _reads) <= 2)
             {
                 if (Volatile.Read(ref _reads) == 2) _firstTwoReads.TrySetResult();
                 await _firstTwoReads.Task.WaitAsync(cancellationToken);
@@ -123,8 +234,18 @@ public sealed class CalendarParticipantConcurrencyTests
             IReadOnlyCollection<long> remove, CancellationToken cancellationToken = default) =>
             inner.UpdateParticipantsAsync(eventId, ownerId, add, remove, cancellationToken);
 
-        public Task<bool> SendResponseAsync(long eventId, long ownerId, long characterId, short response,
-            CancellationToken cancellationToken = default) =>
-            inner.SendResponseAsync(eventId, ownerId, characterId, response, cancellationToken);
+        public async Task<bool> SendResponseAsync(long eventId, long ownerId, long characterId, short response,
+            CancellationToken cancellationToken = default)
+        {
+            _responseReached.TrySetResult();
+            await _releaseResponse.Task.WaitAsync(cancellationToken);
+            return await inner.SendResponseAsync(eventId, ownerId, characterId, response, cancellationToken);
+        }
+    }
+
+    private sealed class RecordingSink : IPacketSink
+    {
+        public List<PyValue> Packets { get; } = [];
+        public void Send(PyValue packet) => Packets.Add(packet);
     }
 }

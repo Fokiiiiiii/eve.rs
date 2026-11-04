@@ -7,9 +7,7 @@ using Npgsql;
 namespace Eve.Content;
 
 /// <summary>
-/// The shared runtime for missions, anomalies, incursions and everything else that has objectives. A feature defines content (a <see cref="ContentDefinition"/>: objectives, a
-/// duration, actions), starts instances of it, and lets domain events advance the objectives; the runtime keeps the state in PostgreSQL, ends the content when its objectives are
-/// met or its time is up (a scheduler job), and announces the end as an event (<c>content.&lt;kind&gt;.completed|failed|expired|abandoned</c>) so the feature's own subscribers pay
+/// The shared runtime for objective-based content. It stores instances in PostgreSQL, advances them from domain events, expires deadlines, and publishes events for feature subscribers.
 /// </summary>
 public sealed class ContentRuntime
 {
@@ -60,8 +58,6 @@ public sealed class ContentRuntime
         Migrations.ApplyAsync(source, schema, MigrationSet(), cancellationToken);
 
     private string Q(string text) => Sql.In(_schema, text);
-
-    // ---- registering -------------------------------------------------------------------------------------------------------------------------------
 
     public void RegisterObjectiveType(ObjectiveType type)
     {
@@ -132,8 +128,6 @@ public sealed class ContentRuntime
     }
 
     private static JsonElement ToElement(object? value) => JsonDocument.Parse(JsonSerializer.Serialize(value ?? new { }, Json)).RootElement.Clone();
-
-    // ---- starting ----------------------------------------------------------------------------------------------------------------------------------
 
     /// <summary>
     /// The newest instance of a kind with this unique key, in any state (a finished one too), or null. <see cref="StartAsync"/> makes a new instance when the one with the
@@ -302,7 +296,7 @@ public sealed class ContentRuntime
     }
 
     /// <summary>
-    /// a system): asking again returns the one that exists. The first objective (every objective, for parallel content) is active at once.
+    /// Starts a content instance. A non-null unique key reuses an active instance of the same kind; sequential content activates its first objective, while parallel content activates all objectives.
     /// </summary>
     public async Task<StartResult> StartAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, string definitionId, long owner, object? data = null, string? uniqueKey = null, long? durationMs = null,
@@ -356,8 +350,6 @@ public sealed class ContentRuntime
     private static object Announcement(long id, string kind, string definition, long owner, string? reason, JsonElement data) =>
         new { instanceId = id, kind, definition, owner, reason, data };
 
-    // ---- progress ----------------------------------------------------------------------------------------------------------------------------------
-
     private sealed record Row(ContentInstance Info, string OrderMode, string OnComplete, string OnFail);
 
     private async Task<Row?> LoadAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long id, bool forUpdate, CancellationToken cancellationToken)
@@ -394,7 +386,10 @@ public sealed class ContentRuntime
     }
 
     private ObjectiveState StateOf(Row row, ObjectiveRow objective) =>
-        new(row.Info.Id, row.Info.Owner, objective.Index, objective.Id, JsonDocument.Parse(objective.ParamsJson).RootElement.Clone(), objective.Progress, objective.Target, JsonDocument.Parse(row.Info.DataJson).RootElement.Clone());
+        StateOf(row, objective, JsonDocument.Parse(row.Info.DataJson).RootElement.Clone());
+
+    private static ObjectiveState StateOf(Row row, ObjectiveRow objective, JsonElement instanceData) =>
+        new(row.Info.Id, row.Info.Owner, objective.Index, objective.Id, JsonDocument.Parse(objective.ParamsJson).RootElement.Clone(), objective.Progress, objective.Target, instanceData);
 
     private async Task OnEventAsync(EventContext context, CancellationToken cancellationToken)
     {
@@ -411,7 +406,11 @@ public sealed class ContentRuntime
         }
         var instanceIds = new List<long>();
         await using (var command = Sql.Command(context.Connection, context.Transaction, Q("""
-            SELECT DISTINCT instance_id FROM {schema}.objectives WHERE state = 'active' AND topic = $1 AND scope_id = ANY($2) ORDER BY instance_id
+            SELECT i.id FROM {schema}.instances i
+            WHERE i.state = 'active' AND i.id IN (
+                SELECT o.instance_id FROM {schema}.objectives o WHERE o.state = 'active' AND o.topic = $1 AND o.scope_id = ANY($2)
+            )
+            ORDER BY i.id FOR UPDATE OF i
             """), @event.Topic, candidates))
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
         {
@@ -420,20 +419,55 @@ public sealed class ContentRuntime
                 instanceIds.Add(reader.GetInt64(0));
             }
         }
-        foreach (var instanceId in instanceIds)
+        if (instanceIds.Count == 0)
         {
-            var row = await LoadAsync(context.Connection, context.Transaction, instanceId, true, cancellationToken);
-            if (row is null || row.Info.State != "active")
+            return;
+        }
+
+        var instances = new List<(Row Row, List<ObjectiveRow> Objectives)>();
+        await using (var command = Sql.Command(context.Connection, context.Transaction, Q("""
+            SELECT i.id, i.kind, i.definition, i.owner, i.state, i.data::text, i.created_ms, i.expires_ms, i.finished_ms, i.result, i.order_mode, i.on_complete::text, i.on_fail::text,
+                   o.idx, o.id, o.type, o.params::text, o.topic, o.scope_field, o.scope_id, o.target, o.required, o.progress, o.state
+            FROM {schema}.instances i JOIN {schema}.objectives o ON o.instance_id = i.id
+            WHERE i.id = ANY($1) AND i.state = 'active' AND o.state = 'active' AND o.topic = $2
+            ORDER BY i.id, o.idx
+            """), instanceIds.ToArray(), @event.Topic))
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            Row? row = null;
+            List<ObjectiveRow>? objectives = null;
+            while (await reader.ReadAsync(cancellationToken))
             {
-                continue;
+                var instanceId = reader.GetInt64(0);
+                if (row is null || row.Info.Id != instanceId)
+                {
+                    if (row is not null)
+                    {
+                        instances.Add((row, objectives!));
+                    }
+                    var info = new ContentInstance(instanceId, reader.GetString(1), reader.GetString(2), reader.GetInt64(3), reader.GetString(4), reader.GetString(5), reader.GetInt64(6),
+                        reader.IsDBNull(7) ? null : reader.GetInt64(7), reader.IsDBNull(8) ? null : reader.GetInt64(8), reader.IsDBNull(9) ? null : reader.GetString(9));
+                    row = new Row(info, reader.GetString(10), reader.GetString(11), reader.GetString(12));
+                    objectives = [];
+                }
+                objectives!.Add(new ObjectiveRow(reader.GetInt32(13), reader.GetString(14), reader.GetString(15), reader.GetString(16), reader.GetString(17), reader.GetString(18),
+                    reader.GetInt64(19), reader.GetDouble(20), reader.GetBoolean(21), reader.GetDouble(22), reader.GetString(23)));
             }
-            foreach (var objective in (await ObjectivesAsync(context.Connection, context.Transaction, instanceId, cancellationToken)).Where(o => o.State == "active" && o.Topic == @event.Topic))
+            if (row is not null)
+            {
+                instances.Add((row, objectives!));
+            }
+        }
+        foreach (var (row, objectives) in instances)
+        {
+            var instanceData = JsonDocument.Parse(row.Info.DataJson).RootElement.Clone();
+            foreach (var objective in objectives)
             {
                 if (!document.RootElement.TryGetProperty(objective.ScopeField, out var scope) || !scope.TryGetInt64(out var scopeId) || scopeId != objective.ScopeId)
                 {
                     continue;
                 }
-                var effect = _types[objective.Type].Evaluate(StateOf(row, objective), @event);
+                var effect = _types[objective.Type].Evaluate(StateOf(row, objective, instanceData), @event, document.RootElement);
                 if (effect.Fail)
                 {
                     await FinishAsync(context.Connection, context.Transaction, row, "failed", $"objective:{objective.Id}", cancellationToken);
@@ -491,9 +525,7 @@ public sealed class ContentRuntime
         return false;
     }
 
-    /// <summary>
-    /// active and moved.
-    /// </summary>
+    /// <summary>Adds delta to the named objective and returns whether the objective was active.</summary>
     public async Task<bool> ProgressAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, string objectiveId, double delta = 1, CancellationToken cancellationToken = default)
     {
         var objectives = await ObjectivesAsync(connection, transaction, instanceId, cancellationToken);
@@ -516,8 +548,6 @@ public sealed class ContentRuntime
         await AddProgressAsync(connection, transaction, row, objective, delta, cancellationToken);
         return true;
     }
-
-    // ---- ending ------------------------------------------------------------------------------------------------------------------------------------
 
     /// <summary>Completes the content now, whatever its objectives say (a feature that decides for itself).</summary>
     public Task<bool> CompleteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, string? reason = null, CancellationToken cancellationToken = default) =>
@@ -584,8 +614,6 @@ public sealed class ContentRuntime
         await _bus.PublishAsync(connection, transaction, $"content.{row.Info.Kind}.{outcome}",
             Announcement(row.Info.Id, row.Info.Kind, row.Info.Definition, row.Info.Owner, reason, JsonDocument.Parse(row.Info.DataJson).RootElement.Clone()), $"{row.Info.Kind}:{row.Info.Id}", cancellationToken);
     }
-
-    // ---- looking -----------------------------------------------------------------------------------------------------------------------------------
 
     public async Task<ContentInstance?> GetAsync(long instanceId, CancellationToken cancellationToken = default)
     {

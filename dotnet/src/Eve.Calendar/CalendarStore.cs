@@ -286,9 +286,21 @@ public sealed class CalendarStore : ICalendarStore
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await using var exists = Command(connection, transaction,
-            Q("SELECT 1 FROM {schema}.events WHERE event_id=$1 AND owner_id=$2 AND is_deleted=false FOR UPDATE"),
+            Q("SELECT tag FROM {schema}.events WHERE event_id=$1 AND owner_id=$2 AND is_deleted=false FOR UPDATE"),
             eventId, ownerId);
-        if (await exists.ExecuteScalarAsync(cancellationToken) is null) return false;
+        if (await exists.ExecuteScalarAsync(cancellationToken) is not { } tagValue) return false;
+        if (Convert.ToInt16(tagValue, System.Globalization.CultureInfo.InvariantCulture) == CalendarTags.Personal &&
+            characterId != ownerId)
+        {
+            await using var invitation = Command(connection, transaction,
+                Q("SELECT status FROM {schema}.responses WHERE event_id=$1 AND character_id=$2"),
+                eventId, characterId);
+            var statusValue = await invitation.ExecuteScalarAsync(cancellationToken);
+            if (statusValue is null ||
+                Convert.ToInt16(statusValue, System.Globalization.CultureInfo.InvariantCulture) == CalendarResponseStates.Uninvited)
+                return false;
+        }
+
         await UpsertResponseAsync(connection, transaction, eventId, characterId, response, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return true;

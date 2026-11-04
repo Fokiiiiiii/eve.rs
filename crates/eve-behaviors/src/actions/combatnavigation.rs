@@ -187,7 +187,7 @@ enter_task!(
             Some(_) => DEFAULT_ANCHOR_ORBIT_RANGE,
         };
         // `random.randrange(min, max)`: a whole number from the first up to the last but one
-        let orbit_range = t.world().random_int(min_orbit_range as i64, max_orbit_range as i64 - 1);
+        let Some(orbit_range) = t.random_int(min_orbit_range as i64, max_orbit_range as i64 - 1) else { return };
         let Some(address) = t.required_address("orbitRangeAddress") else { return };
         t.send_blackboard_value(&address, Value::Int(orbit_range));
     }
@@ -361,6 +361,7 @@ mod tests {
             Value::Int(3999),
             "the default range for a role that has none"
         );
+        assert_eq!(rig.last_error, None, "the maximum orbit distance remains exclusive");
         let mut rig = self::rig();
         rig.post(ScopeType::Item, "Role", Value::Str("tackler".into()));
         rig.run(Box::new(GetFleetCombatOrbitRangeByRole), attrs);

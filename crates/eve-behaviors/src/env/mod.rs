@@ -77,17 +77,34 @@ pub trait Random {
     /// `random.random()`: a number of `[0, 1)`.
     fn random(&mut self) -> f64;
 
+    /// `random.getrandbits(k)`: an unbiased integer from `[0, 2^k)`, for `k` through 64.
+    fn random_bits(&mut self, bits: u32) -> u64;
+
     /// `random.uniform(a, b)`.
     fn random_uniform(&mut self, a: f64, b: f64) -> f64 {
         a + (b - a) * self.random()
     }
 
     /// `random.randint(a, b)`: both ends included.
-    fn random_int(&mut self, a: i64, b: i64) -> i64 {
-        if b < a {
-            return a;
+    fn random_int(&mut self, a: i64, b: i64) -> Result<i64, RandomRangeError> {
+        let width = b as i128 - a as i128 + 1;
+        if width <= 0 {
+            return Err(RandomRangeError { start: a, stop: b as i128 + 1, width });
         }
-        a + (self.random() * (b - a + 1) as f64).floor() as i64
+
+        let offset = if width < (1i128 << 53) {
+            (self.random() * width as f64).floor() as i128
+        } else {
+            let width = width as u128;
+            let bits = u128::BITS - (width - 1).leading_zeros();
+            loop {
+                let candidate = self.random_bits(bits) as u128;
+                if candidate < width {
+                    break candidate as i128;
+                }
+            }
+        };
+        Ok((a as i128 + offset) as i64)
     }
 
     /// `random.choice`: the index of one of `len` things (`len` is not 0).
@@ -95,6 +112,22 @@ pub trait Random {
         ((self.random() * len as f64).floor() as usize).min(len.saturating_sub(1))
     }
 }
+
+/// Python's `ValueError` for an empty `randrange(start, stop)` interval.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RandomRangeError {
+    start: i64,
+    stop: i128,
+    width: i128,
+}
+
+impl std::fmt::Display for RandomRangeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ValueError: empty range for randrange() ({}, {}, {})", self.start, self.stop, self.width)
+    }
+}
+
+impl std::error::Error for RandomRangeError {}
 
 /// The world a behavior tree acts in.
 pub trait World: Random + Ballpark + Dogma + Entities + Inventory + Universe + Logging + Spawning {}
@@ -111,17 +144,25 @@ impl NullWorld {
     pub fn new(seed: u64) -> Self {
         Self { state: seed }
     }
-}
 
-impl Random for NullWorld {
-    fn random(&mut self) -> f64 {
+    fn next_u64(&mut self) -> u64 {
         // splitmix64: any seed (0 too) gives a good sequence
         self.state = self.state.wrapping_add(0x9E37_79B9_7F4A_7C15);
         let mut z = self.state;
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
         z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^= z >> 31;
-        (z >> 11) as f64 / (1u64 << 53) as f64
+        z ^ (z >> 31)
+    }
+}
+
+impl Random for NullWorld {
+    fn random(&mut self) -> f64 {
+        (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
+    }
+
+    fn random_bits(&mut self, bits: u32) -> u64 {
+        assert!(bits <= 64);
+        if bits == 0 { 0 } else { self.next_u64() >> (64 - bits) }
     }
 }
 
@@ -151,10 +192,60 @@ mod tests {
     #[test]
     fn a_random_int_includes_both_ends_and_a_random_index_stays_in_the_list() {
         let mut w = TestWorld::with_numbers(&[0.0, 0.999_999]);
-        assert_eq!(w.random_int(3, 5), 3);
-        assert_eq!(w.random_int(3, 5), 5);
+        assert_eq!(w.random_int(3, 5), Ok(3));
+        assert_eq!(w.random_int(3, 5), Ok(5));
         let mut w = TestWorld::with_numbers(&[0.999_999_9]);
         assert_eq!(w.random_index(4), 3);
         assert_eq!(seconds_to_ticks(1.5), 15_000_000);
+    }
+
+    #[test]
+    fn a_random_int_reports_python_empty_range_details_without_drawing() {
+        let mut w = TestWorld::with_numbers(&[0.5]);
+        assert_eq!(
+            w.random_int(2, 1).unwrap_err().to_string(),
+            "ValueError: empty range for randrange() (2, 2, 0)"
+        );
+        assert_eq!(w.next, 0);
+
+        assert_eq!(
+            w.random_int(i64::MAX, i64::MIN).unwrap_err().to_string(),
+            "ValueError: empty range for randrange() (9223372036854775807, -9223372036854775807, -18446744073709551614)"
+        );
+        assert_eq!(w.next, 0);
+    }
+
+    #[test]
+    fn a_random_int_includes_negative_and_singleton_boundary_values() {
+        let mut w = TestWorld::with_numbers(&[0.0, 0.999_999_9, 0.5]);
+        assert_eq!(w.random_int(-5, -2), Ok(-5));
+        assert_eq!(w.random_int(-5, -2), Ok(-2));
+        assert_eq!(w.random_int(i64::MAX, i64::MAX), Ok(i64::MAX));
+
+        let mut w = TestWorld::with_numbers(&[0.0]);
+        assert_eq!(w.random_int(i64::MIN, i64::MIN), Ok(i64::MIN));
+    }
+
+    #[test]
+    fn wide_random_ints_use_integer_bits_and_reject_the_biased_tail() {
+        let mut below = TestWorld::with_numbers(&[0.5]);
+        assert_eq!(below.random_int(0, (1i64 << 53) - 2), Ok((1i64 << 52) - 1));
+        assert_eq!(below.next, 1);
+
+        let mut at = TestWorld::with_integer_values(&[1u64 << 52]);
+        assert_eq!(at.random_int(0, (1i64 << 53) - 1), Ok(1i64 << 52));
+        assert_eq!(at.next, 0);
+
+        let mut above = TestWorld::with_integer_values(&[u64::MAX, 1u64 << 53]);
+        assert_eq!(above.random_int(0, 1i64 << 53), Ok(1i64 << 53));
+        assert_eq!(above.next_integer, 2, "the out-of-range 54-bit draw was rejected");
+    }
+
+    #[test]
+    fn a_random_int_spans_the_full_i64_range_without_signed_overflow() {
+        let mut w = TestWorld::with_integer_values(&[0, u64::MAX]);
+        assert_eq!(w.random_int(i64::MIN, i64::MAX), Ok(i64::MIN));
+        assert_eq!(w.random_int(i64::MIN, i64::MAX), Ok(i64::MAX));
+        assert_eq!(w.next_integer, 2);
     }
 }

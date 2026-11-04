@@ -26,7 +26,7 @@ impl ActivateModuleTypeOnTarget {
         if max_cycles <= min_cycles {
             return None;
         }
-        Some(t.world().random_int(min_cycles, max_cycles - 1))
+        t.random_int(min_cycles, max_cycles - 1)
     }
 }
 

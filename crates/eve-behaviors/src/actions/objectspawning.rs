@@ -26,7 +26,7 @@ impl SpawnSpaceObjectsFromDungeon {
             let type_id = t.required_int(&format!("object{n}TypeIdForReplacing"))?;
             let min = t.required_int(&format!("object{n}MinCount"))?;
             let max = t.required_int(&format!("object{n}MaxCount"))?;
-            let max_count = t.world().random_int(min, max);
+            let max_count = t.random_int(min, max)?;
             let type_list_id = t.required_int(&format!("eveTypeList{n}"))?;
             let entry = Replacement { type_id, count: 0, max_count, type_list_id };
             match replaced.iter_mut().find(|r| r.type_id == type_id) {
@@ -252,5 +252,22 @@ mod tests {
             calls[0]
         );
         assert!(calls[1].starts_with("add_fake_location(700, "), "{}", calls[1]);
+    }
+
+    #[test]
+    fn a_reversed_replacement_count_fails_before_spawning_objects() {
+        let mut rig = rig();
+        let attrs = Attrs::new()
+            .with("object1TypeIdForReplacing", 501i64)
+            .with("object1MinCount", 2i64)
+            .with("object1MaxCount", 1i64);
+        assert_eq!(rig.run(Box::new(SpawnSpaceObjectsFromDungeon), attrs), Status::Failure);
+        assert_eq!(
+            rig.last_error,
+            Some(crate::tree::BehaviorError::Task(
+                "ValueError: empty range for randrange() (2, 2, 0)".to_string()
+            ))
+        );
+        assert!(rig.world.take_calls().is_empty(), "no objects were spawned");
     }
 }

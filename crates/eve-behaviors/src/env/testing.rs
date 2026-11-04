@@ -42,6 +42,8 @@ pub struct TestWorld {
     pub calls: Vec<String>,
     numbers: Vec<f64>,
     pub next: usize,
+    integer_values: Vec<u64>,
+    pub(crate) next_integer: usize,
     pub balls: HashMap<i64, Ball>,
     pub slims: HashMap<i64, SlimItem>,
     pub bubbles: HashMap<i64, Vec<i64>>,
@@ -195,10 +197,20 @@ impl TestWorld {
         Self { numbers: numbers.to_vec(), ..Self::default() }
     }
 
+    pub fn with_integer_values(values: &[u64]) -> Self {
+        Self { integer_values: values.to_vec(), ..Self::default() }
+    }
+
     /// The numbers the dice answer from, from the start.
     pub fn set_numbers(&mut self, numbers: &[f64]) {
         self.numbers = numbers.to_vec();
         self.next = 0;
+    }
+
+    /// The bit strings the dice answer from, from the start.
+    pub fn set_integer_values(&mut self, values: &[u64]) {
+        self.integer_values = values.to_vec();
+        self.next_integer = 0;
     }
 
     pub fn take_calls(&mut self) -> Vec<String> {
@@ -223,6 +235,18 @@ impl Random for TestWorld {
         let value = self.numbers.get(self.next).or(self.numbers.last()).copied().unwrap_or(0.0);
         self.next += 1;
         value
+    }
+
+    fn random_bits(&mut self, bits: u32) -> u64 {
+        assert!(bits <= 64);
+        let value =
+            self.integer_values.get(self.next_integer).or(self.integer_values.last()).copied().unwrap_or(0);
+        self.next_integer += 1;
+        match bits {
+            0 => 0,
+            64 => value,
+            _ => value & ((1u64 << bits) - 1),
+        }
     }
 }
 

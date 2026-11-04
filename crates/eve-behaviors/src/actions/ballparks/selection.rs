@@ -33,7 +33,7 @@ impl SelectTargetToAnalyzeAction {
         let ignored_types = t.required("ignoredTypes")?;
         let should_ignore_mobile_targets = t.required("shouldIgnoreMobileTargets")?;
         while !target_candidates.is_empty() {
-            let index = t.world().random_int(0, target_candidates.len() as i64 - 1) as usize;
+            let index = t.random_int(0, target_candidates.len() as i64 - 1)? as usize;
             let ball_id = target_candidates.remove(index);
             let Some(slim) = t.world().slim_item(ball_id) else { continue };
             if in_collection(t, slim.category_id, &ignored_categories)?
@@ -170,7 +170,7 @@ impl GetItemIdByTypeId {
         let my_ball = get_my_ball(t)?;
         let mut items_in_bubble = t.world().items_in_bubble_of(my_ball.id);
         while !items_in_bubble.is_empty() {
-            let index = t.world().random_int(0, items_in_bubble.len() as i64 - 1) as usize;
+            let index = t.random_int(0, items_in_bubble.len() as i64 - 1)? as usize;
             let ball_id = items_in_bubble.remove(index);
             let Some(slim) = t.world().slim_item(ball_id) else { continue };
             if !in_collection(t, slim.type_id, type_ids)? {

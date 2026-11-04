@@ -205,6 +205,57 @@ public sealed class ReprocessingHostTests : IAsyncLifetime
         }
     }
 
+    [PgFact]
+    public async Task Reprocess_rejects_personal_output_targets_the_client_cannot_select_without_mutation_or_item_notices()
+    {
+        var host = await HostComposition.BuildAsync(Settings());
+        try
+        {
+            await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url));
+            var characters = new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA"));
+            var character = await InsertPilotAsync(source, characters);
+            var items = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
+            var wallets = new WalletTransactions(source, Schema("EVE_WALLET_SCHEMA"));
+            var balances = new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA"));
+            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            long input;
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await wallets.EnsureAsync(connection, transaction, character);
+                await wallets.AdjustAsync(connection, transaction, character, 100_000m, 0, 0,
+                    "invalid reprocessing target test funds", now, $"reprocess-invalid-target:{Guid.NewGuid():N}");
+                input = await items.CreateAsync(connection, transaction,
+                    new NewItem(Veldspar, character, StationId, ItemFlags.Hangar, 100));
+                await transaction.CommitAsync();
+            }
+
+            var beforeBalance = (await balances.GetAsync(character))!.Isk;
+            var service = host.Registry.Lookup("reprocessingSvc") ?? throw new InvalidOperationException("reprocessingSvc is not registered");
+            var targets = new (PyValue Location, PyValue Flag)[]
+            {
+                (new PyLong(StationId), new PyInt(ItemFlags.Cargo)),
+                (new PyLong(StationId + 1), new PyInt(ItemFlags.Hangar)),
+                (PyNone.Instance, new PyInt(ItemFlags.Hangar)),
+                (new PyLong(StationId), PyNone.Instance),
+            };
+            foreach (var (location, flag) in targets)
+            {
+                var capture = new Capture();
+                await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.CallAsync(PlantCall(Session(character, capture), "Reprocess",
+                    new PyList([new PyLong(input)]), new PyLong(StationId), new PyLong(character), location, flag)));
+                Assert.Empty(capture.Packets);
+                Assert.Equal(100, (await items.GetAsync(input))!.Quantity);
+                Assert.DoesNotContain(await items.InLocationAsync(StationId, character, default), item => item.TypeId == Tritanium);
+                Assert.Equal(beforeBalance, (await balances.GetAsync(character))!.Isk);
+            }
+        }
+        finally
+        {
+            await host.ShutdownAsync();
+        }
+    }
+
     private static ServiceCall PlantCall(ClientSession session, string method, params PyValue[] args) => new()
     {
         Method = "MachoBindObject",

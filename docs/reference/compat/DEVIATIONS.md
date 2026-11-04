@@ -3345,21 +3345,30 @@ Status: the server side is implemented for NPC stations. The client has not been
   here); the wiki gives 30%–50% by station equipment (EVE University, "Refining"). Skill bonuses are the SDE's `refiningYieldMutator`
   (dogma attribute 379): Reprocessing (3385) 3% per level, Reprocessing Efficiency (3389), the ore skill named by the item's
   `reprocessingSkillType` (attribute 790), and Scrapmetal Processing (12196) for items without one; the wiki gives 3%, 2% and 2% per
-  level. The tax is the station's `reprocessingStationsTake` (0.05), reduced by the standing toward the station's owner to zero at
-  6.67 (wiki). The reduced rate is rounded to two decimals, as `round2` in `reprocessingRuntime.js` does.
+  level. The tax keeps the SDE `reprocessingStationsTake` and falls to zero at standing 6.67. It uses the higher of a recorded personal
+  standing after the eligible Connections, Criminal Connections or Diplomacy bonus and the player's corporation standing; a missing
+  personal standing row is ineligible for social-skill bonuses (EVE University, [Reprocessing](https://wiki.eveuniversity.org/Reprocessing),
+  [NPC standings](https://wiki.eveuniversity.org/NPC_standings)). The reduced rate is rounded to two decimals, as `round2` does.
 - **Quotes and reprocess.** A quote processes whole portions (`types.portionSize`); the leftovers stay. Each material yields its
   quantity times the portions times the efficiency, rounded down after removing binary noise (`floorAfterNormalizing` in
   `reprocessingRuntime.js`). The tax is charged on the yield at the material's adjusted price. `Reprocess` consumes the portions in
   one transaction with the output and the tax; the tax is a wallet entry with ref type 127 (`reprocessing_tax`, CCP eve-glue
   `JournalRefTypeEnumV2`). The answer is `[processedItemIDs, {typeID: quantity}]`, as `reprocessingService.js` returns it.
 - **Client contract.** `GetQuotes(itemIDs, activeShipID)` answers `[tax, {typeID: efficiency, None: fallback}, {itemID: quote}]`
-  (`reprocessingService.js` `Handle_GetQuotes`; the client reads `quotes.py:19-21`). The quote fields are the reference's.
+  (`reprocessingService.js` `Handle_GetQuotes`; `reprocessing/ui/quotes.py:18-29`). The client reuses that tax in the controller and
+  window (`reprocessing/ui/controller.py:101-103`, `reprocessing/ui/reprocessingWnd.py:619-621,822-824`). `Reprocess` returns
+  `[processedItemIDs, {typeID: quantity}]`; its controller unpacks the two values (`reprocessing/ui/controller.py:77-82`).
+  The output selector offers `(None, None)`, the docked station hangar, and divisions from the office at that station
+  (`reprocessing/ui/reprocessingWnd.py:343-366`); `itemReprocessor.py:17-46,69-70` derives the owner and sends those values.
 
 Differences and cuts, all listed:
 1. Sources: the caller's items rooted at this station: its hangar, its containers and the cargo of its ships (`RootAtStationAsync`).
    Corporation hangars are not quoted.
-2. Outputs: the sample item's place by default (EVE.js does the same); another personal place must be rooted at this station. Corporation
-   division output requires an active office at this station and the caller's scoped Hangar Query role; yielded items are owned by the corporation.
+2. Outputs: `(None, None)` keeps the sample item's owner/location/flag; explicit personal output is limited to the docked station hangar,
+   matching the client selector. Other personal flag/location pairs are refused before opening the mutation transaction. Corporation division
+   output requires an active office at this station, a selectable division flag and the caller's scoped Hangar Query access; yielded items are
+   owned by the corporation. EveJS 261028.1 uses the same-location default and checks the station hangar, office and accessible division
+   (`server/src/services/reprocessing/reprocessingRuntime.js:949-1048`).
 3. Structures: refused with a named notice (`Reprocessing is available in the NPC station you are docked in.`). The structure rigs and
    profiles of `reprocessingRuntime.js` are not built.
 4. Implants: the implants plugged in the character (flags 89 to 98) add their refining yield mutator to the skill multiplier of the
@@ -3372,10 +3381,18 @@ Differences and cuts, all listed:
 6. The active ship is refused on the server: the character's `ShipId` is checked (the reference checks it in `reprocessItems`).
 7. Randomized outputs (`typeHasRandomizedMaterials`) are not produced; an item with only randomized materials yields nothing here. Not built.
 8. Adjusted prices: from ESI (DEVIATIONS "Reprocessing", item 7). A type with no stored price has a tax of zero on its materials.
-9. The standing is the higher of the character's own and its corporation's standing toward the owner (the wiki's rule).
+9. Tax uses the higher of the effective eligible personal standing and raw player-corporation standing toward the NPC station owner. The
+   station owner's faction comes from its SDE record; the trained social skill level comes from `PgSkillStore`, and `AgentAccessRule`
+   selects Connections, Criminal Connections, Diplomacy or no bonus for that faction and standing. Without a personal standing relation,
+   the personal skill bonus is not applied. This follows the wiki's no-standing eligibility rule and the client's `standingUtil.py:14-42`
+   formula; no SDE base tax or wire field changed.
 10. Notices: a consumed stack is announced as `OnItemChange` with quantity 0 (a removed row) or with its new size; an output is announced
    as a new row. The same convention as the direct trade (DEVIATIONS "Direct trade"). Not checked against a client capture.
 11. `GetQuotes` skips items the station cannot reprocess (no materials, fewer than one portion) rather than answering a quote with an error.
+12. EveJS 261028.1's reprocessing context reads `standingRuntime.resolveBestStandingValue` (`server/src/services/reprocessing/reprocessingRuntime.js:355-411`),
+    which selects a personal standing source ahead of a corporation source (`server/src/services/character/standingRuntime.js:882-951`),
+    and `getStationTaxRate` uses that raw value (`server/src/services/reprocessing/reprocessingRuntime.js:536-586`). Eve.rs follows the wiki's
+    higher-standing rule and applies the eligible personal social skill because that is the stated NPC reprocessing-tax mechanic.
 
 
 ## Corporation station door (corpStationMgr, 37a)

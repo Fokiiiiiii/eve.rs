@@ -794,20 +794,58 @@ mod tests {
     }
 
     #[test]
-    fn active_criminal_flag_adds_a_sentry_target() {
+    fn active_criminal_flag_resets_once_without_duplicate_subscriptions_or_target_work() {
         let attrs = Attrs::new().with("combatTargetsAddress", item("Combat"));
         let mut rig = Rig::new();
         rig.world.solar_system = Some(30000142);
         rig.world.add_ball(1, [0.0; 3], 2).new_bubble_id = 3;
         rig.world.add_ball(40, [0.0; 3], 1).new_bubble_id = 3;
         rig.run(Box::new(MonitorSecurityStatusLoss::default()), attrs);
-        tell(
-            &mut rig,
-            30000142,
-            crate::events::message::CRIMINAL_FLAG_ACTIVE,
-            &[Value::Int(1), Value::Int(40)],
-        );
+
+        assert_eq!(rig.shared.events.subscribers(30000142, SEC_STATUS_LOST_EVENT).len(), 1);
+        assert_eq!(rig.shared.events.subscribers(30000142, CRIMINAL_FLAG_ACTIVE).len(), 1);
+
+        let resets_before = rig.ctx.statistics.reset_requests;
+        tell(&mut rig, 30000142, CRIMINAL_FLAG_ACTIVE, &[Value::Int(1), Value::Int(40)]);
         assert_eq!(combat_set(&mut rig), Value::Set(vec![Value::Int(40)]));
+        assert_eq!(rig.ctx.statistics.reset_requests, resets_before + 1);
+
+        rig.tick().unwrap();
+        assert_eq!(rig.shared.events.subscribers(30000142, SEC_STATUS_LOST_EVENT).len(), 1);
+        let active_observers = rig.shared.events.subscribers(30000142, CRIMINAL_FLAG_ACTIVE);
+        assert_eq!(active_observers.len(), 1, "{active_observers:?}");
+        assert_eq!(rig.ctx.statistics.reset_requests, resets_before + 2);
+        let resets_after_reset = rig.ctx.statistics.reset_requests;
+
+        for _ in 0..2 {
+            tell(&mut rig, 30000142, CRIMINAL_FLAG_ACTIVE, &[Value::Int(1), Value::Int(40)]);
+            assert_eq!(combat_set(&mut rig), Value::Set(vec![Value::Int(40)]));
+            assert_eq!(rig.ctx.statistics.reset_requests, resets_after_reset);
+        }
+    }
+
+    #[test]
+    fn cleaning_up_an_active_security_status_monitor_removes_both_system_observers() {
+        let attrs = Attrs::new().with("combatTargetsAddress", item("Combat"));
+        let mut rig = Rig::new();
+        rig.post(ScopeType::Item, "Combat", Value::None);
+        rig.world.solar_system = Some(30000142);
+        rig.world.add_ball(1, [0.0; 3], 2).new_bubble_id = 3;
+        rig.world.add_ball(40, [0.0; 3], 1).new_bubble_id = 3;
+        rig.run(Box::new(MonitorSecurityStatusLoss::default()), attrs);
+
+        assert_eq!(rig.shared.events.subscribers(30000142, SEC_STATUS_LOST_EVENT).len(), 1);
+        assert_eq!(rig.shared.events.subscribers(30000142, CRIMINAL_FLAG_ACTIVE).len(), 1);
+        let resets_before = rig.ctx.statistics.reset_requests;
+
+        rig.clean_up_task();
+        assert!(rig.shared.events.subscribers(30000142, SEC_STATUS_LOST_EVENT).is_empty());
+        assert!(rig.shared.events.subscribers(30000142, CRIMINAL_FLAG_ACTIVE).is_empty());
+
+        tell(&mut rig, 30000142, SEC_STATUS_LOST_EVENT, &[Value::Int(1), Value::Int(40)]);
+        tell(&mut rig, 30000142, CRIMINAL_FLAG_ACTIVE, &[Value::Int(1), Value::Int(40)]);
+        assert_eq!(combat_set(&mut rig), Value::None);
+        assert_eq!(rig.ctx.statistics.reset_requests, resets_before);
     }
 
     #[test]

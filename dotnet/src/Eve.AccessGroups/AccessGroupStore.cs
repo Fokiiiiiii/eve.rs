@@ -179,7 +179,7 @@ public sealed partial class AccessGroupStore
             return Changed(groupId, group, before, members, [who.CharacterId], AccessGroupChanges.MemberAdded, failures);
         }, token);
 
-    /// <summary>Removes entries. A manager removes member or blocked entries only. Answers the refused ids with the reason.</summary>
+    /// <summary>Removes entries. A manager removes member or blocked entries and its own manager entry. Answers refusals by id and reason.</summary>
     public Task<GroupMutation<IReadOnlyList<MemberFailure>>> DeleteMembersAsync(Affiliation who, long groupId, IReadOnlyList<long> memberIds,
         CancellationToken token = default) =>
         InTransactionAsync(groupId, async (connection, tx) =>
@@ -192,7 +192,7 @@ public sealed partial class AccessGroupStore
             foreach (var memberId in memberIds.Distinct())
             {
                 if (!membersById.TryGetValue(memberId, out var current)) { failures.Add(new(memberId, "NotAMember")); continue; }
-                if (!AccessRules.MayRemove(role, current.Type)) { failures.Add(new(memberId, "NotAllowed")); continue; }
+                if (!AccessRules.MayRemove(role, current.Type, who.CharacterId == memberId)) { failures.Add(new(memberId, "NotAllowed")); continue; }
                 await Execute(connection, tx, $"DELETE FROM {_schema}.members WHERE group_id=$1 AND member_id=$2", token, groupId, memberId);
                 await LogAsync(connection, tx, groupId, who.CharacterId, AccessGroupChanges.MemberRemoved, memberId, (int)current.Type, -1, null, token);
                 membersById.Remove(memberId);
@@ -203,7 +203,8 @@ public sealed partial class AccessGroupStore
         }, token);
 
     /// <summary>
-    /// Changes the membership type of entries. An admin sets any type; a manager sets member or blocked on member or blocked entries.
+    /// Changes the membership type of entries. An admin sets any type; a manager sets member or blocked on member or blocked entries and
+    /// may demote its own manager entry.
     /// Entries already of that type are left alone.
     /// </summary>
     public Task<GroupMutation<IReadOnlyList<MemberFailure>>> ChangeMembershipTypesAsync(Affiliation who, long groupId, IReadOnlyList<long> memberIds,
@@ -219,7 +220,7 @@ public sealed partial class AccessGroupStore
             {
                 if (!membersById.TryGetValue(memberId, out var current)) { failures.Add(new(memberId, "NotAMember")); continue; }
                 if (current.Type == type) continue;
-                if (!AccessRules.ValidForKind(current.Kind, type) || !AccessRules.MayChange(role, current.Type, type))
+                if (!AccessRules.ValidForKind(current.Kind, type) || !AccessRules.MayChange(role, current.Type, type, who.CharacterId == memberId))
                 {
                     failures.Add(new(memberId, "NotAllowed"));
                     continue;

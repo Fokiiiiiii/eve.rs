@@ -169,6 +169,178 @@ public partial class HostServerTests
         }
     }
 
+    [PgFact]
+    public async Task Owner_group_manager_can_change_or_remove_own_manager_entry_over_RPC()
+    {
+        const long adminId = 90000001;
+        const long managerId = 90000004;
+        const long otherManagerId = 90000005;
+        const long memberId = 90000006;
+        const long adminCorpId = 98000001;
+        const long managerCorpId = 98000004;
+
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = Npgsql.NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
+        var schema = $"ag_self_{Guid.NewGuid():N}"[..20];
+        try
+        {
+            await AccessGroupStore.MigrateAsync(source, schema);
+            var store = new AccessGroupStore(source, schema, () => FixedNowMs);
+            var adminAffiliation = new Affiliation(adminId, adminCorpId, 0);
+            var managerAffiliation = new Affiliation(managerId, managerCorpId, 0);
+            var protectedGroup = (await store.CreateAsync(adminAffiliation, "Protected", "")).Result.GroupId;
+            await store.AddMembersAsync(adminAffiliation, protectedGroup,
+            [
+                new NewMember(managerId, MemberKind.Character, MembershipType.Manager),
+                new NewMember(otherManagerId, MemberKind.Character, MembershipType.Manager),
+                new NewMember(memberId, MemberKind.Character, MembershipType.Member),
+            ]);
+
+            async Task<long> CreateManagerGroup(string name)
+            {
+                var groupId = (await store.CreateAsync(adminAffiliation, name, "")).Result.GroupId;
+                await store.AddMembersAsync(adminAffiliation, groupId,
+                    [new NewMember(managerId, MemberKind.Character, MembershipType.Manager)]);
+                return groupId;
+            }
+
+            var demoteGroup = await CreateManagerGroup("Self demotion");
+            var blockGroup = await CreateManagerGroup("Self block");
+            var removeGroup = await CreateManagerGroup("Self removal");
+
+            var sessions = new CharacterSessions();
+            var pilots = new Dictionary<long, (long CharacterId, long CorporationId)>
+            {
+                [101] = (adminId, adminCorpId),
+                [102] = (managerId, managerCorpId),
+            };
+            Start(
+                configure: registry => registry.Register(new OwnerGroupManagerService(
+                    store, _ => ValueTask.FromResult<MemberKind?>(MemberKind.Character), sessions)),
+                sessionOpened: session =>
+                {
+                    var pilot = pilots[session.SessionId];
+                    session.CharacterId = pilot.CharacterId;
+                    session.Set("corpid", new PyInt((int)pilot.CorporationId));
+                    session.Set("allianceid", new PyInt(0));
+                    sessions.Enter(pilot.CharacterId, session);
+                });
+
+            async Task<(TestFront Front, SessionOpen Open)> OpenPilot(ulong sessionId, uint userId)
+            {
+                var front = await Handshaken(await ConnectAsync());
+                var open = Open(sessionId, userId);
+                await front.SendAsync(open);
+                Assert.IsType<Send>(await front.ReceiveAsync());
+                return (front, open);
+            }
+
+            var (adminFront, adminOpen) = await OpenPilot(101, 42);
+            var (managerFront, managerOpen) = await OpenPilot(102, 43);
+            uint callId = 1;
+
+            async Task DeniedEntry(string method, long targetId, MembershipType? targetType = null)
+            {
+                var beforeMembers = await store.MembersAsync(adminAffiliation, protectedGroup);
+                var beforeLogs = await store.LogsAsync(adminAffiliation, protectedGroup);
+                var reply = targetType is { } type
+                    ? await OwnerGroupCall(managerFront, managerOpen, callId++, method,
+                        new PyLong(protectedGroup), new PyList([new PyLong(targetId)]), new PyInt((int)type))
+                    : await OwnerGroupCall(managerFront, managerOpen, callId++, method,
+                        new PyLong(protectedGroup), new PyList([new PyLong(targetId)]));
+                AssertOwnerGroupMemberFailure(reply, targetId, "NotAllowed");
+                Assert.Equal(beforeMembers, await store.MembersAsync(adminAffiliation, protectedGroup));
+                Assert.Equal(beforeLogs, await store.LogsAsync(adminAffiliation, protectedGroup));
+            }
+
+            await DeniedEntry("UpdateMembershipTypes", otherManagerId, MembershipType.Member);
+            await DeniedEntry("UpdateMembershipTypes", adminId, MembershipType.Excluded);
+            await DeniedEntry("DeleteMembers", otherManagerId);
+            await DeniedEntry("DeleteMembers", adminId);
+            await DeniedEntry("UpdateMembershipTypes", managerId, MembershipType.Admin);
+
+            async Task AssertSuccessAndNotifications(long groupId, int actionId, int? newType)
+            {
+                var beforeLogs = await store.LogsAsync(adminAffiliation, groupId);
+                Send reply;
+                if (newType is { } type)
+                    reply = await OwnerGroupCall(managerFront, managerOpen, callId++, "UpdateMembershipTypes",
+                        new PyLong(groupId), new PyList([new PyLong(managerId)]), new PyInt(type));
+                else
+                    reply = await OwnerGroupCall(managerFront, managerOpen, callId++, "DeleteMembers",
+                        new PyLong(groupId), new PyList([new PyLong(managerId)]));
+
+                AssertOwnerGroupSuccess(reply);
+                var codes = actionId == AccessGroupChanges.MemberRemoved
+                    ? new[] { AccessGroupChanges.MemberRemoved, AccessGroupChanges.ChangedForListener }
+                    : new[] { AccessGroupChanges.MemberTypeChanged, AccessGroupChanges.ChangedForListener };
+                AssertOwnerGroupNotification(Assert.IsType<Send>(await managerFront.ReceiveAsync()), groupId, codes);
+                AssertOwnerGroupNotification(Assert.IsType<Send>(await adminFront.ReceiveAsync()), groupId, codes);
+
+                var members = await store.MembersAsync(adminAffiliation, groupId);
+                if (newType is { } savedType)
+                    Assert.Contains(members, member => member.MemberId == managerId && (int)member.Type == savedType);
+                else
+                    Assert.DoesNotContain(members, member => member.MemberId == managerId);
+
+                var logs = await store.LogsAsync(adminAffiliation, groupId);
+                Assert.Equal(beforeLogs.Count + 1, logs.Count);
+                var log = Assert.Single(logs, entry => entry.CharacterId == managerId);
+                Assert.Equal(actionId, log.ActionId);
+                Assert.Equal(managerId, log.OwnerId);
+                Assert.Equal((int?)MembershipType.Manager, log.OldType);
+                Assert.Equal<int?>(newType ?? -1, log.NewType);
+            }
+
+            await AssertSuccessAndNotifications(demoteGroup, AccessGroupChanges.MemberTypeChanged, (int)MembershipType.Member);
+            await AssertSuccessAndNotifications(blockGroup, AccessGroupChanges.MemberTypeChanged, (int)MembershipType.Excluded);
+            await AssertSuccessAndNotifications(removeGroup, AccessGroupChanges.MemberRemoved, null);
+
+            var removedSummary = Result(MarshalCodec.Decode(
+                (await OwnerGroupCall(managerFront, managerOpen, callId, "GetGroup", new PyLong(removeGroup))).Payload));
+            Assert.NotNull(removedSummary);
+            Assert.Equal(new PyInt((int)MembershipType.None), OwnerGroupFields(removedSummary)["membershipType"]);
+        }
+        finally
+        {
+            await using var drop = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await drop.ExecuteNonQueryAsync();
+        }
+    }
+
+    private static void AssertOwnerGroupSuccess(Send reply)
+    {
+        Assert.Equal(MachoMessage.CallRsp,
+            Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(reply.Payload))).Type);
+        Assert.Empty(Assert.IsType<PyList>(Result(MarshalCodec.Decode(reply.Payload))).Items);
+    }
+
+    private static void AssertOwnerGroupMemberFailure(Send reply, long memberId, string reason)
+    {
+        Assert.Equal(MachoMessage.CallRsp,
+            Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(reply.Payload))).Type);
+        var failure = Assert.IsType<PyTuple>(Assert.Single(Assert.IsType<PyList>(Result(MarshalCodec.Decode(reply.Payload))).Items));
+        Assert.Equal(Eve.Services.InventoryWire.Id(memberId), failure.Items[0]);
+        Assert.Equal(new PyBytes(Encoding.UTF8.GetBytes(reason)), failure.Items[1]);
+    }
+
+    private static void AssertOwnerGroupNotification(Send send, long groupId, IReadOnlyList<int> codes)
+    {
+        var packet = Assert.IsType<PyObject>(MarshalCodec.Decode(send.Payload));
+        var state = Assert.IsType<PyTuple>(packet.Args).Items;
+        Assert.Equal(new PyInt(MachoMessage.Notification), state[0]);
+        var address = Assert.IsType<PyTuple>(Assert.IsType<PyObject>(state[2]).Args).Items;
+        Assert.Equal("OnOwnerGroupsUpdated", T(address[1]));
+        Assert.Equal("clientID", T(address[3]));
+        var body = Assert.IsType<PyBuffer>(Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(state[4]).Items[0]).Items[1]);
+        var inner = Assert.IsType<PyTuple>(MarshalCodec.Decode(body.Value.ToArray()));
+        var args = Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(inner.Items[1]).Items[1]).Items;
+        var changedGroups = Assert.IsType<PyDict>(Assert.Single(args));
+        var changed = Assert.Single(changedGroups.Entries);
+        Assert.Equal(Eve.Services.InventoryWire.Id(groupId), changed.Key);
+        Assert.Equal(codes.Select(code => (PyValue)new PyInt(code)), Assert.IsType<PyList>(changed.Value).Items);
+    }
+
     private static async Task<Send> OwnerGroupCall(TestFront front, SessionOpen open, uint callId, string method,
         params PyValue[] args)
     {

@@ -4831,8 +4831,8 @@ cannot see the list or its members; every change is logged. EveJS `ownerGroupMan
   list read by one of its members, answers `membershipType` member to its corporation's members, and refuses changes with the notice
   "This access group cannot be changed." Its `admins` list is the corporation.
 - **Choice: precedence and kinds.** The role is the most specific entry that names the character: character, then corporation, then
-  alliance, then everyone (id 0, a member entry for every character). A blocked (excluded) role gives no access. A corporation or
-  alliance entry is member or blocked; Everyone is member only.
+  alliance, then everyone (id 0, a member entry for every character). A blocked (excluded) role gives no access. Corporation and alliance
+  entries are member or blocked; Everyone is member only.
 - **Choice: Everyone's role.** EVE University Wiki, "Access Lists" / "Types of members" (https://wiki.eveuniversity.org/Access_Lists)
   allows Everyone only as Member. V24.01's public-member action sends `{0: MEMBER}` (`accessGroupsController.py:203-205`), and its
   role menu skips public entries (`menuProvider.py:69-71`). EveJS 261028.1's `accessGroupStore.addMembers` stores supplied membership
@@ -4847,9 +4847,13 @@ cannot see the list or its members; every change is logged. EveJS `ownerGroupMan
   eve.rs now keeps zero only for member arguments, while group-ID lists stay positive-only. Negative member IDs receive per-entry
   refusals; non-integral values and duplicate dictionary keys are rejected, and repeated IDs in member lists are processed once. The
   registered Host PostgreSQL regression checks persistence, refusal tuples and the Everyone notification.
-- **Choice: manager limits.** A manager adds only member or blocked entries, removes only member or blocked entries and changes
-  only member or blocked entries to member or blocked (the wiki). An admin does any of these, including demoting and removing itself.
-  The creator is an admin entry, removable like any other admin entry (the wiki gives no lock on the last admin).
+- **Choice: manager limits.** A manager adds only member or blocked entries, removes only member or blocked entries, and changes
+  only member or blocked entries to member or blocked. The manager can also change its own Manager character entry to member or blocked
+  or remove it; the exception requires the active character ID to equal the target entry ID. A manager still cannot change or remove
+  another Manager or Admin. This follows EVE University Wiki "Access Lists" > "Roles" and the client self-change/removal flows
+  (`accessGroupsController.py:227-247,260-271`). EveJS 261028.1 uses the same identity check (`ownerGroupManagerService.js:89-116`).
+  An admin can manage any entry, including demoting or removing itself. The creator is an admin entry, removable like any other admin
+  entry (the wiki gives no lock on the last admin).
 - **Failure reasons.** `AddMembers`, `DeleteMembers` and `UpdateMembershipTypes` answer the refused entries as (member id, reason):
   `AlreadyMember`, `NotAMember`, `NotAllowed`, `InvalidMember` (the id names no character, corporation, alliance or everyone). These
   are eve.rs keys. The client's per-error text table (`ownergroupsUIUtil.errorDict`) cannot be read from the decompiled file (its keys

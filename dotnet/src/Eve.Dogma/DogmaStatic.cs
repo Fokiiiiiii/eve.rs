@@ -186,6 +186,23 @@ public sealed class DogmaStatic
     }
 }
 
+    /// <summary>The skill levels allowed by the Alpha clone grade for a race, from the SDE's <c>cloneGrades</c>.</summary>
+    public async Task<IReadOnlyDictionary<int, int>> AlphaCloneSkillLevelsAsync(int raceId, CancellationToken cancellationToken = default)
+    {
+        if (_sde is null)
+        {
+            throw new InvalidOperationException("clone-grade data requires an SDE");
+        }
+        var rows = await _sde.ReadAsync("cloneGrades", [(long)raceId], cancellationToken);
+        if (rows.Count != 1)
+        {
+            throw new InvalidOperationException($"the SDE has no clone-grade record for race ID {raceId}");
+        }
+        return rows[0].Doc.GetProperty("skills").EnumerateArray().ToDictionary(
+            skill => skill.GetProperty("typeID").GetInt32(),
+            skill => skill.GetProperty("level").GetInt32());
+    }
+
     /// <summary>
     /// Whether the SDE type list <paramref name="listId"/> names the type: included by its id, group or category, and not excluded by any of them (the
     /// <c>typeLists</c> of the SDE; the Gas Compressor's list names the gas groups and excludes some types). An unknown list names nothing, and so does a

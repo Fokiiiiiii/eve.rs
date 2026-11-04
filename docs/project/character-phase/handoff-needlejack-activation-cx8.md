@@ -18,7 +18,7 @@ The selection proxy is limited to pending NPC bounty kills currently stored per 
 
 ## Tests run locally
 
-The Host and adjacent Space tests below ran against `eve_p8` through `tools/dev/db-lock.sh` after merging `origin/main` at `c68cc46a`.
+The Host and adjacent Space tests below ran against `eve_p8` through `tools/dev/db-lock.sh` after merging `origin/main` through `2edb175d`.
 
 - Host filter `NeedlejackActivationHostTests|Random_jump_rejection_keeps_the_client_error_envelope_through_host_wire|Movement_rpcs_use_registered_host_routes_with_client_wire_shapes`: 10 passed, 0 skipped. The new `Host_rejects_capital_hulls_and_fleets_above_the_sde_candidate_limit` regression checks the SDE-derived hull limit and client error envelope.
 - Space `ActivityTravelRpcServicesTests|RelocationTests|PlayerDeathTests`: 36 passed, 0 skipped.
@@ -26,4 +26,4 @@ The Host and adjacent Space tests below ran against `eve_p8` through `tools/dev/
 - Before the merge, `PgBountyStoreTests` passed 16/16, Services Crimewatch `RuntimeTests|PlayerBountyKillsTests|NpcSecurityStatusRecoverySubscriberTests` passed 38/38, and Crimewatch `AggressionTests|SafetyTests` passed 45/45. After the merge, the `PgBountyStoreTests --no-build` command could not start because that test assembly was absent; these store tests have not been repeated on the merged tree.
 - `cargo +1.94.1 fmt --all -- --check` and workspace `clippy --all-targets -- -D warnings` passed before this test-only change.
 
-The earlier red-gate reproduction for `Movement_rpcs_use_registered_host_routes_with_client_wire_shapes` matched main CI 1484 and was fixed upstream in commit `6e73707b`; the test passed in the Host run above. Main CI 1488 for `b300de8b` passed. Main CI 1489 for merged `c68cc46a` was still running at the last check. The current test change has not been pushed and has no Actions result yet. No graphical EVE client session was run.
+The earlier red-gate reproduction for `Movement_rpcs_use_registered_host_routes_with_client_wire_shapes` matched main CI 1484 and was fixed upstream in commit `6e73707b`; the test passed in the Host run above. Main CI 1491 for `ce18bc3f`, 1492 for `d2f3204e`, and 1493 for `0064fd01` passed. Main CI 1494 for `2edb175d` was in progress at the last check. The focused Agent Test run 41797872638 and push-triggered CI run 41797832335 for `ce18bc3f` passed; `ci-status.py failures ce18bc3f` reported no failed jobs. No graphical EVE client session was run.

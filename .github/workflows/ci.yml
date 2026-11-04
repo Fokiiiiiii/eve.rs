@@ -1,0 +1,435 @@
+name: CI
+
+# Trigger mode is set by tools/dev/ci-mode.py (automatic by default; manual-only for private-repository operation).
+# Run on pushes to main (except documentation-only changes) and by hand: format, lint and test the Rust workspace,
+# build and test the .NET solution, run the Python client's tests, verify generated fixtures, exercise the Linux
+# server stack and headless client, and call the Windows build and live-client workflow. The slow end-to-end tests
+# are live-slow.yml (also by hand).
+
+# Main pushes use one concurrency group per SHA and cannot cancel one another. Superseded branch and pull request runs can be cancelled. Manual runs accept a comma-separated job selection.
+# The default runs every required gate. The Windows workflow runs on a native runner. The same local checks can be run
+# with tools/dev/check-all.sh.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.github/dependabot.yml'
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      jobs:
+        description: 'Comma-separated jobs: rust-fmt,rust-test,dotnet,python,fixtures,live,windows (or all)'
+        required: true
+        default: all
+        type: string
+
+concurrency:
+  group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('ci-main-{0}', github.sha) || format('ci-{0}-interactive', github.ref) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
+
+permissions:
+  contents: read
+
+env:
+  # the toolchain the project is built and tested with (Cargo.toml's rust-version is 1.94); a newer clippy's new lints are
+  # looked at by the advisory job below, not allowed to break the build
+  RUST_TOOLCHAIN: "1.94.1"
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  DOTNET_NOLOGO: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_CLI_USE_MSBUILD_SERVER: "0"
+  # the host seeds the NPC market from CCP's ESI on its first start (minutes, and a load on ESI): not in CI
+  EVE_MARKET_SEED: skip
+
+jobs:
+  rust-fmt:
+    name: Rust format and clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: ${{ github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || contains(inputs.jobs, 'rust-fmt')) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master as of 2026-10-19
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  rust-test:
+    name: Rust tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: ${{ github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || contains(inputs.jobs, 'rust-test')) }}
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: eve
+          POSTGRES_INITDB_ARGS: "-c max_connections=400 -c shared_buffers=512MB -c fsync=off -c full_page_writes=off -c synchronous_commit=off"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d eve"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      EVE_PG_URL: postgres://postgres:postgres@127.0.0.1:5432/eve
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master as of 2026-10-19
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - id: sde-build
+        run: echo "build=$(sed -n 's/^PINNED_BUILD=//p' sde/fetch.sh)" >> "$GITHUB_OUTPUT"
+      - id: sde
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/sde
+          key: sde-${{ steps.sde-build.outputs.build }}-${{ hashFiles('sde/lock.json') }}
+      - name: Fetch the static data
+        if: steps.sde.outputs.cache-hit != 'true'
+        run: cargo run -q -p eve-sde -- ensure
+      - run: cargo test --workspace
+
+  rust-latest:
+    name: Rust on the latest stable (advisory)
+    if: ${{ github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || contains(inputs.jobs, 'rust-fmt')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable toolchain channel
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: latest
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  dotnet-build:
+    name: .NET build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: ${{ github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || contains(inputs.jobs, 'dotnet')) }}
+    env:
+      DOTNET_CLI_USE_MSBUILD_SERVER: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@349aa191ae05aee6d53db4bcba37bd6980e812fe # v6 with skip-lts-prepass
+        with:
+          dotnet-version: 10.0.401
+          skip-lts-prepass: true
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('dotnet/Directory.Packages.props', 'dotnet/**/*.csproj', 'dotnet/**/*.props', 'dotnet/**/*.targets') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - name: Build
+        working-directory: dotnet
+        run: |
+          dotnet build EveRs.slnx -c Release -nologo --verbosity minimal -nodeReuse:false
+          dotnet build-server shutdown
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dotnet-build
+          path: |
+            dotnet/**/bin/Release/**
+            dotnet/**/obj/project.assets.json
+          if-no-files-found: error
+
+  dotnet:
+    name: .NET (${{ matrix.shard.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: dotnet-build
+    if: ${{ always() && github.event_name != 'schedule' && needs.dotnet-build.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || contains(inputs.jobs, 'dotnet')) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Space uses 32 method shards: the 27- and 28-method diagnostic slices pass, while the 55-method 16-way shard times out.
+        shard:
+          - { name: "space tests 1/32", artifact: "space-1", only: "Eve.Services.Space.Tests", index: 0, count: 32 }
+          - { name: "space tests 2/32", artifact: "space-2", only: "Eve.Services.Space.Tests", index: 1, count: 32 }
+          - { name: "space tests 3/32", artifact: "space-3", only: "Eve.Services.Space.Tests", index: 2, count: 32 }
+          - { name: "space tests 4/32", artifact: "space-4", only: "Eve.Services.Space.Tests", index: 3, count: 32 }
+          - { name: "space tests 5/32", artifact: "space-5", only: "Eve.Services.Space.Tests", index: 4, count: 32 }
+          - { name: "space tests 6/32", artifact: "space-6", only: "Eve.Services.Space.Tests", index: 5, count: 32 }
+          - { name: "space tests 7/32", artifact: "space-7", only: "Eve.Services.Space.Tests", index: 6, count: 32 }
+          - { name: "space tests 8/32", artifact: "space-8", only: "Eve.Services.Space.Tests", index: 7, count: 32 }
+          - { name: "space tests 9/32", artifact: "space-9", only: "Eve.Services.Space.Tests", index: 8, count: 32 }
+          - { name: "space tests 10/32", artifact: "space-10", only: "Eve.Services.Space.Tests", index: 9, count: 32 }
+          - { name: "space tests 11/32", artifact: "space-11", only: "Eve.Services.Space.Tests", index: 10, count: 32 }
+          - { name: "space tests 12/32", artifact: "space-12", only: "Eve.Services.Space.Tests", index: 11, count: 32 }
+          - { name: "space tests 13/32", artifact: "space-13", only: "Eve.Services.Space.Tests", index: 12, count: 32 }
+          - { name: "space tests 14/32", artifact: "space-14", only: "Eve.Services.Space.Tests", index: 13, count: 32 }
+          - { name: "space tests 15/32", artifact: "space-15", only: "Eve.Services.Space.Tests", index: 14, count: 32 }
+          - { name: "space tests 16/32", artifact: "space-16", only: "Eve.Services.Space.Tests", index: 15, count: 32 }
+          - { name: "space tests 17/32", artifact: "space-17", only: "Eve.Services.Space.Tests", index: 16, count: 32 }
+          - { name: "space tests 18/32", artifact: "space-18", only: "Eve.Services.Space.Tests", index: 17, count: 32 }
+          - { name: "space tests 19/32", artifact: "space-19", only: "Eve.Services.Space.Tests", index: 18, count: 32 }
+          - { name: "space tests 20/32", artifact: "space-20", only: "Eve.Services.Space.Tests", index: 19, count: 32 }
+          - { name: "space tests 21/32", artifact: "space-21", only: "Eve.Services.Space.Tests", index: 20, count: 32 }
+          - { name: "space tests 22/32", artifact: "space-22", only: "Eve.Services.Space.Tests", index: 21, count: 32 }
+          - { name: "space tests 23/32", artifact: "space-23", only: "Eve.Services.Space.Tests", index: 22, count: 32 }
+          - { name: "space tests 24/32", artifact: "space-24", only: "Eve.Services.Space.Tests", index: 23, count: 32 }
+          - { name: "space tests 25/32", artifact: "space-25", only: "Eve.Services.Space.Tests", index: 24, count: 32 }
+          - { name: "space tests 26/32", artifact: "space-26", only: "Eve.Services.Space.Tests", index: 25, count: 32 }
+          - { name: "space tests 27/32", artifact: "space-27", only: "Eve.Services.Space.Tests", index: 26, count: 32 }
+          - { name: "space tests 28/32", artifact: "space-28", only: "Eve.Services.Space.Tests", index: 27, count: 32 }
+          - { name: "space tests 29/32", artifact: "space-29", only: "Eve.Services.Space.Tests", index: 28, count: 32 }
+          - { name: "space tests 30/32", artifact: "space-30", only: "Eve.Services.Space.Tests", index: 29, count: 32 }
+          - { name: "space tests 31/32", artifact: "space-31", only: "Eve.Services.Space.Tests", index: 30, count: 32 }
+          - { name: "space tests 32/32", artifact: "space-32", only: "Eve.Services.Space.Tests", index: 31, count: 32 }
+          - { name: "host tests 1/6", artifact: "host-1", only: "Eve.Host.Tests", index: 0, count: 6 }
+          - { name: "host tests 2/6", artifact: "host-2", only: "Eve.Host.Tests", index: 1, count: 6 }
+          - { name: "host tests 3/6", artifact: "host-3", only: "Eve.Host.Tests", index: 2, count: 6 }
+          - { name: "host tests 4/6", artifact: "host-4", only: "Eve.Host.Tests", index: 3, count: 6 }
+          - { name: "host tests 5/6", artifact: "host-5", only: "Eve.Host.Tests", index: 4, count: 6 }
+          - { name: "host tests 6/6", artifact: "host-6", only: "Eve.Host.Tests", index: 5, count: 6 }
+          - { name: "other tests 1/3", artifact: "other-1", only: "", index: 0, count: 3 }
+          - { name: "other tests 2/3", artifact: "other-2", only: "", index: 1, count: 3 }
+          - { name: "other tests 3/3", artifact: "other-3", only: "", index: 2, count: 3 }
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: eve
+          # the Host tests open many pools at once; the default of 100 connections runs out (53300)
+          POSTGRES_INITDB_ARGS: "-c max_connections=400 -c shared_buffers=512MB -c fsync=off -c full_page_writes=off -c synchronous_commit=off"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d eve"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      EVE_PG_URL: postgres://postgres:postgres@127.0.0.1:5432/eve
+      DOTNET_CLI_USE_MSBUILD_SERVER: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@349aa191ae05aee6d53db4bcba37bd6980e812fe # v6 with skip-lts-prepass
+        with:
+          dotnet-version: 10.0.401
+          skip-lts-prepass: true
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('dotnet/Directory.Packages.props', 'dotnet/**/*.csproj', 'dotnet/**/*.props', 'dotnet/**/*.targets') }}
+          restore-keys: nuget-${{ runner.os }}-
+      # the static data is loaded into PostgreSQL by the Rust tool, as the server does on its first start
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master as of 2026-10-19
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - id: sde-build
+        run: echo "build=$(sed -n 's/^PINNED_BUILD=//p' sde/fetch.sh)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/sde
+          key: sde-${{ steps.sde-build.outputs.build }}-${{ hashFiles('sde/lock.json') }}
+      - name: Load the static data into PostgreSQL
+        run: |
+          cargo run -q -p eve-sde -- ensure --pg "$EVE_PG_URL"
+          cargo run -q -p eve-sde -- ensure --missions --pg "$EVE_PG_URL"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dotnet-build
+          path: dotnet
+      - name: Test
+        working-directory: dotnet
+        env:
+          EVE_PG_URL: Host=127.0.0.1;Port=5432;Username=postgres;Password=postgres;Database=eve
+          ONLY: ${{ matrix.shard.only }}
+          SHARD_INDEX: ${{ matrix.shard.index }}
+          SHARD_COUNT: ${{ matrix.shard.count }}
+        run: |
+          status=0
+          if [ "$ONLY" = "Eve.Host.Tests" ] || [ "$ONLY" = "Eve.Services.Space.Tests" ]; then
+            proj="tests/$ONLY/$ONLY.csproj"
+            dotnet test "$proj" -c Release --no-build -nologo --verbosity minimal -nodeReuse:false --list-tests > /tmp/test-list.txt
+            filter="$(python3 ../tools/dev/shard-dotnet-tests.py /tmp/test-list.txt "$SHARD_INDEX" "$SHARD_COUNT" --split-methods)"
+            dotnet test "$proj" -c Release --no-build -nologo --verbosity minimal -nodeReuse:false --filter "$filter" --results-directory test-results --logger "trx;LogFileName=$ONLY-$SHARD_INDEX.trx" || status=1
+          else
+            projects="$(python3 ../tools/dev/shard-dotnet-projects.py "$SHARD_INDEX" "$SHARD_COUNT" tests/*/*.csproj)"
+            for name in $projects; do
+              [ "$name" = "Eve.Services.Space.Tests" ] && continue
+              [ "$name" = "Eve.Host.Tests" ] && continue
+              proj="tests/$name/$name.csproj"
+              dotnet test "$proj" -c Release --no-build -nologo --verbosity minimal -nodeReuse:false --results-directory test-results --logger "trx;LogFileName=$name.trx" || status=1
+            done
+          fi
+          exit $status
+      - name: Verify every test shard executed tests
+        working-directory: dotnet
+        run: |
+          python3 - <<'PYTEST'
+          from pathlib import Path
+          from xml.etree import ElementTree
+
+          namespace = {"trx": "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"}
+          reports = sorted(Path("test-results").glob("*.trx"))
+          if not reports:
+              raise SystemExit("No TRX test reports were produced")
+          empty = []
+          for report in reports:
+              root = ElementTree.parse(report).getroot()
+              counters = root.find("trx:ResultSummary/trx:Counters", namespace)
+              executed = int(counters.attrib["executed"]) if counters is not None else 0
+              if executed == 0:
+                  empty.append(str(report))
+          if empty:
+              raise SystemExit("No tests executed in: " + ", ".join(empty))
+          PYTEST
+      - name: Upload test timing results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dotnet-test-results-${{ matrix.shard.artifact }}
+          path: dotnet/test-results/*.trx
+          if-no-files-found: ignore
+      - name: Shut down build servers
+        if: always()
+        run: dotnet build-server shutdown
+
+  python:
+    name: Python client (golden and mock-server tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: ${{ github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || contains(inputs.jobs, 'python')) }}
+    defaults:
+      run:
+        working-directory: tools/headless-client
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tools/headless-client/requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Test CI status output parsing
+        run: python3 ../dev/test_ci_status.py
+      - name: Test service audit extraction
+        working-directory: .
+        run: python3 -m unittest discover -s tools/spec-extract -p 'test_service_audit*.py'
+      # the live tests skip without a server; what is left runs on its own (the marshal golden frames, the mock server)
+      - run: python -m pytest -q -rs
+
+  fixtures:
+    name: Fixtures match their generators
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: ${{ github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || contains(inputs.jobs, 'fixtures')) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Regenerate the link fixtures
+        run: |
+          python3 tools/dev/gen-simlink-fixtures.py
+          python3 tools/dev/gen-hostlink-fixtures.py
+      - name: Fail if a generator and its committed fixture disagree
+        run: git diff --exit-code -- oracle/
+
+  live:
+    name: End to end (server stack + headless client)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: ${{ github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || contains(inputs.jobs, 'live')) }}
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: eve
+          # the Host tests open many pools at once; the default of 100 connections runs out (53300)
+          POSTGRES_INITDB_ARGS: "-c max_connections=400 -c shared_buffers=512MB -c fsync=off -c full_page_writes=off -c synchronous_commit=off"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d eve"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      EVE_PG_URL: postgres://postgres:postgres@127.0.0.1:5432/eve
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@349aa191ae05aee6d53db4bcba37bd6980e812fe # v6 with skip-lts-prepass
+        with:
+          dotnet-version: 10.0.401
+          skip-lts-prepass: true
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('dotnet/Directory.Packages.props') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master as of 2026-10-19
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - id: sde-build
+        run: echo "build=$(sed -n 's/^PINNED_BUILD=//p' sde/fetch.sh)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/sde
+          key: sde-${{ steps.sde-build.outputs.build }}-${{ hashFiles('sde/lock.json') }}
+      - name: Load the static data into PostgreSQL
+        run: cargo run -q -p eve-sde -- ensure --pg "$EVE_PG_URL"
+      - name: Install the headless client
+        run: |
+          python3 -m venv tools/headless-client/.venv
+          tools/headless-client/.venv/bin/pip install -q -r tools/headless-client/requirements-dev.txt
+      - name: A PostgreSQL client for the harness (it drops its scratch schemas)
+        run: command -v psql >/dev/null || sudo apt-get install -y --no-install-recommends postgresql-client
+      - name: Run the server stack and the fast live tests
+        env:
+          EVE_LIVE_LOG_DIR: ${{ github.workspace }}/.live-logs
+          KEEP_LOGS: "1"
+        run: tools/dev/run-eve-live.sh
+      - name: Keep the logs of the stack
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: live-logs
+          path: .live-logs
+          include-hidden-files: true
+          if-no-files-found: ignore
+
+  windows:
+    name: Windows Rust, .NET, Python and live client
+    if: ${{ github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || contains(inputs.jobs, 'windows')) }}
+    uses: ./.github/workflows/ci-windows.yml
+
+  gate:
+    name: Required CI gate
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [rust-fmt, rust-test, dotnet-build, dotnet, python, fixtures, live, windows]
+    steps:
+      - name: Require all selected jobs to succeed
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "Required CI gate for $GITHUB_SHA ($GITHUB_REF)"
+          echo "$RESULTS"
+          if echo "$RESULTS" | grep -qE '"(failure|cancelled)"'; then
+            exit 1
+          fi

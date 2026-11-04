@@ -1,0 +1,195 @@
+using Eve.Scheduler;
+using Npgsql;
+
+namespace Eve.Structures;
+
+public static class StructureServiceIds
+{
+    public const int Docking = 1;
+    /// <summary>The Upwell market service; access is controlled by structure setting MARKET_TAX (setting ID 4).</summary>
+    public const int Market = 5;
+    /// <summary>The Medical service (EVE.js STRUCTURE_SERVICE_ID.MEDICAL), whose access is the cloning bay setting (EVE.js structureServiceAuthority.js 136).</summary>
+    public const int Medical = 6;
+    /// <summary>The JUMP_CLONE service (EVE.js STRUCTURE_SERVICE_ID.JUMP_CLONE): a clone bay that also needs the character to be able to dock (EVE.js characterHasStructureCloneService).</summary>
+    public const int JumpClone = 10;
+    /// <summary>The Upwell loyalty point store service (EVE.js STRUCTURE_SERVICE_ID.LOYALTY_STORE).</summary>
+    public const int LoyaltyStore = 11;
+    public const int Reprocessing = 4;
+    public const int CynoBeacon = 16;
+    public const int CynoJammer = 17;
+    public const int MoonMining = 14;
+
+    public const int Offices = 3;
+
+    /// <summary>The service module of each service (SDE): Standup Reprocessing Facility I, the Pharolux's built-in Standup Cynosural Field Generator I, Standup Cynosural System Jammer I.</summary>
+    public static readonly IReadOnlyDictionary<int, int> ModuleTypeOf = new Dictionary<int, int>
+    {
+        [Reprocessing] = 35899,
+        [CynoBeacon] = 35912,
+        [CynoJammer] = 35914,
+        [MoonMining] = 45009,
+    };
+}
+
+/// <summary>What a service costs in fuel: the hourly burn while it is online and the charge to put it online (SDE attributes 2109 and 2110 of its module).</summary>
+public sealed record ServiceFuelRule(int ServiceId, int FuelPerHour, int FuelToOnline);
+
+/// <summary>Works out the fuel rule of a service id. The Host reads it from the static data.</summary>
+public interface IServiceFuelRules
+{
+    ServiceFuelRule? RuleOf(int serviceId);
+}
+
+/// <summary>The final and prior inventory quantities changed by a fuel-bay take.</summary>
+public sealed record StructureFuelItemChange(long ItemId, int TypeId, long OwnerId, long LocationId, int Flag, long Quantity, bool Singleton, long PreviousLocationId, int PreviousFlag, long PreviousQuantity);
+
+/// <summary>The amount and item changes from a fuel-bay take in the caller's transaction.</summary>
+public sealed record StructureFuelTake(long Taken, IReadOnlyList<StructureFuelItemChange> Changes);
+
+/// <summary>The fuel bay of a structure: the fuel blocks in it (inventory items at the structure, flag 172). The Host implements it over the item store; this module owns
+/// the rule of when fuel is taken, not where it is kept.</summary>
+public interface IStructureFuelBay
+{
+    Task<long> QuantityAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long structureId, CancellationToken cancellationToken);
+
+    /// <summary>Takes the requested fuel in the caller's transaction; when partial takes are allowed, returns the available amount and exact item deltas.</summary>
+    Task<StructureFuelTake> TakeAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, long quantity, bool allowPartial, CancellationToken cancellationToken);
+}
+
+public enum ServiceOnlineOutcome
+{
+    Online,
+    NoStructure,
+    UnknownService,
+    NotEnoughFuel,
+}
+
+/// <summary>
+/// its hourly amount (2109) at each service's online anniversary. When the bay cannot pay a due cycle, every service goes offline and the structure enters Low Power
+/// (<see cref="StructureTimers.FuelOutAsync"/>). The hourly job is the durable job <c>structure.fuel_hour</c> (key <c>structure:{id}</c>): the same
+/// structure has one, and a replay after a restart finds the hour already paid. Every method takes the caller's transaction.
+/// </summary>
+public sealed class StructureFuel
+{
+    public const string JobKind = "structure.fuel_hour";
+    public const long HourMs = 3_600_000;
+
+    private sealed record HourJob(long StructureId);
+
+    private readonly StructureStore _store;
+    private readonly DurableScheduler _scheduler;
+    private readonly StructureTimers _timers;
+    private readonly IServiceFuelRules _rules;
+    private readonly IStructureFuelBay _bay;
+
+    public StructureFuel(StructureStore store, DurableScheduler scheduler, StructureTimers timers, IServiceFuelRules rules, IStructureFuelBay bay)
+    {
+        _store = store;
+        _scheduler = scheduler;
+        _timers = timers;
+        _rules = rules;
+        _bay = bay;
+    }
+
+    /// <summary>Registers the hourly job's handler. Call it once, before the foundations start.</summary>
+    public void Register() => _scheduler.Register(JobKind, (job, token) => HandleAsync(job, token));
+
+    /// <summary>
+    /// Puts a service online, charging its online fuel from the bay. The structure row is locked for the transaction, so an onlining and an hour's burn of the same
+    /// structure run one after the other. An already online service is answered without a charge.
+    /// </summary>
+    public async Task<ServiceOnlineOutcome> OnlineAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, int serviceId, CancellationToken cancellationToken = default)
+    {
+        var record = await _store.GetAsync(connection, transaction, structureId, true, cancellationToken);
+        if (record is null || record.Snapshot.DestroyedMs > 0)
+        {
+            return ServiceOnlineOutcome.NoStructure;
+        }
+        if (_rules.RuleOf(serviceId) is not { } rule)
+        {
+            return ServiceOnlineOutcome.UnknownService;
+        }
+        if ((await _store.ServicesAsync(connection, transaction, structureId, cancellationToken)).GetValueOrDefault(serviceId) == ServiceState.Online)
+        {
+            return ServiceOnlineOutcome.Online;
+        }
+        if (await _bay.QuantityAsync(connection, transaction, structureId, cancellationToken) < rule.FuelToOnline)
+        {
+            return ServiceOnlineOutcome.NotEnoughFuel;
+        }
+        var fuel = await _bay.TakeAsync(connection, transaction, structureId, rule.FuelToOnline, allowPartial: false, cancellationToken: cancellationToken);
+        if (fuel.Taken < rule.FuelToOnline)
+        {
+            return ServiceOnlineOutcome.NotEnoughFuel;
+        }
+        await _timers.SetServiceAsync(connection, transaction, structureId, serviceId, true, cancellationToken);
+        await ScheduleNextHourAsync(connection, transaction, structureId, cancellationToken);
+        return ServiceOnlineOutcome.Online;
+    }
+
+    private async Task HandleAsync(JobContext job, CancellationToken cancellationToken)
+    {
+        var payload = job.Payload<HourJob>() ?? throw new InvalidOperationException("structure.fuel_hour job without a payload");
+        await HourAsync(job.Connection, job.Transaction, payload.StructureId, cancellationToken);
+    }
+
+    /// <summary>
+    /// Pays the due hourly cycle of each online service. A shortfall consumes no part of any due cycle and takes every service offline (Low Power). With nothing online the
+    /// job is cancelled, and the next online service starts a new one-hour cycle.
+    /// </summary>
+    public async Task HourAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, CancellationToken cancellationToken = default)
+    {
+        var record = await _store.GetAsync(connection, transaction, structureId, true, cancellationToken);
+        if (record is null || record.Snapshot.DestroyedMs > 0)
+        {
+            return;
+        }
+        var dueCycles = new List<(int ServiceId, long Cycles)>();
+        var hourly = 0L;
+        foreach (var service in await _store.ServiceFuelCyclesAsync(connection, transaction, structureId, cancellationToken))
+        {
+            if (service.State != ServiceState.Online || service.NextFuelCycleMs <= 0 || service.NextFuelCycleMs > _scheduler.Now
+                || _rules.RuleOf(service.ServiceId) is not { } rule)
+                continue;
+            var cycles = 1 + (_scheduler.Now - service.NextFuelCycleMs) / HourMs;
+            dueCycles.Add((service.ServiceId, cycles));
+            hourly = checked(hourly + (long)rule.FuelPerHour * cycles);
+        }
+        if (dueCycles.Count == 0)
+        {
+            await ScheduleNextHourAsync(connection, transaction, structureId, cancellationToken);
+            return;
+        }
+        if (await _bay.QuantityAsync(connection, transaction, structureId, cancellationToken) < hourly)
+        {
+            await _timers.FuelOutAsync(connection, transaction, structureId, cancellationToken);
+            return;
+        }
+        var fuel = await _bay.TakeAsync(connection, transaction, structureId, hourly, allowPartial: false, cancellationToken: cancellationToken);
+        if (fuel.Taken < hourly)
+        {
+            await _timers.FuelOutAsync(connection, transaction, structureId, cancellationToken);
+            return;
+        }
+        foreach (var (serviceId, cycles) in dueCycles)
+            await _store.AdvanceFuelCycleAsync(connection, transaction, structureId, serviceId, cycles, cancellationToken);
+        await ScheduleNextHourAsync(connection, transaction, structureId, cancellationToken);
+    }
+
+    private async Task ScheduleNextHourAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, CancellationToken cancellationToken)
+    {
+        await _store.InitializeFuelCyclesAsync(connection, transaction, structureId, _scheduler.Now, cancellationToken);
+        var due = (await _store.ServiceFuelCyclesAsync(connection, transaction, structureId, cancellationToken))
+            .Where(service => service.State == ServiceState.Online && _rules.RuleOf(service.ServiceId) is not null)
+            .Select(service => service.NextFuelCycleMs)
+            .Where(time => time > 0)
+            .DefaultIfEmpty(0)
+            .Min();
+        if (due == 0)
+        {
+            await _scheduler.CancelAsync(connection, transaction, JobKind, $"structure:{structureId}", cancellationToken);
+            return;
+        }
+        await _scheduler.ScheduleAsync(connection, transaction, new JobSpec(JobKind, due) { Key = $"structure:{structureId}", Payload = new HourJob(structureId) }, cancellationToken);
+    }
+}

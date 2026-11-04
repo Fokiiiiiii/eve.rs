@@ -1,0 +1,477 @@
+using Eve.Macho;
+using Eve.Events;
+using Eve.Scheduler;
+using Eve.Marshal;
+using Eve.Sde;
+using Eve.Services;
+using Eve.Services.Core;
+using Eve.Structures;
+using Npgsql;
+using System.Text.Json.Nodes;
+
+namespace Eve.Host.Tests;
+
+/// <summary>
+/// <c>StartNewExtraction</c> through the moon service and the Host's authority, on the real stores and the pinned SDE (skipped without EVE_PG_URL): the start and its
+/// notice to the pilot, each named refusal (the gate of the structure and the drill, the moon, the duration, Pochven), the running extraction answered as it is, and the
+/// record read back by the moon service in the client's shape.
+/// </summary>
+public sealed class MoonExtractionStartHostTests
+{
+    private const long Corporation = 98_000_001, OtherCorporation = 98_000_002, Structure = 1_000_000_000_301, Character = 20;
+    private const long SolarSystem = 30_000_142, PochvenSystem = 30_000_021;
+    private const int Athanor = 35835;
+
+    private sealed class Route : IAsyncDisposable
+    {
+        private readonly string _schema;
+
+        private Route(string schema, NpgsqlDataSource source, StructureStore structures, MoonExtractionStore store, MoonExtractionsRpcService moon, Sink packets, DurableScheduler scheduler, TestClock clock)
+        {
+            _schema = schema;
+            Scheduler = scheduler;
+            Clock = clock;
+            Source = source;
+            Structures = structures;
+            Store = store;
+            Moon = moon;
+            Packets = packets;
+            Session = DockedAt(Structure);
+        }
+
+        public NpgsqlDataSource Source { get; }
+        public string EventsSchema => _schema + "_evt";
+        public DurableScheduler Scheduler { get; }
+        public TestClock Clock { get; }
+        public StructureStore Structures { get; }
+        public MoonExtractionStore Store { get; }
+        public MoonExtractionsRpcService Moon { get; }
+        public Sink Packets { get; }
+        public ClientSession Session { get; }
+        public bool MoonAccessAllowed { get; set; } = true;
+        public Func<ValueTask>? BeforeMoonAccess { get; set; }
+
+        public static async Task<Route> CreateAsync(string pgUrl)
+        {
+            var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(pgUrl));
+            var sde = new SdeReader(source);
+            Assert.NotNull(await sde.BuildAsync());
+            var rules = await MoonRulesSource.LoadAsync(sde);
+            var schema = "moon_host_" + Guid.NewGuid().ToString("N")[..12];
+            await StructureStore.MigrateAsync(source, schema);
+            var structures = new StructureStore(source, schema);
+            var store = new MoonExtractionStore(source, schema);
+            await DurableScheduler.MigrateAsync(source, schema + "_sch");
+            await EventBus.MigrateAsync(source, schema + "_evt");
+            var clock = new TestClock();
+            var scheduler = new DurableScheduler(source, () => clock.Now, new SchedulerOptions { Concurrency = 1 }, schema + "_sch", _ => { });
+            var bus = new EventBus(source, scheduler, new EventBusOptions(), schema + "_evt", _ => { });
+            var moons = new MoonExtractions(structures, store, scheduler, bus, rules);
+            moons.Register();
+            Route? route = null;
+            var authority = new StructureMoonAuthority(source, structures, moons, rules, new StructurePilotStore(structures),
+                async (_, _, _) =>
+                {
+                    if (route?.BeforeMoonAccess is { } before) await before();
+                    return route?.MoonAccessAllowed == true;
+                });
+            var sink = new Sink();
+            route = new Route(schema, source, structures, store, new MoonExtractionsRpcService(
+                readState: async () => (JsonObject?)await store.ReadLegacyAsync(),
+                mutationBackend: authority.CallAsync,
+                readAccess: authority.ValidateReadAccessAsync), sink, scheduler, clock);
+            return route;
+        }
+
+        /// <summary>The clock of the route: the scheduler reads it, and a test moves it.</summary>
+        public sealed class TestClock
+        {
+            public long Now { get; set; } = 1_700_006_400_000;
+        }
+
+        /// <summary>A refinery of the corporation with its moon drill online (or not), and the moon's resources (or none).</summary>
+        public async Task RefineryAsync(bool drillOnline = true, bool withMoon = true, long structure = Structure, long owner = Corporation, long solarSystem = SolarSystem)
+        {
+            await using var connection = await Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await Structures.CreateAsync(connection, transaction, new NewStructure(structure, Athanor, (int)solarSystem, 0, 0, 0, 0, owner, 0, "Refinery", ""));
+            await Structures.SetServiceAsync(connection, transaction, structure, StructureServiceIds.MoonMining, drillOnline ? ServiceState.Online : ServiceState.Offline, 0);
+            var pilot = await new StructurePilotStore(Structures).AcquireAsync(connection, transaction,
+                new StructurePilotRequest(structure, Character + structure - Structure, 100 + structure - Structure,
+                    500 + structure - Structure, structure, false), false);
+            Assert.Equal(StructurePilotAcquireStatus.Acquired, pilot.Status);
+            if (withMoon)
+            {
+                await Store.ImportAsync(connection, transaction, new JsonObject
+                {
+                    ["resourcesByStructureID"] = new JsonObject
+                    {
+                        [structure.ToString()] = new JsonObject { ["moonID"] = 40_000_001, ["solarSystemID"] = solarSystem, ["ownerID"] = owner, ["resources"] = new JsonObject { ["34"] = 0.75, ["20"] = 0.25 } },
+                    },
+                });
+            }
+            await transaction.CommitAsync();
+        }
+
+        /// <summary>A pilot of the corporation docked at the structure (the gate of the start).</summary>
+        public ClientSession DockedAt(long structure)
+        {
+            var offset = structure - Structure;
+            var session = new ClientSession(Packets) { SessionId = 100 + offset };
+            session.Set("charid", new PyInt(Character + offset));
+            session.Set("shipid", new PyLong(structure));
+            session.Set("corpid", new PyInt(Corporation));
+            session.Set("structureid", new PyLong(structure));
+            return session;
+        }
+
+        public ServiceCall Start(ClientSession? session = null, PyValue? structure = null, double duration = 518_460, bool calendar = false) => new()
+        {
+            Method = "StartNewExtraction",
+            Args = [structure ?? new PyLong(Structure), new PyReal(duration), calendar ? PyBool.True : PyBool.False],
+            Session = session ?? Session,
+        };
+
+        public async ValueTask DisposeAsync()
+        {
+            await using var connection = await Source.OpenConnectionAsync();
+            await using (var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{_schema}\" CASCADE", connection)) await command.ExecuteNonQueryAsync();
+            await using (var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{_schema}_sch\" CASCADE", connection)) await command.ExecuteNonQueryAsync();
+            await using (var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{_schema}_evt\" CASCADE", connection)) await command.ExecuteNonQueryAsync();
+            await Source.DisposeAsync();
+        }
+    }
+
+    /// <summary>The packets a session was sent, in order.</summary>
+    private sealed class Sink : IPacketSink
+    {
+        public List<PyValue> Sent { get; } = [];
+        public void Send(PyValue packet) => Sent.Add(packet);
+    }
+
+    /// <summary>The names of the notifications among the packets (<c>OnMoonExtractionUpdate</c> and the rest).</summary>
+    private static List<string> NotificationNames(Sink sink)
+    {
+        var names = new List<string>();
+        foreach (var packet in sink.Sent.OfType<PyObject>())
+        {
+            var state = ((PyTuple)packet.Args).Items;
+            if (state[0] is not PyInt { Value: MachoMessage.Notification }) continue;
+            var address = ((PyTuple)((PyObject)state[2]).Args).Items;
+            names.Add(JsSemantics.StringValue(address[1]) ?? "");
+        }
+        return names;
+    }
+
+    /// <summary>The text of a named <c>CustomNotify</c> refusal.</summary>
+    private static string Notice(Exception exception)
+    {
+        var error = Assert.IsType<MachoWrappedException>(exception).Error;
+        Assert.Equal("CustomNotify", error.UserErrorMessage);
+        var arguments = ((PyTuple)((PyTuple)((PyObjectEx)error.Payload).Header).Items[1]).Items;
+        return ((PyStr)((PyDict)arguments[1]).Entries.Single(e => JsSemantics.StringValue(e.Key) == "notify").Value).Value;
+    }
+
+    private static string PgUrl() => Environment.GetEnvironmentVariable("EVE_PG_URL") ?? throw new InvalidOperationException("EVE_PG_URL is not set");
+
+    private static PyValue Field(PyValue payload, string name) => Assert.IsType<PyDict>(Assert.IsType<PyObject>(payload).Args).Entries
+        .Single(entry => Assert.IsType<PyStr>(entry.Key).Value == name).Value;
+
+    [PgFact]
+    public async Task Starting_a_chunk_answers_the_extraction_and_tells_the_pilot()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.RefineryAsync();
+
+        var payload = await route.Moon.CallAsync(route.Start());
+
+        Assert.Equal(new PyInt(518_460), Field(payload, "durationSeconds"));
+        Assert.Equal(new PyLong(Structure), Field(payload, "structureID"));
+        Assert.Equal(new PyInt(Corporation), Field(payload, "ownerID"));
+        Assert.Equal(new[] { "OnMoonExtractionUpdate" }, NotificationNames(route.Packets));
+    }
+
+    [PgFact]
+    public async Task Registered_moon_mutations_put_the_real_actor_in_durable_lifecycle_events()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.RefineryAsync();
+        await route.Moon.CallAsync(route.Start());
+        await using var connection = await route.Source.OpenConnectionAsync();
+        await using (var started = new NpgsqlCommand($"SELECT payload::text FROM {route.EventsSchema}.outbox WHERE topic = 'moon.extraction_started'", connection))
+        {
+            var json = JsonNode.Parse((string)(await started.ExecuteScalarAsync())!)!.AsObject();
+            Assert.Equal(Character, json["actorCharacterId"]!.GetValue<long>());
+            Assert.Equal(Structure, json["structureId"]!.GetValue<long>());
+        }
+        route.Session.Set("corprole", new PyLong(2048));
+        await route.Moon.CallAsync(Mutation("CancelExtraction", route.Session));
+        await using var cancelled = new NpgsqlCommand($"SELECT payload::text FROM {route.EventsSchema}.outbox WHERE topic = 'moon.extraction_ended'", connection);
+        var ended = JsonNode.Parse((string)(await cancelled.ExecuteScalarAsync())!)!.AsObject();
+        Assert.Equal(Character, ended["actorCharacterId"]!.GetValue<long>());
+        Assert.Equal("cancelled", ended["reason"]!.GetValue<string>());
+    }
+
+    [PgFact]
+    public async Task A_forged_control_session_and_a_revoked_moon_profile_change_nothing()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.RefineryAsync();
+        route.MoonAccessAllowed = false;
+        Assert.Equal("StructureDefenseDenied", (await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(route.Start()).AsTask())).Error.UserErrorMessage);
+        route.MoonAccessAllowed = true;
+        var forged = new ClientSession(route.Packets) { SessionId = route.Session.SessionId + 1 };
+        foreach (var (key, value) in route.Session.SnapshotAttributes()) forged.Set(key, value);
+        Assert.Equal("StructureDefenseDenied", (await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(route.Start(forged)).AsTask())).Error.UserErrorMessage);
+        var pilots = new StructurePilotStore(route.Structures);
+        await using var connection = await route.Source.OpenConnectionAsync();
+        var pilot = (await pilots.GetBySessionAsync(connection, null, route.Session.SessionId))!;
+        Assert.True(await pilots.ReleaseAsync(connection, null, pilot));
+        Assert.Equal("StructureDefenseDenied", (await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(route.Start()).AsTask())).Error.UserErrorMessage);
+        Assert.Empty((await route.Store.ReadLegacyAsync())["extractions"]!.AsObject());
+        Assert.Empty(NotificationNames(route.Packets));
+    }
+
+    [PgFact]
+    public async Task A_profile_authorized_controller_from_another_corporation_can_start_an_extraction()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.RefineryAsync();
+        route.Session.Set("corpid", new PyInt(OtherCorporation));
+        Assert.IsType<PyObject>(await route.Moon.CallAsync(route.Start()));
+        Assert.Single((await route.Store.ReadLegacyAsync())["extractions"]!.AsObject());
+    }
+
+    [PgFact]
+    public async Task A_controller_release_cannot_pass_the_moon_mutations_transaction_lock()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.RefineryAsync();
+        var checkedOwner = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        route.BeforeMoonAccess = () => { checkedOwner.TrySetResult(); return new ValueTask(resume.Task); };
+        var mutation = route.Moon.CallAsync(route.Start()).AsTask();
+        try
+        {
+            await checkedOwner.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await using var connection = await route.Source.OpenConnectionAsync();
+            var pilots = new StructurePilotStore(route.Structures);
+            var owner = (await pilots.GetBySessionAsync(connection, null, route.Session.SessionId))!;
+            await using var transaction = await connection.BeginTransactionAsync();
+            await using var timeout = new NpgsqlCommand("SET LOCAL lock_timeout = '100ms'", connection, transaction);
+            await timeout.ExecuteNonQueryAsync();
+            var blocked = await Assert.ThrowsAsync<PostgresException>(() => pilots.ReleaseAsync(connection, transaction, owner));
+            Assert.Equal(PostgresErrorCodes.LockNotAvailable, blocked.SqlState);
+            await transaction.RollbackAsync();
+        }
+        finally { resume.TrySetResult(); }
+        Assert.NotNull(await mutation);
+        Assert.Single((await route.Store.ReadLegacyAsync())["extractions"]!.AsObject());
+    }
+
+    [PgFact]
+    public async Task Each_refusal_is_a_named_notice_and_changes_nothing()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.RefineryAsync(drillOnline: false);
+        await route.RefineryAsync(withMoon: false, structure: Structure + 1);
+        await route.RefineryAsync(structure: Structure + 2, solarSystem: PochvenSystem);
+
+        var notDocked = new ClientSession(route.Packets);
+        notDocked.Set("corpid", new PyInt(Corporation));
+        Assert.Equal("You must be controlling this structure.", Notice(await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(route.Start(notDocked)).AsTask())));
+
+        var otherCorp = new ClientSession(route.Packets);
+        otherCorp.Set("corpid", new PyInt(OtherCorporation));
+        otherCorp.Set("structureid", new PyLong(Structure));
+        Assert.Equal("You must be controlling this structure.", Notice(await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(route.Start(otherCorp)).AsTask())));
+
+        Assert.Equal("An online Standup Moon Drill is required.", Notice(await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(route.Start()).AsTask())));
+        Assert.Equal("This structure has no moon to mine.", Notice(await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(route.Start(route.DockedAt(Structure + 1), new PyLong(Structure + 1))).AsTask())));
+        Assert.Equal("Moon mining is not available in Pochven.", Notice(await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(route.Start(route.DockedAt(Structure + 2), new PyLong(Structure + 2))).AsTask())));
+        Assert.Equal("MoonminingEventTooShort", Assert.IsType<MachoWrappedException>(await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(route.Start(duration: 0.4)).AsTask())).Error.UserErrorMessage);
+
+        Assert.Empty(NotificationNames(route.Packets));
+        var legacy = await route.Store.ReadLegacyAsync();
+        Assert.Empty(legacy["extractions"]!.AsObject());
+    }
+
+    [PgFact]
+    public async Task A_second_start_answers_the_running_extraction_without_a_new_notice()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.RefineryAsync();
+        var first = await route.Moon.CallAsync(route.Start());
+        Assert.Single(NotificationNames(route.Packets));
+
+        var second = await route.Moon.CallAsync(route.Start(duration: 4_838_400));
+
+        Assert.Equal(Field(first, "extractionID"), Field(second, "extractionID"));
+        Assert.Equal(new PyInt(518_460), Field(second, "durationSeconds"));
+        Assert.Single(NotificationNames(route.Packets));
+    }
+
+    [PgFact]
+    public async Task The_started_chunk_is_read_back_by_the_moon_service_in_the_client_shape()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.RefineryAsync();
+        var started = await route.Moon.CallAsync(route.Start(calendar: true));
+
+        async Task<JsonObject?> ReadLegacy() => await route.Store.ReadLegacyAsync();
+        var reader = new MoonExtractionsRpcService(ReadLegacy);
+        var pair = Assert.IsType<PyTuple>(await reader.CallAsync(new ServiceCall
+        {
+            Method = "GetExtractionAndEventIDFromStructureID",
+            Args = [],
+            Session = route.Session,
+        }));
+
+        Assert.Equal(Field(started, "extractionID"), Field(pair.Items[0], "extractionID"));
+        Assert.Equal(new PyInt(1), pair.Items[1]);
+    }
+
+    [PgFact]
+    public async Task Moon_reads_reject_other_corporations_and_uncontrolled_structures()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.RefineryAsync();
+        await route.RefineryAsync(structure: Structure + 1, owner: OtherCorporation);
+        await route.Moon.CallAsync(route.Start());
+
+        var own = Assert.IsType<PyTuple>(await route.Moon.CallAsync(new ServiceCall
+        {
+            Method = "GetExtractionAndEventIDFromStructureID",
+            Args = [],
+            Session = route.Session,
+        }));
+        Assert.IsType<PyObject>(own.Items[0]);
+
+        Assert.Equal("StructureDefenseDenied", Assert.IsType<MachoWrappedException>(await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(new ServiceCall
+            {
+                Method = "GetMoonResourcesForStructure",
+                Args = [new PyLong(Structure + 1)],
+                Session = route.Session,
+            }).AsTask())).Error.UserErrorMessage);
+
+        Assert.Equal("Station Manager role is required.", Notice(await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(new ServiceCall
+            {
+                Method = "GetExtractionsForCorp",
+                Args = [new PyLong(OtherCorporation)],
+                Session = route.Session,
+            }).AsTask())));
+
+        route.Session.Set("corprole", new PyLong(2048));
+        Assert.Single(Assert.IsType<PyList>(await route.Moon.CallAsync(new ServiceCall
+        {
+            Method = "GetExtractionsForCorp",
+            Args = [],
+            Session = route.Session,
+        })).Items);
+        Assert.Equal("Station Manager role is required.", Notice(await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(new ServiceCall
+            {
+                Method = "GetExtractionsForCorp",
+                Args = [new PyLong(OtherCorporation)],
+                Session = route.Session,
+            }).AsTask())));
+    }
+
+    private static ServiceCall Mutation(string method, ClientSession session) => new()
+    {
+        Method = method,
+        Args = [],
+        Session = session,
+    };
+
+    [PgFact]
+    public async Task A_fracture_before_the_chunk_is_ready_is_refused_by_name()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.RefineryAsync();
+        await route.Moon.CallAsync(route.Start());
+
+        Assert.Equal("The moon chunk is not ready to fracture.", Notice(await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(Mutation("FractureChunkWithStructure", route.Session)).AsTask())));
+    }
+
+    [PgFact]
+    public async Task A_fracture_by_a_pilot_not_docked_at_the_structure_is_refused()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.RefineryAsync();
+        await route.Moon.CallAsync(route.Start());
+
+        Assert.Equal("StructureDefenseDenied", Assert.IsType<MachoWrappedException>(await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(Mutation("FractureChunkWithStructure", new ClientSession(route.Packets))).AsTask())).Error.UserErrorMessage);
+    }
+
+    [PgFact]
+    public async Task A_ready_chunk_fires_and_the_drill_completes_it_as_fractured_when_its_time_comes()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.RefineryAsync();
+        await route.Moon.CallAsync(route.Start());
+        route.Clock.Now += 518_460_000;
+        await route.Scheduler.RunDueAsync();
+
+        Assert.Equal(PyNone.Instance, await route.Moon.CallAsync(Mutation("FractureChunkWithStructure", route.Session)));
+        route.Clock.Now += 30_000;
+        await route.Scheduler.RunDueAsync();
+
+        var legacy = await route.Store.ReadLegacyAsync();
+        Assert.Empty(legacy["extractions"]!.AsObject());
+        var pair = Assert.IsType<PyTuple>(await route.Moon.CallAsync(new ServiceCall
+        {
+            Method = "GetExtractionAndEventIDFromStructureID",
+            Args = [],
+            Session = route.Session,
+        }));
+        Assert.Equal(PyNone.Instance, pair.Items[0]);
+    }
+
+    [PgFact]
+    public async Task A_cancel_needs_the_station_manager_role_and_then_ends_the_chunk()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.RefineryAsync();
+        await route.Moon.CallAsync(route.Start());
+
+        Assert.Equal("Station Manager role is required.", Notice(await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(Mutation("CancelExtraction", route.Session)).AsTask())));
+        Assert.Single(NotificationNames(route.Packets));
+
+        route.Session.Set("corprole", new PyLong(2048));
+        Assert.Equal(PyNone.Instance, await route.Moon.CallAsync(Mutation("CancelExtraction", route.Session)));
+
+        var legacy = await route.Store.ReadLegacyAsync();
+        Assert.Empty(legacy["extractions"]!.AsObject());
+    }
+
+    [PgFact]
+    public async Task An_owner_director_can_cancel_but_another_corporations_manager_cannot()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.RefineryAsync();
+        await route.Moon.CallAsync(route.Start());
+        route.Session.Set("corpid", new PyLong(OtherCorporation));
+        route.Session.Set("corprole", new PyLong(2048));
+        await Assert.ThrowsAsync<MachoWrappedException>(() => route.Moon.CallAsync(Mutation("CancelExtraction", route.Session)).AsTask());
+        Assert.Single((await route.Store.ReadLegacyAsync())["extractions"]!.AsObject());
+        route.Session.Set("corpid", new PyLong(Corporation));
+        route.Session.Set("corprole", new PyLong(1));
+        Assert.Equal(PyNone.Instance, await route.Moon.CallAsync(Mutation("CancelExtraction", route.Session)));
+        Assert.Empty((await route.Store.ReadLegacyAsync())["extractions"]!.AsObject());
+    }
+}

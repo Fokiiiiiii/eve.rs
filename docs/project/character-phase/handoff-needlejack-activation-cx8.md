@@ -18,13 +18,12 @@ The selection proxy is limited to pending NPC bounty kills currently stored per 
 
 ## Tests run locally
 
-Database tests ran against `eve_p8` through `tools/dev/db-lock.sh`, including after the latest `origin/main` merge.
+The Host and adjacent Space tests below ran against `eve_p8` through `tools/dev/db-lock.sh` after merging `origin/main` at `c68cc46a`.
 
-- Host filter `NeedlejackActivationHostTests|Crimewatch_bound_get_character_security_status_uses_the_registered_host_route|AbyssalHostFlowTests|Movement_rpcs_use_registered_host_routes_with_client_wire_shapes`: 30 passed, 20 gated skips, 0 failed. All Needlejack and registered-route tests in the filter passed; skips are the pre-existing gated Abyssal cases.
+- Host filter `NeedlejackActivationHostTests|Random_jump_rejection_keeps_the_client_error_envelope_through_host_wire|Movement_rpcs_use_registered_host_routes_with_client_wire_shapes`: 10 passed, 0 skipped. The new `Host_rejects_capital_hulls_and_fleets_above_the_sde_candidate_limit` regression checks the SDE-derived hull limit and client error envelope.
 - Space `ActivityTravelRpcServicesTests|RelocationTests|PlayerDeathTests`: 36 passed, 0 skipped.
-- `PgBountyStoreTests`: 16 passed, 0 skipped.
-- Services Crimewatch `RuntimeTests|PlayerBountyKillsTests|NpcSecurityStatusRecoverySubscriberTests`: 38 passed, 0 skipped.
-- Crimewatch `AggressionTests|SafetyTests`: 45 passed, 0 skipped.
-- `cargo +1.94.1 fmt --all -- --check`: passed; workspace `clippy --all-targets -- -D warnings` passed.
+- The `Eve.Host.Tests` and `Eve.Services.Space.Tests` projects compiled with 0 warnings and 0 errors.
+- Before the merge, `PgBountyStoreTests` passed 16/16, Services Crimewatch `RuntimeTests|PlayerBountyKillsTests|NpcSecurityStatusRecoverySubscriberTests` passed 38/38, and Crimewatch `AggressionTests|SafetyTests` passed 45/45. After the merge, the `PgBountyStoreTests --no-build` command could not start because that test assembly was absent; these store tests have not been repeated on the merged tree.
+- `cargo +1.94.1 fmt --all -- --check` and workspace `clippy --all-targets -- -D warnings` passed before this test-only change.
 
-The earlier main red-gate reproduction for `Movement_rpcs_use_registered_host_routes_with_client_wire_shapes` matched main CI 1484 and was fixed upstream in commit `6e73707b`; the test passed in the Host run above. Main CI 1485 for that fix passed. CI 1486 for main `58e0bf4788a0` was still running at the last check. This feature has not been pushed and has no Actions result yet. No graphical EVE client session was run.
+The earlier red-gate reproduction for `Movement_rpcs_use_registered_host_routes_with_client_wire_shapes` matched main CI 1484 and was fixed upstream in commit `6e73707b`; the test passed in the Host run above. Main CI 1488 for `b300de8b` passed. Main CI 1489 for merged `c68cc46a` was still running at the last check. The current test change has not been pushed and has no Actions result yet. No graphical EVE client session was run.

@@ -12,7 +12,8 @@
 - `MSBUILDDISABLENODEREUSE=1 dotnet build dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -p:UseSharedCompilation=false --no-restore` passed with 0 warnings and 0 errors.
 - On `eve_p20` through `tools/dev/db-lock.sh`, the focused Host RPC test passed (1/1); `OwnerGroupManagerServiceTests` passed (7/7); `AccessGroupStoreTests` passed (14/14). All reported zero skips.
 - The wider `HostServerTests` class completed with 384/407 passing and 23 failures in unrelated fixtures: missing `sde.types`, `sde.npcStations`, or `sde.dogmaAttributes`, unavailable tournament scheduler/session wiring, and one missing structure fixture id. No skips.
-- Before push, Actions CI run 1488 on `b300de8b6a85` completed successfully with no failed jobs. Post-push Agent test and CI results remain pending.
+- Before push, the newest completed Actions CI run was 1489 on `c68cc46a75ed`; it completed successfully with no failed jobs.
+- The feature commit `6ee2f595` reached `main` at `c872a5b588d01b0b2c035d0fa88442a1608fc714` with the latest upstream merges. Selected Agent test run 1298 passed (7.0 min). Push-triggered CI run 1490 passed, and `ci-status.py failures c872a5b588d01b0b2c035d0fa88442a1608fc714` reported no failed tests or jobs.
 
 ## Remaining check
 

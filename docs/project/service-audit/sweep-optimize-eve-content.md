@@ -25,3 +25,9 @@ Consumers include `evemissions/client/mission.py:164-172` (filters by `contentID
 - Related `Eve.Services.Space.Tests`: 46 passed, 0 failed, 0 skipped.
 - Related `Eve.Host.Tests`: 3 passed, 0 failed, 0 skipped.
 - No real graphical V24.01 client session or wall-clock benchmark was run.
+
+## Delivery
+
+- Commit `75879222fa5c00bbe4348a51390c5f429a1d9841` was pushed to `main`.
+- Push CI run 1503 (Actions run 41838757824): success; no failed tests or jobs.
+- Focused Agent test run 41842802147: success.

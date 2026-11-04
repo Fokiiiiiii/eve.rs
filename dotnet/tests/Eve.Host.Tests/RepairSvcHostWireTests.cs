@@ -76,10 +76,14 @@ public partial class HostServerTests
             await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.BoundCall(
                 open, 3, objectId, "RepairItemsInStation",
                 new PyTuple([new PyList([new PyLong(ship)]), PyNone.Instance]), PyNone.Instance))));
-            var changed = Assert.IsType<Send>(await front.ReceiveAsync());
-            var changePacket = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(changed.Payload)));
-            Assert.Equal(MachoMessage.Notification, changePacket.Type);
-            Assert.Equal("OnItemChange", changePacket.Dest.BroadcastId);
+            var damageChanged = Assert.IsType<Send>(await front.ReceiveAsync());
+            var damagePacket = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(damageChanged.Payload)));
+            Assert.Equal(MachoMessage.Notification, damagePacket.Type);
+            Assert.Equal("OnModuleAttributeChanges", damagePacket.Dest.BroadcastId);
+            var itemChanged = Assert.IsType<Send>(await front.ReceiveAsync());
+            var itemPacket = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(itemChanged.Payload)));
+            Assert.Equal(MachoMessage.Notification, itemPacket.Type);
+            Assert.Equal("OnItemChange", itemPacket.Dest.BroadcastId);
             var repairReply = Assert.IsType<Send>(await front.ReceiveAsync());
             Assert.Equal(MachoMessage.CallRsp, Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(repairReply.Payload))).Type);
             Assert.Equal(PyNone.Instance, Result(MarshalCodec.Decode(repairReply.Payload)));

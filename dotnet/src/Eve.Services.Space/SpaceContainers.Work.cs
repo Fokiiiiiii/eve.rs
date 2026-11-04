@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.RegularExpressions;
 using Eve.Dogma;
 using Eve.Inventory;
 using Eve.Marshal;
@@ -460,18 +461,6 @@ public sealed partial class SpaceContainers
             ? _statics.FactionName((int)wreckSpace.WarFactionId)
             : "";
         var identity = $"{factionName} {wreckType.Name}";
-        var difficultyId = _statics.AttributeId("accessDifficulty");
-        var advanced = identity.Contains("Tech II", StringComparison.OrdinalIgnoreCase)
-            || identity.Contains("T2", StringComparison.OrdinalIgnoreCase)
-            || identity.Contains("Officer", StringComparison.OrdinalIgnoreCase)
-            || identity.Contains("Faction Wreck", StringComparison.OrdinalIgnoreCase);
-        if (difficultyId is { } attributeId
-            && wreckType.Attributes.TryGetValue(attributeId, out var baseChance)
-            && baseChance <= 0)
-        {
-            advanced = true;
-        }
-
         var size = identity.Contains("Capital", StringComparison.OrdinalIgnoreCase)
             || identity.Contains("Carrier", StringComparison.OrdinalIgnoreCase)
             || identity.Contains("Dreadnought", StringComparison.OrdinalIgnoreCase)
@@ -495,92 +484,178 @@ public sealed partial class SpaceContainers
             return [];
         }
 
-        var materialNames = SalvageMaterialNames(identity, advanced);
-        IReadOnlyList<TypeDef> pool = materialNames is null
-            ? products
-            : products.Where(product => materialNames.Contains(product.Name, StringComparer.OrdinalIgnoreCase)).ToArray();
-        if (pool.Count == 0)
-        {
-            pool = products;
-        }
-        var ordered = pool.OrderBy(product => product.TypeId).ToArray();
+        var pool = BuildSalvagePool(
+            ClassifySalvageFaction(identity),
+            IsLargeSalvageWreck(identity),
+            products.Select(product => (product.TypeId, product.Name)).ToArray());
         var rollCount = size switch { 3 => 4 + (int)(Roll() * 5), 2 => 1 + (int)(Roll() * 3), 1 => 1 + (int)(Roll() * 2), _ => 1 };
         var rewards = new Dictionary<int, long>();
         for (var index = 0; index < rollCount; index++)
         {
-            var product = ordered[(int)(Roll() * ordered.Length)];
+            var typeId = pool.Count == 0 ? null : SelectWeightedSalvageProductTypeId(pool, Roll());
+            if (typeId is not { } selectedTypeId)
+            {
+                continue;
+            }
             var quantity = size switch { 3 => 2 + (long)(Roll() * 4), 2 => 1 + (long)(Roll() * 3), 1 => 1 + (long)(Roll() * 2), _ => 1 };
-            rewards[product.TypeId] = rewards.GetValueOrDefault(product.TypeId) + quantity;
+            rewards[selectedTypeId] = rewards.GetValueOrDefault(selectedTypeId) + quantity;
         }
         return rewards.Select(reward => (reward.Key, reward.Value)).ToArray();
     }
 
-    private static string[]? SalvageMaterialNames(string identity, bool advanced)
-    {
-        static bool Has(string text, string value) => text.Contains(value, StringComparison.OrdinalIgnoreCase);
+    private readonly record struct SalvagePoolEntry(string Name, int Weight, bool LargeOnly = false);
 
-        if (advanced)
+    private static readonly SalvagePoolEntry[] CommonT1SalvagePool =
+    [
+        new("Tripped Power Circuit", 16),
+        new("Burned Logic Circuit", 16),
+        new("Charred Micro Circuit", 13),
+        new("Fried Interface Circuit", 13),
+        new("Contaminated Nanite Compound", 10),
+        new("Damaged Artificial Neural Network", 8),
+        new("Malfunctioning Shield Emitter", 8),
+    ];
+
+    private static readonly IReadOnlyDictionary<string, SalvagePoolEntry[]> SalvagePoolsByFaction =
+        new Dictionary<string, SalvagePoolEntry[]>(StringComparer.OrdinalIgnoreCase)
         {
-            if (Has(identity, "Angel"))
+            ["angel"] =
+            [
+                new("Alloyed Tritanium Bar", 18),
+                new("Armor Plates", 12),
+                new("Smashed Trigger Unit", 12),
+                new("Thruster Console", 10),
+                new("Malfunctioning Shield Emitter", 8),
+                new("Single-crystal Superalloy I-beam", 2, LargeOnly: true),
+            ],
+            ["blood"] =
+            [
+                new("Armor Plates", 18),
+                new("Melted Capacitor Console", 16),
+                new("Current Pump", 10),
+                new("Power Circuit", 8),
+                new("Capacitor Console", 3, LargeOnly: true),
+                new("Intact Armor Plates", 2, LargeOnly: true),
+            ],
+            ["sansha"] =
+            [
+                new("Armor Plates", 17),
+                new("Melted Capacitor Console", 16),
+                new("Current Pump", 10),
+                new("Power Circuit", 8),
+                new("Capacitor Console", 3, LargeOnly: true),
+                new("Intact Armor Plates", 2, LargeOnly: true),
+            ],
+            ["guristas"] =
+            [
+                new("Malfunctioning Shield Emitter", 18),
+                new("Scorched Telemetry Processor", 14),
+                new("Ward Console", 8),
+                new("Tripped Power Circuit", 8),
+                new("Enhanced Ward Console", 2, LargeOnly: true),
+                new("Intact Shield Emitter", 2, LargeOnly: true),
+            ],
+            ["serpentis"] =
+            [
+                new("Burned Logic Circuit", 16),
+                new("Fried Interface Circuit", 16),
+                new("Tripped Power Circuit", 12),
+                new("Broken Drone Transceiver", 10),
+                new("Damaged Artificial Neural Network", 8),
+                new("Armor Plates", 4, LargeOnly: true),
+            ],
+            ["drone"] =
+            [
+                new("Broken Drone Transceiver", 18),
+                new("Damaged Artificial Neural Network", 15),
+                new("Contaminated Nanite Compound", 14),
+                new("Conductive Polymer", 10),
+                new("Drone Transceiver", 3, LargeOnly: true),
+                new("Artificial Neural Network", 2, LargeOnly: true),
+            ],
+            ["mercenary"] =
+            [
+                new("Tripped Power Circuit", 14),
+                new("Burned Logic Circuit", 14),
+                new("Armor Plates", 10),
+                new("Malfunctioning Shield Emitter", 10),
+                new("Melted Capacitor Console", 8),
+            ],
+        };
+
+    internal static string ClassifySalvageFaction(string source)
+    {
+        if (SalvageSourceMatches(source, @"\b(angel|gist|domination)\b")) return "angel";
+        if (SalvageSourceMatches(source, @"\b(blood|corpus|corpii|corpum|dark blood)\b")) return "blood";
+        if (SalvageSourceMatches(source, @"\b(sansha|centii|centum|centus|true sansha)\b")) return "sansha";
+        if (SalvageSourceMatches(source, @"\b(guristas|pith|dread guristas|dire pithi|dire pithum|dire pithatis)\b")) return "guristas";
+        if (SalvageSourceMatches(source, @"\b(serpentis|coreli|corelum|core|shadow serpentis)\b")) return "serpentis";
+        if (SalvageSourceMatches(source, @"\b(rogue drone|drone|alvi|alvum|alvus|strain|infested)\b")) return "drone";
+        if (SalvageSourceMatches(source, @"\b(mercenary|mordus|mordu|state navy|federation navy|imperial navy|republic fleet)\b")) return "mercenary";
+        return "generic";
+    }
+
+    internal static bool IsLargeSalvageWreck(string source) =>
+        SalvageSourceMatches(source, @"\b(titan|supercarrier|carrier|dreadnought|freighter|capital|force auxiliary|fax|large|battleship|battlecruiser|industrial command|command ship|marauder|black ops)\b");
+
+    private static bool SalvageSourceMatches(string source, string pattern) =>
+        Regex.IsMatch(source, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    internal static IReadOnlyList<(int TypeId, double Weight)> BuildSalvagePool(
+        string faction, bool isLarge, IReadOnlyList<(int TypeId, string Name)> products)
+    {
+        var pool = new List<(int TypeId, double Weight)>();
+        if (SalvagePoolsByFaction.TryGetValue(faction, out var factionPool))
+        {
+            Add(factionPool);
+        }
+        Add(CommonT1SalvagePool);
+        return pool;
+
+        void Add(IReadOnlyList<SalvagePoolEntry> entries)
+        {
+            foreach (var entry in entries)
             {
-                return ["Artificial Neural Network", "Impetus Console", "Interface Circuit", "Logic Circuit",
-                    "Micro Circuit", "Power Circuit", "Single-crystal Superalloy I-beam", "Trigger Unit"];
+                if (entry.Weight <= 0 || (entry.LargeOnly && !isLarge))
+                {
+                    continue;
+                }
+                var typeId = products.FirstOrDefault(product =>
+                    product.TypeId > 0 && string.Equals(product.Name, entry.Name, StringComparison.OrdinalIgnoreCase)).TypeId;
+                if (typeId > 0)
+                {
+                    pool.Add((typeId, entry.Weight));
+                }
             }
-            if (Has(identity, "Blood"))
-            {
-                return ["Artificial Neural Network", "Capacitor Console", "Interface Circuit", "Logic Circuit",
-                    "Micro Circuit", "Power Circuit", "Power Conduit"];
-            }
-            if (Has(identity, "Guristas"))
-            {
-                return ["Artificial Neural Network", "Enhanced Ward Console", "Intact Shield Emitter",
-                    "Interface Circuit", "Logic Circuit", "Micro Circuit", "Power Circuit", "Telemetry Processor"];
-            }
-            if (Has(identity, "Sansha"))
-            {
-                return ["Artificial Neural Network", "Current Pump", "Intact Armor Plates", "Interface Circuit",
-                    "Logic Circuit", "Micro Circuit", "Nanite Compound", "Power Circuit"];
-            }
-            if (Has(identity, "Serpentis"))
-            {
-                return ["Conductive Thermoplastic", "Drone Transceiver", "Interface Circuit", "Logic Circuit",
-                    "Lorentz Fluid", "Micro Circuit", "Power Circuit"];
-            }
+        }
+    }
+
+    internal static int? SelectWeightedSalvageProductTypeId(
+        IReadOnlyList<(int TypeId, double Weight)> pool, double roll)
+    {
+        var totalWeight = pool
+            .Where(candidate => candidate.TypeId > 0 && double.IsFinite(candidate.Weight) && candidate.Weight > 0)
+            .Sum(candidate => candidate.Weight);
+        if (!double.IsFinite(totalWeight) || totalWeight <= 0 || !double.IsFinite(roll))
+        {
             return null;
         }
 
-        if (Has(identity, "Rogue Drone"))
+        var remaining = Math.Clamp(roll, 0, Math.BitDecrement(1d)) * totalWeight;
+        var lastTypeId = 0;
+        foreach (var candidate in pool)
         {
-            return ["Alloyed Tritanium Bar", "Armor Plates", "Broken Drone Transceiver", "Burned Logic Circuit",
-                "Charred Micro Circuit", "Conductive Polymer", "Contaminated Lorentz Fluid", "Contaminated Nanite Compound",
-                "Defective Current Pump", "Fried Interface Circuit", "Malfunctioning Shield Emitter", "Melted Capacitor Console",
-                "Scorched Telemetry Processor", "Smashed Trigger Unit", "Tangled Power Conduit", "Thruster Console",
-                "Tripped Power Circuit", "Ward Console"];
+            if (candidate.TypeId <= 0 || !double.IsFinite(candidate.Weight) || candidate.Weight <= 0)
+            {
+                continue;
+            }
+            lastTypeId = candidate.TypeId;
+            remaining -= candidate.Weight;
+            if (remaining <= 0)
+            {
+                return candidate.TypeId;
+            }
         }
-        if (Has(identity, "Minmatar") || Has(identity, "Angel"))
-        {
-            return ["Alloyed Tritanium Bar", "Armor Plates", "Burned Logic Circuit", "Charred Micro Circuit",
-                "Contaminated Nanite Compound", "Fried Interface Circuit", "Malfunctioning Shield Emitter",
-                "Smashed Trigger Unit", "Thruster Console", "Tripped Power Circuit"];
-        }
-        if (Has(identity, "Caldari") || Has(identity, "Guristas"))
-        {
-            return ["Burned Logic Circuit", "Charred Micro Circuit", "Conductive Polymer",
-                "Damaged Artificial Neural Network", "Fried Interface Circuit", "Malfunctioning Shield Emitter",
-                "Scorched Telemetry Processor", "Tripped Power Circuit", "Ward Console"];
-        }
-        if (Has(identity, "Gallente") || Has(identity, "Serpentis"))
-        {
-            return ["Armor Plates", "Broken Drone Transceiver", "Burned Logic Circuit", "Charred Micro Circuit",
-                "Conductive Polymer", "Contaminated Lorentz Fluid", "Contaminated Nanite Compound",
-                "Damaged Artificial Neural Network", "Fried Interface Circuit", "Tripped Power Circuit"];
-        }
-        if (Has(identity, "Amarr") || Has(identity, "Blood") || Has(identity, "Sansha"))
-        {
-            return ["Armor Plates", "Burned Logic Circuit", "Charred Micro Circuit",
-                "Contaminated Nanite Compound", "Defective Current Pump", "Fried Interface Circuit",
-                "Melted Capacitor Console", "Tangled Power Conduit", "Tripped Power Circuit"];
-        }
-        return null;
+        return lastTypeId > 0 ? lastTypeId : null;
     }
 }

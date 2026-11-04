@@ -26,4 +26,4 @@ The slice had no stale issue/status markers or commented-out code. CBM call/usag
 
 ## Actions handoff
 
-Local verification is complete. Record the selected Actions run and the push-triggered main CI result here after the implementation commit is pushed.
+Implementation commit `483d2d0b` is on `main`. Selected Agent Test run 1308 (`41842510361`) passed with no failed tests. Push-triggered main CI run 1504 (`41842432716`) succeeded with no failed tests or jobs.

@@ -12,6 +12,11 @@ public static class PochvenRules
     /// <summary>The factions of Pochven's NPCs (SDE <c>factions</c>): Drifters 500024, Rogue Drones 500025, Triglavian Collective 500026, EDENCOM 500027.</summary>
     public const int DrifterFactionId = 500_024, RogueDroneFactionId = 500_025, TriglavianFactionId = 500_026, EdencomFactionId = 500_027;
 
+    /// <summary>The NPC LP Store threshold with the Triglavian Collective (EVE University Pochven rules).</summary>
+    public const double LoyaltyStoreMinimumStanding = -0.01;
+
+    public static bool HasLoyaltyStoreStanding(double standing) => standing >= LoyaltyStoreMinimumStanding;
+
     /// <summary>The NPC corporation each faction names in the SDE (<c>factions.corporationID</c>).</summary>
     public const int DrifterCorporationId = 1_000_274, RogueDroneCorporationId = 1_000_287, TriglavianCorporationId = 1_000_298, EdencomCorporationId = 1_000_297;
 

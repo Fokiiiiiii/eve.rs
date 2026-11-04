@@ -27,6 +27,7 @@ public partial class HostServerTests
         var walletReads = new List<LoyaltyHolder>();
         var purchaseRequests = new List<LpStorePurchaseRequest>();
         var directorChecks = new List<(long CharacterId, long CorporationId)>();
+        var standingChecks = new List<(long CharacterId, long StationId)>();
         var corporationLookups = new List<long>();
         long offersReadFor = 0;
 
@@ -54,6 +55,11 @@ public partial class HostServerTests
             (buyerCharacterId, corporationId, _) =>
             {
                 directorChecks.Add((buyerCharacterId, corporationId));
+                return ValueTask.FromResult(true);
+            },
+            (buyerCharacterId, stationId, _) =>
+            {
+                standingChecks.Add((buyerCharacterId, stationId));
                 return ValueTask.FromResult(true);
             },
             readOffers: ReadOffers,
@@ -128,6 +134,7 @@ public partial class HostServerTests
             },
             purchaseRequests);
         Assert.Equal([(characterId, memberCorporationId)], directorChecks);
+        Assert.Equal(Enumerable.Repeat((characterId, stationId), 3), standingChecks);
 
         async Task AssertBalanceRows(
             string method, IReadOnlyList<LoyaltyPointBalance> expectedRows, uint callId)
@@ -175,6 +182,7 @@ public partial class HostServerTests
         var allowDirector = true;
         var offerReads = 0;
         var serviceChecks = new List<(long CharacterId, long StructureId)>();
+        var standingChecks = 0;
         var purchases = new List<LpStorePurchaseRequest>();
         var offer = new LpStoreOffer(storeCorporationId, offerId, 34_101, 2, 100, 500, 0, []);
         IReadOnlyList<LpStoreOffer> offers = [offer];
@@ -183,6 +191,11 @@ public partial class HostServerTests
             null!,
             null!,
             (_, _, _) => ValueTask.FromResult(allowDirector),
+            (_, _, _) =>
+            {
+                standingChecks++;
+                return ValueTask.FromResult(true);
+            },
             readOffers: (_, _) =>
             {
                 offerReads++;
@@ -338,6 +351,7 @@ public partial class HostServerTests
         Assert.Equal("That loyalty store service is not available.",
             ErrorArgument(deniedPurchaseError.Arguments, "notify"));
         Assert.Equal(2, purchases.Count);
+        Assert.Equal(0, standingChecks);
     }
 
     [Fact]

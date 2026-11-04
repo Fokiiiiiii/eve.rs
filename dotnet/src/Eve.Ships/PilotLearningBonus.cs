@@ -24,10 +24,14 @@ public sealed class PilotLearningBonus(DogmaStatic statics, PgCharacterStore cha
     }
 
     /// <summary>Reads the character's implants and active boosters again and keeps what they add.</summary>
-    public async Task RefreshAsync(long characterId, CancellationToken cancellationToken = default) =>
-        _bonuses[characterId] = await ComputeAsync(characterId, cancellationToken);
+    public Task RefreshAsync(long characterId, CancellationToken cancellationToken = default) =>
+        RefreshAtAsync(characterId, UnixEpochInFileTime + nowUnixMs() * 10_000, cancellationToken);
 
-    private async Task<double[]> ComputeAsync(long characterId, CancellationToken cancellationToken)
+    /// <summary>Reads the character's implants and active boosters as they were at a FILETIME.</summary>
+    public async Task RefreshAtAsync(long characterId, long atFileTime, CancellationToken cancellationToken = default) =>
+        _bonuses[characterId] = await ComputeAsync(characterId, atFileTime, cancellationToken);
+
+    private async Task<double[]> ComputeAsync(long characterId, long atFileTime, CancellationToken cancellationToken)
     {
         var bonus = new double[ShipSnapshot.LearningAttributes.Length];
         if (await characters.GetAsync(characterId, cancellationToken) is not { } character)
@@ -35,8 +39,7 @@ public sealed class PilotLearningBonus(DogmaStatic statics, PgCharacterStore cha
             return bonus;
         }
         var augmentations = await items.InLocationAsync(characterId, characterId, cancellationToken);
-        var nowFileTime = UnixEpochInFileTime + nowUnixMs() * 10_000;
-        var activeBoosters = (await skills.ActiveSkillBoostersAsync(characterId, nowFileTime, cancellationToken)).ToDictionary(booster => booster.ItemId);
+        var activeBoosters = (await skills.ActiveSkillBoostersAsync(characterId, atFileTime, cancellationToken)).ToDictionary(booster => booster.ItemId);
         await statics.EnsureTypesAsync([character.TypeId, .. augmentations.Select(item => item.TypeId)], cancellationToken);
 
         // the base is zero: the learning modifiers are added to it, so what the world reads is the bonus alone

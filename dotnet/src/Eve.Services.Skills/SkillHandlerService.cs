@@ -117,7 +117,7 @@ public static SkillAugmentationReader CreateAugmentationReader(
             modifiers);
     }
 
-    internal static async Task PruneExpiredBoosterRowsAsync(
+    internal static async Task<int> PruneExpiredBoosterRowsAsync(
         PgSkillStore skillStore,
         Eve.Inventory.PgItemStore itemStore,
         Npgsql.NpgsqlConnection connection,
@@ -136,7 +136,7 @@ public static SkillAugmentationReader CreateAugmentationReader(
                 await itemStore.DeleteAsync(connection, transaction, item.Id, cancellationToken);
             }
         }
-        await skillStore.DeleteExpiredSkillBoostersAsync(connection, transaction, characterId, nowFileTime, cancellationToken);
+        return await skillStore.DeleteExpiredSkillBoostersAsync(connection, transaction, characterId, nowFileTime, cancellationToken);
     }
 
     private static async Task<Dictionary<long, StoredSkillBooster>> MaterializeLegacyBoosterRowsAsync(

@@ -379,24 +379,56 @@ private sealed record ShipHoldRule(
         {
             return new(false, "NO_TARGET", asteroid.Quantity, 0, false, null);
         }
+        var miningHoldFlags = gas ? new[] { 135, 134 }
+            : CanAddToShipHold(181, yieldType, false, 1) ? new[] { 181, 134 }
+            : new[] { 182, 134 };
+        var miningHoldFlag = miningHoldFlags.FirstOrDefault(flag =>
+            CanAddToShipHold(flag, yieldType, false, 1)
+            && CapacityAttributeOf(flag) is { } attribute
+            && snapshot.World.Get(shipId, attribute) > 0);
+        var destinationFlag = miningHoldFlag == 0 ? CargoFlag : miningHoldFlag;
+        var capacity = CapacityAttributeOf(destinationFlag) is { } capacityAttribute
+            ? snapshot.World.Get(shipId, capacityAttribute)
+            : 0d;
+        var contents = (await items.InContainerAsync(shipId, cancellationToken))
+            .Where(item => item.Flag == destinationFlag)
+            .ToArray();
+        var room = new Room(capacity, await VolumeOfAsync(contents, cancellationToken));
+        var availableVolume = room.Free;
+        if (double.IsNaN(availableVolume) || availableVolume <= 0)
+        {
+            return new(false, "CARGO_FULL", asteroid.Quantity, 0, false, null);
+        }
+        var maximumTransfer = Math.Floor((availableVolume + RoomTolerance) / unitVolume);
+        if (maximumTransfer <= 0)
+        {
+            return new(false, "CARGO_FULL", asteroid.Quantity, 0, false, null);
+        }
+        var maximumTransferredQuantity = maximumTransfer >= long.MaxValue ? long.MaxValue : (long)maximumTransfer;
+        var availableTransferVolume = maximumTransferredQuantity * unitVolume;
+        var clampFactor = Math.Min(1d, Math.Min(
+            asteroid.Quantity * unitVolume / numbers.YieldM3,
+            availableTransferVolume / numbers.YieldM3));
+        if (clampFactor <= 0)
+        {
+            return new(false, "CARGO_FULL", asteroid.Quantity, 0, false, null);
+        }
         // the yield is the one function both sources use (MiningYield): a drone rounds down and gets no critical yield, a module does both
         var mined = MiningYield.ComputeMiningResult(
             new MiningCycle(kind, numbers.YieldM3, unitVolume, asteroid.Quantity, numbers.WasteVolumeMultiplier, numbers.WasteProbability,
-                numbers.CritQuantityMultiplier, numbers.CritProbability),
+                numbers.CritQuantityMultiplier, numbers.CritProbability, ClampFactor: clampFactor),
             rolls);
         if (kind == MiningSource.Drone && mined.NormalQuantity <= 0)
         {
             return new(false, "INVALID_PROFILE", asteroid.Quantity, 0, false, null);
         }
+        var normalQuantity = Math.Min(mined.NormalQuantity, maximumTransferredQuantity);
+        var criticalQuantity = Math.Min(mined.CriticalQuantity, Math.Max(0L, maximumTransferredQuantity - normalQuantity));
+        if (normalQuantity != mined.NormalQuantity || criticalQuantity != mined.CriticalQuantity)
+        {
+            mined = mined with { NormalQuantity = normalQuantity, CriticalQuantity = criticalQuantity };
+        }
         var delivered = mined.TransferredQuantity;
-        var miningHoldFlags = gas ? new[] { 135, 134 }
-            : CanAddToShipHold(181, yieldType, false, delivered) ? new[] { 181, 134 }
-            : new[] { 182, 134 };
-        var miningHoldFlag = miningHoldFlags.FirstOrDefault(flag =>
-            CanAddToShipHold(flag, yieldType, false, delivered)
-            && CapacityAttributeOf(flag) is { } attribute
-            && snapshot.World.Get(shipId, attribute) > 0);
-        var destinationFlag = miningHoldFlag == 0 ? CargoFlag : miningHoldFlag;
         var remaining = asteroid.Quantity - mined.DepletedQuantity;
         if (delivered > 0)
         {

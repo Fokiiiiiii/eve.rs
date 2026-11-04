@@ -47,7 +47,7 @@ public sealed class OwnerGroupManagerServiceTests
     }
 
     [PgFact]
-    public async Task A_group_the_character_cannot_see_is_answered_with_none_and_a_character_less_reader_gets_no_groups()
+    public async Task A_stranger_gets_a_group_summary_and_a_character_less_reader_gets_no_groups()
     {
         await using var rig = await Rig.CreateAsync();
         var sessions = new CharacterSessions();
@@ -56,7 +56,13 @@ public sealed class OwnerGroupManagerServiceTests
         var group = Num(Fields(await Call(service, alice, "Create", new PyWString("Private"), new PyWString(""))) ["groupID"]);
         var stranger = Connect(sessions, Stranger, CorpB, new Sink());
 
-        Assert.Equal(PyNone.Instance, await Call(service, stranger, "GetGroup", new PyLong(group)));
+        var summary = Fields(await Call(service, stranger, "GetGroup", new PyLong(group)));
+        Assert.Equal(group, Num(summary["groupID"]));
+        Assert.Equal(Alice, Num(summary["creatorID"]));
+        Assert.Equal("Private", Text(summary["name"]));
+        Assert.Equal("", Text(summary["description"]));
+        Assert.Equal(-1, Num(summary["membershipType"]));
+        Assert.Equal(new[] { Alice }, Assert.IsType<PyList>(summary["admins"]).Items.Select(Num));
         Assert.Empty(Assert.IsType<PyList>(await Call(service, new ClientSession(), "GetMyGroups")).Items);
     }
 

@@ -26,7 +26,7 @@ public sealed partial class OwnerGroupManagerService(AccessGroupStore store, Fun
 
     [Method("GetGroup")]
     public async ValueTask<PyValue> GetGroup(ServiceCall call) =>
-        await store.VisibleGroupAsync(Who(call), Integral(call.Arg(0)) ?? 0, call.Cancellation) is { } view ? GroupPayload(view) : PyNone.Instance;
+        await store.GroupSummaryAsync(Who(call), Integral(call.Arg(0)) ?? 0, call.Cancellation) is { } view ? GroupPayload(view) : PyNone.Instance;
 
     [Method("GetGroupsMany")]
     public async ValueTask<PyValue> GetGroupsMany(ServiceCall call)
@@ -34,7 +34,7 @@ public sealed partial class OwnerGroupManagerService(AccessGroupStore store, Fun
         var who = Who(call);
         var groups = new List<PyValue>();
         foreach (var groupId in IdsOf(call.Arg(0)))
-            if (await store.VisibleGroupAsync(who, groupId, call.Cancellation) is { } view) groups.Add(GroupPayload(view));
+            if (await store.GroupSummaryAsync(who, groupId, call.Cancellation) is { } view) groups.Add(GroupPayload(view));
         return new PyList(groups);
     }
 

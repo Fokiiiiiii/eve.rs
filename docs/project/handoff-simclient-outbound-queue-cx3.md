@@ -30,8 +30,9 @@ Implementation and local checks are complete. The change is in the cx3 worktree 
 - Focused test `A_full_outbound_queue_fails_pending_requests_and_breaks_the_link`: 1 passed, 0 skipped.
 - `SimClientTests`: 28 passed, 0 skipped.
 - PostgreSQL-backed `SpaceServiceTests.When_the_simulation_is_lost_the_ship_docks_at_the_station_the_character_left` on `eve_p3`: 1 passed, 0 skipped.
+- Selected Host tests referencing `SimClient` (`AbyssalHostFlowTests` and `TournamentMatchPersistenceTests`) on `eve_p3`: 21 passed, 21 skipped. The skipped cases use `RealAbyssalSimPgFact` and need `EVE_ABYSSAL_SIM_BINARY` plus `EVE_ABYSSAL_SIM_SDE`; these skips are reported separately and do not count as passes.
 - Change-specific Actions verification: pending push.
 
 ## Main CI gate at handoff
 
-The newest completed main CI run observed was 1514 and green. Run 1515 was still in progress; its Host tests shard 3/6 had failed `HostServerTests.Registered_lp_store_and_wallet_routes_return_the_client_consumed_shapes` in `LpStoreRpcHostWireTests.cs:154,165`. Confirm its final status before pushing; do not push this unrelated change if that run completes red.
+Main CI run 1515 was red on `HostServerTests.Registered_lp_store_and_wallet_routes_return_the_client_consumed_shapes` (`LpStoreRpcHostWireTests.cs:154,165`). That failure was fixed on main at `96d6bb8f2b15`; CI run 1516 completed successfully: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41898752417. Fetch and merge the current green main, then rerun the touched local checks before pushing this change.

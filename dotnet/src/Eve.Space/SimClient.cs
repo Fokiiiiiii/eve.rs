@@ -478,6 +478,36 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         _outbox.Writer.TryWrite(SimCodec.Encode(message));
     }
 
+    private static void TryEnqueue<T>(object gate, CancellationToken cancellationToken, TaskCompletionSource<T> completion, Action enqueue)
+    {
+        lock (gate)
+        {
+            if (completion.Task.IsCompleted) return;
+            if (cancellationToken.IsCancellationRequested)
+            {
+                completion.TrySetCanceled(cancellationToken);
+                return;
+            }
+
+            enqueue();
+        }
+    }
+
+    internal static void CancelPending<TKey, TValue, T>(
+        object gate, ConcurrentDictionary<TKey, TValue> pending, TKey key, TValue expected,
+        TaskCompletionSource<T> completion, CancellationToken cancellationToken) where TKey : notnull
+    {
+        lock (gate)
+        {
+            TryRemoveExact(pending, key, expected);
+            completion.TrySetCanceled(cancellationToken);
+        }
+    }
+
+    private static bool TryRemoveExact<TKey, TValue>(ConcurrentDictionary<TKey, TValue> pending, TKey key, TValue expected)
+        where TKey : notnull =>
+        ((ICollection<KeyValuePair<TKey, TValue>>)pending).Remove(new KeyValuePair<TKey, TValue>(key, expected));
+
     private async Task<T> AwaitAsync<TKey, T>(ConcurrentDictionary<TKey, TaskCompletionSource<T>> pending, TKey session, SimMessage request, CancellationToken cancellationToken)
         where TKey : notnull
     {
@@ -490,12 +520,10 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         {
             throw new InvalidOperationException($"session {session} already has a request of this kind waiting");
         }
+        var enqueueGate = new object();
         using var registration = cancellationToken.Register(() =>
-        {
-            pending.TryRemove(session, out _);
-            completion.TrySetCanceled(cancellationToken);
-        });
-        Send(request);
+            CancelPending(enqueueGate, pending, session, completion, completion, cancellationToken));
+        TryEnqueue(enqueueGate, cancellationToken, completion, () => Send(request));
         return await completion.Task;
     }
 
@@ -521,25 +549,23 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     private Task<string?> AwaitAbyssalAsync(ulong requestId, Type replyType, SimMessage request, CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        if (cancellationToken.IsCancellationRequested) return Task.FromCanceled<string?>(cancellationToken);
         if (!_connected) throw new SimUnavailableException("the simulation is not running");
         if (requestId == 0) throw new ArgumentOutOfRangeException(nameof(requestId));
         var key = (replyType, requestId);
         var completion = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
         if (!_abyssal.TryAdd(key, completion))
             throw new InvalidOperationException($"Abyssal request {requestId} already has a request of this kind waiting");
+        var enqueueGate = new object();
         var registration = cancellationToken.Register(() =>
-        {
-            _abyssal.TryRemove(key, out _);
-            completion.TrySetCanceled(cancellationToken);
-        });
+            CancelPending(enqueueGate, _abyssal, key, completion, completion, cancellationToken));
         try
         {
-            Send(request);
+            TryEnqueue(enqueueGate, cancellationToken, completion, () => Send(request));
         }
         catch
         {
-            _abyssal.TryRemove(key, out _);
+            TryRemoveExact(_abyssal, key, completion);
             registration.Dispose();
             throw;
         }
@@ -778,16 +804,15 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
             throw new SimUnavailableException("the simulation is not running");
         }
         var completion = new TaskCompletionSource<SimChargeAdjusted>(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (!_adjusting.TryAdd(request.RequestId, (completion, inOrder)))
+        var pending = (Completion: completion, InOrder: inOrder);
+        if (!_adjusting.TryAdd(request.RequestId, pending))
         {
             throw new InvalidOperationException($"request {request.RequestId} is already waiting");
         }
+        var enqueueGate = new object();
         using var registration = cancellationToken.Register(() =>
-        {
-            _adjusting.TryRemove(request.RequestId, out _);
-            completion.TrySetCanceled(cancellationToken);
-        });
-        Send(request);
+            CancelPending(enqueueGate, _adjusting, request.RequestId, pending, completion, cancellationToken));
+        TryEnqueue(enqueueGate, cancellationToken, completion, () => Send(request));
         return await completion.Task;
     }
 

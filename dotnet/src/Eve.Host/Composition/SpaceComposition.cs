@@ -275,13 +275,14 @@ internal sealed partial class CharacterServicesComposition
             spaceSessions.ApplyContrabandPenaltyAsync = customs.ApplyAsync;
             npcWrecks.Warm();
             // the periodic work of the space features is jobs of the shared scheduler, not timers of their own
-            spaceSessions.UseBounties(new PgBountyStore(source, new WalletTransactions(source, walletSchema), npcSchema, message => Console.Error.WriteLine($"eve-host: bounty: {message}"),
+            bountyStore = new PgBountyStore(source, new WalletTransactions(source, walletSchema), npcSchema, message => Console.Error.WriteLine($"eve-host: bounty: {message}"),
                 async (characterId, token) =>   // the member's corporation and its ISK tax rate, read when the bounty is paid
                 {
                     var member = await corporations.MemberAsync(characterId, token);
                     var corporation = member is null ? null : await corporations.GetAsync(member.CorporationId, token);
                     return corporation is null ? null : new BountyTaxTerms(corporation.Id, corporation.IsNpc, corporation.TaxRate);
-                }));
+                });
+            spaceSessions.UseBounties(bountyStore);
             spaceSessions.Ess = Ess;   // the Main Bank share of a bounty earned in an ESS system
             await PlaceEssBallsAsync(sim);   // each ESS is a ball in space, so a pilot in its system can link to it
             spaceSessions.Events = foundations.Events;   // what happens in space is announced on the bus as well
@@ -483,7 +484,8 @@ internal sealed partial class CharacterServicesComposition
             await foundations.Scheduler.EnsureRecurringAsync("space.bounty.pay", "pay", TimeSpan.FromSeconds(10));
             foundations.Scheduler.Register("space.ess.tick", async (_, token) => await TickEssAsync(token));
             await foundations.Scheduler.EnsureRecurringAsync("space.ess.tick", "tick", TimeSpan.FromSeconds(10));
-            spaceContainers = new SpaceContainers(sim, ships, items, new PgSpaceItemStore(source, spaceSchema), new PgWorkCycleLedger(source, spaceSchema), new Eve.Services.Space.EventBusFacts(foundations.Events), dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: cans: {message}"), deployed: new PgDeployedStore(source, spaceSchema), scheduler: foundations.Scheduler, source: source);
+            deployedStore = new PgDeployedStore(source, spaceSchema);
+            spaceContainers = new SpaceContainers(sim, ships, items, new PgSpaceItemStore(source, spaceSchema), new PgWorkCycleLedger(source, spaceSchema), new Eve.Services.Space.EventBusFacts(foundations.Events), dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: cans: {message}"), deployed: deployedStore, scheduler: foundations.Scheduler, source: source);
 
             // Tournament beacons are durable deployed items; restore them when their system scene opens.
             var tournamentSimulation = sim ?? throw new InvalidOperationException("Tournament beacon restoration requires simulation.");
@@ -600,7 +602,7 @@ internal sealed partial class CharacterServicesComposition
             await Eve.Services.Space.Beacons.AnalysisBeaconDirector.MigrateAsync(source, spaceSchema);
             var beacons = new Eve.Services.Space.Beacons.AnalysisBeaconDirector(
                 source, spaceSchema, Eve.Services.Space.Beacons.AnalysisBeaconRules.LoadEmbedded(), foundations.Scheduler, foundations.Events, sim, ships, items, dogma,
-                spaceSessions, new Eve.Ships.PgDeployedStore(source, spaceSchema), new Eve.Services.Space.SpaceDungeonNpcs(spaceSessions), new NpcSelector(npcAuthority), now,
+                spaceSessions, deployedStore, new Eve.Services.Space.SpaceDungeonNpcs(spaceSessions), new NpcSelector(npcAuthority), now,
                 message => Console.Error.WriteLine($"eve-host: {message}"));
             await beacons.AttachAsync();
             spaceContainers.RegisterDeployedKind(Eve.Services.Space.Beacons.AnalysisBeaconDirector.Kind, beacons.ExpireAsync, beacons.RestoreAsync);

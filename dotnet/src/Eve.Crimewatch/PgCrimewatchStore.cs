@@ -313,7 +313,12 @@ public sealed class PgCrimewatchStore
     public async Task<int> SafetyOfAsync(long characterId, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
-        var level = await Sql.ScalarAsync(connection, null, Q("SELECT level FROM {schema}.safety WHERE character_id = $1"), cancellationToken, characterId);
+        return await SafetyOfAsync(connection, null, characterId, cancellationToken);
+    }
+
+    public async Task<int> SafetyOfAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long characterId, CancellationToken cancellationToken = default)
+    {
+        var level = await Sql.ScalarAsync(connection, transaction, Q("SELECT level FROM {schema}.safety WHERE character_id = $1"), cancellationToken, characterId);
         return level is short stored ? stored : SafetyLevel.Full;
     }
 
@@ -416,6 +421,16 @@ public sealed class PgCrimewatchStore
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var result = await UpdateAsync(connection, transaction, characterId, change, nowMs, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return result;
+    }
+
+    /// <summary>Updates timers and their system in the transaction that moves a ship.</summary>
+    public async Task<(CombatState Before, CombatState After)> UpdateAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId,
+        Func<CombatState, CombatState> change, long nowMs, CancellationToken cancellationToken = default)
+    {
         await Sql.ExecuteAsync(connection, transaction, Q("INSERT INTO {schema}.combat_state (character_id, updated_ms) VALUES ($1, $2) ON CONFLICT (character_id) DO NOTHING"), cancellationToken, characterId, nowMs);
         CombatState before;
         await using (var command = Sql.Command(connection, transaction, Q($"SELECT {StateColumns} FROM {{schema}}.combat_state WHERE character_id = $1 FOR UPDATE"), characterId))
@@ -430,7 +445,6 @@ public sealed class PgCrimewatchStore
             SET weapons_until_ms = $2, pvp_until_ms = $3, npc_until_ms = $4, flag_until_ms = $5, flag = $6, disapproval_until_ms = $7, solar_system_id = $8, updated_ms = $9
             WHERE character_id = $1
             """), cancellationToken, characterId, after.WeaponsUntilMs, after.PvpUntilMs, after.NpcUntilMs, after.FlagUntilMs, (short)after.Flag, after.DisapprovalUntilMs, after.SolarSystemId, nowMs);
-        await transaction.CommitAsync(cancellationToken);
         return (before, after);
     }
 

@@ -1,0 +1,32 @@
+# Needlejack activation handoff (cx8)
+
+## Scope and behavior
+
+The Host registers a concrete `NeedlejackActivation` callback for `randomJumpMgr.ActivateRandomJumpFilament` in `SpaceRpc`. For group 4041 it locks and revalidates the cargo item, SDE dogma, fleet, sessions, ship positions and safety; selects an SDE-backed nullsec system from the available pending NPC bounty activity proxy; and commits filament consumption, fleet relocation, timer state and the retry record in one PostgreSQL transaction. A repeated call with the same session and CallId completes post-commit notifications without another consumption.
+
+The selection proxy is limited to pending NPC bounty kills currently stored per system. Noise selects the least active score and Signal the highest; ties use ascending system ID. Neither the source nor available state defines a complete activity measure, time window or tie distribution, so no probability is implied.
+
+## Client evidence
+
+- V24.01 `randomJump/client/randomJumpSvc.py:16-19` sends one item ID; `randomJumpController.py:54` wraps the RPC as a `RandomJump` session change.
+- `randomJumpController.py:141-167` reads the `RandomJumpError` `errors` list. `clientRandomJumpValidator.py:44-57,107-108,150-196` checks supported groups, ownership, quantity, timer and local activation restrictions.
+- `inventorysvc.py:56-100` consumes `OnItemChange` and treats quantity zero as removal. `crimewatchSvc.py:227-232` consumes `OnPvpTimerUpdate(state, expiryTime)`; `randomJumpController.py:192-194,213-220` revalidates after timer and session changes.
+- The client also has a separate trace path: `menuSvcExtras/movementFunctions.py:367,515-525` calls `FILAMENT_SPOOLUP.JumpThroughRandomFilamentGate`; `filamentSpoolup.py:24-36` validates before that action. UniWiki documents nearby fleet linking and a spool-up timer for Needlejack travel ([Needlejack filaments](https://wiki.eveuniversity.org/Needlejack_filaments), [Filament](https://wiki.eveuniversity.org/Filament)).
+- SDE group 4087 is Pochven filament data, without the Needlejack Noise/Signal attribute 3025. The nullsec Needlejack path handles group 4041 only; Pochven routing is separate. The client validator does list both groups, so group 4087 remains a compatibility gap pending its Pochven route.
+- The Host moves pilots on item activation and does not create the separate trace/spool-up gate lifecycle. This matches the requested atomic activation callback scenario, but is not verified against the graphical client’s two-stage travel interaction.
+- EveJS 261028.1 `server/src/services/activity/randomJumpMgrService.js:146-164` currently refuses with error 22 because its destination runtime is unavailable.
+
+## Tests run locally
+
+Database tests used `eve_p8` through `tools/dev/db-lock.sh`.
+
+- Host `NeedlejackActivationHostTests`: 7 passed, 0 skipped.
+- Host `Crimewatch_bound_get_character_security_status_uses_the_registered_host_route`: 1 passed, 0 skipped.
+- `ActivityTravelRpcServicesTests`: 9 passed, 0 skipped.
+- `PgBountyStoreTests`: 16 passed, 0 skipped.
+- Space `RelocationTests`: 5 passed, 0 skipped.
+- Services Crimewatch `RuntimeTests|PlayerBountyKillsTests|NpcSecurityStatusRecoverySubscriberTests`: 38 passed, 0 skipped.
+- Crimewatch `AggressionTests|SafetyTests`: 45 passed, 0 skipped.
+- A combined Host run included 20 unrelated Abyssal gated cases that were skipped; those skips are not counted as passes.
+
+The Host and test projects compiled as part of these runs. GitHub Actions and the graphical EVE client have not yet checked this change.

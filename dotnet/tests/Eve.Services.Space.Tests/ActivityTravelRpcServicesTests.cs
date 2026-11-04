@@ -94,7 +94,7 @@ public sealed class ActivityTravelRpcServicesTests
         session.CharacterId = 123;
         SpaceRpcItem? activated = null;
         var service = new RandomJumpMgrService(
-            (id, _) => ValueTask.FromResult<SpaceRpcItem?>(new SpaceRpcItem(id, 123, 5001, 4087, 2)),
+            (id, _) => ValueTask.FromResult<SpaceRpcItem?>(new SpaceRpcItem(id, 123, 5001, 4041, 2)),
             (_, item, _) =>
             {
                 activated = item;
@@ -102,7 +102,25 @@ public sealed class ActivityTravelRpcServicesTests
             });
 
         Assert.Equal(PyNone.Instance, await service.CallAsync(Call("ActivateRandomJumpFilament", session, new PyInt(51))));
-        Assert.Equal(new SpaceRpcItem(51, 123, 5001, 4087, 2), activated);
+        Assert.Equal(new SpaceRpcItem(51, 123, 5001, 4041, 2), activated);
+    }
+
+    [Fact]
+    public async Task Random_jump_replay_is_checked_before_the_consumed_item_is_read()
+    {
+        var session = new ClientSession();
+        session.CharacterId = 123;
+        var reads = 0;
+        var service = new RandomJumpMgrService(
+            (id, _) =>
+            {
+                reads++;
+                return ValueTask.FromResult<SpaceRpcItem?>(null);
+            },
+            replay: (_, itemId, _) => ValueTask.FromResult<PyValue?>(itemId == 51 ? PyNone.Instance : null));
+
+        Assert.Equal(PyNone.Instance, await service.CallAsync(Call("ActivateRandomJumpFilament", session, new PyInt(51))));
+        Assert.Equal(0, reads);
     }
 
     [Fact]

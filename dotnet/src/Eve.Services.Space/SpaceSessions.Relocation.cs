@@ -68,9 +68,33 @@ public sealed partial class SpaceSessions
         finally { gate.Release(); }
     }
 
+    public async Task<string?> RelocatePersistedAsync(ClientSession session, SpaceMove moved, string operationId, CancellationToken cancellationToken)
+    {
+        var gate = _relocationGates.GetValue(session, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            var sessionId = (ulong)session.SessionId;
+            if (session.CharacterId is not { } characterId || !_pilots.TryGetValue(sessionId, out var pilot) ||
+                !ReferenceEquals(pilot.Session, session) || pilot.CharacterId != characterId || pilot.ShipId != moved.Ship.Id ||
+                moved.Ship.LocationId is <= 0 or > int.MaxValue || moved.PreviousLocationId is <= 0 or > int.MaxValue)
+                return "The persisted space move does not match the active pilot.";
+            if (IsInPublicSystem(session, moved.Ship.LocationId))
+                return null;
+            var resumingMove = pilot.LastPublicMove?.OperationId == operationId;
+            if ((!resumingMove && pilot.SolarSystemId != moved.PreviousLocationId) || pilot.SimulationScene.InstanceId != 0)
+                return "The active pilot is no longer in the move's source system.";
+            if (Interlocked.CompareExchange(ref pilot.PublicMoveInFlight, 1, 0) != 0)
+                return "A space relocation is still being resolved.";
+            try { return await RelocateCoreAsync(session, (int)moved.Ship.LocationId, null, null, cancellationToken, operationId, moved); }
+            finally { Volatile.Write(ref pilot.PublicMoveInFlight, 0); }
+        }
+        finally { gate.Release(); }
+    }
+
     private async Task<string?> RelocateCoreAsync(
         ClientSession session, int solarSystemId, IReadOnlyList<double>? position, IReadOnlyList<double>? direction,
-        CancellationToken cancellationToken, string? operationId)
+        CancellationToken cancellationToken, string? operationId, SpaceMove? persistedMove = null)
     {
         if ((position is null && direction is not null) ||
             (position is not null && (position.Count != 3 || position.Any(x => !double.IsFinite(x)) ||
@@ -166,11 +190,26 @@ public sealed partial class SpaceSessions
                 pilot.PendingPublicMove = new PublicMoveReceipt(normalizedOperation, pilot.ShipId, pilot.SimulationScene, destination,
                     position?.ToArray(), direction?.ToArray());
         }
-        var relocation = await _ships.RelocateAsync(characterId, solarSystemId, place.ConstellationId, place.RegionId, cancellationToken);
-        if (relocation.Moved is not { } moved)
+        SpaceMove moved;
+        if (persistedMove is { } recorded)
         {
-            if (wasInSpace) pilot!.PendingPublicMove = null;
-            return relocation.Refusal == "NO_SHIP" ? "Active ship not found for this character." : "Solar-system jump failed.";
+            if (!wasInSpace || recorded.Ship.Id != snapshot.Ship.Id || recorded.Ship.LocationId != solarSystemId ||
+                recorded.PreviousLocationId != previousSystemId)
+            {
+                if (wasInSpace) pilot!.PendingPublicMove = null;
+                return "The persisted space move no longer matches the pilot.";
+            }
+            moved = recorded;
+        }
+        else
+        {
+            var relocation = await _ships.RelocateAsync(characterId, solarSystemId, place.ConstellationId, place.RegionId, cancellationToken);
+            if (relocation.Moved is not { } newlyMoved)
+            {
+                if (wasInSpace) pilot!.PendingPublicMove = null;
+                return relocation.Refusal == "NO_SHIP" ? "Active ship not found for this character." : "Solar-system jump failed.";
+            }
+            moved = newlyMoved;
         }
 
         await SyncBuffsAsync(snapshot.World, snapshot.Ship.Id, cancellationToken);

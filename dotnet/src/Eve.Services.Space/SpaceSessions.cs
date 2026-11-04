@@ -465,6 +465,10 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
 
     public bool IsWarping(ClientSession session) => _warping.ContainsKey((ulong)session.SessionId);
 
+    public bool IsInvulnerable(ClientSession session) =>
+        _pilots.TryGetValue((ulong)session.SessionId, out var pilot) && ReferenceEquals(pilot.Session, session) &&
+        pilot.InvulnerableUntil > FileTimeNow();
+
     public ClientSession? ClientSessionOf(ulong sessionId) =>
         _pilots.TryGetValue(sessionId, out var pilot) ? pilot.Session : null;
 

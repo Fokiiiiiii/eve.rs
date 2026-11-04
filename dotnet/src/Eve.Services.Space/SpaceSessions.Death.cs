@@ -34,6 +34,14 @@ public sealed partial class SpaceSessions
     private static MachoWrappedException SelfDestructError(string message) =>
         MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(message)));
 
+    public async Task<bool> IsSelfDestructingAsync(ClientSession session, CancellationToken cancellationToken = default)
+    {
+        if (TimedActions is not { } scheduler || !_pilots.TryGetValue((ulong)session.SessionId, out var pilot) ||
+            !ReferenceEquals(pilot.Session, session) || session.CharacterId != pilot.CharacterId)
+            return false;
+        return await scheduler.FindAsync(ShipSelfDestructJobKind, ShipSelfDestructJobKey(pilot.ShipId), cancellationToken) is { State: "pending" };
+    }
+
     public async ValueTask<PyValue> StartSelfDestructAsync(ClientSession session, long? requestedShipId, CancellationToken cancellationToken)
     {
         if (TimedActions is not { } scheduler || !_pilots.TryGetValue((ulong)session.SessionId, out var pilot) ||
@@ -566,7 +574,9 @@ public sealed partial class SpaceSessions
         finally
         {
             if (!handedOver && _pilots.TryRemove(id, out _))
+            {
                 _sim.Leave(id, LeaveWhy.LoggedOff);
+            }
             _dying.TryRemove(pilot.ShipId, out _);
             if (_deaths.TryRemove(pilot.ShipId, out var waiting))
                 waiting.TrySetResult(done);

@@ -125,6 +125,19 @@ public sealed class PgBountyStore
     /// <summary>Every bucket that is waiting, soonest first.</summary>
     public async Task<IReadOnlyList<BountyBucket>> PendingAsync(CancellationToken cancellationToken = default) => await ListAsync(null, cancellationToken);
 
+    public async Task<IReadOnlyDictionary<int, long>> PendingKillsBySystemAsync(CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = Command(
+            "SELECT solar_system_id, SUM(GREATEST(kills, 0)) FROM {schema}.pending_bounties GROUP BY solar_system_id",
+            connection, null);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var kills = new Dictionary<int, long>();
+        while (await reader.ReadAsync(cancellationToken))
+            kills.Add(reader.GetInt32(0), reader.GetInt64(1));
+        return kills;
+    }
+
     /// <summary>The buckets whose time has come at <paramref name="nowMs"/>, soonest first.</summary>
     public async Task<IReadOnlyList<BountyBucket>> DueAsync(long nowMs, CancellationToken cancellationToken = default) => await ListAsync(nowMs, cancellationToken);
 

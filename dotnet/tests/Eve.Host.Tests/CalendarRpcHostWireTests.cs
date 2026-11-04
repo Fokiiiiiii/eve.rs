@@ -59,7 +59,7 @@ public partial class HostServerTests
 
         var (ownerFront, ownerOpen) = await OpenCalendarFrontAsync(401);
         var (inviteeFront, inviteeOpen) = await OpenCalendarFrontAsync(402);
-        var (removedFront, _) = await OpenCalendarFrontAsync(403);
+        var (removedFront, removedOpen) = await OpenCalendarFrontAsync(403);
         var (addedFront, _) = await OpenCalendarFrontAsync(404);
 
         var originalTime = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc)
@@ -203,6 +203,41 @@ public partial class HostServerTests
         await AssertCalendarErrorAsync(ownerFront, ownerOpen, 18, "calendarMgr", "EditPersonalEvent",
             "That calendar event has been deleted.", new PyLong(eventId), new PyLong(editedTime),
             new PyLong(editedTime), new PyInt(30), new PyStr("Deleted event"), new PyStr(""), new PyInt(0));
+
+        var responsesAfterDelete = await store.GetResponsesToEventAsync(eventId, ownerId);
+        Assert.Equal(CalendarResponseStates.Deleted,
+            responsesAfterDelete.Single(row => row.CharacterId == ownerId).Status);
+        Assert.Equal(CalendarResponseStates.Deleted,
+            responsesAfterDelete.Single(row => row.CharacterId == inviteeId).Status);
+        Assert.Equal(CalendarResponseStates.Uninvited,
+            responsesAfterDelete.Single(row => row.CharacterId == removedInviteeId).Status);
+        Assert.Equal(CalendarResponseStates.Deleted,
+            responsesAfterDelete.Single(row => row.CharacterId == addedInviteeId).Status);
+
+        var inviteeDeletedEvents = Assert.IsType<PyTuple>(await HostRpcAsync(
+            inviteeFront, inviteeOpen, 19, "calendarProxy", "GetEventList",
+            new PyLong(month.Month), new PyInt(month.Year)));
+        var inviteeDeletedEvent = Assert.Single(Assert.IsType<PyList>(inviteeDeletedEvents.Items[0]).Items,
+            row => WireInteger(CalendarEventRowField(row, "eventID")) == eventId);
+        Assert.Equal(PyBool.True, CalendarEventRowField(inviteeDeletedEvent, "isDeleted"));
+
+        var removedDeletedEvents = Assert.IsType<PyTuple>(await HostRpcAsync(
+            removedFront, removedOpen, 19, "calendarProxy", "GetEventList",
+            new PyLong(month.Month), new PyInt(month.Year)));
+        Assert.DoesNotContain(Assert.IsType<PyList>(removedDeletedEvents.Items[0]).Items,
+            row => WireInteger(CalendarEventRowField(row, "eventID")) == eventId);
+
+        var ownerDeletedDetails = Assert.IsType<PyObject>(await HostRpcAsync(
+            ownerFront, ownerOpen, 19, "calendarProxy", "GetEventDetails",
+            new PyLong(eventId), new PyLong(ownerId)));
+        Assert.Equal("updated text", WireText(WireField(ownerDeletedDetails, "eventText")));
+        var inviteeDeletedDetails = Assert.IsType<PyObject>(await HostRpcAsync(
+            inviteeFront, inviteeOpen, 20, "calendarProxy", "GetEventDetails",
+            new PyLong(eventId), new PyLong(ownerId)));
+        Assert.Equal("updated text", WireText(WireField(inviteeDeletedDetails, "eventText")));
+        await AssertCalendarErrorAsync(removedFront, removedOpen, 20, "calendarProxy", "GetEventDetails",
+            "You do not have access to that calendar event.",
+            new PyLong(eventId), new PyLong(ownerId));
     }
 
     [Fact]

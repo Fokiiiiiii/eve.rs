@@ -55,9 +55,7 @@ public sealed class ActivationContext
     public DurableScheduler Scheduler { get; }
 }
 
-/// <summary>
-/// value of <c>amountField</c> (1 when it is not given).
-/// </summary>
+/// <summary>Counts matching events using the configured numeric payload field, or one when no <c>amountField</c> is configured.</summary>
 public sealed class CounterObjective : ObjectiveType
 {
     public override string Name => "counter";

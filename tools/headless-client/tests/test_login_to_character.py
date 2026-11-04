@@ -57,19 +57,19 @@ WALK = load("login_to_character.json")
 STARTERS = load("starters.json")["starters"]
 RECORDED_RUN = re.search(r"(\d{6,})$", next(s["call"][2][0] for s in WALK["steps"] if s["call"][1] == "CreateCharacterWithDoll")).group(1)
 
-def connect(name: str) -> Client:
+def connect(name: str, *, timeout: float = 30.0) -> Client:
     host, _, port = LIVE.partition(":")
     address = (host or "127.0.0.1", int(port or 26000))
     if os.environ.get("EVE_IDENTITY_SCHEMA"):
         # eve.rs with its database: the account is made by its first login and its role bits are read at a login, so the walk's account is a
         # game master's (the slash commands need a staff role) by a fixture, and the walk logs in again after it
-        first = Client(*address, timeout=30.0)
+        first = Client(*address, timeout=timeout)
         first.login(name, "walk-password")
         first.close()
         from tests import dbseed  # noqa: PLC0415  (only the walks that run against the database need it)
 
         dbseed.grant_roles(name)
-    client = Client(*address, timeout=30.0)
+    client = Client(*address, timeout=timeout)
     client.login(name, "walk-password")
     return client
 

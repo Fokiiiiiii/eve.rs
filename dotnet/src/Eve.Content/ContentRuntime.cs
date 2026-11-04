@@ -7,9 +7,7 @@ using Npgsql;
 namespace Eve.Content;
 
 /// <summary>
-/// The shared runtime for missions, anomalies, incursions and everything else that has objectives. A feature defines content (a <see cref="ContentDefinition"/>: objectives, a
-/// duration, actions), starts instances of it, and lets domain events advance the objectives; the runtime keeps the state in PostgreSQL, ends the content when its objectives are
-/// met or its time is up (a scheduler job), and announces the end as an event (<c>content.&lt;kind&gt;.completed|failed|expired|abandoned</c>) so the feature's own subscribers pay
+/// The shared runtime for objective-based content. It stores instances in PostgreSQL, advances them from domain events, expires deadlines, and publishes events for feature subscribers.
 /// </summary>
 public sealed class ContentRuntime
 {
@@ -60,8 +58,6 @@ public sealed class ContentRuntime
         Migrations.ApplyAsync(source, schema, MigrationSet(), cancellationToken);
 
     private string Q(string text) => Sql.In(_schema, text);
-
-    // ---- registering -------------------------------------------------------------------------------------------------------------------------------
 
     public void RegisterObjectiveType(ObjectiveType type)
     {
@@ -132,8 +128,6 @@ public sealed class ContentRuntime
     }
 
     private static JsonElement ToElement(object? value) => JsonDocument.Parse(JsonSerializer.Serialize(value ?? new { }, Json)).RootElement.Clone();
-
-    // ---- starting ----------------------------------------------------------------------------------------------------------------------------------
 
     /// <summary>
     /// The newest instance of a kind with this unique key, in any state (a finished one too), or null. <see cref="StartAsync"/> makes a new instance when the one with the
@@ -302,7 +296,7 @@ public sealed class ContentRuntime
     }
 
     /// <summary>
-    /// a system): asking again returns the one that exists. The first objective (every objective, for parallel content) is active at once.
+    /// Starts a content instance. A non-null unique key reuses an active instance of the same kind; sequential content activates its first objective, while parallel content activates all objectives.
     /// </summary>
     public async Task<StartResult> StartAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, string definitionId, long owner, object? data = null, string? uniqueKey = null, long? durationMs = null,
@@ -355,8 +349,6 @@ public sealed class ContentRuntime
 
     private static object Announcement(long id, string kind, string definition, long owner, string? reason, JsonElement data) =>
         new { instanceId = id, kind, definition, owner, reason, data };
-
-    // ---- progress ----------------------------------------------------------------------------------------------------------------------------------
 
     private sealed record Row(ContentInstance Info, string OrderMode, string OnComplete, string OnFail);
 
@@ -533,9 +525,7 @@ public sealed class ContentRuntime
         return false;
     }
 
-    /// <summary>
-    /// active and moved.
-    /// </summary>
+    /// <summary>Adds delta to the named objective and returns whether the objective was active.</summary>
     public async Task<bool> ProgressAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, string objectiveId, double delta = 1, CancellationToken cancellationToken = default)
     {
         var objectives = await ObjectivesAsync(connection, transaction, instanceId, cancellationToken);
@@ -558,8 +548,6 @@ public sealed class ContentRuntime
         await AddProgressAsync(connection, transaction, row, objective, delta, cancellationToken);
         return true;
     }
-
-    // ---- ending ------------------------------------------------------------------------------------------------------------------------------------
 
     /// <summary>Completes the content now, whatever its objectives say (a feature that decides for itself).</summary>
     public Task<bool> CompleteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, string? reason = null, CancellationToken cancellationToken = default) =>
@@ -626,8 +614,6 @@ public sealed class ContentRuntime
         await _bus.PublishAsync(connection, transaction, $"content.{row.Info.Kind}.{outcome}",
             Announcement(row.Info.Id, row.Info.Kind, row.Info.Definition, row.Info.Owner, reason, JsonDocument.Parse(row.Info.DataJson).RootElement.Clone()), $"{row.Info.Kind}:{row.Info.Id}", cancellationToken);
     }
-
-    // ---- looking -----------------------------------------------------------------------------------------------------------------------------------
 
     public async Task<ContentInstance?> GetAsync(long instanceId, CancellationToken cancellationToken = default)
     {

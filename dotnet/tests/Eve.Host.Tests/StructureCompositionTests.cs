@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using Eve.AccessGroups;
 using Eve.Data;
 using Eve.GameStore;
 using Eve.Identity;
@@ -32,7 +33,7 @@ public sealed class StructureCompositionTests : IAsyncLifetime
         "EVE_IDENTITY_SCHEMA", "EVE_GLOBAL_CONFIG_SCHEMA", "EVE_CHARACTERS_SCHEMA", "EVE_INVENTORY_SCHEMA", "EVE_SKILLS_SCHEMA", "EVE_WALLET_SCHEMA",
         "EVE_FITTING_SCHEMA", "EVE_NPC_SCHEMA", "EVE_SPACE_SCHEMA", "EVE_GAMESTORE_SCHEMA", "EVE_ASSET_SAFETY_SCHEMA", "EVE_CORPORATIONS_SCHEMA",
         "EVE_MARKET_SCHEMA", "EVE_FLEET_SCHEMA", "EVE_INDUSTRY_SCHEMA", "EVE_SCHEDULER_SCHEMA", "EVE_EVENTS_SCHEMA", "EVE_RELATIONS_SCHEMA",
-        "EVE_CONTENT_SCHEMA", "EVE_CRIMEWATCH_SCHEMA", "EVE_STRUCTURES_SCHEMA",
+        "EVE_CONTENT_SCHEMA", "EVE_CRIMEWATCH_SCHEMA", "EVE_STRUCTURES_SCHEMA", "EVE_ACCESS_GROUPS_SCHEMA",
         "EVE_TRADE_SCHEMA", "EVE_BOOKMARKS_SCHEMA", "EVE_ESS_SCHEMA",
     ];
 
@@ -961,5 +962,154 @@ public sealed class StructureCompositionTests : IAsyncLifetime
                 NoticeOf(await Assert.ThrowsAsync<MachoWrappedException>(() => travel.CallAsync(Call(pilot, "CmdJumpToStructureBeacon", 4, new PyLong(StructureId), new PyInt(Jita))).AsTask())));
         }
         finally { await host.ShutdownAsync(); }
+    }
+
+    [PgFact]
+    public async Task Registered_owner_group_RPCs_preserve_everyone_zero_validate_roles_and_notify_listeners()
+    {
+        const long invalidMember = -98_000_001;
+        const long observerId = 98_000_099;
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        var actor = await SeedManagerAsync("Access Group Manager");
+        var session = ManagerSession(actor);
+        session.CharacterId = actor;
+        var observerSink = new Sink();
+        var observer = new ClientSession(observerSink) { CharacterId = observerId };
+        var host = await BuildWithSpaceServicesAsync();
+        try
+        {
+            var sessions = host.CharacterSessions ?? throw new InvalidOperationException("Character sessions are unavailable");
+            sessions.Enter(observerId, observer);
+            var service = host.Registry.Lookup("ownerGroupManager") ?? throw new InvalidOperationException("ownerGroupManager is not registered");
+            long callId = 1;
+            async Task<PyValue> Rpc(string method, params PyValue[] args)
+            {
+                var result = await service.CallAsync(Call(session, method, callId++, args));
+                session.RunAfterResponse();
+                return result;
+            }
+            static long Number(PyValue value) => value switch
+            {
+                PyInt number => number.Value,
+                PyLong number => number.Value,
+                _ => throw new InvalidOperationException("Expected an integer wire value"),
+            };
+            (long MemberId, string Reason)[] Failures(PyValue value) => Assert.IsType<PyList>(value).Items.Select(item =>
+            {
+                var pair = Assert.IsType<PyTuple>(item);
+                return (Number(pair.Items[0]), Assert.IsType<PyStr>(pair.Items[1]).Value);
+            }).ToArray();
+            static PyValue Field(PyValue value, string name) => Assert.IsType<PyDict>(Assert.IsType<PyObject>(value).Args)
+                .Entries.Single(entry => JsSemantics.StringValue(entry.Key) == name).Value;
+            static PyDict MemberEntries(params (PyValue Id, int Type)[] entries) => new(entries.Select(entry =>
+                new KeyValuePair<PyValue, PyValue>(entry.Id, new PyInt(entry.Type))).ToArray());
+
+            var created = await Rpc("Create", new PyWString("Everyone access"), new PyWString("Public list"));
+            var groupId = Number(Field(created, "groupID"));
+            var groups = Assert.IsType<PyList>(await Rpc("GetGroupsMany", new PyList([new PyLong(0), new PyLong(groupId)])));
+            Assert.Single(groups.Items);
+            Assert.Equal(groupId, Number(Field(Assert.Single(groups.Items), "groupID")));
+            var memberGroups = Assert.IsType<PyDict>(await Rpc("GetMembersForMultipleGroups",
+                new PyList([new PyLong(0), new PyLong(groupId)])));
+            Assert.Equal(groupId, Number(Assert.Single(memberGroups.Entries).Key));
+
+            foreach (var type in new[] { (int)MembershipType.None, (int)MembershipType.Manager, (int)MembershipType.Admin,
+                         (int)MembershipType.Excluded, 4 })
+            {
+                Assert.Equal([(0L, "NotAllowed")], Failures(await Rpc("AddMembers", new PyLong(groupId),
+                    MemberEntries((new PyLong(0), type)))));
+            }
+            var store = new AccessGroupStore(source, Schema("EVE_ACCESS_GROUPS_SCHEMA"), () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            Assert.DoesNotContain(await store.MembersAsync(new Affiliation(actor, Corporation, 0), groupId), member => member.MemberId == 0);
+
+            await Assert.ThrowsAsync<MachoWrappedException>(async () => await Rpc("AddMembers", new PyLong(groupId),
+                MemberEntries((new PyStr("zero"), (int)MembershipType.Member))));
+            await Assert.ThrowsAsync<MachoWrappedException>(async () => await Rpc("AddMembers", new PyLong(groupId),
+                new PyDict([
+                    new KeyValuePair<PyValue, PyValue>(new PyLong(0), new PyInt((int)MembershipType.Member)),
+                    new KeyValuePair<PyValue, PyValue>(new PyInt(0), new PyInt((int)MembershipType.Member)),
+                ])));
+
+            Assert.Equal([(invalidMember, "InvalidMember")], Failures(await Rpc("AddMembers", new PyLong(groupId),
+                MemberEntries((new PyLong(0), (int)MembershipType.Member), (new PyLong(invalidMember), (int)MembershipType.Member)))));
+            Assert.Contains(new AccessMember(0, MemberKind.Everyone, MembershipType.Member),
+                await store.MembersAsync(new Affiliation(actor, Corporation, 0), groupId));
+            var routedMembers = Assert.IsType<PyList>(await Rpc("GetMembers", new PyLong(groupId)));
+            Assert.Contains(routedMembers.Items, member => Number(Field(member, "memberID")) == 0);
+            var addedNotice = Assert.Single(OwnerGroupNotifications(observerSink));
+            Assert.Equal(groupId, addedNotice.GroupId);
+            Assert.Equal([AccessGroupChanges.MemberAdded, AccessGroupChanges.ChangedForListener], addedNotice.Codes);
+
+            Assert.Empty(Failures(await Rpc("UpdateMembershipTypes", new PyLong(groupId),
+                new PyList([new PyLong(0), new PyLong(0)]), new PyInt((int)MembershipType.Member))));
+            foreach (var type in new[] { (int)MembershipType.None, (int)MembershipType.Manager, (int)MembershipType.Admin,
+                         (int)MembershipType.Excluded, 4 })
+            {
+                Assert.Equal([(0L, "NotAllowed")], Failures(await Rpc("UpdateMembershipTypes", new PyLong(groupId),
+                    new PyList([new PyLong(0), new PyLong(0)]), new PyInt(type))));
+            }
+            await Assert.ThrowsAsync<MachoWrappedException>(async () => await Rpc("DeleteMembers", new PyLong(groupId),
+                new PyList([new PyStr("zero")])));
+            Assert.Equal([(invalidMember, "NotAMember")], Failures(await Rpc("DeleteMembers", new PyLong(groupId),
+                new PyList([new PyLong(invalidMember), new PyLong(invalidMember)]))));
+            Assert.Contains(new AccessMember(0, MemberKind.Everyone, MembershipType.Member),
+                await store.MembersAsync(new Affiliation(actor, Corporation, 0), groupId));
+            Assert.Single(OwnerGroupNotifications(observerSink));
+
+            Assert.Empty(Failures(await Rpc("DeleteMembers", new PyLong(groupId), new PyList([new PyLong(0), new PyLong(0)]))));
+            Assert.DoesNotContain(await store.MembersAsync(new Affiliation(actor, Corporation, 0), groupId), member => member.MemberId == 0);
+            var notifications = OwnerGroupNotifications(observerSink);
+            Assert.Equal(2, notifications.Count);
+            Assert.All(notifications, notice => Assert.Equal(groupId, notice.GroupId));
+            Assert.Equal([AccessGroupChanges.MemberAdded, AccessGroupChanges.ChangedForListener], notifications[0].Codes);
+            Assert.Equal([AccessGroupChanges.MemberRemoved, AccessGroupChanges.ChangedForListener], notifications[1].Codes);
+        }
+        finally { await host.ShutdownAsync(); }
+    }
+
+    private static List<(long GroupId, int[] Codes)> OwnerGroupNotifications(Sink sink)
+    {
+        var heard = new List<(long GroupId, int[] Codes)>();
+        foreach (var packet in sink.Packets)
+        {
+            var nodes = Walk(packet).ToList();
+            if (!nodes.OfType<PyStr>().Any(node => node.Value == "OnOwnerGroupsUpdated")) continue;
+            var stream = Assert.IsType<PyTuple>(MarshalCodec.Decode(nodes.OfType<PyBuffer>().Single().Value));
+            var args = Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(stream.Items[1]).Items[1]);
+            foreach (var entry in Assert.IsType<PyDict>(args.Items[0]).Entries)
+            {
+                var groupId = entry.Key switch
+                {
+                    PyInt number => number.Value,
+                    PyLong number => number.Value,
+                    _ => throw new InvalidOperationException("Expected an integer group ID"),
+                };
+                heard.Add((groupId, Assert.IsType<PyList>(entry.Value).Items.Select(code => code switch
+                {
+                    PyInt number => (int)number.Value,
+                    PyLong number => (int)number.Value,
+                    _ => throw new InvalidOperationException("Expected an integer change code"),
+                }).ToArray()));
+            }
+        }
+        return heard;
+    }
+
+    private static IEnumerable<PyValue> Walk(PyValue value)
+    {
+        yield return value;
+        switch (value)
+        {
+            case PyTuple tuple:
+                foreach (var item in tuple.Items) foreach (var node in Walk(item)) yield return node;
+                break;
+            case PyList list:
+                foreach (var item in list.Items) foreach (var node in Walk(item)) yield return node;
+                break;
+            case PyObject obj:
+                foreach (var node in Walk(obj.Args)) yield return node;
+                break;
+        }
     }
 }

@@ -12,9 +12,9 @@ shared bookmark folders are built and tested on the PostgreSQL lane. The graphic
    `eve/client/script/ui/structure/accessGroups/accessGroupsController.py` (the owner group remote calls and `OnOwnerGroupsUpdated`),
    `eve/client/script/ui/shared/bookmarks/bookmarkSvc.py` (the `accessGroupBookmarkMgr` calls and the shared notifications),
    `eve/common/script/mgt/bookmarkConst.py`, `eve/common/lib/appConst.py` (access levels, limits).
-3. EveJS v0.12.9 as a behaviour reference only: `services/character/ownerGroupManagerService.js`,
-   `services/character/accessGroupBookmarkMgrService.js`, `services/bookmark/bookmarkRuntimeAccess.js`,
-   `services/bookmark/bookmarkNotifications.js`. Its stubs (`GetGroupLogs`, `UpdateMemberships`) were not copied.
+3. EveJS 261028.1 as a behaviour reference only: `server/src/services/character/ownerGroupManagerService.js`,
+   `server/src/services/character/accessGroupBookmarkMgrService.js`, `server/src/services/bookmark/bookmarkRuntimeAccess.js`,
+   `server/src/services/bookmark/bookmarkNotifications.js`. Its stubs (`GetGroupLogs`, `UpdateMemberships`) were not copied.
 
 ## Owner groups (`ownerGroupManager`)
 
@@ -22,12 +22,14 @@ shared bookmark folders are built and tested on the PostgreSQL lane. The graphic
   entry per member id: kind everyone/character/corporation/alliance, membership type none/member/manager/admin/excluded), `logs`.
 - Rules: `AccessRules` (pure). The role is the most specific entry: character, then corporation, then alliance, then everyone. Blocked gives
   no access. Admin edits, renames and deletes and manages every entry; a manager adds, removes and changes member or blocked entries only;
-  corporation, alliance and everyone entries are member or blocked only. Members see no list (only admins and managers read the lists).
+  corporation and alliance entries are member or blocked, while Everyone is member only. Members see no list (only admins and managers read the lists).
 - Corporation built-in list: id = corporation id (no sequence value; the sequence starts above all character, corporation and alliance
   ids), created on first read by a member, fixed (no change), usable by the corporation's members.
 - Service: `OwnerGroupManagerService` (Eve.Services.Core). Each change runs in one transaction under the group's advisory lock; the change
   codes go to the audience (characters, corporations and alliances the entries name, and everyone for a public entry) after the response as
-  `OnOwnerGroupsUpdated`. Member add, type change and removal also send code 8 so clients refresh their lists.
+  `OnOwnerGroupsUpdated`. Member add, type change and removal also send code 8 so clients refresh their lists. Mutation member arguments preserve
+  ID 0 for Everyone; group-ID lists remain positive-only. Non-integral member IDs and duplicate dictionary keys are refused, while repeated
+  list IDs are processed once.
 
 ## Shared bookmark folders (`accessGroupBookmarkMgr`)
 

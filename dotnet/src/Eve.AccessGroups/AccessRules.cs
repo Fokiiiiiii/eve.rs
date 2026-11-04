@@ -101,10 +101,14 @@ public static class AccessRules
     /// <summary>Admins and managers manage a list: its members, its logs, the entries.</summary>
     public static bool CanManage(MembershipType role) => role is MembershipType.Admin or MembershipType.Manager;
 
-    /// <summary>Corporations, alliances and everyone can only be member or blocked; a character can hold any role.</summary>
-    public static bool ValidForKind(MemberKind kind, MembershipType type) =>
-        kind == MemberKind.Character ? type is MembershipType.Member or MembershipType.Manager or MembershipType.Admin or MembershipType.Excluded
-            : type is MembershipType.Member or MembershipType.Excluded;
+    /// <summary>Everyone can only be a member; corporations and alliances can be members or blocked; characters can hold any role.</summary>
+    public static bool ValidForKind(MemberKind kind, MembershipType type) => kind switch
+    {
+        MemberKind.Everyone => type == MembershipType.Member,
+        MemberKind.Character => type is MembershipType.Member or MembershipType.Manager or MembershipType.Admin or MembershipType.Excluded,
+        MemberKind.Corporation or MemberKind.Alliance => type is MembershipType.Member or MembershipType.Excluded,
+        _ => false,
+    };
 
     /// <summary>An admin adds any entry; a manager adds member or blocked entries.</summary>
     public static bool MayAdd(MembershipType actor, MembershipType type) =>

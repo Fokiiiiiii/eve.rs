@@ -116,7 +116,7 @@ public sealed partial class OwnerGroupManagerService(AccessGroupStore store, Fun
     public async ValueTask<PyValue> DeleteMembers(ServiceCall call)
     {
         var groupId = Integral(call.Arg(0)) ?? 0;
-        var mutation = await store.DeleteMembersAsync(Who(call), groupId, IdsOf(call.Arg(1)), call.Cancellation);
+        var mutation = await store.DeleteMembersAsync(Who(call), groupId, MemberIdsOf(call.Arg(1)), call.Cancellation);
         Broadcast(call, mutation.Changes);
         await AccessChanged(call, groupId);
         return Failures(mutation.Result);
@@ -128,7 +128,7 @@ public sealed partial class OwnerGroupManagerService(AccessGroupStore store, Fun
     {
         var who = Who(call);
         var groupId = Integral(call.Arg(0)) ?? 0;
-        var memberIds = IdsOf(call.Arg(1));
+        var memberIds = MemberIdsOf(call.Arg(1));
         if (!TryType(call.Arg(2), out var type))
             return Failures(memberIds.Select(id => new MemberFailure(id, "NotAllowed")));
         var mutation = await store.ChangeMembershipTypesAsync(who, groupId, memberIds, type, call.Cancellation);
@@ -210,10 +210,18 @@ public sealed partial class OwnerGroupManagerService(AccessGroupStore store, Fun
     private static PyValue Failures(IEnumerable<MemberFailure> failures) =>
         new PyList([.. failures.Select(failure => (PyValue)new PyTuple([InventoryWire.Id(failure.MemberId), new PyStr(failure.Reason)]))]);
 
-    private static IEnumerable<(long MemberId, PyValue Type)> EntriesOf(PyValue value) =>
-        value is PyDict dict
-            ? dict.Entries.Select(entry => (Integral(entry.Key) ?? 0, entry.Value)).Where(entry => entry.Item1 > 0)
-            : [];
+    private static IEnumerable<(long MemberId, PyValue Type)> EntriesOf(PyValue value)
+    {
+        if (value is not PyDict dict) throw InvalidMemberIds();
+        var seen = new HashSet<long>();
+        foreach (var entry in dict.Entries)
+        {
+            if (Integral(entry.Key) is not { } memberId) throw InvalidMemberIds();
+            if (!seen.Add(memberId))
+                throw new AccessGroupError("ACCESS_GROUP_DUPLICATE_MEMBER_ID", "ACCESS_GROUP_DUPLICATE_MEMBER_ID");
+            yield return (memberId, entry.Value);
+        }
+    }
 
     /// <summary>A list, tuple or set of ids (the client sends a Python set for bookmark ids and a list for group ids).</summary>
     private static IReadOnlyList<long> IdsOf(PyValue value)
@@ -222,6 +230,34 @@ public sealed partial class OwnerGroupManagerService(AccessGroupStore store, Fun
         if (raw.Length > MaxBulkIds) throw new AccessGroupError("ACCESS_GROUP_BULK_LIMIT_EXCEEDED", "ACCESS_GROUP_BULK_LIMIT_EXCEEDED");
         return raw.Select(Integral).Where(id => id is > 0).Select(id => id!.Value).Distinct().ToList();
     }
+
+    /// <summary>Member arguments preserve zero for Everyone; unlike group-id lists, negative ids reach the store for a refusal.</summary>
+    private static IReadOnlyList<long> MemberIdsOf(PyValue value)
+    {
+        var raw = MemberArgsOf(value).Take(MaxBulkIds + 1).ToArray();
+        if (raw.Length > MaxBulkIds) throw new AccessGroupError("ACCESS_GROUP_BULK_LIMIT_EXCEEDED", "ACCESS_GROUP_BULK_LIMIT_EXCEEDED");
+        var ids = new List<long>(raw.Length);
+        foreach (var item in raw)
+        {
+            if (Integral(item) is not { } id) throw InvalidMemberIds();
+            ids.Add(id);
+        }
+        return ids.Distinct().ToList();
+    }
+
+    private static IEnumerable<PyValue> MemberArgsOf(PyValue value) => value switch
+    {
+        PyList list => list.Items,
+        PyTuple tuple => tuple.Items,
+        PyObjectEx { Header: PyTuple { Items.Count: 2 } header } ex when
+            header.Items[0] is PyToken { Value: "__builtin__.set" } &&
+            header.Items[1] is PyTuple { Items.Count: 1, Items: [PyList first] }
+                => first.Items.Concat(ex.List),
+        _ => throw InvalidMemberIds(),
+    };
+
+    private static AccessGroupError InvalidMemberIds() =>
+        new("ACCESS_GROUP_INVALID_MEMBER_IDS", "ACCESS_GROUP_INVALID_MEMBER_IDS");
 
     private static IEnumerable<PyValue> ArgsOf(PyValue value) => value switch
     {

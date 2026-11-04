@@ -156,7 +156,7 @@ public sealed partial class AccessGroupStore
         }, token);
 
     /// <summary>
-    /// Adds entries. A manager adds member or blocked entries only; a corporation, alliance or everyone entry is member or blocked.
+    /// Adds entries. A manager adds member or blocked entries only; corporations and alliances are member or blocked, and Everyone is member only.
     /// Answers the entries that were refused, with the reason, and the change the rest made.
     /// </summary>
     public Task<GroupMutation<IReadOnlyList<MemberFailure>>> AddMembersAsync(Affiliation who, long groupId, IReadOnlyList<NewMember> entries,

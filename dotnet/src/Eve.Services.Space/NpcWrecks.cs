@@ -47,9 +47,13 @@ public sealed class NpcWrecks
         }
     }
 
-    public async Task<MadeWreck> LeaveAsync(int wreckTypeId, string lootTableId, long ownerId, int solarSystemId, CancellationToken cancellationToken = default)
+    public async Task<MadeWreck> LeaveAsync(
+        int wreckTypeId, string lootTableId, long ownerId, int solarSystemId,
+        CancellationToken cancellationToken = default, int warFactionId = 0)
     {
         var drops = (await LootAsync()).Roll(_tableOf(lootTableId), _random);
-        return await _ships.LeaveWreckAsync(wreckTypeId, ownerId, solarSystemId, [.. drops.Select(d => new WreckContent(d.TypeId, d.Quantity, d.Singleton))], cancellationToken);
+        return await _ships.LeaveWreckAsync(
+            wreckTypeId, ownerId, solarSystemId, [.. drops.Select(d => new WreckContent(d.TypeId, d.Quantity, d.Singleton))],
+            cancellationToken, warFactionId);
     }
 }

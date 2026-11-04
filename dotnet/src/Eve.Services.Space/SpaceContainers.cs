@@ -70,8 +70,6 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
 
     /// <summary>The roll of a mining crystal's volatility (a number in 0 to 1, a hit at or under the chance): the host draws it, as EVE.js does.</summary>
     public Func<double> VolatilityRoll { get; set; } = Random.Shared.NextDouble;
-    public Func<double> SalvageRewardRoll { get; set; } = Random.Shared.NextDouble;
-
     private readonly System.Collections.Concurrent.ConcurrentDictionary<long, byte> _abandonedLoot = new();
 
     public SpaceContainers(

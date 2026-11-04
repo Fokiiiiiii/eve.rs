@@ -55,6 +55,7 @@ public class NpcLootHostTests
     {
         var (rig, c, session) = await InSpaceAsync();
         await using var _ = rig;
+        rig.Ships.SalvageRewardRoll = () => 0.99;
         var system = session.GetInt("solarsystemid")!.Value;
         var spawn = await SpawnAsync(rig, session);
 
@@ -79,6 +80,10 @@ public class NpcLootHostTests
         // telling the scene, so the test waits for the row rather than racing the save
         await Rig.UntilAsync(() => rig.SpaceItems.GetAsync(placed.WreckId).Result is not null);
         Assert.NotNull(await rig.SpaceItems.GetAsync(placed.WreckId));
+        var rewards = await new Eve.Ships.PgWreckSalvageStore(rig.Source, rig.SpaceSchema).GetAsync(placed.WreckId);
+        Assert.NotNull(rewards);
+        Assert.NotEmpty(rewards!);
+        Assert.All(rewards!, reward => Assert.Equal("Salvaged Materials", rig.Statics.GroupName(rig.Statics.Type(reward.TypeId)!.GroupId)));
     }
 
     [PgFact]
@@ -86,6 +91,7 @@ public class NpcLootHostTests
     {
         var (rig, c, session) = await InSpaceAsync();
         await using var _ = rig;
+        rig.Ships.SalvageRewardRoll = () => 0.0;
         rig.LootTable = null;
         var spawn = await SpawnAsync(rig, session);
 
@@ -95,6 +101,9 @@ public class NpcLootHostTests
         var placed = rig.Sim.Heard.OfType<SimPlaceWreck>().Single();
         Assert.True(placed.IsEmpty);
         Assert.Empty(await rig.Items.InContainerAsync(placed.WreckId));
+        var rewards = await new Eve.Ships.PgWreckSalvageStore(rig.Source, rig.SpaceSchema).GetAsync(placed.WreckId);
+        Assert.NotNull(rewards);
+        Assert.Empty(rewards!);
         Assert.Contains(Events.Of(session), e => e.Name == "OnBountyAddedToPayout");
     }
 

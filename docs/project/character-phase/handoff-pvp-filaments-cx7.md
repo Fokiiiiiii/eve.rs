@@ -41,4 +41,6 @@ Leaderboard notifications retain `entries=[]`; statistics retain rank/wins/losse
 
 The pinned catalog has no currently active CCP schedule, so a live Host admission using a current event was not possible. Service-level schedule boundaries and successful queue transitions use real historical row `105_145` under a controlled clock; the Host wire test exercises the sourced catalog and fallback shapes, not a successful Host admission.
 
-The latest completed main CI run is #1482 (`8c71b923d04f`), green with no failed jobs. Run #1481 for the same SHA is also green. The earlier #1480 run failed the unrelated Windows Rust/SDE job and is superseded by these green runs.
+The latest completed main CI before the feature push was #1482 (`8c71b923d04f`), green with no failed jobs. Run #1481 for the same SHA was also green. The earlier #1480 run failed unrelated jobs and was superseded by these green runs.
+
+The implementation commit `5d0c5bf0` was pushed to `main`; resulting HEAD is `a1063d506424`. Dependency audit #27 (run `41762371081`), selected agent-test #1292 (run `41762558590`), and push-triggered main CI #1483 (run `41762371099`) all succeeded. `python3 tools/dev/ci-status.py failures a1063d50` reported no failed tests or jobs.

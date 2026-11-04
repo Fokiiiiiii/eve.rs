@@ -315,8 +315,15 @@ def compare_event(recorded: dict, ours: dict, where: str, mapping: dict) -> list
         out = [] if wait_r == wait_o else [f"{where}: wait {wait_o} in place of {wait_r}"]
         return out + compare_actions(actions_r, actions_o, where, mapping)
     if name == "OnMachoObjectDisconnect":
-        # the object and the client are per run; the shape is what the client reads
-        return [] if shape(args_of(recorded)) == shape(args_of(ours)) else [f"{where}: {shape(args_of(ours))} in place of {shape(args_of(recorded))}"]
+        expected, actual = args_of(recorded), args_of(ours)
+        expected_shape, actual_shape = shape(expected), shape(actual)
+        expected_args, actual_args = expected.get("$tuple", []), actual.get("$tuple", [])
+        def integer(value):
+            return type(value) is int or (isinstance(value, dict) and set(value) == {"$long"} and type(value["$long"]) is int)
+        # The client accepts either Python integer type for clientID.
+        if len(expected_args) == len(actual_args) == 3 and integer(expected_args[1]) and integer(actual_args[1]):
+            actual_shape["$tuple"][1] = expected_shape["$tuple"][1]
+        return [] if expected_shape == actual_shape else [f"{where}: {shape(actual)} in place of {shape(expected)}"]
     return differences(base.blank_times(ids(args_of(recorded), mapping)), base.blank_times(args_of(ours)), f"{where}.{name}")
 
 def _session_changes(recorded, ours, where, mapping) -> list[str]:

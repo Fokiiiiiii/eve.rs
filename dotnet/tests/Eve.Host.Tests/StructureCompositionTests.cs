@@ -221,8 +221,7 @@ public sealed class StructureCompositionTests : IAsyncLifetime
                 if (change.CorporationId == Corporation)
                     context.AfterCommit(_ => { Interlocked.Increment(ref received); return Task.CompletedTask; });
                 return Task.CompletedTask;
-            });
-            await events.PumpAsync();
+            }, Eve.Events.StartAt.Beginning);
             var due = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - 1000;
             await using (var command = source.CreateCommand($"""
                 INSERT INTO {Schema("EVE_SPACE_SCHEMA")}.deployed(deployable_id,kind,solar_system_id,name,type_id,group_id,x,y,z,radius,corporation_id,expires_at_ms,activate_at_ms)

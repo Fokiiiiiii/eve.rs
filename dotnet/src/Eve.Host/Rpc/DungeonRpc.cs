@@ -1,0 +1,95 @@
+using System.Net.Sockets;
+using Eve.Characters;
+using Eve.Data;
+using Eve.Host;
+using Eve.Identity;
+using Eve.Dogma;
+using Eve.Fitting;
+using Eve.GameStore;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using Eve.Inventory;
+using Eve.Ships;
+using Eve.Marshal;
+using Eve.Npc;
+using Eve.Sde;
+using Eve.Skills;
+using Eve.Universe;
+using Eve.Wallet;
+using Npgsql;
+using Sentry;
+using Eve.Services;
+using Eve.Services.CharacterSelect;
+using Eve.Services.Core;
+using Eve.Services.Dogma;
+using Eve.Services.Inventory;
+using Eve.Services.CharacterInfo;
+using Eve.Services.Skills;
+using Eve.Services.Slash;
+using Eve.Services.Space;
+using Eve.Space;
+using Eve.Services.Station;
+using Eve.Services.Wallet;
+using static Eve.Host.HostConfiguration;
+
+namespace Eve.Host;
+
+internal sealed partial class CharacterServicesComposition
+{
+    /// <summary>Incursion anomalies and dungeons.</summary>
+    private IReadOnlyList<IService> DungeonRpc() =>
+    [
+        new MapAccessGuardService(
+            new Eve.Services.Core.IncursionAnomalyService(
+                "map",
+                incursionAnomalyReadModel.ReadIncursionsAsync,
+                incursionAnomalyReadModel.ReadAnomaliesAsync,
+                fallback: new MapService(foundations.Reads, now, corporationId =>
+                    characterSessions.OfCorporation(corporationId)
+                        .Select(session => (
+                            CharacterId: session.CharacterId ?? 0,
+                            LocationId: session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid") ?? 0))
+                        .ToArray())
+                { ReadDataHook = ReadMapTelemetryRpcDataAsync },
+                nowUnixMs: now),
+            session =>
+            {
+                var systemId = session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid") ?? 0;
+                return spaceSessions?.IsInAbyssalRun(session) == true ||
+                    systemId is >= 32_000_001 and <= 32_000_200;
+            }),
+        new Eve.Services.Core.DungeonService(dungeonReadModel.ReadEditorCatalogAsync),
+        new Eve.Services.Core.DungeonInstanceCacheMgrService(dungeonReadModel.ReadCacheSnapshotAsync, now),
+        new Eve.Services.Core.IncursionAnomalyService(
+            "taleMgr",
+            incursionAnomalyReadModel.ReadIncursionsAsync,
+            incursionAnomalyReadModel.ReadAnomaliesAsync,
+            nowUnixMs: now),
+        ScanMgrRpc(),
+    ];
+
+    private IService ScanMgrRpc()
+    {
+        var service = new Eve.Services.Core.IncursionAnomalyService(
+            "scanMgr",
+            incursionAnomalyReadModel.ReadIncursionsAsync,
+            incursionAnomalyReadModel.ReadAnomaliesAsync,
+            nowUnixMs: now,
+            recallProbe: (session, probeId, token) => spaceSessions is null
+                ? ValueTask.CompletedTask
+                : new ValueTask(spaceSessions.RecallAsync(session, probeId, token)),
+            probeScans: (method, call) => method == "ConeScan"
+                ? (spaceSessions?.DirectionalScans is { } sweeps
+                    ? new ValueTask<PyValue>(sweeps.ConeScanAsync(call.Session, call.Arg(0), call.Arg(1), call.Arg(2), call.Arg(3), call.Arg(4), call.Cancellation))
+                    : ValueTask.FromResult<PyValue>(PyNone.Instance))
+                : spaceSessions?.ProbeScans is { } scans
+                    ? scans.HandleAsync(method, call)
+                    : ValueTask.FromResult<PyValue>(PyNone.Instance),
+            signalTrackerRegister: signalTrackerRegistrationProvider.RegisterAsync,
+            readSignatures: (systemId, token) => spaceSessions?.ProbeScans is { } scans
+                ? scans.ReadSignalTrackerSignaturesAsync(systemId, token)
+                : ValueTask.FromResult(new PyDict([])));
+        signalTrackerRegistrationProvider.ReadFullState = service.ReadFullStateForSystemAsync;
+        return service;
+    }
+}

@@ -1,0 +1,56 @@
+# charMgr RPC coverage handoff (RPC-01049–RPC-01113)
+
+## Verified behavior and changes
+
+The Host has working implementations for all listed remote methods except RPC-01092, which the client audit labels as a remote method but the whole client source shows is a local cache helper:
+
+- GetPrivateInfoOnCorpChange reads the bound character and corporation membership start and returns a KeyVal with corporationID and corporationDateTime (CharMgrService.cs:848–866).
+- GetRecentShipKillsAndLosses uses the bound character, validates pagination inputs, caps page size at 25, and returns the killmail page (CharMgrService.cs:1199–1221).
+- GetSettingsInfo returns the settings code blob and signature integer as a two-element tuple (CharMgrService.cs:345). LogSettings validates bounded data and persists through the character read model (CharMgrService.cs:1084–1098).
+- RemoveOwnerNote removes the stored note and preserves the final folders record (CharMgrService.cs:1103–1125).
+- ListStations, ListStationItems, and ListIncludingContainers are registered charMgr methods delegating to the shared global-assets provider (CharMgrService.cs:307–320). The production provider is registered in CharacterRpc.cs:77–100; inventory rows come from persisted item state in InvBrokerService.cs:828–920.
+- Added CharMgrRpcHostWireTests.cs: an actual Host socket and registered CharMgrService route exercise the settings tuple, global asset list routes, personal action replies, and transport-added machoVersion kwargs. The focused test passed: 1 passed, 0 skipped. The fixture does not use PostgreSQL.
+
+## V24.01 client callers and consumers
+
+- RPC-01049/01050: eve/client/script/ui/shared/neocom/wallet/panels/personal/personalDonateEMPanel.py:68–76. It rejects a None reply, reads corporationDateTime, computes membership days, and checks the player-corporation condition.
+- RPC-01086–01089: eve/client/script/ui/shared/info/infosvc.py:2646–2652 requests the page twice and filters each reply by finalCharacterID or victimCharacterID. eve/client/script/ui/shared/neocom/charactersheet.py:90 invalidates the cached page.
+- RPC-01090/01091 and RPC-01107/01108: carbonui/services/settingsSvc.py:148–155 verifies the two-part settings reply, loads the returned code, then logs settings statistics through LogSettings.
+- RPC-01097: eve/client/script/ui/shared/assetsWindow.py:414 iterates the container-inclusive item list; the local inventory wrapper at eve/client/script/environment/invCache.py:877–888 caches the remote result.
+- RPC-01098–01100: assetsWindow.py:744, market/quote.py:376, and assets/assetSafetySvc.py:35 consume station item rows. The five-minute wrapper and cache behavior are in invCache.py:839–854.
+- RPC-01101–01106: callers are assetsWindow.py:440,922, neocom/assetsinfo.py:148, neocom/corporation/corp_ui_accounts.py:752, neocom/contracts/createContractWnd.py:1571, and market/quote.py:364. The wrapper returns cached station rows in invCache.py:826–838.
+- RPC-01110–01113: eve/client/script/ui/shared/neocom/notepad.py:107,179,703 removes malformed, obsolete, and user-deleted note IDs; callers ignore the result.
+
+## RPC-01092 classification
+
+invItemFunctions.py:296–297 calls inv5MinCacheContainer.InvalidateStationItemsCache locally. Its implementation at invCache.py:855–859 deletes a client-side dictionary entry; it performs no service or moniker call. EveJS charMgrService.js:505–520 delegates the global asset remote methods, and charMgrGlobalAssets.js:544–584 implements the list reads; neither exposes InvalidateStationItemsCache. Adding a Host route would invent a server-side cache and side effect with no client request. Keep the audit row marked for correction as a client-local API instead of adding a no-op or fake-success handler.
+
+## EveJS comparison
+
+The corresponding EveJS paths are server/src/services/character/charMgrService.js:505–520 (global asset delegation), 574–589 (killmail page), 617–631 (corp membership info), 738–744 (settings code pair), 990–1001 (settings telemetry), and 1047–1054 (owner-note deletion). Global asset row generation is in server/src/services/character/charMgrGlobalAssets.js:544–584. These match the eve.rs reply purposes and persistence path; the client-local invalidation helper has no EveJS RPC counterpart.
+
+## Verification limits
+
+The full Eve.Host.Tests project built locally with 0 warnings and 0 errors. The focused CharMgr Host wire regression passed locally and in Actions run 40217775718 on e223e74d (success, no failed jobs). The regenerated service audit marks 24 listed remote RPC rows IMPLEMENTED-TESTED and RPC-01092 CLIENT-LOCAL; its focused generator regression passed (1 passed, 0 skipped). The inventory count assertion was updated from 1401 to 1414 after push-triggered CI run 40217476077 reported 1414 methods. The focused inventory test passed in Actions run 40219694445 for 591d8f6f (success, no failed tests/jobs). The local focused run reported 230 after the local build; this local/CI registry-count discrepancy remains unexplained. The push-triggered ci.yml workflow was not listed for 591d8f6f or the subsequent docs-only push d442d95e when checked. Earlier ci.yml run 40216463865 had a separate headless docking failure where OnDockingFinished was absent after session change; the baseline run passed this case, and subsequent run 40217476077 did not report it (that run failed only the stale inventory count). No space code was changed because the failure did not recur in the next run. No PostgreSQL database or graphical EVE client was used. Existing CharacterInfo service tests cover character-bound state and persistence; the added no-database Host regression verifies registered routing and wire transport arguments.
+
+
+## P0 batch 4 update (2026-10-26)
+
+Committed batch verification records in `CLIENT_VERIFIED.md`. The new registered-Host item-list shape test passed in Actions run 40258181572 for 655f60ce. The first run found two test compile issues, fixed in the follow-up commit; the focused rerun passed. The registered-Host recent-kill test now asserts the valid-session list and client-consumed finalCharacterID/victimCharacterID fields, plus the page-size cap; the focused check passed locally (1 passed, 0 skipped). The push-triggered ci.yml run 40258172650 was still in progress at this update. No database or graphical client was used locally.
+
+
+
+## P0 batch 5 update (2026-10-26)
+
+The batch 5 client contracts and verdicts are recorded in `CLIENT_VERIFIED.md`. The DB-free registered-Host mutation wire test covers SetCharacterDescription, SetActivityStatus keyword arguments including FILETIME extraInfo, SetNote read-back, and UnblockOwners state; it passed locally after the origin/main merge (1 passed, 0 skipped). Existing registered Host assertions cover ListStations, LogSettings, RemoveOwnerNote, SaveCharacterSetting, and GetCharOmegaDowngradeStatus. CancelCharacterDeletePrepare, CreateCharacterWithDoll, and DeleteCharacter remain NO-TEST because valid success-path state requires persisted characters and this job forbids PostgreSQL; no fake success was used. No graphical client was run. Actions run 40261124513 failed before tests because recently merged code had one untyped collection expression and two xUnit2031 assertions in `CharacterInfoTests.cs` and `CharMgrClientReadHostWireTests.cs`; those build errors are fixed locally. The batch-5 Host focus passes locally (1 passed, 0 skipped), and `Eve.Services.CharacterInfo.Tests` builds with 0 warnings and 0 errors. The corrective Actions run 40264256453 on 2561e38c passed (no failed tests or jobs). The push-triggered ci.yml run 40264250395 for 2561e38c has all component jobs succeeding; the final Required CI gate remains queued. No ci.yml run was listed for the docs-follow-up SHA 625b8fb8. The focused Actions run on final verification SHA 2c399f1a, 40266206767, passed with no failed tests or jobs. No ci.yml run was listed for 2c399f1a.
+
+The 655f60ce push CI run reported three merged-test failures (wire string type, stale RPC count, and stale private-info Rowset expectation). Their tests have been corrected in the pending follow-up; the new recent-kill Host test passed locally.
+
+The selected Actions run 40260608955 stopped at compile on a missing collection-expression target in the corrected private-info service test. The header was made explicit and materialized; `Eve.Services.CharacterInfo.Tests` builds locally with 0 warnings/errors. The focused Actions rerun is pending.
+
+
+The follow-up focused Actions run 40261514261 stopped during compilation on xUnit2031 in `CharMgrClientReadHostWireTests.cs`; label assertions now use the predicate overload of `Assert.Single`. A focused rerun is pending. Local `Eve.Host.Tests` build succeeded with 0 warnings/errors, and `Char_mgr_client_read_shapes_match_the_registered_host_wire_contract` passed locally (1 passed, 0 skipped).
+
+The focused Actions rerun 40264471982 for 2e9b557f passed with no failed tests/jobs. The run used `--live ''`, so its headless-client step was skipped; no graphical-client check was made. Push-triggered `ci.yml` run 40264462725 was queued at the last check.
+
+Push-triggered `ci.yml` run 40264462725 for 2e9b557f completed successfully with no failed tests/jobs. The graphical client was not run.

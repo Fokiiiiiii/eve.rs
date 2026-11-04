@@ -1,0 +1,29 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/eve-marshal",
+    "crates/eve-destiny",
+    "crates/eve-space",
+    "crates/eve-sim",
+    "crates/eve-oracle",
+    "crates/eve-sde",
+    "crates/eve-net",
+    "crates/eve-bench",
+    "crates/eve-behaviors",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+license = "AGPL-3.0-only"
+publish = false
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+
+[profile.bench]
+inherits = "release"

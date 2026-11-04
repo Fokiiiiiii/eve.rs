@@ -1,0 +1,129 @@
+namespace Eve.AccessGroups;
+
+public enum MembershipType { None = -1, Member = 0, Manager = 1, Admin = 2, Excluded = 3 }
+
+/// <summary>What a member entry names: everyone (the public entry, id 0), a character, a corporation or an alliance.</summary>
+public enum MemberKind { Everyone = 0, Character = 1, Corporation = 2, Alliance = 3 }
+
+/// <summary>The character and its corporation and alliance, the way the entries of a group name them.</summary>
+public sealed record Affiliation(long CharacterId, long CorporationId, long AllianceId);
+
+public sealed record AccessGroup(long GroupId, long CreatorId, string Name, string Description, bool CorpBuiltIn, long CreatedMs);
+
+public sealed record AccessMember(long MemberId, MemberKind Kind, MembershipType Type);
+
+/// <summary>A group as one character sees it: its role there and its admins.</summary>
+public sealed record GroupView(AccessGroup Group, MembershipType Role, IReadOnlyList<long> Admins);
+
+/// <summary>An entry to add: the member, what kind of entry it is, and its membership type.</summary>
+public sealed record NewMember(long MemberId, MemberKind Kind, MembershipType Type);
+
+public sealed record MemberFailure(long MemberId, string Reason);
+
+public sealed record AccessLogEntry(long LogId, long CharacterId, int ActionId, long OwnerId, int? OldType, int? NewType,
+    string? OldText, string? NewText, long LoggedMs);
+
+/// <summary>
+/// Who hears about a change: the characters, corporations and alliances the group's entries name (and the creator), and everyone when a
+/// public entry exists.
+/// </summary>
+public sealed record Audience(IReadOnlySet<long> Characters, IReadOnlySet<long> Corporations, IReadOnlySet<long> Alliances, bool Everyone);
+
+public static class AccessGroupChanges
+{
+    public const int Created = 1;
+    public const int MemberAdded = 2;
+    public const int MemberTypeChanged = 3;
+    public const int MemberRemoved = 4;
+    public const int NameChanged = 5;
+    public const int DescriptionChanged = 6;
+    public const int Deleted = 7;
+    public const int ChangedForListener = 8;
+}
+
+public sealed record GroupChange(long GroupId, IReadOnlyList<int> Codes, Audience Audience);
+
+public sealed record GroupMutation<T>(T Result, IReadOnlyList<GroupChange> Changes);
+
+/// <summary>A refusal of the rules: <see cref="Code"/> names it; <see cref="Notice"/> is the text the client shows.</summary>
+public sealed class AccessGroupError(string code, string? notice = null) : Exception(code)
+{
+    public string Code { get; } = code;
+
+    public string? Notice { get; } = notice;
+}
+
+/// <summary>
+/// An admin manages every entry; a manager manages member and blocked entries and may change or remove its own manager entry. Corporation,
+/// alliance and everyone entries can only be members or blocked, and the most specific matching entry decides a character's role (character,
+/// corporation, alliance, then everyone). A corporation's built-in list is fixed: the corporation is its admin, and its members have the member role.
+/// </summary>
+public static class AccessRules
+{
+    public const string DefaultName = "New Group";
+    public const int MaxNameLength = 100;
+    public const int MaxDescriptionLength = 3900;
+
+    public static string Name(string? value, string fallback = DefaultName)
+    {
+        var text = (value ?? "").Trim();
+        if (text.Length > MaxNameLength) text = text[..MaxNameLength];
+        return text.Length == 0 ? fallback : text;
+    }
+
+    public static string Description(string? value) =>
+        value is null ? "" : value.Length > MaxDescriptionLength ? value[..MaxDescriptionLength] : value;
+
+    /// <summary>The membership type the character has in the group: the most specific entry that names it, or none.</summary>
+    public static MembershipType RoleOf(AccessGroup group, IReadOnlyList<AccessMember> members, Affiliation who)
+    {
+        if (group.CorpBuiltIn) return who.CorporationId > 0 && who.CorporationId == group.CreatorId ? MembershipType.Member : MembershipType.None;
+        AccessMember? corporation = null;
+        AccessMember? alliance = null;
+        AccessMember? everyone = null;
+        foreach (var member in members)
+        {
+            if (member.Kind == MemberKind.Character && member.MemberId == who.CharacterId) return member.Type;
+            if (corporation is null && who.CorporationId > 0 && member.Kind == MemberKind.Corporation && member.MemberId == who.CorporationId)
+                corporation = member;
+            else if (alliance is null && who.AllianceId > 0 && member.Kind == MemberKind.Alliance && member.MemberId == who.AllianceId)
+                alliance = member;
+            else if (everyone is null && member.Kind == MemberKind.Everyone && member.MemberId == 0)
+                everyone = member;
+        }
+        return corporation?.Type ?? alliance?.Type ?? everyone?.Type ?? MembershipType.None;
+    }
+
+    /// <summary>Admins and managers can see a group; members can see their corporation's built-in group.</summary>
+    public static bool CanSee(MembershipType role, AccessGroup group) =>
+        role is MembershipType.Admin or MembershipType.Manager || (group.CorpBuiltIn && role == MembershipType.Member);
+
+    /// <summary>Admins and managers manage a list: its members, its logs, the entries.</summary>
+    public static bool CanManage(MembershipType role) => role is MembershipType.Admin or MembershipType.Manager;
+
+    /// <summary>Everyone can only be a member; corporations and alliances can be members or blocked; characters can hold any role.</summary>
+    public static bool ValidForKind(MemberKind kind, MembershipType type) => kind switch
+    {
+        MemberKind.Everyone => type == MembershipType.Member,
+        MemberKind.Character => type is MembershipType.Member or MembershipType.Manager or MembershipType.Admin or MembershipType.Excluded,
+        MemberKind.Corporation or MemberKind.Alliance => type is MembershipType.Member or MembershipType.Excluded,
+        _ => false,
+    };
+
+    /// <summary>An admin adds any entry; a manager adds member or blocked entries.</summary>
+    public static bool MayAdd(MembershipType actor, MembershipType type) =>
+        actor == MembershipType.Admin || type is MembershipType.Member or MembershipType.Excluded;
+
+    /// <summary>An admin removes any entry; a manager removes member or blocked entries and its own manager entry.</summary>
+    public static bool MayRemove(MembershipType actor, MembershipType current, bool isSelf) =>
+        actor == MembershipType.Admin || current is MembershipType.Member or MembershipType.Excluded
+        || (actor == MembershipType.Manager && isSelf && current == MembershipType.Manager);
+
+    /// <summary>An admin changes any entry; a manager changes member or blocked entries and may demote its own manager entry.</summary>
+    public static bool MayChange(MembershipType actor, MembershipType current, MembershipType target, bool isSelf) =>
+        actor == MembershipType.Admin
+        || ((target is MembershipType.Member or MembershipType.Excluded)
+            && ((current is MembershipType.Member or MembershipType.Excluded)
+                || (actor == MembershipType.Manager && isSelf && current == MembershipType.Manager)));
+
+}

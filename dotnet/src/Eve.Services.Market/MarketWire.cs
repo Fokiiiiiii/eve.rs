@@ -1,0 +1,64 @@
+using Eve.Marshal;
+using Eve.Market;
+
+namespace Eve.Services.Market;
+
+public static class MarketWire
+{
+    private static readonly (string Name,int Type)[] Columns = [
+        ("price",5),("volRemaining",3),("typeID",3),("range",3),("orderID",20),("volEntered",3),("minVolume",3),
+        ("bid",3),("issueDate",64),("duration",3),("stationID",20),("regionID",3),("solarSystemID",3),("constellationID",3),("jumps",3)];
+    private static readonly PyValue Header = new PyObjectEx(ObjectExKind.Ex1,
+        Py.Tuple(new PyToken("blue.DBRowDescriptor"),Py.Tuple(Py.Tuple([.. Columns.Select(c => (PyValue)Py.Tuple(new PyStr(c.Name),new PyInt(c.Type)))]))),[],[]);
+    public static PyValue Orders(IEnumerable<MarketOrder> orders,MarketTopology topology,MarketLocation viewer) => new PyObject(
+        new PyStr("eve.common.script.sys.rowset.Rowset"),Py.Dict(
+            ("header",Header),("columns",new PyList([.. Columns.Select(c => (PyValue)new PyStr(c.Name))])),
+            ("RowClass",new PyToken("blue.DBRow")),
+            ("lines",new PyList([.. orders.Select(o => (PyValue)Py.Tuple(
+                Py.Number((double)o.Price),new PyInt(o.VolumeRemaining),new PyInt(o.TypeId),new PyInt(MarketRules.RangeForClient(o.Range)),new PyLong(o.Id),
+                new PyInt(o.VolumeEntered),new PyInt(o.MinimumVolume),new PyInt(o.Bid ? 1 : 0),new PyLong(Py.FileTimeFromUnixMs(o.IssuedMs)),
+                new PyInt(o.Duration),new PyLong(o.Location.StationId),new PyInt(o.Location.RegionId),new PyInt(o.Location.SolarSystemId),
+                new PyInt(o.Location.ConstellationId),new PyInt(topology.OrderDistance(viewer,o.Location))))]))));
+
+    public static PyValue BestByOrder(MarketOrder order,long quantity) => Py.KeyVal(
+        ("price",Py.Number(MarketRules.RoundIsk((double)order.Price))),
+        ("volRemaining",Py.Number(quantity)),
+        ("typeID",new PyInt(order.TypeId)),
+        ("stationID",new PyLong(order.Location.StationId)));
+
+    public static PyValue BestByOrderRow(MarketOrder order,long quantity) => new PyObject(
+        new PyStr("util.Row"),
+        Py.Dict(
+            ("header",Py.Tuple(new PyStr("price"),new PyStr("volRemaining"),new PyStr("typeID"),new PyStr("stationID"))),
+            ("line",Py.Tuple(
+                Py.Number(MarketRules.RoundIsk((double)order.Price)),
+                Py.Number(quantity),
+                new PyInt(order.TypeId),
+                new PyLong(order.Location.StationId)))));
+}
+
+internal static class MarketHistoryWire
+{
+    private static readonly (string Name,int Type)[] Columns = [
+        ("historyDate",64),("lowPrice",5),("highPrice",5),("avgPrice",5),("volume",20),("orders",3)];
+    private static readonly PyValue Header = new PyObjectEx(ObjectExKind.Ex1,
+        Py.Tuple(new PyToken("blue.DBRowDescriptor"),Py.Tuple(Py.Tuple([.. Columns.Select(c => (PyValue)Py.Tuple(new PyStr(c.Name),new PyInt(c.Type)))]))),[],[]);
+
+    public static PyValue Rowset(IEnumerable<MarketHistory> rows) => new PyObject(
+        new PyStr("eve.common.script.sys.rowset.Rowset"),Py.Dict(
+            ("header",Header),("columns",new PyList([.. Columns.Select(c => (PyValue)new PyStr(c.Name))])),
+            ("RowClass",new PyToken("blue.DBRow")),
+            ("lines",new PyList([.. rows.Select(row => (PyValue)Py.Tuple(
+                new PyLong(Py.FileTimeFromUnixMs(checked(row.UnixDay*86_400_000))),Py.Number((double)row.Low),
+                Py.Number((double)row.High),Py.Number((double)row.Average),new PyLong(row.Volume),new PyInt(row.Orders)))]))));
+
+    /// <summary>
+    /// History is split by calendar day: "old" holds prior days and "new" holds today (none when nothing traded today). The client fills
+    /// missing days after the last "old" row, then appends "new".
+    /// </summary>
+    public static (PyValue Old,PyValue New) Pair(long nowMs,IReadOnlyList<MarketHistory> rows)
+    {
+        var today=nowMs/86_400_000;
+        return (Rowset(rows.Where(row => row.UnixDay<today)),Rowset(rows.Where(row => row.UnixDay>=today)));
+    }
+}

@@ -1,0 +1,31 @@
+eve.rs
+Copyright (C) the eve.rs authors. Licensed under the GNU Affero General Public
+License, version 3 only (see LICENSE).
+
+Third-party notices
+
+carbonengine/destiny v3.1.1 (MIT)
+  The analytic motion integration in crates/eve-destiny/src/carbon.rs is adapted
+  from carbonengine/destiny v3.1.1.
+  Copyright (c) 2026 CCP Games
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+  The above copyright notice and this permission notice shall be included in
+  all copies or substantial portions of the Software.
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+
+FreeBSD msun e_exp.c / fdlibm (Sun Microsystems)
+  `Math.exp` in crates/eve-destiny/src/math.rs reproduces V8's fdlibm-derived
+  routine. Copyright (C) 2004 by Sun Microsystems, Inc. Permission to use, copy,
+  modify, and distribute this software is freely granted, provided that this
+  notice is preserved.
+
+EVE Online is a trademark of CCP hf. This project is not affiliated with or
+endorsed by CCP. It contains no CCP client code and no copy of the static data
+export; both are read from their own sources at development time.

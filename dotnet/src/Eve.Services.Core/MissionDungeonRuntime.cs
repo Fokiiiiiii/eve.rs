@@ -1,0 +1,435 @@
+using System.IO.Compression;
+using System.Text.Json;
+using Eve.Agents;
+using Eve.Universe;
+
+namespace Eve.Services.Core;
+
+/// <summary>
+/// The content template of each mission, read from the client records (contentTemplate, in the client data: <see cref="ClientMissionMessages.Open"/>): the SDE carries
+/// no template, and the trade and mining kinds are told apart by it. Rows without a template or with an unreadable line are skipped.
+/// </summary>
+public static class ClientMissionTemplates
+{
+    public const string TradeTemplate = "agent.missionTemplatizedContent_StorylineTradeMission";
+    public const string MiningTemplate = "agent.missionTemplatizedContent_BasicMiningMission";
+
+    public static IReadOnlyDictionary<long, string> Parse(Stream gzipped)
+    {
+        var templates = new Dictionary<long, string>();
+        using var reader = new StreamReader(new GZipStream(gzipped, CompressionMode.Decompress));
+        string? line;
+        while ((line = reader.ReadLine()) is not null)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(line);
+                var root = document.RootElement;
+                if (root.TryGetProperty("_key", out var key) && key.TryGetInt64(out var missionId) &&
+                    root.TryGetProperty("contentTemplate", out var template) && template.ValueKind == JsonValueKind.String)
+                    templates[missionId] = template.GetString()!;
+            }
+            catch (JsonException)
+            {
+                // a row that is not JSON is skipped, as the client texts loader does
+            }
+        }
+        return templates;
+    }
+}
+
+/// <summary>
+
+/// The destination is a station chosen by a seed (the mission and the character) among the stations within the level's jump range, reached by
+/// stargates. An accepted courier mission expires after the mission data's <c>expirationTime</c> (minutes), or three days where the data gives none,
+
+/// none): levels 1 and 2 0 to 5 jumps, level 3 0 to 12, level 4 1 to 12, level 5 as level 4.
+/// </summary>
+public static class MissionCourierRules
+{
+    /// <summary>The expiry of an accepted courier mission whose data gives no expirationTime.</summary>
+    public static readonly TimeSpan DefaultExpiry = TimeSpan.FromDays(3);
+
+    /// <summary>The custom info that tags a courier cargo stack with its mission: consumption and take-back touch only the tagged stacks.</summary>
+    public static string CargoTag(long missionId) => $"courier:{missionId}";
+
+    /// <summary>The jump range (min, max) of a level, or null for a level the rule does not state.</summary>
+    public static (int Min, int Max)? JumpRange(long? level) => level switch
+    {
+        1 or 2 => (0, 5),
+        3 => (0, 12),
+        4 or 5 => (1, 12),
+        _ => null,
+    };
+
+    /// <summary>
+
+
+    /// </summary>
+    public static long? CourierLevel(bool epicArcStep, long? agentLevel, long? taggedLevel) => epicArcStep ? agentLevel : taggedLevel;
+
+    /// <summary>
+    /// The destination station: the stations (other than the origin's) whose system lies within the level's range of jumps from the origin's system,
+    /// in station ID order, indexed by the seed. Null when no station is in range.
+    /// </summary>
+    public static Station? Destination(long missionId, long characterId, long originStationId, int originSystemId, long? level,
+        StargateGraph gates, IEnumerable<Station> stations)
+    {
+        if (JumpRange(level) is not { } range) return null;
+        var jumps = gates.JumpsFrom(originSystemId);
+        int? JumpsTo(int system)
+        {
+            if (system == originSystemId) return 0;
+            return jumps.TryGetValue(system, out var count) ? count : null;
+        }
+        var candidates = stations
+            .Where(station => station.Id != originStationId)
+            .Where(station => JumpsTo(station.SolarSystemId) is { } count && count >= range.Min && count <= range.Max)
+            .OrderBy(station => station.Id)
+            .ToList();
+        if (candidates.Count == 0) return null;
+        // shortcut: the seed is missionID * 1000003 + characterID (no hash function); upgrade if the destinations must not be guessable
+        var seed = unchecked(missionId * 1_000_003L + characterId);
+        return candidates[(int)(((seed % candidates.Count) + candidates.Count) % candidates.Count)];
+    }
+}
+
+/// <summary>What the mission runtime needs from the space and the wallet. The host implements it.</summary>
+public interface IMissionDungeonHost
+{
+    /// <summary>Whether the character is in space in the solar system.</summary>
+    bool IsPilotInSystem(long characterId, int solarSystemId);
+
+    /// <summary>
+    /// Starts the mission's dungeon for the character in the system (the wave director's start). Returns null when the dungeon runs,
+    /// or the refusal (the pilot has no known position, the content has no template, a wave cannot be planned).
+    /// </summary>
+    Task<string?> StartDungeonAsync(long characterId, int solarSystemId, long dungeonId, CancellationToken cancellationToken);
+
+    /// <summary>Credits ISK once for the operation key (the wallet's idempotent adjustment, with the journal reference type).</summary>
+    Task CreditIskAsync(long characterId, decimal amount, long counterpartyId, int refTypeId, string reason, string operationKey, CancellationToken cancellationToken);
+
+    /// <summary>
+
+    /// accepted (a replay): then nothing is written.
+    /// </summary>
+    Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
+        IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume,
+        long loyaltyPoints, long issuerCorporationId, CancellationToken cancellationToken);
+
+    /// <summary>
+
+    /// items held are counted, so a replayed dungeon outcome grants nothing).
+    /// </summary>
+    Task GrantObjectiveItemAsync(long characterId, int typeId, long quantity, long stationId, CancellationToken cancellationToken);
+
+    /// <summary>How many of an item type the character holds, in any location.</summary>
+    Task<long> HeldQuantityAsync(long characterId, int typeId, CancellationToken cancellationToken);
+
+    /// <summary>Creates a courier's cargo into the hangar of the station (the pickup at acceptance): the quantity, as singletons when the data says so.</summary>
+    Task GrantCargoAsync(long characterId, long missionId, int typeId, long quantity, bool singleton, long stationId, CancellationToken cancellationToken);
+
+    /// <summary>Takes back the cargo a courier mission was handed over (the stacks tagged with the mission, not other items of the type).</summary>
+    Task TakeCargoAsync(long characterId, long missionId, int typeId, CancellationToken cancellationToken);
+}
+
+
+
+public sealed record MissionAgentPlace(long SolarSystemId, long CorporationId, long? BaseStationId = null, long? AgentLevel = null);
+
+/// <summary>
+
+
+/// </summary>
+public sealed record MissionStandingGain(long EntityId, double Amount, bool Diminishing)
+{
+    public double DeltaFrom(double current) => Diminishing ? (10 - current) * Amount : Amount;
+}
+
+/// <summary>
+
+
+/// and a replayed outcome pays nothing twice. Rewards: the official base ISK of <c>missionRewards.reward</c> when its type is ISK (29), plus the
+/// configured approximate loyalty-point rule; SDE ISK time bonuses use the accepted mission's minute interval and wallet reference type 34.
+/// </summary>
+public sealed class MissionDungeonRuntime(
+    AgentMissionStore store,
+    MissionStaticCatalog catalog,
+    IMissionDungeonHost host,
+    Func<long, MissionAgentPlace?> agentPlaceOf,
+    Func<DateTimeOffset> now,
+    Func<long, long, MissionAgentPlace, long?, Station?>? courierDestination = null,
+    Func<long, bool>? isTrade = null,
+    Func<long, bool>? isMining = null,
+    Func<long, string, CancellationToken, Task<int>>? divisionConnectionsLevelOf = null,
+    Func<int, decimal?>? systemSecurityOf = null,
+    ApproximateMissionRewardConfiguration? missionRewardConfiguration = null,
+    Func<long, CancellationToken, Task<int>>? negotiationLevelOf = null)
+{
+    /// <summary>The ISK type ID (EVE item type 29 "ISK" in the SDE reward records).</summary>
+    public const long IskTypeId = 29;
+
+
+    public const int AgentMissionRewardRefType = 33;
+    public const int AgentMissionBonusRefType = 34;
+
+    /// <summary>The mission dungeon's content definition is named <c>dungeon.{id}</c> (<c>DungeonWaveDirector.DefinitionOf</c>).</summary>
+    public const string DefinitionPrefix = "dungeon.";
+
+    /// <summary>
+
+    /// the next sweep asks again. Returns the number of dungeons started.
+    /// </summary>
+    public async Task<int> SweepAsync(CancellationToken cancellationToken = default)
+    {
+        var started = 0;
+        foreach (var record in await store.ReadAcceptedAsync(cancellationToken))
+        {
+            if (catalog.Mission(record.Content.MissionId)?.Kill?.DungeonId is not { } dungeonId) continue;
+            if (agentPlaceOf(record.AgentId) is not { } place) continue;
+            if (!host.IsPilotInSystem(record.CharacterId, (int)place.SolarSystemId)) continue;
+
+            if (FetchOf(record.Content.MissionId) is { } fetched && await host.HeldQuantityAsync(record.CharacterId, (int)fetched.TypeId, cancellationToken) >= fetched.Quantity)
+                continue;
+            if (await host.StartDungeonAsync(record.CharacterId, (int)place.SolarSystemId, dungeonId, cancellationToken) is null) started++;
+        }
+        await ExpireCouriersAsync(now(), cancellationToken);
+        return started;
+    }
+
+
+    public async Task OnAcceptedAsync(long owner, long agentId, CancellationToken cancellationToken = default)
+    {
+        var record = await store.ReadAsync(owner, agentId, cancellationToken);
+        if (record is null || record.State != AgentMissionState.Accepted) return;
+        if (CourierOf(record.Content.MissionId) is not { ObjectiveTypeId: { } typeId, ObjectiveQuantity: > 0 } courier) return;
+        if (agentPlaceOf(agentId)?.BaseStationId is not { } station) return;
+        await host.GrantCargoAsync(owner, record.Content.MissionId, (int)typeId, courier.ObjectiveQuantity, courier.Singleton, station, cancellationToken);
+    }
+
+    /// <summary>
+    /// The pilot docked at a station: an accepted courier mission whose destination this station is completes when the cargo is held. The cargo is
+    /// consumed with the completion, and the mission pays as a basic mission of its level does (see <see cref="CompleteWithRewardAsync"/>).
+    /// </summary>
+    public async Task OnDockedAsync(long owner, long stationId, CancellationToken cancellationToken = default)
+    {
+        foreach (var record in (await store.ReadAcceptedAsync(cancellationToken)).Where(item => item.CharacterId == owner))
+        {
+            if (CourierOf(record.Content.MissionId) is not { ObjectiveTypeId: { } typeId, ObjectiveQuantity: > 0 } courier) continue;
+            if (CourierDestinationOf(record) is not { } destination || destination.Id != stationId) continue;
+            if (await host.HeldQuantityAsync(owner, (int)typeId, cancellationToken) < courier.ObjectiveQuantity) continue;
+            await CompleteWithRewardAsync(owner, record, $"delivery:{record.Content.MissionId}", $"delivery:{record.Content.MissionId}:{record.AgentId}",
+                cancellationToken, [((int)typeId, courier.ObjectiveQuantity, MissionCourierRules.CargoTag(record.Content.MissionId))]);
+        }
+    }
+
+    /// <summary>
+    /// An accepted courier mission past its expiry (the data's expirationTime, or three days) fails with the failure's standing (none). The cargo the
+    /// pilot was handed stays with the pilot (shortcut: the failure does not take it back; upgrade with the removal rule).
+    /// </summary>
+    public async Task<int> ExpireCouriersAsync(DateTimeOffset at, CancellationToken cancellationToken = default)
+    {
+        var failed = 0;
+        foreach (var record in await store.ReadAcceptedAsync(cancellationToken))
+        {
+            if (CourierOf(record.Content.MissionId) is not { } courierObjective || catalog.Mission(record.Content.MissionId) is not { } mission || record.AcceptedAt is not { } accepted) continue;
+            // the data gives 0 for many courier missions: no time limit is given, so the default applies (not a limit of zero minutes)
+            var expiry = mission.ExpirationMinutes is { } minutes and > 0 ? TimeSpan.FromMinutes(minutes) : MissionCourierRules.DefaultExpiry;
+            if (accepted + expiry > at) continue;
+            await TransitionAsync(() => store.FailAsync(record.CharacterId, record.AgentId, at,
+                $"courier-expired:{record.Content.MissionId}:{accepted.ToUnixTimeMilliseconds()}", cancellationToken));
+
+            if (courierObjective.ObjectiveTypeId is { } cargoType)
+                await host.TakeCargoAsync(record.CharacterId, record.Content.MissionId, (int)cargoType, cancellationToken);
+            failed++;
+        }
+        return failed;
+    }
+
+    /// <summary>
+
+    /// </summary>
+    public async Task OnQuitAsync(long owner, long agentId, CancellationToken cancellationToken = default)
+    {
+        var record = await store.ReadAsync(owner, agentId, cancellationToken);
+        if (record is null || record.State != AgentMissionState.Quit) return;
+        if (CourierOf(record.Content.MissionId)?.ObjectiveTypeId is not { } cargoType) return;
+        await host.TakeCargoAsync(owner, record.Content.MissionId, (int)cargoType, cancellationToken);
+    }
+
+    /// <summary>
+
+    /// met, and it pays what a completion pays (the ISK, the standings and the basic mission's gains). A consumed objective is not taken from the hold. False,
+
+    /// </summary>
+    public async Task<bool> GmCompleteAsync(long owner, long agentId, CancellationToken cancellationToken = default)
+    {
+        var record = await store.ReadAsync(owner, agentId, cancellationToken);
+        if (record is null || record.State != AgentMissionState.Accepted) return false;
+        await CompleteWithRewardAsync(owner, record, $"gm:{record.Content.MissionId}", $"gm:{owner}:{record.Content.MissionId}:{agentId}", cancellationToken);
+        return true;
+    }
+
+
+    private MissionStaticCourier? CourierOf(long missionId) => isTrade?.Invoke(missionId) == true ? null : catalog.Mission(missionId)?.Courier;
+
+    private Station? CourierDestinationOf(AgentMissionRecord record) =>
+        agentPlaceOf(record.AgentId) is { BaseStationId: not null } place && courierDestination is not null
+            ? courierDestination(record.Content.MissionId, record.CharacterId, place,
+                MissionCourierRules.CourierLevel(catalog.IsEpicArcStep(record.Content.MissionId), place.AgentLevel, catalog.Level(record.Content.MissionId).Level))
+            : null;
+
+    /// <summary>
+
+    /// A completed kill dungeon records the objective; the agent must still be visited to claim the reward.
+    /// </summary>
+    public async Task OnDungeonOutcomeAsync(string outcome, long owner, string definition, long instanceId, CancellationToken cancellationToken = default)
+    {
+        if (!definition.StartsWith(DefinitionPrefix, StringComparison.Ordinal) ||
+            !long.TryParse(definition.AsSpan(DefinitionPrefix.Length), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var dungeonId))
+            return;
+        var record = (await store.ReadAsync(owner, cancellationToken)).FirstOrDefault(item =>
+            item.State == AgentMissionState.Accepted && catalog.Mission(item.Content.MissionId)?.Kill?.DungeonId == dungeonId);
+        if (record is null) return;
+
+        if (outcome == "completed")
+        {
+            if (FetchOf(record.Content.MissionId) is { } fetch)
+            {
+
+
+                if (isMining?.Invoke(record.Content.MissionId) != true && agentPlaceOf(record.AgentId)?.BaseStationId is { } station)
+                {
+                    await host.GrantObjectiveItemAsync(owner, (int)fetch.TypeId, fetch.Quantity, station, cancellationToken);
+                }
+                return;
+            }
+            await store.MarkObjectiveCompletedAsync(owner, record.AgentId, now(), $"objective:{instanceId}", cancellationToken);
+        }
+        else
+        {
+            await TransitionAsync(() => store.FailAsync(owner, record.AgentId, now(), $"fail:{instanceId}:{outcome}", cancellationToken));
+        }
+    }
+
+    public async Task<bool> OnMissionTurnInAsync(long characterId, long agentId, CancellationToken cancellationToken = default)
+    {
+        var record = await store.ReadAsync(characterId, agentId, cancellationToken);
+        if (record is not { State: AgentMissionState.Accepted, ObjectiveCompleted: true } || record.AcceptedAt is not { } acceptedAt)
+            return false;
+        var sequence = acceptedAt.ToUnixTimeMilliseconds();
+        await CompleteWithRewardAsync(characterId, record,
+            $"turnin:{record.Content.MissionId}:{sequence}",
+            $"turnin:{record.Content.MissionId}:{agentId}:{sequence}",
+            cancellationToken);
+        return (await store.ReadAsync(characterId, agentId, cancellationToken))?.State == AgentMissionState.Completed;
+    }
+
+    /// <summary>
+
+
+    /// </summary>
+    public async Task OnConversationAsync(long characterId, long agentId, bool together, CancellationToken cancellationToken = default)
+    {
+        if (!together) return;
+        foreach (var record in (await store.ReadAsync(characterId, cancellationToken)).Where(item => item.State == AgentMissionState.Accepted))
+        {
+            var missionId = record.Content.MissionId;
+            if (FetchOf(missionId) is { } fetch)
+            {
+
+                if (record.AgentId == agentId && await host.HeldQuantityAsync(characterId, (int)fetch.TypeId, cancellationToken) >= fetch.Quantity)
+                {
+                    await CompleteWithRewardAsync(characterId, record, $"turnin:{missionId}", $"turnin:{missionId}:{agentId}", cancellationToken,
+                        [((int)fetch.TypeId, fetch.Quantity, (string?)null)]);
+                }
+                continue;
+            }
+            if (!catalog.IsTalkStep(missionId) || !catalog.NextAgentsOf(missionId).Contains(agentId)) continue;
+            await CompleteWithRewardAsync(characterId, record, $"talk:{missionId}", $"talk:{missionId}:{agentId}", cancellationToken);
+        }
+    }
+
+    // The ISK base of a basic level 4 or 5 security mission, which the official build does not give (its reward is null): the security scale of
+
+    // are the behaviour reference's numbers. shortcut: the timed bonus uses the SDE interval without EveJS's 1.23x estimate; revisit if a better base source is recorded.
+
+    // shortcut: EveJS's numbers, not a CCP table; EveJS puts the corporation gain above the agent gain, a 2012 forum count the other way round.
+    /// <summary>
+
+    /// use the same field; eve.rs offers no mining mission, so it is read here as a fetch.
+    /// </summary>
+    private (long TypeId, long Quantity)? FetchOf(long missionId)
+    {
+        if (catalog.Mission(missionId)?.Kill is { ObjectiveTypeId: { } typeId, ObjectiveQuantity: > 0 } kill) return (typeId, kill.ObjectiveQuantity);
+
+        if (isTrade?.Invoke(missionId) == true && catalog.Mission(missionId)?.Courier is { ObjectiveTypeId: { } tradeType, ObjectiveQuantity: > 0 } trade) return (tradeType, trade.ObjectiveQuantity);
+        return null;
+    }
+
+    private async Task CompleteWithRewardAsync(long owner, AgentMissionRecord record, string rewardKey, string reference, CancellationToken cancellationToken,
+        IReadOnlyList<(int TypeId, long Quantity, string? Tag)>? consume = null)
+    {
+        var mission = catalog.Mission(record.Content.MissionId)!;
+        var place = agentPlaceOf(record.AgentId);
+        var sdeIsk = mission.Reward?.RewardTypeId == IskTypeId ? mission.Reward.RewardQuantity : 0;
+        var level = catalog.Level(record.Content.MissionId).Level;
+        var rewardSettings = missionRewardConfiguration ?? ApproximateMissionRewardConfiguration.Default;
+        var basic = mission.Reward is null && level is { } tagged ? rewardSettings.BasicMissionRewardFor(tagged) : null;
+        var isk = sdeIsk > 0 ? sdeIsk : basic?.Isk ?? 0;
+        var bonus = mission.Reward;
+        var acceptedAt = record.AcceptedAt;
+        var paysBonus = acceptedAt is { } accepted && bonus?.BonusRewardTypeId == IskTypeId && bonus.BonusRewardQuantity > 0 &&
+            bonus.BonusIntervalMinutes is { } interval && interval > 0 && accepted.AddMinutes(interval) > now();
+        var negotiationLevel = place is not null && (isk > 0 || paysBonus) && negotiationLevelOf is { } readNegotiation
+            ? await readNegotiation(owner, cancellationToken)
+            : 0;
+        if (place is not null)
+        {
+            if (isk > 0)
+            {
+                await host.CreditIskAsync(owner, ApproximateMissionRewardRules.NegotiatedIskReward(isk, negotiationLevel), place.CorporationId, AgentMissionRewardRefType,
+                    $"Agent mission reward: {mission.NameEn}", $"agent-mission:{owner}:{record.Content.MissionId}:{rewardKey}", cancellationToken);
+            }
+
+            if (paysBonus)
+            {
+                await host.CreditIskAsync(owner, ApproximateMissionRewardRules.NegotiatedIskReward(bonus!.BonusRewardQuantity, negotiationLevel), place.CorporationId, AgentMissionBonusRefType,
+                    $"Agent mission time bonus: {mission.NameEn}",
+                    $"agent-mission:{owner}:{record.Content.MissionId}:{rewardKey}:bonus", cancellationToken);
+            }
+        }
+
+        var gains = mission.ExtraStandings.Select(item => new MissionStandingGain(item.Id, item.Value / 10, false)).ToList();
+        if (gains.Count == 0 && basic is not null && place is not null)
+        {
+            gains.Add(new MissionStandingGain(record.AgentId, basic.AgentIncrease, true));
+            gains.Add(new MissionStandingGain(place.CorporationId, basic.CorporationIncrease, true));
+        }
+        var lp = 0L;
+        var issuerCorporationId = place?.CorporationId ?? 0;
+        if (place is not null && !record.Content.Important && issuerCorporationId > 0)
+        {
+            var missionLevel = catalog.Level(record.Content.MissionId).Level;
+            if (missionLevel is null && place.AgentLevel is >= 1 and <= 5) missionLevel = (int)place.AgentLevel.Value;
+            var security = systemSecurityOf?.Invoke(checked((int)place.SolarSystemId));
+            if (missionLevel is { } rewardLevel && security is { } systemSecurity)
+                lp = ApproximateMissionRewardRules.LoyaltyPoints(record.Content.MissionTypeLabel, rewardLevel, systemSecurity,
+                    divisionConnectionsLevelOf is null ? 0 : await divisionConnectionsLevelOf(owner, record.Content.MissionTypeLabel, cancellationToken), rewardSettings);
+        }
+        await host.CompleteMissionAsync(owner, record.AgentId, now(), reference, gains, consume ?? [], lp, issuerCorporationId, cancellationToken);
+    }
+
+    private static async Task<AgentMissionChange?> TransitionAsync(Func<Task<AgentMissionChange?>> transition)
+    {
+        try
+        {
+            return await transition();
+        }
+        catch (AgentMissionRefusedException)
+        {
+            // the mission changed since it was read (a replay): nothing to do
+            return null;
+        }
+    }
+}

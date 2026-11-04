@@ -1,0 +1,12 @@
+.git
+.github
+.devcontainer
+.cache
+.live-logs
+target
+**/bin
+**/obj
+**/.venv
+**/__pycache__
+**/.pytest_cache
+tools/spec-extract/out

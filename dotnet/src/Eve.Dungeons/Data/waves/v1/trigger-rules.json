@@ -1,0 +1,15 @@
+{
+  "schema": "eve.dungeon-waves.rules.v1",
+  "policy": "A wave with no trigger in the owner data: wave 1 starts when the content starts, each later wave starts when the wave before it is cleared (every NPC of it killed). A trigger the owner data gives is used as it is unless a rule below replaces it. A rule names its own source; the owner data is family-derived for most dungeons and is not a CCP source.",
+  "dungeons": [
+    {
+      "dungeonID": 2158,
+      "name": "Breeding Facility",
+      "source": "https://wiki.eveuniversity.org/Breeding_Facility",
+      "note": "The wiki gives a timer of 4 minutes for the first wave; the owner data has it on load. The compositions differ (the wiki lists transports and battleships, the owner data a deadspace pool); only the trigger is taken from the wiki.",
+      "waves": [
+        { "waveIndex": 1, "trigger": "timer", "delaySeconds": 240 }
+      ]
+    }
+  ]
+}

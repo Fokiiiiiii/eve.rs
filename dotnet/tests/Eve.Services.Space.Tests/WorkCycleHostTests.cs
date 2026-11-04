@@ -80,18 +80,155 @@ public class WorkCycleHostTests
     }
 
     [PgFact]
+    public async Task A_partial_hold_clamps_a_module_cycle_to_the_units_that_fit()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (flying, rock) = await MiningPilotAsync(rig, asteroidQuantity: 1000);
+        var oreTypeId = await TypeIdAsync(rig, "Veldspar");
+        await LeaveHoldUnitsAsync(rig, flying, 182, oreTypeId, 3);
+        var holdBefore = (await rig.Items.InContainerAsync(flying.Session.GetInt("shipid")!.Value))
+            .Where(item => item.TypeId == oreTypeId && item.Flag == 182)
+            .Sum(item => item.Quantity);
+        var facts = await MiningFactsAsync(rig);
+        StartModule(rig, flying);
+
+        var result = await SettleAsync(rig, ModuleCycle(flying, flying.Module, rock, 51,
+            wasteProbability: 0, critProbability: 0, critQuantityMultiplier: 0));
+        await rig.Events.PumpAsync();
+
+        Assert.True(result.Accepted, result.Reason);
+        Assert.Equal((997L, 3L), (result.UnitsRemaining, result.DeliveredUnits));
+        Assert.Equal(holdBefore + 3, (await rig.Items.InContainerAsync(flying.Session.GetInt("shipid")!.Value))
+            .Where(item => item.TypeId == oreTypeId && item.Flag == 182)
+            .Sum(item => item.Quantity));
+        var notice = SingleOreMinedNotice(flying);
+        Assert.Equal((oreTypeId, 3L, 3L, 0L, 0L),
+            (Number(notice, "oreType"), Number(notice, "quantity_added"), Number(notice, "quantity_removed"),
+                Number(notice, "amountWasted"), Number(notice, "amountCritBonus")));
+        var fact = Assert.Single(facts);
+        Assert.Equal((3L, 0L, 0L), (fact.Quantity, fact.QuantityWasted, fact.QuantityCritical));
+        Assert.Equal(new[] { "OnItemChange", "OnOreMined" },
+            Events.Of(flying.Session, clear: false).TakeLast(2).Select(e => e.Name));
+    }
+
+    [PgFact]
+    public async Task A_module_cycle_with_no_whole_unit_of_hold_space_refuses_without_mining_or_notifying()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (flying, rock) = await MiningPilotAsync(rig, asteroidQuantity: 1000);
+        var oreTypeId = await TypeIdAsync(rig, "Veldspar");
+        await LeaveHoldUnitsAsync(rig, flying, 182, oreTypeId, 0);
+        var holdBefore = (await rig.Items.InContainerAsync(flying.Session.GetInt("shipid")!.Value))
+            .Where(item => item.TypeId == oreTypeId && item.Flag == 182)
+            .ToArray();
+        var facts = await MiningFactsAsync(rig);
+        StartModule(rig, flying);
+
+        var result = await SettleAsync(rig, ModuleCycle(flying, flying.Module, rock, 52));
+        await rig.Events.PumpAsync();
+
+        Assert.False(result.Accepted);
+        Assert.Equal("CARGO_FULL", result.Reason);
+        Assert.Equal(1000L, (await rig.Items.GetAsync(rock))!.Quantity);
+        var holdAfter = (await rig.Items.InContainerAsync(flying.Session.GetInt("shipid")!.Value))
+            .Where(item => item.TypeId == oreTypeId && item.Flag == 182)
+            .ToArray();
+        Assert.Equal((holdBefore.Length, holdBefore.Sum(item => item.Quantity)), (holdAfter.Length, holdAfter.Sum(item => item.Quantity)));
+        Assert.DoesNotContain(await rig.Items.InContainerAsync(flying.Session.GetInt("shipid")!.Value), item => item.TypeId == oreTypeId && item.Flag == 5);
+        Assert.Empty(facts);
+        Assert.Empty(Events.Of(flying.Session, clear: false));
+        var recorded = await new PgWorkCycleLedger(rig.Source, rig.SpaceSchema).LastAsync(flying.Module);
+        Assert.Equal((false, "CARGO_FULL", 1000L, 0L),
+            (recorded!.Accepted, recorded.Reason, recorded.UnitsRemaining, recorded.DeliveredUnits));
+    }
+
+    [PgFact]
+    public async Task A_module_cycle_with_exactly_one_unit_of_hold_space_mines_one_unit()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (flying, rock) = await MiningPilotAsync(rig, asteroidQuantity: 1000);
+        var oreTypeId = await TypeIdAsync(rig, "Veldspar");
+        await LeaveHoldUnitsAsync(rig, flying, 182, oreTypeId, 1);
+        var holdBefore = (await rig.Items.InContainerAsync(flying.Session.GetInt("shipid")!.Value))
+            .Where(item => item.TypeId == oreTypeId && item.Flag == 182)
+            .Sum(item => item.Quantity);
+        StartModule(rig, flying);
+
+        var result = await SettleAsync(rig, ModuleCycle(flying, flying.Module, rock, 53,
+            wasteProbability: 0, critProbability: 0, critQuantityMultiplier: 0));
+
+        Assert.True(result.Accepted, result.Reason);
+        Assert.Equal((999L, 1L), (result.UnitsRemaining, result.DeliveredUnits));
+        Assert.Equal(holdBefore + 1, (await rig.Items.InContainerAsync(flying.Session.GetInt("shipid")!.Value))
+            .Where(item => item.TypeId == oreTypeId && item.Flag == 182)
+            .Sum(item => item.Quantity));
+    }
+
+    [PgFact]
+    public async Task Waste_depletes_the_rock_and_critical_bonus_uses_only_the_hold_space_left_after_normal_yield()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (flying, rock) = await MiningPilotAsync(rig, asteroidQuantity: 1000);
+        var oreTypeId = await TypeIdAsync(rig, "Veldspar");
+        await LeaveHoldUnitsAsync(rig, flying, 182, oreTypeId, 150);
+        var holdBefore = (await rig.Items.InContainerAsync(flying.Session.GetInt("shipid")!.Value))
+            .Where(item => item.TypeId == oreTypeId && item.Flag == 182)
+            .Sum(item => item.Quantity);
+        var facts = await MiningFactsAsync(rig);
+        StartModule(rig, flying);
+
+        var result = await SettleAsync(rig, ModuleCycle(flying, flying.Module, rock, 54, miningAmountM3: 10,
+            wasteProbability: 100, critProbability: 1, critQuantityMultiplier: 2,
+            wasteRoll: 0, roundingRoll: 0, critRoll: 0));
+        await rig.Events.PumpAsync();
+
+        Assert.True(result.Accepted, result.Reason);
+        Assert.Equal((800L, 150L), (result.UnitsRemaining, result.DeliveredUnits));
+        Assert.Equal(holdBefore + 150, (await rig.Items.InContainerAsync(flying.Session.GetInt("shipid")!.Value))
+            .Where(item => item.TypeId == oreTypeId && item.Flag == 182)
+            .Sum(item => item.Quantity));
+        var notice = SingleOreMinedNotice(flying);
+        Assert.Equal((150L, 100L, 100L, 50L),
+            (Number(notice, "quantity_added"), Number(notice, "quantity_removed"), Number(notice, "amountWasted"), Number(notice, "amountCritBonus")));
+        var fact = Assert.Single(facts);
+        Assert.Equal((150L, 100L, 50L), (fact.Quantity, fact.QuantityWasted, fact.QuantityCritical));
+    }
+
+    [PgFact]
+    public async Task Ice_falls_back_to_the_general_mining_hold_when_the_hull_has_no_ice_hold()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await AssertGeneralMiningHoldFallbackAsync(rig, "Endurance", "Clear Icicle", "Ice Mining Laser I", 181, "ice");
+    }
+
+    [PgFact]
+    public async Task Gas_falls_back_to_the_general_mining_hold_when_the_hull_has_no_gas_hold()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await AssertGeneralMiningHoldFallbackAsync(rig, "Venture", "Amber Cytoserocin", "Gas Cloud Harvester I", 135, "gas");
+    }
+
+    [PgFact]
     public async Task A_repeat_of_a_granted_module_cycle_is_answered_from_the_record_and_is_not_granted_again()
     {
         await using var rig = await Rig.CreateAsync();
         var (flying, rock) = await MiningPilotAsync(rig);
+        var oreTypeId = await TypeIdAsync(rig, "Veldspar");
+        var facts = await MiningFactsAsync(rig);
         StartModule(rig, flying);
         var granted = await SettleAsync(rig, ModuleCycle(flying, flying.Module, rock, 5));
+        await rig.Events.PumpAsync();
         var after = (await rig.Items.GetAsync(rock))!.Quantity;
 
         var repeat = await SettleAsync(rig, ModuleCycle(flying, flying.Module, rock, 5));
+        await rig.Events.PumpAsync();
 
         Assert.Equal((granted.Accepted, granted.DeliveredUnits, granted.UnitsRemaining), (repeat.Accepted, repeat.DeliveredUnits, repeat.UnitsRemaining));
         Assert.Equal(after, (await rig.Items.GetAsync(rock))!.Quantity);
+        Assert.Equal(granted.DeliveredUnits, Assert.Single(await rig.Items.InContainerAsync(flying.Session.GetInt("shipid")!.Value), item => item.TypeId == oreTypeId).Quantity);
+        Assert.Single(facts);
+        Assert.Single(Events.Of(flying.Session, clear: false), e => e.Name == "OnItemChange");
+        Assert.Single(Events.Of(flying.Session, clear: false), e => e.Name == "OnOreMined");
     }
 
     [PgFact]
@@ -273,25 +410,133 @@ public class WorkCycleHostTests
         return wreckId;
     }
 
-    /// <summary>A pilot in space with a Miner I fitted and online, and a rock of Veldspar in its system.</summary>
-    private static async Task<(DroneHostTests.Flying Flying, long Rock)> MiningPilotAsync(Rig rig)
+    /// <summary>A pilot in space with a mining module fitted and online, and a mineable item in its system.</summary>
+    private static async Task<(DroneHostTests.Flying Flying, long Rock)> MiningPilotAsync(
+        Rig rig, long asteroidQuantity = 1, int? asteroidTypeId = null, int? minerTypeId = null, int? shipTypeId = null)
     {
         var types = await new Eve.Sde.SdeReader(rig.Source).ReadTypeSummariesAsync();
-        var minerTypeId = DroneHostTests.SdeTypeId(types, "Miner I");
-        var oreTypeId = DroneHostTests.SdeTypeId(types, "Veldspar");
-        await rig.Statics.EnsureTypesAsync([minerTypeId, oreTypeId]);
-        var flying = await DroneHostTests.FlyingWithADroneAsync(rig, minerTypeId: minerTypeId);
-        var rock = await rig.Ships.CreateAsteroidAsync(oreTypeId, flying.System, 0, 1, [0d, 0d, 0d], [0d, 0d, 1d], 10d, rig.SpaceItems);
+        var miner = minerTypeId ?? DroneHostTests.SdeTypeId(types, "Miner I");
+        var ore = asteroidTypeId ?? DroneHostTests.SdeTypeId(types, "Veldspar");
+        await rig.Statics.EnsureTypesAsync([miner, ore]);
+        var flying = await DroneHostTests.FlyingWithADroneAsync(rig, minerTypeId: miner, shipTypeId: shipTypeId);
+        var rock = await rig.Ships.CreateAsteroidAsync(ore, flying.System, 0, asteroidQuantity, [0d, 0d, 0d], [0d, 0d, 1d], 10d, rig.SpaceItems);
         return (flying, rock.Item.Id);
     }
+
+    private static async Task<int> TypeIdAsync(Rig rig, string name) =>
+        DroneHostTests.SdeTypeId(await new Eve.Sde.SdeReader(rig.Source).ReadTypeSummariesAsync(), name);
+
+    private static async Task LeaveHoldUnitsAsync(Rig rig, DroneHostTests.Flying flying, int holdFlag, int typeId, long availableUnits)
+    {
+        var shipId = flying.Session.GetInt("shipid")!.Value;
+        var unitVolumeAttribute = rig.Statics.AttributeId("volume")!.Value;
+        var unitVolume = rig.Statics.Type(typeId)!.Attributes[unitVolumeAttribute];
+        var initial = await rig.Ships.RoomAsync(flying.Character, shipId, holdFlag);
+        Assert.True(initial.HasValue);
+        var fillQuantity = (long)Math.Floor(Math.Max(0d, initial.Value.Free - availableUnits * unitVolume) / unitVolume);
+        long? fillItemId = null;
+        if (fillQuantity > 0)
+        {
+            await using var connection = await rig.Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            fillItemId = await rig.Items.CreateAsync(connection, transaction,
+                new Eve.Inventory.NewItem(typeId, flying.Character, shipId, holdFlag, fillQuantity, false));
+            await transaction.CommitAsync();
+        }
+        var remaining = await rig.Ships.RoomAsync(flying.Character, shipId, holdFlag);
+        Assert.True(remaining.HasValue);
+        var usableUnits = (long)Math.Floor((remaining.Value.Free + 1e-7) / unitVolume);
+        if (usableUnits > availableUnits)
+        {
+            var correction = usableUnits - availableUnits;
+            await using var connection = await rig.Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await rig.Items.CreateAsync(connection, transaction,
+                new Eve.Inventory.NewItem(typeId, flying.Character, shipId, holdFlag, correction, false));
+            await transaction.CommitAsync();
+        }
+        else if (usableUnits < availableUnits)
+        {
+            var correction = availableUnits - usableUnits;
+            Assert.True(fillItemId.HasValue && fillQuantity > correction);
+            await using var connection = await rig.Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await rig.Items.SetQuantityAsync(connection, transaction, fillItemId!.Value, fillQuantity - correction);
+            await transaction.CommitAsync();
+        }
+        remaining = await rig.Ships.RoomAsync(flying.Character, shipId, holdFlag);
+        Assert.True(remaining.HasValue);
+        Assert.Equal((double)availableUnits, Math.Floor((remaining.Value.Free + 1e-7) / unitVolume));
+    }
+
+    private static async Task<List<Eve.Ships.OreMinedEvent>> MiningFactsAsync(Rig rig)
+    {
+        var facts = new List<Eve.Ships.OreMinedEvent>();
+        rig.Events.Subscribe("test.mining_clamp", [Eve.Ships.OreMinedEvent.Topic], (context, _) =>
+        {
+            facts.Add(context.Event.Payload<Eve.Ships.OreMinedEvent>()!);
+            return Task.CompletedTask;
+        });
+        await rig.Events.PumpAsync();
+        return facts;
+    }
+
+    private static async Task AssertGeneralMiningHoldFallbackAsync(
+        Rig rig, string shipName, string asteroidName, string minerName, int specializedHoldFlag, string yieldKind)
+    {
+        var shipTypeId = await TypeIdAsync(rig, shipName);
+        var asteroidTypeId = await TypeIdAsync(rig, asteroidName);
+        var minerTypeId = await TypeIdAsync(rig, minerName);
+        var (flying, rock) = await MiningPilotAsync(
+            rig, asteroidQuantity: 10, asteroidTypeId: asteroidTypeId, minerTypeId: minerTypeId, shipTypeId: shipTypeId);
+        var shipId = flying.Session.GetInt("shipid")!.Value;
+        var specialized = await rig.Ships.RoomAsync(flying.Character, shipId, specializedHoldFlag);
+        var general = await rig.Ships.RoomAsync(flying.Character, shipId, 134);
+        Assert.True(specialized.HasValue);
+        Assert.True(general.HasValue);
+        Assert.Equal(0d, specialized.Value.Capacity);
+        Assert.True(general.Value.Capacity > 0);
+        var yieldTypeId = yieldKind == "gas"
+            ? (await rig.Statics.GasYieldTypeAsync(asteroidTypeId) ?? throw new InvalidOperationException("gas cloud has no SDE yield type"))
+            : asteroidTypeId;
+        await rig.Statics.EnsureTypesAsync([yieldTypeId]);
+        var unitVolume = rig.Statics.Type(yieldTypeId)!.Attributes[rig.Statics.AttributeId("volume")!.Value];
+        var facts = await MiningFactsAsync(rig);
+        StartModule(rig, flying);
+
+        var result = await SettleAsync(rig, ModuleCycle(flying, flying.Module, rock, 55,
+            miningAmountM3: unitVolume, wasteProbability: 0, critProbability: 0, critQuantityMultiplier: 0));
+        await rig.Events.PumpAsync();
+
+        Assert.True(result.Accepted, result.Reason);
+        Assert.Equal((9L, 1L), (result.UnitsRemaining, result.DeliveredUnits));
+        var output = Assert.Single(await rig.Items.InContainerAsync(shipId), item => item.TypeId == yieldTypeId);
+        Assert.Equal((1L, 134), (output.Quantity, output.Flag));
+        var fact = Assert.Single(facts);
+        Assert.Equal((yieldTypeId, yieldKind, 1L), (fact.OreTypeId, fact.YieldKind, fact.Quantity));
+        var notice = SingleOreMinedNotice(flying);
+        Assert.Equal((yieldTypeId, 1L, 1L),
+            (Number(notice, "oreType"), Number(notice, "quantity_added"), Number(notice, "quantity_removed")));
+    }
+
+    private static PyDict SingleOreMinedNotice(DroneHostTests.Flying flying) =>
+        Assert.IsType<PyDict>(Assert.Single(Events.Of(flying.Session, clear: false), e => e.Name == "OnOreMined").Args[0]);
+
+    private static long Number(PyDict notice, string name) =>
+        Events.Number(notice.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == name).Value);
 
     /// <summary>The pilot's module runs, as an activation the simulation accepted leaves it.</summary>
     internal static void StartModule(Rig rig, DroneHostTests.Flying flying) =>
         rig.Space.StartModuleForTest((ulong)flying.Session.SessionId, flying.Module);
 
-    private static SimModuleWorkCycle ModuleCycle(DroneHostTests.Flying flying, long moduleId, long targetId, ulong cycleId) => new(
+    private static SimModuleWorkCycle ModuleCycle(
+        DroneHostTests.Flying flying, long moduleId, long targetId, ulong cycleId,
+        double miningAmountM3 = 20, double wasteVolumeMultiplier = 1, double wasteProbability = 0.1,
+        double critProbability = 0.05, double critQuantityMultiplier = 2, double accessDifficultyBonus = 0,
+        double wasteRoll = 0.25, double roundingRoll = 0.5, double critRoll = 0.75) => new(
         (ulong)flying.Session.SessionId, flying.Character, flying.Session.GetInt("shipid")!.Value, flying.System, moduleId, targetId, cycleId, Mine,
-        20, 1.0, 0.1, 0.05, 2.0, 0, 0.25, 0.5, 0.75);
+        miningAmountM3, wasteVolumeMultiplier, wasteProbability, critProbability, critQuantityMultiplier,
+        accessDifficultyBonus, wasteRoll, roundingRoll, critRoll);
 
     /// <summary>Sends a cycle and waits for the answer to it (a repeat waits for a second answer).</summary>
     internal static async Task<SimModuleWorkResult> SettleAsync(Rig rig, SimModuleWorkCycle cycle)

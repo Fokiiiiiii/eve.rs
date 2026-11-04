@@ -370,7 +370,7 @@ impl Task for RandomCooldownTimer {
     fn on_enter(&mut self, t: &mut TaskCtx<'_, '_>) {
         cooldown::on_enter(t, |t| {
             let (min, max) = (t.required_int("minTimeoutSeconds")?, t.required_int("maxTimeoutSeconds")?);
-            Some(t.world().random_int(min, max) as f64)
+            Some(t.random_int(min, max)? as f64)
         });
     }
 
@@ -646,6 +646,22 @@ mod tests {
             1,
             "twenty seconds: the top of the range"
         );
+    }
+
+    #[test]
+    fn a_reversed_random_cooldown_fails_without_starting_a_timer() {
+        let mut rig = Rig::new();
+        let attributes = Attrs::new()
+            .with("timerAddress", timer().to_value())
+            .with("minTimeoutSeconds", 20i64)
+            .with("maxTimeoutSeconds", 10i64);
+        let (root, _) = decorated(&mut rig, Box::new(RandomCooldownTimer), attributes, Status::Success, 0);
+        assert_eq!(
+            rig.tick(),
+            Err(BehaviorError::Task("ValueError: empty range for randrange() (20, 11, -9)".to_string()))
+        );
+        assert_eq!(rig.tree.status_of(root), Status::Failure);
+        assert_eq!(rig.shared.timers.active_count(), 0);
     }
 
     #[test]

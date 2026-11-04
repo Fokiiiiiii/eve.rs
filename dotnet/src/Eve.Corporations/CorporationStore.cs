@@ -496,8 +496,7 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
         var member = await MemberAsync(characterId,token);
         if (corp is null || corp.IsNpc || corp.Deleted || member?.CorporationId != corp.Id) return false;
         var roles = CorporationRoles.Session(corp,member,character!.StationId,await TitlesAsync(corp.Id,token)).AtAll;
-        if ((roles & (CorporationRoles.Accountant | CorporationRoles.JuniorAccountant)) != 0) return true;
-        return accountKey is { } key && key is >= 1000 and <= 1006 && (roles & CorporationRoles.WalletTakeRole(key)) != 0;
+        return CorporationRoles.CanReadWalletDivision(roles, accountKey);
     }
 
     public async Task<bool> CanReadCorporationMarketOrdersAsync(long characterId,CancellationToken token = default)

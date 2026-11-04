@@ -15,7 +15,7 @@ AccessRules.ValidForKind permits Everyone only as Member. Corporation and allian
 
 ## Checks
 
-- Eve.AccessGroups.Tests build succeeded. The filtered AccessRulesTests, AccessGroupStoreTests, and OwnerGroupManagerServiceTests run passed 26/26, 0 skipped.
-- Eve.Host.Tests build succeeded. The registered Host RPC test plus the existing owner-group Host route test passed 2/2, 0 skipped. The full StructureCompositionTests class passed 18/18, 0 skipped.
+- Eve.AccessGroups.Tests built successfully with 0 warnings and 0 errors. The filtered AccessRulesTests, AccessGroupStoreTests, and OwnerGroupManagerServiceTests run passed 26/26, 0 skipped on the final merged tree.
+- Eve.Host.Tests built successfully with 0 warnings and 0 errors after the latest main merge. The complete StructureCompositionTests class passed 18/18, 0 skipped on the final merged tree.
 - PostgreSQL tests ran under tools/dev/db-lock.sh on eve_p6. Its sde and sde_mission schemas were copied from the populated static-data database with tools/dev/copy-sde-database.py; each test's feature schemas were isolated.
-- No graphical V24.01 client session has been performed. After pushing, add the selected Actions run and push-triggered CI result here.
+- No graphical V24.01 client session has been performed. Record the selected Actions run and push-triggered CI result here after the push.

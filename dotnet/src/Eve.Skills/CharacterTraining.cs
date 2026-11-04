@@ -126,8 +126,11 @@ public sealed class CharacterTraining(
         long characterId,
         long accountId,
         IReadOnlyList<(int SkillTypeId, int TargetLevel)>? selectedSkills,
+        bool isAlphaClone,
+        int raceId,
         CancellationToken cancellationToken = default)
     {
+        RequireAlphaCloneGrade(raceId);
         var view = await ViewAsync(characterId, accountId, cancellationToken);
         var owned = view.Skills.ToDictionary(skill => skill.TypeId);
         if (selectedSkills is null &&
@@ -137,7 +140,7 @@ public sealed class CharacterTraining(
         }
         var targets = selectedSkills ?? view.Queue.Select(entry => (entry.TypeId, entry.ToLevel)).ToList();
         var balance = await skills.FreeSkillPointsAsync(characterId, cancellationToken);
-        return PlanFreeSkillPoints(owned, targets, balance, view.InTraining).Applied;
+        return PlanFreeSkillPoints(owned, targets, balance, view.InTraining, isAlphaClone, raceId).Applied;
     }
 
     /// <summary>Applies available points to validated selected targets, or to the saved queue when targets is null.</summary>
@@ -145,8 +148,11 @@ public sealed class CharacterTraining(
         long characterId,
         long accountId,
         IReadOnlyList<(int SkillTypeId, int TargetLevel)>? selectedSkills,
+        bool isAlphaClone,
+        int raceId,
         CancellationToken cancellationToken = default)
     {
+        RequireAlphaCloneGrade(raceId);
         await SettleAsync(characterId, accountId, cancellationToken);
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -168,7 +174,7 @@ public sealed class CharacterTraining(
 
         var targets = selectedSkills ?? state.Entries.Select(entry => (entry.TypeId, entry.ToLevel)).ToList();
         var inTraining = state.Running ? state.Entries.FirstOrDefault()?.TypeId : null;
-        var plan = PlanFreeSkillPoints(owned, targets, balance, inTraining);
+        var plan = PlanFreeSkillPoints(owned, targets, balance, inTraining, isAlphaClone, raceId);
         if (plan.Spent == 0)
         {
             await transaction.RollbackAsync(cancellationToken);
@@ -219,14 +225,17 @@ public sealed class CharacterTraining(
         return (plan.Applied, remaining.Value);
     }
 
-    /// <summary>Applies an exact point amount to one skill, capped at its level-V threshold.</summary>
+    /// <summary>Applies an exact point amount to one skill, capped at the current clone's maximum skill level.</summary>
     public async Task<long?> ApplyFreeSkillPointAmountAsync(
         long characterId,
         long accountId,
         int skillTypeId,
         long requestedPoints,
+        bool isAlphaClone,
+        int raceId,
         CancellationToken cancellationToken = default)
     {
+        RequireAlphaCloneGrade(raceId);
         if (requestedPoints <= 0)
         {
             return null;
@@ -250,7 +259,8 @@ public sealed class CharacterTraining(
             return null;
         }
 
-        var points = Math.Min(requestedPoints, Math.Max(0L, SkillPoints.ForTraining(type.Rank, 5) - current.SkillPoints));
+        var maximumLevel = isAlphaClone ? catalog.AlphaMaxLevel(raceId, skillTypeId) : SkillPoints.MaxLevel;
+        var points = Math.Min(requestedPoints, Math.Max(0L, SkillPoints.ForTraining(type.Rank, maximumLevel) - current.SkillPoints));
         if (points == 0)
         {
             await transaction.RollbackAsync(cancellationToken);
@@ -303,12 +313,22 @@ public sealed class CharacterTraining(
         return remaining.Value;
     }
 
+    private void RequireAlphaCloneGrade(int raceId)
+    {
+        if (!catalog.HasAlphaCloneGrade(raceId))
+        {
+            throw new InvalidDataException($"Pinned SDE Alpha clone-grade data is missing for character race {raceId}.");
+        }
+    }
+
     private (Dictionary<int, long> Applied, Dictionary<int, CharacterSkill> Before, List<CharacterSkill> After, long Spent)
         PlanFreeSkillPoints(
             IReadOnlyDictionary<int, CharacterSkill> owned,
             IReadOnlyList<(int SkillTypeId, int TargetLevel)> targets,
             long balance,
-            int? inTraining)
+            int? inTraining,
+            bool isAlphaClone,
+            int raceId)
     {
         var current = new Dictionary<int, CharacterSkill>(owned);
         var before = new Dictionary<int, CharacterSkill>();
@@ -327,7 +347,12 @@ public sealed class CharacterTraining(
                 continue;
             }
 
-            var needed = Math.Max(0L, SkillPoints.ForTraining(type.Rank, targetLevel) - skill.SkillPoints);
+            var maximumLevel = isAlphaClone ? catalog.AlphaMaxLevel(raceId, skillTypeId) : SkillPoints.MaxLevel;
+            if (maximumLevel == 0)
+            {
+                continue;
+            }
+            var needed = Math.Max(0L, SkillPoints.ForTraining(type.Rank, Math.Min(targetLevel, maximumLevel)) - skill.SkillPoints);
             var amount = Math.Min(remaining, needed);
             if (amount <= 0)
             {

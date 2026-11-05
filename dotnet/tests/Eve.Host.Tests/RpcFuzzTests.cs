@@ -52,6 +52,12 @@ public sealed class RpcFuzzTests
         {
             var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL");
             Assert.False(string.IsNullOrWhiteSpace(pgUrl), "RPC fuzzing needs EVE_PG_URL for an isolated Host composition run.");
+            saved["EVE_PG_URL"] = pgUrl;
+            var taggedConnectionString = new NpgsqlConnectionStringBuilder(Eve.Data.PgConnection.ToConnectionString(pgUrl!))
+            {
+                ApplicationName = $"RpcFuzz/{Environment.ProcessId}",
+            }.ConnectionString;
+            Environment.SetEnvironmentVariable("EVE_PG_URL", taggedConnectionString);
             foreach (var variable in SchemaVariables)
             {
                 saved[variable] = Environment.GetEnvironmentVariable(variable);
@@ -187,14 +193,145 @@ public sealed class RpcFuzzTests
             }
             if (schemas.Count > 0 && Environment.GetEnvironmentVariable("EVE_PG_URL") is { } url)
             {
-                await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
-                foreach (var schema in schemas)
+                var cleanupConnectionString = new NpgsqlConnectionStringBuilder(Eve.Data.PgConnection.ToConnectionString(url))
                 {
-                    await using var command = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
-                    command.CommandTimeout = 300; // CI Host shard cleanup can exceed the Npgsql default under database load.
-                    await command.ExecuteNonQueryAsync();
-                }
+                    ApplicationName = $"RpcFuzzCleanup/{Environment.ProcessId}",
+                }.ConnectionString;
+                await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(cleanupConnectionString));
+                var activeSessions = await ScratchSchemaActivityAsync(source, schemas);
+                Assert.True(activeSessions.Length == 0,
+                    $"RPC fuzz teardown found sessions using its scratch schemas: {string.Join("; ", activeSessions)}");
+                foreach (var schema in schemas)
+                    await DropScratchSchemaAsync(source, schema);
             }
+        }
+    }
+
+    [PgFact]
+    public async Task Scratch_schema_drop_reports_the_blocking_session_and_recovers_after_it_exits()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL");
+        Assert.False(string.IsNullOrWhiteSpace(url), "Scratch-schema cleanup diagnostics need EVE_PG_URL.");
+        var schema = $"rfguard_{Guid.NewGuid():N}";
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url!));
+        await using (var createSchema = source.CreateCommand())
+        {
+            createSchema.CommandText = $"CREATE SCHEMA {schema}";
+            await createSchema.ExecuteNonQueryAsync();
+        }
+        await using (var createTable = source.CreateCommand())
+        {
+            createTable.CommandText = $"CREATE TABLE {schema}.held (id integer)";
+            await createTable.ExecuteNonQueryAsync();
+        }
+
+        await using var blocker = await source.OpenConnectionAsync();
+        await using var transaction = await blocker.BeginTransactionAsync();
+        var transactionOpen = true;
+        var schemaDropped = false;
+        try
+        {
+            await using (var holdLock = blocker.CreateCommand())
+            {
+                holdLock.CommandText = $"SELECT count(*) FROM {schema}.held";
+                holdLock.Transaction = transaction;
+                await holdLock.ExecuteScalarAsync();
+            }
+
+            var error = await Assert.ThrowsAsync<Xunit.Sdk.XunitException>(() => DropScratchSchemaAsync(source, schema));
+            Assert.Contains($"pid={blocker.ProcessID}", error.Message);
+            Assert.Contains(schema, error.Message);
+
+            await transaction.RollbackAsync();
+            transactionOpen = false;
+            Assert.Empty(await ScratchSchemaActivityAsync(source, [schema]));
+            await DropScratchSchemaAsync(source, schema);
+            schemaDropped = true;
+        }
+        finally
+        {
+            if (transactionOpen)
+                await transaction.RollbackAsync();
+            if (!schemaDropped)
+            {
+                await using var drop = source.CreateCommand();
+                drop.CommandText = $"DROP SCHEMA IF EXISTS {schema} CASCADE";
+                await drop.ExecuteNonQueryAsync();
+            }
+        }
+    }
+
+    private static async Task<string[]> ScratchSchemaActivityAsync(NpgsqlDataSource source, IReadOnlyList<string> schemas)
+    {
+        if (schemas.Count == 0)
+            return [];
+
+        await using var command = source.CreateCommand();
+        command.CommandText = """
+            SELECT format('pid=%s app=%s state=%s xact_age=%s wait=%s/%s query=%s',
+                activity.pid,
+                coalesce(activity.application_name, ''),
+                coalesce(activity.state, ''),
+                coalesce(age(now(), activity.xact_start)::text, '-'),
+                coalesce(activity.wait_event_type, ''),
+                coalesce(activity.wait_event, ''),
+                left(coalesce(activity.query, ''), 240))
+            FROM pg_stat_activity AS activity
+            WHERE activity.datname = current_database()
+              AND activity.pid <> pg_backend_pid()
+              AND (
+                (activity.state IS DISTINCT FROM 'idle' AND EXISTS (
+                    SELECT 1 FROM unnest($1::text[]) AS target(schema_name)
+                    WHERE position(target.schema_name IN coalesce(activity.query, '')) > 0
+                ))
+                OR EXISTS (
+                    SELECT 1
+                    FROM pg_locks AS held
+                    JOIN pg_class AS relation ON relation.oid = held.relation
+                    JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+                    WHERE held.pid = activity.pid
+                      AND held.granted
+                      AND namespace.nspname = ANY($1::text[])
+                )
+              )
+            ORDER BY activity.pid
+            """;
+        command.Parameters.AddWithValue(schemas.ToArray());
+        var activity = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            activity.Add(reader.GetString(0));
+        return activity.ToArray();
+    }
+
+    private static async Task DropScratchSchemaAsync(NpgsqlDataSource source, string schema)
+    {
+        await using var connection = await source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        await using (var timeout = connection.CreateCommand())
+        {
+            timeout.CommandText = "SET LOCAL lock_timeout = '5s'";
+            timeout.Transaction = transaction;
+            await timeout.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            await using var drop = connection.CreateCommand();
+            drop.CommandText = $"DROP SCHEMA IF EXISTS {schema} CASCADE";
+            drop.Transaction = transaction;
+            await drop.ExecuteNonQueryAsync();
+            await transaction.CommitAsync();
+        }
+        catch (PostgresException error) when (error.SqlState == "55P03")
+        {
+            await transaction.RollbackAsync();
+            var blockers = await ScratchSchemaActivityAsync(source, [schema]);
+            var detail = blockers.Length == 0
+                ? "No other session with a scratch-schema query or relation lock remained in pg_stat_activity."
+                : string.Join("; ", blockers);
+            throw new Xunit.Sdk.XunitException(
+                $"DROP SCHEMA {schema} remained lock-blocked for 5 seconds (SQLSTATE {error.SqlState}): {detail}");
         }
     }
 

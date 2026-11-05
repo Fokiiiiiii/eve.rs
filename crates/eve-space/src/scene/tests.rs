@@ -311,7 +311,7 @@ fn a_ship_cannot_undock_twice_or_from_a_station_that_is_not_there() {
 }
 
 #[test]
-fn binding_sends_the_time_the_ship_then_the_state_then_the_ship_numbers() {
+fn binding_sends_the_time_the_ship_then_the_state() {
     let mut scene = scene();
     let out = scene.bind(SESSION, NOON);
     let names: Vec<_> = out
@@ -323,14 +323,7 @@ fn binding_sends_the_time_the_ship_then_the_state_then_the_ship_numbers() {
         .collect();
     assert_eq!(
         names,
-        [
-            "OnSetTimeDilation",
-            "DoSimClockRebase",
-            "DoDestinyUpdate",
-            "DoDestinyUpdate",
-            "DoDestinyUpdate",
-            "DoDestinyUpdate"
-        ]
+        ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate", "DoDestinyUpdate", "DoDestinyUpdate"]
     );
     assert_eq!(action_names(&out[2]), ["AddBalls2"]);
     assert_eq!(
@@ -345,7 +338,6 @@ fn binding_sends_the_time_the_ship_then_the_state_then_the_ship_numbers() {
         ]
     );
     assert_eq!(action_names(&out[4]), ["SetState"]);
-    assert!(action_names(&out[5]).is_empty());
     // the ship comes at the stamp of the moment and the state a stamp after (the reference's 102 and 103)
     let now_stamp = i64::from(stamp_at(NOON));
     assert_eq!(stamps(&out[2]), [now_stamp]);

@@ -52,7 +52,7 @@ fn binding_says_what_the_reference_said() {
     let out = scene.bind(SESSION, SIM_TIME);
     let bind = step(recorded.race(), "bind the ballpark");
     let events: Vec<&Value> = bind["events"].as_array().unwrap().iter().collect();
-    assert_eq!(out.len(), 6, "what the reference sent, without the props it adds");
+    assert_eq!(out.len(), 5, "what the reference sent, without the props it adds");
 
     // The clock uses the simulation time supplied to this scene.
     assert_eq!(out_args(&out[0]), event_args(events[0]));
@@ -100,8 +100,6 @@ fn binding_says_what_the_reference_said() {
         json!(i64::from(stamp_at(SIM_TIME)) + 1),
         "the scene's state stamp"
     );
-
-    assert!(action_names_of(&out_args(&out[5])).is_empty());
 }
 
 #[test]

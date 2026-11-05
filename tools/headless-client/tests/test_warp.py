@@ -12,6 +12,7 @@ while the ship is in warp, DEVIATIONS.md #16) is left out. It takes a minute and
 
 from __future__ import annotations
 
+import copy
 import os
 import time
 import uuid
@@ -21,7 +22,10 @@ import pytest
 from evecli.describe import describe
 from evecli.observe import timed_events, wait_quietly
 from tests import test_login_to_character as base
-from tests.test_undock import STATION, SYSTEM, actions_of, arrive, compare_events, outcome
+from tests.test_undock import (
+    FIRST_BALL_ID, STATION, SYSTEM, UNDOCK, actions_of, add_ball_slim, arrive,
+    compare_destiny_updates, compare_events, keyval, number, outcome,
+)
 
 WARP = base.load("warp.json")
 pytestmark = [
@@ -54,12 +58,17 @@ def milestones(events: list) -> dict:
                 out["rest"] = event["at"]
     return out
 
-def without_ballpark_noise(events: list) -> list:
+def without_ballpark_noise(events: list, reference_props: set[int] | frozenset[int] = frozenset()) -> list:
     """The events without the state the polling asks for and the balls the reference takes out of the ballpark in warp (DEVIATIONS #16)."""
     keep = []
     for event in events:
         if names(event) in (["SetState"], ["PackagedAction"]):
             continue
+        event = copy.deepcopy(event)
+        for _, name, args in actions_of(event)[0] if event["name"] == "DoDestinyUpdate" else []:
+            if name == "RemoveBalls":
+                removed = args["$tuple"][0]
+                args["$tuple"][0] = [item for item in removed if number(item) not in reference_props]
         keep.append(event)
     return keep
 
@@ -71,6 +80,8 @@ def test_a_ship_warps_to_a_planet_as_the_reference_did(race):
     run = uuid.uuid4().hex[:10]
     problems: list[str] = []
     steps = {step["label"]: step for step in race["steps"]}
+    recent = next(r for r in UNDOCK["races"] if r["raceID"] == race["raceID"])
+    recent_steps = {step["label"]: step for step in recent["steps"]}
     planet = race["planetID"]
     with base.connect(f"walk-warp-{run}") as who:
         _, ship_id, _, mapping = arrive(who, race, run)
@@ -78,9 +89,27 @@ def test_a_ship_warps_to_a_planet_as_the_reference_did(race):
         wait_quietly(who, 0.5)
         raw, error = outcome(lambda: who.call_bound(ship[0], "Undock", ship_id, False))
         assert error is None, base.brief(error)
-        problems += compare_events(steps["undock"]["events"], wait_quietly(who, 2.0), "undock", mapping)
+        undock_events = wait_quietly(who, 2.0)
+        problems += compare_events(steps["undock"]["events"], undock_events, "undock", mapping)
         ballpark = who.call("beyonce", "MachoBindObject", SYSTEM, None)
-        problems += compare_events(steps["bind the ballpark"]["events"], wait_quietly(who, 2.5), "bind the ballpark", mapping)
+        bind_events = wait_quietly(who, 2.5)
+        reference_mapping = {
+            **mapping,
+            int(recent["characterID"]): mapping[int(race["characterID"])],
+            int(recent["shipID"]): ship_id,
+            **{int(old): mapping[int(original)] for old, original in zip(recent["moduleIDs"], race["moduleIDs"])},
+        }
+        def initial(events):
+            return [event for event in events if event["name"] == "DoDestinyUpdate"]
+        problems += compare_destiny_updates(
+            initial(recent_steps["undock"]["events"] + recent_steps["bind the ballpark"]["events"]),
+            initial(undock_events + bind_events), "initial destiny updates", reference_mapping,
+        )
+        mapping.update(reference_mapping)
+        problems += compare_events(
+            [e for e in steps["bind the ballpark"]["events"] if e["name"] != "DoDestinyUpdate"],
+            [e for e in bind_events if e["name"] != "DoDestinyUpdate"], "bind the ballpark", mapping,
+        )
 
         # the warp: the answer, then every event until the ship stops (asking for the state every three seconds, as the recording did)
         where = "warp to a planet"
@@ -100,8 +129,19 @@ def test_a_ship_warps_to_a_planet_as_the_reference_did(race):
             for event in seen:
                 event["at"] = round(event["at"] + (time.time() - started) - 3.0, 2)
             events += seen
+        reference_props = set()
+        for event in steps["bind the ballpark"]["events"]:
+            if event["name"] != "DoDestinyUpdate":
+                continue
+            for _, name, args in actions_of(event)[0]:
+                if name == "AddBalls2":
+                    for entry in args["$tuple"][0]["$tuple"][1]:
+                        fields = keyval(add_ball_slim(entry))
+                        item_id = number(fields["itemID"])
+                        if fields.get("categoryID") == 2 and item_id >= FIRST_BALL_ID:
+                            reference_props.add(item_id)
         ours = without_ballpark_noise(in_order(events))
-        theirs = without_ballpark_noise(in_order(recorded["events"]))
+        theirs = without_ballpark_noise(in_order(recorded["events"]), reference_props)
         problems += compare_events(theirs, ours, where, mapping)
         got, expected = milestones(ours), milestones(theirs)
         for name in ("dropout", "rest"):

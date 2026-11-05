@@ -1493,6 +1493,30 @@ public class SpaceServiceTests
         MarshalCodec.Encode(Py.Tuple(new PyList([Py.Tuple(new PyInt(1790679102), Py.Tuple(new PyStr("Stop"), Py.Tuple(new PyLong(9988400001939))))]), PyBool.False)));
 
     [PgFact]
+    public async Task A_warp_ending_away_from_a_belt_clears_only_the_pilots_own_warp_state()
+    {
+        var (rig, _, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        await rig.Space.WarpAsync(session, 40491233, 0, CancellationToken.None);
+        Assert.True(rig.Space.IsWarping(session));
+
+        void Stop(long shipId)
+        {
+            var position = Py.Tuple(new PyInt(1), Py.Tuple(new PyStr("SetBallPosition"), Py.Tuple(new PyLong(shipId), new PyReal(0), new PyReal(0), new PyReal(0))));
+            var action = Py.Tuple(new PyInt(1), Py.Tuple(new PyStr("Stop"), Py.Tuple(new PyLong(shipId))));
+            rig.Sim.Say(new SimNotify((ulong)session.SessionId, "DoDestinyUpdate", "clientID",
+                MarshalCodec.Encode(Py.Tuple(new PyList([position, action]), PyBool.False))));
+        }
+
+        var shipId = session.GetInt("shipid")!.Value;
+        Stop(shipId + 1);
+        Assert.True(rig.Space.IsWarping(session));
+        Stop(shipId);
+        Assert.False(rig.Space.IsWarping(session));
+    }
+
+    [PgFact]
     public async Task The_first_movement_the_simulation_accepts_while_the_protection_lasts_ends_it_and_the_client_is_told_once_after_the_update()
     {
         var (rig, _, session) = await DockedAsync();

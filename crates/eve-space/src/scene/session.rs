@@ -382,12 +382,14 @@ impl Scene {
         told.push(update(vec![state]));
         let mut numbers = Vec::new();
         for other in &ships {
-            // The undocked ego is primed above, and fixed SDE sentries have no movement numbers to prime.
+            // The undocked ego's numbers are in SetState; fixed SDE sentries do not move.
             if (other.spec.ship_id != ship.spec.ship_id || pilot.jumped_in) && other.spec.max_velocity > 0.0 {
                 numbers.extend(Self::numbers_of(other, second));
             }
         }
-        told.push(update(numbers));
+        if !numbers.is_empty() {
+            told.push(update(numbers));
+        }
         if login_visuals_sent && let Some(pilot) = self.pilots.get_mut(&session) {
             pilot.login_visuals_sent = false;
         }

@@ -27,11 +27,11 @@ All local test invocations used `eve_p6` through `tools/dev/db-lock.sh`; each re
 - `Eve.Services.Space.Tests`: `DynamicBountyHostTests|NpcBountyHostTests|DynamicResourceCacheMgrTests|PlayerDeathTests|AbyssalSpaceSessionsTests` — 55 passed.
 - `Eve.Services.Core.Tests`: `SessionStartupRpcServicesTests` — 7 passed.
 - `Eve.Host.Tests`: `AbyssalDeathSettlementProcessorTests|Dungeon_and_dynamic_resource_cache_calls_round_trip_through_host_registration` — 2 passed.
-- `Eve.Ships.Tests`: `DeathTests` — 15 passed.
+- `Eve.Ships.Tests`: `DeathTests` — 16 passed.
 - `Eve.Services.Crimewatch.Tests`: `PlayerBountyKillsTests` — 2 passed.
 
 The Host, Npc, Space, Core and corresponding test projects compiled with zero warnings/errors. A real graphical V24.01 client session was outside this verification.
 
 ## Git and Actions
 
-Commit: pending. Push and Actions checks: pending. Keep this section current after the main sync, push, and Actions completion.
+Task commit: `f9376551`; main merge: `02f22898`. Pre-push gate: CI run 1534 on main passed at `63ad9eed`. Push and task Actions checks are pending; keep this section current after they complete.

@@ -36,6 +36,7 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
     private readonly string _prefix = "ne" + Guid.NewGuid().ToString("N")[..10];
     private readonly Dictionary<string, string?> _saved = [];
     private readonly List<string> _schemas = [];
+    private HostRuntime? _host;
 
     private string Schema(string variable) => variable["EVE_".Length..^"_SCHEMA".Length].ToLowerInvariant() is var name ? $"{_prefix}_{name}" : "";
 
@@ -58,10 +59,20 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
+        if (_host is not null)
+        {
+            await _host.ShutdownAsync();
+            _host = null;
+        }
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL");
         if (url is not null)
         {
             await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
+            await using var activity = source.CreateCommand("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND (position($1 in query) > 0 OR position($2 in query) > 0 OR position($3 in query) > 0)");
+            activity.Parameters.AddWithValue(Schema("EVE_EVENTS_SCHEMA"));
+            activity.Parameters.AddWithValue(Schema("EVE_SCHEDULER_SCHEMA"));
+            activity.Parameters.AddWithValue(Schema("EVE_CHARACTERS_SCHEMA"));
+            Assert.Equal(0L, Assert.IsType<long>(await activity.ExecuteScalarAsync()));
             foreach (var schema in _schemas)
             {
                 // a background job of this run may still hold a lock on the scratch schema: the drop is retried when the server
@@ -97,6 +108,9 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
             return Sent.Count(packet => packet.Contains(name, StringComparison.Ordinal));
         }
     }
+
+    private async Task<HostRuntime> BuildHostAsync() =>
+        _host = await HostComposition.BuildAsync(Settings());
 
     private static HostSettings Settings() => new(
         "", "disabled", new ClusterOptions { NewCharacterExperienceEnabled = false, NewCharacterExperienceMode = "disabled" },
@@ -172,7 +186,7 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
     public async Task Omega_offer_checkout_without_settlement_keeps_the_subscription_end_unchanged()
     {
         await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
-        var host = await HostComposition.BuildAsync(Settings());
+        var host = await BuildHostAsync();
         var accounts = Accounts(source);
         var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
         var accountId = await NewAccountAsync(accounts, "omega-buyer");
@@ -190,7 +204,7 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
     public async Task Omega_offer_checkout_without_settlement_keeps_the_2100_floor_unchanged()
     {
         await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
-        var host = await HostComposition.BuildAsync(Settings());
+        var host = await BuildHostAsync();
         var accounts = Accounts(source);
         var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
         var accountId = await NewAccountAsync(accounts, "floor-account");
@@ -208,7 +222,7 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
     public async Task Multiple_character_training_offer_without_settlement_keeps_account_unchanged()
     {
         await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
-        var host = await HostComposition.BuildAsync(Settings());
+        var host = await BuildHostAsync();
         var accounts = Accounts(source);
         var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
         var accountId = await NewAccountAsync(accounts, "training-buyer");
@@ -226,7 +240,7 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
     public async Task Six_certificate_offer_without_settlement_keeps_subscription_unchanged()
     {
         await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
-        var host = await HostComposition.BuildAsync(Settings());
+        var host = await BuildHostAsync();
         var accounts = Accounts(source);
         var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
         var accountId = await NewAccountAsync(accounts, "six-buyer");
@@ -244,7 +258,7 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
     public async Task A_certificate_activates_once_into_the_queues_and_an_alpha_account_is_refused_with_its_certificate_kept()
     {
         await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
-        var host = await HostComposition.BuildAsync(Settings());
+        var host = await BuildHostAsync();
         var accounts = Accounts(source);
         var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
         var accountId = await NewAccountAsync(accounts, "certificate-holder");
@@ -282,7 +296,7 @@ public sealed class NewEdenEntitlementHostTests : IAsyncLifetime
     public async Task Unavailable_and_expired_certificates_cannot_activate_through_the_direct_rpc()
     {
         await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
-        var host = await HostComposition.BuildAsync(Settings());
+        var host = await BuildHostAsync();
         var accounts = Accounts(source);
         var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
         var accountId = await NewAccountAsync(accounts, "invalid-certificate-holder");

@@ -26,9 +26,11 @@ EVE University [Contacts](https://wiki.eveuniversity.org/Contacts) requires mutu
 
 ## Checks
 
-- Post-merge builds of `Eve.Host.Tests` and `Eve.Services.CharacterInfo.Tests`: passed, 0 warnings/errors.
-- Post-merge selected reference classes, on `eve_p7` through `tools/dev/db-lock.sh`: 409 passed, 20 skipped, 0 failed across 12 projects. The 20 skips are existing live/real-scene cases in `AbyssalHostFlowTests`; they are not counted as passes.
-- The focused Host privacy and notification regressions, service privacy/session regressions, and CharacterLogoff regressions all passed in the selected run.
+- Builds after the code/main merge for `Eve.Host.Tests` and `Eve.Services.CharacterInfo.Tests`: passed, 0 warnings/errors.
+- Selected direct-reference classes across 12 projects on `eve_p7` via `tools/dev/db-lock.sh`: 409 passed, 20 skipped, 0 failed. The 20 skips are existing live/real-scene cases in `AbyssalHostFlowTests`; they are not counted as passes.
+- After the final documentation-only main sync, focused regressions passed: `OnlineStatusServiceTests` 27/27, Host privacy/lifecycle tests 2/2, and `CharacterLogoffTests` 4/4; no skips.
+- Pushed commit `e9236fd1416b133e05299cc04acac984a7e815a0`. Push-triggered CI run 1536 passed all jobs; `ci-status.py failures` reported no failed tests or jobs. Selected Agent-test run 1341 also passed.
+- Pre-push latest completed main CI run 1535 and Agent-test run 1340 were green.
 - `eve_p7` contains pinned SDE build 3396210 and required Host fixture mission tables.
 - No graphical-client trace was captured; checks here are headless.
 

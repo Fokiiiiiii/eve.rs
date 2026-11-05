@@ -19,7 +19,7 @@
 - `brains::world_tests`: 19 passed。security-status、active-criminal、no-range tasklet、pilot exit/destruction、SimLink fixtureの追加focused実行も成功。SimLink fixture integration: 13 passed。
 - `Eve.Services.Space.Tests.SpaceServiceTests`: `eve_p6` にpinned SDE build 3396210をロード後、162 passed / 0 failed / 0 skipped。初回はSDE未投入かつ並列接続上限で失敗したため、SDEを投入し低並列で再実行しました。
 - `Eve.Space.Tests.SimCodecTests`: stale expected kind名を更新後、477 passed / 0 failed / 0 skipped。
-- GitHub Actions検証はコードcommitをpushしてから実行し、この欄を更新します。
+- コードcommit `f54cdf2a` のCI run 1539（`42086919673`）はfailure。Rust workspaceの2件をローカル再現し、`an_undock_puts_the_ship_in_space_and_binding_sends_it_the_scene_as_marshalled_notifications` から空のDoDestinyUpdateを期待する1項目を除き、`tether_host_policy_dispatches_to_the_real_scene_and_transitions_return_to_the_host` の期待protocolを92へ更新しました。該当2 focused tests、fmt、`eve-space` check、workspace Clippyは成功。選択agent-test run 1343（`42086952755`）とCIのend-to-end、他の完了shardはsuccess。Rust修正のActions結果を次のpush後に記録します。
 
 ## 未実施の検証
 

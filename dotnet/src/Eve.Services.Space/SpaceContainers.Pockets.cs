@@ -66,7 +66,8 @@ public sealed partial class SpaceContainers
             await _deployed.SaveAsync(new DeployedRecord(
                 deployableId, AccelerationGateKind, solarSystemId, AccelerationGateName, type, AccelerationGateGroupId, position, radius, 0, 0, 0, 0, NeverExpires), cancellationToken);
         }
-        GiveBody(deployableId, periodic, () => _sim.PlaceAccelerationGate(new SimPlaceAccelerationGate(deployableId, solarSystemId, AccelerationGateName, type, AccelerationGateGroupId, position, radius)));
+        await GiveBodyAsync(deployableId, periodic, () => _sim.PlaceAccelerationGateAsync(
+            new SimPlaceAccelerationGate(deployableId, solarSystemId, AccelerationGateName, type, AccelerationGateGroupId, position, radius), cancellationToken));
     }
 
     /// <summary>
@@ -94,7 +95,7 @@ public sealed partial class SpaceContainers
             {
                 if (!running.Contains(record.DeployableId))
                 {
-                    _sim.RemoveDeployed(record.DeployableId);
+                    await _sim.RemoveDeployedAsync(record.DeployableId, cancellationToken);
                     _placed.TryRemove(record.DeployableId, out _);
                     await _deployed.RemoveAsync(record.DeployableId, cancellationToken);
                 }
@@ -129,28 +130,25 @@ public sealed partial class SpaceContainers
             await _deployed.SaveAsync(new DeployedRecord(
                 id, DeadspacePocketKind, solarSystemId, PocketName, 0, 0, origin, DeadspaceSiteRadiusMeters, 0, 0, 0, 0, NeverExpires), cancellationToken);
         }
-        GiveBody(id, periodic, () => _sim.PlaceDeadspacePocket(new SimPlaceDeadspacePocket(id, solarSystemId, PocketName, origin, DeadspaceSiteRadiusMeters)));
+        await GiveBodyAsync(id, periodic, () => _sim.PlaceDeadspacePocketAsync(
+            new SimPlaceDeadspacePocket(id, solarSystemId, PocketName, origin, DeadspaceSiteRadiusMeters), cancellationToken));
     }
 
-    private void GiveBody(long id, bool periodic, Action give)
+    private async Task GiveBodyAsync(long id, bool periodic, Func<Task<bool>> give)
     {
         if (!periodic)
         {
-            give();
+            await give();
             return;
         }
-        // shortcut: a link reset can still enqueue over 64 distinct bodies; batch if the active pocket/gate set reaches that queue bound.
         if (!_sim.IsConnected || !_placed.TryAdd(id, 0))
         {
             return;
         }
         try
         {
-            give();
-            if (!_sim.IsConnected)
-            {
+            if (!await give())
                 _placed.TryRemove(id, out _);
-            }
         }
         catch
         {

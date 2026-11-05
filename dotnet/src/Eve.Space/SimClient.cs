@@ -583,6 +583,39 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
             FailOverloadedLink(failure, sessionToCancel);
     }
 
+    private async Task<bool> SendAsync(SimMessage message, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var frame = EncodeOutbound(message);
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            CancellationToken sessionToken;
+            lock (_pendingGate)
+            {
+                if (_outboundFailure is { } failure)
+                    throw failure;
+                var session = _activeSession;
+                if (!_connected || session is null || session.IsCancellationRequested)
+                    return false;
+                if (_outbox.Writer.TryWrite(frame))
+                    return true;
+                sessionToken = session.Token;
+            }
+
+            using var wait = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, sessionToken);
+            try
+            {
+                if (!await _outbox.Writer.WaitToWriteAsync(wait.Token).ConfigureAwait(false))
+                    return false;
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // Recheck the link; it may have reconnected while this send was waiting.
+            }
+        }
+    }
+
     private static void TryEnqueue<T>(
         object gate,
         CancellationToken cancellationToken,
@@ -1039,6 +1072,9 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     public void RemoveDeployed(long deployableId) => Send(new SimRemoveDeployed(deployableId));
 
+    public Task<bool> RemoveDeployedAsync(long deployableId, CancellationToken cancellationToken = default) =>
+        SendAsync(new SimRemoveDeployed(deployableId), cancellationToken);
+
     public void PlaceProbe(SimPlaceProbe probe) => Send(probe);
 
     public void RemoveProbe(long probeId) => Send(new SimRemoveProbe(probeId));
@@ -1072,7 +1108,11 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     public void PlaceObservatory(SimPlaceObservatory observatory) => Send(observatory);
     public void PlaceControlTower(SimPlaceControlTower tower) => Send(tower);
     public void PlaceDeadspacePocket(SimPlaceDeadspacePocket pocket) => Send(pocket);
+    public Task<bool> PlaceDeadspacePocketAsync(SimPlaceDeadspacePocket pocket, CancellationToken cancellationToken = default) =>
+        SendAsync(pocket, cancellationToken);
     public void PlaceAccelerationGate(SimPlaceAccelerationGate gate) => Send(gate);
+    public Task<bool> PlaceAccelerationGateAsync(SimPlaceAccelerationGate gate, CancellationToken cancellationToken = default) =>
+        SendAsync(gate, cancellationToken);
     public void PlaceCapturePoint(SimPlaceCapturePoint point) => Send(point);
     public void PlaceBattlefieldScoreboard(SimPlaceBattlefieldScoreboard scoreboard) => Send(scoreboard);
 

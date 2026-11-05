@@ -226,6 +226,8 @@ public interface ISimulation
     void RestoreDeployed(SimDeployed deployed);
     /// <summary>Takes a cynosural field out of space (its record's time is up).</summary>
     void RemoveDeployed(long deployableId);
+    /// <summary>Queues taking a deployed object out of the scene without dropping the link when the outbound queue is full.</summary>
+    Task<bool> RemoveDeployedAsync(long deployableId, CancellationToken cancellationToken = default);
     /// <summary>Puts a scanner probe in space where it was launched (protocol 45).</summary>
     void PlaceProbe(SimPlaceProbe probe);
     /// <summary>Takes a scanner probe out of space (protocol 45).</summary>
@@ -270,9 +272,13 @@ public interface ISimulation
 
     /// <summary>Puts a deadspace pocket of a dungeon in its system's scene at its origin (protocol 74).</summary>
     void PlaceDeadspacePocket(SimPlaceDeadspacePocket pocket);
+    /// <summary>Queues a deadspace pocket, waiting for outbound queue room when needed.</summary>
+    Task<bool> PlaceDeadspacePocketAsync(SimPlaceDeadspacePocket pocket, CancellationToken cancellationToken = default);
 
     /// <summary>Puts an acceleration gate of a dungeon room in its system's space (protocol 75).</summary>
     void PlaceAccelerationGate(SimPlaceAccelerationGate gate);
+    /// <summary>Queues an acceleration gate, waiting for outbound queue room when needed.</summary>
+    Task<bool> PlaceAccelerationGateAsync(SimPlaceAccelerationGate gate, CancellationToken cancellationToken = default);
 
     /// <summary>Puts a battlefield's capture point in its system's space (protocol 77).</summary>
     void PlaceCapturePoint(SimPlaceCapturePoint point);

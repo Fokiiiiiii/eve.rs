@@ -86,7 +86,8 @@ public partial class HostServerTests
             var modules = new PgModuleStateStore(source, fittingSchema);
             var structures = new StructureStore(source, structureSchema);
             var pilots = new StructurePilotStore(structures);
-            var scheduler = new DurableScheduler(source, () => FixedNowMs, new SchedulerOptions { Concurrency = 1 }, schedulerSchema, _ => { });
+            var nowMs = FixedNowMs;
+            var scheduler = new DurableScheduler(source, () => nowMs, new SchedulerOptions { Concurrency = 1 }, schedulerSchema, _ => { });
             var events = new EventBus(source, scheduler, new EventBusOptions { MaxAttempts = 3 }, eventSchema, _ => { });
             var rules = new ServiceToggleRules();
             var timers = new StructureTimers(structures, scheduler, events, rules);
@@ -127,7 +128,7 @@ public partial class HostServerTests
                 (_, _) => ValueTask.FromResult<PyValue?>(null));
             await events.PumpAsync();
             var ships = new CharacterShips(source, dogma, characters, items, skills, modules);
-            var service = new DogmaIMService(dogma, ships, () => FixedNowMs,
+            var service = new DogmaIMService(dogma, ships, () => nowMs,
                 (_, _, _, _, _, _) => ValueTask.FromResult<bool?>(null),
                 controlledStructureSnapshot: control.DogmaAsync,
                 structureServiceModuleToggle: authority.ToggleAsync);
@@ -314,6 +315,29 @@ public partial class HostServerTests
             Assert.Equal(MachoMessage.CallRsp, Envelope(servicesReply).Type);
             var onlineServices = Assert.IsType<PyDict>(Result(MarshalCodec.Decode(servicesReply.Payload)));
             Assert.Contains(onlineServices.Entries, entry => entry.Key == new PyInt(StructureServiceIds.Market) && entry.Value == new PyInt(ServiceState.Online));
+
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                _ = await items.CreateAsync(connection, transaction,
+                    new NewItem(HydrogenFuelBlock, ServiceToggleCorporation, ServiceToggleStructure,
+                        StructureFuelBayFlag, 30, false));
+                await transaction.CommitAsync();
+            }
+            nowMs += StructureFuel.HourMs;
+            Assert.Equal(1, await scheduler.RunDueAsync());
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                Assert.Equal(0, await bay.QuantityAsync(connection, transaction, ServiceToggleStructure, default));
+                Assert.Equal(ItemState.Online, await modules.StateAsync(connection, transaction, moduleId));
+                Assert.Equal(ServiceState.Online,
+                    (await structures.ServicesAsync(connection, transaction, ServiceToggleStructure))[StructureServiceIds.Market]);
+                var cycle = Assert.IsType<StructureServiceModuleFuelCycle>(
+                    await structures.ServiceModuleFuelCycleAsync(connection, transaction, ServiceToggleStructure, moduleId));
+                Assert.Equal(FixedNowMs + 2 * StructureFuel.HourMs, cycle.NextFuelCycleMs);
+                await transaction.CommitAsync();
+            }
 
             client!.Set("corprole", new PyLong(0));
             var refusedOffline = await ToggleAsync(7, oid, online: false);

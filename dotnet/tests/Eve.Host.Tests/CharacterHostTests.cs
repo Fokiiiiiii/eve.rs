@@ -1263,6 +1263,104 @@ public sealed class CharacterHostTests
     }
 
     [PgFact]
+    public async Task Online_status_rpc_denies_presence_before_character_selection()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var targetId = await rig.CreateCharacterAsync();
+        rig.Sessions.Enter(targetId, new ClientSession { CharacterId = targetId, UserId = 1 });
+
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("onlineStatus"));
+        var unselected = new ClientSession { UserId = 1 };
+
+        Assert.Equal(PyBool.False, await CallAsync(service, "GetOnlineStatus", unselected, new PyLong(targetId)));
+    }
+
+    [PgFact]
+    public async Task Online_status_notifications_follow_reciprocal_watchlists_and_session_lifecycle()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var targetId = await rig.CreateCharacterAsync();
+        var reciprocalId = await rig.CreateCharacterAsync();
+        var oneWayId = await rig.CreateCharacterAsync();
+        var unwatchedId = await rig.CreateCharacterAsync();
+        var charMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charMgr"));
+        var userSvc = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("userSvc"));
+
+        foreach (var (ownerId, contactId) in new[]
+        {
+            (reciprocalId, targetId),
+            (targetId, reciprocalId),
+            (oneWayId, targetId),
+        })
+        {
+            Assert.IsType<PyNone>(await CallAsync(charMgr, "AddContact",
+                new ClientSession { CharacterId = ownerId, UserId = 1 },
+                new PyLong(contactId), new PyInt(-10), PyBool.True, PyBool.False, new PyStr("")));
+        }
+
+        var targetSession = new ClientSession { CharacterId = targetId, UserId = 1 };
+        var deliveredPresence = new List<ClientSession?>();
+        var reciprocalSink = new RecordingPacketSink(() => deliveredPresence.Add(rig.Sessions.Of(targetId)));
+        var oneWaySink = new RecordingPacketSink();
+        var unwatchedSink = new RecordingPacketSink();
+        rig.Sessions.Enter(reciprocalId, new ClientSession { CharacterId = reciprocalId, UserId = 1, Sink = reciprocalSink });
+        rig.Sessions.Enter(oneWayId, new ClientSession { CharacterId = oneWayId, UserId = 1, Sink = oneWaySink });
+        rig.Sessions.Enter(unwatchedId, new ClientSession { CharacterId = unwatchedId, UserId = 1, Sink = unwatchedSink });
+        await rig.OnlineStatusNotifications.FlushAsync();
+
+        rig.Sessions.Enter(targetId, targetSession);
+        var onlineStatus = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("onlineStatus"));
+        var reciprocalSession = Assert.IsType<ClientSession>(rig.Sessions.Of(reciprocalId));
+        Assert.Equal(PyBool.True, await CallAsync(onlineStatus, "GetOnlineStatus", reciprocalSession, new PyLong(targetId)));
+        await rig.OnlineStatusNotifications.FlushAsync();
+        Assert.Equal(new[] { "OnContactLoggedOn" }, Notifications(reciprocalSink).Select(notification => notification.Name));
+        Assert.Empty(Notifications(oneWaySink));
+        Assert.Empty(Notifications(unwatchedSink));
+        Assert.Same(targetSession, Assert.Single(deliveredPresence));
+
+        var replacement = new ClientSession { CharacterId = targetId, UserId = 1 };
+        rig.Sessions.Enter(targetId, replacement);
+        rig.Sessions.Enter(targetId, replacement);
+        targetSession.Close();
+        await rig.OnlineStatusNotifications.FlushAsync();
+        Assert.Same(replacement, rig.Sessions.Of(targetId));
+        Assert.Single(Notifications(reciprocalSink));
+
+        Assert.Equal(PyBool.True, await CallAsync(userSvc, "UserLogOffCharacter", replacement));
+        replacement.Close();
+        replacement.Close();
+        await rig.OnlineStatusNotifications.FlushAsync();
+
+        Assert.Null(replacement.CharacterId);
+        Assert.Null(rig.Sessions.Of(targetId));
+        Assert.Equal(new[] { "OnContactLoggedOn", "OnContactLoggedOff" },
+            Notifications(reciprocalSink).Select(notification => notification.Name));
+
+        var reentered = new ClientSession { CharacterId = targetId, UserId = 1 };
+        rig.Sessions.Enter(targetId, reentered);
+        await rig.OnlineStatusNotifications.FlushAsync();
+        reentered.Close();
+        reentered.Close();
+        await rig.OnlineStatusNotifications.FlushAsync();
+
+        Assert.Equal(new[] { "OnContactLoggedOn", "OnContactLoggedOff", "OnContactLoggedOn", "OnContactLoggedOff" },
+            Notifications(reciprocalSink).Select(notification => notification.Name));
+        Assert.Equal(new ClientSession?[] { targetSession, null, reentered, null }, deliveredPresence);
+        Assert.Empty(Notifications(oneWaySink));
+        Assert.Empty(Notifications(unwatchedSink));
+        var packets = reciprocalSink.Sent.OfType<PyObject>().ToArray();
+        Assert.Equal(4, packets.Length);
+        var expectedNames = new[] { "OnContactLoggedOn", "OnContactLoggedOff", "OnContactLoggedOn", "OnContactLoggedOff" };
+        for (var i = 0; i < packets.Length; i++)
+        {
+            var address = MachoAddress.Decode(((PyTuple)packets[i].Args).Items[2]);
+            Assert.Equal(expectedNames[i], address.BroadcastId);
+            Assert.Equal("clientID", address.IdType);
+            Assert.Equal(new PyValue[] { new PyLong(targetId) }, Notifications(reciprocalSink)[i].Args);
+        }
+    }
+
+    [PgFact]
     public async Task Contact_add_persists_and_routes_the_recipient_notification()
     {
         await using var rig = await CharacterHostRig.CreateAsync();
@@ -1889,6 +1987,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         public ServiceRegistry Registry => _runtime.Registry;
         internal Eve.Host.PublicGateway.PublicGatewayRoutes Gateway => _runtime.PublicGateway;
         public CharacterSessions Sessions => Assert.IsType<CharacterSessions>(_runtime.CharacterSessions);
+        public OnlineStatusNotifications OnlineStatusNotifications => Assert.IsType<OnlineStatusNotifications>(_runtime.OnlineStatusNotifications);
         public Eve.Scheduler.DurableScheduler Scheduler => _runtime.Scheduler ?? throw new InvalidOperationException("the scheduler is not composed");
         public PgCharacterStore Characters => new(Source, CharactersSchema);
         public long Station { get; }

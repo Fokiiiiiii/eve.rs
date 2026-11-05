@@ -82,6 +82,10 @@ public interface ICharacterEntryHook
     ValueTask OnCharacterLeavingAsync(ClientSession session, long characterId, CancellationToken cancellationToken) =>
         ValueTask.CompletedTask;
 
+    /// <summary>Called after the logoff time is saved and before the character attributes are cleared.</summary>
+    ValueTask OnCharacterLoggedOffAsync(ClientSession session, long characterId, CancellationToken cancellationToken) =>
+        ValueTask.CompletedTask;
+
     ValueTask OnCharacterEnteredAsync(ClientSession session, long characterId, CancellationToken cancellationToken);
 
     ValueTask OnInventoryRpcAsync(ClientSession session, string method, bool stationHangar, bool activeSpaceShipInventoryList, CancellationToken cancellationToken) =>

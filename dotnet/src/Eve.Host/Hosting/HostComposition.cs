@@ -78,6 +78,7 @@ internal static class HostComposition
         Eve.Host.Xmpp.XmppListener? xmppListener = null;
         System.Security.Cryptography.X509Certificates.X509Certificate2? xmppCertificate = null;
         CharacterSessions? characterSessions = null;
+        OnlineStatusNotifications? onlineStatusNotifications = null;
         List<ICharacterEntryHook>? characterEntryHooks = null;
         PublicGateway.PublicGatewayRoutes? publicGateway = null;
         Eve.Services.Core.IContractReadModel? contractReadModel = null;
@@ -162,7 +163,7 @@ internal static class HostComposition
                 clock, contractSchema, contractExpiryJobs, foundations.Events);
             legacy = await LegacyGameStoreComposition.OpenAsync(source, foundations.Events);
             var notices = new PublicGateway.NoticeHub();
-        (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, calendarCspaBilling, gameRpcCallbacks, keeperRpcCallbacks, characterSessions, contractBrokerFeeAdjustment, hasContractManagerRole, canManageCalendarGroupEvent, readCurrentCalendarGroups) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected, notices, hooks => characterEntryHooks = hooks, containers => tournamentContainers = containers, ships => tournamentShips = ships);
+        (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, calendarCspaBilling, gameRpcCallbacks, keeperRpcCallbacks, characterSessions, onlineStatusNotifications, contractBrokerFeeAdjustment, hasContractManagerRole, canManageCalendarGroupEvent, readCurrentCalendarGroups) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected, notices, hooks => characterEntryHooks = hooks, containers => tournamentContainers = containers, ships => tournamentShips = ships);
             if (characterSessions is not null)
                 new Eve.Host.Persistence.ContractNotifications(characterSessions).Subscribe(foundations.Events);
             // the public gateway's skill plans: the tables are the skills module's (migration 0009, applied with its store)
@@ -590,7 +591,7 @@ internal static class HostComposition
             accounts,
             () => MarshalCodec.Encode(config.Current()));
 
-        return new HostRuntime(server, registry, legacy, foundations, space, crimewatch, simulation, characterSessions, publicGateway, dataSource, xmppListener, xmppCertificate, scientificReplay, discoveryHttp);
+        return new HostRuntime(server, registry, legacy, foundations, space, crimewatch, simulation, characterSessions, publicGateway, dataSource, xmppListener, xmppCertificate, scientificReplay, discoveryHttp, onlineStatusNotifications);
         }
         catch
         {
@@ -603,6 +604,7 @@ internal static class HostComposition
             await Cleanup(() => { xmppCertificate?.Dispose(); return ValueTask.CompletedTask; });
             if (scientificReplay is not null) await Cleanup(scientificReplay.DisposeAsync);
             await Cleanup(() => { discoveryHttp?.Dispose(); return ValueTask.CompletedTask; });
+            if (onlineStatusNotifications is not null) await Cleanup(onlineStatusNotifications.DisposeAsync);
             if (legacy is not null) await Cleanup(legacy.DisposeAsync);
             if (foundations is not null) await Cleanup(foundations.DisposeAsync);
             await Cleanup(() => { space?.Dispose(); return ValueTask.CompletedTask; });

@@ -54,7 +54,8 @@ internal sealed partial class CharacterServicesComposition
             Console.Error.WriteLine($"eve-host: {stranded} ship(s) left in space by the last host were put back in their stations");
         }
         dogmaSync = new CharacterDogmaSync(dogma, ships, now);
-            characterSessions = new CharacterSessions();
+            characterSessions = new CharacterSessions((characterId, isOnline, recipients) =>
+                onlineStatusNotifications?.Enqueue(characterId, isOnline, recipients));
             signalTrackerRegistrationProvider = new Eve.Host.SignalTrackerRegistrationProvider(characterSessions);
     }
 }

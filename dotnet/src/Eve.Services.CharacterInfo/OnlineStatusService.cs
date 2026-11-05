@@ -36,8 +36,12 @@ public sealed partial class OnlineStatusService(
             return false;
         }
 
-        // Like the reference, a call without a selected observer reads raw presence.
-        if (observerId > 0 && observerId != targetId)
+        if (observerId <= 0)
+        {
+            return false;
+        }
+
+        if (observerId != targetId)
         {
             var contacts = observerWatchlist ?? await Watchlist(observerId, cancellation);
             if (!contacts.Contains(targetId)

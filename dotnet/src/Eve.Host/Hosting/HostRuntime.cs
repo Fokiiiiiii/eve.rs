@@ -41,12 +41,15 @@ internal sealed class HostRuntime(HostServer server, ServiceRegistry registry, L
     PublicGateway.PublicGatewayRoutes? publicGateway = null, NpgsqlDataSource? dataSource = null,
     Eve.Host.Xmpp.XmppListener? xmppListener = null,
     System.Security.Cryptography.X509Certificates.X509Certificate2? xmppCertificate = null,
-    Eve.Host.ProjectDiscovery.ScientificReplayComposition? scientificReplay = null, HttpClient? discoveryHttp = null)
+    Eve.Host.ProjectDiscovery.ScientificReplayComposition? scientificReplay = null, HttpClient? discoveryHttp = null,
+    OnlineStatusNotifications? onlineStatusNotifications = null)
 {
     internal HostServer Server { get; } = server;
 
     /// <summary>The sessions that have a character in the game (null when no characters are served: no EVE_PG_URL).</summary>
     internal CharacterSessions? CharacterSessions { get; } = characterSessions;
+
+    internal OnlineStatusNotifications? OnlineStatusNotifications { get; } = onlineStatusNotifications;
 
     internal ServiceRegistry Registry { get; } = registry;
 
@@ -83,6 +86,7 @@ internal sealed class HostRuntime(HostServer server, ServiceRegistry registry, L
         }
         if (scientificReplay is not null) await scientificReplay.DisposeAsync();
         discoveryHttp?.Dispose();
+        if (OnlineStatusNotifications is not null) await OnlineStatusNotifications.DisposeAsync();
         if (legacy is not null) await legacy.DisposeAsync();
         if (foundations is not null)
         {

@@ -139,6 +139,7 @@ public sealed partial class SpaceContainers
             give();
             return;
         }
+        // shortcut: a link reset can still enqueue over 64 distinct bodies; batch if the active pocket/gate set reaches that queue bound.
         if (!_sim.IsConnected || !_placed.TryAdd(id, 0))
         {
             return;
@@ -146,6 +147,10 @@ public sealed partial class SpaceContainers
         try
         {
             give();
+            if (!_sim.IsConnected)
+            {
+                _placed.TryRemove(id, out _);
+            }
         }
         catch
         {

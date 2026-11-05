@@ -31,6 +31,12 @@ internal sealed class FakeSim : ISimulation
 
     public event Action? Lost;
 
+    public void LoseLink()
+    {
+        IsConnected = false;
+        Lost?.Invoke();
+    }
+
     public System.Collections.Concurrent.ConcurrentQueue<SimMessage> Heard { get; } = new();
 
     /// <summary>What an <c>Enter</c> is answered with: null (done) or a reason.</summary>

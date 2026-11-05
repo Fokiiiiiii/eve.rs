@@ -741,10 +741,33 @@ public class SimClientTests
         Assert.True(overflow.IsCompleted);
         var overload = await Assert.ThrowsAsync<SimUnavailableException>(() => Within(overflow));
         Assert.Contains("outbound queue is full", overload.Message);
-        Assert.Throws<SimUnavailableException>(() => client.Bind(200));
+        client.Bind(200); // one-way sends stay quiet after the link is marked unavailable
+        await Assert.ThrowsAsync<SimUnavailableException>(() => Within(client.EnterAsync(Enter(200))));
         foreach (var request in pending)
             await Assert.ThrowsAsync<SimUnavailableException>(() => Within(request));
 
+        await Until(() => !client.IsConnected && Volatile.Read(ref lost) == 1);
+    }
+
+    [Fact]
+    public async Task A_one_way_send_overflow_breaks_the_link_without_throwing()
+    {
+        var stream = new BlockingWriteStream();
+        await using var client = new SimClient(_ => Task.FromResult<Stream>(stream));
+        client.RetryAfter = TimeSpan.FromMinutes(1);
+        var lost = 0;
+        client.Lost += () => Interlocked.Increment(ref lost);
+        client.Start();
+        await Until(() => client.IsConnected);
+
+        client.Bind(200);
+        await stream.WriteStarted.Task.WaitAsync(Patience);
+        for (var i = 0; i < SimClient.OutboundQueueCapacity; i++)
+            client.Bind((ulong)(201 + i));
+
+        var error = Record.Exception(() => client.Bind((ulong)(201 + SimClient.OutboundQueueCapacity)));
+
+        Assert.Null(error);
         await Until(() => !client.IsConnected && Volatile.Read(ref lost) == 1);
     }
 

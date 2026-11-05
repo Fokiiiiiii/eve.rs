@@ -105,13 +105,15 @@ public sealed partial class SpaceContainers
                 if (record.Kind == AccelerationGateKind)
                 {
                     // the body of a running dungeon's gate goes back in its room's space; the reconciling job keeps the record while the dungeon runs
-                    _sim.PlaceAccelerationGate(new SimPlaceAccelerationGate(record.DeployableId, record.SolarSystemId, record.Name, record.TypeId, record.GroupId, record.Position, record.Radius));
+                    GiveBody(record.DeployableId, true, () =>
+                        _sim.PlaceAccelerationGate(new SimPlaceAccelerationGate(record.DeployableId, record.SolarSystemId, record.Name, record.TypeId, record.GroupId, record.Position, record.Radius)));
                     continue;
                 }
                 if (record.Kind == DeadspacePocketKind)
                 {
                     // the body of a running dungeon's pocket goes back in the scene at its origin; the reconciling job keeps the record while the dungeon runs
-                    _sim.PlaceDeadspacePocket(new SimPlaceDeadspacePocket(record.DeployableId, record.SolarSystemId, record.Name, record.Position, record.Radius));
+                    GiveBody(record.DeployableId, true, () =>
+                        _sim.PlaceDeadspacePocket(new SimPlaceDeadspacePocket(record.DeployableId, record.SolarSystemId, record.Name, record.Position, record.Radius)));
                     continue;
                 }
                 if (record.Kind == ControlTowerKind)

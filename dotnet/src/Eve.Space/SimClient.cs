@@ -572,22 +572,15 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         bool overloaded;
         lock (_pendingGate)
         {
-            if (_outboundFailure is { } linkFailure)
-            {
-                failure = linkFailure;
-                sessionToCancel = null;
-                overloaded = false;
-            }
-            else if (!_connected)
+            if (!_connected)
                 return; // nobody is there to hear it
-            else
-                failure = TryEnqueueLocked(message, out sessionToCancel, out overloaded);
+            failure = TryEnqueueLocked(message, out sessionToCancel, out overloaded);
         }
         if (failure is null)
             return;
+        // One-way operations have no result channel; Lost is their recovery signal.
         if (overloaded)
             FailOverloadedLink(failure, sessionToCancel);
-        throw failure;
     }
 
     private static void TryEnqueue<T>(

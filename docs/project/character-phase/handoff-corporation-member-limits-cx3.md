@@ -20,3 +20,7 @@ UpdateCorporationAbilities is registered by CorporationRpc() in dotnet/src/Eve.H
 - After merging origin/main, builds of Eve.Corporations, Eve.Services.Corporations, and Eve.Host succeeded with zero warnings or errors. The selected test commands compiled the touched corporation, Host, market, CharacterSelect, and space test projects.
 - PostgreSQL tests on eve_p3, run through tools/dev/db-lock.sh, passed with zero skips: 122 corporation store/protocol and neighbor cases; 11 additional AccountRpc, CorpStationMgr, and StandingMgrService cases; 26 selected Host cases covering changed fixtures plus CorporationStore callers; 90 market cases in the classes that instantiate TradeRig; 35 CharUnboundMgr cases; and 5 SpaceFightersRemainder cases.
 - OrderBookBenchmarkTests was excluded from the local selection because benchmark checks are assigned to ci-nightly. The tests are headless; no graphical V24 client session was exercised.
+
+## Main-branch gate
+
+At 2026-11-05, the latest completed main CI run was 1527 for 9981e0e3 and failed in the live structure-control test at tests/test_structures.py:618: the TakeControl request timed out waiting for its reply. The preceding completed run 1526 for 7f50c62e was green. This failure is outside the corporation member-limit test paths; hold the feature push until a newer completed main CI run is green.

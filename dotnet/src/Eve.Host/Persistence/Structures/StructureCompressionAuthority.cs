@@ -41,6 +41,7 @@ public sealed class StructureCompressionAuthority
     private readonly CorporationHangarAccess _hangarAccess;
     private readonly OfficeAtStation _officeAt;
     private readonly CharacterSessions _sessions;
+    private readonly int _reprocessingFacilityModuleTypeId;
     private IReadOnlyDictionary<int, int>? _sourceOf;
 
 
@@ -50,7 +51,7 @@ public sealed class StructureCompressionAuthority
     /// <param name="officeAt">The office rental of the corporation at the station, read in the caller transaction.</param>
     /// <param name="sessions">The sessions of the corporation members, who are told of a change to its office hangar.</param>
     public StructureCompressionAuthority(NpgsqlDataSource source, StructureStore store, PgItemStore items, DogmaStatic dogma, SdeReader sde, PgSkillStore skills,
-        CorporationHangarAccess hangarAccess, OfficeAtStation officeAt, CharacterSessions sessions)
+        CorporationHangarAccess hangarAccess, OfficeAtStation officeAt, CharacterSessions sessions, int reprocessingFacilityModuleTypeId)
     {
         _source = source;
         _store = store;
@@ -61,6 +62,7 @@ public sealed class StructureCompressionAuthority
         _hangarAccess = hangarAccess;
         _officeAt = officeAt;
         _sessions = sessions;
+        _reprocessingFacilityModuleTypeId = reprocessingFacilityModuleTypeId;
     }
 
     /// <summary>
@@ -229,10 +231,10 @@ public sealed class StructureCompressionAuthority
         return isGas ? source : null;
     }
 
-    /// <summary>The structure's efficiency: the Reprocessing facility's base (SDE 3262 on module 35899) and the hull's bonus (3261; the refineries have one).</summary>
+    /// <summary>The structure's efficiency: the reprocessing facility's base and the hull bonus, read from dogma.</summary>
     private async Task<double> StructureEfficiencyAsync(int hullTypeId, CancellationToken cancellationToken)
     {
-        var facility = StructureServiceIds.ModuleTypeOf[StructureServiceIds.Reprocessing];
+        var facility = _reprocessingFacilityModuleTypeId;
         await _dogma.EnsureTypesAsync([facility, hullTypeId], cancellationToken);
         var baseEfficiency = _dogma.Type(facility)?.Attributes.GetValueOrDefault(StructureBaseEfficiencyAttribute) ?? 0;
         var hullBonus = _dogma.Type(hullTypeId)?.Attributes.GetValueOrDefault(HullBonusAttribute) ?? 0;

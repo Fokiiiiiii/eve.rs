@@ -124,10 +124,10 @@ public sealed class StructureTimers
             : null;
 
     /// <summary>Puts a service module online or offline, then lets the timeline react (Low Power ends or begins).</summary>
-    public async Task<StructureTransition?> SetServiceAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, int serviceId, bool online, CancellationToken cancellationToken = default)
+    public async Task<StructureTransition?> SetServiceAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, int serviceId, bool online, CancellationToken cancellationToken = default, bool manageFuelCycle = true)
     {
         var state = online ? ServiceState.Online : ServiceState.Offline;
-        await _store.SetServiceAsync(connection, transaction, structureId, serviceId, state, online ? _scheduler.Now : 0, cancellationToken);
+        await _store.SetServiceAsync(connection, transaction, structureId, serviceId, state, online ? _scheduler.Now : 0, cancellationToken, manageFuelCycle);
         await PublishServiceAsync(connection, transaction, structureId, serviceId, state, online ? _scheduler.Now : 0, cancellationToken);
         return await ApplyAsync(connection, transaction, structureId, online ? new ServiceOnline() : new ServiceOffline(), cancellationToken);
     }

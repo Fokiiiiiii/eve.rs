@@ -200,6 +200,15 @@ public sealed class PgModuleStateStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>Reads one module's online state inside the caller's transaction.</summary>
+    public async Task<ItemState> StateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long itemId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"SELECT state FROM {_schema}.module_state WHERE item_id = $1", connection, transaction);
+        command.Parameters.AddWithValue(itemId);
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+        return value is short state ? (ItemState)state : ItemState.Offline;
+    }
+
     /// <summary>How far each of these modules is switched on (a module with no row is offline).</summary>
     public async Task<IReadOnlyDictionary<long, ItemState>> StatesAsync(IEnumerable<long> itemIds, CancellationToken cancellationToken = default)
     {

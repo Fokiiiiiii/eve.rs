@@ -66,14 +66,24 @@ internal sealed class Rig : IAsyncDisposable
     Func<IReadOnlyList<Character>, CancellationToken, ValueTask<IReadOnlyDictionary<long, CharMgrOrganizationInfo>>>? readOrganizationInfo = null,
     HomeStationResolver? homeStations = null,
     Func<long, long, CancellationToken, ValueTask<bool>>? canReadPrivateCorporationMemberInfo = null,
-    Func<long, long, int, long, string, CancellationToken, ValueTask>? writeContactNotification = null) =>
+    Func<long, long, int, long, string, CancellationToken, ValueTask>? writeContactNotification = null,
+    Func<Character, CancellationToken, ValueTask<long?>>? readMilitiaFactionId = null) =>
     new(Characters, homeStations ?? CreateHomeStationResolver(Characters), ReadRecentShipKillmailPageAsync,
         ReadCharacterDescriptionAsync, WriteCharacterDescriptionAsync, ReadSecurityStatusAsync, ReadMedal1GraphicIdAsync,
         readPersonalData, updatePersonalData, writeActivityStatus, writeLogSettings,
         readCorporationMemberStartedMs, readOrganizationInfo,
         readBalance: async (characterId, token) => (await Wallets.GetAsync(characterId, token))?.Isk,
         canReadPrivateCorporationMemberInfo: canReadPrivateCorporationMemberInfo,
-        writeContactNotification: writeContactNotification);
+        writeContactNotification: writeContactNotification, readMilitiaFactionId: readMilitiaFactionId);
+
+    public async Task SetCreatedAtAsync(long characterId, DateTimeOffset createdAt)
+    {
+        await using var connection = await Source.OpenConnectionAsync();
+        await using var command = new NpgsqlCommand($"UPDATE {_characters}.characters SET created_at = $1 WHERE id = $2", connection);
+        command.Parameters.Add(new NpgsqlParameter { Value = createdAt.UtcDateTime });
+        command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        Assert.Equal(1, await command.ExecuteNonQueryAsync());
+    }
 
 public static HomeStationResolver CreateHomeStationResolver(
     PgCharacterStore characters,
@@ -250,10 +260,10 @@ public class CharMgrTests
         Assert.Equal((Id(id), new PyStr("Ann Lee"), Id(1373), Id(1), Id(1), Id(10)), (f["characterID"], f["characterName"], f["typeID"], f["raceID"], f["bloodlineID"], f["ancestryID"]));
         Assert.Equal((Id(1000006), PyNone.Instance, Id(500001), Id(500004), Id(35), Id(1)), (f["corporationID"], f["allianceID"], f["factionID"], f["empireID"], f["schoolID"], f["gender"]));
         Assert.Equal((Id(60015249), Id(30100032)), (f["stationID"], f["solarSystemID"]));
-        Assert.Equal(f["createDateTime"], f["startDateTime"]);
         Assert.IsType<PyLong>(f["createDateTime"]);
+        Assert.IsType<PyLong>(f["startDateTime"]);
         Assert.Equal((new PyStr(""), Id(0), Id(0), Id(0), new PyStr(""), new PyStr("none")), (f["description"], f["securityRating"], f["securityStatus"], f["bounty"], f["title"], f["shortName"]));
-        Assert.Equal((PyNone.Instance, PyNone.Instance), (f["militiaFactionID"], f["medal1GraphicID"]));
+        Assert.Equal(PyNone.Instance, f["medal1GraphicID"]);
     }
 
     [PgFact]
@@ -284,6 +294,48 @@ public class CharMgrTests
         Assert.Equal(new PyList([single]), await Rig.CallAsync(rig.CharMgr, session, "GetPublicInfo3", Id(id), Id(0)));
         Assert.Equal(single, await Rig.CallAsync(rig.CharMgr, session, "GetPublicInfo", new PyLong(id)));
         Assert.Equal(PyNone.Instance, await Rig.CallAsync(rig.CharMgr, session, "GetPublicInfo3", Id(1)));
+    }
+
+    [PgFact]
+    public async Task The_public_record_starts_at_the_corporation_join_and_falls_back_to_the_creation_date()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var created = DateTimeOffset.Parse("2020-03-01T00:00:00Z");
+        var joined = DateTimeOffset.Parse("2026-03-01T00:00:00Z").ToUnixTimeMilliseconds();
+        var recent = await rig.MakeAsync("Ann Lee");
+        var plain = await rig.MakeAsync("Bob Roe", account: 2);
+        await rig.SetCreatedAtAsync(recent, created);
+        var charMgr = rig.CreateCharMgr(readCorporationMemberStartedMs: (characterId, _) =>
+            ValueTask.FromResult<long?>(characterId == recent ? joined : null));
+        var (session, _) = Rig.Session(recent);
+
+        var fields = Fields(await Rig.CallAsync(charMgr, session, "GetPublicInfo", Id(recent)));
+        Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(joined)), fields["startDateTime"]);
+        Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(created.ToUnixTimeMilliseconds())), fields["createDateTime"]);
+        Assert.NotEqual(fields["createDateTime"], fields["startDateTime"]);
+        var publicInfo3 = (PyList)await Rig.CallAsync(charMgr, session, "GetPublicInfo3", Id(recent));
+        Assert.Equal(fields["startDateTime"], Fields(Assert.Single(publicInfo3.Items))["startDateTime"]);
+
+        var fallback = Fields(await Rig.CallAsync(charMgr, session, "GetPublicInfo", Id(plain)));
+        Assert.Equal(fallback["createDateTime"], fallback["startDateTime"]);
+        var fallback3 = (PyList)await Rig.CallAsync(charMgr, session, "GetPublicInfo3", Id(plain));
+        Assert.Equal(fallback["startDateTime"], Fields(Assert.Single(fallback3.Items))["startDateTime"]);
+    }
+
+    [PgFact]
+    public async Task Direct_enlistment_is_projected_for_an_ordinary_corporation_member()
+    {
+        await using var rig = await Rig.CreateAsync();
+        const long ordinaryCorporation = 1000200;
+        var enlisted = await rig.MakeAsync("Ann Lee", corporation: ordinaryCorporation, faction: 500004);
+        var civilian = await rig.MakeAsync("Cy Doe", account: 2, corporation: ordinaryCorporation, faction: 500004);
+        Assert.True(await rig.Characters.SetFactionWarfareStateAsync(enlisted, 500001L, 0));
+        var charMgr = rig.CreateCharMgr(readMilitiaFactionId: (character, _) =>
+            ValueTask.FromResult<long?>(character.DirectFactionId));
+        var (session, _) = Rig.Session(enlisted);
+
+        Assert.Equal(Id(500001), Fields(await Rig.CallAsync(charMgr, session, "GetPublicInfo", Id(enlisted)))["militiaFactionID"]);
+        Assert.Equal(PyNone.Instance, Fields(await Rig.CallAsync(charMgr, session, "GetPublicInfo", Id(civilian)))["militiaFactionID"]);
     }
 
     [PgFact]
@@ -615,7 +667,7 @@ public class CharMgrTests
         Assert.Single(records.Items);
         var fields = Fields(records.Items[0]);
         Assert.Equal(new PyStr("A saved bio"), fields["description"]);
-        Assert.Equal(await Rig.CallAsync(rig.CharMgr, session, "GetCharacterCreationDate", Id(characterId)), fields["startDateTime"]);
+        Assert.IsType<PyLong>(fields["startDateTime"]);
         Assert.Equal(Py.Number(-2.5), fields["securityRating"]);
         Assert.Equal(Py.Number(-2.5), fields["securityStatus"]);
         Assert.Equal(Id(9876), fields["medal1GraphicID"]);

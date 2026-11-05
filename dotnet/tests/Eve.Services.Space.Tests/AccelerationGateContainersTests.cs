@@ -45,4 +45,58 @@ public class AccelerationGateContainersTests
         await rig.Containers.RestoreDeployedAsync(System);
         Assert.Contains(rig.Sim.Heard, m => m is SimPlaceAccelerationGate body && body.DeployableId == gateId);
     }
+
+    [PgFact]
+    public async Task The_periodic_reconcile_gives_a_running_site_once_per_link_and_again_after_the_link_is_lost()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var dungeon = ((DungeonFound)DungeonCatalog.LoadEmbedded().GetDungeon(283)).Dungeon;
+        var layout = DungeonRoomLayout.Build(dungeon, Origin, Radii);
+        var pocket = new DungeonPocket(Instance, System, Origin, layout);
+        var expectedIds = new[] { SpaceContainers.PocketDeployableId(Instance) }
+            .Concat(layout.Rooms.Where(room => room.Index > 0).Select(room => SpaceContainers.RoomPocketDeployableId(Instance, room.Index)))
+            .Concat(layout.Gates.Select(gate => SpaceContainers.AccelerationGateDeployableId(Instance, gate.GateIndex)))
+            .OrderBy(id => id)
+            .ToArray();
+        long[] PlacedIds() => rig.Sim.Heard.OfType<SimPlaceDeadspacePocket>().Select(body => body.DeployableId)
+            .Concat(rig.Sim.Heard.OfType<SimPlaceAccelerationGate>().Select(body => body.DeployableId))
+            .OrderBy(id => id)
+            .ToArray();
+
+        rig.Sim.IsConnected = false;
+        await rig.Containers.ReconcileDeadspacePocketsAsync([pocket]);
+        Assert.Empty(PlacedIds());
+        foreach (var id in expectedIds)
+        {
+            Assert.NotNull(await rig.Deployed.GetAsync(id));
+        }
+
+        rig.Sim.IsConnected = true;
+        await Task.WhenAll(
+            rig.Containers.ReconcileDeadspacePocketsAsync([pocket]),
+            rig.Containers.ReconcileDeadspacePocketsAsync([pocket]));
+        Assert.Equal(expectedIds, PlacedIds());
+
+        rig.Sim.Heard.Clear();
+        await rig.Containers.ReconcileDeadspacePocketsAsync([pocket]);
+        Assert.Empty(PlacedIds());
+
+        var gate = layout.Gates[0];
+        var gateId = SpaceContainers.AccelerationGateDeployableId(Instance, gate.GateIndex);
+        await rig.Containers.PlaceAccelerationGateAsync(System, gateId, gate.TypeId, gate.Radius, gate.Position);
+        await rig.Containers.PlaceAccelerationGateAsync(System, gateId, gate.TypeId, gate.Radius, gate.Position);
+        Assert.Equal(2, rig.Sim.Heard.OfType<SimPlaceAccelerationGate>().Count());
+
+        rig.Sim.IsConnected = false;
+        rig.Sim.Lose();
+        rig.Sim.IsConnected = true;
+        rig.Sim.Heard.Clear();
+        await rig.Containers.ReconcileDeadspacePocketsAsync([pocket]);
+        Assert.Equal(expectedIds, PlacedIds());
+
+        rig.Sim.Heard.Clear();
+        await rig.Containers.ReconcileDeadspacePocketsAsync([]);
+        await rig.Containers.ReconcileDeadspacePocketsAsync([pocket]);
+        Assert.Equal(expectedIds, PlacedIds());
+    }
 }

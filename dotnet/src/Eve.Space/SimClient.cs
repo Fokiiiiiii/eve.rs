@@ -590,6 +590,41 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         throw failure;
     }
 
+    private static void TryEnqueue<T>(
+        object gate,
+        CancellationToken cancellationToken,
+        TaskCompletionSource<T> completion,
+        Action cancelPending,
+        Action enqueue)
+    {
+        lock (gate)
+        {
+            if (completion.Task.IsCompleted) return;
+            if (cancellationToken.IsCancellationRequested)
+            {
+                cancelPending();
+                return;
+            }
+
+            enqueue();
+        }
+    }
+
+    internal static void CancelPending<TKey, TValue, T>(
+        object gate, ConcurrentDictionary<TKey, TValue> pending, TKey key, TValue expected,
+        TaskCompletionSource<T> completion, CancellationToken cancellationToken) where TKey : notnull
+    {
+        lock (gate)
+        {
+            if (TryRemoveExact(pending, key, expected))
+                completion.TrySetCanceled(cancellationToken);
+        }
+    }
+
+    private static bool TryRemoveExact<TKey, TValue>(ConcurrentDictionary<TKey, TValue> pending, TKey key, TValue expected)
+        where TKey : notnull =>
+        ((ICollection<KeyValuePair<TKey, TValue>>)pending).Remove(new KeyValuePair<TKey, TValue>(key, expected));
+
     private async Task<T> AwaitAsync<TKey, T>(
         ConcurrentDictionary<TKey, TaskCompletionSource<T>> pending,
         TKey session,
@@ -621,17 +656,22 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                 try
                 {
                     registration = cancellationToken.Register(() =>
-                    {
-                        pending.TryRemove(session, out _);
-                        completion.TrySetCanceled(cancellationToken);
-                    });
-                    failure = TryEnqueueLocked(request, out sessionToCancel, out overloaded);
-                    if (failure is not null)
-                        pending.TryRemove(session, out _);
+                        CancelPending(_pendingGate, pending, session, completion, completion, cancellationToken));
+                    TryEnqueue(
+                        _pendingGate,
+                        cancellationToken,
+                        completion,
+                        () => CancelPending(_pendingGate, pending, session, completion, completion, cancellationToken),
+                        () =>
+                        {
+                            failure = TryEnqueueLocked(request, out sessionToCancel, out overloaded);
+                            if (failure is not null)
+                                TryRemoveExact(pending, session, completion);
+                        });
                 }
                 catch
                 {
-                    pending.TryRemove(session, out _);
+                    TryRemoveExact(pending, session, completion);
                     throw;
                 }
             }
@@ -671,7 +711,7 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     private Task<string?> AwaitAbyssalAsync(ulong requestId, Type replyType, SimMessage request, CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        if (cancellationToken.IsCancellationRequested) return Task.FromCanceled<string?>(cancellationToken);
         lock (_pendingGate)
         {
             if (!_connected)
@@ -909,6 +949,7 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     public async Task<SimChargeAdjusted> AdjustChargeAsync(SimAdjustCharge request, Action<SimChargeAdjusted>? inOrder = null, CancellationToken cancellationToken = default)
     {
         var completion = new TaskCompletionSource<SimChargeAdjusted>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = (Completion: completion, InOrder: inOrder);
         CancellationTokenRegistration registration = default;
         SimUnavailableException? failure = null;
         CancellationTokenSource? sessionToCancel = null;
@@ -920,22 +961,27 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                 if (_outboundFailure is { } linkFailure) throw linkFailure;
                 if (!_connected) throw new SimUnavailableException("the simulation is not running");
                 _afterConnectionCheck?.Invoke();
-                if (!_adjusting.TryAdd(request.RequestId, (completion, inOrder)))
+                if (!_adjusting.TryAdd(request.RequestId, pending))
                     throw new InvalidOperationException($"request {request.RequestId} is already waiting");
                 try
                 {
                     registration = cancellationToken.Register(() =>
-                    {
-                        _adjusting.TryRemove(request.RequestId, out _);
-                        completion.TrySetCanceled(cancellationToken);
-                    });
-                    failure = TryEnqueueLocked(request, out sessionToCancel, out overloaded);
-                    if (failure is not null)
-                        _adjusting.TryRemove(request.RequestId, out _);
+                        CancelPending(_pendingGate, _adjusting, request.RequestId, pending, completion, cancellationToken));
+                    TryEnqueue(
+                        _pendingGate,
+                        cancellationToken,
+                        completion,
+                        () => CancelPending(_pendingGate, _adjusting, request.RequestId, pending, completion, cancellationToken),
+                        () =>
+                        {
+                            failure = TryEnqueueLocked(request, out sessionToCancel, out overloaded);
+                            if (failure is not null)
+                                TryRemoveExact(_adjusting, request.RequestId, pending);
+                        });
                 }
                 catch
                 {
-                    _adjusting.TryRemove(request.RequestId, out _);
+                    TryRemoveExact(_adjusting, request.RequestId, pending);
                     throw;
                 }
             }

@@ -37,6 +37,14 @@ The bounded queue implementation and post-merge local checks are complete. Queue
 
 ## Main CI gate
 
-The latest completed `CI` workflow on `main` is run 1520, successful on `2178010953f5`: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41929981873. Focused Agent test 1329 and Windows CI run 265 also passed on `21780109`: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41930004669 and https://github.com/Fokiiiiiii/eve.rs/actions/runs/41933700972. The prior run 1519 failure was addressed by the cleanup timeout adjustment in `21780109`.
+The latest completed `CI` workflow on `main` is run 1520, successful on `2178010953f5`: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41929981873. Focused Agent test 1329 and Windows CI run 265 also passed on `21780109`: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41930004669 and https://github.com/Fokiiiiiii/eve.rs/actions/runs/41933700972. The prior run 1519 failure was addressed by the cleanup timeout adjustment in `21780109`. Recheck the gate and fetch `origin/main` before the next push.
 
 Earlier, main CI run 1515 failed on `HostServerTests.Registered_lp_store_and_wallet_routes_return_the_client_consumed_shapes` (`LpStoreRpcHostWireTests.cs:154,165`). That failure was fixed on main at `96d6bb8f2b15`; CI run 1516 completed successfully: https://github.com/Fokiiiiiii/eve.rs/actions/runs/41898752417.
+
+## Cancellation and retry follow-up (CX10)
+
+- Generic requests and charge adjustments register exact-entry cancellation cleanup and enqueue through the bounded outbound queue while holding `_pendingGate`. A pre-cancelled token removes its pending completion before enqueue; when enqueue wins the gate, a later cancellation affects the waiter while preserving the accepted frame. Late cleanup cannot remove a retry that reused the same key.
+- Abyssal requests keep the cancelled-task return behavior before request validation, then check connection loss under `_pendingGate` and use the same generic enqueue path.
+- The touched `SimClient` is the internal Host-to-simulation link (`dotnet/src/Eve.Space/SimClient.cs:5-8`). Whole-tree searches of `/home/user/eve-logic` found no `SimClient`, `SimAdjustCharge`, or `SimHello` symbols, so no EVE client RPC, reply, notification, or session-field shape changed.
+- After merging `origin/main` at `2178010953f5` and its handoff-only updates `4fa50922` and `0162af56` in `5892ad1f` and `11ffa8e2`, builds of `Eve.Space`, `Eve.Space.Tests`, `Eve.Host.Tests`, and `Eve.Services.Space.Tests` passed with 0 warnings and 0 errors. `Eve.Space` and `Eve.Space.Tests` were rebuilt after `11ffa8e2`. On `eve_p10`, the post-merge rerun of `SimClientTests` passed 33/33; the 21 selected real-simulation Host DB tests passed 21/21; `When_the_simulation_is_lost_the_ship_docks_at_the_station_the_character_left` passed 1/1. All reported 0 skipped. The `eve-sim` Rust binary build also succeeded for the real-simulation cases.
+- The cancellation changes are in local commit `9bf04318`, integrated with the outbound queue in merge resolution `be78f4aa`. The latest test reruns followed merge `11ffa8e2`.

@@ -7,6 +7,7 @@ PvP Filament catalog and queue admission are wired from the matching V24.01 stat
 Cross-system headless walk coverage and remaining integration gaps are tracked in [WALKS.md](WALKS.md).
 RPC malformed-argument fuzz coverage and its execution record are tracked in [RPC_FUZZING.md](RPC_FUZZING.md).
 Market expiry notification tokens and partially filled order volumes are tracked in [market-wallet-defect-handoff.md](market-wallet-defect-handoff.md).
+OnePerSubject relation assignments serialize by schema, kind, and subject inside the caller's transaction. PostgreSQL race, rollback, and retry coverage is in [RelationTests.cs](../../dotnet/tests/Eve.Relations.Tests/RelationTests.cs).
 Corporation member-limit mechanics, V24.01 call shape, regression results, and continuation notes are tracked in [the CX3 handoff](character-phase/handoff-corporation-member-limits-cx3.md).
 Wallet journal month-range queries and the 125-row service regression are tracked in [market-wallet-defect-handoff.md](market-wallet-defect-handoff.md).
 Wallet transfer RPC failures now return a user error instead of a normal `PyNone` result; the Host regression and client evidence are in [account-wallet-rpc-handoff.md](account-wallet-rpc-handoff.md).

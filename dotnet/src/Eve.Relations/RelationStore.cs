@@ -65,6 +65,15 @@ public sealed class RelationStore
     private RelationKind Kind(string name) =>
         _kinds.TryGetValue(name, out var kind) ? kind : throw new ArgumentException($"unknown relation kind '{name}'; define it first", nameof(name));
 
+    private async Task LockSubjectAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, string kind, long subject, CancellationToken cancellationToken)
+    {
+        await using var command = Sql.Command(connection, transaction,
+            "SELECT pg_advisory_xact_lock(hashtextextended($1 || ':' || $2::text, 0))",
+            $"relations:{_schema}:{kind}", subject);
+        await command.ExecuteScalarAsync(cancellationToken);
+    }
+
     private static Relation ReadRelation(NpgsqlDataReader r) =>
         new(r.GetInt64(0), r.GetString(1), r.GetInt64(2), r.GetInt64(3), r.GetDouble(4), r.GetString(5), r.GetInt64(6), r.IsDBNull(7) ? null : r.GetInt64(7), r.GetInt64(8));
 
@@ -85,6 +94,10 @@ public sealed class RelationStore
             throw new ArgumentException("a relation's value is a number", nameof(value));
         }
         value = rules.Clamp(value);
+        if (rules.Cardinality == Cardinality.OnePerSubject)
+        {
+            await LockSubjectAsync(connection, transaction, kind, subject, cancellationToken);
+        }
         var now = _scheduler.Now;
 
         if (rules.Cardinality == Cardinality.OnePerSubject)

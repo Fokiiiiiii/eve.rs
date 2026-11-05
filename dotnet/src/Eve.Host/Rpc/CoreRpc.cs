@@ -164,7 +164,8 @@ internal sealed partial class CharacterServicesComposition
             new Eve.Services.Core.AlertService(),
             new Eve.Services.Core.FighterMgrService { Provider = FighterProvider() },
             EssMgr,
-            new Eve.Services.Space.DynamicResourceCacheMgrService(readSystem: ReadEssSystemAsync, listSystems: ListEssSystemsAsync, quadrantOf: EssQuadrantOf),
+            new Eve.Services.Space.DynamicResourceCacheMgrService(readSystem: ReadEssSystemAsync, listSystems: ListEssSystemsAsync,
+                quadrantOf: EssQuadrantOf, listDbsSystems: ListDynamicBountyMapAsync),
             new Eve.Services.Core.ShipKillCounterService(ct => ReadGameStoreTableAsync("shipKillCounters", ct)),
     ];
 }

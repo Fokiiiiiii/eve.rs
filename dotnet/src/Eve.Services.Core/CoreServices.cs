@@ -41,7 +41,8 @@ public static class CoreServices
         Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? readCurrentCalendarGroups = null,
         IContractInventoryReader? contractInventoryReader = null,
         Func<long, long, CancellationToken, ValueTask<bool>>? isCharacterInCurrentCorporation = null,
-        TourneyMatchCallbacks? tournamentMatchCallbacks = null)
+        TourneyMatchCallbacks? tournamentMatchCallbacks = null,
+        ReadDynamicBountyCallback? readDynamicBounty = null)
     {
         gameRpcCallbacks ??= new GameRpcCallbacks();
         var licenses = new OmegaLicenses(accounts, nowUnixMs);
@@ -93,7 +94,7 @@ public static class CoreServices
               new ChatAuthenticationService(),
             new CommunityTrackMgrService(),
             new ContextualOfferMgrService(),
-              new DynamicBountyMgrService(),
+              new DynamicBountyMgrService(readDynamicBounty),
                 new JumpTimersService(readJumpTimers),
               new InGameReportService(submitInGameReport),
               new NonDiminishingInjectionMgrService(readNonDiminishingInjections),

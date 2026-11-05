@@ -52,14 +52,12 @@ public static class NpcBounty
     public static decimal Money(decimal value) => decimal.Round(value, 2, MidpointRounding.AwayFromZero);
 
     /// <summary>
-    /// What a kill of an NPC worth <paramref name="bounty"/> pays (<c>resolveNpcBountyAmount</c>: the bounty to the cent; the reference's multipliers for the solar
-    /// system, for the spawn and for the ESS are all one and nothing is split off), or null when it pays nothing.
+    /// What an NPC kill pays after its authored and solar-system multipliers, rounded to cents, or null when it pays nothing.
     /// </summary>
-    public static decimal? AmountOf(decimal bounty)
-    {
-        var amount = Money(Math.Max(0, Money(bounty)));
-        return amount > 0 ? amount : null;
-    }
+    public static decimal? AmountOf(decimal bounty) => AmountOf(bounty, 1m, 1m);
+
+    public static decimal? AmountOf(decimal bounty, decimal authoredMultiplier, decimal systemOutput) =>
+        DynamicBountyRules.GrossBounty(bounty, authoredMultiplier, systemOutput);
 
     public static string BucketKey(long characterId, int solarSystemId, long payoutTime) =>
         string.Create(CultureInfo.InvariantCulture, $"{characterId}:{solarSystemId}:{payoutTime}");

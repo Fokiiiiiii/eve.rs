@@ -13,6 +13,7 @@ using Eve.Ships;
 using Eve.Space;
 using Eve.Universe;
 using ModuleAttributes = Eve.Services.Space.Effects.ModuleAttributes;
+using Npgsql;
 
 namespace Eve.Services.Space;
 
@@ -194,6 +195,8 @@ public sealed partial class SpaceSessions
     private PgBountyStore? _bounties;
     private int _paying;
     public event Action<BountyPaid>? BountyPaidOut;
+    public PgDynamicBountyStore? DynamicBounties { get; set; }
+    public Func<NpgsqlConnection, NpgsqlTransaction, int, decimal, long, CancellationToken, Task>? RecordDynamicBountyPaidInTransactionAsync { get; set; }
 
     /// <summary>
     /// Keeps the bounties NPCs are worth: a kill whose last blow was a pilot's goes to <paramref name="store"/>. What has come due is paid by <see cref="PayBountiesAsync"/>, which the    /// host runs as a recurring job of the durable scheduler (<c>space.bounty.pay</c>); a test calls it.
@@ -327,7 +330,8 @@ public sealed partial class SpaceSessions
 
     private Task PayNpcBountyAsync(NpcShip npc, SimDestroyed destroyed, Pilot? killer) =>
         PayBountyAsync(npc.SolarSystemId, npc.TypeId, destroyed.ShipId, killer,
-            (npc.Profile ?? throw new InvalidOperationException("A non-Abyssal NPC has no catalog profile.")).Bounty);
+            (npc.Profile ?? throw new InvalidOperationException("A non-Abyssal NPC has no catalog profile.")).Bounty,
+            npc.Profile.BountyPayoutMultiplier);
 
     /// <summary>
     /// The bounty of an NPC the simulation keeps (a Pochven sentry or fighter, a kill the host has no record of): the <c>entityKillBounty</c> of its type in the
@@ -345,7 +349,7 @@ public sealed partial class SpaceSessions
         {
             return;
         }
-        await PayBountyAsync(killer.SolarSystemId, destroyed.ShipTypeId, destroyed.ShipId, killer, (long)bounty);
+        await PayBountyAsync(killer.SolarSystemId, destroyed.ShipTypeId, destroyed.ShipId, killer, (decimal)bounty);
     }
 
     /// <summary>The name of the static data's attribute an NPC's kill is worth (<c>entityKillBounty</c>, ISK).</summary>
@@ -355,12 +359,18 @@ public sealed partial class SpaceSessions
     public const ulong SimNpcSessionBase = 1UL << 62;
 
     /// <summary>Records a kill's bounty for the pilot who dealt the last blow, and tells the pilot of the payout (an ESS in the system takes its share).</summary>
-    private async Task PayBountyAsync(int solarSystemId, int typeId, long shipId, Pilot? killer, long bounty)
+    private async Task PayBountyAsync(int solarSystemId, int typeId, long shipId, Pilot? killer, decimal bounty, decimal authoredMultiplier = 1m)
     {
-        if (_bounties is not { } store || killer is null || NpcBounty.AmountOf(bounty) is not { } amount)
+        if (_bounties is not { } store || killer is null)
         {
             return;
         }
+        var now = _nowUnixMs();
+        var systemOutput = DynamicBounties is { } dbs
+            ? await dbs.ReadAsync(solarSystemId, now).ConfigureAwait(false)
+            : new DynamicBountyValue(1, false);
+        if (NpcBounty.AmountOf(bounty, authoredMultiplier, (decimal)systemOutput.Output) is not { } amount)
+            return;
         if (RegionOfSystem(solarSystemId) is { } regionId && !Pochven.PochvenRules.PaysNpcBounty(regionId))
         {
             return;
@@ -369,23 +379,48 @@ public sealed partial class SpaceSessions
         var essOnline = Ess is not null && await Ess.IsOnlineAsync(solarSystemId);
         var (pilotShare, mainShare, reserveShare) = EssRules.SplitBounty(amount, essOnline);
         var essShare = mainShare + reserveShare;
-        var now = _nowUnixMs();
+        var baseAmount = NpcBounty.Money(Math.Max(0, NpcBounty.Money(bounty)));
+        var modified = baseAmount != pilotShare || authoredMultiplier != 1m || systemOutput.Output != 1 || essShare > 0;
+        async Task SettleAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken token, bool includeEss)
+        {
+            if (includeEss && essShare > 0 && Ess is { } ess)
+            {
+                try
+                {
+                    await ess.CreditBountyShareAsync(connection, transaction, solarSystemId, mainShare, reserveShare, token);
+                }
+                catch (InvalidOperationException error)
+                {
+                    throw new EssCreditRaceException(error);
+                }
+            }
+            if (RecordDynamicBountyPaidInTransactionAsync is { } record)
+                await record(connection, transaction, solarSystemId, amount, now, token);
+        }
         if (pilotShare <= 0)
         {
-            await Ess!.CreditAsync(solarSystemId, mainShare, reserveShare);
+            await store.RecordWithoutPilotShareAsync(shipId,
+                (connection, transaction, token) => SettleAsync(connection, transaction, token, includeEss: true));
             return;
         }
         BountyAdded added;
         try
         {
             added = await store.RecordAsync(
-                new BountyKill(killer.CharacterId, solarSystemId, typeId, shipId, pilotShare, IsModified: pilotShare != amount), now,
-                inTransaction: essShare > 0 && Ess is { } ess ? (connection, transaction, token) => ess.CreditBountyShareAsync(connection, transaction, solarSystemId, mainShare, reserveShare, token) : null);
+                new BountyKill(killer.CharacterId, solarSystemId, typeId, shipId, pilotShare, IsModified: modified), now,
+                inTransaction: essShare > 0 || RecordDynamicBountyPaidInTransactionAsync is not null
+                    ? (connection, transaction, token) => SettleAsync(connection, transaction, token, includeEss: true)
+                    : null);
         }
-        catch (InvalidOperationException) when (essShare > 0)
+        catch (EssCreditRaceException) when (essShare > 0)
         {
             // the ESS went away between the check and the credit: the pilot takes the whole bounty, as in a system without one
-            added = await store.RecordAsync(new BountyKill(killer.CharacterId, solarSystemId, typeId, shipId, amount), now);
+            var fallbackModified = baseAmount != amount || authoredMultiplier != 1m || systemOutput.Output != 1;
+            added = await store.RecordAsync(
+                new BountyKill(killer.CharacterId, solarSystemId, typeId, shipId, amount, IsModified: fallbackModified), now,
+                inTransaction: RecordDynamicBountyPaidInTransactionAsync is null
+                    ? null
+                    : (connection, transaction, token) => SettleAsync(connection, transaction, token, includeEss: false));
         }
         if (!added.AlreadyRecorded)
         {
@@ -394,7 +429,10 @@ public sealed partial class SpaceSessions
                 "OnBountyAddedToPayout", "charid",                Py.KeyVal(
                     ("enemyTypeID", new PyInt(added.EnemyTypeId)), ("amount", new PyInt((int)added.Amount)), ("payoutTime", new PyLong(added.PayoutTime)),
                     ("isModified", added.IsModified ? PyBool.True : PyBool.False)));
-        }    }
+        }
+    }
+
+    private sealed class EssCreditRaceException(Exception inner) : Exception("the ESS left the system before its bounty share committed", inner);
 
     /// <summary>
     /// The wreck of an NPC that asked the host to make it (<see cref="SimNpcIdentity.HostWreck"/>): an item of the pilot who dealt the last blow (of the NPC's corporation when no pilot did) with what

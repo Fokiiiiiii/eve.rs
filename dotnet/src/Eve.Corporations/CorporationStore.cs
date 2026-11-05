@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Eve.Characters;
 using Eve.Data;
+using Eve.Sde;
 using Eve.Skills;
 using Eve.Wallet;
 using Npgsql;
@@ -15,12 +16,13 @@ public sealed partial class CorporationStore
     public const string DefaultSchema = "corporations";
     public const decimal CorporationFoundingCost = 1599800m;
     public const decimal AllianceFoundingCost = 1000000000m;
-private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,bool,CancellationToken,Task>? _setBlueprintLock;
+    private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,bool,CancellationToken,Task>? _setBlueprintLock;
     private readonly NpgsqlDataSource _source;
     private readonly PgCharacterStore _characters;
     private readonly PgWalletStore _walletStore;
     private readonly WalletTransactions _wallets;
     private readonly PgSkillStore _skills;
+    private readonly CorporationMemberLimitRules _memberLimitRules;
     private readonly string _schema;
     private readonly Func<long> _now;
     public AllianceAffiliationMutationCallback? AllianceAffiliationWriter { get; set; }
@@ -32,12 +34,14 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
 
     public CorporationStore(NpgsqlDataSource source, PgCharacterStore characters, PgWalletStore walletStore,
         WalletTransactions wallets, PgSkillStore skills, Func<long> now, string schema = DefaultSchema,
-        Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,bool,CancellationToken,Task>? setBlueprintLock = null)
+        Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,bool,CancellationToken,Task>? setBlueprintLock = null,
+        SdeReader? sde = null)
     {
         if (!System.Text.RegularExpressions.Regex.IsMatch(schema, "^[a-z_][a-z0-9_]{0,62}$"))
             throw new ArgumentException($"not a usable schema name: {schema}", nameof(schema));
         _source = source; _characters = characters; _walletStore = walletStore; _wallets = wallets; _skills = skills; _now = now; _schema = schema;
         _setBlueprintLock = setBlueprintLock;
+        _memberLimitRules = new CorporationMemberLimitRules(sde ?? new SdeReader(source));
     }
 
     public static IReadOnlyList<Migration> MigrationSet() =>
@@ -338,6 +342,12 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
                     ALTER TABLE corporation_contact_labels ALTER COLUMN color DROP NOT NULL;
                     ALTER TABLE alliance_contact_labels ALTER COLUMN color DROP NOT NULL;
                 """),
+                new Migration("015_skill_based_member_limits", """
+                    ALTER TABLE corporations DROP CONSTRAINT corporations_member_limit_check;
+                    ALTER TABLE corporations ADD CONSTRAINT corporations_member_limit_check CHECK (
+                        (is_npc AND member_limit = -1) OR (NOT is_npc AND member_limit >= 0)
+                    );
+                """),
     ];
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
         Migrations.ApplyAsync(source, schema, MigrationSet(), cancellationToken);
@@ -486,9 +496,8 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
     }
 
     /// <summary>
-    /// The wallet read rule of the market transactions tab (EVE.js corporationAuthority.js, V24.01 ValidateCorpWalletDivisionReadAccess):
-    /// an Accountant or a Junior Accountant reads every division; any other member reads only the division whose Account Take role it holds,
-    /// so a null division (every division) needs the accountant role. Nothing is changed.
+    /// Accountants and junior accountants can read every wallet division; other members need the selected division's Account Take role.
+    /// An omitted division therefore requires one of the accountant roles. This check is read-only.
     /// </summary>
     public async Task<bool> CanReadWalletDivisionAsync(long characterId,int? accountKey,CancellationToken token = default)
     {
@@ -497,8 +506,7 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
         var member = await MemberAsync(characterId,token);
         if (corp is null || corp.IsNpc || corp.Deleted || member?.CorporationId != corp.Id) return false;
         var roles = CorporationRoles.Session(corp,member,character!.StationId,await TitlesAsync(corp.Id,token)).AtAll;
-        if ((roles & (CorporationRoles.Accountant | CorporationRoles.JuniorAccountant)) != 0) return true;
-        return accountKey is { } key && key is >= 1000 and <= 1006 && (roles & CorporationRoles.WalletTakeRole(key)) != 0;
+        return CorporationRoles.CanReadWalletDivision(roles, accountKey);
     }
 
     public async Task<bool> CanReadCorporationMarketOrdersAsync(long characterId,CancellationToken token = default)
@@ -558,6 +566,10 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
                     return existing;
                 }
             }
+            var founderSkills = await _skills.ForCharacterAsync(connection,tx,founder,token);
+            if (!await _memberLimitRules.CanFoundCorporationAsync(founderSkills,token))
+                throw new CorporationError("CORPORATION_MANAGEMENT_SKILL_REQUIRED");
+            var memberLimit = await _memberLimitRules.MemberLimitAsync(founderSkills,token);
             await using (var npcTicker = Command(connection,tx,$"SELECT 1 FROM {_schema}.owner_names WHERE ticker_key=$1 AND is_npc AND NOT deleted",Key(ticker)))
                 if (await npcTicker.ExecuteScalarAsync(token) is not null) throw new CorporationError("CORPORATION_TICKER_TAKEN");
             await using var allocate = Command(connection,tx,$"SELECT nextval('{_schema}.corporation_ids')");
@@ -574,8 +586,8 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
             var now = _now();
             await using (var insert = Command(connection,tx,$"""
                 INSERT INTO {_schema}.corporations(id,name,ticker,ceo_id,creator_id,station_id,solar_system_id,tax_rate,lp_tax_rate,description,url,member_limit,friendly_fire,created_ms,settings,founding_key)
-                VALUES($1,$2,$3,$4,$4,$5,$6,$7,$8,$9,$10,20,$11,$12,$13::jsonb,$14)
-                """,id,name,ticker,founder,character.StationId,character.SolarSystemId,request.TaxRate,request.LoyaltyPointTaxRate,request.Description,request.Url,request.FriendlyFire,now,settingsText,operationKey))
+                VALUES($1,$2,$3,$4,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15)
+                """,id,name,ticker,founder,character.StationId,character.SolarSystemId,request.TaxRate,request.LoyaltyPointTaxRate,request.Description,request.Url,memberLimit,request.FriendlyFire,now,settingsText,operationKey))
                 await insert.ExecuteNonQueryAsync(token);
             await CanLeaveAsync(connection,tx,character,token);
             await using (var titles = Command(connection,tx,$"INSERT INTO {_schema}.titles(corporation_id,id,name) SELECT $1,1 << n,'' FROM generate_series(0,15) n",id))
@@ -631,6 +643,25 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
                 """,corporation,description,url,taxRate,loyaltyPointTaxRate,applicationsEnabled);
             await update.ExecuteNonQueryAsync(token);
             return 0;
+        },token);
+
+    public Task<(int PreviousLimit,int NewLimit)> UpdateMemberLimitAsync(long actor,long corporation,CancellationToken token = default) =>
+        WriteAsync(async (connection,tx) =>
+        {
+            var corp = await GetAsync(connection,tx,corporation,true,token)
+                ?? throw new CorporationError("CORPORATION_NOT_FOUND");
+            var member = await MemberAsync(connection,tx,actor,token);
+            if (corp.IsNpc || corp.Deleted || corp.CeoId != actor || member?.CorporationId != corp.Id)
+                throw new CorporationError("CORPORATION_ACCESS_DENIED");
+            var skills = await _skills.ForCharacterAsync(connection,tx,actor,token);
+            var memberLimit = await _memberLimitRules.MemberLimitAsync(skills,token);
+            if (corp.MemberLimit != memberLimit)
+            {
+                await using var update = Command(connection,tx,
+                    $"UPDATE {_schema}.corporations SET member_limit=$2 WHERE id=$1",corp.Id,memberLimit);
+                await update.ExecuteNonQueryAsync(token);
+            }
+            return (corp.MemberLimit,memberLimit);
         },token);
 
     public Task UpdateSettingsAsync(long actor,long corporation,string jsonPatch,CancellationToken token = default) =>
@@ -735,7 +766,7 @@ private readonly Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,boo
         if (ids.Length == 0) return new Dictionary<long,int>();
         await using var connection = await _source.OpenConnectionAsync(token);
         await using var command = Command(connection,null,
-            $"SELECT corporation_id,count(*) FROM {_schema}.members WHERE corporation_id=ANY($1) GROUP BY corporation_id",ids);
+            $"SELECT m.corporation_id,count(*) FROM {_schema}.members m JOIN {_schema}.corporations c ON c.id=m.corporation_id WHERE m.corporation_id=ANY($1) AND m.character_id<>c.ceo_id GROUP BY m.corporation_id",ids);
         await using var reader = await command.ExecuteReaderAsync(token);
         var counts = new Dictionary<long,int>();
         while (await reader.ReadAsync(token)) counts[reader.GetInt64(0)] = checked((int)reader.GetInt64(1));

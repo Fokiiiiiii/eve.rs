@@ -31,6 +31,87 @@ public class MembershipTests
     }
 
     [PgFact]
+    public async Task Lowering_the_limit_keeps_members_and_blocks_joins_until_membership_is_below_it()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Limit Founder");
+        var corporation = await rig.Store.CreateAsync(founder,Request,"limit-membership");
+        Assert.Equal(20,corporation.MemberLimit);
+
+        var existingMembers = new List<long>();
+        for (var index = 0; index < 20; index++)
+        {
+            var member = await rig.CharacterAsync($"Limit Member {index}");
+            var application = await rig.Store.ApplyAsync(member,corporation.Id,"Joining");
+            await rig.Store.RespondAsync(founder,application,6,"Joining","");
+            await rig.Store.RespondAsync(member,application,2,"Joining","");
+            existingMembers.Add(member);
+        }
+        Assert.Equal(20,(await rig.Store.MembersAsync(corporation.Id)).Count(member => member.CharacterId != founder));
+        Assert.Equal(21,(await rig.Store.MembersAsync(corporation.Id)).Count);
+
+        await rig.SeedNpcCorporationAsync(1000044);
+        var applicant = await rig.CharacterAsync("Limit Applicant");
+        var applicationToJoin = await rig.Store.ApplyAsync(applicant,corporation.Id,"Joining");
+        await rig.Store.RespondAsync(founder,applicationToJoin,6,"Joining","");
+        var full = await Assert.ThrowsAsync<CorporationError>(() =>
+            rig.Store.RespondAsync(applicant,applicationToJoin,2,"Joining",""));
+        Assert.Equal("CORPORATION_FULL",full.Code);
+        Assert.Equal(1000044,(await rig.Characters.GetAsync(applicant))!.CorporationId);
+
+        await rig.SetSkillAsync(founder,Rig.CorporationManagementSkillId,2);
+        Assert.Equal((20,40),await rig.Store.UpdateMemberLimitAsync(founder,corporation.Id));
+        await rig.Store.RespondAsync(applicant,applicationToJoin,2,"Joining","");
+        Assert.Equal(corporation.Id,(await rig.Characters.GetAsync(applicant))!.CorporationId);
+
+        var overLimitApplicant = await rig.CharacterAsync("Over Limit Applicant");
+        var overLimitApplication = await rig.Store.ApplyAsync(overLimitApplicant,corporation.Id,"Joining");
+        await rig.Store.RespondAsync(founder,overLimitApplication,6,"Joining","");
+        await rig.SetSkillAsync(founder,Rig.CorporationManagementSkillId,1);
+        Assert.Equal((40,20),await rig.Store.UpdateMemberLimitAsync(founder,corporation.Id));
+        Assert.Equal(22,(await rig.Store.MembersAsync(corporation.Id)).Count);
+        var overLimit = await Assert.ThrowsAsync<CorporationError>(() =>
+            rig.Store.RespondAsync(overLimitApplicant,overLimitApplication,2,"Joining",""));
+        Assert.Equal("CORPORATION_FULL",overLimit.Code);
+        Assert.Equal(1000044,(await rig.Characters.GetAsync(overLimitApplicant))!.CorporationId);
+
+        await rig.Store.LeaveAsync(existingMembers[0],1000044);
+        await rig.Store.LeaveAsync(existingMembers[1],1000044);
+
+        var racingApplicant = await rig.CharacterAsync("Racing Applicant");
+        var racingApplication = await rig.Store.ApplyAsync(racingApplicant,corporation.Id,"Joining");
+        await rig.Store.RespondAsync(founder,racingApplication,6,"Joining","");
+        async Task<string?> TryAcceptAsync(long character,long application)
+        {
+            try
+            {
+                await rig.Store.RespondAsync(character,application,2,"Joining","");
+                return null;
+            }
+            catch (CorporationError error)
+            {
+                return error.Code;
+            }
+        }
+        var outcomes = await Task.WhenAll(
+            TryAcceptAsync(overLimitApplicant,overLimitApplication),
+            TryAcceptAsync(racingApplicant,racingApplication));
+        Assert.Single(outcomes,outcome => outcome is null);
+        Assert.Single(outcomes,outcome => outcome == "CORPORATION_FULL");
+        Assert.Equal(20,(await rig.Store.MembersAsync(corporation.Id)).Count(member => member.CharacterId != founder));
+
+        var waitingApplicant = outcomes[0] is null ? racingApplicant : overLimitApplicant;
+        var waitingApplication = outcomes[0] is null ? racingApplication : overLimitApplication;
+        var stillFull = await Assert.ThrowsAsync<CorporationError>(() =>
+            rig.Store.RespondAsync(waitingApplicant,waitingApplication,2,"Joining",""));
+        Assert.Equal("CORPORATION_FULL",stillFull.Code);
+        await rig.Store.LeaveAsync(existingMembers[2],1000044);
+        await rig.Store.RespondAsync(waitingApplicant,waitingApplication,2,"Joining","");
+        Assert.Equal(corporation.Id,(await rig.Characters.GetAsync(waitingApplicant))!.CorporationId);
+        Assert.Equal(20,(await rig.Store.MembersAsync(corporation.Id)).Count(member => member.CharacterId != founder));
+    }
+
+    [PgFact]
     public async Task Ceo_resignation_changes_both_leadership_and_the_old_director_mask()
     {
         await using var rig = await Rig.CreateAsync();

@@ -279,9 +279,13 @@ public class TrainingServiceTests
     [PgFact]
     public async Task Applying_free_points_to_the_running_skill_returns_the_client_user_error()
     {
-        var (rig, session, _) = await ReadyAsync();
+        var rig = await Rig.CreateAsync();
         await using var owned = rig;
-        await rig.GrantFreeSkillPointsAsync(Character, 100);
+        var character = rig.CharacterId;
+        await rig.GrantAsync(character, (3300, 4, 45255), (3301, 1, 250), (3315, 0, 0));
+        await rig.GrantFreeSkillPointsAsync(character, 100);
+        var (session, _) = Rig.Session(character);
+        rig.Sessions.Enter(character, session);
         await Call(rig, session, "SaveNewQueue", [Queue((0, 3301, 2))]);
 
         var refused = await Assert.ThrowsAsync<MachoWrappedException>(() =>

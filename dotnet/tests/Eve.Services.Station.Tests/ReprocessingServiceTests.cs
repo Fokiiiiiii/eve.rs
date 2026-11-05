@@ -8,6 +8,7 @@ using Eve.Relations;
 using Eve.Scheduler;
 using Eve.Sde;
 using Eve.Services;
+using Eve.Services.Core;
 using Eve.Skills;
 using Eve.Universe;
 using Eve.Wallet;
@@ -90,8 +91,8 @@ internal sealed class ReprocessingRig : IAsyncDisposable
         var durable = new DurableScheduler(source, () => start.ToUnixTimeMilliseconds(), new SchedulerOptions { Concurrency = 1 }, scheduler);
         var bus = new EventBus(source, durable, null, events);
         var stations = new StationCatalog([
-            new Eve.Universe.Station(Station, 1531, "Test Station", StationOwner, "Owner", null, "", 0, 0, 30000142, "Jita", 20000020, "Kimotoro", 10000002, "The Forge", 0.9, 0.05, 4),
-            new Eve.Universe.Station(OtherStation, 1531, "Other Station", StationOwner, "Owner", null, "", 0, 0, 30000142, "Jita", 20000020, "Kimotoro", 10000002, "The Forge", 0.9, 0.05, 4),
+            new Eve.Universe.Station(Station, 1531, "Test Station", StationOwner, "Owner", 500001, "", 0, 0, 30000142, "Jita", 20000020, "Kimotoro", 10000002, "The Forge", 0.9, 0.05, 4),
+            new Eve.Universe.Station(OtherStation, 1531, "Other Station", StationOwner, "Owner", 500001, "", 0, 0, 30000142, "Jita", 20000020, "Kimotoro", 10000002, "The Forge", 0.9, 0.05, 4),
         ]);
         var wallets = new PgWalletStore(source, walletSchema);
         var characterSchema = "rc_" + id;
@@ -175,6 +176,13 @@ public sealed class ReprocessingServiceTests
 
     private static PyList Ids1(params long[] ids) => new(ids.Select(id => (PyValue)new PyLong(id)).ToList());
 
+    private static async Task<double> TaxAsync(ReprocessingRig rig, long character, long item)
+    {
+        var quotes = (PyList)await CallPlant(rig.Service(), Session(character, ReprocessingRig.Station), ReprocessingRig.Station,
+            "GetQuotes", Ids1(item), new PyInt(0));
+        return ((PyReal)quotes.Items[0]).Value;
+    }
+
     [ReprocessingPgFact]
     public async Task GetQuotes_quotes_the_hangar_stack_at_the_station_efficiency_and_the_tax()
     {
@@ -204,6 +212,48 @@ public sealed class ReprocessingServiceTests
         var quotes = (PyList)await CallPlant(rig.Service(), Session(Character, ReprocessingRig.Station), ReprocessingRig.Station, "GetQuotes", Ids1(stack), new PyInt(0));
 
         Assert.Equal(0, ((PyReal)quotes.Items[0]).Value, 6);
+    }
+
+    [ReprocessingPgFact]
+    public async Task GetQuotes_applies_connections_to_recorded_personal_standing_and_compares_it_with_corporation_standing()
+    {
+        await using var rig = await ReprocessingRig.CreateAsync();
+        const long noStanding = 9310;
+        const long zeroStanding = 9311;
+        const long connectionsI = 9312;
+        const long connectionsV = 9313;
+        const long personalWins = 9314;
+        const long corporationWins = 9315;
+        var characters = new[] { noStanding, zeroStanding, connectionsI, connectionsV, personalWins, corporationWins };
+        var stacks = new Dictionary<long, long>();
+        foreach (var character in characters)
+            stacks[character] = await rig.CreateAsync(character, ReprocessingRig.Station, ItemFlags.Hangar, FixedReprocessingData.Veldspar, 100);
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            foreach (var (character, level) in new[] { (noStanding, 5), (zeroStanding, 5), (connectionsI, 1), (connectionsV, 5), (personalWins, 5), (corporationWins, 5) })
+                await rig.Skills.GrantAsync(connection, transaction, character,
+                    [new CharacterSkill(AgentAccessRule.ConnectionsSkill, level, 0)]);
+            await transaction.CommitAsync();
+        }
+
+        await rig.Relations.SetAsync(RelationKinds.Standing.Name, ReprocessingRig.StationOwner, zeroStanding, 0);
+        await rig.Relations.SetAsync(RelationKinds.Standing.Name, ReprocessingRig.StationOwner, connectionsI, 2);
+        await rig.Relations.SetAsync(RelationKinds.Standing.Name, ReprocessingRig.StationOwner, connectionsV, 2);
+        await rig.Relations.SetAsync(RelationKinds.Standing.Name, ReprocessingRig.StationOwner, personalWins, 2);
+        await rig.Relations.SetAsync(RelationKinds.Standing.Name, ReprocessingRig.StationOwner, corporationWins, 2);
+        await rig.Relations.SetAsync(RelationKinds.CorporationMember.Name, personalWins, 98000001, 1);
+        await rig.Relations.SetAsync(RelationKinds.Standing.Name, ReprocessingRig.StationOwner, 98000001, 1);
+        await rig.Relations.SetAsync(RelationKinds.CorporationMember.Name, corporationWins, 98000002, 1);
+        await rig.Relations.SetAsync(RelationKinds.Standing.Name, ReprocessingRig.StationOwner, 98000002, 5.5);
+
+        Assert.Equal(0.05, await TaxAsync(rig, noStanding, stacks[noStanding]), 6);
+        Assert.Equal(0.04, await TaxAsync(rig, zeroStanding, stacks[zeroStanding]), 6);
+        Assert.Equal(0.03, await TaxAsync(rig, connectionsI, stacks[connectionsI]), 6);
+        Assert.Equal(0.02, await TaxAsync(rig, connectionsV, stacks[connectionsV]), 6);
+        Assert.Equal(0.02, await TaxAsync(rig, personalWins, stacks[personalWins]), 6);
+        Assert.Equal(0.01, await TaxAsync(rig, corporationWins, stacks[corporationWins]), 6);
     }
 
     [ReprocessingPgFact]

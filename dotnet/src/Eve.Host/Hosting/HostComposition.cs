@@ -64,6 +64,7 @@ internal static class HostComposition
         Eve.Services.Core.KeeperRpcCallbacks? keeperRpcCallbacks = null;
         Eve.Calendar.ICalendarStore? calendarStore = null;
         Eve.Calendar.ICalendarAudienceReader? calendarAudience = null;
+        Eve.Services.Core.CalendarCspaBilling? calendarCspaBilling = null;
         Foundations? foundations = null;
         SpaceSessions? space = null;
         SpaceContainers? tournamentContainers = null;
@@ -162,7 +163,7 @@ internal static class HostComposition
                 clock, contractSchema, contractExpiryJobs, foundations.Events);
             legacy = await LegacyGameStoreComposition.OpenAsync(source, foundations.Events);
             var notices = new PublicGateway.NoticeHub();
-            (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks, characterSessions, contractBrokerFeeAdjustment, hasContractManagerRole, canManageCalendarGroupEvent, readCurrentCalendarGroups, readDynamicBounty) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected, notices, hooks => characterEntryHooks = hooks, containers => tournamentContainers = containers, ships => tournamentShips = ships);
+            (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, calendarCspaBilling, gameRpcCallbacks, keeperRpcCallbacks, characterSessions, contractBrokerFeeAdjustment, hasContractManagerRole, canManageCalendarGroupEvent, readCurrentCalendarGroups, readDynamicBounty) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected, notices, hooks => characterEntryHooks = hooks, containers => tournamentContainers = containers, ships => tournamentShips = ships);
             if (characterSessions is not null)
                 new Eve.Host.Persistence.ContractNotifications(characterSessions).Subscribe(foundations.Events);
             // the public gateway's skill plans: the tables are the skills module's (migration 0009, applied with its store)
@@ -457,7 +458,8 @@ internal static class HostComposition
             readCurrentCalendarGroups: readCurrentCalendarGroups,
               contractBrokerFeeAdjustment: contractBrokerFeeAdjustment,
               hasContractManagerRole: hasContractManagerRole,
-              localizationTextChanges: HostConfiguration.ParseLocalizationTextChanges(Env("EVE_LOCALIZATION_TEXT_CHANGES", ""))))
+              localizationTextChanges: HostConfiguration.ParseLocalizationTextChanges(Env("EVE_LOCALIZATION_TEXT_CHANGES", "")),
+            calendarCspaBilling: calendarCspaBilling))
         {
             registry.Register(service);
         }

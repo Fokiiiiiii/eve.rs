@@ -1,4 +1,3 @@
-// Membership workflow ported from EVE.js corpRegistryRuntime.js and corporationRuntimeState.js (828823a).
 using Eve.Characters;
 using Npgsql;
 
@@ -174,7 +173,7 @@ public sealed partial class CorporationStore
             var now = _now();
             if (status == 2)
             {
-                await using (var count = Command(connection,tx,$"SELECT count(*) FROM {_schema}.members WHERE corporation_id=$1",corp.Id))
+                await using (var count = Command(connection,tx,$"SELECT count(*) FROM {_schema}.members WHERE corporation_id=$1 AND character_id<>$2",corp.Id,corp.CeoId))
                     if ((long)(await count.ExecuteScalarAsync(token))! >= corp.MemberLimit) throw new CorporationError("CORPORATION_FULL");
                 var character = await _characters.LockAndGetAsync(connection,tx,application.CharacterId,token) ?? throw new CorporationError("CHARACTER_NOT_FOUND");
                 await CanLeaveAsync(connection,tx,character,token);

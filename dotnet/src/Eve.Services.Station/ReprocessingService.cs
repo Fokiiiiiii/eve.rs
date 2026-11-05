@@ -4,6 +4,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Relations;
 using Eve.Sde;
+using Eve.Services.Core;
 using Eve.Skills;
 using Eve.Universe;
 using Eve.Wallet;
@@ -174,6 +175,12 @@ public sealed partial class ReprocessingService(NpgsqlDataSource source, PgItemS
         if (requestedSourceLocation < 0) throw Notify("Invalid reprocessing source location.");
         var requestedLocation = IdOf(call.Arg(3));
         var requestedFlag = IdOf(call.Arg(4));
+        if (requestedOwner == 0 || requestedOwner == character)
+        {
+            if ((requestedLocation is null) != (requestedFlag is null)
+                || requestedLocation is { } location && (location != station || requestedFlag != (long)ItemFlags.Hangar))
+                throw Notify("Choose a supported personal output location.");
+        }
 
         await using var connection = await source.OpenConnectionAsync(call.Cancellation).ConfigureAwait(false);
         await using var transaction = await connection.BeginTransactionAsync(call.Cancellation).ConfigureAwait(false);
@@ -332,7 +339,7 @@ public sealed partial class ReprocessingService(NpgsqlDataSource source, PgItemS
         var implantBonus = await ImplantMultiplierAsync(connection, transaction, character, cancellationToken).ConfigureAwait(false);
 
         var stationEfficiency = await data.StationEfficiencyAsync(stationId, cancellationToken).ConfigureAwait(false);
-        var standing = await StandingTowardAsync(character, station.OwnerId, cancellationToken).ConfigureAwait(false);
+        var standing = await StandingForTaxAsync(connection, transaction, character, station, cancellationToken).ConfigureAwait(false);
         var taxRate = ReprocessingRules.StationTax(station.ReprocessingStationsTake, standing);
         var prices = await data.AdjustedPricesAsync(materialTypes, cancellationToken).ConfigureAwait(false);
 
@@ -393,8 +400,26 @@ public sealed partial class ReprocessingService(NpgsqlDataSource source, PgItemS
         return false;
     }
 
-    private async Task<double> StandingTowardAsync(long character, long owner, CancellationToken cancellationToken)
-        => await relations.StandingTowardAsync(character, owner, cancellationToken).ConfigureAwait(false);
+    private async Task<double> StandingForTaxAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long character, Eve.Universe.Station station,
+        CancellationToken cancellationToken)
+    {
+        var personal = await relations.GetAsync(RelationKinds.Standing.Name, station.OwnerId, character, connection, transaction, cancellationToken).ConfigureAwait(false);
+        var affiliation = await relations.AffiliationOfAsync(character, connection, transaction, cancellationToken).ConfigureAwait(false);
+        var corporationStanding = affiliation.Corporation is { } corporation
+            ? await relations.ValueAsync(RelationKinds.Standing.Name, station.OwnerId, corporation, connection: connection, transaction: transaction,
+                cancellationToken: cancellationToken).ConfigureAwait(false)
+            : 0;
+
+        // A missing row is not an eligible zero standing for Connections.
+        var personalStanding = personal?.Value ?? 0;
+        if (personal is { } relation && station.FactionId is { } factionId
+            && AgentAccessRule.BonusSkill(relation.Value, factionId) is { } bonusSkill)
+        {
+            var level = await skills.LevelAsync(connection, transaction, character, bonusSkill, cancellationToken).ConfigureAwait(false);
+            personalStanding = AgentAccessRule.EffectiveStanding(relation.Value, factionId, skill => skill == bonusSkill ? level : 0);
+        }
+        return Math.Max(personalStanding, corporationStanding);
+    }
 
     private static PyValue QuoteValue(ReprocessingRules.Quote quote) => Py.KeyVal(
         ("itemID", InventoryWire.Id(quote.ItemId)),

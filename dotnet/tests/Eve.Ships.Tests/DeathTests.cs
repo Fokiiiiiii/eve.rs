@@ -91,6 +91,21 @@ public class DeathTests
         Assert.Equal((FrigateWreck, c.CharacterId, system, CharacterShips.InSpaceFlag, true), (wreck.TypeId, wreck.OwnerId, wreck.LocationId, wreck.Flag, wreck.Singleton));
     }
 
+    [PgFact]
+    public async Task An_empty_salvage_bundle_is_persisted_with_a_player_wreck()
+    {
+        var (rig, character) = await InSpaceAsync();
+        await using var _ = rig;
+        rig.Ships.SalvageRewardRoll = () => 0.0;
+
+        var death = await rig.Ships.DestroyShipAsync(character.CharacterId, character.ShipId, FrigateWreck, "seed");
+
+        Assert.NotNull(death?.Wreck);
+        var rewards = await new PgWreckSalvageStore(rig.Source, rig.SpaceSchema).GetAsync(death!.Wreck!.Id);
+        Assert.NotNull(rewards);
+        Assert.Empty(rewards!);
+    }
+
 
     [PgFact]
     public async Task A_valid_frigate_escape_bay_ship_survives_battleship_death_and_is_not_wreck_loot()
@@ -216,6 +231,7 @@ public class DeathTests
     {
         var (rig, character) = await InSpaceAsync();
         await using var _ = rig;
+        rig.Ships.SalvageRewardRoll = () => 0.99;
         var system = (await rig.Characters.GetAsync(character.CharacterId))!.SolarSystemId;
         var cargo = await rig.GiveAsync(character.CharacterId, Rig.Afterburner, true, 1,
             character.ShipId, CharacterShips.CargoFlag);
@@ -238,6 +254,9 @@ public class DeathTests
         Assert.Equal((system, CharacterShips.InSpaceFlag), (death.Capsule.LocationId, death.Capsule.Flag));
         var wreckContents = await rig.Items.InContainerAsync(death.Wreck!.Id);
         Assert.Contains(wreckContents, item => item.Id == cargo);
+        var salvage = await new PgWreckSalvageStore(rig.Source, rig.SpaceSchema).GetAsync(death.Wreck.Id);
+        Assert.NotNull(salvage);
+        Assert.NotEmpty(salvage!);
         Assert.Empty(await rig.Items.InContainerAsync(character.ShipId));
 
         Assert.Null(await rig.Ships.DestroyAbandonedShipAsync(

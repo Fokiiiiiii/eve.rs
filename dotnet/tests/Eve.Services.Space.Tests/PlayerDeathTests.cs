@@ -36,6 +36,7 @@ public class PlayerDeathTests
         var (rig, c, session) = await InSpaceAsync();
         await using var _ = rig;
         var system = session.GetInt("solarsystemid")!.Value;
+        rig.Ships.SalvageRewardRoll = () => 0.99;
 
         rig.Sim.Say(Destroyed(session, c.ShipId, FrigateWreck));
         await rig.Space.QuiesceAsync();
@@ -74,6 +75,10 @@ public class PlayerDeathTests
         var kept = await rig.SpaceItems.GetAsync(wreck.WreckId);
         Assert.NotNull(kept);
         Assert.Equal((system, 186, Rig.ClockMs + (long)SpaceContainers.CanLifetime.TotalMilliseconds), (kept!.SolarSystemId, kept.GroupId, kept.ExpiresAtMs));
+        var rewards = await new Eve.Ships.PgWreckSalvageStore(rig.Source, rig.SpaceSchema).GetAsync(wreck.WreckId);
+        Assert.NotNull(rewards);
+        Assert.NotEmpty(rewards!);
+        Assert.All(rewards!, reward => Assert.Equal("Salvaged Materials", rig.Statics.GroupName(rig.Statics.Type(reward.TypeId)!.GroupId)));
     }
 
     [PgFact]

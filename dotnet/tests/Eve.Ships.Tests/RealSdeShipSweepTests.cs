@@ -39,11 +39,18 @@ public sealed class RealSdeShipSweepTests
     {
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Rig.Url!));
         var sde = new SdeReader(source);
-        Assert.True(await sde.BuildAsync() is not null, "no SDE is loaded: run `cargo run -p eve-sde -- ensure --pg $EVE_PG_URL`");
+        Rig.AssertPinnedSdeBuild(await sde.BuildAsync());
         var statics = await DogmaStatic.LoadAsync(sde);
         var ships = await statics.TypesInCategoryAsync("Ship");
         var subsystems = await statics.TypesInCategoryAsync("Subsystem");
         return (sde, statics, ships, subsystems);
+    }
+
+    [PgFact]
+    public async Task The_loaded_sde_build_matches_the_pinned_build()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Rig.Url!));
+        Rig.AssertPinnedSdeBuild(await new SdeReader(source).BuildAsync());
     }
 
     private static int Attr(TypeDef type, int attribute) => type.Attributes.TryGetValue(attribute, out var value) ? (int)value : 0;

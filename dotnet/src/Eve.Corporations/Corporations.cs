@@ -1,4 +1,3 @@
-// Domain shapes for EVE.js corporationRuntimeState, corpRegistryRuntime and allianceRegistryRuntime (828823a), ADR 0009.
 using System.Text.Json;
 
 namespace Eve.Corporations;
@@ -48,7 +47,7 @@ public sealed record AllianceMember(long AllianceId, long CorporationId, long St
 
 public sealed record AllianceDepartureMutation(AllianceMember? Member, Alliance? Before, Alliance? After, bool Duplicate);
 
-/// <summary>Rules and numeric masks ported from corporationRuntimeState.js. No protocol or database dependency.</summary>
+/// <summary>Pure corporation role-mask rules, independent of persistence and protocol state.</summary>
 public static class CorporationRoles
 {
     public const long Director = 1;
@@ -74,6 +73,11 @@ public static class CorporationRoles
     public static bool CanTakeWalletDivision(SessionRoles roles, int accountKey) =>
         accountKey is >= 1000 and <= 1006 &&
         (roles.AtAll & (Director | WalletTakeRole(accountKey))) != 0;
+    public static bool CanReadWalletDivision(long roles, int? accountKey) =>
+        (roles & (Accountant | JuniorAccountant)) != 0 ||
+        accountKey is { } key && key is >= 1000 and <= 1006 && (roles & WalletTakeRole(key)) != 0;
+    public static bool CanReadWalletBalanceChange(long roles, int accountKey) =>
+        accountKey is >= 1000 and <= 1006 && (roles & (Director | WalletTakeRole(accountKey))) != 0;
     private static long Effective(long direct, long allowed, IEnumerable<long> titles, long? titleAllowed = null)
     {
         if (!IsKnown(direct, allowed)) return 0;

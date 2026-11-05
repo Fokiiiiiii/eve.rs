@@ -69,14 +69,22 @@ public sealed class ClientStaticDataHostTests : IAsyncLifetime
     {
         var original = Console.Error;
         var log = new StringWriter();
+        HostRuntime? host = null;
         Console.SetError(log);
         try
         {
-            await HostComposition.BuildAsync(Settings());
+            host = await HostComposition.BuildAsync(Settings());
         }
         finally
         {
-            Console.SetError(original);
+            try
+            {
+                if (host is not null) await host.ShutdownAsync();
+            }
+            finally
+            {
+                Console.SetError(original);
+            }
         }
 
         var output = log.ToString();

@@ -39,7 +39,11 @@ internal sealed class Rig : IAsyncDisposable
 {
     public static readonly string? Url = Environment.GetEnvironmentVariable("EVE_PG_URL");
 
+    public const long PinnedSdeBuild = 3396210;
     public const long Station = 60015249;
+
+    public static void AssertPinnedSdeBuild(long? actualBuild) =>
+        Assert.True(actualBuild == PinnedSdeBuild, $"Expected SDE build {PinnedSdeBuild}, actual was {actualBuild?.ToString() ?? "null"}.");
 
     // module types of the static data
     public const int Afterburner = 21857, Railgun = 3638, Miner = 3651, DamageControlI = 2046, DamageControlII = 2048;
@@ -50,14 +54,14 @@ internal sealed class Rig : IAsyncDisposable
     private Rig(NpgsqlDataSource source, string suffix, DogmaStatic statics, CharacterCreation creation, IShipInsuranceInvalidator? shipInsuranceInvalidator)
     {
         Source = source;
-        _schemas = [$"sc_{suffix}", $"si_{suffix}", $"ss_{suffix}", $"sw_{suffix}", $"sf_{suffix}", $"pd_{suffix}", $"pe_{suffix}"];
+        _schemas = [$"sc_{suffix}", $"si_{suffix}", $"ss_{suffix}", $"sw_{suffix}", $"sf_{suffix}", $"pd_{suffix}", $"pe_{suffix}", $"sp_{suffix}"];
         Characters = new PgCharacterStore(source, _schemas[0]);
         Items = new PgItemStore(source, _schemas[1], shipInsuranceInvalidator);
         Skills = new PgSkillStore(source, _schemas[2]);
         Modules = new PgModuleStateStore(source, _schemas[4]);
         Statics = statics;
         Creation = creation;
-        Ships = new CharacterShips(source, statics, Characters, Items, Skills, Modules);
+        Ships = new CharacterShips(source, statics, Characters, Items, Skills, Modules, spaceSchema: _schemas[7]);
         Events = new EventBus(source, new DurableScheduler(source, () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), schema: _schemas[5]), schema: _schemas[6]);
         Facts = new BusFacts(Events);
     }
@@ -69,6 +73,8 @@ internal sealed class Rig : IAsyncDisposable
 
     /// <summary>The schema the skills (and the expert systems) are kept in.</summary>
     public string SkillsSchema => _schemas[2];
+
+    public string SpaceSchema => _schemas[7];
 
     public PgCharacterStore Characters { get; }
 
@@ -241,7 +247,7 @@ internal sealed class Rig : IAsyncDisposable
         CharacterNames.EnsureUnicodeSupport();
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
         var sde = new SdeReader(source);
-        Assert.True(await sde.BuildAsync() is not null, "no SDE is loaded: run `cargo run -p eve-sde -- ensure --pg $EVE_PG_URL`");
+        AssertPinnedSdeBuild(await sde.BuildAsync());
         var suffix = Guid.NewGuid().ToString("N")[..12];
         var characters = new PgCharacterStore(source, $"sc_{suffix}");
         var items = new PgItemStore(source, $"si_{suffix}");
@@ -253,6 +259,7 @@ internal sealed class Rig : IAsyncDisposable
         await PgSkillStore.MigrateAsync(source, $"ss_{suffix}");
         await PgWalletStore.MigrateAsync(source, $"sw_{suffix}");
         await PgModuleStateStore.MigrateAsync(source, $"sf_{suffix}");
+          await PgSpaceItemStore.MigrateAsync(source, $"sp_{suffix}");
         await DurableScheduler.MigrateAsync(source, $"pd_{suffix}");
         await EventBus.MigrateAsync(source, $"pe_{suffix}");
         var creation = new CharacterCreation(

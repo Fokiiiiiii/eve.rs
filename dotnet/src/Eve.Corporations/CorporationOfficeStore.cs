@@ -313,7 +313,8 @@ public sealed class CorporationOfficeStore
     }
 
     /// <summary>
-    /// from now on do. A bill that has a creditor is not touched, so a second run changes nothing. Answers the open bills it credited, for their due jobs.
+    /// Assigns a creditor to uncredited station bills and returns the open bills it changed.
+    /// A bill with a creditor is left alone, so repeated runs do not change it.
     /// </summary>
     public async Task<IReadOnlyList<CorporationOfficeRentBill>> CreditStationBillsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
         long stationId, long ownerId, CancellationToken cancellationToken = default)
@@ -474,7 +475,7 @@ public sealed class CorporationOfficeStore
 
     private static decimal SeedPrice(CorporationOfficeStation station)
     {
-        // ponytail: the SDE has station identity but no live rent history; seed a repeatable 10k-110k price from those static IDs until a price feed exists.
+        // shortcut: the SDE has no live office rents, so station IDs seed a stable 10k-110k price; replace this when authoritative office prices are available.
         var seed = unchecked((ulong)station.Id * 0x9E3779B185EBCA87UL ^
             (ulong)station.TypeId * 0xC2B2AE3D27D4EB4FUL ^
             (ulong)station.SolarSystemId * 0x165667B19E3779F9UL ^ (ulong)station.OwnerId);

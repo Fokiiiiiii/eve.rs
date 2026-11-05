@@ -42,6 +42,7 @@ public static class CoreServices
         IContractInventoryReader? contractInventoryReader = null,
         Func<long, long, CancellationToken, ValueTask<bool>>? isCharacterInCurrentCorporation = null,
         TourneyMatchCallbacks? tournamentMatchCallbacks = null,
+        CalendarCspaBilling? calendarCspaBilling = null,
         ReadDynamicBountyCallback? readDynamicBounty = null)
     {
         gameRpcCallbacks ??= new GameRpcCallbacks();
@@ -51,7 +52,8 @@ public static class CoreServices
             ? new CalendarMgrService()
             : new CalendarMgrService(calendarStore,
                 calendarAudience ?? throw new ArgumentNullException(nameof(calendarAudience)), calendarSessions,
-                canManageCalendarGroupEvent, readCurrentCalendarGroups);
+                canManageCalendarGroupEvent, readCurrentCalendarGroups,
+                nowUnixMs: nowUnixMs, cspaBilling: calendarCspaBilling);
         var calendarProxy = calendarStore is null
             ? new CalendarProxyService()
             : new CalendarProxyService(calendarStore, readCurrentCalendarGroups);

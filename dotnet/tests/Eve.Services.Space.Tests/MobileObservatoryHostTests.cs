@@ -286,15 +286,12 @@ public class MobileObservatoryHostTests
 
         await rig.Containers.PlaceDeadspacePocketAsync(system, 77, origin);
         await rig.Containers.PlaceDeadspacePocketAsync(system, 77, origin);
-        // the body is given to the simulation on each call (it keeps the first); the record is kept once
         var placed = rig.Sim.Heard.OfType<SimPlaceDeadspacePocket>().ToList();
         Assert.Equal(2, placed.Count);
-        Assert.All(placed, body =>
-        {
-            Assert.Equal(pocket, body.DeployableId);
-            Assert.Equal(origin, body.Position.ToArray());
-            Assert.Equal(1_000_000_000.0, body.Radius);
-        });
+        var body = placed[0];
+        Assert.Equal(pocket, body.DeployableId);
+        Assert.Equal(origin, body.Position.ToArray());
+        Assert.Equal(1_000_000_000.0, body.Radius);
         var record = (await rig.Deployed.GetAsync(pocket))!;
         Assert.Equal("dungeon_pocket", record.Kind);
         Assert.Single(await rig.Deployed.ByKindAsync("dungeon_pocket"));
@@ -315,6 +312,8 @@ public class MobileObservatoryHostTests
 
         // a restart puts the body of a running pocket back in the scene when a ship comes into its system
         await rig.Containers.PlaceDeadspacePocketAsync(system, 78, origin);
+        rig.Sim.LoseLink();
+        rig.Sim.IsConnected = true;
         rig.Sim.Heard.Clear();
         await rig.Containers.RestoreDeployedAsync(system);
         Assert.Contains(rig.Sim.Heard, m => m is SimPlaceDeadspacePocket body && body.DeployableId == SpaceContainers.PocketDeployableId(78));

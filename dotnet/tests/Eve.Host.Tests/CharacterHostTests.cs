@@ -992,6 +992,21 @@ public sealed class CharacterHostTests
         var skillPlans = new Eve.Skills.PgSkillPlanStore(rig.Source, rig.SkillsSchema);
         var skillPlanId = await skillPlans.CreateAsync(character, "Private plan", "", []);
         var otherCharacter = await rig.CreateCharacterAsync();
+        const int expertSystemTypeId = 63826;
+        var expertSystemInstalledAtMs = DateTimeOffset.UtcNow.AddHours(-1).ToUnixTimeMilliseconds();
+        var expertSystemExpiresAtMs = DateTimeOffset.UtcNow.AddDays(1).ToUnixTimeMilliseconds();
+        await using (var expertSystemConnection = await rig.Source.OpenConnectionAsync())
+        await using (var expertSystemInsert = new NpgsqlCommand(
+            $"INSERT INTO {rig.SkillsSchema}.character_expert_systems(character_id, type_id, installed_at_ms, expires_at_ms, source_item_id, grant_reason, updated_at_ms) " +
+            "VALUES ($1, $3, $4, $5, NULL, 'item', $4), ($2, $3, $4, $5, NULL, 'item', $4)", expertSystemConnection))
+        {
+            expertSystemInsert.Parameters.Add(new NpgsqlParameter { Value = character });
+            expertSystemInsert.Parameters.Add(new NpgsqlParameter { Value = otherCharacter });
+            expertSystemInsert.Parameters.Add(new NpgsqlParameter { Value = expertSystemTypeId });
+            expertSystemInsert.Parameters.Add(new NpgsqlParameter { Value = expertSystemInstalledAtMs });
+            expertSystemInsert.Parameters.Add(new NpgsqlParameter { Value = expertSystemExpiresAtMs });
+            await expertSystemInsert.ExecuteNonQueryAsync();
+        }
         var titleId = Guid.NewGuid();
         foreach (var ownerId in new[] { character, otherCharacter })
         {
@@ -1064,6 +1079,8 @@ public sealed class CharacterHostTests
             command.Parameters.Add(new NpgsqlParameter { Value = character });
             await command.ExecuteNonQueryAsync();
         }
+        Assert.Equal(2L, await ScalarAsync(rig,
+            $"SELECT count(*) FROM {rig.SkillsSchema}.character_expert_systems WHERE expires_at_ms > {DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}"));
         Assert.IsType<PyNone>(await CallAsync(restarted, "DeleteCharacter", session, new PyLong(character)));
         Assert.IsType<PyNone>(await CallAsync(restarted, "DeleteCharacter", session, new PyLong(character)));
 
@@ -1113,6 +1130,10 @@ public sealed class CharacterHostTests
             queueCount.Parameters.Add(new NpgsqlParameter { Value = character });
             Assert.Equal(0L, (long)(await queueCount.ExecuteScalarAsync())!);
         }
+        Assert.Equal(0L, await ScalarAsync(rig,
+            $"SELECT count(*) FROM {rig.SkillsSchema}.character_expert_systems WHERE character_id = {character}"));
+        Assert.Equal(1L, await ScalarAsync(rig,
+            $"SELECT count(*) FROM {rig.SkillsSchema}.character_expert_systems WHERE character_id = {otherCharacter}"));
         // the graveyard corporation (EveJS DOOMHEIM_CORPORATION_ID)
         Assert.Equal(1000001L, (await rig.Characters.GetAsync(character))!.CorporationId);
 
@@ -1124,6 +1145,66 @@ public sealed class CharacterHostTests
         var refused = await Assert.ThrowsAsync<MachoWrappedException>(() =>
             CallAsync(restarted, "SelectCharacterID", session, new PyLong(character), PyNone.Instance, PyBool.False));
         Assert.Equal("That character is not available on this account.", InfoText(refused));
+    }
+
+    [PgFact]
+    public async Task Character_deletion_rolls_back_expert_system_purge_when_a_later_cleanup_step_fails()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var session = new ClientSession { CharacterId = character, UserId = 1 };
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charUnboundMgr"));
+        const int expertSystemTypeId = 63826;
+        var installedAtMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var expiresAtMs = DateTimeOffset.UtcNow.AddDays(1).ToUnixTimeMilliseconds();
+        Assert.True(expiresAtMs > installedAtMs);
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        {
+            await using (var insertExpertSystem = new NpgsqlCommand(
+                $"INSERT INTO {rig.SkillsSchema}.character_expert_systems(character_id, type_id, installed_at_ms, expires_at_ms, source_item_id, grant_reason, updated_at_ms) " +
+                "VALUES ($1, $2, $3, $4, NULL, 'item', $3)", connection))
+            {
+                insertExpertSystem.Parameters.Add(new NpgsqlParameter { Value = character });
+                insertExpertSystem.Parameters.Add(new NpgsqlParameter { Value = expertSystemTypeId });
+                insertExpertSystem.Parameters.Add(new NpgsqlParameter { Value = installedAtMs });
+                insertExpertSystem.Parameters.Add(new NpgsqlParameter { Value = expiresAtMs });
+                await insertExpertSystem.ExecuteNonQueryAsync();
+            }
+
+            await using (var insertRemap = new NpgsqlCommand(
+                $"INSERT INTO {rig.SkillsSchema}.character_neural_remaps(character_id, charisma, intelligence, memory, perception, willpower) " +
+                "VALUES ($1, 20, 20, 20, 20, 20)", connection))
+            {
+                insertRemap.Parameters.Add(new NpgsqlParameter { Value = character });
+                await insertRemap.ExecuteNonQueryAsync();
+            }
+
+            // Neural remaps are purged after expert systems, so this failure must roll back the earlier deletion.
+            await using (var function = new NpgsqlCommand(
+                $"CREATE FUNCTION {rig.SkillsSchema}.fail_character_neural_remap_delete() RETURNS trigger " +
+                "LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced later purge failure'; END; $$", connection))
+                await function.ExecuteNonQueryAsync();
+            await using (var trigger = new NpgsqlCommand(
+                $"CREATE TRIGGER fail_character_neural_remap_delete BEFORE DELETE ON {rig.SkillsSchema}.character_neural_remaps " +
+                $"FOR EACH ROW EXECUTE FUNCTION {rig.SkillsSchema}.fail_character_neural_remap_delete()", connection))
+                await trigger.ExecuteNonQueryAsync();
+        }
+
+        await CallAsync(service, "PrepareCharacterForDelete", session, new PyLong(character));
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var makeDeletionDue = new NpgsqlCommand(
+            $"UPDATE {rig.CharactersSchema}.characters SET delete_prepare_at = now() - interval '1 minute' WHERE id = $1", connection))
+        {
+            makeDeletionDue.Parameters.Add(new NpgsqlParameter { Value = character });
+            await makeDeletionDue.ExecuteNonQueryAsync();
+        }
+
+        var failure = await Assert.ThrowsAsync<PostgresException>(() =>
+            CallAsync(service, "DeleteCharacter", session, new PyLong(character)));
+        Assert.Equal("forced later purge failure", failure.MessageText);
+        Assert.Equal(1L, await ScalarAsync(rig,
+            $"SELECT count(*) FROM {rig.SkillsSchema}.character_expert_systems WHERE character_id = {character}"));
     }
 
     /// <summary>The <c>info</c> text of a CustomInfo refusal, as the client's UserError reads it.</summary>

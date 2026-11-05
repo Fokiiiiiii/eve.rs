@@ -123,6 +123,8 @@ public sealed partial class CharacterShips
             {
                 RunSpaceProvenance = provenance,
             };
+            var salvageRewards = await RollWreckSalvageAsync(type, character.FactionId ?? 0, cancellationToken);
+            await _wreckSalvage.SaveAsync(connection, transaction, id, salvageRewards, cancellationToken);
         }
 
         var snapshot = new Dictionary<long, Item>();
@@ -223,6 +225,8 @@ public sealed partial class CharacterShips
             var id = await items.CreateAsync(connection, transaction,
                 new NewItem(type, ownerCharacterId, ship.LocationId, InSpaceFlag, 1, true), cancellationToken);
             wreck = new Item(id, type, ownerCharacterId, ship.LocationId, InSpaceFlag, 1, true, null);
+            var salvageRewards = await RollWreckSalvageAsync(type, character.FactionId ?? 0, cancellationToken);
+            await _wreckSalvage.SaveAsync(connection, transaction, id, salvageRewards, cancellationToken);
         }
 
         var snapshot = new Dictionary<long, Item>();

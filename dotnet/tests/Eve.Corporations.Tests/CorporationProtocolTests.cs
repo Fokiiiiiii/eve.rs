@@ -422,7 +422,7 @@ private static PyValue RowField(PyValue value,string key)
         Assert.IsType<PySubStruct>(bound.Items[0]);
         Assert.Equal(MarshalCodec.Encode(row),MarshalCodec.Encode(bound.Items[1]));
         var publicInfo = await new CorpMgrService(rig.Store,rig.Characters).GetPublicInfo(Call(session,"GetPublicInfo",new PyInt(corp.Id)));
-        Assert.Equal(new PyInt(1),Field(publicInfo,"memberCount"));
+        Assert.Equal(new PyInt(0),Field(publicInfo,"memberCount"));
         var history = await new CorporationService(rig.Store,rig.Characters).GetEmploymentRecord(Call(session,"GetEmploymentRecord",new PyInt(founder)));
         Assert.Equal(2,Assert.IsType<PyList>(Field(history,"lines")).Items.Count);
     }
@@ -899,7 +899,8 @@ private static PyValue RowField(PyValue value,string key)
                 "011_alliance_registry_state",
                 "012_alliance_bill_lifecycle",
                 "013_item_locks",
-                "014_nullable_contact_label_colors"
+                "014_nullable_contact_label_colors",
+                "015_skill_based_member_limits"
             },applied);
 
             await using var read = await rig.Source.OpenConnectionAsync();
@@ -941,6 +942,75 @@ private static PyValue RowField(PyValue value,string key)
             drop.CommandText = $"DROP SCHEMA IF EXISTS {schema} CASCADE";
             await drop.ExecuteNonQueryAsync();
         }
+    }
+
+[PgFact]
+    public async Task Update_corporation_abilities_no_arg_recomputes_member_limit_and_notifies_after_reply()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Member Limit RPC Founder");
+        var member = await rig.CharacterAsync("Member Limit RPC Member");
+        var corporation = await rig.Store.CreateAsync(founder,new("Member Limit RPC","MLRPC","","",0.05m),"member-limit-rpc");
+        var application = await rig.Store.ApplyAsync(member,corporation.Id,"");
+        await rig.Store.RespondAsync(founder,application,6,"","");
+        await rig.Store.RespondAsync(member,application,2,"","");
+        await rig.Store.UpdateSettingsAsync(founder,corporation.Id,"{\"applicationsEnabled\":false}");
+        await rig.SetSkillAsync(founder,Rig.CorporationManagementSkillId,5);
+
+        var sessions = new CharacterSessions();
+        var founderSink = new PacketSink();
+        var founderSession = new ClientSession(founderSink) { SessionId = founder,CharacterId = founder };
+        founderSession.Set("corpid",new PyInt(corporation.Id));
+        var memberSink = new PacketSink();
+        var memberSession = new ClientSession(memberSink) { SessionId = member,CharacterId = member };
+        memberSession.Set("corpid",new PyInt(corporation.Id));
+        sessions.Enter(founder,founderSession);
+        sessions.Enter(member,memberSession);
+        var registry = (IService)new CorpRegistryService(rig.Store,rig.Characters,() => rig.Now,characterSessions:sessions);
+        ValueTask<PyValue> Rpc(ClientSession session,string method,params PyValue[] args) =>
+            registry.CallAsync(Call(session,method,args));
+
+        Assert.Same(PyBool.True,await Rpc(founderSession,"UpdateCorporationAbilities"));
+        Assert.Equal(100,(await rig.Store.GetAsync(corporation.Id))!.MemberLimit);
+        Assert.False((await rig.Store.GetAsync(corporation.Id))!.Settings.GetProperty("applicationsEnabled").GetBoolean());
+        var corporationRow = Assert.IsType<PyObject>(await Rpc(founderSession,"GetCorporation"));
+        Assert.Equal(new PyInt(100),RowField(corporationRow,"memberLimit"));
+        Assert.Equal(new PyInt(1),RowField(corporationRow,"memberCount"));
+        Assert.Empty(founderSink.Packets);
+        Assert.Empty(memberSink.Packets);
+
+        founderSession.RunAfterResponse();
+        var founderNotice = Assert.Single(founderSink.Packets,p => NotificationName(p) == "OnCorporationChanged");
+        var memberNotice = Assert.Single(memberSink.Packets,p => NotificationName(p) == "OnCorporationChanged");
+        Assert.Equal("ownerid",NotificationAddress(founderNotice).IdType);
+        Assert.Equal("ownerid",NotificationAddress(memberNotice).IdType);
+        PyValue[] NotificationArgs(PyValue packet)
+        {
+            var state = Assert.IsType<PyTuple>(Assert.IsType<PyObject>(packet).Args).Items;
+            var stream = Assert.IsType<PyBuffer>(Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(state[4]).Items[0]).Items[1]);
+            var decoded = Assert.IsType<PyTuple>(MarshalCodec.Decode(stream.Value.ToArray()));
+            return Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(decoded.Items[1]).Items[1]).Items.ToArray();
+        }
+        void AssertMemberLimitChange(PyValue packet)
+        {
+            var payload = Assert.IsType<PyTuple>(Assert.Single(NotificationArgs(packet))).Items;
+            Assert.Equal(new PyInt(corporation.Id),payload[0]);
+            var changes = Assert.IsType<PyDict>(payload[1]);
+            var change = Assert.Single(changes.Entries);
+            Assert.Equal(new PyBytes(System.Text.Encoding.UTF8.GetBytes("memberLimit")),change.Key);
+            var pair = Assert.IsType<PyList>(change.Value);
+            Assert.Equal(new PyValue[] { new PyInt(20),new PyInt(100) },pair.Items);
+        }
+        AssertMemberLimitChange(founderNotice);
+        AssertMemberLimitChange(memberNotice);
+
+        founderSink.Packets.Clear();
+        memberSink.Packets.Clear();
+        var denied = await Assert.ThrowsAsync<CorporationError>(() => Rpc(memberSession,"UpdateCorporationAbilities").AsTask());
+        Assert.Equal("CORPORATION_ACCESS_DENIED",denied.Code);
+        Assert.Equal(100,(await rig.Store.GetAsync(corporation.Id))!.MemberLimit);
+        Assert.Empty(founderSink.Packets);
+        Assert.Empty(memberSink.Packets);
     }
 
 [PgFact]
@@ -1068,10 +1138,10 @@ private static PyValue RowField(PyValue value,string key)
         Assert.IsType<PyNone>(await CorpRpc("UpdateDivisionNames",new PyStr("Ship Hangar")));
         var afterDivisions = await rig.Store.GetAsync(corp.Id);
         Assert.Equal("Ship Hangar",afterDivisions!.Settings.GetProperty("divisionNames").GetProperty("1").GetString());
-        Assert.IsType<PyNone>(await CorpRpc("UpdateCorporationAbilities",new PyStr("false")));
+        Assert.Same(PyBool.True,await CorpRpc("UpdateCorporationAbilities"));
         publicInfo = await ManagerRpc("GetPublicInfo",new PyInt(corp.Id));
-        Assert.Equal(new PyInt(0),Field(publicInfo,"applicationsEnabled"));
-        Assert.Equal(new PyInt(0),Field(publicInfo,"isRecruiting"));
+        Assert.Equal(new PyInt(1),Field(publicInfo,"applicationsEnabled"));
+        Assert.Equal(new PyInt(1),Field(publicInfo,"isRecruiting"));
         Assert.Equal(PyBool.True,await CorpRpc("SetAccountKey",new PyStr("cash2")));
         Assert.Equal(1001,(await rig.Store.MemberAsync(founder))!.AccountKey);
         Assert.Equal(1001,founderSession.GetInt("corpAccountKey"));
@@ -1206,7 +1276,7 @@ private static PyValue RowField(PyValue value,string key)
         Assert.Equal(corporationId,(await rig.Store.MemberAsync(founder))!.CorporationId);
         var manager = (IService)new CorpMgrService(rig.Store,rig.Characters);
         var publicRow = await manager.CallAsync(Call(session,"GetCorporations",new PyInt(corporationId)));
-        Assert.Equal(new PyInt(1),RowField(publicRow,"memberCount"));
+        Assert.Equal(new PyInt(0),RowField(publicRow,"memberCount"));
 
         var replay = await service.CallAsync(call);
         Assert.Equal(new PyInt(corporationId),RowField(replay,"corporationID"));
@@ -2162,6 +2232,7 @@ private static PyValue RowField(PyValue value,string key)
             var store = new CorporationStore(rig.Source,rig.Characters,rig.Wallets,rig.Transactions,rig.Skills,() => rig.Now,schema);
             var founder = await rig.CharacterAsync("Vote Founder");
             var member = await rig.CharacterAsync("Vote Member");
+            await rig.SetSkillAsync(member,Rig.CorporationManagementSkillId,0);
             var corporation = await store.CreateAsync(founder,new("Vote Works","VOTE","","",0m),"vote-manager");
             var application = await store.ApplyAsync(member,corporation.Id,"");
             await store.RespondAsync(founder,application,6,"","");
@@ -2595,6 +2666,98 @@ private static PyValue RowField(PyValue value,string key)
         Assert.Equal(800,afterGrant[corporation.Id]);
         Assert.Equal(100,afterGrant[first]);
         Assert.Equal(100,afterGrant[second]);
+    }
+
+    [PgFact]
+    public async Task Vote_access_is_restricted_and_unauthorized_reads_do_not_resolve_votes()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var schema = "vote_access_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            await CorporationStore.MigrateAsync(rig.Source,schema);
+            var store = new CorporationStore(rig.Source,rig.Characters,rig.Wallets,rig.Transactions,rig.Skills,
+                () => rig.Now,schema);
+            await store.SeedNpcAsync(new Eve.Sde.SdeReader(rig.Source));
+            var ceo = await rig.CharacterAsync("Vote Access CEO");
+            var member = await rig.CharacterAsync("Vote Access Member");
+            var corporation = await store.CreateAsync(ceo,new("Vote Access","VACC","","",0m),
+                "vote-access-" + Guid.NewGuid().ToString("N"));
+            var application = await store.ApplyAsync(member,corporation.Id,"");
+            await store.RespondAsync(ceo,application,6,"","");
+            await store.RespondAsync(member,application,2,"","");
+            var memberState = (await store.MemberAsync(member))!;
+            await store.UpdateMemberAsync(ceo,memberState with
+            {
+                Masks = new RoleMasks(CorporationRoles.PersonnelManager)
+            });
+
+            var service = (IService)new VoteManagerService(store);
+            ClientSession Session(long characterId)
+            {
+                var session = new ClientSession { CharacterId = characterId };
+                session.Set("corporationID",new PyInt(corporation.Id));
+                session.Set("corpid",new PyInt(corporation.Id));
+                return session;
+            }
+            ValueTask<PyValue> VoteRpc(ClientSession session,string method,params PyValue[] args) =>
+                service.CallAsync(Call(session,method,args));
+            var ceoSession = Session(ceo);
+            var session = Session(member);
+            var voteArguments = new PyValue[]
+            {
+                new PyWString("Manager vote"),
+                new PyWString(""),
+                new PyInt(4),
+                new PyList([new PyWString("For"),new PyWString("Against")]),
+                new PyInt(1)
+            };
+
+            var voteCaseId = Assert.IsType<PyInt>(await VoteRpc(ceoSession,"InsertVoteCase",voteArguments)).Value;
+            Assert.True(voteCaseId > 0);
+            rig.Now += 86_400_001L;
+
+            Assert.Equal(PyBool.False,await VoteRpc(session,"CanViewVotes",new PyInt(corporation.Id)));
+            var deniedCases = Assert.IsType<PyDict>(await VoteRpc(session,"GetVoteCasesByCorporation",new PyInt(corporation.Id)));
+            Assert.All(deniedCases.Entries,entry => Assert.Empty(Lines(entry.Value)));
+            async Task<long> ResolutionCountAsync()
+            {
+                await using var command = rig.Source.CreateCommand(
+                    $"SELECT COUNT(*) FROM {schema}.vote_case_resolutions WHERE vote_case_id=$1");
+                command.Parameters.AddWithValue(voteCaseId);
+                return Convert.ToInt64(await command.ExecuteScalarAsync());
+            }
+            Assert.Equal(0,await ResolutionCountAsync());
+            Assert.IsType<PyNone>(await VoteRpc(session,"GetVoteCase",new PyInt(corporation.Id),new PyInt(voteCaseId)));
+            Assert.Empty(Lines(await VoteRpc(session,"GetVoteCaseOptions",new PyInt(corporation.Id),new PyInt(voteCaseId))));
+            Assert.Empty(Lines(await VoteRpc(session,"GetVotes",new PyInt(voteCaseId))));
+            Assert.Equal(0,await ResolutionCountAsync());
+            await Assert.ThrowsAsync<CorporationError>(async () =>
+            {
+                _ = await VoteRpc(session,"InsertVote",new PyInt(corporation.Id),new PyInt(voteCaseId),new PyInt(0));
+            });
+            await Assert.ThrowsAsync<CorporationError>(async () =>
+            {
+                _ = await VoteRpc(session,"InsertVoteCase",voteArguments);
+            });
+            Assert.Equal(0,await ResolutionCountAsync());
+
+            await store.UpdateMemberAsync(ceo,memberState with
+            {
+                Masks = new RoleMasks(CorporationRoles.Director | CorporationRoles.PersonnelManager)
+            });
+            Assert.Equal(PyBool.True,await VoteRpc(session,"CanViewVotes",new PyInt(corporation.Id)));
+            var allowedCases = Assert.IsType<PyDict>(await VoteRpc(session,"GetVoteCasesByCorporation",new PyInt(corporation.Id)));
+            var closedCases = Assert.Single(allowedCases.Entries,entry => entry.Key == new PyInt(1)).Value;
+            Assert.Equal(new PyInt(voteCaseId),RowValues(Assert.Single(Lines(closedCases)))[0]);
+            Assert.Equal(1,await ResolutionCountAsync());
+            Assert.True(Assert.IsType<PyInt>(await VoteRpc(session,"InsertVoteCase",voteArguments)).Value > 0);
+        }
+        finally
+        {
+            await using var command = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await command.ExecuteNonQueryAsync();
+        }
     }
 
     [PgFact]
@@ -3151,11 +3314,11 @@ private static PyValue RowField(PyValue value,string key)
         Assert.Equal(new PyStr("adID"),header.Items[0]);
         Assert.Equal(new PyInt(adId),line.Items[0]);
         Assert.Equal(new PyWString("Join Recruit Works"),line.Items[7]);
-        Assert.Equal(new PyInt(1),line.Items[13]);
+        Assert.Equal(new PyInt(0),line.Items[13]);
 
         var searchArgs = new PyValue[]
         {
-            new PyInt(2),new PyInt(4),PyBool.False,PyBool.False,new PyInt(0),new PyInt(1),
+            new PyInt(2),new PyInt(4),PyBool.False,PyBool.False,new PyInt(0),new PyInt(0),
             new PyInt(10),Py.Number(0.1),Py.Number(0.1),new PyInt(8),new PyInt(16)
         };
         var matches = Assert.IsType<PyList>(await service.CallAsync(Call(session,"SearchCorpAds",searchArgs)));

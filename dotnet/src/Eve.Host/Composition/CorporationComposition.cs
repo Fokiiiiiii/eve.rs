@@ -71,7 +71,7 @@ internal sealed partial class CharacterServicesComposition
     private async Task CorporationStores()
     {
         corporations = new Eve.Corporations.CorporationStore(source, characters, wallets, economyWallets, skills, now, corporationSchema,
-            setBlueprintLock: SetCorporationBlueprintLockAsync);
+            setBlueprintLock: SetCorporationBlueprintLockAsync, sde: sde);
         corporations.ItemLockChanged += change => Eve.Services.Corporations.ItemLockingService.NotifyChanged(characterSessions, change);
         await corporations.SeedNpcAsync(sde);
         foundations.Scheduler.Register("corporation.votes.resolve",

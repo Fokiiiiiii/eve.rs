@@ -126,7 +126,8 @@ public Eve.Wallet.PgWalletStore WalletStore { get; }
 
     public static async Task<Rig> CreateAsync(TrainingSettings? settings = null,
             Eve.Scheduler.LocalTimers? localTimers = null, bool scheduleAnnouncer = false,
-            Func<long, bool>? isAlphaClone = null, bool useCurrentSdeCatalog = false, int accountId = 34)
+            Func<long, bool>? isAlphaClone = null, bool useCurrentSdeCatalog = false, int accountId = 34,
+            bool cloneStateAvailable = true, int characterRaceId = 1)
         {
             var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
             var catalog = Catalog;
@@ -139,12 +140,13 @@ public Eve.Wallet.PgWalletStore WalletStore { get; }
                 catalog = await SkillCatalog.LoadAsync(sde);
                 loadedDogma = await Eve.Dogma.DogmaStatic.LoadAsync(sde);
             }
-            var rig = new Rig(source, catalog, settings, localTimers, scheduleAnnouncer, isAlphaClone, loadedDogma);
+            var cloneState = cloneStateAvailable ? isAlphaClone ?? (_ => false) : null;
+            var rig = new Rig(source, catalog, settings, localTimers, scheduleAnnouncer, cloneState, loadedDogma);
             await PgSkillStore.MigrateAsync(source, rig._schema);
             await Eve.Characters.PgCharacterStore.MigrateAsync(source, rig._schema + "c");
             await Eve.Inventory.PgItemStore.MigrateAsync(source, rig._schema + "i");
             await Eve.Wallet.PgWalletStore.MigrateAsync(source, rig._schema + "w");
-            rig.CharacterId = await rig.CreateCharacterAsync("Skills Test Character", accountId);
+            rig.CharacterId = await rig.CreateCharacterAsync("Skills Test Character", accountId, characterRaceId);
             return rig;
         }
 
@@ -184,12 +186,12 @@ public Eve.Wallet.PgWalletStore WalletStore { get; }
         return itemId;
     }
 
-    public async Task<long> CreateCharacterAsync(string name, int accountId = 34)
+    public async Task<long> CreateCharacterAsync(string name, int accountId = 34, int raceId = 1)
         {
             await using var connection = await Source.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
             var characterId = await Characters.InsertAsync(connection, transaction,
-                new Eve.Characters.NewCharacter(accountId, name, 0, 1, 1, 1, 11, 1376,
+                new Eve.Characters.NewCharacter(accountId, name, 0, raceId, 1, 1, 11, 1376,
                     1000044, null, 60_000_001, 30_000_001, 20_000_001, 10_000_001, null, null));
             await transaction.CommitAsync();
             return characterId;
@@ -1142,6 +1144,219 @@ public class SkillHandlerTests
         Assert.Equal(4, cargoItem.Flag);
         Assert.Null(await rig.Store.ActiveSkillBoosterAsync(
             characterId, cargoStackId, Py.FileTimeFromUnixMs(rig.Now)));
+    }
+
+    [PgFact]
+    public async Task Alpha_selected_free_skill_points_preview_and_commit_match_partial_and_clone_grade_balances()
+    {
+        await using var rig = await Rig.CreateAsync(
+            settings: new TrainingSettings { HasOmega = _ => false },
+            isAlphaClone: _ => true,
+            useCurrentSdeCatalog: true);
+        var character = rig.CharacterId;
+        const int skillTypeId = 3307;
+        var skill = rig.CatalogForTest.Get(skillTypeId)!;
+        Assert.Equal(4, rig.CatalogForTest.AlphaMaxLevel(1, skillTypeId));
+        var pointsAtLevelThree = Eve.Skills.SkillPoints.ForTraining(skill.Rank, 3);
+        var pointsAtAlphaMaximum = Eve.Skills.SkillPoints.ForTraining(skill.Rank, 4);
+        await rig.GrantAsync(character, (skillTypeId, 3, pointsAtLevelThree));
+
+        var (session, sink) = Rig.Session(character);
+        rig.Sessions.Enter(character, session);
+        var targets = new PyList([Py.Tuple(new PyInt(skillTypeId), new PyInt(5))]);
+        await rig.GrantFreeSkillPointsAsync(character, 100);
+
+        var partialPreview = await Rig.CallAsync(rig.Handler, session, "GetFreeSkillPointsAppliedToSkills", targets);
+        Assert.Equal(
+            new PyDict([new KeyValuePair<PyValue, PyValue>(new PyInt(skillTypeId), new PyInt(100))]),
+            partialPreview);
+        Assert.Equal(new PyInt(0), await Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPointsToSkills", targets));
+        var partiallyTrained = Assert.Single(await rig.Store.ForCharacterAsync(character));
+        Assert.Equal(pointsAtLevelThree + 100, partiallyTrained.SkillPoints);
+        Assert.Equal(3, partiallyTrained.Level);
+        Assert.Equal(["OnServerSkillsChanged", "OnNewSkillQueueSaved", "OnFreeSkillPointsChanged"],
+            Notes.Of(sink).Select(note => note.Name));
+        sink.Sent.Clear();
+
+        var pointsToAlphaMaximum = pointsAtAlphaMaximum - partiallyTrained.SkillPoints;
+        await rig.GrantFreeSkillPointsAsync(character, pointsToAlphaMaximum + 50);
+        var completePreview = await Rig.CallAsync(rig.Handler, session, "GetFreeSkillPointsAppliedToSkills", targets);
+        Assert.Equal(
+            new PyDict([new KeyValuePair<PyValue, PyValue>(new PyInt(skillTypeId), new PyInt(pointsToAlphaMaximum))]),
+            completePreview);
+        Assert.Equal(new PyInt(50), await Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPointsToSkills", targets));
+        var completed = Assert.Single(await rig.Store.ForCharacterAsync(character));
+        Assert.Equal((4, pointsAtAlphaMaximum), (completed.Level, completed.SkillPoints));
+        Assert.Equal(50, await rig.Store.FreeSkillPointsAsync(character));
+        Assert.Equal(["OnServerSkillsChanged", "OnNewSkillQueueSaved", "OnFreeSkillPointsChanged"],
+            Notes.Of(sink).Select(note => note.Name));
+    }
+
+    [PgFact]
+    public async Task Alpha_queue_free_skill_points_preview_and_commit_match_partial_and_complete_balances()
+    {
+        await using var rig = await Rig.CreateAsync(
+            settings: new TrainingSettings { HasOmega = _ => false },
+            isAlphaClone: _ => true,
+            useCurrentSdeCatalog: true);
+        var character = rig.CharacterId;
+        const int skillTypeId = 3310;
+        var skill = rig.CatalogForTest.Get(skillTypeId)!;
+        Assert.Equal(4, rig.CatalogForTest.AlphaMaxLevel(1, skillTypeId));
+        var pointsAtLevelThree = Eve.Skills.SkillPoints.ForTraining(skill.Rank, 3);
+        var pointsAtAlphaMaximum = Eve.Skills.SkillPoints.ForTraining(skill.Rank, 4);
+        var owned = skill.Needs
+            .Select(need =>
+            {
+                var prerequisite = rig.CatalogForTest.Get(need.TypeId)!;
+                return (need.TypeId, need.Level, Eve.Skills.SkillPoints.ForTraining(prerequisite.Rank, need.Level));
+            })
+            .Append((skillTypeId, 3, pointsAtLevelThree))
+            .ToArray();
+        await rig.GrantAsync(character, owned);
+        var (session, sink) = Rig.Session(character);
+        rig.Sessions.Enter(character, session);
+        var saved = await rig.Training.SaveQueueAsync(
+            character, 34, [new QueueEntry(skillTypeId, 4)], activate: false, [character],
+            isAlphaClone: true, raceId: 1);
+        Assert.IsType<QueueSaved>(saved);
+        sink.Sent.Clear();
+
+        await rig.GrantFreeSkillPointsAsync(character, 100);
+        var partialPreview = await Rig.CallAsync(rig.Handler, session, "GetFreeSkillPointsAppliedToQueue");
+        Assert.Equal(
+            new PyDict([new KeyValuePair<PyValue, PyValue>(new PyInt(skillTypeId), new PyInt(100))]),
+            partialPreview);
+        Assert.Equal(new PyInt(0), await Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPointsToQueue"));
+        var partiallyTrained = Assert.Single(await rig.Store.ForCharacterAsync(character), row => row.TypeId == skillTypeId);
+        Assert.Equal(pointsAtLevelThree + 100, partiallyTrained.SkillPoints);
+        Assert.Equal(["OnServerSkillsChanged", "OnNewSkillQueueSaved", "OnFreeSkillPointsChanged"],
+            Notes.Of(sink).Select(note => note.Name));
+        sink.Sent.Clear();
+
+        var pointsToAlphaMaximum = pointsAtAlphaMaximum - partiallyTrained.SkillPoints;
+        await rig.GrantFreeSkillPointsAsync(character, pointsToAlphaMaximum);
+        var completePreview = await Rig.CallAsync(rig.Handler, session, "GetFreeSkillPointsAppliedToQueue");
+        Assert.Equal(
+            new PyDict([new KeyValuePair<PyValue, PyValue>(new PyInt(skillTypeId), new PyInt(pointsToAlphaMaximum))]),
+            completePreview);
+        Assert.Equal(new PyInt(0), await Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPointsToQueue"));
+        var completed = Assert.Single(await rig.Store.ForCharacterAsync(character), row => row.TypeId == skillTypeId);
+        Assert.Equal((4, pointsAtAlphaMaximum), (completed.Level, completed.SkillPoints));
+        Assert.Empty((await rig.Training.ViewAsync(character, 34)).State.Entries);
+        Assert.Equal(["OnServerSkillsChanged", "OnNewSkillQueueSaved", "OnFreeSkillPointsChanged"],
+            Notes.Of(sink).Select(note => note.Name));
+    }
+
+    [PgFact]
+    public async Task Alpha_direct_free_skill_points_use_the_clone_grade_cap_and_retries_are_silent()
+    {
+        await using var rig = await Rig.CreateAsync(
+            settings: new TrainingSettings { HasOmega = _ => false },
+            isAlphaClone: _ => true,
+            useCurrentSdeCatalog: true);
+        var character = rig.CharacterId;
+        const int skillTypeId = 3307;
+        var skill = rig.CatalogForTest.Get(skillTypeId)!;
+        Assert.Equal(4, rig.CatalogForTest.AlphaMaxLevel(1, skillTypeId));
+        var pointsAtLevelThree = Eve.Skills.SkillPoints.ForTraining(skill.Rank, 3);
+        var pointsAtAlphaMaximum = Eve.Skills.SkillPoints.ForTraining(skill.Rank, 4);
+        await rig.GrantAsync(character, (skillTypeId, 3, pointsAtLevelThree));
+        await rig.GrantFreeSkillPointsAsync(character, pointsAtAlphaMaximum - pointsAtLevelThree + 200);
+        var (session, sink) = Rig.Session(character);
+        rig.Sessions.Enter(character, session);
+
+        var requestedThroughLevelFive = Eve.Skills.SkillPoints.ForTraining(skill.Rank, 5) - pointsAtLevelThree;
+        Assert.Equal(new PyInt(200), await Rig.CallAsync(
+            rig.Handler, session, "ApplyFreeSkillPoints", new PyInt(skillTypeId), new PyLong(requestedThroughLevelFive)));
+        var completed = Assert.Single(await rig.Store.ForCharacterAsync(character));
+        Assert.Equal((4, pointsAtAlphaMaximum), (completed.Level, completed.SkillPoints));
+        Assert.Equal(200, await rig.Store.FreeSkillPointsAsync(character));
+        Assert.Equal(["OnServerSkillsChanged", "OnNewSkillQueueSaved", "OnFreeSkillPointsChanged"],
+            Notes.Of(sink).Select(note => note.Name));
+        sink.Sent.Clear();
+
+        Assert.Equal(new PyInt(200), await Rig.CallAsync(
+            rig.Handler, session, "ApplyFreeSkillPoints", new PyInt(skillTypeId), new PyLong(requestedThroughLevelFive)));
+        Assert.Equal(200, await rig.Store.FreeSkillPointsAsync(character));
+        Assert.Equal((await rig.Store.ForCharacterAsync(character)).Single(), completed);
+        Assert.Empty(sink.Sent);
+    }
+
+    [PgFact]
+    public async Task Alpha_skills_without_a_clone_grade_allowance_do_not_spend_free_points()
+    {
+        await using var rig = await Rig.CreateAsync(
+            isAlphaClone: _ => true,
+            useCurrentSdeCatalog: true);
+        var character = rig.CharacterId;
+        const int skillTypeId = 2403;
+        Assert.NotNull(rig.CatalogForTest.Get(skillTypeId));
+        Assert.Equal(0, rig.CatalogForTest.AlphaMaxLevel(1, skillTypeId));
+        await rig.GrantAsync(character, (skillTypeId, 0, 0));
+        await rig.GrantFreeSkillPointsAsync(character, 1_000);
+        var (session, sink) = Rig.Session(character);
+        rig.Sessions.Enter(character, session);
+        var target = new PyList([Py.Tuple(new PyInt(skillTypeId), new PyInt(1))]);
+
+        Assert.Equal(new PyDict([]), await Rig.CallAsync(rig.Handler, session, "GetFreeSkillPointsAppliedToSkills", target));
+        Assert.Equal(new PyInt(1_000), await Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPointsToSkills", target));
+        Assert.Equal(new PyInt(1_000), await Rig.CallAsync(
+            rig.Handler, session, "ApplyFreeSkillPoints", new PyInt(skillTypeId), new PyInt(100)));
+        Assert.Equal(1_000, await rig.Store.FreeSkillPointsAsync(character));
+        Assert.Equal(new CharacterSkill(skillTypeId, 0, 0), Assert.Single(await rig.Store.ForCharacterAsync(character)));
+        Assert.Empty(sink.Sent);
+    }
+
+    [PgFact]
+    public async Task Free_skill_point_preview_and_mutation_fail_when_clone_state_is_missing()
+    {
+        await using var rig = await Rig.CreateAsync(cloneStateAvailable: false);
+        var character = rig.CharacterId;
+        await rig.GrantAsync(character, (3300, 1, 250));
+        await rig.GrantFreeSkillPointsAsync(character, 1_000);
+        var (session, sink) = Rig.Session(character);
+        rig.Sessions.Enter(character, session);
+        var target = new PyList([Py.Tuple(new PyInt(3300), new PyInt(2))]);
+        var skillsBefore = await rig.Store.ForCharacterAsync(character);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            Rig.CallAsync(rig.Handler, session, "GetFreeSkillPointsAppliedToQueue"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            Rig.CallAsync(rig.Handler, session, "GetFreeSkillPointsAppliedToSkills", target));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPointsToQueue"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPointsToSkills", target));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPoints", new PyInt(3300), new PyInt(100)));
+        Assert.Equal(skillsBefore, await rig.Store.ForCharacterAsync(character));
+        Assert.Equal(1_000, await rig.Store.FreeSkillPointsAsync(character));
+        Assert.Empty(sink.Sent);
+    }
+
+    [PgFact]
+    public async Task Free_skill_point_mutation_fails_when_race_has_no_pinned_clone_grade_data()
+    {
+        await using var rig = await Rig.CreateAsync(
+            isAlphaClone: _ => true,
+            useCurrentSdeCatalog: true,
+            characterRaceId: 999);
+        var character = rig.CharacterId;
+        await rig.GrantAsync(character, (3300, 1, 250));
+        await rig.GrantFreeSkillPointsAsync(character, 1_000);
+        var (session, sink) = Rig.Session(character);
+        rig.Sessions.Enter(character, session);
+        var skillsBefore = await rig.Store.ForCharacterAsync(character);
+
+        var target = new PyList([Py.Tuple(new PyInt(3300), new PyInt(2))]);
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            Rig.CallAsync(rig.Handler, session, "GetFreeSkillPointsAppliedToSkills", target));
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPoints", new PyInt(3300), new PyInt(100)));
+        Assert.Equal(skillsBefore, await rig.Store.ForCharacterAsync(character));
+        Assert.Equal(1_000, await rig.Store.FreeSkillPointsAsync(character));
+        Assert.Empty(sink.Sent);
     }
 
     [PgFact]

@@ -23,6 +23,7 @@ internal sealed class FakeSimulation : IAsyncDisposable
 
     /// <summary>What to say to each message (a <c>Hello</c> is always answered).</summary>
     public Func<SimMessage, IEnumerable<SimMessage>> Reply { get; set; } = _ => [];
+    public Task? PauseAfterHello { get; set; }
 
     public ushort AckVersion { get; set; } = SimCodec.ProtocolVersion;
 
@@ -76,6 +77,8 @@ internal sealed class FakeSimulation : IAsyncDisposable
                 {
                     await stream.WriteAsync(SimCodec.Encode(answer), _stop.Token);
                 }
+                if (message is SimHello && PauseAfterHello is { } pauseAfterHello)
+                    await pauseAfterHello.WaitAsync(_stop.Token);
             }
         }
         catch (Exception error) when (error is IOException or OperationCanceledException or ObjectDisposedException)

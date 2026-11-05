@@ -1,7 +1,22 @@
 using Eve.Calendar;
+using System.Globalization;
 using Eve.Marshal;
+using Eve.Wallet;
+using Npgsql;
 
 namespace Eve.Services.Core;
+
+public enum CalendarCspaRecipientRule
+{
+    Charge,
+    Exempt,
+    Blocked,
+}
+
+public sealed record CalendarCspaBilling(
+    Func<long, CancellationToken, ValueTask<int?>> ReadContactCostAsync,
+    Func<long, long, CancellationToken, ValueTask<CalendarCspaRecipientRule>> ReadRecipientRuleAsync,
+    WalletTransactions? Wallets);
 
 
 // server/src/services/calendar/{calendarMgrService,calendarProxyService,calendarPayloads,calendarRuntimeState}.js.
@@ -22,20 +37,26 @@ public sealed partial class CalendarMgrService
     private readonly CharacterSessions? _sessions;
     private readonly Func<long, long, short, CancellationToken, ValueTask<bool>>? _canManageGroupEvent;
     private readonly Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? _readCurrentGroups;
+    private readonly CalendarCspaBilling? _cspaBilling;
+    private readonly Func<long> _nowUnixMs;
 
-    public CalendarMgrService() { }
+    public CalendarMgrService() => _nowUnixMs = static () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     public CalendarMgrService(
         ICalendarStore store,
         ICalendarAudienceReader? audience = null,
         CharacterSessions? sessions = null,
         Func<long, long, short, CancellationToken, ValueTask<bool>>? canManageGroupEvent = null,
-        Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? readCurrentGroups = null)
+        Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? readCurrentGroups = null,
+        Func<long>? nowUnixMs = null,
+        CalendarCspaBilling? cspaBilling = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _audience = audience;
         _sessions = sessions;
         _canManageGroupEvent = canManageGroupEvent;
         _readCurrentGroups = readCurrentGroups;
+        _cspaBilling = cspaBilling;
+        _nowUnixMs = nowUnixMs ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
     }
     private ICalendarStore Store => _store ?? throw new InvalidOperationException("Host must inject the PostgreSQL calendar store.");
 
@@ -89,11 +110,20 @@ public sealed partial class CalendarMgrService
         var textIndex = 3;
         var importanceIndex = 4;
         IReadOnlyList<long> invitees = personal
-            ? CalendarWire.CharacterIds(call.Arg(5)).Where(id => id != characterId).ToArray()
+            ? CalendarWire.CharacterIds(call.Arg(5)).Where(id => id > 0 && id != characterId).Distinct().ToArray()
             : Array.Empty<long>();
         var input = CalendarWire.ReadInput(call, dateTimeIndex, durationIndex, titleIndex, textIndex, importanceIndex, ownerId, characterId, tag);
         CalendarWire.Validate(input, invitees.Count);
-        var eventId = await Store.CreateEventAsync(input, invitees, call.Cancellation);
+        decimal? chargedBalance = null;
+        var eventId = personal && invitees.Count > 0
+            ? await Store.CreateEventAsync(input, invitees, call.Cancellation,
+                async (connection, transaction, actualEventId, actualInvitees, cancellationToken) =>
+                {
+                    chargedBalance = await ApproveAndChargeCspaAsync(
+                        call, connection, transaction, actualEventId, actualInvitees, "create", cancellationToken);
+                })
+            : await Store.CreateEventAsync(input, invitees, call.Cancellation);
+        AnnounceCspaWalletBalance(characterId, chargedBalance);
         var created = await Store.GetEventByIdAsync(eventId, call.Cancellation);
         if (created is not null)
             await NotifyNewAsync(created, call, excludeCallingSession: personal);
@@ -184,10 +214,19 @@ public sealed partial class CalendarMgrService
         }
 
         var before = await Store.GetResponsesToEventAsync(eventId, calendarEvent.OwnerId, call.Cancellation);
-        var update = await Store.UpdateParticipantsAsync(eventId, calendarEvent.OwnerId, add, remove, call.Cancellation);
+        decimal? chargedBalance = null;
+        var update = add.Count > 0
+            ? await Store.UpdateParticipantsAsync(eventId, calendarEvent.OwnerId, add, remove, call.Cancellation,
+                async (connection, transaction, actualEventId, actualInvitees, cancellationToken) =>
+                {
+                    chargedBalance = await ApproveAndChargeCspaAsync(
+                        call, connection, transaction, actualEventId, actualInvitees, "participants", cancellationToken);
+                })
+            : await Store.UpdateParticipantsAsync(eventId, calendarEvent.OwnerId, add, remove, call.Cancellation);
         if (update == CalendarParticipantUpdateResult.TooManyInvitees) throw CalendarWire.TooManyInvitees();
         if (update != CalendarParticipantUpdateResult.Updated)
             throw EventNotFound();
+        AnnounceCspaWalletBalance(CalendarWire.CharacterId(call), chargedBalance);
         var after = await Store.GetResponsesToEventAsync(eventId, calendarEvent.OwnerId, call.Cancellation);
         var beforeVisible = before.Where(row => row.Status != CalendarResponseStates.Uninvited)
             .Select(row => row.CharacterId).ToHashSet();
@@ -202,6 +241,69 @@ public sealed partial class CalendarMgrService
             await NotifyRemoveAsync(updated, false, call, removed);
         }
         return PyNone.Instance;
+    }
+
+    private const int CspaWalletRefType = 35; // eve-logic eve/common/lib/appConst.py:675
+
+    private async Task<decimal?> ApproveAndChargeCspaAsync(
+        ServiceCall call, NpgsqlConnection connection, NpgsqlTransaction transaction, long eventId,
+        IReadOnlyCollection<long> invitees, string operation, CancellationToken cancellationToken)
+    {
+        if (invitees.Count == 0) return null;
+        var billing = _cspaBilling ?? throw new InvalidOperationException(
+            "Personal calendar invitations require CSPA billing providers.");
+        var senderId = CalendarWire.CharacterId(call);
+        var charges = new List<(long RecipientId, int Cost)>();
+        foreach (var recipientId in invitees.Distinct().Order())
+        {
+            switch (await billing.ReadRecipientRuleAsync(recipientId, senderId, cancellationToken))
+            {
+                case CalendarCspaRecipientRule.Exempt:
+                    continue;
+                case CalendarCspaRecipientRule.Blocked:
+                    throw ClientNotify("A recipient blocks calendar invitations from your character.");
+            }
+
+            var cost = await billing.ReadContactCostAsync(recipientId, cancellationToken);
+            if (cost is null)
+                throw ClientNotify("A recipient blocks calendar invitations from unknown characters.");
+            if (cost is < 0 or > 1_000_000)
+                throw new InvalidOperationException("The persisted character CSPA charge is invalid.");
+            if (cost > 0) charges.Add((recipientId, cost.Value));
+        }
+
+        var totalCost = charges.Sum(charge => (long)charge.Cost);
+        if (totalCost == 0) return null;
+        var approvedCost = call.Kwarg("approvedCost") switch
+        {
+            PyInt value => (long)value.Value,
+            PyLong value => value.Value,
+            _ => (long?)null,
+        };
+        if (approvedCost is not { } approved || approved < totalCost)
+        {
+            var totalCostIsk = totalCost.ToString("N2", CultureInfo.InvariantCulture) + " ISK";
+            throw MachoErrors.ThrowUserError("ContactCostNotApproved",
+                ("totalCost", new PyLong(totalCost)), ("totalCostISK", new PyStr(totalCostIsk)));
+        }
+
+        var wallets = billing.Wallets ?? throw new InvalidOperationException("CSPA charges require the wallet transaction provider.");
+        decimal balance = 0;
+        var callId = Eve.Macho.JsSemantics.StringValue(call.CallId);
+        foreach (var charge in charges)
+        {
+            balance = await wallets.AdjustAsync(
+                connection, transaction, senderId, -charge.Cost, 0, CspaWalletRefType, string.Empty,
+                _nowUnixMs(), $"calendar-cspa:{operation}:{callId}:{eventId}:{charge.RecipientId}",
+                cancellationToken, referenceId: charge.RecipientId);
+        }
+        return balance;
+    }
+
+    private void AnnounceCspaWalletBalance(long characterId, decimal? balance)
+    {
+        if (balance is { } committedBalance)
+            _cspaBilling?.Wallets?.AnnounceCommitted(new WalletBalanceChange(characterId, 1000, committedBalance));
     }
 
     [Method("SendEventResponse")]

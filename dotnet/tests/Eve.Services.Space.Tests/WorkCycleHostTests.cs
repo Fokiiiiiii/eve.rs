@@ -290,7 +290,7 @@ public class WorkCycleHostTests
     public async Task A_salvager_cycle_on_a_wreck_is_granted_its_product_into_the_hold()
     {
         await using var rig = await Rig.CreateAsync();
-        rig.Containers.SalvageRewardRoll = () => 0.99;
+        rig.Ships.SalvageRewardRoll = () => 0.99;
         var types = await new Eve.Sde.SdeReader(rig.Source).ReadTypeSummariesAsync();
         var salvagerTypeId = DroneHostTests.SdeTypeId(types, "Salvager I");
         // a wreck type is not published, as the drone salvage test finds it
@@ -348,7 +348,7 @@ public class WorkCycleHostTests
     public async Task A_granted_salvage_tells_the_pilot_what_it_recovered_and_announces_the_wreck_salvaged()
     {
         await using var rig = await Rig.CreateAsync();
-        rig.Containers.SalvageRewardRoll = () => 0.99;
+        rig.Ships.SalvageRewardRoll = () => 0.99;
         var (flying, wreck, _) = await SalvagerOnWreckAsync(rig);
         var facts = await SalvageFactsAsync(rig);
         StartModule(rig, flying);
@@ -364,6 +364,15 @@ public class WorkCycleHostTests
         Assert.StartsWith("Salvaging succeeded. Recovered 1 x ", text);
         Assert.EndsWith(" and placed it in your cargo hold.", text);
         Assert.Equal(new[] { Eve.Ships.SalvageWreckedEvent.Topic }, facts.Select(fact => fact.Topic));
+
+        var replay = await SettleAsync(rig, SalvageCycle(flying, flying.Module, wreck, 6));
+        await rig.Events.PumpAsync();
+        Assert.True(replay.Accepted, replay.Reason);
+        Assert.Equal(1L, Assert.Single(await rig.Items.InContainerAsync(flying.Session.GetInt("shipid")!.Value), item =>
+            rig.Statics.GroupName(rig.Statics.Type(item.TypeId)!.GroupId) == "Salvaged Materials").Quantity);
+        Assert.Single(RemoteMessagesOf(flying));
+        Assert.Single(facts);
+        Assert.Null(await new Eve.Ships.PgWreckSalvageStore(rig.Source, rig.SpaceSchema).GetAsync(wreck));
     }
 
     [PgFact]
@@ -384,6 +393,7 @@ public class WorkCycleHostTests
         Assert.Equal((wreck, 4L, (long)wreckType), (Events.Number(body.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == "itemID").Value),
             Events.Number(type[0]), Events.Number(type[1])));
         Assert.Equal(7L, (await new PgWorkCycleLedger(rig.Source, rig.SpaceSchema).LastAsync(flying.Module))?.CycleId);
+        Assert.NotNull(await new Eve.Ships.PgWreckSalvageStore(rig.Source, rig.SpaceSchema).GetAsync(wreck));
         Assert.Equal(new[] { Eve.Ships.SalvageFailedEvent.Topic }, facts.Select(fact => fact.Topic));
     }
 
@@ -396,14 +406,8 @@ public class WorkCycleHostTests
             faction.Doc.TryGetProperty("name", out var name)
             && Eve.Sde.SdeReader.English(name).Equals("Amarr Empire", StringComparison.OrdinalIgnoreCase)).Key;
         var wreckType = rig.Statics.Type(wreckTypeId)!;
-        long wreckId;
-        await using (var connection = await rig.Source.OpenConnectionAsync())
-        await using (var transaction = await connection.BeginTransactionAsync())
-        {
-            wreckId = await rig.Items.CreateAsync(connection, transaction,
-                new Eve.Inventory.NewItem(wreckTypeId, flying.Character, flying.System, Eve.Ships.CharacterShips.InSpaceFlag, 1, true));
-            await transaction.CommitAsync();
-        }
+        var made = await rig.Ships.LeaveWreckAsync(wreckTypeId, flying.Character, flying.System, [], warFactionId: amarr);
+        var wreckId = made.Wreck.Id;
         await rig.SpaceItems.SaveAsync(new Eve.Ships.SpaceItem(
             wreckId, flying.System, [1000, 2000, 3000], [1, 0, 0], 14, wreckType.GroupId, flying.Session.GetInt("shipid")!.Value,
             flying.Character, 0, 0, amarr, long.MaxValue));

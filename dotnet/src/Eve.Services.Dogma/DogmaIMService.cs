@@ -21,6 +21,16 @@ public delegate ValueTask<bool?> SkillBoosterActivationHandler(
     long? shipId,
     CancellationToken cancellationToken);
 
+public sealed record StructureServiceModuleToggleResult(string? Error, IReadOnlyList<DogmaEvent> Events);
+
+public delegate ValueTask<StructureServiceModuleToggleResult?> StructureServiceModuleToggleHandler(
+    ClientSession session,
+    long boundLocationId,
+    long locationId,
+    long moduleId,
+    bool online,
+    CancellationToken cancellationToken);
+
 [Service("dogmaIM")]
 public sealed partial class DogmaIMService(
     DogmaStatic statics, CharacterShips ships, Func<long> nowUnixMs, SkillBoosterActivationHandler activateBooster,
@@ -32,7 +42,8 @@ public sealed partial class DogmaIMService(
     Func<ClientSession, ShipSnapshot, CancellationToken, ValueTask<ShipSnapshot?>>? prepareSpaceDogma = null,
     Func<ClientSession, CancellationToken, ValueTask<ShipSnapshot?>>? snapshotProvider = null,
     Func<long, long, IReadOnlyList<long>, long, int?, long?, CancellationToken, Task<ShipOutcome>>? unloadAmmo = null,
-    IWeaponBankStore? weaponBankStore = null) : IBoundObjectReleaseHandler
+    IWeaponBankStore? weaponBankStore = null,
+    StructureServiceModuleToggleHandler? structureServiceModuleToggle = null) : IBoundObjectReleaseHandler
 {
     private readonly CharacterDogmaSync _sync = sync ?? new CharacterDogmaSync(statics, ships, nowUnixMs);
 
@@ -234,12 +245,28 @@ public sealed partial class DogmaIMService(
 
     private async ValueTask<PyValue> SwitchAsync(ServiceCall call, bool online)
     {
-        if (BoundContextOf(call) is null || call.Session.CharacterId is not { } character)
+        if (BoundContextOf(call) is not { } bound || call.Session.CharacterId is not { } character)
         {
             return None;
         }
         var shipId = IdOf(call.Arg(0)) ?? 0;
         var moduleId = IdOf(call.Arg(1)) ?? 0;
+        if (structureServiceModuleToggle is not null
+            && await structureServiceModuleToggle(call.Session, bound.LocationId, shipId, moduleId, online, call.Cancellation) is { } structure)
+        {
+            if (structure.Error is { } error)
+            {
+                if (error == "CrpAccessDenied")
+                    throw MachoErrors.ThrowUserError(error,
+                        ("reason", Py.Tuple(new PyInt(101), new PyStr("UI/Corporations/AccessRestrictions/InsufficientRoles"))));
+                if (error == "NotEnoughFuel")
+                    throw MachoErrors.ThrowUserError("CustomNotify",
+                        ("notify", new PyStr("There is not enough fuel in the structure fuel bay to online that service module.")));
+                throw MachoErrors.ThrowUserError(error);
+            }
+            ShipNotifications.SendEvents(call.Session, character, shipId, structure.Events, Py.FileTimeFromUnixMs(nowUnixMs()));
+            return None;
+        }
         // Refuse before changing the durable ship state so the simulation and the client cannot diverge.
         if (!online && modules is not null && await modules.OfflineAsync(call.Session, moduleId, call.Cancellation) is { Ok: false } offlineRefusal)
         {

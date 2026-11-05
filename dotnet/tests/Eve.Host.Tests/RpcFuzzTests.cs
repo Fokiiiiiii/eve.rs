@@ -191,7 +191,7 @@ public sealed class RpcFuzzTests
                 foreach (var schema in schemas)
                 {
                     await using var command = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
-                    command.CommandTimeout = 120; // The CI Host shard exceeded Npgsql's default during scratch-schema cleanup.
+                    command.CommandTimeout = 300; // CI Host shard cleanup can exceed the Npgsql default under database load.
                     await command.ExecuteNonQueryAsync();
                 }
             }

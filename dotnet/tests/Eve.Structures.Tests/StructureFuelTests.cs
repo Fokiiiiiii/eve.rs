@@ -15,6 +15,23 @@ public class StructureFuelTests
             StructureServiceIds.Reprocessing => new ServiceFuelRule(StructureServiceIds.Reprocessing, 10, 720),
             _ => null,
         };
+
+        public StructureServiceModuleFuelRule? RuleOfModule(int moduleTypeId, int structureTypeId) =>
+            moduleTypeId == 35892 ? new StructureServiceModuleFuelRule(2.5, 2.5) : null;
+
+        public IReadOnlyList<int> ServicesOfModule(int moduleTypeId) =>
+            moduleTypeId == 35892 ? [StructureServiceIds.Market] : [];
+    }
+
+    private sealed class FakeModuleStates : IStructureServiceModuleStates
+    {
+        public Dictionary<long, bool> States { get; } = [];
+
+        public Task SetAsync(Npgsql.NpgsqlConnection connection, Npgsql.NpgsqlTransaction transaction, long moduleId, bool online, CancellationToken cancellationToken)
+        {
+            States[moduleId] = online;
+            return Task.CompletedTask;
+        }
     }
 
     /// <summary>A bay per structure. The real bay is the item store (the Host's tests cover it); this one only keeps the quantities.</summary>
@@ -36,9 +53,9 @@ public class StructureFuelTests
         }
     }
 
-    private static StructureFuel Fuel(Rig rig, FakeBay bay)
+    private static StructureFuel Fuel(Rig rig, FakeBay bay, IStructureServiceModuleStates? moduleStates = null)
     {
-        var fuel = new StructureFuel(rig.Store, rig.Scheduler, rig.Timers, new FakeRules(), bay);
+        var fuel = new StructureFuel(rig.Store, rig.Scheduler, rig.Timers, new FakeRules(), bay, moduleStates);
         fuel.Register();
         return fuel;
     }
@@ -200,5 +217,58 @@ public class StructureFuelTests
 
         Assert.Equal(ServiceOnlineOutcome.Online, await rig.Commit((c, t) => fuel.OnlineAsync(c, t, Structure, StructureServiceIds.CynoJammer)));
         Assert.Equal(0, bay.Stock[Structure]);
+    }
+
+    [PgFact]
+    public async Task Service_module_fuel_retries_without_charge_and_survives_restart_with_fractional_cycles()
+    {
+        await using var rig = await Rig.Create();
+        const long module = 901;
+        const int moduleType = 35892;
+        int[] services = [StructureServiceIds.Market];
+        var bay = new FakeBay { Stock = { [Structure] = 2 } };
+        var moduleStates = new FakeModuleStates();
+        var fuel = Fuel(rig, bay, moduleStates);
+        await rig.Working(Structure);
+
+        Assert.Equal(StructureServiceModuleOutcome.NotEnoughFuel,
+            await rig.Commit((c, t) => fuel.OnlineModuleAsync(c, t, Structure, module, moduleType, services)));
+        Assert.Equal(2, bay.Stock[Structure]);
+        Assert.Empty(await rig.Commit((c, t) => rig.Store.ServiceModuleFuelCyclesAsync(c, t, Structure)));
+        Assert.False((await Services(rig, Structure)).ContainsKey(StructureServiceIds.Market));
+
+        bay.Stock[Structure] = 23;
+        Assert.Equal(StructureServiceModuleOutcome.Changed,
+            await rig.Commit((c, t) => fuel.OnlineModuleAsync(c, t, Structure, module, moduleType, services)));
+        Assert.Equal(20, bay.Stock[Structure]);
+        Assert.Equal(ServiceState.Online, (await Services(rig, Structure))[StructureServiceIds.Market]);
+        var first = Assert.Single(await rig.Commit((c, t) => rig.Store.ServiceModuleFuelCyclesAsync(c, t, Structure)));
+        Assert.Equal(rig.Now + HourMs, first.NextFuelCycleMs);
+
+        Assert.Equal(StructureServiceModuleOutcome.Unchanged,
+            await rig.Commit((c, t) => fuel.OnlineModuleAsync(c, t, Structure, module, moduleType, services)));
+        Assert.Equal(20, bay.Stock[Structure]);
+
+        await rig.Restart();
+        fuel = Fuel(rig, bay, moduleStates);
+        rig.Now += HourMs;
+        await rig.Tick();
+        await rig.Tick();
+        Assert.Equal(18, bay.Stock[Structure]);
+        var afterFirstCycle = Assert.Single(await rig.Commit((c, t) => rig.Store.ServiceModuleFuelCyclesAsync(c, t, Structure)));
+        Assert.Equal(0.5, afterFirstCycle.FuelRemainder);
+        Assert.Equal(rig.Now + HourMs, afterFirstCycle.NextFuelCycleMs);
+
+        rig.Now += HourMs;
+        await rig.Tick();
+        Assert.Equal(15, bay.Stock[Structure]);
+
+        await rig.Commit((c, t) => fuel.OfflineModuleAsync(c, t, Structure, module));
+        Assert.Equal(15, bay.Stock[Structure]);
+        Assert.Equal(ServiceState.Offline, (await Services(rig, Structure))[StructureServiceIds.Market]);
+        Assert.Empty(await rig.Commit((c, t) => rig.Store.ServiceModuleFuelCyclesAsync(c, t, Structure)));
+        Assert.Equal(StructureServiceModuleOutcome.Unchanged,
+            await rig.Commit((c, t) => fuel.OfflineModuleAsync(c, t, Structure, module)));
+        Assert.Equal(15, bay.Stock[Structure]);
     }
 }

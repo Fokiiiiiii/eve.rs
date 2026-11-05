@@ -263,7 +263,16 @@ public partial class HostServerTests
             Assert.Equal(MachoMessage.CallRsp, Envelope(online.Response).Type);
             Assert.IsType<PyNone>(Result(MarshalCodec.Decode(online.Response.Payload)));
             Assert.Equal(new[] { MachoMessage.Notification }, online.Notices.Select(packet => Envelope(packet).Type));
-            Assert.Equal("OnMultiEvent", DecodeClientNotification(online.Notices.Single()).Name);
+            var dogmaNotification = DecodeClientNotification(online.Notices.Single());
+            Assert.Equal("OnMultiEvent", dogmaNotification.Name);
+            Assert.Equal("clientID", dogmaNotification.IdType);
+            var dogmaEvents = Assert.IsType<PyList>(dogmaNotification.Args.Items[0]).Items;
+            Assert.Equal(new[] { "OnModuleAttributeChange", "OnGodmaShipEffect" }, dogmaEvents.Select(value =>
+            {
+                var eventAndTime = Assert.IsType<PyTuple>(value);
+                var dogmaEvent = Assert.IsType<PyTuple>(eventAndTime.Items[0]);
+                return JsSemantics.StringValue(dogmaEvent.Items[0]);
+            }));
             var duplicateOnline = await ToggleAsync(5, oid);
             Assert.Equal(MachoMessage.CallRsp, Envelope(duplicateOnline.Response).Type);
             await using (var connection = await source.OpenConnectionAsync())
@@ -343,6 +352,33 @@ public partial class HostServerTests
                     $"SELECT count(*) FROM {eventSchema}.outbox WHERE topic = $1", connection, transaction);
                 count.Parameters.AddWithValue(StructureTimers.ServiceChangedTopic);
                 Assert.Equal(2L, (long)(await count.ExecuteScalarAsync())!);
+                await transaction.CommitAsync();
+            }
+
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                _ = await items.CreateAsync(connection, transaction,
+                    new NewItem(HydrogenFuelBlock, ServiceToggleCorporation, ServiceToggleStructure,
+                        StructureFuelBayFlag, 2_160, false));
+                await transaction.CommitAsync();
+            }
+            var concurrentOnline = await Task.WhenAll(Enumerable.Range(0, 2).Select(_ => authority.ToggleAsync(
+                client!, ServiceToggleStructure, ServiceToggleStructure, moduleId, true, default).AsTask()));
+            Assert.All(concurrentOnline, result => Assert.NotNull(result));
+            Assert.All(concurrentOnline, result => Assert.Null(result!.Error));
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                Assert.Equal(0, await bay.QuantityAsync(connection, transaction, ServiceToggleStructure, default));
+                Assert.Equal(ItemState.Online, await modules.StateAsync(connection, transaction, moduleId));
+                Assert.Equal(ServiceState.Online,
+                    (await structures.ServicesAsync(connection, transaction, ServiceToggleStructure))[StructureServiceIds.Market]);
+                Assert.NotNull(await structures.ServiceModuleFuelCycleAsync(connection, transaction, ServiceToggleStructure, moduleId));
+                await using var count = new NpgsqlCommand(
+                    $"SELECT count(*) FROM {eventSchema}.outbox WHERE topic = $1", connection, transaction);
+                count.Parameters.AddWithValue(StructureTimers.ServiceChangedTopic);
+                Assert.Equal(3L, (long)(await count.ExecuteScalarAsync())!);
                 await transaction.CommitAsync();
             }
         }

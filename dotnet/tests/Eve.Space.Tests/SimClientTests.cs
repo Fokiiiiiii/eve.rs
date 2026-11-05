@@ -538,16 +538,181 @@ public class SimClientTests
     }
 
     [Fact]
-    public async Task A_request_that_is_given_up_stops_waiting()
+    public async Task A_pre_cancelled_request_is_canceled_without_reaching_the_simulation()
     {
         var (sim, client) = await ConnectedAsync();
         await using var _ = sim;
         await using var __ = client;
-        using var give_up = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.EnterAsync(Enter(), give_up.Token));
-        // the session can ask again: the abandoned request left nothing behind
-        var again = client.EnterAsync(Enter());
-        Assert.False(again.IsCompleted);
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+        var scene = new SimSceneKey(31_000_201, 42, 2);
+        var profile = new SimAbyssalSceneSpec(
+            scene,
+            new SimAbyssalEnvironmentProfile([], []),
+            new SimAbyssalBoundaryProfile([0.0, 0.0, 0.0], 75_000.0, 1_000,
+                [new SimAbyssalBoundaryDamagePoint(0.0, 12.5)]),
+            134_351_527_136_350_000);
+
+        var enterCancellation = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.EnterAsync(Enter(), canceled.Token));
+        var abyssalCancellation = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.EnsureAbyssalSceneAsync(
+            new SimEnsureAbyssalScene(101, profile), canceled.Token));
+        var chargeCancellation = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.AdjustChargeAsync(
+            new SimAdjustCharge(102, 7, 9988400001939, 34, new SimChargeOp.Add(10, 5)), cancellationToken: canceled.Token));
+        Assert.Equal(canceled.Token, enterCancellation.CancellationToken);
+        Assert.Equal(canceled.Token, abyssalCancellation.CancellationToken);
+        Assert.Equal(canceled.Token, chargeCancellation.CancellationToken);
+
+        Assert.DoesNotContain(sim.HeardNow(), message => message is SimEnter or SimEnsureAbyssalScene or SimAdjustCharge);
+    }
+
+    [Fact]
+    public async Task Cancellation_after_the_connection_check_prevents_enqueue()
+    {
+        using var canceled = new CancellationTokenSource();
+        using var continueEnqueue = new ManualResetEventSlim();
+        var checkedConnection = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (sim, client) = await ConnectedAsync(afterConnectionCheck: () =>
+        {
+            checkedConnection.TrySetResult(true);
+            if (!continueEnqueue.Wait(Patience)) throw new TimeoutException("request enqueue was not released");
+        });
+        await using var _ = sim;
+        await using var __ = client;
+
+        var request = Task.Run(() => client.EnterAsync(Enter(), canceled.Token));
+        try
+        {
+            await checkedConnection.Task.WaitAsync(Patience);
+            canceled.Cancel();
+            continueEnqueue.Set();
+
+            var cancellation = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request.WaitAsync(Patience));
+            Assert.Equal(canceled.Token, cancellation.CancellationToken);
+            Assert.DoesNotContain(sim.HeardNow(), message => message is SimEnter);
+        }
+        finally
+        {
+            continueEnqueue.Set();
+        }
+    }
+
+    [Fact]
+    public async Task Cancellation_at_the_enqueue_boundary_keeps_the_accepted_send_and_cancels_the_wait()
+    {
+        using var canceled = new CancellationTokenSource();
+        var seen = 0;
+        var (sim, client) = await ConnectedAsync(message =>
+        {
+            if (message is not SimEnter enter) return [];
+            if (Interlocked.Increment(ref seen) == 1)
+            {
+                canceled.Cancel();
+                return [];
+            }
+            return [new SimEnterReply(enter.SessionId, null)];
+        });
+        await using var _ = sim;
+        await using var __ = client;
+
+        var cancellation = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.EnterAsync(Enter(), canceled.Token));
+        Assert.Equal(canceled.Token, cancellation.CancellationToken);
+        Assert.Single(sim.HeardNow().OfType<SimEnter>());
+
+        Assert.Null(await Within(client.EnterAsync(Enter())));
+        Assert.Equal(2, sim.HeardNow().OfType<SimEnter>().Count());
+    }
+
+    [Fact]
+    public async Task A_reply_after_cancellation_is_ignored_before_a_retry_reuses_the_key()
+    {
+        var (sim, client) = await ConnectedAsync();
+        await using var _ = sim;
+        await using var __ = client;
+        using var canceled = new CancellationTokenSource();
+        var heardAfterReply = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.Received += message =>
+        {
+            if (message is SimBind { SessionId: 7 }) heardAfterReply.TrySetResult(true);
+        };
+
+        var first = client.EnterAsync(Enter(), canceled.Token);
+        await Until(() => sim.HeardNow().OfType<SimEnter>().Count() == 1);
+        canceled.Cancel();
+        var cancellation = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
+        Assert.Equal(canceled.Token, cancellation.CancellationToken);
+        await sim.SayAsync(new SimEnterReply(7, "CANCELLED_REQUEST"));
+        await sim.SayAsync(new SimBind(7));
+        await Within(heardAfterReply.Task);
+
+        var retry = client.EnterAsync(Enter());
+        await Until(() => sim.HeardNow().OfType<SimEnter>().Count() == 2);
+        await sim.SayAsync(new SimEnterReply(7, "RETRY_REPLY"));
+        Assert.Equal("RETRY_REPLY", await Within(retry));
+    }
+
+    [Fact]
+    public void Late_cancellation_cleanup_keeps_retries_with_the_same_key_in_every_pending_map()
+    {
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+
+        var answeredKey = (Session: 7UL, Code: SimCommands.Dock);
+        var oldAnswer = new TaskCompletionSource<CommandReply>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var retryAnswer = new TaskCompletionSource<CommandReply>(TaskCreationOptions.RunContinuationsAsynchronously);
+        AssertLateCancellationLeavesRetry(
+            new System.Collections.Concurrent.ConcurrentDictionary<(ulong Session, byte Code), TaskCompletionSource<CommandReply>>(),
+            answeredKey, oldAnswer, retryAnswer, oldAnswer, new CommandReply(true, 1, null), canceled.Token);
+
+        var abyssalKey = (ReplyType: typeof(SimEnsureAbyssalSceneReply), RequestId: 101UL);
+        var oldAbyssal = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var retryAbyssal = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        AssertLateCancellationLeavesRetry(
+            new System.Collections.Concurrent.ConcurrentDictionary<(Type ReplyType, ulong RequestId), TaskCompletionSource<string?>>(),
+            abyssalKey, oldAbyssal, retryAbyssal, oldAbyssal, null, canceled.Token);
+
+        var oldCharge = new TaskCompletionSource<SimChargeAdjusted>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var retryCharge = new TaskCompletionSource<SimChargeAdjusted>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var oldChargePending = (Completion: oldCharge, InOrder: (Action<SimChargeAdjusted>?)null);
+        var retryChargePending = (Completion: retryCharge, InOrder: (Action<SimChargeAdjusted>?)null);
+        AssertLateCancellationLeavesRetry(
+            new System.Collections.Concurrent.ConcurrentDictionary<ulong, (TaskCompletionSource<SimChargeAdjusted> Completion, Action<SimChargeAdjusted>? InOrder)>(),
+            102UL, oldChargePending, retryChargePending, oldCharge, new SimChargeAdjusted(102, true, 4, 5), canceled.Token);
+    }
+
+    [Fact]
+    public async Task Charge_adjustment_completes_from_its_correlated_reply()
+    {
+        var request = new SimAdjustCharge(201, 7, 9988400001939, 34, new SimChargeOp.Add(10, 5));
+        var reply = new SimChargeAdjusted(request.RequestId, true, 4, 9);
+        var (sim, client) = await ConnectedAsync(message => message is SimAdjustCharge sent && sent.RequestId == request.RequestId ? [reply] : []);
+        await using var _ = sim;
+        await using var __ = client;
+        var ordered = new List<SimChargeAdjusted>();
+
+        Assert.Equal(reply, await Within(client.AdjustChargeAsync(request, ordered.Add)));
+        Assert.Equal([reply], ordered);
+        Assert.Equal(request, Assert.Single(sim.HeardNow().OfType<SimAdjustCharge>()));
+    }
+
+    private static void AssertLateCancellationLeavesRetry<TKey, TValue, T>(
+        System.Collections.Concurrent.ConcurrentDictionary<TKey, TValue> pending,
+        TKey key,
+        TValue original,
+        TValue retry,
+        TaskCompletionSource<T> originalCompletion,
+        T reply,
+        CancellationToken cancellationToken) where TKey : notnull
+    {
+        Assert.True(pending.TryAdd(key, original));
+        Assert.True(pending.TryRemove(key, out var replied));
+        Assert.Equal(original, replied);
+        Assert.True(originalCompletion.TrySetResult(reply));
+        Assert.True(pending.TryAdd(key, retry));
+
+        SimClient.CancelPending(new object(), pending, key, original, originalCompletion, cancellationToken);
+
+        Assert.Equal(retry, pending[key]);
+        Assert.Equal(reply, originalCompletion.Task.GetAwaiter().GetResult());
     }
 
     [Fact]

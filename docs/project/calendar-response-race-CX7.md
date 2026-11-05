@@ -21,6 +21,14 @@ The PostgreSQL regression pauses a response after the service precheck, commits 
 - `CalendarMgrServiceTests`: 10 passed.
 - No graphical EVE client session was used.
 
+## Deleted-event privacy follow-up
+
+No source change was needed in this continuation: current main already contains `948421d3` (`Preserve calendar uninvite status on deletion`) and the corresponding service assertion and PostgreSQL-backed Host regression. `CalendarStore.DeleteEventAsync` changes active responses to `Deleted` while leaving `Uninvited` intact. The month query excludes response status 0, and `CalendarWire.CanViewAsync` denies details to a character whose response is `Uninvited`. The Host regression creates a personal event, removes one participant, then deletes it; the owner and remaining invitee retain deleted-event list and detail access, while the removed character sees no event and receives an access error. `CalendarMgrServiceTests` also checks the owner and remaining invitee become `Deleted` and the removed character stays `Uninvited`.
+
+V24.01 client evidence: `eve/client/script/ui/services/eveCalendarsvc.py:236-241` fetches and caches month rows; `:258-262` calls and caches event details. `eve/client/script/ui/shared/eveCalendar.py:1106-1112` consumes `eventText` and `creatorID` for the event window. `eveCalendarsvc.py:315-320` sends `DeleteEvent`; `:378-397` handles removal notifications and marks a deleted row; `eveCalendar.py:1588` reaches participant updates and `:1672-1676` closes the deleted event window. The calendar notification formatter also reads detail text at `notifications/common/formatters/calendar.py:25-29`.
+
+EveJS 261028.1 evidence: `calendarRuntimeState.js:665-710` removes the character from `inviteeCharacterIDs` and records `Uninvited`; `:712-730` marks and persists the deleted event without dropping its active invitee list. Index rebuilding and month access use that list at `:105-151` and `:226-280`; `calendarAccess.js:226-257` and `calendarRuntimeState.js:282-302` check visibility before returning details.
+
 ## Delivery gate
 
-At the last status check, completed main CI run 1498 (SHA `141310d7`) was red; run 1499 was still in progress. No merge or push has been made. Recheck the latest completed main CI status before merging or pushing, and update this note with the resulting commit and Actions run after delivery.
+Worktree fast-forwarded to main SHA `2417e284`. Main CI run 1521 passed: <https://github.com/Fokiiiiiii/eve.rs/actions/runs/41938528264>. On PostgreSQL database `eve_p7`, through `tools/dev/db-lock.sh`, the Host delete-privacy case passed (1/1) and the invite-removal concurrency/failed-notification case passed (1/1). The focused service deletion-state and mutation-notification cases passed (2/2). No graphical EVE client session was used.

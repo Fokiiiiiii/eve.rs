@@ -290,7 +290,8 @@ fn lowsec_security_status_loss_makes_station_sentries_lock_and_fire() {
     let mut criminal = scene.pilots[&PLAYER].ship.spec.clone();
     criminal.security_status = -1.0;
     scene.respec(PLAYER, criminal, LATER);
-    assert_eq!(scene.security_status_losses.len(), 1);
+    assert_eq!(scene.pending_security_status_losses.len(), 1);
+    scene.crimewatch_flag_active(PLAYER, true, i64::MAX, LATER);
 
     let told = run(&mut scene, LATER, 8);
     let sentries = scene.pilots.values().filter(|pilot| pilot.ship.spec.group_id == 99).count();
@@ -336,7 +337,8 @@ fn a_lowsec_status_loss_before_the_first_scene_poll_reaches_sentries() {
     let mut criminal = scene.pilots[&PLAYER].ship.spec.clone();
     criminal.security_status = -1.0;
     scene.respec(PLAYER, criminal, LATER);
-    assert_eq!(scene.security_status_losses.len(), 1);
+    assert_eq!(scene.pending_security_status_losses.len(), 1);
+    scene.crimewatch_flag_active(PLAYER, false, i64::MAX, LATER);
 
     let told = run(&mut scene, LATER, 12);
     assert!(!notified(&told, "OnTarget").is_empty(), "{told:?}");
@@ -352,8 +354,7 @@ fn an_active_criminal_flag_before_the_first_scene_poll_reaches_sentries() {
     player_spec.vitals.shield_capacity = 20_000.0;
     scene.undock(PLAYER, player_spec, STATION, NOON).unwrap();
     scene.bind(PLAYER, NOON);
-    let ship = &scene.pilots[&PLAYER].ship.spec;
-    scene.criminal_flag_activations.push((ship.owner_id, ship.ship_id));
+    scene.crimewatch_flag_active(PLAYER, true, i64::MAX, NOON);
 
     let told = run(&mut scene, LATER, 12);
     assert!(!notified(&told, "OnTarget").is_empty(), "{told:?}");

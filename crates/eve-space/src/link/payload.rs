@@ -778,9 +778,14 @@ impl Message {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.push(*why);
             }
-            Self::Bind { session_id }
-            | Self::UpdateState { session_id }
-            | Self::CriminalFlagActive { session_id } => out.extend_from_slice(&session_id.to_le_bytes()),
+            Self::Bind { session_id } | Self::UpdateState { session_id } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+            }
+            Self::CrimewatchFlagActive { session_id, is_criminal, expires_at_unix_ms } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.push(u8::from(*is_criminal));
+                out.extend_from_slice(&expires_at_unix_ms.to_le_bytes());
+            }
             Self::ControlStructure {
                 session_id,
                 solar_system_id,

@@ -2539,9 +2539,20 @@ fn active_criminal_flag_is_routed_to_the_session_scene() {
     let ship = &sim.scenes[&SceneKey::solar_system(SYSTEM)].pilots[&SESSION].ship.spec;
     let expected = (ship.owner_id, ship.ship_id);
 
-    sim.handle(Message::CriminalFlagActive { session_id: SESSION }, NOON).unwrap();
+    sim.handle(
+        Message::CrimewatchFlagActive {
+            session_id: SESSION,
+            is_criminal: true,
+            expires_at_unix_ms: i64::MAX,
+        },
+        NOON,
+    )
+    .unwrap();
 
-    assert_eq!(sim.scenes[&SceneKey::solar_system(SYSTEM)].criminal_flag_activations, vec![expected]);
+    let scene = &sim.scenes[&SceneKey::solar_system(SYSTEM)];
+    assert_eq!(scene.pending_criminal_flag_activations, vec![expected]);
+    assert_eq!(scene.pilots[&SESSION].crimewatch_flag_expires_at, Some(i64::MAX));
+    assert!(scene.pilots[&SESSION].crimewatch_flag_is_criminal);
 }
 
 #[test]

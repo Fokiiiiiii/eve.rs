@@ -195,7 +195,24 @@ public class SpaceServiceTests
           Assert.Equal(session.GetInt("solarsystemid"), entry.System);
           Assert.True(entry.Security >= 0.5);
             Assert.Contains(rig.Sim.Heard, message =>
-                message is Eve.Space.SimCriminalFlagActive active && active.SessionId == (ulong)session.SessionId);
+                message is Eve.Space.SimCrimewatchFlagActive active && active.SessionId == (ulong)session.SessionId &&
+                active.IsCriminal && active.ExpiresAtUnixMs == long.MaxValue);
+      }
+
+      [PgFact]
+      public async Task An_active_suspect_flag_is_sent_with_its_authoritative_expiry()
+      {
+          var (rig, _, session) = await DockedAsync();
+          await using var _ = rig;
+          const long expiresAtUnixMs = long.MaxValue;
+          rig.Space.CrimewatchStateOf = (_, _) => Task.FromResult(
+              new Eve.Crimewatch.CombatState(0, 0, 0, expiresAtUnixMs, Eve.Crimewatch.Flag.Suspect, 0, 0));
+
+          await UndockAsync(rig, session);
+
+          var flag = Assert.Single(rig.Sim.Heard.OfType<Eve.Space.SimCrimewatchFlagActive>());
+          Assert.False(flag.IsCriminal);
+          Assert.Equal(expiresAtUnixMs, flag.ExpiresAtUnixMs);
       }
 
       private static async Task<(Rig Rig, Eve.Characters.Created Character, ClientSession Session)> DockedAsync(

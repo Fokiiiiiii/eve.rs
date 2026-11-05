@@ -92,6 +92,7 @@ impl Scene {
         }
         let ship = &pilot.ship;
         let ship_id = ship.spec.ship_id;
+        self.remove_pending_crime_events(ship_id);
         self.abyssal_boundary_exposure_ms.remove(&ship_id);
         if self.abyssal.is_some()
             && let Some(receipt) = self.abyssal_npc_spawn_receipts.get_mut(&ship_id)

@@ -1132,7 +1132,8 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     public void ShipChanged(ulong sessionId, SimShip ship) => Send(new SimShipChanged(sessionId, ship));
 
-    public void CriminalFlagActive(ulong sessionId) => Send(new SimCriminalFlagActive(sessionId));
+    public void CrimewatchFlagActive(ulong sessionId, bool isCriminal, long expiresAtUnixMs) =>
+        Send(new SimCrimewatchFlagActive(sessionId, isCriminal, expiresAtUnixMs));
 
     public async ValueTask DisposeAsync()
     {

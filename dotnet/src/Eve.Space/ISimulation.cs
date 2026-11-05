@@ -162,7 +162,7 @@ public interface ISimulation
 
     void ShipChanged(ulong sessionId, SimShip ship);
 
-    void CriminalFlagActive(ulong sessionId);
+    void CrimewatchFlagActive(ulong sessionId, bool isCriminal, long expiresAtUnixMs);
 
     /// <summary>Spawns an NPC in the scene of a system and waits for the answer (the session it is known by, or why it could not be done).</summary>
     Task<SimSpawnReply> SpawnAsync(SimSpawn spawn, CancellationToken cancellationToken = default);

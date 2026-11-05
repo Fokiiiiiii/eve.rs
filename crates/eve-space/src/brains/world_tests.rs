@@ -12,8 +12,8 @@ use super::rat_tests::{
 use super::world::distance;
 use super::{Brains, SceneWorld};
 use crate::npc::is_npc_session;
-use crate::scene::tests::NOON;
-use crate::scene::{Scene, SessionId};
+use crate::scene::tests::{NOON, STATION, spec};
+use crate::scene::{Departure, MAX_PENDING_CRIME_EVENTS, Scene, SessionId};
 use crate::targeting::Order;
 use crate::weapons::Aggression;
 
@@ -180,7 +180,8 @@ fn an_offensive_act_is_told_to_those_who_wait_for_one_on_the_ship_it_was_done_to
 #[test]
 fn a_security_status_loss_is_told_once_to_sentries_subscribed_in_its_system() {
     let (mut scene, _) = scene_with_a_rat();
-    scene.security_status_losses.push((1_000_001, PLAYER_SHIP));
+    scene.queue_security_status_loss(1_000_001, PLAYER_SHIP);
+    scene.crimewatch_flag_active(PLAYER, true, i64::MAX, LATER);
     with_world(&mut scene, LATER, |world, brains| {
         brains.shared.events.subscribe_item(30_000_001, message::SEC_STATUS_LOST_EVENT, WATCHER);
         brains.shared.events.subscribe_item(
@@ -198,7 +199,8 @@ fn a_security_status_loss_is_told_once_to_sentries_subscribed_in_its_system() {
 #[test]
 fn a_security_status_loss_waits_for_sentries_created_in_the_first_scene_poll() {
     let (mut scene, _) = scene_with_a_rat();
-    scene.security_status_losses.push((1_000_001, PLAYER_SHIP));
+    scene.queue_security_status_loss(1_000_001, PLAYER_SHIP);
+    scene.crimewatch_flag_active(PLAYER, true, i64::MAX, LATER);
     with_world(&mut scene, LATER, |world, brains| {
         world.tell_what_happened(&mut brains.shared);
         assert!(heard(brains).is_empty(), "the sentry trees have not subscribed yet");
@@ -213,11 +215,12 @@ fn a_security_status_loss_waits_for_sentries_created_in_the_first_scene_poll() {
 #[test]
 fn an_active_criminal_flag_is_told_once_to_sentries_subscribed_in_its_system() {
     let (mut scene, _) = scene_with_a_rat();
-    scene.criminal_flag_activations.push((1_000_001, PLAYER_SHIP));
+    let owner_id = scene.pilots[&PLAYER].ship.spec.owner_id;
+    scene.crimewatch_flag_active(PLAYER, true, i64::MAX, LATER);
     with_world(&mut scene, LATER, |world, brains| {
         brains.shared.events.subscribe_item(30_000_001, message::CRIMINAL_FLAG_ACTIVE, WATCHER);
         world.tell_what_happened(&mut brains.shared);
-        assert_eq!(heard(brains), [vec![Value::Int(1_000_001), Value::Int(PLAYER_SHIP)]]);
+        assert_eq!(heard(brains), [vec![Value::Int(owner_id), Value::Int(PLAYER_SHIP)]]);
         world.tell_what_happened(&mut brains.shared);
         assert!(heard(brains).is_empty(), "an active criminal flag is told once");
     });
@@ -226,8 +229,9 @@ fn an_active_criminal_flag_is_told_once_to_sentries_subscribed_in_its_system() {
 #[test]
 fn pending_crime_events_wait_for_sentry_subscribers_across_multiple_ticks() {
     let (mut scene, _) = scene_with_a_rat();
-    scene.security_status_losses.push((1_000_001, PLAYER_SHIP));
-    scene.criminal_flag_activations.push((1_000_002, PLAYER_SHIP + 1));
+    let criminal_owner_id = scene.pilots[&PLAYER].ship.spec.owner_id;
+    scene.queue_security_status_loss(1_000_001, PLAYER_SHIP);
+    scene.crimewatch_flag_active(PLAYER, true, i64::MAX, LATER);
     with_world(&mut scene, LATER, |world, brains| {
         world.tell_what_happened(&mut brains.shared);
         assert!(heard(brains).is_empty());
@@ -241,12 +245,97 @@ fn pending_crime_events_wait_for_sentry_subscribers_across_multiple_ticks() {
             heard(brains),
             [
                 vec![Value::Int(1_000_001), Value::Int(PLAYER_SHIP)],
-                vec![Value::Int(1_000_002), Value::Int(PLAYER_SHIP + 1)],
+                vec![Value::Int(criminal_owner_id), Value::Int(PLAYER_SHIP)],
             ]
         );
         world.tell_what_happened(&mut brains.shared);
         assert!(heard(brains).is_empty());
     });
+}
+
+#[test]
+fn pending_crime_events_are_bounded() {
+    let (mut scene, _) = scene_with_a_rat();
+    let excess = 32;
+    for owner_id in 0..(MAX_PENDING_CRIME_EVENTS + excess) {
+        scene.queue_security_status_loss(owner_id as i64, PLAYER_SHIP);
+        scene.crimewatch_flag_active(PLAYER, true, i64::MAX, LATER);
+    }
+
+    assert_eq!(scene.pending_security_status_losses.len(), MAX_PENDING_CRIME_EVENTS);
+    assert_eq!(scene.pending_security_status_losses.first(), Some(&(excess as i64, PLAYER_SHIP)));
+    assert_eq!(scene.pending_criminal_flag_activations.len(), MAX_PENDING_CRIME_EVENTS);
+}
+
+#[test]
+fn a_sentry_subscribing_late_is_told_only_crimes_with_live_flags() {
+    const LATE_SESSION: SessionId = 8;
+    let (mut scene, _) = scene_with_a_rat();
+    let mut late_ship = spec();
+    late_ship.ship_id = PLAYER_SHIP + 1;
+    late_ship.character_id = 140_000_343;
+    late_ship.owner_id = 140_000_343;
+    scene.undock(LATE_SESSION, late_ship, STATION, NOON).unwrap();
+    scene.bind(LATE_SESSION, NOON);
+
+    let first_owner = scene.pilots[&PLAYER].ship.spec.owner_id;
+    let first_ship = scene.pilots[&PLAYER].ship.spec.ship_id;
+    let live_owner = scene.pilots[&LATE_SESSION].ship.spec.owner_id;
+    let live_ship = scene.pilots[&LATE_SESSION].ship.spec.ship_id;
+    scene.pilots.get_mut(&PLAYER).unwrap().crimewatch_flag_expires_at = Some(LATER + SECOND);
+    scene.pilots.get_mut(&PLAYER).unwrap().crimewatch_flag_is_criminal = true;
+    scene.pilots.get_mut(&LATE_SESSION).unwrap().crimewatch_flag_expires_at = Some(LATER + 10 * SECOND);
+    scene.pilots.get_mut(&LATE_SESSION).unwrap().crimewatch_flag_is_criminal = true;
+    scene.queue_security_status_loss(first_owner, first_ship);
+    scene.queue_security_status_loss(live_owner, live_ship);
+    scene.queue_security_status_loss(1_000_002, RAT_SHIP);
+    scene.queue_criminal_flag_activation(first_owner, first_ship);
+    scene.queue_criminal_flag_activation(live_owner, live_ship);
+    scene.queue_criminal_flag_activation(1_000_002, RAT_SHIP);
+
+    with_world(&mut scene, LATER, |world, brains| {
+        world.tell_what_happened(&mut brains.shared);
+        assert!(heard(brains).is_empty());
+    });
+
+    with_world(&mut scene, LATER + 2 * SECOND, |world, brains| {
+        brains.shared.events.subscribe_item(30_000_001, message::SEC_STATUS_LOST_EVENT, WATCHER);
+        brains.shared.events.subscribe_item(30_000_001, message::CRIMINAL_FLAG_ACTIVE, WATCHER);
+        world.tell_what_happened(&mut brains.shared);
+        assert_eq!(
+            heard(brains),
+            [
+                vec![Value::Int(live_owner), Value::Int(live_ship)],
+                vec![Value::Int(live_owner), Value::Int(live_ship)],
+            ]
+        );
+    });
+}
+
+#[test]
+fn a_pilot_leaving_the_scene_drops_its_pending_crime_events() {
+    let (mut scene, _) = scene_with_a_rat();
+    scene.queue_security_status_loss(1_000_001, PLAYER_SHIP);
+    scene.crimewatch_flag_active(PLAYER, true, i64::MAX, LATER);
+    assert_eq!(scene.pending_security_status_losses.len(), 1);
+    assert_eq!(scene.pending_criminal_flag_activations.len(), 1);
+
+    scene.leave(PLAYER, Departure::LoggedOff, LATER).unwrap();
+
+    assert!(scene.pending_security_status_losses.is_empty());
+    assert!(scene.pending_criminal_flag_activations.is_empty());
+}
+
+#[test]
+fn destroying_a_pilot_drops_its_pending_crime_events() {
+    let (mut scene, _) = scene_with_a_rat();
+    scene.queue_security_status_loss(1_000_001, PLAYER_SHIP);
+    scene.crimewatch_flag_active(PLAYER, true, i64::MAX, LATER);
+
+    scene.destroy(PLAYER, None, LATER);
+
+    assert!(scene.pending_security_status_losses.is_empty());
+    assert!(scene.pending_criminal_flag_activations.is_empty());
 }
 
 #[test]

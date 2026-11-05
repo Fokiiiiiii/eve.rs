@@ -733,7 +733,7 @@ impl Scene {
             ));
         }
         if let Some(loss) = security_status_loss {
-            self.security_status_losses.push(loss);
+            self.queue_security_status_loss(loss.0, loss.1);
         }
         if scan_resolution_changed || signature_radius_changed {
             self.rebase_pending_target_locks(session, scan_resolution_changed, signature_radius_changed, now);
@@ -749,6 +749,7 @@ impl Scene {
 
     pub fn poll(&mut self, now: i64) -> Vec<Out> {
         self.settle_all(now);
+        self.prune_pending_crime_events(now);
         let mut told = self.populate_empire_sentries(now);
         told.extend(self.populate_pochven(now));
         let arrived: Vec<SessionId> = self

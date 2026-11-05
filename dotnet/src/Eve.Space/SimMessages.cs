@@ -372,7 +372,7 @@ public sealed record SimCommand(ulong SessionId, byte Code, IReadOnlyList<double
 
 /// <summary>New numbers for a ship in space.</summary>
 public sealed record SimShipChanged(ulong SessionId, SimShip Ship) : SimMessage;
-public sealed record SimCriminalFlagActive(ulong SessionId) : SimMessage;
+public sealed record SimCrimewatchFlagActive(ulong SessionId, bool IsCriminal, long ExpiresAtUnixMs) : SimMessage;
 
 /// <summary>A notification the simulation has for a player's client: the host numbers it and sends it. The arguments are a marshalled tuple.</summary>
 public sealed record SimNotify(ulong SessionId, string Name, string IdType, ReadOnlyMemory<byte> Args) : SimMessage;

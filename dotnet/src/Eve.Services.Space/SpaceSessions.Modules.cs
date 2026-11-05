@@ -531,7 +531,7 @@ public sealed partial class SpaceSessions
                       }
                   }
         }
-          await NotifyCriminalFlagActiveAsync(characterId, id, cancellationToken);
+                  await NotifyCrimewatchFlagActiveAsync(characterId, id, cancellationToken);
           return ModuleResult.Done;
     }
 
@@ -568,20 +568,22 @@ public sealed partial class SpaceSessions
                 _log?.Invoke($"crimewatch system entry for character {characterId} could not be recorded: {error.Message}");
             }
           }
-        await NotifyCriminalFlagActiveAsync(characterId, sessionId, CancellationToken.None);
+        await NotifyCrimewatchFlagActiveAsync(characterId, sessionId, CancellationToken.None);
     }
 
-    private async Task NotifyCriminalFlagActiveAsync(long characterId, ulong sessionId, CancellationToken cancellationToken)
+    private async Task NotifyCrimewatchFlagActiveAsync(long characterId, ulong sessionId, CancellationToken cancellationToken)
     {
         if (CrimewatchStateOf is not { } stateOf) return;
         try
         {
             var state = await stateOf(characterId, cancellationToken);
-            if (state.IsCriminal(_nowUnixMs())) _sim.CriminalFlagActive(sessionId);
+            var flag = state.FlagAt(_nowUnixMs());
+            if (flag != Eve.Crimewatch.Flag.None)
+                _sim.CrimewatchFlagActive(sessionId, flag == Eve.Crimewatch.Flag.Criminal, state.FlagUntilMs);
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
-            _log?.Invoke($"the criminal flag of {characterId} could not be refreshed in the simulation: {error.Message}");
+            _log?.Invoke($"the Crimewatch flag of {characterId} could not be refreshed in the simulation: {error.Message}");
         }
       }
 

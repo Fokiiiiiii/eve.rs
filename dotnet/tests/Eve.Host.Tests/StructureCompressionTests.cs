@@ -60,6 +60,7 @@ public sealed class StructureCompressionTests
             var sde = new SdeReader(source);
             Assert.NotNull(await sde.BuildAsync());
             var dogma = await DogmaStatic.LoadAsync(sde);
+            var serviceFuelRules = await ServiceFuelRulesSource.LoadAsync(dogma, sde);
             var id = Guid.NewGuid().ToString("N")[..12];
             var schemas = new[] { $"cmp_i_{id}", $"cmp_s_{id}", $"cmp_k_{id}" };
             await PgItemStore.MigrateAsync(source, schemas[0]);
@@ -77,7 +78,9 @@ public sealed class StructureCompressionTests
                     return ValueTask.FromResult(corporate.Take);
                 },
                 (connection, transaction, corporation, station, token) => Task.FromResult(corporate.Office),
-                sessions);
+                sessions,
+                serviceFuelRules.ModuleTypeOf(StructureServiceIds.Reprocessing)
+                    ?? throw new InvalidOperationException("the pinned SDE has no reprocessing service module"));
             return new Route(schemas, source, items, structures, skills, authority, new Sink()) { Corporate = corporate, Sessions = sessions };
         }
 

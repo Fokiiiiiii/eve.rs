@@ -1378,7 +1378,7 @@ Open (next steps, in order):
 | OPEN | Live client walk for `CmdJumpToStructureBeacon` and arrival at the Pharolux beacon. | The registered-service refusal tests and jump-drive host test do not exercise a live client session; add a live scenario covering beacon selection, access, fuel debit and destination transition. |
 | DONE (tests) | Host registers `structureCynoBeaconMgr` with the Pharolux validator and jump-drive callback; jammed, unavailable-service and access refusals are exercised through the registered service. | `AgentRpc.cs`; `StructureCompositionTests.A_structure_cyno_beacon_jump_is_refused_by_name_through_the_registry_for_a_jammed_system_and_for_no_access`; successful jump: `CynoJumpHostTests.A_revelation_jumps_to_an_accessible_structure_beacon_as_it_does_to_a_field` |
 | DONE (tests) | Fuel burn notices: online owner members outside the structure receive `OnItemChange`; when none are online, the owner corporation receives a durable fuel alert with remaining quantity; zero remaining fuel produces no alert. | `StructureFuelOwnerNotifications.Subscribe`; `StructureFuelOwnerNotificationTests` (`An_owner_member_online_outside_the_structure_gets_the_burn_as_an_item_change_and_no_alert`, `With_no_owner_member_online_the_alert_goes_to_every_member_with_the_fuel_left_and_no_item_change`, `A_burn_that_leaves_no_fuel_writes_no_alert`) |
-| OPEN | Apply hull-specific service-module fuel reductions from structure bonuses before each hourly burn. | Current `StructureFuel.HourAsync` sums base `FuelPerHour`; EVE University [Structure Browser](https://wiki.eveuniversity.org/Structure_Browser) documents hull bonuses to market, cloning, refining/reprocessing, manufacturing and research service fuel use. SDE-derived hull bonus inputs and focused reduced-burn tests are still needed; the old “rig and skill” wording was not supported by the wiki. |
+| DONE (tests) | Apply hull-specific service-module fuel reductions from structure bonuses before each hourly burn. | `ServiceFuelRulesSource.RuleOfModule` derives hourly and online amounts from pinned SDE dogma through the structure hull, and `StructureFuel.HourAsync` reuses the rule each cycle. The Host PostgreSQL lifecycle case verifies Astrahus + Standup Market Hub I costs 2160 blocks to online and 30 blocks per hour; `StructureFuelTests` covers cycle retries and restart. |
 
 ## 41. Omega state (slice D, 2026-10-11)
 
@@ -2824,6 +2824,13 @@ Security review follow-up: `officeManager.GetMyCorporationsOffices` now consumes
 
 - Host now maps every V24.01 `SERVICES_ACCESS_SETTINGS` entry and treats `SETTING_NONE` as unconditional, matching EveJS. The registered-Host regression verifies all mapped IDs, the structure-list `services` field, and repair/insurance/reprocessing service checks. See [cx4 handoff](handoff-cx4-structure-service-access.md) for whole-client evidence and exact source locations.
 - The non-owner `GetStructureInfo` basic payload intentionally omits `services`, as in EveJS. Structure-browser rows receive `services` from `GetMyCharacterStructures` or `GetMyCorporationStructures`; `GetStructureInfos` is an internal Host name lookup, not a client RPC.
+
+## Character expert-system deletion purge (2026-11-04)
+
+- `PgSkillStore.ClearCharacterAsync` now removes persisted `character_expert_systems` rows on the same connection and transaction used by `HostCharacterDeletionPurge`.
+- `CharacterHostTests.Character_deletion_queues_waits_cancels_and_deletes_and_the_deleted_character_is_refused` seeds unexpired grants for the deleted and a retained character, then verifies only the deleted character's row is removed. `Character_deletion_rolls_back_expert_system_purge_when_a_later_cleanup_step_fails` makes the subsequent neural-remap cleanup fail and verifies the grant is restored by rollback. The existing offline expiry test remains unchanged.
+- Local checks: `Eve.Skills`, `Eve.Host.Tests`, and `Eve.Services.Space.Tests` builds passed; focused deletion/rollback/expiry tests passed 3/3; all `CharacterHostTests` passed 33/33; all `SpaceServiceTests` passed 160/160. The graphical client was not exercised.
+- V24.01 deletion caller: `eve/client/script/ui/login/charSelection/characterSelection.py:822-870`. EveJS 261028.1 clears this state in `src/server/src/services/character/characterDeletionRuntime.js:619-670`.
 
 ## Undock and delayed docking sequence audit (2026-11-02)
 

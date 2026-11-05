@@ -64,6 +64,20 @@ public sealed partial class StructureStore
             ALTER TABLE structure_services ADD COLUMN next_fuel_cycle_ms bigint NOT NULL DEFAULT 0;
             UPDATE structure_services SET next_fuel_cycle_ms = online_since_ms + 3600000 WHERE state = 1 AND online_since_ms > 0;
             """),
+        new Migration("0008_structure_service_module_fuel", """
+            CREATE TABLE structure_service_module_fuel (
+                structure_id bigint NOT NULL REFERENCES structures(structure_id) ON DELETE CASCADE,
+                module_id bigint NOT NULL,
+                module_type_id integer NOT NULL,
+                service_ids integer[] NOT NULL CHECK (cardinality(service_ids) > 0),
+                online_since_ms bigint NOT NULL CHECK (online_since_ms > 0),
+                next_fuel_cycle_ms bigint NOT NULL CHECK (next_fuel_cycle_ms > 0),
+                fuel_remainder double precision NOT NULL DEFAULT 0 CHECK (fuel_remainder >= 0 AND fuel_remainder < 1),
+                PRIMARY KEY (structure_id, module_id)
+            );
+            CREATE INDEX structure_service_module_fuel_due
+                ON structure_service_module_fuel (next_fuel_cycle_ms);
+            """),
     ];
 
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
@@ -213,12 +227,12 @@ public sealed partial class StructureStore
             s.PendingEffectiveMs, s.UnanchorEndsMs, s.LowPowerSinceMs, s.DestroyedMs, s.AnchoringMs);
 
     /// <summary>Sets a service's state. An online service records <paramref name="nowMs"/> as the time it came online; an offline one holds 0.</summary>
-    public async Task SetServiceAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, int serviceId, int state, long nowMs, CancellationToken cancellationToken = default) =>
+    public async Task SetServiceAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, int serviceId, int state, long nowMs, CancellationToken cancellationToken = default, bool manageFuelCycle = true) =>
         await Sql.ExecuteAsync(connection, transaction, Q("""
             INSERT INTO {schema}.structure_services (structure_id, service_id, state, online_since_ms, next_fuel_cycle_ms)
-            VALUES ($1, $2, $3, CASE WHEN $3 = 1 THEN $4::bigint ELSE 0 END, CASE WHEN $3 = 1 THEN $4::bigint + $5 ELSE 0 END)
+            VALUES ($1, $2, $3, CASE WHEN $3 = 1 THEN $4::bigint ELSE 0 END, CASE WHEN $3 = 1 AND $6 THEN $4::bigint + $5 ELSE 0 END)
             ON CONFLICT (structure_id, service_id) DO UPDATE SET state = EXCLUDED.state, online_since_ms = EXCLUDED.online_since_ms, next_fuel_cycle_ms = EXCLUDED.next_fuel_cycle_ms
-            """), cancellationToken, structureId, serviceId, (short)state, nowMs, StructureFuel.HourMs);
+            """), cancellationToken, structureId, serviceId, (short)state, nowMs, StructureFuel.HourMs, manageFuelCycle);
 
     public async Task AdvanceFuelCycleAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, int serviceId, long elapsedCycles, CancellationToken cancellationToken = default) =>
@@ -229,7 +243,7 @@ public sealed partial class StructureStore
     public async Task InitializeFuelCyclesAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, long nowMs, CancellationToken cancellationToken = default) =>
         await Sql.ExecuteAsync(connection, transaction,
-            Q("UPDATE {schema}.structure_services SET next_fuel_cycle_ms = CASE WHEN online_since_ms > 0 THEN online_since_ms + $2 ELSE $3 END WHERE structure_id = $1 AND state = 1 AND next_fuel_cycle_ms <= 0"),
+            Q("UPDATE {schema}.structure_services v SET next_fuel_cycle_ms = CASE WHEN online_since_ms > 0 THEN online_since_ms + $2 ELSE $3 END WHERE structure_id = $1 AND state = 1 AND next_fuel_cycle_ms <= 0 AND NOT EXISTS (SELECT 1 FROM {schema}.structure_service_module_fuel m WHERE m.structure_id = v.structure_id AND v.service_id = ANY(m.service_ids))"),
             cancellationToken, structureId, StructureFuel.HourMs, checked(nowMs + StructureFuel.HourMs));
 
     /// <summary>

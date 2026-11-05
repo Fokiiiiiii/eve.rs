@@ -70,6 +70,13 @@ public static class ShipNotifications
         },
         new PyLong(fileTime)))]);
 
+    /// <summary>Tells the session about dogma changes without inventory moves.</summary>
+    public static void SendEvents(ClientSession session, long characterId, long shipId, IReadOnlyList<DogmaEvent> events, long fileTime)
+    {
+        if (events.Count > 0)
+            session.SendNotification("OnMultiEvent", "clientID", MultiEvent(characterId, shipId, events, fileTime));
+    }
+
     /// <summary>
     /// <c>OnOreMined</c>, told to the pilot who ran a mining cycle once it is granted: the keys the client reads (<c>oreMinedNotificationAdapter.py</c>), with the
     /// reference's meaning (<c>quantity_removed</c> is the yield alone, <c>quantity_added</c> is what reached the hold, the critical bonus is extra to the hold).

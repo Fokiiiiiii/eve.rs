@@ -37,7 +37,7 @@ namespace Eve.Host;
 
 internal sealed partial class CharacterServicesComposition
 {
-    internal static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch, Eve.Calendar.ICalendarStore? CalendarStore, Eve.Calendar.ICalendarAudienceReader? CalendarAudience, Eve.Services.Core.GameRpcCallbacks? GameRpcCallbacks, Eve.Services.Core.KeeperRpcCallbacks? KeeperRpcCallbacks, CharacterSessions? CharacterSessions, Func<long, long, CancellationToken, ValueTask<decimal>>? ContractBrokerFeeAdjustment, Func<long, long, CancellationToken, ValueTask<bool>>? HasContractManagerRole, Func<long, long, short, CancellationToken, ValueTask<bool>>? CanManageCalendarGroupEvent, Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? ReadCurrentCalendarGroups)> CharacterServicesAsync(NpgsqlDataSource source, PgAccountDirectory accounts, OnlineCharacters online, Func<long> now, Foundations foundations, PersistenceStore mailStore, OwnerSession mailStoreOwner, GameStoreCache mailCache, string newCharacterExperienceMode, IOmegaAccountStore omegaAccounts, ConnectedSessions connected, PublicGateway.NoticeHub notices, Action<List<ICharacterEntryHook>>? receiveEntryHooks = null, Action<SpaceContainers?>? receiveSpaceContainers = null, Action<CharacterShips>? receiveTournamentShips = null)
+    internal static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch, Eve.Calendar.ICalendarStore? CalendarStore, Eve.Calendar.ICalendarAudienceReader? CalendarAudience, Eve.Services.Core.CalendarCspaBilling? CalendarCspaBilling, Eve.Services.Core.GameRpcCallbacks? GameRpcCallbacks, Eve.Services.Core.KeeperRpcCallbacks? KeeperRpcCallbacks, CharacterSessions? CharacterSessions, Func<long, long, CancellationToken, ValueTask<decimal>>? ContractBrokerFeeAdjustment, Func<long, long, CancellationToken, ValueTask<bool>>? HasContractManagerRole, Func<long, long, short, CancellationToken, ValueTask<bool>>? CanManageCalendarGroupEvent, Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? ReadCurrentCalendarGroups)> CharacterServicesAsync(NpgsqlDataSource source, PgAccountDirectory accounts, OnlineCharacters online, Func<long> now, Foundations foundations, PersistenceStore mailStore, OwnerSession mailStoreOwner, GameStoreCache mailCache, string newCharacterExperienceMode, IOmegaAccountStore omegaAccounts, ConnectedSessions connected, PublicGateway.NoticeHub notices, Action<List<ICharacterEntryHook>>? receiveEntryHooks = null, Action<SpaceContainers?>? receiveSpaceContainers = null, Action<CharacterShips>? receiveTournamentShips = null)
     {
         var composition = new CharacterServicesComposition(source, accounts, online, now, foundations, mailStore, mailStoreOwner, mailCache, newCharacterExperienceMode, omegaAccounts, connected, notices);
         var result = await composition.RunAsync();
@@ -66,7 +66,7 @@ internal sealed partial class CharacterServicesComposition
         this.newCharacterExperienceMode = newCharacterExperienceMode;
     }
 
-    private async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch, Eve.Calendar.ICalendarStore? CalendarStore, Eve.Calendar.ICalendarAudienceReader? CalendarAudience, Eve.Services.Core.GameRpcCallbacks? GameRpcCallbacks, Eve.Services.Core.KeeperRpcCallbacks? KeeperRpcCallbacks, CharacterSessions? CharacterSessions, Func<long, long, CancellationToken, ValueTask<decimal>>? ContractBrokerFeeAdjustment, Func<long, long, CancellationToken, ValueTask<bool>>? HasContractManagerRole, Func<long, long, short, CancellationToken, ValueTask<bool>>? CanManageCalendarGroupEvent, Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? ReadCurrentCalendarGroups)> RunAsync()
+    private async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch, Eve.Calendar.ICalendarStore? CalendarStore, Eve.Calendar.ICalendarAudienceReader? CalendarAudience, Eve.Services.Core.CalendarCspaBilling? CalendarCspaBilling, Eve.Services.Core.GameRpcCallbacks? GameRpcCallbacks, Eve.Services.Core.KeeperRpcCallbacks? KeeperRpcCallbacks, CharacterSessions? CharacterSessions, Func<long, long, CancellationToken, ValueTask<decimal>>? ContractBrokerFeeAdjustment, Func<long, long, CancellationToken, ValueTask<bool>>? HasContractManagerRole, Func<long, long, short, CancellationToken, ValueTask<bool>>? CanManageCalendarGroupEvent, Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? ReadCurrentCalendarGroups)> RunAsync()
     {
         await MigrateCharacterStores();
 
@@ -76,7 +76,7 @@ internal sealed partial class CharacterServicesComposition
         if (buildVersion is null)
         {
             Console.Error.WriteLine("eve-host: the static data is not loaded (run `eve-sde ensure --pg $EVE_PG_URL`): no charUnboundMgr, no skills");
-            return ([], null, null, null, null, null, null, null, null, null, null, null, null);
+            return ([], null, null, null, null, null, null, null, null, null, null, null, null, null);
         }
         build = buildVersion.Value;
         await LoadCatalogsAndStores();
@@ -116,7 +116,9 @@ internal sealed partial class CharacterServicesComposition
         await AgentMissions();
         await CharacterEntryHooks();
         await CharacterServiceList();
-        return (services, spaceSessions, sim, crimewatchRuntime, calendarStore, calendarAudience, gameRpcCallbacks, keeperRpcCallbacks, characterSessions,
+        return (services, spaceSessions, sim, crimewatchRuntime, calendarStore, calendarAudience,
+            new Eve.Services.Core.CalendarCspaBilling(ReadContactCostAsync, ReadCalendarCspaRecipientRuleAsync, economyWallets),
+            gameRpcCallbacks, keeperRpcCallbacks, characterSessions,
             async (characterId, solarSystemId, cancellationToken) =>
             {
                 await using var connection = await source.OpenConnectionAsync(cancellationToken);

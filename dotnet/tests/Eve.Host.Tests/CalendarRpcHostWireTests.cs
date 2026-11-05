@@ -38,7 +38,7 @@ public partial class HostServerTests
                 registry.Register(new CalendarMgrService(
                     store, audience, sessions,
                     (_, _, _, _) => ValueTask.FromResult(allowGroupManager),
-                    readGroups));
+                    readGroups, FreeCalendarCspaBilling()));
                 registry.Register(new CalendarProxyService(store, readGroups));
             },
             sessionOpened: session =>
@@ -264,7 +264,7 @@ public partial class HostServerTests
                 registry.Register(new CalendarMgrService(
                     store, audience, sessions,
                     (_, _, _, _) => ValueTask.FromResult(allowGroupManager),
-                    readGroups));
+                    readGroups, FreeCalendarCspaBilling()));
                 registry.Register(new CalendarProxyService(store, readGroups));
             },
             sessionOpened: session =>
@@ -383,6 +383,11 @@ public partial class HostServerTests
 
     private static PyValue CalendarEventRowField(PyValue row, string name) =>
         Assert.IsType<PyDict>(row).Entries.Single(pair => WireText(pair.Key) == name).Value;
+
+    private static CalendarCspaBilling FreeCalendarCspaBilling() => new(
+        (_, _) => ValueTask.FromResult<int?>(0),
+        (_, _, _) => ValueTask.FromResult(CalendarCspaRecipientRule.Exempt),
+        null);
 
     private async Task<(TestFront Front, SessionOpen Open)> OpenCalendarFrontAsync(uint userId)
     {
@@ -528,22 +533,27 @@ public partial class HostServerTests
                     ? _responses.Values.Where(row => row.EventId == eventId).OrderBy(row => row.CharacterId).ToArray()
                     : []);
 
-        public Task<long> CreateEventAsync(
+        public async Task<long> CreateEventAsync(
             CalendarEventInput input, IReadOnlyCollection<long> invitees,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null)
         {
             var eventId = ++_nextEventId;
+            var actualInvitees = input.Tag == CalendarTags.Personal
+                ? invitees.Where(id => id > 0 && id != input.CreatorId).Distinct().ToArray()
+                : [];
+            if (beforeCommitAsync is not null)
+                await beforeCommitAsync(null!, null!, eventId, actualInvitees, cancellationToken);
             _events[eventId] = new CalendarEvent(
                 eventId, input.OwnerId, input.CreatorId, input.Tag, input.EventDateTime,
                 input.Duration, input.Title, input.Text, input.Importance,
                 DateTime.UtcNow.ToFileTimeUtc(), false, null);
             _responses[(eventId, input.CreatorId)] =
                 new CalendarResponse(eventId, input.CreatorId, CalendarResponseStates.Accepted);
-            if (input.Tag == CalendarTags.Personal)
-                foreach (var invitee in invitees)
-                    _responses[(eventId, invitee)] =
-                        new CalendarResponse(eventId, invitee, CalendarResponseStates.Undecided);
-            return Task.FromResult(eventId);
+            foreach (var invitee in actualInvitees)
+                _responses[(eventId, invitee)] =
+                    new CalendarResponse(eventId, invitee, CalendarResponseStates.Undecided);
+            return eventId;
         }
 
         public Task<bool> EditEventAsync(
@@ -581,19 +591,27 @@ public partial class HostServerTests
             return Task.FromResult(true);
         }
 
-        public Task<CalendarParticipantUpdateResult> UpdateParticipantsAsync(
+        public async Task<CalendarParticipantUpdateResult> UpdateParticipantsAsync(
             long eventId, long ownerId, IReadOnlyCollection<long> add, IReadOnlyCollection<long> remove,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null)
         {
             if (!_events.TryGetValue(eventId, out var value) || value.OwnerId != ownerId)
-                return Task.FromResult(CalendarParticipantUpdateResult.EventNotFound);
-            foreach (var characterId in remove)
+                return CalendarParticipantUpdateResult.EventNotFound;
+            var removed = remove.Where(id => id > 0 && id != value.CreatorId).ToHashSet();
+            var active = _responses.Values.Where(row => row.EventId == eventId && row.CharacterId != value.CreatorId &&
+                row.Status != CalendarResponseStates.Uninvited).Select(row => row.CharacterId).ToHashSet();
+            var newlyAdded = add.Where(id => id > 0 && id != value.CreatorId && !removed.Contains(id))
+                .Distinct().Where(id => !active.Contains(id)).ToArray();
+            if (beforeCommitAsync is not null)
+                await beforeCommitAsync(null!, null!, eventId, newlyAdded, cancellationToken);
+            foreach (var characterId in removed)
                 _responses[(eventId, characterId)] =
                     new CalendarResponse(eventId, characterId, CalendarResponseStates.Uninvited);
-            foreach (var characterId in add.Where(id => !remove.Contains(id)))
+            foreach (var characterId in newlyAdded)
                 _responses[(eventId, characterId)] =
                     new CalendarResponse(eventId, characterId, CalendarResponseStates.Undecided);
-            return Task.FromResult(CalendarParticipantUpdateResult.Updated);
+            return CalendarParticipantUpdateResult.Updated;
         }
 
         public Task<bool> SendResponseAsync(

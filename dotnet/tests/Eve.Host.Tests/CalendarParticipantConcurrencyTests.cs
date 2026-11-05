@@ -28,7 +28,7 @@ public sealed class CalendarParticipantConcurrencyTests
         try
         {
             var synchronizedStore = new FirstConcurrentReadStore(store);
-            IService service = new CalendarMgrService(synchronizedStore);
+            IService service = new CalendarMgrService(synchronizedStore, cspaBilling: FreeCspaBilling());
             var session = new ClientSession { CharacterId = CreatorId };
             var calls = new[] { CreatorId + 100, CreatorId + 101 }.Select(characterId =>
                 service.CallAsync(Call(session, eventId, characterId)).AsTask()).ToArray();
@@ -75,7 +75,7 @@ public sealed class CalendarParticipantConcurrencyTests
         sessions.Enter(CreatorId, ownerSession);
         sessions.Enter(inviteeId, inviteeSession);
         var gatedStore = new FirstConcurrentReadStore(store, synchronizeFirstTwoReads: false);
-        IService service = new CalendarMgrService(gatedStore, sessions: sessions);
+        IService service = new CalendarMgrService(gatedStore, sessions: sessions, cspaBilling: FreeCspaBilling());
         Task<PyValue>? pendingResponse = null;
 
         try
@@ -168,6 +168,11 @@ public sealed class CalendarParticipantConcurrencyTests
         return Assert.IsType<PyStr>(address[1]).Value;
     }).ToArray();
 
+    private static CalendarCspaBilling FreeCspaBilling() => new(
+        (_, _) => ValueTask.FromResult<int?>(0),
+        (_, _, _) => ValueTask.FromResult(CalendarCspaRecipientRule.Charge),
+        null);
+
     private static async Task<bool> CaptureResult(Task<PyValue> call)
     {
         try
@@ -219,8 +224,9 @@ public sealed class CalendarParticipantConcurrencyTests
         }
 
         public Task<long> CreateEventAsync(CalendarEventInput input, IReadOnlyCollection<long> invitees,
-            CancellationToken cancellationToken = default) =>
-            inner.CreateEventAsync(input, invitees, cancellationToken);
+            CancellationToken cancellationToken = default,
+            Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null) =>
+            inner.CreateEventAsync(input, invitees, cancellationToken, beforeCommitAsync);
 
         public Task<bool> EditEventAsync(long eventId, long ownerId, long oldEventDateTime, CalendarEventInput input,
             CancellationToken cancellationToken = default) =>
@@ -231,8 +237,9 @@ public sealed class CalendarParticipantConcurrencyTests
             inner.DeleteEventAsync(eventId, ownerId, dateModified, cancellationToken);
 
         public Task<CalendarParticipantUpdateResult> UpdateParticipantsAsync(long eventId, long ownerId, IReadOnlyCollection<long> add,
-            IReadOnlyCollection<long> remove, CancellationToken cancellationToken = default) =>
-            inner.UpdateParticipantsAsync(eventId, ownerId, add, remove, cancellationToken);
+            IReadOnlyCollection<long> remove, CancellationToken cancellationToken = default,
+            Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null) =>
+            inner.UpdateParticipantsAsync(eventId, ownerId, add, remove, cancellationToken, beforeCommitAsync);
 
         public async Task<bool> SendResponseAsync(long eventId, long ownerId, long characterId, short response,
             CancellationToken cancellationToken = default)

@@ -74,4 +74,21 @@ internal sealed partial class CharacterServicesComposition
             throw new InvalidOperationException($"Could not persist character CSPA charge: {write.ErrorMsg}.");
         return ValueTask.CompletedTask;
     }
+
+    private async ValueTask<Eve.Services.Core.CalendarCspaRecipientRule> ReadCalendarCspaRecipientRuleAsync(
+        long recipientId, long senderId, CancellationToken cancellationToken)
+    {
+        var personal = await charMgrReadModel.ReadAsync(recipientId, cancellationToken);
+        if (personal?.BlockedSenders.Contains(senderId) == true)
+            return Eve.Services.Core.CalendarCspaRecipientRule.Blocked;
+        if (personal?.Contacts.Any(contact => contact.ContactId == senderId) == true)
+            return Eve.Services.Core.CalendarCspaRecipientRule.Exempt;
+
+        var recipient = await characters.GetAsync(recipientId, cancellationToken);
+        var sender = await characters.GetAsync(senderId, cancellationToken);
+        return recipient is not null && sender is not null && recipient.CorporationId > 0 &&
+            recipient.CorporationId == sender.CorporationId
+            ? Eve.Services.Core.CalendarCspaRecipientRule.Exempt
+            : Eve.Services.Core.CalendarCspaRecipientRule.Charge;
+    }
 }

@@ -12,6 +12,7 @@ public static class CoreServices
         Func<long> nowUnixMs,
         Eve.Calendar.ICalendarStore? calendarStore = null,
         Eve.Calendar.ICalendarAudienceReader? calendarAudience = null,
+        CalendarCspaBilling? calendarCspaBilling = null,
         AuthenticationRpcService? authentication = null,
         InfoGatheringMgrService? infoGatheringMgr = null,
         EveguardReportService? eveguardReport = null,
@@ -50,7 +51,7 @@ public static class CoreServices
             ? new CalendarMgrService()
             : new CalendarMgrService(calendarStore,
                 calendarAudience ?? throw new ArgumentNullException(nameof(calendarAudience)), calendarSessions,
-                canManageCalendarGroupEvent, readCurrentCalendarGroups);
+                canManageCalendarGroupEvent, readCurrentCalendarGroups, calendarCspaBilling, nowUnixMs);
         var calendarProxy = calendarStore is null
             ? new CalendarProxyService()
             : new CalendarProxyService(calendarStore, readCurrentCalendarGroups);

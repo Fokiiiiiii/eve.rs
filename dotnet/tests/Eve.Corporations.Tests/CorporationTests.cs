@@ -15,6 +15,54 @@ public class CorporationTests
         new(name,ticker,"A corporation.","https://example.invalid",0.05m,Settings:JsonSerializer.SerializeToElement(new { shape1 = 1,color1 = 2 }));
 
     [PgFact]
+    public async Task Corporation_member_limits_use_the_CEO_skills_at_founding_and_explicit_update()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Skill Limit Founder");
+        await rig.SetSkillAsync(founder,Rig.CorporationManagementSkillId,5);
+        await rig.SetSkillAsync(founder,Rig.MegacorpManagementSkillId,5);
+        await rig.SetSkillAsync(founder,Rig.EmpireControlSkillId,5);
+        await rig.SetSkillAsync(founder,Rig.SovereigntySkillId,5);
+
+        var corp = await rig.Store.CreateAsync(founder,Request(),"skill-limit");
+        Assert.Equal(12600,corp.MemberLimit);
+
+        await rig.SetSkillAsync(founder,Rig.SovereigntySkillId,2);
+        Assert.Equal((12600,6600),await rig.Store.UpdateMemberLimitAsync(founder,corp.Id));
+        await rig.SetSkillAsync(founder,Rig.MegacorpManagementSkillId,1);
+        await rig.SetSkillAsync(founder,Rig.EmpireControlSkillId,0);
+        await rig.SetSkillAsync(founder,Rig.SovereigntySkillId,0);
+        Assert.Equal((6600,200),await rig.Store.UpdateMemberLimitAsync(founder,corp.Id));
+        await rig.SetSkillAsync(founder,Rig.CorporationManagementSkillId,4);
+        await rig.SetSkillAsync(founder,Rig.MegacorpManagementSkillId,5);
+        await rig.SetSkillAsync(founder,Rig.EmpireControlSkillId,5);
+        await rig.SetSkillAsync(founder,Rig.SovereigntySkillId,5);
+        Assert.Equal((200,80),await rig.Store.UpdateMemberLimitAsync(founder,corp.Id));
+        Assert.Equal(80,(await rig.ReopenStore().GetAsync(corp.Id))!.MemberLimit);
+
+        var member = await rig.CharacterAsync("Non CEO Skill Limit Member");
+        var application = await rig.Store.ApplyAsync(member,corp.Id,"");
+        await rig.Store.RespondAsync(founder,application,6,"","");
+        await rig.Store.RespondAsync(member,application,2,"","");
+        var denied = await Assert.ThrowsAsync<CorporationError>(() => rig.Store.UpdateMemberLimitAsync(member,corp.Id));
+        Assert.Equal("CORPORATION_ACCESS_DENIED",denied.Code);
+    }
+
+    [PgFact]
+    public async Task Corporation_founding_requires_Corporation_Management_I()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("Unskilled Founder");
+        await rig.SetSkillAsync(founder,Rig.CorporationManagementSkillId,0);
+
+        var error = await Assert.ThrowsAsync<CorporationError>(() =>
+            rig.Store.CreateAsync(founder,Request(),"unskilled-founding"));
+        Assert.Equal("CORPORATION_MANAGEMENT_SKILL_REQUIRED",error.Code);
+        Assert.Equal(5000000m,(await rig.Wallets.GetAsync(founder))!.Isk);
+        Assert.Equal(1000044,(await rig.Characters.GetAsync(founder))!.CorporationId);
+    }
+
+    [PgFact]
     public async Task Founding_and_replaying_it_charge_once_and_keep_affiliation_and_history_consistent()
     {
         await using var rig = await Rig.CreateAsync();

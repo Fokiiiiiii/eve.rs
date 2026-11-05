@@ -1,0 +1,23 @@
+# Corporation member limits — CX3 handoff
+
+## Implemented
+
+CorporationMemberLimitRules reads the loaded SDE build, resolves the four published skill types by English name, then reads corporationMemberBonus and all six SDE prerequisite slots from typeDogma/dogmaAttributes. Skill levels are capped at V per the mechanics source; prerequisite chains gate each advanced skill. Corporation Management I is required to found a player corporation. Creation and CEO updates persist the calculated non-CEO limit. CEO updates lock and recheck corporation membership and CEO authority in the write transaction and leave recruitment settings alone. Application acceptance counts non-CEO rows under the same corporation-row lock, so over-limit corps retain their members and reject new joins until below cap.
+
+UpdateCorporationAbilities is registered by CorporationRpc() in dotnet/src/Eve.Host/Rpc/CorporationRpc.cs. The no-argument service call returns PyBool.True, commits before queuing OnCorporationChanged, and sends the client's old/new list pair after the RPC response.
+
+## Evidence and compatibility
+
+- Pinned database: SDE build 3396210. Its four skill records provide bonuses 20, 100, 400, and 2,000 and the documented prerequisite chain. The runtime does not hard-code skill type or dogma attribute IDs.
+- EVE University mechanics: [Forming a corporation](https://wiki.eveuniversity.org/Forming_a_corporation) says the CEO is excluded from the member limit, only the CEO updates the cap using “Update with my skills,” Corporation Management I is required to found, and lowering a limit neither removes members nor permits further joins until the count is below it.
+- V24.01 call order/result: /home/user/eve-logic/eve/client/script/ui/shared/neocom/corporation/corp_dlg_editcorpdetails.py:281-287 calls without arguments, exits only on None, then fetches GetCorporation and displays memberLimit. Wrappers forward no args at /home/user/eve-logic/eve/client/script/ui/services/corporation/base_corporation.py:224-226 and /home/user/eve-logic/eve/client/script/ui/services/corporation/bco_corporations.py:177-179.
+- V24.01 notification consumers: /home/user/eve-logic/eve/client/script/ui/services/corporation/bco_corporations.py:78-136 applies change[columnName][1] to the cached row; /home/user/eve-logic/eve/client/script/ui/services/corporation/base_corporation.py:239-241 forwards the notification. Recruitment settings read the new side at /home/user/eve-logic/eve/client/script/ui/shared/neocom/corporation/corp_ui_recruitment.py:103-109; offices refresh at offices.py:177-179; voting invalidates at voting.py:100-103; fitting/logo panels refresh at cosmeticFittingCenter.py:120-122 and logos.py:117-119. The repository-wide memberLimit search found the edit dialog as its only direct consumer.
+- Corporation rows and recruitment ads report non-CEO memberCount; the corporation home and recruitment results consume those fields (/home/user/eve-logic/eve/client/script/ui/shared/neocom/corporation/corp_ui_home.py:395, base_corporation.py:1130, recruitmentEntry.py:251). Its own recruitment entry counts GetMemberIDs() locally (corp_ui_recruitment.py:179).
+- Intentional EveJS difference: EveJS 261028.1 treats the first UpdateCorporationAbilities argument as applicationsEnabled, defaults it to true, changes recruitment settings, and returns null (/home/user/evejs-261028.1/src/server/src/services/corporation/corpRegistryRuntime.js:3547-3560). Its founding flow omits the Corporation Management I check (corpRegistryRuntime.js:3638-3749, corporationFoundingState.js:140-189), and public records count the full index (corporationState.js:537-543,786-810). eve.rs follows the Wiki mechanics and observed no-argument V24 behavior instead.
+
+## Checks
+
+- dotnet build succeeded for Eve.Corporations, Eve.Services.Corporations, Eve.Host, Eve.Corporations.Tests, Eve.Host.Tests, Eve.Market.Tests, Eve.Services.CharacterInfo.Tests, and Eve.Services.CharacterSelect.Tests.
+- PostgreSQL database eve_p3: 122 corporation tests passed across CorporationTests, MembershipTests, CorporationProtocolTests, AllianceTests, and ItemLockTests; 18 focused Host regressions, 63 market regressions, 12 ConfigService tests, and 55 CharacterSelect tests also passed. No selected test was skipped.
+- A broader 20-class Host selection ran 464 cases; its first run found 18 failures caused by missing Corporation Management I in founder fixtures and memberCount expectations that still included the CEO. The fixtures and two expectations were corrected, then all 18 affected tests passed in a focused rerun; the other 446 cases passed in the first run.
+- The tests are headless; no graphical V24 client session was exercised.

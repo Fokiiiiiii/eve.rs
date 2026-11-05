@@ -59,6 +59,7 @@ public sealed class AccountWalletHostRpcTests
 
                 sender = await CreatePilot($"Wallet RPC Sender {suffix}",
                     CorporationStore.CorporationFoundingCost + 4_875m);
+                await skills.GrantAsync(connection, transaction, sender, [new CharacterSkill(3363, 1, 0)]);
                 recipient = await CreatePilot($"Wallet RPC Recipient {suffix}");
                 walletlessRecipient = await CreatePilot($"Wallet RPC Missing Wallet {suffix}", openWallet: false);
                 await transaction.CommitAsync();

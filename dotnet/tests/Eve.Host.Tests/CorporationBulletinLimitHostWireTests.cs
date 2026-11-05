@@ -38,6 +38,7 @@ public partial class HostServerTests
                 actor = await characters.InsertAsync(connection, transaction,
                     new NewCharacter(1, "Bulletin Host Founder", 0, 1, 1, 1, 11, 1376,
                         1000044, null, 60000001, 30000001, 20000001, 10000001, null, null));
+                await skills.GrantAsync(connection, transaction, actor, [new CharacterSkill(3363, 1, 0)]);
                 await wallets.OpenAsync(connection, transaction, actor, 5_000_000_000m, 10);
                 await transaction.CommitAsync();
             }

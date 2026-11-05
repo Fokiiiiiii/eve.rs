@@ -38,7 +38,7 @@ public partial class HostServerTests
                 registry.Register(new CalendarMgrService(
                     store, audience, sessions,
                     (_, _, _, _) => ValueTask.FromResult(allowGroupManager),
-                    readGroups, FreeCalendarCspaBilling()));
+                    readGroups, cspaBilling: FreeCalendarCspaBilling()));
                 registry.Register(new CalendarProxyService(store, readGroups));
             },
             sessionOpened: session =>
@@ -264,7 +264,7 @@ public partial class HostServerTests
                 registry.Register(new CalendarMgrService(
                     store, audience, sessions,
                     (_, _, _, _) => ValueTask.FromResult(allowGroupManager),
-                    readGroups, FreeCalendarCspaBilling()));
+                    readGroups, cspaBilling: FreeCalendarCspaBilling()));
                 registry.Register(new CalendarProxyService(store, readGroups));
             },
             sessionOpened: session =>

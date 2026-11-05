@@ -4,6 +4,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Core;
+using Eve.Wallet;
 using Npgsql;
 
 namespace Eve.Host.Tests;
@@ -53,6 +54,54 @@ public sealed class CalendarParticipantConcurrencyTests
             deleteEvent.Parameters.AddWithValue(eventId);
             await deleteEvent.ExecuteNonQueryAsync();
         }
+    }
+
+    [PgFact]
+    public async Task Concurrent_approved_additions_charge_a_recipient_once()
+    {
+        var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL");
+        Assert.False(string.IsNullOrWhiteSpace(pgUrl));
+        var ownerId = Random.Shared.NextInt64(6_000_000_000_000L, 9_000_000_000_000_000L);
+        var inviteeId = ownerId + 1;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(pgUrl!));
+        await CalendarStore.MigrateAsync(source);
+        await PgWalletStore.MigrateAsync(source);
+        var store = new CalendarStore(source);
+        var wallets = new WalletTransactions(source);
+        await using (var connection = await source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await wallets.EnsureAsync(connection, transaction, ownerId);
+            await wallets.AdjustAsync(connection, transaction, ownerId, 1_000, 0, 1,
+                "calendar CSPA concurrency test seed", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                $"calendar-cspa-concurrency-seed:{ownerId}");
+            await transaction.CommitAsync();
+        }
+
+        var eventId = await store.CreateEventAsync(
+            new CalendarEventInput(ownerId, ownerId, CalendarTags.Personal,
+                DateTime.UtcNow.AddDays(2).ToFileTimeUtc(), 60, "CSPA concurrency", string.Empty, 0), []);
+        var billing = new CalendarCspaBilling(
+            (_, _) => ValueTask.FromResult<int?>(500),
+            (_, _, _) => ValueTask.FromResult(CalendarCspaRecipientRule.Charge),
+            wallets);
+        IService service = new CalendarMgrService(store, cspaBilling: billing);
+        var session = new ClientSession { CharacterId = ownerId };
+        var calls = Enumerable.Range(0, 2)
+            .Select(_ => service.CallAsync(ApprovedParticipantsCall(session, eventId, inviteeId)).AsTask())
+            .ToArray();
+
+        var results = await Task.WhenAll(calls);
+        Assert.All(results, result => Assert.IsType<PyNone>(result));
+        Assert.Equal(new[] { ownerId, inviteeId }.Order(),
+            (await store.GetResponsesToEventAsync(eventId, ownerId)).Select(row => row.CharacterId).Order());
+        var journal = (await wallets.JournalForAccountAsync(ownerId, 1000, limit: 1000))
+            .Where(entry => entry.RefTypeId == 35)
+            .ToArray();
+        var charge = Assert.Single(journal);
+        Assert.Equal(-500m, charge.Amount);
+        Assert.Equal(inviteeId, charge.ReferenceId);
+        Assert.Equal(500m, await ReadBalanceAsync(source, ownerId));
     }
 
     [PgFact]
@@ -143,6 +192,22 @@ public sealed class CalendarParticipantConcurrencyTests
         Args = [new PyLong(eventId), new PyList([new PyLong(inviteeId)]), new PyList([])],
         Session = session,
     };
+
+    private static ServiceCall ApprovedParticipantsCall(ClientSession session, long eventId, long inviteeId) => new()
+    {
+        Method = "UpdateEventParticipants",
+        Args = [new PyLong(eventId), new PyList([new PyLong(inviteeId)]), new PyList([])],
+        Kwargs = new PyDict([new KeyValuePair<PyValue, PyValue>(new PyStr("approvedCost"), new PyLong(500))]),
+        Session = session,
+    };
+
+    private static async Task<decimal> ReadBalanceAsync(NpgsqlDataSource source, long ownerId)
+    {
+        await using var command = source.CreateCommand(
+            "SELECT isk FROM wallet.balances WHERE owner_id = $1 AND account_key = 1000");
+        command.Parameters.AddWithValue(ownerId);
+        return (decimal)(await command.ExecuteScalarAsync())!;
+    }
 
     private static ServiceCall ParticipantsCall(
         ClientSession session, long eventId, long[] add, long[] remove) => new()

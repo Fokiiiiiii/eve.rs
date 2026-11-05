@@ -425,7 +425,7 @@ internal static class HostComposition
                 identityAccounts is not null && call.Session.UserId is { } accountId
                     && await identityAccounts.IsUnderageAsync(checked((uint)accountId), ct));
         foreach (var service in CoreServices.Create(
-            omegaAccounts, now, calendarStore, calendarAudience, calendarCspaBilling,
+            omegaAccounts, now, calendarStore, calendarAudience,
             authentication: authentication,
             gameRpcCallbacks: raffleProxyStore is null ? gameRpcCallbacks : (gameRpcCallbacks ?? new Eve.Services.Core.GameRpcCallbacks()) with { RaffleProxy = new Eve.Services.Core.RaffleProxyCallbacks(raffleProxyStore.InvokeAsync) },
             readJumpTimers: readJumpTimers,
@@ -456,7 +456,8 @@ internal static class HostComposition
             readCurrentCalendarGroups: readCurrentCalendarGroups,
               contractBrokerFeeAdjustment: contractBrokerFeeAdjustment,
               hasContractManagerRole: hasContractManagerRole,
-              localizationTextChanges: HostConfiguration.ParseLocalizationTextChanges(Env("EVE_LOCALIZATION_TEXT_CHANGES", ""))))
+              localizationTextChanges: HostConfiguration.ParseLocalizationTextChanges(Env("EVE_LOCALIZATION_TEXT_CHANGES", "")),
+            calendarCspaBilling: calendarCspaBilling))
         {
             registry.Register(service);
         }

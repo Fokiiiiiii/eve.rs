@@ -330,7 +330,7 @@ public class CalendarMgrServiceTests
         services.Register((IService)new CalendarMgrService(store, new FakeCalendarAudienceReader(), sessions,
             (_, _, _, _) => ValueTask.FromResult(groupAuthority),
             (_, _) => ValueTask.FromResult(groupAuthority ? (CorporationId, AllianceId) : (0L, 0L)),
-            new CalendarCspaBilling(
+            cspaBilling: new CalendarCspaBilling(
                 (_, _) => ValueTask.FromResult<int?>(0),
                 (_, _, _) => ValueTask.FromResult(CalendarCspaRecipientRule.Charge),
                 null)));

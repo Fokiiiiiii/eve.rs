@@ -122,7 +122,12 @@ public partial class HostServerTests
             front, open, 5, "CreatePersonalEvent", new PyLong(1_000), paidCreateArgs, ownerId, 999_000m));
         var invitees = await store.GetResponsesToEventAsync(eventId, ownerId);
         Assert.Equal(3, invitees.Count);
-        Assert.Equal(1_000, (await CspaJournalAsync(wallets, ownerId)).Sum(entry => -(int)entry.Amount));
+        var createCharges = await CspaJournalAsync(wallets, ownerId);
+        Assert.Equal(new[] { firstInvitee, secondInvitee }.Order(),
+            createCharges.Select(entry => entry.ReferenceId!.Value).Order());
+        Assert.Equal(new[] { -600m, -400m }.Order(),
+            createCharges.Select(entry => entry.Amount).Order());
+        Assert.Equal(1_000, createCharges.Sum(entry => -(int)entry.Amount));
         Assert.Equal(999_000m, await ReadWalletBalanceAsync(dataSource, ownerId));
         Assert.Equal(1, announcements);
 

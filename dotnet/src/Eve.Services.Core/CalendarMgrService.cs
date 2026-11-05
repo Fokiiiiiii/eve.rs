@@ -47,8 +47,8 @@ public sealed partial class CalendarMgrService
         CharacterSessions? sessions = null,
         Func<long, long, short, CancellationToken, ValueTask<bool>>? canManageGroupEvent = null,
         Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? readCurrentGroups = null,
-        CalendarCspaBilling? cspaBilling = null,
-        Func<long>? nowUnixMs = null)
+        Func<long>? nowUnixMs = null,
+        CalendarCspaBilling? cspaBilling = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _audience = audience;

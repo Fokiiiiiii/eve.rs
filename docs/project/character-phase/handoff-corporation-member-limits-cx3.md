@@ -23,4 +23,4 @@ UpdateCorporationAbilities is registered by CorporationRpc() in dotnet/src/Eve.H
 
 ## Main-branch gate
 
-At 2026-11-05, the latest completed main CI run was 1527 for 9981e0e3 and failed in the live structure-control test at tests/test_structures.py:618: the TakeControl request timed out waiting for its reply. The preceding completed run 1526 for 7f50c62e was green. This failure is outside the corporation member-limit test paths; hold the feature push until a newer completed main CI run is green.
+At 2026-11-05, main CI run 1528 for 9981e0e3 completed successfully, including the end-to-end server and headless client job. It reran after run 1527 on the same commit failed at tests/test_structures.py:618 when TakeControl timed out. The successful rerun clears the red-main gate. This worktree was fetched and merged against 9981e0e3; the selected corporation and neighbor test groups were rerun after that merge.

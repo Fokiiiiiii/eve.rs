@@ -1,0 +1,262 @@
+using System.Globalization;
+using System.Numerics;
+using Eve.Dogma;
+using Eve.Space;
+
+namespace Eve.Npc;
+
+/// <summary>
+/// What an NPC fights with. A retail entity type carries its weapon on its own dogma record (the effect <c>targetAttack</c> and the attributes of the ship
+/// itself), not in a module loadout: 5592 of the 5620 authored profiles point at the empty loadout by design. This is a port, as it is, of the part of
+/// <c>buildWeaponModuleSnapshot</c> (<c>server/src/space/combat/weaponDogma.js</c>) and <c>getNpcFittedWeaponModules</c> (<c>npc/npcEquipment.js</c>) of EVE.js
+/// </summary>
+public static class NpcArmament
+{
+    private const int CapacitorNeed = 6;
+    private const int Speed = 51;
+    private const int MaxRange = 54;
+    private const int Falloff = 158;
+    private const int TrackingSpeed = 160;
+    private const int OptimalSigRadius = 620;
+    public const int DamageMultiplier = 64;
+    private const int EmDamage = 114;
+    private const int ExplosiveDamage = 116;
+    private const int KineticDamage = 117;
+    private const int ThermalDamage = 118;
+    private const int EntityAttackRange = 247;
+    private const string NpcArmorRepairEffect = "npcBehaviorArmorRepairer";
+    private const string NpcShieldBoosterEffect = "npcBehaviorShieldBooster";
+
+    // what a hull that launches missiles carries (`getNpcEntityMissileWeaponSource` of npcEquipment.js)
+    private const int MaxVelocity = 37;
+    private const int StructureHitPoints = 9;
+    private const int Mass = 4;
+    private const int Agility = 70;
+    private const int Radius = 162;
+    private const int ExplosionDelay = 281;
+    private const int MissileLaunchDuration = 506;
+    private const int EntityMissileTypeId = 507;
+    private const int MissileDamageMultiplier = 212;
+    private const int MissileVelocityMultiplier = 645;
+    private const int MissileFlightTimeMultiplier = 646;
+    private const int MissileAoeVelocityMultiplier = 859;
+    private const int MissileAoeCloudSizeMultiplier = 858;
+    private const int AoeVelocity = 653;
+    private const int AoeCloudSize = 654;
+    private const int AoeDamageReductionFactor = 1353;
+    private const int AoeDamageReductionSensitivity = 1354;
+    private const double DefaultReductionSensitivity = 5.5;
+    private const string MissileLauncherEffect = "missilelaunchingforentity";
+    private const string MissileDeployment = "effects.MissileDeployment";
+
+    // what the effects of a type are when one of them is a weapon and what makes an effect one the pilot can run
+    private static readonly HashSet<int> ActivatableCategories = [EffectDef.Activation, EffectDef.Target, EffectDef.Area];
+
+    private static readonly HashSet<string> PassiveSlotEffects =
+    [
+        "online", "onlineforstructures", "anchordropforstructures", "anchorliftforstructures", "hipower", "medpower", "lopower", "rigslot", "subsystem",
+        "turretfitted", "launcherfitted",
+    ];
+
+    /// <summary>
+    /// <c>round6</c>: a number as <c>toFixed(6)</c> gives it, which takes the exact value of the double and, when it lies exactly half way between two
+    /// millionths (6.4453125 does), the larger magnitude. The formatter of .NET rounds such a tie to even, so a tie is found and settled here.
+    /// </summary>
+    public static double Round6(double value)
+    {
+        if (!double.IsFinite(value))
+        {
+            return 0;
+        }
+        var bits = BitConverter.DoubleToInt64Bits(value);
+        var biased = (int)((bits >> 52) & 0x7FF);
+        var mantissa = bits & 0xF_FFFF_FFFF_FFFFL;
+        var exponent = (biased == 0 ? 1 : biased) - 1075;
+        if (biased != 0)
+        {
+            mantissa |= 1L << 52;
+        }
+        if (exponent < 0)
+        {
+            // value = mantissa / 2^-exponent; it is a tie when value * 2,000,000 is an odd whole number
+            var scaled = new BigInteger(mantissa) * 2_000_000;
+            var divisor = BigInteger.One << -exponent;
+            if (scaled % divisor == 0 && !(scaled / divisor).IsEven)
+            {
+                // odd half-millionths: the larger whole number of millionths, which is divided by a million as parsing its digits would
+                var millionths = ((scaled / divisor) + 1) / 2;
+                var magnitude = (double)millionths / 1_000_000.0;
+                return value < 0 ? -magnitude : magnitude;
+            }
+        }
+        return double.Parse(value.ToString("F6", CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
+    }
+
+    private static double Value(TypeDef type, int attribute, double fallback) => type.Attributes.GetValueOrDefault(attribute, fallback);
+
+    /// <summary><c>typeHasNonzeroTargetAttackDamage</c>: the hull deals damage of some kind and its multiplier (1 when it has none) is above nothing.</summary>
+    public static bool HasTargetAttackDamage(TypeDef type)
+    {
+        var damage = new[] { EmDamage, ThermalDamage, KineticDamage, ExplosiveDamage }.Sum(attribute => Math.Max(0, Value(type, attribute, 0)));
+        return damage > 0 && Math.Max(0, Value(type, DamageMultiplier, 1)) > 0;
+    }
+
+    /// <summary><c>resolveWeaponActivationEffect</c>: the first effect of the type that a pilot can run and that is not one every module has.</summary>
+    public static EffectDef? ActivationEffect(TypeDef type, DogmaStatic statics) =>
+        type.EffectIds
+            .Select(statics.Effect)
+            .FirstOrDefault(effect => effect is not null && ActivatableCategories.Contains(effect.Category) && !PassiveSlotEffects.Contains(effect.Name.Trim().ToLowerInvariant()));
+
+    /// <summary>
+    /// What kind of turret an effect of a hull is, by the name of the client's effect it plays: null for what this does not arm (missiles, vorton projectors
+    /// and the like) or what is no weapon at all.
+    /// </summary>
+    public static string? TurretFamily(EffectDef effect)
+    {
+        var name = effect.Name.Trim().ToLowerInvariant();
+        if (name is not ("targetattack" or "targetdisintegratorattack"))
+        {
+            return null;
+        }
+        var guid = effect.Guid.Trim().ToLowerInvariant();
+        if (guid.Contains("triglavianbeam", StringComparison.Ordinal))
+        {
+            return "precursorTurret";
+        }
+        if (guid.Contains("laser", StringComparison.Ordinal))
+        {
+            return "laserTurret";
+        }
+        if (guid.Contains("hybrid", StringComparison.Ordinal) || guid.Contains("rail", StringComparison.Ordinal) || guid.Contains("blaster", StringComparison.Ordinal))
+        {
+            return "hybridTurret";
+        }
+        if (guid.Contains("projectile", StringComparison.Ordinal) || guid.Contains("artillery", StringComparison.Ordinal) || guid.Contains("autocannon", StringComparison.Ordinal))
+        {
+            return "projectileTurret";
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// The turret a hull carries, as a weapon of the ship's own (the simulation knows the module of an NPC's weapon to be the ship): the first effect of the
+    /// hull that is a turret, with the hull's own attributes for its cycle, range, tracking and damage. Null when the hull deals no damage or has no turret.
+    /// </summary>
+    public static SimNpcWeapon? HullWeapon(TypeDef hull, long shipId, DogmaStatic statics, double damageScale = 1d)
+    {
+        var weapon = TurretHullWeapon(hull, shipId, statics) ?? MissileHullWeapon(hull, shipId, statics);
+        if (weapon is null || damageScale == 1d)
+        {
+            return weapon;
+        }
+        var scale = Math.Max(0, damageScale);
+        return weapon with { RawDamage = [.. weapon.RawDamage.Select(damage => Round6(Math.Max(0, damage) * scale))] };
+    }
+
+    private static SimNpcWeapon? TurretHullWeapon(TypeDef hull, long shipId, DogmaStatic statics)
+    {
+        if (!HasTargetAttackDamage(hull))
+        {
+            return null;
+        }
+        var effect = hull.EffectIds.Select(statics.Effect).FirstOrDefault(candidate => candidate is not null && TurretFamily(candidate) is not null);
+        if (effect is null)
+        {
+            return null;
+        }
+        var multiplier = Math.Max(0, Value(hull, DamageMultiplier, 1));
+        double Shot(int attribute) => Round6(Math.Max(0, Value(hull, attribute, 0)) * multiplier);
+        var guid = ActivationEffect(hull, statics)?.Guid.Trim() ?? "";
+        return new SimNpcWeapon(
+            shipId, effect.Id, Math.Max(1, Round6(Value(hull, Speed, 1000))), Math.Max(0, Round6(Value(hull, CapacitorNeed, 0))), hull.TypeId,
+            guid.Equals("none", StringComparison.OrdinalIgnoreCase) ? "" : guid,
+            [Shot(EmDamage), Shot(ThermalDamage), Shot(KineticDamage), Shot(ExplosiveDamage)],
+            Math.Max(0, Round6(Value(hull, MaxRange, 0))), Math.Max(0, Round6(Value(hull, Falloff, 0))), Math.Max(0, Round6(Value(hull, TrackingSpeed, 0))),
+            Math.Max(1, Round6(Value(hull, OptimalSigRadius, 40_000))), RequiresGunnery: true);
+    }
+
+    /// <summary>The type of the missile a hull launches (<c>entityMissileTypeID</c>), or 0: what the host must have loaded before it can arm the hull with <see cref="HullWeapon"/>.</summary>
+    public static int MissileTypeOf(TypeDef hull) => (int)Math.Max(0, Value(hull, EntityMissileTypeId, 0));
+
+    /// <summary>
+    /// <c>getNpcEntityMissileWeaponSource</c>: a hull with the effect <c>missileLaunchingForEntity</c> and a missile type launches that missile, a cycle at its <c>missileLaunchDuration</c>
+    /// (its <c>speed</c> when it names none). The damage is the missile's times the hull's <c>missileDamageMultiplier</c>; the hull's own multipliers (<c>missileEntityVelocityMultiplier</c>,
+    /// <c>FlightTimeMultiplier</c>, <c>AoeVelocityMultiplier</c>, <c>AoeCloudSizeMultiplier</c>) scale the missile's speed, flight time, explosion velocity and explosion radius. The NPC has no
+    /// rounds to spend. Null when the hull has no such effect or its missile is not loaded.
+    /// </summary>
+    public static SimNpcWeapon? MissileHullWeapon(TypeDef hull, long shipId, DogmaStatic statics)
+    {
+        var effect = hull.EffectIds.Select(statics.Effect).FirstOrDefault(candidate => candidate is not null && candidate.Name.Trim().Equals(MissileLauncherEffect, StringComparison.OrdinalIgnoreCase));
+        if (effect is null || MissileTypeOf(hull) is not (> 0 and var missileTypeId) || statics.Type(missileTypeId) is not { } missile)
+        {
+            return null;
+        }
+        double Multiplier(int attribute) => Math.Max(0, Value(hull, attribute, 1));
+        double Damage(int attribute) => Round6(Math.Max(0, Value(missile, attribute, 0)) * Multiplier(MissileDamageMultiplier));
+        double Positive(int attribute, double fallback) => Value(missile, attribute, 0) is var value and > 0 ? value : fallback;
+        var speed = Math.Max(0, Round6(Value(missile, MaxVelocity, 0) * Multiplier(MissileVelocityMultiplier)));
+        var flightTime = Math.Max(1, Round6(Value(missile, ExplosionDelay, 1000) * Multiplier(MissileFlightTimeMultiplier)));
+        var spec = new SimMissile(
+            missileTypeId, missile.GroupId, string.IsNullOrEmpty(missile.Name) ? "Missile" : missile.Name,
+            Positive(Radius, 1), Positive(Mass, 1), Positive(Agility, 0.1), Math.Max(0, Value(missile, StructureHitPoints, 0)), speed, flightTime,
+            Math.Max(1, Round6(Value(missile, AoeCloudSize, 1) * Multiplier(MissileAoeCloudSizeMultiplier))),
+            Math.Max(0.001, Round6(Value(missile, AoeVelocity, 0.001) * Multiplier(MissileAoeVelocityMultiplier))),
+            Math.Clamp(Value(missile, AoeDamageReductionFactor, 1), 0.000001, 1),
+            Math.Max(0.000001, Round6(Value(missile, AoeDamageReductionSensitivity, DefaultReductionSensitivity))));
+        var guid = effect.Guid.Trim();
+        var cycle = Math.Max(1, Round6(Value(hull, MissileLaunchDuration, Value(hull, Speed, 1000))));
+        var fx = guid.Length == 0 || guid.Equals("none", StringComparison.OrdinalIgnoreCase) ? MissileDeployment : guid;
+        return new SimNpcWeapon(
+            shipId, effect.Id, cycle, 0, hull.TypeId, fx, [Damage(EmDamage), Damage(ThermalDamage), Damage(KineticDamage), Damage(ExplosiveDamage)],
+            Round6(speed * (flightTime / 1000)), 0, 0, 40_000, null, spec);
+    }
+
+    /// <summary>Local armor and shield repair effects carried by an NPC hull's own type dogma.</summary>
+    public static IReadOnlyList<SimNpcSelfRepair> SelfRepairsOf(TypeDef hull, DogmaStatic statics)
+    {
+        var repairs = new List<SimNpcSelfRepair>();
+        foreach (var effectId in hull.EffectIds)
+        {
+            var effect = statics.Effect(effectId)
+                ?? throw new InvalidDataException($"NPC hull {hull.TypeId} refers to missing dogma effect {effectId}.");
+            var name = effect.Name.Trim();
+            var armor = name.Equals(NpcArmorRepairEffect, StringComparison.OrdinalIgnoreCase);
+            var shield = name.Equals(NpcShieldBoosterEffect, StringComparison.OrdinalIgnoreCase);
+            if (!armor && !shield)
+                continue;
+
+            var amountName = armor ? "behaviorArmorRepairerAmount" : "behaviorShieldBoosterAmount";
+            var delayName = armor ? "entityArmorRepairDelayChance" : "entityShieldBoostDelayChance";
+            var amountId = statics.AttributeId(amountName)
+                ?? throw new InvalidDataException($"SDE attribute {amountName} is missing for NPC effect {effectId}.");
+            var delayId = statics.AttributeId(delayName)
+                ?? throw new InvalidDataException($"SDE attribute {delayName} is missing for NPC effect {effectId}.");
+            if (effect.DurationAttributeId <= 0 || effect.DischargeAttributeId <= 0)
+                throw new InvalidDataException($"SDE effect {effectId} has no duration or discharge attribute.");
+
+            double AttributeValue(int attributeId, string attributeName)
+            {
+                var definition = statics.Attribute(attributeId)
+                    ?? throw new InvalidDataException($"SDE attribute {attributeName} ({attributeId}) is missing.");
+                return hull.Attributes.GetValueOrDefault(attributeId, definition.DefaultValue);
+            }
+
+            var repair = new SimNpcSelfRepair(
+                effectId,
+                AttributeValue(amountId, amountName),
+                AttributeValue(effect.DurationAttributeId, "duration"),
+                AttributeValue(effect.DischargeAttributeId, "discharge"),
+                AttributeValue(delayId, delayName));
+            if (!ValidSelfRepair(repair) || repairs.Any(existing => existing.EffectId == effectId))
+                throw new InvalidDataException($"NPC hull {hull.TypeId} has invalid or duplicate self-repair effect {effectId}.");
+            repairs.Add(repair);
+        }
+        return repairs;
+    }
+
+    public static bool ValidSelfRepair(SimNpcSelfRepair repair) => SimNpcSelfRepair.IsValid(repair);
+
+    /// <summary>How near a ship must come for the NPC to attack it: the hull's <c>entityAttackRange</c>, or what that attribute is when a type has none.</summary>
+    public static double AggressionRange(TypeDef hull, DogmaStatic statics) =>
+        Math.Max(0, hull.Attributes.GetValueOrDefault(EntityAttackRange, statics.Attribute(EntityAttackRange)?.DefaultValue ?? 0));
+}

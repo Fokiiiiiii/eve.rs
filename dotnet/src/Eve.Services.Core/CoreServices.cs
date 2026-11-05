@@ -1,0 +1,141 @@
+namespace Eve.Services.Core;
+using Eve.Marshal;
+using Eve.Macho;
+
+/// <summary>The services ported so far, wired to their dependencies.</summary>
+
+public static class CoreServices
+{
+    /// <summary>Creates every core service. Register them with <see cref="ServiceRegistry.Register"/>.</summary>
+    public static IReadOnlyList<IService> Create(
+        IOmegaAccountStore accounts,
+        Func<long> nowUnixMs,
+        Eve.Calendar.ICalendarStore? calendarStore = null,
+        Eve.Calendar.ICalendarAudienceReader? calendarAudience = null,
+        AuthenticationRpcService? authentication = null,
+        InfoGatheringMgrService? infoGatheringMgr = null,
+        EveguardReportService? eveguardReport = null,
+        GameRpcCallbacks? gameRpcCallbacks = null,
+        ReadJumpTimersCallback? readJumpTimers = null,
+        ReadNonDiminishingInjectionCountCallback? readNonDiminishingInjections = null,
+        SubmitInGameReportCallback? submitInGameReport = null,
+        NodeGraphRpcCallback? nodeGraphRpcCallback = null,
+        ReadEscalatingPathDetailsCallback? readEscalatingPathDetails = null,
+        KeeperRpcCallbacks? keeperRpcCallbacks = null,
+        ReadControlTowerRowsCallback? readControlTowerRows = null,
+        UnanchorControlTowerCallback? unanchorControlTower = null,
+        CustomAgencyProviderRpcCallbacks? customAgencyProviderRpcCallbacks = null,
+        ReadEpicArcStatusCallback? readEpicArcStatus = null,
+        SuperWeaponRpcCallbacks? superWeaponRpcCallbacks = null,
+        TourneyQueryCallback? tourneyQueryCallback = null,
+        ISpaceModules? spaceModules = null,
+        Func<ClientSession, bool>? isShipInSpace = null,
+        IContractReadModel? contractReadModel = null,
+        IContractWriteModel? contractWriteModel = null,
+        Func<long, int, CancellationToken, ValueTask<int>>? contractSkillLevel = null,
+        CharacterSessions? calendarSessions = null,
+        Func<long, long, CancellationToken, ValueTask<decimal>>? contractBrokerFeeAdjustment = null,
+        Func<long, long, CancellationToken, ValueTask<bool>>? hasContractManagerRole = null,
+        PyValue? localizationTextChanges = null,
+        Func<long, long, short, CancellationToken, ValueTask<bool>>? canManageCalendarGroupEvent = null,
+        Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? readCurrentCalendarGroups = null,
+        IContractInventoryReader? contractInventoryReader = null,
+        Func<long, long, CancellationToken, ValueTask<bool>>? isCharacterInCurrentCorporation = null,
+        TourneyMatchCallbacks? tournamentMatchCallbacks = null,
+        CalendarCspaBilling? calendarCspaBilling = null,
+        ReadDynamicBountyCallback? readDynamicBounty = null)
+    {
+        gameRpcCallbacks ??= new GameRpcCallbacks();
+        var licenses = new OmegaLicenses(accounts, nowUnixMs);
+        var subscriptionManager = new SubscriptionMgrService(licenses);
+        var calendarManager = calendarStore is null
+            ? new CalendarMgrService()
+            : new CalendarMgrService(calendarStore,
+                calendarAudience ?? throw new ArgumentNullException(nameof(calendarAudience)), calendarSessions,
+                canManageCalendarGroupEvent, readCurrentCalendarGroups,
+                nowUnixMs: nowUnixMs, cspaBilling: calendarCspaBilling);
+        var calendarProxy = calendarStore is null
+            ? new CalendarProxyService()
+            : new CalendarProxyService(calendarStore, readCurrentCalendarGroups);
+        return
+        [
+            new PingService(),
+            new AlertService(),
+            new BrowserLockdownService(),
+            new PosMgrService(readControlTowerRows, unanchorControlTower),
+            new KiringMgrService(),
+            new PetitionerService(),
+            new AbyssalContentManagerService(gameRpcCallbacks.AbyssalSpawnReportAsync),
+            new DungeonExplorationMgrService(readEscalatingPathDetails, nowUnixMs),
+            new KeeperService(keeperRpcCallbacks),
+            new MiningScanMgrService(gameRpcCallbacks.ReadMiningScanResultsAsync),
+            new NodeGraphService(nodeGraphRpcCallback),
+            new PeaceTreatyMgrService(gameRpcCallbacks.ReadPeaceTreaties),
+            new PublicQaToolsServerService(gameRpcCallbacks.PublicQaTools),
+            new CustomAgencyProviderService(customAgencyProviderRpcCallbacks),
+            new EpicArcStatusService(readEpicArcStatus),
+            new SuperWeaponMgrService(superWeaponRpcCallbacks),
+            new TourneyMgrService(tourneyQueryCallback, nowUnixMs, tournamentMatchCallbacks),
+            new RaffleMgrService(gameRpcCallbacks.SeedRafflesAsync),
+            new RaffleProxyService(gameRpcCallbacks.RaffleProxy),
+            new ContractProxyService(contractReadModel, contractWriteModel, contractSkillLevel, contractBrokerFeeAdjustment,
+                hasContractManagerRole, readCurrentCalendarGroups, isCharacterInCurrentCorporation) { Inventory = contractInventoryReader },
+            new JumpCloneService(nowUnixMs, gameRpcCallbacks.JumpClones, gameRpcCallbacks.JumpCloneSpace),
+            new ServiceGatewayMgrService(gameRpcCallbacks.SetHijackMode, gameRpcCallbacks.IsHijackModeEnabled),
+            new SharedSettingsMgrService(gameRpcCallbacks.ReadSharedSettings, gameRpcCallbacks.WriteSharedSettingsAsync, nowUnixMs),
+            new OverviewPresetMgrService(gameRpcCallbacks.ReadOverviewPresets, gameRpcCallbacks.WriteOverviewPresets),
+            new ShipStanceMgrService(gameRpcCallbacks.SetShipStanceAsync,
+                spaceModules is null ? null : (session, cancellationToken) => spaceModules.RefreshShipAsync(session, cancellationToken), isShipInSpace),
+            new SolarSystemInterferenceMgrService(gameRpcCallbacks.ReadInterferenceTableAsync, nowUnixMs),
+            new SurveyService(gameRpcCallbacks.ReadActiveSurveyIdAsync, gameRpcCallbacks.RecordSurveyEventAsync),
+            new WarStatisticMgrService(gameRpcCallbacks.ReadKillmailAsync, nowUnixMs),
+            new VoidSpaceMgrService(),
+            new BannedWordsService(),
+            new CacheService(),
+            new ActivityMgrService(),
+              new ChatAuthenticationService(),
+            new CommunityTrackMgrService(),
+            new ContextualOfferMgrService(),
+              new DynamicBountyMgrService(readDynamicBounty),
+                new JumpTimersService(readJumpTimers),
+              new InGameReportService(submitInGameReport),
+              new NonDiminishingInjectionMgrService(readNonDiminishingInjections),
+            new ProjectDiscoveryService(new ProjectDiscoveryRpcCallbacks(
+                ReadPlayerStateAsync: gameRpcCallbacks.ReadProjectDiscoveryState,
+                TransitionTutorialAsync: gameRpcCallbacks.TransitionProjectDiscoveryTutorial,
+                FixTaskIdAsync: gameRpcCallbacks.FixProjectDiscoveryTaskId,
+                ReadPlayerStatisticsAsync: gameRpcCallbacks.ReadProjectDiscoveryStatistics,
+                ReadRewardEntitlementAsync: gameRpcCallbacks.ReadProjectDiscoveryRewardEntitlement,
+                GrantRewardAsync: gameRpcCallbacks.GrantProjectDiscoveryReward,
+                AnnounceRewardWallet: gameRpcCallbacks.AnnounceProjectDiscoveryRewardWallet,
+                ReadTutorialXpReward: gameRpcCallbacks.ReadProjectDiscoveryTutorialXpReward,
+                ReadBonusSamplesAsync: gameRpcCallbacks.ReadProjectDiscoveryBonusSamples,
+                NewTrainingTaskAsync: gameRpcCallbacks.NewProjectDiscoveryTrainingTask,
+                TransitionTutorialCallAsync: gameRpcCallbacks.TransitionProjectDiscoveryTutorialCall,
+                NotifyStateAfterSubmit: gameRpcCallbacks.NotifyProjectDiscoveryStateAfterSubmit,
+                ReadProjectId: gameRpcCallbacks.ReadProjectDiscoveryProjectId,
+                AnnounceRewardItem: gameRpcCallbacks.AnnounceProjectDiscoveryRewardItem,
+                GetTaskAsync: gameRpcCallbacks.GetProjectDiscoveryTask,
+                SubmitClassificationAsync: gameRpcCallbacks.SubmitProjectDiscoveryClassification)),
+              new LocalizationServerService(localizationTextChanges),
+              new SeasonManagerService(),
+            authentication ?? new AuthenticationRpcService(),
+            infoGatheringMgr ?? new InfoGatheringMgrService(),
+            eveguardReport ?? new EveguardReportService(),
+            subscriptionManager,
+            new LoginRewardFacilitiesService(subscriptionManager),
+            calendarManager,
+            calendarProxy,
+        ];
+    }
+
+    /// <summary>Creates the read-only lookup service for explicit host registration.</summary>
+    public static IService CreateLookupService(ILookupDirectory directory) => new LookupSvcService(directory);
+
+
+    /// <summary>Creates the lookup service from the legacy asynchronous source delegates.</summary>
+    public static IService CreateLookupService(LookupSearchSources sources) => new LookupSvcService(sources);
+
+    /// <summary>The names of the services <see cref="Create"/> returns.</summary>
+    public static IReadOnlyList<string> Names => [.. Generated.Eve_Services_CoreServiceCatalog.Names, "ProjectDiscovery", "overviewPresetMgr", "voidSpaceMgr"];
+}

@@ -1,0 +1,45 @@
+# lookupSvc deep check
+
+Scope: EVE V24.01 client source under `/home/user/eve-logic`, Host service routing, the persisted lookup adapter, and EveJS `/home/user/evejs-261018.1/src`. A whole-client Serena search for `lookupSvc` found 12 direct callsites covering 10 distinct methods. They all use `sm.RemoteSvc('lookupSvc')`; no lookupSvc bound-object or moniker call was found. EveJS also exports `LookupPlayerCharacters`, but the client has no callsite for that alias.
+
+## Client methods and consumed replies
+
+| Method | Client callsites and reply consumption | Host result and status |
+|---|---|---|
+| `LookupCharacters` | `eve/devtools/script/svc_slash.py:103-105` reads `characterID`; `eve/devtools/script/svc_trainer.py:49-51` takes row 0 and turns an empty-list `IndexError` into “Can't find character”. | Registered; wire test asserts list/keyval fields `characterID`, `characterName`, `ownerID`, and numeric IDs. Empty search results stay an empty list. |
+| `LookupEvePlayerCharacters` | `eve/client/script/ui/shared/neocom/corporation/corp_ui_applications.py:890-900` handles None/empty, primes by `characterID`, and reads cached name/type plus the row's `characterID` as itemID. | Registered; wire test checks the characterID row and a later call sees a changed directory result. |
+| `LookupCorporations` | `eve/devtools/script/svc_slash.py:1116-1117` reads `corporationID`. | Registered; wire test checks list/keyval and corporationID/name fields. The client sends one positional argument; omitted exact mode defaults through `ServiceCall.Arg(1)` to None and numeric mode 0. |
+| `LookupFactions` | `eve/devtools/script/svc_slash.py:1118-1119` reads `factionID`. | Registered; wire test checks list/keyval and factionID. The client sends one positional argument; omitted exact mode defaults to mode 0. |
+| `LookupLocationsByGroup` | `eve/devtools/script/insider.py:612-614` iterates rows and reads `itemID`. | Registered; wire test checks the itemID row over Host TCP with an integer group ID. |
+| `LookupKnownLocationsByGroup` | `eve/client/script/ui/util/searchOld.py:53-56` reads each `itemID` and primes `cfg.evelocations`. | Registered alias of the same grouped location lookup; wire test checks `itemID` and `itemName`, including a long integer group ID. |
+| `LookupOwners` | `eve/client/script/ui/util/searchOld.py:260-264` filters on `groupID` and reads `ownerName`, `ownerID`, `typeID`; `xmppchatclient/pcownerpickerdialog.py:60-75` primes owner IDs and reads ownerName/typeID/itemID. | Registered; wire test checks owner IDs/names/type IDs and list counts. |
+| `LookupPCOwners` | `eve/client/script/ui/util/searchOld.py:244-264` calls it when NPCs are hidden, after the client length guard, then consumes groupID/ownerName/ownerID/typeID. | Registered; wire test checks that NPC corporations and factions are excluded while player corporations, characters, and alliances remain. |
+| `LookupNoneNPCAccountOwners` | `eve/client/script/ui/shared/neocom/wallet/noneNPCAccountOwnerDialog.py:64-77` accepts None/empty, primes by `ownerID`, and uses cached owner name/type and row ownerID. | Registered; wire test checks list/keyval fields and its non-NPC character/corporation results. |
+| `LookupWarableCorporationsOrAlliances` | `eve/client/script/ui/services/wars/war_cso.py:337-347` maps rows by `ownerID`; `eve/client/script/ui/shared/neocom/corporation/war/warDeclare.py:358-366` consumes `warPermit` to clear or disable ineligible choices. | Registered; wire test checks ownerID/typeID/warPermit and permit values for corporations and executor-derived alliances. |
+
+Client input limits for owner search are enforced before lookup at `eve/client/script/ui/util/searchOld.py:244-246`. Other search controls check for empty input before calling lookup (for example `eve/client/script/ui/shared/neocom/corporation/corp_ui_applications.py:888-890` and `eve/client/script/ui/shared/neocom/wallet/noneNPCAccountOwnerDialog.py:61-64`). Client callsites pass business arguments positionally. `carbon/common/script/net/ServiceCallGPCS.py:221-227` adds the transport `machoVersion` keyword, defaulting to 1; the Host dispatcher removes that reserved keyword before invoking a service (`dotnet/src/Eve.Services/PacketDispatcher.cs:300-310`). The Host wire tests send this transport keyword and cover PyInt/PyLong exact/group arguments, omitted optional exact mode, bool exact mode, and None search values. No business keyword argument is used by a client lookup call.
+
+All ordinary results are Python lists of keyval rows. IDs and enum-like values are PyInt, names are PyStr, and optional related IDs/tickers are None where the service has no value. The service returns an empty list for no match; this preserves the client’s explicit None-or-empty handling and the trainer’s empty-list behavior. A search string over the service limit produces the named `eveexceptions.UserError` (`CustomInfo`, “Lookup text is too long.”), not the dispatcher's generic RuntimeError. The focused error test sends this case for all ten client methods and checks the wrapped UserError payload.
+
+## Registration, state, and notifications
+
+The service name is `lookupSvc`; `dotnet/src/Eve.Services.Core/LookupSvcService.cs:4-57` declares its registered methods and routes each client-called method. Host composition supplies `CoreServices.CreateLookupService` (`dotnet/src/Eve.Services.Core/CoreServices.cs:111-112`) with the persistence directory. The new tests register that production service in the Host registry, open the Host front door, send real CallReq packets, and decode CallRsp/ErrorResponse packets (`dotnet/tests/Eve.Host.Tests/LookupSvcDeepHostWireTests.cs:12-140`). This exercises PacketDispatcher service lookup, method dispatch, reserved-kwarg filtering, error wrapping, and wire encoding rather than calling the service method directly.
+
+The Host directory reads characters, corporations, and alliances from their PostgreSQL stores on each call (`dotnet/src/Eve.Host/Persistence/Lookup/PersistenceLookupDirectory.cs:17-56`). Factions and locations come from the pinned SDE and are lazily cached. Corporation lookup now maps persisted JSON `settings.allowWar` into the service record (`PersistenceLookupDirectory.cs:32-43,174-194`), preserving false/true/null and EveJS fallback semantics; NPC corporations remain permit 0. This fixes the prior adapter loss where the persisted player-corporation permit was discarded. Alliance permit follows its executor corporation. The wire fixture builds Corporation records through the production mapper for allowWar false/true/null and asserts both corporation and alliance permits (`LookupSvcDeepHostWireTests.cs:139-162`).
+
+These lookup methods are read-only. The service does not write state, queue after-response work, or emit notifications. The client consumes their returned rows directly and no lookupSvc caller expects a follow-up notification.
+
+## EveJS comparison and changes
+
+The EveJS class sets the service name to `lookupSvc` in `server/src/services/corporation/lookupSvcService.js:442-445`. Its handlers build character, owner, corporation, faction, and location keyvals at lines 447-557; the warable method emits ownerID/ownerName/typeID/warPermit at lines 578-626. `server/src/services/corporation/warPermitState.js:27-70` uses a stored non-null allowWar value, otherwise treats NPC corporations as 0 and player corporations as 1, and resolves alliance status through the executor. The Host row shapes and fallback match this behavior.
+
+Two root fixes are covered by the new Host wire tests:
+- `dotnet/src/Eve.Host/Persistence/Lookup/PersistenceLookupDirectory.cs` carries persisted allowWar into the lookup model instead of dropping it.
+- `dotnet/src/Eve.Macho/JsSemantics.cs:34-42` accepts PyLong as numeric conversion input. PyLong is also used by the client wire for Python long integers; leaving it as zero broke exact-mode and group-ID calls. `IsNumber` remains unchanged because it models JavaScript `typeof number`, which excludes BigInt.
+
+## Verification
+
+- Focused Host wire tests: `dotnet test dotnet/tests/Eve.Host.Tests -p:UseSharedCompilation=false --filter 'FullyQualifiedName~Lookup_svc'` — 2 passed, 0 failed, 0 skipped.
+- Whole `Eve.Host.Tests` project was attempted with `EVE_PG_URL` unset and no database used: 499 passed, 101 failed, 227 skipped (827 total). The failure output included database-backed tests that require `EVE_PG_URL` (for example `CompatibilityRpcServiceTests.cs:236-245` and `IndustryJobPersistenceTests.cs:298`). The failure roots were not individually classified for the entire shard; no lookupSvc test failed. Skip counts and failed counts are separate from the focused result.
+- No live PostgreSQL refresh/restart check or graphical-client session was performed. Persistence behavior above is based on the store call paths and the production mapping, with lookup wire behavior exercised against an in-memory directory.
+- GitHub Actions check for the focused test and the push-triggered CI run are pending for the resulting commit.

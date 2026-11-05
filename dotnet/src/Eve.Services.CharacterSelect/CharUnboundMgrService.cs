@@ -1,0 +1,722 @@
+using Eve.Characters;
+using Eve.Identity;
+using Eve.Inventory;
+using Eve.Macho;
+using Eve.Marshal;
+using Eve.Skills;
+using Eve.Wallet;
+
+namespace Eve.Services.CharacterSelect;
+
+/// <summary>
+/// The character selection screen: what the account has, what a new character may be called, making one, and
+/// choosing which to play (<c>charUnboundMgr</c>). Choosing puts the character in the session, and the client learns
+/// of it through one session change notification.
+/// </summary>
+[Service("charUnboundMgr")]
+public sealed partial class CharUnboundMgrService(
+    IAccountLookup accounts,
+    PgCharacterStore characters,
+    PgItemStore items,
+    CharacterTraining training,
+    PgWalletStore wallets,
+    CharacterCreation creation,
+    CreationCatalog catalog,
+    OnlineCharacters online,
+    IReadOnlyList<ICharacterEntryHook> entryHooks,
+    Random random,
+    bool newCharacterExperienceEnabled = false,
+    Func<long, CancellationToken, Task>? sendWelcomeMailAsync = null,
+    Func<long, int>? unreadMailCount = null,
+    Func<long, CancellationToken, Task<double>>? securityStatusOf = null,
+    SystemPopulation? population = null,
+    ICharacterDeletionPurge? deletionPurge = null,
+    Func<DateTimeOffset>? clock = null,
+    Func<int, CancellationToken, Task<IReadOnlyList<Character>>>? readCharactersForAccount = null,
+    Func<long, CancellationToken, Task<Character?>>? readCharacterById = null,
+    Func<string, CancellationToken, Task<bool>>? isCharacterNameTaken = null,
+    Func<long, int, CancellationToken, Task>? writeCharacterGender = null,
+    Func<long, int, int, int, CancellationToken, Task>? writeCharacterBloodline = null,
+    Func<CreationRequest, CancellationToken, Task<CreationOutcome>>? createCharacter = null,
+    Func<long, long, CancellationToken, Task<bool>>? isCorporationCeo = null)
+{
+    /// <summary>What every session's role gets on top of the account's (the client shows staff roles and the base bits alike).</summary>
+    public const long SessionBaseRole = 0x6000000080000000;
+
+    /// <summary>The corporation account key every character starts with.</summary>
+    private const int DefaultCorpAccountKey = 1000;
+
+    /// <summary>Where account creation dates begin on the reference (2019), used when an account is unknown.</summary>
+    private const long FallbackCreationFileTime = 132_000_000_000_000_000;
+
+    private static readonly PyValue None = PyNone.Instance;
+
+    private const long ValidationToggleRoles = (1L << 51) | (1L << 52) | (1L << 54) | (1L << 55);
+
+    private const string ValidationSessionKey = "characterCreationValidation";
+
+    private static CancellationToken Token(ServiceCall call) => call.Cancellation;
+
+    private static int? AccountOf(ServiceCall call) => call.Session.UserId is { } id ? checked((int)id) : null;
+
+    private static long FileTime(DateTimeOffset time) => Py.FileTimeFromUnixMs(time.ToUnixTimeMilliseconds());
+
+    internal static int FinishedSkillsCount(IReadOnlyList<HistoryEntry> history)
+    {
+        var finished = history.Where(entry => entry.EventType is SkillEvents.TrainingComplete or SkillEvents.QueueTrainingCompleted).ToArray();
+        var latest = finished.Select(entry => (long?)entry.LogDate).Max();
+        return latest is { } at ? finished.Count(entry => entry.LogDate == at) : 0;
+    }
+
+    [Method("GetNumCharacters")]
+    public async ValueTask<PyValue> GetNumCharacters(ServiceCall call) =>
+        new PyInt(AccountOf(call) is { } account ? await characters.CountForAccountAsync(account, Token(call)) : 0);
+
+    [Method("GetCharactersToSelect")]
+    public async ValueTask<PyValue> GetCharactersToSelect(ServiceCall call)
+    {
+        var list = AccountOf(call) is { } account ? await characters.ForAccountAsync(account, Token(call)) : [];
+        return new PyList([.. list.Select(SelectRow)]);
+    }
+
+    [Method("GetCharacterInfo")]
+    public async ValueTask<PyValue> GetCharacterInfo(ServiceCall call)
+    {
+        var characterId = RequestCharacterId(call);
+        var account = AccountOf(call);
+        if (characterId <= 0)
+        {
+            var list = account is { } accountId
+                ? await (readCharactersForAccount?.Invoke(accountId, Token(call)) ?? characters.ForAccountAsync(accountId, Token(call)))
+                : [];
+            return new PyList([.. list.Select(SelectRow)]);
+        }
+        if (account is not { } owner)
+        {
+            return None;
+        }
+
+        var character = readCharacterById is null
+            ? await characters.GetAsync(characterId, Token(call))
+            : await readCharacterById(characterId, Token(call));
+        if (character is null || character.AccountId != owner)
+        {
+            return None;
+        }
+        var balances = await wallets.ForOwnersAsync([character.Id], Token(call));
+        return await SelectionRow(character, balances.GetValueOrDefault(character.Id), Token(call));
+    }
+
+    /// <summary>
+    /// <c>(account rows, (None, None), character rows, [])</c>. The rows carry values that belong to modules that do not
+    /// exist yet (mail): they are the reference's for a new character, and are marked below.
+    /// </summary>
+    [Method("GetCharacterSelectionData")]
+    public async ValueTask<PyValue> GetCharacterSelectionData(ServiceCall call)
+    {
+        var account = AccountOf(call);
+        var list = account is { } id ? await characters.ForAccountAsync(id, Token(call)) : [];
+        var info = account is { } known ? await accounts.FindAsync(checked((uint)known), Token(call)) : null;
+        var balances = await wallets.ForOwnersAsync(list.Select(c => c.Id), Token(call));
+        var rows = new List<PyValue>();
+        foreach (var character in list)
+        {
+            rows.Add(await SelectionRow(character, balances.GetValueOrDefault(character.Id), Token(call)));
+        }
+        return Py.Tuple(
+            new PyList(info is null ? [] : [AccountRow(info)]),
+            Py.Tuple(None, None),
+            new PyList(rows),
+            new PyList([]));
+    }
+
+    [Method("GetCohortsForUser")]
+    public PyValue GetCohortsForUser(ServiceCall call) => new PyList([]);
+
+    [Method("GetQAStarterSystemIDs")]
+    public PyValue GetQAStarterSystemIDs(ServiceCall call) => new PyList([
+        .. CreationCatalog.Schools
+            .Select(school => catalog.StarterFor(school.CorporationId)?.SolarSystemId)
+            .Where(systemId => systemId is > 0)
+            .Select(systemId => systemId!.Value)
+            .Distinct()
+            .OrderBy(systemId => systemId)
+            .Select(systemId => (PyValue)new PyInt(systemId)),
+    ]);
+
+    [Method("GetCharacterLockType")]
+    public PyValue GetCharacterLockType(ServiceCall call) => None;
+
+    /// <summary>
+    /// Switches the character-name validation flag of the session and reports the new state (the client's label reads it).
+    /// Only the content, QA, programmer and GML roles may switch it; every other session keeps it on, as the reference does.
+    /// The flag is per session and is not saved.
+    /// </summary>
+    [Method("ToggleValidation")]
+    public PyValue ToggleValidation(ServiceCall call)
+    {
+        var roles = call.Session.Get("accountRole") is PyLong role ? role.Value : 0;
+        var current = call.Session.Get(ValidationSessionKey) is PyBool state ? state.Value : true;
+        var next = (roles & ValidationToggleRoles) != 0 ? !current : true;
+        call.Session.Set(ValidationSessionKey, next ? PyBool.True : PyBool.False);
+        return next ? PyBool.True : PyBool.False;
+    }
+
+    /// <summary>
+    /// Whether the account's Omega time has lapsed: its stored end time has passed (the lapsed-subscription warning of the
+    /// selection screen). An account whose end time is in the future, or that has none, has not lapsed.
+    /// </summary>
+    [Method("GetCharOmegaDowngradeStatus")]
+    public async ValueTask<PyValue> GetCharOmegaDowngradeStatus(ServiceCall call)
+    {
+        if (AccountOf(call) is not { } account)
+        {
+            return PyBool.False;
+        }
+        var info = await accounts.FindAsync(checked((uint)account), Token(call));
+        return info?.SubscriptionEndsAt is { } endsAt && endsAt <= DateTimeOffset.UtcNow ? PyBool.True : PyBool.False;
+    }
+
+    [Method("GetValidRandomName")]
+    public async ValueTask<PyValue> GetValidRandomName(ServiceCall call)
+    {
+        var race = Int(call.Arg(0));
+        string name;
+        var attempts = 0;
+        do
+        {
+            name = RandomNames.Generate(race, random);
+        }
+        while (++attempts < 20 &&
+            await (isCharacterNameTaken?.Invoke(name, Token(call)) ?? characters.NameTakenAsync(name, Token(call))));
+        return new PyStr(name);
+    }
+
+    [Method("ValidateNameEx")]
+    public async ValueTask<PyValue> ValidateNameEx(ServiceCall call)
+    {
+        var name = JsSemantics.StringValue(call.Arg(0));
+        var check = name is { Length: > CharacterNames.MaxLength }
+            ? NameCheck.TooLong
+            : CharacterNames.Validate(name);
+        if (check == NameCheck.Valid && await characters.NameTakenAsync(name!, Token(call)))
+        {
+            check = NameCheck.Unavailable;
+        }
+        return new PyInt((int)check);
+    }
+
+    [Method("UpdateCharacterGender")]
+    public async ValueTask<PyValue> UpdateCharacterGender(ServiceCall call)
+    {
+        var characterId = Long(call.Arg(0));
+        var character = readCharacterById is null
+            ? await characters.GetAsync(characterId, Token(call))
+            : await readCharacterById(characterId, Token(call));
+        if (character is null)
+        {
+            return None;
+        }
+        if (AccountOf(call) != character.AccountId)
+        {
+            throw Info("That character is not available on this account.");
+        }
+
+        var requestedGenderValue = call.Arg(1);
+        if (requestedGenderValue is not PyNone && !TryWireInt(requestedGenderValue, out _))
+            throw Info("That gender is invalid.");
+        var requestedGender = requestedGenderValue is PyNone ? 1 : IntOrDefault(requestedGenderValue, 1);
+        var gender = requestedGender is >= 0 and <= 2 ? requestedGender : 1;
+        await (writeCharacterGender is null
+            ? characters.SetGenderAsync(characterId, gender, Token(call))
+            : writeCharacterGender(characterId, gender, Token(call)));
+        if (IsCurrentCharacter(call, characterId))
+        {
+            call.Session.Set("genderID", new PyInt(gender));
+            call.Session.Set("genderid", new PyInt(gender));
+        }
+        return None;
+    }
+
+    [Method("UpdateCharacterBloodline")]
+    public async ValueTask<PyValue> UpdateCharacterBloodline(ServiceCall call)
+    {
+        var characterId = Long(call.Arg(0));
+        var character = readCharacterById is null
+            ? await characters.GetAsync(characterId, Token(call))
+            : await readCharacterById(characterId, Token(call));
+        if (character is null)
+        {
+            return None;
+        }
+        if (AccountOf(call) != character.AccountId)
+        {
+            throw Info("That character is not available on this account.");
+        }
+
+        var requestedBloodlineValue = call.Arg(1);
+        if (requestedBloodlineValue is not PyNone && !TryWireInt(requestedBloodlineValue, out _))
+            throw Info("That bloodline is invalid.");
+        var requestedBloodlineId = requestedBloodlineValue is PyNone ? 1 : IntOrDefault(requestedBloodlineValue, 1);
+        var bloodlineId = requestedBloodlineId != 0 ? requestedBloodlineId : character.BloodlineId;
+        var bloodline = catalog.Bloodline(bloodlineId);
+        if (bloodline is null)
+            throw Info("That bloodline is invalid.");
+        var raceId = bloodline.RaceId;
+        var typeId = CreationCatalog.CharacterTypeId(bloodlineId, character.TypeId);
+        await (writeCharacterBloodline is null
+            ? characters.SetBloodlineAsync(characterId, bloodlineId, raceId, typeId, Token(call))
+            : writeCharacterBloodline(characterId, bloodlineId, raceId, typeId, Token(call)));
+        if (IsCurrentCharacter(call, characterId))
+        {
+            call.Session.Set("bloodlineID", new PyInt(bloodlineId));
+            call.Session.Set("bloodlineid", new PyInt(bloodlineId));
+            call.Session.Set("raceID", new PyInt(raceId));
+            call.Session.Set("raceid", new PyInt(raceId));
+            call.Session.Set("characterTypeID", new PyInt(typeId));
+        }
+        return None;
+    }
+
+    /// <summary><c>(name, raceID, bloodlineID, genderID, ancestryID, charInfo, portraitInfo, schoolID, None, qaStarter)</c>: the new character's id.</summary>
+    [Method("CreateCharacterWithDoll")]
+    public async ValueTask<PyValue> CreateCharacterWithDoll(ServiceCall call)
+    {
+        if (AccountOf(call) is not { } account)
+        {
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("Log in before creating a character.")));
+        }
+        var name = JsSemantics.StringValue(call.Arg(0)) ?? "";
+        if (name.Length > CharacterNames.MaxLength)
+            throw MachoErrors.ThrowUserError("CharNameInvalid");
+        if (!TryWireInt(call.Arg(1), out var raceId) ||
+            !TryWireInt(call.Arg(2), out var bloodlineId) ||
+            !TryWireInt(call.Arg(3), out var gender) ||
+            !TryWireInt(call.Arg(4), out var ancestryId) ||
+            !TryWireInt(call.Arg(7), out var schoolId))
+            throw Info("That character cannot be created.");
+        var request = new CreationRequest(
+            account,
+            name,
+            raceId,
+            bloodlineId,
+            gender,
+            ancestryId,
+            schoolId,
+            Appearance(call.Arg(5)),
+            Appearance(call.Arg(6)));
+        var outcome = await (createCharacter?.Invoke(request, Token(call)) ?? creation.CreateAsync(request, Token(call)));
+        if (outcome is Created newCharacter && sendWelcomeMailAsync is not null)
+            await sendWelcomeMailAsync(newCharacter.CharacterId, Token(call));
+        return outcome switch
+        {
+            Created created => new PyInt(created.CharacterId),
+            CreationRefused { Reason: CreationRefusal.InvalidName or CreationRefusal.NameTaken } => throw MachoErrors.ThrowUserError("CharNameInvalid"),
+            CreationRefused { Reason: CreationRefusal.SlotsFull } => throw Info("You have no free character slot."),
+            _ => throw Info("That character cannot be created."),
+        };
+    }
+
+    [Method("SelectCharacterID")]
+    public async ValueTask<PyValue> SelectCharacterID(ServiceCall call)
+    {
+        var skipTutorial = call.Args.Count > 2
+            ? BooleanLike(call.Arg(2))
+            : BooleanLike(call.Kwarg("skipTutorial") ?? None);
+        var characterId = RequestCharacterId(call);
+        if (AccountOf(call) is not { } account || characterId <= 0)
+            return None;
+
+        var character = await characters.GetAsync(characterId, Token(call));
+        if (character is null)
+            return None;
+        if (character.AccountId != account || character.IsDeleted)
+            throw Info("That character is not available on this account.");
+        if (character.IsQueuedForDeletion)
+            throw Info("That character is queued for deletion and cannot enter the game.");
+        // The population cap is checked here as well as on the selection screen, because the screen's answer can be stale by now. The room is
+
+        using var seat = population is not null && character.SolarSystemId > 0
+            ? population.TryReserve(character.SolarSystemId, character.Id) ?? throw Info("That solar system has no room for another pilot. Try again later.")
+            : null;
+
+        var previousCharacterId = call.Session.CharacterId;
+        var previousAttributes = call.Session.SnapshotAttributes();
+        if (!online.TryBeginEnter(character.Id, call.Session.SessionId))
+            throw Info($"{character.Name} is already online.");
+
+        var changedPreviousHooks = new List<ICharacterEntryHook>();
+        var enteredCharacterHooks = new List<ICharacterEntryHook>();
+        try
+        {
+            var accountRole = call.Session.Get("accountRole") is PyLong role ? role.Value : 0;
+            (string Name, PyValue Value)[] selected =
+            [
+                ("charid", new PyInt(character.Id)),
+                ("corpid", new PyInt(character.CorporationId)),
+                ("allianceid", None),
+                ("genderID", new PyInt(character.Gender)),
+                ("bloodlineID", new PyInt(character.BloodlineId)),
+                ("raceID", new PyInt(character.RaceId)),
+                ("schoolID", new PyInt(character.SchoolId)),
+                ("factionid", character.FactionId is { } faction ? new PyInt(faction) : None),
+                ("warfactionid", None),
+                ("stationid", character.StructureId is null ? new PyInt(character.StationId) : None),
+                ("stationid2", character.StructureId is null ? new PyInt(character.StationId) : None),
+                ("structureid", character.StructureId is { } structure ? new PyLong(structure) : None),
+                ("solarsystemid", character.StructureId is null ? None : new PyInt(character.SolarSystemId)),
+                ("solarsystemid2", new PyInt(character.SolarSystemId)),
+                ("constellationid", new PyInt(character.ConstellationId)),
+                ("regionid", new PyInt(character.RegionId)),
+                ("shipid", character.ShipId is { } ship ? new PyLong(ship) : None),
+                ("locationid", character.StructureId is { } currentStructure ? new PyLong(currentStructure) : new PyInt(character.StationId)),
+                ("worldspaceid", None),
+                ("homeStationID", new PyInt(character.HomeStationId)),
+                ("cloneStationID", new PyInt(character.HomeStationId)),
+                ("fleetid", None),
+                ("fleetrole", None),
+                ("wingid", None),
+                ("squadid", None),
+                ("corpAccountKey", new PyInt(DefaultCorpAccountKey)),
+                ("hqID", None),
+                ("baseID", None),
+                ("role", new PyLong(accountRole | SessionBaseRole)),
+                ("corprole", new PyLong(0)),
+                ("rolesAtAll", new PyLong(0)),
+                ("rolesAtBase", new PyLong(0)),
+                ("rolesAtHQ", new PyLong(0)),
+                ("rolesAtOther", new PyLong(0)),
+            ];
+            var attributes = selected.ToDictionary(attribute => attribute.Name, attribute => attribute.Value, StringComparer.Ordinal);
+            foreach (var hook in entryHooks)
+            {
+                foreach (var (name, value) in await hook.GetSessionAttributesAsync(call.Session, character.Id, Token(call)))
+                    attributes[name] = value;
+            }
+
+            int? airNpeStateChanged = null;
+            if (skipTutorial)
+                airNpeStateChanged = await characters.MarkTutorialSkippedAsync(character.Id, newCharacterExperienceEnabled, Token(call));
+            else
+                await characters.ConsumeTutorialRevealOnFirstLoginAsync(character.Id, newCharacterExperienceEnabled, Token(call));
+
+            var changingCharacter = previousCharacterId != character.Id;
+            if (changingCharacter && previousCharacterId is { } oldCharacterId)
+            {
+                foreach (var hook in entryHooks)
+                {
+                    changedPreviousHooks.Add(hook);
+                    await hook.OnCharacterLeavingAsync(call.Session, oldCharacterId, Token(call));
+                }
+            }
+            if (changingCharacter)
+                call.Session.SendNotification("OnCharacterSelected", "clientID");
+
+            var announced = call.Session.Change([.. attributes.Select(attribute => (attribute.Key, attribute.Value))]);
+            if (announced.Any(change => change.Name == "charid"))
+            {
+                foreach (var hook in entryHooks)
+                {
+                    enteredCharacterHooks.Add(hook);
+                    await hook.OnCharacterEnteredAsync(call.Session, character.Id, Token(call));
+                }
+            }
+
+            AirNpeNotifications.NotifyStateChanged(call.Session, character.Id, airNpeStateChanged);
+            if (!online.CompleteEnter(call.Session.SessionId))
+                throw new OperationCanceledException("The session closed during character entry.");
+            return None;
+        }
+        catch
+        {
+            // Preserve the entry exception while each affected runtime gets a cleanup attempt.
+            for (var index = enteredCharacterHooks.Count - 1; index >= 0; index--)
+            {
+                try
+                {
+                    await enteredCharacterHooks[index].OnCharacterLeavingAsync(call.Session, character.Id, CancellationToken.None);
+                }
+                catch
+                {
+                }
+            }
+
+            try
+            {
+                call.Session.RestoreAttributes(previousAttributes);
+            }
+            catch
+            {
+            }
+
+            var restoredReservation = online.CancelEnter(call.Session.SessionId);
+            if (restoredReservation && previousCharacterId is { } restoreCharacterId)
+            {
+                for (var index = changedPreviousHooks.Count - 1; index >= 0; index--)
+                {
+                    try
+                    {
+                        await changedPreviousHooks[index].OnCharacterEnteredAsync(call.Session, restoreCharacterId, CancellationToken.None);
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+            throw;
+        }
+    }
+
+    [Method("CancelCharacterDeletePrepare")]
+    public async ValueTask<PyValue> CancelCharacterDeletePrepare(ServiceCall call)
+    {
+        var characterId = RequestCharacterId(call);
+        var character = await characters.GetAsync(characterId, Token(call));
+        if (character is null)
+        {
+            throw Info("That character no longer exists.");
+        }
+        if (AccountOf(call) is not { } account)
+        {
+            throw Info("Character deletion requires a valid authenticated account.");
+        }
+        if (character.AccountId != account)
+        {
+            throw Info("That character is not available on this account.");
+        }
+        if (online.IsOnline(characterId))
+        {
+            throw Info("That character is currently online and cannot be deleted.");
+        }
+        if (character.IsQueuedForDeletion && !await characters.ClearDeletePrepareAsync(characterId, account, Token(call)))
+        {
+            throw Info("That character no longer exists.");
+        }
+        return None;
+    }
+
+    private static readonly TimeSpan BiomassDelay = TimeSpan.FromMinutes(600);
+
+    private const long DoomheimCorporationId = 1000001;
+
+    private DateTimeOffset Now() => (clock ?? (() => DateTimeOffset.UtcNow))();
+
+    /// <summary>
+    /// <c>PrepareCharacterForDelete(charID)</c>: queues an offline character of the account for deletion. A character already in
+    /// the queue keeps its time (the reference returns it). The answer is the FILETIME the deletion becomes possible.
+    /// </summary>
+    [Method("PrepareCharacterForDelete")]
+    public async ValueTask<PyValue> PrepareCharacterForDelete(ServiceCall call)
+    {
+        var (character, account) = await OwnedOfflineCharacter(call);
+        await EnsureNotCorporationCeo(character, Token(call));
+        if (character.DeletePrepareAt is { } queued)
+            return new PyLong(FileTime(queued));
+        var readyAt = Now() + BiomassDelay;
+        if (!await characters.SetDeletePrepareAsync(character.Id, account, readyAt, Token(call)))
+            throw Info("Failed to queue that character for deletion.");
+        return new PyLong(FileTime(readyAt));
+    }
+
+    /// <summary>
+    /// <c>DeleteCharacter(charID)</c>: deletes a queued character once its waiting time has passed. The character is then hidden
+    /// </summary>
+    [Method("DeleteCharacter")]
+    public async ValueTask<PyValue> DeleteCharacter(ServiceCall call)
+    {
+        var (character, account) = await OwnedOfflineCharacter(call, includeDeleted: true);
+        if (character.IsDeleted)
+        {
+            if (deletionPurge is not null)
+                await deletionPurge.PurgeAsync(character.Id, character.CorporationId, Token(call));
+            await characters.SetCorporationAsync(character.Id, DoomheimCorporationId, Token(call));
+            return None;
+        }
+
+        await EnsureNotCorporationCeo(character, Token(call));
+        if (character.DeletePrepareAt is not { } readyAt)
+            throw Info("That character is not in the biomass queue.");
+        var now = Now();
+        if (readyAt > now)
+            throw Info("That character is still waiting for the biomass timer to expire.");
+        var originalCorporation = character.CorporationId;
+        if (!await characters.MarkDeletedAsync(character.Id, account, now, Token(call)))
+            throw Info("Failed to finalize that character deletion.");
+
+        await characters.SetCorporationAsync(character.Id, DoomheimCorporationId, Token(call));
+        if (deletionPurge is not null)
+            await deletionPurge.PurgeAsync(character.Id, originalCorporation, Token(call));
+        return None;
+    }
+
+    private async ValueTask<(Character Character, int Account)> OwnedOfflineCharacter(ServiceCall call, bool includeDeleted = false)
+    {
+        var characterId = RequestCharacterId(call);
+        var character = await characters.GetAsync(characterId, Token(call));
+        if (character is null)
+            throw Info("That character no longer exists.");
+        if (AccountOf(call) is not { } account)
+            throw Info("Character deletion requires a valid authenticated account.");
+        if (character.AccountId != account || (character.IsDeleted && !includeDeleted))
+            throw Info("That character is not available on this account.");
+        if (online.IsOnline(characterId))
+            throw Info("That character is currently online and cannot be deleted.");
+        return (character, account);
+    }
+
+    private async Task EnsureNotCorporationCeo(Character character, CancellationToken cancellationToken)
+    {
+        if (isCorporationCeo is not null && await isCorporationCeo(character.Id, character.CorporationId, cancellationToken))
+            throw Info("You must resign as CEO or close the corporation before deleting this character.");
+    }
+
+    private static MachoWrappedException Info(string text) => MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr(text)));
+
+    private static long RequestCharacterId(ServiceCall call)
+    {
+        var positional = Long(call.Arg(0));
+        if (positional > 0)
+        {
+            return positional;
+        }
+        return Long(call.Kwarg("charID") ?? call.Kwarg("characterID") ?? None);
+    }
+
+    private static bool IsCurrentCharacter(ServiceCall call, long characterId) =>
+        call.Session.CharacterId == characterId ||
+        Long(call.Session.Get("charid")) == characterId ||
+        Long(call.Session.Get("characterID")) == characterId;
+
+    private static long Long(PyValue? value) => value switch
+    {
+        PyInt number => number.Value,
+        PyLong number => number.Value,
+        _ => 0,
+    };
+
+    private static bool BooleanLike(PyValue? value)
+    {
+        if (value is PyBool boolean)
+        {
+            return boolean.Value;
+        }
+        if (value is PyInt integer)
+        {
+            return integer.Value != 0;
+        }
+        if (value is PyLong integer64)
+        {
+            return integer64.Value != 0;
+        }
+        if (value is PyReal real)
+        {
+            return real.Value != 0;
+        }
+        return JsSemantics.StringValue(value)?.Trim().ToLowerInvariant() switch
+        {
+            "true" or "1" or "yes" => true,
+            _ => false,
+        };
+    }
+
+    private static int Int(PyValue value) => value switch
+    {
+        PyInt number => (int)Math.Clamp(number.Value, int.MinValue, int.MaxValue),
+        PyLong number => (int)Math.Clamp(number.Value, int.MinValue, int.MaxValue),
+        PyReal number => (int)Math.Clamp(number.Value, int.MinValue, int.MaxValue),
+        _ => 0,
+    };
+
+    private static int IntOrDefault(PyValue value, int fallback) => value is PyInt or PyLong or PyReal ? Int(value) : fallback;
+
+    private static bool TryWireInt(PyValue value, out int result)
+    {
+        var number = value switch
+        {
+            PyInt integer => (double)integer.Value,
+            PyLong integer => integer.Value,
+            PyReal real => real.Value,
+            _ => double.NaN,
+        };
+        if (!double.IsFinite(number) || number != Math.Truncate(number) || number < int.MinValue || number > int.MaxValue)
+        {
+            result = 0;
+            return false;
+        }
+        result = (int)number;
+        return true;
+    }
+
+    /// <summary>The paper doll or portrait the client sent, kept as it was sent.</summary>
+    private static byte[]? Appearance(PyValue value) => value is PyNone ? null : MarshalCodec.Encode(value);
+
+    private static PyValue SelectRow(Character c) => Py.KeyVal(
+        ("characterID", new PyInt(c.Id)),
+        ("characterName", new PyStr(c.Name)),
+        ("deletePrepareDateTime", c.DeletePrepareAt is { } at ? new PyLong(FileTime(at)) : None),
+        ("gender", new PyInt(c.Gender)),
+        ("typeID", new PyInt(c.TypeId)));
+
+    private PyValue AccountRow(AccountInfo info) => Py.KeyVal(
+        ("characterSlots", new PyInt(CharacterCreation.SlotsPerAccount)),
+        ("userName", new PyStr(info.UserName)),
+        ("creationDate", new PyLong(info.CreatedAt == default ? FallbackCreationFileTime : FileTime(info.CreatedAt))),
+        ("subscriptionEndTime", info.SubscriptionEndsAt is { } endsAt ? new PyLong(FileTime(endsAt)) : None),
+        ("maxCharacterSlots", new PyInt(CharacterCreation.SlotsPerAccount)));
+
+    private async Task<PyValue> SelectionRow(Character c, Balance? balance, CancellationToken ct)
+    {
+        var ship = c.ShipId is { } shipId ? await items.GetAsync(shipId, ct) : null;
+        var trainingView = await training.ViewAsync(c.Id, c.AccountId, ct);
+        var currentTraining = trainingView.Current;
+        var trainingQueueEnd = currentTraining is null ? null : trainingView.Queue.LastOrDefault()?.End;
+        var trainedSkillPoints = currentTraining is null
+            ? null
+            : trainingView.Skills.FirstOrDefault(skill => skill.TypeId == currentTraining.TypeId)?.SkillPoints;
+        var finishedSkills = FinishedSkillsCount(await training.HistoryAsync(c.Id, ct));
+        var securityStatus = securityStatusOf is null ? 0d : await securityStatusOf(c.Id, ct);
+        var paperdollState = await characters.ResolvedPaperdollStateAsync(c.Id, ct);
+        var logoff = c.LastLogoffAt ?? c.CreatedAt;
+        return Py.KeyVal(
+            ("characterID", new PyInt(c.Id)),
+            ("characterName", new PyStr(c.Name)),
+            ("deletePrepareDateTime", c.DeletePrepareAt is { } at ? new PyLong(FileTime(at)) : None),
+            ("gender", new PyInt(c.Gender)),
+            ("typeID", new PyInt(c.TypeId)),
+            ("raceID", new PyInt(c.RaceId)),
+            ("bloodlineID", new PyInt(c.BloodlineId)),
+            ("ancestryID", new PyInt(c.AncestryId)),
+            ("schoolID", new PyInt(c.SchoolId)),
+            ("corporationID", new PyInt(c.CorporationId)),
+            ("allianceID", c.AllianceId is { } alliance ? new PyInt(alliance) : None),
+            // The reference shows no faction here although the session has one.
+            ("factionID", None),
+            ("stationID", new PyInt(c.StationId)),
+            ("solarSystemID", new PyInt(c.SolarSystemId)),
+            ("constellationID", new PyInt(c.ConstellationId)),
+            ("regionID", new PyInt(c.RegionId)),
+            ("balance", new PyReal((double)(balance?.Isk ?? 0m))),
+            ("plexBalance", new PyInt(balance?.Plex ?? 0)),
+            // Gap: the wallet has no journal yet, so nothing has changed the balance.
+            ("balanceChange", new PyReal(0.0)),
+            ("skillPoints", new PyInt(trainingView.TotalPoints)),
+            ("shipTypeID", ship is null ? None : new PyInt(ship.TypeId)),
+            ("shipName", new PyStr(ship is null ? "" : ship.CustomName ?? catalog.ShipName(ship.TypeId))),
+            ("securityRating", Py.Number(securityStatus)),
+            ("securityStatus", Py.Number(securityStatus)),
+            ("title", new PyStr("")),
+            ("unreadMailCount", new PyInt(Math.Max(0, unreadMailCount?.Invoke(c.Id) ?? 0))),
+            ("paperdollState", new PyInt(paperdollState)),
+            ("lockTypeID", None),
+            ("logoffDate", new PyLong(FileTime(logoff))),
+            ("skillTypeID", currentTraining is null ? None : new PyInt(currentTraining.TypeId)),
+            ("toLevel", currentTraining is null ? None : new PyInt(currentTraining.ToLevel)),
+            ("trainingStartTime", currentTraining?.Start is { } trainingStart ? new PyLong(trainingStart) : None),
+            ("trainingEndTime", currentTraining?.End is { } trainingEnd ? new PyLong(trainingEnd) : None),
+            ("queueEndTime", trainingQueueEnd is { } queueEnd ? new PyLong(queueEnd) : None),
+            ("finishSP", currentTraining is null ? None : new PyInt(currentTraining.DestinationPoints)),
+            ("trainedSP", trainedSkillPoints is { } trained ? new PyInt(trained) : None),
+            // ponytail: history has no settle-batch id, so separate completion batches with the same FILETIME merge.
+            ("finishedSkills", new PyInt(finishedSkills)));
+    }
+}

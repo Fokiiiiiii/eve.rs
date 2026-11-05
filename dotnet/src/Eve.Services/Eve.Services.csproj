@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Eve.Marshal/Eve.Marshal.csproj" />
+    <ProjectReference Include="../Eve.Macho/Eve.Macho.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Eve.Services.Tests" />
+  </ItemGroup>
+</Project>

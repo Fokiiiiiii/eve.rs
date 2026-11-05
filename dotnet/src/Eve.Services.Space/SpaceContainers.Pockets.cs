@@ -1,0 +1,159 @@
+using Eve.Dungeons;
+using Eve.Ships;
+using Eve.Services.Space.Waves;
+using Eve.Space;
+
+namespace Eve.Services.Space;
+
+/// <summary>
+/// and a simulation body with no client ball. A running dungeon with a room layout also has a pocket for each room after the entry, and an acceleration gate
+/// placed when their dungeon is active, and taken out when it is not. An observatory is refused inside a pocket by its record.
+/// </summary>
+public sealed partial class SpaceContainers
+{
+    /// <summary>The deployed record kind of a dungeon's pocket (migration 0017).</summary>
+    public const string DeadspacePocketKind = "dungeon_pocket";
+
+    /// <summary>The deployed record kind of an acceleration gate of a dungeon room (migration 0018).</summary>
+    public const string AccelerationGateKind = "dungeon_gate";
+
+    /// <summary>The deployable id of a pocket is this base plus its dungeon instance's id (instance ids are small, item ids are not in this range).</summary>
+    private const long PocketIdBase = 4_500_000_000_000_000_000L;
+
+    /// <summary>The pockets of the rooms after the entry: this base plus the instance's slot (<see cref="IdSlotsPerInstance"/>).</summary>
+    private const long RoomPocketIdBase = 4_490_000_000_000_000_000L;
+
+    /// <summary>
+    /// The gates' deployable ids: this base plus the instance's slot. The host sends a gate's id to the simulation as a double in its transit command, so it is
+    /// below 2^53 (the simulation takes an id only that small).
+    /// </summary>
+    private const long AccelerationGateIdBase = 8_000_000_000_000_000L;
+
+    /// <summary>The ids a dungeon instance has for its rooms and its gates (a site has fewer gates than this).</summary>
+    public const int IdSlotsPerInstance = 256;
+
+    private const string PocketName = "Deadspace Pocket";
+    private const string AccelerationGateName = "Acceleration Gate";
+
+    private const int AccelerationGateGroupId = 366;
+
+    /// <summary>The deployable id of a pocket.</summary>
+    public static long PocketDeployableId(long instanceId) => PocketIdBase + instanceId;
+
+    /// <summary>The deployable id of the pocket of a dungeon's room after the entry (its index is 1 or more).</summary>
+    public static long RoomPocketDeployableId(long instanceId, int roomIndex) => RoomPocketIdBase + instanceId * IdSlotsPerInstance + roomIndex;
+
+    /// <summary>The deployable id of an acceleration gate of a dungeon: the instance and the gate's place in its dungeon's gate list.</summary>
+    public static long AccelerationGateDeployableId(long instanceId, int gateIndex) => AccelerationGateIdBase + instanceId * IdSlotsPerInstance + gateIndex;
+
+    /// <summary>Places a dungeon pocket and its record. Direct calls always send the body; periodic reconciliation sends it once per simulator link.</summary>
+    public Task PlaceDeadspacePocketAsync(int solarSystemId, long instanceId, double[] origin, CancellationToken cancellationToken = default) =>
+        PlacePocketAsync(solarSystemId, PocketDeployableId(instanceId), origin, false, cancellationToken);
+
+    /// <summary>Places an acceleration gate of a dungeon room. Direct calls always send the body.</summary>
+    public Task PlaceAccelerationGateAsync(int solarSystemId, long deployableId, long typeId, double radius, double[] position, CancellationToken cancellationToken = default) =>
+        PlaceGateAsync(solarSystemId, deployableId, typeId, radius, position, false, cancellationToken);
+
+    private async Task PlaceGateAsync(int solarSystemId, long deployableId, long typeId, double radius, double[] position, bool periodic, CancellationToken cancellationToken)
+    {
+        if (_deployed is null)
+        {
+            return;
+        }
+        var type = checked((int)typeId);
+        if (await _deployed.GetAsync(deployableId, cancellationToken) is null)
+        {
+            await _deployed.SaveAsync(new DeployedRecord(
+                deployableId, AccelerationGateKind, solarSystemId, AccelerationGateName, type, AccelerationGateGroupId, position, radius, 0, 0, 0, 0, NeverExpires), cancellationToken);
+        }
+        await GiveBodyAsync(deployableId, periodic, () => _sim.PlaceAccelerationGateAsync(
+            new SimPlaceAccelerationGate(deployableId, solarSystemId, AccelerationGateName, type, AccelerationGateGroupId, position, radius), cancellationToken));
+    }
+
+    /// <summary>
+    /// and gates when its layout is known, and each pocket or gate whose dungeon is not active any more is taken out of the scene and forgotten.
+    /// </summary>
+    public async Task ReconcileDeadspacePocketsAsync(IReadOnlyList<DungeonPocket> active, CancellationToken cancellationToken = default)
+    {
+        if (_deployed is null)
+        {
+            return;
+        }
+        var running = new HashSet<long>();
+        foreach (var pocket in active)
+        {
+            running.Add(PocketDeployableId(pocket.InstanceId));
+            await PlacePocketAsync(pocket.SolarSystemId, PocketDeployableId(pocket.InstanceId), pocket.Origin, true, cancellationToken);
+            if (pocket.Layout is { } layout)
+            {
+                await PlaceLayoutAsync(pocket, layout, running, true, cancellationToken);
+            }
+        }
+        foreach (var kind in new[] { DeadspacePocketKind, AccelerationGateKind })
+        {
+            foreach (var record in await _deployed.ByKindAsync(kind, cancellationToken))
+            {
+                if (!running.Contains(record.DeployableId))
+                {
+                    await _sim.RemoveDeployedAsync(record.DeployableId, cancellationToken);
+                    _placed.TryRemove(record.DeployableId, out _);
+                    await _deployed.RemoveAsync(record.DeployableId, cancellationToken);
+                }
+            }
+        }
+    }
+
+    private async Task PlaceLayoutAsync(DungeonPocket pocket, DungeonLayout layout, HashSet<long> running, bool periodic, CancellationToken cancellationToken)
+    {
+        foreach (var room in layout.Rooms.Where(room => room.Index > 0))
+        {
+            var id = RoomPocketDeployableId(pocket.InstanceId, room.Index);
+            running.Add(id);
+            await PlacePocketAsync(pocket.SolarSystemId, id, room.Anchor, periodic, cancellationToken);
+        }
+        foreach (var gate in layout.Gates)
+        {
+            var id = AccelerationGateDeployableId(pocket.InstanceId, gate.GateIndex);
+            running.Add(id);
+            await PlaceGateAsync(pocket.SolarSystemId, id, gate.TypeId, gate.Radius, gate.Position, periodic, cancellationToken);
+        }
+    }
+
+    private async Task PlacePocketAsync(int solarSystemId, long id, double[] origin, bool periodic, CancellationToken cancellationToken)
+    {
+        if (_deployed is null)
+        {
+            return;
+        }
+        if (await _deployed.GetAsync(id, cancellationToken) is null)
+        {
+            await _deployed.SaveAsync(new DeployedRecord(
+                id, DeadspacePocketKind, solarSystemId, PocketName, 0, 0, origin, DeadspaceSiteRadiusMeters, 0, 0, 0, 0, NeverExpires), cancellationToken);
+        }
+        await GiveBodyAsync(id, periodic, () => _sim.PlaceDeadspacePocketAsync(
+            new SimPlaceDeadspacePocket(id, solarSystemId, PocketName, origin, DeadspaceSiteRadiusMeters), cancellationToken));
+    }
+
+    private async Task GiveBodyAsync(long id, bool periodic, Func<Task<bool>> give)
+    {
+        if (!periodic)
+        {
+            await give();
+            return;
+        }
+        if (!_sim.IsConnected || !_placed.TryAdd(id, 0))
+        {
+            return;
+        }
+        try
+        {
+            if (!await give())
+                _placed.TryRemove(id, out _);
+        }
+        catch
+        {
+            _placed.TryRemove(id, out _);
+            throw;
+        }
+    }
+}

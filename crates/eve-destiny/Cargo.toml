@@ -1,0 +1,10 @@
+[package]
+name = "eve-destiny"
+description = "Destiny kernels (carbon motion integration, ball wire encoding), bit-compatible with the JS reference under server/src/space/destiny"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]

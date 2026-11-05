@@ -1,0 +1,85 @@
+using System.Net;
+using System.Net.Sockets;
+using Eve.Characters;
+using Eve.Data;
+using Eve.Host;
+using Eve.Identity;
+using Eve.Dogma;
+using Eve.Fitting;
+using Eve.GameStore;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using Eve.Inventory;
+using Eve.Ships;
+using Eve.Marshal;
+using Eve.Npc;
+using Eve.Sde;
+using Eve.Skills;
+using Eve.Universe;
+using Eve.Wallet;
+using Npgsql;
+using Sentry;
+using Eve.Services;
+using Eve.Services.CharacterSelect;
+using Eve.Services.Core;
+using Eve.Services.Dogma;
+using Eve.Services.Inventory;
+using Eve.Services.CharacterInfo;
+using Eve.Services.Skills;
+using Eve.Services.Slash;
+using Eve.Services.Space;
+using Eve.Space;
+using Eve.Services.Station;
+using Eve.Services.Wallet;
+using static Eve.Host.HostConfiguration;
+
+namespace Eve.Host;
+
+internal sealed partial class CharacterServicesComposition
+{
+    /// <summary>Structures: directory, moon extractions, travel, control, asset safety, settings and skyhooks.</summary>
+    private async Task<JsonObject?> ReadMoonExtractionsAsync() => await moonExtractionStore.ReadLegacyAsync();
+
+    private ValueTask JettisonStructureFuelAsync(ServiceCall call, long structureId, IReadOnlyList<long> itemIds)
+    {
+        if (sim is null)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Space is not available for structure fuel jettison.")));
+        var backend = new StructureFuelJettisonBackend(source, structureStore, items, dogma, sim, spaceItemStore,
+            foundations.Events,
+            async (characterId, corporationId, token) =>
+            {
+                var member = await corporations.MemberAsync(characterId, token);
+                return member?.CorporationId == corporationId &&
+                    await corporations.HasRoleAsync(characterId, corporationId, Eve.Corporations.CorporationRoles.StationManager, token);
+            }, now,
+            message => Console.Error.WriteLine($"eve-host: structure fuel jettison: {message}"));
+        return backend.JettisonAsync(call, structureId, itemIds);
+    }
+
+    private IReadOnlyList<IService> StructureRpc() =>
+    [
+            new Eve.Services.Core.StructureDirectoryService(structureDirectoryReadModel),
+            new Eve.Services.Core.StructureMonikerService(JettisonStructureFuelAsync, now),
+            // Mutation needs structure-control/drill authority and the space timer/settlement backend.
+            new Eve.Services.Core.MoonExtractionsRpcService(
+                readState: ReadMoonExtractionsAsync,
+                mutationBackend: call => structureMoon.CallAsync(call),
+                readAccess: structureMoon.ValidateReadAccessAsync),
+            new Eve.Services.Space.StructureTravelRpcService(
+                "structureJumpBridgeMgr",
+                jumpBridgeDestination: structureDirectoryReadModel.GetJbStructureDestinationAsync,
+                linkedStructure: structureDirectoryReadModel.GetLinkedStructureAsync),
+            new Eve.Services.Core.StructureRpcService("structureCargoDelivery", structureRpcCallbacks),
+            new Eve.Services.Core.StructureRpcService("structureCompressionMgr", structureRpcCallbacks),
+            new Eve.Services.Core.StructureRpcService("structureControl", structureRpcCallbacks),
+            new Eve.Services.Core.StructureRpcService("structureDeliveries", structureRpcCallbacks),
+            new Eve.Services.Core.StructureRpcService("structureDeployment", structureRpcCallbacks),
+            new Eve.Services.Core.StructureRpcService("structureDocking", structureRpcCallbacks),
+            new Eve.Services.Core.StructureRpcService("structureHangarViewMgr", structureRpcCallbacks),
+            new Eve.Services.Core.StructureRpcService("structureProfiles", structureRpcCallbacks),
+            new Eve.Services.Core.StructureRpcService("structureVulnerability", structureRpcCallbacks),
+            new Eve.Services.Core.StructureAssetSafetyService(structureAssetSafetyReadModel, NotifyAssetSafetyOwner),
+            structureSettingsService,
+            skyhookResourceMgrService,
+    ];
+}

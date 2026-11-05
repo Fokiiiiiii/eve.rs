@@ -1,0 +1,421 @@
+using Eve.Data;
+using Eve.Events;
+using Eve.Host;
+using Eve.Macho;
+using Eve.Marshal;
+using Eve.Scheduler;
+using Eve.Services;
+using Eve.Services.Corporations;
+using Eve.Structures;
+using Npgsql;
+using Xunit;
+
+namespace Eve.Host.Tests;
+
+/// <summary>
+/// The structure notices (ST-2 d) on the real bus, scheduler and store: the owner corporation hears the state change and the directory change, a pilot docked
+/// in the structure hears its current state, and a pilot of another corporation hears nothing. A change that is not a state change sends nothing.
+/// </summary>
+public sealed class StructureNotificationsTests
+{
+    private const long Corporation = 98_000_001, OtherCorporation = 98_000_002, Structure = 1_000_000_000_060;
+    private const int Astrahus = 35_832, Tanoo = 30_000_001;
+    private const long Now = 1_700_006_400_000;
+
+    private sealed class Rules : IStructureRulesSource
+    {
+        public StructureRules RulesOf(int typeId, int solarSystemId) => StructureRules.Of(StructureSize.Medium, SecurityBand.HighSec);
+    }
+
+    private sealed class Sink : IPacketSink
+    {
+        public List<PyValue> Sent { get; } = [];
+        public void Send(PyValue packet) => Sent.Add(packet);
+    }
+
+    /// <summary>A decoded client notification, including its address and wire arguments.</summary>
+    private sealed record ClientNotice(string Name, string IdType, PyTuple Args);
+
+    private static List<ClientNotice> ClientNotices(Sink sink)
+    {
+        var notices = new List<ClientNotice>();
+        foreach (var packet in sink.Sent.OfType<PyObject>())
+        {
+            var fields = ((PyTuple)packet.Args).Items;
+            if (fields[0] is not PyInt { Value: MachoMessage.Notification })
+            {
+                continue;
+            }
+            var address = ((PyTuple)((PyObject)fields[2]).Args).Items;
+            var envelope = (PyTuple)((PyTuple)fields[4]).Items[0];
+            var call = (PyTuple)MarshalCodec.Decode(((PyBuffer)envelope.Items[1]).Value);
+            var args = (PyTuple)((PyTuple)call.Items[1]).Items[1];
+            notices.Add(new(
+                JsSemantics.StringValue(address[1]) ?? "",
+                JsSemantics.StringValue(address[3]) ?? "",
+                args));
+        }
+        return notices;
+    }
+
+    private static PyValue HangarField(PyObjectEx state, string name)
+    {
+        var header = Assert.IsType<PyList>(state.Header);
+        var attributes = Assert.IsType<PyDict>(header.Items[1]);
+        return attributes.Entries.Single(pair => JsSemantics.StringValue(pair.Key) == name).Value;
+    }
+
+    private static long FileTime(long unixMilliseconds) =>
+        116_444_736_000_000_000L + unixMilliseconds * 10_000L;
+
+    private static List<string> Notices(Sink sink) => ClientNotices(sink).Select(notice => notice.Name).ToList();
+
+    [Fact]
+    public void Auto_paid_rent_refreshes_bill_list_for_corporation_sessions()
+    {
+        var sessions = new CharacterSessions();
+        var member = new Sink();
+        var memberSession = new ClientSession(member) { SessionId = 1, CharacterId = 1 };
+        memberSession.Set("corpid", new PyInt(Corporation));
+        sessions.Enter(1, memberSession);
+        var outsider = new Sink();
+        var outsiderSession = new ClientSession(outsider) { SessionId = 2, CharacterId = 2 };
+        outsiderSession.Set("corpid", new PyInt(OtherCorporation));
+        sessions.Enter(2, outsiderSession);
+
+        CorporationOfficeNotifications.BillReceived(sessions, Corporation);
+
+        var notice = Assert.Single(ClientNotices(member));
+        Assert.Equal("OnBillReceived", notice.Name);
+        Assert.Equal("corpid", notice.IdType);
+        Assert.Empty(notice.Args.Items);
+        Assert.Empty(ClientNotices(outsider));
+    }
+
+    [PgFact]
+    public async Task War_eligibility_recipients_include_old_and_current_alliance_members()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(
+            Environment.GetEnvironmentVariable("EVE_PG_URL") ?? throw new InvalidOperationException("EVE_PG_URL is required")));
+        var schema = "wn_corp_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            await Eve.Corporations.CorporationStore.MigrateAsync(source, schema);
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var command = new NpgsqlCommand($"""
+                INSERT INTO {schema}.owner_names(owner_id,name_key,ticker_key)
+                    VALUES (100,'c100','t100'),(101,'c101','t101'),(102,'c102','t102'),(500,'a500','a500'),(600,'a600','a600');
+                INSERT INTO {schema}.corporations(id,name,ticker,ceo_id,creator_id,alliance_id,station_id,solar_system_id,tax_rate,lp_tax_rate,description,url,member_limit,created_ms)
+                    VALUES (100,'c100','t100',1,1,600,1,1,0,0,'','',10,0),
+                           (101,'c101','t101',1,1,500,1,1,0,0,'','',10,0),
+                           (102,'c102','t102',1,1,600,1,1,0,0,'','',10,0);
+                INSERT INTO {schema}.alliances(id,name,short_name,description,url,executor_corporation_id,creator_corporation_id,creator_character_id,created_ms,founding_key)
+                    VALUES (500,'a500','a500','','',101,101,1,0,'a500'),(600,'a600','a600','','',100,100,1,0,'a600');
+                INSERT INTO {schema}.alliance_members(alliance_id,corporation_id,started_ms,chosen_executor_id)
+                    VALUES (500,101,0,101),(600,100,0,100),(600,102,0,100);
+                """, connection))
+                await command.ExecuteNonQueryAsync();
+            var store = new Eve.Corporations.CorporationStore(source, null!, null!, null!, null!, () => 0, schema);
+            var recipients = await CharacterServicesComposition.AffectedWarCorporationsAsync(store,100,500,CancellationToken.None);
+            Assert.Equal(new long[] {100,101,102}, recipients.Order());
+            var sessions = new CharacterSessions();
+            var sinks = new[] { new Sink(), new Sink(), new Sink(), new Sink() };
+            for (var i = 0; i < sinks.Length; i++)
+            {
+                var session = new ClientSession(sinks[i]) { SessionId = i + 1, CharacterId = i + 1 };
+                session.Set("corpid", new PyLong(100 + i));
+                sessions.Enter(i + 1, session);
+            }
+            var values = recipients.ToDictionary(id => id, _ => true);
+            CharacterServicesComposition.PrepareWarEligibilitySends(sessions, recipients, values)();
+            for (var i = 0; i < 3; i++)
+                Assert.Equal("OnAllowWarUpdated", Assert.Single(ClientNotices(sinks[i])).Name);
+            Assert.Empty(ClientNotices(sinks[3]));
+        }
+        finally
+        {
+            await using var connection = await source.OpenConnectionAsync();
+            await using var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE", connection);
+            await command.ExecuteNonQueryAsync();
+        }
+    }
+
+    [Fact]
+    public void War_eligibility_notice_targets_each_affected_corporation_and_carries_its_current_value()
+    {
+        var sessions = new CharacterSessions();
+        var first = new Sink();
+        var second = new Sink();
+        var outsider = new Sink();
+        var a = new ClientSession(first) { SessionId = 1, CharacterId = 1 };
+        var b = new ClientSession(second) { SessionId = 2, CharacterId = 2 };
+        var c = new ClientSession(outsider) { SessionId = 3, CharacterId = 3 };
+        a.Set("corpid", new PyLong(Corporation));
+        b.Set("corpid", new PyLong(OtherCorporation));
+        c.Set("corpid", new PyLong(OtherCorporation + 1));
+        sessions.Enter(1, a);
+        sessions.Enter(2, b);
+        sessions.Enter(3, c);
+        var send = CharacterServicesComposition.PrepareWarEligibilitySends(sessions,
+            [Corporation, OtherCorporation, Corporation], new Dictionary<long,bool>
+            { [Corporation] = true, [OtherCorporation] = false });
+        Assert.Empty(first.Sent);
+        send();
+        var firstNotice = Assert.Single(ClientNotices(first));
+        Assert.Equal("OnAllowWarUpdated", firstNotice.Name);
+        Assert.Equal("clientID", firstNotice.IdType);
+        Assert.Equal(new PyTuple([new PyLong(Corporation), PyBool.True]), firstNotice.Args);
+        var secondNotice = Assert.Single(ClientNotices(second));
+        Assert.Equal("OnAllowWarUpdated", secondNotice.Name);
+        Assert.Equal(new PyTuple([new PyLong(OtherCorporation), PyBool.False]), secondNotice.Args);
+        Assert.Empty(ClientNotices(outsider));
+    }
+
+    [PgFact]
+    public async Task The_owner_and_docked_pilots_receive_persisted_hangar_view_updates_in_order_and_unrelated_sessions_hear_nothing()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL") ?? throw new InvalidOperationException("EVE_PG_URL is not set");
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        await using var _ = source;
+        var id = Guid.NewGuid().ToString("N")[..12];
+        var schemas = new[] { $"ntf_sch_{id}", $"ntf_evt_{id}", $"ntf_str_{id}" };
+        await DurableScheduler.MigrateAsync(source, schemas[0]);
+        await EventBus.MigrateAsync(source, schemas[1]);
+        await StructureStore.MigrateAsync(source, schemas[2]);
+        try
+        {
+            var clock = Now;
+            var scheduler = new DurableScheduler(source, () => clock, new SchedulerOptions { Concurrency = 1 }, schemas[0], _ => { });
+            var bus = new EventBus(source, scheduler, new EventBusOptions { MaxAttempts = 3 }, schemas[1], _ => { });
+            var store = new StructureStore(source, schemas[2]);
+            var timers = new StructureTimers(store, scheduler, bus, new Rules(), () => 0.5);
+            timers.Register();
+
+            var profiles = new PersistenceStructureProfilesRpcBackend(
+                async (table, cancellation) => table == "structures"
+                    ? await store.ReadLegacyTableAsync(cancellation)
+                    : new System.Text.Json.Nodes.JsonObject(),
+                null!, null!);
+            var hangarStateReads = 0;
+            ValueTask<PyValue?> GetHangarViewStateAsync(long structureId, CancellationToken cancellation)
+            {
+                hangarStateReads++;
+                return profiles.GetMyHangarViewStateAsync(structureId, cancellation);
+            }
+
+            var sessions = new CharacterSessions();
+            StructureNotifications.Subscribe(bus, store, sessions, GetHangarViewStateAsync);
+            await bus.PumpAsync();
+
+            var member = new Sink();
+            var memberSession = new ClientSession(member) { SessionId = 1, CharacterId = 1 };
+            memberSession.Set("corpid", new PyInt(Corporation));
+            memberSession.Set("structureid", new PyLong(Structure));
+            sessions.Enter(1, memberSession);
+
+            var docked = new Sink();
+            var dockedSession = new ClientSession(docked) { SessionId = 2, CharacterId = 2 };
+            dockedSession.Set("corpid", new PyInt(OtherCorporation));
+            dockedSession.Set("structureid", new PyLong(Structure));
+            sessions.Enter(2, dockedSession);
+
+            var stranger = new Sink();
+            var strangerSession = new ClientSession(stranger) { SessionId = 3, CharacterId = 3 };
+            strangerSession.Set("corpid", new PyInt(OtherCorporation));
+            sessions.Enter(3, strangerSession);
+
+            var elsewhere = new Sink();
+            var elsewhereSession = new ClientSession(elsewhere) { SessionId = 4, CharacterId = 4 };
+            elsewhereSession.Set("corpid", new PyInt(OtherCorporation));
+            elsewhereSession.Set("structureid", new PyLong(Structure + 1));
+            sessions.Enter(4, elsewhereSession);
+
+            var controlSeat = new Sink();
+            var controlSeatSession = new ClientSession(controlSeat) { SessionId = 5, CharacterId = 5 };
+            controlSeatSession.Set("corpid", new PyInt(OtherCorporation));
+            controlSeatSession.Set("shipid", new PyLong(Structure));
+            controlSeatSession.Set("structureid", new PyLong(Structure));
+            sessions.Enter(5, controlSeatSession);
+
+            // The committed anchor transition is visible as the persisted ObjectEx2 hangar state.
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await timers.AnchorAsync(connection, transaction, new NewStructure(Structure, Astrahus, Tanoo, 1, 2, 3, 0, Corporation, 0, "Notice", ""));
+                await transaction.CommitAsync();
+            }
+            await bus.PumpAsync();
+
+            var ownerNotices = ClientNotices(member);
+            Assert.Equal(
+                new[] { "OnStructureStateChanged", "OnCurrentStructureStateChanged", "OnHangarViewStateUpdated", "OnCorporationStructuresUpdated" },
+                ownerNotices.Select(notice => notice.Name));
+            Assert.Equal("clientID", ownerNotices[0].IdType);
+            Assert.Equal(new PyTuple([new PyLong(Tanoo), new PyLong(Structure), new PyInt(StructureState.AnchorVulnerable)]), ownerNotices[0].Args);
+            Assert.Equal("shipid", ownerNotices[1].IdType);
+            Assert.Equal(new PyTuple([new PyLong(Tanoo), new PyLong(Structure), new PyInt(StructureState.AnchorVulnerable)]), ownerNotices[1].Args);
+            Assert.Equal("*corpid&corprole", ownerNotices[3].IdType);
+            Assert.Empty(ownerNotices[3].Args.Items);
+
+            var dockedNotices = ClientNotices(docked);
+            Assert.Equal(new[] { "OnCurrentStructureStateChanged", "OnHangarViewStateUpdated" }, dockedNotices.Select(notice => notice.Name));
+            Assert.Equal("shipid", dockedNotices[0].IdType);
+            Assert.Equal(new PyTuple([new PyLong(Tanoo), new PyLong(Structure), new PyInt(StructureState.AnchorVulnerable)]), dockedNotices[0].Args);
+
+            var hangarNotice = dockedNotices[1];
+            Assert.Equal(hangarNotice, ownerNotices[2]);
+            Assert.Equal("structureid", hangarNotice.IdType);
+            Assert.Equal(2, hangarNotice.Args.Items.Count);
+            Assert.Equal(new PyLong(Structure), hangarNotice.Args.Items[0]);
+            var anchorViewState = Assert.IsType<PyObjectEx>(hangarNotice.Args.Items[1]);
+            Assert.Equal(ObjectExKind.Ex2, anchorViewState.Kind);
+            var classHeader = Assert.IsType<PyList>(Assert.IsType<PyList>(anchorViewState.Header).Items[0]);
+            Assert.Equal("structures.structureHangarViewState.StructureHangarViewState", JsSemantics.StringValue(classHeader.Items[0]));
+            Assert.Equal(new PyInt(StructureState.AnchorVulnerable), HangarField(anchorViewState, "_operatingState"));
+            Assert.Equal(new PyInt(UpkeepState.LowPower), HangarField(anchorViewState, "_upkeepState"));
+            Assert.Equal(new PyList([new PyReal(0), new PyReal(0), new PyReal(1)]), HangarField(anchorViewState, "_damageState"));
+            var anchored = await store.GetAsync(Structure) ?? throw new InvalidOperationException("structure was not persisted");
+            Assert.Equal(new PyLong(FileTime(anchored.Snapshot.StateStartedMs)), HangarField(anchorViewState, "_timerStartAt"));
+            Assert.Equal(new PyLong(FileTime(anchored.Snapshot.StateEndsMs)), HangarField(anchorViewState, "_timerEndAt"));
+            Assert.Equal(PyNone.Instance, HangarField(anchorViewState, "_timerPauseAt"));
+            Assert.Equal(MarshalCodec.Decode(MarshalCodec.Encode((await profiles.GetMyHangarViewStateAsync(Structure, CancellationToken.None))!)), anchorViewState);
+            Assert.Equal(1, hangarStateReads);
+
+            async Task Apply(StructureEvent structureEvent)
+            {
+                await using var connection = await source.OpenConnectionAsync();
+                await using var transaction = await connection.BeginTransactionAsync();
+                Assert.NotNull(await timers.ApplyAsync(connection, transaction, Structure, structureEvent));
+                await transaction.CommitAsync();
+                await bus.PumpAsync();
+            }
+
+            // AnchorVulnerable -> Anchoring -> OnliningVulnerable exercises distinct persisted view states.
+            clock = anchored.Snapshot.StateEndsMs;
+            await Apply(new TimerDue());
+            var anchoring = ClientNotices(docked).Last(notice => notice.Name == "OnHangarViewStateUpdated");
+            var anchoringViewState = Assert.IsType<PyObjectEx>(anchoring.Args.Items[1]);
+            Assert.Equal(new PyInt(StructureState.Anchoring), HangarField(anchoringViewState, "_operatingState"));
+            Assert.NotEqual(anchorViewState, anchoringViewState);
+            Assert.Equal(MarshalCodec.Decode(MarshalCodec.Encode((await profiles.GetMyHangarViewStateAsync(Structure, CancellationToken.None))!)), anchoringViewState);
+
+            var anchoringRecord = await store.GetAsync(Structure) ?? throw new InvalidOperationException("structure was not persisted");
+            clock = anchoringRecord.Snapshot.StateEndsMs;
+            await Apply(new TimerDue());
+            var onlining = ClientNotices(docked).Last(notice => notice.Name == "OnHangarViewStateUpdated");
+            var onliningViewState = Assert.IsType<PyObjectEx>(onlining.Args.Items[1]);
+            Assert.Equal(new PyInt(StructureState.OnliningVulnerable), HangarField(onliningViewState, "_operatingState"));
+            Assert.NotEqual(anchoringViewState, onliningViewState);
+            Assert.Equal(MarshalCodec.Decode(MarshalCodec.Encode((await profiles.GetMyHangarViewStateAsync(Structure, CancellationToken.None))!)), onliningViewState);
+
+            // Starting unanchoring changes the structure row, so EveJS sends the current hangar view again.
+            await Apply(new UnanchorStarted());
+            var afterUnanchorStart = ClientNotices(docked);
+            Assert.Equal("OnHangarViewStateUpdated", afterUnanchorStart[^1].Name);
+            Assert.Equal(onliningViewState, afterUnanchorStart[^1].Args.Items[1]);
+            Assert.Equal(4, hangarStateReads);
+
+            // Removal has no next structure row: keep the existing state notices, but send no hangar-view update.
+            var unanchoring = await store.GetAsync(Structure) ?? throw new InvalidOperationException("structure was not persisted");
+            clock = unanchoring.Snapshot.UnanchorEndsMs;
+            await Apply(new TimerDue());
+            var afterRemoval = ClientNotices(docked);
+            Assert.Equal(
+                new[]
+                {
+                    "OnCurrentStructureStateChanged", "OnHangarViewStateUpdated",
+                    "OnCurrentStructureStateChanged", "OnHangarViewStateUpdated",
+                    "OnCurrentStructureStateChanged", "OnHangarViewStateUpdated",
+                    "OnHangarViewStateUpdated", "OnCurrentStructureStateChanged",
+                },
+                afterRemoval.Select(notice => notice.Name));
+            Assert.Equal(4, afterRemoval.Count(notice => notice.Name == "OnHangarViewStateUpdated"));
+            var ownerTransition = new[]
+            {
+                "OnStructureStateChanged", "OnCurrentStructureStateChanged",
+                "OnHangarViewStateUpdated", "OnCorporationStructuresUpdated",
+            };
+            Assert.Equal(
+                Enumerable.Repeat(ownerTransition, 3).SelectMany(notices => notices)
+                    .Concat(new[]
+                    {
+                        "OnHangarViewStateUpdated", "OnStructureStateChanged",
+                        "OnCurrentStructureStateChanged", "OnCorporationStructuresUpdated",
+                    }),
+                ClientNotices(member).Select(notice => notice.Name));
+            Assert.Equal(4, hangarStateReads);
+            Assert.Empty(Notices(stranger));
+            Assert.Empty(Notices(elsewhere));
+            Assert.Equal(Enumerable.Repeat("OnCurrentStructureStateChanged", 4), Notices(controlSeat));
+
+            // The subscriber cursor survives a bus restart; acknowledged events are not delivered twice.
+            var replayScheduler = new DurableScheduler(source, () => clock, new SchedulerOptions { Concurrency = 1 }, schemas[0], _ => { });
+            var replay = new EventBus(source, replayScheduler, new EventBusOptions { MaxAttempts = 3 }, schemas[1], _ => { });
+            StructureNotifications.Subscribe(replay, store, sessions, GetHangarViewStateAsync);
+            await replay.PumpAsync();
+            Assert.Equal(8, ClientNotices(docked).Count);
+            Assert.Equal(16, ClientNotices(member).Count);
+            Assert.Equal(4, hangarStateReads);
+        }
+        finally
+        {
+            await using var connection = await source.OpenConnectionAsync();
+            foreach (var schema in schemas)
+            {
+                await Sql.ExecuteAsync(connection, null, $"DROP SCHEMA IF EXISTS {schema} CASCADE", CancellationToken.None);
+            }
+        }
+    }
+
+    [PgFact]
+    public async Task A_service_change_notifies_only_clients_docked_in_the_structure_with_the_structure_id()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL") ?? throw new InvalidOperationException("EVE_PG_URL is not set");
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        var id = Guid.NewGuid().ToString("N")[..12];
+        var schedulerSchema = $"svc_ntf_sch_{id}";
+        var eventSchema = $"svc_ntf_evt_{id}";
+        try
+        {
+            await DurableScheduler.MigrateAsync(source, schedulerSchema);
+            await EventBus.MigrateAsync(source, eventSchema);
+            var scheduler = new DurableScheduler(source, () => Now, new SchedulerOptions { Concurrency = 1 }, schedulerSchema, _ => { });
+            var events = new EventBus(source, scheduler, new EventBusOptions { MaxAttempts = 3 }, eventSchema, _ => { });
+            var sessions = new CharacterSessions();
+            StructureNotifications.Subscribe(events, new StructureStore(source), sessions,
+                (_, _) => ValueTask.FromResult<PyValue?>(null));
+            await events.PumpAsync();
+
+            var docked = new Sink();
+            var dockedSession = new ClientSession(docked) { SessionId = 11, CharacterId = 11 };
+            dockedSession.Set("structureid", new PyLong(Structure));
+            sessions.Enter(11, dockedSession);
+            var elsewhere = new Sink();
+            var elsewhereSession = new ClientSession(elsewhere) { SessionId = 12, CharacterId = 12 };
+            elsewhereSession.Set("structureid", new PyLong(Structure + 1));
+            sessions.Enter(12, elsewhereSession);
+
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await events.PublishInTransactionAsync(connection, transaction, StructureTimers.ServiceChangedTopic,
+                    new StructureServiceChanged(Structure, Tanoo, StructureServiceIds.Market, ServiceState.Online, Now),
+                    $"structure:{Structure}", CancellationToken.None);
+                await transaction.CommitAsync();
+            }
+            await events.PumpAsync();
+
+            var notice = Assert.Single(ClientNotices(docked));
+            Assert.Equal("OnStructureServiceChanged", notice.Name);
+            Assert.Equal("clientID", notice.IdType);
+            Assert.Equal(Py.Tuple(new PyLong(Structure)), notice.Args);
+            Assert.Empty(ClientNotices(elsewhere));
+        }
+        finally
+        {
+            await using var connection = await source.OpenConnectionAsync();
+            await Sql.ExecuteAsync(connection, null, $"DROP SCHEMA IF EXISTS {eventSchema} CASCADE", CancellationToken.None);
+            await Sql.ExecuteAsync(connection, null, $"DROP SCHEMA IF EXISTS {schedulerSchema} CASCADE", CancellationToken.None);
+        }
+    }
+}

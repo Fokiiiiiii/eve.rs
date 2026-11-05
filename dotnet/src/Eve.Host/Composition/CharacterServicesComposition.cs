@@ -1,0 +1,301 @@
+using System.Net;
+using System.Net.Sockets;
+using Eve.Characters;
+using Eve.Data;
+using Eve.Host;
+using Eve.Identity;
+using Eve.Dogma;
+using Eve.Fitting;
+using Eve.GameStore;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using Eve.Inventory;
+using Eve.Ships;
+using Eve.Marshal;
+using Eve.Npc;
+using Eve.Sde;
+using Eve.Skills;
+using Eve.Universe;
+using Eve.Wallet;
+using Npgsql;
+using Sentry;
+using Eve.Services;
+using Eve.Services.CharacterSelect;
+using Eve.Services.Core;
+using Eve.Services.Dogma;
+using Eve.Services.Inventory;
+using Eve.Services.CharacterInfo;
+using Eve.Services.Skills;
+using Eve.Services.Slash;
+using Eve.Services.Space;
+using Eve.Space;
+using Eve.Services.Station;
+using Eve.Services.Wallet;
+using static Eve.Host.HostConfiguration;
+
+namespace Eve.Host;
+
+internal sealed partial class CharacterServicesComposition
+{
+    internal static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch, Eve.Calendar.ICalendarStore? CalendarStore, Eve.Calendar.ICalendarAudienceReader? CalendarAudience, Eve.Services.Core.CalendarCspaBilling? CalendarCspaBilling, Eve.Services.Core.GameRpcCallbacks? GameRpcCallbacks, Eve.Services.Core.KeeperRpcCallbacks? KeeperRpcCallbacks, CharacterSessions? CharacterSessions, OnlineStatusNotifications? OnlineStatusNotifications, Func<long, long, CancellationToken, ValueTask<decimal>>? ContractBrokerFeeAdjustment, Func<long, long, CancellationToken, ValueTask<bool>>? HasContractManagerRole, Func<long, long, short, CancellationToken, ValueTask<bool>>? CanManageCalendarGroupEvent, Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? ReadCurrentCalendarGroups, Eve.Services.Core.ReadDynamicBountyCallback? ReadDynamicBounty)> CharacterServicesAsync(NpgsqlDataSource source, PgAccountDirectory accounts, OnlineCharacters online, Func<long> now, Foundations foundations, PersistenceStore mailStore, OwnerSession mailStoreOwner, GameStoreCache mailCache, string newCharacterExperienceMode, IOmegaAccountStore omegaAccounts, ConnectedSessions connected, PublicGateway.NoticeHub notices, Action<List<ICharacterEntryHook>>? receiveEntryHooks = null, Action<SpaceContainers?>? receiveSpaceContainers = null, Action<CharacterShips>? receiveTournamentShips = null)
+    {
+        var composition = new CharacterServicesComposition(source, accounts, online, now, foundations, mailStore, mailStoreOwner, mailCache, newCharacterExperienceMode, omegaAccounts, connected, notices);
+        var result = await composition.RunAsync();
+        if (result.Services.Count != 0)
+        {
+            receiveEntryHooks?.Invoke(composition.characterEntryHooks);
+            receiveTournamentShips?.Invoke(composition.ships);
+        }
+        receiveSpaceContainers?.Invoke(composition.spaceContainers);
+        return result;
+    }
+
+    public CharacterServicesComposition(NpgsqlDataSource source, PgAccountDirectory accounts, OnlineCharacters online, Func<long> now, Foundations foundations, PersistenceStore mailStore, OwnerSession mailStoreOwner, GameStoreCache mailCache, string newCharacterExperienceMode, IOmegaAccountStore omegaAccounts, ConnectedSessions connected, PublicGateway.NoticeHub notices)
+    {
+        this.source = source;
+        this.accounts = accounts;
+        omega = new OmegaLicenses(omegaAccounts, now);
+        this.online = online;
+        this.connected = connected;
+        this.now = now;
+        this.foundations = foundations;
+        this.mailStore = mailStore;
+        this.mailStoreOwner = mailStoreOwner;
+        this.mailCache = mailCache;
+        this.notices = notices;
+        this.newCharacterExperienceMode = newCharacterExperienceMode;
+    }
+
+    private async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch, Eve.Calendar.ICalendarStore? CalendarStore, Eve.Calendar.ICalendarAudienceReader? CalendarAudience, Eve.Services.Core.CalendarCspaBilling? CalendarCspaBilling, Eve.Services.Core.GameRpcCallbacks? GameRpcCallbacks, Eve.Services.Core.KeeperRpcCallbacks? KeeperRpcCallbacks, CharacterSessions? CharacterSessions, OnlineStatusNotifications? OnlineStatusNotifications, Func<long, long, CancellationToken, ValueTask<decimal>>? ContractBrokerFeeAdjustment, Func<long, long, CancellationToken, ValueTask<bool>>? HasContractManagerRole, Func<long, long, short, CancellationToken, ValueTask<bool>>? CanManageCalendarGroupEvent, Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? ReadCurrentCalendarGroups, Eve.Services.Core.ReadDynamicBountyCallback? ReadDynamicBounty)> RunAsync()
+    {
+        await MigrateCharacterStores();
+
+        await StructureRecords();
+        await OpenStorageAndCrimewatch();
+        var buildVersion = await sde.BuildAsync();
+        if (buildVersion is null)
+        {
+            Console.Error.WriteLine("eve-host: the static data is not loaded (run `eve-sde ensure --pg $EVE_PG_URL`): no charUnboundMgr, no skills");
+            return ([], null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+        }
+        build = buildVersion.Value;
+        await LoadCatalogsAndStores();
+        await ItemMutationsOmegaTraining();
+        await ShipsAndDogma();
+        await PrepareCharacterHelpers();
+        await CharMgrReadModel();
+        await CrimewatchRuntime();
+        await CorporationMigrations();
+        await EconomyAndInsurance();
+        await TrainingSkillsAndCreation();
+        await TradeAuthorityStore();
+        await BookmarkStores();
+        await AccessGroupStores();
+        NesIntroStoreSetup();
+        await CorporationStores();
+        await MarketSeed();
+        await SpaceSimulation();
+        await Alliances();
+        await NpcAgents();
+        await Structures();
+        LinkJumpCloneSpace();
+        await Insurgency();
+        await FactionWarfare();
+        await Planets();
+        await SovereigntyWriteOperations();
+        await SkyhookJobs();
+        await Fleet();
+        if (spaceSessions is not null)
+            await InitializeAbyssalRuntime();
+        await IncursionsDungeonsKeeper();
+        await MailSend();
+        await MailingLists();
+        await IndustryFacilities();
+        await IndustryMap();
+        await CorporationOffices();
+        await AgentMissions();
+        await CharacterEntryHooks();
+        await CharacterServiceList();
+        onlineStatusNotifications = new OnlineStatusNotifications(
+            ReadWatchlistAsync,
+            characterId => characterSessions.Of(characterId));
+        return (services, spaceSessions, sim, crimewatchRuntime, calendarStore, calendarAudience,
+            new Eve.Services.Core.CalendarCspaBilling(ReadContactCostAsync, ReadCalendarCspaRecipientRuleAsync, economyWallets),
+            gameRpcCallbacks, keeperRpcCallbacks, characterSessions, onlineStatusNotifications,
+            async (characterId, solarSystemId, cancellationToken) =>
+            {
+                await using var connection = await source.OpenConnectionAsync(cancellationToken);
+                await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+                return 1m - 0.1m * await FactionWarfareUpgradeLevelAsync(connection, transaction, characterId, solarSystemId, cancellationToken);
+            },
+            async (characterId, corporationId, cancellationToken) => corporations is not null
+                && await corporations.HasRoleAsync(characterId, corporationId, 72057594037927936L, cancellationToken),
+            async (actorId, ownerId, tag, cancellationToken) =>
+            {
+                if (characters is null || corporations is null) return false;
+                var character = await characters.GetAsync(actorId, cancellationToken);
+                if (character is null || character.CorporationId <= 0) return false;
+                var corporation = await corporations.GetAsync(character.CorporationId, cancellationToken);
+                if (corporation is null || corporation.IsNpc) return false;
+                if (tag == Eve.Calendar.CalendarTags.Corporation && corporation.Id != ownerId) return false;
+                if (tag == Eve.Calendar.CalendarTags.Alliance && corporation.AllianceId != ownerId) return false;
+                return await corporations.HasRoleAsync(actorId, corporation.Id,
+                    Eve.Corporations.CorporationRoles.ChatManager, cancellationToken);
+            },
+            async (actorId, cancellationToken) =>
+            {
+                if (characters is null || corporations is null) return (0, 0);
+                var character = await characters.GetAsync(actorId, cancellationToken);
+                if (character is null || character.CorporationId <= 0) return (0, 0);
+                var corporation = await corporations.GetAsync(character.CorporationId, cancellationToken);
+                return corporation is null || corporation.IsNpc
+                    ? (0, 0)
+                    : (corporation.Id, corporation.AllianceId ?? 0);
+            },
+            ReadDynamicBountyAsync);
+    }
+
+    private NpgsqlDataSource source;
+    private PgAccountDirectory accounts;
+    private OnlineCharacters online;
+    private Func<long> now;
+    private Foundations foundations;
+    private PersistenceStore mailStore;
+    private OwnerSession mailStoreOwner;
+    private GameStoreCache mailCache;
+    private PublicGateway.NoticeHub notices;
+    private string newCharacterExperienceMode;
+    private long build;
+    private string characterSchema = default!;
+    private string inventorySchema = default!;
+    private string skillsSchema = default!;
+    private string walletSchema = default!;
+    private string fittingSchema = default!;
+    private string industrySchema = default!;
+    private string npcSchema = default!;
+    private string spaceSchema = default!;
+    private Eve.ReadSide.ReadSide miningLedgerReads = default!;
+    private string assetSafetySchema = default!;
+    private string crimewatchSchema = default!;
+    private Eve.Crimewatch.PgCrimewatchStore crimewatchStore = default!;
+    private SdeReader sde = default!;
+    private IReadOnlyDictionary<long, long> npcCharacterCorporations = default!;
+    private string startText = default!;
+    private long? startStation;
+    private CreationCatalog catalog = default!;
+    private PgCharacterStore characters = default!;
+    private PgItemStore items = default!;
+    private PgSpaceItemStore spaceItemStore = default!;
+    private Eve.Ships.PgDeployedStore deployedStore = default!;
+    private Eve.Npc.PgBountyStore bountyStore = default!;
+    private ItemTypeCatalog itemTypes = default!;
+    private PgSkillStore skills = default!;
+    private SkillCatalog skillCatalog = default!;
+    private PgWalletStore wallets = default!;
+    private PgModuleStateStore modules = default!;
+    private PgSavedFittingStore savedFittings = default!;
+    private StationCatalog stations = default!;
+    private SolarSystemCatalog solarSystems = default!;
+    private DogmaStatic dogma = default!;
+    private Eve.Inventory.Mutation.ItemMutationService itemMutations = default!;
+    private OmegaLicenses omega = default!;
+    private CharacterTraining training = default!;
+    private ExpertSystems expertSystems = default!;
+    private Eve.Services.Skills.ExpertSystemMgrService expertSystemMgr = default!;
+    private PilotLearningBonus learningBonus = default!;
+    private PilotImplants pilotImplants = default!;
+    private CharacterShips ships = default!;
+    private int stranded;
+    private CharacterDogmaSync dogmaSync = default!;
+    private CharacterSessions characterSessions = default!;
+    private OnlineStatusNotifications? onlineStatusNotifications;
+    private SignalTrackerRegistrationProvider signalTrackerRegistrationProvider = default!;
+    private Func<long, CancellationToken, Task<double>> securityStatusOf = default!;
+    private PersistenceCharMgrReadModel charMgrReadModel = default!;
+    private PersistenceCrimewatchCallbacks crimewatchPersistence = default!;
+    private Eve.Services.Crimewatch.CrimewatchRuntime crimewatchRuntime = default!;
+    private Eve.Services.Crimewatch.RelationWars relationWars = default!;
+    private TrainingAnnouncer announcer = default!;
+    private MultipleTrainingSlotExpiry multipleTrainingExpiry = default!;
+    private SkillAugmentationReader readAugmentations = default!;
+    private SkillHandlerService skillHandler = default!;
+    private StartingWallet startingWallet = default!;
+    private CharacterCreation creation = default!;
+    private string corporationSchema = default!;
+    private WalletTransactions economyWallets = default!;
+    private WalletAnnouncer economyAnnouncer = default!;
+    private LoyaltyPointStore loyaltyPoints = default!;
+    private Eve.Services.Wallet.LpStorePurchases lpStorePurchases = default!;
+    private Eve.Wallet.LpStoreOfferCache lpStoreCache = default!;
+    private static readonly System.Net.Http.HttpClient lpStoreHttp = new();
+    private LoyaltyPointAnnouncer loyaltyAnnouncer = default!;
+    private PersistenceInsuranceReadModel insuranceReadModel = default!;
+    private PersistenceInsuranceWriteModel insuranceWriteModel = default!;
+    private InsuranceService insuranceService = default!;
+    private PersistenceNewEdenStoreRuntime storeRuntime = default!;
+    private Eve.Corporations.CorporationStore corporations = default!;
+    private Eve.Services.Corporations.CorporationLoginHook corporationLogin = default!;
+    private string marketSchema = default!;
+    private Eve.Market.MarketStore market = default!;
+    private Eve.Market.MarketCatalog marketCatalog = default!;
+    private Eve.Market.MarketTopology marketTopology = default!;
+    private Eve.Market.MarketTrading marketTrading = default!;
+    private SimClient? sim;
+    private SpaceSessions? spaceSessions;
+    private SpaceContainers? spaceContainers;
+    private Eve.Services.Space.Beacons.AnalysisBeaconDirector? analysisBeacons;
+    /// <summary>The link of a CRAB from a client's component call (the beacon's director, when the space runtime is up).</summary>
+    private Func<Eve.Services.ClientSession, long, Task>? AnalysisBeaconLink => analysisBeacons is { } beacons ? (session, id) => beacons.InitiateLinkAsync(session, id) : null;
+    private SpaceDrones? spaceDrones;
+    private Eve.Services.Space.Sites.CosmicSiteDirector? cosmicSites;
+    private Eve.Services.Space.Incursions.IncursionDirector? incursionDirector;
+    private Eve.Services.Space.Sites.SiteNpcs? siteNpcs;
+    private Func<long, CancellationToken, Task> allianceAffiliationNotify = default!;
+    private Eve.Services.Corporations.AllianceApplicationDueWorker allianceDue = default!;
+    private Eve.Services.Corporations.AllianceRegistryService allianceRegistry = default!;
+    private IReadOnlyList<SdeRow> npcCharacterRows = default!;
+    private Dictionary<long, SdeRow> agentsInSpaceById = default!;
+    private Dictionary<long, long> agentLocationById = default!;
+    private AgentMissionAgentData[] agentMissionAgentRows = default!;
+    private IReadOnlyDictionary<long, AgentOwnerInfo> agentOwnerById = default!;
+    private PersistenceStructureDirectoryReadModel structureDirectoryReadModel = default!;
+    private PersistenceStructureProfilesRpcBackend structureProfilesRpcBackend = default!;
+    private StructureRpcCallbacks structureRpcCallbacks = default!;
+    private PersistenceStructureAssetSafetyReadModel structureAssetSafetyReadModel = default!;
+    private StructureSettingsService structureSettingsService = default!;
+    private PersistenceSovFwReadModel sovereigntyReadModel = default!;
+    private SemaphoreSlim sovereigntyWriteGate = default!;
+    private PersistenceSovFwWriteOperations sovWriteOperations = default!;
+    private PersistenceSkyhookActivationWriter skyhookActivationWriter = default!;
+    private SkyhookResourceService skyhookResourceService = default!;
+    private SkyhookResourceMgrService skyhookResourceMgrService = default!;
+    private string fleetSchema = default!;
+    private FleetStore fleetStore = default!;
+    private PersistenceIncursionAnomalyReadModel incursionAnomalyReadModel = default!;
+    private PersistenceDungeonReadModel dungeonReadModel = default!;
+    private KeeperRpcCallbacks keeperRpcCallbacks = default!;
+    private Eve.Calendar.CalendarStore calendarStore = default!;
+    private PersistenceCalendarAudienceReader calendarAudience = default!;
+    private PersistenceMailSendHostAdapter mailSendWriter = default!;
+    private SemaphoreSlim mailingListMutationGate = default!;
+    private MailingListMutationCallback mutateMailingList = default!;
+    private PersistenceIndustryJobOperations industryJobOperations = default!;
+    private Lazy<Task<IReadOnlyList<SdeRow>>> mapSolarSystems = default!;
+    private Lazy<Task<IReadOnlyList<SdeRow>>> mapIndustrySystems = default!;
+    private Eve.Corporations.CorporationOfficeStore corporationOfficeStore = default!;
+    private Eve.Services.Corporations.OfficeManagerService officeManager = default!;
+    private ShipCosmeticsCatalog skinCosmeticsCatalog = default!;
+    private Dictionary<long, AgentMissionAgentData> agentMissionAgentById = default!;
+    private MissionStaticCatalog agentMissionStatic = default!;
+    private AgentMissionRpcCallbacks agentMissionRpcCallbacks = default!;
+    private AgentMissionService agentMissionService = default!;
+    private Eve.Agents.AgentMissionStore agentMissionStore = default!;
+    private Eve.Agents.ResearchProjectStore agentResearchProjects = default!;
+    private Eve.Agents.LocateStore agentLocates = default!;
+    private Eve.Services.Core.AgentMissionAnnouncer agentMissionAnnouncer = default!;
+    private SlashService? publicQaSlashService;
+    private GameRpcCallbacks gameRpcCallbacks = default!;
+    private StationGuestLedger stationGuestLedger = default!;
+    private List<ICharacterEntryHook> characterEntryHooks = default!;
+    private IReadOnlyList<IService> services = default!;
+}

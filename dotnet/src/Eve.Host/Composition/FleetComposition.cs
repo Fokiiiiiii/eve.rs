@@ -1,0 +1,242 @@
+using System.Net;
+using System.Net.Sockets;
+using Eve.Characters;
+using Eve.Data;
+using Eve.Host;
+using Eve.Identity;
+using Eve.Dogma;
+using Eve.Fitting;
+using Eve.GameStore;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using Eve.Inventory;
+using Eve.Ships;
+using Eve.Marshal;
+using Eve.Npc;
+using Eve.Sde;
+using Eve.Skills;
+using Eve.Universe;
+using Eve.Wallet;
+using Npgsql;
+using Sentry;
+using Eve.Services;
+using Eve.Services.CharacterSelect;
+using Eve.Services.Core;
+using Eve.Services.Dogma;
+using Eve.Services.Inventory;
+using Eve.Services.CharacterInfo;
+using Eve.Services.Skills;
+using Eve.Services.Slash;
+using Eve.Services.Space;
+using Eve.Space;
+using Eve.Services.Station;
+using Eve.Services.Wallet;
+using static Eve.Host.HostConfiguration;
+
+namespace Eve.Host;
+
+internal sealed partial class CharacterServicesComposition
+{
+    async Task<Eve.Services.Space.FleetAdvertLeaderProfile?> FleetAdvertLeaderProfileForAsync(
+        long characterId, CancellationToken cancellationToken)
+    {
+        var affiliation = await AffiliationOfAsync(characterId, cancellationToken);
+        var securityStatus = await securityStatusOf(characterId, cancellationToken);
+        return new Eve.Services.Space.FleetAdvertLeaderProfile(
+            affiliation.Corporation, affiliation.Alliance, affiliation.Faction, securityStatus);
+    }
+
+    Eve.Services.ClientSession? FleetSessionForCharacter(long characterId) =>
+        characterSessions.Of(characterId);
+
+    static bool SameFleetBubble(Eve.Services.ClientSession sender, Eve.Services.ClientSession recipient) =>
+        sender.GetInt("ballparkid") is { } bubbleId && recipient.GetInt("ballparkid") == bubbleId;
+
+    internal static (int[] SkillIds, int[] Levels) FleetCommandSkills(
+        SkillCatalog catalog,
+        IReadOnlyList<CharacterSkill> trainedSkills)
+    {
+        var commandSkillIds = catalog.Skills
+            .Where(skill => skill.Name is "Leadership" or "Wing Command" or "Fleet Command")
+            .OrderBy(skill => skill.TypeId)
+            .Select(skill => skill.TypeId)
+            .ToArray();
+        if (commandSkillIds.Length != 3)
+            throw new InvalidOperationException("The SDE fleet command skill catalog must contain Leadership, Wing Command, and Fleet Command.");
+
+        var levelsBySkillId = trainedSkills.ToDictionary(skill => skill.TypeId, skill => skill.Level);
+        return (commandSkillIds, commandSkillIds.Select(skillId => levelsBySkillId.GetValueOrDefault(skillId)).ToArray());
+    }
+
+    async Task<IReadOnlyList<int>> FleetCommandSkillLevelsForCharacterAsync(
+        long characterId,
+        CancellationToken cancellationToken)
+    {
+        var trainedSkills = await skills.ForCharacterAsync(characterId, cancellationToken);
+        return FleetCommandSkills(skillCatalog, trainedSkills).Levels;
+    }
+
+    async Task<PyValue> FleetCompositionForMembersAsync(
+        IReadOnlyList<long> characterIds,
+        CancellationToken cancellationToken)
+    {
+        var orderedIds = characterIds.Where(id => id > 0).Distinct().ToArray();
+        if (orderedIds.Length == 0)
+            return new PyList([]);
+
+        var firstFleetId = await fleetStore.FleetIdForCharacterAsync(orderedIds[0], cancellationToken);
+        var fleetSnapshot = firstFleetId is { } fleetId
+            ? await fleetStore.SnapshotAsync(fleetId, cancellationToken)
+            : null;
+        var shipTypes = fleetSnapshot?.Members.ToDictionary(member => member.CharacterId, member => member.ShipTypeId)
+            ?? new Dictionary<long, long?>();
+        var result = new List<PyValue>(orderedIds.Length);
+        foreach (var characterId in orderedIds)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var session = FleetSessionForCharacter(characterId);
+            var shipTypeId = session?.GetInt("shiptypeid") is { } liveShipType
+                ? (long?)liveShipType
+                : shipTypes.GetValueOrDefault(characterId);
+            var skillRows = await skills.ForCharacterAsync(characterId, cancellationToken);
+            var (commandSkillIds, commandSkillLevels) = FleetCommandSkills(skillCatalog, skillRows);
+            var skillValues = new PyList([.. commandSkillLevels.Select(level => (PyValue)new PyInt(level))]);
+            var skillIds = new PyList([.. commandSkillIds.Select(skillId => (PyValue)new PyInt(skillId))]);
+            result.Add(Py.KeyVal(
+                ("characterID", new PyLong(characterId)),
+                ("solarSystemID", session?.GetInt("solarsystemid2") is { } solarSystemId
+                    ? new PyLong(solarSystemId) : PyNone.Instance),
+                ("stationID", session?.GetInt("stationid") is { } stationId
+                    ? new PyLong(stationId) : PyNone.Instance),
+                ("shipTypeID", shipTypeId is { } typeId
+                    ? new PyLong(typeId) : PyNone.Instance),
+                ("skills", skillValues),
+                ("skillIDs", skillIds)));
+        }
+        return new PyList(result);
+    }
+
+    private async Task Fleet()
+    {
+        fleetSchema = Env("EVE_FLEET_SCHEMA", Eve.Services.Space.FleetStore.DefaultSchema);
+        await Eve.Data.Migrations.ApplyAsync(source, fleetSchema,
+        [
+            new Eve.Data.Migration("001_fleet_core", """
+                CREATE TABLE fleets (
+                    fleet_id bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                    leader_character_id bigint NOT NULL,
+                    auto_join_squad_id bigint
+                );
+                CREATE TABLE fleet_members (
+                    fleet_id bigint NOT NULL REFERENCES fleets(fleet_id) ON DELETE CASCADE,
+                    character_id bigint NOT NULL UNIQUE,
+                    wing_id bigint NOT NULL DEFAULT -1,
+                    squad_id bigint NOT NULL DEFAULT -1,
+                    role smallint NOT NULL CHECK (role BETWEEN 1 AND 4),
+                    job smallint NOT NULL DEFAULT 0,
+                    joined_at timestamptz NOT NULL DEFAULT now(),
+                    PRIMARY KEY (fleet_id, character_id)
+                );
+                CREATE TABLE fleet_wings (
+                    fleet_id bigint NOT NULL REFERENCES fleets(fleet_id) ON DELETE CASCADE,
+                    wing_id bigint GENERATED BY DEFAULT AS IDENTITY,
+                    name text NOT NULL DEFAULT '',
+                    position integer NOT NULL,
+                    PRIMARY KEY (fleet_id, wing_id)
+                );
+                CREATE TABLE fleet_squads (
+                    fleet_id bigint NOT NULL REFERENCES fleets(fleet_id) ON DELETE CASCADE,
+                    squad_id bigint GENERATED BY DEFAULT AS IDENTITY,
+                    wing_id bigint NOT NULL,
+                    name text NOT NULL DEFAULT '',
+                    position integer NOT NULL,
+                    PRIMARY KEY (fleet_id, squad_id),
+                    FOREIGN KEY (fleet_id, wing_id)
+                        REFERENCES fleet_wings(fleet_id, wing_id) ON DELETE CASCADE
+                );
+                CREATE TABLE fleet_invitations (
+                    fleet_id bigint NOT NULL REFERENCES fleets(fleet_id) ON DELETE CASCADE,
+                    character_id bigint NOT NULL,
+                    inviter_id bigint NOT NULL,
+                    wing_id bigint NOT NULL DEFAULT -1,
+                    squad_id bigint NOT NULL DEFAULT -1,
+                    role smallint NOT NULL CHECK (role BETWEEN 1 AND 4),
+                    created_at timestamptz NOT NULL DEFAULT now(),
+                    PRIMARY KEY (fleet_id, character_id)
+                );
+                CREATE TABLE fleet_join_requests (
+                    fleet_id bigint NOT NULL REFERENCES fleets(fleet_id) ON DELETE CASCADE,
+                    character_id bigint NOT NULL,
+                    created_at timestamptz NOT NULL DEFAULT now(),
+                    PRIMARY KEY (fleet_id, character_id)
+                );
+                """),
+            new Eve.Data.Migration("002_fleet_finder", """
+                ALTER TABLE fleets
+                    ADD COLUMN advert_active boolean NOT NULL DEFAULT false,
+                    ADD COLUMN fleet_name text NOT NULL DEFAULT '',
+                    ADD COLUMN description text NOT NULL DEFAULT '',
+                    ADD COLUMN invite_scope integer NOT NULL DEFAULT 0,
+                    ADD COLUMN join_needs_approval boolean NOT NULL DEFAULT false,
+                    ADD COLUMN hide_info boolean NOT NULL DEFAULT false,
+                    ADD COLUMN advert_join_limit integer NOT NULL DEFAULT 256,
+                    ADD COLUMN public_min_standing double precision NOT NULL DEFAULT -10,
+                    ADD COLUMN max_member_count smallint NOT NULL DEFAULT 256
+                        CHECK (max_member_count BETWEEN 1 AND 256);
+                CREATE INDEX fleets_active_adverts
+                    ON fleets (fleet_id) WHERE advert_active;
+                """),
+            new Eve.Data.Migration("003_fleet_optional_fc", """
+                ALTER TABLE fleets
+                    ALTER COLUMN leader_character_id DROP NOT NULL;
+                """),
+            new Eve.Data.Migration("004_fleet_member_runtime_fields", """
+                ALTER TABLE fleets
+                    ADD COLUMN IF NOT EXISTS is_free_move boolean NOT NULL DEFAULT false,
+                    ADD COLUMN IF NOT EXISTS motd text NOT NULL DEFAULT '';
+                ALTER TABLE fleet_members
+                    ADD COLUMN IF NOT EXISTS accepts_fleet_warp boolean NOT NULL DEFAULT true,
+                    ADD COLUMN IF NOT EXISTS accepts_conduit_jumps boolean NOT NULL DEFAULT true,
+                    ADD COLUMN IF NOT EXISTS accepts_fleet_regroups boolean NOT NULL DEFAULT true,
+                    ADD COLUMN IF NOT EXISTS ship_type_id bigint;
+                """),
+            Eve.Services.Space.FleetStore.FleetFinderAllowedEntitiesMigration,
+            Eve.Services.Space.FleetStore.FleetFinderAdvertPayloadMigration,
+            Eve.Services.Space.FleetStore.FleetJoinRequestProfileMigration
+        ], CancellationToken.None);
+        var maxJoinRequestsText = Env("EVE_MAX_FLEET_JOIN_REQUESTS",
+            Eve.Services.Space.FleetStore.DefaultMaxJoinRequests.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        if (!int.TryParse(maxJoinRequestsText, System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out var maxJoinRequests) ||
+            maxJoinRequests is < 1 or > Eve.Services.Space.FleetStore.MaximumConfiguredJoinRequests)
+            throw new InvalidOperationException("EVE_MAX_FLEET_JOIN_REQUESTS must be between 1 and 65536.");
+        fleetStore = new Eve.Services.Space.FleetStore(source, fleetSchema, maxJoinRequests);
+        // the jump drive to a fleet's cynosural field reads the fleets, so it is made after them (the space simulation is set up before the fleets)
+        if (spaceSessions is not null)
+        {
+            var jumpDrive = new Eve.Services.Space.SpaceJumpDrive(
+                ships, modules, dogma, new Eve.Ships.PgDeployedStore(source, spaceSchema), new Eve.Ships.PgJumpFatigueStore(source, spaceSchema), new Eve.Ships.PgJumpSpoolStore(source, spaceSchema), solarSystems, skills,
+                source, spaceSessions, fleetStore, now, message => Console.Error.WriteLine($"eve-host: jump drive: {message}"), FleetSessionForCharacter);
+            spaceSessions.JumpDrive = jumpDrive;
+            var bridges = new Eve.Services.Space.SpaceBridges(
+                ships, modules, dogma, new Eve.Ships.PgDeployedStore(source, spaceSchema), new Eve.Ships.PgJumpFatigueStore(source, spaceSchema), solarSystems, skills,
+                source, spaceSessions, fleetStore, now, message => Console.Error.WriteLine($"eve-host: jump bridge: {message}"), FleetSessionForCharacter);
+            spaceSessions.Bridges = bridges;
+            spaceSessions.Conduits = new Eve.Services.Space.SpaceConduits(
+                ships, modules, dogma, new Eve.Ships.PgDeployedStore(source, spaceSchema), new Eve.Ships.PgJumpFatigueStore(source, spaceSchema), solarSystems, skills,
+                source, spaceSessions, fleetStore, now, message => Console.Error.WriteLine($"eve-host: conduit: {message}"), FleetSessionForCharacter);
+            // a bridge ends with its time: its fleet is told it is closed (the sweep runs every five seconds)
+            foundations.Scheduler.Register("space.jump_bridge.sweep", async (_, _) => await bridges.SweepAsync());
+            await foundations.Scheduler.EnsureRecurringAsync("space.jump_bridge.sweep", "sweep", TimeSpan.FromSeconds(5));
+            // a spool does not survive a restart: it is refunded now, and the sweep refunds a spool the simulation loses
+            await jumpDrive.CancelInterruptedAsync();
+            foundations.Scheduler.Register("space.jump_spool.sweep", async (_, token) => await jumpDrive.SweepAsync(token));
+            await foundations.Scheduler.EnsureRecurringAsync("space.jump_spool.sweep", "sweep", TimeSpan.FromSeconds(30));
+            // a lit cynosural field is told to the fleet of its lighter, so the jump menu lists it (OnFleetJumpBeaconModuleChange)
+            if (spaceContainers is not null)
+            {
+                spaceContainers.FieldAnnounced = jumpDrive.AnnounceFieldAsync;
+            }
+        }
+    }
+}

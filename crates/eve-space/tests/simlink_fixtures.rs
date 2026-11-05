@@ -1,0 +1,2564 @@
+//! file): every valid frame encodes to its bytes and decodes back, every invalid one is refused for the stated reason.
+use eve_space::death::Credit;
+use eve_space::drones::DroneEffect;
+use eve_space::health::{Condition, Layer, Resonances, Vitals};
+use eve_space::link::SlimValue;
+use eve_space::link::{
+    AbyssalAttributeModifier, AbyssalBoundaryDamagePoint, AbyssalBoundaryProfile, AbyssalEnvironmentField,
+    AbyssalEnvironmentProfile, AbyssalModifierOperation, AbyssalSceneObject, AbyssalSceneSpec, AbyssalTrace,
+    AbyssalTraceStatus, ChargeOp, ContainerPlacement, DecodeError, DirectionalTarget, Enter, How,
+    LaunchDrone, Message, ScanTarget, SceneKey, Spawn, WreckPlacement,
+};
+use eve_space::missiles::{Blast, Missile};
+use eve_space::modules::{Action, Applies, Change, Effect, MiningFamily, Numbers, Reach, Remote, Rules};
+use eve_space::scene::{HeatModuleProfile, HeatProfile, HeatRack};
+use eve_space::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcSelfRepair, NpcWeapon, ShipSpec, ShipStance};
+use eve_space::weapons::{Aoe, Arc, Charge, Spool, Turret};
+use eve_space::wreck::WreckKind;
+use serde_json::Value;
+use serde_json::json;
+
+fn fixtures() -> Value {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../oracle/fixtures/simlink/messages.json");
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+fn hex(text: &str) -> Vec<u8> {
+    (0..text.len() / 2).map(|i| u8::from_str_radix(&text[2 * i..2 * i + 2], 16).unwrap()).collect()
+}
+
+#[test]
+fn encode_into_appends_multiple_complete_frames() {
+    let messages = [Message::Hello { version: 75 }, Message::HelloAck { version: 75, poll_hz: 10 }];
+    let mut output = vec![0xaa];
+    for message in &messages {
+        message.encode_into(&mut output);
+    }
+    let mut expected = vec![0xaa];
+    for message in &messages {
+        expected.extend_from_slice(&message.encode());
+    }
+    assert_eq!(output, expected);
+}
+
+fn text(case: &Value, field: &str) -> String {
+    case[field].as_str().unwrap_or_else(|| panic!("{field} in {case}")).to_owned()
+}
+
+fn wide(case: &Value, field: &str) -> i64 {
+    text(case, field).parse().unwrap()
+}
+
+fn scene_key(value: &Value) -> SceneKey {
+    SceneKey {
+        location_id: value["locationId"].as_i64().unwrap() as i32,
+        instance_id: wide(value, "instanceId"),
+        room_index: value["roomIndex"].as_i64().unwrap() as i32,
+    }
+}
+
+fn scene_key_of(value: &Value) -> SceneKey {
+    value
+        .get("scene")
+        .map(scene_key)
+        .unwrap_or_else(|| SceneKey::solar_system(value["solarSystemId"].as_i64().unwrap() as i32))
+}
+
+fn vector3(value: &Value) -> [f64; 3] {
+    [value[0].as_f64().unwrap(), value[1].as_f64().unwrap(), value[2].as_f64().unwrap()]
+}
+
+fn abyssal_modifiers(value: &Value) -> Vec<AbyssalAttributeModifier> {
+    value
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|modifier| AbyssalAttributeModifier {
+            attribute_id: modifier["attributeId"].as_i64().unwrap() as i32,
+            operation: match modifier["operation"].as_u64().unwrap() {
+                0 => AbyssalModifierOperation::Add,
+                1 => AbyssalModifierOperation::Multiply,
+                other => panic!("invalid fixture modifier operation {other}"),
+            },
+            value: modifier["value"].as_f64().unwrap(),
+        })
+        .collect()
+}
+
+fn abyssal_scene_object_of(value: &Value) -> AbyssalSceneObject {
+    AbyssalSceneObject {
+        scene: scene_key(&value["scene"]),
+        item_id: wide(value, "itemId"),
+        type_id: value["typeId"].as_i64().unwrap() as i32,
+        group_id: value["groupId"].as_i64().unwrap() as i32,
+        category_id: value["categoryId"].as_i64().unwrap() as i32,
+        owner_id: wide(value, "ownerId"),
+        radius: value["radius"].as_f64().unwrap(),
+        graphic_id: value["graphicId"].as_i64().unwrap() as i32,
+        name: text(value, "name"),
+        position: vector3(&value["position"]),
+        direction: vector3(&value["direction"]),
+        is_open: value["isOpen"].as_bool().unwrap(),
+    }
+}
+
+fn abyssal_point_defense_of(value: &Value) -> Option<eve_space::link::AbyssalPointDefense> {
+    if value.is_null() {
+        return None;
+    }
+    let keys = [
+        "includedCategories",
+        "includedGroups",
+        "includedTypes",
+        "excludedCategories",
+        "excludedGroups",
+        "excludedTypes",
+    ];
+    Some(eve_space::link::AbyssalPointDefense {
+        tick_interval_ms: value["tickIntervalMs"].as_i64().unwrap(),
+        damage: std::array::from_fn(|index| value["damage"][index].as_f64().unwrap()),
+        type_list_id: value["typeListId"].as_i64().unwrap() as i32,
+        targets: std::array::from_fn(|index| {
+            value[keys[index]].as_array().unwrap().iter().map(|id| id.as_i64().unwrap() as i32).collect()
+        }),
+        effect_name: text(value, "effectName"),
+    })
+}
+
+fn abyssal_scene_spec(value: &Value) -> AbyssalSceneSpec {
+    AbyssalSceneSpec {
+        scene: scene_key(&value["scene"]),
+        environment: AbyssalEnvironmentProfile {
+            global_modifiers: abyssal_modifiers(&value["environment"]["globalModifiers"]),
+            fields: value["environment"]["fields"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|field| AbyssalEnvironmentField {
+                    center: vector3(&field["center"]),
+                    radius_meters: field["radiusMeters"].as_f64().unwrap(),
+                    modifiers: abyssal_modifiers(&field["modifiers"]),
+                })
+                .collect(),
+        },
+        boundary: AbyssalBoundaryProfile {
+            center: vector3(&value["boundary"]["center"]),
+            radius_meters: value["boundary"]["radiusMeters"].as_f64().unwrap(),
+            tick_interval_ms: value["boundary"]["tickIntervalMs"].as_i64().unwrap(),
+            terminal_exposure_ms: value["boundary"]["terminalExposureMs"].as_i64().unwrap(),
+            damage_curve: value["boundary"]["damageCurve"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|point| AbyssalBoundaryDamagePoint {
+                    distance_outside_meters: point["distanceOutsideMeters"].as_f64().unwrap(),
+                    applied_damage_per_second: point["appliedDamagePerSecond"].as_f64().unwrap(),
+                })
+                .collect(),
+        },
+        expiry_filetime: wide(value, "expiryFileTime"),
+    }
+}
+
+fn abyssal_trace_of(value: &Value) -> AbyssalTrace {
+    AbyssalTrace {
+        solar_system_id: value["solarSystemId"].as_i64().unwrap() as i32,
+        item_id: wide(value, "itemId"),
+        type_id: value["typeId"].as_i64().unwrap() as i32,
+        group_id: value["groupId"].as_i64().unwrap() as i32,
+        category_id: value["categoryId"].as_i64().unwrap() as i32,
+        owner_id: wide(value, "ownerId"),
+        radius: value["radius"].as_f64().unwrap(),
+        position: vector3(&value["position"]),
+        velocity: vector3(&value["velocity"]),
+        direction: vector3(&value["direction"]),
+        target_point: value.get("targetPoint").filter(|point| !point.is_null()).map(vector3),
+        speed_fraction: value["speedFraction"].as_f64().unwrap(),
+        game_mode_id: value["gameModeId"].as_i64().unwrap() as i32,
+        filament_type_id: value["filamentTypeId"].as_i64().unwrap() as i32,
+        difficulty_tier: value["difficultyTier"].as_i64().unwrap() as i32,
+        expires_at_ms: wide(value, "expiresAtMs"),
+    }
+}
+
+fn abyssal_trace_status(value: &Value) -> AbyssalTraceStatus {
+    match value.as_str().unwrap() {
+        "Created" => AbyssalTraceStatus::Created,
+        "AlreadyPresent" => AbyssalTraceStatus::AlreadyPresent,
+        "Removed" => AbyssalTraceStatus::Removed,
+        "AlreadyAbsent" => AbyssalTraceStatus::AlreadyAbsent,
+        "Failed" => AbyssalTraceStatus::Failed,
+        status => panic!("unknown Abyssal trace status {status}"),
+    }
+}
+
+fn abyssal_outcome(case: &Value) -> Result<(), String> {
+    if case["ok"].as_bool().unwrap() { Ok(()) } else { Err(text(case, "reason")) }
+}
+
+fn condition_of(case: &Value) -> Condition {
+    let number = |field: &str| case[field].as_f64().unwrap_or_else(|| panic!("{field} in {case}"));
+    Condition {
+        damage: number("damage"),
+        armor_damage: number("armorDamage"),
+        shield_charge: number("shieldCharge"),
+        charge: number("charge"),
+    }
+}
+
+fn vitals_of(case: &Value) -> Vitals {
+    let number = |field: &str| case[field].as_f64().unwrap_or_else(|| panic!("{field} in {case}"));
+    let four = |layer: &str| -> [f64; 4] {
+        let list = case["resonances"][layer].as_array().unwrap_or_else(|| panic!("{layer} in {case}"));
+        [
+            list[0].as_f64().unwrap(),
+            list[1].as_f64().unwrap(),
+            list[2].as_f64().unwrap(),
+            list[3].as_f64().unwrap(),
+        ]
+    };
+    Vitals {
+        shield_capacity: number("shieldCapacity"),
+        armor_hp: number("armorHp"),
+        structure_hp: number("structureHp"),
+        resonances: Resonances { shield: four("shield"), armor: four("armor"), structure: four("structure") },
+        armor_pinned: case["armorPinned"].as_bool().unwrap_or(false),
+    }
+}
+
+fn ship_of(case: &Value) -> ShipSpec {
+    let number = |field: &str| case[field].as_f64().unwrap_or_else(|| panic!("{field} in {case}"));
+    let int = |field: &str| case[field].as_i64().unwrap_or_else(|| panic!("{field} in {case}")) as i32;
+    ShipSpec {
+        stance: case["stance"].as_object().map(|_| ShipStance {
+            old_stance: case["stance"]["oldStance"].as_i64().unwrap_or_default() as i32,
+            switched_at: wide(&case["stance"], "switchedAt"),
+            stance: case["stance"]["stance"].as_i64().unwrap_or_default() as i32,
+        }),
+        ship_id: wide(case, "shipId"),
+        character_id: wide(case, "characterId"),
+        type_id: int("typeId"),
+        group_id: int("groupId"),
+        category_id: int("categoryId"),
+        name: text(case, "name"),
+        owner_id: wide(case, "ownerId"),
+        corporation_id: int("corporationId"),
+        alliance_id: int("allianceId"),
+        war_faction_id: int("warFactionId"),
+        security_status: number("securityStatus"),
+        radius: number("radius"),
+        mass: number("mass"),
+        max_velocity: number("maxVelocity"),
+        agility: number("agility"),
+        warp_speed_au: number("warpSpeedAu"),
+        shield_recharge_ms: number("shieldRechargeMs"),
+        max_target_range: number("maxTargetRange"),
+        max_locked_targets: int("maxLockedTargets"),
+        scan_resolution: number("scanResolution"),
+        signature_radius: number("signatureRadius"),
+        capacitor_capacity: number("capacitorCapacity"),
+        capacitor_recharge_s: number("capacitorRechargeS"),
+        sensor_strength: sensors_of(&case["sensorStrength"]),
+        ecm_resistance: number("ecmResistance"),
+        energy_warfare_resistance: number("energyWarfareResistance"),
+        drone_damage_multiplier: case["droneDamageMultiplier"].as_f64().unwrap_or(1.0),
+        vitals: vitals_of(&case["vitals"]),
+        condition: condition_of(&case["condition"]),
+        modules: case["modules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| ModuleSpec {
+                item_id: wide(m, "itemId"),
+                type_id: m["typeId"].as_i64().unwrap() as i32,
+                flag: m["flag"].as_i64().unwrap() as i32,
+                bank_master_id: m["bankMasterId"].as_str().and_then(|id| id.parse().ok()).unwrap_or(0),
+            })
+            .collect(),
+    }
+}
+
+fn sensors_of(list: &Value) -> [f64; 4] {
+    let list = list.as_array().expect("four sensor strengths");
+    [
+        list[0].as_f64().unwrap(),
+        list[1].as_f64().unwrap(),
+        list[2].as_f64().unwrap(),
+        list[3].as_f64().unwrap(),
+    ]
+}
+
+fn turret_of(w: &Value) -> Turret {
+    let number = |field: &str| w[field].as_f64().unwrap_or_else(|| panic!("{field} in {w}"));
+    let damage = w["rawDamage"].as_array().unwrap();
+    Turret {
+        weapon_type_id: w["weaponTypeId"].as_i64().unwrap() as i32,
+        fx: text(w, "fx"),
+        raw_damage: [
+            damage[0].as_f64().unwrap(),
+            damage[1].as_f64().unwrap(),
+            damage[2].as_f64().unwrap(),
+            damage[3].as_f64().unwrap(),
+        ],
+        optimal_range: number("optimalRange"),
+        falloff: number("falloff"),
+        tracking_speed: number("trackingSpeed"),
+        signature_resolution: number("signatureResolution"),
+        charge: w.get("charge").filter(|c| !c.is_null()).map(|c| Charge {
+            type_id: c["typeId"].as_i64().unwrap() as i32,
+            flag: c["flag"].as_i64().unwrap() as i32,
+            rounds: c["rounds"].as_i64().unwrap(),
+            per_cycle: c["perCycle"].as_i64().unwrap(),
+            reloads: c.get("reloads").and_then(Value::as_bool).unwrap_or(false),
+        }),
+        missile: w.get("missile").filter(|m| !m.is_null()).map(|m| Missile {
+            charge_type_id: m["chargeTypeId"].as_i64().unwrap() as i32,
+            group_id: m["groupId"].as_i64().unwrap() as i32,
+            name: m["name"].as_str().unwrap().to_string(),
+            radius: m["radius"].as_f64().unwrap(),
+            mass: m["mass"].as_f64().unwrap(),
+            agility: m["agility"].as_f64().unwrap(),
+            hit_points: m["hitPoints"].as_f64().unwrap(),
+            max_velocity: m["maxVelocity"].as_f64().unwrap(),
+            flight_time_ms: m["flightTimeMs"].as_f64().unwrap(),
+            explosion_radius: m["explosionRadius"].as_f64().unwrap(),
+            explosion_velocity: m["explosionVelocity"].as_f64().unwrap(),
+            damage_reduction_factor: m["damageReductionFactor"].as_f64().unwrap(),
+            damage_reduction_sensitivity: m["damageReductionSensitivity"].as_f64().unwrap(),
+            dot: m.get("dot").filter(|d| !d.is_null()).map(|d| eve_space::missiles::Dot {
+                duration_ms: d["durationMs"].as_f64().unwrap(),
+                max_damage_per_tick: d["maxDamagePerTick"].as_f64().unwrap(),
+                max_hp_percent_per_tick: d["maxHpPercentPerTick"].as_f64().unwrap(),
+            }),
+        }),
+        spool: w
+            .get("spool")
+            .filter(|s| !s.is_null())
+            .map(|s| Spool { per_cycle: s["perCycle"].as_f64().unwrap(), max: s["max"].as_f64().unwrap() }),
+        aoe: w.get("aoe").filter(|a| !a.is_null()).map(|a| Aoe {
+            explosion_radius: a["explosionRadius"].as_f64().unwrap(),
+            explosion_velocity: a["explosionVelocity"].as_f64().unwrap(),
+            damage_reduction_factor: a["damageReductionFactor"].as_f64().unwrap(),
+            damage_reduction_sensitivity: a["damageReductionSensitivity"].as_f64().unwrap(),
+        }),
+        arc: w.get("arc").filter(|a| !a.is_null()).map(|a| Arc {
+            range: a["range"].as_f64().unwrap(),
+            targets: a["targets"].as_i64().unwrap() as i32,
+            damage_loss_target: a.get("damageLossTarget").and_then(Value::as_f64),
+        }),
+        requires_gunnery: w["requiresGunnery"].as_bool().unwrap_or_else(|| panic!("requiresGunnery in {w}")),
+    }
+}
+
+fn effect_of(case: &Value) -> Effect {
+    let number = |v: &Value, field: &str| v[field].as_f64().unwrap_or_else(|| panic!("{field} in {v}"));
+    let numbers = |v: &Value| {
+        (!v.is_null()).then(|| Numbers {
+            mass: number(v, "mass"),
+            max_velocity: number(v, "maxVelocity"),
+            signature_radius: number(v, "signatureRadius"),
+        })
+    };
+    let changes = |v: &Value| -> Vec<Change> {
+        v.as_array()
+            .unwrap()
+            .iter()
+            .map(|c| Change {
+                item_id: wide(c, "itemId"),
+                attribute_id: c["attributeId"].as_i64().unwrap() as i32,
+                value: number(c, "value"),
+            })
+            .collect()
+    };
+    let rules = case.get("rules").map_or_else(Rules::default, |r| Rules {
+        group_id: r["groupId"].as_i64().unwrap() as i32,
+        max_group_active: r["maxGroupActive"].as_i64().unwrap() as i32,
+        disallow_early_deactivation: r["disallowEarlyDeactivation"].as_bool().unwrap(),
+        requires_industrial_core: r["requiresIndustrialCore"].as_bool().unwrap(),
+        provides_industrial_core: r["providesIndustrialCore"].as_bool().unwrap(),
+        reactivation_delay_ms: number(r, "reactivationDelayMs"),
+        max_velocity_limit: r.get("maxVelocityLimit").and_then(Value::as_f64).unwrap_or(0.0),
+        min_velocity_limit: r.get("minVelocityLimit").and_then(Value::as_f64).unwrap_or(0.0),
+    });
+    Effect {
+        rules,
+        burns_fuel: case.get("burnsFuel").and_then(|v| v.as_bool()).unwrap_or(false),
+        module_id: wide(case, "moduleId"),
+        module_type: case["moduleType"].as_i64().unwrap() as i32,
+        effect_id: case["effectId"].as_i64().unwrap() as i32,
+        fx: text(case, "fx"),
+        duration_ms: number(case, "durationMs"),
+        capacitor_need: number(case, "capacitorNeed"),
+        fallback_capacitor_need: 0.0,
+        repeat: case["repeat"].as_i64().unwrap() as i32,
+        target_id: wide(case, "targetId"),
+        turret: case.get("turret").map(turret_of),
+        action: case.get("action").map(|a| {
+            let layer = || match a["layer"].as_str().unwrap() {
+                "shield" => Layer::Shield,
+                "armor" => Layer::Armor,
+                _ => Layer::Structure,
+            };
+            let when = if a["when"] == "end" { Applies::CycleEnd } else { Applies::CycleStart };
+            let amount = a["amount"].as_f64().unwrap_or(0.0);
+            if a["kind"] == "pointDefense" {
+                let damage = a["damage"].as_array().unwrap();
+                return Action::PointDefense {
+                    range_meters: a["rangeMeters"].as_f64().unwrap(),
+                    damage: [
+                        damage[0].as_f64().unwrap(),
+                        damage[1].as_f64().unwrap(),
+                        damage[2].as_f64().unwrap(),
+                        damage[3].as_f64().unwrap(),
+                    ],
+                };
+            }
+            if a["kind"] == "smartbomb" {
+                let damage = a["damage"].as_array().unwrap();
+                return Action::Smartbomb {
+                    range: a["range"].as_f64().unwrap(),
+                    damage: [
+                        damage[0].as_f64().unwrap(),
+                        damage[1].as_f64().unwrap(),
+                        damage[2].as_f64().unwrap(),
+                        damage[3].as_f64().unwrap(),
+                    ],
+                    hurts_pilots: a["hurtsPilots"].as_bool().unwrap(),
+                };
+            }
+            if a["kind"] == "charged" {
+                let repair = |value: &Value| Action::Repair {
+                    layer: match value["layer"].as_str().unwrap() {
+                        "shield" => Layer::Shield,
+                        "armor" => Layer::Armor,
+                        _ => Layer::Structure,
+                    },
+                    amount: value["amount"].as_f64().unwrap(),
+                    when: if value["when"] == "end" { Applies::CycleEnd } else { Applies::CycleStart },
+                };
+                let fallback = (!a["fallback"].is_null()).then(|| Box::new(repair(&a["fallback"])));
+                return Action::Charged {
+                    action: Box::new(if a["action"]["kind"] == "commandBurst" {
+                        Action::CommandBurst { range_meters: a["action"]["rangeMeters"].as_f64().unwrap() }
+                    } else {
+                        repair(&a["action"])
+                    }),
+                    fallback,
+                    charge_type_id: a["chargeTypeId"].as_i64().unwrap() as i32,
+                    charge_flag: a["chargeFlag"].as_i64().unwrap() as i32,
+                    charge_per_cycle: a["chargePerCycle"].as_i64().unwrap(),
+                    charges: a["charges"].as_i64().unwrap(),
+                };
+            }
+            let deployable = |v: &Value| eve_space::deployable::Spec {
+                charge_type_id: v["chargeTypeId"].as_i64().unwrap() as i32,
+                group_id: v["groupId"].as_i64().unwrap() as i32,
+                name: v["name"].as_str().unwrap().to_string(),
+                radius: v["radius"].as_f64().unwrap(),
+            };
+            if a["kind"] == "cloak" {
+                return Action::Cloak {
+                    warp_safe: a["warpSafe"].as_bool().unwrap_or(false),
+                    targeting_delay_ms: a["targetingDelayMs"].as_f64().unwrap_or(0.0),
+                };
+            }
+            if a["kind"] == "warpBubble" {
+                return Action::WarpBubble { range: a["range"].as_f64().unwrap() };
+            }
+            if a["kind"] == "warpImmunity" {
+                return Action::WarpImmunity;
+            }
+            if a["kind"] == "scrambleStatus" {
+                return Action::ScrambleStatus { delta: a["delta"].as_f64().unwrap() };
+            }
+            if a["kind"] == "defender" {
+                let m = &a["missile"];
+                let number = |key: &str| m[key].as_f64().unwrap();
+                return Action::Defender {
+                    missile: eve_space::missiles::Missile {
+                        charge_type_id: m["chargeTypeId"].as_i64().unwrap() as i32,
+                        group_id: m["groupId"].as_i64().unwrap() as i32,
+                        name: m["name"].as_str().unwrap().to_string(),
+                        radius: number("radius"),
+                        mass: number("mass"),
+                        agility: number("agility"),
+                        hit_points: number("hitPoints"),
+                        max_velocity: number("maxVelocity"),
+                        flight_time_ms: number("flightTimeMs"),
+                        explosion_radius: number("explosionRadius"),
+                        explosion_velocity: number("explosionVelocity"),
+                        damage_reduction_factor: number("damageReductionFactor"),
+                        damage_reduction_sensitivity: number("damageReductionSensitivity"),
+                        dot: None,
+                    },
+                    damage: sensors_of(&a["damage"]),
+                };
+            }
+            if a["kind"] == "stasisBurst" {
+                return Action::StasisBurst {
+                    range: a["range"].as_f64().unwrap(),
+                    duration_ms: a["durationMs"].as_f64().unwrap(),
+                    speed_factor: a["speedFactor"].as_f64().unwrap(),
+                };
+            }
+            if a["kind"] == "entosis" {
+                return Action::Entosis { range_meters: a["rangeMeters"].as_f64().unwrap() };
+            }
+            if a["kind"] == "structureBurst" {
+                return Action::StructureBurst {
+                    range: a["range"].as_f64().unwrap(),
+                    duration_ms: a["durationMs"].as_f64().unwrap(),
+                    what: burst_remote(a),
+                };
+            }
+            if a["kind"] == "warpProbe" {
+                return Action::WarpProbe {
+                    ball: deployable(&a["ball"]),
+                    range: a["range"].as_f64().unwrap(),
+                    lifetime_ms: a["lifetimeMs"].as_f64().unwrap(),
+                };
+            }
+            if a["kind"] == "commandBurst" {
+                return Action::CommandBurst { range_meters: a["rangeMeters"].as_f64().unwrap() };
+            }
+            if a["kind"] == "entosis" {
+                return Action::Entosis { range_meters: a["rangeMeters"].as_f64().unwrap() };
+            }
+            if a["kind"] == "panic" {
+                return Action::Panic { range_meters: a["rangeMeters"].as_f64().unwrap() };
+            }
+            if a["kind"] == "cynoField" {
+                return Action::CynoField {
+                    ball: deployable(&a["ball"]),
+                    lifetime_ms: a["lifetimeMs"].as_f64().unwrap(),
+                };
+            }
+            if a["kind"] == "bomb" {
+                let numbers = |key: &str| sensors_of(&a[key]);
+                return Action::Bomb {
+                    ball: deployable(&a["ball"]),
+                    kind: match a["bombKind"].as_i64().unwrap() {
+                        0 => eve_space::deployable::BombKind::Damage,
+                        1 => eve_space::deployable::BombKind::Ecm,
+                        _ => eve_space::deployable::BombKind::Neutralize,
+                    },
+                    lifetime_ms: a["lifetimeMs"].as_f64().unwrap(),
+                    blast_radius: a["blastRadius"].as_f64().unwrap(),
+                    damage: numbers("damage"),
+                    ecm: numbers("ecm"),
+                    neutralize: a["neutralize"].as_f64().unwrap(),
+                };
+            }
+            if a["kind"] == "ecmBurst" {
+                return Action::EcmBurst {
+                    range: a["range"].as_f64().unwrap(),
+                    strength: sensors_of(&a["strength"]),
+                };
+            }
+            if a["kind"] == "mining" {
+                return Action::Mining {
+                    family: match a["family"].as_str().unwrap() {
+                        "ore" => MiningFamily::Ore,
+                        "ice" => MiningFamily::Ice,
+                        _ => MiningFamily::Gas,
+                    },
+                    mining_amount_m3: a["miningAmountM3"].as_f64().unwrap(),
+                    waste_multiplier: a["wasteMultiplier"].as_f64().unwrap(),
+                    waste_probability: a["wasteProbability"].as_f64().unwrap(),
+                    crit_probability: a["critProbability"].as_f64().unwrap(),
+                    crit_multiplier: a["critMultiplier"].as_f64().unwrap(),
+                };
+            }
+            if a["kind"] == "scan" {
+                return Action::Scan {
+                    cargo: a["cargo"].as_bool().unwrap(),
+                    reach: Reach {
+                        optimal: a["optimalMeters"].as_f64().unwrap(),
+                        falloff: a["falloffMeters"].as_f64().unwrap(),
+                    },
+                };
+            }
+            if a["kind"] == "salvage" {
+                return Action::Salvage { access_bonus: a["accessBonus"].as_f64().unwrap() };
+            }
+            if a["kind"] == "tractor" {
+                return Action::Tractor {
+                    velocity: a["velocity"].as_f64().unwrap(),
+                    hold: a["hold"].as_f64().unwrap(),
+                    range: a["range"].as_f64().unwrap(),
+                };
+            }
+            if a["kind"] == "passiveLock" {
+                return Action::PassiveLock;
+            }
+            if a["kind"] == "autoTarget" {
+                return Action::AutoTarget { range: a["range"].as_f64().unwrap() };
+            }
+            if a["kind"] == "resistanceShift" {
+                let four = |field: &str| -> [f64; 4] {
+                    let list = a[field].as_array().unwrap_or_else(|| panic!("{field} in {a}"));
+                    [
+                        list[0].as_f64().unwrap(),
+                        list[1].as_f64().unwrap(),
+                        list[2].as_f64().unwrap(),
+                        list[3].as_f64().unwrap(),
+                    ]
+                };
+                let ids = a["attributeIds"].as_array().unwrap();
+                return Action::ResistanceShift {
+                    seed: four("seed"),
+                    shift: a["shift"].as_f64().unwrap(),
+                    attribute_ids: [
+                        ids[0].as_i64().unwrap() as i32,
+                        ids[1].as_i64().unwrap() as i32,
+                        ids[2].as_i64().unwrap() as i32,
+                        ids[3].as_i64().unwrap() as i32,
+                    ],
+                };
+            }
+            if a["kind"] == "doomsday" {
+                let damage = a["damage"].as_array().unwrap();
+                return Action::Doomsday {
+                    delay_ms: a["delayMs"].as_f64().unwrap(),
+                    damage: [
+                        damage[0].as_f64().unwrap(),
+                        damage[1].as_f64().unwrap(),
+                        damage[2].as_f64().unwrap(),
+                        damage[3].as_f64().unwrap(),
+                    ],
+                    immobile_ms: a["immobileMs"].as_f64().unwrap(),
+                    no_jump_ms: a["noJumpMs"].as_f64().unwrap(),
+                };
+            }
+            if a["kind"] == "field" {
+                // the transport field: its sphere is a strike (the nested object), then the destination, the warp block and the two id lists
+                let s = &a["strike"];
+                let number = |v: &Value, key: &str| v[key].as_f64().unwrap();
+                let vector =
+                    |v: &Value| [v[0].as_f64().unwrap(), v[1].as_f64().unwrap(), v[2].as_f64().unwrap()];
+                let ids = |key: &str| {
+                    a[key].as_array().unwrap().iter().map(|id| id.as_i64().unwrap()).collect::<Vec<i64>>()
+                };
+                let damage = s["damage"].as_array().unwrap();
+                return Action::Field {
+                    strike: eve_space::strike::Strike {
+                        shape: eve_space::strike::StrikeShape::from_wire(s["shape"].as_u64().unwrap() as u8)
+                            .expect("a shape the simulation runs"),
+                        direction: vector(&s["direction"]),
+                        length: number(s, "length"),
+                        radius: number(s, "radius"),
+                        warning_ms: number(s, "warningMs"),
+                        pulse_ms: number(s, "pulseMs"),
+                        pulses: s["pulses"].as_i64().unwrap() as i32,
+                        damage: [
+                            damage[0].as_f64().unwrap(),
+                            damage[1].as_f64().unwrap(),
+                            damage[2].as_f64().unwrap(),
+                            damage[3].as_f64().unwrap(),
+                        ],
+                        signature_radius: number(s, "signatureRadius"),
+                        immobile_ms: number(s, "immobileMs"),
+                        no_jump_ms: number(s, "noJumpMs"),
+                        neut_amount: number(s, "neutAmount"),
+                        neut_radius: number(s, "neutRadius"),
+                        neut_signature_radius: number(s, "neutSignatureRadius"),
+                        debuff_ms: s["debuffMs"].as_f64().unwrap_or(0.0),
+                        sweep_end: None,
+                        beacon: None,
+                    },
+                    destination: vector(&a["destination"]),
+                    warp_block_ms: number(a, "warpBlockMs"),
+                    moved: ids("moved"),
+                    held: ids("held"),
+                };
+            }
+            if a["kind"] == "strike" {
+                let direction = a["direction"].as_array().unwrap();
+                let damage = a["damage"].as_array().unwrap();
+                let num = |key: &str| a[key].as_f64().unwrap();
+                return Action::Strike {
+                    strike: eve_space::strike::Strike {
+                        shape: eve_space::strike::StrikeShape::from_wire(a["shape"].as_u64().unwrap() as u8)
+                            .expect("a shape the simulation runs"),
+                        direction: [
+                            direction[0].as_f64().unwrap(),
+                            direction[1].as_f64().unwrap(),
+                            direction[2].as_f64().unwrap(),
+                        ],
+                        length: num("length"),
+                        radius: num("radius"),
+                        warning_ms: num("warningMs"),
+                        pulse_ms: num("pulseMs"),
+                        pulses: a["pulses"].as_i64().unwrap() as i32,
+                        damage: [
+                            damage[0].as_f64().unwrap(),
+                            damage[1].as_f64().unwrap(),
+                            damage[2].as_f64().unwrap(),
+                            damage[3].as_f64().unwrap(),
+                        ],
+                        signature_radius: num("signatureRadius"),
+                        immobile_ms: num("immobileMs"),
+                        no_jump_ms: num("noJumpMs"),
+                        neut_amount: num("neutAmount"),
+                        neut_radius: num("neutRadius"),
+                        neut_signature_radius: num("neutSignatureRadius"),
+                        debuff_ms: a["debuffMs"].as_f64().unwrap_or(0.0),
+                        sweep_end: a["sweepEnd"].as_array().map(|end| {
+                            [end[0].as_f64().unwrap(), end[1].as_f64().unwrap(), end[2].as_f64().unwrap()]
+                        }),
+                        beacon: a["beacon"].as_array().map(|offset| {
+                            [
+                                offset[0].as_f64().unwrap(),
+                                offset[1].as_f64().unwrap(),
+                                offset[2].as_f64().unwrap(),
+                            ]
+                        }),
+                    },
+                };
+            }
+            if a["kind"] == "repair" {
+                return Action::Repair { layer: layer(), amount, when };
+            }
+            let four = |key: &str| -> [f64; 4] {
+                let v = a[key].as_array().unwrap();
+                [
+                    v[0].as_f64().unwrap(),
+                    v[1].as_f64().unwrap(),
+                    v[2].as_f64().unwrap(),
+                    v[3].as_f64().unwrap(),
+                ]
+            };
+            if a["kind"] == "kamikaze" {
+                return Action::Kamikaze {
+                    damage: four("damage"),
+                    range: a["rangeMeters"].as_f64().unwrap(),
+                };
+            }
+            if a["kind"] == "blast" {
+                let c = &a["centre"];
+                let centre = [c[0].as_f64().unwrap(), c[1].as_f64().unwrap(), c[2].as_f64().unwrap()];
+                return Action::Blast {
+                    centre,
+                    radius: a["radiusMeters"].as_f64().unwrap(),
+                    damage: four("damage"),
+                };
+            }
+            if a["kind"] == "missile" {
+                let num = |key: &str| a[key].as_f64().unwrap();
+                let blast = Blast {
+                    explosion_radius: num("explosionRadius"),
+                    explosion_velocity: num("explosionVelocity"),
+                    reduction_factor: num("reductionFactor"),
+                    reduction_sensitivity: num("reductionSensitivity"),
+                };
+                return Action::Missile { damage: four("damage"), reach: num("reachMeters"), blast };
+            }
+            let resolution = || a["signatureResolution"].as_f64().unwrap();
+            let percent = || a["percent"].as_f64().unwrap();
+            let what = match a["what"].as_str().unwrap() {
+                "repair" => Remote::Repair { layer: layer(), amount },
+                "transfer" => Remote::Transfer { amount },
+                "neutralize" => Remote::Neutralize { amount, signature_resolution: resolution() },
+                "drain" => Remote::Drain { amount, signature_resolution: resolution() },
+                "web" => Remote::Web { percent: percent() },
+                "paint" => Remote::Paint { percent: percent() },
+                "damp" => Remote::Damp {
+                    range_percent: a["rangePercent"].as_f64().unwrap(),
+                    resolution_percent: a["resolutionPercent"].as_f64().unwrap(),
+                    gravimetric_percent: a["gravimetricStrengthPercent"].as_f64().unwrap_or(0.0),
+                    ladar_percent: a["ladarStrengthPercent"].as_f64().unwrap_or(0.0),
+                    magnetometric_percent: a["magnetometricStrengthPercent"].as_f64().unwrap_or(0.0),
+                    radar_percent: a["radarStrengthPercent"].as_f64().unwrap_or(0.0),
+                },
+                "disrupt" => Remote::Disrupt {
+                    range_percent: a["rangePercent"].as_f64().unwrap(),
+                    falloff_percent: a["falloffPercent"].as_f64().unwrap(),
+                    tracking_percent: a["trackingPercent"].as_f64().unwrap(),
+                },
+                "guidanceDisrupt" => Remote::GuidanceDisrupt {
+                    velocity_percent: a["velocityPercent"].as_f64().unwrap(),
+                    delay_percent: a["delayPercent"].as_f64().unwrap(),
+                    aoe_velocity_percent: a["aoeVelocityPercent"].as_f64().unwrap(),
+                    aoe_cloud_percent: a["aoeCloudPercent"].as_f64().unwrap(),
+                },
+                "jam" => Remote::Jam { strength: sensors_of(&a["strength"]) },
+                _ => Remote::Scramble {
+                    strength: a["strength"].as_f64().unwrap(),
+                    blocks_mwd: a["blocksMwd"].as_bool().unwrap(),
+                },
+            };
+            Action::Remote {
+                what,
+                reach: Reach {
+                    optimal: a["optimal"].as_f64().unwrap(),
+                    falloff: a["falloff"].as_f64().unwrap(),
+                },
+                when,
+                jam: a["jam"].as_str().unwrap().to_string(),
+            }
+        }),
+        on: numbers(&case["on"]),
+        off: numbers(&case["off"]),
+        on_changes: changes(&case["onChanges"]),
+        off_changes: changes(&case["offChanges"]),
+    }
+}
+
+fn vector_of(case: &Value, field: &str) -> [f64; 3] {
+    let list = case[field].as_array().unwrap_or_else(|| panic!("{field} in {case}"));
+    [list[0].as_f64().unwrap(), list[1].as_f64().unwrap(), list[2].as_f64().unwrap()]
+}
+
+fn identity_of(case: &Value) -> NpcIdentity {
+    let number = |v: &Value, field: &str| v[field].as_f64().unwrap_or_else(|| panic!("{field} in {v}"));
+    let weapons = case["weapons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| NpcWeapon {
+            module_id: wide(w, "moduleId"),
+            effect_id: w["effectId"].as_i64().unwrap() as i32,
+            cycle_ms: number(w, "cycleMs"),
+            capacitor_need: number(w, "capacitorNeed"),
+            turret: turret_of(w),
+        })
+        .collect();
+    let wreck = wreck_kind_of(case.get("wreck"));
+    let self_repairs = case
+        .get("selfRepairs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|repair| NpcSelfRepair {
+            effect_id: repair["effectId"].as_i64().unwrap() as i32,
+            amount: number(repair, "amount"),
+            cycle_ms: number(repair, "cycleMs"),
+            capacitor_cost: number(repair, "capacitorCost"),
+            delay_chance: number(repair, "delayChance"),
+        })
+        .collect();
+    NpcIdentity {
+        hostile_response_threshold: case["hostileResponseThreshold"].as_i64().unwrap(),
+        friendly_response_threshold: case["friendlyResponseThreshold"].as_i64().unwrap(),
+        combat: NpcCombat { weapons, aggression_range: number(case, "aggressionRange") },
+        self_repairs,
+        wreck,
+        hull: case.get("hull").and_then(Value::as_bool).unwrap_or(false),
+        host_wreck: case.get("hostWreck").and_then(Value::as_bool).unwrap_or(false),
+        drone: None,
+    }
+}
+
+/// A drone's remote effect of the fixture: its id, name and cycle numbers, and the action a cycle does (read as an activation's, which holds the same action).
+fn drone_effect_of(case: &Value) -> DroneEffect {
+    let activation = json!({
+        "moduleId": "0", "moduleType": 0, "effectId": case["effectId"], "fx": case["fx"],
+        "durationMs": case["cycleMs"], "capacitorNeed": 0.0, "repeat": 1, "targetId": "0",
+        "onChanges": [], "offChanges": [], "action": case["action"],
+    });
+    DroneEffect {
+        effect_id: case["effectId"].as_i64().unwrap() as i32,
+        fx: text(case, "fx"),
+        cycle_ms: case["cycleMs"].as_f64().unwrap(),
+        lasting_ms: case["lastingMs"].as_f64().unwrap(),
+        action: effect_of(&activation).action.expect("the drone effect's action"),
+    }
+}
+
+fn weapon_of(w: &Value) -> NpcWeapon {
+    let number = |field: &str| w[field].as_f64().unwrap_or_else(|| panic!("{field} in {w}"));
+    NpcWeapon {
+        module_id: wide(w, "moduleId"),
+        effect_id: w["effectId"].as_i64().unwrap() as i32,
+        cycle_ms: number("cycleMs"),
+        capacitor_need: number("capacitorNeed"),
+        turret: turret_of(w),
+    }
+}
+
+fn wreck_kind_of(wreck: Option<&Value>) -> Option<WreckKind> {
+    wreck.filter(|w| !w.is_null()).map(|w| WreckKind {
+        type_id: w["typeId"].as_i64().unwrap() as i32,
+        name: text(w, "name"),
+        graphic_id: Some(w["graphicId"].as_i64().unwrap() as i32).filter(|g| *g != 0),
+    })
+}
+
+/// The attributes a change tells the client (its item, its attribute and its value).
+fn changes_of(list: &Value) -> Vec<Change> {
+    list.as_array()
+        .unwrap()
+        .iter()
+        .map(|c| Change {
+            item_id: wide(c, "itemId"),
+            attribute_id: c["attributeId"].as_i64().unwrap() as i32,
+            value: c["value"].as_f64().unwrap(),
+        })
+        .collect()
+}
+
+/// A CRAB's state as the fixture gives it (protocol 61).
+fn beacon_state(state: &Value) -> eve_space::link::AnalysisBeaconState {
+    eve_space::link::AnalysisBeaconState {
+        active: state["active"].as_bool().unwrap(),
+        activate_at: wide(state, "activateAt"),
+        deployed_at: wide(state, "deployedAt"),
+        activation_seconds: state["activationSeconds"].as_i64().unwrap() as i32,
+        link_state: state["linkState"].as_i64().unwrap() as i32,
+        link_complete_at: wide(state, "linkCompleteAt"),
+        linked_ship_id: wide(state, "linkedShipId"),
+    }
+}
+
+/// A dynamic slim-item field value of a case: `{"tag": ..., "value": ...}` or `{"tag": "tuple", "items": [...]}`.
+fn slim_value_of_case(value: &Value) -> SlimValue {
+    match value["tag"].as_str().unwrap() {
+        "none" => SlimValue::None,
+        "int" => SlimValue::Int(wide(value, "value")),
+        "real" => SlimValue::Real(value["value"].as_f64().unwrap()),
+        "bool" => SlimValue::Bool(value["value"].as_bool().unwrap()),
+        "text" => SlimValue::Text(text(value, "value")),
+        "tuple" => {
+            SlimValue::Tuple(value["items"].as_array().unwrap().iter().map(slim_value_of_case).collect())
+        }
+        other => panic!("slim value tag {other}"),
+    }
+}
+
+fn message_of(case: &Value) -> Message {
+    let number = |field: &str| {
+        case[field]
+            .as_u64()
+            .or_else(|| case[field].as_str().and_then(|value| value.parse::<u64>().ok()))
+            .unwrap_or_else(|| panic!("{field} in {case}"))
+    };
+    let session_id = || wide(case, "sessionId") as u64;
+    let cutoff = || eve_space::link::CutoffIdentity {
+        request_id: number("requestId"),
+        scene: scene_key(&case["scene"]),
+        match_id: wide(case, "matchId"),
+        generation: wide(case, "generation"),
+        start: wide(case, "start"),
+        deadline: wide(case, "deadline"),
+    };
+    let metrics = || eve_space::link::MetricsIdentity {
+        request_id: number("requestId"),
+        scene: scene_key(&case["scene"]),
+        match_id: wide(case, "matchId"),
+        generation: wide(case, "generation"),
+        start: wide(case, "start"),
+        roster: case["roster"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| {
+                (
+                    v[0].as_str().unwrap().parse().unwrap(),
+                    v[1].as_str().unwrap().parse().unwrap(),
+                    v[2].as_u64().unwrap() as u8,
+                )
+            })
+            .collect(),
+    };
+    match case["kind"].as_str().unwrap() {
+        "Hello" => Message::Hello { version: number("version") as u16 },
+        "HelloAck" => {
+            Message::HelloAck { version: number("version") as u16, poll_hz: number("pollHz") as u32 }
+        }
+        "EnsureAbyssalScene" => Message::EnsureAbyssalScene {
+            request_id: number("requestId"),
+            spec: abyssal_scene_spec(&case["spec"]),
+        },
+        "EnsureAbyssalSceneReply" => Message::EnsureAbyssalSceneReply {
+            request_id: number("requestId"),
+            outcome: abyssal_outcome(case),
+        },
+        "EnsureAbyssalSceneObject" => Message::EnsureAbyssalSceneObject {
+            request_id: number("requestId"),
+            object: abyssal_scene_object_of(&case["object"]),
+        },
+        "EnsureAbyssalSceneObjectReply" => Message::EnsureAbyssalSceneObjectReply {
+            request_id: number("requestId"),
+            outcome: abyssal_outcome(case),
+        },
+        "EnsureAbyssalEnvironmentObject" => Message::EnsureAbyssalEnvironmentObject {
+            request_id: number("requestId"),
+            object: Box::new(eve_space::link::AbyssalEnvironmentObject {
+                content_id: text(case, "contentId"),
+                body: abyssal_scene_object_of(&case["object"]["body"]),
+                effect_radius_meters: case["object"]["effectRadiusMeters"].as_f64().unwrap(),
+                point_defense: abyssal_point_defense_of(&case["object"]["pointDefense"]),
+            }),
+        },
+        "EnsureAbyssalEnvironmentObjectReply" => Message::EnsureAbyssalEnvironmentObjectReply {
+            request_id: number("requestId"),
+            outcome: abyssal_outcome(case),
+        },
+        "AbyssalFieldMembership" => Message::AbyssalFieldMembership {
+            scene: scene_key(&case["scene"]),
+            source_item_id: wide(case, "sourceItemId"),
+            ship_id: wide(case, "shipId"),
+            session_id: number("sessionId"),
+            inside: case["inside"].as_bool().unwrap(),
+        },
+        "RefreshAbyssalNpc" => Message::RefreshAbyssalNpc {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            session_id: number("sessionId"),
+            ship: Box::new(ship_of(&case["ship"])),
+            identity: Box::new(identity_of(&case["identity"])),
+        },
+        "RefreshAbyssalNpcReply" => Message::RefreshAbyssalNpcReply {
+            request_id: number("requestId"),
+            outcome: abyssal_outcome(case),
+        },
+        "EnsureAbyssalRewardCache" => Message::EnsureAbyssalRewardCache {
+            request_id: number("requestId"),
+            cache: Box::new(eve_space::link::AbyssalRewardCachePlacement {
+                content_id: text(case, "contentId"),
+                scene: scene_key(&case["scene"]),
+                ship: ship_of(&case["entity"]),
+                position: vector3(&case["position"]),
+                direction: vector3(&case["direction"]),
+            }),
+        },
+        "EnsureAbyssalRewardCacheReply" => Message::EnsureAbyssalRewardCacheReply {
+            request_id: number("requestId"),
+            outcome: abyssal_outcome(case),
+        },
+        "EnsureAbyssalLootContainer" => {
+            let Message::PlaceWreck(placement) = message_of(&case["container"]) else {
+                panic!("loot fixture must contain a real wreck placement")
+            };
+            Message::EnsureAbyssalLootContainer {
+                request_id: number("requestId"),
+                content_id: text(case, "contentId"),
+                placement,
+            }
+        }
+        "EnsureAbyssalLootContainerReply" => Message::EnsureAbyssalLootContainerReply {
+            request_id: number("requestId"),
+            outcome: abyssal_outcome(case),
+        },
+        "EnsureAbyssalTracePublished" => Message::EnsureAbyssalTracePublished {
+            request_id: number("requestId"),
+            actor_session_id: case
+                .get("actorSessionId")
+                .and_then(Value::as_str)
+                .map(|value| value.parse().unwrap()),
+            trace: abyssal_trace_of(&case["trace"]),
+        },
+        "EnsureAbyssalTracePublishedReply" => Message::EnsureAbyssalTracePublishedReply {
+            request_id: number("requestId"),
+            status: abyssal_trace_status(&case["status"]),
+            recipient_count: case["recipientCount"].as_i64().unwrap() as i32,
+            actor_notified: case["actorNotified"].as_bool().unwrap(),
+            error: case.get("error").and_then(Value::as_str).map(str::to_owned),
+        },
+        "RemoveAbyssalTrace" => Message::RemoveAbyssalTrace {
+            request_id: number("requestId"),
+            solar_system_id: case["solarSystemId"].as_i64().unwrap() as i32,
+            item_id: wide(case, "itemId"),
+        },
+        "RemoveAbyssalTraceReply" => Message::RemoveAbyssalTraceReply {
+            request_id: number("requestId"),
+            status: abyssal_trace_status(&case["status"]),
+            recipient_count: case["recipientCount"].as_i64().unwrap() as i32,
+            error: case.get("error").and_then(Value::as_str).map(str::to_owned),
+        },
+        "RemoveAbyssalParticipant" => Message::RemoveAbyssalParticipant {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            ship_id: wide(case, "shipId"),
+        },
+        "RemoveAbyssalParticipantReply" => Message::RemoveAbyssalParticipantReply {
+            request_id: number("requestId"),
+            already_absent: case["alreadyAbsent"].as_bool().unwrap(),
+            error: case.get("error").and_then(Value::as_str).map(str::to_owned),
+        },
+        "RegisterTournamentMetrics" => Message::RegisterTournamentMetrics { identity: metrics() },
+        "RegisterTournamentMetricsReply" => Message::RegisterTournamentMetricsReply {
+            identity: metrics(),
+            status: number("status") as u8,
+            error: text(case, "error"),
+        },
+        "ReadTournamentMetrics" => Message::ReadTournamentMetrics { identity: metrics() },
+        "ReadTournamentMetricsReply" => Message::ReadTournamentMetricsReply {
+            identity: metrics(),
+            status: number("status") as u8,
+            error: text(case, "error"),
+            sample: (number("status") == 0).then(|| eve_space::link::MetricsSample {
+                at: wide(case, "at"),
+                applied: case
+                    .get("applied")
+                    .and_then(Value::as_array)
+                    .map(|v| [v[0].as_f64().unwrap(), v[1].as_f64().unwrap()]),
+                pilots: metrics()
+                    .roster
+                    .into_iter()
+                    .map(|(character, ship, team)| eve_space::link::MetricsPilot {
+                        character,
+                        ship,
+                        team,
+                        state: 0,
+                        fitted: vec![],
+                        running: vec![],
+                        companions: vec![],
+                        ehp_status: 0,
+                        ehp: None,
+                    })
+                    .collect(),
+            }),
+        },
+        "ReleaseTournamentMetrics" => Message::ReleaseTournamentMetrics { identity: metrics() },
+        "ReleaseTournamentMetricsReply" => Message::ReleaseTournamentMetricsReply {
+            identity: metrics(),
+            status: number("status") as u8,
+            error: text(case, "error"),
+        },
+        "RegisterTournamentCutoff" => Message::RegisterTournamentCutoff {
+            identity: cutoff(),
+            roster: case["roster"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| (v[0].as_str().unwrap().parse().unwrap(), v[1].as_str().unwrap().parse().unwrap()))
+                .collect(),
+        },
+        "RegisterTournamentCutoffReply" => Message::RegisterTournamentCutoffReply {
+            identity: cutoff(),
+            status: number("status") as u8,
+            error: text(case, "error"),
+        },
+        "ReadTournamentCutoff" => Message::ReadTournamentCutoff { identity: cutoff() },
+        "ReadTournamentCutoffReply" => Message::ReadTournamentCutoffReply {
+            identity: cutoff(),
+            status: number("status") as u8,
+            evidence: case["evidence"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| {
+                    (
+                        v[0].as_str().unwrap().parse().unwrap(),
+                        v[1].as_str().unwrap().parse().unwrap(),
+                        v[2].as_u64().unwrap() as u8,
+                    )
+                })
+                .collect(),
+            error: text(case, "error"),
+        },
+        "ReleaseTournamentCutoff" => Message::ReleaseTournamentCutoff { identity: cutoff() },
+        "ReleaseTournamentCutoffReply" => Message::ReleaseTournamentCutoffReply {
+            identity: cutoff(),
+            status: number("status") as u8,
+            error: text(case, "error"),
+        },
+        "EnterPublicParticipant" => {
+            let Message::Enter(enter) = message_of(&case["enter"]) else { panic!("expected nested enter") };
+            Message::EnterPublicParticipant {
+                request_id: number("requestId"),
+                operation_id: text(case, "operationId"),
+                enter,
+            }
+        }
+        "EnterPublicParticipantReply" => Message::EnterPublicParticipantReply {
+            request_id: number("requestId"),
+            outcome: case.get("error").and_then(Value::as_str).map_or(Ok(()), |e| Err(e.to_owned())),
+        },
+        "QueryTournamentWreck" => Message::QueryTournamentWreck {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            item_id: wide(case, "itemId"),
+        },
+        "QueryTournamentWreckReply" => Message::QueryTournamentWreckReply {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            item_id: wide(case, "itemId"),
+            outcome: case
+                .get("error")
+                .and_then(Value::as_str)
+                .map_or_else(|| Ok(case["present"].as_bool().unwrap()), |e| Err(e.to_owned())),
+        },
+        "RemoveTournamentWreck" => Message::RemoveTournamentWreck {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            item_id: wide(case, "itemId"),
+            owner_id: wide(case, "ownerId"),
+            launcher_id: wide(case, "launcherId"),
+            type_id: case["typeId"].as_i64().unwrap() as i32,
+            center: vector3(&case["center"]),
+            radius: case["radius"].as_f64().unwrap(),
+        },
+        "RemoveTournamentWreckReply" => Message::RemoveTournamentWreckReply {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            item_id: wide(case, "itemId"),
+            outcome: case
+                .get("error")
+                .and_then(Value::as_str)
+                .map_or_else(|| Ok(case["present"].as_bool().unwrap()), |e| Err(e.to_owned())),
+        },
+        "MovePublicParticipant" => Message::MovePublicParticipant {
+            request_id: number("requestId"),
+            operation_id: text(case, "operationId"),
+            session_id: number("sessionId"),
+            ship_id: wide(case, "shipId"),
+            source: scene_key(&case["source"]),
+            destination: scene_key(&case["destination"]),
+            use_anchor: case["useAnchor"].as_bool().unwrap(),
+            position: vector3(&case["position"]),
+            direction: vector3(&case["direction"]),
+        },
+        "MovePublicParticipantReply" => Message::MovePublicParticipantReply {
+            request_id: number("requestId"),
+            outcome: case.get("error").and_then(Value::as_str).map_or(Ok(()), |e| Err(e.to_owned())),
+        },
+        "EnsureTournamentBeacon" => Message::EnsureTournamentBeacon {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            item_id: wide(case, "itemId"),
+            type_id: case["typeId"].as_i64().unwrap() as i32,
+            group_id: case["groupId"].as_i64().unwrap() as i32,
+            category_id: case["categoryId"].as_i64().unwrap() as i32,
+            owner_id: wide(case, "ownerId"),
+            graphic_id: case["graphicId"].as_i64().unwrap() as i32,
+            name: text(case, "nameValue").to_owned(),
+            position: vector3(&case["position"]),
+            radius: case["radius"].as_f64().unwrap(),
+        },
+        "EnsureTournamentBeaconReply" => Message::EnsureTournamentBeaconReply {
+            request_id: number("requestId"),
+            outcome: case.get("error").and_then(Value::as_str).map_or(Ok(()), |e| Err(e.to_owned())),
+        },
+        "RemoveTournamentBeacon" => Message::RemoveTournamentBeacon {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            item_id: wide(case, "itemId"),
+        },
+        "RemoveTournamentBeaconReply" => Message::RemoveTournamentBeaconReply {
+            request_id: number("requestId"),
+            outcome: case.get("error").and_then(Value::as_str).map_or(Ok(()), |e| Err(e.to_owned())),
+        },
+        "GetSceneBody" => Message::GetSceneBody {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            item_id: wide(case, "itemId"),
+        },
+        "GetSceneBodyReply" => Message::GetSceneBodyReply {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            item_id: wide(case, "itemId"),
+            outcome: case.get("error").and_then(Value::as_str).map_or_else(
+                || {
+                    Ok((
+                        case["typeId"].as_i64().unwrap() as i32,
+                        case["groupId"].as_i64().unwrap() as i32,
+                        case["categoryId"].as_i64().unwrap() as i32,
+                        vector3(&case["position"]),
+                    ))
+                },
+                |error| Err(error.to_owned()),
+            ),
+        },
+        "GetAbyssalParticipantPose" => Message::GetAbyssalParticipantPose {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            ship_id: wide(case, "shipId"),
+        },
+        "GetAbyssalParticipantPoseReply" => Message::GetAbyssalParticipantPoseReply {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            ship_id: wide(case, "shipId"),
+            deployment: case.get("deployment").map(|snapshot| eve_space::link::AbyssalDeploymentSnapshot {
+                warping: snapshot["warping"].as_bool().unwrap(),
+                cloaked: snapshot["cloaked"].as_bool().unwrap(),
+                cyno_active: snapshot["cynoActive"].as_bool().unwrap(),
+                undock_invulnerable: snapshot["undockInvulnerable"].as_bool().unwrap(),
+                warp_scrambled: snapshot["warpScrambled"].as_bool().unwrap(),
+                nearby_objects: snapshot["nearbyObjects"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|object| eve_space::link::AbyssalDeploymentObject {
+                        item_id: wide(object, "itemId"),
+                        type_id: object["typeId"].as_i64().unwrap() as i32,
+                        center_distance_meters: object["centerDistanceMeters"].as_f64().unwrap(),
+                    })
+                    .collect(),
+            }),
+            outcome: case.get("error").and_then(Value::as_str).map_or_else(
+                || Ok((vector3(&case["position"]), vector3(&case["direction"]))),
+                |error| Err(error.to_owned()),
+            ),
+        },
+        "MoveAbyssalParticipant" => {
+            let preserve_source_pose =
+                case.get("preserveSourcePose").and_then(Value::as_bool).unwrap_or(false);
+            Message::MoveAbyssalParticipant {
+                request_id: number("requestId"),
+                ship_id: wide(case, "shipId"),
+                source: scene_key(&case["source"]),
+                destination: scene_key(&case["destination"]),
+                preserve_source_pose,
+                session_handoff: case.get("sessionHandoff").and_then(Value::as_bool).unwrap_or(false),
+                position: if preserve_source_pose { [0.0; 3] } else { vector3(&case["position"]) },
+                direction: if preserve_source_pose { [0.0; 3] } else { vector3(&case["direction"]) },
+            }
+        }
+        "MoveAbyssalParticipantReply" => Message::MoveAbyssalParticipantReply {
+            request_id: number("requestId"),
+            outcome: abyssal_outcome(case),
+        },
+        "RebindAbyssalSession" => Message::RebindAbyssalSession {
+            request_id: number("requestId"),
+            session_id: session_id(),
+            ship_id: wide(case, "shipId"),
+            scene: scene_key(&case["scene"]),
+        },
+        "RebindAbyssalSessionReply" => Message::RebindAbyssalSessionReply {
+            request_id: number("requestId"),
+            outcome: abyssal_outcome(case),
+        },
+        "RemoveAbyssalScene" => Message::RemoveAbyssalScene {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            settled_npc_ids: case["settledNpcIds"]
+                .as_array()
+                .map(|ids| ids.iter().map(|id| id.as_str().unwrap().parse().unwrap()).collect())
+                .unwrap_or_default(),
+            settled_loot_ids: case["settledLootIds"]
+                .as_array()
+                .map(|ids| ids.iter().map(|id| id.as_str().unwrap().parse().unwrap()).collect())
+                .unwrap_or_default(),
+        },
+        "RemoveAbyssalSceneReply" => Message::RemoveAbyssalSceneReply {
+            request_id: number("requestId"),
+            outcome: abyssal_outcome(case),
+        },
+        "Enter" => Message::Enter(Box::new(Enter {
+            session_id: session_id(),
+            scene: if case.get("scene").is_some() {
+                scene_key_of(case)
+            } else {
+                SceneKey::solar_system(number("solarSystemId") as i32)
+            },
+            how: match number("how") {
+                0 => How::Undock,
+                1 => How::InSpace,
+                2 => How::Anchor,
+                other => panic!("how {other} in {case}"),
+            },
+            station_id: wide(case, "stationId"),
+            ship: ship_of(&case["ship"]),
+            position: case.get("position").map(|vector| {
+                [vector[0].as_f64().unwrap(), vector[1].as_f64().unwrap(), vector[2].as_f64().unwrap()]
+            }),
+            direction: case.get("direction").map(|vector| {
+                [vector[0].as_f64().unwrap(), vector[1].as_f64().unwrap(), vector[2].as_f64().unwrap()]
+            }),
+        })),
+        "EnterReply" => Message::EnterReply {
+            session_id: session_id(),
+            outcome: if case["ok"].as_bool().unwrap() { Ok(()) } else { Err(text(case, "reason")) },
+        },
+        "Leave" => Message::Leave { session_id: session_id(), why: number("why") as u8 },
+        "Bind" => Message::Bind { session_id: session_id() },
+        "UpdateState" => Message::UpdateState { session_id: session_id() },
+        "Command" => Message::Command {
+            session_id: session_id(),
+            command: number("command") as u8,
+            args: case["args"].as_array().unwrap().iter().map(|a| a.as_f64().unwrap()).collect(),
+        },
+        "CrimewatchFlagActive" => Message::CrimewatchFlagActive {
+            session_id: session_id(),
+            is_criminal: case["isCriminal"].as_bool().unwrap(),
+            expires_at_unix_ms: wide(case, "expiresAtUnixMs"),
+        },
+        "ShipSpec" => Message::ShipSpec { session_id: session_id(), ship: Box::new(ship_of(&case["ship"])) },
+        "Notify" => Message::Notify {
+            session_id: session_id(),
+            name: text(case, "notification"),
+            id_type: text(case, "idType"),
+            args: hex(case["args"].as_str().unwrap()),
+        },
+        "ServiceNotify" => Message::ServiceNotify {
+            session_id: session_id(),
+            service: text(case, "service"),
+            method: text(case, "method"),
+            args: hex(case["args"].as_str().unwrap()),
+        },
+        "Docked" => Message::Docked {
+            session_id: session_id(),
+            station_id: wide(case, "stationId"),
+            condition: condition_of(&case["condition"]),
+        },
+        "Condition" => Message::Condition {
+            session_id: session_id(),
+            command: number("command") as u8,
+            condition: condition_of(&case["condition"]),
+        },
+        "Refused" => Message::Refused {
+            session_id: session_id(),
+            command: number("command") as u8,
+            reason: text(case, "reason"),
+        },
+        "Accepted" => Message::Accepted {
+            session_id: session_id(),
+            command: number("command") as u8,
+            at: wide(case, "at"),
+        },
+        "Approaching" => Message::Approaching {
+            session_id: session_id(),
+            command: number("command") as u8,
+            distance: case["distance"].as_f64().unwrap(),
+        },
+        "Jumping" => Message::Jumping {
+            session_id: session_id(),
+            command: number("command") as u8,
+            destination_system: number("destinationSystem") as i32,
+            destination_gate: wide(case, "destinationGate"),
+        },
+        "Jumped" => Message::Jumped {
+            session_id: session_id(),
+            from_system: number("fromSystem") as i32,
+            from_gate: wide(case, "fromGate"),
+            to_system: number("toSystem") as i32,
+            to_gate: wide(case, "toGate"),
+        },
+        "Activate" => {
+            Message::Activate { session_id: session_id(), effect: Box::new(effect_of(&case["effect"])) }
+        }
+        "ModuleWorkCycle" => Message::ModuleWorkCycle {
+            session_id: session_id(),
+            character_id: wide(case, "characterId"),
+            ship_id: wide(case, "shipId"),
+            solar_system_id: case["solarSystemId"].as_i64().unwrap() as i32,
+            module_id: wide(case, "moduleId"),
+            target_id: wide(case, "targetId"),
+            cycle_id: wide(case, "cycleId") as u64,
+            command: number("command") as u8,
+            charge_type_id: case.get("chargeTypeId").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+            mining_amount_m3: case["miningAmountM3"].as_f64().unwrap(),
+            waste_multiplier: case["wasteMultiplier"].as_f64().unwrap(),
+            waste_probability: case["wasteProbability"].as_f64().unwrap(),
+            crit_probability: case["critProbability"].as_f64().unwrap(),
+            crit_multiplier: case["critMultiplier"].as_f64().unwrap(),
+            access_difficulty_bonus: case["accessDifficultyBonus"].as_f64().unwrap(),
+            waste_roll: case["wasteRoll"].as_f64().unwrap(),
+            rounding_roll: case["roundingRoll"].as_f64().unwrap(),
+            crit_roll: case["critRoll"].as_f64().unwrap(),
+            recipients: case.get("recipients").and_then(|list| list.as_array()).map_or_else(
+                Vec::new,
+                |list| {
+                    list.iter()
+                        .map(|ship| {
+                            ship.as_str().map_or_else(|| ship.as_i64().unwrap(), |text| text.parse().unwrap())
+                        })
+                        .collect()
+                },
+            ),
+        },
+        "ModuleWorkResult" => Message::ModuleWorkResult {
+            session_id: session_id(),
+            module_id: wide(case, "moduleId"),
+            target_id: wide(case, "targetId"),
+            cycle_id: wide(case, "cycleId") as u64,
+            accepted: case["accepted"].as_bool().unwrap(),
+            reason: text(case, "reason"),
+            units_remaining: wide(case, "unitsRemaining"),
+            delivered_units: wide(case, "deliveredUnits"),
+            complete: case["complete"].as_bool().unwrap(),
+        },
+        "ModuleEnded" => Message::ModuleEnded {
+            session_id: session_id(),
+            module_id: wide(case, "moduleId"),
+            reason: number("reason") as u8,
+        },
+        "Targets" => Message::Targets {
+            session_id: session_id(),
+            command: number("command") as u8,
+            pending: case["pending"].as_bool().unwrap(),
+            targets: case["targets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| t.as_str().unwrap().parse().unwrap())
+                .collect(),
+        },
+        "TargetRefused" => Message::TargetRefused {
+            session_id: session_id(),
+            command: number("command") as u8,
+            reason: text(case, "reason"),
+            target_type: case["targetType"].as_i64().unwrap() as i32,
+            desired_range: case["desiredRange"].as_f64().unwrap(),
+            actual_distance: case["actualDistance"].as_f64().unwrap(),
+        },
+        "ChargeSpent" => Message::ChargeSpent {
+            session_id: session_id(),
+            module_id: wide(case, "moduleId"),
+            rounds_left: wide(case, "roundsLeft"),
+        },
+        "BuffState" => Message::BuffState {
+            session_id: session_id(),
+            ship_id: wide(case, "shipId"),
+            entries: case["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|entry| eve_space::link::BuffEntry {
+                    collection_id: entry["collectionId"].as_i64().unwrap() as i32,
+                    value: entry["value"].as_f64().unwrap(),
+                    remaining_ms: entry["remainingMs"].as_f64().unwrap(),
+                })
+                .collect(),
+        },
+        "UpdateEffect" => Message::UpdateEffect {
+            session_id: session_id(),
+            module_id: wide(case, "moduleId"),
+            duration_ms: case["durationMs"].as_f64().unwrap(),
+            capacitor_need: case["capacitorNeed"].as_f64().unwrap(),
+            turret: case.get("turret").filter(|t| !t.is_null()).map(|t| Box::new(turret_of(t))),
+            changes: changes_of(&case["changes"]),
+        },
+        "AdjustCharge" => Message::AdjustCharge {
+            request_id: wide(case, "requestId") as u64,
+            session_id: session_id(),
+            module_id: wide(case, "moduleId"),
+            charge_type: number("chargeType") as i32,
+            op: match case["op"].as_str().unwrap() {
+                "add" => {
+                    ChargeOp::Add { capacity: wide(case, "capacity"), available: wide(case, "available") }
+                }
+                "remove" => ChargeOp::Remove { quantity: wide(case, "quantity") },
+                other => panic!("unknown charge op {other}"),
+            },
+        },
+        "ChargeAdjusted" => Message::ChargeAdjusted {
+            request_id: wide(case, "requestId") as u64,
+            running: case["running"].as_bool().unwrap(),
+            before: wide(case, "before"),
+            after: wide(case, "after"),
+        },
+        "Destroyed" => Message::Destroyed {
+            session_id: session_id(),
+            ship_id: wide(case, "shipId"),
+            wreck_id: wide(case, "wreckId"),
+            position: vector_of(case, "position"),
+            direction: vector_of(case, "direction"),
+            radius: case["radius"].as_f64().unwrap(),
+            killer_ship_id: wide(case, "killerShipId"),
+            wreck_kind: wreck_kind_of(case.get("wreckKind")),
+            ship_type_id: case["shipTypeId"].as_i64().unwrap() as i32,
+            corporation_id: case["corporationId"].as_i64().unwrap() as i32,
+        },
+        "Respawn" => Message::Respawn {
+            session_id: session_id(),
+            ship: Box::new(ship_of(&case["ship"])),
+            position: vector_of(case, "position"),
+            direction: vector_of(case, "direction"),
+        },
+        "PlaceWreck" => Message::PlaceWreck(Box::new(WreckPlacement {
+            scene: scene_key_of(case),
+            wreck_id: wide(case, "wreckId"),
+            group_id: number("groupId") as i32,
+            kind: wreck_kind_of(case.get("wreck")).unwrap(),
+            position: vector_of(case, "position"),
+            direction: vector_of(case, "direction"),
+            radius: case["radius"].as_f64().unwrap(),
+            launcher_id: wide(case, "launcherId"),
+            credit: Credit {
+                character_id: wide(case, "characterId"),
+                corporation_id: wide(case, "corporationId"),
+                alliance_id: wide(case, "allianceId"),
+                war_faction_id: wide(case, "warFactionId"),
+            },
+            is_empty: case["isEmpty"].as_bool().unwrap(),
+        })),
+        "PlaceContainer" => Message::PlaceContainer(Box::new(ContainerPlacement {
+            session_id: session_id(),
+            container_id: wide(case, "containerId"),
+            kind: wreck_kind_of(case.get("container")).unwrap(),
+            radius: case["radius"].as_f64().unwrap(),
+            launcher_id: wide(case, "launcherId"),
+            credit: Credit {
+                character_id: wide(case, "characterId"),
+                corporation_id: wide(case, "corporationId"),
+                alliance_id: wide(case, "allianceId"),
+                war_faction_id: wide(case, "warFactionId"),
+            },
+            distance: case["distance"].as_f64().unwrap(),
+            expected_scene: case.get("expectedScene").map(scene_key),
+        })),
+        "ContainerPlaced" => Message::ContainerPlaced {
+            session_id: session_id(),
+            container_id: wide(case, "containerId"),
+            position: vector_of(case, "position"),
+            direction: vector_of(case, "direction"),
+        },
+        "Arrived" => Message::Arrived {
+            session_id: session_id(),
+            belt_id: wide(case, "beltId"),
+            position: vector_of(case, "position"),
+        },
+        "ChangeWreck" => Message::ChangeWreck {
+            session_id: session_id(),
+            wreck_id: wide(case, "wreckId"),
+            is_empty: case["isEmpty"].as_bool(),
+            abandoned: case["abandoned"].as_bool(),
+        },
+        "RemoveWreck" => {
+            Message::RemoveWreck { wreck_id: wide(case, "wreckId"), effect: number("effect") as i32 }
+        }
+        "Deployed" => Message::Deployed(Box::new(eve_space::link::DeployedPlacement {
+            solar_system_id: number("solarSystemId") as i32,
+            deployable_id: wide(case, "deployableId"),
+            name: text(case, "typeName"),
+            type_id: number("typeId") as i32,
+            group_id: number("groupId") as i32,
+            position: vector_of(case, "position"),
+            radius: case["radius"].as_f64().unwrap(),
+            owner_id: wide(case, "ownerId"),
+            corporation_id: number("corporationId") as i32,
+            alliance_id: number("allianceId") as i32,
+            ship_id: wide(case, "shipId"),
+            lifetime_ms: case["lifetimeMs"].as_f64().unwrap(),
+        })),
+        "RemoveDeployed" => Message::RemoveDeployed { deployable_id: wide(case, "deployableId") },
+        "RemoveCynoBeacon" => Message::RemoveCynoBeacon {
+            solar_system_id: number("solarSystemId") as i32,
+            structure_beacon_id: wide(case, "structureBeaconId"),
+        },
+        "RemoteDecloakPing" => Message::RemoteDecloakPing {
+            solar_system_id: number("solarSystemId") as i32,
+            observatory_id: wide(case, "observatoryId"),
+        },
+        "PlaceProbe" => Message::PlaceProbe(Box::new(eve_space::link::ProbePlacement {
+            probe_id: wide(case, "probeId"),
+            solar_system_id: number("solarSystemId") as i32,
+            name: text(case, "typeName"),
+            type_id: number("typeId") as i32,
+            group_id: number("groupId") as i32,
+            position: vector_of(case, "position"),
+            radius: case["radius"].as_f64().unwrap(),
+            owner_id: wide(case, "ownerId"),
+            corporation_id: number("corporationId") as i32,
+            alliance_id: number("allianceId") as i32,
+            ship_id: wide(case, "shipId"),
+        })),
+        "RemoveProbe" => Message::RemoveProbe { probe_id: wide(case, "probeId") },
+        "PlaceStructure" => Message::PlaceStructure(Box::new(eve_space::link::StructurePlacement {
+            planet_id: case["planetId"].as_i64().unwrap(),
+            structure_id: wide(case, "structureId"),
+            solar_system_id: number("solarSystemId") as i32,
+            name: text(case, "typeName"),
+            type_id: number("typeId") as i32,
+            group_id: number("groupId") as i32,
+            position: vector_of(case, "position"),
+            radius: case["radius"].as_f64().unwrap(),
+            owner_id: wide(case, "ownerId"),
+            corporation_id: number("corporationId") as i32,
+            alliance_id: number("allianceId") as i32,
+            vitals: structure_vitals_of(case),
+            shield_recharge_ms: case["shieldRechargeMs"].as_f64().unwrap(),
+            limits: eve_space::health::StructureLimits {
+                per_second: std::array::from_fn(|i| case["perSecond"][i].as_f64().unwrap()),
+                repair_pause: std::array::from_fn(|i| case["repairPause"][i].as_f64().unwrap()),
+            },
+            status: status_of(&case["status"]),
+        })),
+        "StructureDamaged" => Message::StructureDamaged {
+            structure_id: wide(case, "structureId"),
+            depleted: match number("depleted") {
+                0 => None,
+                1 => Some(eve_space::health::Layer::Shield),
+                2 => Some(eve_space::health::Layer::Armor),
+                _ => Some(eve_space::health::Layer::Structure),
+            },
+            over_threshold: case["overThreshold"].as_bool().unwrap(),
+        },
+        "TetherPolicy" => Message::TetherPolicy {
+            session_id: wide(case, "sessionId") as u64,
+            blocked_for_ms: wide(case, "blockedForMs") as u64,
+            lease_ms: wide(case, "leaseMs") as u64,
+            candidates: case["candidates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|candidate| eve_space::link::TetherCandidate {
+                    structure_id: wide(candidate, "structureId"),
+                    range: candidate["range"].as_f64().unwrap(),
+                })
+                .collect(),
+        },
+        "TetherChanged" => Message::TetherChanged {
+            session_id: wide(case, "sessionId") as u64,
+            previous_structure_id: wide(case, "previousStructureId"),
+            structure_id: wide(case, "structureId"),
+            repairing: case["repairing"].as_bool().unwrap(),
+        },
+        "PlaceWormhole" => Message::PlaceWormhole(Box::new(eve_space::link::WormholePlacement {
+            wormhole_id: wide(case, "wormholeId"),
+            solar_system_id: number("solarSystemId") as i32,
+            name: text(case, "typeName"),
+            type_id: number("typeId") as i32,
+            group_id: number("groupId") as i32,
+            position: vector_of(case, "position"),
+            radius: case["radius"].as_f64().unwrap(),
+            destination_system_id: case["destinationSystemId"].as_i64().unwrap() as i32,
+            destination_end: wide(case, "destinationEnd"),
+            destination_class: case["destinationClass"].as_i64().unwrap() as i32,
+            destination_position: vector_of(case, "destinationPosition"),
+            destination_radius: case["destinationRadius"].as_f64().unwrap(),
+            max_jump_mass: case["maxJumpMass"].as_f64().unwrap(),
+        })),
+        "RemoveWormhole" => Message::RemoveWormhole { wormhole_id: wide(case, "wormholeId") },
+        "RemoveStructure" => Message::RemoveStructure { structure_id: wide(case, "structureId") },
+        "SetStructureState" => Message::SetStructureState {
+            solar_system_id: number("solarSystemId") as i32,
+            structure_id: wide(case, "structureId"),
+            status: status_of(&case["status"]),
+        },
+        "DamageableEntityUpserted" => Message::DamageableEntityUpserted {
+            solar_system_id: number("solarSystemId") as i32,
+            entity_id: wide(case, "entityId"),
+            type_id: number("typeId") as i32,
+            owner_id: wide(case, "ownerId"),
+            corporation_id: wide(case, "corporationId"),
+            alliance_id: wide(case, "allianceId"),
+            war_faction_id: wide(case, "warFactionId"),
+        },
+        "DamageableEntityRemoved" => Message::DamageableEntityRemoved {
+            solar_system_id: number("solarSystemId") as i32,
+            entity_id: wide(case, "entityId"),
+        },
+        "StructureDamageCandidatesRequest" => Message::StructureDamageCandidatesRequest {
+            session_id: session_id(),
+            structure_id: wide(case, "structureId"),
+            module_id: wide(case, "moduleId"),
+            effect_id: number("effectId") as i32,
+            activation_nonce: number("activationNonce"),
+            control_lease_generation: wide(case, "controlLeaseGeneration"),
+            cycle_id: number("cycleId"),
+            pulse_hop_ordinal: number("pulseHopOrdinal") as u32,
+            candidate_ids: case["candidateIds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|id| id.as_str().unwrap().parse().unwrap())
+                .collect(),
+        },
+        "StructureDamageCandidatesResult" => Message::StructureDamageCandidatesResult {
+            session_id: session_id(),
+            structure_id: wide(case, "structureId"),
+            module_id: wide(case, "moduleId"),
+            effect_id: number("effectId") as i32,
+            activation_nonce: number("activationNonce"),
+            control_lease_generation: wide(case, "controlLeaseGeneration"),
+            cycle_id: number("cycleId"),
+            pulse_hop_ordinal: number("pulseHopOrdinal") as u32,
+            allowed_target_ids: case["allowedTargetIds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|id| id.as_str().unwrap().parse().unwrap())
+                .collect(),
+        },
+        "ControlStructure" => Message::ControlStructure {
+            session_id: session_id(),
+            solar_system_id: number("solarSystemId") as i32,
+            structure_id: wide(case, "structureId"),
+            character_id: wide(case, "characterId"),
+            active: case["active"].as_bool().unwrap(),
+            control_lease_generation: wide(case, "controlLeaseGeneration"),
+        },
+        "PlaceDisruptor" => Message::PlaceDisruptor(Box::new(eve_space::link::DisruptorPlacement {
+            deployable_id: wide(case, "deployableId"),
+            solar_system_id: number("solarSystemId") as i32,
+            name: text(case, "typeName"),
+            type_id: number("typeId") as i32,
+            group_id: number("groupId") as i32,
+            position: vector_of(case, "position"),
+            radius: case["radius"].as_f64().unwrap(),
+            range: case["range"].as_f64().unwrap(),
+            active: case["active"].as_bool().unwrap(),
+            owner_id: wide(case, "ownerId"),
+            corporation_id: number("corporationId") as i32,
+            alliance_id: number("allianceId") as i32,
+            ship_id: wide(case, "shipId"),
+        })),
+        "PlaceInhibitor" => Message::PlaceInhibitor(Box::new(eve_space::link::DisruptorPlacement {
+            deployable_id: wide(case, "deployableId"),
+            solar_system_id: number("solarSystemId") as i32,
+            name: text(case, "typeName"),
+            type_id: number("typeId") as i32,
+            group_id: number("groupId") as i32,
+            position: vector_of(case, "position"),
+            radius: case["radius"].as_f64().unwrap(),
+            range: case["range"].as_f64().unwrap(),
+            active: case["active"].as_bool().unwrap(),
+            owner_id: wide(case, "ownerId"),
+            corporation_id: number("corporationId") as i32,
+            alliance_id: number("allianceId") as i32,
+            ship_id: wide(case, "shipId"),
+        })),
+        "PlaceCynoBeacon" => Message::PlaceCynoBeacon(Box::new(eve_space::link::DisruptorPlacement {
+            deployable_id: wide(case, "deployableId"),
+            solar_system_id: number("solarSystemId") as i32,
+            name: text(case, "typeName"),
+            type_id: number("typeId") as i32,
+            group_id: number("groupId") as i32,
+            position: vector_of(case, "position"),
+            radius: case["radius"].as_f64().unwrap(),
+            range: case["range"].as_f64().unwrap(),
+            active: case["active"].as_bool().unwrap(),
+            owner_id: wide(case, "ownerId"),
+            corporation_id: number("corporationId") as i32,
+            alliance_id: number("allianceId") as i32,
+            ship_id: wide(case, "shipId"),
+        })),
+        "PlaceObservatory" => Message::PlaceObservatory(Box::new(eve_space::link::DisruptorPlacement {
+            deployable_id: wide(case, "deployableId"),
+            solar_system_id: number("solarSystemId") as i32,
+            name: text(case, "typeName"),
+            type_id: number("typeId") as i32,
+            group_id: number("groupId") as i32,
+            position: vector_of(case, "position"),
+            radius: case["radius"].as_f64().unwrap(),
+            range: case["range"].as_f64().unwrap(),
+            active: case["active"].as_bool().unwrap(),
+            owner_id: wide(case, "ownerId"),
+            corporation_id: number("corporationId") as i32,
+            alliance_id: number("allianceId") as i32,
+            ship_id: wide(case, "shipId"),
+        })),
+        "PlaceDeadspacePocket" => {
+            Message::PlaceDeadspacePocket(Box::new(eve_space::link::DisruptorPlacement {
+                deployable_id: wide(case, "deployableId"),
+                solar_system_id: number("solarSystemId") as i32,
+                name: text(case, "typeName"),
+                type_id: number("typeId") as i32,
+                group_id: number("groupId") as i32,
+                position: vector_of(case, "position"),
+                radius: case["radius"].as_f64().unwrap(),
+                range: case["range"].as_f64().unwrap(),
+                active: case["active"].as_bool().unwrap(),
+                owner_id: wide(case, "ownerId"),
+                corporation_id: number("corporationId") as i32,
+                alliance_id: number("allianceId") as i32,
+                ship_id: wide(case, "shipId"),
+            }))
+        }
+        "PlaceBattlefieldScoreboard" => {
+            Message::PlaceBattlefieldScoreboard(Box::new(eve_space::link::ScoreboardPlacement {
+                deployable_id: wide(case, "deployableId"),
+                solar_system_id: number("solarSystemId") as i32,
+                name: text(case, "typeName"),
+                type_id: number("typeId") as i32,
+                group_id: number("groupId") as i32,
+                position: vector_of(case, "position"),
+                radius: case["radius"].as_f64().unwrap(),
+            }))
+        }
+        "PlaceCapturePoint" => Message::PlaceCapturePoint(Box::new(eve_space::link::CapturePointPlacement {
+            deployable_id: wide(case, "deployableId"),
+            solar_system_id: number("solarSystemId") as i32,
+            name: text(case, "typeName"),
+            type_id: number("typeId") as i32,
+            group_id: number("groupId") as i32,
+            position: vector_of(case, "position"),
+            radius: case["radius"].as_f64().unwrap(),
+            attacker_faction: number("attackerFaction") as i32,
+            occupier_faction: number("occupierFaction") as i32,
+            next_point_time: wide(case, "nextPointTime"),
+        })),
+        "PlaceAccelerationGate" => {
+            Message::PlaceAccelerationGate(Box::new(eve_space::link::DisruptorPlacement {
+                deployable_id: wide(case, "deployableId"),
+                solar_system_id: number("solarSystemId") as i32,
+                name: text(case, "typeName"),
+                type_id: number("typeId") as i32,
+                group_id: number("groupId") as i32,
+                position: vector_of(case, "position"),
+                radius: case["radius"].as_f64().unwrap(),
+                range: case["range"].as_f64().unwrap(),
+                active: case["active"].as_bool().unwrap(),
+                owner_id: wide(case, "ownerId"),
+                corporation_id: number("corporationId") as i32,
+                alliance_id: number("allianceId") as i32,
+                ship_id: wide(case, "shipId"),
+            }))
+        }
+        "PlaceControlTower" => Message::PlaceControlTower(Box::new(eve_space::link::DisruptorPlacement {
+            deployable_id: wide(case, "deployableId"),
+            solar_system_id: number("solarSystemId") as i32,
+            name: text(case, "typeName"),
+            type_id: number("typeId") as i32,
+            group_id: number("groupId") as i32,
+            position: vector_of(case, "position"),
+            radius: case["radius"].as_f64().unwrap(),
+            range: case["range"].as_f64().unwrap(),
+            active: case["active"].as_bool().unwrap(),
+            owner_id: wide(case, "ownerId"),
+            corporation_id: number("corporationId") as i32,
+            alliance_id: number("allianceId") as i32,
+            ship_id: wide(case, "shipId"),
+        })),
+        "SetDisruptorActive" => Message::SetDisruptorActive {
+            deployable_id: wide(case, "deployableId"),
+            active: case["active"].as_bool().unwrap(),
+        },
+        "PlaceAnalysisBeacon" => {
+            Message::PlaceAnalysisBeacon(Box::new(eve_space::link::AnalysisBeaconPlacement {
+                deployable_id: wide(case, "deployableId"),
+                solar_system_id: number("solarSystemId") as i32,
+                name: text(case, "typeName"),
+                type_id: number("typeId") as i32,
+                group_id: number("groupId") as i32,
+                position: vector_of(case, "position"),
+                radius: case["radius"].as_f64().unwrap(),
+                owner_id: wide(case, "ownerId"),
+                corporation_id: number("corporationId") as i32,
+                alliance_id: number("allianceId") as i32,
+                ship_id: wide(case, "shipId"),
+                state: beacon_state(&case["state"]),
+            }))
+        }
+        "SetSlimField" => Message::SetSlimField {
+            item_id: wide(case, "itemId"),
+            name: text(case, "fieldName"),
+            value: slim_value_of_case(&case["value"]),
+        },
+        "SetAnalysisBeaconState" => Message::SetAnalysisBeaconState {
+            deployable_id: wide(case, "deployableId"),
+            state: beacon_state(&case["state"]),
+        },
+        "Measured" => Message::Measured {
+            session_id: session_id(),
+            command: number("command") as u8,
+            distance: case["distance"].as_f64(),
+        },
+        "Spawn" => Message::Spawn(Box::new(Spawn {
+            request_id: wide(case, "requestId") as u64,
+            abyssal_content_id: case.get("abyssalContentId").and_then(Value::as_str).map(str::to_owned),
+            scene: scene_key_of(case),
+            ship: ship_of(&case["ship"]),
+            anchor_ship_id: wide(case, "anchorShipId"),
+            position: vector_of(case, "position"),
+            velocity: vector_of(case, "velocity"),
+            direction: vector_of(case, "direction"),
+            behavior: text(case, "behavior"),
+            identity: identity_of(&case["identity"]),
+        })),
+        "SpawnReply" => Message::SpawnReply {
+            request_id: wide(case, "requestId") as u64,
+            outcome: if case["ok"].as_bool().unwrap() {
+                Ok(wide(case, "session") as u64)
+            } else {
+                Err(text(case, "reason"))
+            },
+        },
+        "LaunchDrone" => Message::LaunchDrone(Box::new(LaunchDrone {
+            request_id: wide(case, "requestId") as u64,
+            session_id: session_id(),
+            ship: ship_of(&case["ship"]),
+            weapon: case.get("weapon").filter(|weapon| !weapon.is_null()).map(weapon_of),
+            graphic_id: number("graphicId") as i32,
+            orbit_distance: case["orbitDistance"].as_f64().unwrap(),
+            attack_range: case["attackRange"].as_f64().unwrap(),
+            cruise_fraction: case["cruiseFraction"].as_f64().unwrap(),
+            mining_amount_m3: case.get("miningAmountM3").and_then(Value::as_f64).unwrap_or(0.0),
+            work_cycle_ms: case.get("workCycleMs").and_then(Value::as_f64).unwrap_or(0.0),
+            mining_waste_multiplier: case.get("miningWasteMultiplier").and_then(Value::as_f64).unwrap_or(0.0),
+            mining_waste_probability: case
+                .get("miningWasteProbability")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0),
+            salvage_access_bonus: case.get("salvageAccessBonus").and_then(Value::as_f64).unwrap_or(0.0),
+            effect: case.get("effect").filter(|effect| !effect.is_null()).map(drone_effect_of),
+        })),
+        "DroneCommand" => Message::DroneCommand {
+            session_id: session_id(),
+            command: number("command") as u8,
+            target_id: wide(case, "targetId"),
+            drone_ids: case["droneIds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|d| d.as_str().unwrap().parse().unwrap())
+                .collect(),
+            control_range: case["controlRange"].as_f64().unwrap(),
+        },
+        "DroneResults" => Message::DroneResults {
+            session_id: session_id(),
+            command: number("command") as u8,
+            results: case["results"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| (wide(r, "droneId"), text(r, "reason")))
+                .collect(),
+        },
+        "DirectionalTargets" => Message::DirectionalTargets {
+            session_id: session_id(),
+            command: number("command") as u8,
+            targets: case["targets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| DirectionalTarget {
+                    id: wide(t, "id"),
+                    kind: t["kind"].as_u64().unwrap() as u8,
+                    type_id: t["typeId"].as_i64().unwrap() as i32,
+                    position: [0, 1, 2].map(|i| t["position"][i].as_f64().unwrap()),
+                    radius: t["radius"].as_f64().unwrap(),
+                    cloaked: t["cloaked"].as_bool().unwrap(),
+                    warping: t["warping"].as_bool().unwrap(),
+                })
+                .collect(),
+        },
+        "ScanTargets" => Message::ScanTargets {
+            session_id: session_id(),
+            command: number("command") as u8,
+            targets: case["targets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| ScanTarget {
+                    id: wide(t, "id"),
+                    kind: t["kind"].as_u64().unwrap() as u8,
+                    type_id: t["typeId"].as_i64().unwrap() as i32,
+                    position: [0, 1, 2].map(|i| t["position"][i].as_f64().unwrap()),
+                })
+                .collect(),
+        },
+        "DroneScooped" => Message::DroneScooped { session_id: session_id(), drone_id: wide(case, "droneId") },
+        "DroneReleased" => Message::DroneReleased {
+            session_id: session_id(),
+            drone_id: wide(case, "droneId"),
+            position: vector_of(case, "position"),
+        },
+        "LaunchFighter" => Message::LaunchFighter {
+            request_id: wide(case, "requestId") as u64,
+            session_id: session_id(),
+            ship: Box::new(ship_of(&case["ship"])),
+            graphic_id: number("graphicId") as i32,
+            cruise_fraction: case["cruiseFraction"].as_f64().unwrap(),
+            squadron_size: number("squadronSize") as i32,
+        },
+        "FighterOrder" => Message::FighterOrder {
+            session_id: session_id(),
+            command: number("command") as u8,
+            target_id: wide(case, "targetId"),
+            fighter_ids: case["fighterIds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|f| f.as_str().unwrap().parse().unwrap())
+                .collect(),
+            range: case["range"].as_f64().unwrap(),
+        },
+        "FighterResults" => Message::FighterResults {
+            session_id: session_id(),
+            command: number("command") as u8,
+            results: case["results"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| (wide(r, "fighterId"), text(r, "reason")))
+                .collect(),
+        },
+        "FighterSize" => Message::FighterSize {
+            session_id: session_id(),
+            fighter_id: wide(case, "fighterId"),
+            size: number("size") as i32,
+        },
+        "FighterGotoPoint" => Message::FighterGotoPoint {
+            session_id: session_id(),
+            fighter_ids: case["fighterIds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|f| f.as_str().unwrap().parse().unwrap())
+                .collect(),
+            point: vector_of(case, "point"),
+        },
+        "FighterLanded" => {
+            Message::FighterLanded { session_id: session_id(), fighter_id: wide(case, "fighterId") }
+        }
+        "FighterReleased" => Message::FighterReleased {
+            session_id: session_id(),
+            fighter_id: wide(case, "fighterId"),
+            position: vector_of(case, "position"),
+        },
+        "EcmBurst" => Message::EcmBurst {
+            session_id: session_id(),
+            ship_id: wide(case, "shipId"),
+            reached: case["reached"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| (wide(r, "shipId"), r["jammed"].as_bool().unwrap()))
+                .collect(),
+        },
+        "Destroy" => Message::Destroy {
+            ship_id: wide(case, "shipId"),
+            credit: Credit {
+                character_id: wide(case, "characterId"),
+                corporation_id: wide(case, "corporationId"),
+                alliance_id: wide(case, "allianceId"),
+                war_faction_id: wide(case, "warFactionId"),
+            },
+        },
+        other => panic!("unknown kind {other}"),
+    }
+}
+
+fn reason_of(error: DecodeError) -> &'static str {
+    match error {
+        DecodeError::Empty => "empty",
+        DecodeError::UnknownKind(_) => "unknown-kind",
+        DecodeError::Truncated => "truncated",
+        DecodeError::Trailing => "trailing",
+        DecodeError::Utf8 => "utf8",
+        DecodeError::BadValue(_) => "bad-value",
+    }
+}
+
+#[test]
+fn public_scene_body_frames_match_shared_fixtures() {
+    let fixtures = fixtures();
+    let cases: Vec<_> = fixtures["valid"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|case| {
+            matches!(
+                case["kind"].as_str(),
+                Some(
+                    "GetSceneBody"
+                        | "GetSceneBodyReply"
+                        | "EnsureTournamentBeacon"
+                        | "EnsureTournamentBeaconReply"
+                        | "RemoveTournamentBeacon"
+                        | "RemoveTournamentBeaconReply"
+                )
+            )
+        })
+        .collect();
+    assert_eq!(cases.len(), 7);
+    for case in cases {
+        let expected = hex(case["hex"].as_str().unwrap());
+        let message = message_of(case);
+        assert_eq!(message.encode(), expected);
+        assert_eq!(Message::decode(&expected[4..]).unwrap(), message);
+    }
+}
+
+#[test]
+fn public_move_encoder_requires_guid_d_form() {
+    let data = fixtures();
+    let case = data["valid"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["name"] == "move public pilot to explicit pose")
+        .unwrap();
+    let message = message_of(case);
+    for invalid in [
+        "not-a-guid",
+        "0123456789abcdef0123456789abcdef",
+        "{01234567-89ab-cdef-0123-456789abcdef}",
+        " 01234567-89ab-cdef-0123-456789abcdef",
+    ] {
+        let mut invalid_message = message.clone();
+        if let Message::MovePublicParticipant { operation_id, .. } = &mut invalid_message {
+            *operation_id = invalid.to_string();
+        }
+        assert!(std::panic::catch_unwind(|| invalid_message.encode()).is_err());
+    }
+    for valid in ["01234567-89AB-CDEF-0123-456789ABCDEF", "00000000-0000-0000-0000-000000000000"] {
+        let mut valid_message = message.clone();
+        if let Message::MovePublicParticipant { operation_id, .. } = &mut valid_message {
+            *operation_id = valid.to_string();
+        }
+        assert!(!valid_message.encode().is_empty());
+    }
+}
+
+#[test]
+fn every_valid_frame_encodes_to_its_bytes_and_decodes_back() {
+    let fixtures = fixtures();
+    let cases = fixtures["valid"].as_array().unwrap();
+    assert!(cases.len() >= 20);
+    for case in cases {
+        let name = text(case, "name");
+        let expected = hex(case["hex"].as_str().unwrap());
+        let message = message_of(case);
+        assert_eq!(message.encode(), expected, "encoding of {name}");
+        // the frame is its length, then the payload
+        let payload = &expected[4..];
+        assert_eq!(
+            u32::from_le_bytes(expected[..4].try_into().unwrap()) as usize,
+            payload.len(),
+            "length of {name}"
+        );
+        assert_eq!(
+            Message::decode(payload).unwrap_or_else(|error| panic!("decoding of {name}: {error:?}")),
+            message,
+            "decoding of {name}"
+        );
+    }
+}
+
+#[test]
+fn abyssal_scene_and_participant_frames_match_the_shared_csharp_rust_fixtures() {
+    let fixtures = fixtures();
+    let cases = fixtures["valid"].as_array().unwrap();
+    let selected: Vec<&Value> = cases
+        .iter()
+        .filter(|case| {
+            matches!(
+                case["kind"].as_str(),
+                Some(
+                    "EnsureAbyssalScene"
+                        | "EnsureAbyssalSceneReply"
+                        | "MoveAbyssalParticipant"
+                        | "MoveAbyssalParticipantReply"
+                        | "RebindAbyssalSession"
+                        | "RebindAbyssalSessionReply"
+                        | "RemoveAbyssalScene"
+                        | "RemoveAbyssalSceneReply"
+                        | "EnsureAbyssalTracePublished"
+                        | "EnsureAbyssalTracePublishedReply"
+                        | "RemoveAbyssalTrace"
+                        | "RemoveAbyssalTraceReply"
+                        | "RemoveAbyssalParticipant"
+                        | "RemoveAbyssalParticipantReply"
+                        | "GetAbyssalParticipantPose"
+                        | "GetAbyssalParticipantPoseReply"
+                )
+            ) || case
+                .get("scene")
+                .is_some_and(|scene| scene["instanceId"].as_str().is_some_and(|id| id != "0"))
+        })
+        .collect();
+    assert!(selected.len() >= 8);
+    for case in selected {
+        let expected = hex(case["hex"].as_str().unwrap());
+        let message = message_of(case);
+        assert_eq!(message.encode(), expected, "encoding of {}", text(case, "name"));
+        assert_eq!(Message::decode(&expected[4..]).unwrap(), message, "decoding of {}", text(case, "name"));
+    }
+}
+
+#[test]
+fn a_launch_drone_without_a_weapon_roundtrips_with_the_empty_weapon_record() {
+    let mut case = fixtures()["valid"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| text(case, "name") == "launch of a drone")
+        .unwrap()
+        .clone();
+    case["weapon"] = Value::Null;
+    let message = message_of(&case);
+    let encoded = message.encode();
+    assert_eq!(Message::decode(&encoded[4..]).unwrap(), message);
+}
+
+#[test]
+fn a_heat_profile_roundtrips_through_the_link() {
+    let profile = HeatProfile {
+        generation_multiplier: 0.75,
+        damage_multiplier: 0.85,
+        thermodynamics_level: 3,
+        capacity: [100.0; 3],
+        initial_rack_heat: [0.0, 1.0, 2.0],
+        dissipation_rate: [0.01; 3],
+        attenuation: [0.71; 3],
+        modules: vec![HeatModuleProfile {
+            module_id: 123,
+            flag: 27,
+            structure_hp: 40.0,
+            damage_hp: 2.0,
+            heat_damage_hp: 6.6,
+            heat_absorption_rate: 0.01,
+            overloadable: true,
+            heat_immune: false,
+            online: true,
+        }],
+    };
+    let message = Message::HeatProfile { session_id: 42, profile: profile.clone() };
+    let frame = message.encode();
+    assert_eq!(Message::decode(&frame[4..]).unwrap(), message);
+}
+
+#[test]
+fn charged_actions_roundtrip_cycle_charge_and_fallback_in_the_shared_link() {
+    let fixtures = fixtures();
+    let case = fixtures["valid"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["name"] == "activate an ECM burst")
+        .unwrap();
+    let Message::Activate { session_id, effect } = message_of(case) else {
+        panic!("fixture must activate an effect")
+    };
+    let mut effect = *effect;
+    effect.fallback_capacitor_need = 17.5;
+    effect.action = Some(Action::Charged {
+        action: Box::new(Action::Remote {
+            what: Remote::Transfer { amount: 60.0 },
+            reach: Reach { optimal: 0.0, falloff: 0.0 },
+            when: Applies::CycleStart,
+            jam: "energyTransfer".to_string(),
+        }),
+        fallback: Some(Box::new(Action::Repair {
+            layer: Layer::Armor,
+            amount: 24.0,
+            when: Applies::CycleEnd,
+        })),
+        charge_type_id: 16272,
+        charge_flag: 27,
+        charge_per_cycle: 3,
+        charges: 5,
+    });
+    let message = Message::Activate { session_id, effect: Box::new(effect) };
+    let frame = message.encode();
+    assert_eq!(Message::decode(&frame[4..]).unwrap(), message);
+}
+
+#[test]
+fn module_offline_and_rack_overheat_orders_roundtrip_through_the_link() {
+    for message in [
+        Message::ModuleOffline { session_id: 42, module_id: 123 },
+        Message::RackOverheat { session_id: 42, rack: HeatRack::Medium, active: true },
+    ] {
+        let frame = message.encode();
+        assert_eq!(Message::decode(&frame[4..]).unwrap(), message);
+    }
+}
+
+#[test]
+fn mutadaptive_remote_repair_action_and_cycle_messages_roundtrip_through_the_link() {
+    let effect = eve_space::modules::Effect {
+        rules: Default::default(),
+        burns_fuel: false,
+        module_id: 700,
+        module_type: 35298,
+        effect_id: 8,
+        fx: "effects.RemoteArmorRepair".to_string(),
+        duration_ms: 6_000.0,
+        capacitor_need: 513.0,
+        fallback_capacitor_need: 0.0,
+        repeat: i32::MAX,
+        target_id: 701,
+        turret: None,
+        action: Some(eve_space::modules::Action::Remote {
+            what: eve_space::modules::Remote::MutadaptiveRepair {
+                layer: eve_space::health::Layer::Armor,
+                amount: 256.0,
+                bonus_per_cycle: 0.1,
+                bonus_max: 1.5,
+            },
+            reach: eve_space::modules::Reach { optimal: 12_000.0, falloff: 0.0 },
+            when: eve_space::modules::Applies::CycleEnd,
+            jam: "remoteArmorRepair".to_string(),
+        }),
+        on: None,
+        off: None,
+        on_changes: Vec::new(),
+        off_changes: Vec::new(),
+    };
+    let activation = Message::Activate { session_id: 42, effect: Box::new(effect) };
+    let frame = activation.encode();
+    assert_eq!(Message::decode(&frame[4..]).unwrap(), activation);
+
+    let messages = [
+        Message::RemoteRepairCycle {
+            session_id: 42,
+            module_id: 700,
+            target_id: 701,
+            cycle_id: 9,
+            cycle_number: 15,
+            cycle_at_ms: 123_456,
+            cycle_duration_ms: 6_000,
+            ends_effect_after_cycle: true,
+            base_amount: 256.0,
+            bonus_per_cycle: 0.1,
+            bonus_max: 1.5,
+        },
+        Message::RemoteRepairCycleResult {
+            session_id: 42,
+            module_id: 700,
+            target_id: 701,
+            cycle_id: 9,
+            accepted: true,
+            reason: String::new(),
+            amount: 640.0,
+        },
+    ];
+    for message in messages {
+        let frame = message.encode();
+        assert_eq!(Message::decode(&frame[4..]).unwrap(), message);
+    }
+}
+
+#[test]
+
+fn every_invalid_frame_is_refused_for_the_stated_reason() {
+    let fixtures = fixtures();
+    for case in fixtures["invalid"].as_array().unwrap() {
+        let name = text(case, "name");
+        let frame = hex(case["hex"].as_str().unwrap());
+        let error = Message::decode(&frame[4..]).unwrap_err();
+        assert_eq!(reason_of(error), text(case, "reason"), "{name}");
+    }
+}
+
+#[test]
+fn control_structure_frames_validate_ids_and_boolean() {
+    let active = Message::ControlStructure {
+        session_id: 1,
+        solar_system_id: 30_000_001,
+        structure_id: 42,
+        character_id: 9001,
+        active: true,
+        control_lease_generation: 19,
+    };
+    let frame = active.encode();
+    assert_eq!(frame.len(), 42);
+    assert_eq!(u32::from_le_bytes(frame[..4].try_into().unwrap()), 38);
+    let valid = frame[4..].to_vec();
+    assert_eq!(valid[0], eve_space::link::kind::CONTROL_STRUCTURE);
+    assert_eq!(Message::decode(&valid).unwrap(), active);
+
+    let mut bad_flag = valid.clone();
+    bad_flag[29] = 2;
+    assert!(Message::decode(&bad_flag).is_err());
+    for (start, end) in [(1, 9), (9, 13), (13, 21), (21, 29), (30, 38)] {
+        let mut invalid = valid.clone();
+        invalid[start..end].fill(0);
+        assert!(Message::decode(&invalid).is_err());
+    }
+    let mut negative_structure = valid.clone();
+    negative_structure[13..21].copy_from_slice(&(-1_i64).to_le_bytes());
+    assert!(Message::decode(&negative_structure).is_err());
+    for end in 0..valid.len() {
+        assert!(Message::decode(&valid[..end]).is_err());
+    }
+    let mut trailing = valid.clone();
+    trailing.push(0);
+    assert_eq!(Message::decode(&trailing), Err(eve_space::link::DecodeError::Trailing));
+
+    let inactive = Message::ControlStructure {
+        session_id: 1,
+        solar_system_id: 30_000_001,
+        structure_id: 0,
+        character_id: 0,
+        active: false,
+        control_lease_generation: 0,
+    };
+    assert_eq!(Message::decode(&inactive.encode()[4..]).unwrap(), inactive);
+    let mut invalid_release = inactive.encode()[4..].to_vec();
+    invalid_release[21..29].copy_from_slice(&(-1_i64).to_le_bytes());
+    assert!(Message::decode(&invalid_release).is_err());
+    let mut invalid_generation = inactive.encode()[4..].to_vec();
+    invalid_generation[30..38].copy_from_slice(&(-1_i64).to_le_bytes());
+    assert!(Message::decode(&invalid_generation).is_err());
+}
+
+/// A structure's slim fields from its fixture: a timer is `[start, end, paused or null]`.
+fn status_of(value: &serde_json::Value) -> eve_space::world::StructureStatus {
+    eve_space::world::StructureStatus {
+        state: value["state"].as_i64().unwrap() as i32,
+        upkeep_state: value["upkeepState"].as_i64().unwrap() as i32,
+        timer: value["timer"]
+            .as_array()
+            .map(|t| (t[0].as_i64().unwrap(), t[1].as_i64().unwrap(), t[2].as_i64())),
+        unanchoring: value["unanchoring"].as_i64(),
+        repairing: value["repairing"].as_bool(),
+    }
+}
+
+/// A structure's vitals from its fixture: the points of its shield, armor and hull, and the resonances of each layer.
+fn structure_vitals_of(case: &serde_json::Value) -> eve_space::health::Vitals {
+    let v = &case["vitals"];
+    let layer =
+        |name: &str| -> [f64; 4] { std::array::from_fn(|i| v["resonances"][name][i].as_f64().unwrap()) };
+    eve_space::health::Vitals {
+        shield_capacity: v["shieldCapacity"].as_f64().unwrap(),
+        armor_hp: v["armorHp"].as_f64().unwrap(),
+        structure_hp: v["structureHp"].as_f64().unwrap(),
+        resonances: eve_space::health::Resonances {
+            shield: layer("shield"),
+            armor: layer("armor"),
+            structure: layer("structure"),
+        },
+        armor_pinned: false,
+    }
+}
+
+#[test]
+fn abyssal_scene_object_and_content_keyed_spawn_fixtures_roundtrip() {
+    let fixture = fixtures();
+    let selected: Vec<_> = fixture["valid"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|case| {
+            case["kind"].as_str().is_some_and(|kind| {
+                kind.starts_with("EnsureAbyssalSceneObject")
+                    || kind.starts_with("EnsureAbyssalRewardCache")
+                    || kind.starts_with("EnsureAbyssalLootContainer")
+                    || kind.starts_with("EnsureAbyssalEnvironmentObject")
+                    || kind == "GetAbyssalParticipantPoseReply"
+                    || kind.starts_with("RefreshAbyssalNpc")
+                    || kind == "AbyssalFieldMembership"
+            }) || case.get("abyssalContentId").is_some()
+                || case.get("settledNpcIds").is_some()
+        })
+        .collect();
+    assert_eq!(selected.len(), 18);
+
+    for case in selected {
+        let message = message_of(case);
+        let frame = hex(case["hex"].as_str().unwrap());
+        assert_eq!(message.encode(), frame, "{}", case["name"]);
+        assert_eq!(Message::decode(&frame[4..]).unwrap(), message, "{}", case["name"]);
+    }
+}
+
+/// The remote effect of a structure burst fixture (the kinds of the burst families, as the generator writes them).
+fn burst_remote(a: &serde_json::Value) -> Remote {
+    let number = |key: &str| a[key].as_f64().unwrap();
+    let optional = |key: &str| a.get(key).and_then(serde_json::Value::as_f64).unwrap_or(0.0);
+    match a["what"].as_str().unwrap() {
+        "neutralize" => Remote::Neutralize {
+            amount: number("amount"),
+            signature_resolution: number("signatureResolution"),
+        },
+        "web" => Remote::Web { percent: number("percent") },
+        "paint" => Remote::Paint { percent: number("percent") },
+        "damp" => Remote::Damp {
+            range_percent: number("rangePercent"),
+            resolution_percent: number("resolutionPercent"),
+            gravimetric_percent: optional("gravimetricStrengthPercent"),
+            ladar_percent: optional("ladarStrengthPercent"),
+            magnetometric_percent: optional("magnetometricStrengthPercent"),
+            radar_percent: optional("radarStrengthPercent"),
+        },
+        "disrupt" => Remote::Disrupt {
+            range_percent: number("rangePercent"),
+            falloff_percent: number("falloffPercent"),
+            tracking_percent: number("trackingPercent"),
+        },
+        "scramble" => {
+            Remote::Scramble { strength: number("strength"), blocks_mwd: a["blocksMwd"].as_bool().unwrap() }
+        }
+        "jam" => Remote::Jam { strength: sensors_of(&a["strength"]) },
+        other => panic!("no structure burst remote effect named {other}"),
+    }
+}

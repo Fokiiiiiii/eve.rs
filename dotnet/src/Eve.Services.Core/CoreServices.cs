@@ -41,7 +41,8 @@ public static class CoreServices
         Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? readCurrentCalendarGroups = null,
         IContractInventoryReader? contractInventoryReader = null,
         Func<long, long, CancellationToken, ValueTask<bool>>? isCharacterInCurrentCorporation = null,
-        TourneyMatchCallbacks? tournamentMatchCallbacks = null)
+        TourneyMatchCallbacks? tournamentMatchCallbacks = null,
+        CalendarCspaBilling? calendarCspaBilling = null)
     {
         gameRpcCallbacks ??= new GameRpcCallbacks();
         var licenses = new OmegaLicenses(accounts, nowUnixMs);
@@ -50,7 +51,8 @@ public static class CoreServices
             ? new CalendarMgrService()
             : new CalendarMgrService(calendarStore,
                 calendarAudience ?? throw new ArgumentNullException(nameof(calendarAudience)), calendarSessions,
-                canManageCalendarGroupEvent, readCurrentCalendarGroups);
+                canManageCalendarGroupEvent, readCurrentCalendarGroups,
+                nowUnixMs: nowUnixMs, cspaBilling: calendarCspaBilling);
         var calendarProxy = calendarStore is null
             ? new CalendarProxyService()
             : new CalendarProxyService(calendarStore, readCurrentCalendarGroups);

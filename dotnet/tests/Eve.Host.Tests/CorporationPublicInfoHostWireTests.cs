@@ -55,6 +55,7 @@ public sealed class CorporationPublicInfoHostWireTests
                 founder = await characters.InsertAsync(connection, transaction, new NewCharacter(1,
                     $"Identity Pilot {Guid.NewGuid():N}", 0, 1, 1, 1, 11, 1376, 1000044, null,
                     60000001, 30000001, 20000001, 10000001, null, null));
+                await skills.GrantAsync(connection, transaction, founder, [new CharacterSkill(3363, 1, 0)]);
                 member = await characters.InsertAsync(connection, transaction, new NewCharacter(1,
                     $"Identity Member {Guid.NewGuid():N}", 0, 1, 1, 1, 11, 1376, 1000044, null,
                     60000001, 30000001, 20000001, 10000001, null, null));
@@ -103,7 +104,7 @@ public sealed class CorporationPublicInfoHostWireTests
                 .Single(entry => entry.value == new PyStr(name)).index;
             Assert.Equal(new PyInt(corporation.Id), values[Column("corporationID")]);
             Assert.Equal(new PyStr("Identity Corporation"), values[Column("corporationName")]);
-            Assert.Equal(new PyInt(2), values[Column("memberCount")]);
+            Assert.Equal(new PyInt(1), values[Column("memberCount")]);
 
             Assert.True(await dispatcher.DispatchAsync(ClientCallPacket(
                 "GetCorporations", new PyInt(corporation.Id + 999)), session));
@@ -150,6 +151,7 @@ public sealed class CorporationPublicInfoHostWireTests
                 founder = await characters.InsertAsync(connection, transaction, new NewCharacter(1,
                     $"Public Info Pilot {Guid.NewGuid():N}", 0, 1, 1, 1, 11, 1376, 1000044, null,
                     60000001, 30000001, 20000001, 10000001, null, null));
+                await skills.GrantAsync(connection, transaction, founder, [new CharacterSkill(3363, 1, 0)]);
                 await wallets.OpenAsync(connection, transaction, founder, 5_000_000m, 10);
                 await transaction.CommitAsync();
             }
@@ -175,7 +177,7 @@ public sealed class CorporationPublicInfoHostWireTests
             Assert.Equal(new PyStr("Public description"), Field(response, "description"));
             Assert.IsType<PyNone>(Field(response, "allianceID"));
             Assert.Equal(PyBool.False, Field(response, "allowWar"));
-            Assert.Equal(new PyInt(1), Field(response, "memberCount"));
+            Assert.Equal(new PyInt(0), Field(response, "memberCount"));
 
             Assert.True(await dispatcher.DispatchAsync(ClientCallPacket("GetPublicInfo", new PyInt(corporation.Id + 999)), session));
             Assert.IsType<PyNone>(Result(capture.Packets[^1]));

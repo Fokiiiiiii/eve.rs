@@ -12,6 +12,10 @@ public sealed class PgFactAttribute : FactAttribute
 }
 internal sealed class Rig : IAsyncDisposable
 {
+    internal const int CorporationManagementSkillId = 3363;
+    internal const int MegacorpManagementSkillId = 3731;
+    internal const int EmpireControlSkillId = 3732;
+    internal const int SovereigntySkillId = 12241;
     internal static readonly string? Url = Environment.GetEnvironmentVariable("EVE_PG_URL");
     private readonly string _id = Guid.NewGuid().ToString("N")[..12];
     private readonly string[] _schemas;
@@ -59,8 +63,20 @@ internal sealed class Rig : IAsyncDisposable
         var id = await Characters.InsertAsync(connection,tx,new NewCharacter(1,name,0,1,1,1,11,1376,
             1000044,null,60000001,30000001,20000001,10000001,null,null));
         await Wallets.OpenAsync(connection,tx,id,isk,10);
+        await Skills.GrantAsync(connection,tx,id,[new CharacterSkill(CorporationManagementSkillId,1,250)]);
         await tx.CommitAsync();
         return id;
+    }
+
+    public async Task SetSkillAsync(long characterId,int typeId,int level)
+    {
+        await using var connection = await Source.OpenConnectionAsync();
+        await using var tx = await connection.BeginTransactionAsync();
+        if (level <= 0)
+            await Skills.DeleteAsync(connection,tx,characterId,[typeId]);
+        else
+            await Skills.GrantAsync(connection,tx,characterId,[new CharacterSkill(typeId,level,0)]);
+        await tx.CommitAsync();
     }
 
     public async Task SeedNpcCorporationAsync(long corporationId)

@@ -44,6 +44,7 @@ public sealed class CorporationSharesHostWireTests
                 await using var tx = await connection.BeginTransactionAsync();
                 var id = await characters.InsertAsync(connection, tx, new NewCharacter(1, name + Guid.NewGuid().ToString("N"),
                     0, 1, 1, 1, 11, 1376, 1000044, null, 60000001, 30000001, 20000001, 10000001, null, null));
+                await skills.GrantAsync(connection, tx, id, [new CharacterSkill(3363, 1, 0)]);
                 await wallets.OpenAsync(connection, tx, id, 5_000_000m, 10); await tx.CommitAsync(); return id;
             }
             var ceo = await Character("Share owner "); var issuerCeo = await Character("Share issuer ");

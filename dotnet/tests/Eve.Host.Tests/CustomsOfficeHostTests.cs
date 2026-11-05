@@ -751,7 +751,7 @@ public sealed class CustomsOfficeHostTests : IAsyncLifetime
             Assert.IsType<PyNone>(settings.Items[5]);
     }
 
-    private static async Task<long> InsertPilotAsync(NpgsqlDataSource source, PgCharacterStore characters)
+    private async Task<long> InsertPilotAsync(NpgsqlDataSource source, PgCharacterStore characters)
     {
         var pilot = new NewCharacter(AccountId, $"Customs Host Pilot {Guid.NewGuid():N}", Gender: 1, RaceId: 1, BloodlineId: 1, AncestryId: 10, SchoolId: 35, TypeId: 1373,
             CorporationId: CorporationId, FactionId: 500001, StationId: 60000610, SolarSystemId: Jita, ConstellationId: 20000020, RegionId: 10000002,
@@ -759,6 +759,8 @@ public sealed class CustomsOfficeHostTests : IAsyncLifetime
         await using var connection = await source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
         var id = await characters.InsertAsync(connection, transaction, pilot);
+        await new PgSkillStore(source, Schema("EVE_SKILLS_SCHEMA")).GrantAsync(connection, transaction, id,
+            [new Eve.Skills.CharacterSkill(3363, 1, 0)]);
         await transaction.CommitAsync();
         return id;
     }

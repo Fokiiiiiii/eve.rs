@@ -37,6 +37,7 @@ public class CharUnboundMgrTests
         await using (var tx=await c.BeginTransactionAsync())
         {
             await h.WalletTransactions.AdjustAsync(c,tx,id,2000000m,1,1,"Seed funds",Harness.ClockUnixMs,"fund");
+            await h.SkillStore.GrantAsync(c,tx,id,[new CharacterSkill(3363,1,0)]);
             await tx.CommitAsync();
         }
         var corp=await h.Corporations.CreateAsync(id,new("Orbital Works","ORBIT","","",0),"found");

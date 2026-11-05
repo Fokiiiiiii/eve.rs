@@ -56,12 +56,14 @@ public sealed class CorporationSharesCompositionTests
             await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(databaseUrl));
             var characters = new PgCharacterStore(source);
             var wallets = new PgWalletStore(source);
-            var store = new CorporationStore(source, characters, wallets, new WalletTransactions(source), new PgSkillStore(source), () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            var skills = new PgSkillStore(source);
+            var store = new CorporationStore(source, characters, wallets, new WalletTransactions(source), skills, () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
             async Task<long> Character(string name)
             {
                 await using var connection = await source.OpenConnectionAsync();
                 await using var tx = await connection.BeginTransactionAsync();
                 var id = await characters.InsertAsync(connection, tx, new NewCharacter(1, name + Guid.NewGuid().ToString("N"), 0, 1, 1, 1, 11, 1376, 1000044, null, 60000001, 30000001, 20000001, 10000001, null, null));
+                await skills.GrantAsync(connection, tx, id, [new CharacterSkill(3363, 1, 0)]);
                 await wallets.OpenAsync(connection, tx, id, 5_000_000m, 10);
                 await tx.CommitAsync(); return id;
             }

@@ -95,6 +95,7 @@ internal sealed class TradeRig : IAsyncDisposable
         var id=await Characters.InsertAsync(c,tx,new NewCharacter(1,name,0,1,1,1,11,1376,1000044,null,
             Station.Id,Station.SolarSystemId,Station.ConstellationId,Station.RegionId,null,null));
         await WalletStore.OpenAsync(c,tx,id,isk,0);
+        await Skills.GrantAsync(c,tx,id,[new CharacterSkill(3363,1,0)]);
         await tx.CommitAsync();
         return id;
     }

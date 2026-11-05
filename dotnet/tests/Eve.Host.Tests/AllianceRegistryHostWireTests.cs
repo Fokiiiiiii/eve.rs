@@ -17,6 +17,7 @@ public partial class HostServerTests
         await using var rig = await CharacterHostTests.CharacterHostRig.CreateAsync();
         var characterId = await rig.CreateCharacterAsync();
         await rig.FundAsync(characterId, 3_000_000_000m);
+        await rig.SetSkillLevelAsync(characterId, 3363, 1);
         await rig.SetSkillLevelAsync(characterId, 3732, 5);
         var wallets = new PgWalletStore(rig.Source, rig.WalletSchema);
         var store = new CorporationStore(rig.Source, rig.Characters, wallets,

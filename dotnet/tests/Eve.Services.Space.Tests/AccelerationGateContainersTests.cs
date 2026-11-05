@@ -24,7 +24,12 @@ public class AccelerationGateContainersTests
         var gateId = SpaceContainers.AccelerationGateDeployableId(Instance, layout.Gates[0].GateIndex);
         var roomPocket = SpaceContainers.RoomPocketDeployableId(Instance, 1);
 
+        rig.Sim.IsConnected = false;
         await rig.Containers.ReconcileDeadspacePocketsAsync([pocket]);
+        rig.Sim.IsConnected = true;
+        await Task.WhenAll(
+            rig.Containers.ReconcileDeadspacePocketsAsync([pocket]),
+            rig.Containers.RestoreDeployedAsync(System));
 
         var gate = Assert.Single(rig.Sim.Heard.OfType<SimPlaceAccelerationGate>(), body => body.DeployableId == gateId);
         Assert.Equal(DungeonRoomLayout.AccelerationGateTypeId, gate.TypeId);
@@ -34,15 +39,24 @@ public class AccelerationGateContainersTests
         Assert.Contains(rig.Sim.Heard, m => m is SimPlaceDeadspacePocket body && body.DeployableId == roomPocket && body.Position.SequenceEqual(layout.Rooms[1].Anchor));
 
         rig.Sim.Heard.Clear();
+        await rig.Containers.ReconcileDeadspacePocketsAsync([pocket]);
+        await rig.Containers.RestoreDeployedAsync(System);
+        Assert.Empty(rig.Sim.Heard);
+
+        rig.Sim.LoseLink();
+        rig.Sim.IsConnected = true;
+        await rig.Containers.RestoreDeployedAsync(System);
+        Assert.Contains(rig.Sim.Heard, m => m is SimPlaceAccelerationGate body && body.DeployableId == gateId);
+        Assert.Contains(rig.Sim.Heard, m => m is SimPlaceDeadspacePocket body && body.DeployableId == roomPocket);
+
+        rig.Sim.Heard.Clear();
         await rig.Containers.ReconcileDeadspacePocketsAsync([]);
         Assert.Contains(rig.Sim.Heard, m => m is SimRemoveDeployed removed && removed.DeployableId == gateId);
         Assert.Contains(rig.Sim.Heard, m => m is SimRemoveDeployed removed && removed.DeployableId == roomPocket);
         Assert.Null(await rig.Deployed.GetAsync(gateId));
 
-        // a restart puts the body of a running gate back in the scene from its record
+        // a new dungeon reusing the same ids gets fresh scene bodies
         await rig.Containers.ReconcileDeadspacePocketsAsync([pocket]);
-        rig.Sim.Heard.Clear();
-        await rig.Containers.RestoreDeployedAsync(System);
         Assert.Contains(rig.Sim.Heard, m => m is SimPlaceAccelerationGate body && body.DeployableId == gateId);
     }
 

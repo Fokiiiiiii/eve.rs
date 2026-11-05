@@ -58,6 +58,7 @@ internal static class HostComposition
         IAccountDirectory accounts;
         IReadOnlyList<IService> characterServices = [];
         Eve.Services.Core.GameRpcCallbacks? gameRpcCallbacks = null;
+        ReadDynamicBountyCallback? readDynamicBounty = null;
         TourneyQueryCallback? tourneyQueryCallback = null;
         Eve.Host.Persistence.PersistenceTournamentMatches? tournamentMatches = null;
         Eve.Services.Core.KeeperRpcCallbacks? keeperRpcCallbacks = null;
@@ -163,7 +164,7 @@ internal static class HostComposition
                 clock, contractSchema, contractExpiryJobs, foundations.Events);
             legacy = await LegacyGameStoreComposition.OpenAsync(source, foundations.Events);
             var notices = new PublicGateway.NoticeHub();
-        (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, calendarCspaBilling, gameRpcCallbacks, keeperRpcCallbacks, characterSessions, onlineStatusNotifications, contractBrokerFeeAdjustment, hasContractManagerRole, canManageCalendarGroupEvent, readCurrentCalendarGroups) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected, notices, hooks => characterEntryHooks = hooks, containers => tournamentContainers = containers, ships => tournamentShips = ships);
+            (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, calendarCspaBilling, gameRpcCallbacks, keeperRpcCallbacks, characterSessions, onlineStatusNotifications, contractBrokerFeeAdjustment, hasContractManagerRole, canManageCalendarGroupEvent, readCurrentCalendarGroups, readDynamicBounty) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache, options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected, notices, hooks => characterEntryHooks = hooks, containers => tournamentContainers = containers, ships => tournamentShips = ships);
             if (characterSessions is not null)
                 new Eve.Host.Persistence.ContractNotifications(characterSessions).Subscribe(foundations.Events);
             // the public gateway's skill plans: the tables are the skills module's (migration 0009, applied with its store)
@@ -430,6 +431,7 @@ internal static class HostComposition
             authentication: authentication,
             gameRpcCallbacks: raffleProxyStore is null ? gameRpcCallbacks : (gameRpcCallbacks ?? new Eve.Services.Core.GameRpcCallbacks()) with { RaffleProxy = new Eve.Services.Core.RaffleProxyCallbacks(raffleProxyStore.InvokeAsync) },
             readJumpTimers: readJumpTimers,
+            readDynamicBounty: readDynamicBounty,
             readNonDiminishingInjections: readNonDiminishingInjections,
             keeperRpcCallbacks: keeperRpcCallbacks,
             superWeaponRpcCallbacks: superWeaponCallbacks,

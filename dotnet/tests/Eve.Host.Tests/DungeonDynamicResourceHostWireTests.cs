@@ -4,6 +4,7 @@ using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Core;
 using Eve.Services.Space;
+using Eve.Npc;
 
 namespace Eve.Host.Tests;
 
@@ -38,6 +39,11 @@ public partial class HostServerTests
             new EssMgrSystemData(1, systemId, 1.75, 100, 20),
             new EssMgrSystemData(2, systemId + 1, 0, 0, 0),
         };
+        var bountySystems = new[]
+        {
+            new DynamicBountyMapEntry((int)systemId, 1.75),
+            new DynamicBountyMapEntry((int)systemId + 2, 1.5),
+        };
 
         Start(strictRpc: true, configure: registry =>
         {
@@ -45,7 +51,8 @@ public partial class HostServerTests
             registry.Register(new DungeonInstanceCacheMgrService(
                 _ => ValueTask.FromResult(snapshot), () => FixedNowMs));
             registry.Register(new DynamicResourceCacheMgrService(
-                listSystems: _ => ValueTask.FromResult<IReadOnlyList<EssMgrSystemData>>(resourceSystems)));
+                listSystems: _ => ValueTask.FromResult<IReadOnlyList<EssMgrSystemData>>(resourceSystems),
+                listDbsSystems: _ => ValueTask.FromResult<IReadOnlyList<DynamicBountyMapEntry>>(bountySystems)));
         });
         var front = await Handshaken(await ConnectAsync());
         var open = Open();
@@ -137,6 +144,7 @@ public partial class HostServerTests
         var outputBySystem = Assert.IsType<PyDict>(
             await Call("dynamicResourceCacheMgr", "GetDBSMapData"));
         Assert.Equal(new PyReal(1.75), EntryValue(outputBySystem, systemId));
+        Assert.Equal(new PyReal(1.5), EntryValue(outputBySystem, systemId + 2));
         Assert.DoesNotContain(outputBySystem.Entries, entry => entry.Key == new PyInt(systemId + 1));
 
         var bountyOutput = Assert.IsType<PyTuple>(

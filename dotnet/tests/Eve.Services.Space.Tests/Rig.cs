@@ -182,6 +182,8 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
     /// <summary>The schema of the rig's event bus (a restarted bus over the same cursors is made over it).</summary>
     public string EventsSchema => _schemas[8];
 
+    public string BountySchema => _schemas[5];
+
     public string StructureSchema => _schemas[^1];
 
     /// <summary>What every NPC leaves when the rig has loot (<c>npcLoot</c>): a stack of seven to nine of the first type of <see cref="LootPool"/>, or nothing when null (the dice always come out 0).</summary>

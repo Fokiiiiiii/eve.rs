@@ -86,16 +86,7 @@ internal sealed partial class CharacterServicesComposition
         // a pilot's kill claims the bounties on the victim (pilot, corporation, alliance); the payout is credited by its own job, once
         playerBountyKills = new Eve.Services.Crimewatch.PlayerBountyKills(
             new Eve.Crimewatch.PlayerBountyStore(source, crimewatchSchema), crimewatchSchema, economyWallets,
-            async (typeIds, token) =>
-            {
-                var prices = new Dictionary<long, decimal>();
-                foreach (var row in await sde.ReadAsync("types", typeIds, token))
-                {
-                    if (row.Doc.ValueKind == System.Text.Json.JsonValueKind.Object && row.Doc.TryGetProperty("basePrice", out var price) && price.TryGetDecimal(out var value))
-                        prices[row.Key] = value;
-                }
-                return prices;
-            },
+            ReadBasePricesAsync,
             async (characterId, token) => await characters.GetAsync(characterId, token) is { } character
                 ? (character.CorporationId, character.AllianceId ?? 0)
                 : null);
@@ -103,8 +94,62 @@ internal sealed partial class CharacterServicesComposition
             playerBountyKills.SettlePayoutAsync(context.Connection, context.Transaction, context.Payload<Eve.Services.Crimewatch.PlayerBountyPayoutDue>()!.PayoutId, now(), token));
     }
 
+    private async Task<IReadOnlyDictionary<long, decimal>> ReadBasePricesAsync(IReadOnlyList<long> typeIds, CancellationToken cancellationToken)
+    {
+        var prices = new Dictionary<long, decimal>();
+        foreach (var row in await sde.ReadAsync("types", typeIds, cancellationToken))
+        {
+            if (row.Doc.ValueKind == System.Text.Json.JsonValueKind.Object && row.Doc.TryGetProperty("basePrice", out var price) && price.TryGetDecimal(out var value))
+                prices[row.Key] = value;
+        }
+        return prices;
+    }
+
+    private void RegisterDynamicBountyJobs()
+    {
+        DynamicBountyJobs.Register(foundations.Scheduler,
+            _dynamicBounty ?? throw new InvalidOperationException("The DBS store is not wired."),
+            systemId => characterSessions?.InSolarSystem(systemId) ?? [],
+            message => Console.Error.WriteLine($"eve-host: {message}"));
+    }
+
+    private async Task ScheduleDynamicBountyProcessAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, int systemId, long nextAtMs, CancellationToken cancellationToken) =>
+        await DynamicBountyJobs.ScheduleProcessAsync(foundations.Scheduler, connection, transaction, systemId, nextAtMs, cancellationToken);
+
+    private async Task RecordDynamicBountyPaidInTransactionAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, int systemId, decimal grossAmount, long nowMs, CancellationToken cancellationToken)
+    {
+        var update = await (_dynamicBounty ?? throw new InvalidOperationException("The DBS store is not wired."))
+            .RecordPaidAsync(connection, transaction, systemId, grossAmount, nowMs, cancellationToken);
+        if (update is { Activated: true })
+            await ScheduleDynamicBountyProcessAsync(connection, transaction, systemId, update.NextAtMs, cancellationToken);
+    }
+
+    private async Task RecordDynamicBountyLossInTransactionAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, ShipLoss loss, CancellationToken cancellationToken)
+    {
+        if (loss.Cause != ShipLossCause.Player || loss.KillerCharacterId <= 0 || loss.KillerCharacterId == loss.CharacterId)
+            return;
+        await dogma.EnsureTypesAsync([loss.ShipTypeId], cancellationToken);
+        if (dogma.Type(loss.ShipTypeId) is not { CategoryId: 6 } ship || ship.GroupId == 29)
+            return;
+
+        var contents = (loss.Contents ?? []).Select(item => (item.TypeId, item.Quantity)).ToArray();
+        var typeIds = contents.Select(item => (long)item.TypeId).Append(loss.ShipTypeId).Distinct().ToArray();
+        var prices = await ReadBasePricesAsync(typeIds, cancellationToken);
+        var iskLost = Eve.Services.Crimewatch.PlayerBountyKills.LossValueOf(loss.ShipTypeId, contents, prices);
+        var update = await (_dynamicBounty ?? throw new InvalidOperationException("The DBS store is not wired."))
+            .RecordLossAsync(connection, transaction, loss.SolarSystemId, loss.ShipId, iskLost, now(), cancellationToken);
+        if (update is { Activated: true })
+            await ScheduleDynamicBountyProcessAsync(connection, transaction, loss.SolarSystemId, update.NextAtMs, cancellationToken);
+    }
+
     private async Task SpaceSimulation()
     {
+        _dynamicBounty = new PgDynamicBountyStore(source,
+            solarSystems.Systems.Select(system => new DynamicBountySystem(system.Id, system.RegionId, system.Security)), npcSchema);
+        RegisterDynamicBountyJobs();
         await LoadCustomsPenaltyAsync();
         LoadPlayerBounties();
         sim = null;
@@ -284,6 +329,9 @@ internal sealed partial class CharacterServicesComposition
                 });
             spaceSessions.UseBounties(bountyStore);
             spaceSessions.Ess = Ess;   // the Main Bank share of a bounty earned in an ESS system
+            spaceSessions.DynamicBounties = _dynamicBounty;
+            spaceSessions.RecordDynamicBountyPaidInTransactionAsync = RecordDynamicBountyPaidInTransactionAsync;
+            spaceSessions.RecordDynamicBountyLossInTransactionAsync = RecordDynamicBountyLossInTransactionAsync;
             await PlaceEssBallsAsync(sim);   // each ESS is a ball in space, so a pilot in its system can link to it
             spaceSessions.Events = foundations.Events;   // what happens in space is announced on the bus as well
             spaceSessions.BuffStore = new Eve.Ships.PgShipBuffStore(source, spaceSchema);   // the buffs a restart keeps (track C8)

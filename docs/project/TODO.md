@@ -2635,7 +2635,7 @@ Open:
 - The client's fuel-bay access to a tower's container and the owner's fuel-bay notifications (no `OnItemChange` on a fuel change).
 - The scoop of an unanchored tower from space: built on the unanchor-drop marker, not verified on the graphical client or live.
 - The anchoring charter (SDE purpose 1) and the reinforcement fuel (purpose 4); the tower's modules.
-- Mission pockets: the body is in the scene (protocol 74) and the observatory check reads it; the pocket's warp rules (EveJS `deadspaceWarpPolicy` A and B) are not in the simulation (DEVIATIONS, ST-23).
+- Mission pockets: the body is in the scene (protocol 74), the observatory check reads it, and reconciliation plus system-entry restoration sends each pocket and gate body at most once per simulator link. The pocket's warp rules (EveJS `deadspaceWarpPolicy` A and B) are not in the simulation (DEVIATIONS, ST-23).
 - Live: the own-ship eject, the moon fracture, the completion and the owners' rows are live (`test_structures.py`, ST-23). The tower's online state and fuel-bay notices are not on the client yet.
 
 ## Character phase S2 (2026-10-16)

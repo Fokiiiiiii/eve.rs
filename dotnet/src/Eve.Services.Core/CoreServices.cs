@@ -42,7 +42,8 @@ public static class CoreServices
         IContractInventoryReader? contractInventoryReader = null,
         Func<long, long, CancellationToken, ValueTask<bool>>? isCharacterInCurrentCorporation = null,
         TourneyMatchCallbacks? tournamentMatchCallbacks = null,
-        CalendarCspaBilling? calendarCspaBilling = null)
+        CalendarCspaBilling? calendarCspaBilling = null,
+        ReadDynamicBountyCallback? readDynamicBounty = null)
     {
         gameRpcCallbacks ??= new GameRpcCallbacks();
         var licenses = new OmegaLicenses(accounts, nowUnixMs);
@@ -95,7 +96,7 @@ public static class CoreServices
               new ChatAuthenticationService(),
             new CommunityTrackMgrService(),
             new ContextualOfferMgrService(),
-              new DynamicBountyMgrService(),
+              new DynamicBountyMgrService(readDynamicBounty),
                 new JumpTimersService(readJumpTimers),
               new InGameReportService(submitInGameReport),
               new NonDiminishingInjectionMgrService(readNonDiminishingInjections),

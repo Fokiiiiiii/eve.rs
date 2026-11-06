@@ -22,7 +22,7 @@ internal sealed class TradeRig : IAsyncDisposable
         Source=source; Stations=stations; Topology=topology;
         Station=stationId is { } stationKey ? stations.Get(stationKey) ?? throw new InvalidOperationException($"Station {stationKey} is missing from the SDE") : stations.All.First();
         Characters=new(source,_schemas[1]); WalletStore=new(source,_schemas[2]); Wallets=new(source,_schemas[2]);
-        Items=new(source,_schemas[3]); Skills=new(source,_schemas[4]);
+        Items=new(source,_schemas[3]); ItemTypes=new(new SdeReader(source)); Skills=new(source,_schemas[4]);
         Corporations=new(source,Characters,WalletStore,Wallets,Skills,() => Now,_schemas[5]);
         Book=new(source,_schemas[0]);
         Scheduler=NewScheduler();
@@ -37,6 +37,7 @@ internal sealed class TradeRig : IAsyncDisposable
     public PgWalletStore WalletStore { get; }
     public WalletTransactions Wallets { get; }
     public PgItemStore Items { get; }
+    public ItemTypeCatalog ItemTypes { get; }
     public PgSkillStore Skills { get; }
     public CorporationStore Corporations { get; }
     public MarketStore Book { get; }

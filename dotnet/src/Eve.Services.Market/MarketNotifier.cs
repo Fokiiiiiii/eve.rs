@@ -1,18 +1,23 @@
 using Eve.Macho;
+using Eve.Inventory;
 using Eve.Market;
 using Eve.Marshal;
 using Eve.Wallet;
 
 namespace Eve.Services.Market;
 
-public sealed class MarketNotifier(WalletTransactions wallets, CharacterSessions? sessions)
+public sealed class MarketNotifier(WalletTransactions wallets, CharacterSessions? sessions, PgItemStore items, ItemTypeCatalog itemTypes)
 {
     private const string ObjectCachingService = "objectCaching";
     private const string MarketService = "marketProxy";
     private const int PlexTypeId = 44992;
 
+    private sealed record BuyerDelivery(Item Item, ItemRow Row);
+
     public async Task PublishAsync(MarketReceipt receipt, MarketRequest? immediateFill = null)
     {
+        var deliveries = await ResolveDeliveriesAsync(receipt.DeliveredItemIds);
+
         // A successful replay announces the current balance, not the original receipt's historical balance.
         foreach (var account in receipt.ChangedWallets)
             if (await wallets.AccountBalanceAsync(account) is { } balance)
@@ -34,7 +39,44 @@ public sealed class MarketNotifier(WalletTransactions wallets, CharacterSessions
             sessions?.Of(request.ActorId) is { } session)
             session.SendNotification("OnOwnOrdersChanged","charid",Py.List(),
                 new PyStr("Filled"),new PyInt(request.UseCorporation ? 1 : 0));
+
+        foreach (var buyer in deliveries.GroupBy(delivery => delivery.Item.OwnerId))
+            if (sessions?.Of(buyer.Key) is { } buyerSession)
+                buyerSession.SendNotification("OnItemsChanged","charid",
+                    new PyList([.. buyer.Select(delivery => InventoryWire.PackedRow(delivery.Row))]),
+                    CreatedItemDifferences(),PyNone.Instance);
+        foreach (var delivery in deliveries)
+            sessions?.Of(delivery.Item.OwnerId)?.SendNotification("OnMarketItemReceived","clientID",
+                InventoryWire.Id(delivery.Item.Id),new PyInt(delivery.Item.TypeId),new PyInt(delivery.Item.Flag),
+                InventoryWire.Id(delivery.Item.LocationId));
     }
+
+    private async Task<IReadOnlyList<BuyerDelivery>> ResolveDeliveriesAsync(IReadOnlyList<long> itemIds)
+    {
+        if (itemIds.Count == 0) return [];
+
+        var deliveredItems = new List<Item>(itemIds.Count);
+        foreach (var itemId in itemIds)
+            deliveredItems.Add(await items.GetAsync(itemId) ??
+                throw new InvalidOperationException($"Committed market delivery item {itemId} is missing from inventory."));
+
+        var types = await itemTypes.GetAsync(deliveredItems.Select(item => item.TypeId));
+        var result = new List<BuyerDelivery>(deliveredItems.Count);
+        foreach (var item in deliveredItems)
+        {
+            if (!types.TryGetValue(item.TypeId,out var type))
+                throw new InvalidOperationException($"Committed market delivery type {item.TypeId} is missing from the SDE.");
+            result.Add(new(item,new ItemRow(item.Id,item.TypeId,item.OwnerId,item.LocationId,item.Flag,
+                item.Singleton ? -1 : item.Quantity,type.GroupId,type.CategoryId)));
+        }
+        return result;
+    }
+
+    // The buyer has no cached previous container or stack size for an item just delivered.
+    private static PyDict CreatedItemDifferences() => new([
+        new KeyValuePair<PyValue,PyValue>(new PyInt(3),new PyInt(0)),
+        new KeyValuePair<PyValue,PyValue>(new PyInt(9),new PyInt(0)),
+    ]);
 
     /// <summary>
     /// The book results of a region: the orders of each type that changed, and the station and system asks, which every session of the region

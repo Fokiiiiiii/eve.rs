@@ -36,7 +36,7 @@ public class MarketHistoryTests
         sessions.Enter(actor, session);
         var catalog = await MarketCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
         return (session, new MarketProxyService(rig.Book, rig.Trading, rig.Topology, rig.Characters, rig.Corporations, rig.Wallets, catalog,
-            () => rig.Now, rig.Expiry, sessions));
+            () => rig.Now, rig.Expiry, rig.Items, rig.ItemTypes, sessions));
     }
 
     private static PyValue Received(PyValue value)

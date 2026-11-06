@@ -51,3 +51,9 @@ No graphical-client session was performed. The audit did not execute every marke
 - In the clean `/home/user/wt-cx4-market` continuation, builds of `Eve.Services.Market`, `Eve.Market.Tests`, `Eve.Host.Tests`, and `Eve.Services.Tests` succeeded with 0 warnings and 0 errors.
 - On `eve_p4`, through `tools/dev/db-lock.sh`: focused `Market_order_history` RPC cases: 3 passed, 0 failed, 0 skipped; neighboring `MarketRpcTests`, `MarketCoherenceTests`, `MarketHistoryTests`, `MarketTransactionReadTests`, and `ProtocolTests`: 49 passed, 0 failed, 0 skipped.
 - On `eve_p4`, through `tools/dev/db-lock.sh`: `MarketHostTests` and `MarketProxyFailureWireTests`: 4 passed, 0 failed, 0 skipped. The first attempt stopped at Host startup because the newly prepared database lacked `sde_mission.skinrComponentPointValues`; after recreating `eve_p4` from pinned-SDE `eve_p3`, all four passed.
+
+## Post-merge checks in cx4 (2026-11-06)
+
+- `MSBUILDDISABLENODEREUSE=1 dotnet build` with `-p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors for `Eve.Services.Market`, `Eve.Market.Tests`, `Eve.Host.Tests`, and `Eve.Services.Tests`.
+- On `eve_p4` through `tools/dev/db-lock.sh`: focused `Market_order_history` RPC cases: 3 passed, 0 failed, 0 skipped; neighboring Market RPC/coherence/history/transaction/protocol classes: 49 passed, 0 failed, 0 skipped.
+- On `eve_p4` through `tools/dev/db-lock.sh`: `MarketHostTests` and `MarketProxyFailureWireTests`: 4 passed, 0 failed, 0 skipped.

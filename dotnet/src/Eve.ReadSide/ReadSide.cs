@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using Eve.Data;
 using Eve.Marshal;
 using Eve.Services;
@@ -179,12 +181,64 @@ public sealed class ReadSide : IRowsetReadSide
         return result;
     }
 
+    private static string? CacheKey(string name, object?[] args)
+    {
+        var key = new StringBuilder();
+        AppendCachePart(key, name);
+        key.Append(args.Length.ToString(CultureInfo.InvariantCulture)).Append(':');
+        foreach (var arg in args)
+        {
+            if (arg is null)
+            {
+                key.Append("N;");
+                continue;
+            }
+
+            var type = arg.GetType();
+            if (!HasStableCacheEncoding(type))
+            {
+                // shortcut: custom parameter types bypass caching, add a stable snapshot when a cached query needs one.
+                return null;
+            }
+
+            key.Append("V;");
+            AppendCachePart(key, type.AssemblyQualifiedName ?? type.ToString());
+            try
+            {
+                AppendCachePart(key, JsonSerializer.Serialize(arg, type));
+            }
+            catch (Exception ex) when (ex is JsonException or NotSupportedException)
+            {
+                return null;
+            }
+        }
+        return key.ToString();
+    }
+
+    private static void AppendCachePart(StringBuilder key, string value) =>
+        key.Append(value.Length.ToString(CultureInfo.InvariantCulture)).Append(':').Append(value);
+
+    private static bool HasStableCacheEncoding(Type type)
+    {
+        if (Nullable.GetUnderlyingType(type) is { } nullableType)
+        {
+            return HasStableCacheEncoding(nullableType);
+        }
+        if (type.IsArray)
+        {
+            return type.GetArrayRank() == 1 && type.GetElementType() is { } elementType && HasStableCacheEncoding(elementType);
+        }
+        return type.IsEnum || type.IsPrimitive || type == typeof(string) || type == typeof(decimal)
+            || type == typeof(DateTime) || type == typeof(DateTimeOffset) || type == typeof(DateOnly) || type == typeof(TimeOnly)
+            || type == typeof(TimeSpan) || type == typeof(Guid);
+    }
+
     /// <summary>Runs a query with the values of the request (<c>$1</c>, <c>$2</c>…).</summary>
     public async Task<RowSet> RowsAsync(string name, object?[]? args = null, CancellationToken cancellationToken = default)
     {
         args ??= [];
         var query = _queries.TryGetValue(name, out var found) ? found : throw new KeyNotFoundException($"no query named '{name}'");
-        var cacheKey = query.Cache ? name + "|" + string.Join("|", args.Select(a => a?.ToString())) : null;
+        var cacheKey = query.Cache ? CacheKey(name, args) : null;
         if (cacheKey is not null && _cache.TryGetValue(cacheKey, out var cached))
         {
             return cached;

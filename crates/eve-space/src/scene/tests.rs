@@ -338,6 +338,25 @@ fn binding_sends_the_time_the_ship_then_the_state() {
         ]
     );
     assert_eq!(action_names(&out[4]), ["SetState"]);
+    let ship = spec();
+    let ship_id = ship.ship_id.to_le_bytes();
+    let state = fields_in_state(&out)
+        .unwrap()
+        .iter()
+        .find_map(|(key, value)| {
+            if key != &crate::wire::word("state") {
+                return None;
+            }
+            match value {
+                Value::Buffer(bytes) => Some(bytes.as_ref()),
+                _ => None,
+            }
+        })
+        .unwrap();
+    let ego = state.windows(8).position(|bytes| bytes == ship_id).unwrap();
+    let max_velocity = f32::from_le_bytes(state[ego + 63..ego + 67].try_into().unwrap());
+    let agility = f32::from_le_bytes(state[ego + 91..ego + 95].try_into().unwrap());
+    assert_eq!((max_velocity, agility), (ship.max_velocity as f32, ship.agility as f32));
     // the ship comes at the stamp of the moment and the state a stamp after (the reference's 102 and 103)
     let now_stamp = i64::from(stamp_at(NOON));
     assert_eq!(stamps(&out[2]), [now_stamp]);

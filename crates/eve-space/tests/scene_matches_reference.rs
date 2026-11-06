@@ -20,6 +20,20 @@ fn at_stamp(stamp: i64) -> i64 {
     (stamp + 11_644_473_600) * 10_000_000
 }
 
+fn state_ball_value(args: &Value, ship_id: i64, offset: usize) -> f32 {
+    let fields =
+        args["$tuple"][0][0]["$tuple"][1]["$tuple"][1]["$tuple"][0]["args"]["$dict"].as_array().unwrap();
+    let state = fields.iter().find(|field| field[0].as_str() == Some("state")).unwrap()[1]["$buffer"]
+        .as_str()
+        .unwrap();
+    let id = ship_id.to_le_bytes().iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+    let start = state.find(&id).unwrap() / 2 + offset;
+    let bytes: [u8; 4] = std::array::from_fn(|index| {
+        u8::from_str_radix(&state[(start + index) * 2..(start + index + 1) * 2], 16).unwrap()
+    });
+    f32::from_le_bytes(bytes)
+}
+
 struct Recorded {
     recording: Value,
 }
@@ -100,6 +114,10 @@ fn binding_says_what_the_reference_said() {
         json!(i64::from(stamp_at(SIM_TIME)) + 1),
         "the scene's state stamp"
     );
+    let ship_id = recorded.race()["shipID"].as_i64().unwrap();
+    for offset in [63, 91] {
+        assert_eq!(state_ball_value(&mine, ship_id, offset), state_ball_value(&state, ship_id, offset));
+    }
 }
 
 #[test]

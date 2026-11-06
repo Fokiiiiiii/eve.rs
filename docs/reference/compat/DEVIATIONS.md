@@ -1,5 +1,11 @@
 # Deviations from the reference server
 
+## Station undock speed and agility are in `SetState` (2026-11-06)
+
+V24 flight controls reads agility and maximum velocity from the ship's dogma item and applies them to the local ballpark (`eve/client/script/ui/services/flightControls.py:209-214`). The whole client tree has no other direct callers of `SetBallAgility` or `SetMaxSpeed`; the ship HUD consumes the maximum-speed update for its display (`eve/client/script/ui/inflight/shipHud/activeShipController.py:235`, `shipUI.py:1218`). EveJS 261028.1's station-undock builder sends mass demotion, mass, optional velocity, and heading, not separate agility or maximum-speed actions (`src/server/src/space/destiny/presentation/shipPrime.js:69-123`), and queues that builder for station undocks (`src/server/src/space/runtime/scene/presentation.js:747-752`).
+
+eve.rs therefore leaves the ego ship out of the separate movement-number updates on a normal undock (`crates/eve-space/src/scene/session.rs:383-389`), while its encoded `SetState` retains maximum velocity and agility (`crates/eve-destiny/src/ball.rs:714-717`). The scene, crowd, and recorded-reference tests check those values in the binary state; the crowd case also keeps the separate numbers for the other visible ship. This wire shape matches both V24 and EveJS, so omitting duplicate ego actions is not a client-visible deviation.
+
 ## Corporation member limits (2026-11-05)
 
 The V24.01 edit dialog calls `UpdateCorporationAbilities()` with no arguments. It returns early only for `None`; otherwise it force-refreshes the corporation row and displays `memberLimit` (`eve/client/script/ui/shared/neocom/corporation/corp_dlg_editcorpdetails.py:281-287`). Both service wrappers forward the call without arguments (`eve/client/script/ui/services/corporation/base_corporation.py:224-226`, `bco_corporations.py:177-179`). This rules out interpreting the V24 call as an applications-enabled toggle.
@@ -4370,7 +4376,7 @@ Sources: EveJS `services/corporation/officeRentalBilling.js` (`getCurrentOfficeR
 
 ## Scheduler load audit (2026-10-19)
 
-The durable scheduler claims at most its configured batch size per query, executes up to configured concurrency, and commits each job handler in the same transaction as completion. A PostgreSQL regression on `eve_p3` processed 512 immediately due jobs using concurrency 8 and batch size 64 below a 20-second test bound; the cosmic-site expired replacement regression also passed. This measures scheduler throughput and one site's lifecycle. It does not measure a simultaneous expiry storm across many systems or prove the duration of every registered handler.
+The durable scheduler caps each due-job claim at the smaller of its configured batch size and concurrency, and commits each handler in the same transaction as completion. A PostgreSQL regression on `eve_p3` processed 512 immediately due jobs using concurrency 8 and batch size 64 below a 20-second test bound; the cosmic-site expired replacement regression also passed. On 2026-11-06, `SchedulerTests` passed 18/18 on `eve_p6`, including final-lease recurring recovery without restart, `SKIP LOCKED` cleanup under a held handler row lock, worker-waiting jobs not consuming attempts, and exhausted one-shot lease failure. EveJS `durableSchedulerProcess.worker.js:172-211` requeues expired running jobs as scheduled before dispatch; eve.rs follows the `FOUNDATIONS.md:79` recurring-job contract while retaining exhausted one-shot failure behavior. This coverage does not measure a simultaneous expiry storm across many systems or prove the duration of every registered handler.
 
 ## Structure ST-16 (2026-10-16): station rent, observatory landmarks, destruction loot, customs
 

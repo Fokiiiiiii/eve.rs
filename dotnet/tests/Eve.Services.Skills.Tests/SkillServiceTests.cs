@@ -1389,7 +1389,7 @@ public class SkillHandlerTests
         await rig.GrantFreeSkillPointsAsync(character, 100);
         Assert.Equal(new PyInt(0), await Rig.CallAsync(
             rig.Handler, session, "ApplyFreeSkillPoints", new PyInt(skillTypeId), new PyInt(100)));
-        Assert.Equal(550L, Assert.Single(await rig.Store.ForCharacterAsync(character)).SkillPoints);
+        Assert.Equal(450L, Assert.Single(await rig.Store.ForCharacterAsync(character)).SkillPoints);
         Assert.Equal(0L, await rig.Store.FreeSkillPointsAsync(character));
     }
 

@@ -28,3 +28,7 @@ A whole-tree search found the preview RPCs used by `applySkillPointsWindow.py:12
   - Focused Host RPC shape and composed route checks: 1 passed each, 0 failed, 0 skipped.
 - No graphical V24.01 client session was run.
 - No intentional behavior deviation from EveJS was found; no compatibility deviation record was needed.
+
+## CI follow-up
+
+The first push (`35dff52c`) passed the selected agent-test run (`42267897348`), but its filter did not include `SkillHandlerTests`. The push-triggered CI run (`42267845646`) caught `SkillHandlerTests.Omega_free_skill_point_paths_do_not_require_alpha_clone_grade_data`: the test expected 550 skill points but got 450. This was a test expectation error: the test starts at 250 SP and applies two grants of 100 SP, so 450 is the correct total. The failure was reproduced on `eve_p3`, the expected total was corrected, and the focused test passed (1/1); `SkillHandlerTests`, `TrainingServiceTests`, and `SkillQueueContractTests` then passed (72/72, no skips).

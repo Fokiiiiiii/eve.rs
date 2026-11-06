@@ -117,6 +117,23 @@ internal sealed partial class CharacterServicesComposition
             : null;
     }
 
+    internal static ShipcasterRpcService CreateStarterShipcasterService(
+        SolarSystemCatalog systems,
+        Action<string>? log = null,
+        Func<ServiceCall, bool>? canCharacterJump = null)
+    {
+        if (canCharacterJump is not null)
+            return new ShipcasterRpcService("starterShipcasterTravelMgr", systems, canCharacterJump: canCharacterJump);
+
+        var logged = 0;
+        return new ShipcasterRpcService("starterShipcasterTravelMgr", systems, canCharacterJump: _ =>
+        {
+            if (System.Threading.Interlocked.Exchange(ref logged, 1) == 0)
+                log?.Invoke("Starter shipcaster eligibility is unavailable; refusing the jump.");
+            return false;
+        });
+    }
+
     private IReadOnlyList<IService> AgentRpcServices() =>
     [
             agentMissionService,
@@ -177,6 +194,6 @@ internal sealed partial class CharacterServicesComposition
                         var site = (await sites.ActiveAsync(systemId, token)).FirstOrDefault(active => active.InstanceId == instanceId);
                         return site is null ? null : new WarpCoordinates(systemId, site.Position[0], site.Position[1], site.Position[2]);
                     },
-                }, new StructureTravelRpcService("structureCynoBeaconMgr", new StructureBeaconTravel(StructureBeaconAsync, CynoJammedAsync, structureDirectoryReadModel.CharacterHasServiceAsync, JumpToStructureBeaconAsync, BridgeToStructureBeaconAsync, GroupJumpToStructureBeaconAsync).TravelAsync), new ShipcasterRpcService("shipCasterLandingPadMgr", solarSystems), new ShipcasterRpcService("shipCasterLauncherMgr", solarSystems), new ShipcasterRpcService("shipcasterTravelMgr", solarSystems), new ShipcasterRpcService("starterShipcasterTravelMgr", solarSystems), new EntityService(spaceDrones!, now, spaceContainers) },
+                }, new StructureTravelRpcService("structureCynoBeaconMgr", new StructureBeaconTravel(StructureBeaconAsync, CynoJammedAsync, structureDirectoryReadModel.CharacterHasServiceAsync, JumpToStructureBeaconAsync, BridgeToStructureBeaconAsync, GroupJumpToStructureBeaconAsync).TravelAsync), new ShipcasterRpcService("shipCasterLandingPadMgr", solarSystems), new ShipcasterRpcService("shipCasterLauncherMgr", solarSystems), new ShipcasterRpcService("shipcasterTravelMgr", solarSystems), CreateStarterShipcasterService(solarSystems, message => SentrySdk.CaptureMessage(message, SentryLevel.Warning)), new EntityService(spaceDrones!, now, spaceContainers) },
     ];
 }

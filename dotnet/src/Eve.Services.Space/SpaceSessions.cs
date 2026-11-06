@@ -471,6 +471,11 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         _pilots.TryGetValue((ulong)session.SessionId, out var pilot) && ReferenceEquals(pilot.Session, session) &&
         !pilot.ProtectionEnded && pilot.InvulnerableUntil > FileTimeNow();
 
+    public bool IsCloaked(ClientSession session) =>
+        _pilots.TryGetValue((ulong)session.SessionId, out var pilot) && ReferenceEquals(pilot.Session, session) &&
+        ((!pilot.ProtectionEnded && pilot.JumpCloak && pilot.InvulnerableUntil > FileTimeNow()) ||
+            pilot.RunningModules.Values.Any(module => Effects.CloakingEffect.IsCloakingEffect(module.EffectName)));
+
     public bool IsModuleActive(ClientSession session, long moduleId) =>
         moduleId > 0 && _pilots.TryGetValue((ulong)session.SessionId, out var pilot) && pilot.ActiveModules.ContainsKey(moduleId);
 

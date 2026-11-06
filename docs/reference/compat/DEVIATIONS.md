@@ -4376,7 +4376,7 @@ Sources: EveJS `services/corporation/officeRentalBilling.js` (`getCurrentOfficeR
 
 ## Scheduler load audit (2026-10-19)
 
-The durable scheduler claims at most its configured batch size per query, executes up to configured concurrency, and commits each job handler in the same transaction as completion. A PostgreSQL regression on `eve_p3` processed 512 immediately due jobs using concurrency 8 and batch size 64 below a 20-second test bound; the cosmic-site expired replacement regression also passed. This measures scheduler throughput and one site's lifecycle. It does not measure a simultaneous expiry storm across many systems or prove the duration of every registered handler.
+The durable scheduler caps each due-job claim at the smaller of its configured batch size and concurrency, and commits each handler in the same transaction as completion. A PostgreSQL regression on `eve_p3` processed 512 immediately due jobs using concurrency 8 and batch size 64 below a 20-second test bound; the cosmic-site expired replacement regression also passed. On 2026-11-06, `SchedulerTests` passed 18/18 on `eve_p6`, including final-lease recurring recovery without restart, `SKIP LOCKED` cleanup under a held handler row lock, worker-waiting jobs not consuming attempts, and exhausted one-shot lease failure. EveJS `durableSchedulerProcess.worker.js:172-211` requeues expired running jobs as scheduled before dispatch; eve.rs follows the `FOUNDATIONS.md:79` recurring-job contract while retaining exhausted one-shot failure behavior. This coverage does not measure a simultaneous expiry storm across many systems or prove the duration of every registered handler.
 
 ## Structure ST-16 (2026-10-16): station rent, observatory landmarks, destruction loot, customs
 

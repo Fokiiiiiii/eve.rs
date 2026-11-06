@@ -978,6 +978,121 @@ public sealed class CharacterHostTests
     }
 
     [PgFact]
+    public async Task Player_corporation_biomass_without_an_office_destroys_assets_transfers_isk_and_notifies_members_once()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var recipient = await rig.CreateCharacterAsync();
+        await rig.AddCorporationMemberAsync(character);
+        await rig.AddCorporationMemberAsync(recipient);
+        await rig.FundAsync(character, 98_765.43m);
+        var assets = new PgItemStore(rig.Source, rig.InventorySchema);
+        long shipId;
+        long cargoId;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            shipId = await assets.CreateAsync(connection, transaction,
+                new NewItem(TypeId: 587, OwnerId: character, LocationId: rig.Station, Flag: 4));
+            cargoId = await assets.CreateAsync(connection, transaction,
+                new NewItem(TypeId: 34, OwnerId: character, LocationId: shipId, Flag: 4, Quantity: 12));
+            await transaction.CommitAsync();
+        }
+
+        var sink = new RecordingPacketSink();
+        rig.Sessions.Enter(recipient, new ClientSession { CharacterId = recipient, Sink = sink });
+        await DeleteCharacterNowAsync(rig, character);
+
+        Assert.Null(await assets.GetAsync(shipId));
+        Assert.Null(await assets.GetAsync(cargoId));
+        Assert.Equal(0m, await BalanceAsync(rig, character));
+        Assert.Equal(98_765.43m, await BalanceAsync(rig, CharacterHostRigCorporation));
+        Assert.Equal(1L, await ScalarAsync(rig,
+            $"SELECT count(*) FROM {rig.WalletSchema}.journal WHERE owner_id = {CharacterHostRigCorporation} AND counterparty_id = {character} AND ref_type_id = 9 AND amount = 98765.43"));
+        Assert.Equal(1L, await ScalarAsync(rig,
+            $"SELECT count(*) FROM {rig.WalletSchema}.journal WHERE owner_id = {character} AND counterparty_id = {CharacterHostRigCorporation} AND ref_type_id = 9 AND amount = -98765.43"));
+
+        var (message, notification) = await WaitForBiomassMailAsync(rig, character, recipient);
+        Assert.Equal(CharacterHostRigCorporation.ToString(), message["senderID"]?.ToString());
+        Assert.Contains(recipient.ToString(), message["toCharacterIDs"]!.ToJsonString(), StringComparison.Ordinal);
+        Assert.Equal(CharacterHostRigCorporation.ToString(), message["toCorpOrAllianceID"]?.ToString());
+        var mailboxes = Assert.IsType<JsonObject>((await ReadGameStoreTableAsync(rig, "mail"))["mailboxes"]);
+        var recipientMailbox = Assert.IsType<JsonObject>(mailboxes[recipient.ToString()]);
+        var statuses = Assert.IsType<JsonObject>(recipientMailbox["statuses"]);
+        var messageStatus = Assert.IsType<JsonObject>(statuses[message["messageID"]!.ToString()]);
+        Assert.Equal("5", messageStatus["labelMask"]?.ToString());
+        Assert.Equal("1004", notification["typeID"]?.ToString());
+        Assert.Equal(CharacterHostRigCorporation.ToString(), notification["senderID"]?.ToString());
+        var mailNotice = Assert.Single(Notifications(sink), row => row.Name == "OnNotificationReceived");
+        Assert.Equal(new PyInt(1004), mailNotice.Args[1]);
+        var noticeData = mailNotice.Args[4];
+        Assert.False(string.IsNullOrWhiteSpace(Eve.Macho.JsSemantics.StringValue(Field(noticeData, "senderName"))));
+        var noticeMessage = Field(noticeData, "msg");
+        Assert.Equal(long.Parse(message["messageID"]!.ToString(), System.Globalization.CultureInfo.InvariantCulture),
+            Integer(Field(noticeMessage, "messageID")));
+        Assert.Contains(new PyLong(CharacterHostRigCorporation), Assert.IsType<PyList>(Field(noticeMessage, "toCorpOrAllianceID")).Items);
+
+        // A host restart and a second DeleteCharacter call reuse the original corporation, wallet receipt, mail, and notification.
+        await rig.RestartAsync();
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charUnboundMgr"));
+        await CallAsync(service, "DeleteCharacter", new ClientSession { CharacterId = character, UserId = 1 }, new PyLong(character));
+        Assert.Equal(CharacterHostRigCorporation, (await rig.Characters.GetAsync(character))!.DeletionCorporationId);
+        Assert.Equal(2L, await ScalarAsync(rig,
+            $"SELECT count(*) FROM {rig.WalletSchema}.journal WHERE ref_type_id = 9 AND " +
+            $"((owner_id = {CharacterHostRigCorporation} AND counterparty_id = {character} AND amount = 98765.43) OR " +
+            $"(owner_id = {character} AND counterparty_id = {CharacterHostRigCorporation} AND amount = -98765.43))"));
+        await WaitForBiomassMailAsync(rig, character, recipient);
+        var persistedMessages = (await ReadGameStoreTableAsync(rig, "mail"))["messages"] as JsonObject;
+        Assert.Single(persistedMessages!.Select(pair => pair.Value).OfType<JsonObject>(), row =>
+            string.Equals(row["biomassOperationKey"]?.ToString(), $"character-biomass:{character}", StringComparison.Ordinal));
+        var persistedNotifications = ((await ReadGameStoreTableAsync(rig, "notifications"))["boxes"] as JsonObject)?[recipient.ToString()] as JsonObject;
+        Assert.Single(Assert.IsType<JsonObject>(persistedNotifications?["byID"]).Select(pair => pair.Value).OfType<JsonObject>(), row =>
+            string.Equals(row["idempotencyKey"]?.ToString(), $"character-biomass:{character}:recipient:{recipient}", StringComparison.Ordinal));
+    }
+
+    [PgFact]
+    public async Task Npc_corporation_biomass_destroys_isk_and_assets_without_a_wallet_journal()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var npcCorporationId = await rig.FirstNpcCorporationIdAsync();
+        await rig.Characters.SetCorporationAsync(character, npcCorporationId);
+        await rig.FundAsync(character, 45_678.90m);
+        var itemId = await GiveItemAsync(rig, character, 587, rig.Station, 4, singleton: true);
+
+        await DeleteCharacterNowAsync(rig, character);
+
+        Assert.Null(await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(itemId));
+        Assert.Equal(0m, await BalanceAsync(rig, character));
+        Assert.Equal(0L, await ScalarAsync(rig,
+            $"SELECT count(*) FROM {rig.WalletSchema}.journal WHERE owner_id = {character}"));
+        Assert.Equal(npcCorporationId, (await rig.Characters.GetAsync(character))!.DeletionCorporationId);
+    }
+
+    [PgFact]
+    public async Task Corporation_ceos_still_cannot_prepare_character_deletion()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var member = await rig.CreateCharacterAsync();
+        await rig.AddCorporationMemberAsync(character);
+        await rig.AddCorporationMemberAsync(member);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var makeCeo = new NpgsqlCommand(
+            $"UPDATE {rig.CorporationsSchema}.corporations SET ceo_id = $1 WHERE id = {CharacterHostRigCorporation}", connection))
+        {
+            makeCeo.Parameters.Add(new NpgsqlParameter { Value = character });
+            Assert.Equal(1, await makeCeo.ExecuteNonQueryAsync());
+        }
+
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charUnboundMgr"));
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => CallAsync(service,
+            "PrepareCharacterForDelete", new ClientSession { CharacterId = character, UserId = 1 }, new PyLong(character)));
+        Assert.Equal("You must resign as CEO or close the corporation before deleting this character.", InfoText(error));
+        Assert.Null((await rig.Characters.GetAsync(character))!.DeletePrepareAt);
+    }
+
+    [PgFact]
     public async Task Character_deletion_queues_waits_cancels_and_deletes_and_the_deleted_character_is_refused()
     {
         await using var rig = await CharacterHostRig.CreateAsync();
@@ -1031,6 +1146,10 @@ public sealed class CharacterHostTests
         var skillPlans = new Eve.Skills.PgSkillPlanStore(rig.Source, rig.SkillsSchema);
         var skillPlanId = await skillPlans.CreateAsync(character, "Private plan", "", []);
         var otherCharacter = await rig.CreateCharacterAsync();
+        await rig.AddCorporationMemberAsync(character);
+        await rig.AddCorporationMemberAsync(otherCharacter);
+        var officeFolderId = await rig.AddCorporationOfficeAsync(CharacterHostRigCorporation);
+        await rig.FundAsync(character, 12_345.67m);
         const int expertSystemTypeId = 63826;
         var expertSystemInstalledAtMs = DateTimeOffset.UtcNow.AddHours(-1).ToUnixTimeMilliseconds();
         var expertSystemExpiresAtMs = DateTimeOffset.UtcNow.AddDays(1).ToUnixTimeMilliseconds();
@@ -1123,14 +1242,17 @@ public sealed class CharacterHostTests
         Assert.IsType<PyNone>(await CallAsync(restarted, "DeleteCharacter", session, new PyLong(character)));
         Assert.IsType<PyNone>(await CallAsync(restarted, "DeleteCharacter", session, new PyLong(character)));
 
-        // the assets are in the corporation's deliveries (flag 62), the cargo still inside the ship, and the skills are gone
+        // the assets are in the first office's first hangar division, cargo remains in the ship, and skills are gone
         var corporationItems = await new PgItemStore(rig.Source, rig.InventorySchema).OwnedByAsync(900_001_001);
         var movedShip = Assert.Single(corporationItems, item => item.Id == shipId);
-        Assert.Equal(62, movedShip.Flag);
-        Assert.Equal(rig.Station, movedShip.LocationId);
+        Assert.Equal((115, officeFolderId), (movedShip.Flag, movedShip.LocationId));
         var movedCargo = Assert.Single(corporationItems, item => item.Id == cargoId);
         Assert.Equal(shipId, movedCargo.LocationId);
         Assert.Empty(await new PgItemStore(rig.Source, rig.InventorySchema).OwnedByAsync(character));
+        Assert.Equal(0m, await BalanceAsync(rig, character));
+        Assert.Equal(12_345.67m, await BalanceAsync(rig, CharacterHostRigCorporation));
+        Assert.Equal(1L, await ScalarAsync(rig,
+            $"SELECT count(*) FROM {rig.WalletSchema}.journal WHERE owner_id = {CharacterHostRigCorporation} AND counterparty_id = {character} AND ref_type_id = 9 AND amount = 12345.67"));
         await using (var connection = await rig.Source.OpenConnectionAsync())
         await using (var count = new NpgsqlCommand($"SELECT count(*) FROM {rig.SkillsSchema}.character_skills WHERE character_id = $1", connection))
         {
@@ -1191,6 +1313,12 @@ public sealed class CharacterHostTests
     {
         await using var rig = await CharacterHostRig.CreateAsync();
         var character = await rig.CreateCharacterAsync();
+        var recipient = await rig.CreateCharacterAsync();
+        await rig.AddCorporationMemberAsync(character);
+        await rig.AddCorporationMemberAsync(recipient);
+        await rig.FundAsync(character, 12_345.67m);
+        var assetId = await GiveItemAsync(rig, character, 587, rig.Station, 4, singleton: true);
+        var assets = new PgItemStore(rig.Source, rig.InventorySchema);
         var session = new ClientSession { CharacterId = character, UserId = 1 };
         var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charUnboundMgr"));
         const int expertSystemTypeId = 63826;
@@ -1244,6 +1372,96 @@ public sealed class CharacterHostTests
         Assert.Equal("forced later purge failure", failure.MessageText);
         Assert.Equal(1L, await ScalarAsync(rig,
             $"SELECT count(*) FROM {rig.SkillsSchema}.character_expert_systems WHERE character_id = {character}"));
+        Assert.NotNull(await assets.GetAsync(assetId));
+        Assert.Equal(12_345.67m, await BalanceAsync(rig, character));
+        Assert.Equal(0L, await ScalarAsync(rig,
+            $"SELECT count(*) FROM {rig.WalletSchema}.journal WHERE ref_type_id = 9 AND " +
+            $"((owner_id = {CharacterHostRigCorporation} AND counterparty_id = {character} AND amount = 12345.67) OR " +
+            $"(owner_id = {character} AND counterparty_id = {CharacterHostRigCorporation} AND amount = -12345.67))"));
+        Assert.Equal(CharacterHostRigCorporation, (await rig.Characters.GetAsync(character))!.DeletionCorporationId);
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        {
+            await using var dropTrigger = new NpgsqlCommand(
+                $"DROP TRIGGER fail_character_neural_remap_delete ON {rig.SkillsSchema}.character_neural_remaps", connection);
+            await dropTrigger.ExecuteNonQueryAsync();
+            await using var dropFunction = new NpgsqlCommand(
+                $"DROP FUNCTION {rig.SkillsSchema}.fail_character_neural_remap_delete()", connection);
+            await dropFunction.ExecuteNonQueryAsync();
+        }
+
+        await rig.RestartAsync();
+        service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charUnboundMgr"));
+        Assert.IsType<PyNone>(await CallAsync(service, "DeleteCharacter", session, new PyLong(character)));
+        Assert.Null(await assets.GetAsync(assetId));
+        Assert.Equal(0m, await BalanceAsync(rig, character));
+        Assert.Equal(12_345.67m, await BalanceAsync(rig, CharacterHostRigCorporation));
+        Assert.Equal(2L, await ScalarAsync(rig,
+            $"SELECT count(*) FROM {rig.WalletSchema}.journal WHERE ref_type_id = 9 AND " +
+            $"((owner_id = {CharacterHostRigCorporation} AND counterparty_id = {character} AND amount = 12345.67) OR " +
+            $"(owner_id = {character} AND counterparty_id = {CharacterHostRigCorporation} AND amount = -12345.67))"));
+        Assert.Equal(CharacterHostRigCorporation, (await rig.Characters.GetAsync(character))!.DeletionCorporationId);
+        await WaitForBiomassMailAsync(rig, character, recipient);
+    }
+
+    [PgFact]
+    public async Task Character_deletion_retry_after_a_postcommit_wallet_notice_failure_keeps_each_effect_once()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var recipient = await rig.CreateCharacterAsync();
+        await rig.AddCorporationMemberAsync(character);
+        await rig.AddCorporationMemberAsync(recipient);
+        await rig.FundAsync(character, 54_321.09m);
+        var assetId = await GiveItemAsync(rig, character, 587, rig.Station, 4, singleton: true);
+        var assets = new PgItemStore(rig.Source, rig.InventorySchema);
+        var failingSink = new RecordingPacketSink(() => throw new InvalidOperationException("forced post-commit wallet notice failure"));
+        var memberSession = new ClientSession { CharacterId = recipient, UserId = 1, Sink = failingSink };
+        memberSession.Set("corpid", new PyInt(CharacterHostRigCorporation));
+        memberSession.Set("rolesAtAll", new PyLong(long.MaxValue));
+        rig.Sessions.Enter(recipient, memberSession);
+
+        var session = new ClientSession { CharacterId = character, UserId = 1 };
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charUnboundMgr"));
+        await CallAsync(service, "PrepareCharacterForDelete", session, new PyLong(character));
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var makeDeletionDue = new NpgsqlCommand(
+            $"UPDATE {rig.CharactersSchema}.characters SET delete_prepare_at = now() - interval '1 minute' WHERE id = $1", connection))
+        {
+            makeDeletionDue.Parameters.Add(new NpgsqlParameter { Value = character });
+            await makeDeletionDue.ExecuteNonQueryAsync();
+        }
+
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            CallAsync(service, "DeleteCharacter", session, new PyLong(character)));
+        Assert.Equal("forced post-commit wallet notice failure", failure.Message);
+        rig.Sessions.Leave(recipient, memberSession);
+        Assert.Null(await assets.GetAsync(assetId));
+        Assert.Equal(0m, await BalanceAsync(rig, character));
+        Assert.Equal(54_321.09m, await BalanceAsync(rig, CharacterHostRigCorporation));
+        Assert.Equal(2L, await ScalarAsync(rig,
+            $"SELECT count(*) FROM {rig.WalletSchema}.journal WHERE ref_type_id = 9 AND " +
+            $"((owner_id = {CharacterHostRigCorporation} AND counterparty_id = {character} AND amount = 54321.09) OR " +
+            $"(owner_id = {character} AND counterparty_id = {CharacterHostRigCorporation} AND amount = -54321.09))"));
+        Assert.Equal(CharacterHostRigCorporation, (await rig.Characters.GetAsync(character))!.DeletionCorporationId);
+
+        await rig.RestartAsync();
+        service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charUnboundMgr"));
+        Assert.IsType<PyNone>(await CallAsync(service, "DeleteCharacter", session, new PyLong(character)));
+        Assert.Equal(1000001L, (await rig.Characters.GetAsync(character))!.CorporationId);
+        Assert.Equal(CharacterHostRigCorporation, (await rig.Characters.GetAsync(character))!.DeletionCorporationId);
+        Assert.Equal(2L, await ScalarAsync(rig,
+            $"SELECT count(*) FROM {rig.WalletSchema}.journal WHERE ref_type_id = 9 AND " +
+            $"((owner_id = {CharacterHostRigCorporation} AND counterparty_id = {character} AND amount = 54321.09) OR " +
+            $"(owner_id = {character} AND counterparty_id = {CharacterHostRigCorporation} AND amount = -54321.09))"));
+        var (message, notification) = await WaitForBiomassMailAsync(rig, character, recipient);
+        Assert.Equal("1004", notification["typeID"]?.ToString());
+        Assert.Single((await ReadGameStoreTableAsync(rig, "mail"))["messages"]!.AsObject().Select(pair => pair.Value).OfType<JsonObject>(),
+            row => string.Equals(row["biomassOperationKey"]?.ToString(), $"character-biomass:{character}", StringComparison.Ordinal));
+        Assert.Single(((await ReadGameStoreTableAsync(rig, "notifications"))["boxes"]!.AsObject()[recipient.ToString()]!["byID"]!.AsObject())
+            .Select(pair => pair.Value).OfType<JsonObject>(),
+            row => string.Equals(row["idempotencyKey"]?.ToString(), $"character-biomass:{character}:recipient:{recipient}", StringComparison.Ordinal));
+        Assert.Equal(message["messageID"]?.ToString(), notification["data"]?["msg"]?["messageID"]?.ToString());
     }
 
     /// <summary>The <c>info</c> text of a CustomInfo refusal, as the client's UserError reads it.</summary>
@@ -1918,6 +2136,53 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         return (decimal)(await command.ExecuteScalarAsync())!;
     }
 
+    private static async Task<long> DeleteCharacterNowAsync(CharacterHostRig rig, long characterId)
+    {
+        var session = new ClientSession { CharacterId = characterId, UserId = 1, Sink = new RecordingPacketSink() };
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charUnboundMgr"));
+        await CallAsync(service, "PrepareCharacterForDelete", session, new PyLong(characterId));
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var command = new NpgsqlCommand(
+            $"UPDATE {rig.CharactersSchema}.characters SET delete_prepare_at = now() - interval '1 minute' WHERE id = $1", connection))
+        {
+            command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+            await command.ExecuteNonQueryAsync();
+        }
+        await CallAsync(service, "DeleteCharacter", session, new PyLong(characterId));
+        return characterId;
+    }
+
+    private static async Task<JsonObject> ReadGameStoreTableAsync(CharacterHostRig rig, string table)
+    {
+        await using var store = new PersistenceStore(rig.Source, rig.GameStoreSchema);
+        await store.EnsureSchemaAsync();
+        return await store.LoadTableAsync(table, createIfMissing: false);
+    }
+
+    private static async Task<(JsonObject Message, JsonObject Notification)> WaitForBiomassMailAsync(
+        CharacterHostRig rig, long characterId, long recipientId)
+    {
+        var operationKey = $"character-biomass:{characterId}";
+        var notificationKey = $"{operationKey}:recipient:{recipientId}";
+        var deadline = DateTime.UtcNow.AddSeconds(20);
+        while (DateTime.UtcNow < deadline)
+        {
+            var mailState = await ReadGameStoreTableAsync(rig, "mail");
+            var messages = mailState["messages"] as JsonObject;
+            var message = messages?.Select(pair => pair.Value).OfType<JsonObject>().SingleOrDefault(candidate =>
+                string.Equals(candidate["biomassOperationKey"]?.ToString(), operationKey, StringComparison.Ordinal));
+            var notificationState = await ReadGameStoreTableAsync(rig, "notifications");
+            var records = ((notificationState["boxes"] as JsonObject)?[recipientId.ToString(System.Globalization.CultureInfo.InvariantCulture)]
+                as JsonObject)?["byID"] as JsonObject;
+            var notification = records?.Select(pair => pair.Value).OfType<JsonObject>().SingleOrDefault(candidate =>
+                string.Equals(candidate["idempotencyKey"]?.ToString(), notificationKey, StringComparison.Ordinal));
+            if (message is not null && notification is not null)
+                return (message, notification);
+            await Task.Delay(50);
+        }
+        throw new Xunit.Sdk.XunitException($"Character biomass mail {operationKey} did not reach the persisted mailboxes.");
+    }
+
     /// <summary>A named argument of a user error (the dictionary the client's UserError reads).</summary>
     private static PyValue NamedArgument(MachoWrappedException error, string name)
     {
@@ -2097,6 +2362,84 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             fund.Parameters.Add(new NpgsqlParameter { Value = characterId });
             fund.Parameters.Add(new NpgsqlParameter { Value = isk });
             await fund.ExecuteNonQueryAsync();
+        }
+
+        public async Task AddCorporationMemberAsync(long characterId)
+        {
+            await using (var setupConnection = await Source.OpenConnectionAsync())
+            await using (var setupTransaction = await setupConnection.BeginTransactionAsync())
+            {
+                await using (var owner = new NpgsqlCommand(
+                    $"INSERT INTO {CorporationsSchema}.owner_names(owner_id, name_key, ticker_key) " +
+                    "VALUES ($1, 'character-host-rig-corp', 'CHRC') ON CONFLICT (owner_id) DO NOTHING",
+                    setupConnection, setupTransaction))
+                {
+                    owner.Parameters.Add(new NpgsqlParameter { Value = CorporationId });
+                    await owner.ExecuteNonQueryAsync();
+                }
+                await using (var corporation = new NpgsqlCommand(
+                    $"INSERT INTO {CorporationsSchema}.corporations " +
+                    "(id, name, ticker, ceo_id, creator_id, alliance_id, station_id, solar_system_id, tax_rate, lp_tax_rate, description, url, member_limit, created_ms) " +
+                    "VALUES ($1, 'Character Host Rig Corp', 'CHRC', $2, $2, 0, $3, 30000142, 0, 0, '', '', 100, $4) " +
+                    "ON CONFLICT (id) DO NOTHING",
+                    setupConnection, setupTransaction))
+                {
+                    corporation.Parameters.Add(new NpgsqlParameter { Value = CorporationId });
+                    corporation.Parameters.Add(new NpgsqlParameter { Value = 0L });
+                    corporation.Parameters.Add(new NpgsqlParameter { Value = Station });
+                    corporation.Parameters.Add(new NpgsqlParameter { Value = NowUnixMs });
+                    await corporation.ExecuteNonQueryAsync();
+                }
+                await setupTransaction.CommitAsync();
+            }
+
+            await using var connection = await Source.OpenConnectionAsync();
+            await using var command = new NpgsqlCommand(
+                $"INSERT INTO {CorporationsSchema}.members(character_id, corporation_id, started_ms) VALUES ($1, {CorporationId}, $2) " +
+                "ON CONFLICT (character_id) DO UPDATE SET corporation_id = EXCLUDED.corporation_id", connection);
+            command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+            command.Parameters.Add(new NpgsqlParameter { Value = NowUnixMs });
+            await command.ExecuteNonQueryAsync();
+        }
+
+        public async Task<long> AddCorporationOfficeAsync(long corporationId)
+        {
+            var itemStore = new PgItemStore(Source, InventorySchema);
+            long officeFolderId;
+            await using (var connection = await Source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                officeFolderId = await itemStore.CreateAsync(connection, transaction,
+                    new NewItem(TypeId: Eve.Corporations.CorporationOfficeStore.OfficeFolderTypeId,
+                        OwnerId: corporationId, LocationId: Station, Flag: 4, Singleton: true));
+                await transaction.CommitAsync();
+            }
+
+            var station = (await StationCatalog.LoadAsync(new Eve.Sde.SdeReader(Source))).All.Single(row => row.Id == Station);
+            var rentedAt = NowUnixMs;
+            await using (var connection = await Source.OpenConnectionAsync())
+            await using (var command = new NpgsqlCommand(
+                $"INSERT INTO {CorporationsSchema}.office_rentals " +
+                "(office_folder_id, corporation_id, station_id, solar_system_id, rent_isk, rented_at_ms, expires_at_ms, active) " +
+                "VALUES ($1, $2, $3, $4, 10000, $5, $6, true)", connection))
+            {
+                command.Parameters.Add(new NpgsqlParameter { Value = officeFolderId });
+                command.Parameters.Add(new NpgsqlParameter { Value = corporationId });
+                command.Parameters.Add(new NpgsqlParameter { Value = Station });
+                command.Parameters.Add(new NpgsqlParameter { Value = station.SolarSystemId });
+                command.Parameters.Add(new NpgsqlParameter { Value = rentedAt });
+                command.Parameters.Add(new NpgsqlParameter { Value = rentedAt + Eve.Corporations.CorporationOfficeStore.RentalCycleMs });
+                await command.ExecuteNonQueryAsync();
+            }
+            return officeFolderId;
+        }
+
+        public async Task<long> FirstNpcCorporationIdAsync()
+        {
+            await using var connection = await Source.OpenConnectionAsync();
+            await using var command = new NpgsqlCommand(
+                $"SELECT id FROM {CorporationsSchema}.corporations WHERE is_npc AND NOT deleted ORDER BY id LIMIT 1", connection);
+            return (long)(await command.ExecuteScalarAsync())!;
         }
 
         /// <summary>A fresh account in the identity schema (Omega until 2100 by the schema's default); the first one is account 1.</summary>

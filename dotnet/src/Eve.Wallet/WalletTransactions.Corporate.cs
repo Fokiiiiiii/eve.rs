@@ -20,6 +20,30 @@ public sealed partial class WalletTransactions
         await command.ExecuteNonQueryAsync(token);
     }
 
+    /// <summary>Destroys a character's ISK without creating a transfer or journal entry; PLEX remains unchanged.</summary>
+    public async Task<decimal> DestroyIskAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, CancellationToken token = default)
+    {
+        var account = new WalletAccount(characterId);
+        Validate(account);
+        await using var read = new NpgsqlCommand(
+            $"SELECT isk FROM {_schema}.balances WHERE owner_id=$1 AND account_key=1000 FOR UPDATE", connection, transaction);
+        read.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        var value = await read.ExecuteScalarAsync(token);
+        if (value is not decimal balance)
+            throw new WalletNotFoundException(characterId);
+        if (balance < 0)
+            throw new InvalidOperationException($"Character {characterId} has a negative ISK balance.");
+        if (balance > 0)
+        {
+            await using var update = new NpgsqlCommand(
+                $"UPDATE {_schema}.balances SET isk=0 WHERE owner_id=$1 AND account_key=1000", connection, transaction);
+            update.Parameters.Add(new NpgsqlParameter { Value = characterId });
+            await update.ExecuteNonQueryAsync(token);
+        }
+        return balance;
+    }
+
     public async Task<decimal?> AccountBalanceAsync(WalletAccount account,CancellationToken token = default)
     {
         Validate(account);

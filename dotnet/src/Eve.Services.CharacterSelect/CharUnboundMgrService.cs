@@ -528,7 +528,7 @@ public sealed partial class CharUnboundMgrService(
         if (character.IsDeleted)
         {
             if (deletionPurge is not null)
-                await deletionPurge.PurgeAsync(character.Id, character.CorporationId, Token(call));
+                await deletionPurge.PurgeAsync(character.Id, character.DeletionCorporationId ?? character.CorporationId, Token(call));
             await characters.SetCorporationAsync(character.Id, DoomheimCorporationId, Token(call));
             return None;
         }
@@ -543,9 +543,9 @@ public sealed partial class CharUnboundMgrService(
         if (!await characters.MarkDeletedAsync(character.Id, account, now, Token(call)))
             throw Info("Failed to finalize that character deletion.");
 
-        await characters.SetCorporationAsync(character.Id, DoomheimCorporationId, Token(call));
         if (deletionPurge is not null)
             await deletionPurge.PurgeAsync(character.Id, originalCorporation, Token(call));
+        await characters.SetCorporationAsync(character.Id, DoomheimCorporationId, Token(call));
         return None;
     }
 

@@ -26,6 +26,24 @@ The registered-Host deletion test seeds future-expiry grants for the deleted cha
 - Latest completed main CI before this task push: run `1521` for `2417e284c79d`, all jobs green. `origin/main` later advanced through documentation-only commits `c8274d9d` and `9d0c28b9`.
 - The graphical V24.01 client was not exercised.
 
+## CX8 biomass settlement follow-up (2026-11-06)
+
+### Result
+
+Character deletion now settles corporation assets and ISK in the existing purge transaction. A player-corporation character transfers wallet balance to division 1 with journal reference type 9 (Inheritance), moves owned asset trees to hangar division 1 when an office exists, and destroys assets when no office exists. NPC-corporation balance and assets are destroyed. Player-corporation members receive durable mail through the existing mail owner and durable new-mail notifications through the existing notification path.
+
+The original corporation ID is captured in the character tombstone migration before the corporation changes to Doomheim. A rollback leaves the original assets, wallet balance and corporation ID intact for a later retry; a failure after commit can retry through the same persisted operation and event markers without duplicate wallet transfers, journal rows, mail or notifications. The CEO guard, queue timer, DeleteCharacter/Prepare/Cancel reply shapes, and selection refresh remain intact.
+
+### Evidence
+
+- EVE University [Accounts](https://wiki.eveuniversity.org/Accounts) specifies the player-corporation wallet, assets, office and member-mail outcomes, and NPC-corporation destruction. eve.rs follows that wiki. EveJS 261028.1 `server/src/services/character/characterDeletionRuntime.js:716-799` is the executable comparison; it omits these settlement rules.
+- V24.01 `eve/client/script/ui/login/charSelection/characterSelection.py:812-859` checks the biomass deadline, calls `remoteCharacterSvc.DeleteCharacter`, displays an error or refreshes character selection. `:861-868` calls Prepare and uses its returned deadline; `:870-873` calls Cancel. Whole-client search found no other deletion RPC caller.
+- Mail consumers are `eve/client/script/ui/services/mail/mailSvc.py:1197-1206,1213-1219`, `notifications/common/formatters/newMail.py:17-18` (notification data keys `senderName`, `subject`, `msg`), and `eve/client/script/ui/services/mail/notificationSvc.py:403-416` (stores/processes received notification).
+- Implementation: `dotnet/src/Eve.Characters/Migrations/0022_character_deletion_corporation.sql`, `dotnet/src/Eve.Host/Composition/CharacterDeletionPurge.cs`, `dotnet/src/Eve.Host/Persistence/Mail/CharacterBiomassMailNotifications.cs`, and the existing wallet/mail/inventory/corporation owners.
+- Local builds passed: `Eve.Host` and `Eve.Host.Tests`, zero warnings and errors. After merging `origin/main` at `0992cc6c`, owner and adjacent PostgreSQL test classes passed on `eve_p8` via `tools/dev/db-lock.sh`: Host 462/462, Characters 2/2, Events 20/20, Corporations 113/113, Wallet 4/4 and Inventory 29/29; zero failures and skips.
+- At this check the newest completed main CI was run 1555 for `7351c60b44a1`, all jobs green. Task Actions verification will be appended after it completes.
+- The graphical V24.01 client was not exercised.
+
 ## Current worktree
 
-The implementation, retention, rollback and expiry evidence above is current after the merge and local checks. Two unrelated existing worktree edits remain untouched: `docs/project/service-audit/DEEPCHECK_calendar.md` and `tools/headless-client/tests/test_structures.py`.
+This follow-up includes the biomass settlement implementation, persistence migration, Host/PostgreSQL regressions, and this handoff update. The pre-existing `docs/project/character-phase/handoff-RPC-00996-01023-charMgr.md` edit is outside this task and remains untouched.

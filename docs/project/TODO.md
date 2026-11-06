@@ -1913,7 +1913,7 @@ The audit above missed three observable gaps in the remaining UI paths. `notepad
 
 #### Named group: charUnboundMgr (5 legacy exports)
 
-`PrepareCharacterForDelete`, `CancelCharacterDeletePrepare`, and `DeleteCharacter` are implemented on `charUnboundMgr`. The biomass deadline persists across restart; cancellation and expiry are covered, and repeated deletion retries cleanup after a partially completed request. Host test: `Character_deletion_queues_waits_cancels_and_deletes_and_the_deleted_character_is_refused`.
+`PrepareCharacterForDelete`, `CancelCharacterDeletePrepare`, and `DeleteCharacter` are implemented on `charUnboundMgr`. The biomass deadline and original corporation ID persist across restart; cancellation and expiry are covered. Host/PostgreSQL tests cover office and no-office player-corporation settlement, NPC destruction, journal and member-mail notifications, rollback, restart and post-commit retry without duplicate transfers or notices. Tests include `Character_deletion_queues_waits_cancels_and_deletes_and_the_deleted_character_is_refused`, `Player_corporation_biomass_without_an_office`, `Npc_corporation_biomass`, `Character_deletion_rolls_back_expert_system_purge`, and `Character_deletion_retry_after_a_postcommit_wallet_notice_failure`.
 
 The remaining exports are not selected for implementation: source search found no V24.01 client references to `GetCharacterToSelect`, `GetCharCreationInfo`, `GetCharNewExtraCreationInfo`, or `IsUserReceivingCharacter`. `GetTopBounties` is used through `bountySvc.GetTopBounties`, a separate service call. See [EJS-0077 through EJS-0081](../../docs/project/service-response-audit/evejs-only-responses.md:328).
 

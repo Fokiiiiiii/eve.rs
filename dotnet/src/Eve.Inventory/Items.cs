@@ -933,4 +933,18 @@ public sealed class PgItemStore
         }
         return list;
     }
+
+    /// <summary>Locks an owner's complete item set in stable id order for an atomic ownership transition.</summary>
+    public async Task<IReadOnlyList<Item>> LockOwnedAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long ownerId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"SELECT {Columns} FROM {_schema}.items WHERE owner_id=$1 ORDER BY id FOR UPDATE", connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = ownerId });
+        var items = new List<Item>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            items.Add(Read(reader));
+        return items.AsReadOnly();
+    }
 }

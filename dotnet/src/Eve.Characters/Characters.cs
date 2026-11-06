@@ -25,6 +25,9 @@ public sealed record Character(
 
     public bool IsDeleted => DeletedAt is not null;
 
+    /// <summary>The corporation whose rules apply to this character's permanent deletion.</summary>
+    public long? DeletionCorporationId { get; init; }
+
     public string TutorialEntryMode { get; init; } = "disabled";
 
     public string TutorialFirstLoginHandoff { get; init; } = "none";
@@ -68,7 +71,7 @@ public sealed partial class PgCharacterStore
         "id, account_id, name, gender, race_id, bloodline_id, ancestry_id, school_id, type_id, corporation_id, faction_id, alliance_id, " +
         "station_id, home_station_id, solar_system_id, constellation_id, region_id, ship_id, created_at, last_logoff_at, delete_prepare_at, " +
         "tutorial_entry_mode, tutorial_first_login_handoff, air_npe_state, air_npe_reveal_on_first_login, direct_faction_id, direct_enlistment_cooldown_filetime, " +
-        "next_remote_home_station_change_filetime, deleted_at, structure_id";
+        "next_remote_home_station_change_filetime, deleted_at, structure_id, deletion_corporation_id";
 
     private readonly NpgsqlDataSource _source;
     private readonly string _schema;
@@ -105,6 +108,7 @@ public sealed partial class PgCharacterStore
         NextRemoteHomeStationChangeFileTime = r.GetInt64(27),
         DeletedAt = r.IsDBNull(28) ? null : r.GetFieldValue<DateTimeOffset>(28),
         StructureId = r.IsDBNull(29) ? null : r.GetInt64(29),
+        DeletionCorporationId = r.IsDBNull(30) ? null : r.GetInt64(30),
     };
 
     /// <summary>The account's characters, oldest first (the order the selection screen shows them).</summary>
@@ -160,6 +164,24 @@ public sealed partial class PgCharacterStore
         {
             list.Add(Read(reader));
         }
+        return list;
+    }
+
+    /// <summary>The live characters in a caller's transaction, locked so their deletion state cannot change before commit.</summary>
+    public async Task<IReadOnlyList<Character>> GetLiveManyAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, IEnumerable<long> ids, CancellationToken cancellationToken = default)
+    {
+        var wanted = ids.Distinct().ToArray();
+        if (wanted.Length == 0)
+            return [];
+        await using var command = new NpgsqlCommand(
+            $"SELECT {Columns} FROM {_schema}.characters WHERE id = ANY($1) AND deleted_at IS NULL ORDER BY id FOR SHARE",
+            connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = wanted });
+        var list = new List<Character>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            list.Add(Read(reader));
         return list;
     }
 
@@ -253,7 +275,7 @@ public sealed partial class PgCharacterStore
     public async Task<bool> MarkDeletedAsync(long characterId, int accountId, DateTimeOffset at, CancellationToken cancellationToken = default)
     {
         await using var command = _source.CreateCommand(
-            $"UPDATE {_schema}.characters SET deleted_at = $3, delete_prepare_at = NULL WHERE id = $1 AND account_id = $2 " +
+            $"UPDATE {_schema}.characters SET deleted_at = $3, deletion_corporation_id = corporation_id, delete_prepare_at = NULL WHERE id = $1 AND account_id = $2 " +
             "AND delete_prepare_at IS NOT NULL AND delete_prepare_at <= $3 AND deleted_at IS NULL");
         command.Parameters.Add(new NpgsqlParameter { Value = characterId });
         command.Parameters.Add(new NpgsqlParameter { Value = accountId });

@@ -1,0 +1,155 @@
+using Eve.Host;
+using Eve.Macho;
+using Eve.Marshal;
+using Eve.Services;
+using Eve.Services.Core;
+
+namespace Eve.Host.Tests;
+
+public partial class HostServerTests
+{
+    private static PyDict TransportVersionKwargs() => new([
+        new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1)),
+    ]);
+
+    [Fact]
+    public async Task Character_energy_state_reaches_the_client_through_the_registered_host_route()
+    {
+        const long characterId = 90_000_164;
+        var service = new CharacterEnergyMgrRpcService(nowUnixMs: () => FixedNowMs);
+        Start(
+            strictRpc: true,
+            configure: registry => registry.Register(service),
+            sessionOpened: session => session.CharacterId = characterId);
+
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+        await front.SendAsync(new Packet(open.SessionId,
+            MarshalCodec.Encode(Packets.CallWithKwargs(
+                open, 1, "characterEnergyMgr", "GetMyEnergyState", new PyTuple([]), TransportVersionKwargs()))));
+
+        var reply = Assert.IsType<Send>(await front.ReceiveAsync());
+        var expected = new PyObjectEx(
+            ObjectExKind.Ex1,
+            Py.Tuple(
+                new PyToken("characterenergy.characterEnergyState.CharacterEnergyState"),
+                Py.List(
+                    Py.Number(100),
+                    new PyLong(Py.FileTimeFromUnixMs(FixedNowMs)),
+                    Py.Number(1),
+                    Py.Number(792),
+                    Py.Number(0),
+                    Py.Number(100))),
+            [],
+            []);
+
+        Assert.Equal(MarshalCodec.Decode(MarshalCodec.Encode(expected)),
+            Result(MarshalCodec.Decode(reply.Payload)));
+    }
+
+    [Fact]
+    public async Task Faction_warfare_enlistment_routes_read_write_and_change_session_state()
+    {
+        const long characterId = 90_000_165;
+        const long corporationId = 98_000_165;
+        const long corporationFactionId = 500_002;
+        const long directFactionId = 500_001;
+        const long cooldown = 133_000_000_000_000_000;
+        FwCharacterWarfareState? character = new(null, 0);
+        IReadOnlyList<long> allowedFactions = [500_001, 500_002];
+
+        var service = new FwCharacterEnlistmentMgrService(new FwCharacterEnlistmentRpcCallbacks(
+            ReadCharacterStateAsync: (id, _) => ValueTask.FromResult(id == characterId ? character : null),
+            ReadCorporationFactionIdAsync: (id, _) => ValueTask.FromResult<long?>(id == corporationId ? corporationFactionId : null),
+            ReadAllowedFactionsAsync: (id, _) => ValueTask.FromResult<IReadOnlyList<long>>(id == corporationId ? allowedFactions : []),
+            SetAllowedFactionsAsync: (actor, corp, factions, _) =>
+            {
+                Assert.Equal(characterId, actor);
+                Assert.Equal(corporationId, corp);
+                allowedFactions = factions;
+                return ValueTask.FromResult(true);
+            },
+            SaveCharacterStateAsync: (id, faction, until, _) =>
+            {
+                if (id != characterId) return ValueTask.FromResult(false);
+                character = new FwCharacterWarfareState(faction, until);
+                return ValueTask.FromResult(true);
+            },
+            CurrentFileTime: () => cooldown,
+            ReadStandingAsync: (_, _, _) => ValueTask.FromResult(0d)));
+        Start(
+            strictRpc: true,
+            configure: registry => registry.Register(service),
+            sessionOpened: session =>
+            {
+                session.CharacterId = characterId;
+                session.Set("corpid", new PyInt(corporationId));
+            });
+
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+
+        var sessionChanges = 0;
+        async Task<PyValue?> Call(long id, string method, params PyValue[] args)
+        {
+            await front.SendAsync(new Packet(open.SessionId,
+                MarshalCodec.Encode(Packets.CallWithKwargs(
+                    open, id, "fwCharacterEnlistmentMgr", method, new PyTuple(args), TransportVersionKwargs()))));
+            while (true)
+            {
+                var decoded = MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
+                var packet = Assert.IsType<PyObject>(decoded);
+                var packetType = Assert.IsType<PyInt>(Assert.IsType<PyTuple>(packet.Args).Items[0]).Value;
+                if (packetType == MachoMessage.SessionChangeNotification)
+                {
+                    sessionChanges++;
+                    continue;
+                }
+                Assert.Equal(7, packetType);
+                return Result(decoded);
+            }
+        }
+
+        async Task AssertEnlistmentNotification(params PyValue[] args)
+        {
+            var decoded = MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
+            var notification = Assert.IsType<MachoPacket>(MachoPacket.Decode(decoded));
+            Assert.Equal(MachoMessage.Notification, notification.Type);
+            Assert.Equal("OnEnlistmentStateUpdated", notification.Dest.BroadcastId);
+            Assert.Equal("charid", notification.Dest.IdType);
+            var envelope = Assert.IsType<PyTuple>(notification.Payload);
+            var inner = Assert.IsType<PyBuffer>(Assert.IsType<PyTuple>(Assert.Single(envelope.Items)).Items[1]);
+            Assert.Equal(MarshalCodec.Encode(new PyTuple([new PyInt(0),
+                new PyTuple([new PyInt(1), new PyTuple(args)])])), inner.Value.ToArray());
+        }
+
+        Assert.Equal(new PyValue[] { new PyInt(corporationFactionId), PyNone.Instance, new PyInt(corporationFactionId) },
+            Assert.IsType<PyList>(await Call(1, "GetMyEnlistment")).Items);
+        Assert.Equal(new PyValue[] { new PyInt(500_001), new PyInt(500_002) },
+            Assert.IsType<PyList>(await Call(2, "GetCorpAllowedEnlistmentFactions", new PyInt(corporationId))).Items);
+        Assert.Equal(new PyLong(0), await Call(3, "GetMyDirectEnlistmentCooldownTimestamp"));
+
+        var updatedPolicy = new PyList([new PyInt(directFactionId)]);
+        Assert.Equal(updatedPolicy.Items,
+            Assert.IsType<PyList>(await Call(4, "SetMyCorpAllowedEnlistmentFactions", updatedPolicy)).Items);
+        Assert.Equal(updatedPolicy.Items,
+            Assert.IsType<PyList>(await Call(5, "GetCorpAllowedEnlistmentFactions", new PyInt(corporationId))).Items);
+
+        Assert.Equal(PyNone.Instance, await Call(6, "CreateMyDirectEnlistment", new PyInt(directFactionId)));
+        await AssertEnlistmentNotification(new PyInt(directFactionId), new PyInt(directFactionId), new PyInt(corporationFactionId));
+        Assert.Equal(new PyValue[] { new PyInt(directFactionId), new PyInt(directFactionId), new PyInt(corporationFactionId) },
+            Assert.IsType<PyList>(await Call(7, "GetMyEnlistment")).Items);
+
+        Assert.Equal(PyNone.Instance, await Call(8, "RemoveMyDirectEnlistment"));
+        await AssertEnlistmentNotification(new PyInt(corporationFactionId), PyNone.Instance, new PyInt(corporationFactionId));
+        Assert.Equal(new PyValue[] { new PyInt(corporationFactionId), PyNone.Instance, new PyInt(corporationFactionId) },
+            Assert.IsType<PyList>(await Call(9, "GetMyEnlistment")).Items);
+        Assert.Equal(new PyLong(cooldown + TimeSpan.TicksPerDay),
+            await Call(10, "GetMyDirectEnlistmentCooldownTimestamp"));
+        Assert.Equal(3, sessionChanges);
+    }
+}

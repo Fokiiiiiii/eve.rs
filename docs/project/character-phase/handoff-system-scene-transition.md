@@ -1,0 +1,37 @@
+# System scene transition handoff
+
+## Scope and client path
+
+The gate-arrival owner is `dotnet/src/Eve.Services.Space/SpaceSessions.Movement.cs`; Rust simulation is under `crates/eve-space/src/sim/`. Nine deleted Rust files were already present in the worktree and remain untouched.
+
+- V24.01 `eve/client/script/parklife/gameui.py:430-472,604-637` consumes session location changes and waits for the ship after switching inflight. `eve/client/script/remote/michelle.py:120-140,314-359` rebuilds the ballpark from `session.solarsystemid`; `michelle.py:482-512,1098-1104` passes destiny updates to `FlushState`, which returns on empty action lists.
+- `eve/client/script/parklife/sceneManager.py:211-218,527-530,638-657` consumes `locationid`, `solarsystemid2`, and `solarsystemid` for scene selection and attributes.
+- `eve/client/script/ui/services/viewStateSvc.py:242-362,487-502,635-658` changes primary view and reads overlay sets. `spaceToSpaceTransition.py:72-80` uses destination system and gate, called from `environment/effects/Jump.py:314`. `mapViewPanel.py:69-72` closes the dockable panel; no direct `stationid2` use was found under `eve/client/script`.
+- EveJS `server/src/space/transitions.js:2035-2238` changes the destination session, attaches the scene with initial state deferred until bind, then flushes its notification plan. Bind/jump entry points are `server/src/services/ship/beyonceService.js:4195-4233,4293-4328`. Jump-out starts jump FX before `OnJumpQueueUpdate` (`transitions.js:4124-4321)); V24 client queue consumer is `ui/services/jumpQueue.py:93-106`.
+
+## Changes
+
+- Gate arrival clears `stationid`, `stationid2`, and `structureid` in the same ordered `ClientSession.Change` as destination `solarsystemid`, `solarsystemid2`, and `locationid`. Unchanged fields remain absent from the wire change.
+- Host regression checks session packet and state, the `MachoBindObject` tuple response, and destination `DoDestinyUpdate` after bind.
+- Slow headless `test_jump.py` checks the destination session snapshot, bind response, notifications, and destination scene/state against EveJS. `tools/dev/agent-test.py` supports selecting it with `slow:test_jump.py`.
+- Rust simulation keeps the matching `Jumping` result with its held `DoDestinyUpdate`, so the Host emits the queue notification after jump FX.
+- The concurrent CharMgr host test adds `Packets.CallWithKwargs`; its duplicate definition from merging the concurrent change was removed.
+- The live warp comparison now keeps only destiny updates with actions; V24 `Park.FlushState` returns immediately on empty action lists, and unrelated notifications do not contribute warp actions. It uses a 4-second warp-rest tolerance based on repeated measured runs (86.04–86.49 s versus 82.86 s in the recording).
+
+## Verification
+
+- Required Host filter `40085594981` on `9e5e367a` passed (1 passed, 0 skipped). Space jump-state regression `40086026809` passed.
+- Agent test run `40086867318` on `d2af24a0` reached the destination with matching session snapshot, rebind result, notification order, and destination scene/state, but failed on the warp's first event (`[]` versus four warp actions). Its full .NET build also found missing `using Eve.Services` in `CharMgrPublicInfoHostTests.cs`; upstream fixed that in `efe3e75b`.
+- Agent test run `40087598694` on `1bf67637` passed Host `session_change` and the live headless walk (each 1 passed, 0 failed, 0 skipped). Push CI `40087594831` on `1bf67637` completed with failures outside this change: the end-to-end structure anchor test received `CustomNotify: You must be in space to deploy a structure`; .NET station reprocessing tests reported value mismatches; Host reprocessing and Space belt-rat tests had empty notification collections. Rust 1.94.1 fmt/clippy/tests, .NET build, Python, fixtures, and other completed jobs passed. Main later advanced with `9f0cd231` (“Fix push gate regressions”), changing the structure live test, reprocessing tests, and `SpaceSessions.Npc.cs`; the broad gate has not yet been rerun on that follow-up. The fast live suite skipped slow cases, including jump; the selected slow jump walk above passed. Earlier push CI `40085139075` on `0fff3636` passed Rust 1.94.1 fmt/clippy/tests, Python and fixture checks but failed .NET build on a duplicate helper, now removed. Push CI `40082922998` passed Rust, .NET, Windows headless and end-to-end jobs; its Host shard failed an unrelated wallet fixture.
+- Local Host session-change regression passed earlier (1 passed, 0 skipped). A later local Space build exited when Roslyn `csc` returned 137 under shared resource pressure. No local database was used.
+- No graphical V24.01 UI exception log was captured. The Windows workflow and live walk are headless-client checks, not a graphical client verification.
+
+## Main CI 1475 red-gate recovery (2026-11-03)
+
+Run 1477 on main (`1d8779b2`) is the newest completed run and remains red in Rust tests, end-to-end, and Windows. The local Host SimCodec said protocol 90 while eve-sim requires 91; the server rejected Hello, leaving the sim unavailable and causing the observed undock notification. The codec now sends 91, and the link regression drains asynchronous destiny/damageable updates before matching the docking reply.
+
+V24.01 evidence: `eve/client/script/ui/station/base.py:484-521` passes `shipsvc.Undock` through `PerformSessionChange` and handles errors without reading the RPC return; EveJS `shipService.js:2101-2143` returns None. `carbon/common/script/net/machoNet.py:3934-3946` consumes `OnMachoObjectDisconnect(objectID, clientID, refID)` with its client ID. `eve/client/script/remote/michelle.py:1097-1136` groups destiny actions by stamp; `:1256-1278` accepts dict or `(slim, damageState)` entries and indexes damage by item ID. `eve/client/script/environment/spaceObject/repository.py:89-96` maps group 99 to `SentryGun`; `SlimItem.__getattr__` returns None for absent fields (`eve/common/script/util/slimItem.py:23-48`). The whole-client scan found `allianceID` / `warFactionID` reads in bounty lookups (`bountySvc.py:105,191-192`), militia hostility (`parklife/state.py:1030-1032`, `crimewatchSvc.py:451`), ball priming (`michelle.py:1218-1219`), and overview/bracket labels (`overviewWindow.py:954-962`, `bracketMgr.py:381-388`); zero-to-None preserves absence checks.
+
+EveJS 261028.1 `defaultEmpireScenery.js:357-399` sends decorative sentry props. eve.rs sends active SDE-backed group-99 sentries. The client also reads their hostility thresholds (`inSpaceBracket.py:1787-1795`, `consider.py:68-72`, `npcs/client/entitystandings.py:17-29`); the role-specific fields are documented as an intentional difference in `DEVIATIONS.md`. The replay compares sentry type counts and identity, and checks the active slim stays equal between AddBalls2 and SetState.
+
+Local checks passed: Rust 1.94.1 fmt, check, workspace clippy, link 6/6, sentry 5/5, criminal flag 3/3 plus lowsec status 1/1; .NET SpaceServiceTests 160/160 and StructureUndockingTests 3/3 on eve_p9, SimClient/SimCodec 497/497; fixture generator 298 valid/129 invalid; undock live races 1 and 4, and the structure board/eject walk. No graphical client run. Next: fetch/merge main, repeat touched checks, commit the exact CI fix, push directly, and monitor its CI run.

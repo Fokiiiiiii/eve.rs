@@ -1,0 +1,78 @@
+# ADR 0012: Timed deployed objects share one mechanism, and one job expires them
+
+- Status: accepted
+- Date: 2026-10-08
+- Decided by: the lead's final decisions on the superweapons brief (SW-D2, SW-N1, SW-O3) and the mining brief (MIN-D12); see `scratchpad/specs/DECISIONS.md`.
+
+## Context
+
+Wrecks and cans already exist in space. Cyno fields, jump portals and fleet beacons are new and need the same thing: an object
+that is placed in a system, watched, and removed when its time is up. Two expiry paths were proposed: a new job per kind
+(`space.deployed.expire`, `space.container.expire`) or the existing sweep.
+
+What exists today: `space.containers.sweep` is a recurring scheduler job every 30 s (`dotnet/src/Eve.Host/Program.cs:874-875`).
+`ExpireDueAsync` reads the database (`SpaceContainers.cs:423-431`) and calls the sim to remove the object. Because the
+deadline is a row, it survives a restart. The sim also has its own timer-like expiry for wrecks (`crowd.rs:468-490`).
+
+## Decision
+
+1. **One mechanism.** `Deployed` is the shared record of a timed object in space: id, kind (wreck, can, cyno field, portal,
+   beacon), owner, system, deadline, and the sim ball it is attached to. Its placement and watcher code is extracted from
+   `crowd.rs` (`place_container`, `expire_wrecks`) into a new `placed.rs`. It mirrors the existing `Wreck` (`wreck.rs`).
+2. **One expiry owner.** `space.containers.sweep` expires every `Deployed` kind. No `space.deployed.expire` and no
+   `space.container.expire` job are added. The sweep is extended, not replaced.
+3. **The sim does not decide expiry.** It removes what the host tells it to remove. The sim-side expiry in `crowd.rs:468-490`
+   is removed only after the host removal path is verified in a test, because removing it first leaves wrecks alive in the sim.
+4. **Idempotent handlers.** The sweep may touch the sim, so it can run twice; a second removal of an already removed object is
+   a no-op (FOUNDATIONS rule 2).
+5. **Beacon.** A fleet beacon is cleared only when no live `Deployed` depends on it (SW-O3). The scene owns in-scene life;
+   the sweep only removes what is past its deadline.
+
+## Consequences
+
+* Expiry is as late as the sweep interval (up to 30 s). Objects with a shorter lifetime would need the interval revisited.
+  This is accepted; no current feature needs less.
+* The sweep dispatches by kind through a registry with one entry per kind, not an `if` chain (FOUNDATIONS checklist).
+* Expiry survives a restart, because the deadline is a database row and the job is recurring.
+* The `crowd.rs` extraction collides with the mining change `M6b` (`change_asteroid` fan-out). Order: `M6b` first (see `DECISIONS.md`).
+
+## Addendum (2026-10-08, bombs and warp disruption brief)
+
+- Probes stay simulation-only (bombs brief D11): an interdiction probe's lifetime is its SDE `explosionDelay`, checked in the simulation tick. Nothing is persisted, so a restart drops it (a stated LIMITATION). It is not a `Deployed` row, because the sweep runs every 30 s and would make a 120 s probe up to 25 % late.
+- Mobile warp disruptors are not deployable yet (D6): no SDE lifetime exists, and the EveJS table has not been checked against the client. When they are, they are `Deployed` rows and the expiry job stays `space.containers.sweep`; anchoring is a separate job, `space.deployed.anchor`, which is not an expiry job.
+- Nothing is written to the sweep for the field generator: its bubble is refused (`EFFECT_NOT_IMPLEMENTED`) until its ship penalties have a source (D5).
+
+## Addendum (2026-10-09, the bombs and bubbles track: deployables in the simulation)
+
+- The interdiction probe and the bomb are deployables of the simulation (`crates/eve-space/src/deployable.rs`): a free ball each, kept apart from the ships, with an end
+  time on the simulation's clock (the SDE's explosion delay). They are not `Deployed` rows, for the reason of the first addendum: the 30 s sweep would end a 120 s probe late.
+  A restart drops them (a stated limitation). The end is the simulation's own; the sweep is not involved.
+- The warp bubble of a field generator is not a deployable: it is the ship's own source while its effect runs (`SimAction.WarpBubble`), and it ends with the effect.
+- Mobile warp disruptors are still not deployable: their anchoring and expiry are the deployable store and the durable jobs of this record, not started.
+
+## Addendum (2026-10-09, track C3: the lance beacon)
+
+- The lance beacon (EVE.js `spawnLanceBeacon`, a container of type 41233) is a simulation deployable (`Role::Beacon` in `crates/eve-space/src/deployable.rs`), not a `Deployed` row. Its lifetime is the lance's effect: it is put in space when the strike starts and taken out when the effect ends or stops (the same reasoning as the bomb: a row swept every 30 s would outlive the beam). A restart drops it (a stated limitation).
+- The cone's beacon (EVE.js family `lance`) is put in space without a beam: its FX guid is empty in the reference, so only the ball is shown.
+
+## Addendum (2026-10-09, track A5: the cynosural field record)
+
+- A lit cynosural field has a `Deployed` record: the table `space.deployed` (migration 0004, kind `cyno_field`), written when the simulation says the field was lit
+  (`Deployed`, protocol 44) and read by the host on its own clock. `space.containers.sweep` owns the record's expiry: `ExpireDeployedAsync` runs each record's
+  kind entry (one entry per kind) and forgets the record.
+- A restart: when a ship comes into the field's system, a record whose time is not up is put back in space (`RestoreDeployedAsync`) with the id it had and what
+  is left of its life. A record whose time is up is left to the sweep.
+- The simulation still ends the field at its own end time (B7's sim-timed deployable), so the field's `RemoveBalls` is unchanged. Decision 3 above asks that the
+  simulation not decide expiry; for the field the end is kept in the simulation for this track, because B7's end-of-life behaviour is tested and the sweep may
+  run up to 30 s after it. The sweep's `RemoveDeployed` then finds the field gone and does nothing. Recorded in DEVIATIONS "Track A5: the cynosural field record".
+- Probes, bombs and the lance beacon stay simulation-only, as the addenda above say. Mobile warp disruptors are still not deployable (see TODO section 23).
+
+## Addendum (2026-10-10, track A5: scanner probes)
+
+- A launched scanner probe is a host record (`space.scan_probes`, migration 0005) and a simulation ball (`PlaceProbe`, protocol 45). It is not a `Deployed` row: its life is
+  its explosion delay (an hour or more), and the sweep that owns `Deployed` runs every 30 s, which is accepted for these lifetimes. Its own sweep is
+  `space.probes.sweep`, the same interval.
+- The simulation never ends a probe ball by its own clock (`ends_at` is unbounded); the host recalls it (`RemoveProbe`) or its time is up. The first addendum
+  above, which kept probes simulation-only, is superseded for scanner probes: the record survives a restart, the ball does not yet (see DEVIATIONS "Track A5:
+  scanner probes").
+

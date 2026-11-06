@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Eve.Data/Eve.Data.csproj" />
+    <ProjectReference Include="../Eve.Dogma/Eve.Dogma.csproj" />
+    <ProjectReference Include="../Eve.Fitting/Eve.Fitting.csproj" />
+    <ProjectReference Include="../Eve.Inventory/Eve.Inventory.csproj" />
+    <ProjectReference Include="../Eve.Skills/Eve.Skills.csproj" />
+    <ProjectReference Include="../Eve.Characters/Eve.Characters.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Migrations/*.sql" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Eve.Ships.Tests" />
+    <InternalsVisibleTo Include="Eve.Services.Space" />
+  </ItemGroup>
+</Project>

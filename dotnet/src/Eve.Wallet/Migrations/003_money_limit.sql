@@ -1,0 +1,1 @@
+ALTER TABLE balances ADD CONSTRAINT balances_isk_limit CHECK (isk <= 1145141919364364.00);

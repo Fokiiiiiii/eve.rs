@@ -1,0 +1,392 @@
+{
+  "separator": "\u001f",
+  "runtimeTables": [
+    "skillPlans",
+    "skillQueues",
+    "skillTradingState",
+    "skills",
+    "characters",
+    "items",
+    "raffles",
+    "marketEscrow",
+    "corporationRuntime",
+    "alliances",
+    "bookmarkFolders",
+    "bookmarkGroups",
+    "bookmarkKnownFolders",
+    "bookmarks",
+    "calendarEvents",
+    "calendarResponses",
+    "characterEnergyState",
+    "corporationBills",
+    "corporationGoals",
+    "industryBlueprintState",
+    "industryRuntime",
+    "insuranceContracts",
+    "killRights",
+    "killmails",
+    "mail",
+    "mapTelemetry",
+    "moduleGroupingState",
+    "notifications",
+    "npcEntities",
+    "npcModules",
+    "npcRuntimeControllers",
+    "planetOrbitalState",
+    "planetRuntimeState",
+    "playerBounties",
+    "rafflesRuntime",
+    "savedFittings",
+    "shipCosmetics",
+    "solarSystemInterferenceState",
+    "structurePaintwork",
+    "structureProfiles",
+    "structureTetherRestrictions",
+    "structures",
+    "wormholeRuntimeState",
+    "accessGroups",
+    "bookmarkRuntimeState",
+    "bookmarkSubfolders",
+    "characterExpertSystems",
+    "characterNotes",
+    "corpSkillPlans",
+    "contrabandPenalties",
+    "crimewatchRuntime",
+    "contractSettlements",
+    "reprocessingSettlements",
+    "missionRewardSettlements",
+    "planetaryCustomsSettlements",
+    "corporationLiquidations",
+    "corporationFoundings",
+    "allianceFoundings",
+    "allianceDepartures",
+    "corporationVotes",
+    "achievements",
+    "dailyGoals",
+    "evermarkEntitlements",
+    "evermarkPurchases",
+    "lpStorePurchases",
+    "industryFacilityState",
+    "industryInstallSettlements",
+    "jumpCloneActivationSettlements",
+    "jumpBridgeSettlements",
+    "industryJobs",
+    "lpWallets",
+    "marketRuntime",
+    "miningLedger",
+    "newEdenStore",
+    "newEdenStorePurchaseSettlements",
+    "newEdenStoreRuntime",
+    "npcControlState",
+    "npcRuntimeState",
+    "npcSpawnSites",
+    "pendingNpcBounties",
+    "probeRuntimeState",
+    "reprocessingFacilityState",
+    "repairOperations",
+    "sharedBookmarkFolders",
+    "shipLogoFittings",
+    "scheduledJobs",
+    "structureAssetSafety",
+    "structureDeliveryRuntime",
+    "tradeRuntime",
+    "walletAuthorityState",
+    "shipDirt",
+    "shipKillCounters",
+    "moonExtractions",
+    "overviewSharedPresets",
+    "sharedSettings",
+    "sovereignty",
+    "dungeonRuntimeState",
+    "miningRuntimeState",
+    "missionRuntimeState",
+    "researchRuntimeState",
+    "accounts",
+    "identityState",
+    "npcCargo",
+    "npcWrecks",
+    "npcWreckItems",
+    "corporations",
+    "chatState",
+    "chatStaticContracts",
+    "chatBacklog",
+    "contractRuntime",
+    "abyssalFilamentCompensations",
+    "abyssalRecoveryTombstones",
+    "jumpCloneInstallSettlements",
+    "moonMiningFields"
+  ],
+  "rowGroups": {
+    "items": [
+      "__evejsInventoryGrantReceipts"
+    ],
+    "notifications": [
+      "boxes"
+    ],
+    "miningRuntimeState": [
+      "systems"
+    ],
+    "wormholeRuntimeState": [
+      "pairsByID",
+      "staticSlotsByKey",
+      "polarizationByCharacter"
+    ],
+    "alliances": [
+      "records"
+    ],
+    "bookmarkFolders": [
+      "records"
+    ],
+    "bookmarkGroups": [
+      "records"
+    ],
+    "bookmarkKnownFolders": [
+      "recordsByCharacterID"
+    ],
+    "bookmarks": [
+      "records"
+    ],
+    "calendarEvents": [
+      "events"
+    ],
+    "calendarResponses": [
+      "responses"
+    ],
+    "characterEnergyState": [
+      "characters"
+    ],
+    "corporationBills": [
+      "bills",
+      "automaticPaySettingsByOwner"
+    ],
+    "corporationGoals": [
+      "goalsByID"
+    ],
+    "corporationRuntime": [
+      "corporations",
+      "alliances",
+      "wars",
+      "warNegotiations",
+      "mutualWarInvites",
+      "mutualWarInviteBlocks",
+      "peaceTreaties"
+    ],
+    "dungeonRuntimeState": [
+      "instancesByID"
+    ],
+    "industryBlueprintState": [
+      "records"
+    ],
+    "industryJobs": [
+      "jobs"
+    ],
+    "industryRuntime": [
+      "monitors"
+    ],
+    "insuranceContracts": [
+      "contractsByShipID",
+      "contractHistoryByID",
+      "payoutLedgerByLossID"
+    ],
+    "lpWallets": [
+      "characterWallets",
+      "corporationWallets"
+    ],
+    "miningLedger": [
+      "characters",
+      "observers"
+    ],
+    "killRights": [
+      "rights",
+      "activations"
+    ],
+    "killmails": [
+      "records",
+      "pending"
+    ],
+    "mail": [
+      "messages",
+      "mailboxes",
+      "mailingLists"
+    ],
+    "mapTelemetry": [
+      "visitsByCharacterID"
+    ],
+    "missionRuntimeState": [
+      "charactersByID"
+    ],
+    "researchRuntimeState": [
+      "charactersByID"
+    ],
+    "moduleGroupingState": [
+      "ships"
+    ],
+    "moonExtractions": [
+      "resourcesByStructureID",
+      "extractions"
+    ],
+    "npcEntities": [
+      "entities"
+    ],
+    "npcModules": [
+      "modules"
+    ],
+    "npcRuntimeControllers": [
+      "controllers"
+    ],
+    "overviewSharedPresets": [
+      "entries"
+    ],
+    "planetOrbitalState": [
+      "orbitalsByID"
+    ],
+    "planetRuntimeState": [
+      "resourcesByPlanetID",
+      "coloniesByKey",
+      "launchesByID",
+      "acceptedNetworkEditsByKey",
+      "networkEditReceiptsByKey"
+    ],
+    "playerBounties": [
+      "pools",
+      "contributions",
+      "hunterStats"
+    ],
+    "rafflesRuntime": [
+      "reservations"
+    ],
+    "repairOperations": [
+      "operationsByID"
+    ],
+    "savedFittings": [
+      "owners"
+    ],
+    "sharedSettings": [
+      "entries"
+    ],
+    "shipCosmetics": [
+      "characters",
+      "ships"
+    ],
+    "shipDirt": [
+      "ships"
+    ],
+    "shipKillCounters": [
+      "ships"
+    ],
+    "solarSystemInterferenceState": [
+      "systems"
+    ],
+    "sovereignty": [
+      "alliances",
+      "systems",
+      "hubs",
+      "skyhooks",
+      "mercenaryDens",
+      "resources"
+    ],
+    "structurePaintwork": [
+      "catalogueByTypeID",
+      "licensesByID",
+      "structureAssignments"
+    ],
+    "structureProfiles": [
+      "profilesByID"
+    ],
+    "structureTetherRestrictions": [
+      "restrictions"
+    ],
+    "bookmarkSubfolders": [
+      "records",
+      "recordsByCharacterID"
+    ],
+    "corporationVotes": [
+      "corporations"
+    ],
+    "evermarkEntitlements": [
+      "characters"
+    ],
+    "pendingNpcBounties": [
+      "npcTypes"
+    ],
+    "probeRuntimeState": [
+      "probesByID"
+    ],
+    "shipLogoFittings": [
+      "ships"
+    ],
+    "chatState": [
+      "channels",
+      "privateChannelByPair"
+    ],
+    "chatStaticContracts": [
+      "observations"
+    ],
+    "chatBacklog": [
+      "entriesByRoomName"
+    ],
+    "abyssalRecoveryTombstones": [
+      "byCharacterID",
+      "byShipID",
+      "byHostLocationID"
+    ]
+  },
+  "leasePolicy": {
+    "minLeaseMs": 1000,
+    "minConfiguredLeaseMs": 3000,
+    "defaultLeaseMs": 30000,
+    "acquisitionGraceMs": 5000,
+    "configuredLeaseMs": [
+      {
+        "input": {
+          "$undefined": true
+        },
+        "output": 30000
+      },
+      {
+        "input": null,
+        "output": 30000
+      },
+      {
+        "input": "",
+        "output": 30000
+      },
+      {
+        "input": "abc",
+        "output": 30000
+      },
+      {
+        "input": 0,
+        "output": 30000
+      },
+      {
+        "input": 999,
+        "output": 30000
+      },
+      {
+        "input": 2999,
+        "output": 30000
+      },
+      {
+        "input": 3000,
+        "output": 3000
+      },
+      {
+        "input": 3001,
+        "output": 3001
+      },
+      {
+        "input": 45000,
+        "output": 45000
+      },
+      {
+        "input": 1.5,
+        "output": 30000
+      },
+      {
+        "input": "5000",
+        "output": 5000
+      }
+    ]
+  }
+}

@@ -1,0 +1,40 @@
+//! `behaviors/const/combat.py`: the target evaluators' names and the numbers of the fights.
+
+pub const COST_TARGET_EVALUATOR: &str = "cost";
+pub const RANDOM_TARGET_EVALUATOR: &str = "random";
+pub const FITTED_MODULE_GROUP_TARGET_EVALUATOR: &str = "module";
+pub const SIZE_TARGET_EVALUATOR: &str = "size";
+pub const THREAT_TARGET_EVALUATOR: &str = "threat";
+pub const RANGE_TARGET_EVALUATOR: &str = "range";
+pub const SIGNATURE_RADIUS_AND_VELOCITY_EVALUATOR: &str = "sigRadius & velocity";
+pub const TOWING_TOW_OBJECTIVE_EVALUATOR: &str = "towing tow game objective";
+pub const BASIC_TARGET_EVALUATOR: &str = "zero";
+
+pub const ALL_TARGET_EVALUATORS: [&str; 9] = [
+    RANDOM_TARGET_EVALUATOR,
+    SIZE_TARGET_EVALUATOR,
+    THREAT_TARGET_EVALUATOR,
+    COST_TARGET_EVALUATOR,
+    BASIC_TARGET_EVALUATOR,
+    FITTED_MODULE_GROUP_TARGET_EVALUATOR,
+    RANGE_TARGET_EVALUATOR,
+    SIGNATURE_RADIUS_AND_VELOCITY_EVALUATOR,
+    TOWING_TOW_OBJECTIVE_EVALUATOR,
+];
+
+pub const FW_ATTACK_NONE: &str = "None";
+pub const FW_ATTACK_NOT_SAME_FACTION: &str = "attackFwNotSameFaction";
+pub const FW_ATTACK_ALL_ENEMIES: &str = "attackFwAllEnemies";
+pub const FW_ATTACK_INSURGENCY_ENEMIES: &str = "attackFwInsurgencyEnemies";
+
+pub const COMBAT_ORBIT_MWD_DISTANCE_FACTOR_SHORT_DISTANCE: f64 = 1.5;
+pub const COMBAT_ORBIT_MWD_DISTANCE_FACTOR_LONG_DISTANCE: f64 = 2.0;
+pub const COMBAT_ORBIT_MWD_DISTANCE_THRESHOLD: f64 = 5000.0;
+pub const COMBAT_ORBIT_MWD_DISTANCE_MINIMUM: f64 = 1500.0;
+pub const COMBAT_ORBIT_MWD_DISTANCE_MAXIMUM: f64 = 20000.0;
+pub const COMBAT_ORBIT_COMMANDER_VELOCITY_FACTOR: f64 = 0.75;
+pub const COMBAT_MAX_EFFECTIVE_FALLOFF_DISTANCE_FACTOR: f64 = 0.75;
+pub const COMBAT_MIN_EFFECTIVE_COMBAT_RANGE_FACTOR: f64 = 0.3;
+pub const COMBAT_MAX_EFFECTIVE_DISTANCE_FACTOR: f64 = 1.5;
+pub const COMBAT_MIN_EFFECTIVE_RANGE: f64 = 30000.0;
+pub const THREAT_MAX_DISTANCE_FROM_GUARD_OBJECT: f64 = 1_500_000.0;

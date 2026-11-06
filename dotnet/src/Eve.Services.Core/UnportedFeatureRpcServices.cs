@@ -1,0 +1,700 @@
+using Eve.Macho;
+using Eve.Marshal;
+using Eve.Services;
+
+namespace Eve.Services.Core;
+
+public sealed record AbyssalSpawnReportRequest(int DifficultyTier, int SpawnTableId, int Repetitions, ClientSession Session);
+
+public delegate ValueTask<PyValue?> AbyssalSpawnReportCallback(
+    AbyssalSpawnReportRequest request,
+    CancellationToken cancellationToken);
+
+[Service("abyssal_content_manager")]
+public sealed partial class AbyssalContentManagerService(AbyssalSpawnReportCallback? report = null)
+{
+    [Method("generate_abyss_npc_spawn_report")]
+    public async ValueTask<PyValue> GenerateAbyssNpcSpawnReport(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        if (!PublicQaToolsServerService.HasStaffAccountRole(call.Session))
+            throw MachoErrors.ThrowUserError("ABYSSAL_SPAWN_REPORT_STAFF_ONLY");
+        if (call.Args.Count != 3 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("ABYSSAL_SPAWN_REPORT_ARGUMENTS_INVALID");
+        var difficultyTier = Integer(call.Arg(0));
+        var spawnTableId = PositiveInt32(call.Arg(1));
+        var repetitions = Integer(call.Arg(2));
+        if (difficultyTier is < 172 or > 178 || spawnTableId <= 0 || repetitions is < 0 or > 1000)
+            throw MachoErrors.ThrowUserError("ABYSSAL_SPAWN_REPORT_INPUT_INVALID");
+        if (report is not { } callback)
+            throw MachoErrors.ThrowUserError("ABYSSAL_SPAWN_REPORT_UNAVAILABLE");
+        return await callback(new(difficultyTier, spawnTableId, repetitions, call.Session), call.Cancellation).ConfigureAwait(false)
+            ?? throw MachoErrors.ThrowUserError("ABYSSAL_SPAWN_REPORT_UNAVAILABLE");
+    }
+
+    private static int Integer(PyValue value) => value switch
+    {
+        PyInt integer when integer.Value is >= int.MinValue and <= int.MaxValue => (int)integer.Value,
+        PyLong integer when integer.Value is >= int.MinValue and <= int.MaxValue => (int)integer.Value,
+        _ => int.MinValue,
+    };
+
+    private static int PositiveInt32(PyValue value) => Integer(value) is > 0 and var integer ? integer : 0;
+}
+
+public delegate ValueTask<PyValue?> ReadEscalatingPathDetailsCallback(
+    ClientSession session,
+    CancellationToken cancellationToken);
+
+[Service("dungeonExplorationMgr")]
+public sealed partial class DungeonExplorationMgrService(
+    ReadEscalatingPathDetailsCallback? readDetails = null,
+    Func<long>? nowUnixMs = null)
+{
+    private static readonly string[] Header = [
+        "instanceID", "dungeon", "destDungeon", "srcDungeon", "expiryTime", "journalEntryTemplateID",
+    ];
+
+    [Method("GetMyEscalatingPathDetails")]
+    public async ValueTask<PyValue> GetMyEscalatingPathDetails(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        if (call.Args.Count != 0 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("DUNGEON_EXPLORATION_ARGUMENTS_INVALID");
+        var details = readDetails is { } read
+            ? await read(call.Session, call.Cancellation).ConfigureAwait(false)
+            : null;
+        return ObjectCaching.MethodResult(details ?? EmptyRowset(),
+            (nowUnixMs ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()))(),
+            versionCheck: "always");
+    }
+
+    private static PyValue EmptyRowset() => new PyObject(
+        new PyStr("eve.common.script.sys.rowset.Rowset"),
+        Py.Dict(
+            ("header", new PyList([.. Header.Select(name => (PyValue)new PyStr(name))])),
+            ("columns", new PyList([.. Header.Select(name => (PyValue)new PyStr(name))])),
+            ("RowClass", new PyToken("util.Row")),
+            ("lines", new PyList([]))));
+}
+
+public sealed record KeeperRpcCallbacks(
+    Func<ClientSession, PyValue, CancellationToken, ValueTask<PyValue?>>? ActivateAccelerationGateAsync = null,
+    Func<ClientSession, CancellationToken, ValueTask<PyValue?>>? ReadCurrentDungeonAsync = null,
+    Func<long, long, CancellationToken, ValueTask<long?>>? ReadOperationSpawnpointSolarSystemAsync = null,
+    Func<ClientSession, long, long, CancellationToken, ValueTask<bool>>? IsOperationSiteAsync = null);
+
+[Service("keeper")]
+public sealed partial class KeeperService(KeeperRpcCallbacks? callbacks = null)
+{
+    [Method("ActivateAccelerationGate")]
+    public async ValueTask<PyValue> ActivateAccelerationGate(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        if (callbacks?.ActivateAccelerationGateAsync is { } activate &&
+            await activate(call.Session, call.Arg(0), call.Cancellation).ConfigureAwait(false) is { } result)
+            return result;
+        throw MachoErrors.ThrowUserError("DeniedShipChanged");
+    }
+
+    [Method("GetCurrentDungeonForCharacter")]
+    public async ValueTask<PyValue> GetCurrentDungeonForCharacter(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        return callbacks?.ReadCurrentDungeonAsync is { } read
+            ? await read(call.Session, call.Cancellation).ConfigureAwait(false) ?? PyNone.Instance
+            : PyNone.Instance;
+    }
+
+    [Method("GetLevelEditor")]
+    public PyValue GetLevelEditor(ServiceCall call) => PyNone.Instance;
+
+    [Method("GetOperationSpawnpointSolarSystem")]
+    public async ValueTask<PyValue> GetOperationSpawnpointSolarSystem(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var (characterId, siteId) = OperationSiteIds(call);
+        if (callbacks?.ReadOperationSpawnpointSolarSystemAsync is not { } read || siteId <= 0)
+            return PyNone.Instance;
+        return await read(characterId, siteId, call.Cancellation).ConfigureAwait(false) is { } systemId and > 0
+            ? InventoryWireId(systemId)
+            : PyNone.Instance;
+    }
+
+    [Method("IsOperationSite")]
+    public async ValueTask<PyValue> IsOperationSite(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var (characterId, siteId) = OperationSiteIds(call);
+        return PyValue.Of(callbacks?.IsOperationSiteAsync is { } read && siteId > 0 &&
+            await read(call.Session, characterId, siteId, call.Cancellation).ConfigureAwait(false));
+    }
+
+    private static (long CharacterId, long SiteId) OperationSiteIds(ServiceCall call)
+    {
+        var first = Positive(call.Arg(0));
+        var second = Positive(call.Arg(1));
+        if (second > 0)
+            return (first > 0 ? first : call.Session.CharacterId ?? 0, second);
+        return (call.Session.CharacterId ?? 0, first);
+    }
+
+    private static long Positive(PyValue value) => value switch
+    {
+        PyInt number => Math.Max(0, number.Value),
+        PyLong number => Math.Max(0, number.Value),
+        _ => 0,
+    };
+
+    private static PyValue InventoryWireId(long value) => value is <= int.MaxValue
+        ? new PyInt((int)value)
+        : new PyLong(value);
+}
+
+public sealed record MiningScanResult(long EntityId, long YieldTypeId, long RemainingQuantity, double Distance);
+
+public delegate ValueTask<IReadOnlyList<MiningScanResult>> ReadMiningScanResultsCallback(
+    ClientSession session,
+    CancellationToken cancellationToken);
+
+[Service("miningScanMgr")]
+public sealed partial class MiningScanMgrService(ReadMiningScanResultsCallback? readResults = null)
+{
+    [Method("perform_scan")]
+    public async ValueTask<PyValue> PerformScan(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        if (readResults is null) return new PyList([]);
+        var results = await readResults(call.Session, call.Cancellation).ConfigureAwait(false);
+        return new PyList([.. results.OrderBy(result => result.Distance).ThenBy(result => result.EntityId)
+            .Select(result => (PyValue)new PyList([WireInteger(result.EntityId), WireInteger(result.YieldTypeId), WireInteger(result.RemainingQuantity)]))]);
+    }
+
+    private static PyValue WireInteger(long value) => value is >= int.MinValue and <= int.MaxValue
+        ? new PyInt((int)value)
+        : new PyLong(value);
+}
+
+public enum NodeGraphOperation
+{
+    ProcessClientGraphMessage,
+    ProcessClientBlackboardRequest,
+    QaSubscribe,
+    QaUnsubscribe,
+    QaStartNodeGraph,
+    QaStopNodeGraph,
+    QaStartNode,
+    QaStopNode,
+    QaStopActiveNodes,
+}
+
+public sealed record NodeGraphRequest(
+    NodeGraphOperation Operation,
+    IReadOnlyList<PyValue> Arguments,
+    PyValue KeywordArguments,
+    ClientSession Session);
+
+public delegate ValueTask NodeGraphRpcCallback(NodeGraphRequest request, CancellationToken cancellationToken);
+
+[Service("node_graph")]
+public sealed partial class NodeGraphService(NodeGraphRpcCallback? callback = null)
+{
+    [Method("process_client_graph_message")]
+    public ValueTask<PyValue> ProcessClientGraphMessage(ServiceCall call) =>
+        Dispatch(call, NodeGraphOperation.ProcessClientGraphMessage, PyNone.Instance,
+            messageKeyAllowed: call.Arg(2) is not PyStr key || key.Value.StartsWith("client_", StringComparison.Ordinal));
+
+    [Method("process_client_blackboard_request")]
+    public ValueTask<PyValue> ProcessClientBlackboardRequest(ServiceCall call) =>
+        Dispatch(call, NodeGraphOperation.ProcessClientBlackboardRequest, PyNone.Instance);
+
+    [Method("qa_subscribe")]
+    public ValueTask<PyValue> QaSubscribe(ServiceCall call) =>
+        Dispatch(call, NodeGraphOperation.QaSubscribe, new PyDict([]));
+
+    [Method("qa_unsubscribe")]
+    public ValueTask<PyValue> QaUnsubscribe(ServiceCall call) =>
+        Dispatch(call, NodeGraphOperation.QaUnsubscribe, PyNone.Instance);
+
+    [Method("qa_start_node_graph")]
+    public ValueTask<PyValue> QaStartNodeGraph(ServiceCall call) =>
+        Dispatch(call, NodeGraphOperation.QaStartNodeGraph, PyNone.Instance);
+
+    [Method("qa_stop_node_graph")]
+    public ValueTask<PyValue> QaStopNodeGraph(ServiceCall call) =>
+        Dispatch(call, NodeGraphOperation.QaStopNodeGraph, PyNone.Instance);
+
+    [Method("qa_start_node")]
+    public ValueTask<PyValue> QaStartNode(ServiceCall call) =>
+        Dispatch(call, NodeGraphOperation.QaStartNode, PyNone.Instance);
+
+    [Method("qa_stop_node")]
+    public ValueTask<PyValue> QaStopNode(ServiceCall call) =>
+        Dispatch(call, NodeGraphOperation.QaStopNode, PyNone.Instance);
+
+    [Method("qa_stop_active_nodes")]
+    public ValueTask<PyValue> QaStopActiveNodes(ServiceCall call) =>
+        Dispatch(call, NodeGraphOperation.QaStopActiveNodes, PyNone.Instance);
+
+    private ValueTask<PyValue> Dispatch(ServiceCall call, NodeGraphOperation operation, PyValue result, bool messageKeyAllowed = true)
+    {
+        if (!messageKeyAllowed)
+            return ValueTask.FromResult(result);
+        if (IsQaOperation(operation) && !GameMasterRoles.Has(call.Session, GameMasterRoles.Staff))
+            return ValueTask.FromResult(result);
+        if (callback is { } handler)
+            return ForwardAsync(handler, new NodeGraphRequest(operation, call.Args, call.Kwargs, call.Session), result, call.Cancellation);
+        return ValueTask.FromResult(result);
+    }
+
+    private static bool IsQaOperation(NodeGraphOperation operation) =>
+        operation is NodeGraphOperation.QaSubscribe or NodeGraphOperation.QaUnsubscribe
+            or NodeGraphOperation.QaStartNodeGraph or NodeGraphOperation.QaStopNodeGraph
+            or NodeGraphOperation.QaStartNode or NodeGraphOperation.QaStopNode
+            or NodeGraphOperation.QaStopActiveNodes;
+
+    private static async ValueTask<PyValue> ForwardAsync(
+        NodeGraphRpcCallback handler,
+        NodeGraphRequest request,
+        PyValue result,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        await handler(request, cancellationToken).ConfigureAwait(false);
+        return result;
+    }
+}
+
+public sealed record PeaceTreaty(
+    long OtherOwnerId,
+    long? ExpiryFiletime,
+    int PeaceReason,
+    long WarId,
+    int ReasonEnded,
+    long? WarHqId);
+
+public sealed record PeaceTreatySnapshot(IReadOnlyList<PeaceTreaty> Outgoing, IReadOnlyList<PeaceTreaty> Incoming);
+
+public delegate ValueTask<PeaceTreatySnapshot?> ReadPeaceTreatiesCallback(long ownerId, CancellationToken cancellationToken);
+
+[Service("peaceTreatyMgr")]
+public sealed partial class PeaceTreatyMgrService(ReadPeaceTreatiesCallback? readTreaties = null)
+{
+    private const string RowsetName = "carbon.common.script.sys.crowset.CRowset";
+    private static readonly string[] Columns = ["otherOwnerID", "expiryDate", "peaceReason", "warID", "reasonEnded", "warHQ"];
+    private static readonly int[] Types = [0x03, 0x40, 0x11, 0x03, 0x11, 0x14];
+    private static readonly Descriptor RowDescriptor = Descriptor.FromHeader(new PyObjectEx(
+        ObjectExKind.Ex1,
+        Py.Tuple(new PyToken("blue.DBRowDescriptor"),
+            Py.Tuple(Py.Tuple([.. Columns.Select((name, index) => (PyValue)Py.Tuple(new PyStr(name), new PyInt(Types[index])))]))),
+        [], []));
+
+    [Method("GetPeaceTreatiesForSession")]
+    public async ValueTask<PyValue> GetPeaceTreatiesForSession(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var ownerId = call.Session.GetInt("allianceID") ?? 0;
+        if (ownerId == 0)
+            ownerId = call.Session.GetInt("allianceid") ?? 0;
+        if (ownerId == 0)
+            ownerId = call.Session.GetInt("corporationID") ?? 0;
+        if (ownerId == 0)
+            ownerId = call.Session.GetInt("corpid") ?? 0;
+        var treaties = ownerId > 0 && readTreaties is { } read
+            ? await read(ownerId, call.Cancellation).ConfigureAwait(false)
+            : null;
+        return Py.Tuple(Rowset(treaties?.Outgoing ?? []), Rowset(treaties?.Incoming ?? []));
+    }
+
+    private static PyValue Rowset(IReadOnlyList<PeaceTreaty> treaties)
+    {
+        var header = Py.Tuple(
+            Py.Tuple(new PyToken(RowsetName)),
+            Py.Dict(("header", RowDescriptor.Header)));
+        var rows = treaties.Select(treaty => (PyValue)new PyPackedRow(RowDescriptor,
+        [
+            Id(treaty.OtherOwnerId),
+            treaty.ExpiryFiletime is { } expiry ? new PyLong(expiry) : PyNone.Instance,
+            new PyInt(treaty.PeaceReason),
+            Id(treaty.WarId),
+            new PyInt(treaty.ReasonEnded),
+            treaty.WarHqId is { } hq ? Id(hq) : PyNone.Instance,
+        ])).ToArray();
+        return new PyObjectEx(ObjectExKind.Ex2, header, rows, []);
+    }
+
+    private static PyValue Id(long value) => value is >= int.MinValue and <= int.MaxValue
+        ? new PyInt((int)value)
+        : new PyLong(value);
+}
+
+public enum PublicQaOperation { MoveMeTo, SlashCmd, CanGiveItemForMultifit }
+
+public sealed record PublicQaRequest(PublicQaOperation Operation, IReadOnlyList<PyValue> Arguments, PyValue KeywordArguments, PyValue CallId, ClientSession Session);
+
+public sealed record PublicQaToolsRpcCallbacks(
+    Func<ClientSession, bool>? IsStaff = null,
+    Func<PublicQaRequest, CancellationToken, ValueTask>? MoveMeToAsync = null,
+    Func<PublicQaRequest, CancellationToken, ValueTask<PyValue?>>? SlashCmdAsync = null,
+    Func<PublicQaRequest, CancellationToken, ValueTask<bool>>? CanGiveItemForMultifitAsync = null);
+
+[Service("publicQaToolsServer")]
+public sealed partial class PublicQaToolsServerService(PublicQaToolsRpcCallbacks? callbacks = null)
+{
+    private const long StaffRoleMask = GameMasterRoles.Staff;
+
+    public static bool HasStaffAccountRole(ClientSession session) =>
+        GameMasterRoles.Has(session, StaffRoleMask);
+
+    [Method("MoveMeTo")]
+    public async ValueTask<PyValue> MoveMeTo(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        if (!HasStaffAccountRole(call.Session) || callbacks?.IsStaff?.Invoke(call.Session) == false)
+            return PyNone.Instance;
+        if (callbacks?.MoveMeToAsync is { } move)
+            await move(Request(call, PublicQaOperation.MoveMeTo), call.Cancellation).ConfigureAwait(false);
+        return PyNone.Instance;
+    }
+
+    [Method("SlashCmd")]
+    public async ValueTask<PyValue> SlashCmd(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        if (!HasStaffAccountRole(call.Session) || callbacks?.IsStaff?.Invoke(call.Session) == false ||
+            callbacks?.SlashCmdAsync is not { } slash)
+            return PyNone.Instance;
+        return await slash(Request(call, PublicQaOperation.SlashCmd), call.Cancellation).ConfigureAwait(false) ?? PyNone.Instance;
+    }
+
+    [Method("CanGiveItemForMultifit")]
+    public async ValueTask<PyValue> CanGiveItemForMultifit(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var allowed = HasStaffAccountRole(call.Session) && callbacks?.IsStaff?.Invoke(call.Session) != false &&
+            callbacks?.CanGiveItemForMultifitAsync is { } check &&
+            await check(Request(call, PublicQaOperation.CanGiveItemForMultifit), call.Cancellation).ConfigureAwait(false);
+        return PyValue.Of(allowed);
+    }
+
+    private static PublicQaRequest Request(ServiceCall call, PublicQaOperation operation) =>
+        new(operation, call.Args, call.Kwargs, call.CallId, call.Session);
+}
+
+public delegate ValueTask<IReadOnlyDictionary<long, PyValue>> ReadCommunityFittingsCallback(
+    ClientSession session,
+    CancellationToken cancellationToken);
+
+public sealed record CustomAgencyContentRequest(ClientSession Session, IReadOnlyList<PyValue> Arguments);
+
+public sealed record CustomAgencyProviderRpcCallbacks(
+    Func<CustomAgencyContentRequest, CancellationToken, ValueTask<IReadOnlyList<PyValue>>>? ReadContentAsync = null,
+    Func<long, ClientSession, CancellationToken, ValueTask>? WarpToContentAsync = null);
+
+[Service("custom_agency_provider")]
+public sealed partial class CustomAgencyProviderService(CustomAgencyProviderRpcCallbacks? callbacks = null)
+{
+    [Method("get_content_data")]
+    public async ValueTask<PyValue> GetContentData(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        if (call.Args.Count != 0 || call.Kwargs is not PyNone)
+            throw Eve.Services.MachoErrors.ThrowUserError("CUSTOM_AGENCY_ARGUMENTS_INVALID");
+        var items = callbacks?.ReadContentAsync is { } read
+            ? await read(new CustomAgencyContentRequest(call.Session, Array.Empty<PyValue>()), call.Cancellation).ConfigureAwait(false)
+            : [];
+        return new PyList([.. items]);
+    }
+
+    [Method("warp_to_content")]
+    public async ValueTask<PyValue> WarpToContent(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        if (call.Args.Count != 1 || call.Kwargs is not PyNone)
+            throw Eve.Services.MachoErrors.ThrowUserError("CUSTOM_AGENCY_ARGUMENTS_INVALID");
+        var contentId = PositiveIntegral(call.Arg(0));
+        if (contentId <= 0)
+            throw Eve.Services.MachoErrors.ThrowUserError("CUSTOM_AGENCY_CONTENT_ID_INVALID");
+        if (callbacks?.WarpToContentAsync is { } warp)
+            await warp(contentId, call.Session, call.Cancellation).ConfigureAwait(false);
+        return PyNone.Instance;
+    }
+
+    private static long PositiveIntegral(PyValue value) => value switch
+    {
+        PyInt number when number.Value > 0 => number.Value,
+        PyLong number when number.Value > 0 => number.Value,
+        _ => 0,
+    };
+}
+
+public delegate ValueTask<bool> ReadEpicArcStatusCallback(
+    long agentId,
+    long characterId,
+    CancellationToken cancellationToken);
+
+[Service("epicArcStatus")]
+public sealed partial class EpicArcStatusService(
+    ReadEpicArcStatusCallback? agentHasMissions = null)
+{
+    [Method("AgentHasEpicMissionsForCharacter")]
+    public async ValueTask<PyValue> AgentHasEpicMissionsForCharacter(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        if (call.Args.Count != 1 || call.Kwargs is not PyNone)
+            throw MachoErrors.ThrowUserError("EPIC_ARC_STATUS_ARGUMENTS_INVALID");
+        var agentId = Positive(call.Arg(0));
+        if (agentId <= 0)
+            throw MachoErrors.ThrowUserError("EPIC_ARC_STATUS_AGENT_INVALID");
+        var characterId = call.Session.CharacterId ?? 0;
+        var hasMissions = characterId > 0 && agentHasMissions is { } read &&
+            await read(agentId, characterId, call.Cancellation).ConfigureAwait(false);
+        return PyValue.Of(hasMissions);
+    }
+
+    private static long Positive(PyValue value) => value switch
+    {
+        PyInt number => Math.Max(0, number.Value),
+        PyLong number => Math.Max(0, number.Value),
+        _ => 0,
+    };
+}
+
+public sealed record SuperWeaponPointRequest(long ModuleId, long EffectId, PyValue Destination, ClientSession Session);
+public sealed record SuperWeaponSlashRequest(long ModuleId, PyValue StartPoint, PyValue EndPoint, ClientSession Session);
+
+public sealed record SuperWeaponRpcCallbacks(
+    Func<SuperWeaponPointRequest, CancellationToken, ValueTask<bool>>? ActivatePointTargetedAsync = null,
+    Func<SuperWeaponSlashRequest, CancellationToken, ValueTask<bool>>? ActivateSlashAsync = null);
+
+[Service("superWeaponMgr")]
+public sealed partial class SuperWeaponMgrService(SuperWeaponRpcCallbacks? callbacks = null)
+{
+    /// <summary>
+    /// The user error of a superweapon call this server does not serve. It is an error, not <c>PyNone</c>: the client reads <c>PyNone</c> as an activation
+    /// that went through (AGENTS rule 4), so an unwired route must say so.
+    /// </summary>
+    public static MachoWrappedException NotWired() =>
+        MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Superweapon activation is not wired on this server.")));
+
+    /// <summary>A callback that answers no: the activation did not go through, and the client is told so (never a silent <c>PyNone</c>).</summary>
+    private static MachoWrappedException Refused() =>
+        MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("The superweapon cannot be activated.")));
+
+    [Method("ActivateSinglePointTargetedModule")]
+    public async ValueTask<PyValue> ActivateSinglePointTargetedModule(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var moduleId = Positive(call.Arg(0));
+        var effectId = Positive(call.Arg(1));
+        var activate = callbacks?.ActivatePointTargetedAsync ?? throw NotWired();
+        if (moduleId <= 0)
+            throw MachoErrors.ThrowUserError("DeniedShipChanged");
+        return await activate(new SuperWeaponPointRequest(moduleId, effectId, call.Arg(2), call.Session), call.Cancellation).ConfigureAwait(false)
+            ? new PyInt(1)
+            : throw Refused();
+    }
+
+    [Method("ActivateSlashModule")]
+    public async ValueTask<PyValue> ActivateSlashModule(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        var moduleId = Positive(call.Arg(0));
+        var activate = callbacks?.ActivateSlashAsync ?? throw NotWired();
+        if (moduleId <= 0)
+            throw MachoErrors.ThrowUserError("DeniedShipChanged");
+        return await activate(new SuperWeaponSlashRequest(moduleId, call.Arg(1), call.Arg(2), call.Session), call.Cancellation).ConfigureAwait(false)
+            ? new PyInt(1)
+            : throw Refused();
+    }
+
+    private static long Positive(PyValue value) => value switch
+    {
+        PyInt number => Math.Max(0, number.Value),
+        PyLong number => Math.Max(0, number.Value),
+        _ => 0,
+    };
+}
+
+public enum TourneyQuery { GetTourneySetup, QueryShipList, GetPotentialMatches, GetAllCurrentSeriesMatchDetails, QueryTournamentDetails }
+
+public sealed record TourneyQueryRequest(TourneyQuery Query, long? TournamentId, ClientSession Session);
+
+public delegate ValueTask<PyValue?> TourneyQueryCallback(TourneyQueryRequest request, CancellationToken cancellationToken);
+
+public sealed record TourneyCreateMatchRequest(long TournamentId, long SeriesId, int MaximumPoints, int MatchLength,
+    int OvertimeLength, long? ExternalRulesetId, long SystemId, string BoundObjectId, ClientSession Session, Guid LeaseGeneration = default);
+public sealed record TourneyCreateMatchResult(long MatchId, IReadOnlyList<long> BeaconIds, long? RedCaptainId, long? BlueCaptainId);
+public enum TourneyMatchAction { BanShipType, UnBanShipType, StartAutobanning, FinalizeBans, CompletePregameChecks, StartCountdown, AbortCountdown, MatchCompleted, ResetMatch, TeleportPlayers, ReturnTeamPlayers, ReturnAllPlayers, TeleportRefHome, CleanupGrid, OverrideMoveRestrict, OverrideWarpRestrict, OverrideLockRestrict, UpdateFleetDetails, LockMemberList, UnlockMemberList, AddPlayer, RemovePlayer, OverrideError }
+public sealed record TourneyMatchActionRequest(TourneyMatchAction Operation, long MatchId, IReadOnlyList<PyValue> Arguments,
+    PyValue KeywordArguments, long SystemId, string BoundObjectId, ClientSession Session);
+public sealed record TourneyFleetNominationRequest(long MatchId, int Team, long CandidateId, long SystemId, string BoundObjectId, ClientSession Session, long CallId);
+public enum TourneyRefTravelOperation { TeleportToArena, TeleportToStation }
+public sealed record TourneyRefTravelRequest(TourneyRefTravelOperation Operation, long SystemId, string BoundObjectId, ClientSession Session);
+public sealed record TourneyMatchCallbacks(
+    Func<TourneyCreateMatchRequest, CancellationToken, ValueTask<TourneyCreateMatchResult>> CreateAsync,
+    Func<string, CancellationToken, ValueTask> ReleaseAsync,
+    Func<TourneyMatchActionRequest, CancellationToken, ValueTask<PyValue>>? ActionAsync = null,
+    Func<TourneyFleetNominationRequest, CancellationToken, ValueTask>? NominateFleetAsync = null,
+    Func<ClientSession, CancellationToken, ValueTask>? AcceptFleetAsync = null,
+    Func<TourneyBanSubmitRequest, CancellationToken, ValueTask<PyValue>>? SubmitBanAsync = null,
+    Func<TourneyMatchActionRequest, CancellationToken, ValueTask<PyValue>>? SpaceActionAsync = null,
+    Func<TourneyRefTravelRequest, CancellationToken, ValueTask<PyValue>>? RefTravelAsync = null,
+    Func<TourneyMatchActionRequest, CancellationToken, ValueTask<PyValue>>? RefHomeAsync = null,
+    Func<long, ClientSession, CancellationToken, ValueTask<PyValue>>? ActiveCameraAsync = null,
+    Func<TourneyMatchActionRequest, CancellationToken, ValueTask<PyValue>>? RosterActionAsync = null,
+    Func<string, Guid, CancellationToken, ValueTask>? ReleaseStampedAsync = null,
+    Func<long, long, ClientSession, bool, CancellationToken, ValueTask<PyValue>>? CameraDetailsAsync = null,
+    Func<long, string, ClientSession, CancellationToken, ValueTask<PyValue>>? OtherMatchAsync = null,
+    Func<string, Guid, long, CancellationToken, ValueTask>? RemoveRefereeAsync = null);
+
+[Service("tourneyMgr")]
+public sealed partial class TourneyMgrService(TourneyQueryCallback? query = null, Func<long>? nowUnixMs = null,
+    TourneyMatchCallbacks? matches = null) : IBoundObjectReleaseHandler, IAsyncBoundObjectReleaseHandler, ICapturedBoundObjectReleaseHandler
+{
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (ClientSession Session, long SystemId, Guid Generation)> _bound = new(StringComparer.Ordinal);
+
+    public void OnBoundObjectReleased(string oid, ClientSession? session)
+    {
+        if (_bound.TryGetValue(oid, out var binding) && (session is null || ReferenceEquals(binding.Session, session)))
+            _bound.TryRemove(oid, out _);
+    }
+
+    public ValueTask OnBoundObjectReleasedAsync(string oid, ClientSession? session, CancellationToken cancellationToken) =>
+        matches is { } callback ? callback.ReleaseAsync(oid, cancellationToken) : ValueTask.CompletedTask;
+
+    public Func<CancellationToken, ValueTask>? CaptureBoundObjectRelease(string oid, ClientSession? session)
+    {
+        if (!_bound.TryGetValue(oid, out var binding) || (session is not null && !ReferenceEquals(binding.Session, session))) return null;
+        var generation = binding.Generation;
+        return token => matches?.ReleaseStampedAsync is { } release ? release(oid, generation, token)
+            : matches is { } callback ? callback.ReleaseAsync(oid, token) : ValueTask.CompletedTask;
+    }
+
+    [Method("MachoResolveObject")]
+    public PyValue MachoResolveObject(ServiceCall call) => new PyInt(MachoMessage.ProxyNodeId);
+
+    [Method("MachoBindObject")]
+    public async ValueTask<PyValue> MachoBindObject(ServiceCall call)
+    {
+        var parameter = call.Arg(0) switch
+        {
+            PyTuple { Items.Count: > 0 } tuple => tuple.Items[0],
+            PyList { Items.Count: > 0 } list => list.Items[0],
+            var value => value,
+        };
+        var system = Positive(parameter) ?? throw MachoErrors.ThrowUserError("UnMachoDestination");
+        var oid = $"N={MachoMessage.ProxyNodeId}:{BoundObjectIds.Next()}";
+        _bound[oid] = (call.Session, system, Guid.NewGuid());
+        call.Session.Closed += () => _bound.TryRemove(oid, out _);
+        var bound = new PySubStruct(new PySubStream(Py.Tuple(new PyStr(oid),
+            new PyLong(Py.FileTimeFromUnixMs((nowUnixMs ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()))())))));
+        try
+        {
+            if (call.Arg(1) is not PyTuple { Items.Count: > 0 } nested ||
+                JsSemantics.StringValue(nested.Items[0]) is not { } method)
+                return Py.Tuple(bound, PyNone.Instance);
+            var args = nested.Items.Count > 1 ? nested.Items[1] switch
+            {
+                PyTuple tuple => tuple.Items,
+                PyList list => list.Items,
+                var value => (IReadOnlyList<PyValue>)[value],
+            } : [];
+            var result = await ((IService)this).CallAsync(new ServiceCall
+            {
+                Method = method, Args = args,
+                Kwargs = nested.Items.Count > 2 ? nested.Items[2] : PyNone.Instance,
+                Session = call.Session, CallId = call.CallId, BoundObjectId = oid,
+                BoundObjectParameters = call.Arg(0), Cancellation = call.Cancellation,
+            }).ConfigureAwait(false);
+            return Py.Tuple(bound, result);
+        }
+        catch
+        {
+            _bound.TryRemove(oid, out _);
+            throw;
+        }
+    }
+
+    [Method("CreateMatch")]
+    public async ValueTask<PyValue> CreateMatch(ServiceCall call)
+    {
+        if (call.BoundObjectId is not { } oid || !_bound.TryGetValue(oid, out var binding) ||
+            !ReferenceEquals(binding.Session, call.Session) || !GameMasterRoles.Has(call.Session, GameMasterRoles.Staff) ||
+            call.Session.CharacterId is not > 0 || call.Session.DockedLocationId is not null ||
+            call.Session.GetInt("solarsystemid") != binding.SystemId)
+            throw MachoErrors.ThrowUserError("UnMachoDestination");
+        static long? Integer(PyValue value) => value switch { PyInt n => n.Value, PyLong n => n.Value, _ => null };
+        var tournament = Integer(call.Arg(0)); var series = Integer(call.Arg(1)); var points = Integer(call.Arg(2));
+        var length = Integer(call.Arg(3)); var overtime = Integer(call.Arg(4));
+        if (call.Args.Count != 6 || tournament is not > 0 || series is not >= 0 || points is not > 0 or > int.MaxValue ||
+            length is not > 0 or > int.MaxValue || overtime is not >= 0 or > int.MaxValue)
+            throw new ArgumentException("Invalid tournament match arguments.");
+        long? ruleset = call.Arg(5) is PyNone ? null : Positive(call.Arg(5)) ?? throw new ArgumentException("Invalid tournament ruleset.");
+        if (matches is not { } callback) throw new InvalidOperationException("Tournament matches are not wired.");
+        var result = await callback.CreateAsync(new TourneyCreateMatchRequest(tournament.Value, series.Value, (int)points.Value, (int)length.Value,
+            (int)overtime.Value, ruleset, binding.SystemId, oid, call.Session, binding.Generation), call.Cancellation).ConfigureAwait(false);
+        if (result.MatchId <= 0 || result.BeaconIds.Count == 0 || result.BeaconIds.Any(id => id <= 0))
+            throw new InvalidOperationException("Tournament match returned invalid authoritative state.");
+        static PyValue Wire(long id) => id is >= int.MinValue and <= int.MaxValue ? new PyInt(id) : new PyLong(id);
+        return Py.Tuple(Wire(result.MatchId), new PyList([.. result.BeaconIds.Select(Wire)]),
+            Py.Tuple(result.RedCaptainId is { } red ? Wire(red) : PyNone.Instance,
+                result.BlueCaptainId is { } blue ? Wire(blue) : PyNone.Instance));
+    }
+
+    [Method("GetMatchSystem")]
+    public PyValue GetMatchSystem(ServiceCall call)
+    {
+        if (call.BoundObjectId is not { } oid || !_bound.TryGetValue(oid, out var binding) ||
+            !ReferenceEquals(binding.Session, call.Session))
+            throw MachoErrors.ThrowUserError("UnMachoDestination");
+        return Py.Number(binding.SystemId);
+    }
+
+    [Method("GetTourneySetup")]
+    public ValueTask<PyValue> GetTourneySetup(ServiceCall call) =>
+        QueryAsync(call, TourneyQuery.GetTourneySetup, null, Py.Tuple(new PyDict([]), new PyDict([]), new PyList([])));
+
+    [Method("QueryShipList")]
+    public ValueTask<PyValue> QueryShipList(ServiceCall call) =>
+        QueryAsync(call, TourneyQuery.QueryShipList, Positive(call.Arg(0)),
+            Py.Dict(("allowedShipList", new PyList([]))));
+
+    [Method("GetPotentialMatches")]
+    public ValueTask<PyValue> GetPotentialMatches(ServiceCall call) =>
+        QueryAsync(call, TourneyQuery.GetPotentialMatches, Positive(call.Arg(0)), new PyDict([]));
+
+    [Method("GetAllCurrentSeriesMatchDetails")]
+    public ValueTask<PyValue> GetAllCurrentSeriesMatchDetails(ServiceCall call) =>
+        QueryAsync(call, TourneyQuery.GetAllCurrentSeriesMatchDetails, Positive(call.Arg(0)), new PyDict([]));
+
+    [Method("QueryTournamentDetails")]
+    public ValueTask<PyValue> QueryTournamentDetails(ServiceCall call) =>
+        QueryAsync(call, TourneyQuery.QueryTournamentDetails, Positive(call.Arg(0)), Py.Dict(
+            ("allowedShipList", new PyList([])),
+            ("maximumPointsMatch", new PyInt(0)),
+            ("matchLength", new PyInt(600)),
+            ("overtimeLength", new PyInt(300)),
+            ("externalRulesetID", PyNone.Instance)));
+
+    private ValueTask<PyValue> QueryAsync(ServiceCall call, TourneyQuery queryType, long? tournamentId, PyValue fallback)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        return query is { } callback
+            ? CompleteAsync(callback, new TourneyQueryRequest(queryType, tournamentId, call.Session), call.Cancellation, fallback)
+            : ValueTask.FromResult(fallback);
+    }
+
+    private static async ValueTask<PyValue> CompleteAsync(
+        TourneyQueryCallback callback,
+        TourneyQueryRequest request,
+        CancellationToken cancellationToken,
+        PyValue fallback) => await callback(request, cancellationToken).ConfigureAwait(false) ?? fallback;
+
+    private static long? Positive(PyValue value) => value switch
+    {
+        PyInt number when number.Value > 0 => number.Value,
+        PyLong number when number.Value > 0 => number.Value,
+        _ => null,
+    };
+}

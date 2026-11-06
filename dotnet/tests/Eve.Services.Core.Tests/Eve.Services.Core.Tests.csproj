@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Eve.Services.Core/Eve.Services.Core.csproj" />
+    <ProjectReference Include="../../src/Eve.Dungeons/Eve.Dungeons.csproj" />
+    <ProjectReference Include="../../src/Eve.Ships/Eve.Ships.csproj" />
+    <ProjectReference Include="../../src/Eve.ReadSide/Eve.ReadSide.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <None Include="../../../oracle/fixtures/services/wave1.json" Link="fixtures/services/wave1.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

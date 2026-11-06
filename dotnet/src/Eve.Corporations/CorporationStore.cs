@@ -496,7 +496,7 @@ public sealed partial class CorporationStore
     }
 
     /// <summary>
-    /// Accountants and junior accountants can read every wallet division; other members need the selected division's Account Take role.
+    /// Directors, accountants, and junior accountants can read every wallet division; other members need the selected division's Account Take role.
     /// An omitted division therefore requires one of the accountant roles. This check is read-only.
     /// </summary>
     public async Task<bool> CanReadWalletDivisionAsync(long characterId,int? accountKey,CancellationToken token = default)

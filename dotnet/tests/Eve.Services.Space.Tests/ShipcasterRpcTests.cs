@@ -108,9 +108,11 @@ public sealed class ShipcasterRpcTests
     {
         var session = new ClientSession { CharacterId = 42 };
         var service = new ShipcasterRpcService("starterShipcasterTravelMgr", Systems, canCharacterJump: call => call.Session.CharacterId == 42);
+        var falseService = new ShipcasterRpcService("starterShipcasterTravelMgr", Systems, canCharacterJump: _ => false);
         var defaultService = new ShipcasterRpcService("starterShipcasterTravelMgr", Systems);
 
         Assert.Equal(PyBool.True, await service.CallAsync(Call("CanCharacterJump", session: session)));
+        Assert.Equal(PyBool.False, await falseService.CallAsync(Call("CanCharacterJump", session: session)));
         await Assert.ThrowsAsync<MachoWrappedException>(async () =>
             await defaultService.CallAsync(Call("CanCharacterJump", session: session)));
     }

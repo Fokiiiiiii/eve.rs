@@ -68,6 +68,45 @@ public sealed class CharacterEntryInventoryBootstrapTests
     }
 }
 
+internal static class WarpArrivalAssertions
+{
+    public static void TellOwnShipStopped(Rig rig, ClientSession session)
+    {
+        var shipId = session.GetInt("shipid")!.Value;
+        var stop = Py.Tuple(new PyInt(1), Py.Tuple(new PyStr("Stop"), Py.Tuple(new PyLong(shipId))));
+        var args = MarshalCodec.Encode(Py.Tuple(new PyList([stop]), PyBool.False));
+        rig.Sim.Say(new SimNotify((ulong)session.SessionId, "DoDestinyUpdate", "clientID", args));
+    }
+
+    public static async Task AssertArrivalAllowsAnotherWarpAndDockAsync(
+        Rig rig,
+        ClientSession session,
+        string beyonceObjectId)
+    {
+        Assert.True(rig.Space.IsWarping(session), "the accepted warp is still tracked before its own Stop arrives");
+        TellOwnShipStopped(rig, session);
+        Assert.False(rig.Space.IsWarping(session), "the pilot's own Stop ends the warp");
+
+        var shipId = session.GetInt("shipid")!.Value;
+        var warp = await rig.BeyonceCallAsync(
+            session, "CmdWarpToStuff", beyonceObjectId, new PyStr("item"), new PyLong(Rig.Station));
+        Assert.Equal(PyNone.Instance, warp);
+        Assert.True(rig.Space.IsWarping(session), "the second warp is accepted after arrival");
+        var warpCommand = Assert.IsType<SimCommand>(rig.Sim.Heard.Last());
+        Assert.Equal(((ulong)session.SessionId, SimCommands.WarpTo), (warpCommand.SessionId, warpCommand.Code));
+        Assert.Equal([(double)Rig.Station, 0d], warpCommand.Args);
+        TellOwnShipStopped(rig, session);
+        Assert.False(rig.Space.IsWarping(session), "the second warp's own Stop ends the warp");
+
+        var dock = await rig.BeyonceCallAsync(
+            session, "CmdDock", beyonceObjectId, new PyLong(Rig.Station), new PyLong(shipId));
+        Assert.Equal(PyNone.Instance, dock);
+        var dockCommand = Assert.IsType<SimCommand>(rig.Sim.Heard.Last());
+        Assert.Equal(((ulong)session.SessionId, SimCommands.Dock), (dockCommand.SessionId, dockCommand.Code));
+        Assert.Equal([(double)Rig.Station], dockCommand.Args);
+    }
+}
+
 public class SpaceServiceTests
 {
     private static long Id(PyValue value) => Events.Number(value);
@@ -1531,6 +1570,35 @@ public class SpaceServiceTests
         Assert.True(rig.Space.IsWarping(session));
         Stop(shipId);
         Assert.False(rig.Space.IsWarping(session));
+
+        var oid = await rig.BindBeyonceAsync(session);
+        Assert.Equal(PyNone.Instance,
+            await rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr("item"), new PyLong(Gate)));
+        await WarpArrivalAssertions.AssertArrivalAllowsAnotherWarpAndDockAsync(rig, session, oid);
+    }
+
+    [PgFact]
+    public async Task Stop_and_align_requests_in_warp_leave_arrival_stop_to_clear_the_state_before_the_next_order()
+    {
+        var (rig, _, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        var oid = await rig.BindBeyonceAsync(session);
+        var shipId = session.GetInt("shipid")!.Value;
+        await rig.Space.WarpAsync(session, 40491233, 0, CancellationToken.None);
+        Assert.True(rig.Space.IsWarping(session));
+        var before = rig.Sim.Heard.Count;
+
+        Assert.Equal(PyNone.Instance, await rig.BeyonceCallAsync(session, "CmdStop", oid));
+        Assert.Equal(PyNone.Instance, await rig.BeyonceCallAsync(session, "CmdAlignTo", oid, new PyLong(40491233)));
+        Assert.Equal(
+            [SimCommands.Stop, SimCommands.AlignTo],
+            rig.Sim.Heard.Skip(before).OfType<SimCommand>().Select(command => command.Code));
+        rig.Sim.Say(new SimRefused((ulong)session.SessionId, SimCommands.Stop, "IN_WARP"));
+        rig.Sim.Say(new SimRefused((ulong)session.SessionId, SimCommands.AlignTo, "IN_WARP"));
+        Assert.True(rig.Space.IsWarping(session), "a refused Stop or AlignTo does not stand in for arrival");
+
+        await WarpArrivalAssertions.AssertArrivalAllowsAnotherWarpAndDockAsync(rig, session, oid);
     }
 
     [PgFact]
@@ -2404,6 +2472,8 @@ public class SpaceServiceTests
             Describe(new SimCommand((ulong)session.SessionId, SimCommands.WarpTo, [40491233, 10_000])),
             Describe(rig.Sim.Heard.Last()));
 
+        await WarpArrivalAssertions.AssertArrivalAllowsAnotherWarpAndDockAsync(rig, session, oid);
+
         rig.Sim.WarpAnswer = new CommandReply(false, 0, "WARP_SCRAMBLED");
         var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
             rig.BeyonceCallAsync(session, "CmdWarpToStuffAutopilot", oid, new PyLong(40491233)));
@@ -2458,6 +2528,7 @@ public class SpaceServiceTests
         var told = Events.Of(session).Where(e => e.Name == "OnInvulnCancelled").ToArray();
         Assert.Single(told);
         Assert.Equal(("OnInvulnCancelled", "shipid"), (told[0].Name, told[0].IdType));
+        await WarpArrivalAssertions.AssertArrivalAllowsAnotherWarpAndDockAsync(rig, session, oid);
     }
 
     [PgFact]
@@ -2560,6 +2631,7 @@ public class SpaceServiceTests
         Assert.Equal(
             Describe(new SimCommand((ulong)session.SessionId, SimCommands.WarpToPoint, [101, 202, 303, 35_000])),
             Describe(rig.Sim.Heard.Last()));
+        await WarpArrivalAssertions.AssertArrivalAllowsAnotherWarpAndDockAsync(rig, session, oid);
         Assert.Single(Events.Of(session), e => e.Name == "OnInvulnCancelled");
     }
 
@@ -2720,6 +2792,7 @@ public class SpaceServiceTests
             var solo = Assert.Single(WarpCommandsSince(soloStart));
             Assert.Equal((ulong)leaderSession.SessionId, solo.SessionId);
             Assert.Equal((double)member.ShipId, solo.Args[0]);
+            await WarpArrivalAssertions.AssertArrivalAllowsAnotherWarpAndDockAsync(rig, leaderSession, leaderBound);
 
             var fleetStart = rig.Sim.Heard.Count;
             Assert.Equal(PyNone.Instance, await WarpCharacter(true));
@@ -2780,6 +2853,37 @@ public class SpaceServiceTests
         Assert.Equal(
             [Describe(new SimCommand((ulong)session.SessionId, SimCommands.WarpToPoint, [x, y, z, range]))],
             rig.Sim.Heard.Skip(before).Select(Describe));
+        await WarpArrivalAssertions.AssertArrivalAllowsAnotherWarpAndDockAsync(rig, session, oid);
+    }
+
+    [PgFact]
+    public async Task A_bookmark_to_an_item_uses_the_entity_warp_path_and_reaches_arrival()
+    {
+        var (rig, _, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        var oid = await rig.BindBeyonceAsync(session);
+        var before = rig.Sim.Heard.Count;
+        const long bookmarkId = 50_123_457;
+        const long range = 20_000;
+        var systemId = (int)session.GetInt("solarsystemid")!.Value;
+        rig.Beyonce.BookmarkTargetForCharacter = (_, requestedId, _) =>
+            Task.FromResult<BookmarkWarpTarget?>(requestedId == bookmarkId
+                ? new BookmarkWarpTarget(systemId, Gate, null, null, null)
+                : null);
+
+        var answer = await rig.BeyonceCallWithAsync(
+            session,
+            "CmdWarpToStuff",
+            oid,
+            [new PyStr("bookmark"), new PyLong(bookmarkId)],
+            ("minRange", new PyLong(range)));
+
+        Assert.Equal(PyNone.Instance, answer);
+        Assert.Equal(
+            [Describe(new SimCommand((ulong)session.SessionId, SimCommands.WarpTo, [Gate, range]))],
+            rig.Sim.Heard.Skip(before).Select(Describe));
+        await WarpArrivalAssertions.AssertArrivalAllowsAnotherWarpAndDockAsync(rig, session, oid);
     }
 
     [PgFact]
@@ -2812,6 +2916,40 @@ public class SpaceServiceTests
         Assert.Equal(
             [Describe(new SimCommand((ulong)session.SessionId, SimCommands.WarpToPoint, [x, y, z, range]))],
             rig.Sim.Heard.Skip(before).Select(Describe));
+        await WarpArrivalAssertions.AssertArrivalAllowsAnotherWarpAndDockAsync(rig, session, oid);
+    }
+
+    [PgFact]
+    public async Task A_coordinates_subject_uses_the_client_subject_name_and_reaches_arrival()
+    {
+        var (rig, _, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        var oid = await rig.BindBeyonceAsync(session);
+        var before = rig.Sim.Heard.Count;
+
+        const double x = 21_500_000;
+        const double y = -3_250_000;
+        const double z = 800_000;
+        const double range = 5_000;
+        var target = new PyDict([
+            new(new PyStr("x"), new PyReal(x)),
+            new(new PyStr("y"), new PyReal(y)),
+            new(new PyStr("z"), new PyReal(z)),
+        ]);
+
+        var answer = await rig.BeyonceCallWithAsync(
+            session,
+            "CmdWarpToStuff",
+            oid,
+            [new PyStr("coords"), target],
+            ("minRange", new PyReal(range)));
+
+        Assert.Equal(PyNone.Instance, answer);
+        Assert.Equal(
+            [Describe(new SimCommand((ulong)session.SessionId, SimCommands.WarpToPoint, [x, y, z, range]))],
+            rig.Sim.Heard.Skip(before).Select(Describe));
+        await WarpArrivalAssertions.AssertArrivalAllowsAnotherWarpAndDockAsync(rig, session, oid);
     }
 
     [PgFact]
@@ -4144,6 +4282,9 @@ public class SpaceServiceTests
             Assert.NotEqual(new double[] { 1_000_000, 0, 0 }, memberWarp.Args.Take(3));
             Assert.Contains(acceptedCommands, command => command.Code == SimCommands.ResolveWarpTarget);
             Assert.Contains(acceptedCommands, command => command.Code == SimCommands.PositionOf);
+            await WarpArrivalAssertions.AssertArrivalAllowsAnotherWarpAndDockAsync(rig, wingCommanderSession, oid);
+            var memberOid = await rig.BindBeyonceAsync(inScopeSession);
+            await WarpArrivalAssertions.AssertArrivalAllowsAnotherWarpAndDockAsync(rig, inScopeSession, memberOid);
         }
         finally
         {

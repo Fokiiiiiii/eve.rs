@@ -403,16 +403,17 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
         if (space.IsInAbyssalRun(call.Session))
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(SpaceSessions.AbyssalWarpBlockedMessage)));
         var type = JsSemantics.PlainText(call.Arg(0));
-        if (type is not ("item" or "bookmark" or "char" or "position" or "scan" or "launch"))
+        if (type is not ("item" or "bookmark" or "char" or "position" or "coords" or "scan" or "launch"))
         {
             throw WarpRefusal();
         }
 
-        var coordinate = type == "position" ? Coordinates(call.Arg(1)) : null;
+        var coordinateSubject = type is "position" or "coords";
+        var coordinate = coordinateSubject ? Coordinates(call.Arg(1)) : null;
 
         var scanCode = type == "scan" ? JsSemantics.StringValue(call.Arg(1)) : null;
-        var requestedTarget = type == "position" || scanCode is not null ? null : Number(call.Arg(1));
-        if (type == "position")
+        var requestedTarget = coordinateSubject || scanCode is not null ? null : Number(call.Arg(1));
+        if (coordinateSubject)
         {
             if (coordinate is not { } parsedPoint
                 || !double.IsFinite(parsedPoint.X)
@@ -475,7 +476,7 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
         }
 
         var callerSystem = space.SolarSystemOf(call.Session);
-        if (type == "position")
+        if (coordinateSubject)
         {
             if (callerSystem is not { } systemId || coordinate is not { } position)
             {

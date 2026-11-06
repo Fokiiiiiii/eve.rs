@@ -30,7 +30,7 @@ public partial class HostServerTests
         const long corporationEnlistedCharacterId = 90_000_002;
         const long factionId = 500_001;
         const long corporationFactionId = 500_002;
-        var service = new FacWarMgrService(new FwService(null!, null!), new FacWarMgrCallbacks(
+        var service = new FacWarMgrService(new FwService(null!, null!, null!), new FacWarMgrCallbacks(
             ReadCharacterAsync: (id, _) => ValueTask.FromResult<FwCharacterWarfareState?>(
                 id == characterId ? new FwCharacterWarfareState(factionId, 0)
                     : id == corporationEnlistedCharacterId ? new FwCharacterWarfareState(null, 0)
@@ -101,7 +101,7 @@ public partial class HostServerTests
         var saveSucceeds = false;
         var leaveCalls = 0;
         ClientSession? session = null;
-        var service = new FacWarMgrService(new FwService(null!, null!), new FacWarMgrCallbacks(
+        var service = new FacWarMgrService(new FwService(null!, null!, null!), new FacWarMgrCallbacks(
             ReadCharacterAsync: (_, _) => ValueTask.FromResult<FwCharacterWarfareState?>(state),
             SaveCharacterAsync: (_, enlistedFactionId, cooldown, _) =>
             {

@@ -5,7 +5,10 @@ using Eve.Marshal;
 namespace Eve.Services.Corporations;
 
 /// <summary>Refresh live role masks from durable membership after login or a committed corporation mutation.</summary>
-public sealed class CorporationLoginHook(CorporationStore store,PgCharacterStore characters) : ICharacterEntryHook
+public sealed class CorporationLoginHook(
+    CorporationStore store,
+    PgCharacterStore characters,
+    Func<long, CancellationToken, ValueTask<long?>>? readWarFaction = null) : ICharacterEntryHook
 {
     public async ValueTask OnCharacterEnteredAsync(ClientSession session,long characterId,CancellationToken cancellationToken) =>
         session.Change((await GetSessionAttributesAsync(session,characterId,cancellationToken)).ToArray());
@@ -18,9 +21,12 @@ public sealed class CorporationLoginHook(CorporationStore store,PgCharacterStore
         var roles = corp is not null && !corp.IsNpc && member is not null
             ? CorporationRoles.Session(corp,member,character.StationId,await store.TitlesAsync(corp.Id,cancellationToken))
             : new SessionRoles(0,0,0,0,0,null,null,1000);
+        var warFactionId = readWarFaction is null
+            ? character.DirectFactionId ?? (corp is { IsNpc: false } ? CorporationWire.FactionId(corp) : null)
+            : await readWarFaction(characterId, cancellationToken);
         return [("corpid",new PyInt(character.CorporationId)),("allianceid",CorporationWire.Id(character.AllianceId)),
             ("factionid",CorporationWire.Id(character.FactionId)),
-            ("warfactionid",CorporationWire.Id(character.DirectFactionId ?? (corp is { IsNpc: false } ? CorporationWire.FactionId(corp) : null))),
+            ("warfactionid",CorporationWire.Id(warFactionId)),
             ("hqID",CorporationWire.Id(roles.HqId)),
             ("baseID",CorporationWire.Id(roles.BaseId)),("corpAccountKey",new PyInt(roles.AccountKey)),
             ("corprole",new PyLong(roles.CorpRole)),("rolesAtAll",new PyLong(roles.AtAll)),("rolesAtHQ",new PyLong(roles.AtHq)),

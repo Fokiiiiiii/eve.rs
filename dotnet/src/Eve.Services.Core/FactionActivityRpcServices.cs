@@ -112,9 +112,12 @@ public sealed class FwCharacterEnlistmentMgrService(FwCharacterEnlistmentRpcCall
                 var state = await ReadCharacterStateAsync(CharacterId(call.Session).GetValueOrDefault(), call.Cancellation);
                 var directFactionId = Positive(state?.DirectFactionId ?? 0);
                 var corporationFactionId = Positive(await ReadCorporationFactionIdAsync(CorporationId(call.Session), call.Cancellation) ?? 0);
+                var effectiveFactionId = directFactionId ?? corporationFactionId;
+                if (call.Session.GetInt("warfactionid") != effectiveFactionId)
+                    call.Session.Change(("warfactionid", Number(effectiveFactionId)));
                 return new PyList(
                 [
-                    Number(directFactionId ?? corporationFactionId),
+                    Number(effectiveFactionId),
                     Number(directFactionId),
                     Number(corporationFactionId),
                 ]);

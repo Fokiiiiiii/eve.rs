@@ -696,6 +696,36 @@ public class RuntimeTests : IAsyncLifetime
     }
 
     [PgFact]
+    public async Task Opposing_direct_militia_members_in_the_same_corporation_are_legal_targets()
+    {
+        Pilot(1, System);
+        Pilot(2, System);
+        Pilot(3, System);
+        Pilot(4, System);
+
+        await using var relations = await RelationsRig.Create(_source!, () => _now);
+        const long corporation = 98_000_201;
+        foreach (var characterId in new long[] { 1, 2, 3, 4 })
+            await relations.Set(Eve.Relations.RelationKinds.CorporationMember.Name, characterId, corporation);
+        await relations.Set(Eve.Relations.RelationKinds.FactionMember.Name, 1, Eve.FactionWarfare.FwFactions.AmarrEmpire);
+        await relations.Set(Eve.Relations.RelationKinds.FactionMember.Name, 2, Eve.FactionWarfare.FwFactions.MinmatarRepublic);
+        await relations.Set(Eve.Relations.RelationKinds.FactionMember.Name, 3, Eve.FactionWarfare.FwFactions.CaldariState);
+
+        var wars = new RelationWars(relations.Relations);
+        Assert.True(await wars.AreAtWarAsync(1, 2, _now));
+        Assert.False(await wars.AreAtWarAsync(1, 3, _now));
+        Assert.False(await wars.AreAtWarAsync(1, 4, _now));
+        Assert.False(await wars.AreAtWarAsync(4, 2, _now));
+
+        using var runtime = Runtime();
+        runtime.Legal = wars.AreAtWarAsync;
+        Assert.Equal(AggressionReason.Legal,
+            (await runtime.RecordAggressionAsync(Attack(1, 2, SecurityClass.HighSec, System, false))).Outcome.Reason);
+        Assert.Equal(AggressionReason.Criminal,
+            (await runtime.RecordAggressionAsync(Attack(1, 3, SecurityClass.HighSec, System, false))).Outcome.Reason);
+    }
+
+    [PgFact]
     public async Task A_war_check_with_one_thousand_unrelated_wars_has_bounded_latency()
     {
         await using var relations = await RelationsRig.Create(_source!, () => _now);

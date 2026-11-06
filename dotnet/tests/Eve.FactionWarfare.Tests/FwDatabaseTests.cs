@@ -1,4 +1,7 @@
 using Eve.Data;
+using Eve.Events;
+using Eve.Relations;
+using Eve.Scheduler;
 using Eve.Wallet;
 using Npgsql;
 
@@ -26,14 +29,23 @@ public sealed class FwRig : IAsyncDisposable
         Source = source;
         Store = new FwStore(source, "fw_" + id);
         Loyalty = new LoyaltyPointStore(source, "wal_" + id);
-        Service = new FwService(Store, Loyalty);
+        Scheduler = new DurableScheduler(source, () => Now, new SchedulerOptions { Concurrency = 1 }, "sch_" + id);
+        Bus = new EventBus(source, Scheduler, null, "evt_" + id);
+        Relations = new RelationStore(source, Scheduler, Bus, "rel_" + id);
+        Service = new FwService(Store, Loyalty, Relations);
     }
 
     public NpgsqlDataSource Source { get; }
     public FwStore Store { get; }
     public LoyaltyPointStore Loyalty { get; }
+    public DurableScheduler Scheduler { get; }
+    public EventBus Bus { get; }
+    public RelationStore Relations { get; }
+    public string RelationSchema => RelationsSchema;
     public FwService Service { get; }
     public long Now { get; set; } = Epoch;
+
+    private string RelationsSchema => Store.Schema.Replace("fw_", "rel_", StringComparison.Ordinal);
 
     public static async Task<FwRig> CreateAsync()
     {
@@ -41,6 +53,9 @@ public sealed class FwRig : IAsyncDisposable
         var id = Guid.NewGuid().ToString("N")[..12];
         await FwStore.MigrateAsync(source, "fw_" + id);
         await PgWalletStore.MigrateAsync(source, "wal_" + id);
+        await DurableScheduler.MigrateAsync(source, "sch_" + id);
+        await EventBus.MigrateAsync(source, "evt_" + id);
+        await RelationStore.MigrateAsync(source, "rel_" + id);
         return new FwRig(source, id);
     }
 
@@ -67,7 +82,15 @@ public sealed class FwRig : IAsyncDisposable
         await transaction.CommitAsync();
     }
 
-    public async ValueTask DisposeAsync() => await Source.DisposeAsync();
+    public async ValueTask DisposeAsync()
+    {
+        await using (var connection = await Source.OpenConnectionAsync())
+        {
+            foreach (var schema in new[] { Store.Schema, "wal_" + Store.Schema[3..], "sch_" + Store.Schema[3..], "evt_" + Store.Schema[3..], RelationsSchema })
+                await Sql.ExecuteAsync(connection, null, $"DROP SCHEMA {schema} CASCADE", CancellationToken.None);
+        }
+        await Source.DisposeAsync();
+    }
 }
 
 public sealed class FwDatabaseTests
@@ -86,10 +109,12 @@ public sealed class FwDatabaseTests
         var pending = await rig.Service.StatusAsync(FwStore.CorporationKind, Corporation, rig.Now);
         Assert.Equal(new FwStatus(FwService.JoiningStatus, Amarr, rig.Now), pending);
         Assert.Equal(0, await rig.Service.FactionOfAsync(FwStore.CorporationKind, Corporation, rig.Now));
+        Assert.Empty(await rig.Relations.FromAsync(RelationKinds.FactionMember.Name, Corporation));
         Assert.Empty(await rig.Service.CorporationsInFactionAsync(Amarr, rig.Now));
 
         var downtime = FwRules.NextDowntimeMs(rig.Now);
         Assert.Equal(Amarr, await rig.Service.FactionOfAsync(FwStore.CorporationKind, Corporation, downtime));
+        Assert.Equal([Amarr], (await rig.Relations.FromAsync(RelationKinds.FactionMember.Name, Corporation)).Select(row => row.Object));
         Assert.Equal(new FwStatus(FwService.ActiveStatus, Amarr, downtime), await rig.Service.StatusAsync(FwStore.CorporationKind, Corporation, downtime));
         Assert.Equal(new long[] { Corporation }, await rig.Service.CorporationsInFactionAsync(Amarr, downtime));
     }
@@ -100,8 +125,11 @@ public sealed class FwDatabaseTests
         await using var rig = await FwRig.CreateAsync();
         await rig.Service.JoinAsync(FwStore.CorporationKind, Corporation, Amarr, 0.5, rig.Now);
         var afterJoin = FwRules.NextDowntimeMs(rig.Now);
+        Assert.Equal(Amarr, await rig.Service.FactionOfAsync(FwStore.CorporationKind, Corporation, afterJoin));
+        Assert.Equal([Amarr], (await rig.Relations.FromAsync(RelationKinds.FactionMember.Name, Corporation)).Select(row => row.Object));
         Assert.Equal(EnlistOutcome.Accepted, await rig.Service.LeaveAsync(FwStore.CorporationKind, Corporation, afterJoin));
         Assert.Equal(Amarr, await rig.Service.FactionOfAsync(FwStore.CorporationKind, Corporation, afterJoin));
+        Assert.Equal([Amarr], (await rig.Relations.FromAsync(RelationKinds.FactionMember.Name, Corporation)).Select(row => row.Object));
         Assert.Equal(FwService.LeavingStatus, (await rig.Service.StatusAsync(FwStore.CorporationKind, Corporation, afterJoin))!.Status);
 
         Assert.Equal(EnlistOutcome.NothingToWithdraw, await rig.Service.WithdrawJoinAsync(FwStore.CorporationKind, Corporation, afterJoin));
@@ -111,6 +139,7 @@ public sealed class FwDatabaseTests
         Assert.Equal(EnlistOutcome.Accepted, await rig.Service.LeaveAsync(FwStore.CorporationKind, Corporation, afterJoin));
         var afterLeave = FwRules.NextDowntimeMs(afterJoin);
         Assert.Equal(0, await rig.Service.FactionOfAsync(FwStore.CorporationKind, Corporation, afterLeave));
+        Assert.Empty(await rig.Relations.FromAsync(RelationKinds.FactionMember.Name, Corporation));
         Assert.Null(await rig.Service.StatusAsync(FwStore.CorporationKind, Corporation, afterLeave));
     }
 
@@ -134,7 +163,41 @@ public sealed class FwDatabaseTests
         await rig.Service.JoinAsync(FwStore.AllianceKind, Alliance, FwFactions.CaldariState, 0, rig.Now);
         var downtime = FwRules.NextDowntimeMs(rig.Now);
         Assert.Equal(FwFactions.CaldariState, await rig.Service.FactionOfAsync(FwStore.AllianceKind, Alliance, downtime));
-        Assert.Equal(0, await rig.Service.FactionOfAsync(FwStore.CorporationKind, Alliance, downtime));
+        Assert.Equal(0, await rig.Service.FactionOfAsync(FwStore.CorporationKind, Corporation, downtime));
+        Assert.Equal([FwFactions.CaldariState], (await rig.Relations.FromAsync(RelationKinds.FactionMember.Name, Alliance)).Select(row => row.Object));
+        Assert.Empty(await rig.Relations.FromAsync(RelationKinds.FactionMember.Name, Corporation));
+    }
+
+    [PgFact]
+    public async Task A_due_corporation_enlistment_is_projected_after_a_service_restart()
+    {
+        await using var rig = await FwRig.CreateAsync();
+        Assert.Equal(EnlistOutcome.Accepted, await rig.Service.JoinAsync(FwStore.CorporationKind, Corporation, Amarr, 0.5, rig.Now));
+        var downtime = FwRules.NextDowntimeMs(rig.Now);
+        Assert.Empty(await rig.Relations.FromAsync(RelationKinds.FactionMember.Name, Corporation));
+
+        var scheduler = new DurableScheduler(rig.Source, () => downtime, new SchedulerOptions { Concurrency = 1 }, "sch_" + rig.Store.Schema[3..]);
+        var bus = new EventBus(rig.Source, scheduler, null, "evt_" + rig.Store.Schema[3..]);
+        var relations = new RelationStore(rig.Source, scheduler, bus, rig.RelationSchema);
+        var restarted = new FwService(new FwStore(rig.Source, rig.Store.Schema), rig.Loyalty, relations);
+
+        Assert.Equal(Amarr, await restarted.FactionOfAsync(FwStore.CorporationKind, Corporation, downtime));
+        Assert.Equal([Amarr], (await relations.FromAsync(RelationKinds.FactionMember.Name, Corporation)).Select(row => row.Object));
+    }
+
+    [PgFact]
+    public async Task Failed_relation_history_write_rolls_back_a_corporation_leave()
+    {
+        await using var rig = await FwRig.CreateAsync();
+        Assert.Equal(EnlistOutcome.Accepted, await rig.Service.GmEnlistAsync(FwStore.CorporationKind, Corporation, Amarr, rig.Now));
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+            await Sql.ExecuteAsync(connection, null, $"DROP TABLE {rig.RelationSchema}.relation_history", CancellationToken.None);
+
+        await Assert.ThrowsAsync<PostgresException>(() =>
+            rig.Service.GmLeaveAsync(FwStore.CorporationKind, Corporation, rig.Now));
+
+        Assert.Equal(Amarr, await rig.Service.FactionOfAsync(FwStore.CorporationKind, Corporation, rig.Now));
+        Assert.Equal([Amarr], (await rig.Relations.FromAsync(RelationKinds.FactionMember.Name, Corporation)).Select(row => row.Object));
     }
 
     [PgFact]

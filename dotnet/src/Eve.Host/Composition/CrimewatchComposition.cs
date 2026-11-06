@@ -45,7 +45,7 @@ internal sealed partial class CharacterServicesComposition
             crimewatchStore, characterSessions, now, crimewatchPersistence,
             message => Console.Error.WriteLine($"eve-host: crimewatch: {message}"),
             localTimers: foundations.LocalTimers);
-        relationWars = new Eve.Services.Crimewatch.RelationWars(foundations.Relations);
+        relationWars = new Eve.Services.Crimewatch.RelationWars(foundations.Relations, WarFactionSessionOfAsync);
         crimewatchRuntime.Legal = relationWars.AreAtWarAsync;
         crimewatchRuntime.WarAssistanceFactsOf = relationWars.AssistanceFactsAsync;
         crimewatchRuntime.SecurityOfSystem = (systemId, _) => Task.FromResult(

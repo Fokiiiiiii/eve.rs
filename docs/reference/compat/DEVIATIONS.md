@@ -4667,6 +4667,15 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
   https://wiki.eveuniversity.org/Faction_Warfare) says retirement blocks enlistment for 24 hours, so this direct route follows the wiki and
   the other eve.rs enlistment handler rather than allowing a bypass through the client-facing RPC. Focused service coverage checks refusal,
   unchanged state, and acceptance at the expiry boundary.
+- **Applied: direct militia legal targets (EVE University priority over EveJS).** EVE University's Faction warfare page says members of an unaligned
+  corporation can directly enlist in opposing factions and become legal Militia War Targets to one another
+  ([Faction warfare](https://wiki.eveuniversity.org/Faction_warfare)). EveJS 261028.1 `server/src/services/corporation/warRuntimeState.js:1607-1629`
+  resolves character warfare owners through corporation and alliance IDs, so it omits direct faction membership. eve.rs persists a direct pilot's
+  faction with the character row and `RelationKinds.FactionMember`, projects active corporation/alliance factions from the Fw state in the same
+  transaction, and resolves due corporation changes before Crimewatch reads the relation chain. `RelationWars` marks only opposing occupier factions
+  as militia-war targets; friendly occupiers and characters without a militia affiliation stay non-legal. The client still receives the three values
+  from `GetMyEnlistment` and all three arguments of `OnEnlistmentStateUpdated` (`fwEnlistmentSvc.py:51-80`). Tests: `FwCharacterAffiliationWriterTests`,
+  `FwDatabaseTests`, `RuntimeTests`, and the registered Host enlistment wire tests.
 - **Applied: the militia rank.** The rank is the whole part of the standing toward the militia corporation, clamped to 0 to 9 (the client's
   `OnNPCStandingChange` rule). Standing comes from the relation store (`standing`, character to militia corporation).
 - **Applied: system occupation at the start.** Each warzone system whose SDE faction is one of its two factions starts occupied by that faction;
@@ -4702,7 +4711,11 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
   be determined, so the exact rate and rounding are the decision above, not CCP's published formula. Tests: `LoyaltyMemberCreditTests` (3, eve_p4),
   `InsurgencyCampaignTests` (18 run, all pass).
   control bunker structures). The donation refusals are `CustomInfo` notices with localization keys, not the client's pool text.
-  A corporation enlistment that takes effect at the downtime does not push a session change to its members.
+  A corporation enlistment that takes effect at downtime does not push a session change to its members. The next `GetMyEnlistment` call refreshes
+  effective/direct/corporation faction values and `session.warfactionid`; login and corporation-registry session refresh derive the same active
+  direct/corporation/alliance state. Crimewatch resolves those owners before its legal war check. Client consumers include
+  `fwEnlistmentSvc.py:51-80`, `modularHangarBehaviours.py:158`, and the 59 `session.warfactionid` references recorded in
+  `/home/user/reports/audit-eve-relations-r10.md`.
 - **Complexes: sizes, capture times, hull limits and victory points** (`FwComplexes`, `FwComplexTicker`, `FwComplexDirector`, migration 0003).
   Source: the wiki's "Complex types" table (Rank/Size: Scout 10 min, frigates and smaller; Small 10 min, destroyers and smaller; Medium 15 min,
   cruisers and smaller; Large 15 min, battleships and smaller) and its "Victory points" table. The SDE archetypes of the complexes are 33 (Scout),

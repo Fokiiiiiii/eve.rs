@@ -101,6 +101,21 @@ public class CorporationTests
     }
 
     [PgFact]
+    public async Task Non_directors_cannot_change_corporation_faction_warfare_policy()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var founder = await rig.CharacterAsync("FW Policy Director");
+        var corporation = await rig.Store.CreateAsync(founder, Request("FW Authorization", "FWA"), "fw-policy-authorization");
+        var outsider = await rig.CharacterAsync("FW Policy Outsider");
+
+        var error = await Assert.ThrowsAsync<CorporationError>(() =>
+            rig.Store.SetFactionWarfareAllowedEnlistmentFactionsAsync(outsider, corporation.Id, [500001]));
+
+        Assert.Equal("CORPORATION_ACCESS_DENIED", error.Code);
+        Assert.False((await rig.Store.GetAsync(corporation.Id))!.Settings.TryGetProperty("fw", out _));
+    }
+
+    [PgFact]
     public async Task Character_login_restores_direct_war_faction_then_corporation_faction()
     {
         await using var rig = await Rig.CreateAsync();
@@ -112,6 +127,11 @@ public class CorporationTests
         Assert.True(await rig.Characters.SetFactionWarfareStateAsync(characterId, 500003, 0));
         var joined = await hook.GetSessionAttributesAsync(new Eve.Services.ClientSession(), characterId, CancellationToken.None);
         Assert.Equal(new Eve.Marshal.PyInt(500003), Assert.Single(joined, entry => entry.Name == "warfactionid").Value);
+
+        var refreshed = await new Eve.Services.Corporations.CorporationLoginHook(
+            rig.Store, rig.Characters, (_, _) => ValueTask.FromResult<long?>(500004))
+            .GetSessionAttributesAsync(new Eve.Services.ClientSession(), characterId, CancellationToken.None);
+        Assert.Equal(new Eve.Marshal.PyInt(500004), Assert.Single(refreshed, entry => entry.Name == "warfactionid").Value);
 
         Assert.True(await rig.Characters.SetFactionWarfareStateAsync(characterId, null, 0));
         var removed = await hook.GetSessionAttributesAsync(new Eve.Services.ClientSession(), characterId, CancellationToken.None);

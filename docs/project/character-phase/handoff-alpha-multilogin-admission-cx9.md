@@ -25,4 +25,4 @@
 
 ## Follow-up
 
-Implementation commit `be8ba999` is merged with `origin/main` at `d7299bb6` in `018edd0b`. The newest completed main CI before push was run 1554 and passed. Post-merge builds and tests are green; push is next. Record the pushed SHA and Actions results here so another agent can continue from this handoff.
+Implementation commit `be8ba999` and merge commit `018edd0b` were pushed to `main` as `7351c60b`. The newest completed main CI before push was run 1554 and passed. Post-merge builds and tests are green. Selected agent-test run 1353 (`42186345267`) passed in 10.8 minutes with no failed tests. Push-triggered CI run 1555 (`42186290792`) passed all jobs, including headless end-to-end (21.4 minutes); `ci-status.py failures 7351c60b` found no failed tests or jobs.

@@ -44,7 +44,7 @@ public class MarketCoherenceTests
         sessions.Enter(actor, session);
         var catalog = await MarketCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
         var proxy = new MarketProxyService(rig.Book, rig.Trading, rig.Topology, rig.Characters, rig.Corporations, rig.Wallets, catalog,
-            () => rig.Now, rig.Expiry, sessions);
+            () => rig.Now, rig.Expiry, rig.Items, rig.ItemTypes, sessions);
         return new Viewer(actor, outbox, session, proxy);
     }
 
@@ -103,6 +103,9 @@ public class MarketCoherenceTests
         foreach (var packet in outbox.Packets)
         {
             if (packet is not PyObject { Name: var name } call || JsSemantics.PlainText(name) != ClientNotification.ClassName) continue;
+            var fields = Assert.IsType<PyTuple>(call.Args).Items;
+            var address = Assert.IsType<PyTuple>(Assert.IsType<PyObject>(fields[2]).Args);
+            if (JsSemantics.PlainText(address.Items[1]) != "OnOwnOrdersChanged") continue;
             var entry = Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(call.Args).Items[4]).Items[0]);
             var notification = Assert.IsType<PyTuple>(MarshalCodec.Decode(Assert.IsType<PyBuffer>(entry.Items[1]).Value.ToArray()));
             var payload = Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(notification.Items[1]).Items[1]);
@@ -235,7 +238,7 @@ public class MarketCoherenceTests
     {
         await using var r = await TradeRig.Create();
         var sessions = new CharacterSessions();
-        r.Notifier = new MarketNotifier(r.Wallets, sessions);
+        r.Notifier = new MarketNotifier(r.Wallets, sessions, r.Items, r.ItemTypes);
         var seller = await ViewerAsync(r, sessions, await r.Actor("Seller", 10_000m), 231);
         var buyer = await ViewerAsync(r, sessions, await r.Actor("Buyer"), 232);
         var placedAt = r.Now;

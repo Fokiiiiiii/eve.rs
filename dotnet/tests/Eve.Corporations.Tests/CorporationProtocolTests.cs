@@ -1550,6 +1550,7 @@ private static PyValue RowField(PyValue value,string key)
         await registry.UpdateMember(Call(founderSession,"UpdateMember",new PyInt(member),PyNone.Instance,PyNone.Instance,PyNone.Instance,
             new PyLong(CorporationRoles.JuniorAccountant)));
         Assert.Equal(CorporationRoles.JuniorAccountant,(await rig.Store.MemberAsync(member))!.Masks.Roles);
+        Assert.Equal(CorporationRoles.JuniorAccountant,memberSession.GetInt("rolesAtAll") ?? 0);
         Assert.DoesNotContain(founderSink.Packets,p => NotificationName(p) == "OnCorporationMemberChanged");
         Assert.DoesNotContain(memberSink.Packets,p => NotificationName(p) == "OnCorporationMemberChanged");
         founderSession.RunAfterResponse();
@@ -1558,10 +1559,18 @@ private static PyValue RowField(PyValue value,string key)
         Assert.Equal("corpid",NotificationAddress(founderRole).IdType);
         Assert.Equal("corpid",NotificationAddress(memberRole).IdType);
 
+        await registry.UpdateMember(Call(founderSession,"UpdateMember",new PyInt(member),PyNone.Instance,PyNone.Instance,PyNone.Instance,
+            new PyLong(CorporationRoles.Director)));
+        Assert.NotEqual(0,(memberSession.GetInt("rolesAtAll") ?? 0) & CorporationRoles.Director);
+        await registry.UpdateMember(Call(founderSession,"UpdateMember",new PyInt(member),PyNone.Instance,PyNone.Instance,PyNone.Instance,
+            new PyLong(0)));
+        Assert.Equal(0,memberSession.GetInt("rolesAtAll") ?? -1);
+        founderSession.RunAfterResponse();
+
         founderSink.Packets.Clear();
         memberSink.Packets.Clear();
         await registry.UpdateTitle(Call(founderSession,"UpdateTitle",new PyInt(1),new PyWString("Quartermaster"),
-            new PyLong(0),new PyLong(0),new PyLong(0),new PyLong(0),new PyLong(0),new PyLong(0),new PyLong(0),new PyLong(0)));
+            new PyLong(CorporationRoles.Accountant),new PyLong(0),new PyLong(0),new PyLong(0),new PyLong(0),new PyLong(0),new PyLong(0),new PyLong(0)));
         Assert.DoesNotContain(founderSink.Packets,p => NotificationName(p) == "OnTitleChanged");
         Assert.DoesNotContain(memberSink.Packets,p => NotificationName(p) == "OnTitleChanged");
         founderSession.RunAfterResponse();
@@ -1569,6 +1578,14 @@ private static PyValue RowField(PyValue value,string key)
         var memberTitle = Assert.Single(memberSink.Packets,p => NotificationName(p) == "OnTitleChanged");
         Assert.Equal("corpid",NotificationAddress(founderTitle).IdType);
         Assert.Equal("corpid",NotificationAddress(memberTitle).IdType);
+        await registry.UpdateMember(Call(founderSession,"UpdateMember",new PyInt(member),PyNone.Instance,PyNone.Instance,PyNone.Instance,
+            new PyLong(0),PyNone.Instance,PyNone.Instance,PyNone.Instance,PyNone.Instance,PyNone.Instance,PyNone.Instance,PyNone.Instance,PyNone.Instance,
+            new PyInt(1)));
+        Assert.Equal(CorporationRoles.Accountant,memberSession.GetInt("rolesAtAll") ?? 0);
+        founderSession.RunAfterResponse();
+        await registry.DeleteTitle(Call(founderSession,"DeleteTitle",new PyInt(1)));
+        founderSession.RunAfterResponse();
+        Assert.Equal(0,memberSession.GetInt("rolesAtAll") ?? -1);
 
         founderSink.Packets.Clear();
         memberSink.Packets.Clear();

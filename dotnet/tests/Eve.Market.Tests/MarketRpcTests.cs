@@ -23,6 +23,14 @@ public class MarketRpcTests
     private static PyDict Fields(PyValue value) => Assert.IsType<PyDict>(Assert.IsType<PyObject>(value).Args);
     private static PyValue Field(PyDict dict, string name) => dict.Entries.Single(e => JsSemantics.PlainText(e.Key) == name).Value;
 
+    private static string? NotificationName(PyValue packet)
+    {
+        if (packet is not PyObject { Name: var name } notification || JsSemantics.PlainText(name) != ClientNotification.ClassName) return null;
+        var fields = Assert.IsType<PyTuple>(notification.Args).Items;
+        var address = Assert.IsType<PyTuple>(Assert.IsType<PyObject>(fields[2]).Args);
+        return JsSemantics.PlainText(address.Items[1]);
+    }
+
     /// <summary>The value after a marshal round trip, as the client receives it; a cached result is unwrapped to its payload.</summary>
     private static PyValue Received(PyValue value)
     {
@@ -69,7 +77,7 @@ public class MarketRpcTests
         var sessions = new CharacterSessions();
         sessions.Enter(actor, session);
         var catalog = await MarketCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
-        var proxy = new MarketProxyService(rig.Book, rig.Trading, rig.Topology, rig.Characters, rig.Corporations, rig.Wallets, catalog, () => rig.Now, rig.Expiry, sessions);
+        var proxy = new MarketProxyService(rig.Book, rig.Trading, rig.Topology, rig.Characters, rig.Corporations, rig.Wallets, catalog, () => rig.Now, rig.Expiry, rig.Items, rig.ItemTypes, sessions);
         return new Seat(rig, actor, sink, session, proxy);
     }
 
@@ -377,7 +385,8 @@ public class MarketRpcTests
         Assert.Empty((await r.Book.BookAsync(r.Station.RegionId,Tritanium,r.Now)).Bids);
         Assert.Equal(9950m,(await r.WalletStore.GetAsync(actor))!.Isk);
         Assert.NotEmpty(seat.Sink.Packets);
-        var packet = Assert.IsType<PyObject>(seat.Sink.Packets[^1]);
+        var packet = Assert.IsType<PyObject>(Assert.Single(
+            seat.Sink.Packets, packet => NotificationName(packet) == "OnOwnOrdersChanged"));
         var packetFields = Assert.IsType<PyTuple>(packet.Args).Items;
         var sequence = checked((int)Assert.IsType<PyInt>(Field(Assert.IsType<PyDict>(packetFields[5]), "sn")).Value);
         var expectedNotification = ClientNotification.Build(seat.Session.UserId ?? 0, seat.Session.NodeId,

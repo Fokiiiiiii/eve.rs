@@ -40,4 +40,4 @@ All database-backed checks used `eve_p7` through `tools/dev/db-lock.sh`.
 - Station reprocessing relation caller: 13 passed, 0 skipped.
 - Host standing history wire-shape check: 1 passed, 0 skipped.
 
-The graphical V24.01 client was not exercised. The worktree fast-forwarded to `origin/main` at `abcdcc4c`; touched builds and selected checks passed again after that merge. Before this push, the newest completed main CI run was green (run 1547). Push is next; update this note with the pushed commit and Actions result.
+The graphical V24.01 client was not exercised. The worktree fast-forwarded to `origin/main` at `abcdcc4c`; touched builds and selected checks passed again after that merge. Commit `d7449b80` was pushed to `main`. Its push-triggered Actions run `42160492961` completed successfully with no failed jobs or tests. This note is the docs-only follow-up to record that result.

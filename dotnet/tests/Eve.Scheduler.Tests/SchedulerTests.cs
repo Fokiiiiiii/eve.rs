@@ -247,6 +247,132 @@ public class SchedulerTests
     }
 
     [PgFact]
+    public async Task An_expired_final_recurring_lease_runs_the_next_occurrence_without_a_restart()
+    {
+        await using var rig = await Rig.Create();
+        var ran = new List<long>();
+        rig.Scheduler.Register("t.recover", (ctx, _) => { ran.Add(ctx.ScheduledForMs); return Task.CompletedTask; });
+        var due = rig.Now;
+        var id = await rig.Scheduler.ScheduleAsync(new JobSpec("t.recover", due) { Key = "k", EveryMs = 1000, MaxAttempts = 1 });
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        {
+            await Sql.ExecuteAsync(connection, null,
+                $"UPDATE {rig.Schema}.jobs SET state='running', attempts=1, lease_owner='dead', lease_until_ms=$1 WHERE id=$2", CancellationToken.None, rig.Now - 1, id);
+        }
+
+        Assert.Equal(1, await rig.Scheduler.RunDueAsync());
+        var job = (await rig.Scheduler.FindAsync("t.recover", "k"))!;
+        Assert.Equal(("pending", 0, due + 1000), (job.State, job.Attempts, job.RunAtMs));
+        Assert.Equal([due], ran);
+
+        rig.Now = due + 1000;
+        Assert.Equal(1, await rig.Scheduler.RunDueAsync());
+        Assert.Equal([due, due + 1000], ran);
+        job = (await rig.Scheduler.FindAsync("t.recover", "k"))!;
+        Assert.Equal(("pending", 0, due + 2000), (job.State, job.Attempts, job.RunAtMs));
+    }
+
+    [PgFact]
+    public async Task An_expired_final_attempt_does_not_block_claiming_an_unrelated_job()
+    {
+        await using var rig = await Rig.Create(new SchedulerOptions { Concurrency = 1, BatchSize = 4, LeaseMs = 10 });
+        await using var other = rig.Make();
+        var heldStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseHeld = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var unrelatedStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        rig.Scheduler.Register("t.held", async (_, _) =>
+        {
+            heldStarted.TrySetResult();
+            await releaseHeld.Task;
+        });
+        other.Register("t.unrelated", (_, _) => { unrelatedStarted.TrySetResult(); return Task.CompletedTask; });
+        await rig.Scheduler.ScheduleAsync(new JobSpec("t.held", rig.Now) { Key = "held", MaxAttempts = 1 });
+        await rig.Scheduler.ScheduleAsync(new JobSpec("t.unrelated", rig.Now));
+
+        var heldRun = rig.Scheduler.RunDueAsync();
+        Task<int>? unrelatedRun = null;
+        try
+        {
+            await heldStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var held = (await rig.Scheduler.FindAsync("t.held", "held"))!;
+            Assert.Equal(("running", 1), (held.State, held.Attempts));
+            rig.Now += 11;
+            unrelatedRun = other.RunDueAsync();
+            await unrelatedStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await unrelatedRun.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            releaseHeld.TrySetResult();
+            await heldRun;
+            if (unrelatedRun is not null)
+            {
+                await unrelatedRun;
+            }
+        }
+
+        Assert.Equal(0, await rig.Count());
+    }
+
+    [PgFact]
+    public async Task Runners_do_not_consume_attempts_for_jobs_waiting_beyond_concurrency()
+    {
+        await using var rig = await Rig.Create(new SchedulerOptions { Concurrency = 1, BatchSize = 4, LeaseMs = 10 });
+        await using var other = rig.Make();
+        var started = Enumerable.Range(0, 3)
+            .Select(_ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously))
+            .ToArray();
+        var releaseStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var runs = new int[3];
+        JobHandler handler = async (ctx, _) =>
+        {
+            var n = ctx.Payload<Ping>()!.N;
+            Interlocked.Increment(ref runs[n]);
+            started[n].TrySetResult();
+            if (n < 2)
+            {
+                await releaseStarted.Task;
+            }
+        };
+        rig.Scheduler.Register("t.queued", handler);
+        other.Register("t.queued", handler);
+        for (var i = 0; i < started.Length; i++)
+        {
+            await rig.Scheduler.ScheduleAsync(new JobSpec("t.queued", rig.Now) { Key = $"k:{i}", Payload = new Ping(i, ""), MaxAttempts = 1 });
+        }
+
+        var firstRun = rig.Scheduler.RunDueAsync();
+        Task<int>? secondRun = null;
+        try
+        {
+            await started[0].Task.WaitAsync(TimeSpan.FromSeconds(10));
+            foreach (var key in new[] { "k:1", "k:2" })
+            {
+                var waiting = (await rig.Scheduler.FindAsync("t.queued", key))!;
+                Assert.Equal(("pending", 0), (waiting.State, waiting.Attempts));
+            }
+
+            rig.Now += 11;
+            secondRun = other.RunDueAsync();
+            await started[1].Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var waitingForWorker = (await rig.Scheduler.FindAsync("t.queued", "k:2"))!;
+            Assert.Equal(("pending", 0), (waitingForWorker.State, waitingForWorker.Attempts));
+        }
+        finally
+        {
+            releaseStarted.TrySetResult();
+            await firstRun;
+            if (secondRun is not null)
+            {
+                await secondRun;
+            }
+        }
+
+        Assert.All(runs, count => Assert.Equal(1, count));
+        Assert.Equal(0, await rig.Count());
+    }
+
+    [PgFact]
     public async Task Two_runners_on_the_same_jobs_run_each_job_once()
     {
         await using var rig = await Rig.Create(new SchedulerOptions { Concurrency = 4, BatchSize = 5 });

@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json.Nodes;
 using Eve.Data;
 using Eve.Inventory;
@@ -25,6 +27,17 @@ public class CatalogTests
         Assert.True(await reader.BuildAsync() is not null, "no SDE is loaded: run `cargo run -p eve-sde -- ensure --pg $EVE_PG_URL`");
         return (await CreationCatalog.LoadAsync(reader), source);
     }
+
+    private static string SdeRowsSha256(IReadOnlyList<SdeRow> rows) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            string.Join("\n", rows.Select(row => $"{row.Key}\t{row.Doc.GetRawText()}")))))
+            .ToLowerInvariant();
+
+    private static string TypeSummariesSha256(IReadOnlyList<SdeTypeSummary> summaries) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            string.Join("\n", summaries.Select(summary =>
+                $"{summary.TypeId}\t{summary.GroupId}\t{summary.Name}\t{summary.Published.ToString().ToLowerInvariant()}")))))
+            .ToLowerInvariant();
 
     [PgFact]
     public async Task The_four_playable_races_have_their_rookie_ships()
@@ -172,15 +185,26 @@ public class CatalogTests
     {
         var (_, source) = await LoadAsync();
         var reader = new SdeReader(source);
+        Assert.Equal(3396210L, await reader.BuildAsync());
 
         var rows = await reader.ReadByFieldAsync("types", "groupID", [6, 7, 8, 9]);
 
-        Assert.NotEmpty(rows);
-        Assert.All(rows, row => Assert.Contains(row.Doc.GetProperty("groupID").GetInt64(), new long[] { 6, 7, 8, 9 }));
-        Assert.Equal(rows.Count, rows.Select(row => row.Key).Distinct().Count());
-
-        var ordered = await reader.ReadAsync("types", rows.Select(row => row.Key));
-        Assert.Equal(ordered.Select(row => row.Key), rows.Select(row => row.Key));
+        Assert.Equal(
+            new long[]
+            {
+                6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 2014, 2015, 2016, 2017, 2063, 3796, 3797, 3798, 3799, 3800,
+                3801, 3802, 3803, 17774, 30889, 34331, 45030, 45031, 45032, 45033, 45034, 45035, 45036, 45037, 45038,
+                45039, 45040, 45041, 45042, 45046, 45047, 52673, 56018, 56019, 56020, 56021, 56022, 56023, 56024,
+                56082, 56083, 56084, 56085, 56086, 56097, 56098, 73909, 73911, 78350,
+            },
+            rows.Select(row => row.Key).ToArray());
+        Assert.Equal("aa5747bbf7b6af43e7022ceeaa504ea121cc7f805c1a5043d8e6bceb13d81b14", SdeRowsSha256(rows));
+        Assert.Equal(
+            (6L, 6L, "Sun G5 (Yellow)"),
+            (
+                rows[0].Key,
+                rows[0].Doc.GetProperty("groupID").GetInt64(),
+                rows[0].Doc.GetProperty("name").GetProperty("en").GetString()!));
     }
 
     [PgFact]
@@ -188,13 +212,35 @@ public class CatalogTests
     {
         var (_, source) = await LoadAsync();
         var reader = new SdeReader(source);
+        Assert.Equal(3396210L, await reader.BuildAsync());
 
         var rows = await reader.ReadContainingAsync("typeDogma", """{"dogmaEffects":[{"effectID":101}]}""");
 
-        Assert.NotEmpty(rows);
-        Assert.All(rows, row => Assert.Contains(
-            row.Doc.GetProperty("dogmaEffects").EnumerateArray(),
-            effect => effect.GetProperty("effectID").GetInt32() == 101));
+        Assert.Equal(
+            new long[]
+            {
+                499, 501, 503, 1875, 1877, 2083, 2404, 2410, 2420, 3563, 3565, 4256, 4258, 4260, 7993, 7997, 8001,
+                8007, 8023, 8025, 8027, 8089, 8091, 8093, 8101, 8103, 8105, 8113, 8115, 8117, 10629, 10631, 10642,
+                13320, 13919, 13920, 13921, 13922, 13923, 13924, 13925, 13926, 13927, 13929, 13931, 13933, 14516,
+                14518, 14520, 14522, 14524, 14525, 14526, 14527, 14672, 14674, 14676, 14678, 14680, 14681, 14682,
+                14683, 15449, 16061, 16062, 16064, 16065, 16067, 16068, 16136, 16137, 16138, 16513, 16515, 16517,
+                16519, 16521, 16523, 16525, 16527, 17484, 17485, 17487, 17488, 17490, 17491, 17901, 17938, 18639,
+                19660, 19739, 20138, 20539, 20593, 20595, 20597, 20599, 20601, 20603, 21542, 22564, 22565, 22566,
+                22567, 22568, 22569, 22782, 25707, 25709, 25711, 25713, 25715, 25771, 26173, 27914, 28375, 28377,
+                28379, 28381, 28383, 28511, 28513, 28565, 28756, 28758, 32444, 32461, 33270, 33272, 33440, 33441,
+                33442, 33446, 33448, 33450, 33452, 33453, 33454, 33455, 33456, 33457, 33458, 33459, 33461, 33462,
+                33463, 33464, 33465, 33466, 34290, 34292, 34294, 35921, 35922, 35923, 37288, 37292, 37293, 37294,
+                37295, 41174, 41175, 41176, 41180, 41181, 41182, 41223, 41224, 44102, 44109, 47298, 47303, 47323,
+                47325, 85021, 85023, 85084, 85085, 92453,
+            },
+            rows.Select(row => row.Key).ToArray());
+        Assert.Equal("9adb44301d7db8f159dd8ea68ce671829f098e94cbb71bf162125d37b197379d", SdeRowsSha256(rows));
+        Assert.Equal(499L, rows[0].Key);
+        Assert.Equal(
+            new[] { (12, false), (16, false), (40, false), (101, true), (3001, false) },
+            rows[0].Doc.GetProperty("dogmaEffects").EnumerateArray()
+                .Select(effect => (effect.GetProperty("effectID").GetInt32(), effect.GetProperty("isDefault").GetBoolean()))
+                .ToArray());
     }
 
     [PgFact]
@@ -202,15 +248,29 @@ public class CatalogTests
     {
         var (_, source) = await LoadAsync();
         var reader = new SdeReader(source);
+        Assert.Equal(3396210L, await reader.BuildAsync());
 
         var timer = System.Diagnostics.Stopwatch.StartNew();
         var summaries = await reader.ReadTypeSummariesAsync();
         timer.Stop();
 
+        Assert.Equal(52_591, summaries.Count);
+        Assert.Equal("306238ad691fee3ccc4117c2a687204d7535dee76c3936cda4e33183e7a24ffe", TypeSummariesSha256(summaries));
+        Assert.Equal(
+            new[]
+            {
+                (0, 0, "#System", false),
+                (2, 2, "Corporation", false),
+                (3, 3, "Region", false),
+                (4, 4, "Constellation", false),
+                (5, 5, "Solar System", false),
+            },
+            summaries.Take(5)
+                .Select(summary => (summary.TypeId, summary.GroupId, summary.Name, summary.Published))
+                .ToArray());
+
         var ibis = Assert.Single(summaries, summary => summary.TypeId == 601);
-        Assert.Equal("Ibis", ibis.Name);
-        Assert.True(ibis.GroupId > 0);
-        Assert.True(ibis.Published);
+        Assert.Equal((601, 237, "Ibis", true), (ibis.TypeId, ibis.GroupId, ibis.Name, ibis.Published));
         if (Environment.GetEnvironmentVariable("EVE_SDE_BENCH") == "1")
         {
             _output.WriteLine($"SDE type summaries: {timer.Elapsed.TotalMilliseconds:F3} ms; rows={summaries.Count}");

@@ -17,11 +17,12 @@
 - PASS: CharacterSelect service build and test-project build, each with zero warnings/errors.
 - PASS: `MultiLoginBlockerTests`, 9/9.
 - PASS: Host route registration test, 1/1.
-- PASS: full `HostServerTests` class against `eve_p9` after copying static SDE schemas with `tools/dev/copy-sde-database.py`, 409/409, zero skipped.
+- PASS: full `HostServerTests` class against `eve_p9` after copying static SDE schemas with `tools/dev/copy-sde-database.py`, 411/411 after merging current main, zero skipped.
 - PASS: `PgAccountTests` through `tools/dev/db-lock.sh` on `eve_p9`, 19/19, zero skipped.
 - PASS: `OmegaStateTests`, 8/8.
+- PASS after merging current main: service, CharacterSelect tests, Host tests, Identity tests and Core tests built with zero warnings/errors; all focused tests above were rerun, including the 411 HostServer tests.
 - The native V24 graphical client was not launched during this verification.
 
 ## Follow-up
 
-Commit and push after checking the main CI gate. Record the pushed SHA and the Actions results here so another agent can continue from this handoff.
+Implementation commit `be8ba999` is merged with `origin/main` at `d7299bb6` in `018edd0b`. The newest completed main CI before push was run 1554 and passed. Post-merge builds and tests are green; push is next. Record the pushed SHA and Actions results here so another agent can continue from this handoff.

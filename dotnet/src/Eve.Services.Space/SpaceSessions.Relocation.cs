@@ -92,6 +92,16 @@ public sealed partial class SpaceSessions
         finally { gate.Release(); }
     }
 
+    public void SchedulePersistedRelocationRetry(ClientSession session, SpaceMove moved, string operationId, string firstFailure)
+    {
+        Background(async () =>
+        {
+            var error = await RelocatePersistedAsync(session, moved, operationId, CancellationToken.None);
+            if (error is not null)
+                throw new InvalidOperationException($"Persisted relocation retry failed after '{firstFailure}': {error}");
+        });
+    }
+
     private async Task<string?> RelocateCoreAsync(
         ClientSession session, int solarSystemId, IReadOnlyList<double>? position, IReadOnlyList<double>? direction,
         CancellationToken cancellationToken, string? operationId, SpaceMove? persistedMove = null)

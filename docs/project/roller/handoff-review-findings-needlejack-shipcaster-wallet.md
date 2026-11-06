@@ -22,8 +22,22 @@ Verified against the V24.01 client: `randomJump/client/clientRandomJumpValidator
 
 The Host can read cloak state from its authoritative pilot state: active cloak module effects are retained in `RunningModules`, and jump-cloak state is tracked separately. The Rust scene decloak state is not queried by this Host path. `SpaceSessions.IsCloaked` now checks these Host-owned states and the effect names handled by the shared cloaking effect. Needlejack validation returns code 15 with the affected character ID for a cloaked activator or in-range linked fleet pilot. The Host test activates a real cloaking module for both cases and checks the error IDs, unchanged filament, and absent activation row.
 
-Local checks passed: Host and Space project builds; the focused Host regression and all `NeedlejackActivationHostTests` (9 passed, 0 skipped); four cloak-related Space tests (4 passed, 0 skipped). Changes are awaiting the required merge/check/push cycle.
+Local checks passed: Host and Space project builds; all `NeedlejackActivationHostTests` (9 passed, 0 skipped); four cloak-related Space tests (4 passed, 0 skipped). Commit `e2229ecb` was pushed to main. Selected agent-test run `42293894129` and push-triggered CI run `42293854018` both completed successfully with no failed tests or jobs.
 
-## Remaining review findings
+## Finding 2 — post-commit relocation recovery
 
-Findings 2 and 4 still need the committed-relocation recovery and corporate-wallet notification/session-role traces, tests, and independent pushes.
+Verified: the filament decrement, persisted ship and character locations, and activation row commit together. The V24.01 controller only marks activation finished after the RPC returns; it maps an unexpected RPC exception to error 22 (`randomJump/client/randomJumpController.py:141-167`), and the random-jump service calls the activation RPC directly (`randomJump/client/randomJumpSvc.py:17-19`). A relocation error after commit therefore reported failure for an activation that had already consumed the filament and moved persisted state.
+
+Change: after commit, `CompleteCommittedAsync` now schedules a background retry with the same deterministic move operation ID when the first simulation relocation fails. Simulation `public_move` treats an identical operation ID and payload as a successful replay (`crates/eve-space/src/sim/spawn.rs:792-802`; replay regression `crates/eve-space/src/sim/tests.rs:835-864`). The Host test drops the first move reply, asserts the activation RPC succeeds and persisted state remains committed, drains background work, and checks the retry uses the same operation ID and reaches the destination.
+
+Local checks passed on `eve_p4`: Host and Space project builds; `NeedlejackActivationHostTests` (9 passed, 0 skipped); `SpaceServiceTests` (168 passed, 0 skipped). Push-triggered Actions results will be added after the push.
+
+## Finding 4 — corporate wallet notification roles
+
+Verified on the server: `AccountService.GetCashBalance` allows the existing Accountant and Junior Accountant read rule through `WalletAccountAsync(..., requireTake:false)` (`dotnet/src/Eve.Services.Wallet/AccountService.cs:157-181`; `dotnet/src/Eve.Corporations/CorporationStore.cs:483-513`), while the notification gate previously excluded them.
+
+Separate pending worktree change for finding 4 (not included in the finding 2 commit): `WalletAnnouncer` uses `CorporationRoles.CanReadWalletDivision`, the same rule as wallet-division reads. Connected `rolesAtAll` values are recomputed after direct and bulk member-role updates, title-mask changes or deletion, CEO succession, and member removal; the login hook remains the source of the refreshed attributes.
+
+The Haiku client rationale was incomplete: `WalletSvc.OnAccountChange` reaches `_OnCorpAccountChange`, which checks the selected division's read role before updating its cache (`eve/client/script/ui/shared/neocom/wallet/walletSvc.py:80-115`), then scatters the local notification; the market balance widget listens to that event (`eve/client/script/ui/shared/market/wallet_balance.py:135-140`). The RPC and notification audiences are aligned in the worktree change, while the V24 UI's selected-division check remains in effect. EveJS 261028.1 broadcasts corporate changes broadly (`src/server/src/services/corporation/corpWalletState.js:241-256`); the role-filtered server behavior is recorded in `docs/reference/compat/DEVIATIONS.md`.
+
+Worktree-local checks passed on `eve_p4`: `AnnouncementsTests` (2 passed, 0 skipped) and `Corporation_membership_role_and_medal_notifications_run_after_commit` (1 passed, 0 skipped). The remaining related classes and post-merge checks are still in progress.

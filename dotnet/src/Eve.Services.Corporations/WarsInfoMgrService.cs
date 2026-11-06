@@ -58,6 +58,24 @@ public sealed partial class WarsInfoMgrService
                     .Select(war => new KeyValuePair<Eve.Marshal.PyValue, Eve.Marshal.PyValue>(Number(war.WarId), Payload(war)))])))]);
     }
 
+    public async Task<IReadOnlyList<Eve.Marshal.PyValue>> GetCharacterSelectionWarsAsync(
+        IReadOnlyList<(long CharacterId, long CorporationId, long? AllianceId)> characters, CancellationToken cancellationToken = default)
+    {
+        if (characters.Count == 0)
+            return [];
+
+        var wars = await WarsAsync(cancellationToken);
+        var now = Eve.Services.Py.FileTimeFromUnixMs(_nowUnixMs());
+        return [.. characters.SelectMany(character =>
+        {
+            var ownerId = character.AllianceId is { } allianceId && allianceId > 0 ? allianceId : character.CorporationId;
+            return wars.Where(war => war.TimeStarted <= now && (war.TimeFinished is null || war.TimeFinished > now)
+                    && ActiveForOwner(war, ownerId, now))
+                .OrderBy(war => war.WarId)
+                .Select(war => CharacterSelectionPayload(war, character.CharacterId));
+        })];
+    }
+
     [Eve.Services.Method("GetWarsRequiringAssistance")]
     public async ValueTask<Eve.Marshal.PyValue> GetWarsRequiringAssistance(Eve.Services.ServiceCall call)
     {
@@ -185,6 +203,10 @@ public sealed partial class WarsInfoMgrService
     internal static bool Owns(WarRecord war, long id) =>
         war.DeclaredById == id || war.AgainstId == id || war.Allies.Any(ally => ally.AllyId == id);
 
+    private static bool ActiveForOwner(WarRecord war, long id, long now) =>
+        war.DeclaredById == id || war.AgainstId == id ||
+        war.Allies.Any(ally => ally.AllyId == id && ally.TimeStarted <= now && (ally.TimeFinished is null || ally.TimeFinished > now));
+
     private static Eve.Marshal.PyValue Payload(WarRecord war)
     {
         var allies = new Eve.Marshal.PyDict([.. war.Allies.Select(ally =>
@@ -212,6 +234,13 @@ public sealed partial class WarsInfoMgrService
             ("createdFromWarID", OptionalNumber(war.CreatedFromWarId)),
             ("reward", Eve.Services.Py.Number(war.Reward)),
             ("allies", allies));
+    }
+
+    private static Eve.Marshal.PyValue CharacterSelectionPayload(WarRecord war, long characterId)
+    {
+        var fields = ((Eve.Marshal.PyDict)((Eve.Marshal.PyObject)Payload(war)).Args).Entries;
+        return Eve.Services.Py.KeyVal(fields.Append(
+            new KeyValuePair<Eve.Marshal.PyValue, Eve.Marshal.PyValue>(new Eve.Marshal.PyStr("characterID"), Number(characterId))));
     }
 
     private static Eve.Marshal.PyValue Rowset(IReadOnlyList<WarRecord> wars)

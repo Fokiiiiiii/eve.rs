@@ -4,6 +4,7 @@ using Npgsql;
 namespace Eve.Wallet;
 
 public sealed record Balance(long OwnerId, decimal Isk, long Plex);
+public sealed record BalanceWithLastIskChange(Balance? Balance, decimal LastIskChange);
 
 /// <summary>Wallets in PostgreSQL, in the module's own schema (<c>wallet</c> unless told otherwise).</summary>
 public sealed class PgWalletStore
@@ -157,5 +158,38 @@ public sealed class PgWalletStore
             balances[reader.GetInt64(0)] = new Balance(reader.GetInt64(0), reader.GetDecimal(1), reader.GetInt64(2));
         }
         return balances;
+    }
+
+    public async Task<IReadOnlyDictionary<long, BalanceWithLastIskChange>> ForOwnersWithLastIskChangeAsync(
+        IEnumerable<long> ownerIds, CancellationToken cancellationToken = default)
+    {
+        var projections = new Dictionary<long, BalanceWithLastIskChange>();
+        var ids = ownerIds.Distinct().ToArray();
+        if (ids.Length == 0)
+        {
+            return projections;
+        }
+
+        await using var command = _source.CreateCommand($"""
+            SELECT requested.owner_id, balances.isk, balances.plex,
+                   COALESCE((
+                       SELECT amount FROM {_schema}.journal
+                       WHERE owner_id = requested.owner_id AND account_key = 1000
+                       ORDER BY id DESC LIMIT 1
+                   ), 0::numeric)
+            FROM unnest($1::bigint[]) requested(owner_id)
+            LEFT JOIN {_schema}.balances balances
+              ON balances.owner_id = requested.owner_id AND balances.account_key = 1000
+            ORDER BY requested.owner_id
+            """);
+        command.Parameters.Add(new NpgsqlParameter { Value = ids });
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var ownerId = reader.GetInt64(0);
+            var balance = reader.IsDBNull(1) ? null : new Balance(ownerId, reader.GetDecimal(1), reader.GetInt64(2));
+            projections[ownerId] = new BalanceWithLastIskChange(balance, reader.GetDecimal(3));
+        }
+        return projections;
     }
 }

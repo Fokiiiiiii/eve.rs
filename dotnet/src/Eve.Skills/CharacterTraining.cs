@@ -136,7 +136,7 @@ public sealed class CharacterTraining(
         int raceId,
         CancellationToken cancellationToken = default)
     {
-        RequireAlphaCloneGrade(raceId);
+        RequireAlphaCloneGrade(isAlphaClone, raceId);
         var view = await ViewAsync(characterId, accountId, cancellationToken);
         var owned = view.Skills.ToDictionary(skill => skill.TypeId);
         if (selectedSkills is null &&
@@ -158,7 +158,7 @@ public sealed class CharacterTraining(
         int raceId,
         CancellationToken cancellationToken = default)
     {
-        RequireAlphaCloneGrade(raceId);
+        RequireAlphaCloneGrade(isAlphaClone, raceId);
         await SettleAsync(characterId, accountId, cancellationToken);
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -241,7 +241,7 @@ public sealed class CharacterTraining(
         int raceId,
         CancellationToken cancellationToken = default)
     {
-        RequireAlphaCloneGrade(raceId);
+        RequireAlphaCloneGrade(isAlphaClone, raceId);
         if (requestedPoints <= 0)
         {
             return null;
@@ -319,9 +319,9 @@ public sealed class CharacterTraining(
         return remaining.Value;
     }
 
-    private void RequireAlphaCloneGrade(int raceId)
+    private void RequireAlphaCloneGrade(bool isAlphaClone, int raceId)
     {
-        if (!catalog.HasAlphaCloneGrade(raceId))
+        if (isAlphaClone && !catalog.HasAlphaCloneGrade(raceId))
         {
             throw new InvalidDataException($"Pinned SDE Alpha clone-grade data is missing for character race {raceId}.");
         }

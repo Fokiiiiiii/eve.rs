@@ -174,6 +174,17 @@ public sealed class SalvagePoolTests
     }
 
     [Fact]
+    public void Build_pool_has_no_fallback_when_no_available_product_matches_any_configured_material()
+    {
+        var products = new[] { (TypeId: 999, Name: "Unlisted Salvage Material") };
+
+        var pool = SpaceContainers.BuildSalvagePool("angel", false, products);
+
+        Assert.Empty(pool);
+        Assert.Null(SpaceContainers.SelectWeightedSalvageProductTypeId(pool, 0.5));
+    }
+
+    [Fact]
     public void Weighted_selection_keeps_each_boundary_with_evejs_entry_order()
     {
         IReadOnlyList<(int TypeId, double Weight)> pool = [(101, 1), (102, 1), (103, 2)];

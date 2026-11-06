@@ -68,6 +68,11 @@ internal sealed partial class CharacterServicesComposition
     /// </summary>
     private SystemPopulation? _systemPopulation;
 
+    private Eve.Services.Corporations.WarsInfoMgrService? _warsInfoMgrService;
+
+    private Eve.Services.Corporations.WarsInfoMgrService CharacterWarsInfo =>
+        _warsInfoMgrService ??= new Eve.Services.Corporations.WarsInfoMgrService(foundations.Relations, now);
+
     private SystemPopulation SystemPopulationModel => _systemPopulation ??= new SystemPopulation(
         characterSessions, solarSystems,
         int.TryParse(Environment.GetEnvironmentVariable("EVE_SYSTEM_POPULATION_CAP"), out var cap) && cap > 0
@@ -97,7 +102,11 @@ internal sealed partial class CharacterServicesComposition
                         corporations.ActiveMemberCharacterIdsAsync(connection, transaction, corporationId, cancellationToken)),
                 isCorporationCeo: async (characterId, corporationId, cancellationToken) =>
                     await corporations.GetAsync(corporationId, cancellationToken) is { IsNpc: false, Deleted: false } corporation &&
-                    corporation.CeoId == characterId),
+                    corporation.CeoId == characterId,
+                readCharacterSelectionWarsAsync: async (selectedCharacters, cancellationToken) =>
+                    await CharacterWarsInfo.GetCharacterSelectionWarsAsync(
+                        [.. selectedCharacters.Select(character => (character.Id, character.CorporationId, character.AllianceId))], cancellationToken),
+                warFactionOfAsync: WarFactionOfAsync),
             new MultiLoginBlockerService(session => CloneGradeSource.CloneGradeOf(session.Get("userid"))),
             new PopulationCapService(characters, SystemPopulationModel),
             new Eve.Services.CharacterInfo.ConfigService(characters, corporations, stations, solarSystems,

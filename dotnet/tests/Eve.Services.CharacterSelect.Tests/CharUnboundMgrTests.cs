@@ -3,6 +3,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Skills;
+using Npgsql;
 
 namespace Eve.Services.CharacterSelect.Tests;
 
@@ -16,6 +17,14 @@ public class CharUnboundMgrTests
         var id = await h.CallAsync(session, "CreateCharacterWithDoll",
             new PyStr(name), new PyInt(race), new PyInt(bloodline), new PyInt(gender), new PyInt(ancestry), Doll, Portrait, new PyInt(school), PyNone.Instance, PyNone.Instance);
         return ((PyInt)id).Value;
+    }
+
+    private static IReadOnlyDictionary<string, PyValue> KeyValFields(PyValue value)
+    {
+        var keyVal = Assert.IsType<PyObject>(value);
+        Assert.Equal("util.KeyVal", Assert.IsType<PyStr>(keyVal.Name).Value);
+        return Assert.IsType<PyDict>(keyVal.Args).Entries
+            .ToDictionary(entry => Assert.IsType<PyStr>(entry.Key).Value, entry => entry.Value);
     }
 
     [PgFact]
@@ -530,6 +539,90 @@ public class CharUnboundMgrTests
         Assert.Equal(new PyLong(training.Queue[^1].End!.Value), fields["queueEndTime"]);
         Assert.Equal(new PyInt(current.DestinationPoints), fields["finishSP"]);
         Assert.Equal(new PyInt(training.Skills.Single(skill => skill.TypeId == current.TypeId).SkillPoints), fields["trainedSP"]);
+    }
+
+    [PgFact]
+    public async Task Character_selection_projects_active_wars_militia_and_the_latest_wallet_delta_with_v24_shapes()
+    {
+        await using var h = await Harness.CreateAsync();
+        var (session, _) = await h.LoginAsync("selection-projection");
+        var corporationCharacterId = await CreateAsync(h, session, "Selection Corp Pilot");
+        var militiaCharacterId = await CreateAsync(h, session, "Selection Militia Pilot");
+        var ordinaryFactionCharacterId = await CreateAsync(h, session, "Selection Faction Pilot");
+        var corporationCharacter = await h.Characters.GetAsync(corporationCharacterId, CancellationToken.None);
+        var militiaCharacter = await h.Characters.GetAsync(militiaCharacterId, CancellationToken.None);
+        var ordinaryFactionCharacter = await h.Characters.GetAsync(ordinaryFactionCharacterId, CancellationToken.None);
+        Assert.NotNull(corporationCharacter);
+        Assert.NotNull(militiaCharacter);
+        Assert.NotNull(ordinaryFactionCharacter);
+        Assert.True(ordinaryFactionCharacter!.FactionId is > 0);
+        Assert.Equal(corporationCharacter!.CorporationId, militiaCharacter!.CorporationId);
+        Assert.Equal(corporationCharacter.CorporationId, ordinaryFactionCharacter.CorporationId);
+        Assert.True(await h.Characters.SetFactionWarfareStateAsync(militiaCharacterId, 500002, 0, CancellationToken.None));
+
+        await using (var connection = await h.Source.OpenConnectionAsync())
+        {
+            await using var transaction = await connection.BeginTransactionAsync();
+            await h.WalletTransactions.AdjustAsync(connection, transaction, corporationCharacterId, 100m, 0, 1,
+                "character selection projection test", Harness.ClockUnixMs, "selection-positive-then-negative");
+            await transaction.CommitAsync();
+        }
+        await using (var connection = await h.Source.OpenConnectionAsync())
+        {
+            await using var transaction = await connection.BeginTransactionAsync();
+            await h.WalletTransactions.AdjustAsync(connection, transaction, corporationCharacterId, -25m, 0, 1,
+                "character selection projection test", Harness.ClockUnixMs, "selection-negative-latest");
+            await transaction.CommitAsync();
+        }
+        await using (var connection = await h.Source.OpenConnectionAsync())
+        {
+            await using var transaction = await connection.BeginTransactionAsync();
+            await h.WalletTransactions.AdjustAsync(connection, transaction, militiaCharacterId, 50m, 0, 1,
+                "character selection projection test", Harness.ClockUnixMs, "selection-positive");
+            await transaction.CommitAsync();
+        }
+        Assert.Empty(await h.WalletTransactions.JournalAsync(ordinaryFactionCharacterId));
+
+        var noWarsData = Assert.IsType<PyTuple>(await h.CallAsync(session, "GetCharacterSelectionData"));
+        Assert.Equal(4, noWarsData.Items.Count);
+        Assert.IsType<PyList>(noWarsData.Items[0]);
+        var trainingInfo = Assert.IsType<PyTuple>(noWarsData.Items[1]);
+        Assert.Equal(2, trainingInfo.Items.Count);
+        Assert.Same(PyNone.Instance, trainingInfo.Items[0]);
+        Assert.Same(PyNone.Instance, trainingInfo.Items[1]);
+        var noWarRows = Assert.IsType<PyList>(noWarsData.Items[2]).Items;
+        Assert.Equal(3, noWarRows.Count);
+        Assert.Empty(Assert.IsType<PyList>(noWarsData.Items[3]).Items);
+        var noWarFields = noWarRows.Select(KeyValFields).ToDictionary(fields => ((PyInt)fields["characterID"]).Value);
+        Assert.Same(PyNone.Instance, noWarFields[corporationCharacterId]["factionID"]);
+        Assert.Equal(new PyInt(500002), noWarFields[militiaCharacterId]["factionID"]);
+        Assert.Same(PyNone.Instance, noWarFields[ordinaryFactionCharacterId]["factionID"]);
+
+        await h.Relations.SetAsync("war", corporationCharacter.CorporationId, 500010, 0, "selection projection test",
+            new { timeStarted = Eve.Services.Py.FileTimeFromUnixMs(Harness.ClockUnixMs - 1_000), mutual = true }, null, CancellationToken.None);
+        var data = Assert.IsType<PyTuple>(await h.CallAsync(session, "GetCharacterSelectionData"));
+        var rows = Assert.IsType<PyList>(data.Items[2]).Items;
+        var fieldsByCharacter = rows.Select(KeyValFields).ToDictionary(fields => ((PyInt)fields["characterID"]).Value);
+        Assert.IsType<PyReal>(fieldsByCharacter[corporationCharacterId]["balance"]);
+        Assert.Equal(new PyReal(100_075d), fieldsByCharacter[corporationCharacterId]["balance"]);
+        Assert.IsType<PyReal>(fieldsByCharacter[corporationCharacterId]["balanceChange"]);
+        Assert.Equal(new PyReal(-25d), fieldsByCharacter[corporationCharacterId]["balanceChange"]);
+        Assert.Equal(new PyReal(100_050d), fieldsByCharacter[militiaCharacterId]["balance"]);
+        Assert.Equal(new PyReal(50d), fieldsByCharacter[militiaCharacterId]["balanceChange"]);
+        Assert.Equal(new PyReal(100_000d), fieldsByCharacter[ordinaryFactionCharacterId]["balance"]);
+        Assert.Equal(new PyReal(0d), fieldsByCharacter[ordinaryFactionCharacterId]["balanceChange"]);
+        var warRows = Assert.IsType<PyList>(data.Items[3]).Items;
+        Assert.Equal(3, warRows.Count);
+        Assert.Equal(new HashSet<long> { corporationCharacterId, militiaCharacterId, ordinaryFactionCharacterId },
+            warRows.Select(war => ((PyInt)KeyValFields(war)["characterID"]).Value).ToHashSet());
+        var warFields = KeyValFields(warRows[0]);
+        Assert.IsType<PyInt>(warFields["warID"]);
+        Assert.IsType<PyInt>(warFields["characterID"]);
+        Assert.IsType<PyInt>(warFields["declaredByID"]);
+        Assert.IsType<PyInt>(warFields["againstID"]);
+        Assert.IsType<PyLong>(warFields["timeStarted"]);
+        Assert.Equal(new PyInt(1), warFields["mutual"]);
+        Assert.IsType<PyDict>(warFields["allies"]);
     }
 
     [PgFact]

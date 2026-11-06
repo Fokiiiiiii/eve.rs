@@ -38,7 +38,9 @@ public sealed partial class CharUnboundMgrService(
     Func<long, int, CancellationToken, Task>? writeCharacterGender = null,
     Func<long, int, int, int, CancellationToken, Task>? writeCharacterBloodline = null,
     Func<CreationRequest, CancellationToken, Task<CreationOutcome>>? createCharacter = null,
-    Func<long, long, CancellationToken, Task<bool>>? isCorporationCeo = null)
+    Func<long, long, CancellationToken, Task<bool>>? isCorporationCeo = null,
+    Func<IReadOnlyList<Character>, CancellationToken, Task<IReadOnlyList<PyValue>>>? readCharacterSelectionWarsAsync = null,
+    Func<long, CancellationToken, ValueTask<long>>? warFactionOfAsync = null)
 {
     /// <summary>What every session's role gets on top of the account's (the client shows staff roles and the base bits alike).</summary>
     public const long SessionBaseRole = 0x6000000080000000;
@@ -103,8 +105,8 @@ public sealed partial class CharUnboundMgrService(
         {
             return None;
         }
-        var balances = await wallets.ForOwnersAsync([character.Id], Token(call));
-        return await SelectionRow(character, balances.GetValueOrDefault(character.Id), Token(call));
+        var walletsByOwner = await wallets.ForOwnersWithLastIskChangeAsync([character.Id], Token(call));
+        return await SelectionRow(character, walletsByOwner.GetValueOrDefault(character.Id), Token(call));
     }
 
     /// <summary>
@@ -117,17 +119,22 @@ public sealed partial class CharUnboundMgrService(
         var account = AccountOf(call);
         var list = account is { } id ? await characters.ForAccountAsync(id, Token(call)) : [];
         var info = account is { } known ? await accounts.FindAsync(checked((uint)known), Token(call)) : null;
-        var balances = await wallets.ForOwnersAsync(list.Select(c => c.Id), Token(call));
+        var walletsByOwner = await wallets.ForOwnersWithLastIskChangeAsync(list.Select(c => c.Id), Token(call));
+        IReadOnlyList<PyValue> warRows = list.Count == 0
+            ? []
+            : readCharacterSelectionWarsAsync is { } readWars
+                ? await readWars(list, Token(call))
+                : throw new InvalidOperationException("character selection war projection is not wired");
         var rows = new List<PyValue>();
         foreach (var character in list)
         {
-            rows.Add(await SelectionRow(character, balances.GetValueOrDefault(character.Id), Token(call)));
+            rows.Add(await SelectionRow(character, walletsByOwner.GetValueOrDefault(character.Id), Token(call)));
         }
         return Py.Tuple(
             new PyList(info is null ? [] : [AccountRow(info)]),
             Py.Tuple(None, None),
             new PyList(rows),
-            new PyList([]));
+            new PyList(warRows));
     }
 
     [Method("GetCohortsForUser")]
@@ -664,8 +671,12 @@ public sealed partial class CharUnboundMgrService(
         ("subscriptionEndTime", info.SubscriptionEndsAt is { } endsAt ? new PyLong(FileTime(endsAt)) : None),
         ("maxCharacterSlots", new PyInt(CharacterCreation.SlotsPerAccount)));
 
-    private async Task<PyValue> SelectionRow(Character c, Balance? balance, CancellationToken ct)
+    private async Task<PyValue> SelectionRow(Character c, BalanceWithLastIskChange? wallet, CancellationToken ct)
     {
+        var warFactionId = warFactionOfAsync is { } readWarFaction
+            ? await readWarFaction(c.Id, ct)
+            : throw new InvalidOperationException("character selection militia projection is not wired");
+        var balance = wallet?.Balance;
         var ship = c.ShipId is { } shipId ? await items.GetAsync(shipId, ct) : null;
         var trainingView = await training.ViewAsync(c.Id, c.AccountId, ct);
         var currentTraining = trainingView.Current;
@@ -689,16 +700,14 @@ public sealed partial class CharUnboundMgrService(
             ("schoolID", new PyInt(c.SchoolId)),
             ("corporationID", new PyInt(c.CorporationId)),
             ("allianceID", c.AllianceId is { } alliance ? new PyInt(alliance) : None),
-            // The reference shows no faction here although the session has one.
-            ("factionID", None),
+            ("factionID", warFactionId > 0 ? new PyInt(warFactionId) : None),
             ("stationID", new PyInt(c.StationId)),
             ("solarSystemID", new PyInt(c.SolarSystemId)),
             ("constellationID", new PyInt(c.ConstellationId)),
             ("regionID", new PyInt(c.RegionId)),
             ("balance", new PyReal((double)(balance?.Isk ?? 0m))),
             ("plexBalance", new PyInt(balance?.Plex ?? 0)),
-            // Gap: the wallet has no journal yet, so nothing has changed the balance.
-            ("balanceChange", new PyReal(0.0)),
+            ("balanceChange", new PyReal((double)(wallet?.LastIskChange ?? 0m))),
             ("skillPoints", new PyInt(trainingView.TotalPoints)),
             ("shipTypeID", ship is null ? None : new PyInt(ship.TypeId)),
             ("shipName", new PyStr(ship is null ? "" : ship.CustomName ?? catalog.ShipName(ship.TypeId))),

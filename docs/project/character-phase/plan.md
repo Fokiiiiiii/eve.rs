@@ -8,7 +8,7 @@
 
 **Scope:** the character domain of the V24.01 client: selection, creation and deletion; appearance and paperdoll; skills (queue, injectors, extractors, remap, plans, notifications, multi-character training, alpha injections); clones (jump clones, clone station, clone grade, implants); attributes; security status; titles, ranks, achievements, tutorial and season data; character info; bounties and standings basics.
 
-**Source priority** (AGENTS.md, DEVIATIONS.md): numbers and attributes from the official SDE (`sde` schema); mechanics from the EVE University wiki, implemented as written; client wire shapes from eve-logic (`/home/user/eve-logic`, V24.01); EveJS v0.12.9 (`/home/user/evejs-v0.12.9/server/src`, short form `services/...` below) is the behaviour reference only. EveJS is not authoritative where it is a stub: `userService.js` `Handle_ActivateCharacterReSculpt` returns `true` and changes nothing. Record each conflict in `docs/reference/compat/DEVIATIONS.md` with the chosen source.
+**Source priority** (AGENTS.md, DEVIATIONS.md): static statistics and data come from the pinned SDE; mechanics follow the EVE University wiki; EveJS 261028.1 (`/home/user/evejs-261028.1/src`) is the primary executable behavior reference after those rules, followed by CCP sources as needed. V24.01 eve-logic callsites and traces (`/home/user/eve-logic`) decide client wire shapes. Record conflicts in `docs/reference/compat/DEVIATIONS.md` with evidence and the chosen source.
 
 **Reading rules for this plan:**
 - "Literal present" means the method name occurs in eve.rs source. It does not prove a working handler. Section 3 gives the real state of each name.
@@ -84,7 +84,7 @@ Lanes are the PostgreSQL databases from `docs/project/DATABASES.md`: `eve_p2` (l
 
 | ID | Package | Outcome | Depends on | Wave | Lane | Parallel with |
 |---|---|---|---|---|---|---|
-|CH-1|Character deletion: prepare, cancel, delete, and purge character-owned skill plans with the deletion transaction|Partial|none|1|eve_p2|CH-3, CH-6, CH-10, CH-12|
+|CH-1|Character deletion: prepare, cancel, delete, purge private state, and settle corporation biomass assets and ISK|Done|none|1|eve_p2|CH-3, CH-6, CH-10, CH-12|
 |CH-2|Alpha injections, and acceptance of the injector correction|Done|none|1|eve_p3|CH-5, CH-7, CH-9|
 |CH-3|Skill handler: CheckAndSendNotifications, GetSkillBundleInfo, skill notification order|Partial|none|1|eve_p2|CH-1, CH-6, CH-10, CH-12|
 |CH-4|Tutorial and season read surfaces|Done|none|1|eve_p4|CH-8, CH-11, CH-13, CH-14|
@@ -128,7 +128,9 @@ Wave 1 runs about 14 packages across three lanes. Packages in one wave may run a
 - **Status:** Implemented. `PrepareCharacterForDelete` persists the existing `delete_prepare_at` column; `DeleteCharacter` tombstones a queued character after the wait, moves or destroys its assets, and purges the character-owned runtime and persisted state; `CancelCharacterDeletePrepare` clears the queue. Character selection omits deleted characters. PostgreSQL deletion clears skills, plans and queues in its transaction, followed by the character-keyed GameStore purge (`skillPlans`, `skillQueues`, `skillTradingState`) and flush. The Host and private-state purge tests cover deletion, refusals, persistence, restart and preservation of another character's rows; the headless walk covers the client prepare/cancel/refusal flow. A repeated delete on a tombstoned character reruns the purge and graveyard assignment so a request retry can finish after losing its reply; the Host regression sends deletion twice. The same PostgreSQL transaction also removes jump clones and cascading implant rows, earned/equipped titles, achievement tracker rows, NES intro state, Project Discovery tutorial state, and jump-clone settlement rows for either participant, and clears the tombstone's last-clone-jump timestamp. Account-scoped login milestones remain for the account's other characters.
 - **Files:** `dotnet/src/Eve.Services.CharacterSelect/CharUnboundMgrService.cs` (near line 428); `dotnet/src/Eve.Characters/Characters.cs`; `dotnet/src/Eve.Host/Rpc/CoreRpc.cs` (construction near line 73); a new migration in `dotnet/src/Eve.Characters/Migrations/` only if removal needs new state; `dotnet/tests/Eve.Services.CharacterSelect.Tests/`; new live test `tools/headless-client/tests/test_character_delete.py`.
 - **Sources:** `eve/client/script/ui/login/charSelection/characterSelection.py` 823-871; EveJS files above; wiki.
-- **Acceptance:** both methods are registered and answer the client's shape. Prepare persists across a restart. A second prepare, a delete before the waiting period, and a delete of an unprepared character are refused with the reference's text. Cancel clears the state. After delete, the character is absent from `GetCharactersToSelect` and `SelectCharacterID` refuses it. Live: prepare, cancel, prepare, delete under the test clock, login refused.
+- **Acceptance:** all three RPC methods are registered and preserve the client's reply shapes. Prepare persists across a restart. A second prepare, a delete before the waiting period, and a delete of an unprepared character are refused with the reference's text. Cancel clears the state. After delete, the character is absent from `GetCharactersToSelect` and `SelectCharacterID` refuses it. Live: prepare, cancel, prepare, delete under the test clock, login refused.
+
+- **CX8 biomass settlement:** player-corporation ISK moves to wallet division 1 with an Inheritance journal row; assets move to hangar division 1 when an office exists, otherwise assets are destroyed; corporation members receive persisted mail and new-mail notifications. NPC-corporation ISK and assets are destroyed. The original corporation ID is retained across tombstoning so rollback and post-commit retries follow the same settlement branch. Host/PostgreSQL tests cover office, no-office, NPC, rollback, restart and post-commit retry. Details and V24.01 callsite evidence are in [the CX8 handoff](handoff-character-expert-system-purge-cx8.md) and [DEVIATIONS](../../reference/compat/DEVIATIONS.md).
 
 #### CH-2 Alpha injections, and acceptance of the injector correction
 - **Depends on:** none. **Wave 1, lane eve_p3.**
@@ -342,6 +344,7 @@ Each item was checked in source; the test names are those found by search. Items
 
 ### 7.2 Verification record
 
+- After merge of `origin/main` at `0992cc6c`, CX8 owner and adjacent Host/PostgreSQL classes passed on `eve_p8` through `tools/dev/db-lock.sh`: Host 462/462, Characters 2/2, Events 20/20, Corporations 113/113, Wallet 4/4 and Inventory 29/29; zero failures and skips. The Host test run compiled `Eve.Host` and `Eve.Host.Tests`. The latest completed main CI at this check was run 1555 on `7351c60b`, all jobs green. The CX8 handoff records evidence and Actions follow-up.
 - Local Rust checks for the Destiny wreck-stamp fix passed: the focused `eve-space` regression (1/1), `cargo check -p eve-space`, `cargo +1.94.1 fmt --all -- --check`, and workspace clippy.
 - The graphical V24.01 client was not used. Active-season challenge progress and reward behavior, non-character target-group delivery, and achievement reward claims remain partial for the sources and Host-wiring reasons listed above.
 - CH-23 selected Actions results and final package outcomes are added here after the current-tree runs finish.

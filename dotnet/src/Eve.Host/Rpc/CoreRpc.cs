@@ -89,7 +89,12 @@ internal sealed partial class CharacterServicesComposition
                         Environment.GetEnvironmentVariable("EVE_BOOKMARKS_SCHEMA") ?? Eve.Bookmarks.BookmarkStore.DefaultSchema,
                         Environment.GetEnvironmentVariable("EVE_SPACE_SCHEMA") ?? Eve.Ships.PgProbeStore.DefaultSchema,
                         Environment.GetEnvironmentVariable("EVE_SKILLS_SCHEMA") ?? Eve.Skills.PgSkillStore.DefaultSchema,
-                        Environment.GetEnvironmentVariable("EVE_CHARACTERS_SCHEMA") ?? Eve.Characters.PgCharacterStore.DefaultSchema)),
+                        Environment.GetEnvironmentVariable("EVE_CHARACTERS_SCHEMA") ?? Eve.Characters.PgCharacterStore.DefaultSchema),
+                    corporationOfficeStore,
+                    economyWallets,
+                    foundations.Events,
+                    (connection, transaction, corporationId, cancellationToken) =>
+                        corporations.ActiveMemberCharacterIdsAsync(connection, transaction, corporationId, cancellationToken)),
                 isCorporationCeo: async (characterId, corporationId, cancellationToken) =>
                     await corporations.GetAsync(corporationId, cancellationToken) is { IsNpc: false, Deleted: false } corporation &&
                     corporation.CeoId == characterId),

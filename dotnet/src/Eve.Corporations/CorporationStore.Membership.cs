@@ -16,6 +16,26 @@ public sealed partial class CorporationStore
         return await r.ReadAsync(token) ? ReadMember(r) : null;
     }
 
+    /// <summary>Live member mail recipients captured with the corporation and membership rows locked in the caller's transaction.</summary>
+    public async Task<IReadOnlyList<long>> ActiveMemberCharacterIdsAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long corporationId, CancellationToken cancellationToken = default)
+    {
+        var corporation = await GetAsync(connection, transaction, corporationId, locked: true, cancellationToken);
+        if (corporation is not { IsNpc: false, Deleted: false })
+            return [];
+
+        var memberIds = new List<long>();
+        await using (var command = Command(connection, transaction,
+            $"SELECT character_id FROM {_schema}.members WHERE corporation_id=$1 ORDER BY character_id FOR SHARE", corporationId))
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+            while (await reader.ReadAsync(cancellationToken))
+                memberIds.Add(reader.GetInt64(0));
+
+        return (await _characters.GetLiveManyAsync(connection, transaction, memberIds, cancellationToken))
+            .Select(character => character.Id)
+            .ToArray();
+    }
+
     public async Task<bool> HasHangarAccessAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
         long characterId, long corporationId, long stationId, int divisionFlag, bool take, CancellationToken token = default)
     {

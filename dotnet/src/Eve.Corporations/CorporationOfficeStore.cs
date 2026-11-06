@@ -142,6 +142,19 @@ public sealed class CorporationOfficeStore
         return offices;
     }
 
+    public async Task<IReadOnlyList<CorporationOffice>> ForCorporationAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long corporationId, CancellationToken cancellationToken = default)
+    {
+        await using var command = Command(connection, transaction, $"""
+            SELECT office_id,office_folder_id,corporation_id,station_id,solar_system_id,rent_isk,rented_at_ms,expires_at_ms
+            FROM {_schema}.office_rentals WHERE corporation_id=$1 AND active ORDER BY station_id FOR SHARE
+            """, corporationId);
+        var offices = new List<CorporationOffice>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) offices.Add(ReadOffice(reader));
+        return offices;
+    }
+
     public async Task<IReadOnlyList<CorporationOfficeRentBill>> BillsForCorporationAsync(
         long corporationId, CancellationToken cancellationToken = default)
     {

@@ -269,6 +269,192 @@ public sealed class PersistenceMailSendHostAdapter(
         }
     }
 
+    /// <summary>Persists the corporation mail and its standard new-mail notifications; retries reuse both records.</summary>
+    public async Task<long> SendCharacterBiomassMailAsync(
+        long characterId,
+        string characterName,
+        long corporationId,
+        string corporationName,
+        IEnumerable<long> recipientCharacterIds,
+        CancellationToken cancellationToken)
+    {
+        if (characterId <= 0 || corporationId <= 0 || string.IsNullOrWhiteSpace(characterName) ||
+            string.IsNullOrWhiteSpace(corporationName))
+            throw new ArgumentException("Biomass mail requires persisted character and corporation identities.");
+        ArgumentNullException.ThrowIfNull(recipientCharacterIds);
+        var recipients = recipientCharacterIds.Where(id => id > 0 && id != characterId).Distinct().Order().ToArray();
+        if (recipients.Length == 0)
+            return 0;
+
+        var operationKey = $"character-biomass:{characterId}";
+        var title = $"{characterName} has permanently died";
+        var body = $"{WebUtility.HtmlEncode(characterName)} has been permanently deleted from {WebUtility.HtmlEncode(corporationName)}.";
+        await _sendGate.WaitAsync(cancellationToken);
+        try
+        {
+            await flushTableAsync("mail", cancellationToken);
+            var mail = await readPersistedTableAsync("mail", cancellationToken);
+            var messages = mail["messages"] as JsonObject ?? new JsonObject();
+            var mailboxes = mail["mailboxes"] as JsonObject ?? new JsonObject();
+            var prior = messages.FirstOrDefault(pair => pair.Value is JsonObject candidate &&
+                string.Equals(Text(candidate["biomassOperationKey"]), operationKey, StringComparison.Ordinal));
+            JsonObject message;
+            long messageId;
+            long sentFiletime;
+            if (prior.Value is JsonObject existing)
+            {
+                message = (JsonObject)existing.DeepClone();
+                messageId = Number(message["messageID"]);
+                sentFiletime = Number(message["sentDate"]);
+                if (messageId <= 0 || Number(message["senderID"]) != corporationId ||
+                    !string.Equals(Text(message["title"]), title, StringComparison.Ordinal) ||
+                    !string.Equals(Text(message["body"]), body, StringComparison.Ordinal) ||
+                    !LongArraysEqual(message["toCharacterIDs"] as JsonArray, recipients))
+                    throw new InvalidOperationException($"Biomass mail receipt {operationKey} has different terms.");
+            }
+            else
+            {
+                messageId = NextMailId(messages, mailboxes);
+                sentFiletime = DateTimeOffset.FromUnixTimeMilliseconds(nowUnixMs()).UtcDateTime.ToFileTimeUtc();
+                message = new JsonObject
+                {
+                    ["messageID"] = messageId,
+                    ["senderID"] = corporationId,
+                    ["senderName"] = corporationName,
+                    ["toCharacterIDs"] = LongArray(recipients),
+                    ["toListID"] = null,
+                    ["toCorpOrAllianceID"] = corporationId,
+                    ["title"] = title,
+                    ["subject"] = title,
+                    ["body"] = body,
+                    ["sentDate"] = sentFiletime,
+                    ["replyToMessageID"] = null,
+                    ["forwardedFromMessageID"] = null,
+                    ["statusMask"] = 0,
+                    ["labelMask"] = 0,
+                    ["read"] = false,
+                    ["trashed"] = false,
+                    ["replied"] = false,
+                    ["forwarded"] = false,
+                    ["biomassOperationKey"] = operationKey,
+                };
+                RequireWrite("mail", $"/messages/{Key(messageId)}", message);
+            }
+
+            foreach (var recipientId in recipients)
+            {
+                var statusKey = Key(messageId);
+                var status = ((mailboxes[Key(recipientId)] as JsonObject)?["statuses"] as JsonObject)?[statusKey] as JsonObject;
+                if (status is null)
+                {
+                    RequireWrite("mail", $"/mailboxes/{Key(recipientId)}/statuses/{statusKey}", new JsonObject
+                    {
+                        ["statusMask"] = 0,
+                        ["labelMask"] = 1 | 4,
+                    });
+                }
+                else if ((Number(status["labelMask"]) & (1 | 4)) != (1 | 4))
+                {
+                    var updated = (JsonObject)status.DeepClone();
+                    updated["labelMask"] = Number(status["labelMask"]) | 1 | 4;
+                    RequireWrite("mail", $"/mailboxes/{Key(recipientId)}/statuses/{statusKey}", updated);
+                }
+            }
+
+            await FlushUntilVisibleAsync("mail", persisted =>
+            {
+                var savedMessage = (persisted["messages"] as JsonObject)?[Key(messageId)] as JsonObject;
+                if (savedMessage is null ||
+                    !string.Equals(Text(savedMessage["biomassOperationKey"]), operationKey, StringComparison.Ordinal) ||
+                    Number(savedMessage["senderID"]) != corporationId ||
+                    !string.Equals(Text(savedMessage["title"]), title, StringComparison.Ordinal) ||
+                    !LongArraysEqual(savedMessage["toCharacterIDs"] as JsonArray, recipients))
+                    return false;
+                var savedMailboxes = persisted["mailboxes"] as JsonObject;
+                return recipients.All(recipientId =>
+                    (savedMailboxes?[Key(recipientId)] as JsonObject)?["statuses"] is JsonObject statuses &&
+                    statuses[Key(messageId)] is JsonObject savedStatus &&
+                    (Number(savedStatus["labelMask"]) & (1 | 4)) == (1 | 4));
+            }, cancellationToken);
+
+            await flushTableAsync("notifications", cancellationToken);
+            var notificationState = await readPersistedTableAsync("notifications", cancellationToken);
+            var boxes = notificationState["boxes"] as JsonObject ?? new JsonObject();
+            var nextNotificationId = NextNotificationId(boxes);
+            var notificationIds = new Dictionary<long, long>();
+            var createdFiletimes = new Dictionary<long, long>();
+            foreach (var recipientId in recipients)
+            {
+                var rows = (boxes[Key(recipientId)] as JsonObject)?["byID"] as JsonObject;
+                var notificationKey = $"{operationKey}:recipient:{recipientId}";
+                var priorNotification = rows?.FirstOrDefault(pair => pair.Value is JsonObject candidate &&
+                    string.Equals(Text(candidate["idempotencyKey"]), notificationKey, StringComparison.Ordinal));
+                if (priorNotification is { Value: JsonObject saved })
+                {
+                    if (Number(saved["typeID"]) != 1004 || Number(saved["senderID"]) != corporationId ||
+                        Number(saved["receiverID"]) != recipientId)
+                        throw new InvalidOperationException($"Biomass mail notification {notificationKey} has different terms.");
+                    continue;
+                }
+
+                var notificationId = checked(++nextNotificationId);
+                var created = sentFiletime;
+                var notificationMessage = (JsonObject)message.DeepClone();
+                var notification = new JsonObject
+                {
+                    ["notificationID"] = notificationId,
+                    ["typeID"] = 1004,
+                    ["senderID"] = corporationId,
+                    ["receiverID"] = recipientId,
+                    ["processed"] = false,
+                    ["created"] = created,
+                    ["data"] = new JsonObject
+                    {
+                        ["senderName"] = corporationName,
+                        ["subject"] = title,
+                        ["msg"] = notificationMessage,
+                    },
+                    ["idempotencyKey"] = notificationKey,
+                };
+                RequireWrite("notifications", $"/boxes/{Key(recipientId)}/byID/{Key(notificationId)}", notification);
+                notificationIds[recipientId] = notificationId;
+                createdFiletimes[recipientId] = created;
+            }
+
+            if (notificationIds.Count > 0)
+            {
+                await FlushUntilVisibleAsync("notifications", persisted =>
+                {
+                    var persistedBoxes = persisted["boxes"] as JsonObject;
+                    return notificationIds.All(pair =>
+                        (persistedBoxes?[Key(pair.Key)] as JsonObject)?["byID"] is JsonObject rows &&
+                        rows[Key(pair.Value)] is JsonObject saved &&
+                        Number(saved["typeID"]) == 1004 && Number(saved["receiverID"]) == pair.Key &&
+                        string.Equals(Text(saved["idempotencyKey"]), $"{operationKey}:recipient:{pair.Key}", StringComparison.Ordinal));
+                }, cancellationToken);
+
+                foreach (var (recipientId, notificationId) in notificationIds)
+                {
+                    var data = NotificationData(corporationId, corporationName, title, message, sentFiletime);
+                    sendNotification(recipientId,
+                    [
+                        new Eve.Marshal.PyLong(notificationId),
+                        new Eve.Marshal.PyInt(1004),
+                        new Eve.Marshal.PyLong(corporationId),
+                        Py.FileTimeLong(createdFiletimes[recipientId]),
+                        data,
+                    ]);
+                }
+            }
+
+            return messageId;
+        }
+        finally
+        {
+            _sendGate.Release();
+        }
+    }
+
     public async Task<long?> SendWelcomeMailAsync(
         long senderId,
         string senderName,
@@ -575,6 +761,10 @@ public sealed class PersistenceMailSendHostAdapter(
         long.TryParse(value?.ToString(), System.Globalization.NumberStyles.Integer,
             System.Globalization.CultureInfo.InvariantCulture, out var result) ? result : 0;
 
+    private static bool LongArraysEqual(JsonArray? values, IReadOnlyList<long> expected) =>
+        values is not null && values.Count == expected.Count &&
+        values.Select(Number).SequenceEqual(expected);
+
     private static string Text(JsonNode? value) => value?.ToString() ?? "";
 
     private static string Key(long id) => id.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -633,10 +823,7 @@ public sealed class PersistenceMailSendHostAdapter(
             ("toCharacterIDs", new Eve.Marshal.PyList(
                 ((JsonArray)message["toCharacterIDs"]!).Select(value => (Eve.Marshal.PyValue)new Eve.Marshal.PyLong(Number(value))).ToArray())),
             ("toListID", message["toListID"] is null ? Eve.Marshal.PyNone.Instance : new Eve.Marshal.PyLong(Number(message["toListID"]))),
-            ("toCorpOrAllianceID", message["toCorpOrAllianceID"] is null
-                ? Eve.Marshal.PyNone.Instance
-                : new Eve.Marshal.PyList(((JsonArray)message["toCorpOrAllianceID"]!)
-                    .Select(value => (Eve.Marshal.PyValue)new Eve.Marshal.PyLong(Number(value))).ToArray())),
+            ("toCorpOrAllianceID", CorporationOrAllianceIds(message["toCorpOrAllianceID"])),
             ("subject", new Eve.Marshal.PyStr(subject)),
             ("statusMask", new Eve.Marshal.PyInt(0)),
             ("labelMask", new Eve.Marshal.PyInt(0)),
@@ -649,4 +836,11 @@ public sealed class PersistenceMailSendHostAdapter(
             ("subject", new Eve.Marshal.PyStr(subject)),
             ("msg", messageView));
     }
+
+    private static Eve.Marshal.PyValue CorporationOrAllianceIds(JsonNode? value) => value switch
+    {
+        null => Eve.Marshal.PyNone.Instance,
+        JsonArray ids => new Eve.Marshal.PyList(ids.Select(id => (Eve.Marshal.PyValue)new Eve.Marshal.PyLong(Number(id))).ToArray()),
+        _ => new Eve.Marshal.PyList([new Eve.Marshal.PyLong(Number(value))]),
+    };
 }

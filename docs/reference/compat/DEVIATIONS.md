@@ -4884,17 +4884,19 @@ cannot see the list or its members; every change is logged. EveJS `ownerGroupMan
 - **Choice: rename, description and delete are admin only.** The wiki says "Admins can edit and delete the list" and does not give
   managers that right. EveJS let a manager rename (`UpdateName` required the manager type); the wiki is the higher source, so the
   manager is refused.
-- **Choice: read-only group summaries.** `GetGroup` and `GetGroupsMany` return the six client fields (`groupID`, `creatorID`, `name`,
-  `description`, the reader's `membershipType`, and admin ids) for any existing group. The published-link client calls `GetGroup` and
-  dereferences `creatorID`, `name`, `description`, and `admins` (`ownergroups/client/link.py:24-57`,
-  `eve/client/script/ui/structure/accessGroups/groupInfoWnd.py:34-57`). Structure profile editing fetches `GetGroupsMany` and omits
-  a setting from `SaveProfile(toSave)` when the summary is absent (`accessGroupsController.py:197`,
-  `structureSettingsWnd.py:83-103`). UniWiki's "Publish" section says a link shows the list name, description, and admins, not managers
-  (https://wiki.eveuniversity.org/Access_Lists). EveJS 261028.1 differs: `Handle_GetGroup` calls `getGroupForCharacter`, which filters
-  by membership (`ownerGroupManagerService.js:190-198`, `bookmarkRuntimeState.js:850-858`). The id-only client link and profile callsites
-  need these summaries for readers who do not manage the group, so this server returns only those fields and never member rows or logs.
-  `GetMyGroups` remains the list used for management; member and log reads and every write retain their existing role checks. The
-  registered Host regression covers managers, members, unrelated readers, missing ids, and denied member, log, and write calls.
+- **Choice: read-only group summaries require an effective role.** `GetGroup` returns `None` and `GetGroupsMany` omits a group if the
+  character has no effective role; Member, Manager, and Admin readers receive the six client fields (`groupID`, `creatorID`, `name`,
+  `description`, their `membershipType`, and admin ids). The client resolves an ID with `GetGroup` and populates profiles with
+  `GetGroupsMany` (`accessGroupsController.py:172-202`); `GroupInfoWnd` displays the name, description, and admins
+  (`groupInfoWnd.py:22-45`). UniWiki says a published link snapshots those fields, but V24.01's link contains only `accessGroup:<id>`
+  (`ownergroups/client/link.py:14-27,37-50`) and this flow provides no server publication flag or setter. The server therefore cannot
+  safely distinguish a published link from a guessed ID. An Everyone/member entry grants the intended public summary; a private list's
+  link does not disclose its metadata to nonmembers. This follows EveJS 261028.1, whose single and bulk lookups filter through
+  `isCharacterInGroup` (`ownerGroupManagerService.js:190-198,237-249`, `bookmarkRuntimeState.js:850-866`,
+  `bookmarkRuntimeAccess.js:251-268`), while recording the published-private-link limitation described by UniWiki
+  (https://wiki.eveuniversity.org/Access_Lists). `GetMyGroups` remains the management list; member and log reads and every write keep
+  their existing role checks. The PostgreSQL service regression covers a private nonmember, an Everyone member, an unknown id, and
+  bulk filtering.
 - **Choice: the corporation's built-in list.** The wiki says each corporation has a built-in list named after it, with the
   corporation as admin, that cannot be modified and that all corporation members may use. It takes the corporation's id as its group id
   (no sequence value; the sequence starts at 2000000001 above every character, corporation and alliance id), is created on the first

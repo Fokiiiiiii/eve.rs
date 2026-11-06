@@ -69,14 +69,15 @@ public sealed partial class AccessGroupStore
             return AccessRules.CanSee(role, group) ? new GroupView(group, role, AdminsOf(group, members)) : null;
         }, token);
 
-    /// <summary>The group summary visible to any reader: the reader's role and only the admins shown to the client.</summary>
+    /// <summary>The group summary available to a character with an effective member, manager, or admin role.</summary>
     public Task<GroupView?> GroupSummaryAsync(Affiliation who, long groupId, CancellationToken token = default) =>
         InTransactionAsync(0, async (connection, tx) =>
         {
             var group = await GroupAsync(connection, tx, groupId, token);
             if (group is null) return null;
             var members = await SummaryMembersOfAsync(connection, tx, groupId, who, token);
-            return new GroupView(group, AccessRules.RoleOf(group, members, who), AdminsOf(group, members));
+            var role = AccessRules.RoleOf(group, members, who);
+            return AccessRules.CanReadSummary(role) ? new GroupView(group, role, AdminsOf(group, members)) : null;
         }, token);
 
     public Task<IReadOnlyList<AccessMember>> MembersAsync(Affiliation who, long groupId, CancellationToken token = default) =>

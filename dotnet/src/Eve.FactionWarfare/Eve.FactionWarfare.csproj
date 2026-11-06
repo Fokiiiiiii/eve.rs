@@ -4,6 +4,7 @@
     <ProjectReference Include="../Eve.Wallet/Eve.Wallet.csproj" />
     <ProjectReference Include="../Eve.Events/Eve.Events.csproj" />
     <ProjectReference Include="../Eve.Scheduler/Eve.Scheduler.csproj" />
+    <ProjectReference Include="../Eve.Relations/Eve.Relations.csproj" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Migrations/*.sql" />

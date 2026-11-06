@@ -49,6 +49,7 @@ impl<'a> SceneWorld<'a> {
     /// What happened in the scene since the trees were last told, told to whoever asked to hear of it: locks that were had or lost, ships that came
     /// within a sensor's range or left it, and offensive acts against the NPCs.
     pub(crate) fn tell_what_happened(&mut self, shared: &mut Shared) {
+        self.scene.prune_pending_crime_events(self.now);
         self.tell_locks(shared);
         self.tell_proximity(shared);
         self.tell_aggressions(shared);
@@ -164,11 +165,10 @@ impl<'a> SceneWorld<'a> {
 
     fn tell_security_status_losses(&mut self, shared: &mut Shared) {
         let pending = std::mem::take(&mut self.scene.pending_security_status_losses);
-        let losses = std::mem::take(&mut self.scene.security_status_losses);
         let solar_system_id = i64::from(self.scene.solar_system_id());
         let has_subscribers =
             !shared.events.subscribers(solar_system_id, message::SEC_STATUS_LOST_EVENT).is_empty();
-        for (owner_id, ship_id) in pending.into_iter().chain(losses) {
+        for (owner_id, ship_id) in pending {
             if has_subscribers {
                 shared.tell_subscribers(
                     Subject::Item(solar_system_id),
@@ -176,18 +176,17 @@ impl<'a> SceneWorld<'a> {
                     &[Value::Int(owner_id), Value::Int(ship_id)],
                 );
             } else {
-                self.scene.pending_security_status_losses.push((owner_id, ship_id));
+                self.scene.queue_security_status_loss(owner_id, ship_id);
             }
         }
     }
 
     fn tell_criminal_flags(&mut self, shared: &mut Shared) {
         let pending = std::mem::take(&mut self.scene.pending_criminal_flag_activations);
-        let activations = std::mem::take(&mut self.scene.criminal_flag_activations);
         let solar_system_id = i64::from(self.scene.solar_system_id());
         let has_subscribers =
             !shared.events.subscribers(solar_system_id, message::CRIMINAL_FLAG_ACTIVE).is_empty();
-        for (owner_id, ship_id) in pending.into_iter().chain(activations) {
+        for (owner_id, ship_id) in pending {
             if has_subscribers {
                 shared.tell_subscribers(
                     Subject::Item(solar_system_id),
@@ -195,7 +194,7 @@ impl<'a> SceneWorld<'a> {
                     &[Value::Int(owner_id), Value::Int(ship_id)],
                 );
             } else {
-                self.scene.pending_criminal_flag_activations.push((owner_id, ship_id));
+                self.scene.queue_criminal_flag_activation(owner_id, ship_id);
             }
         }
     }

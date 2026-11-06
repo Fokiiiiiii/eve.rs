@@ -7,7 +7,7 @@ namespace Eve.Npc;
 /// <summary>What a profile says of an NPC: the ship type it flies, whose it is, what is fitted to it and where it comes into space.</summary>
 public sealed record NpcProfile(
     string Id, string Name, IReadOnlyList<string> Aliases, string EntityType, int ShipTypeId, long CorporationId, long AllianceId, int FactionId, string LoadoutId,
-    string LootTableId, string ShipNameTemplate, double SecurityStatus, long Bounty, double SpawnDistanceMeters);
+    string LootTableId, string ShipNameTemplate, double SecurityStatus, long Bounty, double SpawnDistanceMeters, decimal BountyPayoutMultiplier = 1m);
 
 /// <summary>What is fitted to an NPC: modules (type, how many) and the charges they hold (type, how many to a module). Retail entity types have none of either.</summary>
 public sealed record NpcLoadout(string Id, string Name, IReadOnlyList<(int TypeId, int Quantity)> Modules, IReadOnlyList<(int TypeId, int Quantity)> Charges);
@@ -63,6 +63,8 @@ public sealed partial class NpcAuthority
             _lootTables[table.Id.Trim()] = table;
         }
         _profiles = new Index<NpcProfile>([.. profiles], p => p.Id, p => p.Name, p => p.Aliases);
+        if (_profiles.Rows.Any(profile => profile.BountyPayoutMultiplier < 0))
+            throw new InvalidDataException("NPC bounty payout multipliers must be nonnegative.");
         _loadouts = [];
         foreach (var loadout in loadouts)
         {
@@ -196,6 +198,7 @@ public sealed partial class NpcAuthority
         var root = document.RootElement;
         string Text(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
         long Number(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? (long)v.GetDouble() : 0;
+        decimal Multiplier(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetDecimal(out var result) ? result : 1m;
         double Real(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetDouble() : 0;
         string[] Strings(JsonElement e, string name) =>
             e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Array ? [.. v.EnumerateArray().Select(a => a.GetString() ?? "")] : [];
@@ -207,7 +210,8 @@ public sealed partial class NpcAuthority
         var profiles = root.GetProperty("profiles").EnumerateArray().Select(p => new NpcProfile(
             Text(p, "id"), Text(p, "name"), Strings(p, "aliases"), Text(p, "entityType"), (int)Number(p, "shipTypeID"), Number(p, "corporationID"),
             Number(p, "allianceID"), (int)Number(p, "factionID"), Text(p, "loadoutID"), Text(p, "lootTableID"), Text(p, "shipNameTemplate"),
-            Real(p, "securityStatus"), Number(p, "bounty"), p.TryGetProperty("spawnDistanceMeters", out var distance) ? distance.GetDouble() : 20_000));
+            Real(p, "securityStatus"), Number(p, "bounty"), p.TryGetProperty("spawnDistanceMeters", out var distance) ? distance.GetDouble() : 20_000,
+            Multiplier(p, "bountyPayoutMultiplier")));
         var loadouts = root.GetProperty("loadouts").EnumerateArray().Select(l => new NpcLoadout(Text(l, "id"), Text(l, "name"), Pairs(l, "modules"), Pairs(l, "charges")));
         var pools = root.GetProperty("pools").EnumerateArray().Select(p => new NpcPool(
             Text(p, "id"), Text(p, "name"), Strings(p, "aliases"), Text(p, "entityType"),

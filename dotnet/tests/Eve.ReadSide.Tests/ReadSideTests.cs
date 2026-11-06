@@ -29,7 +29,7 @@ public class ReadSideTests
     {
         var read = new ReadSide(null!).Register(Groups());
         Assert.Equal(
-            "SELECT (key)::integer AS groupID, (doc #>> '{categoryID}')::integer AS categoryID, (doc #>> '{name,en}')::text AS groupName FROM sde.groups WHERE (doc->>'categoryID')::int = $1 ORDER BY ord",
+            "SELECT (key)::integer AS groupID, (doc #>> '{categoryID}')::integer AS categoryID, (doc #>> '{name,en}')::text AS groupName FROM sde.\"groups\" WHERE (doc->>'categoryID')::int = $1 ORDER BY ord",
             read.SqlOf("groupsOfCategory"));
     }
 
@@ -40,6 +40,7 @@ public class ReadSideTests
         Assert.Throws<ArgumentException>(() => read.Register(new RowsetQuery("none", "sde.types", [])));
         Assert.Throws<ArgumentException>(() => read.Register(new RowsetQuery("dup", "sde.types", [Column.Key("a"), Column.Key("a")])));
         Assert.Throws<ArgumentException>(() => Column.Field("x", ColumnType.Text, "a'; DROP TABLE x; --"));
+        Assert.Throws<ArgumentException>(() => RowsetQuery.Sde("bad", "groups; DROP TABLE groups", Column.Key()));
         read.Register(new RowsetQuery("elsewhere", "{market}.orders", [Column.Key()]));
         Assert.Throws<InvalidOperationException>(() => read.SqlOf("elsewhere"));
         Assert.Equal("SELECT (key)::bigint AS key FROM trade.orders", new ReadSide(null!, new Dictionary<string, string> { ["market"] = "trade" }).Register(new RowsetQuery("elsewhere", "{market}.orders", [Column.Key()])).SqlOf("elsewhere"));
@@ -59,6 +60,94 @@ public class ReadSideTests
         Assert.Contains(ships.Rows, row => (string)row[2]! == "Frigate");
         Assert.Same(ships, await read.RowsAsync("groupsOfCategory", [6]));
         Assert.NotSame(ships, await read.RowsAsync("groupsOfCategory", [7]));
+    }
+
+    [PgFact]
+    public async Task Mixed_case_sde_table_names_are_quoted_and_read_successfully()
+    {
+        await using var source = Source();
+        var query = RowsetQuery.Sde("npcCorporations", "npcCorporations",
+                Column.Key("corporationID", ColumnType.Int), Column.English("corporationName", "name"))
+            with { Where = "key = $1" };
+        var read = new ReadSide(source).Register(query);
+
+        var rows = await read.RowsAsync("npcCorporations", ["1000001"]);
+        var row = Assert.Single(rows.Rows);
+        Assert.Equal(1000001, (int)row[0]!);
+        Assert.Equal("Doomheim", (string)row[1]!);
+        Assert.Same(rows, await read.RowsAsync("npcCorporations", ["1000001"]));
+    }
+
+    [PgFact]
+    public async Task Cached_parameterized_queries_keep_argument_boundaries_types_and_nulls_independent()
+    {
+        await using var source = Source();
+        var schema = "rs_" + Guid.NewGuid().ToString("N")[..12];
+        await using var connection = await source.OpenConnectionAsync();
+        await Sql.ExecuteAsync(connection, null, $"CREATE SCHEMA {schema}", CancellationToken.None);
+        try
+        {
+            await Sql.ExecuteAsync(connection, null,
+                $"CREATE TABLE {schema}.cache_arguments (id integer PRIMARY KEY, left_value text, right_value text)", CancellationToken.None);
+            await Sql.ExecuteAsync(connection, null,
+                $"INSERT INTO {schema}.cache_arguments VALUES (1, 'a|b', 'c'), (2, 'a', 'b|c'), (3, NULL, 'x'), (4, '', 'x')",
+                CancellationToken.None);
+
+            var read = new ReadSide(source, new Dictionary<string, string> { ["mod"] = schema })
+                .Register(new RowsetQuery("cacheArguments", "{mod}.cache_arguments",
+                    [Column.Of("rowID", ColumnType.Int, "id"), Column.Of("argumentType", ColumnType.Text, "pg_typeof($3)::text")])
+                {
+                    Where = "left_value IS NOT DISTINCT FROM $1::text AND right_value IS NOT DISTINCT FROM $2::text",
+                    Cache = true,
+                })
+                .Register(new RowsetQuery("cacheNoArgs", "{mod}.cache_arguments",
+                    [Column.Of("rowID", ColumnType.Int, "id")])
+                {
+                    OrderBy = "id",
+                    Cache = true,
+                });
+
+            var args = new object?[] { "a|b", "c", 1 };
+            var delimiterLeft = await read.RowsAsync("cacheArguments", args);
+            Assert.Equal(1, (int)delimiterLeft.Rows.Single()[0]!);
+            Assert.Equal("integer", (string)delimiterLeft.Rows.Single()[1]!);
+            Assert.Same(delimiterLeft, await read.RowsAsync("cacheArguments", args));
+
+            args[0] = "a";
+            args[1] = "b|c";
+            var delimiterRight = await read.RowsAsync("cacheArguments", args);
+            Assert.Equal(2, (int)delimiterRight.Rows.Single()[0]!);
+            Assert.Same(delimiterRight, await read.RowsAsync("cacheArguments", args));
+
+            args[0] = "a|b";
+            args[1] = "c";
+            Assert.Same(delimiterLeft, await read.RowsAsync("cacheArguments", args));
+            args[2] = 1L;
+            var differentType = await read.RowsAsync("cacheArguments", args);
+            Assert.Equal("bigint", (string)differentType.Rows.Single()[1]!);
+            Assert.Same(differentType, await read.RowsAsync("cacheArguments", args));
+
+            args[0] = null;
+            args[1] = "x";
+            args[2] = 1;
+            var nullArgument = await read.RowsAsync("cacheArguments", args);
+            Assert.Equal(3, (int)nullArgument.Rows.Single()[0]!);
+            Assert.Same(nullArgument, await read.RowsAsync("cacheArguments", args));
+
+            args[0] = "";
+            var emptyArgument = await read.RowsAsync("cacheArguments", args);
+            Assert.Equal(4, (int)emptyArgument.Rows.Single()[0]!);
+            Assert.NotSame(nullArgument, emptyArgument);
+            Assert.Same(emptyArgument, await read.RowsAsync("cacheArguments", args));
+
+            var noArguments = await read.RowsAsync("cacheNoArgs");
+            Assert.Equal(4, noArguments.Count);
+            Assert.Same(noArguments, await read.RowsAsync("cacheNoArgs", []));
+        }
+        finally
+        {
+            await Sql.ExecuteAsync(connection, null, $"DROP SCHEMA {schema} CASCADE", CancellationToken.None);
+        }
     }
 
     [PgFact]

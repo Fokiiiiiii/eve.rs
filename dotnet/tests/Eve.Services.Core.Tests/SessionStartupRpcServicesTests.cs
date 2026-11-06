@@ -137,19 +137,20 @@ public sealed class SessionStartupRpcServicesTests
     {
         var session = new ClientSession();
         session.Set("solarsystemid", new PyInt(30000142));
+        session.Set("solarsystemid2", new PyInt(30000144));
         IService empty = new DynamicBountyMgrService();
-            Assert.Equal(new PyTuple([new PyReal(1), PyBool.False]), await empty.CallAsync(
+        Assert.Equal(new PyTuple([new PyReal(1), PyBool.False]), await empty.CallAsync(
             Call(empty, "GetOutputForClientSolarSystem", session)));
 
         long? observedSystem = null;
         IService wired = new DynamicBountyMgrService((systemId, _) =>
         {
             observedSystem = systemId;
-            return ValueTask.FromResult<DynamicBountyState?>(new(2.5, true));
+            return ValueTask.FromResult<DynamicBountyState?>(new(1.5, true));
         });
-        Assert.Equal(new PyTuple([new PyReal(2.5), PyBool.True]), await wired.CallAsync(
+        Assert.Equal(new PyTuple([new PyReal(1.5), PyBool.True]), await wired.CallAsync(
             Call(wired, "GetOutputForClientSolarSystem", session)));
-        Assert.Equal(30000142, observedSystem);
+        Assert.Equal(30000144, observedSystem);
     }
 
     [Fact]

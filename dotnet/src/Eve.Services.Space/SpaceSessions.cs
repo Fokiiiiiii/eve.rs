@@ -926,6 +926,27 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         }
     }
 
+    private void TrackWarpArrival(SimNotify notify, Pilot pilot)
+    {
+        if (notify.Name != "DoDestinyUpdate" || !_warping.ContainsKey(notify.SessionId)
+            || MarshalCodec.Decode(notify.Args.ToArray()) is not PyTuple { Items.Count: > 0 } args
+            || args.Items[0] is not PyList actions)
+            return;
+
+        foreach (var action in actions.Items)
+        {
+            if (action is PyTuple { Items.Count: 2 } entry
+                && entry.Items[1] is PyTuple { Items.Count: 2 } call
+                && JsSemantics.StringValue(call.Items[0]) == "Stop"
+                && call.Items[1] is PyTuple { Items.Count: > 0 } values
+                && TryTargetId(values.Items[0], out var shipId) && shipId == pilot.ShipId)
+            {
+                _warping.TryRemove(notify.SessionId, out _);
+                return;
+            }
+        }
+    }
+
     private static bool TryTargetId(PyValue value, out long targetId)
     {
         targetId = value switch
@@ -1026,6 +1047,7 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                     Forward(structureObserver, notify);
                     break;
                 case SimNotify notify when _pilots.TryGetValue(notify.SessionId, out var pilot):
+                    TrackWarpArrival(notify, pilot);
                     TrackTargetingNotification(notify);
                     Forward(pilot.Session, notify);
                     RecordNpcCombatTimer(notify, pilot);

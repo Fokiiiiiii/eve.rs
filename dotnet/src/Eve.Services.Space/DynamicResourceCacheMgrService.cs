@@ -1,5 +1,6 @@
 using Eve.Marshal;
 using Eve.Services;
+using Eve.Npc;
 
 namespace Eve.Services.Space;
 
@@ -11,7 +12,8 @@ public sealed class DynamicResourceCacheMgrService(
     Func<ServiceCall, CancellationToken, ValueTask<PyValue?>>? rpcHandler = null,
     Func<long, CancellationToken, ValueTask<EssMgrSystemData?>>? readSystem = null,
     Func<CancellationToken, ValueTask<IReadOnlyList<EssMgrSystemData>>>? listSystems = null,
-    Func<int, string?>? quadrantOf = null) : IService
+    Func<int, string?>? quadrantOf = null,
+    Func<CancellationToken, ValueTask<IReadOnlyList<DynamicBountyMapEntry>>>? listDbsSystems = null) : IService
 {
     private static readonly (string Name, double Value)[] DefaultSettings =
     [
@@ -55,13 +57,13 @@ public sealed class DynamicResourceCacheMgrService(
 
     private async ValueTask<PyValue> DbsMapDataAsync(CancellationToken cancellationToken)
     {
-        if (listSystems is null)
+        if (listDbsSystems is null)
             return new PyDict([]);
 
-        var entries = (await listSystems(cancellationToken))
-            .Where(state => state.SolarSystemId > 0 && state.CurrentOutput > 0)
+        var entries = (await listDbsSystems(cancellationToken))
+            .Where(state => state.SolarSystemId > 0 && state.Output > 0)
             .Select(state => new KeyValuePair<PyValue, PyValue>(
-                Py.Number(state.SolarSystemId), Py.Number(state.CurrentOutput)))
+                Py.Number(state.SolarSystemId), Py.Number(state.Output)))
             .ToArray();
         return new PyDict(entries);
     }

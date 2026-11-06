@@ -14,11 +14,13 @@ using Eve.Ships;
 using Eve.Space;
 using Eve.Universe;
 using ModuleAttributes = Eve.Services.Space.Effects.ModuleAttributes;
+using Npgsql;
 
 namespace Eve.Services.Space;
 
 public sealed partial class SpaceSessions
 {
+    public Func<NpgsqlConnection, NpgsqlTransaction, ShipLoss, CancellationToken, Task>? RecordDynamicBountyLossInTransactionAsync { get; set; }
     public const string ShipSelfDestructJobKind = "ship.self-destruct";
     private static readonly TimeSpan ShipSelfDestructDuration = TimeSpan.FromSeconds(120);
     private const string SelfDestructTimeField = "selfDestructTime";
@@ -457,7 +459,16 @@ public sealed partial class SpaceSessions
                 $"ship:{pilot.ShipId}:{_nowUnixMs()}");
             death = await _transitions.ExecuteAsync(
                 token => _ships.DestroyShipAsync(
-                    pilot.CharacterId, pilot.ShipId, destroyed.WreckKind?.TypeId, seed, token),
+                      pilot.CharacterId, pilot.ShipId, destroyed.WreckKind?.TypeId, seed, token,
+                      inTransaction: RecordDynamicBountyLossInTransactionAsync is { } recordLoss
+                          ? (connection, transaction, lost, innerToken) =>
+                          {
+                              var loss = ShipLossOf(pilot, lost, destroyed);
+                              return loss.Cause == ShipLossCause.Player && loss.KillerCharacterId != loss.CharacterId
+                                  ? recordLoss(connection, transaction, loss, innerToken)
+                                  : Task.CompletedTask;
+                          }
+                          : null),
                 result => result is not null,
                 async (result, token) =>
                 {
@@ -593,8 +604,16 @@ public sealed partial class SpaceSessions
 
     private void RaiseShipLost(Pilot pilot, ShipDeath death, SimDestroyed destroyed)
     {
+        _concordDestroyed.TryRemove(pilot.ShipId, out _);
+        var loss = ShipLossOf(pilot, death, destroyed);
+        Raise(ShipLost, loss, nameof(ShipLost));
+        Announce("ship.lost", new { characterId = loss.CharacterId, shipId = loss.ShipId, shipTypeId = loss.ShipTypeId, cause = loss.Cause.ToString(), solarSystemId = loss.SolarSystemId, killerCharacterId = loss.KillerCharacterId }, $"char:{loss.CharacterId}");
+    }
+
+    private ShipLoss ShipLossOf(Pilot pilot, ShipDeath death, SimDestroyed destroyed)
+    {
         var killer = destroyed.KillerShipId == 0 ? null : _pilots.Values.FirstOrDefault(other => other.ShipId == destroyed.KillerShipId);
-        var concord = _concordDestroyed.TryRemove(pilot.ShipId, out _)
+        var concord = _concordDestroyed.ContainsKey(pilot.ShipId)
             || (destroyed.KillerShipId != 0
                 && _npcShips.TryGetValue(destroyed.KillerShipId, out var npc)
                   && (npc.Profile?.EntityType.Equals("concord", StringComparison.OrdinalIgnoreCase) == true
@@ -604,10 +623,8 @@ public sealed partial class SpaceSessions
             : killer is not null ? ShipLossCause.Player
             : destroyed.KillerShipId != 0 && _npcShips.ContainsKey(destroyed.KillerShipId) ? ShipLossCause.Npc
             : ShipLossCause.Unknown;
-        var loss = new ShipLoss(pilot.CharacterId, death.Ship.Id, death.Ship.TypeId, cause, pilot.SolarSystemId, cause == ShipLossCause.Player ? killer!.CharacterId : 0,
+        return new ShipLoss(pilot.CharacterId, death.Ship.Id, death.Ship.TypeId, cause, pilot.SolarSystemId, cause == ShipLossCause.Player ? killer!.CharacterId : 0,
             [.. death.Changes.Select(change => new ShipLossItem(change.Item.TypeId, change.Item.Quantity))]);
-        Raise(ShipLost, loss, nameof(ShipLost));
-        Announce("ship.lost", new { characterId = loss.CharacterId, shipId = loss.ShipId, shipTypeId = loss.ShipTypeId, cause = loss.Cause.ToString(), solarSystemId = loss.SolarSystemId, killerCharacterId = loss.KillerCharacterId }, $"char:{loss.CharacterId}");
     }
 
     private void RaisePodLost(Pilot pilot, Item capsule, SimDestroyed destroyed, IReadOnlyList<Item> implants)

@@ -427,9 +427,15 @@ internal sealed class IndustryRig : IAsyncDisposable
         return await _operations.InstallJobAsync(request, default);
     }
 
-    /// <summary>A corporation founded by the character (who becomes its director); its wallet is open and empty.</summary>
-    public async Task<long> Corporation(long founder) =>
-        (await _corporations.CreateAsync(founder, new NewCorporation("Industry Corp", "INDC", "", "", 0m), "found-" + Guid.NewGuid().ToString("N"))).Id;
+    /// <summary>A corporation founded by a character with Corporation Management I; its wallet is open and empty.</summary>
+    public async Task<long> Corporation(long founder)
+    {
+        var management = (await _sde.ReadTypeSummariesAsync()).Single(type =>
+            type.Published && type.Name == "Corporation Management");
+        await Grant(founder, (management.TypeId, 1));
+        return (await _corporations.CreateAsync(founder,
+            new NewCorporation("Industry Corp", "INDC", "", "", 0m), "found-" + Guid.NewGuid().ToString("N"))).Id;
+    }
 
     /// <summary>A character who is a member of the corporation with the given role bits (a non-director member).</summary>
     public async Task<long> Member(long corporation, long roles)

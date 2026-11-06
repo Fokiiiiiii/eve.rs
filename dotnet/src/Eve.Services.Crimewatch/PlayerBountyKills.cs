@@ -41,9 +41,7 @@ public sealed class PlayerBountyKills(
 
         var typeIds = contents.Select(item => (long)item.TypeId).Append(shipTypeId).Distinct().ToArray();
         var prices = await basePrices(typeIds, cancellationToken);
-        var loss = Math.Round(
-            prices.GetValueOrDefault(shipTypeId) + contents.Sum(item => prices.GetValueOrDefault(item.TypeId) * item.Quantity),
-            2, MidpointRounding.AwayFromZero);
+        var loss = LossValueOf(shipTypeId, contents, prices);
 
         // the victim's pilot, then its corporation and alliance (the order of the pools drained)
         var victim = await characterAffiliation(victimCharacterId, cancellationToken);
@@ -60,6 +58,10 @@ public sealed class PlayerBountyKills(
                 targets, loss, nowMs, sharers),
             schedule, cancellationToken);
     }
+
+    public static decimal LossValueOf(int shipTypeId, IReadOnlyList<(int TypeId, long Quantity)> contents, IReadOnlyDictionary<long, decimal> prices) =>
+        Math.Round(prices.GetValueOrDefault(shipTypeId) + contents.Sum(item => prices.GetValueOrDefault(item.TypeId) * item.Quantity),
+            2, MidpointRounding.AwayFromZero);
 
     /// <summary>Credits a pending payout to its hunter's wallet and marks it paid, in the job's transaction. A payout that is not pending is left as it is.</summary>
     public async Task SettlePayoutAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string payoutId, long nowMs, CancellationToken cancellationToken = default)

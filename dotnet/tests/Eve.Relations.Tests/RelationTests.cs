@@ -1,8 +1,11 @@
+using Npgsql;
+
 namespace Eve.Relations.Tests;
 
 public class RelationTests
 {
-    private const long Pilot = 90000001, Other = 90000002, Corp = 98000001, Corp2 = 98000002, Alliance = 99000001, Faction = 500001;
+    private const long Pilot = 90000001, Other = 90000002, Corp = 98000001, Corp2 = 98000002, Corp3 = 98000003, Alliance = 99000001, Faction = 500001;
+    private const string CorporationAffiliation = "affiliation.corporation";
 
     [PgFact]
     public async Task A_standing_is_set_clamped_read_back_and_a_write_that_changes_nothing_reports_nothing()
@@ -89,6 +92,157 @@ public class RelationTests
         var history = await rig.Relations.HistoryAsync("affiliation.corporation", Pilot);
         Assert.Contains(history, h => h.Object == Corp && h.NewValue is null && h.Reason == "replaced");
         Assert.Equal([Pilot, Corp2], await rig.Relations.ChainOfAsync(Pilot));
+    }
+
+    [PgFact]
+    public async Task Concurrent_first_affiliation_assignments_are_serialized_with_matching_history_events_and_expiry()
+    {
+        await using var rig = await Rig.Create();
+        var events = await WatchAffiliationEventsAsync(rig);
+        var firstUntil = rig.Now + 1_000;
+        var secondUntil = rig.Now + 2_000;
+
+        await using var firstConnection = await rig.Source.OpenConnectionAsync();
+        await using var firstTransaction = await firstConnection.BeginTransactionAsync();
+        await rig.Relations.SetAsync(firstConnection, firstTransaction, CorporationAffiliation, Pilot, Corp, 0,
+            "first", untilMs: firstUntil);
+
+        await using var secondConnection = await rig.Source.OpenConnectionAsync();
+        await using var secondTransaction = await secondConnection.BeginTransactionAsync();
+        var secondPid = await BackendPidAsync(secondConnection, secondTransaction);
+        using var secondCancellation = new CancellationTokenSource();
+        var secondWrite = rig.Relations.SetAsync(secondConnection, secondTransaction, CorporationAffiliation, Pilot, Corp2, 0,
+            "second", untilMs: secondUntil, cancellationToken: secondCancellation.Token);
+        var waiting = await IsWaitingForAdvisoryLockAsync(rig, secondPid, secondWrite);
+        if (!waiting)
+        {
+            secondCancellation.Cancel();
+            try { await secondWrite; } catch (OperationCanceledException) { }
+        }
+        Assert.True(waiting, "the second write should wait for the subject's transaction lock");
+
+        await firstTransaction.CommitAsync();
+        await secondWrite;
+        await secondTransaction.CommitAsync();
+        await rig.Bus.PumpAsync();
+
+        Assert.Equal([Corp2], (await rig.Relations.FromAsync(CorporationAffiliation, Pilot)).Select(r => r.Object));
+        var affiliation = await rig.Relations.AffiliationOfAsync(Pilot);
+        Assert.Equal((long?)Corp2, affiliation.Corporation);
+        Assert.Equal([Pilot, Corp2], await rig.Relations.ChainOfAsync(Pilot));
+        Assert.Equal(
+            [(Corp2, (double?)null, (double?)0, "second"), (Corp, (double?)0, (double?)null, "replaced"), (Corp, (double?)null, (double?)0, "first")],
+            (await rig.Relations.HistoryAsync(CorporationAffiliation, Pilot)).Select(h => (h.Object, h.OldValue, h.NewValue, h.Reason)));
+        Assert.Equal(
+            [
+                ($"relation.{CorporationAffiliation}.changed", $"{CorporationAffiliation}:{Pilot}", Corp.ToString(), "first"),
+                ($"relation.{CorporationAffiliation}.ended", $"{CorporationAffiliation}:{Pilot}", Corp.ToString(), "replaced"),
+                ($"relation.{CorporationAffiliation}.changed", $"{CorporationAffiliation}:{Pilot}", Corp2.ToString(), "second"),
+            ], events);
+        await AssertOnlyExpiryJobAsync(rig, CorporationAffiliation, Pilot, Corp2, secondUntil);
+    }
+
+    [PgFact]
+    public async Task Concurrent_replacements_serialize_the_affiliation_chain_history_events_and_expiry()
+    {
+        await using var rig = await Rig.Create();
+        var events = await WatchAffiliationEventsAsync(rig);
+        var firstUntil = rig.Now + 1_000;
+        var secondUntil = rig.Now + 2_000;
+        var thirdUntil = rig.Now + 3_000;
+        await rig.Set(CorporationAffiliation, Pilot, Corp, 0, "initial", until: firstUntil);
+
+        await using var firstConnection = await rig.Source.OpenConnectionAsync();
+        await using var firstTransaction = await firstConnection.BeginTransactionAsync();
+        await rig.Relations.SetAsync(firstConnection, firstTransaction, CorporationAffiliation, Pilot, Corp2, 0,
+            "first replacement", untilMs: secondUntil);
+
+        await using var secondConnection = await rig.Source.OpenConnectionAsync();
+        await using var secondTransaction = await secondConnection.BeginTransactionAsync();
+        var secondPid = await BackendPidAsync(secondConnection, secondTransaction);
+        using var secondCancellation = new CancellationTokenSource();
+        var secondWrite = rig.Relations.SetAsync(secondConnection, secondTransaction, CorporationAffiliation, Pilot, Corp3, 0,
+            "second replacement", untilMs: thirdUntil, cancellationToken: secondCancellation.Token);
+        var waiting = await IsWaitingForAdvisoryLockAsync(rig, secondPid, secondWrite);
+        if (!waiting)
+        {
+            secondCancellation.Cancel();
+            try { await secondWrite; } catch (OperationCanceledException) { }
+        }
+        Assert.True(waiting, "the second replacement should wait for the subject's transaction lock");
+
+        await firstTransaction.CommitAsync();
+        await secondWrite;
+        await secondTransaction.CommitAsync();
+        await rig.Bus.PumpAsync();
+
+        Assert.Equal([Corp3], (await rig.Relations.FromAsync(CorporationAffiliation, Pilot)).Select(r => r.Object));
+        var affiliation = await rig.Relations.AffiliationOfAsync(Pilot);
+        Assert.Equal((long?)Corp3, affiliation.Corporation);
+        Assert.Equal([Pilot, Corp3], await rig.Relations.ChainOfAsync(Pilot));
+        Assert.Equal(
+            [
+                (Corp3, (double?)null, (double?)0, "second replacement"),
+                (Corp2, (double?)0, (double?)null, "replaced"),
+                (Corp2, (double?)null, (double?)0, "first replacement"),
+                (Corp, (double?)0, (double?)null, "replaced"),
+                (Corp, (double?)null, (double?)0, "initial"),
+            ],
+            (await rig.Relations.HistoryAsync(CorporationAffiliation, Pilot)).Select(h => (h.Object, h.OldValue, h.NewValue, h.Reason)));
+        Assert.Equal(
+            [
+                ($"relation.{CorporationAffiliation}.changed", $"{CorporationAffiliation}:{Pilot}", Corp.ToString(), "initial"),
+                ($"relation.{CorporationAffiliation}.ended", $"{CorporationAffiliation}:{Pilot}", Corp.ToString(), "replaced"),
+                ($"relation.{CorporationAffiliation}.changed", $"{CorporationAffiliation}:{Pilot}", Corp2.ToString(), "first replacement"),
+                ($"relation.{CorporationAffiliation}.ended", $"{CorporationAffiliation}:{Pilot}", Corp2.ToString(), "replaced"),
+                ($"relation.{CorporationAffiliation}.changed", $"{CorporationAffiliation}:{Pilot}", Corp3.ToString(), "second replacement"),
+            ], events);
+        await AssertOnlyExpiryJobAsync(rig, CorporationAffiliation, Pilot, Corp3, thirdUntil);
+    }
+
+    [PgFact]
+    public async Task A_rolled_back_affiliation_replacement_preserves_the_committed_relation_and_retry_is_consistent()
+    {
+        await using var rig = await Rig.Create();
+        var events = await WatchAffiliationEventsAsync(rig);
+        var firstUntil = rig.Now + 1_000;
+        var secondUntil = rig.Now + 2_000;
+        await rig.Set(CorporationAffiliation, Pilot, Corp, 0, "initial", until: firstUntil);
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Relations.SetAsync(connection, transaction, CorporationAffiliation, Pilot, Corp2, 0,
+                "failed replacement", untilMs: secondUntil);
+            await transaction.RollbackAsync();
+        }
+
+        Assert.Equal([Corp], (await rig.Relations.FromAsync(CorporationAffiliation, Pilot)).Select(r => r.Object));
+        Assert.Equal((long?)Corp, (await rig.Relations.AffiliationOfAsync(Pilot)).Corporation);
+        Assert.Equal([Pilot, Corp], await rig.Relations.ChainOfAsync(Pilot));
+        Assert.Equal([(Corp, (double?)null, (double?)0, "initial")],
+            (await rig.Relations.HistoryAsync(CorporationAffiliation, Pilot)).Select(h => (h.Object, h.OldValue, h.NewValue, h.Reason)));
+        await AssertOnlyExpiryJobAsync(rig, CorporationAffiliation, Pilot, Corp, firstUntil);
+        await rig.Bus.PumpAsync();
+        Assert.Equal(
+            [($"relation.{CorporationAffiliation}.changed", $"{CorporationAffiliation}:{Pilot}", Corp.ToString(), "initial")], events);
+
+        await rig.Set(CorporationAffiliation, Pilot, Corp2, 0, "retry", until: secondUntil);
+        await rig.Bus.PumpAsync();
+
+        Assert.Equal([Corp2], (await rig.Relations.FromAsync(CorporationAffiliation, Pilot)).Select(r => r.Object));
+        Assert.Equal((long?)Corp2, (await rig.Relations.AffiliationOfAsync(Pilot)).Corporation);
+        Assert.Equal([Pilot, Corp2], await rig.Relations.ChainOfAsync(Pilot));
+        Assert.Equal(
+            [(Corp2, (double?)null, (double?)0, "retry"), (Corp, (double?)0, (double?)null, "replaced"), (Corp, (double?)null, (double?)0, "initial")],
+            (await rig.Relations.HistoryAsync(CorporationAffiliation, Pilot)).Select(h => (h.Object, h.OldValue, h.NewValue, h.Reason)));
+        Assert.Equal(
+            [
+                ($"relation.{CorporationAffiliation}.changed", $"{CorporationAffiliation}:{Pilot}", Corp.ToString(), "initial"),
+                ($"relation.{CorporationAffiliation}.ended", $"{CorporationAffiliation}:{Pilot}", Corp.ToString(), "replaced"),
+                ($"relation.{CorporationAffiliation}.changed", $"{CorporationAffiliation}:{Pilot}", Corp2.ToString(), "retry"),
+            ], events);
+        await AssertOnlyExpiryJobAsync(rig, CorporationAffiliation, Pilot, Corp2, secondUntil);
     }
 
     [PgFact]
@@ -225,5 +379,60 @@ public class RelationTests
             .ToDictionary(value => (long)value, value => (long?)Corp);
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
             rig.Relations.ReconcileOnePerSubjectBatchAsync(kind, tooMany, "over-sized batch"));
+    }
+
+    private static async Task<List<(string Topic, string? Key, string? Object, string? Reason)>> WatchAffiliationEventsAsync(Rig rig)
+    {
+        var seen = new List<(string Topic, string? Key, string? Object, string? Reason)>();
+        rig.Bus.Subscribe("affiliation-race", ["relation.affiliation.corporation.*"], (ctx, _) =>
+        {
+            var payload = ctx.Event.Payload<Dictionary<string, object?>>()!;
+            seen.Add((ctx.Event.Topic, ctx.Event.Key, payload["object"]?.ToString(), payload["reason"]?.ToString()));
+            return Task.CompletedTask;
+        });
+        await rig.Bus.PumpAsync();
+        return seen;
+    }
+
+    private static async Task<int> BackendPidAsync(NpgsqlConnection connection, NpgsqlTransaction transaction)
+    {
+        await using var command = new NpgsqlCommand("SELECT pg_backend_pid()", connection, transaction);
+        return (int)(await command.ExecuteScalarAsync())!;
+    }
+
+    private static async Task<bool> IsWaitingForAdvisoryLockAsync(Rig rig, int waitingPid, Task pendingWrite)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var monitor = await rig.Source.OpenConnectionAsync(timeout.Token);
+        try
+        {
+            while (true)
+            {
+                if (pendingWrite.IsCompleted)
+                    return false;
+
+                await using var command = new NpgsqlCommand("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM pg_stat_activity
+                        WHERE pid = $1 AND wait_event_type = 'Lock' AND wait_event = 'advisory'
+                    )
+                    """, monitor);
+                command.Parameters.AddWithValue(waitingPid);
+                if ((bool)(await command.ExecuteScalarAsync(timeout.Token))!)
+                    return true;
+                await Task.Delay(10, timeout.Token);
+            }
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            return false;
+        }
+    }
+
+    private static async Task AssertOnlyExpiryJobAsync(Rig rig, string kind, long subject, long obj, long runAtMs)
+    {
+        var job = Assert.Single(await rig.Scheduler.ListAsync(RelationStore.ExpireKind, "pending"));
+        Assert.Equal($"{kind}|{subject}|{obj}", job.Key);
+        Assert.Equal(runAtMs, job.RunAtMs);
     }
 }

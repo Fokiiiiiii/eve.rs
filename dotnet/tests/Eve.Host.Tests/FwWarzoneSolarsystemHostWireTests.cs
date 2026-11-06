@@ -28,7 +28,7 @@ public partial class HostServerTests
             await transaction.CommitAsync();
         }
 
-        var factionWarfare = new FwService(store, new Eve.Wallet.LoyaltyPointStore(source, walletSchema));
+        var factionWarfare = new FwService(store, new Eve.Wallet.LoyaltyPointStore(source, walletSchema), null!);
         var service = new FwWarzoneSolarsystemHostService(
             async call =>
             {

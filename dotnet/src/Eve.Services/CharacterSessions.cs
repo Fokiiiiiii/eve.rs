@@ -9,23 +9,68 @@ namespace Eve.Services;
 public sealed class CharacterSessions
 {
     private readonly ConcurrentDictionary<long, ClientSession> _byCharacter = new();
+    private readonly object _presenceGate = new();
+    private readonly Action<long, bool, IReadOnlyList<(long CharacterId, ClientSession Session)>>? _presenceChanged;
+
+    public CharacterSessions(Action<long, bool, IReadOnlyList<(long CharacterId, ClientSession Session)>>? presenceChanged = null) =>
+        _presenceChanged = presenceChanged;
 
     /// <summary>Records that <paramref name="session"/> plays <paramref name="characterId"/>.</summary>
     public void Enter(long characterId, ClientSession session)
     {
-        foreach (var (previousCharacterId, previousSession) in _byCharacter)
-            if (previousCharacterId != characterId && ReferenceEquals(previousSession, session))
-                _byCharacter.TryRemove(new KeyValuePair<long, ClientSession>(previousCharacterId, session));
+        ArgumentNullException.ThrowIfNull(session);
+        lock (_presenceGate)
+        {
+            if (session.IsClosed)
+                return;
 
-        var alreadyRegistered = _byCharacter.TryGetValue(characterId, out var current) && ReferenceEquals(current, session);
-        _byCharacter[characterId] = session;
-        if (!alreadyRegistered)
-            session.Closed += () => _byCharacter.TryRemove(new KeyValuePair<long, ClientSession>(characterId, session));
+            foreach (var (previousCharacterId, previousSession) in _byCharacter)
+                if (previousCharacterId != characterId && ReferenceEquals(previousSession, session) &&
+                    _byCharacter.TryRemove(new KeyValuePair<long, ClientSession>(previousCharacterId, session)))
+                    _presenceChanged?.Invoke(previousCharacterId, false, Snapshot());
+
+            var wasPresent = _byCharacter.TryGetValue(characterId, out var current) && current.CharacterId == characterId;
+            var alreadyRegistered = wasPresent && ReferenceEquals(current, session);
+            _byCharacter[characterId] = session;
+            if (!alreadyRegistered)
+                session.Closed += () => OnClosed(characterId, session);
+
+            if (session.IsClosed)
+            {
+                if (_byCharacter.TryRemove(new KeyValuePair<long, ClientSession>(characterId, session)) && wasPresent)
+                    _presenceChanged?.Invoke(characterId, false, Snapshot());
+                return;
+            }
+
+            if (!wasPresent)
+                _presenceChanged?.Invoke(characterId, true, Snapshot());
+        }
     }
+
+    public void Leave(long characterId, ClientSession session)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        lock (_presenceGate)
+            if (_byCharacter.TryRemove(new KeyValuePair<long, ClientSession>(characterId, session)))
+                _presenceChanged?.Invoke(characterId, false, Snapshot());
+    }
+
+    private void OnClosed(long characterId, ClientSession session)
+    {
+        lock (_presenceGate)
+            if (_byCharacter.TryRemove(new KeyValuePair<long, ClientSession>(characterId, session)))
+                _presenceChanged?.Invoke(characterId, false, Snapshot());
+    }
+
+    private IReadOnlyList<(long CharacterId, ClientSession Session)> Snapshot() =>
+        _byCharacter
+            .Where(pair => !pair.Value.IsClosed && pair.Value.CharacterId == pair.Key)
+            .Select(pair => (pair.Key, pair.Value))
+            .ToArray();
 
     /// <summary>The session that plays the character now, or null.</summary>
     public ClientSession? Of(long characterId) =>
-        _byCharacter.TryGetValue(characterId, out var session) && session.CharacterId == characterId ? session : null;
+        _byCharacter.TryGetValue(characterId, out var session) && !session.IsClosed && session.CharacterId == characterId ? session : null;
 
     /// <summary>The sessions of an account that have a character in the game.</summary>
     public IReadOnlyList<ClientSession> OfUser(long userId) =>

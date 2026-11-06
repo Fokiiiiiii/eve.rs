@@ -64,6 +64,78 @@ public class LocalTimersTests
     }
 
     [Fact]
+    public async Task Concurrent_sets_cancel_replaced_waits_and_leave_no_orphaned_entry()
+    {
+        var initialCancellationStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseInitialCancellation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var waits = new System.Collections.Concurrent.ConcurrentDictionary<int, (TaskCompletionSource Done, CancellationToken Token)>();
+        var nextWait = 0;
+        Task Delay(TimeSpan _, CancellationToken token)
+        {
+            var index = Interlocked.Increment(ref nextWait) - 1;
+            var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (index == 0)
+            {
+                token.Register(() =>
+                {
+                    initialCancellationStarted.TrySetResult();
+                    releaseInitialCancellation.Task.GetAwaiter().GetResult();
+                    done.TrySetCanceled(token);
+                });
+            }
+            else
+            {
+                token.Register(() => done.TrySetCanceled(token));
+            }
+            waits[index] = (done, token);
+            return done.Task;
+        }
+
+        using var timers = new LocalTimers(delay: Delay);
+        var ran = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        timers.Set("same", TimeSpan.FromHours(1), () => ran.Enqueue("initial"));
+        var firstSet = Task.Run(() => timers.Set("same", TimeSpan.FromHours(2), () => ran.Enqueue("first")));
+        Task finalSet = Task.CompletedTask;
+        try
+        {
+            await initialCancellationStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            finalSet = Task.Run(() => timers.Set("same", TimeSpan.FromHours(3), () => ran.Enqueue("final")));
+            await finalSet.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            releaseInitialCancellation.TrySetResult();
+        }
+        await Task.WhenAll(firstSet, finalSet).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(waits[0].Token.IsCancellationRequested);
+        Assert.True(waits[1].Token.IsCancellationRequested);
+        Assert.False(waits[2].Token.IsCancellationRequested);
+
+        waits[0].Done.TrySetResult();
+        waits[1].Done.TrySetResult();
+        waits[2].Done.TrySetResult();
+        await Settle(() => timers.Count == 0 && ran.Count == 1);
+        Assert.Equal(["final"], ran.ToArray());
+
+        timers.Set("cancel", Timeout.InfiniteTimeSpan, () => ran.Enqueue("cancel"));
+        Assert.True(timers.Cancel("cancel"));
+        Assert.Equal(0, timers.Count);
+        Assert.False(timers.IsSet("cancel"));
+        Assert.True(waits[3].Token.IsCancellationRequested);
+        waits[3].Done.TrySetResult();
+
+        timers.Set("dispose", Timeout.InfiniteTimeSpan, () => ran.Enqueue("dispose"));
+        timers.Dispose();
+        Assert.Equal(0, timers.Count);
+        Assert.False(timers.IsSet("dispose"));
+        Assert.True(waits[4].Token.IsCancellationRequested);
+        waits[4].Done.TrySetResult();
+        await Task.Delay(50);
+        Assert.Equal(["final"], ran.ToArray());
+    }
+
+    [Fact]
     public async Task An_action_that_throws_is_logged_and_does_not_stop_the_others()
     {
         var waits = new Waits();

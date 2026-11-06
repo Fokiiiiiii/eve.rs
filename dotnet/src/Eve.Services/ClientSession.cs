@@ -233,6 +233,8 @@ public sealed class ClientSession
     /// <summary>Raised once, when the connection of this session has ended: modules release what the session held.</summary>
     public event Action? Closed;
 
+    public bool IsClosed => Volatile.Read(ref _closed) != 0;
+
     /// <summary>Ends the session. Later calls do nothing.</summary>
 private Action<string>? _disconnectClient;
 

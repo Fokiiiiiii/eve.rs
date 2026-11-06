@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Eve.Crimewatch;
+using Eve.FactionWarfare;
 using Eve.Marshal;
 using Eve.Scheduler;
 using Eve.Universe;
@@ -7,7 +8,9 @@ using Eve.Universe;
 namespace Eve.Services.Crimewatch;
 
 /// <summary>Resolves active war relations and their accepted allies for crimewatch.</summary>
-public sealed class RelationWars(Eve.Relations.RelationStore relations) : Eve.Services.IWars
+public sealed class RelationWars(
+    Eve.Relations.RelationStore relations,
+    Func<long, CancellationToken, ValueTask<long?>>? resolveWarFactionAsync = null) : Eve.Services.IWars
 {
     private enum WarSide { Aggressor, Defender }
 
@@ -16,8 +19,21 @@ public sealed class RelationWars(Eve.Relations.RelationStore relations) : Eve.Se
 
     public async Task<bool> AreAtWarAsync(long attackerCharacterId, long targetCharacterId, long nowUnixMs, CancellationToken cancellationToken = default)
     {
+        if (resolveWarFactionAsync is { } resolveWarFaction)
+        {
+            if (attackerCharacterId > 0)
+                _ = await resolveWarFaction(attackerCharacterId, cancellationToken);
+            if (targetCharacterId > 0 && targetCharacterId != attackerCharacterId)
+                _ = await resolveWarFaction(targetCharacterId, cancellationToken);
+        }
         var attackerOwners = await relations.ChainOfAsync(attackerCharacterId, cancellationToken);
         var targetOwners = await relations.ChainOfAsync(targetCharacterId, cancellationToken);
+        var attackerFaction = attackerOwners.LastOrDefault(FwFactions.IsOccupier);
+        var targetFaction = targetOwners.LastOrDefault(FwFactions.IsOccupier);
+        if (attackerFaction > 0 && targetFaction > 0 && FwFactions.IsCombatEnemy(attackerFaction, targetFaction))
+        {
+            return true;
+        }
         var directWars = await relations.BetweenAsync(Eve.Relations.RelationKinds.War.Name, attackerOwners, targetOwners, cancellationToken);
         if (directWars.Any(war => Active(war, nowUnixMs)))
         {

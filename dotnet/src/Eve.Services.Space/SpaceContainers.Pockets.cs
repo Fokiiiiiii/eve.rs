@@ -46,15 +46,15 @@ public sealed partial class SpaceContainers
     /// <summary>The deployable id of an acceleration gate of a dungeon: the instance and the gate's place in its dungeon's gate list.</summary>
     public static long AccelerationGateDeployableId(long instanceId, int gateIndex) => AccelerationGateIdBase + instanceId * IdSlotsPerInstance + gateIndex;
 
-    /// <summary>
-    /// Places a dungeon's pocket: its record (kept once) and its body in the scene at its origin. The body is given to the simulation again on each call, which
-    /// the simulation takes as given once, so a restart puts it back in the scene by the next call.
-    /// </summary>
-    public async Task PlaceDeadspacePocketAsync(int solarSystemId, long instanceId, double[] origin, CancellationToken cancellationToken = default) =>
-        await PlacePocketAsync(solarSystemId, PocketDeployableId(instanceId), origin, cancellationToken);
+    /// <summary>Places a dungeon pocket and its record. Direct calls always send the body; periodic reconciliation sends it once per simulator link.</summary>
+    public Task PlaceDeadspacePocketAsync(int solarSystemId, long instanceId, double[] origin, CancellationToken cancellationToken = default) =>
+        PlacePocketAsync(solarSystemId, PocketDeployableId(instanceId), origin, false, cancellationToken);
 
-    /// <summary>Places an acceleration gate of a dungeon room at its position in the system (the record kept once; the ball is given again on each call).</summary>
-    public async Task PlaceAccelerationGateAsync(int solarSystemId, long deployableId, long typeId, double radius, double[] position, CancellationToken cancellationToken = default)
+    /// <summary>Places an acceleration gate of a dungeon room. Direct calls always send the body.</summary>
+    public Task PlaceAccelerationGateAsync(int solarSystemId, long deployableId, long typeId, double radius, double[] position, CancellationToken cancellationToken = default) =>
+        PlaceGateAsync(solarSystemId, deployableId, typeId, radius, position, false, cancellationToken);
+
+    private async Task PlaceGateAsync(int solarSystemId, long deployableId, long typeId, double radius, double[] position, bool periodic, CancellationToken cancellationToken)
     {
         if (_deployed is null)
         {
@@ -66,7 +66,8 @@ public sealed partial class SpaceContainers
             await _deployed.SaveAsync(new DeployedRecord(
                 deployableId, AccelerationGateKind, solarSystemId, AccelerationGateName, type, AccelerationGateGroupId, position, radius, 0, 0, 0, 0, NeverExpires), cancellationToken);
         }
-        _sim.PlaceAccelerationGate(new SimPlaceAccelerationGate(deployableId, solarSystemId, AccelerationGateName, type, AccelerationGateGroupId, position, radius));
+        await GiveBodyAsync(deployableId, periodic, () => _sim.PlaceAccelerationGateAsync(
+            new SimPlaceAccelerationGate(deployableId, solarSystemId, AccelerationGateName, type, AccelerationGateGroupId, position, radius), cancellationToken));
     }
 
     /// <summary>
@@ -82,10 +83,10 @@ public sealed partial class SpaceContainers
         foreach (var pocket in active)
         {
             running.Add(PocketDeployableId(pocket.InstanceId));
-            await PlaceDeadspacePocketAsync(pocket.SolarSystemId, pocket.InstanceId, pocket.Origin, cancellationToken);
+            await PlacePocketAsync(pocket.SolarSystemId, PocketDeployableId(pocket.InstanceId), pocket.Origin, true, cancellationToken);
             if (pocket.Layout is { } layout)
             {
-                await PlaceLayoutAsync(pocket, layout, running, cancellationToken);
+                await PlaceLayoutAsync(pocket, layout, running, true, cancellationToken);
             }
         }
         foreach (var kind in new[] { DeadspacePocketKind, AccelerationGateKind })
@@ -94,30 +95,31 @@ public sealed partial class SpaceContainers
             {
                 if (!running.Contains(record.DeployableId))
                 {
-                    _sim.RemoveDeployed(record.DeployableId);
+                    await _sim.RemoveDeployedAsync(record.DeployableId, cancellationToken);
+                    _placed.TryRemove(record.DeployableId, out _);
                     await _deployed.RemoveAsync(record.DeployableId, cancellationToken);
                 }
             }
         }
     }
 
-    private async Task PlaceLayoutAsync(DungeonPocket pocket, DungeonLayout layout, HashSet<long> running, CancellationToken cancellationToken)
+    private async Task PlaceLayoutAsync(DungeonPocket pocket, DungeonLayout layout, HashSet<long> running, bool periodic, CancellationToken cancellationToken)
     {
         foreach (var room in layout.Rooms.Where(room => room.Index > 0))
         {
             var id = RoomPocketDeployableId(pocket.InstanceId, room.Index);
             running.Add(id);
-            await PlacePocketAsync(pocket.SolarSystemId, id, room.Anchor, cancellationToken);
+            await PlacePocketAsync(pocket.SolarSystemId, id, room.Anchor, periodic, cancellationToken);
         }
         foreach (var gate in layout.Gates)
         {
             var id = AccelerationGateDeployableId(pocket.InstanceId, gate.GateIndex);
             running.Add(id);
-            await PlaceAccelerationGateAsync(pocket.SolarSystemId, id, gate.TypeId, gate.Radius, gate.Position, cancellationToken);
+            await PlaceGateAsync(pocket.SolarSystemId, id, gate.TypeId, gate.Radius, gate.Position, periodic, cancellationToken);
         }
     }
 
-    private async Task PlacePocketAsync(int solarSystemId, long id, double[] origin, CancellationToken cancellationToken)
+    private async Task PlacePocketAsync(int solarSystemId, long id, double[] origin, bool periodic, CancellationToken cancellationToken)
     {
         if (_deployed is null)
         {
@@ -128,6 +130,30 @@ public sealed partial class SpaceContainers
             await _deployed.SaveAsync(new DeployedRecord(
                 id, DeadspacePocketKind, solarSystemId, PocketName, 0, 0, origin, DeadspaceSiteRadiusMeters, 0, 0, 0, 0, NeverExpires), cancellationToken);
         }
-        _sim.PlaceDeadspacePocket(new SimPlaceDeadspacePocket(id, solarSystemId, PocketName, origin, DeadspaceSiteRadiusMeters));
+        await GiveBodyAsync(id, periodic, () => _sim.PlaceDeadspacePocketAsync(
+            new SimPlaceDeadspacePocket(id, solarSystemId, PocketName, origin, DeadspaceSiteRadiusMeters), cancellationToken));
+    }
+
+    private async Task GiveBodyAsync(long id, bool periodic, Func<Task<bool>> give)
+    {
+        if (!periodic)
+        {
+            await give();
+            return;
+        }
+        if (!_sim.IsConnected || !_placed.TryAdd(id, 0))
+        {
+            return;
+        }
+        try
+        {
+            if (!await give())
+                _placed.TryRemove(id, out _);
+        }
+        catch
+        {
+            _placed.TryRemove(id, out _);
+            throw;
+        }
     }
 }

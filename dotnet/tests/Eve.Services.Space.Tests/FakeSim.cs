@@ -31,6 +31,12 @@ internal sealed class FakeSim : ISimulation
 
     public event Action? Lost;
 
+    public void LoseLink()
+    {
+        IsConnected = false;
+        Lost?.Invoke();
+    }
+
     public System.Collections.Concurrent.ConcurrentQueue<SimMessage> Heard { get; } = new();
 
     /// <summary>What an <c>Enter</c> is answered with: null (done) or a reason.</summary>
@@ -312,6 +318,13 @@ internal sealed class FakeSim : ISimulation
 
     public void RemoveDeployed(long deployableId) => Heard.Enqueue(new SimRemoveDeployed(deployableId));
 
+    public Task<bool> RemoveDeployedAsync(long deployableId, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        RemoveDeployed(deployableId);
+        return Task.FromResult(true);
+    }
+
     public void PlaceProbe(SimPlaceProbe probe) => Heard.Enqueue(probe);
 
     public void RemoveProbe(long probeId) => Heard.Enqueue(new SimRemoveProbe(probeId));
@@ -346,7 +359,19 @@ internal sealed class FakeSim : ISimulation
     public void PlaceObservatory(SimPlaceObservatory observatory) => Heard.Enqueue(observatory);
     public void PlaceControlTower(SimPlaceControlTower tower) => Heard.Enqueue(tower);
     public void PlaceDeadspacePocket(SimPlaceDeadspacePocket pocket) => Heard.Enqueue(pocket);
+    public Task<bool> PlaceDeadspacePocketAsync(SimPlaceDeadspacePocket pocket, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        PlaceDeadspacePocket(pocket);
+        return Task.FromResult(true);
+    }
     public void PlaceAccelerationGate(SimPlaceAccelerationGate gate) => Heard.Enqueue(gate);
+    public Task<bool> PlaceAccelerationGateAsync(SimPlaceAccelerationGate gate, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        PlaceAccelerationGate(gate);
+        return Task.FromResult(true);
+    }
     public void PlaceCapturePoint(SimPlaceCapturePoint point) => Heard.Enqueue(point);
     public void PlaceBattlefieldScoreboard(SimPlaceBattlefieldScoreboard scoreboard) => Heard.Enqueue(scoreboard);
 
@@ -526,7 +551,8 @@ internal sealed class FakeSim : ISimulation
 
     public void ShipChanged(ulong sessionId, SimShip ship) => Heard.Enqueue(new SimShipChanged(sessionId, ship));
 
-    public void CriminalFlagActive(ulong sessionId) => Heard.Enqueue(new SimCriminalFlagActive(sessionId));
+    public void CrimewatchFlagActive(ulong sessionId, bool isCriminal, long expiresAtUnixMs) =>
+        Heard.Enqueue(new SimCrimewatchFlagActive(sessionId, isCriminal, expiresAtUnixMs));
 
     public void Say(SimMessage message) => Received?.Invoke(message);
 

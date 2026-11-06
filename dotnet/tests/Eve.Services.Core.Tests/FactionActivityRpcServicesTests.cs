@@ -145,6 +145,7 @@ public sealed class FactionActivityRpcServicesTests
 
         Assert.Equal(new PyList([new PyInt(500002), PyNone.Instance, new PyInt(500002)]),
             await service.CallAsync(Call(service, "GetMyEnlistment", session)));
+        Assert.Equal(new PyInt(500002), session.Get("warfactionid"));
         Assert.Equal(new PyLong(0), await service.CallAsync(Call(service, "GetMyDirectEnlistmentCooldownTimestamp", session)));
         Assert.Equal(new PyList([new PyInt(500001), new PyInt(500002)]),
             await service.CallAsync(Call(service, "GetCorpAllowedEnlistmentFactions", session, new PyInt(99))));
@@ -161,6 +162,10 @@ public sealed class FactionActivityRpcServicesTests
 
         Assert.Same(PyNone.Instance, await service.CallAsync(Call(service, "RemoveMyDirectEnlistment", session)));
         Assert.Equal(new FwCharacterWarfareState(null, fileTime + TimeSpan.TicksPerDay), character);
+        Assert.Equal(new PyInt(500002), session.Get("warfactionid"));
+        session.Set("warfactionid", new PyInt(500003));
+        Assert.Equal(new PyValue[] { new PyInt(500002), PyNone.Instance, new PyInt(500002) },
+            Assert.IsType<PyList>(await service.CallAsync(Call(service, "GetMyEnlistment", session))).Items);
         Assert.Equal(new PyInt(500002), session.Get("warfactionid"));
         Assert.Equal(new PyLong(fileTime + TimeSpan.TicksPerDay),
             await service.CallAsync(Call(service, "GetMyDirectEnlistmentCooldownTimestamp", session)));

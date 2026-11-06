@@ -46,6 +46,27 @@ public sealed class OnlineStatusServiceTests
     }
 
     [Fact]
+    public void Leaving_character_emits_offline_once_after_removing_the_session()
+    {
+        CharacterSessions? sessions = null;
+        var transitions = new List<(long CharacterId, bool Online, ClientSession? Current)>();
+        sessions = new CharacterSessions((characterId, online, _) =>
+            transitions.Add((characterId, online, sessions!.Of(characterId))));
+        var session = new ClientSession { CharacterId = Target };
+
+        sessions.Enter(Target, session);
+        sessions.Leave(Target, session);
+        sessions.Leave(Target, session);
+        session.Close();
+
+        Assert.Equal(new (long CharacterId, bool Online, ClientSession? Current)[]
+        {
+            (Target, true, session),
+            (Target, false, null),
+        }, transitions);
+    }
+
+    [Fact]
     public async Task Switching_character_clears_old_presence_and_closing_old_session_preserves_replacement()
     {
         var sessions = new CharacterSessions();
@@ -59,9 +80,9 @@ public sealed class OnlineStatusServiceTests
         Assert.Equal(PyBool.False, await Call(service, query, "GetOnlineStatus", new PyInt(Observer)));
         Assert.Equal(PyBool.False, await Call(service, query, "GetOnlineStatus", new PyInt(Target)));
         sessions.Enter(Target, current);
-        Assert.Equal(PyBool.True, await Call(service, query, "GetOnlineStatus", new PyInt(Target)));
+        Assert.Equal(PyBool.True, await Call(service, current, "GetOnlineStatus", new PyInt(Target)));
         current.Close();
-        Assert.Equal(PyBool.False, await Call(service, query, "GetOnlineStatus", new PyInt(Target)));
+        Assert.Equal(PyBool.False, await Call(service, current, "GetOnlineStatus", new PyInt(Target)));
     }
 
     [Fact]
@@ -135,7 +156,7 @@ public sealed class OnlineStatusServiceTests
     }
 
     [Fact]
-    public async Task Unselected_observer_gets_empty_initial_state_and_reads_raw_presence()
+    public async Task Unselected_observer_gets_empty_initial_state_and_cannot_read_other_presence()
     {
         var sessions = new CharacterSessions();
         Enter(sessions, Target);
@@ -143,7 +164,7 @@ public sealed class OnlineStatusServiceTests
         var observer = new ClientSession();
         Assert.Empty(Rows(await Call(service, observer, "GetInitialState")));
         Assert.Empty(Rows(await Call(service, observer, "Prime")));
-        Assert.Equal(PyBool.True, await Call(service, observer, "GetOnlineStatus", new PyInt(Target)));
+        Assert.Equal(PyBool.False, await Call(service, observer, "GetOnlineStatus", new PyInt(Target)));
         Assert.Equal(PyBool.False, await Call(service, observer, "GetOnlineStatus", new PyInt(Target + 1)));
         Assert.Equal(PyBool.False, await Call(service, observer, "GetOnlineStatus"));
     }
@@ -170,12 +191,12 @@ public sealed class OnlineStatusServiceTests
     }
 
     [Fact]
-    public async Task Unselected_sessions_read_raw_presence()
+    public async Task Unselected_sessions_cannot_read_other_presence()
     {
         var sessions = new CharacterSessions();
         Enter(sessions, Target);
 
-        Assert.Equal(PyBool.True, await Call(new OnlineStatusService(sessions), new ClientSession(),
+        Assert.Equal(PyBool.False, await Call(new OnlineStatusService(sessions), new ClientSession(),
             "GetOnlineStatus", new PyInt(Target)));
         Assert.Equal(PyBool.False, await Call(new OnlineStatusService(sessions), new ClientSession(),
             "GetOnlineStatus", new PyInt(Target + 1)));

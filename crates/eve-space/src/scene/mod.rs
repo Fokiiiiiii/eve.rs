@@ -10,6 +10,8 @@ mod gate_transit;
 
 /// The most passengers one conduit jump takes (the Black Ops limit is 30; the array leaves room for the carriers).
 pub const MAX_CONDUIT_PASSENGERS: usize = 64;
+/// How many sentry events a scene retains while their ships and Crimewatch flags remain active.
+pub(crate) const MAX_PENDING_CRIME_EVENTS: usize = 256;
 mod collision;
 mod decloak;
 mod directional;
@@ -90,6 +92,19 @@ const STRUCTURE_DOCKING_RANGE: f64 = 2_500.0;
 
 fn docking_range(kind: BodyKind) -> f64 {
     if kind == BodyKind::Structure { STRUCTURE_DOCKING_RANGE } else { DOCKING_RANGE }
+}
+
+fn enqueue_crime_event(queue: &mut Vec<(i64, i64)>, event: (i64, i64)) {
+    if queue.len() >= MAX_PENDING_CRIME_EVENTS {
+        queue.remove(0);
+    }
+    queue.push(event);
+}
+
+fn unix_millis_to_filetime(unix_ms: i64) -> i64 {
+    unix_ms
+        .saturating_mul(TICKS_PER_SECOND / 1_000)
+        .saturating_add(UNIX_EPOCH_SECONDS.saturating_mul(TICKS_PER_SECOND))
 }
 
 /// How long after a jump was accepted the ship leaves for the other system at the soonest, and how long after the jump-out effect begins.
@@ -642,6 +657,9 @@ pub(crate) struct Pilot {
     pub(crate) no_jump_until: i64,
     /// Until when the ship cannot warp: the residual of a transport field on a capital ship (`Action::Field::warp_block_ms`, protocol 29).
     pub(crate) warp_blocked_until: i64,
+    /// The Host's current Crimewatch flag expiry, in FILETIME ticks.
+    pub(crate) crimewatch_flag_expires_at: Option<i64>,
+    pub(crate) crimewatch_flag_is_criminal: bool,
     /// What other ships' modules do to this ship's numbers while they run (webs, painters, dampeners, scramblers).
     pub(crate) incoming: crate::ewar::Incoming,
     /// Cloak state used by target selection and public visibility.
@@ -681,6 +699,8 @@ impl Pilot {
             disrupted_until: 0,
             no_jump_until: 0,
             warp_blocked_until: 0,
+            crimewatch_flag_expires_at: None,
+            crimewatch_flag_is_criminal: false,
             incoming: crate::ewar::Incoming::default(),
             cloak: crate::visibility::CloakState::Uncloaked,
             cloak_stabilized_until: 0,
@@ -787,13 +807,9 @@ pub struct Scene {
     pub(crate) rng: PythonRandom,
     /// The offensive acts since the brains last looked (`crate::brains` tells the NPCs that were their targets).
     pub(crate) aggressions: Vec<crate::weapons::Aggression>,
-    /// Ships whose security status fell since the brains last looked.
-    pub(crate) security_status_losses: Vec<(i64, i64)>,
-    /// Those that arrived before the sentry brains subscribed; delivery is retried on the next poll only.
+    /// Security status losses waiting for sentry brains; bounded and retained only while the ship's Crimewatch timer is active.
     pub(crate) pending_security_status_losses: Vec<(i64, i64)>,
-    /// Ships that entered with an active criminal timer.
-    pub(crate) criminal_flag_activations: Vec<(i64, i64)>,
-    /// Criminal entries that arrived before sentry brains subscribed; delivery is retried on the next poll only.
+    /// Active criminal flags waiting for sentry brains; bounded and retained only while the flag is live.
     pub(crate) pending_criminal_flag_activations: Vec<(i64, i64)>,
     /// The missiles that are on their way to a ship, by id: entities of their own, apart from the ships (`crate::missile_entity`).
     pub(crate) missiles: BTreeMap<i64, crate::missile_entity::MissileEntity>,
@@ -892,9 +908,7 @@ impl Scene {
             group_sequence: 0,
             rng: PythonRandom::new(0x5348_4f54),
             aggressions: Vec::new(),
-            security_status_losses: Vec::new(),
             pending_security_status_losses: Vec::new(),
-            criminal_flag_activations: Vec::new(),
             pending_criminal_flag_activations: Vec::new(),
             missiles: BTreeMap::new(),
             missile_sequence: 0,
@@ -932,6 +946,73 @@ impl Scene {
             wreck_catalog: None,
             field_capital_size_by_type: None,
         }
+    }
+
+    pub(crate) fn queue_security_status_loss(&mut self, owner_id: i64, ship_id: i64) {
+        enqueue_crime_event(&mut self.pending_security_status_losses, (owner_id, ship_id));
+    }
+
+    pub(crate) fn queue_criminal_flag_activation(&mut self, owner_id: i64, ship_id: i64) {
+        enqueue_crime_event(&mut self.pending_criminal_flag_activations, (owner_id, ship_id));
+    }
+
+    pub(crate) fn crimewatch_flag_active(
+        &mut self,
+        session: SessionId,
+        is_criminal: bool,
+        expires_at_unix_ms: i64,
+        now: i64,
+    ) {
+        let expires_at = unix_millis_to_filetime(expires_at_unix_ms);
+        let Some(pilot) = self.pilots.get_mut(&session) else { return };
+        match pilot.crimewatch_flag_expires_at {
+            Some(current) if current > expires_at => return,
+            Some(current) if current == expires_at => {
+                pilot.crimewatch_flag_is_criminal |= is_criminal;
+            }
+            _ => {
+                pilot.crimewatch_flag_expires_at = Some(expires_at);
+                pilot.crimewatch_flag_is_criminal = is_criminal;
+            }
+        }
+        if pilot.crimewatch_flag_is_criminal
+            && pilot.crimewatch_flag_expires_at.is_some_and(|expires_at| expires_at > now)
+        {
+            let event = (pilot.ship.spec.owner_id, pilot.ship.spec.ship_id);
+            enqueue_crime_event(&mut self.pending_criminal_flag_activations, event);
+        }
+    }
+
+    pub(crate) fn remove_pending_crime_events(&mut self, ship_id: i64) {
+        self.pending_security_status_losses.retain(|(_, candidate)| *candidate != ship_id);
+        self.pending_criminal_flag_activations.retain(|(_, candidate)| *candidate != ship_id);
+    }
+
+    pub(crate) fn prune_pending_crime_events(&mut self, now: i64) {
+        if self.pending_security_status_losses.is_empty() && self.pending_criminal_flag_activations.is_empty()
+        {
+            return;
+        }
+        let flags_by_ship: HashMap<_, _> = self
+            .pilots
+            .values()
+            .map(|pilot| {
+                (
+                    pilot.ship.spec.ship_id,
+                    (pilot.crimewatch_flag_expires_at, pilot.crimewatch_flag_is_criminal),
+                )
+            })
+            .collect();
+        self.pending_security_status_losses.retain(|(_, ship_id)| {
+            flags_by_ship
+                .get(ship_id)
+                .is_some_and(|(expires_at, _)| expires_at.is_some_and(|expires_at| expires_at > now))
+        });
+        self.pending_criminal_flag_activations.retain(|(_, ship_id)| {
+            flags_by_ship.get(ship_id).is_some_and(|(expires_at, is_criminal)| {
+                *is_criminal && (*expires_at).is_some_and(|expires_at| expires_at > now)
+            })
+        });
     }
 
     pub(crate) fn solar_system_id(&self) -> i32 {

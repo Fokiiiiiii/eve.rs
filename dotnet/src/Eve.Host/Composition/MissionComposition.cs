@@ -40,6 +40,8 @@ internal sealed partial class CharacterServicesComposition
 {
     /// <summary>The offset of a mission dungeon from the pilot's position when it starts (metres): the rule of the eve.rs mission runtime.</summary>
     public const double MissionDungeonOffsetMetres = 20_000;
+    private const int AgentMissionStandingEventTypeId = 73;
+    private const double ZeroStandingChangeEpsilon = 1e-9;
 
     /// <summary>The wave director of the dungeons (set by the space composition, which runs first).</summary>
     private Eve.Services.Space.Waves.DungeonWaveDirector? dungeonWavesDirector;
@@ -803,7 +805,12 @@ internal sealed partial class CharacterServicesComposition
         var taxCorporation = member is null ? null : await corporations.GetAsync(member.CorporationId, cancellationToken);
         return await CompleteInTransactionAsync(source, agentMissionStore, foundations.Relations, items, characterId, agentId, now, reference, standings, consume,
             cancellationToken, storylineCounters, await CountedFactionOfAsync(characterId, agentId, cancellationToken), loyaltyPoints,
-            loyaltyAmount, issuerCorporationId, taxCorporation?.Id ?? 0, taxCorporation?.LoyaltyPointTaxRate ?? 0m);
+            loyaltyAmount, issuerCorporationId, taxCorporation?.Id ?? 0, taxCorporation?.LoyaltyPointTaxRate ?? 0m,
+            afterStandingCommit: modifications =>
+            {
+                characterSessions.Of(characterId)?.SendNotification("OnStandingsModified", "charid", modifications);
+                return Task.CompletedTask;
+            });
     }
 
     /// <summary>
@@ -835,7 +842,8 @@ internal sealed partial class CharacterServicesComposition
         Eve.Relations.RelationStore relations, Eve.Inventory.PgItemStore items, long characterId, long agentId, DateTimeOffset now, string reference,
         IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, CancellationToken cancellationToken,
         Eve.Agents.StorylineCounters? counters = null, (long FactionId, long Level)? counted = null,
-        LoyaltyPointStore? loyalty = null, long loyaltyAmount = 0, long issuerCorporationId = 0, long taxCorporationId = 0, decimal loyaltyTaxRate = 0)
+        LoyaltyPointStore? loyalty = null, long loyaltyAmount = 0, long issuerCorporationId = 0, long taxCorporationId = 0, decimal loyaltyTaxRate = 0,
+        Func<PyValue, Task>? afterStandingCommit = null)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -888,16 +896,47 @@ internal sealed partial class CharacterServicesComposition
             if (taken == stack.Quantity) await items.DeleteAsync(connection, transaction, stack.Id, cancellationToken);
             else await items.SetQuantityAsync(connection, transaction, stack.Id, stack.Quantity - taken, cancellationToken);
         }
-        // read in the transaction: a diminishing gain depends on the standing the pilot has when the completion is written
-        foreach (var gain in standings)
+        // Lock all affected pairs first, in a stable order, so independent mission rows read each prior committed standing.
+        var standingGains = standings.Where(gain => Math.Abs(gain.Amount) > ZeroStandingChangeEpsilon).ToArray();
+        foreach (var ownerId in standingGains.Select(gain => gain.EntityId).Distinct().OrderBy(ownerId => ownerId))
+        {
+            await Sql.ExecuteAsync(connection, transaction,
+                "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", cancellationToken,
+                $"mission-standing:{characterId}:{ownerId}");
+        }
+        var standingModifications = new List<PyValue>(standingGains.Length);
+        foreach (var gain in standingGains)
         {
             var kind = Eve.Relations.RelationKinds.Standing.Name;
             var current = await relations.ValueAsync(kind, gain.EntityId, characterId, 0, connection, transaction, cancellationToken);
-            await relations.AdjustAsync(connection, transaction, kind, gain.EntityId, characterId, gain.DeltaFrom(current),
-                "Agent mission standing", cancellationToken: cancellationToken);
+            var next = Math.Clamp(Math.Floor((current + gain.DeltaFrom(current)) * 1000d + 0.5d) / 1000d, -10d, 10d);
+            var rawChange = gain.Diminishing || current == next
+                ? gain.Amount
+                : (next - current) / (next > current ? 10d - current : 10d + current);
+            var reason = JsonSerializer.Serialize(new
+            {
+                eventTypeID = AgentMissionStandingEventTypeId,
+                eventDateTime = Py.FileTimeFromUnixMs(now.ToUnixTimeMilliseconds()),
+                modification = rawChange,
+                msg = gain.Message,
+                int_1 = (int?)null,
+                int_2 = (int?)null,
+                int_3 = (int?)null,
+            });
+            await relations.SetAsync(connection, transaction, kind, gain.EntityId, characterId, next, reason,
+                cancellationToken: cancellationToken, recordHistoryWhenUnchanged: true);
+            standingModifications.Add(new PyList([
+                new PyInt(gain.EntityId),
+                new PyInt(characterId),
+                Py.Number(rawChange),
+                Py.Number(-10),
+                Py.Number(10),
+            ]));
         }
         await transaction.CommitAsync(cancellationToken);
         foreach (var loyaltyChange in loyaltyChanges) loyalty!.AnnounceCommitted(loyaltyChange);
+        if (standingModifications.Count > 0 && afterStandingCommit is not null)
+            await afterStandingCommit(new PyList(standingModifications));
         agentMissionStore.Announce(change);
         return true;
     }

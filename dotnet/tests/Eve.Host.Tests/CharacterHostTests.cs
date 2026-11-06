@@ -60,6 +60,45 @@ public sealed class CharacterHostTests
     }
 
     [PgFact]
+    public async Task Public_record_in_a_list_reaches_the_client_with_membership_and_authoritative_militia_values()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        const long allianceId = 900_002_001;
+        var created = DateTimeOffset.FromUnixTimeMilliseconds(rig.NowUnixMs).AddYears(-5);
+        var joinedMs = rig.NowUnixMs - (long)TimeSpan.FromDays(14).TotalMilliseconds;
+        await rig.SeedPublicProfileCorporationMemberAsync(character, allianceId, created, joinedMs);
+        await rig.SetFactionWarfareEnlistmentAsync(Eve.FactionWarfare.FwStore.CorporationKind, 900_001_001, 500004);
+        await rig.SetFactionWarfareEnlistmentAsync(Eve.FactionWarfare.FwStore.AllianceKind, allianceId, 500002);
+        var session = new ClientSession { CharacterId = character };
+        session.Set("charid", new PyLong(character));
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charMgr"));
+
+        async Task<Dictionary<string, PyValue>> ReadFieldsAsync()
+        {
+            var list = Assert.IsType<PyList>(await CallAsync(service, "GetPublicInfo3", session, new PyInt(character)));
+            var record = Assert.IsType<PyObject>(Assert.Single(list.Items));
+            return ((PyDict)record.Args).Entries.ToDictionary(entry => Eve.Macho.JsSemantics.StringValue(entry.Key)!, entry => entry.Value);
+        }
+
+        var fields = await ReadFieldsAsync();
+        Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(created.ToUnixTimeMilliseconds())), fields["createDateTime"]);
+        Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(joinedMs)), fields["startDateTime"]);
+        Assert.NotEqual(fields["createDateTime"], fields["startDateTime"]);
+        Assert.Equal(new PyInt(500004), fields["militiaFactionID"]);
+
+        await rig.SetFactionWarfareEnlistmentAsync(Eve.FactionWarfare.FwStore.CorporationKind, 900_001_001, 0);
+        Assert.Equal(new PyInt(500002), (await ReadFieldsAsync())["militiaFactionID"]);
+
+        Assert.True(await rig.Characters.SetFactionWarfareStateAsync(character, 500001L, 0));
+        Assert.Equal(new PyInt(500001), (await ReadFieldsAsync())["militiaFactionID"]);
+
+        Assert.True(await rig.Characters.SetFactionWarfareStateAsync(character, null, 0));
+        await rig.SetFactionWarfareEnlistmentAsync(Eve.FactionWarfare.FwStore.AllianceKind, allianceId, 0);
+        Assert.Equal(PyNone.Instance, (await ReadFieldsAsync())["militiaFactionID"]);
+    }
+
+    [PgFact]
     public async Task Achievement_tracker_updates_are_validated_before_persisting_and_survive_host_restart()
     {
         await using var rig = await CharacterHostRig.CreateAsync();
@@ -1263,6 +1302,104 @@ public sealed class CharacterHostTests
     }
 
     [PgFact]
+    public async Task Online_status_rpc_denies_presence_before_character_selection()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var targetId = await rig.CreateCharacterAsync();
+        rig.Sessions.Enter(targetId, new ClientSession { CharacterId = targetId, UserId = 1 });
+
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("onlineStatus"));
+        var unselected = new ClientSession { UserId = 1 };
+
+        Assert.Equal(PyBool.False, await CallAsync(service, "GetOnlineStatus", unselected, new PyLong(targetId)));
+    }
+
+    [PgFact]
+    public async Task Online_status_notifications_follow_reciprocal_watchlists_and_session_lifecycle()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var targetId = await rig.CreateCharacterAsync();
+        var reciprocalId = await rig.CreateCharacterAsync();
+        var oneWayId = await rig.CreateCharacterAsync();
+        var unwatchedId = await rig.CreateCharacterAsync();
+        var charMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charMgr"));
+        var userSvc = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("userSvc"));
+
+        foreach (var (ownerId, contactId) in new[]
+        {
+            (reciprocalId, targetId),
+            (targetId, reciprocalId),
+            (oneWayId, targetId),
+        })
+        {
+            Assert.IsType<PyNone>(await CallAsync(charMgr, "AddContact",
+                new ClientSession { CharacterId = ownerId, UserId = 1 },
+                new PyLong(contactId), new PyInt(-10), PyBool.True, PyBool.False, new PyStr("")));
+        }
+
+        var targetSession = new ClientSession { CharacterId = targetId, UserId = 1 };
+        var deliveredPresence = new List<ClientSession?>();
+        var reciprocalSink = new RecordingPacketSink(() => deliveredPresence.Add(rig.Sessions.Of(targetId)));
+        var oneWaySink = new RecordingPacketSink();
+        var unwatchedSink = new RecordingPacketSink();
+        rig.Sessions.Enter(reciprocalId, new ClientSession { CharacterId = reciprocalId, UserId = 1, Sink = reciprocalSink });
+        rig.Sessions.Enter(oneWayId, new ClientSession { CharacterId = oneWayId, UserId = 1, Sink = oneWaySink });
+        rig.Sessions.Enter(unwatchedId, new ClientSession { CharacterId = unwatchedId, UserId = 1, Sink = unwatchedSink });
+        await rig.OnlineStatusNotifications.FlushAsync();
+
+        rig.Sessions.Enter(targetId, targetSession);
+        var onlineStatus = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("onlineStatus"));
+        var reciprocalSession = Assert.IsType<ClientSession>(rig.Sessions.Of(reciprocalId));
+        Assert.Equal(PyBool.True, await CallAsync(onlineStatus, "GetOnlineStatus", reciprocalSession, new PyLong(targetId)));
+        await rig.OnlineStatusNotifications.FlushAsync();
+        Assert.Equal(new[] { "OnContactLoggedOn" }, Notifications(reciprocalSink).Select(notification => notification.Name));
+        Assert.Empty(Notifications(oneWaySink));
+        Assert.Empty(Notifications(unwatchedSink));
+        Assert.Same(targetSession, Assert.Single(deliveredPresence));
+
+        var replacement = new ClientSession { CharacterId = targetId, UserId = 1 };
+        rig.Sessions.Enter(targetId, replacement);
+        rig.Sessions.Enter(targetId, replacement);
+        targetSession.Close();
+        await rig.OnlineStatusNotifications.FlushAsync();
+        Assert.Same(replacement, rig.Sessions.Of(targetId));
+        Assert.Single(Notifications(reciprocalSink));
+
+        Assert.Equal(PyBool.True, await CallAsync(userSvc, "UserLogOffCharacter", replacement));
+        replacement.Close();
+        replacement.Close();
+        await rig.OnlineStatusNotifications.FlushAsync();
+
+        Assert.Null(replacement.CharacterId);
+        Assert.Null(rig.Sessions.Of(targetId));
+        Assert.Equal(new[] { "OnContactLoggedOn", "OnContactLoggedOff" },
+            Notifications(reciprocalSink).Select(notification => notification.Name));
+
+        var reentered = new ClientSession { CharacterId = targetId, UserId = 1 };
+        rig.Sessions.Enter(targetId, reentered);
+        await rig.OnlineStatusNotifications.FlushAsync();
+        reentered.Close();
+        reentered.Close();
+        await rig.OnlineStatusNotifications.FlushAsync();
+
+        Assert.Equal(new[] { "OnContactLoggedOn", "OnContactLoggedOff", "OnContactLoggedOn", "OnContactLoggedOff" },
+            Notifications(reciprocalSink).Select(notification => notification.Name));
+        Assert.Equal(new ClientSession?[] { targetSession, null, reentered, null }, deliveredPresence);
+        Assert.Empty(Notifications(oneWaySink));
+        Assert.Empty(Notifications(unwatchedSink));
+        var packets = reciprocalSink.Sent.OfType<PyObject>().ToArray();
+        Assert.Equal(4, packets.Length);
+        var expectedNames = new[] { "OnContactLoggedOn", "OnContactLoggedOff", "OnContactLoggedOn", "OnContactLoggedOff" };
+        for (var i = 0; i < packets.Length; i++)
+        {
+            var address = MachoAddress.Decode(((PyTuple)packets[i].Args).Items[2]);
+            Assert.Equal(expectedNames[i], address.BroadcastId);
+            Assert.Equal("clientID", address.IdType);
+            Assert.Equal(new PyValue[] { new PyLong(targetId) }, Notifications(reciprocalSink)[i].Args);
+        }
+    }
+
+    [PgFact]
     public async Task Contact_add_persists_and_routes_the_recipient_notification()
     {
         await using var rig = await CharacterHostRig.CreateAsync();
@@ -1866,7 +2003,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             "EVE_WALLET_SCHEMA", "EVE_FITTING_SCHEMA", "EVE_INDUSTRY_SCHEMA", "EVE_NPC_SCHEMA", "EVE_SPACE_SCHEMA",
             "EVE_ASSET_SAFETY_SCHEMA", "EVE_CRIMEWATCH_SCHEMA", "EVE_CORPORATIONS_SCHEMA", "EVE_MARKET_SCHEMA", "EVE_FLEET_SCHEMA",
             "EVE_GAMESTORE_SCHEMA", "EVE_SCHEDULER_SCHEMA", "EVE_EVENTS_SCHEMA", "EVE_RELATIONS_SCHEMA", "EVE_CONTENT_SCHEMA",
-            "EVE_STRUCTURES_SCHEMA", "EVE_AGENTS_SCHEMA",
+            "EVE_STRUCTURES_SCHEMA", "EVE_AGENTS_SCHEMA", "EVE_FACTIONWARFARE_SCHEMA",
         ];
 
         private const long CorporationId = 900_001_001;
@@ -1889,6 +2026,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         public ServiceRegistry Registry => _runtime.Registry;
         internal Eve.Host.PublicGateway.PublicGatewayRoutes Gateway => _runtime.PublicGateway;
         public CharacterSessions Sessions => Assert.IsType<CharacterSessions>(_runtime.CharacterSessions);
+        public OnlineStatusNotifications OnlineStatusNotifications => Assert.IsType<OnlineStatusNotifications>(_runtime.OnlineStatusNotifications);
         public Eve.Scheduler.DurableScheduler Scheduler => _runtime.Scheduler ?? throw new InvalidOperationException("the scheduler is not composed");
         public PgCharacterStore Characters => new(Source, CharactersSchema);
         public long Station { get; }
@@ -1898,6 +2036,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         public string IdentitySchema => _schemas["EVE_IDENTITY_SCHEMA"];
         public string WalletSchema => _schemas["EVE_WALLET_SCHEMA"];
         public string CorporationsSchema => _schemas["EVE_CORPORATIONS_SCHEMA"];
+        public string FactionWarfareSchema => _schemas["EVE_FACTIONWARFARE_SCHEMA"];
         public string GameStoreSchema => _schemas["EVE_GAMESTORE_SCHEMA"];
         public string SchedulerSchema => _schemas["EVE_SCHEDULER_SCHEMA"];
         public string StructuresSchema => _schemas["EVE_STRUCTURES_SCHEMA"];
@@ -2018,6 +2157,57 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             var id = await new PgCharacterStore(Source, CharactersSchema).InsertAsync(connection, transaction, character);
             await transaction.CommitAsync();
             return id;
+        }
+
+        public async Task SeedPublicProfileCorporationMemberAsync(long characterId, long allianceId, DateTimeOffset createdAt, long startedMs)
+        {
+            await using var connection = await Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await using (var character = new NpgsqlCommand(
+                $"UPDATE {CharactersSchema}.characters SET created_at = $1, alliance_id = $2 WHERE id = $3", connection, transaction))
+            {
+                character.Parameters.Add(new NpgsqlParameter { Value = createdAt.UtcDateTime });
+                character.Parameters.Add(new NpgsqlParameter { Value = allianceId });
+                character.Parameters.Add(new NpgsqlParameter { Value = characterId });
+                Assert.Equal(1, await character.ExecuteNonQueryAsync());
+            }
+            await using (var owner = new NpgsqlCommand(
+                $"INSERT INTO {CorporationsSchema}.owner_names (owner_id, name_key, ticker_key) VALUES ($1, 'public-profile-corp', 'PPC')", connection, transaction))
+            {
+                owner.Parameters.Add(new NpgsqlParameter { Value = CorporationId });
+                await owner.ExecuteNonQueryAsync();
+            }
+            await using (var corporation = new NpgsqlCommand(
+                $"INSERT INTO {CorporationsSchema}.corporations " +
+                "(id, name, ticker, ceo_id, creator_id, alliance_id, station_id, solar_system_id, tax_rate, lp_tax_rate, description, url, member_limit, created_ms) " +
+                "VALUES ($1, 'Public Profile Corp', 'PPC', $2, $2, $3, $4, 30000142, 0, 0, '', '', 100, $5)", connection, transaction))
+            {
+                corporation.Parameters.Add(new NpgsqlParameter { Value = CorporationId });
+                corporation.Parameters.Add(new NpgsqlParameter { Value = characterId });
+                corporation.Parameters.Add(new NpgsqlParameter { Value = allianceId });
+                corporation.Parameters.Add(new NpgsqlParameter { Value = Station });
+                corporation.Parameters.Add(new NpgsqlParameter { Value = NowUnixMs });
+                await corporation.ExecuteNonQueryAsync();
+            }
+            await using (var member = new NpgsqlCommand(
+                $"INSERT INTO {CorporationsSchema}.members (character_id, corporation_id, started_ms) VALUES ($1, $2, $3)", connection, transaction))
+            {
+                member.Parameters.Add(new NpgsqlParameter { Value = characterId });
+                member.Parameters.Add(new NpgsqlParameter { Value = CorporationId });
+                member.Parameters.Add(new NpgsqlParameter { Value = startedMs });
+                await member.ExecuteNonQueryAsync();
+            }
+            await transaction.CommitAsync();
+        }
+
+        public async Task SetFactionWarfareEnlistmentAsync(int ownerKind, long ownerId, long factionId)
+        {
+            var store = new Eve.FactionWarfare.FwStore(Source, FactionWarfareSchema);
+            await using var connection = await Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await store.SaveEnlistmentAsync(connection, transaction,
+                new Eve.FactionWarfare.FwEnlistment(ownerKind, ownerId, factionId, 0, 0, NowUnixMs));
+            await transaction.CommitAsync();
         }
 
         public async Task SetSkillLevelAsync(long characterId, int typeId, short level)

@@ -38,6 +38,8 @@ public sealed class CharacterLogoff(
         foreach (var hook in entryHooks)
             await hook.OnCharacterLeavingAsync(session, characterId, cancellationToken);
         await characters.SetLastLogoffAsync(characterId, DateTimeOffset.FromUnixTimeMilliseconds(nowUnixMs()), cancellationToken);
+        foreach (var hook in entryHooks)
+            await hook.OnCharacterLoggedOffAsync(session, characterId, cancellationToken);
         online.Leave(session.SessionId);
         session.Change([.. CharacterAttributes.Select(name => (name, (PyValue)PyNone.Instance))]);
         return true;

@@ -1,4 +1,5 @@
 using Eve.Marshal;
+using Eve.Npc;
 using Eve.Services;
 using Eve.Services.Space;
 
@@ -41,6 +42,20 @@ public sealed class DynamicResourceCacheMgrTests
             ValueTask.FromResult<PyValue?>(call.Method == "GetESSAgencyData" ? value : null));
 
         Assert.Same(value, await Call(service, new ClientSession(), "GetESSAgencyData"));
+    }
+
+    [Fact]
+    public async Task Dbs_map_includes_equilibrium_valued_systems_from_its_reader()
+    {
+        var service = (IService)new DynamicResourceCacheMgrService(listDbsSystems: _ =>
+            ValueTask.FromResult<IReadOnlyList<DynamicBountyMapEntry>>(
+            [new(30_000_142, 1.5), new(30_000_143, 1.49)]));
+
+        var map = Assert.IsType<PyDict>(await Call(service, new ClientSession(), "GetDBSMapData"));
+
+        Assert.Equal(2, map.Entries.Count);
+        Assert.Contains(map.Entries, entry => entry.Key == new PyInt(30_000_142) && entry.Value == new PyReal(1.5));
+        Assert.Contains(map.Entries, entry => entry.Key == new PyInt(30_000_143) && entry.Value == new PyReal(1.49));
     }
 
     private static Task<PyValue> Call(IService service, ClientSession session, string method, params PyValue[] args) =>

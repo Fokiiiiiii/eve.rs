@@ -103,6 +103,6 @@ public sealed record RowsetQuery(string Name, string From, IReadOnlyList<Column>
         {
             throw new ArgumentException($"not a usable table name: {table}", nameof(table));
         }
-        return new RowsetQuery(name, $"{{sde}}.{table}", columns) { OrderBy = "ord", Cache = true };
+        return new RowsetQuery(name, $"{{sde}}.\"{table}\"", columns) { OrderBy = "ord", Cache = true };
     }
 }

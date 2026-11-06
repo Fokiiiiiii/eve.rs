@@ -44,6 +44,7 @@ public sealed partial class HostServerTests
                 founder = await characters.InsertAsync(connection, transaction, new NewCharacter(1,
                     $"Medal Host Pilot {Guid.NewGuid():N}", 0, 1, 1, 1, 11, 1376, 1000044, null,
                     60000001, 30000001, 20000001, 10000001, null, null));
+                await skills.GrantAsync(connection, transaction, founder, [new CharacterSkill(3363, 1, 0)]);
                 await wallets.OpenAsync(connection, transaction, founder, 5_000_000m, 10);
                 await transaction.CommitAsync();
             }

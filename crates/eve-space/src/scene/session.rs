@@ -382,12 +382,14 @@ impl Scene {
         told.push(update(vec![state]));
         let mut numbers = Vec::new();
         for other in &ships {
-            // The undocked ego is primed above, and fixed SDE sentries have no movement numbers to prime.
+            // The undocked ego's numbers are in SetState; fixed SDE sentries do not move.
             if (other.spec.ship_id != ship.spec.ship_id || pilot.jumped_in) && other.spec.max_velocity > 0.0 {
                 numbers.extend(Self::numbers_of(other, second));
             }
         }
-        told.push(update(numbers));
+        if !numbers.is_empty() {
+            told.push(update(numbers));
+        }
         if login_visuals_sent && let Some(pilot) = self.pilots.get_mut(&session) {
             pilot.login_visuals_sent = false;
         }
@@ -731,7 +733,7 @@ impl Scene {
             ));
         }
         if let Some(loss) = security_status_loss {
-            self.security_status_losses.push(loss);
+            self.queue_security_status_loss(loss.0, loss.1);
         }
         if scan_resolution_changed || signature_radius_changed {
             self.rebase_pending_target_locks(session, scan_resolution_changed, signature_radius_changed, now);
@@ -747,6 +749,7 @@ impl Scene {
 
     pub fn poll(&mut self, now: i64) -> Vec<Out> {
         self.settle_all(now);
+        self.prune_pending_crime_events(now);
         let mut told = self.populate_empire_sentries(now);
         told.extend(self.populate_pochven(now));
         let arrived: Vec<SessionId> = self

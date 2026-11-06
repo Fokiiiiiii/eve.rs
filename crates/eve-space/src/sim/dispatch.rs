@@ -483,7 +483,7 @@ impl Sim {
                 | Message::Activate { session_id, .. }
                 | Message::ShipSpec { session_id, .. }
                 | Message::Bind { session_id }
-                | Message::CriminalFlagActive { session_id }
+                | Message::CrimewatchFlagActive { session_id, .. }
                 | Message::Leave { session_id, .. }
                 | Message::UpdateState { session_id, .. } => {
                     self.sessions.get(session_id).map(|key| vec![*key])
@@ -792,7 +792,7 @@ impl Sim {
             | Message::Leave { .. }
             | Message::Bind { .. }
             | Message::UpdateState { .. }
-            | Message::CriminalFlagActive { .. }
+            | Message::CrimewatchFlagActive { .. }
             | Message::Spawn(..)
             | Message::Destroy { .. }
             | Message::Respawn { .. }
@@ -1138,16 +1138,10 @@ impl Sim {
                     out
                 })
                 .unwrap_or_default(),
-            Message::CriminalFlagActive { session_id } => self
+            Message::CrimewatchFlagActive { session_id, is_criminal, expires_at_unix_ms } => self
                 .scene_of(session_id)
                 .map(|scene| {
-                    if let Some(activation) = scene
-                        .pilots
-                        .get(&session_id)
-                        .map(|pilot| (pilot.ship.spec.owner_id, pilot.ship.spec.ship_id))
-                    {
-                        scene.criminal_flag_activations.push(activation);
-                    }
+                    scene.crimewatch_flag_active(session_id, is_criminal, expires_at_unix_ms, now);
                     Vec::new()
                 })
                 .unwrap_or_default(),

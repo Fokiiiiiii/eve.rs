@@ -197,8 +197,24 @@ public sealed partial class PgCharacterStore
         long cooldownFileTime,
         CancellationToken cancellationToken = default)
     {
-        await using var command = _source.CreateCommand(
-            $"UPDATE {_schema}.characters SET direct_faction_id = $1, direct_enlistment_cooldown_filetime = $2 WHERE id = $3");
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var saved = await SetFactionWarfareStateAsync(connection, transaction, characterId, directFactionId, cooldownFileTime, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return saved;
+    }
+
+    public async Task<bool> SetFactionWarfareStateAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long characterId,
+        long? directFactionId,
+        long cooldownFileTime,
+        CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"UPDATE {_schema}.characters SET direct_faction_id = $1, direct_enlistment_cooldown_filetime = $2 WHERE id = $3",
+            connection, transaction);
         command.Parameters.Add(new NpgsqlParameter { Value = directFactionId is > 0 ? (object)directFactionId.Value : DBNull.Value });
         command.Parameters.Add(new NpgsqlParameter { Value = Math.Max(0, cooldownFileTime) });
         command.Parameters.Add(new NpgsqlParameter { Value = characterId });

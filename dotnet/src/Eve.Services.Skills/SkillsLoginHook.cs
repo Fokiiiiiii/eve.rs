@@ -29,4 +29,10 @@ public sealed class SkillsLoginHook(CharacterTraining training, SkillCatalog cat
             PyNone.Instance,
             new PyLong(Py.FileTimeFromUnixMs(nowUnixMs())));
     }
+
+    public ValueTask OnCharacterLoggedOffAsync(ClientSession session, long characterId, CancellationToken cancellationToken)
+    {
+        sessions.Leave(characterId, session);
+        return ValueTask.CompletedTask;
+    }
 }

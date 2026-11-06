@@ -57,7 +57,8 @@ public sealed partial class CharMgrService(
     Func<long, long, CancellationToken, ValueTask<bool>>? canReadPrivateCorporationMemberInfo = null,
     Func<long, long, int, long, string, CancellationToken, ValueTask>? writeContactNotification = null,
     Func<long, CancellationToken, ValueTask<Character?>>? readCharacterById = null,
-    Func<IReadOnlyList<long>, CancellationToken, Task<IReadOnlyList<Character>>>? readCharactersByIds = null)
+    Func<IReadOnlyList<long>, CancellationToken, Task<IReadOnlyList<Character>>>? readCharactersByIds = null,
+    Func<Character, CancellationToken, ValueTask<long?>>? readMilitiaFactionId = null)
 {
     private const int MaxOrganizationInfoCharacterIds = 500;
     private const int MaxBulkContactOwnerIds = 500;
@@ -117,7 +118,8 @@ public sealed partial class CharMgrService(
     private static PyValue Nullable(long? value) => value is { } id ? new PyInt(id) : None;
 
     /// <summary>The public record of a character: <c>util.KeyVal</c> of the fields the client's character windows read.</summary>
-    internal static PyValue PublicInfo(Character c, string description, double securityStatus, long? medal1GraphicId)
+    internal static PyValue PublicInfo(Character c, string description, double securityStatus, long? medal1GraphicId,
+        long? corporationStartedMs = null, long? militiaFactionId = null)
     {
         var empire = EmpireOf(c.CorporationId, c.FactionId);
         return Py.KeyVal(
@@ -134,7 +136,7 @@ public sealed partial class CharMgrService(
             ("schoolID", new PyInt(c.SchoolId)),
             ("gender", new PyInt(c.Gender)),
             ("createDateTime", FileTime(c.CreatedAt)),
-            ("startDateTime", FileTime(c.CreatedAt)),
+            ("startDateTime", corporationStartedMs is > 0 ? new PyLong(Py.FileTimeFromUnixMs(corporationStartedMs.Value)) : FileTime(c.CreatedAt)),
             ("description", new PyStr(description)),
             ("securityRating", Py.Number(securityStatus)),
             ("securityStatus", Py.Number(securityStatus)),
@@ -143,7 +145,7 @@ public sealed partial class CharMgrService(
             ("shortName", new PyStr("none")),
             ("stationID", new PyInt(c.StationId)),
             ("solarSystemID", new PyInt(c.SolarSystemId)),
-            ("militiaFactionID", None),
+            ("militiaFactionID", Nullable(militiaFactionId is > 0 ? militiaFactionId : null)),
             ("medal1GraphicID", Nullable(medal1GraphicId)));
     }
 
@@ -176,7 +178,9 @@ public sealed partial class CharMgrService(
         var description = await readCharacterDescription(character.Id, cancellationToken) ?? "";
         var securityStatus = await readCharacterSecurityStatus(character.Id, cancellationToken);
         var medal1GraphicId = await readMedal1GraphicId(character.Id, cancellationToken);
-        return PublicInfo(character, description, securityStatus, medal1GraphicId);
+        var startedMs = readCorporationMemberStartedMs is null ? null : await readCorporationMemberStartedMs(character.Id, cancellationToken);
+        var militiaFactionId = readMilitiaFactionId is null ? null : await readMilitiaFactionId(character, cancellationToken);
+        return PublicInfo(character, description, securityStatus, medal1GraphicId, startedMs, militiaFactionId);
     }
 
     [Method("GetPublicInfo")]

@@ -47,6 +47,8 @@ if [ -z "${EVE_SDE_DIR:-}" ]; then
   if [ -n "$sde_copy" ]; then export EVE_SDE_DIR="$sde_copy"; fi
 fi
 TARGET="${CARGO_TARGET_DIR:-$HERE/target}"
+SIM_BINARY="$TARGET/release/eve-sim"
+case "$SIM_BINARY" in /*) ;; *) SIM_BINARY="$HERE/$SIM_BINARY" ;; esac
 PORT="${EVE_LIVE_PORT:-26100}"
 export EVE_LIVE_PORT="$PORT" EVE_NET_BINARY="$TARGET/release/eve-net" EVE_NET_LISTEN="127.0.0.1:$PORT"
 GATEWAY_ADDR="${EVE_PUBLIC_GATEWAY:-127.0.0.1:${EVE_PUBLIC_GATEWAY_PORT:-26101}}"
@@ -137,6 +139,7 @@ done
 EVE_DEV_AUTO_CREATE=1 EVE_HOST="$SOCK" EVE_SIM_SOCKET="$SIMSOCK" dotnet "$EVE_HOST_DLL" >"$LOG/host.out" 2>&1 &
 host_pid=$!
 export EVE_HOST_PID="$host_pid"
+export EVE_SIM_PID="$sim_pid" EVE_SIM_BINARY="$SIM_BINARY"
 # a first start loads the static data catalogs: give a slow machine a minute (EVE_LIVE_START_TENTHS: tenths of a second to wait, 600 by default)
 host_ready=0
 for _ in $(seq 1 "${EVE_LIVE_START_TENTHS:-600}"); do

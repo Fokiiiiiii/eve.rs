@@ -119,6 +119,23 @@ internal sealed partial class CharacterServicesComposition
                     await mailbox.WriteNotificationsAsync(senderId, typeId, 9, [recipientId],
                         $"contact:{Guid.NewGuid():N}",
                         new JsonObject { ["level"] = level, ["message"] = message }, token);
+                },
+                readMilitiaFactionId: async (character, token) =>
+                {
+                    if (character.DirectFactionId is { } direct && direct > 0)
+                        return direct;
+                    var corporation = await corporations.GetAsync(character.CorporationId, token);
+                    if (corporation is null || corporation.IsNpc)
+                        return null;
+                    var corporationFactionId = await factionWarfare.FactionOfAsync(
+                        Eve.FactionWarfare.FwStore.CorporationKind, corporation.Id, now(), token);
+                    if (corporationFactionId > 0)
+                        return corporationFactionId;
+                    if (corporation.AllianceId is not { } allianceId || allianceId <= 0)
+                        return null;
+                    var allianceFactionId = await factionWarfare.FactionOfAsync(
+                        Eve.FactionWarfare.FwStore.AllianceKind, allianceId, now(), token);
+                    return allianceFactionId > 0 ? allianceFactionId : null;
                 }),
             new Eve.Services.CharacterInfo.HomeStationService(
                 homeStations,

@@ -44,12 +44,15 @@ def ego_ball(events, ship_id):
     raise AssertionError("no ego ball in SetState")
 
 
-def wait_for_warp_arrival(who, ballpark, target_id, ship_id, *, kind="item", min_range=0, during_warp=None):
+def wait_for_warp_arrival(who, ballpark, target_id, ship_id, *, kind="item", min_range=0, during_warp=None, fleet=None):
     if kind == "autopilot":
         who.call_bound(ballpark, "CmdWarpToStuffAutopilot", target_id)
         expected_range = None
     else:
-        who.call_bound(ballpark, "CmdWarpToStuff", kind, target_id, minRange=min_range)
+        kwargs = {"minRange": min_range}
+        if fleet is not None:
+            kwargs["fleet"] = fleet
+        who.call_bound(ballpark, "CmdWarpToStuff", kind, target_id, **kwargs)
         expected_range = min_range
     if during_warp is not None:
         during_warp()
@@ -190,6 +193,35 @@ def test_undock_coordinate_warp_arrival_and_next_order():
         docked = wait_quietly(who, 15.0, lambda seen: any(event["name"] == "$sessionchange" for event in seen))
         assert any(event["name"] == "$sessionchange" for event in docked), docked
         assert all(names(e) for e in bind_events if e["name"] == "DoDestinyUpdate"), bind_events
+
+
+@pytest.mark.timeout(600)
+def test_moon_mining_point_warp_arrives_then_accepts_another_warp_and_dock():
+    race = WARP["races"][0]
+    moon_id = 40_491_234
+    with base.connect(f"walk-warp-moon-point-{uuid.uuid4().hex[:10]}", timeout=120.0) as who:
+        _, ship_id, _, _ = arrive(who, race, uuid.uuid4().hex[:10])
+        ship = who.call("ship", "MachoBindObject", (STATION, 15), None)
+        wait_quietly(who, 0.5)
+        who.call_bound(ship[0], "Undock", ship_id, False)
+        wait_quietly(who, 2.0)
+        ballpark = who.call("beyonce", "MachoBindObject", SYSTEM, None)[0]
+        bind_events = wait_quietly(who, 2.5)
+        initial = ego_ball(bind_events, ship_id)
+        assert initial[1] > 0 and initial[3] > 0, initial
+
+        wait_for_warp_arrival(who, ballpark, moon_id, ship_id, kind="moonMiningPoint", min_range=35_000, fleet=False)
+        who.call_bound(ballpark, "UpdateStateRequest")
+        arrived = ego_ball(wait_quietly(who, 2.0), ship_id)
+        assert arrived[0] == 2, arrived
+        assert arrived[1] == pytest.approx(initial[1])
+        assert arrived[3] == pytest.approx(initial[3])
+        assert arrived[4] == 0.0
+
+        wait_for_warp_arrival(who, ballpark, STATION, ship_id)
+        who.call_bound(ballpark, "CmdDock", STATION)
+        docked = wait_quietly(who, 15.0, lambda seen: any(event["name"] == "$sessionchange" for event in seen))
+        assert any(event["name"] == "$sessionchange" for event in docked), docked
 
 
 @pytest.mark.timeout(600)

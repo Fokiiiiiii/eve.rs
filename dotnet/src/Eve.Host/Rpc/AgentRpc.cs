@@ -49,6 +49,34 @@ internal sealed partial class CharacterServicesComposition
         return AgentRpcServices();
     }
 
+    internal static async Task<WarpCoordinates?> ResolveMoonMiningPointForSystemAsync(SdeReader sde, long moonId, int systemId, CancellationToken token)
+    {
+        var point = MoonMiningPointCatalog.Resolve(moonId, systemId);
+        if (point is null)
+            return null;
+
+        var moons = await sde.ReadAsync("mapMoons", [moonId], token);
+        if (moons.Count != 1
+            || !moons[0].Doc.TryGetProperty("solarSystemID", out var moonSystem)
+            || !moonSystem.TryGetInt32(out var moonSystemId) || moonSystemId != systemId
+            || !moons[0].Doc.TryGetProperty("typeID", out var type)
+            || !type.TryGetInt32(out var typeId))
+            return null;
+
+        var types = await sde.ReadAsync("types", [typeId], token);
+        if (types.Count != 1
+            || !types[0].Doc.TryGetProperty("groupID", out var group)
+            || !group.TryGetInt32(out var groupId) || groupId != 8
+            || !moons[0].Doc.TryGetProperty("position", out var position)
+            || !position.TryGetProperty("x", out var x) || !x.TryGetDouble(out var moonX)
+            || !position.TryGetProperty("y", out var y) || !y.TryGetDouble(out var moonY)
+            || !position.TryGetProperty("z", out var z) || !z.TryGetDouble(out var moonZ)
+            || !MoonMiningPointCatalog.IsAtMoonMiningPoint(moonId, systemId, moonX, moonY, moonZ))
+            return null;
+
+        return point;
+    }
+
     /// <summary>
     /// The Director rule of a corporation purchase: the character is a member of the corporation and its roles include Director
     /// (the member's roles, as the corporation service reads them; eve-logic lpStoreSvc.py:457-462 is the client's copy).
@@ -136,6 +164,19 @@ internal sealed partial class CharacterServicesComposition
                 rowOf: item => new Eve.Services.ItemRow(item.Id, item.TypeId, item.OwnerId, item.LocationId, item.Flag, item.Singleton ? -1 : item.Quantity,
                     dogma.Type(item.TypeId)?.GroupId ?? 0, dogma.Type(item.TypeId)?.CategoryId ?? 0),
                 shipConfigurations: new PgShipConfigurationStore(source,
-                    string.IsNullOrEmpty(Environment.GetEnvironmentVariable("EVE_SPACE_SCHEMA")) ? PgSpaceItemStore.DefaultSchema : Environment.GetEnvironmentVariable("EVE_SPACE_SCHEMA")!)), new BeyonceService(spaceSessions, now, fleetStore, FleetSessionForCharacter) { CynoJammerOnlineSimTimeForSystem = CynoJammerOnlineSimTimeAsync, InitiateBeaconLink = AnalysisBeaconLink, LaunchTargetForCharacter = LaunchWarpTargetForCharacterAsync }, new StructureTravelRpcService("structureCynoBeaconMgr", new StructureBeaconTravel(StructureBeaconAsync, CynoJammedAsync, structureDirectoryReadModel.CharacterHasServiceAsync, JumpToStructureBeaconAsync, BridgeToStructureBeaconAsync, GroupJumpToStructureBeaconAsync).TravelAsync), new ShipcasterRpcService("shipCasterLandingPadMgr", solarSystems), new ShipcasterRpcService("shipCasterLauncherMgr", solarSystems), new ShipcasterRpcService("shipcasterTravelMgr", solarSystems), new ShipcasterRpcService("starterShipcasterTravelMgr", solarSystems), new EntityService(spaceDrones!, now, spaceContainers) },
+                    string.IsNullOrEmpty(Environment.GetEnvironmentVariable("EVE_SPACE_SCHEMA")) ? PgSpaceItemStore.DefaultSchema : Environment.GetEnvironmentVariable("EVE_SPACE_SCHEMA")!)), new BeyonceService(spaceSessions, now, fleetStore, FleetSessionForCharacter)
+                {
+                    CynoJammerOnlineSimTimeForSystem = CynoJammerOnlineSimTimeAsync,
+                    InitiateBeaconLink = AnalysisBeaconLink,
+                    LaunchTargetForCharacter = LaunchWarpTargetForCharacterAsync,
+                    MoonMiningPointForSystem = (moonId, systemId, token) => ResolveMoonMiningPointForSystemAsync(sde, moonId, systemId, token),
+                    EpicInstanceForSystem = async (instanceId, systemId, token) =>
+                    {
+                        if (cosmicSites is not { } sites)
+                            return null;
+                        var site = (await sites.ActiveAsync(systemId, token)).FirstOrDefault(active => active.InstanceId == instanceId);
+                        return site is null ? null : new WarpCoordinates(systemId, site.Position[0], site.Position[1], site.Position[2]);
+                    },
+                }, new StructureTravelRpcService("structureCynoBeaconMgr", new StructureBeaconTravel(StructureBeaconAsync, CynoJammedAsync, structureDirectoryReadModel.CharacterHasServiceAsync, JumpToStructureBeaconAsync, BridgeToStructureBeaconAsync, GroupJumpToStructureBeaconAsync).TravelAsync), new ShipcasterRpcService("shipCasterLandingPadMgr", solarSystems), new ShipcasterRpcService("shipCasterLauncherMgr", solarSystems), new ShipcasterRpcService("shipcasterTravelMgr", solarSystems), new ShipcasterRpcService("starterShipcasterTravelMgr", solarSystems), new EntityService(spaceDrones!, now, spaceContainers) },
     ];
 }

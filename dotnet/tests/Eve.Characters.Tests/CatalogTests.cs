@@ -178,6 +178,9 @@ public class CatalogTests
         Assert.NotEmpty(rows);
         Assert.All(rows, row => Assert.Contains(row.Doc.GetProperty("groupID").GetInt64(), new long[] { 6, 7, 8, 9 }));
         Assert.Equal(rows.Count, rows.Select(row => row.Key).Distinct().Count());
+
+        var ordered = await reader.ReadAsync("types", rows.Select(row => row.Key));
+        Assert.Equal(ordered.Select(row => row.Key), rows.Select(row => row.Key));
     }
 
     [PgFact]

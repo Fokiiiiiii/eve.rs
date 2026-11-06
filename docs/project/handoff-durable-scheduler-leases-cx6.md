@@ -22,4 +22,5 @@ The completion transaction, lease ownership checks, error backoff, and replaceme
 - PostgreSQL `eve_p6`, through `tools/dev/db-lock.sh`: focused `SchedulerTests`, 18/18; neighboring Host, Content, Corporations, Insurgency, Market, Relations, Space, Structures, and Wormholes checks, 379/379. Total: 397 passed, none skipped.
 - The existing single-job exhausted-lease test still confirms one-shot jobs can fail. New regressions confirm recurring recovery without restart, nonblocking cleanup with a held row lock, and no attempts for jobs waiting beyond concurrency.
 - Comparison to EveJS 261028.1 worker behavior is complete. A graphical V24 client session was not exercised.
-- Main CI status, commit SHA, and Actions runs: to be recorded before handoff is complete.
+- Fix commit: `76b7129a`; merged current main at `4848bdec6b74b7fe97bf6edce4cace2c4f603d27`. After that merge, the same selected test groups passed again: 397 passed, none skipped.
+- Most recent completed main CI before push: run 1549 (`d7449b80886b`), all jobs and the required gate succeeded. This change has not been pushed yet; record its pushed SHA and Actions runs after push.

@@ -423,9 +423,12 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
         if(call.Session.CharacterId is not { } actor) return OwnerOrderRowset([],null);
         try
         {
+            var canReadCorporationHistory=await corporations.CanReadCorporationMarketOrdersAsync(actor,call.Cancellation);
             await expiry.SweepAsync(call.Cancellation, readTriggered: true);
             var characterOrders=await trading.OwnerOrdersAsync(actor,false,true,call.Cancellation);
-            var corporationOrders=await trading.OwnerOrdersAsync(actor,true,true,call.Cancellation);
+            IReadOnlyList<MarketOwnedOrder> corporationOrders=[];
+            if (canReadCorporationHistory)
+                corporationOrders=await trading.OwnerOrdersAsync(actor,true,true,call.Cancellation);
             var history=characterOrders.Concat(corporationOrders).Where(order=>order.State!=0).ToArray();
             return ObjectCaching.MethodResult(OwnerOrderRowset(history,null),now(),sessionInfo:"charid");
         }

@@ -67,7 +67,8 @@ internal sealed partial class CharacterServicesComposition
                   declareWar: CreateWarDeclarationAsync,
                   validateWarHQ: (call, ownerId, structureId, token) =>
                       structureDirectoryReadModel.IsValidWarHQAsync(call, ownerId, structureId, token),
-                  readWarEligibility: ReadWarEligibilityAsync)
+                  readWarEligibility: ReadWarEligibilityAsync,
+                  readWarFaction: WarFactionSessionOfAsync)
             {
                 AllianceAffiliationWriter = allianceDue.WriteAffiliationAsync
             },

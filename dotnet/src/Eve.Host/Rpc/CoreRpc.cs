@@ -117,14 +117,13 @@ internal sealed partial class CharacterServicesComposition
                         ? null
                         : new Eve.Services.Core.FwCharacterWarfareState(character.DirectFactionId, character.DirectEnlistmentCooldownFileTime);
                 },
-                ReadCorporationFactionIdAsync: async (corporationId, cancellationToken) =>
-                    Eve.Services.Corporations.CorporationWire.FactionId(await corporations.GetAsync(corporationId, cancellationToken)),
+                ReadCorporationFactionIdAsync: ReadCorporationWarFactionAsync,
                 ReadAllowedFactionsAsync: async (corporationId, cancellationToken) =>
                     Eve.Services.Corporations.CorporationWire.AllowedEnlistmentFactions(await corporations.GetAsync(corporationId, cancellationToken)),
                 SetAllowedFactionsAsync: async (characterId, corporationId, factions, cancellationToken) =>
                     await corporations.SetFactionWarfareAllowedEnlistmentFactionsAsync(characterId, corporationId, factions, cancellationToken),
                 SaveCharacterStateAsync: async (characterId, factionId, cooldown, cancellationToken) =>
-                    await characters.SetFactionWarfareStateAsync(characterId, factionId, cooldown, cancellationToken),
+                    await fwCharacterAffiliations.SaveAsync(characterId, factionId, cooldown, cancellationToken),
                 ReadStandingAsync: async (characterId, factionId, cancellationToken) =>
                     await foundations.Relations.ValueAsync("standing", factionId, characterId, 0, cancellationToken: cancellationToken))),
             new Eve.Services.Core.FwVictoryPointMgrService(new Eve.Services.Core.FwVictoryPointRpcCallbacks(VictoryPointStatesAsync)),
@@ -139,22 +138,14 @@ internal sealed partial class CharacterServicesComposition
                         : new Eve.Services.Core.FwCharacterWarfareState(character.DirectFactionId, character.DirectEnlistmentCooldownFileTime);
                 },
                 SaveCharacterAsync: async (characterId, factionId, cooldown, cancellationToken) =>
-                    await characters.SetFactionWarfareStateAsync(characterId, factionId, cooldown, cancellationToken),
+                    await fwCharacterAffiliations.SaveAsync(characterId, factionId, cooldown, cancellationToken),
                 ReadStandingAsync: async (subjectId, factionOrCorporationId, cancellationToken) =>
                     await foundations.Relations.ValueAsync("standing", factionOrCorporationId, subjectId, 0, cancellationToken: cancellationToken),
                 CanActAsCorporationDirectorAsync: async (characterId, corporationId, cancellationToken) =>
                     await corporations.HasRoleAsync(characterId, corporationId, Eve.Corporations.CorporationRoles.Director, cancellationToken),
                 CanActAsAllianceExecutorDirectorAsync: async (characterId, allianceId, cancellationToken) =>
                     await corporations.CanActAsAllianceExecutorDirectorAsync(characterId, allianceId, cancellationToken),
-                ReadWarFactionAsync: async (characterId, cancellationToken) =>
-                {
-                    var character = await characters.GetAsync(characterId, cancellationToken);
-                    if (character is null)
-                        return 0;
-                    var corporationFaction = Eve.Services.Corporations.CorporationWire.FactionId(
-                        await corporations.GetAsync(character.CorporationId, cancellationToken));
-                    return character.DirectFactionId ?? corporationFaction ?? 0;
-                },
+                ReadWarFactionAsync: WarFactionOfAsync,
                 LeaveCorporationAsync: async (characterId, militiaCorporationId, cancellationToken) =>
                 {
                     await corporations.LeaveAsync(characterId, militiaCorporationId, cancellationToken);

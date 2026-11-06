@@ -1,4 +1,5 @@
 using Eve.Wallet;
+using Eve.Relations;
 using Npgsql;
 
 namespace Eve.FactionWarfare;
@@ -52,11 +53,13 @@ public sealed class FwService
 
     private readonly FwStore _store;
     private readonly LoyaltyPointStore _loyalty;
+    private readonly RelationStore _relations;
 
-    public FwService(FwStore store, LoyaltyPointStore loyalty)
+    public FwService(FwStore store, LoyaltyPointStore loyalty, RelationStore relations)
     {
         _store = store;
         _loyalty = loyalty;
+        _relations = relations;
     }
 
     public FwStore Store => _store;
@@ -295,6 +298,7 @@ public sealed class FwService
             return EnlistOutcome.AlreadyEnlisted;
         await _store.SaveEnlistmentAsync(connection, transaction,
             current with { FactionId = factionId, NextFactionId = 0, EffectiveMs = 0, ChangedMs = nowMs }, cancellationToken);
+        await SetFactionMemberAsync(connection, transaction, ownerId, factionId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return EnlistOutcome.Accepted;
     }
@@ -312,6 +316,7 @@ public sealed class FwService
             return EnlistOutcome.NothingToWithdraw;
         await _store.SaveEnlistmentAsync(connection, transaction,
             current with { FactionId = 0, NextFactionId = 0, EffectiveMs = 0, ChangedMs = nowMs }, cancellationToken);
+        await SetFactionMemberAsync(connection, transaction, ownerId, 0, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return EnlistOutcome.Accepted;
     }
@@ -345,9 +350,35 @@ public sealed class FwService
         var row = await _store.EnlistmentAsync(connection, transaction, ownerKind, ownerId, true, cancellationToken)
             ?? new FwEnlistment(ownerKind, ownerId, 0, 0, 0, 0);
         if (row.EffectiveMs <= 0 || row.EffectiveMs > nowMs)
+        {
+            await SetFactionMemberAsync(connection, transaction, ownerId, row.FactionId, cancellationToken);
             return row;
+        }
         var applied = row with { FactionId = row.NextFactionId, NextFactionId = 0, EffectiveMs = 0, ChangedMs = row.EffectiveMs };
         await _store.SaveEnlistmentAsync(connection, transaction, applied, cancellationToken);
+        await SetFactionMemberAsync(connection, transaction, ownerId, applied.FactionId, cancellationToken);
         return applied;
+    }
+
+    private async Task SetFactionMemberAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long ownerId,
+        long factionId,
+        CancellationToken cancellationToken)
+    {
+        var current = await _relations.FromAsync(RelationKinds.FactionMember.Name, ownerId, connection, transaction, cancellationToken);
+        if (factionId > 0)
+        {
+            if (current.Count == 1 && current[0].Object == factionId)
+                return;
+            await _relations.SetAsync(connection, transaction, RelationKinds.FactionMember.Name,
+                ownerId, factionId, 1, "faction warfare enlistment", cancellationToken: cancellationToken);
+            return;
+        }
+
+        foreach (var relation in current)
+            await _relations.EndAsync(connection, transaction, RelationKinds.FactionMember.Name, ownerId, relation.Object,
+                "faction warfare enlistment removed", cancellationToken);
     }
 }

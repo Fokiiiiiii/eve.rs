@@ -150,6 +150,6 @@ public partial class HostServerTests
             Assert.IsType<PyList>(await Call(9, "GetMyEnlistment")).Items);
         Assert.Equal(new PyLong(cooldown + TimeSpan.TicksPerDay),
             await Call(10, "GetMyDirectEnlistmentCooldownTimestamp"));
-        Assert.Equal(2, sessionChanges);
+        Assert.Equal(3, sessionChanges);
     }
 }

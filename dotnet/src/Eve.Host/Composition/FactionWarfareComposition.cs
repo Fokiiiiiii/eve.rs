@@ -14,6 +14,7 @@ internal sealed partial class CharacterServicesComposition
 {
     private FwStore factionWarfareStore = default!;
     private FwService factionWarfare = default!;
+    private FwCharacterAffiliationWriter fwCharacterAffiliations = default!;
     /// <summary>The open complex a pilot is inside (the keeper's current dungeon of a complex pilot); set when the complexes start (FactionWarfare).</summary>
     private Func<ClientSession, CancellationToken, Task<long?>>? complexInstanceOfPilot;
 
@@ -94,14 +95,41 @@ internal sealed partial class CharacterServicesComposition
             cancellationToken);
     }
 
-    /// <summary>The war faction of a character: its direct enlistment, else its corporation's faction (0: none, or no such character).</summary>
+    /// <summary>The war faction of a character: its direct enlistment, else its corporation's or alliance's active faction (0: none, or no such character).</summary>
     private async ValueTask<long> WarFactionOfAsync(long characterId, CancellationToken cancellationToken)
     {
         var character = await characters.GetAsync(characterId, cancellationToken);
         if (character is null)
             return 0;
-        var corporationFaction = Eve.Services.Corporations.CorporationWire.FactionId(await corporations.GetAsync(character.CorporationId, cancellationToken));
-        return character.DirectFactionId ?? corporationFaction ?? 0;
+        var directFactionId = character.DirectFactionId is > 0 ? character.DirectFactionId : null;
+        var corporationFactionId = await ReadCorporationWarFactionAsync(character.CorporationId, cancellationToken);
+        return directFactionId ?? corporationFactionId ?? 0;
+    }
+
+    private async ValueTask<long?> WarFactionSessionOfAsync(long characterId, CancellationToken cancellationToken)
+    {
+        var character = await characters.GetAsync(characterId, cancellationToken);
+        if (character is null)
+            return null;
+        var directFactionId = character.DirectFactionId is > 0 ? character.DirectFactionId : null;
+        await fwCharacterAffiliations.ReconcileAsync(characterId, directFactionId, cancellationToken);
+        if (directFactionId is > 0)
+            return directFactionId;
+        var corporationFactionId = await ReadCorporationWarFactionAsync(character.CorporationId, cancellationToken);
+        return corporationFactionId;
+    }
+
+    private async ValueTask<long?> ReadCorporationWarFactionAsync(long corporationId, CancellationToken cancellationToken)
+    {
+        if (corporationId <= 0)
+            return null;
+        var corporation = await corporations.GetAsync(corporationId, cancellationToken);
+        var nowMs = now();
+        var corporationFactionId = await factionWarfare.FactionOfAsync(FwStore.CorporationKind, corporationId, nowMs, cancellationToken);
+        var allianceFactionId = corporation?.AllianceId is long allianceId && allianceId > 0
+            ? await factionWarfare.FactionOfAsync(FwStore.AllianceKind, allianceId, nowMs, cancellationToken)
+            : 0;
+        return corporationFactionId > 0 ? corporationFactionId : allianceFactionId > 0 ? allianceFactionId : null;
     }
 
     private async ValueTask<int> FactionWarfareUpgradeLevelAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long solarSystemId,
@@ -173,7 +201,8 @@ internal sealed partial class CharacterServicesComposition
         var schema = Env("EVE_FACTIONWARFARE_SCHEMA", FwStore.DefaultSchema);
         await FwStore.MigrateAsync(source, schema);
         factionWarfareStore = new FwStore(source, schema);
-        factionWarfare = new FwService(factionWarfareStore, loyaltyPoints);
+        fwCharacterAffiliations = new FwCharacterAffiliationWriter(source, characters, foundations.Relations);
+        factionWarfare = new FwService(factionWarfareStore, loyaltyPoints, foundations.Relations);
         var lpPoolNotifications = new SolarSystemLpPoolNotifications(characterSessions);
         factionWarfare.SolarSystemLpPoolChanged += lpPoolNotifications.OnPoolChanged;
         var systems = new List<FwSystem>();

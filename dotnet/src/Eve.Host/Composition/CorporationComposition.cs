@@ -78,7 +78,7 @@ internal sealed partial class CharacterServicesComposition
             async (_, token) => await corporations.ResolveAllExpiredVotesAsync(token));
         await foundations.Scheduler.EnsureRecurringAsync(
             "corporation.votes.resolve", "resolve", TimeSpan.FromMinutes(1));
-        corporationLogin = new Eve.Services.Corporations.CorporationLoginHook(corporations, characters);
+        corporationLogin = new Eve.Services.Corporations.CorporationLoginHook(corporations, characters, WarFactionSessionOfAsync);
         marketSchema = Env("EVE_MARKET_SCHEMA", Eve.Market.MarketStore.DefaultSchema);
         await Eve.Market.MarketStore.MigrateAsync(source, marketSchema);
         market = new Eve.Market.MarketStore(source, marketSchema);

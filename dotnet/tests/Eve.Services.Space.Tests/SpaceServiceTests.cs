@@ -656,7 +656,7 @@ public class SpaceServiceTests
         var earlyBoard = await rig.ShipCallAsync(session, "Board", oid, new PyLong(shipId), new PyLong(capsuleId));
         Assert.IsType<PyNone>(earlyBoard);
         releaseSessionChange.TrySetResult();
-        await Task.Delay(25);
+        await Rig.UntilAsync(() => !rig.Space.Transitions.SessionChangeActive((ulong)session.SessionId));
 
         var board = await rig.ShipCallAsync(session, "Board", oid, new PyLong(shipId), new PyLong(capsuleId));
 

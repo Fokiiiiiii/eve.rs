@@ -26,5 +26,6 @@ The `max_velocity > 0` filter in the numbers loop applies to all ships in the vi
 ## Verification status
 - Local builds and focused PostgreSQL-backed tests passed on `eve_p3` through `tools/dev/db-lock.sh`: AccessGroups 26, Skills training 27, Skills handler 56, Skills queue contract 1, Dogma ship refresh 1, and Host RPC/expiry regressions 5; all reported zero skips.
 - Access-group privacy fix pushed as `58bcbde5`; selected Actions tests `42299537067` and push-triggered CI `42299479312` both succeeded, with no failed jobs.
+- Settlement-order fix pushed as `cb8c78ce`; selected Actions tests `42303566519` and push-triggered CI `42303541871` both succeeded, with no failed jobs.
 - The source constants are `PROTOCOL_VERSION = 92` in `crates/eve-space/src/link/mod.rs:49` and `SimCodec.ProtocolVersion = 92` in `dotnet/src/Eve.Space/SimCodec.cs:26`; the candidate's value 91 does not match the current code. The simlink fixture is generated with `json.dump(..., indent=1)` (`tools/dev/gen-simlink-fixtures.py:2062-2064`) and was not changed.
 - The graphical V24 client has not been launched in this review. The large single-line undock fixture was not read directly; its ego values are checked by the focused Rust reference test.

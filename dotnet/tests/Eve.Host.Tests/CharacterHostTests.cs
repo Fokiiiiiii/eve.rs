@@ -768,6 +768,7 @@ public sealed class CharacterHostTests
         var persisted = Assert.Single(await skills.ForCharacterAsync(characterId), skill => skill.TypeId == type.TypeId);
         Assert.Equal(expectedPoints, persisted.SkillPoints);
         var queue = Assert.IsType<PyList>(Assert.IsType<PyTuple>(await BoundAsync(handler, session, "GetSkillQueueAndFreePoints")).Items[0]);
+        Assert.Equal(completesAcrossExpiry ? 1 : 2, queue.Items.Count);
         var line = Assert.IsType<PyObject>(queue.Items[0]);
         Assert.Equal(targetLevelAfterExpiry, Integer(Field(line, "trainingToLevel")));
         Assert.Equal(expectedPoints, Integer(Field(line, "trainingStartSP")));
@@ -803,6 +804,7 @@ public sealed class CharacterHostTests
         rig.Sessions.Enter(characterId, session);
         Assert.Equal(expectedPoints, Assert.Single(await skills.ForCharacterAsync(characterId), skill => skill.TypeId == type.TypeId).SkillPoints);
         var restartedQueue = Assert.IsType<PyList>(Assert.IsType<PyTuple>(await BoundAsync(handler, session, "GetSkillQueueAndFreePoints")).Items[0]);
+        Assert.Equal(completesAcrossExpiry ? 1 : 2, restartedQueue.Items.Count);
         var restartedLine = Assert.IsType<PyObject>(restartedQueue.Items[0]);
         Assert.Equal(expectedQueueEnd, Integer(Field(restartedLine, "trainingEndTime")));
         Assert.Equal(history, await trainingStore.HistoryAsync(characterId, 20));

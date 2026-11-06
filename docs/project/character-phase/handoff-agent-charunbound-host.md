@@ -32,7 +32,7 @@ EveJS 261028.1 `charService.js:857-981` returns an empty wars list and copies it
 - Built `Eve.Wallet`, `Eve.Services.CharacterSelect`, `Eve.Services.Corporations`, `Eve.Host`, and the CharacterSelect, Corporations, Host, Wallet, and Wallet service test projects with shared compilation and node reuse disabled; all builds passed with 0 warnings and 0 errors.
 - On the task database `eve_p7`, with the pinned SDE schemas copied from `eve_p3`, `CharUnboundMgrTests` passed 36/36, `CorporationProtocolTests` passed 55/55, the selected Host wire/registration set passed 411/411, `Eve.Wallet.Tests` passed 43/43, and `Eve.Services.Wallet.Tests` passed 16/16. All used `tools/dev/db-lock.sh`; no tests were skipped.
 - The first CharacterSelect run exposed that the default `eve` database in this cluster has no SDE schemas. The run passed after preparing `eve_p7` from `eve_p3` using `tools/dev/copy-sde-database.py`.
-- Selected Actions and push-triggered CI for this follow-on are pending.
+- Selected agent-test run [42198229168](https://github.com/Fokiiiiiii/eve.rs/actions/runs/42198229168) and push-triggered CI run [42198159732](https://github.com/Fokiiiiiii/eve.rs/actions/runs/42198159732) passed on commit `bdce763e`; neither reported failed tests or jobs.
 - The V24 graphical client was not exercised.
 
 ## Previous verification

@@ -107,6 +107,7 @@ name: Live (slow)
           - test_walk_trade.py
           - test_walk_war_registry.py
           - test_walk_xmpp_live.py
+          - test_warp_arrival.py
           - test_warp.py
           - test_weapon.py
           - test_wormhole_live.py

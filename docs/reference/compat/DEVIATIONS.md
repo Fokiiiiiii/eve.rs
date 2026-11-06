@@ -1,5 +1,11 @@
 # Deviations from the reference server
 
+## Station undock speed and agility are in `SetState` (2026-11-06)
+
+V24 flight controls reads agility and maximum velocity from the ship's dogma item and applies them to the local ballpark (`eve/client/script/ui/services/flightControls.py:209-214`). The whole client tree has no other direct callers of `SetBallAgility` or `SetMaxSpeed`; the ship HUD consumes the maximum-speed update for its display (`eve/client/script/ui/inflight/shipHud/activeShipController.py:235`, `shipUI.py:1218`). EveJS 261028.1's station-undock builder sends mass demotion, mass, optional velocity, and heading, not separate agility or maximum-speed actions (`src/server/src/space/destiny/presentation/shipPrime.js:69-123`), and queues that builder for station undocks (`src/server/src/space/runtime/scene/presentation.js:747-752`).
+
+eve.rs therefore leaves the ego ship out of the separate movement-number updates on a normal undock (`crates/eve-space/src/scene/session.rs:383-389`), while its encoded `SetState` retains maximum velocity and agility (`crates/eve-destiny/src/ball.rs:714-717`). The scene, crowd, and recorded-reference tests check those values in the binary state; the crowd case also keeps the separate numbers for the other visible ship. This wire shape matches both V24 and EveJS, so omitting duplicate ego actions is not a client-visible deviation.
+
 ## Corporation member limits (2026-11-05)
 
 The V24.01 edit dialog calls `UpdateCorporationAbilities()` with no arguments. It returns early only for `None`; otherwise it force-refreshes the corporation row and displays `memberLimit` (`eve/client/script/ui/shared/neocom/corporation/corp_dlg_editcorpdetails.py:281-287`). Both service wrappers forward the call without arguments (`eve/client/script/ui/services/corporation/base_corporation.py:224-226`, `bco_corporations.py:177-179`). This rules out interpreting the V24 call as an applications-enabled toggle.

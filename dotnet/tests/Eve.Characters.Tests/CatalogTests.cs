@@ -295,6 +295,21 @@ public class CatalogTests
         }
     }
 
+    [Fact]
+    public async Task Sde_reader_rejects_terminal_line_feeds_before_opening_a_connection()
+    {
+        await using var source = NpgsqlDataSource.Create(
+            "Host=127.0.0.1;Port=1;Database=unused;Username=unused;Timeout=1;Pooling=false");
+
+        Assert.Throws<ArgumentException>(() => new SdeReader(source, "sde\n"));
+
+        var reader = new SdeReader(source);
+        await Assert.ThrowsAsync<ArgumentException>(() => reader.ReadAsync("types\n"));
+        await Assert.ThrowsAsync<ArgumentException>(() => reader.ReadByFieldAsync("types\n", "groupID", []));
+        await Assert.ThrowsAsync<ArgumentException>(() => reader.ReadByFieldAsync("types", "groupID\n", []));
+        await Assert.ThrowsAsync<ArgumentException>(() => reader.ReadContainingAsync("types\n", "{}"));
+    }
+
     [PgFact]
     public async Task The_sde_reader_refuses_a_table_name_that_could_carry_sql_and_reads_a_real_one()
     {

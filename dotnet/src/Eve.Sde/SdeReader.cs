@@ -19,10 +19,10 @@ public sealed partial class SdeReader
     public const string DefaultSchema = "sde";
     public const string MissionSchema = "sde_mission";
 
-    [GeneratedRegex("^[a-z_][a-z0-9_]{0,62}$")]
+    [GeneratedRegex(@"\A[a-z_][a-z0-9_]{0,62}\z")]
     private static partial Regex SchemaName();
 
-    [GeneratedRegex("^[A-Za-z0-9_]+$")]
+    [GeneratedRegex(@"\A[A-Za-z0-9_]+\z")]
     private static partial Regex TableName();
 
     private readonly NpgsqlDataSource _source;

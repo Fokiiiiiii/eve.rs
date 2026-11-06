@@ -29,7 +29,7 @@ public class ReadSideTests
     {
         var read = new ReadSide(null!).Register(Groups());
         Assert.Equal(
-            "SELECT (key)::integer AS groupID, (doc #>> '{categoryID}')::integer AS categoryID, (doc #>> '{name,en}')::text AS groupName FROM sde.groups WHERE (doc->>'categoryID')::int = $1 ORDER BY ord",
+            "SELECT (key)::integer AS groupID, (doc #>> '{categoryID}')::integer AS categoryID, (doc #>> '{name,en}')::text AS groupName FROM sde.\"groups\" WHERE (doc->>'categoryID')::int = $1 ORDER BY ord",
             read.SqlOf("groupsOfCategory"));
     }
 
@@ -40,6 +40,7 @@ public class ReadSideTests
         Assert.Throws<ArgumentException>(() => read.Register(new RowsetQuery("none", "sde.types", [])));
         Assert.Throws<ArgumentException>(() => read.Register(new RowsetQuery("dup", "sde.types", [Column.Key("a"), Column.Key("a")])));
         Assert.Throws<ArgumentException>(() => Column.Field("x", ColumnType.Text, "a'; DROP TABLE x; --"));
+        Assert.Throws<ArgumentException>(() => RowsetQuery.Sde("bad", "groups; DROP TABLE groups", Column.Key()));
         read.Register(new RowsetQuery("elsewhere", "{market}.orders", [Column.Key()]));
         Assert.Throws<InvalidOperationException>(() => read.SqlOf("elsewhere"));
         Assert.Equal("SELECT (key)::bigint AS key FROM trade.orders", new ReadSide(null!, new Dictionary<string, string> { ["market"] = "trade" }).Register(new RowsetQuery("elsewhere", "{market}.orders", [Column.Key()])).SqlOf("elsewhere"));
@@ -59,6 +60,22 @@ public class ReadSideTests
         Assert.Contains(ships.Rows, row => (string)row[2]! == "Frigate");
         Assert.Same(ships, await read.RowsAsync("groupsOfCategory", [6]));
         Assert.NotSame(ships, await read.RowsAsync("groupsOfCategory", [7]));
+    }
+
+    [PgFact]
+    public async Task Mixed_case_sde_table_names_are_quoted_and_read_successfully()
+    {
+        await using var source = Source();
+        var query = RowsetQuery.Sde("npcCorporations", "npcCorporations",
+                Column.Key("corporationID", ColumnType.Int), Column.English("corporationName", "name"))
+            with { Where = "key = $1" };
+        var read = new ReadSide(source).Register(query);
+
+        var rows = await read.RowsAsync("npcCorporations", ["1000001"]);
+        var row = Assert.Single(rows.Rows);
+        Assert.Equal(1000001, (int)row[0]!);
+        Assert.Equal("Doomheim", (string)row[1]!);
+        Assert.Same(rows, await read.RowsAsync("npcCorporations", ["1000001"]));
     }
 
     [PgFact]

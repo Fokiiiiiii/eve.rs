@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json.Nodes;
 using Eve.Marshal;
 using Eve.Services;
+using Eve.Npc;
 using Eve.Inventory;
 using Eve.Services.Space;
 using Eve.Space;
@@ -21,6 +22,7 @@ internal sealed partial class CharacterServicesComposition
 {
     private string essSchema = default!;
     private PgEssStore? _ess;
+    private PgDynamicBountyStore? _dynamicBounty;
     private Eve.Services.Space.EssMgrService? _essMgrService;
     private Eve.Services.Space.EssMgrService EssMgr => _essMgrService ??= new(EssCallbacks());
     private Dictionary<int, string> _essQuadrantBySystem = [];
@@ -144,6 +146,17 @@ internal sealed partial class CharacterServicesComposition
     /// <summary>Every ESS as the client reads it (the agency's list).</summary>
     private async ValueTask<IReadOnlyList<EssMgrSystemData>> ListEssSystemsAsync(CancellationToken cancellationToken) =>
         [.. (await Ess.ListAsync(cancellationToken)).Select(PgEssStore.ToClient)];
+
+    private async ValueTask<Eve.Services.Core.DynamicBountyState?> ReadDynamicBountyAsync(long? solarSystemId, CancellationToken cancellationToken)
+    {
+        if (_dynamicBounty is not { } store || solarSystemId is not (> 0 and <= int.MaxValue))
+            return null;
+        var state = await store.ReadAsync((int)solarSystemId.Value, now(), cancellationToken);
+        return new(state.Output, state.Active);
+    }
+
+    private async ValueTask<IReadOnlyList<DynamicBountyMapEntry>> ListDynamicBountyMapAsync(CancellationToken cancellationToken) =>
+        _dynamicBounty is { } store ? await store.MapAsync(now(), cancellationToken) : [];
 
     /// <summary>The essMgr calls: the state, the requests, what the other pilots of a system are told, and the weapon timer a link starts.</summary>
     private Eve.Services.Space.EssMgrCallbacks EssCallbacks() => new(

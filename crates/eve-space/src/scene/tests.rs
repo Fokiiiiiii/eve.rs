@@ -311,7 +311,7 @@ fn a_ship_cannot_undock_twice_or_from_a_station_that_is_not_there() {
 }
 
 #[test]
-fn binding_sends_the_time_the_ship_then_the_state_then_the_ship_numbers() {
+fn binding_sends_the_time_the_ship_then_the_state() {
     let mut scene = scene();
     let out = scene.bind(SESSION, NOON);
     let names: Vec<_> = out
@@ -323,14 +323,7 @@ fn binding_sends_the_time_the_ship_then_the_state_then_the_ship_numbers() {
         .collect();
     assert_eq!(
         names,
-        [
-            "OnSetTimeDilation",
-            "DoSimClockRebase",
-            "DoDestinyUpdate",
-            "DoDestinyUpdate",
-            "DoDestinyUpdate",
-            "DoDestinyUpdate"
-        ]
+        ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate", "DoDestinyUpdate", "DoDestinyUpdate"]
     );
     assert_eq!(action_names(&out[2]), ["AddBalls2"]);
     assert_eq!(
@@ -345,7 +338,25 @@ fn binding_sends_the_time_the_ship_then_the_state_then_the_ship_numbers() {
         ]
     );
     assert_eq!(action_names(&out[4]), ["SetState"]);
-    assert!(action_names(&out[5]).is_empty());
+    let ship = spec();
+    let ship_id = ship.ship_id.to_le_bytes();
+    let state = fields_in_state(&out)
+        .unwrap()
+        .iter()
+        .find_map(|(key, value)| {
+            if key != &crate::wire::word("state") {
+                return None;
+            }
+            match value {
+                Value::Buffer(bytes) => Some(bytes.as_ref()),
+                _ => None,
+            }
+        })
+        .unwrap();
+    let ego = state.windows(8).position(|bytes| bytes == ship_id).unwrap();
+    let max_velocity = f32::from_le_bytes(state[ego + 63..ego + 67].try_into().unwrap());
+    let agility = f32::from_le_bytes(state[ego + 91..ego + 95].try_into().unwrap());
+    assert_eq!((max_velocity, agility), (ship.max_velocity as f32, ship.agility as f32));
     // the ship comes at the stamp of the moment and the state a stamp after (the reference's 102 and 103)
     let now_stamp = i64::from(stamp_at(NOON));
     assert_eq!(stamps(&out[2]), [now_stamp]);
@@ -1574,7 +1585,7 @@ fn a_change_of_the_security_status_shows_the_slim_item_again_to_the_pilot() {
     let mut penalised = spec();
     penalised.security_status = -0.25;
     let out = scene.respec(SESSION, penalised.clone(), NOON);
-    assert_eq!(scene.security_status_losses, [(penalised.character_id, penalised.ship_id)]);
+    assert_eq!(scene.pending_security_status_losses, [(penalised.character_id, penalised.ship_id)]);
     assert_eq!(out.len(), 1, "only the pilot is in the scene");
     assert_eq!(action_names(&out[0]), ["OnSlimItemChange"]);
     let told = format!("{:?}", out[0]);
@@ -1584,7 +1595,11 @@ fn a_change_of_the_security_status_shows_the_slim_item_again_to_the_pilot() {
     );
     assert!(told.contains(&spec().ship_id.to_string()), "the item is the ship");
     assert!(scene.respec(SESSION, penalised, NOON).is_empty(), "the same status says nothing more");
-    assert_eq!(scene.security_status_losses.len(), 1, "a repeated status does not report another loss");
+    assert_eq!(
+        scene.pending_security_status_losses.len(),
+        1,
+        "a repeated status does not report another loss"
+    );
 }
 
 #[test]

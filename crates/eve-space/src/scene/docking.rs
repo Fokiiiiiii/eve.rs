@@ -147,6 +147,7 @@ impl Scene {
             return Some(out);
         }
 
+        self.remove_pending_crime_events(ship_id);
         out.extend(self.announce_departure(session, ship_id, now));
         Some(out)
     }

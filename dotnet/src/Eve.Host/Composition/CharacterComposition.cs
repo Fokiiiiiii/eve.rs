@@ -79,7 +79,10 @@ internal sealed partial class CharacterServicesComposition
 
         async ValueTask<IReadOnlyCollection<long>> ReadWatchlistAsync(long characterId, CancellationToken cancellationToken)
         {
-            var state = await ReadGameStoreTableAsync("characters", cancellationToken);
+            var cached = mailCache.Read("characters");
+            var state = cached.Success && cached.Data is JsonObject cachedRow
+                ? cachedRow
+                : await ReadGameStoreTableAsync("characters", cancellationToken);
             var contacts = (state[characterId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject)?["personalContacts"];
             var ids = new HashSet<long>();
             if (contacts is JsonObject byId)

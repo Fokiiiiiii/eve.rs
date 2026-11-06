@@ -1,3 +1,5 @@
+using System.Net.Sockets;
+
 namespace Eve.Space.Tests;
 
 public class SimClientTests
@@ -398,6 +400,51 @@ public class SimClientTests
     }
 
     [Fact]
+    public async Task Placement_waits_for_outbound_queue_room_without_dropping_the_link()
+    {
+        var allowReading = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var sim = new FakeSimulation { PauseAfterHello = allowReading.Task };
+        sim.Listen();
+        await using var client = new SimClient(async cancellationToken =>
+        {
+            var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified) { SendBufferSize = 1024 };
+            try
+            {
+                await socket.ConnectAsync(new UnixDomainSocketEndPoint(sim.Path), cancellationToken);
+                return new NetworkStream(socket, ownsSocket: true);
+            }
+            catch
+            {
+                socket.Dispose();
+                throw;
+            }
+        });
+        client.RetryAfter = TimeSpan.FromMilliseconds(20);
+        client.Start();
+        await Until(() => client.IsConnected);
+
+        const int count = 10_000;
+        var expected = Enumerable.Range(0, count).Select(index => index + 1_000L).ToArray();
+        var origin = new double[] { 0, 0, 0 };
+        var sending = Task.Run(async () =>
+        {
+            foreach (var id in expected)
+                Assert.True(await client.PlaceDeadspacePocketAsync(new(id, 30_000_142, "Deadspace Pocket", origin, 75_000)));
+        });
+
+        await Task.Delay(100);
+        var waitedForRoom = !sending.IsCompleted;
+        var stayedConnected = client.IsConnected;
+        allowReading.TrySetResult(true);
+        await sending.WaitAsync(Patience);
+        await Until(() => sim.HeardNow().OfType<SimPlaceDeadspacePocket>().Count() == count);
+
+        Assert.True(waitedForRoom);
+        Assert.True(stayedConnected);
+        Assert.Equal(expected, sim.HeardNow().OfType<SimPlaceDeadspacePocket>().Select(pocket => pocket.DeployableId));
+    }
+
+    [Fact]
     public async Task A_request_when_the_simulation_is_not_there_is_refused_at_once()
     {
         await using var client = SimClient.ToUnixSocket(Path.Combine(Path.GetTempPath(), $"nobody-{Guid.NewGuid():N}.sock"));
@@ -741,10 +788,33 @@ public class SimClientTests
         Assert.True(overflow.IsCompleted);
         var overload = await Assert.ThrowsAsync<SimUnavailableException>(() => Within(overflow));
         Assert.Contains("outbound queue is full", overload.Message);
-        Assert.Throws<SimUnavailableException>(() => client.Bind(200));
+        client.Bind(200); // one-way sends stay quiet after the link is marked unavailable
+        await Assert.ThrowsAsync<SimUnavailableException>(() => Within(client.EnterAsync(Enter(200))));
         foreach (var request in pending)
             await Assert.ThrowsAsync<SimUnavailableException>(() => Within(request));
 
+        await Until(() => !client.IsConnected && Volatile.Read(ref lost) == 1);
+    }
+
+    [Fact]
+    public async Task A_one_way_send_overflow_breaks_the_link_without_throwing()
+    {
+        var stream = new BlockingWriteStream();
+        await using var client = new SimClient(_ => Task.FromResult<Stream>(stream));
+        client.RetryAfter = TimeSpan.FromMinutes(1);
+        var lost = 0;
+        client.Lost += () => Interlocked.Increment(ref lost);
+        client.Start();
+        await Until(() => client.IsConnected);
+
+        client.Bind(200);
+        await stream.WriteStarted.Task.WaitAsync(Patience);
+        for (var i = 0; i < SimClient.OutboundQueueCapacity; i++)
+            client.Bind((ulong)(201 + i));
+
+        var error = Record.Exception(() => client.Bind((ulong)(201 + SimClient.OutboundQueueCapacity)));
+
+        Assert.Null(error);
         await Until(() => !client.IsConnected && Volatile.Read(ref lost) == 1);
     }
 

@@ -2,6 +2,7 @@ using Eve.Characters;
 using Eve.Dogma;
 using Eve.Fitting;
 using Eve.Inventory;
+using Npgsql;
 
 namespace Eve.Ships;
 
@@ -51,7 +52,8 @@ public sealed partial class CharacterShips
         int? wreckTypeId,
         string seed,
         CancellationToken cancellationToken = default,
-        RunSpaceItemScope? runSpaceScope = null)
+        RunSpaceItemScope? runSpaceScope = null,
+        Func<NpgsqlConnection, NpgsqlTransaction, ShipDeath, CancellationToken, Task>? inTransaction = null)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -188,11 +190,14 @@ public sealed partial class CharacterShips
         await WriteTransitionAsync(connection, transaction,
             new ShipTransitionEvent("ship-destroyed", characterId, ship.Id, pilotShipId,
                 ship.LocationId, InSpaceFlag, ship.LocationId, InSpaceFlag), cancellationToken);
+          var death = new ShipDeath(ship, character with { ShipId = pilotShipId }, capsule, escapeShip, wreck, changes, events);
+          if (inTransaction is not null)
+              await inTransaction(connection, transaction, death, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
         await modules.SetShipConditionAsync(ship.Id, ShipCondition.Full, cancellationToken);
         await modules.SetModuleConditionsAsync(changes.Where(c => c.Destroyed).ToDictionary(c => c.Item.Id, _ => ModuleCondition.Untouched), cancellationToken);
-        return new ShipDeath(ship, character with { ShipId = pilotShipId }, capsule, escapeShip, wreck, changes, events);
+          return death;
     }
 
     /// <summary>What is in a place and in what is in it, as the death rules look at it (the ids of the snapshot are those of the items).</summary>

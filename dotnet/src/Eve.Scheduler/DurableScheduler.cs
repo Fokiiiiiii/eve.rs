@@ -13,7 +13,7 @@ public sealed record SchedulerOptions
     /// <summary>How long a claim holds before another runner may take the job over (a handler's row lock holds longer while it runs).</summary>
     public long LeaseMs { get; init; } = 60_000;
 
-    /// <summary>How many due jobs are claimed at once.</summary>
+    /// <summary>Maximum jobs claimed in one pass; a batch never exceeds Concurrency.</summary>
     public int BatchSize { get; init; } = 16;
 
     /// <summary>How many jobs run at the same time in this process.</summary>
@@ -251,7 +251,7 @@ public sealed class DurableScheduler : IAsyncDisposable
         var total = 0;
         while (total < maxJobs)
         {
-            var batch = await ClaimAsync(Math.Min(_options.BatchSize, maxJobs - total), cancellationToken);
+            var batch = await ClaimAsync(Math.Min(Math.Min(_options.BatchSize, Math.Max(1, _options.Concurrency)), maxJobs - total), cancellationToken);
             if (batch.Count == 0)
             {
                 break;
@@ -278,10 +278,15 @@ public sealed class DurableScheduler : IAsyncDisposable
         var now = _now();
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        // a claim that lapsed after the last allowed attempt is not tried again: the process that held it died each time
+        // An exhausted one-shot can be parked; recurring work must reach its next occurrence.
         await Sql.ExecuteAsync(connection, transaction, Q("""
-            UPDATE {schema}.jobs SET state = 'failed', last_error = 'the lease lapsed on every attempt', lease_owner = NULL, lease_until_ms = NULL, updated_ms = $1
-            WHERE state = 'running' AND lease_until_ms < $1 AND attempts >= max_attempts AND kind = ANY($2)
+            WITH exhausted AS (
+                SELECT id FROM {schema}.jobs
+                WHERE state = 'running' AND lease_until_ms < $1 AND attempts >= max_attempts AND every_ms IS NULL AND kind = ANY($2)
+                FOR UPDATE SKIP LOCKED
+            )
+            UPDATE {schema}.jobs j SET state = 'failed', last_error = 'the lease lapsed on every attempt', lease_owner = NULL, lease_until_ms = NULL, updated_ms = $1
+            FROM exhausted WHERE j.id = exhausted.id
             """), cancellationToken, now, kinds);
         await using (var command = Sql.Command(connection, transaction, Q("""
             WITH due AS (

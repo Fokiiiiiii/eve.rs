@@ -1,8 +1,11 @@
 using Eve.Data;
+using Eve.Events;
 using Eve.FactionWarfare;
 using Eve.Host;
 using Eve.Macho;
 using Eve.Marshal;
+using Eve.Relations;
+using Eve.Scheduler;
 using Eve.Services;
 using Eve.Services.Core;
 using Eve.Wallet;
@@ -17,7 +20,11 @@ public partial class HostServerTests
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
-        var schema = $"fw_host_{Guid.NewGuid():N}"[..20];
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var schema = "fw_host_" + suffix;
+        var schedulerSchema = "sch_host_" + suffix;
+        var eventSchema = "evt_host_" + suffix;
+        var relationSchema = "rel_host_" + suffix;
         const long factionId = 500_001;
         const long corporationId = 1_900_000_001;
         const long allianceId = 1_900_000_002;
@@ -29,6 +36,9 @@ public partial class HostServerTests
         try
         {
             await FwStore.MigrateAsync(source, schema);
+            await DurableScheduler.MigrateAsync(source, schedulerSchema);
+            await EventBus.MigrateAsync(source, eventSchema);
+            await RelationStore.MigrateAsync(source, relationSchema);
             await using (var connection = await source.OpenConnectionAsync())
             await using (var transaction = await connection.BeginTransactionAsync())
             {
@@ -47,7 +57,10 @@ public partial class HostServerTests
             }
 
             var persistedStore = new FwStore(source, schema);
-            var warfare = new FwService(persistedStore, new LoyaltyPointStore(source));
+            var scheduler = new DurableScheduler(source, () => now, new SchedulerOptions { Concurrency = 1 }, schedulerSchema);
+            var bus = new EventBus(source, scheduler, null, eventSchema);
+            var relations = new RelationStore(source, scheduler, bus, relationSchema);
+            var warfare = new FwService(persistedStore, new LoyaltyPointStore(source), relations);
             var callbacks = new FacWarMgrCallbacks(
                 ReadCharacterAsync: (_, _) => ValueTask.FromResult<FwCharacterWarfareState?>(null),
                 SaveCharacterAsync: (_, _, _, _) => ValueTask.FromResult(false),
@@ -134,7 +147,9 @@ public partial class HostServerTests
         }
         finally
         {
-            await using var command = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await using var command = source.CreateCommand(
+                $"DROP SCHEMA IF EXISTS {schema} CASCADE; DROP SCHEMA IF EXISTS {schedulerSchema} CASCADE; " +
+                $"DROP SCHEMA IF EXISTS {eventSchema} CASCADE; DROP SCHEMA IF EXISTS {relationSchema} CASCADE");
             await command.ExecuteNonQueryAsync();
         }
     }

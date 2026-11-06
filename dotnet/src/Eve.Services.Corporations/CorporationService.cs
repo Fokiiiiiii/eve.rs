@@ -32,7 +32,7 @@ public sealed partial class CorporationService(
     {
         if (call.Session.CharacterId is not { } id || await characters.GetAsync(id,call.Cancellation) is not { } character ||
             await store.GetAsync(character.CorporationId,call.Cancellation) is not { } c) return PyNone.Instance;
-        var fields = CorporationWire.Fields(c,(await store.MembersAsync(c.Id,call.Cancellation)).Count, readWarEligibility is not null && await readWarEligibility(c.Id,call.Cancellation)).ToDictionary(f => f.Key,f => f.Value);
+        var fields = CorporationWire.Fields(c,(await store.MembersAsync(c.Id,call.Cancellation)).Count(member => member.CharacterId != c.CeoId), readWarEligibility is not null && await readWarEligibility(c.Id,call.Cancellation)).ToDictionary(f => f.Key,f => f.Value);
         string[] keys = ["corporationID","corporationName","ticker","tickerName","allianceID","factionID","ceoID","creatorID",
             "membership","shares","deleted","stationID","memberCount","taxRate","loyaltyPointTaxRate","friendlyFire","isRecruiting",
             "allowWar","shape1","shape2","shape3","color1","color2","color3","typeface","description","url"];

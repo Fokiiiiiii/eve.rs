@@ -71,14 +71,14 @@ internal sealed partial class CharacterServicesComposition
     private async Task CorporationStores()
     {
         corporations = new Eve.Corporations.CorporationStore(source, characters, wallets, economyWallets, skills, now, corporationSchema,
-            setBlueprintLock: SetCorporationBlueprintLockAsync);
+            setBlueprintLock: SetCorporationBlueprintLockAsync, sde: sde);
         corporations.ItemLockChanged += change => Eve.Services.Corporations.ItemLockingService.NotifyChanged(characterSessions, change);
         await corporations.SeedNpcAsync(sde);
         foundations.Scheduler.Register("corporation.votes.resolve",
             async (_, token) => await corporations.ResolveAllExpiredVotesAsync(token));
         await foundations.Scheduler.EnsureRecurringAsync(
             "corporation.votes.resolve", "resolve", TimeSpan.FromMinutes(1));
-        corporationLogin = new Eve.Services.Corporations.CorporationLoginHook(corporations, characters);
+        corporationLogin = new Eve.Services.Corporations.CorporationLoginHook(corporations, characters, WarFactionSessionOfAsync);
         marketSchema = Env("EVE_MARKET_SCHEMA", Eve.Market.MarketStore.DefaultSchema);
         await Eve.Market.MarketStore.MigrateAsync(source, marketSchema);
         market = new Eve.Market.MarketStore(source, marketSchema);

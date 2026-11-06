@@ -15,10 +15,12 @@
    "hex": "0700000002520004000000"
   },
   {
-   "name": "active criminal flag",
-   "kind": "CriminalFlagActive",
+   "name": "active Crimewatch flag",
+   "kind": "CrimewatchFlagActive",
    "sessionId": "1001",
-   "hex": "090000008ce903000000000000"
+   "isCriminal": true,
+   "expiresAtUnixMs": "1800000000000",
+   "hex": "120000008ce9030000000000000100505c18a3010000"
   },
   {
    "name": "ensure private Abyssal room scene",
@@ -7395,6 +7397,21 @@
   }
  ],
  "invalid": [
+  {
+   "name": "Crimewatch flag byte is not boolean",
+   "reason": "bad-value",
+   "hex": "120000008ce9030000000000000200505c18a3010000"
+  },
+  {
+   "name": "Crimewatch flag session is zero",
+   "reason": "bad-value",
+   "hex": "120000008c00000000000000000100505c18a3010000"
+  },
+  {
+   "name": "Crimewatch flag expiry is not positive",
+   "reason": "bad-value",
+   "hex": "120000008ce903000000000000000000000000000000"
+  },
   {
    "name": "environment presentation radius is negative",
    "reason": "bad-value",

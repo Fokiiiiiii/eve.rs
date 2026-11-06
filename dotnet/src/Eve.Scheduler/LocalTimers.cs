@@ -51,11 +51,26 @@ public sealed class LocalTimers : IDisposable
         var entry = new Entry(new CancellationTokenSource());
         // Timeout.InfiniteTimeSpan is a timer that never runs (until it is replaced or cancelled); any other negative wait is no wait
         var wait = _delay(after == Timeout.InfiniteTimeSpan || after >= TimeSpan.Zero ? after : TimeSpan.Zero, entry.Source.Token);
-        if (_entries.TryGetValue(key, out var old))
+        Entry? old;
+        while (true)
         {
-            old.Cancel();
+            if (_entries.TryGetValue(key, out var current))
+            {
+                if (!_entries.TryUpdate(key, entry, current))
+                {
+                    continue;
+                }
+                old = current;
+                break;
+            }
+            if (_entries.TryAdd(key, entry))
+            {
+                old = null;
+                break;
+            }
         }
-        _entries[key] = entry;
+        // Publish atomically before cancellation so the next setter cancels this entry, not the stale one.
+        old?.Cancel();
         _ = Task.Run(async () =>
         {
             try

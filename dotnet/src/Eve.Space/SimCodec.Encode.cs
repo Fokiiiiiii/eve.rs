@@ -1199,9 +1199,11 @@ private static void WriteStructureDamageCorrelation(
                 w.U64(m.SessionId);
                 WriteShip(w, m.Ship);
                 break;
-                    case SimCriminalFlagActive m:
-                        w.U8(Kind.CriminalFlagActive);
+                    case SimCrimewatchFlagActive m:
+                        w.U8(Kind.CrimewatchFlagActive);
                         w.U64(m.SessionId);
+                        w.U8(m.IsCriminal ? (byte)1 : (byte)0);
+                        w.I64(m.ExpiresAtUnixMs);
                         break;
             case SimNotify m:
                 w.U8(Kind.Notify);

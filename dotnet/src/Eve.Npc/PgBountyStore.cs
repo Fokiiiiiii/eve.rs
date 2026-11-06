@@ -73,13 +73,9 @@ public sealed class PgBountyStore
         {
             await gate.ExecuteNonQueryAsync(cancellationToken);
         }
-        if (kill.VictimShipId > 0)
+        if (kill.VictimShipId > 0 && await AlreadyRecordedAsync(connection, transaction, kill.VictimShipId, cancellationToken) is { } payoutTime)
         {
-            await using var seen = Command("SELECT payout_time FROM {schema}.pending_bounties WHERE source_references @> ARRAY[$1::bigint] LIMIT 1", connection, transaction, kill.VictimShipId);
-            if (await seen.ExecuteScalarAsync(cancellationToken) is long payoutTime)
-            {
-                return new BountyAdded(kill.EnemyTypeId, kill.Amount, payoutTime, kill.IsModified, AlreadyRecorded: true);
-            }
+            return new BountyAdded(kill.EnemyTypeId, kill.Amount, payoutTime, kill.IsModified, AlreadyRecorded: true);
         }
         var pending = new List<long>();
         await using (var windows = Command("SELECT payout_at_ms FROM {schema}.pending_bounties WHERE character_id = $1", connection, transaction, kill.CharacterId))
@@ -113,6 +109,11 @@ public sealed class PgBountyStore
             save.Parameters[7].NpgsqlDbType = NpgsqlDbType.Jsonb;
             await save.ExecuteNonQueryAsync(cancellationToken);
         }
+        if (kill.VictimShipId > 0)
+        {
+            await using var source = Command("UPDATE {schema}.bounty_kill_sources SET payout_time = $2 WHERE victim_ship_id = $1", connection, transaction, kill.VictimShipId, bucket.PayoutTime);
+            await source.ExecuteNonQueryAsync(cancellationToken);
+        }
         // what belongs with this kill (the ESS share of it) commits or fails with the bucket, never one without the other
         if (inTransaction is not null)
         {
@@ -120,6 +121,30 @@ public sealed class PgBountyStore
         }
         await transaction.CommitAsync(cancellationToken);
         return new BountyAdded(kill.EnemyTypeId, kill.Amount, bucket.PayoutTime, kill.IsModified, AlreadyRecorded: false);
+    }
+
+    /// <summary>Commits an ESS-only kill and its dynamic bounty input once, without creating a zero-value pilot bucket.</summary>
+    public async Task<bool> RecordWithoutPilotShareAsync(
+        long victimShipId, Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task> inTransaction, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        if (victimShipId > 0 && await AlreadyRecordedAsync(connection, transaction, victimShipId, cancellationToken) is not null)
+            return false;
+        await inTransaction(connection, transaction, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return true;
+    }
+
+    private async Task<long?> AlreadyRecordedAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long victimShipId, CancellationToken cancellationToken)
+    {
+        await using var reserve = Command(
+            "INSERT INTO {schema}.bounty_kill_sources (victim_ship_id, payout_time) VALUES ($1, 0) ON CONFLICT (victim_ship_id) DO NOTHING RETURNING payout_time",
+            connection, transaction, victimShipId);
+        if (await reserve.ExecuteScalarAsync(cancellationToken) is long)
+            return null;
+        await using var seen = Command("SELECT payout_time FROM {schema}.bounty_kill_sources WHERE victim_ship_id = $1", connection, transaction, victimShipId);
+        return await seen.ExecuteScalarAsync(cancellationToken) is long payoutTime ? payoutTime : null;
     }
 
     /// <summary>Every bucket that is waiting, soonest first.</summary>

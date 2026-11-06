@@ -143,6 +143,7 @@ public sealed class ReprocessingHostTests : IAsyncLifetime
             await using (var transaction = await connection.BeginTransactionAsync())
             {
                 await walletStore.OpenAsync(connection, transaction, founder, 5_000_000m, now);
+                await skills.GrantAsync(connection, transaction, founder, [new CharacterSkill(3363, 1, 0)]);
                 await walletStore.OpenAsync(connection, transaction, member, 100_000m, now);
                 await transaction.CommitAsync();
             }

@@ -200,7 +200,7 @@ async fn a_ship_is_sent_out_bound_told_to_dock_and_reported_docked() {
 
     host.send(Message::Bind { session_id: SESSION }).await;
     let mut names = Vec::new();
-    while names.len() < 6 {
+    while names.len() < 5 {
         match host.recv().await {
             Message::Notify { name, id_type, session_id, .. } => {
                 assert_eq!((id_type.as_str(), session_id), ("clientID", SESSION));

@@ -11,7 +11,7 @@ public sealed record CorpWarDeclarationRequest(long CorporationId,long DeclaredB
 public sealed record CorpWarDeclarationResult(long WarId,long BillId,long DueFiletime = 0,bool Replayed = false);
 
 [Service("corpRegistry")]
-public sealed partial class CorpRegistryService(CorporationStore store,PgCharacterStore characters,Func<long> now,CharacterSessions? characterSessions = null,Eve.Inventory.PgItemStore? items = null,Func<long,bool,int,long?,CancellationToken,ValueTask<IReadOnlyList<PyValue>>>? readRecentCorporationKillmails = null,Func<long,CancellationToken,ValueTask<long>>? readCharacterAllyBaseCost = null,Func<CorpWarDeclarationRequest,CancellationToken,ValueTask<CorpWarDeclarationResult>>? declareWar = null,Func<ServiceCall,long,long,CancellationToken,ValueTask<bool>>? validateWarHQ = null,Func<long,CancellationToken,ValueTask<bool>>? readWarEligibility = null)
+public sealed partial class CorpRegistryService(CorporationStore store,PgCharacterStore characters,Func<long> now,CharacterSessions? characterSessions = null,Eve.Inventory.PgItemStore? items = null,Func<long,bool,int,long?,CancellationToken,ValueTask<IReadOnlyList<PyValue>>>? readRecentCorporationKillmails = null,Func<long,CancellationToken,ValueTask<long>>? readCharacterAllyBaseCost = null,Func<CorpWarDeclarationRequest,CancellationToken,ValueTask<CorpWarDeclarationResult>>? declareWar = null,Func<ServiceCall,long,long,CancellationToken,ValueTask<bool>>? validateWarHQ = null,Func<long,CancellationToken,ValueTask<bool>>? readWarEligibility = null,Func<long,CancellationToken,ValueTask<long?>>? readWarFaction = null)
 {
     private const int MaxBulkMemberIds = 500;
     private const int MaxBulkCorporationActions = 500;
@@ -29,8 +29,13 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         call.Session.CharacterId is { } id && await characters.GetAsync(id,call.Cancellation) is { } c
             ? await store.GetAsync(c.CorporationId,call.Cancellation) : null;
     [Method("GetCorporation")]
-    public async ValueTask<PyValue> GetCorporation(ServiceCall call) => await Current(call) is { } c
-        ? CorporationWire.Row(c,(await store.MembersAsync(c.Id,call.Cancellation)).Count, readWarEligibility is not null && await readWarEligibility(c.Id,call.Cancellation)) : PyNone.Instance;
+    public async ValueTask<PyValue> GetCorporation(ServiceCall call)
+    {
+        if (await Current(call) is not { } corp) return PyNone.Instance;
+        var members = await store.MembersAsync(corp.Id,call.Cancellation);
+        return CorporationWire.Row(corp,members.Count(member => member.CharacterId != corp.CeoId),
+            readWarEligibility is not null && await readWarEligibility(corp.Id,call.Cancellation));
+    }
 
     private static long Number(PyValue value) => value switch
     {
@@ -366,7 +371,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         foreach (var member in changed)
             CorporationNotificationAdapter.MemberChanged(characterSessions,call,corp.Id,member.CharacterId,beforeById[member.CharacterId],member);
         if (updates.Any(member => member.CharacterId == actor))
-            await new CorporationLoginHook(store,characters).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
+            await new CorporationLoginHook(store,characters,readWarFaction).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
         return PyNone.Instance;
     }
 
@@ -1024,7 +1029,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         if (before != after)
             CorporationNotificationAdapter.MemberChanged(characterSessions,call,corporation,updated.CharacterId,before,after);
         if (status == 2)
-            await new CorporationLoginHook(store,characters).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
+            await new CorporationLoginHook(store,characters,readWarFaction).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
         return PyNone.Instance;
     }
     private static IReadOnlyList<PyValue> Items(PyValue v) => v switch { PyTuple t => t.Items,PyList l => l.Items,_ => [] };
@@ -1072,11 +1077,11 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         var created = await store.CreateAsync(founder,new NewCorporation(Text(call.Arg(0)),Text(call.Arg(1)),Text(call.Arg(2)),Text(call.Arg(3)),
             DecimalValue(call.Arg(4)),DecimalValue(call.Arg(14)),Truth(call.Arg(12)),Truth(call.Arg(13)),document.RootElement.Clone()),
             $"corp-found:{founder}:{call.Session.SessionId}:{Number(call.CallId)}",call.Cancellation);
-        await new CorporationLoginHook(store,characters).OnCharacterEnteredAsync(call.Session,founder,call.Cancellation);
+        await new CorporationLoginHook(store,characters,readWarFaction).OnCharacterEnteredAsync(call.Session,founder,call.Cancellation);
         var members = await store.MembersAsync(created.Id,call.Cancellation);
         if (members.FirstOrDefault(m => m.CharacterId == founder) is { } member)
             CorporationNotificationAdapter.MemberChanged(characterSessions,call,created.Id,founder,null,member);
-        return CorporationWire.Row(created,members.Count);
+        return CorporationWire.Row(created,members.Count(member => member.CharacterId != created.CeoId));
     }
 
     [Method("UpdateCorporation")]
@@ -1121,9 +1126,10 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     {
         if (call.Session.CharacterId is not { } actor || await Current(call) is not { } corp)
             throw new CorporationError("CORPORATION_ACCESS_DENIED");
-        await store.UpdateSettingsAsync(actor,corp.Id,
-            System.Text.Json.JsonSerializer.Serialize(new { applicationsEnabled = NormalizeBoolean(call.Arg(0),true) }),call.Cancellation);
-        return PyNone.Instance;
+        var (previousLimit,newLimit) = await store.UpdateMemberLimitAsync(actor,corp.Id,call.Cancellation);
+        CorporationNotificationAdapter.CorporationChanged(characterSessions,call,corp.Id,"memberLimit",
+            new PyInt(previousLimit),new PyInt(newLimit));
+        return PyBool.True;
     }
 
     [Method("SetAccountKey")]
@@ -1136,7 +1142,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         if (before is not null)
             CorporationNotificationAdapter.MemberChanged(characterSessions,call,before.CorporationId,character,before,before with { AccountKey=key });
         call.Session.Set("corpaccountkey",new PyInt(key));
-        await new CorporationLoginHook(store,characters).OnCharacterEnteredAsync(call.Session,character,call.Cancellation);
+        await new CorporationLoginHook(store,characters,readWarFaction).OnCharacterEnteredAsync(call.Session,character,call.Cancellation);
         return PyBool.True;
     }
 
@@ -1186,7 +1192,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
             var before = await store.MemberAsync(actor,call.Cancellation);
             await store.LeaveAsync(actor,destination.Id,call.Cancellation);
             CorporationNotificationAdapter.MemberChanged(characterSessions,call,corp.Id,actor,before,null);
-            await new CorporationLoginHook(store,characters).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
+            await new CorporationLoginHook(store,characters,readWarFaction).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
             return MoveResult(actor,destination);
         }
         if (await store.MemberAsync(target,call.Cancellation) is not { } member || member.CorporationId != corp.Id || !Kickable(member))
@@ -1262,7 +1268,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
             };
             CorporationNotificationAdapter.MemberChanged(characterSessions,call,corp.Id,actor,actorBefore,actorAfter);
             CorporationNotificationAdapter.MemberChanged(characterSessions,call,corp.Id,successor,successorBefore,successorAfter);
-            await new CorporationLoginHook(store,characters).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
+            await new CorporationLoginHook(store,characters,readWarFaction).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
             return PyNone.Instance;
         }
         var members = await store.MembersAsync(corp.Id,call.Cancellation);
@@ -1279,7 +1285,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         var (before,desired) = await MemberUpdate(target,call.Args,false,corp.Id,call.Cancellation);
         var after = await store.UpdateMemberAsync(actor,desired,call.Cancellation);
         CorporationNotificationAdapter.MemberChanged(characterSessions,call,corp.Id,target,before,after);
-        if (target == actor) await new CorporationLoginHook(store,characters).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
+        if (target == actor) await new CorporationLoginHook(store,characters,readWarFaction).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
         return PyNone.Instance;
     }
 
@@ -1313,7 +1319,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         foreach (var member in changed)
             CorporationNotificationAdapter.MemberChanged(characterSessions,call,corp.Id,member.CharacterId,beforeById[member.CharacterId],member);
         if (updates.Any(m => m.CharacterId == actor))
-            await new CorporationLoginHook(store,characters).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
+            await new CorporationLoginHook(store,characters,readWarFaction).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
         return PyNone.Instance;
     }
 
@@ -2050,7 +2056,8 @@ public sealed partial class CorpRecruitmentProxyService(
             await store.GetAsync(corporationId,call.Cancellation) is not { } corporation ||
             await store.RecruitmentAdAsync(corporationId,adId,call.Cancellation) is not { } ad)
             return PyNone.Instance;
-        var count = (await store.MembersAsync(corporationId,call.Cancellation)).Count;
+        var count = (await store.MembersAsync(corporationId,call.Cancellation))
+            .Count(member => member.CharacterId != corporation.CeoId);
         return CorporationWire.RecruitmentAdRow(ad,corporation.AllianceId,count);
     }
 
@@ -2191,7 +2198,8 @@ public sealed partial class CorpRecruitmentProxyService(
     private async Task<PyValue> AdsForCorporation(Corporation corporation,CancellationToken token)
     {
         var ads = await store.RecruitmentAdsAsync(corporation.Id,token);
-        var memberCount = (await store.MembersAsync(corporation.Id,token)).Count;
+        var memberCount = (await store.MembersAsync(corporation.Id,token))
+            .Count(member => member.CharacterId != corporation.CeoId);
         return new PyList(ads.Select(ad => (PyValue)CorporationWire.RecruitmentAdRow(ad,corporation.AllianceId,memberCount)).ToArray());
     }
 

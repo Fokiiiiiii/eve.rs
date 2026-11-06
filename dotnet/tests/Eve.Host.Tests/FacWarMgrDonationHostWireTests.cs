@@ -45,7 +45,7 @@ public partial class HostServerTests
 
             var persistedLoyalty = new LoyaltyPointStore(source, walletSchema);
             var service = new FacWarMgrService(
-                new FwService(new FwStore(source, fwSchema), persistedLoyalty),
+                new FwService(new FwStore(source, fwSchema), persistedLoyalty, null!),
                 new FacWarMgrCallbacks(
                     ReadCharacterAsync: (_, _) => ValueTask.FromResult<FwCharacterWarfareState?>(null),
                     SaveCharacterAsync: (_, _, _, _) => ValueTask.FromResult(false),
@@ -81,13 +81,13 @@ public partial class HostServerTests
             Assert.Contains("taxNow", staleWire);
             Assert.Equal(1_000, (await persistedLoyalty.ReadAsync(new LoyaltyHolder(LoyaltyHolderKind.Character, characterId)))
                 .Single().Amount);
-            Assert.Equal(0, await new FwService(new FwStore(source, fwSchema), persistedLoyalty).SolarSystemLpsAsync(systemId));
+            Assert.Equal(0, await new FwService(new FwStore(source, fwSchema), persistedLoyalty, null!).SolarSystemLpsAsync(systemId));
 
             var accepted = await Donate(2, 100, 17);
             Assert.Same(PyNone.Instance, Result(MarshalCodec.Decode(accepted.Payload)));
             Assert.Equal(900, (await persistedLoyalty.ReadAsync(new LoyaltyHolder(LoyaltyHolderKind.Character, characterId)))
                 .Single().Amount);
-            Assert.Equal(17, await new FwService(new FwStore(source, fwSchema), persistedLoyalty).SolarSystemLpsAsync(systemId));
+            Assert.Equal(17, await new FwService(new FwStore(source, fwSchema), persistedLoyalty, null!).SolarSystemLpsAsync(systemId));
         }
         finally
         {

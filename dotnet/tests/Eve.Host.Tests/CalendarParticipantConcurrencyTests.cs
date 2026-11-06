@@ -4,6 +4,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Core;
+using Eve.Wallet;
 using Npgsql;
 
 namespace Eve.Host.Tests;
@@ -28,7 +29,7 @@ public sealed class CalendarParticipantConcurrencyTests
         try
         {
             var synchronizedStore = new FirstConcurrentReadStore(store);
-            IService service = new CalendarMgrService(synchronizedStore);
+            IService service = new CalendarMgrService(synchronizedStore, cspaBilling: FreeCspaBilling());
             var session = new ClientSession { CharacterId = CreatorId };
             var calls = new[] { CreatorId + 100, CreatorId + 101 }.Select(characterId =>
                 service.CallAsync(Call(session, eventId, characterId)).AsTask()).ToArray();
@@ -56,6 +57,54 @@ public sealed class CalendarParticipantConcurrencyTests
     }
 
     [PgFact]
+    public async Task Concurrent_approved_additions_charge_a_recipient_once()
+    {
+        var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL");
+        Assert.False(string.IsNullOrWhiteSpace(pgUrl));
+        var ownerId = Random.Shared.NextInt64(6_000_000_000_000L, 9_000_000_000_000_000L);
+        var inviteeId = ownerId + 1;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(pgUrl!));
+        await CalendarStore.MigrateAsync(source);
+        await PgWalletStore.MigrateAsync(source);
+        var store = new CalendarStore(source);
+        var wallets = new WalletTransactions(source);
+        await using (var connection = await source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await wallets.EnsureAsync(connection, transaction, ownerId);
+            await wallets.AdjustAsync(connection, transaction, ownerId, 1_000, 0, 1,
+                "calendar CSPA concurrency test seed", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                $"calendar-cspa-concurrency-seed:{ownerId}");
+            await transaction.CommitAsync();
+        }
+
+        var eventId = await store.CreateEventAsync(
+            new CalendarEventInput(ownerId, ownerId, CalendarTags.Personal,
+                DateTime.UtcNow.AddDays(2).ToFileTimeUtc(), 60, "CSPA concurrency", string.Empty, 0), []);
+        var billing = new CalendarCspaBilling(
+            (_, _) => ValueTask.FromResult<int?>(500),
+            (_, _, _) => ValueTask.FromResult(CalendarCspaRecipientRule.Charge),
+            wallets);
+        IService service = new CalendarMgrService(store, cspaBilling: billing);
+        var session = new ClientSession { CharacterId = ownerId };
+        var calls = Enumerable.Range(0, 2)
+            .Select(_ => service.CallAsync(ApprovedParticipantsCall(session, eventId, inviteeId)).AsTask())
+            .ToArray();
+
+        var results = await Task.WhenAll(calls);
+        Assert.All(results, result => Assert.IsType<PyNone>(result));
+        Assert.Equal(new[] { ownerId, inviteeId }.Order(),
+            (await store.GetResponsesToEventAsync(eventId, ownerId)).Select(row => row.CharacterId).Order());
+        var journal = (await wallets.JournalForAccountAsync(ownerId, 1000, limit: 1000))
+            .Where(entry => entry.RefTypeId == 35)
+            .ToArray();
+        var charge = Assert.Single(journal);
+        Assert.Equal(-500m, charge.Amount);
+        Assert.Equal(inviteeId, charge.ReferenceId);
+        Assert.Equal(500m, await ReadBalanceAsync(source, ownerId));
+    }
+
+    [PgFact]
     public async Task Personal_response_and_invite_removal_serialize_without_reviving_a_revoked_invitee()
     {
         var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL");
@@ -75,7 +124,7 @@ public sealed class CalendarParticipantConcurrencyTests
         sessions.Enter(CreatorId, ownerSession);
         sessions.Enter(inviteeId, inviteeSession);
         var gatedStore = new FirstConcurrentReadStore(store, synchronizeFirstTwoReads: false);
-        IService service = new CalendarMgrService(gatedStore, sessions: sessions);
+        IService service = new CalendarMgrService(gatedStore, sessions: sessions, cspaBilling: FreeCspaBilling());
         Task<PyValue>? pendingResponse = null;
 
         try
@@ -144,6 +193,22 @@ public sealed class CalendarParticipantConcurrencyTests
         Session = session,
     };
 
+    private static ServiceCall ApprovedParticipantsCall(ClientSession session, long eventId, long inviteeId) => new()
+    {
+        Method = "UpdateEventParticipants",
+        Args = [new PyLong(eventId), new PyList([new PyLong(inviteeId)]), new PyList([])],
+        Kwargs = new PyDict([new KeyValuePair<PyValue, PyValue>(new PyStr("approvedCost"), new PyLong(500))]),
+        Session = session,
+    };
+
+    private static async Task<decimal> ReadBalanceAsync(NpgsqlDataSource source, long ownerId)
+    {
+        await using var command = source.CreateCommand(
+            "SELECT isk FROM wallet.balances WHERE owner_id = $1 AND account_key = 1000");
+        command.Parameters.AddWithValue(ownerId);
+        return (decimal)(await command.ExecuteScalarAsync())!;
+    }
+
     private static ServiceCall ParticipantsCall(
         ClientSession session, long eventId, long[] add, long[] remove) => new()
     {
@@ -167,6 +232,11 @@ public sealed class CalendarParticipantConcurrencyTests
         var address = Assert.IsType<PyTuple>(Assert.IsType<PyObject>(fields[2]).Args).Items;
         return Assert.IsType<PyStr>(address[1]).Value;
     }).ToArray();
+
+    private static CalendarCspaBilling FreeCspaBilling() => new(
+        (_, _) => ValueTask.FromResult<int?>(0),
+        (_, _, _) => ValueTask.FromResult(CalendarCspaRecipientRule.Charge),
+        null);
 
     private static async Task<bool> CaptureResult(Task<PyValue> call)
     {
@@ -219,8 +289,9 @@ public sealed class CalendarParticipantConcurrencyTests
         }
 
         public Task<long> CreateEventAsync(CalendarEventInput input, IReadOnlyCollection<long> invitees,
-            CancellationToken cancellationToken = default) =>
-            inner.CreateEventAsync(input, invitees, cancellationToken);
+            CancellationToken cancellationToken = default,
+            Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null) =>
+            inner.CreateEventAsync(input, invitees, cancellationToken, beforeCommitAsync);
 
         public Task<bool> EditEventAsync(long eventId, long ownerId, long oldEventDateTime, CalendarEventInput input,
             CancellationToken cancellationToken = default) =>
@@ -231,8 +302,9 @@ public sealed class CalendarParticipantConcurrencyTests
             inner.DeleteEventAsync(eventId, ownerId, dateModified, cancellationToken);
 
         public Task<CalendarParticipantUpdateResult> UpdateParticipantsAsync(long eventId, long ownerId, IReadOnlyCollection<long> add,
-            IReadOnlyCollection<long> remove, CancellationToken cancellationToken = default) =>
-            inner.UpdateParticipantsAsync(eventId, ownerId, add, remove, cancellationToken);
+            IReadOnlyCollection<long> remove, CancellationToken cancellationToken = default,
+            Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null) =>
+            inner.UpdateParticipantsAsync(eventId, ownerId, add, remove, cancellationToken, beforeCommitAsync);
 
         public async Task<bool> SendResponseAsync(long eventId, long ownerId, long characterId, short response,
             CancellationToken cancellationToken = default)

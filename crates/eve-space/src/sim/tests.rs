@@ -2539,9 +2539,20 @@ fn active_criminal_flag_is_routed_to_the_session_scene() {
     let ship = &sim.scenes[&SceneKey::solar_system(SYSTEM)].pilots[&SESSION].ship.spec;
     let expected = (ship.owner_id, ship.ship_id);
 
-    sim.handle(Message::CriminalFlagActive { session_id: SESSION }, NOON).unwrap();
+    sim.handle(
+        Message::CrimewatchFlagActive {
+            session_id: SESSION,
+            is_criminal: true,
+            expires_at_unix_ms: i64::MAX,
+        },
+        NOON,
+    )
+    .unwrap();
 
-    assert_eq!(sim.scenes[&SceneKey::solar_system(SYSTEM)].criminal_flag_activations, vec![expected]);
+    let scene = &sim.scenes[&SceneKey::solar_system(SYSTEM)];
+    assert_eq!(scene.pending_criminal_flag_activations, vec![expected]);
+    assert_eq!(scene.pilots[&SESSION].crimewatch_flag_expires_at, Some(i64::MAX));
+    assert!(scene.pilots[&SESSION].crimewatch_flag_is_criminal);
 }
 
 #[test]
@@ -2551,14 +2562,7 @@ fn an_undock_puts_the_ship_in_space_and_binding_sends_it_the_scene_as_marshalled
     let out = sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
     assert_eq!(
         names(&out),
-        [
-            "OnSetTimeDilation",
-            "DoSimClockRebase",
-            "DoDestinyUpdate",
-            "DoDestinyUpdate",
-            "DoDestinyUpdate",
-            "DoDestinyUpdate"
-        ]
+        ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate", "DoDestinyUpdate", "DoDestinyUpdate"]
     );
     let Message::Notify { id_type, args, session_id, .. } = &out[0] else { panic!() };
     assert_eq!((id_type.as_str(), *session_id), ("clientID", SESSION));
@@ -4706,5 +4710,5 @@ fn tether_host_policy_dispatches_to_the_real_scene_and_transitions_return_to_the
         )
         .unwrap_err();
     assert!(wrong_direction.0.contains("kind 81"));
-    assert_eq!(crate::link::PROTOCOL_VERSION, 91);
+    assert_eq!(crate::link::PROTOCOL_VERSION, 92);
 }

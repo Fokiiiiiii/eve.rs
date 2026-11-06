@@ -1135,7 +1135,15 @@ impl Message {
             kind::LEAVE => Message::Leave { session_id: r.u64()?, why: r.u8()? },
             kind::BIND => Message::Bind { session_id: r.u64()? },
             kind::UPDATE_STATE => Message::UpdateState { session_id: r.u64()? },
-            kind::CRIMINAL_FLAG_ACTIVE => Message::CriminalFlagActive { session_id: r.u64()? },
+            kind::CRIMEWATCH_FLAG_ACTIVE => {
+                let session_id = r.u64()?;
+                let is_criminal = read_flag(&mut r, "criminal flag")?;
+                let expires_at_unix_ms = r.i64()?;
+                if session_id == 0 || expires_at_unix_ms <= 0 {
+                    return Err(DecodeError::BadValue("Crimewatch flag session or expiry"));
+                }
+                Message::CrimewatchFlagActive { session_id, is_criminal, expires_at_unix_ms }
+            }
             kind::CONTROL_STRUCTURE => {
                 let session_id = r.u64()?;
                 let solar_system_id = r.i32()?;

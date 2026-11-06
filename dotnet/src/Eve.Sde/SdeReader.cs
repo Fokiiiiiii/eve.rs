@@ -216,7 +216,8 @@ public sealed partial class SdeReader
         {
             if (long.TryParse(reader.GetString(0), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var key))
             {
-                rows.Add(new SdeRow(key, reader.GetFieldValue<JsonDocument>(1).RootElement.Clone()));
+                using var document = reader.GetFieldValue<JsonDocument>(1);
+                rows.Add(new SdeRow(key, document.RootElement.Clone()));
             }
         }
         return keys is null ? rows.AsReadOnly() : rows;
@@ -245,7 +246,8 @@ public sealed partial class SdeReader
         {
             if (long.TryParse(reader.GetString(0), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var key))
             {
-                rows.Add(new SdeRow(key, reader.GetFieldValue<JsonDocument>(1).RootElement.Clone()));
+                using var document = reader.GetFieldValue<JsonDocument>(1);
+                rows.Add(new SdeRow(key, document.RootElement.Clone()));
             }
         }
         return rows;
@@ -272,7 +274,8 @@ public sealed partial class SdeReader
         {
             if (long.TryParse(reader.GetString(0), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var key))
             {
-                rows.Add(new SdeRow(key, reader.GetFieldValue<JsonDocument>(1).RootElement.Clone()));
+                using var document = reader.GetFieldValue<JsonDocument>(1);
+                rows.Add(new SdeRow(key, document.RootElement.Clone()));
             }
         }
         return rows;

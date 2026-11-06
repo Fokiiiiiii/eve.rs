@@ -312,6 +312,8 @@ public sealed class MarketHostTests : IAsyncLifetime
         var fortizar=checked((int)(await sde.ReadAsync("types")).Single(row =>
             row.Doc.TryGetProperty("name",out var name) && SdeReader.English(name)=="Fortizar").Key);
         const long structureId=9_000_000_001_001;
+        const long secondStructureId=9_000_000_001_002;
+        const int Pyerite=35;
         const long ownerCorporationId=1000044;
         var seller=await CreateTraderAsync(source,station,"Structure Seller",ownerCorporationId,structureId);
         var buyer=await CreateTraderAsync(source,station,"Structure Buyer",ownerCorporationId,structureId);
@@ -328,12 +330,22 @@ public sealed class MarketHostTests : IAsyncLifetime
             await structures.SaveAsync(connection,transaction,
                 new StructureSnapshot { StructureId=structureId,State=StructureState.ShieldVulnerable,CoreInstalled=true,Upkeep=UpkeepState.FullPower });
             await structures.SetServiceAsync(connection,transaction,structureId,StructureServiceIds.Market,ServiceState.Online,DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            // Both structures share the station's solar system and therefore its market region.
+            Assert.True(await structures.CreateAsync(connection,transaction,
+                new NewStructure(secondStructureId,fortizar,station.SolarSystemId,0,0,0,0,ownerCorporationId,0,"Market Test Fortizar Two","")));
+            await structures.SaveAsync(connection,transaction,
+                new StructureSnapshot { StructureId=secondStructureId,State=StructureState.ShieldVulnerable,CoreInstalled=true,Upkeep=UpkeepState.FullPower });
+            await structures.SetServiceAsync(connection,transaction,secondStructureId,StructureServiceIds.Market,ServiceState.Online,DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
             await transaction.CommitAsync();
         }
 
+        var secondSeller=await CreateTraderAsync(source,station,"Second Structure Seller",ownerCorporationId,secondStructureId);
         var sellerSession=new ClientSession(new Sink()) { SessionId=302 };
         sellerSession.Set("charid",new PyInt(seller));
         sellerSession.Set("structureid",new PyLong(structureId));
+        var secondSellerSession=new ClientSession(new Sink()) { SessionId=307 };
+        secondSellerSession.Set("charid",new PyInt(secondSeller));
+        secondSellerSession.Set("structureid",new PyLong(secondStructureId));
         var buyerSession=new ClientSession(new Sink()) { SessionId=303 };
         buyerSession.Set("charid",new PyInt(buyer));
         buyerSession.Set("structureid",new PyLong(structureId));
@@ -397,6 +409,19 @@ public sealed class MarketHostTests : IAsyncLifetime
         // A 40 ISK Upwell order pays the 100 ISK broker and 25 ISK SCC minimums separately.
         Assert.Equal(9875m, (await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).GetAsync(seller))!.Isk);
 
+        long secondItemId;
+        await using (var connection=await source.OpenConnectionAsync())
+        await using (var transaction=await connection.BeginTransactionAsync())
+        {
+            secondItemId=await new PgItemStore(source,Schema("EVE_INVENTORY_SCHEMA")).CreateAsync(connection,transaction,
+                new NewItem(Pyerite,secondSeller,secondStructureId,ItemFlags.Hangar,3));
+            await transaction.CommitAsync();
+        }
+        await market.CallAsync(Call(secondSellerSession,"PlaceMultiSellOrder",23,
+            new PyList([Py.KeyVal(("typeID",new PyInt(Pyerite)),("itemID",new PyLong(secondItemId)),
+                ("price",new PyReal(20)),("quantity",new PyInt(3)),("stationID",new PyLong(secondStructureId)))]),
+            PyBool.False,new PyInt(90),new PyReal(0.01)));
+
         await new MarketStore(source,Schema("EVE_MARKET_SCHEMA")).SeedNpcAsync(
             [new MarketNpcSeed("public-tritanium",Tritanium,false,12,10,MarketRules.RangeRegion,
                 MarketLocation.From(station),DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())]);
@@ -411,17 +436,37 @@ public sealed class MarketHostTests : IAsyncLifetime
         Assert.Equal(new PyInt(Tritanium),systemAsk.Items[2]);
         Assert.Equal(new PyLong(station.Id),systemAsk.Items[3]);
 
+        Assert.Null(buyerSession.GetInt("stationid"));
         var askResult=await market.CallAsync(Call(buyerSession,"GetStationAsks",4));
         var askDetails=Assert.IsType<PyDict>(Assert.IsType<PyTuple>(Assert.IsType<PyObject>(askResult).Args).Items[0]);
         Assert.Equal(new PyBytes("stationid"u8.ToArray()),Field(askDetails,"sessionInfo"));
+        Assert.Equal(new PyLong(structureId),Field(askDetails,"sessionInfoValue"));
         var asks=Assert.IsType<PyDict>(Received(askResult));
         Assert.Contains(asks.Entries,entry=>entry.Key==new PyInt(Tritanium));
+        Assert.DoesNotContain(asks.Entries,entry=>entry.Key==new PyInt(Pyerite));
         var askSummary=AskLine(asks.Entries.Single(entry=>entry.Key==new PyInt(Tritanium)).Value);
         Assert.Equal(4,askSummary.Items.Count);
         Assert.Equal(new PyInt(10),askSummary.Items[0]);
         Assert.Equal(new PyInt(4),askSummary.Items[1]);
         Assert.Equal(new PyInt(Tritanium),askSummary.Items[2]);
         Assert.Equal(new PyLong(structureId),askSummary.Items[3]);
+
+        buyerSession.Set("structureid",new PyLong(secondStructureId));
+        Assert.Null(buyerSession.GetInt("stationid"));
+        var secondAskResult=await market.CallAsync(Call(buyerSession,"GetStationAsks",24));
+        var secondAskDetails=Assert.IsType<PyDict>(Assert.IsType<PyTuple>(Assert.IsType<PyObject>(secondAskResult).Args).Items[0]);
+        Assert.Equal(new PyBytes("stationid"u8.ToArray()),Field(secondAskDetails,"sessionInfo"));
+        Assert.Equal(new PyLong(secondStructureId),Field(secondAskDetails,"sessionInfoValue"));
+        var secondAsks=Assert.IsType<PyDict>(Received(secondAskResult));
+        Assert.DoesNotContain(secondAsks.Entries,entry=>entry.Key==new PyInt(Tritanium));
+        Assert.Contains(secondAsks.Entries,entry=>entry.Key==new PyInt(Pyerite));
+        var secondAskSummary=AskLine(secondAsks.Entries.Single(entry=>entry.Key==new PyInt(Pyerite)).Value);
+        Assert.Equal(4,secondAskSummary.Items.Count);
+        Assert.Equal(new PyInt(20),secondAskSummary.Items[0]);
+        Assert.Equal(new PyInt(3),secondAskSummary.Items[1]);
+        Assert.Equal(new PyInt(Pyerite),secondAskSummary.Items[2]);
+        Assert.Equal(new PyLong(secondStructureId),secondAskSummary.Items[3]);
+
         static IReadOnlyList<PyValue> Lines(PyValue value)
         {
             var fields=Assert.IsType<PyDict>(Assert.IsType<PyObject>(value).Args);

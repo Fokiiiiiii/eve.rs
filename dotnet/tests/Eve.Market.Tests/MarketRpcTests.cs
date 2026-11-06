@@ -147,7 +147,11 @@ public class MarketRpcTests
         var actor = await r.Actor("Ask Reader");
         var seat = await SeatAsync(r, actor);
         await r.Book.SeedNpcAsync([new("ask", Tritanium, false, 10, 100, 32767, MarketLocation.From(r.Station), r.Now)]);
-        foreach (var asks in new[] { await seat.Proxy.GetStationAsks(Call(seat.Session, "GetStationAsks", 1)), await seat.Proxy.GetSystemAsks(Call(seat.Session, "GetSystemAsks", 2)) })
+        var stationAsks = await seat.Proxy.GetStationAsks(Call(seat.Session, "GetStationAsks", 1));
+        var stationDetails = Assert.IsType<PyDict>(Assert.IsType<PyTuple>(Assert.IsType<PyObject>(stationAsks).Args).Items[0]);
+        Assert.Equal(new PyBytes("stationid"u8.ToArray()), Field(stationDetails, "sessionInfo"));
+        Assert.Equal(new PyLong(r.Station.Id), Field(stationDetails, "sessionInfoValue"));
+        foreach (var asks in new[] { stationAsks, await seat.Proxy.GetSystemAsks(Call(seat.Session, "GetSystemAsks", 2)) })
         {
             var row = Assert.IsType<PyObject>(Assert.Single(Assert.IsType<PyDict>(Received(asks)).Entries).Value);
             Assert.Equal("util.Row", Eve.Macho.JsSemantics.PlainText(row.Name));

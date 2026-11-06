@@ -236,7 +236,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
         }
         var entries=rows.Select(row=>new KeyValuePair<PyValue,PyValue>(
             new PyInt(row.Order.TypeId),MarketWire.BestByOrderRow(row.Order,row.Quantity))).ToArray();
-        return ObjectCaching.MethodResult(new PyDict(entries),now(),sessionInfo:"stationid");
+        return ObjectCaching.MethodResult(new PyDict(entries),now(),sessionInfo:"stationid",sessionInfoValue:new PyLong(locationId));
     }
 
     [Method("GetSystemAsks")]

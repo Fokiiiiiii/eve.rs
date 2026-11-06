@@ -1,6 +1,6 @@
 # Market status
 
-Updated 2026-10-29. This status follows the V24.01 call sites, current Host wiring, pinned SDE and EVE University market rules.
+Updated 2026-11-06. This status follows the V24.01 call sites, current Host wiring, pinned SDE and EVE University market rules.
 
 ## Built
 
@@ -24,6 +24,8 @@ The best ask row shape is resolved from the V24.01 client source. `marketutil/__
 The two-account station headless walk passed on `eve_p3`; it checks transfer, tax, broker fee, wallet journals, partial fill, modification refusal and cancellation. Host tests cover structure market access, fee charging, failed-transaction rollback, item custody, settlement and restart recovery. Focused rule tests cover separate broker/SCC minimums, Zarzakh tax discounts and structure factional-warfare discounts without a database. The duration-zero buy and market notification regressions passed on Actions run `40857707780` for `a28f6cf9`: `Eve.Market.Tests` 142 passed, 0 failed, 0 skipped; `Eve.Host.Tests` 940 passed, 0 failed, 0 skipped. Push-triggered CI run `40857692666` also passed. The earlier selected run `40854638927` found a stale expected ID-0 notification row; `MarketRpcTests.Buy_multi_fills_available_quantity_without_posting_the_rest` now checks the empty changed-order list and passed on the corrected run.
 
 `MarketTradeHostWireTests.Registered_market_and_trade_calls_reply_and_update_persisted_state` now also calls the registered `CancelCharOrder` RPC after modifying a resting buy order and verifies the persisted order is removed.
+
+`GetStationAsks` cached-method metadata now carries `sessionInfoValue` for its resolved station or structure location. `MarketHostTests.The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart` switches one same-region session between two permitted structures with `stationid` unset and verifies both asks and their location-specific cache values (`MarketHostTests.cs:438-467`). `MarketRpcTests.Station_and_system_ask_rows_match_the_client_attribute_and_sequence_contract` retains the NPC-station row contract and checks its station ID value (`MarketRpcTests.cs:143-152`). On `eve_p3`, the focused Host class passed 4 tests, the selected Market classes passed 40, and `CachedResultTests` passed 7; all had zero skips.
 
 Immediate fills notify the client with an empty changed-order list. This preserves the client-side transaction cache reset and escrow signal without reporting an order ID 0 that does not exist. Client consumers are `marketSvc.py:32-35`, `marketsvc.py:113-127`, `marketHistory.py:61-65`, `orders.py:66-69`, `marketbase.py:536-546`, and `buyMultiFromBase.py:557-564`; the V24 buy call returns no order (`marketsvc.py:256-268`). EveJS 261028.1 still sends a synthetic row (`marketProxyService.js:5687-5702`); the compatibility deviation is recorded in `docs/reference/compat/DEVIATIONS.md`.
 

@@ -44,6 +44,10 @@ public sealed partial class CharacterShips(
     public Task<ShipSnapshot?> LoadAsync(long characterId, CancellationToken cancellationToken = default) =>
         LoadSelectedShipAsync(characterId, null, cancellationToken);
 
+    /// <summary>Loads the current ship after a skill change whose training settlement is already in progress or complete.</summary>
+    public Task<ShipSnapshot?> LoadAfterTrainingSettledAsync(long characterId, CancellationToken cancellationToken = default) =>
+        LoadSelectedShipAsync(characterId, null, cancellationToken, settleTraining: false);
+
     public Task<ShipSnapshot?> LoadShipAsync(long characterId, long shipId, CancellationToken cancellationToken = default) =>
         LoadSelectedShipAsync(characterId, shipId, cancellationToken);
 
@@ -56,9 +60,10 @@ public sealed partial class CharacterShips(
         CancellationToken cancellationToken = default) =>
         modules.UpdateWeaponBanksAsync(shipId, update, cancellationToken);
 
-    private async Task<ShipSnapshot?> LoadSelectedShipAsync(long characterId, long? shipId, CancellationToken cancellationToken, long? shipOwnerIdOverride = null)
+    private async Task<ShipSnapshot?> LoadSelectedShipAsync(long characterId, long? shipId, CancellationToken cancellationToken,
+        long? shipOwnerIdOverride = null, bool settleTraining = true)
     {
-        if (training is not null && await characters.GetAsync(characterId, cancellationToken) is { } owner)
+        if (settleTraining && training is not null && await characters.GetAsync(characterId, cancellationToken) is { } owner)
         {
             await training.SettleAsync(characterId, owner.AccountId, cancellationToken);
         }

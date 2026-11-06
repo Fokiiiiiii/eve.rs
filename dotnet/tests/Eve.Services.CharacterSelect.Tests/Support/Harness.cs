@@ -1,9 +1,12 @@
 using Eve.Characters;
 using Eve.Data;
+using Eve.Events;
 using Eve.Fitting;
 using Eve.Identity;
 using Eve.Inventory;
 using Eve.Marshal;
+using Eve.Relations;
+using Eve.Scheduler;
 using Eve.Services;
 using Eve.Services.Skills;
 using Eve.Universe;
@@ -67,6 +70,9 @@ public sealed class Harness : IAsyncDisposable
     private readonly string _walletSchema;
     private readonly string _fittingSchema;
     private readonly string _corporationSchema;
+    private readonly string _schedulerSchema;
+    private readonly string _eventsSchema;
+    private readonly string _relationsSchema;
 
     private Harness(
         NpgsqlDataSource source,
@@ -84,12 +90,19 @@ public sealed class Harness : IAsyncDisposable
         _walletSchema = $"csw_test_{suffix}";
         _fittingSchema = $"csf_test_{suffix}";
         _corporationSchema = $"csc_test_{suffix}";
+        _schedulerSchema = $"cssched_test_{suffix}";
+        _eventsSchema = $"csev_test_{suffix}";
+        _relationsSchema = $"csrel_test_{suffix}";
         Characters = new PgCharacterStore(source, _characterSchema);
         Items = new PgItemStore(source, _inventorySchema);
         SkillStore = new PgSkillStore(source, _skillsSchema);
         Wallets = new PgWalletStore(source, _walletSchema);
         WalletTransactions = new WalletTransactions(source,_walletSchema);
         Corporations = new Eve.Corporations.CorporationStore(source, Characters, Wallets, WalletTransactions, SkillStore, () => ClockUnixMs, _corporationSchema);
+        Scheduler = new DurableScheduler(source, () => ClockUnixMs, new SchedulerOptions { Concurrency = 1 }, _schedulerSchema);
+        Events = new EventBus(source, Scheduler, null, _eventsSchema);
+        Relations = new RelationStore(source, Scheduler, Events, _relationsSchema);
+        WarsInfo = new Eve.Services.Corporations.WarsInfoMgrService(Relations, () => ClockUnixMs);
         Accounts = new InMemoryAccountDirectory(new AccountOptions());
         Online = new OnlineCharacters();
         Training = new CharacterTraining(source, Skills, SkillStore, new PgTrainingStore(source, _skillsSchema), new TrainingSettings(), () => ClockUnixMs);
@@ -104,7 +117,12 @@ public sealed class Harness : IAsyncDisposable
                 new Eve.Services.Corporations.CorporationLoginHook(Corporations, Characters)],
             new Random(7), newCharacterExperienceEnabled,
             securityStatusOf: (_, _) => Task.FromResult(securityStatus),
-            population: Population);
+            population: Population,
+            readCharacterSelectionWarsAsync: async (selectedCharacters, cancellationToken) =>
+                await WarsInfo.GetCharacterSelectionWarsAsync(
+                    [.. selectedCharacters.Select(character => (character.Id, character.CorporationId, character.AllianceId))], cancellationToken),
+            warFactionOfAsync: async (characterId, cancellationToken) =>
+                (await Characters.GetAsync(characterId, cancellationToken))?.DirectFactionId ?? 0);
         var dogma = new Eve.Dogma.DogmaStatic([], [], []);
         Handler = new SkillHandlerService(
             SkillStore, Skills, Training, Characters, Items, dogma, Announcer, () => ClockUnixMs,
@@ -125,6 +143,14 @@ public sealed class Harness : IAsyncDisposable
     public Eve.Corporations.CorporationStore Corporations { get; }
 
     public WalletTransactions WalletTransactions { get; }
+
+    public DurableScheduler Scheduler { get; }
+
+    public EventBus Events { get; }
+
+    public RelationStore Relations { get; }
+
+    public Eve.Services.Corporations.WarsInfoMgrService WarsInfo { get; }
 
     public CharacterTraining Training { get; }
 
@@ -162,6 +188,9 @@ public sealed class Harness : IAsyncDisposable
         await PgWalletStore.MigrateAsync(source, harness._walletSchema);
         await PgModuleStateStore.MigrateAsync(source, harness._fittingSchema);
         await Eve.Corporations.CorporationStore.MigrateAsync(source, harness._corporationSchema);
+        await DurableScheduler.MigrateAsync(source, harness._schedulerSchema);
+        await EventBus.MigrateAsync(source, harness._eventsSchema);
+        await RelationStore.MigrateAsync(source, harness._relationsSchema);
         return harness;
     }
 
@@ -195,7 +224,11 @@ public sealed class Harness : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        foreach (var schema in new[] { _characterSchema, _inventorySchema, _skillsSchema, _walletSchema, _fittingSchema, _corporationSchema })
+        foreach (var schema in new[]
+                 {
+                     _characterSchema, _inventorySchema, _skillsSchema, _walletSchema, _fittingSchema, _corporationSchema,
+                     _schedulerSchema, _eventsSchema, _relationsSchema,
+                 })
         {
             await using var command = Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
             await command.ExecuteNonQueryAsync();

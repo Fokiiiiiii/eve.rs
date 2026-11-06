@@ -61,6 +61,55 @@ public sealed class WarsInfoMgrServiceTests
     }
 
     [Eve.Corporations.Tests.PgFact]
+    public async Task Character_selection_wars_are_active_and_grouped_by_corporation_or_alliance_owner()
+    {
+        await using var rig = await WarRig.CreateAsync();
+        const long corporationId = 3101;
+        const long allianceId = 3201;
+        await rig.SetAsync("war", corporationId, 9101, new
+        {
+            timeStarted = Eve.Services.Py.FileTimeFromUnixMs(rig.Now - 1_000),
+            mutual = true,
+        });
+        await rig.SetAsync("war", allianceId, 9102, new
+        {
+            timeStarted = Eve.Services.Py.FileTimeFromUnixMs(rig.Now - 1_000),
+        });
+        await rig.SetAsync("war", corporationId, 9103, new
+        {
+            timeStarted = Eve.Services.Py.FileTimeFromUnixMs(rig.Now + 60_000),
+        });
+        await rig.SetAsync("war", corporationId, 9104, new
+        {
+            timeStarted = Eve.Services.Py.FileTimeFromUnixMs(rig.Now - 60_000),
+            timeFinished = Eve.Services.Py.FileTimeFromUnixMs(rig.Now - 1_000),
+        });
+
+        var service = new Eve.Services.Corporations.WarsInfoMgrService(rig.Relations, () => rig.Now);
+        Assert.Empty(await service.GetCharacterSelectionWarsAsync([(103L, 9999L, (long?)null)]));
+        var rows = await service.GetCharacterSelectionWarsAsync(
+        [
+            (101L, corporationId, (long?)null),
+            (102L, corporationId, allianceId),
+        ]);
+
+        Assert.Equal(2, rows.Count);
+        var corporationWar = KeyValFields(rows[0]);
+        var allianceWar = KeyValFields(rows[1]);
+        Assert.IsType<Eve.Marshal.PyInt>(corporationWar["characterID"]);
+        Assert.Equal(101, Number(corporationWar["characterID"]));
+        Assert.Equal(corporationId, Number(corporationWar["declaredByID"]));
+        Assert.Equal(9101, Number(corporationWar["againstID"]));
+        Assert.IsType<Eve.Marshal.PyInt>(corporationWar["warID"]);
+        Assert.IsType<Eve.Marshal.PyLong>(corporationWar["timeStarted"]);
+        Assert.Equal(new Eve.Marshal.PyInt(1), corporationWar["mutual"]);
+        Assert.IsType<Eve.Marshal.PyDict>(corporationWar["allies"]);
+        Assert.Equal(102, Number(allianceWar["characterID"]));
+        Assert.Equal(allianceId, Number(allianceWar["declaredByID"]));
+        Assert.Equal(9102, Number(allianceWar["againstID"]));
+    }
+
+    [Eve.Corporations.Tests.PgFact]
     public async Task Assistance_lookup_is_defender_only_and_uses_session_owner_defaults()
     {
         await using var rig = await WarRig.CreateAsync();

@@ -57,3 +57,8 @@ No graphical-client session was performed. The audit did not execute every marke
 - `MSBUILDDISABLENODEREUSE=1 dotnet build` with `-p:UseSharedCompilation=false` succeeded with 0 warnings and 0 errors for `Eve.Services.Market`, `Eve.Market.Tests`, `Eve.Host.Tests`, and `Eve.Services.Tests`.
 - On `eve_p4` through `tools/dev/db-lock.sh`: focused `Market_order_history` RPC cases: 3 passed, 0 failed, 0 skipped; neighboring Market RPC/coherence/history/transaction/protocol classes: 49 passed, 0 failed, 0 skipped.
 - On `eve_p4` through `tools/dev/db-lock.sh`: `MarketHostTests` and `MarketProxyFailureWireTests`: 4 passed, 0 failed, 0 skipped.
+
+## Actions verification after push (2026-11-06)
+
+- Commit `82e24529242fd534de00b2b276039365952e3bbf` reached `main`. Push-triggered `CI` run 1560 (`42230077598`) completed successfully, including the headless end-to-end job; `python3 tools/dev/ci-status.py failures 82e24529242fd534de00b2b276039365952e3bbf` reported no failed tests or jobs.
+- Selected Agent test run 1358 (`42230763076`) for `Eve.Market.Tests` and `Eve.Host.Tests` completed successfully in 7.1 minutes.

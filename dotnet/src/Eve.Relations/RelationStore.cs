@@ -80,13 +80,14 @@ public sealed class RelationStore
     private const string Columns = "id, kind, subject, object, value, attrs::text, since_ms, until_ms, updated_ms";
 
     /// <summary>
-    /// Makes the relation hold with this value (clamped to the kind's range), in the caller's transaction. Returns what changed, or <c>null</c> when nothing did. For a one-per-subject
-    /// kind the subject's relation to any other object ends first. <paramref name="attrs"/> replaces the attributes when given; <paramref name="untilMs"/> is when the relation
-    /// ends by itself (null: it does not).
+    /// Makes the relation hold with this value (clamped to the kind's range), in the caller's transaction. Returns what changed, or <c>null</c> when nothing did unless
+    /// <paramref name="recordHistoryWhenUnchanged"/> is requested. For a one-per-subject kind the subject's relation to any other object ends first. <paramref name="attrs"/>
+    /// replaces the attributes when given; <paramref name="untilMs"/> is when the relation ends by itself (null: it does not).
     /// </summary>
     public async Task<RelationChange?> SetAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, string kind, long subject, long obj, double value,
-        string? reason = null, object? attrs = null, long? untilMs = null, CancellationToken cancellationToken = default)
+        string? reason = null, object? attrs = null, long? untilMs = null, CancellationToken cancellationToken = default,
+        bool recordHistoryWhenUnchanged = false)
     {
         var rules = Kind(kind);
         if (double.IsNaN(value))
@@ -144,13 +145,17 @@ public sealed class RelationStore
         else
         {
             var attrsChanged = attrsJson is not null && !JsonEquals(attrsJson, beforeAttrs!);
-            if (before == value && !attrsChanged && beforeUntil == untilMs)
+            var unchanged = before == value && !attrsChanged && beforeUntil == untilMs;
+            if (unchanged && !recordHistoryWhenUnchanged)
             {
                 return null;
             }
-            await Sql.ExecuteAsync(connection, transaction, Q("""
-                UPDATE {schema}.relations SET value = $2, attrs = COALESCE($3::text::jsonb, attrs), until_ms = $4, updated_ms = $5 WHERE id = $1
-                """), cancellationToken, id, value, attrsJson, untilMs, now);
+            if (!unchanged)
+            {
+                await Sql.ExecuteAsync(connection, transaction, Q("""
+                    UPDATE {schema}.relations SET value = $2, attrs = COALESCE($3::text::jsonb, attrs), until_ms = $4, updated_ms = $5 WHERE id = $1
+                    """), cancellationToken, id, value, attrsJson, untilMs, now);
+            }
         }
 
         if (untilMs is { } until)
@@ -163,7 +168,7 @@ public sealed class RelationStore
         }
 
         var change = new RelationChange(id, kind, subject, obj, before, value, reason, now);
-        if (rules.KeepHistory && (before != value || before is null))
+        if (rules.KeepHistory && (before != value || before is null || recordHistoryWhenUnchanged))
         {
             await Sql.ExecuteAsync(connection, transaction, Q("""
                 INSERT INTO {schema}.relation_history (relation_id, kind, subject, object, old_value, new_value, reason, at_ms, attrs)

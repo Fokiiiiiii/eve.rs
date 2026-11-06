@@ -3,8 +3,12 @@ using Eve.Data;
 using Eve.Events;
 using Eve.Host;
 using Eve.Inventory;
+using Eve.Marshal;
+using Eve.ReadSide;
 using Eve.Relations;
 using Eve.Scheduler;
+using Eve.Services;
+using Eve.Services.Corporations;
 using Eve.Services.Core;
 using Eve.Wallet;
 using Npgsql;
@@ -51,6 +55,7 @@ public class MissionCompletionTransactionTests
             await transaction.CommitAsync();
         }
         public RelationStore Relations { get; }
+        public string RelationSchema => _schemas[2];
         public LoyaltyPointStore Loyalty { get; }
         public string LoyaltySchema => _schemas[5];
         /// <summary>A relation store on a schema that does not exist: its first standing read fails inside the completion's transaction.</summary>
@@ -101,6 +106,103 @@ public class MissionCompletionTransactionTests
         Assert.Equal(AgentMissionState.Completed, (await fixture.Store.ReadAsync(Pilot, Agent))!.State);
         Assert.Equal(0.28, await fixture.Relations.ValueAsync(RelationKinds.Standing.Name, Agent, Pilot, 0), 10);
         Assert.Equal(0.55, await fixture.Relations.ValueAsync(RelationKinds.Standing.Name, Corporation, Pilot, 0), 10);
+    }
+
+    [PgFact]
+    public async Task Concurrent_mission_completions_apply_diminishing_gain_to_the_latest_standing()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        const long otherAgent = 3008417;
+        await fixture.Store.OfferAsync(Pilot, otherAgent, Kill, Start, "offer:standing-race");
+        await fixture.Store.AcceptAsync(Pilot, otherAgent, Start, "accept:standing-race");
+        await fixture.Relations.SetAsync(RelationKinds.Standing.Name, Agent, Pilot, 5.0, "seed");
+
+        var completions = await Task.WhenAll(
+            CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store, fixture.Relations, fixture.Items,
+                Pilot, Agent, Start + TimeSpan.FromHours(1), "complete:standing-race-a", [new(Agent, 0.028, true)], [], CancellationToken.None),
+            CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store, fixture.Relations, fixture.Items,
+                Pilot, otherAgent, Start + TimeSpan.FromHours(1), "complete:standing-race-b", [new(Agent, 0.028, true)], [], CancellationToken.None));
+
+        Assert.All(completions, done => Assert.True(done));
+        Assert.Equal(5.276, await fixture.Relations.ValueAsync(RelationKinds.Standing.Name, Agent, Pilot, 0), 10);
+    }
+
+    [PgFact]
+    public async Task Standing_cap_records_the_mission_transaction_and_zero_gain_writes_nothing()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        const long otherAgent = 3008417;
+        await fixture.Store.OfferAsync(Pilot, otherAgent, Kill, Start, "offer:standing-zero");
+        await fixture.Store.AcceptAsync(Pilot, otherAgent, Start, "accept:standing-zero");
+        await fixture.Relations.SetAsync(RelationKinds.Standing.Name, Agent, Pilot, 10, "seed");
+        var notifications = 0;
+
+        Assert.True(await CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store, fixture.Relations, fixture.Items,
+            Pilot, Agent, Start + TimeSpan.FromHours(1), "complete:standing-cap", [new(Agent, 0.028, true, "Mission at the cap")], [], CancellationToken.None,
+            afterStandingCommit: _ => { notifications++; return Task.CompletedTask; }));
+        Assert.True(await CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store, fixture.Relations, fixture.Items,
+            Pilot, otherAgent, Start + TimeSpan.FromHours(1), "complete:standing-zero", [new(Agent, 0, true)], [], CancellationToken.None,
+            afterStandingCommit: _ => { notifications++; return Task.CompletedTask; }));
+
+        var transaction = Assert.Single((await StandingTransactionsAsync(fixture)).Items);
+        Assert.Equal(10, await fixture.Relations.ValueAsync(RelationKinds.Standing.Name, Agent, Pilot, 0), 10);
+        Assert.Equal(1, notifications);
+        Assert.Equal("Mission at the cap", Assert.IsType<PyWString>(KeyValField(transaction, "msg")).Value);
+        Assert.Equal(new PyReal(0.028), KeyValField(transaction, "modification"));
+    }
+
+    [PgFact]
+    public async Task Mission_standing_history_is_returned_after_reopening_the_read_side()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var eventTime = Start + TimeSpan.FromHours(1);
+        const string message = "The completed mission";
+
+        Assert.True(await CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store, fixture.Relations, fixture.Items,
+            Pilot, Agent, eventTime, "complete:standing-history", [new(Agent, 0.028, true, message)], [], CancellationToken.None));
+
+        var transaction = Assert.Single((await StandingTransactionsAsync(fixture)).Items);
+        Assert.Equal(new PyInt(73), KeyValField(transaction, "eventTypeID"));
+        Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(eventTime.ToUnixTimeMilliseconds())), KeyValField(transaction, "eventDateTime"));
+        Assert.Equal(new PyReal(0.028), KeyValField(transaction, "modification"));
+        Assert.Equal(new PyInt(Agent), KeyValField(transaction, "fromID"));
+        Assert.Equal(new PyInt(Pilot), KeyValField(transaction, "toID"));
+        Assert.Equal(message, Assert.IsType<PyWString>(KeyValField(transaction, "msg")).Value);
+        Assert.Same(PyNone.Instance, KeyValField(transaction, "int_1"));
+        Assert.Same(PyNone.Instance, KeyValField(transaction, "int_2"));
+        Assert.Same(PyNone.Instance, KeyValField(transaction, "int_3"));
+    }
+
+    [PgFact]
+    public async Task Standing_notification_is_sent_after_commit_once_with_the_client_row_shape()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var order = new List<string>();
+        PyValue? payload = null;
+        fixture.Store.Committed += _ => order.Add("mission");
+        async Task StandingNotification(PyValue modifications)
+        {
+            Assert.Equal(0.28, await fixture.Relations.ValueAsync(RelationKinds.Standing.Name, Agent, Pilot, 0), 10);
+            payload = modifications;
+            order.Add("standing");
+        }
+
+        Assert.True(await CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store, fixture.Relations, fixture.Items,
+            Pilot, Agent, Start + TimeSpan.FromHours(1), "complete:standing-notify", [new(Agent, 0.028, true)], [], CancellationToken.None,
+            afterStandingCommit: StandingNotification));
+        Assert.False(await CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store, fixture.Relations, fixture.Items,
+            Pilot, Agent, Start + TimeSpan.FromHours(1), "complete:standing-notify-retry", [new(Agent, 0.028, true)], [], CancellationToken.None,
+            afterStandingCommit: StandingNotification));
+
+        Assert.Equal(["standing", "mission"], order);
+        var row = Assert.IsType<PyList>(Assert.Single(Assert.IsType<PyList>(payload).Items));
+        Assert.Equal(5, row.Items.Count);
+        Assert.Equal(new PyInt(Agent), row.Items[0]);
+        Assert.Equal(new PyInt(Pilot), row.Items[1]);
+        Assert.Equal(new PyReal(0.028), row.Items[2]);
+        Assert.Equal(new PyInt(-10), row.Items[3]);
+        Assert.Equal(new PyInt(10), row.Items[4]);
+        Assert.Single((await StandingTransactionsAsync(fixture)).Items);
     }
 
     [PgFact]
@@ -160,12 +262,16 @@ public class MissionCompletionTransactionTests
     public async Task A_standing_write_that_fails_rolls_the_completion_back_and_the_mission_stays_accepted()
     {
         await using var fixture = await Fixture.CreateAsync();
+        var notifications = 0;
 
         await Assert.ThrowsAnyAsync<Exception>(() => CharacterServicesComposition.CompleteInTransactionAsync(fixture.Source, fixture.Store,
-            fixture.MissingRelations, fixture.Items, Pilot, Agent, Start + TimeSpan.FromHours(1), "complete:x6-fail", Gains, [], CancellationToken.None));
+            fixture.MissingRelations, fixture.Items, Pilot, Agent, Start + TimeSpan.FromHours(1), "complete:x6-fail", Gains, [], CancellationToken.None,
+            afterStandingCommit: _ => { notifications++; return Task.CompletedTask; }));
 
         Assert.Equal(AgentMissionState.Accepted, (await fixture.Store.ReadAsync(Pilot, Agent))!.State);
         Assert.Empty(await fixture.Store.ReadCompletedAsync(Pilot));
+        Assert.Equal(0, notifications);
+        Assert.Equal(0.0, await fixture.Relations.ValueAsync(RelationKinds.Standing.Name, Agent, Pilot, 0), 10);
     }
 
     [PgFact]
@@ -254,5 +360,23 @@ public class MissionCompletionTransactionTests
         Assert.False(done);
         Assert.Equal(AgentMissionState.Accepted, (await fixture.Store.ReadAsync(Pilot, Agent))!.State);
         Assert.Equal(0.0, await fixture.Relations.ValueAsync(RelationKinds.Standing.Name, Agent, Pilot, 0), 10);
+    }
+
+    private static async Task<PyList> StandingTransactionsAsync(Fixture fixture)
+    {
+        var readSide = new Eve.ReadSide.ReadSide(fixture.Source, new Dictionary<string, string> { ["relations"] = fixture.RelationSchema });
+        var service = new StandingMgrService(readSide, null!, () => Start.ToUnixTimeMilliseconds());
+        return Assert.IsType<PyList>(await ((IService)service).CallAsync(new ServiceCall
+        {
+            Method = "GetStandingTransactions",
+            Args = [new PyLong(Agent), new PyLong(Pilot)],
+            Session = new ClientSession { CharacterId = Pilot },
+        }));
+    }
+
+    private static PyValue KeyValField(PyValue value, string name)
+    {
+        var dictionary = Assert.IsType<PyDict>(Assert.IsType<PyObject>(value).Args);
+        return dictionary.Entries.Single(entry => Assert.IsType<PyStr>(entry.Key).Value == name).Value;
     }
 }

@@ -41,7 +41,8 @@ The original corporation ID is captured in the character tombstone migration bef
 - Mail consumers are `eve/client/script/ui/services/mail/mailSvc.py:1197-1206,1213-1219`, `notifications/common/formatters/newMail.py:17-18` (notification data keys `senderName`, `subject`, `msg`), and `eve/client/script/ui/services/mail/notificationSvc.py:403-416` (stores/processes received notification).
 - Implementation: `dotnet/src/Eve.Characters/Migrations/0022_character_deletion_corporation.sql`, `dotnet/src/Eve.Host/Composition/CharacterDeletionPurge.cs`, `dotnet/src/Eve.Host/Persistence/Mail/CharacterBiomassMailNotifications.cs`, and the existing wallet/mail/inventory/corporation owners.
 - Local builds passed: `Eve.Host` and `Eve.Host.Tests`, zero warnings and errors. After the latest code-bearing merge of `origin/main` at `bdce763e`, owner and adjacent PostgreSQL test classes passed on `eve_p8` via `tools/dev/db-lock.sh`: Host 462/462, Characters 2/2, Events 20/20, Corporations 113/113, Wallet 4/4 and Inventory 29/29; zero failures and skips.
-- At this check the newest completed main CI was run 1556 for `bdce763e0757`, all jobs green. Task Actions verification will be appended after it completes.
+- The initial task push's main CI run 1557 on `4c3141c9` exposed a stale migration-list expectation in `Home_station_cooldown_migration_preserves_existing_rows`. Commit `c270580d` added migration `0022_character_deletion_corporation` to that test's expected list; the focused PostgreSQL test passed 1/1 locally on `eve_p8` via `tools/dev/db-lock.sh`.
+- Selected Actions run 1356 for `c270580d` passed. Main CI run 1558 for `c270580de301` passed all jobs, including the headless end-to-end job; `ci-status.py failures c270580de301` reported no failed tests or jobs.
 - The graphical V24.01 client was not exercised.
 
 ## Current worktree

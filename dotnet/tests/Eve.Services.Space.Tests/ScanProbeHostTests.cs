@@ -579,11 +579,13 @@ public class ScanProbeHostTests
         var oid = await rig.BindBeyonceAsync(session);
         var before = rig.Sim.Heard.Count;
 
-        await rig.BeyonceCallWithAsync(session, "CmdWarpToStuff", oid, [new PyStr("scan"), new PyLong(ShipInSystem)], ("minRange", new PyInt(5_000)));
+        var answer = await rig.BeyonceCallWithAsync(session, "CmdWarpToStuff", oid, [new PyStr("scan"), new PyLong(ShipInSystem)], ("minRange", new PyInt(5_000)));
+        Assert.Equal(PyNone.Instance, answer);
 
         var warp = Assert.Single(rig.Sim.Heard.Skip(before).OfType<SimCommand>());
         Assert.Equal(SimCommands.WarpToPoint, warp.Code);
         Assert.Equal(new double[] { 0, 0, 0, 5_000 }, warp.Args.ToArray());
+        await WarpArrivalAssertions.AssertArrivalAllowsAnotherWarpAndDockAsync(rig, session, oid);
     }
 
     [PgFact]

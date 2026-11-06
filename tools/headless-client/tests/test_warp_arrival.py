@@ -13,7 +13,7 @@ import pytest
 from evecli.describe import buffer_bytes
 from evecli.observe import _set_state_fields, wait_quietly
 from tests import test_login_to_character as base
-from tests.test_undock import STATION, SYSTEM, actions_of, arrive
+from tests.test_undock import STATION, SYSTEM, actions_of, add_ball_slim, arrive, keyval, number
 from tests.test_warp import WARP, names
 
 pytestmark = [
@@ -44,14 +44,34 @@ def ego_ball(events, ship_id):
     raise AssertionError("no ego ball in SetState")
 
 
-def wait_for_warp_arrival(who, ballpark, target_id, ship_id):
-    who.call_bound(ballpark, "CmdWarpToStuff", "item", target_id, minRange=0)
+def wait_for_warp_arrival(who, ballpark, target_id, ship_id, *, kind="item", min_range=0, during_warp=None):
+    if kind == "autopilot":
+        who.call_bound(ballpark, "CmdWarpToStuffAutopilot", target_id)
+    else:
+        who.call_bound(ballpark, "CmdWarpToStuff", kind, target_id, minRange=min_range)
+    if during_warp is not None:
+        during_warp()
     events = wait_quietly(who, 150.0, lambda seen: any("Stop" in names(event) for event in seen))
     arrival = [event for event in events if names(event) == ["SetBallPosition", "SetBallVelocity", "SetSpeedFraction", "Stop"]]
     assert arrival, f"no complete warp arrival update for {target_id}"
     actions, _ = actions_of(arrival[-1])
     assert all(action[2]["$tuple"][0] in (ship_id, {"$long": ship_id}) for action in actions)
     return events
+
+
+def gate_ids(events):
+    gates = set()
+    for event in events:
+        if event.get("name") != "DoDestinyUpdate":
+            continue
+        for _, name, args in actions_of(event)[0]:
+            if name != "AddBalls2":
+                continue
+            for entry in args["$tuple"][0]["$tuple"][1]:
+                fields = keyval(add_ball_slim(entry))
+                if number(fields.get("groupID", 0)) == 10:
+                    gates.add(number(fields["itemID"]))
+    return gates
 
 
 def stop_simulation(pid):
@@ -122,11 +142,47 @@ def test_undock_align_warp_arrival_and_next_order():
         assert math.sqrt(sum(v * v for v in landed[2])) < 1.0
         assert landed[4] == 0.0
 
+        point = {"x": landed[2][0] + 1_000_000, "y": landed[2][1], "z": landed[2][2]}
+        wait_for_warp_arrival(who, ballpark, point, ship_id, kind="position", min_range=25_000)
+        who.call_bound(ballpark, "UpdateStateRequest")
+        positioned = ego_ball(wait_quietly(who, 2.0), ship_id)
+        distance = math.dist(positioned[2], (point["x"], point["y"], point["z"]))
+        assert distance == pytest.approx(25_000, abs=1_000), distance
+
         wait_for_warp_arrival(who, ballpark, STATION, ship_id)
         who.call_bound(ballpark, "CmdDock", STATION)
         docked = wait_quietly(who, 15.0, lambda seen: any(event["name"] == "$sessionchange" for event in seen))
         assert any(event["name"] == "$sessionchange" for event in docked), docked
         assert all(names(e) for e in bind_events if e["name"] == "DoDestinyUpdate"), bind_events
+
+
+@pytest.mark.timeout(600)
+def test_autopilot_warp_to_a_gate_arrives_then_accepts_another_warp_and_dock():
+    race = WARP["races"][0]
+    with base.connect(f"walk-warp-gate-{uuid.uuid4().hex[:10]}", timeout=120.0) as who:
+        _, ship_id, _, _ = arrive(who, race, uuid.uuid4().hex[:10])
+        ship = who.call("ship", "MachoBindObject", (STATION, 15), None)
+        wait_quietly(who, 0.5)
+        who.call_bound(ship[0], "Undock", ship_id, False)
+        wait_quietly(who, 2.0)
+        ballpark = who.call("beyonce", "MachoBindObject", SYSTEM, None)[0]
+        bind_events = wait_quietly(who, 2.5)
+        initial = ego_ball(bind_events, ship_id)
+        gates = gate_ids(bind_events)
+        assert gates, "the bound system state contains no stargate ball"
+        gate = max(gates, key=lambda item: math.dist(ego_ball(bind_events, item)[2], initial[2]))
+        gate_position = ego_ball(bind_events, gate)[2]
+        assert math.dist(gate_position, initial[2]) > 150_000
+
+        def stop_and_align_during_warp():
+            who.call_bound(ballpark, "CmdStop")
+            who.call_bound(ballpark, "CmdAlignTo", gate)
+
+        wait_for_warp_arrival(who, ballpark, gate, ship_id, kind="autopilot", during_warp=stop_and_align_during_warp)
+        wait_for_warp_arrival(who, ballpark, STATION, ship_id)
+        who.call_bound(ballpark, "CmdDock", STATION)
+        docked = wait_quietly(who, 15.0, lambda seen: any(event["name"] == "$sessionchange" for event in seen))
+        assert any(event["name"] == "$sessionchange" for event in docked), docked
 
 
 def test_sim_link_loss_during_warp_reconnects_and_accepts_warp_and_dock():

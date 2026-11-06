@@ -98,6 +98,10 @@ public static class AccessRules
     public static bool CanSee(MembershipType role, AccessGroup group) =>
         role is MembershipType.Admin or MembershipType.Manager || (group.CorpBuiltIn && role == MembershipType.Member);
 
+    /// <summary>A character with an effective group role may read its summary.</summary>
+    public static bool CanReadSummary(MembershipType role) =>
+        role is MembershipType.Member or MembershipType.Manager or MembershipType.Admin;
+
     /// <summary>Admins and managers manage a list: its members, its logs, the entries.</summary>
     public static bool CanManage(MembershipType role) => role is MembershipType.Admin or MembershipType.Manager;
 

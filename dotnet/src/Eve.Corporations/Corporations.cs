@@ -74,10 +74,8 @@ public static class CorporationRoles
         accountKey is >= 1000 and <= 1006 &&
         (roles.AtAll & (Director | WalletTakeRole(accountKey))) != 0;
     public static bool CanReadWalletDivision(long roles, int? accountKey) =>
-        (roles & (Accountant | JuniorAccountant)) != 0 ||
+        (roles & (Director | Accountant | JuniorAccountant)) != 0 ||
         accountKey is { } key && key is >= 1000 and <= 1006 && (roles & WalletTakeRole(key)) != 0;
-    public static bool CanReadWalletBalanceChange(long roles, int accountKey) =>
-        accountKey is >= 1000 and <= 1006 && (roles & (Director | WalletTakeRole(accountKey))) != 0;
     private static long Effective(long direct, long allowed, IEnumerable<long> titles, long? titleAllowed = null)
     {
         if (!IsKnown(direct, allowed)) return 0;

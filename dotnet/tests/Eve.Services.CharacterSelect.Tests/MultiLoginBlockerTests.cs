@@ -3,7 +3,7 @@ using Eve.Services;
 
 namespace Eve.Services.CharacterSelect.Tests;
 
-/// <summary>The SSO multi-login check: an Alpha account and another account on the same computer are refused; the rest are allowed.</summary>
+/// <summary>The SSO multi-login check resolves current clone grades and atomically admits accounts per computer.</summary>
 public class MultiLoginBlockerTests
 {
     private const long Alpha = MultiLoginBlockerService.CloneGradeAlpha;
@@ -19,6 +19,23 @@ public class MultiLoginBlockerTests
     private static async ValueTask<PyValue> LoginAsync(MultiLoginBlockerService service, ClientSession session, string hash) =>
         await ((IService)service).CallAsync(new ServiceCall { Method = "Login", Args = [new PyStr(hash)], Session = session });
 
+    private static async Task<PyValue[]> ConcurrentLoginsAsync(
+        MultiLoginBlockerService service,
+        params (ClientSession Session, string Hash)[] attempts)
+    {
+        using var ready = new Barrier(attempts.Length);
+        var calls = attempts.Select(attempt => Task.Factory.StartNew(
+            async () =>
+            {
+                ready.SignalAndWait();
+                return await LoginAsync(service, attempt.Session, attempt.Hash);
+            },
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default).Unwrap());
+        return await Task.WhenAll(calls);
+    }
+
     private static MultiLoginBlockerService Grades(Dictionary<long, long> gradeByAccount) =>
         new(session => gradeByAccount.GetValueOrDefault(session.UserId ?? 0, Omega));
 
@@ -32,13 +49,47 @@ public class MultiLoginBlockerTests
     }
 
     [Fact]
-    public async Task Two_omega_accounts_on_one_computer_are_both_allowed()
+    public async Task Concurrent_omega_accounts_on_one_computer_are_both_allowed()
     {
         var service = Grades(new() { [1] = Omega, [2] = Omega });
 
-        Assert.Equal(PyBool.True, await LoginAsync(service, SessionOf(1, 10), "ABC"));
-        Assert.Equal(PyBool.True, await LoginAsync(service, SessionOf(2, 20), "abc "));
+        var replies = await ConcurrentLoginsAsync(
+            service,
+            (SessionOf(1, 10), "ABC"),
+            (SessionOf(2, 20), "abc "));
+
+        Assert.All(replies, reply => Assert.Equal(PyBool.True, reply));
         Assert.Equal(2, service.Count);
+    }
+
+    [Fact]
+    public async Task Concurrent_alpha_accounts_on_one_computer_allow_exactly_one()
+    {
+        var service = Grades(new() { [1] = Alpha, [2] = Alpha });
+
+        var replies = await ConcurrentLoginsAsync(
+            service,
+            (SessionOf(1, 10), "hash"),
+            (SessionOf(2, 20), "hash"));
+
+        Assert.Equal(1, replies.Count(reply => reply == PyBool.True));
+        Assert.Equal(1, replies.Count(reply => reply == PyBool.False));
+        Assert.Equal(1, service.Count);
+    }
+
+    [Fact]
+    public async Task Concurrent_alpha_and_omega_accounts_on_one_computer_allow_exactly_one()
+    {
+        var service = Grades(new() { [1] = Alpha, [2] = Omega });
+
+        var replies = await ConcurrentLoginsAsync(
+            service,
+            (SessionOf(1, 10), "hash"),
+            (SessionOf(2, 20), "hash"));
+
+        Assert.Equal(1, replies.Count(reply => reply == PyBool.True));
+        Assert.Equal(1, replies.Count(reply => reply == PyBool.False));
+        Assert.Equal(1, service.Count);
     }
 
     [Fact]
@@ -67,6 +118,20 @@ public class MultiLoginBlockerTests
 
         Assert.Equal(PyBool.True, await LoginAsync(service, SessionOf(1, 11), "hash"));
         Assert.Equal(PyBool.True, await LoginAsync(service, SessionOf(2, 20), "another"));
+    }
+
+    [Fact]
+    public async Task An_existing_alpha_session_stops_blocking_after_its_account_becomes_omega()
+    {
+        var gradeByAccount = new Dictionary<long, long> { [1] = Alpha, [2] = Omega };
+        var service = Grades(gradeByAccount);
+        var existing = SessionOf(1, 10);
+        Assert.Equal(PyBool.True, await LoginAsync(service, existing, "hash"));
+
+        gradeByAccount[1] = Omega;
+
+        Assert.Equal(PyBool.True, await LoginAsync(service, SessionOf(2, 20), "hash"));
+        Assert.Equal(2, service.Count);
     }
 
     [Fact]

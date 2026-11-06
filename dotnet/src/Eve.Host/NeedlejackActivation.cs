@@ -225,6 +225,8 @@ public sealed class NeedlejackActivation(
             errors.Add(Error(21));
             return (null, [], errors);
         }
+        if (spaceSessions.IsCloaked(activator))
+            errors.Add(Error(15, new PyLong(characterId)));
         if (spaceSessions.Transitions.SessionChangeActive((ulong)activator.SessionId))
             errors.Add(Error(10, new PyLong(characterId)));
         if (spaceSessions.IsWarping(activator))
@@ -273,6 +275,8 @@ public sealed class NeedlejackActivation(
             if (position is not { } shipPosition || shipPosition.SolarSystemId != systemId ||
                 Distance(anchor.X, anchor.Y, anchor.Z, shipPosition.X, shipPosition.Y, shipPosition.Z) > FleetLinkMeters)
                 continue;
+            if (member.CharacterId != characterId && spaceSessions.IsCloaked(pilotSession))
+                errors.Add(Error(15, new PyLong(member.CharacterId)));
             var shipTypeId = spaceSessions.ShipTypeIdOf(pilotSession);
             if (shipTypeId is not { } hullTypeId)
             {

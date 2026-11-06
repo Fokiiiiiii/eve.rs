@@ -2223,6 +2223,7 @@ public class SpaceServiceTests
 
         Assert.Equal(activationCount + 1, rig.Sim.Heard.OfType<SimActivate>().Count());
         Assert.DoesNotContain(Events.Of(session), e => e.Name is "OnJumpCloakCancelled" or "OnInvulnCancelled");
+        Assert.True(rig.Space.IsCloaked(session));
     }
 
     [PgFact]
@@ -2244,6 +2245,7 @@ public class SpaceServiceTests
         await rig.Space.ActivateAsync(session, gun, "targetAttack", 1, 1, CancellationToken.None);
 
         Assert.Equal(["OnJumpCloakCancelled", "OnInvulnCancelled"], Events.Of(session).Select(e => e.Name));
+        Assert.False(rig.Space.IsCloaked(session));
     }
 
     [PgFact]
@@ -2266,6 +2268,7 @@ public class SpaceServiceTests
         await rig.Space.ActivateAsync(session, gun, "targetAttack", 1, 1, CancellationToken.None);
 
         Assert.Empty(Events.Of(session));
+        Assert.True(rig.Space.IsCloaked(session));
     }
 
     [PgFact]

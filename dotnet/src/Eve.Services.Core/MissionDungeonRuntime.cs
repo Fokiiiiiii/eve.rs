@@ -141,7 +141,7 @@ public sealed record MissionAgentPlace(long SolarSystemId, long CorporationId, l
 
 
 /// </summary>
-public sealed record MissionStandingGain(long EntityId, double Amount, bool Diminishing)
+public sealed record MissionStandingGain(long EntityId, double Amount, bool Diminishing, string Message = "Agent mission standing")
 {
     public double DeltaFrom(double current) => Diminishing ? (10 - current) * Amount : Amount;
 }
@@ -400,11 +400,12 @@ public sealed class MissionDungeonRuntime(
             }
         }
 
-        var gains = mission.ExtraStandings.Select(item => new MissionStandingGain(item.Id, item.Value / 10, false)).ToList();
+        var standingMessage = string.IsNullOrWhiteSpace(mission.NameEn) ? "Agent mission standing" : mission.NameEn;
+        var gains = mission.ExtraStandings.Select(item => new MissionStandingGain(item.Id, item.Value / 10, false, standingMessage)).ToList();
         if (gains.Count == 0 && basic is not null && place is not null)
         {
-            gains.Add(new MissionStandingGain(record.AgentId, basic.AgentIncrease, true));
-            gains.Add(new MissionStandingGain(place.CorporationId, basic.CorporationIncrease, true));
+            gains.Add(new MissionStandingGain(record.AgentId, basic.AgentIncrease, true, standingMessage));
+            gains.Add(new MissionStandingGain(place.CorporationId, basic.CorporationIncrease, true, standingMessage));
         }
         var lp = 0L;
         var issuerCorporationId = place?.CorporationId ?? 0;

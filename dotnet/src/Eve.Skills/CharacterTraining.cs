@@ -434,18 +434,17 @@ public sealed class CharacterTraining(
         try
         {
             await gate.Semaphore.WaitAsync(cancellationToken);
-            TrainingUpdate? update;
             try
             {
-                update = await SettleCoreAsync(characterId, accountId, maxFinished, atFileTime, bonusAtFileTime, cancellationToken);
+                var update = await SettleCoreAsync(characterId, accountId, maxFinished, atFileTime, bonusAtFileTime, cancellationToken);
+                if (update is not null)
+                    await RaiseSettledAsync(update);
+                return update;
             }
             finally
             {
                 gate.Semaphore.Release();
             }
-            if (update is not null)
-                await RaiseSettledAsync(update);
-            return update;
         }
         finally
         {

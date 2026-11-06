@@ -343,7 +343,6 @@ public sealed class NeedlejackActivationHostTests
         var session = await rig.ConnectPublic(run);
         var sessionClosed = false;
         session.Closed += () => sessionClosed = true;
-        var sourceSystemId = session.GetInt("solarsystemid");
         var characterId = run.Data.CreatorCharacterId;
         var filamentTypeId = await FilamentTypeAsync(rig, fixture.Dogma, 0);
         var filamentId = await CreateFilamentAsync(rig, characterId, run.Data.CreatorShipId, filamentTypeId, 2);
@@ -356,19 +355,28 @@ public sealed class NeedlejackActivationHostTests
 
         var call = ActivateCall(session, filamentId, 45);
         rig.Simulator.DropNextPublicMoveReply = true;
-        var lostReply = await Assert.ThrowsAsync<MachoWrappedException>(() =>
-            fixture.Service.CallAsync(call).AsTask());
-        AssertErrorCode(lostReply, 22);
+        PyValue? activationResult = null;
+        var activationFailure = await Record.ExceptionAsync(async () => activationResult = await fixture.Service.CallAsync(call));
+        Assert.True(activationFailure is null,
+            $"activation failed after commit: {activationFailure}; source={rig.Space.SolarSystemOf(session)}; " +
+            $"session={session.GetInt("solarsystemid")}; problems={string.Join(" | ", rig.Problems)}");
+        Assert.Equal(PyNone.Instance, activationResult);
         Assert.Equal(1, (await rig.Items.GetAsync(filamentId))!.Quantity);
-        Assert.Equal(sourceSystemId, session.GetInt("solarsystemid"));
         Assert.True(!sessionClosed, "The public session closed after a lost simulation reply.");
-        Assert.Null(rig.Space.SolarSystemOf(session));
+
         var committedDestination = await ActivationDestinationAsync(rig);
         var committedShip = (await rig.Items.GetAsync(run.Data.CreatorShipId))!;
         var committedCharacter = (await rig.Characters.GetAsync(characterId))!;
         Assert.Equal((committedDestination, committedDestination), (committedShip.LocationId, committedCharacter.SolarSystemId));
+        await rig.Space.QuiesceAsync();
         Assert.False(rig.Simulator.DropNextPublicMoveReply);
-        Assert.Single(fixture.Simulation!.Moves);
+        var moves = fixture.Simulation!.Moves.ToArray();
+        Assert.Equal(2, moves.Length);
+        Assert.Equal(moves[0].OperationId, moves[1].OperationId);
+        Assert.Equal(committedDestination, moves[0].Destination.LocationId);
+        Assert.Equal(moves[0].Destination, moves[1].Destination);
+        Assert.Equal(committedDestination, session.GetInt("solarsystemid"));
+        Assert.Equal(committedDestination, rig.Space.SolarSystemOf(session));
         var snapshot = await rig.Ships.LoadAsync(characterId);
         Assert.NotNull(snapshot);
         Assert.Equal((committedDestination, CharacterShips.InSpaceFlag), (snapshot.Ship.LocationId, snapshot.Ship.Flag));

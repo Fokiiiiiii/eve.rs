@@ -1599,8 +1599,12 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
 - **`multiLoginBlocker.Login` checks the computer.** The reference answers True unless `EVE_ENFORCE_ALPHA_MULTILOGIN` is set  (`multiLoginBlockerService.js:87-90`, off by default). eve.rs enforces the Alpha rule without a switch: a session is refused when
   another account on the same computer hash is logged in and either account is Alpha. Reason: the clone grades here are real
   (`SubscriptionMgrService` reads each account's stored Omega end time), so the rule can apply, and the brief requires real behaviour
-  where the constant True was. The computer hash exists only on the SSO path (see "Single sign-on login"), so the client calls
-  `Login` only after SSO has been built. Status: decided (slice C); tests `MultiLoginBlockerTests`.
+  where the constant True was. Host routes this to `MultiLoginBlockerService` with the shared clone-grade source (`CoreRpc.cs:55-57,96`);
+  each admission re-reads conflicting sessions' grades from `identity.accounts.subscription_end_at` inside the serialized check/register
+  section (`AccountOmegaStore.cs:16-25`, `PgAccountDirectory.cs:81-88`). This preserves the immediate Alpha-to-Omega change described by
+  the [Omega clone rules](https://wiki.eveuniversity.org/Omega_clone) and avoids retaining a stale grade snapshot. The computer hash exists
+  only on the SSO path (see "Single sign-on login"), so the client calls `Login` only after SSO has been built. The bool response remains
+  unchanged. Tests: `MultiLoginBlockerTests`.
 - **`ToggleValidation` is per session and role-gated.** Same rule as the reference (`charService.js:1883-1902`): the content,
   QA, programmer and GML roles may switch the flag; every other session stays on. The flag is not saved, and nothing reads it
   (the reference does not read it either). Replaces a constant False, which a non-elevated client showed as "Validation Off" while

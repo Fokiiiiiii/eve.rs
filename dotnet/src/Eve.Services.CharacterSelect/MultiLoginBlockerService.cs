@@ -7,8 +7,8 @@ namespace Eve.Services.CharacterSelect;
 /// <summary>
 /// The multi-login check of the SSO login: <c>multiLoginBlocker.Login(computerHash)</c>, which the client calls before it opens
 /// a character (characterSelection.py _CanLogin; only when the login carries a computer hash). A session that asks is recorded
-/// with its account, its computer hash and its clone grade. The answer is False when another account is logged in from the
-/// share a computer. A session that closes is forgotten.
+/// with its account and computer hash. Each admission resolves the current clone grades of conflicting accounts. The answer is
+/// False when another account on that computer is Alpha or the requesting account is Alpha. A session that closes is forgotten.
 /// </summary>
 [Service("multiLoginBlocker")]
 public sealed partial class MultiLoginBlockerService(Func<ClientSession, long>? cloneGradeOf = null)
@@ -17,8 +17,9 @@ public sealed partial class MultiLoginBlockerService(Func<ClientSession, long>? 
     public const long CloneGradeAlpha = 0;
 
     private readonly ConcurrentDictionary<long, LoggedIn> _logins = new();
+    private readonly object _admissionGate = new();
 
-    private sealed record LoggedIn(ClientSession Session, long AccountId, string ComputerHash, long CloneGrade);
+    private sealed record LoggedIn(ClientSession Session, long AccountId, string ComputerHash);
 
     /// <summary>The logins the service knows of, by session id (the sessions that asked and have not closed).</summary>
     public int Count => _logins.Count;
@@ -32,18 +33,21 @@ public sealed partial class MultiLoginBlockerService(Func<ClientSession, long>? 
 
         var session = call.Session;
         var accountId = session.UserId ?? 0;
-        var grade = cloneGradeOf?.Invoke(session) ?? 1;
-        var conflict = _logins.Values.Any(other =>
-            other.Session != session
-            && other.AccountId != accountId
-            && other.ComputerHash == hash
-            && (grade == CloneGradeAlpha || other.CloneGrade == CloneGradeAlpha));
-        if (conflict)
-            return PyBool.False;
+        lock (_admissionGate)
+        {
+            var grade = cloneGradeOf?.Invoke(session) ?? 1;
+            var conflict = _logins.Values.Any(other =>
+                other.Session != session
+                && other.AccountId != accountId
+                && other.ComputerHash == hash
+                && (grade == CloneGradeAlpha || (cloneGradeOf?.Invoke(other.Session) ?? 1) == CloneGradeAlpha));
+            if (conflict)
+                return PyBool.False;
 
-        if (!_logins.ContainsKey(session.SessionId))
-            session.Closed += () => _logins.TryRemove(session.SessionId, out _);
-        _logins[session.SessionId] = new LoggedIn(session, accountId, hash, grade);
+            if (!_logins.ContainsKey(session.SessionId))
+                session.Closed += () => _logins.TryRemove(session.SessionId, out _);
+            _logins[session.SessionId] = new LoggedIn(session, accountId, hash);
+        }
         return PyBool.True;
     }
 

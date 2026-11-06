@@ -344,7 +344,7 @@ Each item was checked in source; the test names are those found by search. Items
 
 ### 7.2 Verification record
 
-- After final merge of `origin/main` at `bdce763e`, CX8 owner and adjacent Host/PostgreSQL classes passed on `eve_p8` through `tools/dev/db-lock.sh`: Host 462/462, Characters 2/2, Events 20/20, Corporations 113/113, Wallet 4/4 and Inventory 29/29; zero failures and skips. The Host test run compiled `Eve.Host` and `Eve.Host.Tests`. The latest completed main CI at this check was run 1556 on `bdce763e`, all jobs green. The CX8 handoff records evidence and Actions follow-up.
+- After the latest code-bearing merge of `origin/main` at `bdce763e`, CX8 owner and adjacent Host/PostgreSQL classes passed on `eve_p8` through `tools/dev/db-lock.sh`: Host 462/462, Characters 2/2, Events 20/20, Corporations 113/113, Wallet 4/4 and Inventory 29/29; zero failures and skips. The Host test run compiled `Eve.Host` and `Eve.Host.Tests`. The latest completed main CI at this check was run 1556 on `bdce763e`, all jobs green. The CX8 handoff records evidence and Actions follow-up.
 - Local Rust checks for the Destiny wreck-stamp fix passed: the focused `eve-space` regression (1/1), `cargo check -p eve-space`, `cargo +1.94.1 fmt --all -- --check`, and workspace clippy.
 - The graphical V24.01 client was not used. Active-season challenge progress and reward behavior, non-character target-group delivery, and achievement reward claims remain partial for the sources and Host-wiring reasons listed above.
 - CH-23 selected Actions results and final package outcomes are added here after the current-tree runs finish.

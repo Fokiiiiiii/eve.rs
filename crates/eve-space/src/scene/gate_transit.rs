@@ -116,6 +116,20 @@ mod tests {
         }
     }
 
+    fn action_names(out: &Out) -> Vec<String> {
+        let Out::Notify { name: "DoDestinyUpdate", args, .. } = out else { return Vec::new() };
+        let Some(Value::List(actions)) = args.first() else { return Vec::new() };
+        actions
+            .iter()
+            .filter_map(|action| {
+                let Value::Tuple(entry) = action else { return None };
+                let Value::Tuple(call) = &entry[1] else { return None };
+                let Value::Str(name) = &call[0] else { return None };
+                Some(name.to_string())
+            })
+            .collect()
+    }
+
     #[test]
     fn a_warp_to_a_placed_gate_starts_and_is_not_refused_as_a_missing_target() {
         // the pilot warps to its room's gate (CmdWarpToStuff): the gate is a deployable ball, so the warp finds it and starts
@@ -146,14 +160,49 @@ mod tests {
             !out.iter().any(|o| matches!(o, Out::Refused { .. })),
             "the warp to the gate is refused: {out:?}"
         );
+        for command in [Command::Stop, Command::AlignTo { target_id: GATE }] {
+            let interrupted = scene.command(SESSION, command, now);
+            assert!(
+                matches!(interrupted.as_slice(), [Out::Refused { reason: "IN_WARP", .. }]),
+                "a stop or align during warp does not interrupt the flight: {interrupted:?}"
+            );
+            assert!(scene.pilots[&SESSION].flight.is_some(), "the warp continues after the refused order");
+        }
+        let mut arrival = None;
         for _ in 0..60 {
             now += crate::scene::TICKS_PER_SECOND;
-            scene.update_state(SESSION, now);
+            let update = scene.update_state(SESSION, now);
+            arrival = update.iter().find_map(|out| {
+                let names = action_names(out);
+                names.contains(&"Stop".to_string()).then_some(names)
+            });
+            if arrival.is_some() {
+                break;
+            }
         }
+        assert_eq!(
+            arrival,
+            Some(vec![
+                "SetBallPosition".to_string(),
+                "SetBallVelocity".to_string(),
+                "SetSpeedFraction".to_string(),
+                "Stop".to_string(),
+            ])
+        );
         let at = scene.pilots[&SESSION].ship.position;
         let distance = ((at.x - gate.x).powi(2) + (at.y - gate.y).powi(2) + (at.z - gate.z).powi(2)).sqrt();
         assert!(scene.pilots[&SESSION].flight.is_none(), "the warp is over");
         assert!(distance < 1_000.0, "the pilot is {distance:.0} m from the gate after the warp");
+
+        let next = scene.command(
+            SESSION,
+            Command::WarpToPoint { destination: Vec3::new(at.x + 200_000.0, at.y, at.z), range: 0.0 },
+            now,
+        );
+        assert!(
+            next.iter().any(|out| matches!(out, Out::Accepted { .. })),
+            "a second warp is accepted: {next:?}"
+        );
     }
 
     #[test]

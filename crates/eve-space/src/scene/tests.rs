@@ -1195,6 +1195,35 @@ fn a_warp_to_an_arbitrary_coordinate_uses_the_supplied_point() {
 }
 
 #[test]
+fn a_short_coordinate_warp_stops_at_the_requested_range() {
+    let mut scene = scene_with_a_planet();
+    let origin = scene.ship(SESSION, NOON).unwrap().position;
+    let destination = Vec3::new(origin.x + 1_000_000.0, origin.y, origin.z);
+    let range = 25_000.0;
+    let start = NOON + seconds(1);
+
+    let told = scene.command(SESSION, Command::WarpToPoint { destination, range }, start);
+    assert!(matches!(told.last(), Some(Out::Accepted { command: 21, .. })));
+
+    let mut at = start;
+    for _ in 0..2_400 {
+        at += 2_500_000;
+        scene.poll(at);
+        if scene.ship(SESSION, at).is_some_and(|ship| ship.course == Course::Stop) {
+            break;
+        }
+    }
+
+    let ship = scene.ship(SESSION, at).unwrap();
+    let distance = ((destination.x - ship.position.x).powi(2)
+        + (destination.y - ship.position.y).powi(2)
+        + (destination.z - ship.position.z).powi(2))
+    .sqrt();
+    assert_eq!(ship.course, Course::Stop);
+    assert!((distance - range).abs() < 1_000.0, "stopped {distance}m from the destination");
+}
+
+#[test]
 fn a_warp_range_cannot_extend_past_the_destination() {
     let mut scene = scene_with_a_planet();
     scene.pilots.get_mut(&SESSION).unwrap().ship.position = Vec3::new(1_000_000.0, 0.0, 0.0);

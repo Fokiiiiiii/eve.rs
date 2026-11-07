@@ -290,7 +290,7 @@ internal static class HostComposition
             foreach (var (name, handler) in PublicGateway.ShipSkinrGateway.DraftHandlers(source, skinrStore, skinrCatalog, skinrSkills, skinrSkillTypeIds))
                 gateway[name] = handler;
             Eve.Host.PublicGateway.ShipSkinrSequenceJobs.Register(foundations.Scheduler, skinrStore, foundations.Events);
-            Eve.Host.PublicGateway.ShipSkinrNoticeHandlers.Register(foundations.Events, notices);
+            Eve.Host.PublicGateway.ShipSkinrNoticeHandlers.Register(foundations.Events, foundations.Scheduler, notices);
             var skinrWallets = new Eve.Wallet.PgWalletStore(source, Env("EVE_WALLET_SCHEMA", Eve.Wallet.PgWalletStore.DefaultSchema));
             var skinrSessions = characterSessions ?? new CharacterSessions();
             var skinrGateway = new PublicGateway.ShipSkinrSequencingGateway(source, skinrStore, skinrCatalog,

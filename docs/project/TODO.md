@@ -2,6 +2,8 @@
 
 ## Project status
 
+EventBus audit r14 findings, SKINR notice delivery recovery, and EventBus option validation are recorded in [audit-fixes-events.md](audit-fixes-events.md).
+
 PvP Filament catalog and queue admission are wired from the matching V24.01 static schedules and Host state. The catalog currently contains 88 CCP schedules; this build has no active/future CCP schedule. See [the CX7 handoff](character-phase/handoff-pvp-filaments-cx7.md) for source hashes, V24.01 callsites, regressions, and the graphical-client check.
 
 Cross-system headless walk coverage and remaining integration gaps are tracked in [WALKS.md](WALKS.md).

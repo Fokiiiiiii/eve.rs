@@ -13,6 +13,7 @@ public partial class HostServerTests
         var events = new PyDict([new(new PyInt(7001), new PyList([
             new PyList(Enumerable.Repeat<PyValue>(PyNone.Instance, 12).ToArray()),
         ]))]);
+        var submittedReports = new List<InGameReportSubmission>();
         var campaign = new InsurgencyCampaignSnapshot(
             10, Py.FileTimeFromUnixMs(FixedNowMs + 60_000), 500012, 7000001, [30000142, 30000143], 7,
             1000, 250, 90000001, 3, 30000141, 500);
@@ -25,6 +26,11 @@ public partial class HostServerTests
             {
                 session.Set("charid", new PyInt(42));
                 session.Set("solarsystemid2", new PyInt(30000142));
+            },
+            submitInGameReport: (report, _) =>
+            {
+                submittedReports.Add(report);
+                return ValueTask.CompletedTask;
             });
         var front = await Handshaken(await ConnectAsync());
         var open = Open();
@@ -67,6 +73,13 @@ public partial class HostServerTests
         uint correlationId = 3;
         foreach (var (method, args) in reportMethods)
             Assert.Same(PyNone.Instance, await Call(correlationId++, "ingamereport", method, args));
+        Assert.Equal(reportMethods.Select(report => report.Method), submittedReports.Select(report => report.MethodName));
+        Assert.Equal(42L, submittedReports[0].ReporterCharacterId);
+        Assert.Equal(9001L, submittedReports[0].TargetCharacterId);
+        Assert.Equal("reason", submittedReports[0].Comments);
+        Assert.Equal("time", submittedReports[0].ChatTime);
+        Assert.Equal("channel", submittedReports[0].ChatChannel);
+        Assert.Equal("chat", submittedReports[0].ChatContent);
 
         var all = Assert.IsType<PyList>(await Call(correlationId++, "insurgencySolarsystem", "GetAllVisibleCampaigns"));
         var snapshot = Assert.IsType<PyObjectEx>(Assert.Single(all.Items));

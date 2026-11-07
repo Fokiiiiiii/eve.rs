@@ -91,6 +91,7 @@ internal static class HostComposition
         Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? readCurrentCalendarGroups = null;
         Func<long, long, CancellationToken, ValueTask<bool>>? isCharacterInCurrentCorporation = null;
         NpgsqlDataSource? dataSource = null; // owned by the runtime: shut down with it, so its pooled connections return to the server
+        Eve.Host.Persistence.PersistenceInGameReportStore? inGameReportStore = null;
         Eve.Host.Persistence.PgAccruedTimeStore? accruedTimeStore = null;
         Eve.Host.Persistence.RaffleProxyStore? raffleProxyStore = null;
         Eve.Host.Xmpp.XmppMotdStore? xmppMotdStore = null;
@@ -103,6 +104,9 @@ internal static class HostComposition
         {
             var schema = Env("EVE_IDENTITY_SCHEMA", PgAccountDirectory.DefaultSchema);
             var source = dataSource = NpgsqlDataSource.Create(PgConnection.ToConnectionString(pgUrl));
+            var supportSchema = Env("EVE_SUPPORT_SCHEMA", Eve.Host.Persistence.PersistenceInGameReportStore.DefaultSchema);
+            await Eve.Host.Persistence.PersistenceInGameReportStore.MigrateAsync(source, supportSchema);
+            inGameReportStore = new Eve.Host.Persistence.PersistenceInGameReportStore(source, supportSchema);
             accruedTimeStore = new Eve.Host.Persistence.PgAccruedTimeStore(source, Env("EVE_LOGIN_SCHEMA", schema));
             await accruedTimeStore.MigrateAsync();
             var contractSchema = Env("EVE_CONTRACTS_SCHEMA", Eve.Host.Persistence.PersistenceContractReadModel.DefaultSchema);
@@ -433,6 +437,7 @@ internal static class HostComposition
             readJumpTimers: readJumpTimers,
             readDynamicBounty: readDynamicBounty,
             readNonDiminishingInjections: readNonDiminishingInjections,
+            submitInGameReport: inGameReportStore is { } reportStore ? reportStore.SubmitAsync : null,
             keeperRpcCallbacks: keeperRpcCallbacks,
             superWeaponRpcCallbacks: superWeaponCallbacks,
             tourneyQueryCallback: tourneyQueryCallback,

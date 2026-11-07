@@ -43,10 +43,15 @@ internal sealed partial class CharacterServicesComposition
         var industryMonitor = new IndustryMonitorRpcService(mailCache, items, nowUnixMs: now, itemTypes: itemTypes,
             authorizedInputLocation: HostInventoryServiceFactory.IndustryMonitorLocationOf(
                 items, itemTypes, corporations, corporationOfficeStore));
-        var inventoryBroker = new IndustryInventoryChangePublisher(
-            WithCustoms(HostInventoryServiceFactory.CreateInvBroker(items, itemTypes, stations, ships, dogma, now, spaceContainers, spaceDrones, corporations, characterEntryHooks,
-                controlledStructureInventory: structureControlReadModel.InventoryAsync, officeStore: corporationOfficeStore)),
-            industryMonitor);
+        marketInventoryBroker = WithCustoms(HostInventoryServiceFactory.CreateInvBroker(items, itemTypes, stations, ships, dogma, now,
+            spaceContainers, spaceDrones, corporations, characterEntryHooks,
+            controlledStructureInventory: structureControlReadModel.InventoryAsync,
+            crystalDamage: async (itemIds, token) => (await modules.ModuleConditionsAsync(itemIds, token))
+                .ToDictionary(entry => entry.Key, entry => entry.Value.Damage),
+            officeStore: corporationOfficeStore,
+            capsuleerDeliveriesAccess: HostInventoryServiceFactory.CapsuleerDeliveriesAccessOf(corporations),
+            characterSessions: characterSessions));
+        var inventoryBroker = new IndustryInventoryChangePublisher(marketInventoryBroker, industryMonitor);
 
         return
         [

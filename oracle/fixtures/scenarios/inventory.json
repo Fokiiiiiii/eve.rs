@@ -2,7 +2,7 @@
  "reference": "EVE.js",
  "referenceCommit": "b637d2a",
  "recordedAt": "2026-10-01T13:48:14Z",
- "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py",
+ "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py; ListByFlags wire shapes reconciled to EVE.js 261028.1 source on 2026-11-07.",
  "races": [
   {
    "bloodlineID": 1,
@@ -251,23 +251,38 @@
          }
         ]
        ],
-       "ok": [
-        {
-         "$row": {
-          "itemID": 9988400002924,
-          "typeID": 601,
-          "ownerID": 140000427,
-          "locationID": 60015249,
-          "flagID": 4,
-          "quantity": -1,
-          "groupID": 237,
-          "categoryID": 6,
-          "customInfo": "",
-          "stacksize": 1,
-          "singleton": 1
-         }
-        }
-       ]
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            [
+             {
+              "$row": {
+               "itemID": 9988400002924,
+               "typeID": 601,
+               "ownerID": 140000427,
+               "locationID": 60015249,
+               "flagID": 4,
+               "quantity": -1,
+               "groupID": 237,
+               "categoryID": 6,
+               "customInfo": "",
+               "stacksize": 1,
+               "singleton": 1
+              }
+             }
+            ]
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
       },
       {
        "call": [
@@ -566,23 +581,38 @@
          }
         ]
        ],
-       "ok": [
-        {
-         "$row": {
-          "itemID": 9988400002924,
-          "typeID": 601,
-          "ownerID": 140000427,
-          "locationID": 60015249,
-          "flagID": 4,
-          "quantity": -1,
-          "groupID": 237,
-          "categoryID": 6,
-          "customInfo": "",
-          "stacksize": 1,
-          "singleton": 1
-         }
-        }
-       ]
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            [
+             {
+              "$row": {
+               "itemID": 9988400002924,
+               "typeID": 601,
+               "ownerID": 140000427,
+               "locationID": 60015249,
+               "flagID": 4,
+               "quantity": -1,
+               "groupID": 237,
+               "categoryID": 6,
+               "customInfo": "",
+               "stacksize": 1,
+               "singleton": 1
+              }
+             }
+            ]
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
       },
       {
        "call": [
@@ -925,7 +955,22 @@
          }
         ]
        ],
-       "ok": []
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            []
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
       },
       {
        "call": [
@@ -1364,23 +1409,38 @@
          }
         ]
        ],
-       "ok": [
-        {
-         "$row": {
-          "itemID": 9988400002928,
-          "typeID": 588,
-          "ownerID": 140000428,
-          "locationID": 60015249,
-          "flagID": 4,
-          "quantity": -1,
-          "groupID": 237,
-          "categoryID": 6,
-          "customInfo": "",
-          "stacksize": 1,
-          "singleton": 1
-         }
-        }
-       ]
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            [
+             {
+              "$row": {
+               "itemID": 9988400002928,
+               "typeID": 588,
+               "ownerID": 140000428,
+               "locationID": 60015249,
+               "flagID": 4,
+               "quantity": -1,
+               "groupID": 237,
+               "categoryID": 6,
+               "customInfo": "",
+               "stacksize": 1,
+               "singleton": 1
+              }
+             }
+            ]
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
       },
       {
        "call": [
@@ -1679,23 +1739,38 @@
          }
         ]
        ],
-       "ok": [
-        {
-         "$row": {
-          "itemID": 9988400002928,
-          "typeID": 588,
-          "ownerID": 140000428,
-          "locationID": 60015249,
-          "flagID": 4,
-          "quantity": -1,
-          "groupID": 237,
-          "categoryID": 6,
-          "customInfo": "",
-          "stacksize": 1,
-          "singleton": 1
-         }
-        }
-       ]
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            [
+             {
+              "$row": {
+               "itemID": 9988400002928,
+               "typeID": 588,
+               "ownerID": 140000428,
+               "locationID": 60015249,
+               "flagID": 4,
+               "quantity": -1,
+               "groupID": 237,
+               "categoryID": 6,
+               "customInfo": "",
+               "stacksize": 1,
+               "singleton": 1
+              }
+             }
+            ]
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
       },
       {
        "call": [
@@ -2038,7 +2113,22 @@
          }
         ]
        ],
-       "ok": []
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            []
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
       },
       {
        "call": [
@@ -2477,23 +2567,38 @@
          }
         ]
        ],
-       "ok": [
-        {
-         "$row": {
-          "itemID": 9988400002932,
-          "typeID": 596,
-          "ownerID": 140000429,
-          "locationID": 60015249,
-          "flagID": 4,
-          "quantity": -1,
-          "groupID": 237,
-          "categoryID": 6,
-          "customInfo": "",
-          "stacksize": 1,
-          "singleton": 1
-         }
-        }
-       ]
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            [
+             {
+              "$row": {
+               "itemID": 9988400002932,
+               "typeID": 596,
+               "ownerID": 140000429,
+               "locationID": 60015249,
+               "flagID": 4,
+               "quantity": -1,
+               "groupID": 237,
+               "categoryID": 6,
+               "customInfo": "",
+               "stacksize": 1,
+               "singleton": 1
+              }
+             }
+            ]
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
       },
       {
        "call": [
@@ -2792,23 +2897,38 @@
          }
         ]
        ],
-       "ok": [
-        {
-         "$row": {
-          "itemID": 9988400002932,
-          "typeID": 596,
-          "ownerID": 140000429,
-          "locationID": 60015249,
-          "flagID": 4,
-          "quantity": -1,
-          "groupID": 237,
-          "categoryID": 6,
-          "customInfo": "",
-          "stacksize": 1,
-          "singleton": 1
-         }
-        }
-       ]
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            [
+             {
+              "$row": {
+               "itemID": 9988400002932,
+               "typeID": 596,
+               "ownerID": 140000429,
+               "locationID": 60015249,
+               "flagID": 4,
+               "quantity": -1,
+               "groupID": 237,
+               "categoryID": 6,
+               "customInfo": "",
+               "stacksize": 1,
+               "singleton": 1
+              }
+             }
+            ]
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
       },
       {
        "call": [
@@ -3151,7 +3271,22 @@
          }
         ]
        ],
-       "ok": []
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            []
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
       },
       {
        "call": [
@@ -3590,23 +3725,38 @@
          }
         ]
        ],
-       "ok": [
-        {
-         "$row": {
-          "itemID": 9988400002936,
-          "typeID": 606,
-          "ownerID": 140000430,
-          "locationID": 60015249,
-          "flagID": 4,
-          "quantity": -1,
-          "groupID": 237,
-          "categoryID": 6,
-          "customInfo": "",
-          "stacksize": 1,
-          "singleton": 1
-         }
-        }
-       ]
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            [
+             {
+              "$row": {
+               "itemID": 9988400002936,
+               "typeID": 606,
+               "ownerID": 140000430,
+               "locationID": 60015249,
+               "flagID": 4,
+               "quantity": -1,
+               "groupID": 237,
+               "categoryID": 6,
+               "customInfo": "",
+               "stacksize": 1,
+               "singleton": 1
+              }
+             }
+            ]
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
       },
       {
        "call": [
@@ -3905,23 +4055,38 @@
          }
         ]
        ],
-       "ok": [
-        {
-         "$row": {
-          "itemID": 9988400002936,
-          "typeID": 606,
-          "ownerID": 140000430,
-          "locationID": 60015249,
-          "flagID": 4,
-          "quantity": -1,
-          "groupID": 237,
-          "categoryID": 6,
-          "customInfo": "",
-          "stacksize": 1,
-          "singleton": 1
-         }
-        }
-       ]
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            [
+             {
+              "$row": {
+               "itemID": 9988400002936,
+               "typeID": 606,
+               "ownerID": 140000430,
+               "locationID": 60015249,
+               "flagID": 4,
+               "quantity": -1,
+               "groupID": 237,
+               "categoryID": 6,
+               "customInfo": "",
+               "stacksize": 1,
+               "singleton": 1
+              }
+             }
+            ]
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
       },
       {
        "call": [
@@ -4264,7 +4429,22 @@
          }
         ]
        ],
-       "ok": []
+       "ok": {
+        "$objectex": {
+         "$tuple": [
+          {
+           "$token": "__builtin__.set"
+          },
+          {
+           "$tuple": [
+            []
+           ]
+          }
+         ]
+        },
+        "list": [],
+        "dict": []
+       }
       },
       {
        "call": [

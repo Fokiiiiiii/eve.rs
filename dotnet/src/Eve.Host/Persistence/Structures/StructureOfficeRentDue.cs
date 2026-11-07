@@ -114,13 +114,14 @@ internal sealed class StructureOfficeRentDue(
         var office = await offices.GetAsync(connection, transaction, bill.CorporationId, bill.StationId, forUpdate: true, cancellationToken);
         if (open is null || office is null || office.OfficeId != officeId) return;
         var evicted = false;
+        var cancelledBill = false;
         if (!site.Gone && open.DueAtMs > now)
         {
             await structures.ScheduleRentDueAsync(connection, transaction, officeId, open.DueAtMs, cancellationToken);
         }
         else if (await structures.MoveOfficeToSafetyAsync(connection, transaction, site, bill.CorporationId, cancellationToken))
         {
-            await offices.UnrentAsync(connection, transaction, office, now, cancellationToken);
+            cancelledBill = await offices.UnrentAsync(connection, transaction, office, now, cancellationToken);
             evicted = true;
         }
         else
@@ -131,7 +132,11 @@ internal sealed class StructureOfficeRentDue(
         if (evicted)
         {
             if (characterSessions is { } sessions)
+            {
                 CorporationOfficeNotifications.RentalChanged(sessions, bill.CorporationId, bill.StationId, office.OfficeFolderId);
+                if (cancelledBill)
+                    CorporationOfficeNotifications.BillReceived(sessions, bill.CorporationId);
+            }
             await NotifyAsync(open, cancellationToken);
         }
     }
@@ -157,10 +162,14 @@ internal sealed class StructureOfficeRentDue(
             await transaction.CommitAsync(cancellationToken);
             return;
         }
-        await StationOfficeImpound.ImpoundAsync(items, offices, connection, transaction, office, now, cancellationToken);
+        var impound = await StationOfficeImpound.ImpoundAsync(items, offices, connection, transaction, office, now, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         if (characterSessions is { } sessions)
+        {
             CorporationOfficeNotifications.RentalChanged(sessions, bill.CorporationId, bill.StationId, office.OfficeFolderId);
+            if (impound.CancelledBill)
+                CorporationOfficeNotifications.BillReceived(sessions, bill.CorporationId);
+        }
         await NotifyAsync(open, cancellationToken);
     }
 

@@ -70,8 +70,11 @@ public sealed class TradeAuthority
     private readonly ItemTypeCatalog _itemTypes;
     private readonly Func<long> _nowMs;
     private readonly string _schema;
+    private readonly Func<long, long, long, int, long, CancellationToken, Task<bool>>? _canTradeCorporationOfficeItem;
 
-    public TradeAuthority(NpgsqlDataSource source, PgItemStore items, WalletTransactions wallets, PgWalletStore balances, Func<long> nowMs, string schema = DefaultSchema, ItemTypeCatalog? itemTypes = null)
+    public TradeAuthority(NpgsqlDataSource source, PgItemStore items, WalletTransactions wallets, PgWalletStore balances, Func<long> nowMs,
+        string schema = DefaultSchema, ItemTypeCatalog? itemTypes = null,
+        Func<long, long, long, int, long, CancellationToken, Task<bool>>? canTradeCorporationOfficeItem = null)
     {
         if (!System.Text.RegularExpressions.Regex.IsMatch(schema, "^[a-z_][a-z0-9_]{0,62}$"))
             throw new ArgumentException($"not a usable schema name: {schema}", nameof(schema));
@@ -82,6 +85,7 @@ public sealed class TradeAuthority
         _itemTypes = itemTypes ?? throw new ArgumentNullException(nameof(itemTypes));
         _nowMs = nowMs;
         _schema = schema;
+        _canTradeCorporationOfficeItem = canTradeCorporationOfficeItem;
     }
 
     public static IReadOnlyList<Migration> MigrationSet() => [.. Migrations.Embedded(typeof(TradeAuthority).Assembly, "Migrations")];
@@ -114,6 +118,22 @@ public sealed class TradeAuthority
         if (await command.ExecuteScalarAsync(cancellationToken) is not long tradeId)
             return null;
         return await ViewAsync(tradeId, cancellationToken);
+    }
+
+    /// <summary>The staged roots and every contained item, in depth-first item order, for the client prime notification.</summary>
+    public async Task<IReadOnlyList<long>> PrimingItemIdsAsync(IEnumerable<long> rootIds, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var ids = new List<long>();
+        var seen = new HashSet<long>();
+        foreach (var rootId in rootIds.Distinct())
+        {
+            foreach (var item in await _items.TreeAsync(connection, transaction, rootId, cancellationToken).ConfigureAwait(false))
+                if (seen.Add(item.Id)) ids.Add(item.Id);
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return ids;
     }
 
     // ── writes ───────────────────────────────────────────────────────────────
@@ -169,6 +189,17 @@ public sealed class TradeAuthority
     public Task<TradeChange> StageAsync(long tradeId, long characterId, long itemId, long quantity, long sourceLocationId, long activeShipId, CancellationToken cancellationToken = default) =>
         StageItemsAsync(tradeId, characterId, [(itemId, quantity)], sourceLocationId, activeShipId, cancellationToken);
 
+    /// <summary>Stages the whole charge stacks fitted to the specified modules, preserving their original slot for abort.</summary>
+    public Task<TradeChange> StageFittedChargesAsync(long tradeId, long characterId, long shipId,
+        IReadOnlyList<(long ModuleId, long ChargeId)> fittedCharges, CancellationToken cancellationToken = default)
+    {
+        if (fittedCharges.Count is 0 or > 256 || fittedCharges.Select(pair => pair.ModuleId).Distinct().Count() != fittedCharges.Count
+            || fittedCharges.Select(pair => pair.ChargeId).Distinct().Count() != fittedCharges.Count)
+            throw new TradeRefusedException("The trade item list is invalid.");
+        return StageItemsAsync(tradeId, characterId, fittedCharges.Select(pair => (pair.ChargeId, 0L)).ToArray(),
+            shipId, shipId, cancellationToken, fittedCharges.ToDictionary(pair => pair.ChargeId, pair => pair.ModuleId));
+    }
+
     /// <summary>Stages a batch only after every item and source chain has passed validation, in one transaction.</summary>
     public Task<TradeChange> StageManyAsync(long tradeId, long characterId, IReadOnlyList<long> itemIds, long sourceLocationId, long activeShipId, CancellationToken cancellationToken = default)
     {
@@ -178,7 +209,7 @@ public sealed class TradeAuthority
     }
 
     private async Task<TradeChange> StageItemsAsync(long tradeId, long characterId, IReadOnlyList<(long ItemId, long Quantity)> requested,
-        long sourceLocationId, long activeShipId, CancellationToken cancellationToken)
+        long sourceLocationId, long activeShipId, CancellationToken cancellationToken, IReadOnlyDictionary<long, long>? fittedSourceModules = null)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -191,7 +222,9 @@ public sealed class TradeAuthority
         {
             var item = await _items.LockAndGetAsync(connection, transaction, itemId, cancellationToken)
                 ?? throw new TradeRefusedException("That item is no longer there.");
-            var chain = await ValidateOfferedItemAsync(connection, transaction, view, characterId, item, sourceLocationId, activeShipId, cancellationToken);
+            var chain = fittedSourceModules is not null && fittedSourceModules.TryGetValue(itemId, out var moduleId)
+                ? await ValidateFittedChargeAsync(connection, transaction, view, characterId, item, moduleId, sourceLocationId, activeShipId, cancellationToken)
+                : await ValidateOfferedItemAsync(connection, transaction, view, characterId, item, sourceLocationId, activeShipId, cancellationToken);
             selected.Add((item, quantity, chain));
         }
         await _itemTypes.GetAsync(selected.Select(value => value.Item.TypeId).Distinct(), cancellationToken).ConfigureAwait(false);
@@ -215,7 +248,7 @@ public sealed class TradeAuthority
             long? sourceId = null;
             if (item.Singleton || quantity <= 0 || quantity >= item.Quantity)
             {
-                await _items.MoveAsync(connection, transaction, item.Id, tradeId, ItemFlags.Hangar, cancellationToken);
+                await _items.MoveToOwnerAsync(connection, transaction, item.Id, characterId, tradeId, ItemFlags.Hangar, cancellationToken);
                 staged = await _items.LockAndGetAsync(connection, transaction, item.Id, cancellationToken)
                     ?? throw new InvalidOperationException("the staged item vanished");
                 moves.Add(new TradeItemMove(staged, item.OwnerId, item.LocationId, item.Flag, item.Quantity));
@@ -227,17 +260,18 @@ public sealed class TradeAuthority
                 var source = await _items.LockAndGetAsync(connection, transaction, item.Id, cancellationToken)
                     ?? throw new InvalidOperationException("the split stack vanished");
                 moves.Add(new TradeItemMove(source, source.OwnerId, source.LocationId, source.Flag, item.Quantity));
-                moves.Add(new TradeItemMove(staged, characterId, item.LocationId, item.Flag, 0));
+                moves.Add(new TradeItemMove(staged, item.OwnerId, item.LocationId, item.Flag, 0));
             }
 
             await using var stage = new NpgsqlCommand(
-                $"INSERT INTO {_schema}.staged_items(item_id, trade_id, owner_id, source_item_id, origin_location_id, origin_flag) VALUES ($1, $2, $3, $4, $5, $6)",
+                $"INSERT INTO {_schema}.staged_items(item_id, trade_id, owner_id, source_item_id, origin_owner_id, origin_location_id, origin_flag) VALUES ($1, $2, $3, $4, $5, $6, $7)",
                 connection, transaction)
             {
                 Parameters =
                 {
                     new() { Value = staged.Id }, new() { Value = tradeId }, new() { Value = characterId },
-                    new() { Value = (object?)sourceId ?? DBNull.Value }, new() { Value = item.LocationId }, new() { Value = item.Flag },
+                    new() { Value = (object?)sourceId ?? DBNull.Value }, new() { Value = item.OwnerId },
+                    new() { Value = item.LocationId }, new() { Value = item.Flag },
                 },
             };
             await stage.ExecuteNonQueryAsync(cancellationToken);
@@ -250,10 +284,30 @@ public sealed class TradeAuthority
         return new TradeChange(after, moves);
     }
 
+    private async Task<HashSet<long>> ValidateFittedChargeAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+        TradeView view, long characterId, Item charge, long moduleId, long shipId, long activeShipId, CancellationToken cancellationToken)
+    {
+        var chargeType = await _itemTypes.GetAsync(charge.TypeId, cancellationToken).ConfigureAwait(false);
+        var module = await _items.LockAndGetAsync(connection, transaction, moduleId, cancellationToken).ConfigureAwait(false);
+        var moduleType = module is null ? null : await _itemTypes.GetAsync(module.TypeId, cancellationToken).ConfigureAwait(false);
+        if (chargeType?.CategoryId != 8 || moduleType?.CategoryId != 7
+            || charge.OwnerId != characterId || charge.LocationId != shipId || module is null
+            || module.OwnerId != characterId || module.LocationId != shipId || module.Flag != charge.Flag
+            || module.Id == charge.Id || activeShipId != shipId)
+            throw new TradeRefusedException("That fitted charge is no longer available to trade.");
+
+        return await ValidateOfferedItemAsync(connection, transaction, view, characterId, charge, shipId, activeShipId, cancellationToken);
+    }
+
     private async Task<HashSet<long>> ValidateOfferedItemAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, TradeView view,
         long characterId, Item item, long sourceLocationId, long activeShipId, CancellationToken cancellationToken)
     {
-        if (item.OwnerId != characterId)
+        var corporationOfficeItem = item.OwnerId != characterId
+            && item.LocationId == view.LocationId && sourceLocationId == view.LocationId
+            && ItemFlags.IsCorporationHangar(item.Flag) && !item.BlueprintLocked
+            && _canTradeCorporationOfficeItem is { } canTrade
+            && await canTrade(characterId, item.OwnerId, view.LocationId, item.Flag, item.Id, cancellationToken).ConfigureAwait(false);
+        if (item.OwnerId != characterId && !corporationOfficeItem)
             throw new TradeRefusedException("That item is not available to trade.");
         if (item.Id == activeShipId && activeShipId > 0)
             throw new TradeRefusedException("People aboard the active ship cannot trade it.", "PeopleAboardShip");
@@ -261,6 +315,14 @@ public sealed class TradeAuthority
             throw new TradeRefusedException("Asset Safety wraps cannot be traded.", "CannotTradeAssetSafety");
         if (sourceLocationId > 0 && item.LocationId != sourceLocationId)
             throw new TradeRefusedException("That item is no longer in the source inventory.");
+
+        if (corporationOfficeItem)
+        {
+            var tree = await _items.TreeAsync(connection, transaction, item.Id, cancellationToken).ConfigureAwait(false);
+            if (tree.Any(child => child.OwnerId != item.OwnerId && child.OwnerId != characterId))
+                throw new TradeRefusedException("That item contains inventory unavailable to trade.");
+            return [item.Id];
+        }
 
         var chain = new HashSet<long> { item.Id };
         var root = item;
@@ -350,11 +412,14 @@ public sealed class TradeAuthority
 
         // both accepted: complete in this transaction
         var moves = new List<TradeItemMove>();
-        foreach (var (itemId, owner) in await StagedOwnersAsync(connection, transaction, tradeId, cancellationToken))
+        foreach (var staged in await StagedRowsAsync(connection, transaction, tradeId, cancellationToken))
         {
+            var itemId = staged.ItemId;
+            var owner = staged.OwnerId;
             var receiver = view.OtherOf(owner);
             var tree = await _items.TreeAsync(connection, transaction, itemId, cancellationToken);
-            if (tree.Count == 0 || tree[0].Id != itemId || tree.Any(item => item.OwnerId != owner))
+            if (tree.Count == 0 || tree[0].Id != itemId
+                || tree.Any(item => item.OwnerId != owner && item.OwnerId != staged.OriginOwnerId))
                 throw new InvalidOperationException("a staged item tree is inconsistent");
             foreach (var before in tree)
             {
@@ -423,7 +488,7 @@ public sealed class TradeAuthority
             var item = await _items.LockAndGetAsync(connection, transaction, staged.ItemId, cancellationToken)
                 ?? throw new InvalidOperationException("a staged item vanished");
             var merged = staged.SourceItemId is { } source
-                ? await _items.MergeAsync(connection, transaction, item.Id, source, item.Quantity, staged.OwnerId, tradeId, staged.OriginLocationId, cancellationToken)
+                ? await _items.MergeAsync(connection, transaction, item.Id, source, item.Quantity, staged.OriginOwnerId, tradeId, staged.OriginLocationId, cancellationToken)
                 : null;
             if (merged is not null)
             {
@@ -431,9 +496,9 @@ public sealed class TradeAuthority
                 moves.Add(new TradeItemMove(item with { Quantity = 0 }, staged.OwnerId, tradeId, ItemFlags.Hangar, item.Quantity, Removed: true));
                 continue;
             }
-            await _items.MoveAsync(connection, transaction, item.Id, staged.OriginLocationId, staged.OriginFlag, cancellationToken);
+            await _items.MoveToOwnerAsync(connection, transaction, item.Id, staged.OriginOwnerId, staged.OriginLocationId, staged.OriginFlag, cancellationToken);
             var returned = await _items.LockAndGetAsync(connection, transaction, item.Id, cancellationToken) ?? throw new InvalidOperationException("a returned item vanished");
-            moves.Add(new TradeItemMove(returned, returned.OwnerId, tradeId, ItemFlags.Hangar, item.Quantity));
+            moves.Add(new TradeItemMove(returned, staged.OwnerId, tradeId, ItemFlags.Hangar, item.Quantity));
         }
 
         await DeleteStagingAsync(connection, transaction, tradeId, cancellationToken);
@@ -502,13 +567,13 @@ public sealed class TradeAuthority
         return view with { Items = items };
     }
 
-    private sealed record StagedRow(long ItemId, long OwnerId, long? SourceItemId, long OriginLocationId, int OriginFlag);
+    private sealed record StagedRow(long ItemId, long OwnerId, long? SourceItemId, long OriginOwnerId, long OriginLocationId, int OriginFlag);
 
     private async Task<IReadOnlyList<StagedRow>> StagedRowsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long tradeId, CancellationToken cancellationToken)
     {
         var rows = new List<StagedRow>();
         await using var command = new NpgsqlCommand(
-            $"SELECT item_id, owner_id, source_item_id, origin_location_id, origin_flag FROM {_schema}.staged_items WHERE trade_id = $1 ORDER BY item_id",
+            $"SELECT item_id, owner_id, source_item_id, origin_owner_id, origin_location_id, origin_flag FROM {_schema}.staged_items WHERE trade_id = $1 ORDER BY item_id",
             connection, transaction)
         {
             Parameters = { new() { Value = tradeId } },
@@ -516,7 +581,8 @@ public sealed class TradeAuthority
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            rows.Add(new StagedRow(reader.GetInt64(0), reader.GetInt64(1), reader.IsDBNull(2) ? null : reader.GetInt64(2), reader.GetInt64(3), reader.GetInt32(4)));
+            rows.Add(new StagedRow(reader.GetInt64(0), reader.GetInt64(1), reader.IsDBNull(2) ? null : reader.GetInt64(2),
+                reader.GetInt64(3), reader.GetInt64(4), reader.GetInt32(5)));
         }
         return rows;
     }

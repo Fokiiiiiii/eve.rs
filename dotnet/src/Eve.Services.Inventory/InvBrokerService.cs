@@ -3,6 +3,7 @@ using Eve.Dogma;
 using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
+using Eve.Services;
 using Eve.Services.Ships;
 using Eve.Ships;
 using Eve.Universe;
@@ -20,7 +21,8 @@ public sealed partial class InvBrokerService(
             Func<IReadOnlyCollection<long>, CancellationToken, Task<IReadOnlyDictionary<long, double>>>? crystalDamage = null,
             Func<long, CancellationToken, ValueTask<DockableAssetLocation?>>? dockableAssetLocation = null,
     Func<long, long, int?, long, CancellationToken, Task<IReadOnlyList<ItemChanged>>>? stackAll = null,
-    Func<long, long, CancellationToken, ValueTask<bool>>? hasCorporationOffice = null) : IBoundObjectReleaseHandler, IContractInventoryReader
+    Func<long, long, CancellationToken, ValueTask<bool>>? hasCorporationOffice = null,
+    CharacterSessions? characterSessions = null) : IBoundObjectReleaseHandler, IContractInventoryReader
 {
     /// <summary>The container the client asks for to get the hangar of the station it is docked at.</summary>
     public const int ContainerHangar = 10004;
@@ -65,7 +67,10 @@ public sealed partial class InvBrokerService(
     }
 
     /// <summary>What a bound inventory is: which kind, whose item it is, and the session that opened it.</summary>
-    private sealed record Context(Kind Kind, long ItemId, long SessionId, long FlagId = 0);
+    private sealed record Context(Kind Kind, long ItemId, long SessionId, long FlagId = 0)
+    {
+        public ConcurrentDictionary<int,byte> CorporationHangarFlags { get; } = new();
+    }
 
     private readonly ConcurrentDictionary<string, Context> _bound = new(StringComparer.Ordinal);
 
@@ -83,6 +88,65 @@ public sealed partial class InvBrokerService(
     private static long? DockedLocationOf(ClientSession session) => StationOf(session) ?? session.GetInt("structureid");
 
     public void OnBoundObjectReleased(string oid, ClientSession? session) => _bound.TryRemove(oid, out _);
+
+    /// <summary>Tell online members who listed an authorized corporation division that an external market move changed its rows.</summary>
+    public async Task NotifyExternalMarketInventoryChangesAsync(IReadOnlyList<ItemChanged> changes, ClientSession? actorSession)
+    {
+        if (changes.Count==0 || characterSessions is null || hasCorporationOffice is null) return;
+        foreach (var observer in characterSessions.All())
+        {
+            if (observer.CharacterId is not { } observerCharacter || ReferenceEquals(observer,actorSession)) continue;
+            var stationId=StationOf(observer);
+            var corporationId=CorporationIdOf(observer);
+            if (stationId is null || corporationId<=0) continue;
+            var contexts=_bound.Values.Where(context => context.Kind==Kind.Hangar && context.ItemId==stationId &&
+                context.SessionId==observer.SessionId && context.CorporationHangarFlags.Count>0).ToArray();
+            if (contexts.Length==0) continue;
+            try
+            {
+                if (!await hasCorporationOffice(corporationId,stationId.Value,CancellationToken.None)) continue;
+                var seen=new HashSet<long>();
+                foreach (var change in changes)
+                {
+                    if (!seen.Add(change.After.Id)) continue;
+                    var previousOwner=change.PreviousOwnerId ?? change.After.OwnerId;
+                    var previousVisible=previousOwner==corporationId && change.PreviousLocationId==stationId &&
+                        ItemFlags.IsCorporationHangar(change.PreviousFlag);
+                    var currentVisible=change.After.OwnerId==corporationId && change.After.LocationId==stationId &&
+                        ItemFlags.IsCorporationHangar(change.After.Flag);
+                    if (!previousVisible && !currentVisible) continue;
+                    var previousAllowed=previousVisible && contexts.Any(context => context.CorporationHangarFlags.ContainsKey(change.PreviousFlag));
+                    var currentAllowed=currentVisible && contexts.Any(context => context.CorporationHangarFlags.ContainsKey(change.After.Flag));
+                    if (previousAllowed)
+                        previousAllowed=await CorporationAccessAsync(observerCharacter,corporationId,stationId.Value,
+                            change.PreviousFlag,CorporationHangarOperation.Query,CancellationToken.None);
+                    if (currentAllowed)
+                        currentAllowed=await CorporationAccessAsync(observerCharacter,corporationId,stationId.Value,
+                            change.After.Flag,CorporationHangarOperation.Query,CancellationToken.None);
+                    if (!previousAllowed && !currentAllowed) continue;
+                    ItemChanged projected;
+                    if (previousAllowed && currentAllowed)
+                        projected=change;
+                    else if (previousAllowed)
+                    {
+                        var removed=change.After with
+                        {
+                            OwnerId=previousOwner,LocationId=CharacterShips.JunkLocation,
+                            Flag=change.PreviousFlag,Quantity=change.PreviousQuantity,
+                        };
+                        projected=new(removed,change.PreviousLocationId,change.PreviousFlag,change.PreviousQuantity,previousOwner);
+                    }
+                    else
+                        projected=new(change.After,0,change.After.Flag,0,change.After.OwnerId);
+                    ShipNotifications.SendItemChange(observer,projected,item => DogmaRow(item));
+                }
+            }
+            catch (Exception error)
+            {
+                Console.Error.WriteLine($"eve-host: corporation market inventory notification failed for {observerCharacter}: {error.Message}");
+            }
+        }
+    }
 
     /// <summary>The planetary customs offices (set by the host when the planets are running).</summary>
     public ICustomsOffices? Customs { get; set; }
@@ -177,6 +241,20 @@ public sealed partial class InvBrokerService(
         corporationHangarAccess is { } authorize
             ? authorize(characterId, corporationId, stationId, flag, operation, cancellationToken)
             : ValueTask.FromResult(false);
+
+    private async Task SubscribeCorporationHangarFlagsAsync(Context context,ClientSession session,IEnumerable<int> flags,
+        CancellationToken cancellationToken)
+    {
+        if (session.CharacterId is not { } characterId || hasCorporationOffice is null) return;
+        var corporationId=CorporationIdOf(session);
+        if (corporationId<=0 || corporationId==characterId ||
+            !await hasCorporationOffice(corporationId,context.ItemId,cancellationToken)) return;
+        foreach (var flag in flags.Distinct())
+            if (ItemFlags.IsCorporationHangar(flag) &&
+                await CorporationAccessAsync(characterId,corporationId,context.ItemId,flag,
+                    CorporationHangarOperation.Query,cancellationToken))
+                context.CorporationHangarFlags.TryAdd(flag,0);
+    }
 
     private async Task<(long StationId, int DivisionFlag)?> CorporationDivisionOfItemAsync(
         ClientSession session, Item item, long corporationId, CancellationToken cancellationToken)
@@ -598,6 +676,9 @@ public sealed partial class InvBrokerService(
                 contents = contents.Where(row => roots.LocationIds.Contains(row.LocationId)).ToArray();
             }
             var chosen = flag is { } f ? contents.Where(r => r.Flag == f).ToList() : [.. contents];
+            if (context.Kind==Kind.Hangar)
+                await SubscribeCorporationHangarFlagsAsync(context,call.Session,
+                    flag is { } requested ? [requested] : Enumerable.Range(ItemFlags.CorpSAG1,7).Append(ItemFlags.CorpDeliveries),call.Cancellation);
             result = context.Kind == Kind.Ship && flag is null && StationOf(call.Session) is not null
                 ? InventoryWire.Set(chosen.Select(r => InventoryWire.PackedRow(r, r.CategoryId == PlayerCategory ? new PyStr("") : PyNone.Instance)))
                 : chosen.Count == 0 && flag is not null
@@ -622,6 +703,8 @@ public sealed partial class InvBrokerService(
             throw MachoErrors.ThrowUserError("INVENTORY_BULK_LIMIT_EXCEEDED");
         var wanted = requestedFlags.Select(IdOf).Where(v => v is not null).Select(v => (int)v!.Value).ToHashSet();
         var contents = await ContentsAsync(context, call.Session, call.Cancellation);
+        if (context.Kind==Kind.Hangar)
+            await SubscribeCorporationHangarFlagsAsync(context,call.Session,wanted,call.Cancellation);
         return new PyList([.. contents.Where(r => wanted.Contains(r.Flag)).Select(r => InventoryWire.PackedRow(r))]);
     }
 

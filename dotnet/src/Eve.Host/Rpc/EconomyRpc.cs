@@ -45,7 +45,9 @@ internal sealed partial class CharacterServicesComposition
                 ReadContactCost = ReadContactCostAsync,
                 WriteContactCost = WriteContactCostAsync,
             },
-            new Eve.Services.Market.MarketProxyService(market, marketTrading, marketTopology, characters, corporations, economyWallets, marketCatalog, now, marketExpiry, items, itemTypes, characterSessions),
+            new Eve.Services.Market.MarketProxyService(market, marketTrading, marketTopology, characters, corporations, economyWallets,
+                marketCatalog, now, marketExpiry, items, itemTypes, characterSessions,
+                marketInventoryBroker.NotifyExternalMarketInventoryChangesAsync),
     ];
 
     private ValueTask<int?> ReadContactCostAsync(long characterId, CancellationToken cancellationToken)

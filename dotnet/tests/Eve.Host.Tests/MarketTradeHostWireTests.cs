@@ -10,6 +10,7 @@ using Eve.Market;
 using Eve.Services;
 using Eve.Services.Station;
 using Eve.Sde;
+using Eve.Ships;
 using Eve.Skills;
 using Eve.Universe;
 using Eve.Wallet;
@@ -215,6 +216,253 @@ public sealed class MarketTradeHostWireTests : IAsyncLifetime
         Assert.Equal(corporationItemId, Assert.Single(corporationDeliveryIds));
         Assert.Empty(NamedNotifications(corporationSellerSink, "OnItemsChanged"));
         Assert.Empty(NamedNotifications(corporationSellerSink, "OnMarketItemReceived"));
+    }
+
+    [PgFact]
+    public async Task Registered_buy_multi_returns_each_transient_order_and_expires_the_same_rows()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        host = await HostComposition.BuildAsync(Settings());
+        var market = host.Registry.Lookup("marketProxy") ?? throw new InvalidOperationException("marketProxy is not registered");
+        var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
+        var actor = await CreateTraderAsync(source, station, "Market Multi Buyer");
+        var sink = new Sink();
+        var session = DockedSession(actor, 808, station, sink, 808);
+        (host.CharacterSessions ?? throw new InvalidOperationException("character sessions are not registered")).Enter(actor, session);
+        var location = new MarketLocation(station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId);
+        await new MarketStore(source, Schema("EVE_MARKET_SCHEMA")).SeedNpcAsync([
+            new("market-multi-buy-asks", 34, false, 10m, 5, 32767, location, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()),
+        ]);
+        var requests = new PyList([
+            MultiBuyEntry(2, 10),
+            MultiBuyEntry(5, 10),
+            MultiBuyEntry(4, 9),
+        ]);
+
+        var response = MarshalCodec.Decode(MarshalCodec.Encode(await market.CallAsync(Call(session, "BuyMultipleItems", 1,
+            new PyLong(station.Id), requests, PyBool.False))));
+
+        var returnedRows = ImmediateOrderRows(response);
+        Assert.Equal(3, returnedRows.Count);
+        Assert.Equal(3, returnedRows.Select(row => row.Id).Distinct().Count());
+        Assert.Equal(new long[] { 2, 5, 4 }, returnedRows.Select(row => row.Entered));
+        Assert.Equal(new long[] { 0, 2, 4 }, returnedRows.Select(row => row.Remaining));
+        Assert.Equal(9950m, (await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).GetAsync(actor))!.Isk);
+        Assert.Empty(await new MarketStore(source, Schema("EVE_MARKET_SCHEMA")).OwnOrdersAsync(actor, actor, false));
+
+        var notice = Assert.Single(NamedNotifications(sink, "OnOwnOrdersChanged"));
+        Assert.Equal("charid", NotificationIdType(notice));
+        var args = NotificationArguments(notice);
+        Assert.Equal("Expiry", JsSemantics.PlainText(args.Items[1]));
+        Assert.Equal(new PyInt(0), args.Items[2]);
+        var notifiedRows = Assert.IsType<PyList>(args.Items[0]).Items.Select(ImmediateOrderRow).ToArray();
+        Assert.Equal(returnedRows, notifiedRows);
+    }
+
+    [PgFact]
+    public async Task Registered_market_sell_escrow_notifies_personal_hangar_stack_and_full_move()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        host = await HostComposition.BuildAsync(Settings());
+        var market = host.Registry.Lookup("marketProxy") ?? throw new InvalidOperationException("marketProxy is not registered");
+        var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
+        var seller = await CreateTraderAsync(source, station, "Market Escrow Seller");
+        var sink = new Sink();
+        var session = DockedSession(seller, 809, station, sink, 809);
+        (host.CharacterSessions ?? throw new InvalidOperationException("character sessions are not registered")).Enter(seller, session);
+        var inventory = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
+        long partialItemId;
+        long fullItemId;
+        await using (var connection = await source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            partialItemId = await inventory.CreateAsync(connection, transaction,
+                new NewItem(34, seller, station.Id, ItemFlags.Hangar, 10));
+            fullItemId = await inventory.CreateAsync(connection, transaction,
+                new NewItem(34, seller, station.Id, ItemFlags.Hangar, 5));
+            await transaction.CommitAsync();
+        }
+
+        await market.CallAsync(Call(session, "PlaceMultiSellOrder", 1,
+            new PyList([SellEntry(partialItemId, station, 5, 10m), SellEntry(fullItemId, station, 5, 10m)]),
+            PyBool.False, new PyInt(30), PyNone.Instance));
+
+        var partialAfter = await inventory.GetAsync(partialItemId);
+        var fullAfter = await inventory.GetAsync(fullItemId);
+        Assert.NotNull(partialAfter);
+        Assert.NotNull(fullAfter);
+        Assert.Equal(station.Id, partialAfter.LocationId);
+        Assert.Equal(ItemFlags.Hangar, partialAfter.Flag);
+        Assert.Equal(5, partialAfter.Quantity);
+        Assert.NotEqual(station.Id, fullAfter.LocationId);
+        Assert.Equal(ItemFlags.Hangar, fullAfter.Flag);
+        Assert.Equal(5, fullAfter.Quantity);
+
+        var changes = NamedNotifications(sink, "OnItemChange");
+        Assert.Equal(2, changes.Count);
+        Assert.Empty(NamedNotifications(sink, "OnMarketItemReceived"));
+        Assert.Empty(NamedNotifications(sink, "OnItemsChanged"));
+        var packedRows = changes.Select(packet => Assert.IsType<PyPackedRow>(NotificationArguments(packet).Items[0]))
+            .ToDictionary(row => IntegerValue(row.Values[0]));
+        Assert.Equal(2, packedRows.Count);
+        var partialPacket = Assert.Single(changes, packet => IntegerValue(
+            Assert.IsType<PyPackedRow>(NotificationArguments(packet).Items[0]).Values[0]) == partialItemId);
+        var partialArgs = NotificationArguments(partialPacket);
+        var partialRow = Assert.IsType<PyPackedRow>(partialArgs.Items[0]);
+        Assert.Equal(station.Id, IntegerValue(partialRow.Values[3]));
+        Assert.Equal(5, IntegerValue(partialRow.Values[5]));
+        var partialDifferences = Assert.IsType<PyDict>(partialArgs.Items[1]);
+        Assert.Equal(10, IntegerValue(partialDifferences.Entries.Single(entry => IntegerValue(entry.Key) == 9).Value));
+
+        var fullPacket = Assert.Single(changes, packet => IntegerValue(
+            Assert.IsType<PyPackedRow>(NotificationArguments(packet).Items[0]).Values[0]) == fullItemId);
+        var fullArgs = NotificationArguments(fullPacket);
+        var fullRow = Assert.IsType<PyPackedRow>(fullArgs.Items[0]);
+        Assert.Equal(fullAfter.LocationId, IntegerValue(fullRow.Values[3]));
+        Assert.Equal(5, IntegerValue(fullRow.Values[5]));
+        var fullDifferences = Assert.IsType<PyDict>(fullArgs.Items[1]);
+        Assert.Equal(station.Id, IntegerValue(fullDifferences.Entries.Single(entry => IntegerValue(entry.Key) == 3).Value));
+        Assert.True(sink.Packets.FindIndex(packet => NotificationName(packet) == "OnOwnOrdersChanged") <
+            sink.Packets.FindIndex(packet => NotificationName(packet) == "OnItemChange"),
+            "order and cache invalidations must precede the seller's inventory rows");
+
+        var marketStore=new MarketStore(source,Schema("EVE_MARKET_SCHEMA"));
+        var canceled=(await marketStore.OwnOrdersAsync(seller,seller,false)).Single(order => fullAfter.LocationId==9_200_000_000L+order.Order.Id).Order;
+        sink.Packets.Clear();
+        await market.CallAsync(Call(session,"CancelCharOrder",2,new PyLong(canceled.Id),new PyInt(station.RegionId)));
+        var returned=await inventory.GetAsync(fullItemId);
+        Assert.NotNull(returned);
+        Assert.Equal(station.Id,returned.LocationId);
+        var returnChange=Assert.Single(NamedNotifications(sink,"OnItemChange"));
+        var returnArgs=NotificationArguments(returnChange);
+        var returnRow=Assert.IsType<PyPackedRow>(returnArgs.Items[0]);
+        Assert.Equal(fullItemId,IntegerValue(returnRow.Values[0]));
+        Assert.Equal(station.Id,IntegerValue(returnRow.Values[3]));
+        Assert.Equal(fullAfter.LocationId,IntegerValue(Assert.IsType<PyDict>(returnArgs.Items[1]).Entries
+            .Single(entry => IntegerValue(entry.Key)==3).Value));
+        Assert.Empty(NamedNotifications(sink,"OnMarketItemReceived"));
+    }
+
+    [PgFact]
+    public async Task Registered_corporation_sell_notifies_only_authorized_bound_hangar_viewers()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        host = await HostComposition.BuildAsync(Settings());
+        var market = host.Registry.Lookup("marketProxy") ?? throw new InvalidOperationException("marketProxy is not registered");
+        var inventoryBroker = host.Registry.Lookup("invbroker") ?? throw new InvalidOperationException("invbroker is not registered");
+        var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
+        var (seller, corporationId) = await CreateCorporationBuyerAsync(source, station, "Market Corp Inventory Seller");
+        var observer = await CreateTraderAsync(source, station, "Market Corp Inventory Observer");
+        var wrongDivisionObserver = await CreateTraderAsync(source, station, "Market Corp Wrong Division Observer");
+        var corporations = new CorporationStore(source,
+            new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA")),
+            new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")),
+            new WalletTransactions(source, Schema("EVE_WALLET_SCHEMA")),
+            new PgSkillStore(source, Schema("EVE_SKILLS_SCHEMA")),
+            () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), Schema("EVE_CORPORATIONS_SCHEMA"));
+        var application = await corporations.ApplyAsync(observer, corporationId, "Market hangar observer");
+        await corporations.RespondAsync(seller, application, 6, "Market hangar observer", "");
+        await corporations.RespondAsync(observer, application, 2, "Market hangar observer", "");
+        var wrongDivisionApplication=await corporations.ApplyAsync(wrongDivisionObserver,corporationId,"Market wrong division observer");
+        await corporations.RespondAsync(seller,wrongDivisionApplication,6,"Market wrong division observer","");
+        await corporations.RespondAsync(wrongDivisionObserver,wrongDivisionApplication,2,"Market wrong division observer","");
+        await using (var roles = source.CreateCommand($"UPDATE {Schema("EVE_CORPORATIONS_SCHEMA")}.members SET roles_hq=$2 WHERE character_id=$1"))
+        {
+            roles.Parameters.AddWithValue(observer);
+            roles.Parameters.AddWithValue(1L << 20); // flagCorpSAG1 Query at this corporation's HQ.
+            Assert.Equal(1, await roles.ExecuteNonQueryAsync());
+        }
+        await using (var roles = source.CreateCommand($"UPDATE {Schema("EVE_CORPORATIONS_SCHEMA")}.members SET roles_hq=$2 WHERE character_id=$1"))
+        {
+            roles.Parameters.AddWithValue(wrongDivisionObserver);
+            roles.Parameters.AddWithValue(1L << 21); // flagCorpSAG2 Query, but not flagCorpSAG1.
+            Assert.Equal(1, await roles.ExecuteNonQueryAsync());
+        }
+        var itemStore = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        await using (var connection = await source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            var officeFolder = await itemStore.CreateAsync(connection, transaction,
+                new NewItem(CorporationOfficeStore.OfficeFolderTypeId, corporationId, station.Id, ItemFlags.Hangar, Singleton: true));
+            var offices = new CorporationOfficeStore(source, Schema("EVE_CORPORATIONS_SCHEMA"));
+            await offices.RentAsync(connection, transaction, corporationId, officeFolder,
+                new CorporationOfficeStation(station.Id, station.TypeId, station.OwnerId, station.SolarSystemId, station.Security),
+                CorporationOfficeStore.MinimumRentIsk, now);
+            await transaction.CommitAsync();
+        }
+        long corporationStackId;
+        await using (var connection = await source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            corporationStackId = await itemStore.CreateAsync(connection, transaction,
+                new NewItem(34, corporationId, station.Id, ItemFlags.CorpSAG1, 5));
+            await transaction.CommitAsync();
+        }
+
+        var sessions = host.CharacterSessions ?? throw new InvalidOperationException("character sessions are not registered");
+        var sellerSink = new Sink();
+        var observerSink = new Sink();
+        var outsiderSink = new Sink();
+        var sellerSession = DockedSession(seller, 810, station, sellerSink, 810, corporationId);
+        var observerSession = DockedSession(observer, 811, station, observerSink, 811, corporationId);
+        var outsiderSession = DockedSession(wrongDivisionObserver, 812, station, outsiderSink, 812, corporationId);
+        sessions.Enter(seller, sellerSession);
+        sessions.Enter(observer, observerSession);
+        sessions.Enter(wrongDivisionObserver, outsiderSession);
+
+        var boundHangarValue = await inventoryBroker.CallAsync(new ServiceCall
+        {
+            Session = observerSession, Method = "GetInventoryFromId", Args = [new PyLong(station.Id)],
+        });
+        var boundHangar = JsSemantics.StringValue(((PyTuple)((PySubStream)((PySubStruct)boundHangarValue).Value).Decoded!).Items[0])!;
+        var initialList = await inventoryBroker.CallAsync(new ServiceCall
+        {
+            Session = observerSession, Method = "List", BoundObjectId = boundHangar,
+            Args = [new PyInt(ItemFlags.CorpSAG1)],
+        });
+        Assert.Contains(corporationStackId, Assert.IsType<PyList>(initialList).Items
+            .OfType<PyPackedRow>().Select(row => IntegerValue(row.Values[0])));
+        var wrongDivisionBoundValue=await inventoryBroker.CallAsync(new ServiceCall
+        {
+            Session=outsiderSession,Method="GetInventoryFromId",Args=[new PyLong(station.Id)],
+        });
+        var wrongDivisionBound=JsSemantics.StringValue(((PyTuple)((PySubStream)((PySubStruct)wrongDivisionBoundValue).Value).Decoded!).Items[0])!;
+        var wrongDivisionList=await inventoryBroker.CallAsync(new ServiceCall
+        {
+            Session=outsiderSession,Method="List",BoundObjectId=wrongDivisionBound,Args=[new PyInt(ItemFlags.CorpSAG2)],
+        });
+        Assert.Equal(InventoryWire.EmptySet(),wrongDivisionList);
+
+        await market.CallAsync(Call(sellerSession, "PlaceMultiSellOrder", 1,
+            new PyList([SellEntry(corporationStackId, station, 5, 10m)]), PyBool.True, new PyInt(30), PyNone.Instance));
+
+        var sellerChange = Assert.Single(NamedNotifications(sellerSink, "OnItemChange"));
+        var observerChange = Assert.Single(NamedNotifications(observerSink, "OnItemChange"));
+        Assert.Empty(NamedNotifications(outsiderSink, "OnItemChange"));
+        Assert.Equal(corporationStackId, IntegerValue(Assert.IsType<PyPackedRow>(NotificationArguments(observerChange).Items[0]).Values[0]));
+        Assert.Equal(CharacterShips.JunkLocation,
+            IntegerValue(Assert.IsType<PyPackedRow>(NotificationArguments(observerChange).Items[0]).Values[3]));
+        Assert.NotEqual(CharacterShips.JunkLocation,
+            IntegerValue(Assert.IsType<PyPackedRow>(NotificationArguments(sellerChange).Items[0]).Values[3]));
+    }
+
+    private static PyValue MultiBuyEntry(long quantity, double price) => Py.KeyVal(
+        ("typeID", new PyInt(34)), ("quantity", new PyLong(quantity)), ("price", new PyReal(price)), ("minVolume", new PyInt(1)));
+
+    private static IReadOnlyList<(long Id, long Entered, long Remaining)> ImmediateOrderRows(PyValue rowset)
+    {
+        return [.. Assert.IsType<PyList>(rowset).Items.Select(ImmediateOrderRow)];
+    }
+
+    private static (long Id, long Entered, long Remaining) ImmediateOrderRow(PyValue row)
+    {
+        var fields = Assert.IsType<PyDict>(Assert.IsType<PyObject>(row).Args);
+        return (IntegerValue(Field(fields, "orderID")), IntegerValue(Field(fields, "volEntered")),
+            IntegerValue(Field(fields, "volRemaining")));
     }
 
     private static PyValue SellEntry(long itemId, Station station, long quantity, decimal price) => Py.KeyVal(
@@ -505,6 +753,9 @@ public sealed class MarketTradeHostWireTests : IAsyncLifetime
         PyLong number => number.Value,
         _ => throw new InvalidOperationException($"not an integer: {value}"),
     };
+
+    private static PyValue Field(PyDict fields, string name) =>
+        fields.Entries.Single(entry => JsSemantics.PlainText(entry.Key) == name).Value;
 
     private static ClientSession DockedSession(long characterId, long sessionId, Station station, Sink sink, long clientId = 0, long? corporationId = null)
     {

@@ -51,7 +51,8 @@ public static class HostInventoryServiceFactory
         Func<Eve.Services.ClientSession, long, CancellationToken, ValueTask<ControlledStructureInventory?>>? controlledStructureInventory = null,
         Func<IReadOnlyCollection<long>, CancellationToken, Task<IReadOnlyDictionary<long, double>>>? crystalDamage = null,
         Func<long, CancellationToken, ValueTask<DockableAssetLocation?>>? dockableAssetLocation = null,
-        Eve.Corporations.CorporationOfficeStore? officeStore = null) =>
+        Eve.Corporations.CorporationOfficeStore? officeStore = null,
+        Func<long, long, CancellationToken, ValueTask<bool>>? capsuleerDeliveriesAccess = null) =>
         new(
             items,
             types,
@@ -66,8 +67,24 @@ public static class HostInventoryServiceFactory
             controlledStructureInventory: controlledStructureInventory,
             crystalDamage: crystalDamage,
             dockableAssetLocation: dockableAssetLocation,
+            capsuleerDeliveriesAccess: capsuleerDeliveriesAccess,
             hasCorporationOffice: officeStore is null ? null : async (corporationId, locationId, token) =>
                 (await officeStore.ForCorporationAsync(corporationId, token)).Any(office => office.StationId == locationId));
+
+    /// <summary>Capsuleer Deliveries can be viewed and taken by Project Managers and Directors only.</summary>
+    public static Func<long, long, CancellationToken, ValueTask<bool>> CapsuleerDeliveriesAccessOf(
+        Eve.Corporations.CorporationStore corporations) => async (characterId, corporationId, token) =>
+    {
+        if (await corporations.GetAsync(corporationId, token) is not { IsNpc: false, Deleted: false } corporation
+            || await corporations.MemberAsync(characterId, token) is not { } member
+            || member.CorporationId != corporationId)
+            return false;
+
+        const long projectManager = 1L << 60; // V24.01 appConst.corpRoleProjectManager.
+        var roles = Eve.Corporations.CorporationRoles.Session(
+            corporation, member, null, await corporations.TitlesAsync(corporationId, token));
+        return (roles.CorpRole & (Eve.Corporations.CorporationRoles.Director | projectManager)) != 0;
+    };
 
     /// <summary>
     /// The access to a corporation division hangar: the Query, Take and Deposit operations. Deposit needs only membership (the existing rule); Query and Take read

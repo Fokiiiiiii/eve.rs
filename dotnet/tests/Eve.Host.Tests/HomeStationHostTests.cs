@@ -1,8 +1,16 @@
+using System.Text;
 using Eve.Characters;
+using Eve.Corporations;
+using Eve.Dogma;
+using Eve.Fitting;
 using Eve.Host;
+using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
+using Eve.Services.Inventory;
+using Eve.Ships;
+using Eve.Sde;
 using Eve.Universe;
 using Npgsql;
 using Xunit;
@@ -12,6 +20,180 @@ namespace Eve.Host.Tests;
 [Collection("host-composition")]
 public sealed class HomeStationHostTests
 {
+    [PgFact]
+    public async Task Registered_invbroker_returns_persisted_crystal_damage_from_module_state()
+    {
+        await using var rig = await HomeStationPgRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var statics = await DogmaStatic.LoadAsync(new SdeReader(rig.Source));
+        const int crystalTypeId = 12552;
+        await statics.EnsureTypesAsync([crystalTypeId]);
+        var damageAttributeId = Assert.IsType<int>(statics.AttributeId("crystalsGetDamaged"));
+        Assert.True(statics.Type(crystalTypeId)!.Attributes.GetValueOrDefault(damageAttributeId) > 0);
+
+        var items = new PgItemStore(rig.Source, rig.InventorySchema);
+        long crystalId;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            crystalId = await items.CreateAsync(connection, transaction,
+                new NewItem(crystalTypeId, character.Id, rig.LocalOfficeStation.Id, ItemFlags.Hangar, 1, true));
+            await transaction.CommitAsync();
+        }
+        var modules = new PgModuleStateStore(rig.Source, rig.FittingSchema);
+        await modules.SetModuleConditionsAsync(new Dictionary<long, ModuleCondition>
+        {
+            [crystalId] = new(0.375, 0, 0, false),
+        });
+        var session = new ClientSession { CharacterId = character.Id };
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("invbroker"));
+
+        var response = Assert.IsType<PyDict>(await service.CallAsync(new ServiceCall
+        {
+            Method = "GetDamageForCrystals",
+            Session = session,
+            Args = [PyValue.PythonSet([InventoryWire.Id(crystalId)])],
+        }));
+
+        var crystalDamage = Assert.Single(response.Entries);
+        Assert.Equal(crystalId, Assert.IsType<PyLong>(crystalDamage.Key).Value);
+        Assert.Equal(new PyReal(0.375), crystalDamage.Value);
+    }
+
+    [PgFact]
+    public async Task Registered_invbroker_checks_capsuleer_deliveries_roles_and_persists_taken_items()
+    {
+        await using var rig = await HomeStationPgRig.CreateAsync();
+        var projectManager = await rig.CreateCharacterAsync();
+        await rig.SeedCorporationMemberAsync(projectManager.Id, 1L << 60);
+        var ordinaryMember = await rig.CreateCharacterAsync();
+        await rig.SeedCorporationMemberRoleAsync(ordinaryMember.Id, 0);
+        var director = await rig.CreateCharacterAsync();
+        await rig.SeedCorporationMemberRoleAsync(director.Id, CorporationRoles.Director);
+        var items = new PgItemStore(rig.Source, rig.InventorySchema);
+        long deliveredItemId;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            deliveredItemId = await items.CreateAsync(connection, transaction,
+                new NewItem(34, projectManager.CorporationId, rig.LocalOfficeStation.Id,
+                    ItemFlags.CapsuleerDeliveries, 1, false));
+            await transaction.CommitAsync();
+        }
+
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("invbroker"));
+        long shipId;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            shipId = await items.CreateAsync(connection, transaction,
+                new NewItem(11019, projectManager.Id, rig.LocalOfficeStation.Id, ItemFlags.Hangar, 1, true));
+            await rig.Characters.SetShipAsync(connection, transaction, projectManager.Id, shipId);
+            await transaction.CommitAsync();
+        }
+        var deniedSink = new RecordingPacketSink();
+        var deniedSession = new ClientSession(deniedSink) { SessionId = 80_001, CharacterId = ordinaryMember.Id };
+        deniedSession.Set("stationid", InventoryWire.Id(rig.LocalOfficeStation.Id));
+        deniedSession.Set("corporationID", InventoryWire.Id(ordinaryMember.CorporationId));
+        var deniedDeliveries = BoundOid(await CallAsync(service, "GetInventory", deniedSession,
+            new PyInt(InvBrokerService.ContainerCapsuleerDeliveries)));
+        var deniedRows = await CallBoundAsync(service, "ListByFlags", deniedSession, deniedDeliveries,
+            [new PyList([new PyInt(ItemFlags.CapsuleerDeliveries)])]);
+        Assert.Empty(PythonSetRows(deniedRows));
+
+        var deniedHangar = BoundOid(await CallAsync(service, "GetInventory", deniedSession,
+            new PyInt(InvBrokerService.ContainerHangar)));
+        var deniedTake = await Assert.ThrowsAsync<MachoWrappedException>(() => CallBoundAsync(service,
+            "MultiAdd", deniedSession, deniedHangar,
+            [new PyList([InventoryWire.Id(deliveredItemId)]), InventoryWire.Id(rig.LocalOfficeStation.Id)],
+            new PyDict([new KeyValuePair<PyValue, PyValue>(new PyStr("flag"), new PyInt(ItemFlags.Hangar))])));
+        Assert.Equal("CustomNotify", deniedTake.Error.UserErrorMessage);
+        Assert.Equal((projectManager.CorporationId, rig.LocalOfficeStation.Id, ItemFlags.CapsuleerDeliveries),
+            ((await items.GetAsync(deliveredItemId))!.OwnerId,
+             (await items.GetAsync(deliveredItemId))!.LocationId,
+             (await items.GetAsync(deliveredItemId))!.Flag));
+        Assert.Empty(Notifications(deniedSink));
+
+        var managerSink = new RecordingPacketSink();
+        var managerSession = new ClientSession(managerSink) { SessionId = 80_002, CharacterId = projectManager.Id };
+        managerSession.Set("stationid", InventoryWire.Id(rig.LocalOfficeStation.Id));
+        managerSession.Set("corporationID", InventoryWire.Id(projectManager.CorporationId));
+        managerSession.Set("shipid", InventoryWire.Id(shipId));
+        var managerDeliveries = BoundOid(await CallAsync(service, "GetInventory", managerSession,
+            new PyInt(InvBrokerService.ContainerCapsuleerDeliveries)));
+        var visibleRows = PythonSetRows(await CallBoundAsync(service, "ListByFlags", managerSession,
+            managerDeliveries, [new PyList([new PyInt(ItemFlags.CapsuleerDeliveries)])]));
+        Assert.Equal(deliveredItemId, Assert.IsType<PyLong>(Assert.IsType<PyPackedRow>(Assert.Single(visibleRows))
+            .Fields().Single(field => field.Key == "itemID").Value).Value);
+
+        var directorSession = new ClientSession { SessionId = 80_003, CharacterId = director.Id };
+        directorSession.Set("stationid", InventoryWire.Id(rig.LocalOfficeStation.Id));
+        directorSession.Set("corporationID", InventoryWire.Id(director.CorporationId));
+        var directorDeliveries = BoundOid(await CallAsync(service, "GetInventory", directorSession,
+            new PyInt(InvBrokerService.ContainerCapsuleerDeliveries)));
+        var directorRows = PythonSetRows(await CallBoundAsync(service, "ListByFlags", directorSession,
+            directorDeliveries, [new PyList([new PyInt(ItemFlags.CapsuleerDeliveries)])]));
+        Assert.Equal(deliveredItemId, Assert.IsType<PyLong>(Assert.IsType<PyPackedRow>(Assert.Single(directorRows))
+            .Fields().Single(field => field.Key == "itemID").Value).Value);
+
+        var managerShip = BoundOid(await CallAsync(service, "GetInventoryFromId", managerSession,
+            InventoryWire.Id(shipId)));
+        Assert.Equal(PyBool.True, await CallBoundAsync(service, "MultiAdd", managerSession, managerShip,
+            [new PyList([InventoryWire.Id(deliveredItemId)]), InventoryWire.Id(rig.LocalOfficeStation.Id)],
+            new PyDict([new KeyValuePair<PyValue, PyValue>(new PyStr("flag"), new PyInt(CharacterShips.CargoFlag))])));
+        Assert.Equal((projectManager.Id, shipId, CharacterShips.CargoFlag),
+            ((await items.GetAsync(deliveredItemId))!.OwnerId,
+             (await items.GetAsync(deliveredItemId))!.LocationId,
+             (await items.GetAsync(deliveredItemId))!.Flag));
+        Assert.Equal("OnItemChange", Assert.Single(Notifications(managerSink)).Name);
+
+        var structureId = await rig.SeedStructureAsync();
+        long structureDeliveryId;
+        long structureShipId;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            structureDeliveryId = await items.CreateAsync(connection, transaction,
+                new NewItem(34, projectManager.CorporationId, structureId, ItemFlags.CapsuleerDeliveries, 1, false));
+            structureShipId = await items.CreateAsync(connection, transaction,
+                new NewItem(11019, projectManager.Id, structureId, ItemFlags.Hangar, 1, true));
+            await rig.Characters.SetShipAsync(connection, transaction, projectManager.Id, structureShipId);
+            await transaction.CommitAsync();
+        }
+
+        var ordinaryStructureSession = new ClientSession { SessionId = 80_004, CharacterId = ordinaryMember.Id };
+        ordinaryStructureSession.Set("structureid", InventoryWire.Id(structureId));
+        ordinaryStructureSession.Set("corporationID", InventoryWire.Id(ordinaryMember.CorporationId));
+        var ordinaryStructureInventory = BoundOid(await CallAsync(service, "GetInventory", ordinaryStructureSession,
+            new PyInt(InvBrokerService.ContainerStructure)));
+        Assert.Empty(PythonSetRows(await CallBoundAsync(service, "ListByFlags", ordinaryStructureSession,
+            ordinaryStructureInventory, [new PyList([new PyInt(ItemFlags.CapsuleerDeliveries)])])));
+
+        var structureSink = new RecordingPacketSink();
+        var managerStructureSession = new ClientSession(structureSink)
+            { SessionId = 80_005, CharacterId = projectManager.Id };
+        managerStructureSession.Set("structureid", InventoryWire.Id(structureId));
+        managerStructureSession.Set("corporationID", InventoryWire.Id(projectManager.CorporationId));
+        managerStructureSession.Set("shipid", InventoryWire.Id(structureShipId));
+        var managerStructureInventory = BoundOid(await CallAsync(service, "GetInventory", managerStructureSession,
+            new PyInt(InvBrokerService.ContainerStructure)));
+        var structureRows = PythonSetRows(await CallBoundAsync(service, "ListByFlags", managerStructureSession,
+            managerStructureInventory, [new PyList([new PyInt(ItemFlags.CapsuleerDeliveries)])]));
+        Assert.Equal(structureDeliveryId, Assert.IsType<PyLong>(Assert.IsType<PyPackedRow>(Assert.Single(structureRows))
+            .Fields().Single(field => field.Key == "itemID").Value).Value);
+        var managerStructureShip = BoundOid(await CallAsync(service, "GetInventoryFromId", managerStructureSession,
+            InventoryWire.Id(structureShipId)));
+        Assert.Equal(PyBool.True, await CallBoundAsync(service, "MultiAdd", managerStructureSession,
+            managerStructureShip,
+            [new PyList([InventoryWire.Id(structureDeliveryId)]), InventoryWire.Id(structureId)],
+            new PyDict([new KeyValuePair<PyValue, PyValue>(new PyStr("flag"), new PyInt(CharacterShips.CargoFlag))])));
+        Assert.Equal((projectManager.Id, structureShipId, CharacterShips.CargoFlag),
+            ((await items.GetAsync(structureDeliveryId))!.OwnerId,
+             (await items.GetAsync(structureDeliveryId))!.LocationId,
+             (await items.GetAsync(structureDeliveryId))!.Flag));
+        Assert.Equal("OnItemChange", Assert.Single(Notifications(structureSink)).Name);
+    }
+
     [PgFact]
     public async Task Host_composition_persists_local_and_remote_home_station_changes()
     {
@@ -224,6 +406,35 @@ public sealed class HomeStationHostTests
     private static async Task<PyValue> CallAsync(IService service, string method, ClientSession session, params PyValue[] args) =>
         await service.CallAsync(new ServiceCall { Method = method, Args = args, Session = session });
 
+    private static Task<PyValue> CallBoundAsync(IService service, string method, ClientSession session,
+        string boundObjectId, PyValue[] args, PyValue? kwargs = null) =>
+        service.CallAsync(new ServiceCall
+        {
+            Method = method, Args = args, Session = session, BoundObjectId = boundObjectId,
+            Kwargs = kwargs ?? PyNone.Instance,
+        }).AsTask();
+
+    private static string BoundOid(PyValue response)
+    {
+        var bound = Assert.IsType<PySubStruct>(response);
+        var data = Assert.IsType<PyTuple>(Assert.IsType<PySubStream>(bound.Value).Decoded);
+        return data.Items[0] switch
+        {
+            PyStr value => value.Value,
+            PyBytes value => Encoding.UTF8.GetString(value.Value.Span),
+            _ => throw new InvalidOperationException("Bound inventory object ID is not a string."),
+        };
+    }
+
+    private static IReadOnlyList<PyValue> PythonSetRows(PyValue response)
+    {
+        var set = Assert.IsType<PyObjectEx>(response);
+        Assert.Equal(ObjectExKind.Ex1, set.Kind);
+        var header = Assert.IsType<PyTuple>(set.Header);
+        Assert.Equal(new PyToken("__builtin__.set"), header.Items[0]);
+        return Assert.IsType<PyList>(Assert.Single(Assert.IsType<PyTuple>(header.Items[1]).Items)).Items;
+    }
+
     private static PyInt HomeStationId(PyValue response)
     {
         var value = Assert.IsType<PyObjectEx>(response);
@@ -311,6 +522,7 @@ public sealed class HomeStationHostTests
             Runtime = runtime;
             Characters = new PgCharacterStore(source, schemas["EVE_CHARACTERS_SCHEMA"]);
             InventorySchema = schemas["EVE_INVENTORY_SCHEMA"];
+            FittingSchema = schemas["EVE_FITTING_SCHEMA"];
             CorporationSchema = schemas["EVE_CORPORATIONS_SCHEMA"];
             StructureSchema = schemas["EVE_STRUCTURES_SCHEMA"];
             InitialHomeStation = initialHomeStation;
@@ -322,6 +534,7 @@ public sealed class HomeStationHostTests
         public ServiceRegistry Registry => Runtime.Registry;
         public NpgsqlDataSource Source => _source;
         public string InventorySchema { get; }
+        public string FittingSchema { get; }
         public PgCharacterStore Characters { get; }
         public string CorporationSchema { get; }
         public string StructureSchema { get; }
@@ -417,6 +630,69 @@ public sealed class HomeStationHostTests
                 };
                 await command.ExecuteNonQueryAsync();
             }
+            await transaction.CommitAsync();
+        }
+
+        public async Task SeedCorporationMemberAsync(long characterId, long roles)
+        {
+            await using var connection = await _source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            await using (var command = new NpgsqlCommand(
+                $"INSERT INTO {CorporationSchema}.owner_names (owner_id, name_key, ticker_key) " +
+                "VALUES ($1, 'capsuleer deliveries test corp', 'cdtc')",
+                connection, transaction))
+            {
+                command.Parameters.AddWithValue(CorporationId);
+                await command.ExecuteNonQueryAsync();
+            }
+            await using (var command = new NpgsqlCommand(
+                $"INSERT INTO {CorporationSchema}.corporations " +
+                "(id, name, ticker, ceo_id, creator_id, station_id, solar_system_id, tax_rate, lp_tax_rate, " +
+                "description, url, member_limit, created_ms) " +
+                "VALUES ($1, 'Capsuleer Deliveries Test Corp', 'CDTC', $2, $3, $4, $5, 0, 0, '', '', 100, $6)",
+                connection, transaction))
+            {
+                command.Parameters.AddWithValue(CorporationId);
+                command.Parameters.AddWithValue(long.MaxValue - 1);
+                command.Parameters.AddWithValue(characterId);
+                command.Parameters.AddWithValue(LocalOfficeStation.Id);
+                command.Parameters.AddWithValue(LocalOfficeStation.SolarSystemId);
+                command.Parameters.AddWithValue(nowMs);
+                await command.ExecuteNonQueryAsync();
+            }
+            await using (var command = new NpgsqlCommand(
+                $"INSERT INTO {CorporationSchema}.members (character_id, corporation_id, started_ms, roles) " +
+                "VALUES ($1, $2, $3, $4)",
+                connection, transaction))
+            {
+                command.Parameters.AddWithValue(characterId);
+                command.Parameters.AddWithValue(CorporationId);
+                command.Parameters.AddWithValue(nowMs);
+                command.Parameters.AddWithValue(roles);
+                await command.ExecuteNonQueryAsync();
+            }
+            await transaction.CommitAsync();
+        }
+
+        public async Task SeedCorporationMemberRoleAsync(long characterId, long roles)
+        {
+            await using var connection = await _source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await using var command = new NpgsqlCommand(
+                $"INSERT INTO {CorporationSchema}.members (character_id, corporation_id, started_ms, roles) " +
+                "VALUES ($1, $2, $3, $4)",
+                connection, transaction)
+            {
+                Parameters =
+                {
+                    new() { Value = characterId },
+                    new() { Value = CorporationId },
+                    new() { Value = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() },
+                    new() { Value = roles },
+                },
+            };
+            await command.ExecuteNonQueryAsync();
             await transaction.CommitAsync();
         }
 

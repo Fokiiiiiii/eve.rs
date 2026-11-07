@@ -30,9 +30,17 @@ EveJSは [crimewatchState.js:2699-2748, 2751-2812](/home/user/evejs-261028.1/ser
 
 `CrimewatchKillRightHostTests.A_new_kill_right_publishes_one_atomic_creation_event_then_persists_the_earned_notification` はDB保存、outbox、通知type/group/sender/recipient/data、オンラインwire引数、配信順、重複createと、通知が保存された後にlive sendが失敗した場合のretry・通知ID再利用を検証する。
 
+## CI追補
+
+push後のActions run 1614では、既存の `WeaponHostTests` が60秒を超えた攻撃でもcriminal timer終了までsecurity status penaltyを抑止すると期待していた。EveJSの [crimewatchState.js:1539-1573, 2384-2458](/home/user/evejs-261028.1/server/src/services/security/crimewatchState.js) は重複攻撃時に期限を延長せず、元の60秒期限後に同じtarget itemへ再適用する。Hostテストを59,999msでは抑止し、60,000ms境界とその次の1分で再適用する期待へ直し、criminal flagが継続中であることも確認する。
+
+同runの `HackingMgrServiceTests.Closing_the_session_retries_a_failed_settlement_until_the_target_is_released` は、fake siteが2回目のsettlement開始時に通知した直後、serviceがHackingWindowを削除する前にassertしていた。テストは実装処理の完了まで待ち、window削除とtarget reservation解放を確認するようにした。service実装自体は変更していない。
+
+run 1614は上記2件がfailとなり、Required CI gateもfailureで完了した。原因は、Host testがCrimewatchの60秒境界を古い15分期待で固定していたことと、settlement retry testの完了通知位置が早すぎたこと。2件ともassertionを弱めず、期待仕様と処理完了条件に合わせて修正した。この追補後のローカル確認はRelease build 0 warning、`HackingMgrServiceTests` 16件、`WeaponHostTests` 36件がすべてpass、skipなし。いずれも `eve_p4` を使用した。修正を含む次のmain CI runはまだ実施していない。
+
 ## 未確認
 
 - V24.01のグラフィカルクライアントへの実接続は行っていない。wireと遷移の確認はDB-backed Hostテストとソース照合による。
 - EveJSのサーバーフローはソースを追跡したが、EveJS実行環境でのシナリオ再生は行っていない。
 - `codebase-memory-mcp` / Serenaはこの作業環境で使用できなかったため、全体検索と行番号付きのソース読み取りで照合した。
-- ローカルで実行したのは対象のDB-backedテストクラスとRelease buildのみ。Actionsのmain CI結果は作業終了時に別途確認する。
+- V24.01の実クライアント接続、EveJS実行、修正後のActions main CI結果は未確認。

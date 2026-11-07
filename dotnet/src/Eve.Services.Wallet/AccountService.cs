@@ -23,6 +23,10 @@ public sealed partial class AccountService(PgWalletStore wallets, Eve.Corporatio
         (16, "Bounty", 59808, null),
         (17, "BountyPrize", 59809, null),
         (19, "Insurance", 59811, null),
+        // V24 defines refPaymentToLPStore as 26. The pinned SDE omits accountingEntryTypes; the available rows
+        // consistently map entryTypeNameID = entryTypeID + 59792 (for example, 19 -> 59811 and 33 -> 59825).
+        // Applying that verified mapping gives 59818 for type 26.
+        (26, "PaymentToLPStore", 59818, null),
         (33, "AgentMissionReward", 59825, 234515),
         (34, "AgentMissionTimeBonusReward", 59826, 234516),
         (93, "AgentMissionRewardCorporationTax", 59885, 234555),
@@ -172,14 +176,15 @@ public sealed partial class AccountService(PgWalletStore wallets, Eve.Corporatio
             {
                 try
                 {
-                    var raw = call.Kwarg("accountKey") ?? call.Arg(1);
-                    var key = raw switch
+                    var raw = call.Kwarg("accountKey");
+                    if (raw is null or PyNone)
+                        raw = call.Arg(1);
+                    if (raw is null or PyNone)
                     {
-                        PyInt n when n.Value is >= 1000 and <= 1006 => (int)n.Value,
-                        PyStr { Value:"cash" } => 1000,
-                        PyStr s when s.Value.Length == 5 && s.Value.StartsWith("cash",StringComparison.Ordinal) && s.Value[4] is >= '2' and <= '7' => 999 + s.Value[4] - '0',
-                        _ => 1000,
-                    };
+                        var selectedKey = call.Session.GetInt("corpAccountKey") ?? call.Session.GetInt("corpaccountkey");
+                        raw = selectedKey is { } value ? new PyLong(value) : PyNone.Instance;
+                    }
+                    var key = WalletKey(raw);
                     var account = await corporations.WalletAccountAsync(actor,key,false,call.Cancellation);
                     return new PyReal((double)(await transactions.AccountBalanceAsync(account,call.Cancellation) ?? 0m));
                 }
@@ -189,9 +194,10 @@ public sealed partial class AccountService(PgWalletStore wallets, Eve.Corporatio
                 "CrpAccessDenied",
                 ("reason", Py.Tuple(new PyInt(101), new PyStr("UI/Corporations/AccessRestrictions/NoAccessToWalletDivision"))));
         }
-        return call.Session.CharacterId is { } id && await wallets.GetAsync(id, call.Cancellation) is { } balance
-            ? new PyReal((double)balance.Isk)
-            : PyNone.Instance;
+        if (call.Session.CharacterId is not { } id)
+            return PyNone.Instance;
+        var personalBalance = await wallets.GetAsync(id, call.Cancellation);
+        return new PyReal((double)(personalBalance?.Isk ?? 0m));
     }
 
     /// <summary>Transfer ISK from the active character wallet to a character or corporation.</summary>

@@ -148,6 +148,68 @@ public class CynoJumpHostTests
     }
 
     [PgFact]
+    public async Task A_jump_at_the_v24_range_limit_is_allowed()
+    {
+        const double v24LightYearMeters = 9_460_000_000_000_000.0;
+
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, ship, _) = await JumperAsync(rig, fuel: 50_000);
+        await FleetOfAsync(rig, character.CharacterId);
+        await LightAsync(rig, Field, character.CharacterId, ship);
+        await rig.Statics.EnsureTypesAsync([Revelation, JumpDriveRules.FuelConservationSkill], CancellationToken.None);
+        var hull = rig.Statics.Type(Revelation)!;
+        var range = hull.Attributes[JumpDriveRules.RangeAttribute];
+        var fuelPerLightYear = hull.Attributes[JumpDriveRules.FuelPerLightYearAttribute];
+        var conservation = rig.Statics.Type(JumpDriveRules.FuelConservationSkill)!;
+        var conservationPerLevel = conservation.Attributes[JumpDriveRules.FuelBonusAttribute] / 100;
+        var systems = new SolarSystemCatalog([
+            new SolarSystemInfo(Origin, "Test Origin", 1, 1, -0.5),
+            new SolarSystemInfo(Destination, "Test Destination", 1, 1, -0.4, X: range * v24LightYearMeters),
+        ]);
+        var beyonceOid = await rig.BindBeyonceAsync(session);
+        rig.Space.JumpDrive = Drive(rig, systemCatalog: systems);
+        rig.Sim.Heard.Clear();
+
+        var answer = await rig.RegisteredCallAsync(session, beyonceOid, "CmdJumpToFleetModuleBeacon",
+            new PyLong(character.CharacterId), new PyLong(Field), new PyInt(Destination));
+
+        Assert.IsType<PyTuple>(answer);
+        Assert.Single(rig.Sim.Heard.OfType<SimCommand>(), command => command.Code == SimCommands.CynoJump);
+        var lightYears = systems.LightYearsBetween(Origin, Destination)!.Value;
+        var fuel = JumpDriveRules.FuelQuantity(lightYears, fuelPerLightYear, 0, conservationPerLevel, 0, 1.0);
+        Assert.Equal(50_000 - fuel, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, Helium));
+    }
+
+    [PgFact]
+    public async Task A_jump_just_beyond_the_v24_range_is_refused_without_consuming_fuel_or_setting_fatigue()
+    {
+        const double v24LightYearMeters = 9_460_000_000_000_000.0;
+
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, ship, _) = await JumperAsync(rig, fuel: 50_000);
+        await FleetOfAsync(rig, character.CharacterId);
+        await LightAsync(rig, Field, character.CharacterId, ship);
+        await rig.Statics.EnsureTypesAsync([Revelation], CancellationToken.None);
+        var range = rig.Statics.Type(Revelation)!.Attributes[JumpDriveRules.RangeAttribute];
+        var systems = new SolarSystemCatalog([
+            new SolarSystemInfo(Origin, "Test Origin", 1, 1, -0.5),
+            new SolarSystemInfo(Destination, "Test Destination", 1, 1, -0.4, X: range * 1.00001 * v24LightYearMeters),
+        ]);
+        var beyonceOid = await rig.BindBeyonceAsync(session);
+        rig.Space.JumpDrive = Drive(rig, systemCatalog: systems);
+        rig.Sim.Heard.Clear();
+
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(
+            () => rig.RegisteredCallAsync(session, beyonceOid, "CmdJumpToFleetModuleBeacon",
+                new PyLong(character.CharacterId), new PyLong(Field), new PyInt(Destination)));
+
+        Assert.Contains("out of your jump drive's range", Texts(refused.Error.Payload));
+        Assert.Equal(50_000, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, Helium));
+        Assert.Equal(JumpFatigueState.None, await new PgJumpFatigueStore(rig.Source, rig.SpaceSchema).GetAsync(character.CharacterId));
+        Assert.DoesNotContain(rig.Sim.Heard.OfType<SimCommand>(), command => command.Code == SimCommands.CynoJump);
+    }
+
+    [PgFact]
     public async Task A_spool_in_progress_is_kept_and_a_restart_refunds_its_fuel_and_restores_the_fatigue()
     {
         await using var rig = await Rig.CreateAsync();

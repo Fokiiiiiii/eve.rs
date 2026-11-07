@@ -257,15 +257,15 @@ public class StateMachineTests
     }
 
     [Fact]
-    public void A_flex_structure_skips_armor_reinforcement_and_waits_half_an_hour_for_the_hull()
+    public void A_flex_structure_skips_armor_reinforcement_and_waits_an_hour_for_the_hull()
     {
         var flex = StructureRules.Of(StructureSize.Flex, SecurityBand.NullSec);
-        var s = Do(Working(), flex, new Damaged(StructureLayer.Shield, true, false), T0);
+        var working = Working() with { ReinforceWeekday = NoReinforceWeekday, ReinforceHour = 1 };
+        var s = Do(working, flex, new Damaged(StructureLayer.Shield, true, false), T0);
         Assert.Equal(StructureState.ArmorVulnerable, s.State);
         s = Do(s, flex, new Damaged(StructureLayer.Armor, true, false), T0 + 1000, 0);
         Assert.Equal(StructureState.HullReinforce, s.State);
-        Assert.True(s.StateEndsMs >= T0 + 1000 + 1_800 * Second);
-        Assert.InRange(s.StateEndsMs % Day, 18 * Hour - flex.ExitJitterMs, 18 * Hour + flex.ExitJitterMs);
+        Assert.Equal(T0 + 1000 + Hour, s.StateEndsMs);
     }
 
     [Fact]
@@ -296,27 +296,35 @@ public class StateMachineTests
     }
 
     [Fact]
-    public void Fuel_out_starts_low_power_and_seven_days_of_it_abandon_the_structure()
+    public void Fuel_out_samples_a_seven_to_eight_day_abandonment_deadline()
     {
-        var s = Do(Working() with { OnlineServices = 0 }, Medium, new FuelOut(), T0);
+        var s = Do(Working() with { OnlineServices = 0 }, Medium, new FuelOut(), T0, roll: 0);
         Assert.Equal(UpkeepState.LowPower, s.Upkeep);
         Assert.Equal(T0, s.LowPowerSinceMs);
-        Assert.Equal(T0 + AbandonAfterMs, StructureStateMachine.NextDue(s, Medium));
+        Assert.Equal(T0 + AbandonAfterMinMs, s.AbandonAtMs);
+        Assert.Equal(T0 + AbandonAfterMinMs, StructureStateMachine.NextDue(s, Medium));
 
         // a service online again ends Low Power and the clock
         var back = Do(s with { OnlineServices = 1 }, Medium, new ServiceOnline(), T0 + Day);
         Assert.Equal(UpkeepState.FullPower, back.Upkeep);
         Assert.Equal(0, back.LowPowerSinceMs);
+        Assert.Equal(0, back.AbandonAtMs);
         Assert.Equal(0, StructureStateMachine.NextDue(back, Medium));
 
-        var early = StructureStateMachine.Apply(s, Medium, new TimerDue(), T0 + AbandonAfterMs - 1);
+        var early = StructureStateMachine.Apply(s, Medium, new TimerDue(), T0 + AbandonAfterMinMs - 1);
         Assert.Equal(UpkeepState.LowPower, early.Next.Upkeep);
-        var abandoned = Do(s, Medium, new TimerDue(), T0 + AbandonAfterMs);
+        var abandoned = Do(s, Medium, new TimerDue(), T0 + AbandonAfterMinMs);
         Assert.Equal(UpkeepState.Abandoned, abandoned.Upkeep);
+        Assert.Equal(0, abandoned.AbandonAtMs);
         Assert.Equal(0, StructureStateMachine.NextDue(abandoned, Medium));
 
+        var maxRoll = 1d - 1d / (AbandonAfterMaxMs - AbandonAfterMinMs + 1);
+        var latest = Do(Working() with { OnlineServices = 0 }, Medium, new FuelOut(), T0, maxRoll);
+        Assert.Equal(T0 + AbandonAfterMaxMs, latest.AbandonAtMs);
+        Assert.Equal(T0 + AbandonAfterMaxMs, StructureStateMachine.NextDue(latest, Medium));
+
         // any service online brings an abandoned structure back
-        var revived = Do(abandoned with { OnlineServices = 1 }, Medium, new ServiceOnline(), T0 + 8 * Day);
+        var revived = Do(abandoned with { OnlineServices = 1 }, Medium, new ServiceOnline(), T0 + AbandonAfterMaxMs);
         Assert.Equal(UpkeepState.FullPower, revived.Upkeep);
 
         var never = StructureRules.Of(StructureSize.Large, SecurityBand.NullSec, canBeAbandoned: false);
@@ -444,9 +452,9 @@ public class StateMachineTests
     private static readonly StructureRules Fob = StructureRules.Of(StructureSize.Fob, SecurityBand.LowSec, canBeAbandoned: false);
 
     [Fact]
-    public void A_fob_is_invulnerable_until_exposed_then_one_reinforcement_two_to_four_hours_and_no_repair_before_the_kill()
+    public void A_fob_is_invulnerable_until_exposed_then_reinforces_for_one_day_on_its_normal_exit_schedule()
     {
-        var s = Do(Fresh(), Fob, new FobDeployed(), T0);
+        var s = Do(Fresh() with { ReinforceWeekday = NoReinforceWeekday, ReinforceHour = 2 }, Fob, new FobDeployed(), T0);
         Assert.Equal(StructureState.FobInvulnerable, s.State);
         Assert.Equal(UpkeepState.FullPower, s.Upkeep);
         Assert.Equal("NOT_VULNERABLE", StructureStateMachine.Apply(s, Fob, new Damaged(StructureLayer.Shield, true, false), T0).Refusal);
@@ -456,9 +464,9 @@ public class StateMachineTests
 
         var earliest = StructureStateMachine.Apply(s, Fob, new Damaged(StructureLayer.Shield, true, false), T0 + 2 * Hour, roll: 0).Next;
         Assert.Equal(StructureState.ArmorReinforce, earliest.State);
-        Assert.Equal(T0 + 4 * Hour, earliest.StateEndsMs);
+        Assert.Equal(T0 + 2 * Hour + Day, earliest.StateEndsMs);
         var latest = StructureStateMachine.Apply(s, Fob, new Damaged(StructureLayer.Shield, true, false), T0 + 2 * Hour, roll: 0.999999).Next;
-        Assert.InRange(latest.StateEndsMs - (T0 + 2 * Hour), 3 * Hour, 4 * Hour - 1);
+        Assert.InRange(latest.StateEndsMs, T0 + 2 * Hour + Day, T0 + 2 * Hour + Day + 3 * Hour);
 
         var armored = Do(earliest, Fob, new TimerDue(), earliest.StateEndsMs);
         Assert.Equal(StructureState.ArmorVulnerable, armored.State);

@@ -186,12 +186,10 @@ public sealed class ContentRuntime
                 SELECT EXISTS (
                     SELECT 1 FROM {schema}.instances i
                     WHERE i.state = 'active'
-                      AND ((i.order_mode = 'parallel' AND NOT EXISTS (
-                               SELECT 1 FROM {schema}.objectives o WHERE o.instance_id = i.id AND o.required
-                           ))
-                           OR (i.order_mode = 'sequential' AND NOT EXISTS (
-                               SELECT 1 FROM {schema}.objectives o WHERE o.instance_id = i.id
-                           )))
+                      AND i.order_mode = 'parallel'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM {schema}.objectives o WHERE o.instance_id = i.id AND o.required
+                      )
                 )
                 """), cancellationToken))!;
             if (reconcileNeeded)
@@ -421,7 +419,7 @@ public sealed class ContentRuntime
             await _scheduler.ScheduleAsync(connection, transaction, new JobSpec(ExpireKind, at) { Key = instanceId.ToString(), Payload = new InstanceKey(instanceId) }, cancellationToken);
         }
         await _bus.PublishAsync(connection, transaction, $"content.{definition.Kind}.started", Announcement(instanceId, definition.Kind, definition.Id, owner, null, instanceData), $"{definition.Kind}:{instanceId}", cancellationToken);
-        if (definition.Objectives.Count == 0 || definition.Order == ObjectiveOrder.Parallel && definition.Objectives.All(objective => !objective.Required))
+        if (definition.Order == ObjectiveOrder.Parallel && definition.Objectives.All(objective => !objective.Required))
         {
             var row = await LoadAsync(connection, transaction, instanceId, true, cancellationToken);
             if (row is not null)
@@ -439,12 +437,10 @@ public sealed class ContentRuntime
             SELECT i.id
             FROM {schema}.instances i
             WHERE i.state = 'active'
-              AND ((i.order_mode = 'parallel' AND NOT EXISTS (
-                       SELECT 1 FROM {schema}.objectives o WHERE o.instance_id = i.id AND o.required
-                   ))
-                   OR (i.order_mode = 'sequential' AND NOT EXISTS (
-                       SELECT 1 FROM {schema}.objectives o WHERE o.instance_id = i.id
-                   )))
+              AND i.order_mode = 'parallel'
+              AND NOT EXISTS (
+                  SELECT 1 FROM {schema}.objectives o WHERE o.instance_id = i.id AND o.required
+              )
             ORDER BY i.id
             FOR UPDATE
             """)))

@@ -342,6 +342,20 @@ public class ContentTests
     }
 
     [PgFact]
+    public async Task Sequential_content_with_no_objectives_remains_active_until_its_deadline()
+    {
+        await using var rig = await Rig.Create();
+        rig.Content.Define(new ContentDefinition("anomaly", "empty-sequential",
+            []) { DurationMs = 5_000 });
+        await rig.Ready();
+
+        var id = (await rig.Start("empty-sequential", System)).Id;
+
+        Assert.Equal("active", (await rig.Content.GetAsync(id))!.State);
+        Assert.Single(await rig.Scheduler.ListAsync(ContentRuntime.ExpireKind));
+    }
+
+    [PgFact]
     public async Task Restart_completes_saved_parallel_content_with_no_required_objectives()
     {
         await using var rig = await Rig.Create();

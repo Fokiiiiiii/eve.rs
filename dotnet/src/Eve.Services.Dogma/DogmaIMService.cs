@@ -43,7 +43,8 @@ public sealed partial class DogmaIMService(
     Func<ClientSession, CancellationToken, ValueTask<ShipSnapshot?>>? snapshotProvider = null,
     Func<long, long, IReadOnlyList<long>, long, int?, long?, CancellationToken, Task<ShipOutcome>>? unloadAmmo = null,
     IWeaponBankStore? weaponBankStore = null,
-    StructureServiceModuleToggleHandler? structureServiceModuleToggle = null) : IBoundObjectReleaseHandler
+    StructureServiceModuleToggleHandler? structureServiceModuleToggle = null,
+    Func<long, IReadOnlyDictionary<int, bool>, CancellationToken, Task>? updateDroneSettings = null) : IBoundObjectReleaseHandler
 {
     private readonly CharacterDogmaSync _sync = sync ?? new CharacterDogmaSync(statics, ships, nowUnixMs);
 

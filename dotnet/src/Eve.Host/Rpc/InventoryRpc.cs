@@ -95,7 +95,8 @@ internal sealed partial class CharacterServicesComposition
                 localTimers: foundations.LocalTimers,
                 augmentations: new PilotAugmentationRpc(pilotImplants, skillHandler.UseBoosterAsync, announcer, dogma),
                 prepareSpaceDogma: spaceSessions is null ? null : spaceSessions.PrepareSpaceDogmaAsync,
-                structureServiceModuleToggle: structureServiceModuleAuthority.ToggleAsync).ListeningForDryGuns(),
+                structureServiceModuleToggle: structureServiceModuleAuthority.ToggleAsync,
+                updateDroneSettings: characters.UpdateDroneSettingsAsync).ListeningForDryGuns(),
         ];
     }
 }

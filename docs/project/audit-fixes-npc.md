@@ -52,10 +52,11 @@ Add EveJS-authored capital NPC profiles, loadouts, loot and special pools to the
 
 ## Verification actually run
 
-- `Eve.Npc.Tests`: 121 selected tests passed, 0 failed, 0 skipped. Included `BeltRatsTests`, `NpcLootTests`, DB-backed `NpcLootSdeTests`, `NpcSelectorTests`, `NpcSecurityStatusRecoveryTests`, `SpawnPlanFixtureTests`, DB-backed `PgBountyStoreTests`, and `DynamicBountyTests`.
-- `Eve.Services.Space.Tests`: 266 selected Host tests passed, 0 failed, 0 skipped. Included `BeltRatsHostTests`, `NpcLootHostTests`, `AnalysisBeaconHostTests`, `InsurgencyDirectorTests`, `SiteNpcTests`, `SpaceServiceTests`, `DungeonWaveSpaceTests`, `NpcBountyHostTests`, `WormholeSiteTemplatesTests`, `IncursionDirectorTests`, `DungeonWaveTests`, `NpcSpawnTests` and `PgEssStoreTests`.
+- After merging `origin/main` at `b6f5dc1`, `Eve.Npc.Tests`: 121 selected tests passed, 0 failed, 0 skipped. Included `BeltRatsTests`, `NpcLootTests`, DB-backed `NpcLootSdeTests`, `NpcSelectorTests`, `NpcSecurityStatusRecoveryTests`, `SpawnPlanFixtureTests`, DB-backed `PgBountyStoreTests`, and `DynamicBountyTests`.
+- After merging `origin/main` at `b6f5dc1`, `Eve.Services.Space.Tests`: 266 selected Host tests passed, 0 failed, 0 skipped. Included `BeltRatsHostTests`, `NpcLootHostTests`, `AnalysisBeaconHostTests`, `InsurgencyDirectorTests`, `SiteNpcTests`, `SpaceServiceTests`, `DungeonWaveSpaceTests`, `NpcBountyHostTests`, `WormholeSiteTemplatesTests`, `IncursionDirectorTests`, `DungeonWaveTests`, `NpcSpawnTests` and `PgEssStoreTests`.
 - After converting the new special-spawn tests to start from the Host's `SimArrived` event, DB-backed `BeltRatsHostTests` passed 9/9 with commander and capital spawns observed through the arrival handler.
-- `Eve.Host.Tests` `NeedlejackActivationHostTests` passed 9/9. All were Release runs using `EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p7` when applicable.
+- After merging `origin/main` at `b6f5dc1`, `Eve.Host.Tests` `NeedlejackActivationHostTests` passed 9/9. The runs used Release and `EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p7` for DB-backed tests.
+- Release `-warnaserror` builds passed with 0 warnings for `Eve.Npc`, `Eve.Services.Space`, `Eve.Npc.Tests`, `Eve.Services.Space.Tests` and `Eve.Host.Tests`.
 - The loot and bounty regressions were also exercised as failing tests before their respective fixes. No assertion was weakened.
 
 ## Not checked
@@ -63,4 +64,4 @@ Add EveJS-authored capital NPC profiles, loadouts, loot and special pools to the
 - EveJS's planner could not be executed in this checkout: its local game store lacks the required static tables, and the attempted module load stopped at `ITEM_RESOLVE_FAILED:52182`. Behavior was compared against the source and authored tables cited above, not a live EveJS run.
 - The pinned `.cache/sde` directory is absent in this worktree; SDE-backed verification used the `eve_p7` database, whose metadata reports build 3396210.
 - The graphical V24.01 client was not launched. Client source paths were inspected; Host and SDE tests are headless checks.
-- The full local test suite and live headless suite were not run. Release `-warnaserror` builds passed for `Eve.Npc`, `Eve.Services.Space`, `Eve.Npc.Tests` and `Eve.Services.Space.Tests`, each with 0 warnings. The required fetch/merge/push/CI gate is pending in this work session. Latest main CI for SHA `b6f5dc1` completed successfully.
+- The full local test suite and live headless suite were not run. Latest `origin/main` CI for SHA `b6f5dc1` completed successfully before this push; the post-push CI result is reported separately in the job summary.

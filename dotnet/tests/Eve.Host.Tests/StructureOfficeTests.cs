@@ -93,15 +93,18 @@ public sealed class StructureOfficeTests : IAsyncLifetime
         new AccountOptions { AutoCreate = true }, StrictRpc: true);
 
     /// <summary>A pilot's session at the structure, in the corporation the test names.</summary>
-    private static ClientSession PilotAtStructure(long characterId, long corporationId)
+    private static ClientSession PilotAtStructure(long characterId, long corporationId, Sink? sink = null)
     {
-        var session = new ClientSession(new Sink()) { SessionId = 402 };
+        var session = new ClientSession(sink ?? new Sink()) { SessionId = 402, CharacterId = characterId };
         session.Set("charid", new PyInt(characterId));
         session.Set("corpid", new PyInt(corporationId));
         session.Set("corporationID", new PyInt(corporationId));
         session.Set("structureid", new PyInt(StructureId));
         return session;
     }
+
+    private static bool IsBillReceived(PyValue packet) =>
+        MachoPacket.Decode(packet) is { Type: MachoMessage.Notification, Dest.BroadcastId: "OnBillReceived" };
 
     private static ServiceCall Call(ClientSession session, string method, long id, params PyValue[] args) =>
         new() { Session = session, Method = method, Args = args, CallId = new PyInt(id) };
@@ -366,6 +369,34 @@ public sealed class StructureOfficeTests : IAsyncLifetime
         Assert.Equal(Balance - OutsiderRent, await BalanceAsync(Outsider));
         Assert.Equal(1L, await ScalarAsync<long>(
             $"SELECT count(*) FROM {Schema("EVE_CORPORATIONS_SCHEMA")}.office_rent_bills WHERE corporation_id = $1 AND status = 0", Outsider));
+    }
+
+    [PgFact]
+    public async Task Rent_and_unrent_refresh_the_corporation_bill_list_after_the_rpc_response()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url));
+        var actor = await SeedPilotAsync("Bill Refresh Director", Outsider);
+        await SeedWorldAsync(source, actor, CorporationRoles.RentOffice | CorporationRoles.Director, Balance);
+        var host = await HostComposition.BuildAsync(Settings());
+        var sink = new Sink();
+        var session = PilotAtStructure(actor, Outsider, sink);
+        host.CharacterSessions!.Enter(actor, session);
+        var offices = host.Registry.Lookup("officeManager") ?? throw new InvalidOperationException("officeManager is not registered");
+
+        await offices.CallAsync(Call(session, "RentOffice", 1));
+        Assert.DoesNotContain(sink.Packets, IsBillReceived);
+        session.RunAfterResponse();
+        Assert.Single(sink.Packets, IsBillReceived);
+        Assert.Equal(1L, await ScalarAsync<long>(
+            $"SELECT count(*) FROM {Schema("EVE_CORPORATIONS_SCHEMA")}.office_rent_bills WHERE corporation_id = $1 AND status = 0", Outsider));
+
+        await offices.CallAsync(Call(session, "UnrentOffice", 2));
+        Assert.Single(sink.Packets, IsBillReceived);
+        session.RunAfterResponse();
+        Assert.Equal(2, sink.Packets.Count(IsBillReceived));
+        Assert.Equal(1L, await ScalarAsync<long>(
+            $"SELECT count(*) FROM {Schema("EVE_CORPORATIONS_SCHEMA")}.office_rent_bills WHERE corporation_id = $1 AND status = 2", Outsider));
+        await host.ShutdownAsync();
     }
 
     [PgFact]

@@ -197,6 +197,26 @@ public class DeathTests
     }
 
     [PgFact]
+    public async Task A_missing_wreck_type_in_the_sde_does_not_abort_death_and_saves_empty_salvage()
+    {
+        var (rig, character) = await InSpaceAsync();
+        await using var _ = rig;
+        var errors = new List<string>();
+        rig.Ships.SalvageDataError = errors.Add;
+        const int missingWreckType = int.MaxValue;
+
+        var death = await rig.Ships.DestroyShipAsync(character.CharacterId, character.ShipId, missingWreckType, "missing-wreck-type");
+
+        Assert.NotNull(death);
+        Assert.NotNull(death.Wreck);
+        Assert.Null(await rig.Items.GetAsync(character.ShipId));
+        var outcome = await new PgWreckSalvageStore(rig.Source, rig.SpaceSchema).GetAsync(death.Wreck.Id);
+        Assert.NotNull(outcome);
+        Assert.Empty(outcome!);
+        Assert.Contains(errors, error => error.Contains($"wreck type {missingWreckType}", StringComparison.Ordinal));
+    }
+
+    [PgFact]
     public async Task With_no_wreck_type_everything_is_destroyed_and_nothing_is_left()
     {
         var (rig, c) = await InSpaceAsync();

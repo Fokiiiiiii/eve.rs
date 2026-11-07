@@ -9,16 +9,24 @@ public sealed partial class CharacterShips
     /// <summary>Draws the bundle once, when the wreck is created.</summary>
     public Func<double> SalvageRewardRoll { get; set; } = Random.Shared.NextDouble;
 
+    /// <summary>Writes a diagnostic when static salvage data is missing and an empty outcome is saved.</summary>
+    public Action<string>? SalvageDataError { get; set; }
+
     private async Task<IReadOnlyList<(int TypeId, long Quantity)>> RollWreckSalvageAsync(
         int wreckTypeId, long warFactionId, CancellationToken cancellationToken)
     {
         await statics.EnsureTypesAsync([wreckTypeId], cancellationToken);
-        var wreckType = statics.Type(wreckTypeId)
-            ?? throw new InvalidDataException($"Wreck type {wreckTypeId} is absent from the SDE.");
+        var wreckType = statics.Type(wreckTypeId);
+        if (wreckType is null)
+        {
+            SalvageDataError?.Invoke($"wreck type {wreckTypeId} is absent from the SDE; saving an empty salvage outcome");
+            return [];
+        }
         var products = await statics.TypesInGroupsAsync(["Salvaged Materials"], cancellationToken);
         if (products.Count == 0)
         {
-            throw new InvalidDataException("The SDE contains no salvage products.");
+            SalvageDataError?.Invoke("the SDE has no Salvaged Materials types; saving an empty salvage outcome");
+            return [];
         }
         return SelectSalvageRewards(wreckType, warFactionId, products);
     }

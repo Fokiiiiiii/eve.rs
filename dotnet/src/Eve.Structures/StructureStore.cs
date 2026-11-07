@@ -29,7 +29,7 @@ public sealed partial class StructureStore
         "s.structure_id, s.type_id, s.solar_system_id, s.x, s.y, s.z, s.yaw, s.owner_corporation_id, s.alliance_id, s.name, s.bio, s.profile_id, s.state, s.state_started_ms, " +
         "s.state_ends_ms, s.timer_paused_ms, s.upkeep, s.core_installed, s.reinforce_weekday, s.reinforce_hour, s.fight_weekday, s.fight_hour, s.pending_weekday, " +
         "s.pending_hour, s.pending_effective_ms, s.unanchor_ends_ms, s.low_power_since_ms, s.destroyed_ms, s.doc::text, s.version, " +
-        "(SELECT count(*) FROM {schema}.structure_services v WHERE v.structure_id = s.structure_id AND v.state = 1), s.anchoring_ms";
+        "(SELECT count(*) FROM {schema}.structure_services v WHERE v.structure_id = s.structure_id AND v.state = 1), s.anchoring_ms, s.abandon_at_ms";
 
     /// <summary>Fields of the legacy record that a column of the table carries (EVE.js names); the rest of the record is kept in <c>doc</c>.</summary>
     private static readonly string[] ColumnFields =
@@ -176,6 +176,7 @@ public sealed partial class StructureStore
             LowPowerSinceMs = r.GetInt64(26),
             DestroyedMs = r.GetInt64(27),
             OnlineServices = (int)r.GetInt64(30),
+            AbandonAtMs = r.GetInt64(32),
         },
         r.GetInt32(1), r.GetInt32(2), r.GetDouble(3), r.GetDouble(4), r.GetDouble(5), r.GetDouble(6), r.GetInt64(7), r.GetInt64(8), r.GetString(9), r.GetString(10),
         r.GetInt64(11), JsonNode.Parse(r.GetString(28)) as JsonObject ?? new JsonObject(), r.GetInt64(29));
@@ -220,11 +221,11 @@ public sealed partial class StructureStore
         await Sql.ExecuteAsync(connection, transaction, Q("""
             UPDATE {schema}.structures SET state = $2, state_started_ms = $3, state_ends_ms = $4, timer_paused_ms = $5, upkeep = $6, core_installed = $7,
                 reinforce_weekday = $8, reinforce_hour = $9, fight_weekday = $10, fight_hour = $11, pending_weekday = $12, pending_hour = $13, pending_effective_ms = $14,
-                unanchor_ends_ms = $15, low_power_since_ms = $16, destroyed_ms = $17, anchoring_ms = $18, version = version + 1
+                unanchor_ends_ms = $15, low_power_since_ms = $16, destroyed_ms = $17, anchoring_ms = $18, abandon_at_ms = $19, version = version + 1
             WHERE structure_id = $1
             """), cancellationToken, s.StructureId, (short)s.State, s.StateStartedMs, s.StateEndsMs, s.TimerPausedMs, (short)s.Upkeep, s.CoreInstalled,
             (short)s.ReinforceWeekday, (short)s.ReinforceHour, (short)s.FightWeekday, (short)s.FightHour, (short)s.PendingWeekday, (short)s.PendingHour,
-            s.PendingEffectiveMs, s.UnanchorEndsMs, s.LowPowerSinceMs, s.DestroyedMs, s.AnchoringMs);
+            s.PendingEffectiveMs, s.UnanchorEndsMs, s.LowPowerSinceMs, s.DestroyedMs, s.AnchoringMs, s.AbandonAtMs);
 
     /// <summary>Sets a service's state. An online service records <paramref name="nowMs"/> as the time it came online; an offline one holds 0.</summary>
     public async Task SetServiceAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, int serviceId, int state, long nowMs, CancellationToken cancellationToken = default, bool manageFuelCycle = true) =>
@@ -324,6 +325,10 @@ public sealed partial class StructureStore
         SetIfPositive(row, "stateEndsAt", s.StateEndsMs);
         SetIfPositive(row, "timerPausedAt", s.TimerPausedMs);
         row["hasQuantumCore"] = s.CoreInstalled;
+        if (s.Upkeep == UpkeepState.LowPower)
+        {
+            SetIfPositive(row, "abandonAt", s.AbandonAtMs);
+        }
         row["reinforceWeekday"] = s.ReinforceWeekday;
         row["reinforceHour"] = s.ReinforceHour;
         if (s.PendingEffectiveMs > 0)
@@ -383,11 +388,14 @@ public sealed partial class StructureStore
             var hasState = row["state"] is not null;
             var upkeepState = row["upkeepState"] is not null ? Integer(row["upkeepState"]) : UpkeepState.FullPower;
             var abandonAt = Integer(row["abandonAt"]);
+            var lowPowerSince = upkeepState == UpkeepState.LowPower
+                ? abandonAt > 0 ? abandonAt - StructureTimes.AbandonAfterMinMs : nowMs
+                : 0L;
             var inserted = await Sql.ExecuteAsync(connection, transaction, Q("""
                 INSERT INTO {schema}.structures (structure_id, type_id, solar_system_id, x, y, z, yaw, owner_corporation_id, alliance_id, name, bio, profile_id, state, state_started_ms,
                     state_ends_ms, timer_paused_ms, upkeep, core_installed, reinforce_weekday, reinforce_hour, pending_weekday, pending_hour, pending_effective_ms,
-                    unanchor_ends_ms, low_power_since_ms, destroyed_ms, doc)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27::text::jsonb)
+                    unanchor_ends_ms, low_power_since_ms, abandon_at_ms, destroyed_ms, doc)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28::text::jsonb)
                 ON CONFLICT (structure_id) DO NOTHING
                 """), cancellationToken,
                 id, (int)Integer(row["typeID"]), (int)Integer(row["solarSystemID"]),
@@ -402,9 +410,7 @@ public sealed partial class StructureStore
                 (short)(Integer(row["nextReinforceApply"]) > 0 ? Integer(row["nextReinforceWeekday"]) : -1),
                 (short)(Integer(row["nextReinforceApply"]) > 0 ? Integer(row["nextReinforceHour"]) : -1), Integer(row["nextReinforceApply"]),
                 Integer(row["unanchoring"]),
-                // the abandonment clock of a structure in Low Power: EVE.js stored the day it falls due, otherwise it starts at the import
-                upkeepState == UpkeepState.LowPower ? (abandonAt > 0 ? abandonAt - StructureTimes.AbandonAfterMs : nowMs) : 0L,
-                destroyed, doc.ToJsonString());
+                lowPowerSince, abandonAt > 0 && upkeepState == UpkeepState.LowPower ? abandonAt : 0L, destroyed, doc.ToJsonString());
             if (inserted == 0)
             {
                 continue;

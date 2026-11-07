@@ -21,7 +21,12 @@ public static class StructureStateMachine
         var transition = e switch
         {
             AnchorPlaced => s.State == StructureState.Unanchored
-                ? Moved(next, Enter(next, StructureState.AnchorVulnerable, now, now + StructureTimes.RepairMs) with { Upkeep = UpkeepState.LowPower, LowPowerSinceMs = now })
+                ? Moved(next, Enter(next, StructureState.AnchorVulnerable, now, now + StructureTimes.RepairMs) with
+                {
+                    Upkeep = UpkeepState.LowPower,
+                    LowPowerSinceMs = now,
+                    AbandonAtMs = rules.CanBeAbandoned ? now + StructureTimes.AbandonDelayMs(roll) : 0,
+                })
                 : Refuse(s, "ALREADY_ANCHORED"),
             Damaged damaged => OnDamaged(next, rules, damaged, now, roll),
             TimerDue => Advance(next, rules, now, roll),
@@ -32,7 +37,7 @@ public static class StructureStateMachine
                 StateEndsMs = next.State == StructureState.OnliningVulnerable ? 0 : next.StateEndsMs,
             }),
             ServiceOnline => Moved(next, OnServiceOnline(next, now)),
-            ServiceOffline or FuelOut => Moved(next, OnServicesLost(next, now)),
+            ServiceOffline or FuelOut => Moved(next, OnServicesLost(next, rules, now, roll)),
             UnanchorStarted => OnUnanchorStarted(next, rules, now),
             UnanchorCancelled => next.UnanchorEndsMs > 0 ? Moved(next, next with { UnanchorEndsMs = 0 }) : Refuse(s, "NOT_UNANCHORING"),
             ReinforceTimeRequested request => OnReinforceTimeRequested(next, request, now),
@@ -61,7 +66,10 @@ public static class StructureStateMachine
         var due = 0L;
         void Offer(long at) => due = at > 0 && (due == 0 || at < due) ? at : due;
         Offer(s.StateEndsMs);
-        Offer(s.PendingEffectiveMs);
+        if (CanApplyPendingReinforceTime(s))
+        {
+            Offer(s.PendingEffectiveMs);
+        }
         Offer(s.UnanchorEndsMs);
         Offer(AbandonAt(s, rules));
         return due;
@@ -152,12 +160,13 @@ public static class StructureStateMachine
         for (var step = 0; step < MaxSteps; step++)
         {
             var abandonAt = AbandonAt(n, rules);
-            var at = new[] { n.PendingEffectiveMs, n.UnanchorEndsMs, abandonAt, n.StateEndsMs }.Where(t => t > 0 && t <= now).DefaultIfEmpty(0).Min();
+            var pendingAt = CanApplyPendingReinforceTime(n) ? n.PendingEffectiveMs : 0;
+            var at = new[] { pendingAt, n.UnanchorEndsMs, abandonAt, n.StateEndsMs }.Where(t => t > 0 && t <= now).DefaultIfEmpty(0).Min();
             if (at == 0)
             {
                 break;
             }
-            if (n.PendingEffectiveMs == at)
+            if (pendingAt == at)
             {
                 n = ApplyPendingReinforceTime(n, at);
             }
@@ -169,7 +178,7 @@ public static class StructureStateMachine
             }
             else if (abandonAt == at)
             {
-                n = n with { Upkeep = UpkeepState.Abandoned, LowPowerSinceMs = 0 };
+                n = n with { Upkeep = UpkeepState.Abandoned, LowPowerSinceMs = 0, AbandonAtMs = 0 };
             }
             else
             {
@@ -214,17 +223,22 @@ public static class StructureStateMachine
         {
             return s;
         }
-        var n = s with { Upkeep = UpkeepState.FullPower, LowPowerSinceMs = 0 };
+        var n = s with { Upkeep = UpkeepState.FullPower, LowPowerSinceMs = 0, AbandonAtMs = 0 };
         // a structure whose onlining repair is done and that waited for a service becomes a working one
         return n.State == StructureState.OnliningVulnerable && n.CoreInstalled && n.StateEndsMs == 0
             ? Enter(n, StructureState.ShieldVulnerable, now, 0)
             : n;
     }
 
-    private static StructureSnapshot OnServicesLost(StructureSnapshot s, long now) =>
+    private static StructureSnapshot OnServicesLost(StructureSnapshot s, StructureRules rules, long now, double roll) =>
         s.OnlineServices > 0 || s.Upkeep != UpkeepState.FullPower || s.State is StructureState.Unanchored or StructureState.AnchorVulnerable or StructureState.Anchoring
             ? s
-            : s with { Upkeep = UpkeepState.LowPower, LowPowerSinceMs = now };
+            : s with
+            {
+                Upkeep = UpkeepState.LowPower,
+                LowPowerSinceMs = now,
+                AbandonAtMs = rules.CanBeAbandoned ? now + StructureTimes.AbandonDelayMs(roll) : 0,
+            };
 
     private static StructureTransition OnUnanchorStarted(StructureSnapshot s, StructureRules rules, long now) =>
         s.UnanchorEndsMs > 0 ? Refuse(s, "ALREADY_UNANCHORING")
@@ -251,9 +265,12 @@ public static class StructureStateMachine
     // ---- helpers --------------------------------------------------------------------------------------------------------------------------------
 
     private static StructureSnapshot ApplyPendingReinforceTime(StructureSnapshot s, long now) =>
-        s.PendingEffectiveMs > 0 && s.PendingEffectiveMs <= now
+        CanApplyPendingReinforceTime(s) && s.PendingEffectiveMs > 0 && s.PendingEffectiveMs <= now
             ? s with { ReinforceWeekday = s.PendingWeekday, ReinforceHour = s.PendingHour, PendingWeekday = -1, PendingHour = -1, PendingEffectiveMs = 0 }
             : s;
+
+    private static bool CanApplyPendingReinforceTime(StructureSnapshot s) =>
+        s.State == StructureState.ShieldVulnerable && s.StateEndsMs == 0 && s.TimerPausedMs == 0;
 
     /// <summary>Enters a state: the timer starts at <paramref name="at"/> and ends at <paramref name="ends"/> (0 for none); an unanchoring in progress is called off in the states that cancel it.</summary>
     private static StructureSnapshot Enter(StructureSnapshot s, int state, long at, long ends) =>
@@ -267,15 +284,13 @@ public static class StructureStateMachine
         };
 
     private static long AbandonAt(StructureSnapshot s, StructureRules rules) =>
-        s.Upkeep == UpkeepState.LowPower && s.LowPowerSinceMs > 0 && rules.CanBeAbandoned ? s.LowPowerSinceMs + StructureTimes.AbandonAfterMs : 0;
+        s.Upkeep == UpkeepState.LowPower && rules.CanBeAbandoned ? s.AbandonAtMs : 0;
 
     /// <summary>Whether a stage has a repair countdown. A FOB has none after its shield: its reinforcement is the only chance, and it does not heal.</summary>
     private static bool Repairs(StructureRules rules, int state) => rules.Size != StructureSize.Fob || state == StructureState.ShieldVulnerable;
 
     private static long ArmorReinforceEnd(StructureRules rules, StructureSnapshot n, long now, double roll) =>
-        rules.Size == StructureSize.Fob
-            ? now + rules.ArmorReinforceMs - rules.ExitJitterMs + (long)(2 * rules.ExitJitterMs * Math.Clamp(roll, 0, 0.999999))
-            : ExitTime(now + rules.ArmorReinforceMs, n.FightWeekday, n.FightHour, rules.ExitJitterMs, roll);
+        ExitTime(now + rules.ArmorReinforceMs, n.FightWeekday, n.FightHour, rules.ExitJitterMs, roll);
 
     private static long RepairTime(int state) => state == StructureState.HullVulnerable ? StructureTimes.HullRepairMs : StructureTimes.RepairMs;
 

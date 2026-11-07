@@ -51,7 +51,9 @@ internal sealed class PersistenceAgentLocator(
     public ValueTask<LocatePlace?> PlaceAsync(long solarSystemId, CancellationToken cancellationToken) =>
         ValueTask.FromResult<LocatePlace?>(systems.Get((int)solarSystemId) is { } system ? new LocatePlace(system.ConstellationId, system.RegionId) : null);
 
-    public async ValueTask<bool> DeliverAsync(long characterId, long agentId, long fee, JsonObject result, CancellationToken cancellationToken)
+    public async ValueTask<LocateDeliveryResult> DeliverAsync(
+        long characterId, long agentId, long targetCharacterId, long fee, int cooldownMinutes,
+        JsonObject result, CancellationToken cancellationToken)
     {
         var now = nowMs();
         var reference = $"locate:{characterId}:{agentId}:{now}";
@@ -59,6 +61,13 @@ internal sealed class PersistenceAgentLocator(
         await using (var connection = await source.OpenConnectionAsync(cancellationToken))
         await using (var transaction = await connection.BeginTransactionAsync(cancellationToken))
         {
+            var at = DateTimeOffset.FromUnixTimeMilliseconds(now);
+            if (!await locates.TryMarkLocatedAsync(connection, transaction, characterId, agentId, targetCharacterId,
+                    at, TimeSpan.FromMinutes(cooldownMinutes), cancellationToken))
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return LocateDeliveryResult.RequestUnavailable;
+            }
             try
             {
                 settlement = await wallets.AdjustAsync(connection, transaction, new WalletAccount(characterId), -fee, 0,
@@ -66,15 +75,15 @@ internal sealed class PersistenceAgentLocator(
             }
             catch (Exception exception) when (exception is InsufficientFundsException or WalletNotFoundException)
             {
-                return false;
+                await transaction.RollbackAsync(cancellationToken);
+                return LocateDeliveryResult.InsufficientFunds;
             }
-            await locates.MarkLocatedAsync(connection, transaction, characterId, agentId, DateTimeOffset.FromUnixTimeMilliseconds(now), cancellationToken);
             await events.PublishAsync(connection, transaction, LocateDelivered.Topic, new LocateDelivered(characterId, agentId, result),
                 characterId.ToString(System.Globalization.CultureInfo.InvariantCulture), cancellationToken);
             await transaction.CommitAsync(cancellationToken);
         }
         Announce(settlement);
-        return true;
+        return LocateDeliveryResult.Delivered;
     }
 
     private void Announce(WalletSettlement settlement)

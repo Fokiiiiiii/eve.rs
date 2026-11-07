@@ -1,4 +1,5 @@
 using Eve.Agents;
+using Npgsql;
 
 namespace Eve.Services.Core;
 
@@ -24,7 +25,8 @@ public sealed class StorylineOffers(AgentMissionStore store, StorylineCounters c
             .OrderBy(candidate => candidate.MissionId)
             .FirstOrDefault();
         if (mission is null) return null;
-        return new AgentMissionContent(mission.MissionId, mission.NameId, mission.NameEn, agent.MissionKind, agent.ImportantMission);
+        return new AgentMissionContent(mission.MissionId, mission.NameId, mission.NameEn, agent.MissionKind, agent.ImportantMission,
+            mission.ExpirationMinutes);
     }
 
 
@@ -35,6 +37,26 @@ public sealed class StorylineOffers(AgentMissionStore store, StorylineCounters c
         if (record is null || record.State != AgentMissionState.Accepted || !isTrade(record.Content.MissionId)) return;
         if (await DueAsync(agent, characterId, cancellationToken) is not { } due) return;
         await counters.MarkOfferedAsync(characterId, due.FactionId, due.Level, cancellationToken);
+    }
+
+    /// <summary>Consumes a due storyline offer in the accepted-mission event transaction.</summary>
+    public async Task MarkAcceptedAsync(
+        AgentMissionAgentData agent, AgentMissionChange acceptance,
+        NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken cancellationToken = default)
+    {
+        if (acceptance.Action != "accepted" || !IsStorylineAgent(agent) || !isTrade(acceptance.MissionId) ||
+            !factionOfCorporation.TryGetValue(agent.CorporationId, out var faction) || faction <= 0) return;
+        await counters.MarkOneDueOfferAsync(connection, transaction, acceptance.CharacterId, faction,
+            acceptance.Reference, cancellationToken);
+    }
+
+    /// <summary>Applies a committed acceptance immediately; the same reference is safe when its durable event is replayed later.</summary>
+    public async Task MarkAcceptedAsync(
+        AgentMissionAgentData agent, AgentMissionChange acceptance, CancellationToken cancellationToken = default)
+    {
+        if (acceptance.Action != "accepted" || !IsStorylineAgent(agent) || !isTrade(acceptance.MissionId) ||
+            !factionOfCorporation.TryGetValue(agent.CorporationId, out var faction) || faction <= 0) return;
+        await counters.MarkOneDueOfferAsync(acceptance.CharacterId, faction, acceptance.Reference, cancellationToken);
     }
 
 

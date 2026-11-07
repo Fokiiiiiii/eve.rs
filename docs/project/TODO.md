@@ -1167,8 +1167,7 @@ Tests: `Eve.Agents.Tests` (8, PostgreSQL), `Eve.Services.Core.Tests` (AgentMissi
 
 | Status | Item | Where / blocker |
 |---|---|---|
-| OPEN | No live path creates an offer: the mission pool is not in the SDE build; `OfferAsync` is tested only | the mission-data track (second SDE pin) |
-| OPEN | The expiry sweep is not scheduled (durable job) and `OnMissionsUpdated` is not sent | DEVIATIONS "Agents slice AG-2, A5" |
+| OPEN | No live path creates an offer: the mission pool is not in the SDE build; `OfferAsync` is tested only. The independently verified offer/accept expiry path is implemented. | the mission-data track (second SDE pin); expiry evidence: `AgentMissionExpiryHostTests.Accepted_mission_deadline_survives_restart_then_expires_once_and_notifies_the_host_session` |
 
 Slice A4 (2026-10-11): DONE for the dialogue on the bound agent: `DoAction` answers the reference's reply shape; the greeting,
 the standing refusal (read from the relations and the skills), request (through the store), accept, decline, quit at the

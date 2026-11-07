@@ -1,6 +1,7 @@
 using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
+using Eve.Sde;
 using Eve.Ships;
 
 namespace Eve.Services.Inventory.Tests;
@@ -27,6 +28,15 @@ public class InventoryRpcFixTests
 
     private static IReadOnlyList<PyValue> Rows(PyValue rows) => Assert.IsType<PyList>(rows).Items;
 
+    private static IReadOnlyList<PyValue> SetRows(PyValue value)
+    {
+        var set = Assert.IsType<PyObjectEx>(value);
+        Assert.Equal(ObjectExKind.Ex1, set.Kind);
+        var header = Assert.IsType<PyTuple>(set.Header);
+        Assert.Equal(new PyToken("__builtin__.set"), header.Items[0]);
+        return Assert.IsType<PyList>(Assert.Single(Assert.IsType<PyTuple>(header.Items[1]).Items)).Items;
+    }
+
     private sealed class Sink : IPacketSink
     {
         public List<PyValue> Packets { get; } = [];
@@ -40,6 +50,7 @@ public class InventoryRpcFixTests
         IEnumerable<PyValue> children = value switch
         {
             PyObject obj => [obj.Args],
+            PyPackedRow row => row.Fields().Select(field => field.Value),
             PyBuffer buffer => [MarshalCodec.Decode(buffer.Value.ToArray())],
             PyTuple tuple => tuple.Items,
             PyList list => list.Items,
@@ -72,12 +83,151 @@ public class InventoryRpcFixTests
         var flags = new PyList([new PyInt(ItemFlags.Hangar), new PyInt(ItemFlags.Hangar)]);
         foreach (var args in new[] { Array.Empty<PyValue>(), new PyValue[] { PyNone.Instance } })
         {
-            var rows = Rows(await Call(rig, session, "ListByFlags", bound, args, ("flags", flags)));
+            var rows = SetRows(await Call(rig, session, "ListByFlags", bound, args, ("flags", flags)));
             Assert.Equal(item, Number(Fields(Assert.Single(rows))["itemID"]));
         }
-        Assert.Empty(Rows(await Call(rig, session, "ListByFlags", bound, [new PyList([])], ("flags", flags))));
-        Assert.Empty(Rows(await Call(rig, session, "ListByFlags", bound, [], ("flags", new PyInt(ItemFlags.Hangar)))));
+        Assert.Empty(SetRows(await Call(rig, session, "ListByFlags", bound, [new PyList([])], ("flags", flags))));
+        Assert.Empty(SetRows(await Call(rig, session, "ListByFlags", bound, [], ("flags", new PyInt(ItemFlags.Hangar)))));
         Assert.Equal(PyNone.Instance, await Call(rig, Rig.Session(id: 99), "ListByFlags", bound, [], ("flags", flags)));
+    }
+
+    [PgFact]
+    public async Task ListByFlags_returns_a_python_set_on_the_wire()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var item = await rig.AddAsync(Rig.Cockroach, Rig.Character, Rig.Station, singleton: true);
+        var session = Session(new Sink());
+        var bound = await rig.HangarAsync(session);
+
+        var response = await Call(rig, session, "ListByFlags", bound, [new PyTuple([new PyInt(ItemFlags.Hangar)])]);
+        var set = Assert.IsType<PyObjectEx>(response);
+        Assert.Equal(ObjectExKind.Ex1, set.Kind);
+        var header = Assert.IsType<PyTuple>(set.Header);
+        Assert.Equal(new PyToken("__builtin__.set"), header.Items[0]);
+        var constructorArgs = Assert.IsType<PyTuple>(header.Items[1]);
+        var rows = Assert.IsType<PyList>(Assert.Single(constructorArgs.Items));
+        Assert.Equal(item, Number(Fields(Assert.Single(rows.Items))["itemID"]));
+        Assert.Empty(set.List);
+        Assert.Empty(set.Dict);
+        var decoded = Assert.IsType<PyObjectEx>(MarshalCodec.Decode(MarshalCodec.Encode(response)));
+        Assert.Equal(ObjectExKind.Ex1, decoded.Kind);
+        Assert.Equal(item, Number(Fields(Assert.Single(SetRows(decoded)))["itemID"]));
+
+        var empty = await Call(rig, session, "ListByFlags", bound, [new PyTuple([new PyInt(ItemFlags.Cargo)])]);
+        Assert.Equal(InventoryWire.EmptySet(), empty);
+    }
+
+    [PgFact]
+    public async Task GetInventory_binds_the_docked_capsuleer_deliveries_container()
+    {
+        var canManageDeliveries = false;
+        await using var rig = await Rig.CreateAsync(activeShip: true,
+            capsuleerDeliveriesAccess: (character, corporation, _) =>
+                ValueTask.FromResult(character == Rig.Character && corporation == Rig.Corporation && canManageDeliveries));
+        var delivered = await rig.AddAsync(Rig.Tritanium, Rig.Corporation, Rig.Station,
+            flag: ItemFlags.CapsuleerDeliveries);
+        const long structureId = 900_001_888;
+        var structureDelivery = await rig.AddAsync(Rig.Tritanium, Rig.Corporation, structureId,
+            flag: ItemFlags.CapsuleerDeliveries);
+        await rig.AddAsync(Rig.Tritanium, Rig.Corporation, Rig.OtherStation,
+            flag: ItemFlags.CapsuleerDeliveries);
+        await rig.AddAsync(Rig.Tritanium, Rig.Corporation, Rig.Station, flag: ItemFlags.CorpDeliveries);
+        var session = Session(new Sink(), Rig.Corporation);
+
+        var bound = await rig.CallAsync(session, "GetInventory", null, new PyInt(10015));
+        var oid = Rig.OidOf(bound);
+        Assert.Equal(InventoryWire.EmptySet(), await Call(rig, session, "List", oid, [new PyInt(ItemFlags.CapsuleerDeliveries)]));
+
+        var ship = (await rig.Ships.LoadAsync(Rig.Character))!.Ship.Id;
+        var shipInventory = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, InventoryWire.Id(ship)));
+        var denied = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(rig, session, "MultiAdd", shipInventory,
+            [new PyList([InventoryWire.Id(delivered)]), InventoryWire.Id(Rig.Station)],
+            ("flag", new PyInt(CharacterShips.CargoFlag))));
+        Assert.Equal("CustomNotify", denied.Error.UserErrorMessage);
+        Assert.Equal((Rig.Corporation, Rig.Station, ItemFlags.CapsuleerDeliveries),
+            ((await rig.Items.GetAsync(delivered))!.OwnerId, (await rig.Items.GetAsync(delivered))!.LocationId, (await rig.Items.GetAsync(delivered))!.Flag));
+
+        canManageDeliveries = true;
+        var visible = Assert.IsType<PyList>(await Call(rig, session, "List", oid,
+            [new PyInt(ItemFlags.CapsuleerDeliveries)]));
+        Assert.Equal(delivered, Number(Fields(Assert.Single(visible.Items))["itemID"]));
+
+        var structureSession = Rig.Session(station: null, corporation: Rig.Corporation);
+        structureSession.Set("structureid", InventoryWire.Id(structureId));
+        var structureInventory = Rig.OidOf(await rig.CallAsync(structureSession, "GetInventory", null,
+            new PyInt(InvBrokerService.ContainerStructure)));
+        var structureRows = SetRows(await Call(rig, structureSession, "ListByFlags", structureInventory,
+            [new PyList([new PyInt(ItemFlags.CapsuleerDeliveries)])]));
+        Assert.Equal(structureDelivery, Number(Fields(Assert.Single(structureRows))["itemID"]));
+
+        Assert.Equal(PyBool.True, await Call(rig, session, "MultiAdd", shipInventory,
+            [new PyList([InventoryWire.Id(delivered)]), InventoryWire.Id(Rig.Station)],
+            ("flag", new PyInt(CharacterShips.CargoFlag))));
+        var moved = (await rig.Items.GetAsync(delivered))!;
+        Assert.Equal((Rig.Character, ship, CharacterShips.CargoFlag), (moved.OwnerId, moved.LocationId, moved.Flag));
+
+        Assert.IsType<PySubStruct>(bound);
+    }
+
+    [PgFact]
+    public async Task MultiAdd_skips_a_denied_corporation_item_and_moves_later_personal_items()
+    {
+        await using var rig = await Rig.CreateAsync(activeShip: true);
+        var ship = (await rig.Ships.LoadAsync(Rig.Character))!.Ship.Id;
+        var first = await rig.AddAsync(Rig.Tritanium, Rig.Character, Rig.Station, quantity: 4);
+        var denied = await rig.AddAsync(Rig.Tritanium, Rig.Corporation, Rig.Station,
+            flag: ItemFlags.CorpSAG1, quantity: 4);
+        var last = await rig.AddAsync(Rig.Tritanium, Rig.Character, Rig.Station, quantity: 6);
+        var sink = new Sink();
+        var session = Session(sink, Rig.Corporation);
+        var bound = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, InventoryWire.Id(ship)));
+
+        var response = await Call(rig, session, "MultiAdd", bound,
+            [new PyList([InventoryWire.Id(first), InventoryWire.Id(denied), InventoryWire.Id(last)]), InventoryWire.Id(Rig.Station)],
+            ("flag", new PyInt(CharacterShips.CargoFlag)));
+
+        Assert.Equal(PyBool.True, response);
+        Assert.Equal((ship, 4L, Rig.Character),
+            ((await rig.Items.GetAsync(first))!.LocationId, (await rig.Items.GetAsync(first))!.Quantity, (await rig.Items.GetAsync(first))!.OwnerId));
+        Assert.Equal((Rig.Station, 4L, Rig.Corporation),
+            ((await rig.Items.GetAsync(denied))!.LocationId, (await rig.Items.GetAsync(denied))!.Quantity, (await rig.Items.GetAsync(denied))!.OwnerId));
+        Assert.Equal((ship, 6L, Rig.Character),
+            ((await rig.Items.GetAsync(last))!.LocationId, (await rig.Items.GetAsync(last))!.Quantity, (await rig.Items.GetAsync(last))!.OwnerId));
+        var itemChanges = sink.Packets.Where(packet => Named(packet, "OnItemChange")).ToArray();
+        Assert.Equal(2, itemChanges.Length);
+        Assert.Equal([first, last], itemChanges.SelectMany(Descendants).OfType<PyPackedRow>()
+            .Select(row => Number(Fields(row)["itemID"])).Distinct().ToArray());
+    }
+
+    [PgFact]
+    public async Task GetAssetWorth_counts_dockable_asset_roots_only_and_keeps_fractional_isk()
+    {
+        await using var rig = await Rig.CreateAsync();
+        const int fractionalPriceTypeId = 353774; // V24.01 SDE types: unpublished 20GJ Neutron Blaster, basePrice 16873.5.
+        const long systemId = 30_100_032;
+        var catalog = new ItemTypeCatalog(new SdeReader(rig.Source));
+        var prices = await catalog.GetAsync([fractionalPriceTypeId, Rig.Cockroach]);
+        var fractionalPrice = Assert.IsType<ItemType>(prices.GetValueOrDefault(fractionalPriceTypeId)).BasePrice;
+        var shipPrice = Assert.IsType<ItemType>(prices.GetValueOrDefault(Rig.Cockroach)).BasePrice;
+        Assert.NotEqual(decimal.Truncate(fractionalPrice), fractionalPrice);
+
+        var dockedItem = await rig.AddAsync(fractionalPriceTypeId, Rig.Character, Rig.Station);
+        var dockedShip = await rig.AddAsync(Rig.Cockroach, Rig.Character, Rig.Station, singleton: true);
+        var dockedCargo = await rig.AddAsync(fractionalPriceTypeId, Rig.Character, dockedShip,
+            flag: CharacterShips.CargoFlag, quantity: 2);
+        var spaceShip = await rig.AddAsync(Rig.Cockroach, Rig.Character, systemId, singleton: true);
+        var spaceCargo = await rig.AddAsync(fractionalPriceTypeId, Rig.Character, spaceShip,
+            flag: CharacterShips.CargoFlag, quantity: 3);
+        Assert.All([dockedItem, dockedShip, dockedCargo, spaceShip, spaceCargo], id => Assert.True(id > 0));
+
+        var session = Session(new Sink());
+        var binding = Assert.IsType<PyTuple>(await rig.CallAsync(session, "MachoBindObject", null,
+            new PyTuple([InventoryWire.Id(Rig.Character), new PyInt(10002)]),
+            new PyTuple([new PyStr("ListStations"), new PyTuple([]), PyNone.Instance])));
+        var bound = Rig.OidOf(binding.Items[0]);
+        var response = Assert.IsType<PyTuple>(await Call(rig, session, "GetAssetWorth", bound, []));
+
+        Assert.Equal(new PyReal((double)Math.Round(fractionalPrice * 3m + shipPrice, 2, MidpointRounding.AwayFromZero)), response.Items[0]);
     }
 
     [PgFact]
@@ -527,9 +677,10 @@ public class InventoryRpcFixTests
         Assert.Equal((3L, ItemFlags.CorpSAG1), (corporate.Quantity, corporate.Flag));
         var ship = (await rig.Ships.LoadAsync(Rig.Character))!.Ship.Id;
         var cargo = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, InventoryWire.Id(ship)));
-        Assert.Equal(PyNone.Instance, await Call(rig, session, "MultiAdd", cargo,
+        var takeDenied = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(rig, session, "MultiAdd", cargo,
             [new PyList([InventoryWire.Id(corporate.Id)]), InventoryWire.Id(Rig.Station)],
             ("flag", new PyInt(CharacterShips.CargoFlag)), ("quantity", new PyInt(1))));
+        Assert.Equal("CustomNotify", takeDenied.Error.UserErrorMessage);
         Assert.Equal(corporate, await rig.Items.GetAsync(corporate.Id));
         allowTake = true;
         Assert.Equal(PyBool.True, await Call(rig, session, "MultiAdd", cargo,

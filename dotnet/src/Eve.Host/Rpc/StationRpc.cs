@@ -37,11 +37,16 @@ namespace Eve.Host;
 
 internal sealed partial class CharacterServicesComposition
 {
+    private Eve.Services.Station.TradeMgrService? tradeMgrService;
+
+    private Eve.Services.Station.TradeMgrService TradeMgrService =>
+        tradeMgrService ??= new Eve.Services.Station.TradeMgrService(characterSessions, tradeAuthority, itemTypes, stations, now);
+
     /// <summary>Stations, trade, development indices and eject.</summary>
     private IReadOnlyList<IService> StationRpc() =>
     [
             new StationService(stations, characters, online, now, sovereigntyReadModel.ReadAllianceSystemsAsync, officeManager: officeManager, beginObserverGuestLedgerSeed: stationGuestLedger.BeginObserverGuestLedgerSeed, characterSessions: characterSessions, allAllianceSystems: sovereigntyReadModel.ReadAllAllianceSystemsAsync, solarSystems: solarSystems),
-            new Eve.Services.Station.TradeMgrService(characterSessions, tradeAuthority, itemTypes, stations, now),
+            TradeMgrService,
             new Eve.Services.Station.ReprocessingService(source, items, itemTypes, stations, new Eve.Services.Station.SdeReprocessingData(sde, adjustedPrices), foundations.Relations, skills, economyWallets, wallets, characters, dogma, now, corporations, corporationOfficeStore),
             new Eve.Services.Station.RepairService(source, items, itemTypes, stations, dogma, modules, adjustedPrices, economyWallets, wallets, now, structureStore,
                 (characterId, structureId, token) => structureDirectoryReadModel.CharacterHasSettingAsync(characterId, structureId, 19, token)),

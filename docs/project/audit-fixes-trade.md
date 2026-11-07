@@ -56,11 +56,11 @@ NPC station は catalog の typeID を維持し、catalog にない virtual trad
 - Host E2E filter (`MarketTradeHostWireTests`, `NewEdenStoreHostTests`, `HostServerTests.Unload_ammo_returns_the_destination_item_ids_after_its_inventory_notice`) は実装前の 7 件が所見の症状で失敗した後、merged tree で29件すべて成功、skip 0。
 - 修正後に実行した focused test 合計は83件、成功83・失敗0・skip 0。Trade 12、Ships 22、Station TradeMgr 8、Space ammo Host 12、Host E2E 29。
 - 監査所見5件はすべてコード、V24.01 client callsites、EveJS と照合済み。`origin/main` の取り込みに使った CI run 1602 (commit `e839cfb7c`) は成功。
+- 修正を含む code push `4227d0904` の CI run 1603 は成功、失敗 job/test は 0 件。後続の docs-only commit は `.github/workflows/ci.yml` の `paths-ignore` により CI 対象外。
 - 既存 untracked `dotnet/tests/Eve.Host.Tests/InventoryAuditHostWireTests.cs` は今回変更せず、事前からの compile error (誤った `InvBrokerService` constructor 引数) があるため Host.Tests の compile/test から一時 target で除外した。この別件のテストは未確認であり pass と数えていない。
 
 ### 未確認
 
 - graphical V24.01 client を起動した画面結果、実 client packet trace、notification の実時間順序。
-- この修正を含む push 後の main CI 結果。
 - `/home/user/wt-cx6/.cache/sde` はこの worktree には存在しない。DB-backed tests は `eve_p6` の既存 SDE テーブルを使う。
 - code-navigation MCP / Serena は公開されていないため、`rg` と `sed` で全クライアント callsite を検索・確認した。

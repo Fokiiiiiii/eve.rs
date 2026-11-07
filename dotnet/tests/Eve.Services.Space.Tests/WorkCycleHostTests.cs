@@ -398,6 +398,28 @@ public class WorkCycleHostTests
     }
 
     /// <summary>A salvage cycle of a module: the access bonus is the module's, and the roll decides the chance (0 is a success at any chance).</summary>
+    [PgFact]
+    public async Task A_missing_salvage_outcome_is_refused_and_logged()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (flying, wreck, _) = await SalvagerOnWreckAsync(rig);
+        var outcomes = new Eve.Ships.PgWreckSalvageStore(rig.Source, rig.SpaceSchema);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            Assert.True(await outcomes.DeleteAsync(connection, transaction, wreck));
+            await transaction.CommitAsync();
+        }
+        StartModule(rig, flying);
+
+        var result = await SettleAsync(rig, SalvageCycle(flying, flying.Module, wreck, 8));
+
+        Assert.False(result.Accepted);
+        Assert.Equal("NO_SALVAGE_OUTCOME", result.Reason);
+        Assert.Contains(rig.Log, message => message.Contains($"salvage outcome missing for wreck {wreck}", StringComparison.Ordinal));
+        Assert.NotNull(await rig.Items.GetAsync(wreck));
+    }
+
     /// <summary>A wreck of an Amarr frigate in the pilot's system, with no contents: the salvager reaches it and the answer takes its product.</summary>
     private static async Task<long> WreckInSpaceAsync(Rig rig, DroneHostTests.Flying flying, int wreckTypeId)
     {

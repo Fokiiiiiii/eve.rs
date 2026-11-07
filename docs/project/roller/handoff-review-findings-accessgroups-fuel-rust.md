@@ -13,6 +13,11 @@ V24 calls `GetGroup` and `GetGroupsMany` from `eve/client/script/ui/services/acc
 ### Accelerator-expiry queue count
 The restart-and-retry Host regression now asserts one queue line when the second training level completes across the booster expiry and two lines when it does not, both before and after restart. V24 refreshes attributes after `OnServerBoostersChanged` (`skillsvc.py:934-939`), rebuilds the local timing cache and redraws the in-memory queue (`skillQueuePanelNew.py:922-927,952-960`, `skillQueueSvc.py:453-459,668-678`), then consumes the projected queue from `OnNewSkillQueueSaved` (`skillQueueSvc.py:761-765`). The prior handoff citations were corrected.
 
+### Corporation wallet notification assertion
+The new main CI failure at `d3baea09` was reproduced locally in `CorporationOfficeTests.Bill_manager_lists_saves_settings_and_pays_office_rent_in_the_wallet_transaction`: paying the bill emits the corporation wallet `OnAccountChange` before the RPC `CALL_RSP`, so the old `Assert.Single(replies)` expectation was stale. V24 calls `billMgr.PayCorporationBill` with `session.corpAccountKey` from `walletSvc.py:129`; `WalletSvc.OnAccountChange` handles `cash` through `cash7` when `ownerID == session.corpid`, then `_OnCorpAccountChange` checks read access, updates its cached balance, and scatters the client event (`walletSvc.py:80-88,98-116`). The other direct consumers are `industrySvc.py:280-283`, `wallet_balance.py:135-139`, `accountsvc.py:63-66`, `securityOfficeWindow.py:149-153`, `lpStoreSvc.py:389-392`, and `lpStorePanel.py:400-412`; mission research also emits the personal-account event from `agents.py:715-719`.
+
+The exact test assertion fix is on main as `37333b0a`; it checks the corporation `OnAccountChange` before the `CALL_RSP`. Local `Eve.Corporations.Tests` build succeeded, and the focused PostgreSQL-backed test passed 1/1 on `eve_p3` with zero skips after the earlier failure was reproduced on `d3baea09`. Selected Actions test `42313768263` and push CI `42313745296` both succeeded, with no failed jobs.
+
 ## Reviewed and rejected findings
 
 ### Structure service module ownership

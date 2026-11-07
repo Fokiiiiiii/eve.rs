@@ -75,7 +75,7 @@ public sealed partial class StructureDeploymentAuthority
     }
 
     /// <summary>
-    /// <c>Unanchor</c>: the structure's unanchoring starts and ends after 7 days (45 minutes for a Flex structure); the structure leaves the system then. Only a
+    /// <c>Unanchor</c>: the structure's unanchoring starts and ends after 7 days (45 minutes for a Flex structure, 3 days for the Metenox Moon Drill); the structure leaves the system then. Only a
     /// Director or the CEO may ask (EVE.js <c>requireStructureDecommissionSession</c>). A structure already unanchoring is answered as EVE.js does: nothing changes.
     /// </summary>
     public Task UnanchorAsync(ServiceCall call, long structureId, CancellationToken cancellationToken = default) =>

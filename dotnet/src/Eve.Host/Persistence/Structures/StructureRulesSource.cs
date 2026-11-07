@@ -13,6 +13,7 @@ namespace Eve.Host;
 public sealed class StructureRulesSource : IStructureRulesSource
 {
     private const int RigSizeAttribute = 1547;
+    private const int AutoMoonMinerTypeId = 81826;
     private const long PochvenRegionId = 10000070;
     private const int FirstWormholeSystemId = 31000000;
     private const int WormholeSystemIdLimit = 32000000;
@@ -86,7 +87,8 @@ public sealed class StructureRulesSource : IStructureRulesSource
 
         if (InsurgencyWarzones.All.Any(warzone => warzone.FobTypeId == typeId))
             return StructureRules.Of(StructureSize.Fob, band, canBeAbandoned: false);
-        return StructureRules.Of(size, band);
+        long? unanchoringMs = typeId == AutoMoonMinerTypeId ? StructureTimes.MetenoxUnanchoringMs : null;
+        return StructureRules.Of(size, band, unanchoringMs: unanchoringMs);
     }
 
     private static int[] ReadAnchorIds(System.Text.Json.JsonElement system, string property) =>

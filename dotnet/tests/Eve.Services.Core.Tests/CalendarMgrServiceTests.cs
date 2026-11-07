@@ -521,13 +521,17 @@ public class CalendarMgrServiceTests
             return new(CalendarParticipantUpdateResult.Updated, calendarEvent, newlyAdded, actuallyRemoved);
         }
 
-        public Task<bool> SendResponseAsync(
+        public Task<CalendarResponseUpdate> SendResponseAsync(
             long eventId, long ownerId, long characterId, short response, CancellationToken cancellationToken = default)
         {
-            if (!Events.Any(row => row.EventId == eventId && row.OwnerId == ownerId && !row.IsDeleted))
-                return Task.FromResult(false);
+            var calendarEvent = Events.FirstOrDefault(row => row.EventId == eventId && row.OwnerId == ownerId && !row.IsDeleted);
+            if (calendarEvent is null ||
+                (calendarEvent.Tag == CalendarTags.Personal && characterId != ownerId &&
+                    !Responses.Any(row => row.EventId == eventId && row.CharacterId == characterId &&
+                        row.Status != CalendarResponseStates.Uninvited)))
+                return Task.FromResult(new CalendarResponseUpdate(false, null));
             Upsert(eventId, characterId, response);
-            return Task.FromResult(true);
+            return Task.FromResult(new CalendarResponseUpdate(true, calendarEvent));
         }
 
         private void Upsert(long eventId, long characterId, short status)

@@ -317,11 +317,12 @@ public sealed partial class CalendarMgrService
             throw ClientNotify("You are not invited to that calendar event.");
         if (response is < CalendarResponseStates.Declined or > CalendarResponseStates.Maybe)
             throw ClientNotify("Invalid calendar response.");
-        if (!await Store.SendResponseAsync(eventId, ownerId, characterId, response, call.Cancellation))
+        var update = await Store.SendResponseAsync(eventId, ownerId, characterId, response, call.Cancellation);
+        if (!update.Updated || update.Event is null)
             throw ClientNotify(calendarEvent.Tag == CalendarTags.Personal
                 ? "You are not invited to that calendar event."
                 : "You do not have access to that calendar event.");
-        await NotifyResponseAsync(calendarEvent, response, call);
+        await NotifyResponseAsync(update.Event, response, call);
         return PyNone.Instance;
     }
 

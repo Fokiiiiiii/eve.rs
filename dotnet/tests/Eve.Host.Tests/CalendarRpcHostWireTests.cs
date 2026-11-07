@@ -615,16 +615,16 @@ public partial class HostServerTests
             return new(CalendarParticipantUpdateResult.Updated, value, newlyAdded, actuallyRemoved);
         }
 
-        public Task<bool> SendResponseAsync(
+        public Task<CalendarResponseUpdate> SendResponseAsync(
             long eventId, long ownerId, long characterId, short response,
             CancellationToken cancellationToken = default)
         {
             if (!_events.TryGetValue(eventId, out var value) || value.OwnerId != ownerId ||
                 !_responses.TryGetValue((eventId, characterId), out var existing) ||
                 existing.Status == CalendarResponseStates.Uninvited)
-                return Task.FromResult(false);
+                return Task.FromResult(new CalendarResponseUpdate(false, null));
             _responses[(eventId, characterId)] = existing with { Status = response };
-            return Task.FromResult(true);
+            return Task.FromResult(new CalendarResponseUpdate(true, value));
         }
     }
 }

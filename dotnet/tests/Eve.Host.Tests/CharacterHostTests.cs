@@ -7,6 +7,7 @@ using Eve.Marshal;
 using Eve.Skills;
 using Eve.Ships;
 using Eve.Services;
+using Eve.Services.Core;
 using Eve.GameStore;
 using Eve.Universe;
 using Eve.Wallet;
@@ -2369,6 +2370,310 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
     }
 
     [PgFact]
+    public async Task Jumping_to_a_ship_clone_requests_the_clients_confirmation_before_settlement()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, Sink = sink };
+        session.Set("stationid", new PyLong(rig.Station));
+        var capsule = await GiveItemAsync(rig, character, CharacterShips.CapsuleTypeId, rig.Station, ItemFlags.Hangar, singleton: true);
+        await SetShipAsync(rig, character, capsule);
+        await FundAsync(rig, character, 1_000_000m);
+        const long targetShip = 1_000_000_000_091;
+        var cloneId = await rig.AddCloneAsync(character, targetShip, "ship", "Vat clone", []);
+        var clones = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
+
+        var confirmation = await Assert.ThrowsAsync<MachoWrappedException>(() => BoundAsync(clones, session, "CloneJump",
+            new PyLong(targetShip), new PyLong(cloneId), new PyReal(900_000), PyBool.False));
+
+        Assert.Equal("JumpCheckIntoShip", confirmation.Error.UserErrorMessage);
+        Assert.Equal(new PyLong(targetShip), NamedArgument(confirmation, "shipID"));
+        Assert.Equal(new PyLong(rig.Station), session.Get("stationid"));
+        Assert.Single(Rows(Field(await BoundAsync(clones, session, "GetCloneState"), "clones")));
+        Assert.Equal(1_000_000m, await BalanceAsync(rig, character));
+        Assert.Empty(Notifications(sink));
+    }
+
+    [PgFact]
+    public async Task Confirmed_ship_clone_jump_is_refused_without_mutations_when_the_destination_ship_is_not_in_space()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { SessionId = 10_003, CharacterId = character, Sink = sink };
+        session.Set("stationid", new PyLong(rig.Station));
+        var capsule = await GiveItemAsync(rig, character, CharacterShips.CapsuleTypeId, rig.Station, ItemFlags.Hangar, singleton: true);
+        await SetShipAsync(rig, character, capsule);
+        session.Set("shipid", new PyLong(capsule));
+        await FundAsync(rig, character, 1_000_000m);
+        var ship = await GiveItemAsync(rig, character, 587, 30000142, CharacterShips.InSpaceFlag, singleton: true);
+        var cloneId = await rig.AddCloneAsync(character, ship, "ship", "Unavailable", []);
+        var clones = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
+
+        var confirmation = await Assert.ThrowsAsync<MachoWrappedException>(() => BoundAsync(clones, session, "CloneJump",
+            new PyLong(ship), new PyLong(cloneId), new PyReal(900_000), PyBool.False));
+        Assert.Equal("JumpCheckIntoShip", confirmation.Error.UserErrorMessage);
+
+        var unavailable = await Assert.ThrowsAsync<MachoWrappedException>(() => BoundAsync(clones, session, "CloneJump",
+            new PyLong(ship), new PyLong(cloneId), new PyReal(900_000), PyBool.True));
+        Assert.Equal("Jump clone not found", Assert.IsType<PyStr>(NamedArgument(unavailable, "notify")).Value);
+        Assert.Equal(new PyLong(rig.Station), session.Get("stationid"));
+        Assert.Equal(new PyLong(capsule), session.Get("shipid"));
+        Assert.Equal(1_000_000m, await BalanceAsync(rig, character));
+        Assert.Equal((rig.Station, ItemFlags.Hangar), (await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(capsule)) is { } item
+            ? (item.LocationId, item.Flag)
+            : throw new Xunit.Sdk.XunitException("The docked capsule disappeared."));
+        Assert.Empty(await SettlementsAsync(rig, character));
+        Assert.Single(Rows(Field(await BoundAsync(clones, session, "GetCloneState"), "clones")));
+        Assert.Empty(Notifications(sink));
+    }
+
+    [RealAbyssalSimPgFact]
+    public async Task Confirmed_ship_clone_jump_moves_the_capsule_settles_state_and_notifies_after_space_entry()
+    {
+        var start = new System.Diagnostics.ProcessStartInfo(Environment.GetEnvironmentVariable("EVE_ABYSSAL_SIM_BINARY")!)
+        { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true };
+        start.Environment["EVE_SIM_LISTEN"] = "127.0.0.1:0";
+        start.Environment["EVE_SDE_DIR"] = Environment.GetEnvironmentVariable("EVE_ABYSSAL_SIM_SDE")!;
+        using var process = System.Diagnostics.Process.Start(start) ?? throw new InvalidOperationException("Simulation failed to start.");
+        try
+        {
+            string? endpoint = null;
+            using var ready = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+            while (await process.StandardError.ReadLineAsync(ready.Token) is { } line)
+                if (line.StartsWith("eve-sim: listening on ", StringComparison.Ordinal))
+                {
+                    endpoint = line["eve-sim: listening on ".Length..];
+                    break;
+                }
+            Assert.NotNull(endpoint);
+            _ = process.StandardError.ReadToEndAsync();
+            _ = process.StandardOutput.ReadToEndAsync();
+
+            await using var rig = await CharacterHostRig.CreateAsync(simSocket: $"tcp:{endpoint}");
+            await rig.WaitForSimulationConnectionAsync();
+            var targetStation = (await StationCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source)))
+                .InSystem(30000143).OrderBy(station => station.Id).First();
+            var targetCharacter = await rig.CreateCharacterAsync();
+            await using (var connection = await rig.Source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await rig.Characters.SetStationAsync(connection, transaction, targetCharacter, targetStation.Id);
+                await rig.Characters.SetLocationAsync(connection, transaction, targetCharacter, targetStation.SolarSystemId,
+                    targetStation.ConstellationId, targetStation.RegionId);
+                await transaction.CommitAsync();
+            }
+            var targetShip = await GiveItemAsync(rig, targetCharacter, 587, targetStation.Id, ItemFlags.Hangar, singleton: true);
+            await SetShipAsync(rig, targetCharacter, targetShip);
+            var targetSink = new RecordingPacketSink();
+            var targetSession = new ClientSession { SessionId = 10_001, CharacterId = targetCharacter, UserId = 1, Sink = targetSink };
+            targetSession.Set("stationid", new PyLong(targetStation.Id));
+            rig.Sessions.Enter(targetCharacter, targetSession);
+            var shipService = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("ship"));
+            await BoundAtAsync(shipService, targetSession, targetStation.Id, "Undock", new PyLong(targetShip), PyBool.True);
+            Assert.NotNull(targetSession.GetInt("solarsystemid"));
+
+            var character = await rig.CreateCharacterAsync();
+            var sink = new RecordingPacketSink();
+            var session = new ClientSession { SessionId = 10_002, CharacterId = character, UserId = 1, Sink = sink };
+            session.Set("stationid", new PyLong(rig.Station));
+            rig.Sessions.Enter(character, session);
+            var capsule = await GiveItemAsync(rig, character, CharacterShips.CapsuleTypeId, rig.Station, ItemFlags.Hangar, singleton: true);
+            await SetShipAsync(rig, character, capsule);
+            session.Set("shipid", new PyLong(capsule));
+            await FundAsync(rig, character, 1_000_000m);
+            await GiveItemAsync(rig, character, 9942, character, 89, singleton: true);
+            var cloneId = await rig.AddCloneAsync(character, targetShip, "ship", "Vat clone", [9941]);
+            var clones = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
+
+            var confirmation = await Assert.ThrowsAsync<MachoWrappedException>(() => BoundAsync(clones, session, "CloneJump",
+                new PyLong(targetShip), new PyLong(cloneId), new PyReal(900_000), PyBool.False));
+            Assert.Equal("JumpCheckIntoShip", confirmation.Error.UserErrorMessage);
+            Assert.Equal(1_000_000m, await BalanceAsync(rig, character));
+            Assert.Equal(new PyLong(rig.Station), session.Get("stationid"));
+
+            PyValue jumpResult;
+            try
+            {
+                jumpResult = await BoundAsync(clones, session, "CloneJump",
+                    new PyLong(targetShip), new PyLong(cloneId), new PyReal(900_000), PyBool.True);
+            }
+            catch (MachoWrappedException error)
+            {
+                var reason = error.Error.UserErrorMessage == "CustomNotify"
+                    ? Assert.IsType<PyStr>(NamedArgument(error, "notify")).Value
+                    : error.Error.UserErrorMessage;
+                Assert.Fail($"Confirmed ship clone jump was rejected: {reason}");
+                throw;
+            }
+            Assert.IsType<PyNone>(jumpResult);
+
+            Assert.Null(session.GetInt("stationid"));
+            Assert.Equal(targetStation.SolarSystemId, session.GetInt("solarsystemid2"));
+            Assert.Equal(capsule, (long?)session.GetInt("shipid"));
+            var capsuleState = await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(capsule);
+            Assert.NotNull(capsuleState);
+            Assert.Equal(targetStation.SolarSystemId, capsuleState.LocationId);
+            Assert.Equal(CharacterShips.InSpaceFlag, capsuleState.Flag);
+            Assert.Equal(targetStation.SolarSystemId, (await rig.Characters.GetAsync(character))!.SolarSystemId);
+            Assert.Null((await rig.Characters.GetAsync(character))!.StructureId);
+            Assert.Equal([9941], await BodyImplantTypesAsync(rig, character));
+            Assert.Equal(100_000m, await BalanceAsync(rig, character));
+            var persisted = await new PgJumpCloneStore(rig.Source, rig.CharactersSchema).ReadAsync(character);
+            Assert.NotEqual(0, persisted.TimeLastJumpFileTime);
+            var atOrigin = Assert.Single(persisted.Clones);
+            Assert.Equal((rig.Station, "station"), (atOrigin.LocationId, atOrigin.LocationKind));
+            Assert.Equal([9942], atOrigin.ImplantTypeIds);
+            Assert.Equal(
+                ["OnItemsChanged", "OnJumpCloneCacheInvalidated", "OnStationJumpCloneCacheInvalidated", "OnShipJumpCloneCacheInvalidated",
+                    "OnJumpCloneCacheInvalidated", "OnStationJumpCloneCacheInvalidated", "OnShipJumpCloneCacheInvalidated"],
+                Notifications(sink).Select(notification => notification.Name));
+
+            await rig.RestartAsync();
+            rig.Sessions.Enter(character, session);
+            Assert.Equal([rig.Station], Rows(Field(await BoundAsync(Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc")), session,
+                "GetCloneState"), "clones")).Select(row => (long)((PyLong)row.Items[1]).Value));
+        }
+        finally
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync();
+        }
+    }
+
+    [PgFact]
+    public async Task Concurrent_station_clone_installs_respect_the_clone_limit_and_settle_one_fee()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var session = new ClientSession { CharacterId = character, Sink = new RecordingPacketSink() };
+        session.Set("stationid", new PyLong(rig.Station));
+        await rig.SetSkillLevelAsync(character, 24242, 1);
+        await FundAsync(rig, character, 7_200_000m);
+        var clones = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
+
+        var attempts = await Task.WhenAll(Enumerable.Range(0, 8).Select(async _ =>
+        {
+            try
+            {
+                await BoundAsync(clones, session, "InstallCloneInStation");
+                return (Succeeded: true, Error: (MachoWrappedException?)null);
+            }
+            catch (MachoWrappedException error)
+            {
+                return (Succeeded: false, Error: error);
+            }
+        }));
+
+        Assert.Single(attempts, attempt => attempt.Succeeded);
+        Assert.All(attempts, attempt =>
+        {
+            if (!attempt.Succeeded)
+                Assert.Equal("CustomNotify", attempt.Error!.Error.UserErrorMessage);
+        });
+        Assert.Single(Rows(Field(await BoundAsync(clones, session, "GetCloneState"), "clones")));
+        Assert.Single(await SettlementsAsync(rig, character));
+        Assert.Equal(6_300_000m, await BalanceAsync(rig, character));
+    }
+
+    [PgFact]
+    public async Task Different_characters_can_install_clones_in_the_same_station()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var characters = new[] { await rig.CreateCharacterAsync(), await rig.CreateCharacterAsync() };
+        var sessions = characters.Select(character =>
+        {
+            var session = new ClientSession { CharacterId = character, Sink = new RecordingPacketSink() };
+            session.Set("stationid", new PyLong(rig.Station));
+            return session;
+        }).ToArray();
+        foreach (var character in characters)
+        {
+            await rig.SetSkillLevelAsync(character, 24242, 1);
+            await FundAsync(rig, character, 1_000_000m);
+        }
+        var clones = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
+
+        foreach (var session in sessions)
+            await BoundAsync(clones, session, "InstallCloneInStation");
+        foreach (var (character, session) in characters.Zip(sessions))
+        {
+            Assert.Single(Rows(Field(await BoundAsync(clones, session, "GetCloneState"), "clones")));
+            Assert.Single(await SettlementsAsync(rig, character));
+            Assert.Equal(100_000m, await BalanceAsync(rig, character));
+        }
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(
+            $"SELECT count(*) FROM {rig.CharactersSchema}.character_jump_clones WHERE location_id = $1 AND location_kind = 'station'", connection);
+        command.Parameters.AddWithValue(rig.Station);
+        Assert.Equal(2, Convert.ToInt32(await command.ExecuteScalarAsync()));
+    }
+
+    [PgFact]
+    public async Task Concurrent_ship_clone_installs_from_different_characters_respect_the_shared_bay_capacity()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var carrierOwner = await rig.CreateCharacterAsync();
+        var carrier = await GiveItemAsync(rig, carrierOwner, 28352, rig.Station, ItemFlags.Hangar, singleton: true);
+        var statics = await Eve.Dogma.DogmaStatic.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        await statics.EnsureTypesAsync([28352]);
+        var capacity = (int)statics.Type(28352)!.Attributes[979];
+        Assert.True(capacity > 1);
+
+        var cloneRows = new PgJumpCloneStore(rig.Source, rig.CharactersSchema);
+        for (var index = 0; index < capacity - 1; index++)
+        {
+            var existingOwner = await rig.CreateCharacterAsync();
+            await rig.SetSkillLevelAsync(existingOwner, 24242, 1);
+            await using var connection = await rig.Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await cloneRows.InsertAsync(connection, transaction, existingOwner, carrier, "ship");
+            await transaction.CommitAsync();
+        }
+
+        var candidates = new[] { await rig.CreateCharacterAsync(), await rig.CreateCharacterAsync() };
+        foreach (var character in candidates)
+        {
+            await rig.SetSkillLevelAsync(character, 24242, 1);
+            await FundAsync(rig, character, 1_000_000m);
+        }
+
+        // This is the Host's PostgreSQL store, with unused authorities null because this scenario exercises InstallAsync only.
+        var hostStore = new HostJumpCloneStore(cloneRows, rig.Source, new PgSkillStore(rig.Source, rig.SkillsSchema),
+            new WalletTransactions(rig.Source, rig.WalletSchema), new PgWalletStore(rig.Source, rig.WalletSchema), rig.Characters,
+            new PgItemStore(rig.Source, rig.InventorySchema), null!, null!, null!, null!, null!);
+        var attempts = await Task.WhenAll(candidates.Select(async character =>
+        {
+            try
+            {
+                await hostStore.InstallAsync(character,
+                    new JumpCloneInstall(carrier, "ship", 900_000m, OfferingCharacterId: carrierOwner, ShipCapacity: capacity),
+                    CancellationToken.None);
+                return (Character: character, Refusal: (string?)null);
+            }
+            catch (JumpCloneInstallRefusedException refused)
+            {
+                return (Character: character, Refusal: refused.Reason);
+            }
+        }));
+
+        Assert.Single(attempts, attempt => attempt.Refusal is null);
+        Assert.Equal("SHIP_CAPACITY", Assert.Single(attempts, attempt => attempt.Refusal is not null).Refusal);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var command = new NpgsqlCommand(
+            $"SELECT count(*) FROM {rig.CharactersSchema}.character_jump_clones WHERE location_id = $1 AND location_kind = 'ship'", connection))
+        {
+            command.Parameters.AddWithValue(carrier);
+            Assert.Equal(capacity, Convert.ToInt32(await command.ExecuteScalarAsync()));
+        }
+        Assert.Equal(1, (await SettlementsAsync(rig, candidates[0])).Count + (await SettlementsAsync(rig, candidates[1])).Count);
+        Assert.Equal([100_000m, 1_000_000m], (await Task.WhenAll(candidates.Select(character => BalanceAsync(rig, character))))
+            .Order().ToArray());
+    }
+
+    [PgFact]
     public async Task Installing_a_clone_in_a_station_charges_the_fee_once_and_is_refused_without_the_money()
     {
         await using var rig = await CharacterHostRig.CreateAsync();
@@ -2543,6 +2848,14 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         return bound.Items[1];
     }
 
+    private static async Task<PyValue> BoundAtAsync(IService service, ClientSession session, long locationId, string method, params PyValue[] args)
+    {
+        var nested = Py.Tuple(new PyStr(method), Py.Tuple(args), PyNone.Instance);
+        var bound = Assert.IsType<PyTuple>(await CallAsync(service, "MachoBindObject", session,
+            Py.Tuple(new PyLong(locationId), new PyInt(3)), nested));
+        return bound.Items[1];
+    }
+
     private static PyValue Field(PyValue keyVal, string key)
     {
         var entries = keyVal switch
@@ -2614,10 +2927,12 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         private const long CorporationId = 900_001_001;
         private readonly IReadOnlyDictionary<string, string> _schemas;
         private readonly ManualClock? _clock;
+        private readonly string? _simSocket;
         private HostRuntime _runtime;
         private Func<Task> _shutdown;
 
-        private CharacterHostRig(NpgsqlDataSource source, IReadOnlyDictionary<string, string> schemas, HostRuntime runtime, Func<Task> shutdown, long station, ManualClock? clock)
+        private CharacterHostRig(NpgsqlDataSource source, IReadOnlyDictionary<string, string> schemas, HostRuntime runtime, Func<Task> shutdown,
+            long station, ManualClock? clock, string? simSocket)
         {
             Source = source;
             _schemas = schemas;
@@ -2625,12 +2940,19 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             _shutdown = shutdown;
             Station = station;
             _clock = clock;
+            _simSocket = simSocket;
         }
 
         public NpgsqlDataSource Source { get; }
         public ServiceRegistry Registry => _runtime.Registry;
         internal Eve.Host.PublicGateway.PublicGatewayRoutes Gateway => _runtime.PublicGateway;
         public CharacterSessions Sessions => Assert.IsType<CharacterSessions>(_runtime.CharacterSessions);
+        public async Task WaitForSimulationConnectionAsync()
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            while (_runtime.Simulation?.IsConnected != true)
+                await Task.Delay(20, timeout.Token);
+        }
         public OnlineStatusNotifications OnlineStatusNotifications => Assert.IsType<OnlineStatusNotifications>(_runtime.OnlineStatusNotifications);
         public Eve.Scheduler.DurableScheduler Scheduler => _runtime.Scheduler ?? throw new InvalidOperationException("the scheduler is not composed");
         public PgCharacterStore Characters => new(Source, CharactersSchema);
@@ -2689,7 +3011,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
                 await cache.FlushTableAsync("structures");
             }
 
-            (_runtime, _shutdown) = await BuildHostAsync(_schemas, _clock is null ? null : _clock.Read);
+            (_runtime, _shutdown) = await BuildHostAsync(_schemas, _clock is null ? null : _clock.Read, _simSocket);
         }
 
         /// <summary>Sets a character's ISK balance (the wallet row is opened here if the character has none yet).</summary>
@@ -2791,7 +3113,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             return (int)(await command.ExecuteScalarAsync())!;
         }
 
-        public static async Task<CharacterHostRig> CreateAsync(long? nowUnixMs = null)
+        public static async Task<CharacterHostRig> CreateAsync(long? nowUnixMs = null, string? simSocket = null)
         {
             var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL")
                 ?? throw new InvalidOperationException("EVE_PG_URL is not set.");
@@ -2803,10 +3125,10 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             var source = new NpgsqlDataSourceBuilder(new NpgsqlConnectionStringBuilder(Eve.Data.PgConnection.ForTest(pgUrl)).ConnectionString).Build();
             try
             {
-                var (runtime, shutdown) = await BuildHostAsync(schemas, clock is null ? null : clock.Read);
+                var (runtime, shutdown) = await BuildHostAsync(schemas, clock is null ? null : clock.Read, simSocket);
                 var stations = await StationCatalog.LoadAsync(new Eve.Sde.SdeReader(source));
-                var station = stations.All.OrderBy(s => s.Id).First().Id;
-                return new CharacterHostRig(source, schemas, runtime, shutdown, station, clock);
+                var station = stations.InSystem(30000142).OrderBy(s => s.Id).First().Id;
+                return new CharacterHostRig(source, schemas, runtime, shutdown, station, clock, simSocket);
             }
             catch
             {
@@ -2819,7 +3141,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         public async Task RestartAsync()
         {
             await _shutdown();
-            (_runtime, _shutdown) = await BuildHostAsync(_schemas, _clock is null ? null : _clock.Read);
+            (_runtime, _shutdown) = await BuildHostAsync(_schemas, _clock is null ? null : _clock.Read, _simSocket);
         }
 
         public async Task<long> CreateCharacterAsync(string tutorialEntryMode = "disabled", int airNpeState = 2)
@@ -2952,16 +3274,19 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             }
         }
 
-        private static async Task<(HostRuntime Runtime, Func<Task> Shutdown)> BuildHostAsync(IReadOnlyDictionary<string, string> schemas, Func<long>? clockOverride = null)
+        private static async Task<(HostRuntime Runtime, Func<Task> Shutdown)> BuildHostAsync(IReadOnlyDictionary<string, string> schemas,
+            Func<long>? clockOverride = null, string? simSocket = null)
         {
-            var previous = SchemaVariables.Concat(["EVE_MARKET_SEED", "EVE_SIM", "EVE_WORMHOLES"])
+            var previous = SchemaVariables.Concat(["EVE_MARKET_SEED", "EVE_SIM", "EVE_SIM_SOCKET", "EVE_WORMHOLES"])
                 .ToDictionary(variable => variable, variable => Environment.GetEnvironmentVariable(variable));
             try
             {
                 foreach (var (variable, schema) in schemas)
                     Environment.SetEnvironmentVariable(variable, schema);
                 Environment.SetEnvironmentVariable("EVE_MARKET_SEED", "skip");
-                Environment.SetEnvironmentVariable("EVE_SIM", "off");
+                Environment.SetEnvironmentVariable("EVE_SIM", simSocket is null ? "off" : "on");
+                if (simSocket is not null)
+                    Environment.SetEnvironmentVariable("EVE_SIM_SOCKET", simSocket);
                 Environment.SetEnvironmentVariable("EVE_WORMHOLES", "off");
                 var host = await HostComposition.BuildAsync(HostConfiguration.Read(), clockOverride);
                 return (host, host.ShutdownAsync);

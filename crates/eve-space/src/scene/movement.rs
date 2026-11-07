@@ -313,7 +313,7 @@ pub(super) fn steer(ship: &mut Ship, target: Option<Target>, command: Command) -
                         Steering::Actions(actions)
                     }
                     Steering::Nothing => Steering::Actions(vec![("SetSpeedFraction", vec![real(0.0)])]),
-                    refused => refused,
+                    Steering::Refused(_) => unreachable!("stop only returns Nothing or Actions"),
                 };
             }
             ship.speed_fraction = fraction;

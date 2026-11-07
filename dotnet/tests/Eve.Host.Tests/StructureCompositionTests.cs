@@ -206,6 +206,38 @@ public sealed class StructureCompositionTests : IAsyncLifetime
     }
 
     [PgFact]
+    public async Task A_subscriber_receives_an_event_published_before_subscription_once()
+    {
+        var host = await BuildWithSpaceServicesAsync();
+        try
+        {
+            var events = host.Events ?? throw new InvalidOperationException("Event bus is unavailable");
+            const string topic = "test.structure.pre-subscription";
+            var received = 0;
+            await events.PublishAsync(topic, null, "before-subscribe");
+            events.Subscribe("test.structure.pre-subscription", [topic], (context, _) =>
+            {
+                Assert.Equal("before-subscribe", context.Event.Key);
+                Interlocked.Increment(ref received);
+                return Task.CompletedTask;
+            }, Eve.Events.StartAt.Beginning);
+
+            Assert.True(await WaitForAsync(async () =>
+            {
+                await events.PumpAsync();
+                return Volatile.Read(ref received) > 0;
+            }, TimeSpan.FromSeconds(10)));
+            await Task.Delay(TimeSpan.FromSeconds(1));
+            await events.PumpAsync();
+            Assert.Equal(1, Volatile.Read(ref received));
+        }
+        finally
+        {
+            await host.ShutdownAsync();
+        }
+    }
+
+    [PgFact]
     public async Task Registered_tower_anchor_job_publishes_eligibility_event()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
@@ -239,6 +271,8 @@ public sealed class StructureCompositionTests : IAsyncLifetime
                 await events.PumpAsync();
                 return Volatile.Read(ref received) > 0;
             }, TimeSpan.FromSeconds(10)));
+            await Task.Delay(TimeSpan.FromSeconds(1));
+            await events.PumpAsync();
             Assert.Equal(1, Volatile.Read(ref received));
         }
         finally

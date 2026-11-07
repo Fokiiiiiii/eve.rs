@@ -333,8 +333,9 @@ internal sealed partial class CharacterServicesComposition
             },
             async (characterId, ct) =>
             {
-                var state = await ReadGameStoreTableAsync("researchRuntimeState", ct);
-                return (state["charactersByID"] as JsonObject)?[characterId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonArray;
+                var now = DateTimeOffset.FromUnixTimeMilliseconds(foundations.Scheduler.Now);
+                return await AgentResearchJournalRows.ReadAsync(
+                    agentResearchProjects, agentMissionAgentById, characterId, now, ct);
             },
             (characterId, agentId, session) =>
             {

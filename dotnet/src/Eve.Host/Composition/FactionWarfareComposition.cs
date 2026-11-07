@@ -132,6 +132,16 @@ internal sealed partial class CharacterServicesComposition
         return corporationFactionId > 0 ? corporationFactionId : allianceFactionId > 0 ? allianceFactionId : null;
     }
 
+    private async Task<FwComplexPilot> FwPilotOfCharacterAsync(long characterId, CancellationToken cancellationToken)
+    {
+        var character = await characters.GetAsync(characterId, cancellationToken);
+        if (character is null)
+            return new FwComplexPilot(characterId, 0);
+        long? directFaction = character.DirectFactionId is > 0 ? character.DirectFactionId : null;
+        long corporationFaction = await ReadCorporationWarFactionAsync(character.CorporationId, cancellationToken) ?? 0;
+        return new FwComplexPilot(characterId, directFaction ?? corporationFaction, character.CorporationId);
+    }
+
     private async ValueTask<int> FactionWarfareUpgradeLevelAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long solarSystemId,
         CancellationToken cancellationToken)
     {
@@ -232,7 +242,7 @@ internal sealed partial class CharacterServicesComposition
             (session, cancellationToken) => spaceSessions is { } space && space.ShipIdOf(session) is > 0 and var ship
                 ? space.PositionOfAsync(session, ship, cancellationToken)
                 : Task.FromResult<WarpCoordinates?>(null),
-            async (characterId, cancellationToken) => await WarFactionOfAsync(characterId, cancellationToken),
+            async (characterId, cancellationToken) => await FwPilotOfCharacterAsync(characterId, cancellationToken),
             async (solarSystemId, cancellationToken) =>
             {
                 // the sites a pilot can be inside: the open complexes' and the open battlefields' (their rooms are entered by the same gates)

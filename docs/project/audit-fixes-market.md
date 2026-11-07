@@ -18,6 +18,8 @@
 
 回帰テストは Host 登録経由で全約定・部分約定・未約定を一度に実行し、3 行の数量、永続注文がないこと、残高、応答と通知の一致を確認します。RPC テストは後続の資金不足で全体をロールバックし、通知も送らないことを確認します。
 
+RPC の戻り値は Python list です。V24.01 `marketsvc.py` は `BuyMultipleItems` の返却値を順に取り出し、EveJS も `buildList(ordersMade)` を返します。CI で見つかった古い headless assertion は空 list を Rowset と誤認していたため、V24/EveJS に合わせて wire 形式を検証するよう直しました。
+
 ### P2 — sell エスクロー後の在庫キャッシュ
 
 **所見を確認しました。** sell 出品では元 hangar のスタックが減るか、市場エスクローへ移ります。旧レシートはこの変更を持たず、`MarketNotifier` が buyer の配送だけを通知していました。

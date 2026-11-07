@@ -7,6 +7,7 @@ public sealed record CatalogManifest(
     [property: JsonPropertyName("sdeBuild")] long SdeBuild,
     [property: JsonPropertyName("dungeonFiles")] IReadOnlyList<string> DungeonFiles,
     [property: JsonPropertyName("missionFile")] string MissionFile,
+    [property: JsonPropertyName("layoutProfilesFile")] string LayoutProfilesFile,
     [property: JsonPropertyName("knownGapsFile")] string KnownGapsFile,
     [property: JsonPropertyName("counts")] IReadOnlyDictionary<string, long> Counts,
     [property: JsonPropertyName("validation")] IReadOnlyDictionary<string, long> Validation);
@@ -34,6 +35,25 @@ public sealed record Dungeon(
     [property: JsonPropertyName("miningLocks")] IReadOnlyList<MiningLock> MiningLocks,
     [property: JsonPropertyName("lootProfiles")] IReadOnlyList<LootProfile> LootProfiles);
 
+public sealed record DungeonLayoutProfilesFile(
+    [property: JsonPropertyName("schema")] string Schema,
+    [property: JsonPropertyName("profiles")] IReadOnlyList<DungeonLayoutProfile> Profiles);
+
+public sealed record DungeonLayoutProfile(
+    [property: JsonPropertyName("dungeonID")] long DungeonID,
+    [property: JsonPropertyName("rooms")] IReadOnlyList<DungeonRoomLayoutProfile> Rooms,
+    [property: JsonPropertyName("gates")] IReadOnlyList<DungeonGateLayoutProfile> Gates);
+
+public sealed record DungeonRoomLayoutProfile(
+    [property: JsonPropertyName("roomKey")] string RoomKey,
+    [property: JsonPropertyName("initialState")] string? InitialState,
+    [property: JsonPropertyName("positionOffset")] DungeonPosition? PositionOffset);
+
+public sealed record DungeonGateLayoutProfile(
+    [property: JsonPropertyName("gateKey")] string GateKey,
+    [property: JsonPropertyName("sourceRoomKey")] string? SourceRoomKey,
+    [property: JsonPropertyName("positionOffset")] DungeonPosition? PositionOffset);
+
 public sealed record DungeonResources(
     [property: JsonPropertyName("ore")] IReadOnlyList<long> Ore,
     [property: JsonPropertyName("gas")] IReadOnlyList<long> Gas,
@@ -47,7 +67,14 @@ public sealed record DungeonPosition(
 public sealed record DungeonRoom(
     [property: JsonPropertyName("key")] string Key,
     [property: JsonPropertyName("roomID")] long? RoomID,
-    [property: JsonPropertyName("entry")] bool Entry);
+    [property: JsonPropertyName("entry")] bool Entry)
+{
+    [JsonIgnore]
+    public string? InitialState { get; init; }
+
+    [JsonIgnore]
+    public DungeonPosition? PositionOffset { get; init; }
+}
 
 public sealed record DungeonGate(
     [property: JsonPropertyName("key")] string Key,
@@ -55,7 +82,14 @@ public sealed record DungeonGate(
     [property: JsonPropertyName("fromObjectID")] long? FromObjectID,
     [property: JsonPropertyName("toObjectID")] long? ToObjectID,
     [property: JsonPropertyName("destinationRoomKey")] string? DestinationRoomKey,
-    [property: JsonPropertyName("allowedRaces")] IReadOnlyList<long> AllowedRaces);
+    [property: JsonPropertyName("allowedRaces")] IReadOnlyList<long> AllowedRaces)
+{
+    [JsonIgnore]
+    public string? SourceRoomKey { get; init; }
+
+    [JsonIgnore]
+    public DungeonPosition? PositionOffset { get; init; }
+}
 
 public sealed record DungeonWave(
     [property: JsonPropertyName("key")] string? Key,

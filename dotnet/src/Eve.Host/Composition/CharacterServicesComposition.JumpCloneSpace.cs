@@ -19,7 +19,7 @@ internal sealed partial class CharacterServicesComposition
 
     /// <summary>The clone installs read the space side on every server; without a space scene no ship is in space (its distance is none).</summary>
     private void LinkJumpCloneSpace() =>
-        jumpCloneSpace.Space = new HostJumpCloneSpace(spaceSessions, ships, dogma, characterSessions, StructureCloneBayAsync);
+        jumpCloneSpace.Space = new HostJumpCloneSpace(spaceSessions, ships, dogma, characterSessions, StructureCloneBayAsync, items);
 
     /// <summary>
     /// A structure's clone bay for a character: its Medical service online, or its Jump Clone service online and the character allowed to dock

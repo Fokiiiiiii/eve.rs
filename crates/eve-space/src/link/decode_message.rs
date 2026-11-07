@@ -1237,7 +1237,24 @@ impl Message {
             kind::REFUSED => Message::Refused { session_id: r.u64()?, command: r.u8()?, reason: r.text()? },
             kind::ACCEPTED => Message::Accepted { session_id: r.u64()?, command: r.u8()?, at: r.i64()? },
             kind::POSITION => {
-                Message::Position { session_id: r.u64()?, command: r.u8()?, position: read_vector(&mut r)? }
+                let (session_id, command, position) = (r.u64()?, r.u8()?, read_vector(&mut r)?);
+                let direction = match r.u8()? {
+                    0 => None,
+                    1 => Some(read_vector(&mut r)?),
+                    _ => return Err(DecodeError::BadValue("position direction")),
+                };
+                let radius = match r.u8()? {
+                    0 => None,
+                    1 => {
+                        let value = r.f64()?;
+                        if !value.is_finite() || value < 0.0 {
+                            return Err(DecodeError::BadValue("position radius"));
+                        }
+                        Some(value)
+                    }
+                    _ => return Err(DecodeError::BadValue("position radius")),
+                };
+                Message::Position { session_id, command, position, direction, radius }
             }
             kind::DIRECTIONAL_TARGETS => {
                 let (session_id, command) = (r.u64()?, r.u8()?);

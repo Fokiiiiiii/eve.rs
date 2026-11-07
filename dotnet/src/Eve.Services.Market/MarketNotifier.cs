@@ -2,11 +2,14 @@ using Eve.Macho;
 using Eve.Inventory;
 using Eve.Market;
 using Eve.Marshal;
+using Eve.Services.Ships;
+using Eve.Ships;
 using Eve.Wallet;
 
 namespace Eve.Services.Market;
 
-public sealed class MarketNotifier(WalletTransactions wallets, CharacterSessions? sessions, PgItemStore items, ItemTypeCatalog itemTypes)
+public sealed class MarketNotifier(WalletTransactions wallets, CharacterSessions? sessions, PgItemStore items, ItemTypeCatalog itemTypes,
+    Func<IReadOnlyList<ItemChanged>,ClientSession?,Task>? corporationInventoryObservers = null)
 {
     private const string ObjectCachingService = "objectCaching";
     private const string MarketService = "marketProxy";
@@ -14,7 +17,7 @@ public sealed class MarketNotifier(WalletTransactions wallets, CharacterSessions
 
     private sealed record BuyerDelivery(Item Item, ItemRow Row);
 
-    public async Task PublishAsync(MarketReceipt receipt, MarketRequest? immediateFill = null)
+    public async Task PublishAsync(MarketReceipt receipt, MarketRequest? immediateFill = null, ClientSession? actorSession = null)
     {
         var deliveries = await ResolveDeliveriesAsync(receipt.DeliveredItemIds);
 
@@ -36,9 +39,11 @@ public sealed class MarketNotifier(WalletTransactions wallets, CharacterSessions
                     Py.List(MarketProxyService.OrderNotificationEntry(change.Order)),new PyStr(change.Reason),new PyInt(orderIsCorp ? 1 : 0));
         }
         if (immediateFill is { } request && receipt.OrderId is null && receipt.FilledQuantity > 0 &&
-            sessions?.Of(request.ActorId) is { } session)
+            (actorSession ?? sessions?.Of(request.ActorId)) is { } session)
             session.SendNotification("OnOwnOrdersChanged","charid",Py.List(),
                 new PyStr("Filled"),new PyInt(request.UseCorporation ? 1 : 0));
+
+        await PublishInventoryChangesAsync(receipt.InventoryChanges,actorSession);
 
         foreach (var buyer in deliveries.GroupBy(delivery => delivery.Item.OwnerId))
             if (sessions?.Of(buyer.Key) is { } buyerSession)
@@ -49,6 +54,47 @@ public sealed class MarketNotifier(WalletTransactions wallets, CharacterSessions
             sessions?.Of(delivery.Item.OwnerId)?.SendNotification("OnMarketItemReceived","clientID",
                 InventoryWire.Id(delivery.Item.Id),new PyInt(delivery.Item.TypeId),new PyInt(delivery.Item.Flag),
                 InventoryWire.Id(delivery.Item.LocationId));
+    }
+
+    private async Task PublishInventoryChangesAsync(IReadOnlyList<MarketInventoryChange> inventoryChanges,ClientSession? actorSession)
+    {
+        if (inventoryChanges.Count==0) return;
+        var changes=inventoryChanges.Select(change => new ItemChanged(
+            change.After ?? change.Before with { LocationId=CharacterShips.JunkLocation },
+            change.Before.LocationId,change.Before.Flag,change.Before.Quantity,change.Before.OwnerId)).ToArray();
+        var typeIds=changes.Select(change => change.After.TypeId).Distinct().ToArray();
+        var types=await itemTypes.GetAsync(typeIds);
+        foreach (var change in inventoryChanges.Zip(changes))
+        {
+            var session=actorSession?.CharacterId==change.First.CharacterId ? actorSession : sessions?.Of(change.First.CharacterId);
+            if (session is null) continue;
+            var itemChange=change.Second;
+            if (!types.TryGetValue(itemChange.After.TypeId,out var type))
+                throw new InvalidOperationException($"Committed market inventory type {itemChange.After.TypeId} is missing from the SDE.");
+            ShipNotifications.SendItemChange(session,itemChange,item => new ItemRow(item.Id,item.TypeId,item.OwnerId,item.LocationId,
+                item.Flag,item.Singleton ? -1 : item.Quantity,type.GroupId,type.CategoryId));
+        }
+        if (corporationInventoryObservers is not null)
+        {
+            try { await corporationInventoryObservers(changes,actorSession); }
+            catch (Exception error) { Console.Error.WriteLine($"eve-host: market corporation inventory notification failed: {error.Message}"); }
+        }
+    }
+
+    /// <summary>Completes BuyMultipleItems once, after its per-line fills have committed and their deliveries are announced.</summary>
+    public void PublishImmediateBuyOrders(IReadOnlyList<MarketOwnedOrder> orders)
+    {
+        if (orders.Count == 0) return;
+        var first=orders[0];
+        if (orders.Any(order => order.ActorId != first.ActorId || order.WalletOwnerId != first.WalletOwnerId ||
+            order.AccountKey != first.AccountKey))
+            throw new InvalidOperationException("A multi-buy completion must describe one pilot and wallet.");
+
+        var isCorp=first.WalletOwnerId != first.ActorId;
+        var ownerChange=new MarketOrderChange(first,"Expiry",[first.ActorId]);
+        InvalidateOwnerLists([ownerChange]);
+        sessions?.Of(first.ActorId)?.SendNotification("OnOwnOrdersChanged","charid",
+            Py.List([.. orders.Select(MarketProxyService.OrderNotificationEntry)]),new PyStr("Expiry"),new PyInt(isCorp ? 1 : 0));
     }
 
     private async Task<IReadOnlyList<BuyerDelivery>> ResolveDeliveriesAsync(IReadOnlyList<long> itemIds)

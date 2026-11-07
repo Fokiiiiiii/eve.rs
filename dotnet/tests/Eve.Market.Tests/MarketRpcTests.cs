@@ -31,6 +31,14 @@ public class MarketRpcTests
         return JsSemantics.PlainText(address.Items[1]);
     }
 
+    private static PyTuple NotificationPayload(PyValue packet)
+    {
+        var fields=Assert.IsType<PyTuple>(Assert.IsType<PyObject>(packet).Args).Items;
+        var entry=Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(fields[4]).Items.Single());
+        var notification=Assert.IsType<PyTuple>(MarshalCodec.Decode(Assert.IsType<PyBuffer>(entry.Items[1]).Value.ToArray()));
+        return Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(notification.Items[1]).Items[1]);
+    }
+
     /// <summary>The value after a marshal round trip, as the client receives it; a cached result is unwrapped to its payload.</summary>
     private static PyValue Received(PyValue value)
     {
@@ -380,20 +388,23 @@ public class MarketRpcTests
         await r.Book.SeedNpcAsync([new("ask",Tritanium,false,10,100,32767,MarketLocation.From(r.Station),r.Now)]);
         var created=await seat.Proxy.BuyMultipleItems(Call(seat.Session,"BuyMultipleItems",3,new PyInt(r.Station.Id),
             new PyList([Line(Tritanium,5,10),Line(Tritanium,4,9)]),PyBool.False));
-        var rows=Assert.IsType<PyObject>(Received(created));
-        Assert.Empty(Assert.IsType<PyList>(Field(Fields(rows),"lines")).Items);
+        var rows=Assert.IsType<PyList>(Received(created));
+        Assert.Equal(2,rows.Items.Count);
+        var returnedOrders=rows.Items.Select(row => Fields(row)).ToArray();
+        Assert.Equal(new long[] { 5, 4 },returnedOrders.Select(row => Convert.ToInt64(Num(Field(row,"volEntered")))));
+        Assert.Equal(new long[] { 0, 4 },returnedOrders.Select(row => Convert.ToInt64(Num(Field(row,"volRemaining")))));
         Assert.Empty((await r.Book.BookAsync(r.Station.RegionId,Tritanium,r.Now)).Bids);
         Assert.Equal(9950m,(await r.WalletStore.GetAsync(actor))!.Isk);
         Assert.NotEmpty(seat.Sink.Packets);
         var packet = Assert.IsType<PyObject>(Assert.Single(
             seat.Sink.Packets, packet => NotificationName(packet) == "OnOwnOrdersChanged"));
-        var packetFields = Assert.IsType<PyTuple>(packet.Args).Items;
-        var sequence = checked((int)Assert.IsType<PyInt>(Field(Assert.IsType<PyDict>(packetFields[5]), "sn")).Value);
-        var expectedNotification = ClientNotification.Build(seat.Session.UserId ?? 0, seat.Session.NodeId,
-            "OnOwnOrdersChanged", "charid",
-            [Py.List(),
-                new PyStr("Filled"), new PyInt(0)], sequence);
-        Assert.Equal(MarshalCodec.Encode(expectedNotification), MarshalCodec.Encode(packet));
+        var notice=NotificationPayload(packet);
+        var notifiedOrders=Assert.IsType<PyList>(notice.Items[0]).Items.Select(Fields).ToArray();
+        Assert.Equal("Expiry",JsSemantics.PlainText(notice.Items[1]));
+        Assert.Equal(new PyInt(0),notice.Items[2]);
+        Assert.Equal(returnedOrders.Select(row => Convert.ToInt64(Num(Field(row,"orderID")))),
+            notifiedOrders.Select(row => Convert.ToInt64(Num(Field(row,"orderID")))));
+        Assert.Equal(new long[] { 0, 4 },notifiedOrders.Select(row => Convert.ToInt64(Num(Field(row,"volRemaining")))));
         Assert.Equal(95,(await r.Book.BookAsync(r.Station.RegionId,Tritanium,r.Now)).Asks.Single().VolumeRemaining);
     }
 
@@ -418,7 +429,8 @@ public class MarketRpcTests
 
         var result=await seat.Proxy.BuyMultipleItems(Call(seat.Session,"BuyMultipleItems",77,
             new PyInt(r.Station.Id),new PyList([Line(Tritanium,10,10),Line(35,20,1)]),PyBool.False));
-        Assert.IsType<PyObject>(result);
+        var immediateOrders=Assert.IsType<PyList>(Received(result)).Items.Select(Fields).ToArray();
+        Assert.Equal(new long[] { 0, 0 },immediateOrders.Select(row => Convert.ToInt64(Num(Field(row,"volRemaining")))));
         Assert.Equal(9880m,(await r.WalletStore.GetAsync(actor))!.Isk);
         Assert.Empty((await r.Book.BookAsync(r.Station.RegionId,Tritanium,r.Now)).Bids);
         Assert.Empty((await r.Book.BookAsync(r.Station.RegionId,35,r.Now)).Bids);
@@ -473,8 +485,13 @@ public class MarketRpcTests
             PyBool.False, new PyInt(r.Station.Id), new PyInt(r.Station.SolarSystemId), new PyReal(12), new PyInt(-1), new PyInt(5),
             new PyLong(Py.FileTimeFromUnixMs(order.IssuedMs)))));
         Assert.Equal(13m, (await r.Book.BookAsync(r.Station.RegionId, Plex, r.Now)).Asks.Single().Price);
-        // the Created notification of the sell and the Modified notification of the modify
-        Assert.Equal(2, seat.Sink.Packets.Count);
+        // A resting sell first updates its own-order and hangar caches, then the price modification updates the own-order cache.
+        Assert.Equal(2, seat.Sink.Packets.Count(packet => NotificationName(packet)=="OnOwnOrdersChanged"));
+        var stockChange=Assert.Single(seat.Sink.Packets,packet => NotificationName(packet)=="OnItemChange");
+        var stockChangeArgs=NotificationPayload(stockChange);
+        Assert.Equal(stock,Convert.ToInt64(Num(Assert.IsType<PyPackedRow>(stockChangeArgs.Items[0]).Values[0])));
+        Assert.Equal(r.Station.Id,Convert.ToInt64(Num(Assert.IsType<PyDict>(stockChangeArgs.Items[1]).Entries
+            .Single(entry => Convert.ToInt32(Num(entry.Key))==3).Value)));
     }
 
     [PgFact]

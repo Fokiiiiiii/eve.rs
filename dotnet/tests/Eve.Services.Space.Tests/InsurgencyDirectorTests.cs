@@ -95,11 +95,22 @@ public sealed class InsurgencyDirectorTests
         Assert.Equal(StructureState.ShieldVulnerable, (await rig.FobAsync(campaign.StructureId)).Snapshot.State);
         Assert.Equal(Ins.CampaignStates.Active, (await rig.CampaignAsync(campaign.CampaignId)).State);
 
-        // let the actual armor reinforcement deadline elapse, then damage armor and hull: the FOB is destroyed
+        // A FOB uses the normal 24-hour armor timer (plus its reinforce-time jitter), then armor and hull can be destroyed.
         await rig.HitAsync(campaign.StructureId, new Damaged(StructureLayer.Shield, true, false));
-        var shieldReinforcement = await rig.FobAsync(campaign.StructureId);
-        rig.Advance(TimeSpan.FromMilliseconds(shieldReinforcement.Snapshot.StateEndsMs - rig.Now + 1));
+        var reinforcement = (await rig.FobAsync(campaign.StructureId)).Snapshot;
+        Assert.Equal(StructureState.ArmorReinforce, reinforcement.State);
+        Assert.True(reinforcement.StateEndsMs >= reinforcement.StateStartedMs + (long)TimeSpan.FromDays(1).TotalMilliseconds);
+
+        var earlyCheck = TimeSpan.FromHours(3) + TimeSpan.FromMinutes(1);
+        rig.Advance(earlyCheck);
         await rig.RunDueAsync();
+        var stillReinforced = (await rig.FobAsync(campaign.StructureId)).Snapshot;
+        Assert.Equal(StructureState.ArmorReinforce, stillReinforced.State);
+        Assert.Equal(reinforcement.StateEndsMs, stillReinforced.StateEndsMs);
+
+        rig.Advance(TimeSpan.FromMilliseconds(reinforcement.StateEndsMs - reinforcement.StateStartedMs - earlyCheck.TotalMilliseconds + 1));
+        await rig.RunDueAsync();
+        Assert.Equal(StructureState.ArmorVulnerable, (await rig.FobAsync(campaign.StructureId)).Snapshot.State);
         await rig.HitAsync(campaign.StructureId, new Damaged(StructureLayer.Armor, true, false));
         await rig.HitAsync(campaign.StructureId, new Damaged(StructureLayer.Hull, true, false));
 
@@ -199,7 +210,6 @@ public sealed class InsurgencyDirectorTests
         public Ins.InsurgencyStore Store { get; }
         public Ins.InsurgencyCampaigns Campaigns { get; }
         public LoyaltyPointStore Loyalty { get; }
-        public long Now => _now;
 
         public static async Task<InsurgencyRig> CreateAsync()
         {

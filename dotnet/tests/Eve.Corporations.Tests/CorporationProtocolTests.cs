@@ -494,7 +494,7 @@ private static PyValue RowField(PyValue value,string key)
         Assert.Equal("versionCheck", Eve.Macho.JsSemantics.StringValue(detail.Key));
         Assert.Equal("run", Eve.Macho.JsSemantics.StringValue(detail.Value));
         var rows = Assert.IsType<PyList>(Assert.IsType<PySubStream>(args[1]).Decoded);
-        Assert.Equal(26, rows.Items.Count);
+        Assert.Equal(27, rows.Items.Count);
         var version = Assert.IsType<PyList>(args[2]);
         Assert.InRange(Assert.IsType<PyLong>(version.Items[0]).Value,
             Py.FileTimeFromUnixMs(before), Py.FileTimeFromUnixMs(after));
@@ -511,6 +511,12 @@ private static PyValue RowField(PyValue value,string key)
             row => row is PyObject item && HasTransactionField(item, "entryTypeID", new PyInt(13))));
         AssertTransactionField(officeRent, "entryTypeNameID", PyNone.Instance);
         AssertTransactionField(officeRent, "entryJournalMessageID", PyNone.Instance);
+
+        var lpStorePayment = Assert.IsType<PyObject>(Assert.Single(rows.Items,
+            row => row is PyObject item && HasTransactionField(item, "entryTypeID", new PyInt(26))));
+        AssertTransactionField(lpStorePayment, "entryTypeName", new PyStr("PaymentToLPStore"));
+        AssertTransactionField(lpStorePayment, "entryTypeNameID", new PyInt(59818));
+        AssertTransactionField(lpStorePayment, "entryJournalMessageID", PyNone.Instance);
     }
 
     [PgFact]

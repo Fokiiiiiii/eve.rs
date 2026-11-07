@@ -17,32 +17,28 @@ public sealed class UnportedSupportRpcTests
     }
 
     [Fact]
-    public async Task In_game_report_methods_forward_the_exact_wire_call_and_return_none()
+    public async Task In_game_report_methods_keep_the_client_payload_and_return_none()
     {
-        var calls = new List<(string Method, ServiceCall Call)>();
-        IService service = new InGameReportService((method, call, _) =>
+        var reports = new List<InGameReportSubmission>();
+        IService service = new InGameReportService((report, _) =>
         {
-            calls.Add((method, call));
+            reports.Add(report);
             return ValueTask.CompletedTask;
         });
-        var methods = new[]
+        var methods = new (string Method, PyValue[] Args)[]
         {
-            "report_inappropriate_language",
-            "report_offensive_mail",
-            "report_macro_use",
-            "report_questionable_transaction",
-            "report_inappropriate_character_name",
-            "report_exploit_abuse",
-            "report_gambling",
-            "report_other",
+            ("report_inappropriate_language", [new PyLong(9001), new PyWString("reason"), new PyWString("time"), new PyWString("channel"), new PyWString("content")]),
+            ("report_offensive_mail", [new PyLong(9002), new PyWString("mail reason")]),
+            ("report_macro_use", [new PyLong(9003), new PyWString("macro reason")]),
+            ("report_questionable_transaction", [new PyLong(9004), new PyWString("transaction reason")]),
+            ("report_inappropriate_character_name", [new PyLong(9005), new PyWString("name reason")]),
+            ("report_exploit_abuse", [new PyLong(9006), new PyWString("exploit reason")]),
+            ("report_gambling", [new PyLong(9007), new PyWString("gambling reason")]),
+            ("report_other", [new PyLong(9008), new PyWString("other reason")]),
         };
-        var session = new ClientSession { CharacterId = 42 };
-        var args = new PyValue[]
-        {
-            new PyInt(9001), new PyStr("reason"), new PyStr("time"), new PyStr("channel"), new PyStr("content"),
-        };
+        var session = new ClientSession { CharacterId = 42, UserId = 77 };
 
-        foreach (var method in methods)
+        foreach (var (method, args) in methods)
         {
             Assert.True(service.HasMethod(method));
             var result = await service.CallAsync(new ServiceCall
@@ -54,20 +50,30 @@ public sealed class UnportedSupportRpcTests
             Assert.Same(PyNone.Instance, result);
         }
 
-        Assert.Equal(methods, calls.Select(call => call.Method));
-        Assert.All(calls, entry =>
-        {
-            Assert.Same(session, entry.Call.Session);
-            Assert.Equal(args, entry.Call.Args);
-        });
+        Assert.Equal(methods.Select(method => method.Method), reports.Select(report => report.MethodName));
+        Assert.Equal("inappropriate_language", reports[0].ReportType);
+        Assert.Equal(42L, reports[0].ReporterCharacterId);
+        Assert.Equal<long?>(77L, reports[0].ReporterAccountId);
+        Assert.Equal(9001L, reports[0].TargetCharacterId);
+        Assert.Equal("reason", reports[0].Comments);
+        Assert.Equal("time", reports[0].ChatTime);
+        Assert.Equal("channel", reports[0].ChatChannel);
+        Assert.Equal("content", reports[0].ChatContent);
+    }
 
-        IService withoutBackend = new InGameReportService();
-        Assert.Same(PyNone.Instance, await withoutBackend.CallAsync(new ServiceCall
+    [Fact]
+    public async Task In_game_report_without_a_sink_does_not_acknowledge_a_lost_report()
+    {
+        IService service = new InGameReportService();
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(new ServiceCall
         {
-            Method = methods[0],
-            Args = args,
-            Session = session,
-        }));
+            Method = "report_other",
+            Args = [new PyLong(9001), new PyWString("reason")],
+            Session = new ClientSession { CharacterId = 42, UserId = 77 },
+        }).AsTask());
+
+        Assert.Equal("INGAME_REPORT_STORAGE_UNAVAILABLE", error.Error.UserErrorMessage);
     }
 
     [Fact]

@@ -8,7 +8,7 @@ public sealed record BountyKill(long CharacterId, int SolarSystemId, int EnemyTy
 /// <summary>What a character has earned in a solar system and is paid together when its time comes.</summary>
 public sealed record BountyBucket(
     string Key, long CharacterId, int SolarSystemId, long PayoutAtMs, long PayoutTime, decimal Amount, int Kills, IReadOnlyDictionary<int, int> NpcTypes,
-    IReadOnlyList<long> SourceReferences);
+    IReadOnlyList<long> SourceReferences, BountyTaxSplit? TaxSplit = null);
 
 /// <summary>What a kill came to: the bounty it added and when it will be paid (what <c>OnBountyAddedToPayout</c> tells the client), and whether it was already counted.</summary>
 public sealed record BountyAdded(int EnemyTypeId, decimal Amount, long PayoutTime, bool IsModified, bool AlreadyRecorded);
@@ -18,6 +18,9 @@ public sealed record BountyPaid(long CharacterId, decimal Amount, int Kills, dec
 
 /// <summary>The corporation a bounty's character belongs to and its ISK tax rate (a fraction); the corporation is credited unless it is an NPC corporation.</summary>
 public sealed record BountyTaxTerms(long CorporationId, bool IsNpc, decimal TaxRate);
+
+/// <summary>The tax recipient and member/corporation split captured before a bounty payout is attempted.</summary>
+public sealed record BountyTaxSplit(long? CorporationId, bool IsNpc, decimal TaxRate, decimal Gross, decimal Tax, decimal Net, bool Credit);
 
 /// <summary>
 /// The rules of an NPC bounty, a port, as they are, of <c>server/src/services/bounty/bountyRuntime.js</c> of EVE.js (ADR 0009): a kill is worth the NPC's bounty to
@@ -71,6 +74,20 @@ public static class NpcBounty
     /// <summary>The corporation's ISK tax of a payout: none at or below <see cref="MinimumCorporationTax"/>, else the rate of the amount to the cent.</summary>
     public static decimal CorporationTaxOf(decimal amount, decimal taxRate) =>
         amount > MinimumCorporationTax && taxRate > 0 ? Money(amount * Math.Min(1m, taxRate)) : 0m;
+
+    /// <summary>Locks the first payout's corporation terms and resulting split, including a no-corporation result.</summary>
+    public static BountyTaxSplit SplitOf(decimal gross, BountyTaxTerms? terms)
+    {
+        var tax = terms is null ? 0m : CorporationTaxOf(gross, terms.TaxRate);
+        return new BountyTaxSplit(
+            terms?.CorporationId,
+            terms?.IsNpc ?? false,
+            terms?.TaxRate ?? 0m,
+            gross,
+            tax,
+            gross - tax,
+            tax > 0 && terms is { IsNpc: false, CorporationId: > 0 });
+    }
 
     /// <summary>
     /// The description of a paid bucket with the corporation's tax line appended (<c>buildCorporationTaxDescription</c>): a top-level

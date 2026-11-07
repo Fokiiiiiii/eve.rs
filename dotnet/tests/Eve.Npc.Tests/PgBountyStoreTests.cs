@@ -10,6 +10,7 @@ public sealed class PgBountyStoreTests
     private const long Now = 1_700_000_000_000;
     private const long Window = NpcBounty.PayoutIntervalMs;
     private const long Corporation = 98_000_001;
+    private const long OtherCorporation = 98_000_002;
 
     private static BountyKill Kill(long ship, decimal amount = 15_000m, int system = Jita, long character = Character, int type = 23245) =>
         new(character, system, type, 4_100_000_000_000_000 + ship, amount);
@@ -142,6 +143,35 @@ public sealed class PgBountyStoreTests
         var corporate = Assert.Single(await rig.Transactions.JournalAsync(Corporation));
         Assert.Equal((12_000m, NpcBounty.CorporationTaxRefType, Character, "Corporation tax on pirate bounties"),
             (corporate.Amount, corporate.RefTypeId, corporate.CounterpartyId, corporate.Reason));
+        Assert.Empty(await rig.Store.PendingAsync());
+    }
+
+    [PgFact]
+    public async Task A_failed_payout_retries_with_the_corporation_and_tax_split_from_its_first_attempt()
+    {
+        BountyTaxTerms? terms = new(Corporation, false, 0.1m);
+        await using var rig = await BountyRig.CreateAsync((_, _) => Task.FromResult<BountyTaxTerms?>(terms));
+        await rig.Store.RecordAsync(Kill(1, 60_000m), Now);
+        await rig.Store.RecordAsync(Kill(2, 60_000m), Now + 1);
+
+        Assert.Empty(await rig.Store.PayDueAsync(Now + Window));
+        Assert.Equal(new BountyTaxSplit(Corporation, false, 0.1m, 120_000m, 12_000m, 108_000m, true),
+            Assert.Single(await rig.Store.PendingAsync()).TaxSplit);
+
+        terms = new BountyTaxTerms(OtherCorporation, false, 0.25m);
+        await rig.OpenWalletAsync(Character, 0m);
+        await rig.OpenWalletAsync(Corporation, 0m);
+        await rig.OpenWalletAsync(OtherCorporation, 0m);
+        var restarted = new PgBountyStore(rig.Source, rig.Transactions, rig.NpcSchema, taxTerms: (_, _) => Task.FromResult<BountyTaxTerms?>(terms));
+        var paid = Assert.Single(await restarted.PayDueAsync(Now + Window + 1));
+
+        Assert.Equal((120_000m, 108_000m), (paid.Amount, paid.Balance));
+        Assert.Equal(12_000m, (await rig.Wallet.GetAsync(Corporation))!.Isk);
+        Assert.Equal(0m, (await rig.Wallet.GetAsync(OtherCorporation))!.Isk);
+        Assert.Equal("NBL:\n  23245: 2\nsolarSystemID: 30000142\nkills: 2\n92: [98000001, 12000]",
+            Assert.Single(await rig.Transactions.JournalAsync(Character)).Reason);
+        Assert.Equal("Corporation tax on pirate bounties", Assert.Single(await rig.Transactions.JournalAsync(Corporation)).Reason);
+        Assert.Empty(await rig.Transactions.JournalAsync(OtherCorporation));
         Assert.Empty(await rig.Store.PendingAsync());
     }
 

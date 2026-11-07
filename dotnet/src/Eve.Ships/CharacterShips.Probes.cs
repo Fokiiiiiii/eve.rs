@@ -11,6 +11,12 @@ namespace Eve.Ships;
 /// </summary>
 public sealed record ProbeLaunchState(string? Refusal, long ModuleId, int ModuleTypeId, long ChargeId, int ProbeTypeId, long Quantity, long LifetimeMs);
 
+/// <summary>The committed records from one launch, or the validation reason that kept its charges and records unchanged.</summary>
+public sealed record ProbeLaunchCommit(string? Refusal, IReadOnlyList<ScanProbeRecord> Records);
+
+/// <summary>The probes and item stacks changed by one atomic recovery.</summary>
+public sealed record ProbeRecoveryCommit(IReadOnlyList<ScanProbeRecord> Probes, IReadOnlyList<ItemChanged> Changes);
+
 public sealed partial class CharacterShips
 {
     /// <summary>The scanner probe launchers (SDE group 481) and the scanner probes they fire (group 479, in the charges category).</summary>
@@ -102,26 +108,135 @@ public sealed partial class CharacterShips
     }
 
     /// <summary>
+    /// Spends the launcher charge and writes every launched probe row together. The active count is checked while holding the character's ship lock, so concurrent
+    /// launches cannot both spend from the same pre-launch count. Scene changes and client notifications are sent by SpaceProbes after this commits.
+    /// </summary>
+    public async Task<ProbeLaunchCommit> LaunchProbesAndRecordAsync(
+        long characterId, long shipId, int solarSystemId, ProbeLaunchState launchState, int count, int maxActiveProbes, PgProbeStore probeStore,
+        Func<int, IReadOnlyList<long>, IReadOnlyList<ScanProbeRecord>> recordsOf, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(probeStore);
+        ArgumentNullException.ThrowIfNull(recordsOf);
+        if (count <= 0)
+            throw new ArgumentOutOfRangeException(nameof(count));
+
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+
+        var module = await items.LockAndGetAsync(connection, transaction, launchState.ModuleId, cancellationToken);
+        if (module is null || module.OwnerId != characterId || module.LocationId != shipId || module.TypeId != launchState.ModuleTypeId)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return new ProbeLaunchCommit("MODULE_NOT_FOUND", []);
+        }
+        if (await modules.StateAsync(connection, transaction, module.Id, cancellationToken) < ItemState.Online)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return new ProbeLaunchCommit("MODULE_NOT_ONLINE", []);
+        }
+        var charge = await items.LockAndGetAsync(connection, transaction, launchState.ChargeId, cancellationToken);
+        if (charge is null || charge.OwnerId != characterId || charge.LocationId != shipId || charge.Flag != module.Flag
+            || charge.TypeId != launchState.ProbeTypeId || charge.Quantity < count)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return new ProbeLaunchCommit("NO_CHARGES", []);
+        }
+
+        var active = await probeStore.ActiveCountAsync(connection, transaction, characterId, solarSystemId, cancellationToken);
+        if (active + count > maxActiveProbes)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return new ProbeLaunchCommit("ACTIVE_PROBE_LIMIT", []);
+        }
+
+        var ids = new long[count];
+        for (var index = 0; index < ids.Length; index++)
+            ids[index] = await probeStore.NextIdAsync(connection, transaction, cancellationToken);
+        var records = recordsOf(active, ids);
+        if (records.Count != count || records.Select(record => record.ProbeId).Distinct().Count() != count
+            || records.Any(record => record.CharacterId != characterId || record.SolarSystemId != solarSystemId || record.ShipId != shipId
+                || record.TypeId != launchState.ProbeTypeId || record.LauncherId != launchState.ModuleId))
+        {
+            throw new InvalidOperationException("The scanner probe launch records do not match their transaction.");
+        }
+
+        if (charge.Quantity == count)
+            await items.DeleteAsync(connection, transaction, charge.Id, cancellationToken);
+        else
+            await items.SetQuantityAsync(connection, transaction, charge.Id, charge.Quantity - count, cancellationToken);
+        foreach (var record in records)
+            await probeStore.SaveAsync(connection, transaction, record, cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+        return new ProbeLaunchCommit(null, records);
+    }
+
+    /// <summary>
     /// Puts recovered probes back (EVE.js <c>restoreRecoveredProbeCharges</c>): into the launcher they came from while it has room for them (its charge of the probe's
     /// type, up to the capacity <see cref="AmmoRules.Capacity"/> gives), the rest into the ship's cargo hold, a stack joining the stack of its type there. Answers
     /// what changed, in order.
     /// </summary>
     public async Task<IReadOnlyList<ItemChanged>> RestoreProbesAsync(long characterId, long shipId, long? launcherId, int probeTypeId, long count, CancellationToken cancellationToken = default)
     {
-        var changes = new List<ItemChanged>();
         if (count <= 0)
-        {
-            return changes;
-        }
+            return [];
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await LockAsync(connection, transaction, characterId, cancellationToken);
+        var changes = await RestoreProbeGroupAsync(connection, transaction, characterId, shipId, launcherId, probeTypeId, count, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return changes;
+    }
+
+    /// <summary>Removes a character's requested probe rows and restores their charges as one idempotent transaction.</summary>
+    public async Task<ProbeRecoveryCommit> RecoverProbesAsync(
+        long characterId, long shipId, int solarSystemId, IReadOnlyCollection<long> probeIds, PgProbeStore probeStore,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(probeStore);
+        var requested = probeIds.Distinct().ToArray();
+        if (requested.Length == 0)
+            return new ProbeRecoveryCommit([], []);
+
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+        var records = (await probeStore.LockOwnedAsync(connection, transaction, requested, characterId, solarSystemId, cancellationToken)).ToList();
+        if (records.Count == 0)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return new ProbeRecoveryCommit([], []);
+        }
+        var position = requested.Select((id, index) => (id, index)).ToDictionary(pair => pair.id, pair => pair.index);
+        records.Sort((left, right) => position[left.ProbeId].CompareTo(position[right.ProbeId]));
+
+        var changes = new List<ItemChanged>();
+        foreach (var group in records.GroupBy(record => (record.LauncherId, record.TypeId)))
+        {
+            changes.AddRange(await RestoreProbeGroupAsync(
+                connection, transaction, characterId, shipId, group.Key.LauncherId, group.Key.TypeId, group.Count(), cancellationToken));
+        }
+
+        var removed = await probeStore.RemoveOwnedAsync(connection, transaction, records.Select(record => record.ProbeId).ToArray(), characterId, solarSystemId, cancellationToken);
+        if (removed.Count != records.Count)
+            throw new InvalidOperationException("A locked scanner probe was not removed during recovery.");
+        await transaction.CommitAsync(cancellationToken);
+        return new ProbeRecoveryCommit(records, changes);
+    }
+
+    private async Task<IReadOnlyList<ItemChanged>> RestoreProbeGroupAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long shipId, long? launcherId, int probeTypeId, long count,
+        CancellationToken cancellationToken)
+    {
         await statics.EnsureTypesAsync([probeTypeId], cancellationToken);
         if (statics.Type(probeTypeId) is not { } probe)
         {
-            await transaction.RollbackAsync(cancellationToken);
-            return changes;
+            throw new InvalidDataException($"The scanner probe type {probeTypeId} is missing from dogma static data.");
         }
+        var contents = await items.LockContainerAsync(connection, transaction, shipId, cancellationToken);
+        var ownedContents = contents.Where(item => item.OwnerId == characterId).ToArray();
+        var changes = new List<ItemChanged>();
         var remaining = count;
         if (launcherId is { } launcherItem
             && await items.LockAndGetAsync(connection, transaction, launcherItem, cancellationToken) is { } module
@@ -129,7 +244,7 @@ public sealed partial class CharacterShips
         {
             await statics.EnsureTypesAsync([module.TypeId], cancellationToken);
             var capacity = statics.Type(module.TypeId) is { } moduleType ? AmmoRules.Capacity(moduleType, probe) : 0;
-            var (_, charges) = await ShipSnapshot.SlotsOfAsync(statics, await items.InLocationAsync(shipId, characterId, cancellationToken), cancellationToken);
+            var (_, charges) = await ShipSnapshot.SlotsOfAsync(statics, ownedContents, cancellationToken);
             var loaded = charges.FirstOrDefault(c => c.Flag == module.Flag);
             // a launcher that holds another charge takes no probes; one that holds probes takes up to its capacity
             if (capacity > 0 && (loaded is null || loaded.TypeId == probeTypeId))
@@ -144,13 +259,12 @@ public sealed partial class CharacterShips
         }
         if (remaining > 0)
         {
-            var hold = (await items.InContainerAsync(shipId, cancellationToken))
+            var hold = contents
                 .Where(i => i.Flag == ItemFlags.Cargo && i.TypeId == probeTypeId && !i.Singleton)
                 .OrderBy(i => i.Id)
                 .FirstOrDefault();
             changes.Add(await AddProbeStackAsync(connection, transaction, characterId, shipId, ItemFlags.Cargo, probeTypeId, remaining, hold, cancellationToken));
         }
-        await transaction.CommitAsync(cancellationToken);
         return changes;
     }
 

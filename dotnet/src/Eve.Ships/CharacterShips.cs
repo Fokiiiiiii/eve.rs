@@ -92,10 +92,24 @@ public sealed partial class CharacterShips(
     /// <summary>A refusal about a skill names the skill, so its type is made known to the static data.</summary>
     private async Task NameTheSkillAsync(FitFailure failure, CancellationToken cancellationToken)
     {
-        if (failure.Error == FitError.SkillRequired && failure.Data.TryGetValue("skillTypeID", out var skill))
+        if (failure.Error != FitError.SkillRequired)
         {
-            await statics.EnsureTypesAsync([(int)skill], cancellationToken);
+            return;
         }
+        int[] skills;
+        if (failure.MissingSkills.Count > 0)
+        {
+            skills = failure.MissingSkills.Select(requirement => requirement.SkillTypeId).ToArray();
+        }
+        else if (failure.Data.TryGetValue("skillTypeID", out var skill))
+        {
+            skills = [(int)skill];
+        }
+        else
+        {
+            skills = [];
+        }
+        await statics.EnsureTypesAsync(skills, cancellationToken);
     }
 
     private static bool Differs(double? old, double now) => old is not { } value || Math.Abs(value - now) > Tolerance * Math.Max(1d, Math.Abs(now));
@@ -669,9 +683,11 @@ public sealed partial class CharacterShips(
                 await NameTheSkillAsync(missing, cancellationToken);
                 return new ShipRefused(ShipRefusal.SkillRequired, missing, module.TypeId, snapshot.Ship.TypeId);
             }
-            if (FittingRules.OnlineShortage(world, shipId, moduleId) is { } shortage)
+            if (FittingRules.OnlineShortageFailure(world, shipId, moduleId) is { } shortage)
             {
-                return new ShipRefused(shortage == FitError.NotEnoughCpu ? ShipRefusal.NotEnoughCpu : ShipRefusal.NotEnoughPower, null, module.TypeId, snapshot.Ship.TypeId);
+                return new ShipRefused(
+                    shortage.Error == FitError.NotEnoughCpu ? ShipRefusal.NotEnoughCpu : ShipRefusal.NotEnoughPower,
+                    shortage, module.TypeId, snapshot.Ship.TypeId);
             }
             if (MaxGroupOnlineRefusal(snapshot.Fitted, snapshot.Ship.TypeId, statics, world, module) is { } limited)
             {

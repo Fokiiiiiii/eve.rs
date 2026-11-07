@@ -19,6 +19,7 @@ public sealed class StructureRulesSourceTests
         Assert.Equal(StructureRules.Of(StructureSize.Large, SecurityBand.LowSec), rules.RulesOf(35833, 30000012));
         Assert.Equal(StructureRules.Of(StructureSize.ExtraLarge, SecurityBand.NullSec), rules.RulesOf(35834, 30000208));
         Assert.Equal(StructureRules.Of(StructureSize.Flex, SecurityBand.Wormhole), rules.RulesOf(35841, 31000001));
+        Assert.Equal(StructureRules.Of(StructureSize.Flex, SecurityBand.HighSec, unanchoringMs: StructureTimes.MetenoxUnanchoringMs), rules.RulesOf(81826, 30000001));
         Assert.Equal(StructureRules.Of(StructureSize.Medium, SecurityBand.Pochven), rules.RulesOf(35832, 30000021));
     }
 

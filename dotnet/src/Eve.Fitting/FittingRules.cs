@@ -27,6 +27,9 @@ public enum FitError
 /// <summary>A refusal, with the numbers the message about it names (the skill and its levels, how many are fitted of how many allowed...).</summary>
 public sealed record FitFailure(FitError Error, IReadOnlyDictionary<string, double> Data)
 {
+    /// <summary>Every unmet skill requirement, in the order stored on the SDE type.</summary>
+    public IReadOnlyList<(int SkillTypeId, int RequiredLevel)> MissingSkills { get; init; } = [];
+
     public static FitFailure Of(FitError error, params (string Key, double Value)[] data) =>
         new(error, data.ToDictionary(d => d.Key, d => d.Value));
 }
@@ -81,29 +84,44 @@ public static class FittingRules
 
     public static FitFailure? MissingSkill(DogmaWorld world, long ownerId, TypeDef type)
     {
+        var missing = new List<(int SkillTypeId, int RequiredLevel, int CurrentLevel)>();
         foreach (var (skill, level) in RequiredSkills(type))
         {
             var trained = world.Items.FirstOrDefault(i => i.OwnerId == ownerId && i.TypeId == skill) is { } item ? (int)world.Get(item.Id, DogmaWorld.SkillLevel) : 0;
             if (trained < level)
             {
-                return FitFailure.Of(FitError.SkillRequired, ("skillTypeID", skill), ("requiredLevel", level), ("currentLevel", trained));
+                missing.Add((skill, level, trained));
             }
         }
-        return null;
+        return missing.Count == 0
+            ? null
+            : FitFailure.Of(FitError.SkillRequired,
+                ("skillTypeID", missing[0].SkillTypeId), ("requiredLevel", missing[0].RequiredLevel), ("currentLevel", missing[0].CurrentLevel))
+                with { MissingSkills = [.. missing.Select(entry => (entry.SkillTypeId, entry.RequiredLevel))] };
     }
 
     /// <summary>Whether the ship's processor and power grid can run a fitted module that is offline now, on top of what already runs.</summary>
     public static FitError? OnlineShortage(DogmaWorld world, long shipId, long moduleId)
+        => OnlineShortageFailure(world, shipId, moduleId)?.Error;
+
+    /// <summary>Why a module cannot be switched on, including the values the client's UserError displays.</summary>
+    public static FitFailure? OnlineShortageFailure(DogmaWorld world, long shipId, long moduleId)
     {
         var cpu = world.Get(moduleId, BuiltInEffects.Cpu);
-        if (cpu != 0 && world.Get(shipId, BuiltInEffects.CpuLoad) + cpu > world.Get(shipId, CpuOutput) + LoadSlack)
+        var cpuOutput = world.Get(shipId, CpuOutput);
+        var cpuLoad = world.Get(shipId, BuiltInEffects.CpuLoad);
+        if (cpu != 0 && cpuLoad + cpu > cpuOutput + LoadSlack)
         {
-            return FitError.NotEnoughCpu;
+            return FitFailure.Of(FitError.NotEnoughCpu,
+                ("require", cpu), ("remaining", cpuOutput - cpuLoad), ("total", cpuOutput));
         }
         var power = world.Get(moduleId, BuiltInEffects.Power);
-        if (power != 0 && world.Get(shipId, BuiltInEffects.PowerLoad) + power > world.Get(shipId, PowerOutput) + LoadSlack)
+        var powerOutput = world.Get(shipId, PowerOutput);
+        var powerLoad = world.Get(shipId, BuiltInEffects.PowerLoad);
+        if (power != 0 && powerLoad + power > powerOutput + LoadSlack)
         {
-            return FitError.NotEnoughPower;
+            return FitFailure.Of(FitError.NotEnoughPower,
+                ("require", power), ("remaining", powerOutput - powerLoad), ("total", powerOutput));
         }
         return null;
     }
@@ -180,7 +198,8 @@ public static class FittingRules
         {
             return FitFailure.Of(FitError.InvalidSlot);
         }
-        var others = Fitted(world, shipId).Where(i => i.Id != candidate.Id).ToList();
+        var fitted = Fitted(world, shipId).ToList();
+        var others = fitted.Where(i => i.Id != candidate.Id).ToList();
         if (others.Any(i => i.FlagId == flag))
         {
             return FitFailure.Of(FitError.SlotOccupied);
@@ -239,13 +258,19 @@ public static class FittingRules
             }
         }
 
-        if (type.EffectIds.Contains(TurretFittedEffect) && world.Get(shipId, BuiltInEffects.TurretSlotsLeft) < 1)
+        var fittedTurrets = fitted.Count(item => statics.Type(item.TypeId)?.EffectIds.Contains(TurretFittedEffect) == true);
+        var usedTurrets = others.Count(item => statics.Type(item.TypeId)?.EffectIds.Contains(TurretFittedEffect) == true);
+        var turretHardpoints = Math.Max(0, world.Get(shipId, BuiltInEffects.TurretSlotsLeft) + fittedTurrets);
+        if (type.EffectIds.Contains(TurretFittedEffect) && usedTurrets >= turretHardpoints)
         {
-            return FitFailure.Of(FitError.NoTurretHardpoints, ("turretHardpoints", 0));
+            return FitFailure.Of(FitError.NoTurretHardpoints, ("turretHardpoints", turretHardpoints), ("usedTurrets", usedTurrets));
         }
-        if (type.EffectIds.Contains(LauncherFittedEffect) && world.Get(shipId, BuiltInEffects.LauncherSlotsLeft) < 1)
+        var fittedLaunchers = fitted.Count(item => statics.Type(item.TypeId)?.EffectIds.Contains(LauncherFittedEffect) == true);
+        var usedLaunchers = others.Count(item => statics.Type(item.TypeId)?.EffectIds.Contains(LauncherFittedEffect) == true);
+        var launcherHardpoints = Math.Max(0, world.Get(shipId, BuiltInEffects.LauncherSlotsLeft) + fittedLaunchers);
+        if (type.EffectIds.Contains(LauncherFittedEffect) && usedLaunchers >= launcherHardpoints)
         {
-            return FitFailure.Of(FitError.NoLauncherHardpoints, ("launcherHardpoints", 0));
+            return FitFailure.Of(FitError.NoLauncherHardpoints, ("launcherHardpoints", launcherHardpoints), ("usedLaunchers", usedLaunchers));
         }
         return null;
     }

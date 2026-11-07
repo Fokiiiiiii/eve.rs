@@ -182,10 +182,20 @@ public sealed class MarketHostTests : IAsyncLifetime
             insurance.CallAsync(Call(session, "UnInsureShip", 36, new PyLong(1))).AsTask());
         Assert.Equal("InsCouldNotFindItem", uninsureFailure.Error.UserErrorMessage);
 
-        // the multi-buy fills the ask at its limit: no order is created (the answer is the rowset of created orders, empty), the wallet charged, and the fill in the transaction tab
+        // The multi-buy returns one ephemeral expired-order row for the filled line; it creates no standing bid and records the wallet debit and fill.
         var bought = await market.CallAsync(Call(session, "BuyMultipleItems", 1, new PyInt(station.Id),
             new PyList([Line(Tritanium, 5, 10)]), PyBool.False));
-        Assert.IsType<PyObject>(bought);
+        var immediateOrders = Assert.IsType<PyList>(bought).Items;
+        var immediateOrder = Assert.IsType<PyObject>(Assert.Single(immediateOrders));
+        var immediateFields = Assert.IsType<PyDict>(immediateOrder.Args);
+        PyValue ImmediateField(string name) => immediateFields.Entries.Single(entry => JsSemantics.PlainText(entry.Key) == name).Value;
+        Assert.IsType<PyLong>(ImmediateField("orderID"));
+        Assert.Equal(new PyInt(Tritanium), ImmediateField("typeID"));
+        Assert.Equal(new PyInt(5), ImmediateField("volEntered"));
+        Assert.Equal(new PyInt(0), ImmediateField("volRemaining"));
+        Assert.Equal(new PyInt(0), ImmediateField("duration"));
+        Assert.Empty((await new MarketStore(source, Schema("EVE_MARKET_SCHEMA")).BookAsync(
+            station.RegionId, Tritanium, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())).Bids);
         Assert.Equal(9950m, (await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).GetAsync(actor))!.Isk);
         var transactions = Assert.IsType<PyList>(await market.CallAsync(Call(session, "CharGetTransactions", 2, PyNone.Instance))).Items;
         var fill = Assert.IsType<PyObject>(Assert.Single(transactions));

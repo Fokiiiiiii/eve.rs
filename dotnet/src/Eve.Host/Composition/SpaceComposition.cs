@@ -286,11 +286,13 @@ internal sealed partial class CharacterServicesComposition
                 var wormholes = new Eve.Wormholes.WormholeWorld(source, foundations.Scheduler, wormholeSchema,
                     await Eve.Universe.WormholeTypeCatalog.LoadAsync(sde),
                     await Eve.Universe.WormholeSystemClasses.LoadAllAsync(clientDirectory),
-                    Eve.Universe.JSpaceSystems.Load());
+                    Eve.Universe.JSpaceSystems.Load(),
+                    solarSystems.Systems.ToDictionary(system => system.Id, system => system.NebulaTypeId));
                 await wormholes.EnsureWorldAsync(ulong.Parse(Env("EVE_WORMHOLE_SEED", "20261012"), System.Globalization.CultureInfo.InvariantCulture), now());
                 wormholes.RegisterJobs();
                 spaceSessions.Wormholes = wormholes;
                 wormholes.Changed += spaceSessions.PublishWormholeChange;
+                wormholes.StateChanged += spaceSessions.PublishWormholeStateChangeAsync;
             }
 
             var tollWallets = new Eve.Wallet.WalletTransactions(source, walletSchema);

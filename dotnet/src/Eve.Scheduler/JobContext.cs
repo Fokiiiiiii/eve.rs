@@ -11,6 +11,7 @@ namespace Eve.Scheduler;
 public sealed class JobContext
 {
     private readonly DurableScheduler _scheduler;
+    private readonly List<Func<CancellationToken, Task>> _afterCommit = [];
 
     internal JobContext(DurableScheduler scheduler, ClaimedJob job, NpgsqlConnection connection, NpgsqlTransaction transaction, long nowMs)
     {
@@ -44,6 +45,22 @@ public sealed class JobContext
 
     public NpgsqlConnection Connection { get; }
     public NpgsqlTransaction Transaction { get; }
+
+    /// <summary>Publishes an external state change only after the job's row changes and completion are committed.</summary>
+    public void AfterCommit(Func<CancellationToken, Task> callback)
+    {
+        ArgumentNullException.ThrowIfNull(callback);
+        _afterCommit.Add(callback);
+    }
+
+    internal async Task CompleteAsync(Action<Exception> onError)
+    {
+        foreach (var callback in _afterCommit)
+        {
+            try { await callback(CancellationToken.None); }
+            catch (Exception error) { onError(error); }
+        }
+    }
 
     internal bool RunAgain { get; private set; }
     internal long RunAgainAtMs { get; private set; }

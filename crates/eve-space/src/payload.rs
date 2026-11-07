@@ -167,6 +167,12 @@ pub fn structure_slim_change(stamp: u32, system: &SolarSystem, index: usize) -> 
     action(stamp, "OnSlimItemChange", [id(body.id), slim_object(slim::body_entries(system, body))])
 }
 
+/// `OnSlimItemChange` for a wormhole end: the client updates its nebula and lifetime/mass state from the complete slim item.
+pub fn wormhole_slim_change(stamp: u32, system: &SolarSystem, index: usize) -> Value {
+    let body = &system.bodies[index];
+    action(stamp, "OnSlimItemChange", [id(body.id), slim_object(slim::body_entries(system, body))])
+}
+
 pub fn abyssal_scene_object_slim_change(stamp: u32, system: &SolarSystem, index: usize) -> Value {
     let body = &system.bodies[index];
     action(stamp, "OnSlimItemChange", [id(body.id), slim_object(slim::body_entries(system, body))])

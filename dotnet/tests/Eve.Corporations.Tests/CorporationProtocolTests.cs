@@ -949,7 +949,9 @@ private static PyValue RowField(PyValue value,string key)
                 "012_alliance_bill_lifecycle",
                 "013_item_locks",
                 "014_nullable_contact_label_colors",
-                "015_skill_based_member_limits"
+                "015_skill_based_member_limits",
+                "016_war_negotiations",
+                "017_peace_treaties"
             },applied);
 
             await using var read = await rig.Source.OpenConnectionAsync();

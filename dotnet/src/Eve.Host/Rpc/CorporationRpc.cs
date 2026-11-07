@@ -81,8 +81,54 @@ internal sealed partial class CharacterServicesComposition
             new Eve.Services.Corporations.CorpStationMgrService(corporations, characterSessions, StandingTowardAsync, StationPlace,
                 StationStandingRulesAsync, now),
             new Eve.Services.Corporations.WarRegistryService(
-                source, foundations.Relations, characterSessions, now, CanManageWarAsync),
+                source, foundations.Relations,
+                new Eve.Corporations.WarNegotiationStore(source, corporationSchema), economyWallets,
+                characterSessions, now, CanManageWarAsync,
+                ResolveWarWalletOwnerAsync, ReadCharacterAllyBaseCostAsync,
+                NotifyWarOwnersAsync,
+                async (ownerId, token) => await corporations.AllianceAsync(ownerId, token) is { Deleted: false }),
         ];
+    }
+
+    private async ValueTask<long?> ResolveWarWalletOwnerAsync(long ownerId, CancellationToken token)
+    {
+        if (await corporations.GetAsync(ownerId, token) is { Deleted: false }) return ownerId;
+        if (await corporations.AllianceAsync(ownerId, token) is { Deleted: false, ActiveExecutorId: > 0 } alliance)
+            return alliance.ActiveExecutorId;
+        return null;
+    }
+
+    private async Task NotifyWarOwnersAsync(IReadOnlyList<long> ownerIds, long senderId, int typeId,
+        JsonObject data, string idempotencyKey, CancellationToken token)
+    {
+        var recipientCorporations = new SortedSet<long>();
+        foreach (var ownerId in ownerIds.Distinct())
+        {
+            if (await corporations.GetAsync(ownerId, token) is { Deleted: false, IsNpc: false })
+            {
+                recipientCorporations.Add(ownerId);
+                continue;
+            }
+            if (await corporations.AllianceAsync(ownerId, token) is { Deleted: false })
+            {
+                foreach (var member in await corporations.AllianceMembersAsync(ownerId, token))
+                    recipientCorporations.Add(member.CorporationId);
+            }
+        }
+
+        var recipients = new SortedSet<long>();
+        if (recipientCorporations.Count > 0)
+        {
+            await using var connection = await source.OpenConnectionAsync(token);
+            await using var transaction = await connection.BeginTransactionAsync(token);
+            foreach (var corporationId in recipientCorporations)
+                recipients.UnionWith(await corporations.ActiveMemberCharacterIdsAsync(connection, transaction, corporationId, token));
+            await transaction.CommitAsync(token);
+        }
+
+        foreach (var recipient in recipients)
+            await mailSendWriter.WriteWarNotificationAsync(recipient, senderId, typeId,
+                (JsonObject)data.DeepClone(), $"{idempotencyKey}:{recipient}", token);
     }
 
     private async Task<bool> CanManageWarAsync(long characterId, long ownerId, CancellationToken token)

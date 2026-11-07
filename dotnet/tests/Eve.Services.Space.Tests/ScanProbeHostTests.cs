@@ -90,6 +90,19 @@ public class ScanProbeHostTests
     private static PyValue Field(PyValue keyVal, string name) =>
         ((PyDict)((PyObject)keyVal).Args).Entries.Single(e => JsSemantics.StringValue(e.Key) == name).Value;
 
+    private static async Task<PyList> RecoverThroughScanMgrAsync(Eve.Services.Space.SpaceProbeScans scans, ClientSession session, IEnumerable<long> probeIds)
+    {
+        var args = new PyList([.. probeIds.Select(id => (PyValue)new PyLong(id))]);
+        var result = await scans.HandleAsync("RecoverProbes", new Eve.Services.ServiceCall
+        {
+            Method = "RecoverProbes",
+            Args = [args],
+            Session = session,
+            Cancellation = CancellationToken.None,
+        });
+        return Assert.IsType<PyList>(result);
+    }
+
     [PgFact]
     public async Task A_system_whose_client_flags_forbid_scanning_refuses_the_launch_and_places_no_probe()
     {
@@ -121,6 +134,141 @@ public class ScanProbeHostTests
         var told = Events.Of(session).Where(e => e.Name == "OnNewProbe").ToList();
         Assert.Equal(placed.Select(p => p.ProbeId).ToArray(), told.Select(e => Events.Number(Field(e.Args[0], "probeID"))).ToArray());
         Assert.Equal(5, await LoadedAsync(rig, character, launcher));
+    }
+
+    [PgFact]
+    public async Task A_failed_probe_record_insert_rolls_back_the_charge_and_every_earlier_probe_insert()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, launcher) = await LauncherInSpaceAsync(rig, probes: 8);
+        await using (var command = rig.Source.CreateCommand($"""
+            CREATE FUNCTION "{rig.SpaceSchema}".fail_second_probe_insert() RETURNS trigger
+            LANGUAGE plpgsql AS $trigger$
+            BEGIN
+                IF NEW.probe_id = {ProbeBase + 2} THEN RAISE EXCEPTION 'injected probe insert failure'; END IF;
+                RETURN NEW;
+            END
+            $trigger$;
+            CREATE TRIGGER fail_second_probe_insert BEFORE INSERT ON "{rig.SpaceSchema}".scan_probes
+            FOR EACH ROW EXECUTE FUNCTION "{rig.SpaceSchema}".fail_second_probe_insert();
+            """))
+            await command.ExecuteNonQueryAsync();
+
+        await Assert.ThrowsAsync<Npgsql.PostgresException>(() => rig.Space.LaunchAsync(session, launcher, 3, CancellationToken.None));
+
+        Assert.Equal(8, await LoadedAsync(rig, character, launcher));
+        Assert.Empty(await rig.Probes.CharacterInSystemAsync(character.CharacterId, 30100032));
+        Assert.Empty(Placed(rig));
+        Assert.DoesNotContain(Events.Of(session), notification => notification.Name == "OnNewProbe");
+    }
+
+    [PgFact]
+    public async Task Concurrent_launches_from_separate_space_services_cannot_both_cross_the_active_probe_limit()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, launcher) = await LauncherInSpaceAsync(rig, probes: 8);
+        var system = (int)session.GetInt("solarsystemid2")!.Value;
+        await rig.Space.Probes!.RestoreAsync(system, CancellationToken.None);
+        for (var index = 0; index < 4; index++)
+        {
+            await rig.Probes.SaveAsync(new ScanProbeRecord(
+                ProbeBase + 1_000 + index, character.CharacterId, system, CoreProbe, CharacterShips.ScanProbeGroup, launcher, character.ShipId,
+                [0, 0, 0], [0, 0, 0], 0, 7, 1, Rig.ClockMs + 3_600_000));
+        }
+        Events.Of(session);
+
+        var restarted = new Eve.Services.Space.SpaceProbes(rig.Ships, rig.Statics, rig.Probes, rig.Space, rig.Sim, () => rig.Now);
+        async Task<bool> TryLaunchAsync(Eve.Services.Space.SpaceProbes probes)
+        {
+            try
+            {
+                await probes.LaunchAsync(session, launcher, 4, CancellationToken.None);
+                return true;
+            }
+            catch (MachoWrappedException error)
+            {
+                Assert.Contains("You cannot control more than eight active probes.", Texts(error.Error.Payload));
+                return false;
+            }
+        }
+
+        var outcomes = await Task.WhenAll(TryLaunchAsync(rig.Space.Probes), TryLaunchAsync(restarted));
+
+        Assert.Single(outcomes, launched => launched);
+        Assert.Equal(4, await LoadedAsync(rig, character, launcher));
+        Assert.Equal(8, (await rig.Probes.CharacterInSystemAsync(character.CharacterId, system)).Count);
+        Assert.Equal(4, Placed(rig).Count);
+        Assert.Equal(4, Events.Of(session).Count(notification => notification.Name == "OnNewProbe"));
+    }
+
+    [PgFact]
+    public async Task Recovery_rolls_back_when_probe_removal_fails_and_a_restarted_service_can_retry_once()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, launcher) = await LauncherInSpaceAsync(rig, probes: 8);
+        await rig.Space.LaunchAsync(session, launcher, 3, CancellationToken.None);
+        var probeIds = Placed(rig).Select(probe => probe.ProbeId).Take(1).ToArray();
+        Assert.Equal(5, await LoadedAsync(rig, character, launcher));
+        await using (var command = rig.Source.CreateCommand($"""
+            CREATE FUNCTION "{rig.SpaceSchema}".fail_probe_removal() RETURNS trigger
+            LANGUAGE plpgsql AS $trigger$
+            BEGIN
+                IF OLD.probe_id = {probeIds[0]} THEN RAISE EXCEPTION 'injected probe removal failure'; END IF;
+                RETURN OLD;
+            END
+            $trigger$;
+            CREATE TRIGGER fail_probe_removal BEFORE DELETE ON "{rig.SpaceSchema}".scan_probes
+            FOR EACH ROW EXECUTE FUNCTION "{rig.SpaceSchema}".fail_probe_removal();
+            """))
+            await command.ExecuteNonQueryAsync();
+        Events.Of(session);
+
+        await Assert.ThrowsAsync<Npgsql.PostgresException>(() => rig.Space.Probes!.RecoverAsync(session, probeIds, CancellationToken.None));
+
+        Assert.Equal(5, await LoadedAsync(rig, character, launcher));
+        Assert.NotNull(await rig.Probes.GetAsync(probeIds[0]));
+        Assert.DoesNotContain(Events.Of(session), notification => notification.Name == "OnRemoveProbe");
+        Assert.DoesNotContain(rig.Sim.Heard.OfType<SimRemoveProbe>(), removed => removed.ProbeId == probeIds[0]);
+
+        await using (var command = rig.Source.CreateCommand($"""
+            DROP TRIGGER fail_probe_removal ON "{rig.SpaceSchema}".scan_probes;
+            DROP FUNCTION "{rig.SpaceSchema}".fail_probe_removal();
+            """))
+            await command.ExecuteNonQueryAsync();
+
+        var restarted = new Eve.Services.Space.SpaceProbes(rig.Ships, rig.Statics, rig.Probes, rig.Space, rig.Sim, () => rig.Now);
+        var restartedScans = new Eve.Services.Space.SpaceProbeScans(
+            rig.Space, rig.Sim, rig.Statics, rig.Probes, rig.Ships, rig.Skills, rig.Scheduler, restarted, () => rig.Now);
+        Assert.Equal(probeIds.Select(id => (PyValue)new PyLong(id)), (await RecoverThroughScanMgrAsync(restartedScans, session, probeIds)).Items);
+        Assert.Empty((await RecoverThroughScanMgrAsync(restartedScans, session, probeIds)).Items);
+        Assert.Equal(6, await LoadedAsync(rig, character, launcher));
+        Assert.Null(await rig.Probes.GetAsync(probeIds[0]));
+        Assert.Single(Events.Of(session), notification => notification.Name == "OnRemoveProbe");
+        Assert.Single(rig.Sim.Heard.OfType<SimRemoveProbe>(), removed => removed.ProbeId == probeIds[0]);
+    }
+
+    [PgFact]
+    public async Task Concurrent_recovery_through_separate_space_services_returns_each_probe_charge_once()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, launcher) = await LauncherInSpaceAsync(rig, probes: 8);
+        await rig.Space.LaunchAsync(session, launcher, 2, CancellationToken.None);
+        var probeIds = Placed(rig).Select(probe => probe.ProbeId).ToArray();
+        Events.Of(session);
+        rig.Sim.Heard.Clear();
+
+        var restarted = new Eve.Services.Space.SpaceProbes(rig.Ships, rig.Statics, rig.Probes, rig.Space, rig.Sim, () => rig.Now);
+        var outcomes = await Task.WhenAll(
+            rig.Space.Probes!.RecoverAsync(session, probeIds, CancellationToken.None),
+            restarted.RecoverAsync(session, probeIds, CancellationToken.None));
+
+        Assert.Equal(probeIds, outcomes.SelectMany(ids => ids).ToArray());
+        Assert.Single(outcomes, ids => ids.Count == 0);
+        Assert.Equal(8, await LoadedAsync(rig, character, launcher));
+        foreach (var id in probeIds)
+            Assert.Null(await rig.Probes.GetAsync(id));
+        Assert.Equal(probeIds.Length, Events.Of(session).Count(notification => notification.Name == "OnRemoveProbe"));
+        Assert.Equal(probeIds.Length, rig.Sim.Heard.OfType<SimRemoveProbe>().Count());
     }
 
     [PgFact]
@@ -477,9 +625,9 @@ public class ScanProbeHostTests
         Assert.Equal(5, await LoadedAsync(rig, character, launcher));
         Events.Of(session);
 
-        var left = await rig.Space.Probes!.RecoverAsync(session, two, CancellationToken.None);
+        var left = await RecoverThroughScanMgrAsync(rig.ProbeScans, session, two);
 
-        Assert.Equal(two, left.ToArray());
+        Assert.Equal(two.Select(id => (PyValue)new PyLong(id)), left.Items);
         Assert.Equal(7, await LoadedAsync(rig, character, launcher));
         var told = Events.Of(session).Where(e => e.Name == "OnRemoveProbe").Select(e => Events.Number(e.Args[0])).ToArray();
         Assert.Equal(two.Select(id => (long)id).ToArray(), told);

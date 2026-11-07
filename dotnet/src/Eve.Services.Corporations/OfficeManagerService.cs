@@ -170,6 +170,8 @@ public sealed partial class OfficeManagerService(
         }
         if (changedOffice is not null && characterSessions is { } sessions && notificationType is { } type)
             CorporationOfficeNotifications.Rented(sessions, corporationId, station.Id, changedOffice.OfficeFolderId, type);
+        if (changedOffice is not null && characterSessions is { } billSessions)
+            call.Session.AfterResponse(() => CorporationOfficeNotifications.BillReceived(billSessions, corporationId));
         return PyNone.Instance;
     }
 
@@ -186,20 +188,22 @@ public sealed partial class OfficeManagerService(
 
         var notificationType = await OfficeNotificationTypeAsync(call.Cancellation);
         var atStation = now();
-        var changed = await store.WriteAsync<(CorporationOffice Office, bool SendItemChange)?>(async (connection, transaction) =>
+        var changed = await store.WriteAsync<(CorporationOffice Office, bool SendItemChange, bool CancelledBill)?>(async (connection, transaction) =>
         {
             await store.LockStationAsync(connection, transaction, station.Id, call.Cancellation);
             var office = await store.GetAsync(connection, transaction, corporationId, station.Id,
                 forUpdate: true, cancellationToken: call.Cancellation);
             if (office is null) return null;
 
-            var hadAssets = await StationOfficeImpound.ImpoundAsync(items, store, connection, transaction, office,
+            var impound = await StationOfficeImpound.ImpoundAsync(items, store, connection, transaction, office,
                 atStation, call.Cancellation);
-            return (office, !hadAssets);
+            return (office, !impound.HadAssets, impound.CancelledBill);
         }, call.Cancellation);
         if (changed is { } result && characterSessions is { } sessions && notificationType is { } type)
             CorporationOfficeNotifications.Unrented(sessions, corporationId, station.Id, result.Office.OfficeFolderId,
                 type, result.SendItemChange);
+        if (changed is { CancelledBill: true } && characterSessions is { } billSessions)
+            call.Session.AfterResponse(() => CorporationOfficeNotifications.BillReceived(billSessions, corporationId));
         return PyNone.Instance;
     }
 
@@ -485,6 +489,8 @@ public sealed partial class OfficeManagerService(
         }
         if (changedOffice is not null && characterSessions is { } sessions && notificationType is { } type)
             CorporationOfficeNotifications.Rented(sessions, corporationId, site.StructureId, changedOffice.OfficeFolderId, type);
+        if (changedOffice is not null && characterSessions is { } billSessions)
+            call.Session.AfterResponse(() => CorporationOfficeNotifications.BillReceived(billSessions, corporationId));
         return PyNone.Instance;
     }
 
@@ -498,7 +504,7 @@ public sealed partial class OfficeManagerService(
         if (!IsCeoOrDirector(actor, authority))
             throw ClientError("CrpAccessDenied");
         var atStructure = now();
-        var changedOffice = await store.WriteAsync<CorporationOffice?>(async (connection, transaction) =>
+        var changed = await store.WriteAsync<(CorporationOffice Office, bool CancelledBill)?>(async (connection, transaction) =>
         {
             await store.LockStationAsync(connection, transaction, site.StructureId, call.Cancellation);
             var office = await store.GetAsync(connection, transaction, corporationId, site.StructureId,
@@ -506,11 +512,13 @@ public sealed partial class OfficeManagerService(
             if (office is null) return null;
             if (!await structures!.MoveOfficeToSafetyAsync(connection, transaction, site, corporationId, call.Cancellation))
                 throw new CorporationError("STRUCTURE_ASSET_SAFETY_UNAVAILABLE");
-            await store.UnrentAsync(connection, transaction, office, atStructure, call.Cancellation);
-            return office;
+            var cancelledBill = await store.UnrentAsync(connection, transaction, office, atStructure, call.Cancellation);
+            return (office, cancelledBill);
         }, call.Cancellation);
-        if (changedOffice is not null && characterSessions is { } sessions)
-            CorporationOfficeNotifications.RentalChanged(sessions, corporationId, site.StructureId, changedOffice.OfficeFolderId);
+        if (changed is { } result && characterSessions is { } sessions)
+            CorporationOfficeNotifications.RentalChanged(sessions, corporationId, site.StructureId, result.Office.OfficeFolderId);
+        if (changed is { CancelledBill: true } && characterSessions is { } billSessions)
+            call.Session.AfterResponse(() => CorporationOfficeNotifications.BillReceived(billSessions, corporationId));
         return PyNone.Instance;
     }
 

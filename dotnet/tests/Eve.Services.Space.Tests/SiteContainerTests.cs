@@ -108,6 +108,13 @@ public sealed class SiteContainerTests
         container, Site, SiteContainerRig.SolarSystemId, relic ? "research_laboratory" : "containment_facility", relic, 17, 306,
         [1_000, 2_000, 3_000], 50, 4, 0, "secure", expiresMs);
 
+    private static async Task EndAsync(SiteContainerHacks hacks, HackableTarget target, bool won)
+    {
+        var reservationId = Guid.NewGuid();
+        Assert.True(await hacks.TryReserveAsync(target, reservationId, Character, 1, CancellationToken.None));
+        await hacks.EndedAsync(target, reservationId, won, Character, CancellationToken.None);
+    }
+
     [PgFact]
     public async Task A_container_is_hackable_until_two_failures_then_it_is_destroyed_and_leaves_the_scene()
     {
@@ -119,12 +126,12 @@ public sealed class SiteContainerTests
         Assert.NotNull(target);
         Assert.Equal((Container, SiteContainerRig.SolarSystemId, 4, false), (target.ItemId, target.SolarSystemId, target.Difficulty, target.Relic));
 
-        await hacks.EndedAsync(target, won: false, Character, CancellationToken.None);
+        await EndAsync(hacks, target, won: false);
         Assert.Equal(1, (await rig.Store.GetAsync(Container))!.Failures);
         Assert.Equal("secure", (await rig.Store.GetAsync(Container))!.State);
         Assert.Empty(rig.Removed);
 
-        await hacks.EndedAsync(target, won: false, Character, CancellationToken.None);
+        await EndAsync(hacks, target, won: false);
         Assert.Equal("destroyed", (await rig.Store.GetAsync(Container))!.State);
         Assert.Equal([Container], rig.Removed);
         Assert.Null(await hacks.FindAsync(Container, CancellationToken.None));
@@ -136,12 +143,12 @@ public sealed class SiteContainerTests
         await using var rig = await SiteContainerRig.CreateAsync();
         await rig.InsertAsync(Secure(rig.Now + 86_400_000));
         var target = (await rig.Hacks().FindAsync(Container, CancellationToken.None))!;
-        await rig.Hacks().EndedAsync(target, won: false, Character, CancellationToken.None);
+        await EndAsync(rig.Hacks(), target, won: false);
 
         // a new process: a new bus, scheduler and hacks, on the same rows
         rig.Start();
         Assert.Equal(1, (await rig.Store.GetAsync(Container))!.Failures);
-        await rig.Hacks().EndedAsync(target, won: false, Character, CancellationToken.None);
+        await EndAsync(rig.Hacks(), target, won: false);
 
         Assert.Equal("destroyed", (await rig.Store.GetAsync(Container))!.State);
         Assert.Equal([Container], rig.Removed);
@@ -155,7 +162,7 @@ public sealed class SiteContainerTests
         var target = (await rig.Hacks().FindAsync(Container, CancellationToken.None))!;
         Assert.True(target.Relic);
 
-        await rig.Hacks().EndedAsync(target, won: true, Character, CancellationToken.None);
+        await EndAsync(rig.Hacks(), target, won: true);
         await rig.Bus.PumpAsync();
 
         Assert.Equal("looted", (await rig.Store.GetAsync(Container))!.State);
@@ -168,11 +175,25 @@ public sealed class SiteContainerTests
     }
 
     [PgFact]
+    public async Task A_reservation_without_an_in_memory_attempt_is_released_during_Host_restart()
+    {
+        await using var rig = await SiteContainerRig.CreateAsync();
+        await rig.InsertAsync(Secure(rig.Now + 86_400_000));
+        var hacks = rig.Hacks();
+        var target = (await hacks.FindAsync(Container, CancellationToken.None))!;
+        Assert.True(await hacks.TryReserveAsync(target, Guid.NewGuid(), Character, 1, CancellationToken.None));
+
+        await rig.Store.ResetActiveHackAttemptsAsync(rig.Now, CancellationToken.None);
+
+        Assert.True(await hacks.TryReserveAsync(target, Guid.NewGuid(), Character + 1, 2, CancellationToken.None));
+    }
+
+    [PgFact]
     public async Task The_last_loot_taken_clears_the_container_announces_it_with_its_site_and_removes_its_ball()
     {
         await using var rig = await SiteContainerRig.CreateAsync();
         await rig.InsertAsync(Secure(rig.Now + 86_400_000, relic: true));
-        await rig.Hacks().EndedAsync((await rig.Hacks().FindAsync(Container, CancellationToken.None))!, won: true, Character, CancellationToken.None);
+        await EndAsync(rig.Hacks(), (await rig.Hacks().FindAsync(Container, CancellationToken.None))!, won: true);
         await rig.Bus.PumpAsync();
         var items = new PgItemStore(rig.Source, rig.ItemsSchema) { Events = rig.Bus };
         var loot = (await items.InLocationAsync(Container, Character)).ToList();

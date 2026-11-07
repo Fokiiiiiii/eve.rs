@@ -226,6 +226,8 @@ internal sealed partial class CharacterServicesComposition
             // container groups (306 Spawn, 314, 1207 Scatter); a name the static data does not have falls back to the lowest type id of the kind's group
             var siteContainers = new Eve.Services.Space.SiteContainerStore(source);
             await Eve.Services.Space.SiteContainerStore.MigrateAsync(source);
+            // Hacking windows live in this Host's memory. Any active reservation from its previous process has no board to resume.
+            await siteContainers.ResetActiveHackAttemptsAsync(now());
             var containerRows = (await sde.ReadByFieldAsync("types", "groupID", new long[] { 306, 314, 1207 }))
                 .Select(row => (Name: row.Doc.GetProperty("name").GetProperty("en").GetString() ?? "", TypeId: (int)row.Key, GroupId: row.Doc.GetProperty("groupID").GetInt32(),
                     Published: row.Doc.TryGetProperty("published", out var published) && published.ValueKind == System.Text.Json.JsonValueKind.True))

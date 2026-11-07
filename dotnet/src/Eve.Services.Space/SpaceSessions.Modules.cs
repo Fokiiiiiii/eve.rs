@@ -415,124 +415,139 @@ public sealed partial class SpaceSessions
             }
         }
 
-        if (string.Equals(effectName, AnalyzerEffectName, StringComparison.OrdinalIgnoreCase) && HackingService is { } analyzerChecks
-            && await analyzerChecks.AnalyzerRefusalAsync(characterId, targetId, AnalyzerValuesOf(snapshot, moduleId, made.ModuleType), cancellationToken) is { } analyzerRefusal)
-        {
-            return ModuleResult.Refusal(analyzerRefusal, made.ModuleType, made.ModuleName);
-        }
-        // the module is marked active while its start is pending: a start the simulation parks for the host (a fuel ask, a P.A.N.I.C.'s grant) asks the host
-        // whether the module runs, and its answer comes only when the start is accepted (track C6); a refused start is unmarked below
-        var chargeOwnerTrackedHere = false;
-        var structureModuleTrackedHere = false;
-        if (structureObserver)
-        {
-            var fittedModule = snapshot.Fitted.FirstOrDefault(item => item.Id == moduleId);
-            if (snapshot.Ship.OwnerId <= 0 || fittedModule is null || fittedModule.OwnerId != snapshot.Ship.OwnerId)
-            {
-                return ModuleResult.Refusal("REFUSED", made.ModuleType, made.ModuleName);
-            }
-            if (pilot.ModuleChargeOwners.TryGetValue(moduleId, out var previousOwner) && previousOwner != fittedModule.OwnerId)
-            {
-                return ModuleResult.Refusal("REFUSED", made.ModuleType, made.ModuleName);
-            }
-            chargeOwnerTrackedHere = pilot.ModuleChargeOwners.TryAdd(moduleId, fittedModule.OwnerId);
-            structureModuleTrackedHere = pilot.StructureModuleIds.TryAdd(moduleId, 0);
-        }
-        var provisional = RunningModule.Of(effectName, targetId, repeat, aim, aimEnd, package);
-        bool markedHere;
-        lock (pilot.ModuleLifecycleSync)
-        {
-            markedHere = pilot.ActiveModules.TryAdd(moduleId, ItemState.Active);
-            if (markedHere) pilot.RunningModules[moduleId] = provisional;
-        }
-        void UndoProvisional()
-        {
-            lock (pilot.ModuleLifecycleSync)
-            {
-                if (markedHere && pilot.RunningModules.TryGetValue(moduleId, out var current) && current.Generation == provisional.Generation)
-                {
-                    pilot.RunningModules.TryRemove(moduleId, out _);
-                    pilot.ActiveModules.TryRemove(moduleId, out _);
-                }
-            }
-        }
-        CommandReply reply;
+        HackingMgrService? analyzerChecks = null;
+        var analyzerReservationPending = false;
         try
         {
-            reply = await AskSimAsync(id, () => _sim.ActivateAsync(id, package, cancellationToken), session);
-        }
-        catch
-        {
-
-            UndoProvisional();
-            throw;
-        }
-        if (!reply.Accepted)
-        {
-            if (chargeOwnerTrackedHere)
-                pilot.ModuleChargeOwners.TryRemove(moduleId, out _);
-            if (structureModuleTrackedHere)
-                pilot.StructureModuleIds.TryRemove(moduleId, out _);
-            UndoProvisional();
-            var refusal = ModuleResult.Refusal(reply.Reason == "ALREADY_ACTIVE" ? "MODULE_ALREADY_ACTIVE" : reply.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);
-            // a target out of reach is told with how far the module reaches and how far the target is
-            return reply.Reason == "TARGET_OUT_OF_RANGE"
-                ? refusal with { TargetType = reply.TargetType, ShipType = snapshot.Ship.TypeId, DesiredRange = reply.DesiredRange, ActualDistance = reply.ActualDistance, EffectName = effectName }
-                : refusal;
-        }
-        if (string.Equals(effectName, Effects.TypeAttributeResistanceEffect.EffectName, StringComparison.OrdinalIgnoreCase))
-        {
-            await _ships.BurnOutModuleAsync(characterId, moduleId, cancellationToken).ConfigureAwait(false);
-        }
-        await RefreshRunningAsync(pilot, id, cancellationToken).ConfigureAwait(false);
-        AnnounceModeChange(pilot, snapshot, moduleId, started: true);
-        await SendShipAsync(id, pilot, SimShips.VitalsOf(snapshot), cancellationToken);
-        made.Accepted?.Invoke();
-
-        if (string.Equals(effectName, AnalyzerEffectName, StringComparison.OrdinalIgnoreCase) && HackingService is { } analyzerOpen)
-        {
-            await analyzerOpen.OpenAnalyzerAttemptAsync(session, characterId, targetId, AnalyzerValuesOf(snapshot, moduleId, made.ModuleType), cancellationToken);
-        }
-        // a module that may run in a gate cloak (canActivateInGateCloak: the warp core stabilizers and interdiction nullifiers) keeps the cloak of a jump
-        if (!structureObserver)
-            EndInvulnerability(pilot, keepsJumpCloak: snapshot.World.Get(moduleId, ModuleAttributes.CanActivateInGateCloak) > 0);
-        if (assistanceRequest is { } remoteRequest && recordAssistance is { } recordRemoteAssistance)
-        {
+            if (string.Equals(effectName, AnalyzerEffectName, StringComparison.OrdinalIgnoreCase) && HackingService is { } analyzerService)
+            {
+                analyzerChecks = analyzerService;
+                if (await analyzerService.AnalyzerRefusalAsync(session, characterId, targetId, AnalyzerValuesOf(snapshot, moduleId, made.ModuleType), cancellationToken) is { } analyzerRefusal)
+                    return ModuleResult.Refusal(analyzerRefusal, made.ModuleType, made.ModuleName);
+                analyzerReservationPending = true;
+            }
+            // the module is marked active while its start is pending: a start the simulation parks for the host (a fuel ask, a P.A.N.I.C.'s grant) asks the host
+            // whether the module runs, and its answer comes only when the start is accepted (track C6); a refused start is unmarked below
+            var chargeOwnerTrackedHere = false;
+            var structureModuleTrackedHere = false;
+            if (structureObserver)
+            {
+                var fittedModule = snapshot.Fitted.FirstOrDefault(item => item.Id == moduleId);
+                if (snapshot.Ship.OwnerId <= 0 || fittedModule is null || fittedModule.OwnerId != snapshot.Ship.OwnerId)
+                {
+                    return ModuleResult.Refusal("REFUSED", made.ModuleType, made.ModuleName);
+                }
+                if (pilot.ModuleChargeOwners.TryGetValue(moduleId, out var previousOwner) && previousOwner != fittedModule.OwnerId)
+                {
+                    return ModuleResult.Refusal("REFUSED", made.ModuleType, made.ModuleName);
+                }
+                chargeOwnerTrackedHere = pilot.ModuleChargeOwners.TryAdd(moduleId, fittedModule.OwnerId);
+                structureModuleTrackedHere = pilot.StructureModuleIds.TryAdd(moduleId, 0);
+            }
+            var provisional = RunningModule.Of(effectName, targetId, repeat, aim, aimEnd, package);
+            bool markedHere;
+            lock (pilot.ModuleLifecycleSync)
+            {
+                markedHere = pilot.ActiveModules.TryAdd(moduleId, ItemState.Active);
+                if (markedHere) pilot.RunningModules[moduleId] = provisional;
+            }
+            void UndoProvisional()
+            {
+                lock (pilot.ModuleLifecycleSync)
+                {
+                    if (markedHere && pilot.RunningModules.TryGetValue(moduleId, out var current) && current.Generation == provisional.Generation)
+                    {
+                        pilot.RunningModules.TryRemove(moduleId, out _);
+                        pilot.ActiveModules.TryRemove(moduleId, out _);
+                    }
+                }
+            }
+            CommandReply reply;
             try
             {
-                await recordRemoteAssistance(remoteRequest, cancellationToken);
+                reply = await AskSimAsync(id, () => _sim.ActivateAsync(id, package, cancellationToken), session);
             }
-            catch (Exception error) when (error is not OperationCanceledException)
+            catch
             {
-                _log?.Invoke($"crimewatch could not record remote assistance by {characterId} on {remoteRequest.Target}: {error.Message}");
+                if (analyzerReservationPending && analyzerChecks is not null)
+                    await analyzerChecks.CancelAnalyzerReservationAsync(session, targetId, CancellationToken.None);
+                UndoProvisional();
+                throw;
             }
+            if (!reply.Accepted)
+            {
+                if (analyzerReservationPending && analyzerChecks is not null)
+                    await analyzerChecks.CancelAnalyzerReservationAsync(session, targetId, CancellationToken.None);
+                if (chargeOwnerTrackedHere)
+                    pilot.ModuleChargeOwners.TryRemove(moduleId, out _);
+                if (structureModuleTrackedHere)
+                    pilot.StructureModuleIds.TryRemove(moduleId, out _);
+                UndoProvisional();
+                var refusal = ModuleResult.Refusal(reply.Reason == "ALREADY_ACTIVE" ? "MODULE_ALREADY_ACTIVE" : reply.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);
+                // a target out of reach is told with how far the module reaches and how far the target is
+                return reply.Reason == "TARGET_OUT_OF_RANGE"
+                    ? refusal with { TargetType = reply.TargetType, ShipType = snapshot.Ship.TypeId, DesiredRange = reply.DesiredRange, ActualDistance = reply.ActualDistance, EffectName = effectName }
+                    : refusal;
+            }
+            if (string.Equals(effectName, Effects.TypeAttributeResistanceEffect.EffectName, StringComparison.OrdinalIgnoreCase))
+            {
+                await _ships.BurnOutModuleAsync(characterId, moduleId, cancellationToken).ConfigureAwait(false);
+            }
+            await RefreshRunningAsync(pilot, id, cancellationToken).ConfigureAwait(false);
+            AnnounceModeChange(pilot, snapshot, moduleId, started: true);
+            await SendShipAsync(id, pilot, SimShips.VitalsOf(snapshot), cancellationToken);
+            made.Accepted?.Invoke();
+
+            if (string.Equals(effectName, AnalyzerEffectName, StringComparison.OrdinalIgnoreCase) && analyzerChecks is not null)
+            {
+                await analyzerChecks.OpenAnalyzerAttemptAsync(session, characterId, targetId, AnalyzerValuesOf(snapshot, moduleId, made.ModuleType), cancellationToken);
+            }
+            // a module that may run in a gate cloak (canActivateInGateCloak: the warp core stabilizers and interdiction nullifiers) keeps the cloak of a jump
+            if (!structureObserver)
+                EndInvulnerability(pilot, keepsJumpCloak: snapshot.World.Get(moduleId, ModuleAttributes.CanActivateInGateCloak) > 0);
+            if (assistanceRequest is { } remoteRequest && recordAssistance is { } recordRemoteAssistance)
+            {
+                try
+                {
+                    await recordRemoteAssistance(remoteRequest, cancellationToken);
+                }
+                catch (Exception error) when (error is not OperationCanceledException)
+                {
+                    _log?.Invoke($"crimewatch could not record remote assistance by {characterId} on {remoteRequest.Target}: {error.Message}");
+                }
+            }
+            if (victim is not null && securityClass is { } crimeWhere && Aggression is { } record)
+            {
+                // Crimewatch owns attack timers and flags; the module runs whatever it keeps
+                try
+                {
+                    var security = _systems.Get(pilot.SolarSystemId)?.Security ?? 0;
+                    await record(new AggressionRequest(characterId, victim.CharacterId, victim.ShipId, pilot.SolarSystemId, security, crimeWhere, await IsCapsuleAsync(victim, crimeWhere, cancellationToken)), cancellationToken);
+                }
+                catch (Exception error) when (error is not OperationCanceledException)
+                {
+                    _log?.Invoke($"crimewatch could not record the attack of {characterId} on {victim.CharacterId}: {error.Message}");
+                }
+                if (SecurityStatusOf is not null)
+                {
+                    try
+                    {
+                        await SendShipAsync(id, pilot, null, cancellationToken);
+                    }
+                    catch (Exception error) when (error is not OperationCanceledException)
+                    {
+                        _log?.Invoke($"the security status of {characterId} could not be refreshed in the simulation: {error.Message}");
+                    }
+                }
+            }
+            await NotifyCrimewatchFlagActiveAsync(characterId, id, cancellationToken);
+            return ModuleResult.Done;
         }
-        if (victim is not null && securityClass is { } crimeWhere && Aggression is { } record)
+        finally
         {
-            // Crimewatch owns attack timers and flags; the module runs whatever it keeps
-            try
-            {
-                var security = _systems.Get(pilot.SolarSystemId)?.Security ?? 0;
-                await record(new AggressionRequest(characterId, victim.CharacterId, victim.ShipId, pilot.SolarSystemId, security, crimeWhere, await IsCapsuleAsync(victim, crimeWhere, cancellationToken)), cancellationToken);
-            }
-            catch (Exception error) when (error is not OperationCanceledException)
-            {
-                _log?.Invoke($"crimewatch could not record the attack of {characterId} on {victim.CharacterId}: {error.Message}");
-            }
-                  if (SecurityStatusOf is not null)
-                  {
-                      try
-                      {
-                          await SendShipAsync(id, pilot, null, cancellationToken);
-                      }
-                      catch (Exception error) when (error is not OperationCanceledException)
-                      {
-                          _log?.Invoke($"the security status of {characterId} could not be refreshed in the simulation: {error.Message}");
-                      }
-                  }
+            if (analyzerReservationPending && analyzerChecks is not null)
+                await analyzerChecks.CancelAnalyzerReservationAsync(session, targetId, CancellationToken.None);
         }
-                  await NotifyCrimewatchFlagActiveAsync(characterId, id, cancellationToken);
-          return ModuleResult.Done;
     }
 
     /// <summary>
@@ -552,13 +567,13 @@ public sealed partial class SpaceSessions
     public Func<long, CancellationToken, Task>? RecordNpcTimerAsync { get; set; }
 
     /// <summary>Host calls this after a criminal with an active timer enters high-security space.</summary>
-      public Func<long, long, double, CancellationToken, Task>? PilotEnteredSystem { get; set; }
+    public Func<long, long, double, CancellationToken, Task>? PilotEnteredSystem { get; set; }
 
     private async Task NotifyPilotEnteredSystemAsync(long characterId, ulong sessionId, long solarSystemId)
-      {
+    {
         if (solarSystemId > 0 && solarSystemId <= int.MaxValue &&
             _systems.Get((int)solarSystemId) is { } system && PilotEnteredSystem is { } entered)
-          {
+        {
             try
             {
                 await entered(characterId, solarSystemId, system.Security, CancellationToken.None);
@@ -567,7 +582,7 @@ public sealed partial class SpaceSessions
             {
                 _log?.Invoke($"crimewatch system entry for character {characterId} could not be recorded: {error.Message}");
             }
-          }
+        }
         await NotifyCrimewatchFlagActiveAsync(characterId, sessionId, CancellationToken.None);
     }
 
@@ -585,7 +600,7 @@ public sealed partial class SpaceSessions
         {
             _log?.Invoke($"the Crimewatch flag of {characterId} could not be refreshed in the simulation: {error.Message}");
         }
-      }
+    }
 
     /// <summary>The security status of a character (its relation of that kind; 0 when it is not set). The ship in space shows it in its slim item.</summary>
     public Func<long, CancellationToken, Task<double>>? SecurityStatusOf { get; set; }

@@ -59,3 +59,36 @@ V24.01 `parklife/playerOwnedTargetMgr.py:84-102` は battery ID を伴う OBO lo
 V24.01 `playerOwned.py:428-472` は POS battery の assume/relinquish control を `posMgr` に送り、その後 `playerOwnedTargetMgr.py:84-102` が DogmaIM OBO RPC を呼ぶ。現行 `PosMgrService.cs:16-50` には tower list/unanchor だけがあり制御 grant callback がない。シミュレーション `targeting/mod.rs:382-410` は通常 ship pilot か controlled Upwell structure の lock state を持つが POS battery actor/lock state は持たない。DogmaIM に handler だけ足すと grant と simulation の authoritative path が欠け、自艦 target state の誤更新か fake success になるため、OBO は未修正 gap のまま残す。
 
 `eve.js` の `npm run` には `start` と migration/data scripts のみがあり test runner はないため、同じシナリオの runtime 比較は未実施。ソース経路は照合した。実クライアント GUI と POS battery の live simulation は未確認。
+
+## cx5 現行ツリーの再確認
+
+2026-11-07、`cx5` の基点 `4b05adc60` と指定された client / EveJS source を再確認した。監査の7件はいずれも元の調査時点では実在した指摘であり、誤検知とは確認できなかった。うち6件はこの基点に既に修正が含まれているため、この作業で重ねて変更しなかった。
+
+- スキル本注入は `InventoryRpc.cs` から `skillHandler.InjectSkillBooksAsync` に接続され、`CharacterHostTests.DogmaIM_skill_injection_consumes_the_skillbook_and_persists_the_skill_through_the_host` がアイテム消費・永続化・通知を確認する。
+- ammo 搬出は `DogmaIMService.Ammo.cs` が tuple の owner / flag を保持し、Host が個人・法人コンテナの認可と `CharacterShips.UnloadAmmoToContainerAsync` に接続する。`CharacterHostTests`、`DogmaModuleActivationHostWireTests`、`ReloadServiceTests`、`AmmoTests` / `AmmoRaceTests` が wire、状態変更、拒否を確認する。
+- `ChangeDroneSettings` は DogmaIM handler と `Characters.UpdateDroneSettingsAsync` を経て `character_drone_settings` に部分更新を保存する。`CharacterHostTests.DogmaIM_drone_settings_merge_partial_changes_and_survive_a_host_restart` が再起動後を確認する。
+- `CreateNewbieShip` は Host callback から既存の rookie-ship / boarding owner に接続され、`CharacterHostTests` が船、session、通知と二度目の拒否を確認する。
+- `GetAllInfo` は dock 中 ship-only の `charInfo`、space 中 ship-only の空 dict、ship 要求時の `shipModifiedCharAttribs` を返す。`DogmaServiceTests.What_is_left_out_of_the_question_is_left_out_of_the_answer_as_the_reference_leaves_it` が dock / space 両方を検査する。
+- 初回 brain と `OnServerBrainUpdated` は `DogmaInfo.StructureEffectTarget` を共有する。`DogmaWireTests.Structure_brain_update_targets_the_same_structure_as_the_get_all_info_brain` が target ID の一致を検査し、`DogmaServiceTests.GetAllInfo_is_followed_by_the_characters_attributes_and_the_brain_and_the_brain_version_counts` が通知順と brain version を検査する。
+
+最後の `AddTargetOBO` / `RemoveTargetOBO` は、現在も DogmaIM に実装がなく、client の呼び出しも確認した。V24.01 `playerOwned.py:428-472` は先に `posMgr.AssumeStructureControl` / `RelinquishStructureControl` を使い、`playerOwnedTargetMgr.py:84-102` がその grant で `dogmaIM.AddTargetOBO(sid, tid)` / `RemoveTargetOBO(sid, tid)` を呼ぶ。EveJS `dogmaService/targeting.js:27-41` は battery 固有の `starbaseControlRuntime` に委譲し、battery の独立 lock state と `OnTargetOBO` を維持する。
+
+現行 C# の `PosMgrService` は tower list と unanchor のみを持ち、control grant はない。Rust `eve-space` の targeting state は session の ship、または controlled Upwell structure の modules に属し、POS battery actor / target state は存在しない。従って OBO の欠落自体は確認済みだが、DogmaIM handler の追加だけでは成功経路を作れない。一般 targeting API へ流すと client が指定した battery ID の state ではなく pilot の ship state を変えてしまう。必要な最小依存変更は POS control grant と battery actor の simulation ownership を追加することであり、これは Dogma adapter の範囲外なのでこの変更では行わなかった。OBO は未修正 gap として残す。
+
+### cx5 での再実行
+
+`eve_p5` を `EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p5` で使用し、Release / `/warnaserror` で次を実行した。全て 0 failed / 0 skipped。
+
+- `Eve.Host.Tests`: `CharacterHostTests|DogmaModuleActivationHostWireTests|SkillHandlerRpcHostTests` — 47 passed。
+- `Eve.Services.Dogma.Tests`: `DogmaServiceTests|DogmaWireTests|ReloadServiceTests|MissingDogmaRpcTests` — 35 passed。
+- `Eve.Services.Dogma.Tests`: `HealthTests|StructureControlInfoTests` — 10 passed。
+- `Eve.Ships.Tests`: `AmmoTests|ReloadTests` — 14 passed。
+- `Eve.Ships.Tests`: `AmmoRaceTests` — 3 passed。
+- `Eve.Services.Skills.Tests`: `SkillHandlerTests` — 56 passed。
+- `Eve.Characters.Tests`: `StoreTests` — 32 passed。
+- `Eve.Services.Core.Tests`: `PosMgrServiceTests` — 5 passed。
+- `Eve.Host` Release build — 0 warnings / 0 errors。Test project invocations also built with `/warnaserror`.
+
+誤った filter (`SkillServiceTests`) は test match 0 件だったため pass に数えず、正しい `SkillHandlerTests` filter で再実行した。`Eve.Services.Core.Tests` の初回 `--no-restore` は assets file がなかったため起動せず、restore 付きで再実行して上記の5件が通った。
+
+codebase-memory / Serena MCP はこの実行環境で利用できなかったため、repository source の検索・読み取りは shell の `rg` / `sed` にフォールバックした。EveJS は指定経路をソース照合したが、runtime 実行はしていない。GUI client と POS battery live simulation も未確認。

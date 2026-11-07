@@ -393,7 +393,12 @@ public sealed record SimRefused(ulong SessionId, byte Command, string Reason) : 
 public sealed record SimAccepted(ulong SessionId, byte Command, long At) : SimMessage;
 
 /// <summary>A requested target coordinate was resolved by the simulation.</summary>
-public sealed record SimPosition(ulong SessionId, byte Command, IReadOnlyList<double> Position) : SimMessage;
+public sealed record SimPosition(ulong SessionId, byte Command, IReadOnlyList<double> Position) : SimMessage
+{
+    public IReadOnlyList<double>? Direction { get; init; }
+
+    public double? Radius { get; init; }
+}
 
 /// <summary>Something a probe scan can find (protocol 52): the item id, its kind (1 ship, 2 drone, 3 fighter, 4 deployable), its type and where it is.</summary>
 public sealed record SimScanTarget(long Id, byte Kind, int TypeId, IReadOnlyList<double> Position);

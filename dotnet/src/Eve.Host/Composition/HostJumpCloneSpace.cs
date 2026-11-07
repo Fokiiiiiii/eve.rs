@@ -1,4 +1,5 @@
 using Eve.Dogma;
+using Eve.Inventory;
 using Eve.Services;
 using Eve.Services.Core;
 using Eve.Services.Space;
@@ -11,7 +12,7 @@ namespace Eve.Host;
 /// distance of two ships in the scene, the online sessions, and the structures' clone bays.
 /// </summary>
 internal sealed class HostJumpCloneSpace(SpaceSessions? space, CharacterShips ships, DogmaStatic dogma, CharacterSessions sessions,
-    Func<long, long, CancellationToken, ValueTask<StructureCloneBay?>> structureBay) : IJumpCloneSpace
+    Func<long, long, CancellationToken, ValueTask<StructureCloneBay?>> structureBay, PgItemStore items) : IJumpCloneSpace
 {
 
     private const int CloneVatBayI = 23735;
@@ -57,6 +58,30 @@ internal sealed class HostJumpCloneSpace(SpaceSessions? space, CharacterShips sh
     }
 
     public ClientSession? SessionOf(long characterId) => sessions.Of(characterId);
+
+    public async ValueTask<ShipCloneDestination?> ShipDestinationAsync(long shipId, CancellationToken cancellationToken)
+    {
+        if (space is null || await items.GetAsync(shipId, cancellationToken) is not { } ship ||
+            ship.Flag != CharacterShips.InSpaceFlag ||
+            sessions.Of(ship.OwnerId) is not { } pilot || (long?)pilot.GetInt("shipid") != shipId ||
+            !space.IsInSpace(pilot) || space.SolarSystemOf(pilot) is not { } system || ship.LocationId != system)
+            return null;
+
+        await dogma.EnsureTypesAsync([ship.TypeId], cancellationToken);
+        if (dogma.Type(ship.TypeId)?.CategoryId != 6 ||
+            await space.PositionOfAsync(pilot, shipId, cancellationToken) is not { } pose || pose.SolarSystemId != system ||
+            pose.Direction is not { Count: 3 } direction || pose.Radius is not { } radius || radius < 0)
+            return null;
+
+        return new ShipCloneDestination(shipId, system, [pose.X, pose.Y, pose.Z], direction, radius);
+    }
+
+    public Task<string?> RelocateForCloneJumpAsync(ClientSession session, ShipCloneDestination destination,
+        IReadOnlyList<double> position, IReadOnlyList<double> direction,
+        Func<CancellationToken, ValueTask<string?>> settle, CancellationToken cancellationToken) =>
+        space is null
+            ? Task.FromResult<string?>("Space is not available right now. Try again in a moment.")
+            : space.RelocateForCloneJumpAsync(session, destination.SolarSystemId, position, direction, settle, cancellationToken);
 
     public ValueTask<StructureCloneBay?> StructureBayAsync(long characterId, long structureId, CancellationToken cancellationToken) =>
         structureBay(characterId, structureId, cancellationToken);

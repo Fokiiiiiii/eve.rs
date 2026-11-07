@@ -868,10 +868,18 @@ impl Message {
                 out.push(*command);
                 out.extend_from_slice(&at.to_le_bytes());
             }
-            Self::Position { session_id, command, position } => {
+            Self::Position { session_id, command, position, direction, radius } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.push(*command);
                 put_vector(&mut out, position);
+                out.push(u8::from(direction.is_some()));
+                if let Some(direction) = direction {
+                    put_vector(&mut out, direction);
+                }
+                out.push(u8::from(radius.is_some()));
+                if let Some(radius) = radius {
+                    out.extend_from_slice(&radius.to_le_bytes());
+                }
             }
             Self::DirectionalTargets { session_id, command, targets } => {
                 out.extend_from_slice(&session_id.to_le_bytes());

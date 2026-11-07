@@ -1273,10 +1273,12 @@ fn a_warp_point_with_an_overflowing_distance_is_refused_without_starting_warp() 
 fn fleet_warp_queries_return_positions_without_moving_the_commander() {
     let mut scene = scene_with_a_planet();
     let body_position = scene.system.body(PLANET).unwrap().position;
+    let body_radius = scene.system.body(PLANET).unwrap().radius;
 
     assert!(matches!(
         scene.command(SESSION, Command::PositionOf { target_id: PLANET }, NOON).last(),
-        Some(Out::Position { command: 23, position, .. }) if *position == body_position
+        Some(Out::Position { command: 23, position, direction: None, radius: Some(radius), .. })
+            if *position == body_position && *radius == body_radius
     ));
     let resolved = scene.command(SESSION, Command::ResolveWarpTarget { target_id: PLANET, range: 0.0 }, NOON);
     assert!(matches!(resolved.last(), Some(Out::Position { command: 22, .. })));
@@ -1295,7 +1297,14 @@ fn a_fleet_member_ship_is_a_warp_target_in_its_system() {
 
     let start = scene.ship(SESSION, NOON).unwrap().position;
     let target_position = Vec3::new(start.x + 2_000_000.0, start.y, start.z);
-    scene.pilots.get_mut(&(SESSION + 1)).unwrap().ship.position = target_position;
+    let target = &mut scene.pilots.get_mut(&(SESSION + 1)).unwrap().ship;
+    target.position = target_position;
+    target.direction = Vec3::new(0.0, 0.0, 1.0);
+    assert!(matches!(
+        scene.command(SESSION, Command::PositionOf { target_id: target_spec.ship_id }, NOON).last(),
+        Some(Out::Position { command: 23, position, direction: Some(direction), radius: Some(radius), .. })
+            if *position == target_position && *direction == Vec3::new(0.0, 0.0, 1.0) && *radius == target_spec.radius
+    ));
 
     let result = scene.command(SESSION, Command::WarpTo { target_id: target_spec.ship_id, range: 0.0 }, NOON);
 

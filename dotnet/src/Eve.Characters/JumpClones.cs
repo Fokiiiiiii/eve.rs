@@ -80,6 +80,46 @@ public sealed class PgJumpCloneStore
         return (long)(await command.ExecuteScalarAsync(cancellationToken))!;
     }
 
+    /// <summary>Counts a character's installed clones inside the caller's transaction.</summary>
+    public async Task<int> CountForCharacterAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"SELECT count(*) FROM {_schema}.character_jump_clones WHERE character_id = $1", connection, transaction);
+        command.Parameters.AddWithValue(characterId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
+    }
+
+    /// <summary>Counts all characters' clones in one physical location inside the caller's transaction.</summary>
+    public async Task<int> CountAtAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long locationId, string locationKind,
+        CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"SELECT count(*) FROM {_schema}.character_jump_clones WHERE location_id = $1 AND location_kind = $2", connection, transaction)
+        {
+            Parameters = { new() { Value = locationId }, new() { Value = locationKind } },
+        };
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
+    }
+
+    /// <summary>Counts one character's clones at a location inside the caller's transaction.</summary>
+    public async Task<int> CountAtForCharacterAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId,
+        long locationId, string locationKind, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"SELECT count(*) FROM {_schema}.character_jump_clones WHERE character_id = $1 AND location_id = $2 AND location_kind = $3",
+            connection, transaction);
+        command.Parameters.AddWithValue(characterId);
+        command.Parameters.AddWithValue(locationId);
+        command.Parameters.AddWithValue(locationKind);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
+    }
+
+    /// <summary>Reads one character-owned clone inside the caller's transaction.</summary>
+    public async Task<InstalledJumpClone?> FindAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId,
+        long jumpCloneId, CancellationToken cancellationToken = default) =>
+        (await ReadClonesAsync(connection, transaction, characterId, cancellationToken, jumpCloneId)).SingleOrDefault();
+
     /// <summary>Records one install's settlement (inside the caller's transaction): the fee, the clone it made, and who was paid.</summary>
     public async Task InsertSettlementAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string operationId, long characterId, long jumpCloneId,
         JumpCloneInstallRecord install, CancellationToken cancellationToken = default)

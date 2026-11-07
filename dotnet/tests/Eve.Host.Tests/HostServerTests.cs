@@ -1929,10 +1929,10 @@ public partial class HostServerTests : IAsyncLifetime
                     Eve.Calendar.CalendarParticipantUpdateResult.EventNotFound, null, [], []))
                 : throw new System.NotSupportedException("The fake calendar store has no PostgreSQL transaction.");
 
-        public System.Threading.Tasks.Task<bool> SendResponseAsync(
+        public System.Threading.Tasks.Task<Eve.Calendar.CalendarResponseUpdate> SendResponseAsync(
             long eventId, long ownerId, long characterId, short response,
             System.Threading.CancellationToken cancellationToken = default) =>
-            System.Threading.Tasks.Task.FromResult(false);
+            System.Threading.Tasks.Task.FromResult(new Eve.Calendar.CalendarResponseUpdate(false, null));
     }
 
     [Fact]

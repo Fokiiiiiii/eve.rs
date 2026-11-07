@@ -1851,12 +1851,19 @@ impl Sim {
                 .find(|scene| scene.deployables.contains_key(&deployable_id))
                 .map(|scene| scene.set_analysis_beacon_state(deployable_id, state, now))
                 .unwrap_or_default(),
-            Message::SetSlimField { item_id, name, value } => self
-                .scenes
-                .values_mut()
-                .find(|scene| scene.deployables.contains_key(&item_id))
-                .map(|scene| scene.set_slim_field(item_id, name, value, now))
-                .unwrap_or_default(),
+            Message::SetSlimField { item_id, name, value } => {
+                if let Some(scene) =
+                    self.scenes.values_mut().find(|scene| scene.wormhole_index(item_id).is_some())
+                {
+                    scene.set_wormhole_slim_field(item_id, name, value, now)
+                } else {
+                    self.scenes
+                        .values_mut()
+                        .find(|scene| scene.deployables.contains_key(&item_id))
+                        .map(|scene| scene.set_slim_field(item_id, name, value, now))
+                        .unwrap_or_default()
+                }
+            }
             Message::PlaceCynoBeacon(beacon) => {
                 let beacon = *beacon;
                 match self.scenes.get_mut(&SceneKey::solar_system(beacon.solar_system_id)) {

@@ -591,16 +591,17 @@ public partial class HostServerTests
             return Task.FromResult(true);
         }
 
-        public async Task<CalendarParticipantUpdateResult> UpdateParticipantsAsync(
+        public async Task<CalendarParticipantUpdate> UpdateParticipantsAsync(
             long eventId, long ownerId, IReadOnlyCollection<long> add, IReadOnlyCollection<long> remove,
             CancellationToken cancellationToken = default,
             Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null)
         {
             if (!_events.TryGetValue(eventId, out var value) || value.OwnerId != ownerId)
-                return CalendarParticipantUpdateResult.EventNotFound;
+                return new(CalendarParticipantUpdateResult.EventNotFound, null, [], []);
             var removed = remove.Where(id => id > 0 && id != value.CreatorId).ToHashSet();
             var active = _responses.Values.Where(row => row.EventId == eventId && row.CharacterId != value.CreatorId &&
                 row.Status != CalendarResponseStates.Uninvited).Select(row => row.CharacterId).ToHashSet();
+            var actuallyRemoved = active.Where(removed.Contains).ToArray();
             var newlyAdded = add.Where(id => id > 0 && id != value.CreatorId && !removed.Contains(id))
                 .Distinct().Where(id => !active.Contains(id)).ToArray();
             if (beforeCommitAsync is not null)
@@ -611,7 +612,7 @@ public partial class HostServerTests
             foreach (var characterId in newlyAdded)
                 _responses[(eventId, characterId)] =
                     new CalendarResponse(eventId, characterId, CalendarResponseStates.Undecided);
-            return CalendarParticipantUpdateResult.Updated;
+            return new(CalendarParticipantUpdateResult.Updated, value, newlyAdded, actuallyRemoved);
         }
 
         public Task<bool> SendResponseAsync(

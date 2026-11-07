@@ -277,6 +277,7 @@ public sealed class DogmaWorld
     private static bool Runs(EffectDef effect, ItemState state) => effect.Category switch
     {
         EffectDef.Passive => true,
+        EffectDef.System => true,
         EffectDef.Online => state >= ItemState.Online,
         EffectDef.Activation => state >= ItemState.Active,
         EffectDef.Overload => state >= ItemState.Overloaded,

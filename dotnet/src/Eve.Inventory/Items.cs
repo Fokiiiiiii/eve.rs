@@ -812,6 +812,34 @@ public sealed class PgItemStore
         return result;
     }
 
+    /// <summary>Locks items in a flag range in deterministic order on the caller's transaction.</summary>
+    public async Task<IReadOnlyList<Item>> LockInLocationFlagRangeAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long locationId,
+        long ownerId,
+        int firstFlag,
+        int lastFlag,
+        CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"SELECT {Columns} FROM {_schema}.items WHERE location_id=$1 AND owner_id=$2 AND flag >= $3 AND flag <= $4 ORDER BY id FOR UPDATE",
+            connection, transaction)
+        {
+            Parameters =
+            {
+                new() { Value = locationId },
+                new() { Value = ownerId },
+                new() { Value = firstFlag },
+                new() { Value = lastFlag },
+            },
+        };
+        var items = new List<Item>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) items.Add(Read(reader));
+        return items;
+    }
+
 /// <summary>Locks candidate material rows in deterministic item order on the caller's transaction.</summary>
     public async Task<IReadOnlyList<Item>> LockInLocationAsync(
         NpgsqlConnection connection,

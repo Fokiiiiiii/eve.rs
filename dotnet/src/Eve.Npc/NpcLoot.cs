@@ -12,11 +12,13 @@ public sealed record LootType(int TypeId, string Name, string GroupName, int Cat
 /// </summary>
 public sealed record LootSelector(
     string Kind, string SizeBand, string Grade, IReadOnlyList<string> NameIncludes, IReadOnlyList<string> NameExcludes, IReadOnlyList<string> GroupNames,
-    IReadOnlyList<int> CategoryIds, int? Weight, int? QuantityMin, int? QuantityMax);
+    IReadOnlyList<int> CategoryIds, int? Weight, int? QuantityMin, int? QuantityMax, bool? Singleton = null, IReadOnlyList<int>? TypeIds = null);
+
+public sealed record LootGuaranteedEntry(int TypeId, int Quantity, bool Singleton, int? MaxQuantity = null);
 
 public sealed record LootTable(
     string Id, string Mode, int? MinEntries, int? MaxEntries, double EmptyChance, bool AllowDuplicates, bool DisableRandomLoot, int? StackableMin, int? StackableMax,
-    IReadOnlyList<LootSelector> Selectors, bool HasSelectors);
+    IReadOnlyList<LootSelector> Selectors, bool HasSelectors, IReadOnlyList<LootGuaranteedEntry>? GuaranteedEntries = null);
 
 /// <summary>An item an NPC leaves: what it is, how many (a stack of them) and whether it is a single unit item (a module or a ship: one each, not a stack).</summary>
 public sealed record LootDrop(int TypeId, string Name, long Quantity, bool Singleton);
@@ -68,11 +70,15 @@ public sealed class NpcLoot
     private static readonly Regex LargeModule = new(@"\blarge\b|\bcruise\b|\btorpedo\b|\b650mm\b|\b720mm\b|\b800mm\b|\b1200mm\b|\b1400mm\b|\bmega\b|\b100mn\b", Js);
 
     private readonly LootType[] _pool;
+    private readonly Dictionary<int, LootType> _typesById;
     private readonly ConcurrentDictionary<LootSelector, LootType[]> _candidates = new(ReferenceEqualityComparer.Instance);
 
     /// <summary>The types everything is drawn from; a type without a name, and a wreck, is never drawn (the caller leaves out what is not published).</summary>
-    public NpcLoot(IEnumerable<LootType> types) =>
+    public NpcLoot(IEnumerable<LootType> types)
+    {
         _pool = [.. types.Where(t => t.TypeId > 0 && t.Name.Trim().Length > 0 && !t.GroupName.Trim().Equals("wreck", StringComparison.OrdinalIgnoreCase))];
+        _typesById = _pool.ToDictionary(type => type.TypeId);
+    }
 
     public int PoolSize => _pool.Length;
 
@@ -110,7 +116,7 @@ public sealed class NpcLoot
         {
             var type = Choose(_pool, random);
             var stackable = IsStackable(type);
-            drops.Add(new LootDrop(type.TypeId, type.Name, stackable ? stackMin + (long)Math.Floor(random() * (stackMax - stackMin + 1)) : 1, !stackable));
+            drops.Add(new LootDrop(type.TypeId, type.Name, stackable ? stackMin + (long)Math.Floor(random() * (stackMax - stackMin + 1)) : 1, SingletonOf(type)));
         }
         return drops;
     }
@@ -122,6 +128,21 @@ public sealed class NpcLoot
         if (emptyChance > 0 && random() < emptyChance)
         {
             return drops;
+        }
+        if (table.Selectors.Count == 0 && table.GuaranteedEntries is not { Count: > 0 })
+        {
+            return drops;
+        }
+        if (table.GuaranteedEntries is { } guaranteed)
+        {
+            foreach (var entry in guaranteed)
+            {
+                if (entry.TypeId > 0 && _typesById.TryGetValue(entry.TypeId, out var type))
+                {
+                    var quantity = entry.Singleton ? 1 : RollQuantity(entry.Quantity, entry.MaxQuantity ?? entry.Quantity, random);
+                    drops.Add(new LootDrop(type.TypeId, type.Name, quantity, entry.Singleton));
+                }
+            }
         }
         if (table.Selectors.Count == 0)
         {
@@ -151,11 +172,12 @@ public sealed class NpcLoot
                 continue;
             }
             var type = Choose(available, random);
-            var stackable = IsStackable(type);
+            var stackable = chosen.Selector.Singleton != true && (IsStackable(type) || chosen.Selector.Singleton == false);
             used.Add(type.TypeId);
             drops.Add(new LootDrop(
                 type.TypeId, type.Name,
-                stackable ? RollQuantity(chosen.Selector.QuantityMin ?? table.StackableMin, chosen.Selector.QuantityMax ?? table.StackableMax, random) : 1, !stackable));
+                stackable ? RollQuantity(chosen.Selector.QuantityMin ?? table.StackableMin, chosen.Selector.QuantityMax ?? table.StackableMax, random) : 1,
+                SingletonOf(type, chosen.Selector.Singleton)));
         }
         return drops;
     }
@@ -164,6 +186,10 @@ public sealed class NpcLoot
 
     private static bool Matches(LootType type, LootSelector selector)
     {
+        if (selector.TypeIds is { } exactTypeIds)
+        {
+            return exactTypeIds.Contains(type.TypeId);
+        }
         if (!IsEligible(type, selector) || !MatchesText(type, selector))
         {
             return false;
@@ -238,6 +264,9 @@ public sealed class NpcLoot
 
     /// <summary>Charges, ammunition, minerals and the like are stacks of many; anything else is one unit of its own.</summary>
     private static bool IsStackable(LootType type) => type.CategoryId is 4 or 5 or 8 or 17 or 25;
+
+    /// <summary>Generated modules are packaged unless a loot selector explicitly asks for a singleton item.</summary>
+    private static bool SingletonOf(LootType type, bool? authored = null) => authored ?? (type.CategoryId != ModuleCategory && !IsStackable(type));
 
     private static T Choose<T>(IReadOnlyList<T> entries, Func<double> random) => entries[Math.Min(entries.Count - 1, (int)Math.Floor(random() * entries.Count))];
 

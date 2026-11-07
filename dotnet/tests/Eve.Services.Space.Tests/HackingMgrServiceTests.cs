@@ -69,6 +69,13 @@ public sealed class HackingMgrServiceTests
 
     private static PyValue Tile(int x, int y) => Py.Tuple(new PyInt(x), new PyInt(y));
 
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!condition())
+            await Task.Delay(TimeSpan.FromMilliseconds(1), timeout.Token);
+    }
+
     private static IReadOnlyList<int> EventIds(Events.Event note) =>
         ((PyTuple)note.Args[0]).Items.Select(item => (int)Number(Field(item, "eventID"))).ToArray();
 
@@ -267,9 +274,11 @@ public sealed class HackingMgrServiceTests
 
         session.Close();
         await settled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await WaitUntilAsync(() => store.Get(CharacterId) is null);
 
         Assert.Null(store.Get(CharacterId));
         Assert.Equal([(Data, false), (Data, false)], site.Ended);
+        Assert.Empty(site.ActiveReservations);
     }
 
     [Fact]

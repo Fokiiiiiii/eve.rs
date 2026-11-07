@@ -39,3 +39,4 @@ computes points from the time the running line began, and settles finished lines
 - After a restart nothing needs restoring: the queue is data, and the first read or login settles it. A timer exists only to
   tell a client that is watching.
 - Alpha clone limits, extra training slots, injectors and remapping were outside the implementation at this ADR's acceptance. Later status is recorded in `docs/reference/compat/DEVIATIONS.md` and the character phase handoffs.
+- The 5,000,000 SP Alpha cap is enforced against live trained and unallocated points plus the remaining queue. The V24.01 queue panel can undercount when its cached total predates active-head progress; this server refusal is not exact parity with that stale forecast. See the Alpha queue cap entry in `docs/reference/compat/DEVIATIONS.md` and `docs/project/roller/handoff-alpha-cap-accounting-parity.md`.

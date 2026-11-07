@@ -51,15 +51,19 @@ public class AgentLocatorDialogueTests
             ValueTask.FromResult(Places.TryGetValue(solarSystemId, out var place) ? place : (LocatePlace?)null);
 
         // the same transaction shape as the host: the fee is charged and the located time is recorded together
-        public async ValueTask<bool> DeliverAsync(long characterId, long agentId, long fee, JsonObject result, CancellationToken cancellationToken)
+        public async ValueTask<LocateDeliveryResult> DeliverAsync(
+            long characterId, long agentId, long targetCharacterId, long fee, int cooldownMinutes,
+            JsonObject result, CancellationToken cancellationToken)
         {
-            if (!CanPay) return false;
+            if (!CanPay) return LocateDeliveryResult.InsufficientFunds;
             await using var connection = await source.OpenConnectionAsync(cancellationToken);
             await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-            await Locates.MarkLocatedAsync(connection, transaction, characterId, agentId, now(), cancellationToken);
+            if (!await Locates.TryMarkLocatedAsync(connection, transaction, characterId, agentId, targetCharacterId,
+                    now(), TimeSpan.FromMinutes(cooldownMinutes), cancellationToken))
+                return LocateDeliveryResult.RequestUnavailable;
             await transaction.CommitAsync(cancellationToken);
             Delivered.Add((fee, result));
-            return true;
+            return LocateDeliveryResult.Delivered;
         }
     }
 

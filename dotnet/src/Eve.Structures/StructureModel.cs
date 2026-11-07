@@ -63,11 +63,14 @@ public static class StructureTimes
     public const long UnanchoringMs = 7 * Day;
     /// <summary>A Flex structure (client <c>FLEX_UNANCHORING_TIME</c>).</summary>
     public const long FlexUnanchoringMs = 2_700 * Second;
-
-    public const long FobArmorReinforceMs = 3 * Hour;
-    public const long FobReinforceJitterMs = Hour;
-    /// <summary>A structure that stays in Low Power for this long is abandoned.</summary>
-    public const long AbandonAfterMs = 7 * Day;
+    /// <summary>The Metenox unanchoring duration (client <c>METENOX_UNANCHORING_TIME</c>).</summary>
+    public const long MetenoxUnanchoringMs = 259_200 * Second;
+    /// <summary>The Flex hull reinforcement base duration (client <c>FLEX_REINFORCE_DURATION_HULL</c>).</summary>
+    public const long FlexHullReinforceMs = Hour;
+    /// <summary>The minimum time a structure stays in Low Power before abandonment.</summary>
+    public const long AbandonAfterMinMs = 7 * Day;
+    /// <summary>The maximum time a structure stays in Low Power before abandonment.</summary>
+    public const long AbandonAfterMaxMs = 8 * Day;
     /// <summary>A new reinforcement time takes effect this long after it was asked for.</summary>
     public const long ReinforceChangeDelayMs = 30 * Day;
     /// <summary>The repair countdown holds this long after a hit that pauses it (EVE.js <c>STRUCTURE_REPAIR_RESUME_DELAY_MS</c>).</summary>
@@ -76,6 +79,14 @@ public static class StructureTimes
     public const int NoReinforceWeekday = 255;
     public const int DefaultReinforceWeekday = 5;
     public const int DefaultReinforceHour = 18;
+
+    /// <summary>Samples the inclusive client abandonment range using the transition's supplied random roll.</summary>
+    public static long AbandonDelayMs(double roll)
+    {
+        var range = AbandonAfterMaxMs - AbandonAfterMinMs;
+        var boundedRoll = Math.Clamp(roll, 0, Math.BitDecrement(1d));
+        return AbandonAfterMinMs + (long)(boundedRoll * (range + 1));
+    }
 }
 
 /// <summary>
@@ -99,7 +110,6 @@ public sealed record StructureRules(StructureSize Size, SecurityBand Band, bool 
     /// <summary>Duration of the armor reinforcement. Medium structures depend on the space; Large and X-Large are 24 hours everywhere.</summary>
     public long ArmorReinforceMs => Size switch
     {
-        StructureSize.Fob => StructureTimes.FobArmorReinforceMs,
         StructureSize.Medium => Band switch
         {
             SecurityBand.Wormhole or SecurityBand.Pochven => 216_000 * StructureTimes.Second,
@@ -110,7 +120,7 @@ public sealed record StructureRules(StructureSize Size, SecurityBand Band, bool 
     };
 
     public long HullReinforceMs => Size == StructureSize.Flex
-        ? 1_800 * StructureTimes.Second
+        ? StructureTimes.FlexHullReinforceMs
         : Band switch
         {
             SecurityBand.Wormhole or SecurityBand.Pochven => 129_600 * StructureTimes.Second,
@@ -120,7 +130,6 @@ public sealed record StructureRules(StructureSize Size, SecurityBand Band, bool 
 
     public long ExitJitterMs => Size switch
     {
-        StructureSize.Fob => StructureTimes.FobReinforceJitterMs,
         StructureSize.Medium => 5_400 * StructureTimes.Second,
         StructureSize.Flex => 1_800 * StructureTimes.Second,
         _ => 10_800 * StructureTimes.Second,
@@ -156,6 +165,8 @@ public sealed record StructureSnapshot
     public long PendingEffectiveMs { get; init; }
     public long UnanchorEndsMs { get; init; }
     public long LowPowerSinceMs { get; init; }
+    /// <summary>The sampled, absolute abandonment deadline; 0 when no Low Power timer is running.</summary>
+    public long AbandonAtMs { get; init; }
     public long DestroyedMs { get; init; }
 
     /// <summary>Whether the repair countdown is held by a recent hit.</summary>

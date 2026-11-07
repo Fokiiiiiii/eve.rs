@@ -101,6 +101,131 @@ public class StructureTimersTests
     }
 
     [PgFact]
+    public async Task A_fob_armor_timer_uses_the_24_hour_base_and_normal_exit_schedule()
+    {
+        const long first = 1101, second = 1102;
+        const int fobType = 90_001;
+        await using var rig = await Rig.Create();
+        rig.Rules.ByType[fobType] = StructureRules.Of(StructureSize.Fob, SecurityBand.LowSec, canBeAbandoned: false);
+        rig.Now = rig.Now / Day * Day;
+
+        foreach (var id in new[] { first, second })
+        {
+            await rig.Commit((connection, transaction) => rig.Timers.DeployFobAsync(connection, transaction,
+                new NewStructure(id, fobType, 30_000_142, 0, 0, 0, 0, 98_000_001, 0, "Test FOB", "",
+                    ReinforceWeekday: NoReinforceWeekday, ReinforceHour: 3)));
+            await rig.Apply(id, new FobExposed());
+        }
+
+        var start = rig.Now;
+        rig.Roll = 0;
+        await rig.Apply(first, new Damaged(StructureLayer.Shield, Depleted: true, PausesRepair: false));
+        await rig.Tick();
+        var earliest = (await rig.Snapshot(first)).StateEndsMs;
+        Assert.Equal(start + Day, earliest);
+        Assert.Equal(earliest, (await rig.Job(first))!.RunAtMs);
+        Assert.Equal(earliest, rig.Changes[^1].Timer.EndsMs);
+
+        rig.Roll = 0.999999;
+        await rig.Apply(second, new Damaged(StructureLayer.Shield, Depleted: true, PausesRepair: false));
+        await rig.Tick();
+        var latest = (await rig.Snapshot(second)).StateEndsMs;
+        Assert.InRange(latest, start + Day, start + Day + 6 * Hour);
+        Assert.Equal(latest, (await rig.Job(second))!.RunAtMs);
+        Assert.Equal(latest, rig.Changes[^1].Timer.EndsMs);
+    }
+
+    [PgFact]
+    public async Task A_flex_hull_timer_uses_the_one_hour_base_and_persists_its_exit_deadline()
+    {
+        const long structureId = 1103;
+        const int flexType = 35_841;
+        await using var rig = await Rig.Create();
+        rig.Rules.ByType[flexType] = StructureRules.Of(StructureSize.Flex, SecurityBand.NullSec);
+        await rig.Working(structureId, flexType);
+        rig.Now = rig.Now / Day * Day;
+        rig.Roll = 0;
+
+        var snapshot = await rig.Snapshot(structureId);
+        await rig.Commit(async (connection, transaction) =>
+        {
+            await rig.Store.SaveAsync(connection, transaction, snapshot with { ReinforceWeekday = NoReinforceWeekday, ReinforceHour = 1 });
+            return true;
+        });
+        await rig.Apply(structureId, new Damaged(StructureLayer.Shield, Depleted: true, PausesRepair: false));
+        rig.Now += 1_000;
+        var hullDamageAt = rig.Now;
+        await rig.Apply(structureId, new Damaged(StructureLayer.Armor, Depleted: true, PausesRepair: false));
+        await rig.Tick();
+
+        var reinforced = await rig.Snapshot(structureId);
+        Assert.Equal(StructureState.HullReinforce, reinforced.State);
+        Assert.Equal(hullDamageAt + Hour, reinforced.StateEndsMs);
+        Assert.Equal(reinforced.StateEndsMs, (await rig.Job(structureId))!.RunAtMs);
+        Assert.Equal(reinforced.StateEndsMs, rig.Changes[^1].Timer.EndsMs);
+    }
+
+    [PgFact]
+    public async Task Low_power_abandonment_uses_a_persisted_random_deadline_across_restart()
+    {
+        const long structureId = 1104;
+        await using var rig = await Rig.Create();
+        await rig.Working(structureId);
+        var lowPowerAt = rig.Now;
+        rig.Roll = 1d - 1d / (Day + 1);
+        await rig.Commit((connection, transaction) => rig.Timers.FuelOutAsync(connection, transaction, structureId));
+        await rig.Tick();
+
+        var deadline = lowPowerAt + 8 * Day;
+        Assert.Equal(UpkeepState.LowPower, (await rig.Snapshot(structureId)).Upkeep);
+        Assert.Equal(deadline, (await rig.Job(structureId))!.RunAtMs);
+        var legacy = (await rig.Store.ReadLegacyTableAsync())[structureId.ToString()];
+        Assert.Equal(deadline, legacy!["abandonAt"]!.GetValue<long>());
+
+        await rig.Restart();
+        Assert.Equal(deadline, (await rig.Job(structureId))!.RunAtMs);
+        Assert.Equal(deadline, (await rig.Store.ReadLegacyTableAsync())[structureId.ToString()]!["abandonAt"]!.GetValue<long>());
+        rig.Now = deadline - 1;
+        await rig.Tick();
+        Assert.Equal(UpkeepState.LowPower, (await rig.Snapshot(structureId)).Upkeep);
+        rig.Now++;
+        await rig.Tick();
+        Assert.Equal(UpkeepState.Abandoned, (await rig.Snapshot(structureId)).Upkeep);
+        Assert.Null(await rig.Job(structureId));
+    }
+
+    [PgFact]
+    public async Task A_queued_reinforce_time_waits_until_shield_vulnerability_is_fully_repaired()
+    {
+        const long structureId = 1105;
+        await using var rig = await Rig.Create();
+        await rig.Working(structureId);
+        await rig.Apply(structureId, new ReinforceTimeRequested(2, 10));
+        var pendingAt = (await rig.Snapshot(structureId)).PendingEffectiveMs;
+
+        rig.Now = pendingAt - RepairMs + 1;
+        await rig.Apply(structureId, new Damaged(StructureLayer.Shield, Depleted: false, PausesRepair: false));
+        var damaged = await rig.Snapshot(structureId);
+        Assert.Equal(pendingAt + 1, damaged.StateEndsMs);
+        Assert.Equal(damaged.StateEndsMs, (await rig.Job(structureId))!.RunAtMs);
+
+        rig.Now = pendingAt;
+        await rig.Tick();
+        var stillPending = await rig.Snapshot(structureId);
+        Assert.Equal(StructureTimes.DefaultReinforceWeekday, stillPending.ReinforceWeekday);
+        Assert.Equal(pendingAt, stillPending.PendingEffectiveMs);
+        Assert.Equal(damaged.StateEndsMs, (await rig.Job(structureId))!.RunAtMs);
+
+        rig.Now = damaged.StateEndsMs;
+        await rig.Tick();
+        var applied = await rig.Snapshot(structureId);
+        Assert.Equal((2, 10), (applied.ReinforceWeekday, applied.ReinforceHour));
+        Assert.Equal(0, applied.PendingEffectiveMs);
+        Assert.Equal(StructureState.ShieldVulnerable, applied.State);
+        Assert.True(rig.Changes[^1].Repaired);
+    }
+
+    [PgFact]
     public async Task The_import_copies_the_legacy_rows_once_and_reads_back_in_the_legacy_shape()
     {
         await using var rig = await Rig.Create();

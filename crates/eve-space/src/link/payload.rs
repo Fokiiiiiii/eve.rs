@@ -1437,6 +1437,10 @@ impl Message {
                 out.extend_from_slice(&wormhole.destination_system_id.to_le_bytes());
                 out.extend_from_slice(&wormhole.destination_end.to_le_bytes());
                 out.extend_from_slice(&wormhole.destination_class.to_le_bytes());
+                out.extend_from_slice(&wormhole.nebula_type_id.to_le_bytes());
+                out.extend_from_slice(&wormhole.wormhole_age.to_le_bytes());
+                out.extend_from_slice(&wormhole.wormhole_size.to_le_bytes());
+                out.extend_from_slice(&wormhole.max_ship_jump_mass_category.to_le_bytes());
                 put_vector(&mut out, &wormhole.destination_position);
                 out.extend_from_slice(&wormhole.destination_radius.to_le_bytes());
                 out.extend_from_slice(&wormhole.max_jump_mass.to_le_bytes());

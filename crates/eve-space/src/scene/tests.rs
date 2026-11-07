@@ -3805,10 +3805,81 @@ fn wormhole_placement(at: Vec3, far: Vec3, far_radius: f64) -> crate::link::Worm
         destination_system_id: OTHER_SYSTEM,
         destination_end: FAR_END,
         destination_class: 2,
+        nebula_type_id: 7_654,
+        wormhole_age: 1,
+        wormhole_size: 0.7,
+        max_ship_jump_mass_category: 3,
         destination_position: [far.x, far.y, far.z],
         destination_radius: far_radius,
         max_jump_mass: 62_000_000.0,
     }
+}
+
+#[test]
+fn a_wormhole_slim_item_has_the_client_fields_for_its_destination_age_size_and_ship_limit() {
+    let mut scene = scene_by_a_gate();
+    scene.place_wormhole(wormhole_placement(Vec3::new(5.0e8, 0.0, 0.0), Vec3::ZERO, 5_000.0), NOON);
+    let index = scene.wormhole_index(WORMHOLE_END).unwrap();
+    let entries = crate::slim::body_entries(&scene.system, &scene.system.bodies[index]);
+    let field = |key: &str| entries.iter().find(|(name, _)| *name == key).map(|(_, value)| value.clone());
+
+    assert_eq!(field("otherSolarSystemClass"), Some(crate::wire::int(2)));
+    assert!(field("nebulaType").is_some(), "client wormhole.py reads slimItem.nebulaType");
+    assert!(field("wormholeAge").is_some(), "client info window reads slimItem.wormholeAge");
+    assert!(field("wormholeSize").is_some(), "client info window reads slimItem.wormholeSize");
+    assert!(field("maxShipJumpMass").is_some(), "client info window reads slimItem.maxShipJumpMass");
+}
+
+#[test]
+fn host_age_and_mass_state_changes_refresh_both_fields_in_the_wormhole_slim_item() {
+    let mut scene = scene_by_a_gate();
+    scene.bind(SESSION, NOON);
+    scene.place_wormhole(wormhole_placement(Vec3::new(5.0e8, 0.0, 0.0), Vec3::ZERO, 5_000.0), NOON);
+
+    let age = scene.set_wormhole_slim_field(
+        WORMHOLE_END,
+        "wormholeAge".into(),
+        crate::link::SlimValue::Int(2),
+        NOON + 1,
+    );
+    assert_eq!(age.len(), 1);
+    assert_eq!(action_names(&age[0]), ["OnSlimItemChange"]);
+    let size = scene.set_wormhole_slim_field(
+        WORMHOLE_END,
+        "wormholeSize".into(),
+        crate::link::SlimValue::Real(0.4),
+        NOON + 2,
+    );
+    assert_eq!(size.len(), 1);
+    assert_eq!(action_names(&size[0]), ["OnSlimItemChange"]);
+
+    let entries = crate::slim::body_entries(
+        &scene.system,
+        &scene.system.bodies[scene.wormhole_index(WORMHOLE_END).unwrap()],
+    );
+    let field = |key: &str| entries.iter().find(|(name, _)| *name == key).map(|(_, value)| value.clone());
+    assert_eq!(field("wormholeAge"), Some(crate::wire::int(2)));
+    assert_eq!(field("wormholeSize"), Some(eve_marshal::Value::Real(0.4)));
+    assert!(
+        scene
+            .set_wormhole_slim_field(
+                WORMHOLE_END,
+                "wormholeAge".into(),
+                crate::link::SlimValue::Int(2),
+                NOON + 3
+            )
+            .is_empty()
+    );
+    assert!(
+        scene
+            .set_wormhole_slim_field(
+                WORMHOLE_END,
+                "wormholeSize".into(),
+                crate::link::SlimValue::Real(1.5),
+                NOON + 4
+            )
+            .is_empty()
+    );
 }
 
 #[test]

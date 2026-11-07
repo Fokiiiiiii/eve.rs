@@ -26,6 +26,7 @@ public sealed class StructureCompositionTests : IAsyncLifetime
     private const long StructureId = 1_001;
     private const long Jita = 30_000_142;
     private const int Astrahus = 35_832;
+    private const int Metenox = 81_826;
 
     /// <summary>The environment the host reads: every schema on its own scratch name, plus the no-simulation switch.</summary>
     private static readonly string[] SchemaVariables =
@@ -100,10 +101,10 @@ public sealed class StructureCompositionTests : IAsyncLifetime
     }
 
     /// <summary>A structure in the game store's legacy shape: a working Astrahus in Jita, shield stage, full power.</summary>
-    private static JsonObject SeededRow(long structureId, int state, long stateStartedMs, long stateEndsMs, int upkeep) => new()
+    private static JsonObject SeededRow(long structureId, int state, long stateStartedMs, long stateEndsMs, int upkeep, int typeId = Astrahus) => new()
     {
         ["structureID"] = structureId,
-        ["typeID"] = Astrahus,
+        ["typeID"] = typeId,
         ["solarSystemID"] = Jita,
         ["ownerCorpID"] = Corporation,
         ["itemName"] = "Seeded " + structureId,
@@ -511,7 +512,12 @@ public sealed class StructureCompositionTests : IAsyncLifetime
         Assert.True(await WaitForAsync(async () => (await store.GetAsync(StructureId))!.Snapshot.State == StructureState.Anchoring, TimeSpan.FromSeconds(30)));
         var advanced = (await store.GetAsync(StructureId))!;
         Assert.Equal(deadline + StructureTimes.AnchoringMs, advanced.Snapshot.StateEndsMs);
-        Assert.Equal(2, advanced.Version); // the import is version 1: exactly one step was applied
+        Assert.Equal(3, advanced.Version); // import, one-time sampled abandonment deadline, then exactly one state transition
+        await using (var connection = await source.OpenConnectionAsync())
+        await using (var eventCommand = new NpgsqlCommand($"SELECT count(*) FROM {Schema("EVE_EVENTS_SCHEMA")}.outbox WHERE topic = 'structure.state_changed' AND key = 'structure:{StructureId}'", connection))
+        {
+            Assert.Equal(1L, (long)(await eventCommand.ExecuteScalarAsync())!);
+        }
         await Task.Delay(TimeSpan.FromSeconds(2));
         await host.ShutdownAsync();
 
@@ -522,7 +528,12 @@ public sealed class StructureCompositionTests : IAsyncLifetime
         var again = (await store.GetAsync(StructureId))!;
         Assert.Equal(StructureState.Anchoring, again.Snapshot.State);
         Assert.Equal(deadline + StructureTimes.AnchoringMs, again.Snapshot.StateEndsMs);
-        Assert.Equal(2, again.Version);
+        Assert.Equal(3, again.Version);
+        await using (var connection = await source.OpenConnectionAsync())
+        await using (var eventCommand = new NpgsqlCommand($"SELECT count(*) FROM {Schema("EVE_EVENTS_SCHEMA")}.outbox WHERE topic = 'structure.state_changed' AND key = 'structure:{StructureId}'", connection))
+        {
+            Assert.Equal(1L, (long)(await eventCommand.ExecuteScalarAsync())!);
+        }
     }
 
     private static ClientSession RoleSession(long characterId, long corporationId, int roles)
@@ -799,6 +810,40 @@ public sealed class StructureCompositionTests : IAsyncLifetime
         // nothing to cancel is not an error
         await deployment.CallAsync(Call(director, "CancelUnanchor", 6, new PyInt(StructureId)));
         await host.ShutdownAsync();
+    }
+
+    [PgFact]
+    public async Task Metenox_unanchoring_uses_three_days_through_the_registered_deployment_service()
+    {
+        const long metenoxUnanchoringMs = 259_200_000;
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        await SeedGameStoreAsync(source, SeededRow(StructureId, StructureState.ShieldVulnerable, 0, 0, UpkeepState.FullPower, Metenox));
+        var characterId = await SeedManagerAsync();
+        var store = new StructureStore(source, Schema("EVE_STRUCTURES_SCHEMA"));
+
+        var host = await HostComposition.BuildAsync(Settings());
+        try
+        {
+            var deployment = host.Registry.Lookup("structureDeployment") ?? throw new InvalidOperationException("structureDeployment is not registered");
+            var director = RoleSession(characterId, Corporation, 1);
+            var before = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            await deployment.CallAsync(Call(director, "Unanchor", 1, new PyInt(StructureId)));
+            var after = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+            var unanchorEnds = (await store.GetAsync(StructureId))!.Snapshot.UnanchorEndsMs;
+            Assert.InRange(unanchorEnds, before + metenoxUnanchoringMs, after + metenoxUnanchoringMs);
+
+            await using var connection = await source.OpenConnectionAsync();
+            await using var command = new NpgsqlCommand($"SELECT run_at_ms FROM {Schema("EVE_SCHEDULER_SCHEMA")}.jobs WHERE kind = 'structure.timer' AND key = 'structure:{StructureId}'", connection);
+            Assert.Equal(unanchorEnds, (long?)await command.ExecuteScalarAsync());
+            await using var eventCommand = new NpgsqlCommand($"SELECT count(*) FROM {Schema("EVE_EVENTS_SCHEMA")}.outbox WHERE topic = 'structure.state_changed' AND key = 'structure:{StructureId}'", connection);
+            Assert.Equal(1L, (long)(await eventCommand.ExecuteScalarAsync())!);
+        }
+        finally
+        {
+            await host.ShutdownAsync();
+        }
     }
 
     [PgFact]

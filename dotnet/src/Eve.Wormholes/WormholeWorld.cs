@@ -10,7 +10,8 @@ namespace Eve.Wormholes;
 /// position and radius, and the largest ship the wormhole takes).
 /// </summary>
 public sealed record WormholeEnd(long BodyId, int SolarSystemId, string Name, int TypeId, int GroupId, double[] Position, double Radius,
-    int DestinationSystemId, long DestinationEnd, int DestinationClass, double[] DestinationPosition, double DestinationRadius, double MaxJumpMass);
+    int DestinationSystemId, long DestinationEnd, int DestinationClass, double[] DestinationPosition, double DestinationRadius, double MaxJumpMass,
+    int NebulaTypeId, int AgeState, double Size, int MaxShipJumpMassCategory);
 
 /// <summary>
 /// The world of the wormholes in the host: the stored connections, their durable lifecycle, and the ends the host places in space.
@@ -24,16 +25,20 @@ public sealed class WormholeWorld
     private const ulong FarSalt = 0x9E3779B97F4A7C15UL;
 
     private readonly NpgsqlDataSource _source;
+    private readonly DurableScheduler _scheduler;
     private readonly IReadOnlyDictionary<int, WormholeType> _types;
     private readonly IReadOnlyDictionary<int, int> _classes;
+    private readonly IReadOnlyDictionary<int, int> _nebulaTypeIds;
     private readonly IReadOnlyList<JSpaceSystem> _jSystems;
 
     public WormholeWorld(NpgsqlDataSource source, DurableScheduler scheduler, string schema, IReadOnlyDictionary<int, WormholeType> types,
-        IReadOnlyDictionary<int, int> classes, IReadOnlyList<JSpaceSystem> jSystems)
+        IReadOnlyDictionary<int, int> classes, IReadOnlyList<JSpaceSystem> jSystems, IReadOnlyDictionary<int, int>? nebulaTypeIds = null)
     {
         _source = source;
+        _scheduler = scheduler;
         _types = types;
         _classes = classes;
+        _nebulaTypeIds = nebulaTypeIds ?? new Dictionary<int, int>();
         _jSystems = jSystems;
         Store = new WormholeStore(source, schema);
         Jobs = new WormholeJobs(scheduler, Store, types, classes);
@@ -51,6 +56,13 @@ public sealed class WormholeWorld
     {
         add => Jobs.Changed += value;
         remove => Jobs.Changed -= value;
+    }
+
+    /// <summary>Raised after a successful transit changes mass or an age-state job changes a connection's slim state.</summary>
+    public event Func<long, CancellationToken, Task>? StateChanged
+    {
+        add => Jobs.StateChanged += value;
+        remove => Jobs.StateChanged -= value;
     }
 
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema) => WormholeStore.MigrateAsync(source, schema);
@@ -82,12 +94,26 @@ public sealed class WormholeWorld
         var ends = new List<WormholeEnd>();
         foreach (var stored in await Store.ActiveAtAsync(connection, null, systemId, cancellationToken))
         {
+            if (stored.ExpiresMs <= _scheduler.Now)
+                continue;
             if (stored.SourceSystemId == systemId)
                 ends.Add(EndOf(stored, far: false));
             if (stored.DestinationSystemId == systemId)
                 ends.Add(EndOf(stored, far: true));
         }
         return ends;
+    }
+
+    /// <summary>Both active ends of a connection before expiry, or no ends after collapse or expiry.</summary>
+    public async Task<IReadOnlyList<WormholeEnd>> EndsForConnectionAsync(long connectionId, CancellationToken cancellationToken = default)
+    {
+        if (connectionId <= 0)
+            return [];
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        var stored = await Store.GetAsync(connection, null, connectionId, forUpdate: false, cancellationToken);
+        if (stored is not { Active: true } || stored.ExpiresMs <= _scheduler.Now)
+            return [];
+        return [EndOf(stored, far: false), EndOf(stored, far: true)];
     }
 
     /// <summary>The end with this body ID while its connection is active, or null (a collapsed or unknown end).</summary>
@@ -97,7 +123,7 @@ public sealed class WormholeWorld
             return null;
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         var stored = await Store.GetAsync(connection, null, bodyId / 2, forUpdate: false, cancellationToken);
-        return stored is { Active: true } ? EndOf(stored, far: bodyId % 2 == 1) : null;
+        return stored is { Active: true } && stored.ExpiresMs > _scheduler.Now ? EndOf(stored, far: bodyId % 2 == 1) : null;
     }
 
     /// <summary>The transit's outcome for a ship of this mass, without changing the wormhole (null when the connection is not active).</summary>
@@ -105,7 +131,9 @@ public sealed class WormholeWorld
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         var stored = await Store.GetAsync(connection, null, connectionId, forUpdate: false, cancellationToken);
-        return stored is { Active: true } ? WormholeLifecycle.Transit(_types[stored.TypeId], stored.MassKg, shipMassKg) : null;
+        return stored is { Active: true } && stored.ExpiresMs > _scheduler.Now
+            ? WormholeLifecycle.Transit(_types[stored.TypeId], stored.MassKg, shipMassKg)
+            : null;
     }
 
     /// <summary>One ship's transit: its mass comes off the wormhole and a collapse is raised to <paramref name="sink"/> (captured) or <see cref="Changed"/>.</summary>
@@ -113,9 +141,45 @@ public sealed class WormholeWorld
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        var result = await Jobs.TransitAsync(connection, transaction, connectionId, shipMassKg, nowMs, cancellationToken, sink);
+        var changes = new List<WormholeChange>();
+        var result = await Jobs.TransitAsync(connection, transaction, connectionId, shipMassKg, nowMs, cancellationToken, changes.Add);
         await transaction.CommitAsync(cancellationToken);
+        foreach (var change in changes)
+        {
+            if (sink is null)
+                Jobs.Publish(change);
+            else
+                sink(change);
+        }
+        if (result.Outcome == TransitOutcome.Passed)
+            await Jobs.PublishStateChangedAsync(connectionId, CancellationToken.None);
         return result;
+    }
+
+    /// <summary>The remaining polarization time of an end, looked up by its connection so either mouth returns the same state.</summary>
+    public async Task<long?> PolarizedUntilAsync(long endId, long characterId, long nowMs, CancellationToken cancellationToken = default)
+    {
+        if (endId <= 0 || characterId <= 0)
+            return null;
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        return await Store.PolarizedUntilAsync(connection, null, characterId, endId / 2, nowMs, cancellationToken);
+    }
+
+    /// <summary>Checks expiry, polarization and mass under the connection's database row lock, accepts the jump, then commits the debit.</summary>
+    public async Task<WormholeJumpAttempt> AttemptJumpAsync(long endId, int currentSystemId, long characterId, double shipMassKg, long nowMs,
+        Func<CancellationToken, Task<bool>> acceptInSimulation, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var changes = new List<WormholeChange>();
+        var attempt = await Jobs.AttemptJumpAsync(connection, transaction, endId, currentSystemId, characterId, shipMassKg, nowMs,
+            acceptInSimulation, cancellationToken, changes.Add);
+        await transaction.CommitAsync(cancellationToken);
+        foreach (var change in changes)
+            Jobs.Publish(change);
+        if (attempt.Accepted && attempt.Transit?.Outcome == TransitOutcome.Passed)
+            await Jobs.PublishStateChangedAsync(endId / 2, CancellationToken.None);
+        return attempt;
     }
 
     /// <summary>The end of a stored connection: the near end (<paramref name="far"/> false) or the far end.</summary>
@@ -137,7 +201,11 @@ public sealed class WormholeWorld
             DestinationClass: _classes.GetValueOrDefault(farSystem),
             DestinationPosition: EndPosition(stored.Seed, !far),
             DestinationRadius: EndRadiusMeters,
-            MaxJumpMass: type.MaxJumpMassKg);
+            MaxJumpMass: type.MaxJumpMassKg,
+            NebulaTypeId: _nebulaTypeIds.GetValueOrDefault(farSystem),
+            AgeState: WormholeLifecycle.AgeState(_scheduler.Now, stored.ExpiresMs),
+            Size: WormholeLifecycle.Size(stored.MassKg, stored.MaxStableMassKg),
+            MaxShipJumpMassCategory: WormholeLifecycle.MaxShipJumpMassCategory(type.MaxJumpMassKg));
     }
 
     /// <summary>An end's position relative to its system's centre: 50 km on a bearing from the seed (the far end's bearing uses another salt).</summary>

@@ -9,6 +9,14 @@ public sealed record LocateTarget(long SolarSystemId, long StationId);
 /// <summary>The constellation and region of a solar system.</summary>
 public sealed record LocatePlace(long ConstellationId, long RegionId);
 
+/// <summary>Outcome of claiming a pending locate request and delivering its result.</summary>
+public enum LocateDeliveryResult
+{
+    Delivered,
+    InsufficientFunds,
+    RequestUnavailable,
+}
+
 /// <summary>
 /// What the locator needs from the server: the character by name, the target's place from the session that is online, the
 /// geography of a system (the SDE), and the delivery of a located result: the fee and the notification, in one transaction.
@@ -28,5 +36,7 @@ public interface IAgentLocatorPort
 
     /// written, when the pilot cannot pay.
     /// </summary>
-    ValueTask<bool> DeliverAsync(long characterId, long agentId, long fee, JsonObject result, CancellationToken cancellationToken);
+    ValueTask<LocateDeliveryResult> DeliverAsync(
+        long characterId, long agentId, long targetCharacterId, long fee, int cooldownMinutes,
+        JsonObject result, CancellationToken cancellationToken);
 }

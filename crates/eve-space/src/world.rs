@@ -73,11 +73,15 @@ pub enum Detail {
         /// The way the gate faces: the unit vector from its system to the one it leads to (what ships that jump appear in front of).
         heading: Option<Vec3>,
     },
-    /// A wormhole end: the far end it leads to (its system, body ID, the class of that system, its position and radius) and the largest ship it takes.
+    /// A wormhole end: its client-visible slim state and the far end it leads to (system, body ID, class, position and radius), plus its ship mass limit.
     Wormhole {
         destination_system: i32,
         destination_end: i64,
         destination_class: i32,
+        nebula_type_id: i32,
+        wormhole_age: i32,
+        wormhole_size: f64,
+        max_ship_jump_mass_category: i32,
         destination_position: Vec3,
         destination_radius: f64,
         max_jump_mass: f64,

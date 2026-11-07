@@ -3,6 +3,8 @@
     <ProjectReference Include="../Eve.Services/Eve.Services.csproj" />
     <ProjectReference Include="../Eve.Market/Eve.Market.csproj" />
     <ProjectReference Include="../Eve.Scheduler/Eve.Scheduler.csproj" />
+    <ProjectReference Include="../Eve.Ships/Eve.Ships.csproj" />
+    <ProjectReference Include="../Eve.Services.Ships/Eve.Services.Ships.csproj" />
     <ProjectReference Include="../Eve.Services.Generator/Eve.Services.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 </Project>

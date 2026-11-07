@@ -111,41 +111,34 @@ public sealed partial class CacheService
     }
 }
 
-public sealed record CommunityTrackInstanceAttributes(long DefinitionId, long Progress);
-
-public delegate ValueTask<CommunityTrackInstanceAttributes?> ReadCommunityTrackAttributesCallback(
-    long instanceId,
-    CancellationToken cancellationToken);
-
 [Service("communityTrackMgr")]
-public sealed partial class CommunityTrackMgrService(ReadCommunityTrackAttributesCallback? readAttributes = null)
+public sealed partial class CommunityTrackMgrService
 {
     public Func<ServiceCall, ValueTask<PyValue?>>? RpcHandler { get; set; }
 
+    private readonly ConcurrentDictionary<long, (long DefinitionId, long Progress)> _instances = new();
     private int _qaMode;
 
     public bool QaMode => Volatile.Read(ref _qaMode) != 0;
 
+    public void SetInstanceAttributes(long instanceId, long definitionId, long progress)
+    {
+        if (instanceId <= 0) return;
+        if (definitionId <= 0) _instances.TryRemove(instanceId, out _);
+        else _instances[instanceId] = (definitionId, Math.Max(0, progress));
+    }
+
     [Method("get_instance_attributes_public")]
-    public async ValueTask<PyValue> GetInstanceAttributesPublic(ServiceCall call)
+    public ValueTask<PyValue> GetInstanceAttributesPublic(ServiceCall call)
     {
         ValidateArguments(call, 1);
         var instanceId = PositiveIntegral(call.Arg(0));
         if (instanceId <= 0)
             throw MachoErrors.ThrowUserError("COMMUNITY_TRACK_INSTANCE_ID_INVALID");
-
-        if (RpcHandler is { } handler && await handler(call).ConfigureAwait(false) is { } handled)
-            return handled;
-
-        var attributes = readAttributes is null
-            ? null
-            : await readAttributes(instanceId, call.Cancellation).ConfigureAwait(false);
-        if (attributes is { } state && (state.DefinitionId <= 0 || state.Progress < 0))
-            throw new InvalidOperationException("The community track store returned invalid instance attributes.");
-
-        return attributes is { } found
-            ? Py.Tuple(new PyLong(found.DefinitionId), new PyLong(found.Progress))
-            : Py.Tuple(PyNone.Instance, PyNone.Instance);
+        return CompatibilityRpc.Invoke(call, RpcHandler, () =>
+            _instances.TryGetValue(instanceId, out var attributes)
+                ? Py.Tuple(new PyLong(attributes.DefinitionId), new PyLong(attributes.Progress))
+                : Py.Tuple(PyNone.Instance, PyNone.Instance));
     }
 
     [Method("change_qa_mode")]

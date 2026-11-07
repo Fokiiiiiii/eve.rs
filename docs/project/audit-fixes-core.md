@@ -20,7 +20,7 @@ reporter account/character, target, comments, optional chat fields and database 
 The database table is the operator-accessible inbox; no new client-facing support console was added.
 
 **Regression evidence.** Before the fix, `In_game_report_without_a_sink_does_not_acknowledge_a_lost_report` failed because no exception was
-thrown. The PostgreSQL Host test also observed no argument error for an invalid target. After the fix, `CoreServicesAuditHostTests` sends all
+thrown. The PostgreSQL Host test also observed no argument error for an invalid target. After the fix, `InGameReportPersistenceHostTests` sends all
 eight client shapes, checks stored report details, rejects malformed input, runs four concurrent submissions, restarts the real Host and
 checks the records remain. `Support_and_insurgency_rpcs_return_client_shapes_through_host_registration` exercises the wire reply and report
 callback through `HostServerTests`.
@@ -36,16 +36,15 @@ Searching all Python sources in `/home/user/eve-logic` found client initializati
 and the QA mock (`communitytracks/client/mock/mock_gateway.py:23-27`, which returns a test progress of 12); it found no producer that writes
 live instance progress. The bundled SDE directory has no community-track template data from which to derive a runtime instance or progress.
 
-**Fix status: partial.** `CommunityTrackMgrService` now reads through a provider. Host owns that state in the PostgreSQL `community_tracks`
-schema, using `community_track_instances` for instance ID, definition ID, progress and update time. The durable store supports create/update,
-atomic progress increments and removal. The registered Host RPC reads from that state; missing IDs retain the reference `(None, None)` shape.
-No default instance or progress is seeded. No production gameplay producer currently writes this state.
+**Fix status: open; no code change.** A local prototype store and Host test briefly demonstrated that a separately seeded PostgreSQL row could
+be read, but final tracing found no production caller that creates or advances such rows. Keeping that store would add an unreachable second
+state owner and would leave the live RPC returning `(None, None)`. No authoritative runtime source exists in this repository, the V24 client,
+EveJS, or the pinned SDE from which to create instance `1337` or derive its progress. The prototype and its test were removed; do not seed
+definition `1` with a guessed progress value or copy the QA mock's value `12`.
 
-**Regression evidence and limit.** The pre-fix Host test failed because the registered route returned `(None, None)` for a persisted test
-instance. `CoreServicesAuditHostTests` creates an instance through the durable store, checks its Host RPC reply and missing-ID shape,
-concurrently advances progress, and verifies the new value after restart. This verifies the durable owner and Core RPC read path, but not
-production event delivery. A production Vanguard Nemesis event producer that creates or advances instance `1337` was not found in eve.rs or
-EveJS and remains open; no event progress is invented. The client-facing event screen has not been exercised in the graphical client.
+**Regression evidence and limit.** Before the prototype, the Host test for an expected persisted instance failed because the registered route
+returned `(None, None)`. No post-fix test is claimed for P2 because the prototype was removed. A production Vanguard Nemesis event producer
+that creates or advances instance `1337` remains necessary. The client-facing event screen has not been exercised in the graphical client.
 
 ## Verification
 
@@ -57,8 +56,8 @@ Release builds completed with 0 warnings and 0 errors for `Eve.Services.Core`, `
 using `dotnet build <project> -c Release -warnaserror --no-restore`. Regression tests, all with 0 skipped, passed:
 
 - `dotnet test dotnet/tests/Eve.Services.Core.Tests/Eve.Services.Core.Tests.csproj -c Release --no-build --filter 'FullyQualifiedName~UnportedSupportRpcTests|FullyQualifiedName~CompatibilityRpcServicesTests'` — 15 passed.
-- `EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p3 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -c Release --no-build --filter 'FullyQualifiedName~CoreServicesAuditHostTests|FullyQualifiedName~Support_and_insurgency_rpcs_return_client_shapes_through_host_registration|FullyQualifiedName~Client_calls_for_chat_community_offers_employment_and_agency_cross_host_wire'` — 4 passed, including PostgreSQL migration, concurrent writes, Host registration and restart checks.
+- `EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p3 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -c Release --no-build --filter 'FullyQualifiedName~InGameReportPersistenceHostTests|FullyQualifiedName~Support_and_insurgency_rpcs_return_client_shapes_through_host_registration|FullyQualifiedName~Client_calls_for_chat_community_offers_employment_and_agency_cross_host_wire'` — 3 passed, 0 skipped; the PostgreSQL test covers all report shapes, concurrent submissions and persistence across restart.
 - `EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p3 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -c Release --no-build --filter 'FullyQualifiedName~HostServerTests'` — 412 passed.
 
-No finding in the two-item audit was judged false. No graphical V24.01 client session was run; the community-track event producer remains
-unimplemented and unverified.
+No finding in the two-item audit was judged false. P1 is fixed. P2 remains open because its authoritative event producer is absent; no
+graphical V24.01 client session was run.

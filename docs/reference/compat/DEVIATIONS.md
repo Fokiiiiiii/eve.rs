@@ -1726,12 +1726,11 @@ Sources. The wiki: "Pochven" (https://wiki.eveuniversity.org/Pochven, fetched 20
   (the next alpha injection is available now): the reference computes it from the account's injections
   (`skillTradingRuntime.js`), which eve.rs does not record. `contextualOfferMgr.Track*` keeps only the latest 1,024 bounded diagnostic events in memory; no
   contextual offer is served by eve.rs. Calls require a positive integer offer ID and consume one dispatch budget unit. `localizationServer.UpdateLocalizationQAWrap` and
-  `ReloadFSDPickle` change only in-process state. `communityTrackMgr.get_instance_attributes_public` now reads persisted
-  rows from PostgreSQL `community_tracks.community_track_instances`; its durable state owner supports atomic progress
-  increments and the Host RPC is tested through restart. V24's client uses instance 1337 and definition 1 in the
-  Vanguard Nemesis page, but no production event producer currently creates or advances that instance. An absent row
-  remains `(None, None)` as in EveJS; no definition or progress is fabricated. QA mode remains process-local. Status:
-  partial; the event lifecycle remains open in TODO section 41. See `docs/project/audit-fixes-core.md`.
+  `ReloadFSDPickle` change only in-process state. `communityTrackMgr.get_instance_attributes_public` keeps its
+  attributes in a test-only in-memory map; the production Host has no instance producer, so a missing instance returns
+  `(None, None)`. V24's client requests instance 1337 for Vanguard Nemesis, but no authoritative producer or progress
+  source exists in eve.rs, EveJS, the client or pinned SDE. QA mode remains process-local. Status: open in TODO section
+  41; no progress is fabricated. See `docs/project/audit-fixes-core.md`.
 - **Loyalty point store (historical status, superseded by A9 below).** At this point `LPStoreMgr` answered no offers and refused every take. The current ESI-backed offer and purchase behavior is recorded in Agents slices AG-2/A9 and AG-3/A9.
 - **Map read state (2026-10-27).** `GetHistory` and `GetSolarSystemVisits` read saved killmail, jump, and visit telemetry; `GetBeaconCount` derives active fleet counts from persisted deployed-beacon records and current fleet membership; `GetMyExtraMapInfo` reads online corporation member locations; sovereignty and faction-war data use their existing providers. The client-visible rowsets and dictionary are checked through Host wire tests. The GameStore/PostgreSQL persistence and restart path was not exercised in this audit. `GetConstellationLPData`, `GetAllRoamingWeatherSystems`, `GetMyExtraMapInfoAgents`, and both deadspace maps retain EveJS-compatible fallback shapes. The EDENCOM and Triglavian system lists match the reference's constant-list behavior, but their authoritative data source remains unresolved. See `docs/project/TODO.md` section 41 and `docs/project/service-audit/DEEPCHECK_map.md`.
 - **Report row types (slice 2, 2026-10-12).** `lastUpdated` is a long (a FILETIME), as EVE.js's answer has it; the field was a real. The key sets of `GetIncursionGlobalReport` and `GetSystemsInIncursions` equal EVE.js's in the live walk (`test_incursion_walk.py`). Status: verified against EVE.js.

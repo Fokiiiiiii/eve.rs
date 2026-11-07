@@ -10,12 +10,12 @@ using Npgsql;
 namespace Eve.Host.Tests;
 
 [Collection("host-composition")]
-public sealed class CoreServicesAuditHostTests : IAsyncLifetime
+public sealed class InGameReportPersistenceHostTests : IAsyncLifetime
 {
     private static readonly string[] SchemaVariables =
     [
         "EVE_ACCESS_GROUPS_SCHEMA", "EVE_AGENTS_SCHEMA", "EVE_ASSET_SAFETY_SCHEMA", "EVE_BOOKMARKS_SCHEMA",
-        "EVE_CHARACTERS_SCHEMA", "EVE_COMMUNITY_TRACKS_SCHEMA", "EVE_CONTRABAND_SCHEMA", "EVE_CONTRACTS_SCHEMA", "EVE_CORPORATIONS_SCHEMA",
+        "EVE_CHARACTERS_SCHEMA", "EVE_CONTRABAND_SCHEMA", "EVE_CONTRACTS_SCHEMA", "EVE_CORPORATIONS_SCHEMA",
         "EVE_CRIMEWATCH_SCHEMA", "EVE_ESS_SCHEMA", "EVE_FACTIONWARFARE_SCHEMA", "EVE_FITTING_SCHEMA",
         "EVE_FLEET_SCHEMA", "EVE_GAMESTORE_SCHEMA", "EVE_GLOBAL_CONFIG_SCHEMA", "EVE_IDENTITY_SCHEMA",
         "EVE_INDUSTRY_SCHEMA", "EVE_INSURGENCY_SCHEMA", "EVE_INVENTORY_SCHEMA", "EVE_LOGIN_SCHEMA",
@@ -161,36 +161,4 @@ public sealed class CoreServicesAuditHostTests : IAsyncLifetime
         Assert.Equal(13, await ReportCountAsync(source));
     }
 
-    [PgFact]
-    public async Task Community_track_attributes_are_read_from_persisted_instance_state()
-    {
-        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
-        var schemaName = Schema("EVE_COMMUNITY_TRACKS_SCHEMA");
-        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
-        await PersistenceCommunityTrackStore.MigrateAsync(source, schemaName);
-        var trackStore = new PersistenceCommunityTrackStore(source, schemaName);
-        await trackStore.SetInstanceAttributesAsync(1337, 1, 7);
-
-        _host = await HostComposition.BuildAsync(Settings());
-        var service = _host.Registry.Lookup("communityTrackMgr") ?? throw new InvalidOperationException("communityTrackMgr is not registered");
-        var session = new ClientSession { UserId = 77, CharacterId = 42 };
-
-        Assert.Equal(Py.Tuple(new PyLong(1), new PyLong(7)), await service.CallAsync(
-            Call(session, "get_instance_attributes_public", new PyLong(1337))));
-        Assert.Equal(Py.Tuple(PyNone.Instance, PyNone.Instance), await service.CallAsync(
-            Call(session, "get_instance_attributes_public", new PyLong(1338))));
-
-        var progress = await Task.WhenAll(Enumerable.Range(0, 20)
-            .Select(_ => trackStore.AddProgressAsync(1337, 1)));
-        Assert.Equal(20, progress.Distinct().Count());
-        Assert.All(progress, value => Assert.NotNull(value));
-        Assert.Equal(Py.Tuple(new PyLong(1), new PyLong(27)), await service.CallAsync(
-            Call(session, "get_instance_attributes_public", new PyLong(1337))));
-
-        await _host.ShutdownAsync();
-        _host = await HostComposition.BuildAsync(Settings());
-        service = _host.Registry.Lookup("communityTrackMgr") ?? throw new InvalidOperationException("communityTrackMgr is not registered after restart");
-        Assert.Equal(Py.Tuple(new PyLong(1), new PyLong(27)), await service.CallAsync(
-            Call(session, "get_instance_attributes_public", new PyLong(1337))));
-    }
 }

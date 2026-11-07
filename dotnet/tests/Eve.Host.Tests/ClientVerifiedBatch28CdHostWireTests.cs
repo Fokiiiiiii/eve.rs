@@ -18,10 +18,8 @@ public partial class HostServerTests
         const long characterId = 90000001;
         const long instanceId = 700001;
         const long solarSystemId = 30000142;
-        var community = new CommunityTrackMgrService((requestedInstanceId, _) =>
-            ValueTask.FromResult<CommunityTrackInstanceAttributes?>(requestedInstanceId == instanceId
-                ? new CommunityTrackInstanceAttributes(42, 7)
-                : null));
+        var community = new CommunityTrackMgrService();
+        community.SetInstanceAttributes(instanceId, 42, 7);
 
         var offerTracker = new ContextualOfferMgrService();
         var content = new PyObjectEx(

@@ -147,25 +147,36 @@ public sealed partial class ExpertSystemMgrService(
     /// </summary>
     public async Task ExpireDueAsync(CancellationToken cancellationToken)
     {
-        foreach (var due in await expertSystems.Store.ExpiredAsync(expertSystems.NowMs, 100, cancellationToken))
+        var nowMs = expertSystems.NowMs;
+        var dueEntries = await expertSystems.Store.ExpiredAsync(nowMs, 100, cancellationToken);
+        foreach (var characterEntries in dueEntries.GroupBy(entry => entry.CharacterId))
         {
-            var trainedBefore = await skills.ForCharacterAsync(due.CharacterId, cancellationToken);
-            Dictionary<int, int> grantsBefore;
-            bool removed;
+            IReadOnlyList<CharacterSkill> trainedBefore = [];
+            Dictionary<int, int> grantsBefore = new();
+            var expiredTypeIds = new List<int>();
             await using (var connection = await source.OpenConnectionAsync(cancellationToken))
             await using (var transaction = await connection.BeginTransactionAsync(cancellationToken))
             {
-                await LockCharacterAsync(connection, transaction, due.CharacterId, cancellationToken);
-                grantsBefore = ExpertSystemRules.GrantsOf(expertSystems.Catalog, await expertSystems.Store.ForCharacterAsync(connection, transaction, due.CharacterId, cancellationToken), expertSystems.NowMs);
-                removed = await expertSystems.Store.RemoveAsync(connection, transaction, due.CharacterId, due.TypeId, expertSystems.NowMs, cancellationToken);
+                await LockCharacterAsync(connection, transaction, characterEntries.Key, cancellationToken);
+                var entries = await expertSystems.Store.ForCharacterAsync(connection, transaction, characterEntries.Key, cancellationToken);
+                var dueForCharacter = entries.Where(entry => entry.ExpiresAtMs <= nowMs)
+                    .OrderBy(entry => entry.ExpiresAtMs).ThenBy(entry => entry.TypeId).ToArray();
+                grantsBefore = ExpertSystemRules.GrantsFromEntries(expertSystems.Catalog, entries);
+                trainedBefore = await skills.ForCharacterAsync(connection, transaction, characterEntries.Key, cancellationToken);
+                foreach (var entry in dueForCharacter)
+                {
+                    if (await expertSystems.Store.RemoveAsync(connection, transaction, characterEntries.Key, entry.TypeId, nowMs, cancellationToken))
+                        expiredTypeIds.Add(entry.TypeId);
+                }
                 await transaction.CommitAsync(cancellationToken);
             }
-            if (removed)
+            if (expiredTypeIds.Count > 0)
             {
-
                 if (writeLapseNotice is not null)
-                    await writeLapseNotice(due.CharacterId, due.TypeId, cancellationToken);
-                await Told(sessions.Of(due.CharacterId), due.CharacterId, null, false, due.TypeId, false, grantsBefore, trainedBefore, cancellationToken, expired: true);
+                    foreach (var typeId in expiredTypeIds)
+                        await writeLapseNotice(characterEntries.Key, typeId, cancellationToken);
+                await Told(sessions.Of(characterEntries.Key), characterEntries.Key, null, false, expiredTypeIds[0], false,
+                    grantsBefore, trainedBefore, cancellationToken, expired: true, expiredTypeIds: expiredTypeIds);
             }
         }
     }
@@ -176,7 +187,8 @@ public sealed partial class ExpertSystemMgrService(
     /// </summary>
     private async Task Told(
         ClientSession? session, long characterId, Item? used, bool removedItem, int typeId, bool added,
-        Dictionary<int, int> grantsBefore, IReadOnlyList<CharacterSkill> trainedBefore, CancellationToken cancellationToken, bool expired = false)
+        Dictionary<int, int> grantsBefore, IReadOnlyList<CharacterSkill> trainedBefore, CancellationToken cancellationToken,
+        bool expired = false, IReadOnlyList<int>? expiredTypeIds = null)
     {
         if (session is null)
         {
@@ -206,7 +218,8 @@ public sealed partial class ExpertSystemMgrService(
         }
         if (expired)
         {
-            session.SendNotification("OnExpertSystemExpired", "clientID", new PyInt(typeId));
+            foreach (var expiredTypeId in expiredTypeIds ?? [typeId])
+                session.SendNotification("OnExpertSystemExpired", "clientID", new PyInt(expiredTypeId));
         }
     }
 

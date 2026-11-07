@@ -231,8 +231,9 @@ public partial class HostServerTests
         public ValueTask<bool> InReachAsync(ClientSession session, long targetId, double maxRange, CancellationToken cancellationToken) =>
             ValueTask.FromResult(true);
 
-        public ValueTask AttemptEndedAsync(ClientSession session, HackableTarget target, bool won, CancellationToken cancellationToken) =>
-            ValueTask.CompletedTask;
+        public ValueTask<IReadOnlyList<HackingLootItem>> AttemptEndedAsync(
+            ClientSession session, HackableTarget target, Guid reservationId, bool won, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<IReadOnlyList<HackingLootItem>>([]);
     }
 
     private static PyValue[] TurnEvents(PyValue[] notificationArgs) =>

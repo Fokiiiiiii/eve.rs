@@ -47,6 +47,7 @@ public static class HackingWire
     public const int EventVirusSuppressor = 306;
     public const int EventRestorationHeal = 307;
     public const int EventDistanceIndicator = 308;
+    public const int EventCoreContents = 400;
 
     public const int GridColumns = 10;
     public const int GridRows = 9;

@@ -1,4 +1,5 @@
 using Eve.Marshal;
+using Eve.Scheduler;
 using Eve.Services;
 using Eve.Services.Space;
 
@@ -82,6 +83,7 @@ public sealed class ActivityTravelRpcServicesTests
     [Fact]
     public async Task Pvp_queue_rejects_invalid_ids_and_only_admits_an_active_sourced_filament()
     {
+        using var timers = HeldTimers();
         var session = new ClientSession { CharacterId = 123 };
         var callbackCount = 0;
         var service = new PvpFilamentMgrService(
@@ -95,7 +97,8 @@ public sealed class ActivityTravelRpcServicesTests
                     ? new PvpFilamentAdmissionResult([new PvpFilamentQueueParticipant(123, session)], [])
                     : new PvpFilamentAdmissionResult([], [error]));
             },
-            utcNow: () => new DateTimeOffset(2022, 6, 4, 11, 0, 0, TimeSpan.Zero));
+            utcNow: () => new DateTimeOffset(2022, 6, 4, 11, 0, 0, TimeSpan.Zero),
+            localTimers: timers);
 
         var invalidType = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
             await service.CallAsync(Call("JoinPVPQueue", session, new PyInt(44), new PyInt(99999))));
@@ -133,6 +136,7 @@ public sealed class ActivityTravelRpcServicesTests
     [Fact]
     public async Task Pvp_queue_duplicate_leave_retry_and_notifications_keep_reference_shapes()
     {
+        using var timers = HeldTimers();
         var ownerSink = new PacketSink();
         var memberSink = new PacketSink();
         var owner = new ClientSession(ownerSink) { CharacterId = 123, ClientId = 20 };
@@ -146,7 +150,8 @@ public sealed class ActivityTravelRpcServicesTests
         };
         var service = new PvpFilamentMgrService(
             admit: (_, _, _) => ValueTask.FromResult(new PvpFilamentAdmissionResult(participants, [])),
-            utcNow: () => new DateTimeOffset(2022, 6, 4, 11, 0, 0, TimeSpan.Zero));
+            utcNow: () => new DateTimeOffset(2022, 6, 4, 11, 0, 0, TimeSpan.Zero),
+            localTimers: timers);
 
         Assert.Equal(new PyInt(0), await service.CallAsync(Call("JoinPVPQueue", owner, new PyInt(44), new PyInt(63715))));
         var duplicate = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
@@ -176,6 +181,7 @@ public sealed class ActivityTravelRpcServicesTests
     [Fact]
     public async Task Pvp_queue_concurrent_joins_admit_only_one_record()
     {
+        using var timers = HeldTimers();
         var session = new ClientSession { CharacterId = 123 };
         var bothAdmitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseAdmission = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -189,7 +195,8 @@ public sealed class ActivityTravelRpcServicesTests
         }
 
         var service = new PvpFilamentMgrService(admit: Admit,
-            utcNow: () => new DateTimeOffset(2022, 6, 4, 11, 0, 0, TimeSpan.Zero));
+            utcNow: () => new DateTimeOffset(2022, 6, 4, 11, 0, 0, TimeSpan.Zero),
+            localTimers: timers);
         async Task<object> JoinAsync()
         {
             try
@@ -210,6 +217,50 @@ public sealed class ActivityTravelRpcServicesTests
         Assert.Single(results.OfType<PyInt>(), result => result.Value == 0);
         var duplicate = Assert.IsType<MachoWrappedException>(Assert.Single(results.OfType<MachoWrappedException>()));
         Assert.Equal(PyList.Of(PyList.Of(new PyInt(32), new PyList([]))), ErrorValue(duplicate, "errors"));
+    }
+
+    [Fact]
+    public async Task An_admitted_queue_without_a_match_runtime_is_cleared_with_the_reference_failure_notification()
+    {
+        var sink = new PacketSink();
+        var notification = new TaskCompletionSource<PyValue>(TaskCreationOptions.RunContinuationsAsynchronously);
+        sink.OnSend = packet => notification.TrySetResult(packet);
+        var session = new ClientSession(sink) { CharacterId = 123, ClientId = 20 };
+        session.UserId = 10;
+        var delayStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseDelay = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var delayCalls = 0;
+        var admissionCalls = 0;
+        using var timers = new LocalTimers(delay: (delay, cancellationToken) =>
+        {
+            Assert.Equal(TimeSpan.FromMilliseconds(100), delay);
+            if (Interlocked.Increment(ref delayCalls) == 1)
+            {
+                delayStarted.TrySetResult();
+                return releaseDelay.Task.WaitAsync(cancellationToken);
+            }
+            return Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        });
+        var service = new PvpFilamentMgrService(
+            admit: (_, _, _) =>
+            {
+                Interlocked.Increment(ref admissionCalls);
+                return ValueTask.FromResult(new PvpFilamentAdmissionResult(
+                    [new PvpFilamentQueueParticipant(123, session)], []));
+            },
+            utcNow: () => new DateTimeOffset(2022, 6, 4, 11, 0, 0, TimeSpan.Zero),
+            localTimers: timers);
+
+        Assert.Equal(new PyInt(0), await service.CallAsync(Call("JoinPVPQueue", session, new PyInt(44), new PyInt(63715))));
+        await delayStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        releaseDelay.TrySetResult();
+        var packet = await notification.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var failure = PyList.Of(PyList.Of(new PyInt(PvpFilamentJumpErrorCodes.UnknownError), new PyList([])));
+        Assert.Equal(ClientNotification.Build(10, session.NodeId, "OnMatchMakingFailure", "clientID", [failure], 0), packet);
+        Assert.Equal(packet, Assert.Single(sink.Packets));
+        Assert.Equal(2, admissionCalls);
+        Assert.Equal(new PyInt(0), await service.CallAsync(Call("JoinPVPQueue", session, new PyInt(44), new PyInt(63715))));
     }
 
     [Fact]
@@ -433,6 +484,14 @@ public sealed class ActivityTravelRpcServicesTests
     private sealed class PacketSink : IPacketSink
     {
         public List<PyValue> Packets { get; } = [];
-        public void Send(PyValue packet) => Packets.Add(packet);
+        public Action<PyValue>? OnSend { get; set; }
+        public void Send(PyValue packet)
+        {
+            Packets.Add(packet);
+            OnSend?.Invoke(packet);
+        }
     }
+
+    private static LocalTimers HeldTimers() => new(delay: (_, cancellationToken) =>
+        Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken));
 }

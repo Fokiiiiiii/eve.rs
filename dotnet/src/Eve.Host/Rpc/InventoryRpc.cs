@@ -45,7 +45,11 @@ internal sealed partial class CharacterServicesComposition
                 items, itemTypes, corporations, corporationOfficeStore));
         var inventoryBroker = new IndustryInventoryChangePublisher(
             WithCustoms(HostInventoryServiceFactory.CreateInvBroker(items, itemTypes, stations, ships, dogma, now, spaceContainers, spaceDrones, corporations, characterEntryHooks,
-                controlledStructureInventory: structureControlReadModel.InventoryAsync, officeStore: corporationOfficeStore)),
+                controlledStructureInventory: structureControlReadModel.InventoryAsync,
+                crystalDamage: async (itemIds, token) => (await modules.ModuleConditionsAsync(itemIds, token))
+                    .ToDictionary(entry => entry.Key, entry => entry.Value.Damage),
+                officeStore: corporationOfficeStore,
+                capsuleerDeliveriesAccess: HostInventoryServiceFactory.CapsuleerDeliveriesAccessOf(corporations))),
             industryMonitor);
 
         return

@@ -32,7 +32,7 @@ Host rechecks that the same event schedule remains active after awaited ship, fl
 
 ## PvP Filament queue lifetime without a match runtime (2026-11-04)
 
-EveJS calls `pvpFilamentQueueRuntime.tickScene` from `space/runtime/scene/tick.js:2424`. With its match runtime unavailable, that tick revalidates and clears an admitted record with `PVPJumpError.UNKNOWN_ERROR` (22), then notifies each participant (`pvpFilamentQueueRuntime.js:118-132,154-175`, `pvpJumpErrors.js:10`). The Host port retains its transient, cancellable queue record until leave or disconnect; it does not synthesize a match or result. This keeps duplicate detection and explicit leave/retry usable without adding timer-based match behavior; a future match runtime should own periodic revalidation and queue completion.
+EveJS calls `pvpFilamentQueueRuntime.tickScene` from `space/runtime/scene/tick.js:2424-2427`; the runtime tick interval is 100 ms (`space/runtime/runtimeClock.js:24`). Without a match runtime, each tick revalidates and clears an admitted record with `PVPJumpError.UNKNOWN_ERROR` (22), then notifies each participant (`pvpFilamentQueueRuntime.js:119-132,154-178`, `pvpJumpErrors.js:10`). The Host uses the shared `LocalTimers` to clear an admitted queue after 100 ms and send the same error (`dotnet/src/Eve.Services.Space/ActivityTravelRpcServices.cs`, `dotnet/src/Eve.Host/Rpc/SpaceRpc.cs`); leave and disconnect cancel that timer. It does not synthesize a match or result. The compatibility difference is the scheduled revalidation interval rather than an indefinite queue. The selected PvP service tests verify the timer failure shape, duplicate admission, retry, leave and disconnect.
 
 ## Fleet Finder advert member count (2026-11-02)
 

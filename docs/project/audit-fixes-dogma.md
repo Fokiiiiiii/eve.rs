@@ -52,6 +52,7 @@ V24.01 `parklife/playerOwnedTargetMgr.py:84-102` は battery ID を伴う OBO lo
 - `eve_p5` の関連 .NET tests は全 pass、skip 0: `CharacterHostTests` 47件、`DogmaServiceTests` / `DogmaWireTests` / `ReloadServiceTests` 33件、`AmmoTests` / `ReloadTests` 14件、`SkillHandlerTests` 56件、登録済み Host の newbie/ammo wire 2件。
 - 変更前の失敗確認: スキル注入 state、ship-only wire shape、brain target ID、drone settings 永続化、newbie ship 搭乗、一般コンテナ ammo 搬出、structure-dock の通知形式。
 - GitHub Actions main CI run 1593 (`fcea50118de1`) は全 job と required gate が success。push 後のこの branch の CI は未確認。
+- push 後の run 1594 の `Eve.Characters.Tests.StoreTests.Home_station_cooldown_migration_preserves_existing_rows` は、migration `0023_character_drone_settings` の追加後に旧 migration 一覧を期待して失敗した。V24 の `godma.py:2339-2356` は属性 1275/1297 の部分更新を送信し、EveJS `droneSettings.js` は許可属性をキャラクター状態へ永続化するため、migration 自体は必要。期待一覧に migration 0023 を追加し、失敗を再現した focused test は修正後 pass、`StoreTests` 32件も pass。`Eve.Characters.Tests` Release build は 0 warnings / 0 errors。
 
 V24.01 `playerOwned.py:428-472` は POS battery の assume/relinquish control を `posMgr` に送り、その後 `playerOwnedTargetMgr.py:84-102` が DogmaIM OBO RPC を呼ぶ。現行 `PosMgrService.cs:16-50` には tower list/unanchor だけがあり制御 grant callback がない。シミュレーション `targeting/mod.rs:382-410` は通常 ship pilot か controlled Upwell structure の lock state を持つが POS battery actor/lock state は持たない。DogmaIM に handler だけ足すと grant と simulation の authoritative path が欠け、自艦 target state の誤更新か fake success になるため、OBO は未修正 gap のまま残す。
 

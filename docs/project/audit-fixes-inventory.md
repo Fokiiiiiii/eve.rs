@@ -36,6 +36,8 @@ V24.01 `invCache.py:1167-1196` は RPC 結果を反復して row cache に格納
 
 `ListByFlags` を `InventoryWire.Set` に変更した。`ListByFlags_returns_a_python_set_on_the_wire` は非空・空 set と marshal roundtrip 後の set marker / row を確認する。既存 `InvBrokerTests` の期待値も wire shape に合わせた。
 
+最初の push CI では headless client の新規キャラクター inventory 比較が失敗した。`oracle/fixtures/scenarios/inventory.json` は 2026-10-01、reference commit `b637d2a` の古い `ListByFlags` list 形を保持していた一方、指定された EveJS 261028.1 の `invBrokerService.js:10834-10842, 11648-11649` は `__builtin__.set` ObjectEx を構築して返す。V24.01 `invCache.py:1174-1196` と全 `ListByFlags` 呼び出し箇所は結果を iterable として処理し、set と互換である。fixture の 12 件を現在の EveJS set wire shape に更新し、各 item row と空結果をそのまま維持した。headless 比較は戻り値の wire type を含む厳密比較のままにしている。
+
 ## 中 — GetAssetWorth が dockable root 以外の item も評価していた
 
 V24.01 `invCache.py:890-892` は `GetAssetWorth` を global-assets inventory から呼ぶ。`playerprogression/assetnetworthnotifier.py:52-65` が実際に取得した値を使う。EveJS `charMgrGlobalAssets.js:399-448` は station / dockable structure まで root を解決できた item のみ `allEntries` に含め、`621-657` はその一覧を評価する。
@@ -64,3 +66,5 @@ Release build は以下の変更プロジェクトすべてで完了し、各 0 
 - invbroker / factory を参照する Host class 群: 449 passed, 20 skipped, 0 failed。20 件は `AbyssalHostFlowTests` の `RealAbyssalSimPgFact` 群で、`EVE_ABYSSAL_SIM_BINARY` と `EVE_ABYSSAL_SIM_SDE` が未設定のため skip された。skip を pass には数えていない。
 
 **未確認:** GUI の V24.01 client、通信 trace、EveJS runtime の同一シナリオは実行していない。EveJS の該当実装と client callsites はソース照合した。EveJS `server/package.json` に test script はなく、この checkout には該当シナリオの独立実行 harness を見つけられなかった。
+
+CI 1588 は上記 fixture 不一致で失敗した。訂正後、ローカルで `tools/headless-client/tests/test_recorded_scenarios.py` を実行し 15 passed を確認した。JSON parse と whitespace check も通過した。訂正 fixture を含む後続 CI の結果は未確認。

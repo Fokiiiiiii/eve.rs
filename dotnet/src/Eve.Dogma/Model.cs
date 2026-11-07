@@ -82,6 +82,7 @@ public sealed record EffectDef(int Id, string Name, int Category, IReadOnlyList<
     public const int Area = 3;
     public const int Online = 4;
     public const int Overload = 5;
+    public const int System = 7;
 
     /// <summary>Whether the SDE publishes this dogma effect. This does not determine whether a module type is published.</summary>
     public bool Published { get; init; } = true;

@@ -7,7 +7,8 @@ namespace Eve.Npc;
 /// <summary>What a profile says of an NPC: the ship type it flies, whose it is, what is fitted to it and where it comes into space.</summary>
 public sealed record NpcProfile(
     string Id, string Name, IReadOnlyList<string> Aliases, string EntityType, int ShipTypeId, long CorporationId, long AllianceId, int FactionId, string LoadoutId,
-    string LootTableId, string ShipNameTemplate, double SecurityStatus, long Bounty, double SpawnDistanceMeters, decimal BountyPayoutMultiplier = 1m);
+    string LootTableId, string ShipNameTemplate, double SecurityStatus, long Bounty, double SpawnDistanceMeters, decimal BountyPayoutMultiplier = 1m,
+    string? CapitalClassId = null, string? CapitalRarity = null);
 
 /// <summary>What is fitted to an NPC: modules (type, how many) and the charges they hold (type, how many to a module). Retail entity types have none of either.</summary>
 public sealed record NpcLoadout(string Id, string Name, IReadOnlyList<(int TypeId, int Quantity)> Modules, IReadOnlyList<(int TypeId, int Quantity)> Charges);
@@ -187,7 +188,9 @@ public sealed partial class NpcAuthority
     {
         using var stream = typeof(NpcAuthority).Assembly.GetManifestResourceStream("npc_authority.json")
             ?? throw new InvalidOperationException("npc_authority.json is not in the assembly");
-        return FromJson(stream);
+        using var capitalStream = typeof(NpcAuthority).Assembly.GetManifestResourceStream("capital_npc_authority.json")
+            ?? throw new InvalidOperationException("capital_npc_authority.json is not in the assembly");
+        return FromJson(stream).Merge(FromJson(capitalStream));
     });
 
     public static NpcAuthority Load() => Embedded.Value;
@@ -211,26 +214,46 @@ public sealed partial class NpcAuthority
             Text(p, "id"), Text(p, "name"), Strings(p, "aliases"), Text(p, "entityType"), (int)Number(p, "shipTypeID"), Number(p, "corporationID"),
             Number(p, "allianceID"), (int)Number(p, "factionID"), Text(p, "loadoutID"), Text(p, "lootTableID"), Text(p, "shipNameTemplate"),
             Real(p, "securityStatus"), Number(p, "bounty"), p.TryGetProperty("spawnDistanceMeters", out var distance) ? distance.GetDouble() : 20_000,
-            Multiplier(p, "bountyPayoutMultiplier")));
-        var loadouts = root.GetProperty("loadouts").EnumerateArray().Select(l => new NpcLoadout(Text(l, "id"), Text(l, "name"), Pairs(l, "modules"), Pairs(l, "charges")));
+            Multiplier(p, "bountyPayoutMultiplier"), Text(p, "capitalClassID") is { Length: > 0 } classId ? classId : null,
+            Text(p, "capitalRarity") is { Length: > 0 } rarity ? rarity : null));
+        var loadouts = root.TryGetProperty("loadouts", out var loadoutRows)
+            ? loadoutRows.EnumerateArray().Select(l => new NpcLoadout(Text(l, "id"), Text(l, "name"), Pairs(l, "modules"), Pairs(l, "charges")))
+            : [];
         var pools = root.GetProperty("pools").EnumerateArray().Select(p => new NpcPool(
             Text(p, "id"), Text(p, "name"), Strings(p, "aliases"), Text(p, "entityType"),
             [.. p.GetProperty("entries").EnumerateArray().Select(entry => new NpcPoolEntry(entry[0].GetString() ?? "", entry[1].GetInt32()))]));
         int? Whole(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? (int)v.GetDouble() : null;
         bool Flag(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
+        bool? OptionalFlag(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind is JsonValueKind.True or JsonValueKind.False ? v.GetBoolean() : null;
         var lootTables = !root.TryGetProperty("lootTables", out var tables) ? [] : tables.EnumerateArray().Select(t => new LootTable(
             Text(t, "id"), Text(t, "mode"), Whole(t, "minEntries"), Whole(t, "maxEntries"), Real(t, "emptyChance"), Flag(t, "allowDuplicates"), Flag(t, "disableRandomLoot"),
             Whole(t, "stackableMinQuantity"), Whole(t, "stackableMaxQuantity"),
             [.. t.GetProperty("selectors").EnumerateArray().Select(s => new LootSelector(
                 Text(s, "kind"), Text(s, "sizeBand"), Text(s, "grade"), Strings(s, "nameIncludes"), Strings(s, "nameExcludes"), Strings(s, "groupNames"),
                 s.TryGetProperty("categoryIDs", out var categories) ? [.. categories.EnumerateArray().Select(c => c.GetInt32())] : [], Whole(s, "weight"),
-                Whole(s, "quantityMin"), Whole(s, "quantityMax")))],
-            Flag(t, "hasSelectors"))).ToList();
+                Whole(s, "quantityMin"), Whole(s, "quantityMax"), OptionalFlag(s, "singleton"),
+                s.TryGetProperty("typeIDs", out var exactTypes) ? [.. exactTypes.EnumerateArray().Select(type => type.GetInt32())] : null))],
+            Flag(t, "hasSelectors"),
+            t.TryGetProperty("guaranteedEntries", out var guaranteed) ? [.. guaranteed.EnumerateArray().Select(entry => new LootGuaranteedEntry(
+                Whole(entry, "typeID") ?? 0,
+                Whole(entry, "minQuantity") ?? Whole(entry, "quantityMin") ?? Whole(entry, "quantity") ?? 1,
+                Flag(entry, "singleton"),
+                Whole(entry, "maxQuantity") ?? Whole(entry, "quantityMax")))] : [])).ToList();
         var authority = new NpcAuthority(profiles.ToList(), loadouts.ToList(), pools.ToList(), lootTables);
         if (root.TryGetProperty("pirateRegions", out var regions))
         {
             authority.WithPirateRegions(regions.EnumerateObject().Select(r => new KeyValuePair<int, string>(int.Parse(r.Name, System.Globalization.CultureInfo.InvariantCulture), r.Value.GetString() ?? "")));
         }
         return authority;
+    }
+
+    private NpcAuthority Merge(NpcAuthority addition)
+    {
+        var merged = new NpcAuthority(
+            [.. Profiles, .. addition.Profiles],
+            [.. _loadouts.Values, .. addition._loadouts.Values],
+            [.. _pools.Rows.Where(pool => !pool.Derived), .. addition._pools.Rows.Where(pool => !pool.Derived)],
+            [.. _lootTables.Values, .. addition._lootTables.Values]);
+        return merged.WithPirateRegions([.. _pirateRegions, .. addition._pirateRegions]);
     }
 }

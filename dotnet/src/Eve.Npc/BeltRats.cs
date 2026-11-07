@@ -7,19 +7,33 @@ public sealed record BeltSystem(int SolarSystemId, double SecurityStatus, int Re
 
 /// <summary>
 /// How asteroid belt rats are rolled (<c>config/npc.json</c> of the reference: <c>asteroidBeltNpcRat*</c>): a pilot arriving at a belt makes one roll; a belt has no more than
-/// <see cref="MaxActiveGroupsPerBelt"/> groups at once, is rolled again after <see cref="RollCooldownMs"/> and a new group comes after <see cref="RespawnCooldownMs"/> at the earliest.
+/// <see cref="MaxActiveGroupsPerBelt"/> groups at once, is rolled again after <see cref="RollCooldownMs"/> and a new group comes after <see cref="RespawnCooldownMs"/> at the earliest. Eligible arrivals
+/// first roll for hauler, commander, officer and capital groups; a chosen special group does not also roll the ordinary spawn chance.
 /// </summary>
 public sealed record BeltRatConfig(
     bool Enabled, double ChanceHighSec, double ChanceLowSec, double ChanceNullSec, long RollCooldownMs, long RespawnCooldownMs, int MaxActiveGroupsPerBelt, double LandingRadiusMeters,
-    double SpawnDistanceMeters)
+    double SpawnDistanceMeters,
+    bool SpecialsEnabled = true,
+    double HaulerChance = 0.02,
+    double CommanderChance = 0.015,
+    double OfficerChance = 0.0005,
+    double OfficerMaxSecurity = -0.7,
+    bool OfficerRequireHomeRegion = true,
+    bool CapitalEnabled = true,
+    double CapitalChance = 0.00025,
+    double CapitalMaxSecurity = 0,
+    string CapitalClasses = "dreadnought",
+    int CapitalMaxActiveGroupsPerSystem = 1,
+    int HaulerMinCount = 2,
+    int HaulerMaxCount = 4)
 {
     /// <summary>The reference's own values.</summary>
     public static readonly BeltRatConfig Reference = new(true, 0.25, 0.35, 0.45, 120_000, 1_200_000, 1, 250_000, 30_000);
 
     /// <summary>
-    /// The reference's values with what the environment changes: <c>EVE_BELT_RATS</c> (<c>off</c>, <c>0</c> or <c>false</c> switches the rats off), <c>EVE_BELT_RAT_CHANCE</c> (the chance of a
-    /// group at an arrival, for every security band), <c>EVE_BELT_RAT_ROLL_COOLDOWN_MS</c> and <c>EVE_BELT_RAT_RESPAWN_COOLDOWN_MS</c>. A value that is not a number (or a chance outside 0 to 1)
-    /// is not taken. The landing radius is the simulation's (it decides where a warp has arrived at a belt) and is not changed here.
+    /// The reference's values with what the environment changes: <c>EVE_BELT_RATS</c>, ordinary <c>EVE_BELT_RAT_CHANCE</c> and cooldown variables, and the <c>EVE_BELT_RAT_SPECIALS</c>,
+    /// <c>EVE_BELT_RAT_{HAULER,COMMANDER,OFFICER}_CHANCE</c>, officer eligibility, and capital eligibility, class and system-cap variables. A number outside its documented range is ignored.
+    /// The landing radius is the simulation's (it decides where a warp has arrived at a belt) and is not changed here.
     /// </summary>
     public static BeltRatConfig FromEnvironment(Func<string, string?> get)
     {
@@ -40,15 +54,78 @@ public sealed record BeltRatConfig(
         {
             config = config with { RespawnCooldownMs = (long)respawn };
         }
+        if (get("EVE_BELT_RAT_SPECIALS") is { Length: > 0 } specials)
+        {
+            config = config with { SpecialsEnabled = On(specials) };
+        }
+        if (Number(get("EVE_BELT_RAT_HAULER_CHANCE")) is { } hauler and >= 0 and <= 1)
+        {
+            config = config with { HaulerChance = hauler };
+        }
+        if (Number(get("EVE_BELT_RAT_COMMANDER_CHANCE")) is { } commander and >= 0 and <= 1)
+        {
+            config = config with { CommanderChance = commander };
+        }
+        if (Number(get("EVE_BELT_RAT_OFFICER_CHANCE")) is { } officer and >= 0 and <= 1)
+        {
+            config = config with { OfficerChance = officer };
+        }
+        if (Number(get("EVE_BELT_RAT_OFFICER_MAX_SECURITY")) is { } officerSecurity and >= -1 and <= 1)
+        {
+            config = config with { OfficerMaxSecurity = officerSecurity };
+        }
+        if (get("EVE_BELT_RAT_OFFICER_REQUIRE_HOME_REGION") is { Length: > 0 } officerHome)
+        {
+            config = config with { OfficerRequireHomeRegion = On(officerHome) };
+        }
+        if (get("EVE_BELT_RAT_CAPITAL_ENABLED") is { Length: > 0 } capitalEnabled)
+        {
+            config = config with { CapitalEnabled = On(capitalEnabled) };
+        }
+        if (Number(get("EVE_BELT_RAT_CAPITAL_CHANCE")) is { } capitalChance and >= 0 and <= 1)
+        {
+            config = config with { CapitalChance = capitalChance };
+        }
+        if (Number(get("EVE_BELT_RAT_CAPITAL_MAX_SECURITY")) is { } capitalSecurity and >= -1 and <= 1)
+        {
+            config = config with { CapitalMaxSecurity = capitalSecurity };
+        }
+        if (get("EVE_BELT_RAT_CAPITAL_CLASSES") is { Length: > 0 } capitalClasses)
+        {
+            config = config with { CapitalClasses = capitalClasses.Trim() };
+        }
+        if (Number(get("EVE_BELT_RAT_CAPITAL_MAX_ACTIVE_GROUPS_PER_SYSTEM")) is { } maxCapitalGroups and >= 0)
+        {
+            config = config with { CapitalMaxActiveGroupsPerSystem = (int)Math.Min(int.MaxValue, maxCapitalGroups) };
+        }
+        if (Number(get("EVE_BELT_RAT_HAULER_MIN_COUNT")) is { } haulerMin and >= 1)
+        {
+            config = config with { HaulerMinCount = (int)Math.Min(int.MaxValue, haulerMin) };
+        }
+        if (Number(get("EVE_BELT_RAT_HAULER_MAX_COUNT")) is { } haulerMax and >= 1)
+        {
+            config = config with { HaulerMaxCount = (int)Math.Min(int.MaxValue, haulerMax) };
+        }
+        config = config with { HaulerMaxCount = Math.Max(config.HaulerMinCount, config.HaulerMaxCount) };
         return config;
     }
+
+    private static bool On(string value) => value.Trim().ToLowerInvariant() is not ("off" or "0" or "false");
 
     private static double? Number(string? text) =>
         double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var value) && double.IsFinite(value) ? value : null;
 }
 
-/// <summary>A group of rats chosen for a belt: what holds the system, how safe it is, and the profile of each rat.</summary>
-public sealed record BeltRatPlan(string Faction, string Band, double SecurityStatus, IReadOnlyList<NpcProfile> Profiles);
+public enum BeltSpecialKind
+{
+    Hauler,
+    Commander,
+    Officer,
+    Capital,
+}
+
+/// <summary>A group chosen for a belt: what holds the system, how safe it is, which pool supplied it and the profile of each rat.</summary>
+public sealed record BeltRatPlan(string Faction, string Band, double SecurityStatus, IReadOnlyList<NpcProfile> Profiles, BeltSpecialKind? SpecialKind = null, string? PoolId = null);
 
 /// <summary>What came of an arrival at a belt.</summary>
 public enum BeltOutcome
@@ -69,13 +146,15 @@ public enum BeltOutcome
     ChanceMiss,
     /// <summary>A planned group had no ships accepted by the simulation.</summary>
     SpawnFailed,
+    /// <summary>A capital belt spawn is already active in this solar system.</summary>
+    CapitalSystemLimit,
 }
 
 public sealed record BeltDecision(BeltOutcome Outcome, BeltRatPlan? Plan = null, string? Faction = null, string? Band = null);
 
 /// <summary>
 /// The rats of asteroid belts (<c>beltRatRuntime.js</c> and <c>pirateFactionPolicy.js</c> of the reference, ADR 0009): a pilot who arrives at a belt may find a group of pirates of the faction that holds
-/// the region, as many and as big as the system's security allows. This is the ordinary group; the reference's rarer ones (haulers, commanders, officers, capitals) are not ported.
+/// the region, as many and as big as the system's security allows, or an eligible rare hauler, commander, officer or capital group.
 /// </summary>
 public sealed partial class BeltRats
 {
@@ -99,6 +178,35 @@ public sealed partial class BeltRats
     /// <summary>The factions a system that no faction owns draws from, <c>STANDARD_PIRATE_FACTIONS</c>.</summary>
     private static readonly string[] AnyPirate = ["guristas", "serpentis", "angels", "blood", "sanshas", "rogue_drones"];
 
+    private static readonly Dictionary<string, string> HaulerPoolByFaction = new(StringComparer.Ordinal)
+    {
+        ["blood"] = "blood_asteroid_haulers", ["sanshas"] = "sanshas_asteroid_haulers", ["serpentis"] = "serpentis_asteroid_haulers",
+        ["angels"] = "angels_asteroid_haulers", ["guristas"] = "guristas_asteroid_haulers",
+    };
+
+    private static readonly Dictionary<string, string> CommanderPoolByFaction = new(StringComparer.Ordinal)
+    {
+        ["blood"] = "blood_deadspace", ["sanshas"] = "sanshas_deadspace", ["serpentis"] = "serpentis_deadspace",
+        ["angels"] = "angels_deadspace", ["guristas"] = "guristas_deadspace",
+    };
+
+    private static readonly Dictionary<string, string> OfficerPoolByFaction = new(StringComparer.Ordinal)
+    {
+        ["blood"] = "blood_officer", ["sanshas"] = "sanshas_officer", ["serpentis"] = "serpentis_officer",
+        ["angels"] = "angels_officer", ["guristas"] = "guristas_officer",
+    };
+
+    private static readonly Dictionary<string, string> CapitalPoolByFaction = new(StringComparer.Ordinal)
+    {
+        ["blood"] = "capital_npc_blood", ["sanshas"] = "capital_npc_sanshas", ["serpentis"] = "capital_npc_serpentis",
+        ["angels"] = "capital_npc_angels", ["guristas"] = "capital_npc_guristas",
+    };
+
+    private static readonly Dictionary<string, int> OfficerHomeRegionByFaction = new(StringComparer.Ordinal)
+    {
+        ["guristas"] = 10000015, ["angels"] = 10000012, ["blood"] = 10000060, ["sanshas"] = 10000022, ["serpentis"] = 10000058,
+    };
+
     private readonly NpcAuthority _authority;
     private readonly Func<int, bool> _hasHull;
     private readonly Dictionary<(int System, long Belt), BeltState> _belts = [];
@@ -119,16 +227,18 @@ public sealed partial class BeltRats
 
     public BeltRatConfig Config { get; }
 
-    /// <summary>The ship types of the profiles the rats are chosen from: their hulls are to be known (<c>hasHull</c>) before a group is rolled.</summary>
+    /// <summary>The ship types of ordinary and special pools: their hulls are known (<c>hasHull</c>) before a group is rolled.</summary>
     public IReadOnlyList<int> PoolShipTypes() =>
     [
-        .. AnyPirate.Select(_authority.Pool).OfType<NpcPool>().SelectMany(pool => pool.Entries)
+        .. AnyPirate.Select(_authority.Pool).OfType<NpcPool>()
+            .Concat(SpecialPoolIds().Select(_authority.Pool).OfType<NpcPool>())
+            .SelectMany(pool => pool.Entries)
             .Select(entry => _authority.Profile(entry.ProfileId)).OfType<NpcProfile>().Select(profile => profile.ShipTypeId).Distinct(),
     ];
 
     /// <summary>How a pilot's arrival at a belt comes out: the checks the reference makes, in its order, and then one roll of chance. A group that is to be spawned is told by <see cref="Spawned"/> when it was.</summary>
     /// <param name="activeGroups">How many groups of rats the belt has now.</param>
-    public BeltDecision Decide(BeltSystem system, long beltId, long nowMs, int activeGroups, Func<double> random)
+    public BeltDecision Decide(BeltSystem system, long beltId, long nowMs, int activeGroups, Func<double> random, int activeCapitalGroups = 0)
     {
         if (!Config.Enabled)
         {
@@ -153,12 +263,23 @@ public sealed partial class BeltRats
         }
         var band = BandOf(system.SecurityStatus);
         var faction = FactionOf(system, random);
-        var plan = PlanOf(system, band, faction, random);
+        var specialKind = RollSpecialKind(system, band, faction, random);
+        var plan = specialKind is { } kind
+            ? SpecialPlanOf(system, band, faction, kind, random)
+            : PlanOf(system, band, faction, random);
         if (plan is null)
         {
             return new BeltDecision(BeltOutcome.PlanFailed, Faction: faction, Band: band.Name);
         }
+        if (specialKind == BeltSpecialKind.Capital && Config.CapitalMaxActiveGroupsPerSystem > 0 && activeCapitalGroups >= Config.CapitalMaxActiveGroupsPerSystem)
+        {
+            return new BeltDecision(BeltOutcome.CapitalSystemLimit, plan, faction, band.Name);
+        }
         state.LastRollMs = nowMs;
+        if (specialKind is not null)
+        {
+            return new BeltDecision(BeltOutcome.Spawn, plan, faction, band.Name);
+        }
         var chance = band.Name switch { "highsec" => Config.ChanceHighSec, "lowsec" => Config.ChanceLowSec, "nullsec" => Config.ChanceNullSec, _ => 0 };
         return random() >= Math.Clamp(chance, 0, 1)
             ? new BeltDecision(BeltOutcome.ChanceMiss, Faction: faction, Band: band.Name)
@@ -216,6 +337,110 @@ public sealed partial class BeltRats
         }
         return profiles.Count == 0 ? null : new BeltRatPlan(faction, band.Name, system.SecurityStatus, profiles);
     }
+
+    private BeltRatPlan? SpecialPlanOf(BeltSystem system, Band band, string faction, BeltSpecialKind kind, Func<double> random)
+    {
+        var poolId = PoolIdOf(kind, faction);
+        if (poolId is null || _authority.Pool(poolId) is not { } pool)
+        {
+            return null;
+        }
+        var allowedCapitalClasses = kind == BeltSpecialKind.Capital ? CapitalClassesOf(Config.CapitalClasses) : null;
+        var candidates = pool.Entries
+            .Where(entry => entry.Weight > 0 && _authority.Profile(entry.ProfileId) is { } profile && _hasHull(profile.ShipTypeId)
+                && (kind != BeltSpecialKind.Capital || profile.CapitalClassId is { } classId && allowedCapitalClasses!.Contains(CapitalClassOf(classId))))
+            .Select(entry => (Entry: entry, Profile: _authority.Profile(entry.ProfileId)!))
+            .ToArray();
+        if (candidates.Length == 0)
+        {
+            return null;
+        }
+        var minCount = kind == BeltSpecialKind.Hauler ? Math.Max(1, Config.HaulerMinCount) : 1;
+        var maxCount = kind == BeltSpecialKind.Hauler ? Math.Max(minCount, Config.HaulerMaxCount) : minCount;
+        var count = minCount == maxCount ? minCount : minCount + (int)Math.Floor(random() * (maxCount - minCount + 1));
+        var profiles = new List<NpcProfile>(count);
+        for (var index = 0; index < count; index++)
+        {
+            profiles.Add(ChooseWeighted(candidates, candidate => candidate.Entry.Weight, random).Profile);
+        }
+        return new BeltRatPlan(faction, band.Name, system.SecurityStatus, profiles, kind, poolId);
+    }
+
+    private BeltSpecialKind? RollSpecialKind(BeltSystem system, Band band, string faction, Func<double> random)
+    {
+        if (!Config.SpecialsEnabled)
+        {
+            return null;
+        }
+        // The reference checks these independent chances in this order. A selected special spawn bypasses the ordinary group chance.
+        (BeltSpecialKind Kind, double Chance)[] candidates =
+        [
+            (BeltSpecialKind.Capital, Config.CapitalChance),
+            (BeltSpecialKind.Officer, Config.OfficerChance),
+            (BeltSpecialKind.Commander, Config.CommanderChance),
+            (BeltSpecialKind.Hauler, Config.HaulerChance),
+        ];
+        foreach (var candidate in candidates)
+        {
+            if (candidate.Chance > 0 && IsEligible(candidate.Kind, system, band, faction) && random() < Math.Clamp(candidate.Chance, 0, 1))
+            {
+                return candidate.Kind;
+            }
+        }
+        return null;
+    }
+
+    private bool IsEligible(BeltSpecialKind kind, BeltSystem system, Band band, string faction) => kind switch
+    {
+        BeltSpecialKind.Hauler => band.Name is "highsec" or "lowsec" or "nullsec" && HaulerPoolByFaction.ContainsKey(faction),
+        BeltSpecialKind.Commander => CommanderPoolByFaction.ContainsKey(faction),
+        BeltSpecialKind.Officer => OfficerPoolByFaction.ContainsKey(faction) && band.Name == "nullsec"
+            && (OfficerHomeRegionByFaction.TryGetValue(faction, out var homeRegion) && system.RegionId == homeRegion
+                || !Config.OfficerRequireHomeRegion && system.SecurityStatus <= Config.OfficerMaxSecurity),
+        BeltSpecialKind.Capital => Config.CapitalEnabled && CapitalPoolByFaction.ContainsKey(faction) && band.Name == "nullsec"
+            && system.SecurityStatus <= Config.CapitalMaxSecurity,
+        _ => false,
+    };
+
+    private static string? PoolIdOf(BeltSpecialKind kind, string faction) => kind switch
+    {
+        BeltSpecialKind.Hauler => HaulerPoolByFaction.GetValueOrDefault(faction),
+        BeltSpecialKind.Commander => CommanderPoolByFaction.GetValueOrDefault(faction),
+        BeltSpecialKind.Officer => OfficerPoolByFaction.GetValueOrDefault(faction),
+        BeltSpecialKind.Capital => CapitalPoolByFaction.GetValueOrDefault(faction),
+        _ => null,
+    };
+
+    private static string CapitalClassOf(string value)
+    {
+        var token = Regex.Replace(value.Trim().ToLowerInvariant(), "[\\s_-]+", "");
+        return token switch
+        {
+            "dread" or "dreads" or "dreadnoughts" => "dreadnought",
+            "titans" => "titan",
+            "super" or "supers" or "supercarriers" or "carrier" or "carriers" => "supercarrier",
+            _ => token,
+        };
+    }
+
+    private static IReadOnlySet<string> CapitalClassesOf(string classes)
+    {
+        var raw = classes.Trim().ToLowerInvariant();
+        if (raw.Length == 0)
+        {
+            return new HashSet<string>(["dreadnought"], StringComparer.Ordinal);
+        }
+        if (raw is "all" or "any" or "*")
+        {
+            return new HashSet<string>(["dreadnought", "titan", "supercarrier"], StringComparer.Ordinal);
+        }
+        var allowed = classes.Split([',', '|', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(CapitalClassOf).Where(value => value is "dreadnought" or "titan" or "supercarrier").ToHashSet(StringComparer.Ordinal);
+        return allowed.Count > 0 ? allowed : new HashSet<string>(["dreadnought"], StringComparer.Ordinal);
+    }
+
+    private IEnumerable<string> SpecialPoolIds() =>
+        [.. HaulerPoolByFaction.Values, .. CommanderPoolByFaction.Values, .. OfficerPoolByFaction.Values, .. CapitalPoolByFaction.Values];
 
     /// <summary><c>chooseStandardPoolProfileIDForFactionHull</c>: a profile of the faction's standard pool whose hull class is the one asked for, by its weight in the pool.</summary>
     private NpcProfile? ProfileOf(string faction, string hull, Func<double> random)

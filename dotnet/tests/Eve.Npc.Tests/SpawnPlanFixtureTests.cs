@@ -15,7 +15,9 @@ public sealed class SpawnPlanFixtureTests
         using var fixture = JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "fixtures", "npc", "spawn_plans.json")));
         var root = fixture.RootElement;
         var notDamageable = root.GetProperty("notDamageable").EnumerateArray().Select(type => type.GetInt32()).ToHashSet();
-        var selector = new NpcSelector(NpcAuthority.Load());
+        using var authored = typeof(NpcAuthority).Assembly.GetManifestResourceStream("npc_authority.json")
+            ?? throw new InvalidOperationException("npc_authority.json is not in the assembly");
+        var selector = new NpcSelector(NpcAuthority.FromJson(authored));
         var cases = root.GetProperty("cases").EnumerateArray().ToList();
         Assert.True(cases.Count > 300, $"{cases.Count} cases");
 

@@ -53,7 +53,7 @@ public sealed class CalendarBatchWriteTests
                 [inviteeId, addedId, addedId, CreatorId, 0, -1],
                 [inviteeId, removedId, removedId, CreatorId, 0, -1]);
 
-            Assert.Equal(CalendarParticipantUpdateResult.Updated, update);
+            Assert.Equal(CalendarParticipantUpdateResult.Updated, update.Result);
             var updatedResponses = await store.GetResponsesToEventAsync(personalEventId, CreatorId);
             Assert.Collection(updatedResponses,
                 row => Assert.Equal(new CalendarResponse(personalEventId, CreatorId, CalendarResponseStates.Accepted), row),
@@ -92,7 +92,7 @@ public sealed class CalendarBatchWriteTests
             var result = await store.UpdateParticipantsAsync(
                 eventId, CreatorId, [CreatorId + CalendarLimits.MaxInvitees + 1], []);
 
-            Assert.Equal(CalendarParticipantUpdateResult.TooManyInvitees, result);
+            Assert.Equal(CalendarParticipantUpdateResult.TooManyInvitees, result.Result);
             var responses = await store.GetResponsesToEventAsync(eventId, CreatorId);
             Assert.Equal(CalendarLimits.MaxInvitees + 1, responses.Count);
             Assert.DoesNotContain(responses, row => row.CharacterId == CreatorId + CalendarLimits.MaxInvitees + 1);

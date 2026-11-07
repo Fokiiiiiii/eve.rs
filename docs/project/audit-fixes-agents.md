@@ -14,6 +14,8 @@ V24.01 `eve/client/script/ui/station/agents/agentUtil.py:153-194` と `agentDial
 
 期限が `null` のままという先行テストを追加し、offer と accepted の期限・scheduler job が欠けることを確認した。修正では期限を migration 0007 で保存し、offer／accept ごとに期限を設定、DurableScheduler job を遷移と同じ DB transaction で置換・取消する。起動時は既存 active record の job を復元し、期限を backfill する。job は行ロック下で state と exact deadline を再検査し、期限切れ遷移と outbox event を同じ transaction に保存する。登録済み agentMgr RPC の Host テストで accept 後の7日 deadline、host/scheduler の再生成、再起動後の expiry 1回、state、wire notification を確認した。
 
+期限経路全体を追う際、別のcourier sweepが `expirationTime=0` を3日後に `Failed` にし、DurableSchedulerより先に期限処理する不整合も確認した。EveJS `resolveMissionExpirationDurationMs` (`agentMissionRuntime.js:2191-2203`) はSDEに0が明示された場合に0分を返し、expiry read path (`:4398-4468`) は期限なしとして扱う。旧3日 sweep に対して追加した PostgreSQL 回帰テストは修正前に `Expected: Accepted, Actual: Failed` で失敗した。個別 `ExpireCouriersAsync` 経路を除き、期限は保存期限とDurableSchedulerが所有するようにした。修正後、期限なしcourierは4日後のdungeon sweep後もAcceptedで、cargoも保持する。
+
 監査に併記された「expiry 時に `OnMissionsUpdated` が送られない」は、期限処理の欠陥という結論には至らなかった。EveJS `expireMissionIfNeeded` (`agentMissionRuntime.js:4398-4468`) は `OnMissionsUpdated` を呼ばず、`OnAgentMissionChange("offer_expired", agentID)` のみを送る。V24 の `OnAgentMissionChanged` は modified 以外の mission event で tracker info を無効化し、mission list を再計算する (`missions/client/missionObjectivesTracker.py:158-180`)。したがって追加 notification は行っていない。
 
 期限機能とは別に、SDE mission pool から offer を作る live path はまだ無く、`docs/project/TODO.md` で OPEN のまま残す。
@@ -32,6 +34,6 @@ V24.01 の agent action は `agents.py:675-684` から `DoAction` を行う。Ev
 
 ## 実行した確認と未確認
 
-確認済み: `eve_p4` 上の PostgreSQL-backed test。Host focused run は6件 pass / 0 failed / 0 skipped。その他、`AgentMissionDispatchTests` 3件、`AgentMissionStoreTests` 15件、core agent / research / mission 73件、agents store/storyline/research 20件を実行し、全て pass・skip 0。修正前の locator concurrency と callback concurrency のテストはそれぞれ二重処理を検出して失敗した後、修正後に通過した。
+確認済み: `eve_p4` 上の PostgreSQL-backed tests。Agents の store/storyline/research 20件、Services.Core の agent/research/mission 72件、Host の agent/mission 関連クラス28件をマージ後のRelease構成で実行し、全て pass・skip 0。各関連コード／テストプロジェクトのRelease buildも0 warning。修正前の locator concurrency、同一 mission accept、無期限courier sweepテストはそれぞれ二重徴収、callback二重実行、期限の誤失敗を検出して失敗した後、修正後に通過した。
 
 未確認: V24.01 graphical client での実動作、wire capture の取得、EveJS server の end-to-end 実行比較。コード上の callsite／通知形状比較と Host の wire assertions は行った。locator action はEveJSに executable implementation が見つからず、比較対象がない。mission expiry に伴う EveJS 固有の bookmark cleanup／dungeon purge と、同じ永続副作用を持つHost integration はこの監査修正テストでは確認していない。

@@ -166,7 +166,18 @@ public sealed class StructureTimers
         foreach (var record in await _store.ListAsync(connection, transaction, false, cancellationToken))
         {
             var rules = _rules.RulesOf(record.TypeId, record.SolarSystemId) with { AnchoringMs = record.Snapshot.AnchoringMs };
-            if (await ScheduleAsync(connection, transaction, record.Snapshot, rules, cancellationToken))
+            var snapshot = record.Snapshot;
+            if (snapshot.Upkeep == UpkeepState.LowPower && snapshot.AbandonAtMs == 0 && rules.CanBeAbandoned)
+            {
+                var lowPowerSince = snapshot.LowPowerSinceMs > 0 ? snapshot.LowPowerSinceMs : _scheduler.Now;
+                snapshot = snapshot with
+                {
+                    LowPowerSinceMs = lowPowerSince,
+                    AbandonAtMs = lowPowerSince + StructureTimes.AbandonDelayMs(_roll()),
+                };
+                await _store.SaveAsync(connection, transaction, snapshot, cancellationToken);
+            }
+            if (await ScheduleAsync(connection, transaction, snapshot, rules, cancellationToken))
             {
                 scheduled++;
             }

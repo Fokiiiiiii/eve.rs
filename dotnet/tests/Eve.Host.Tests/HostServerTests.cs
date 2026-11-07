@@ -1905,32 +1905,37 @@ public partial class HostServerTests : IAsyncLifetime
         public System.Threading.Tasks.Task<long> CreateEventAsync(
             Eve.Calendar.CalendarEventInput input, System.Collections.Generic.IReadOnlyCollection<long> invitees,
             System.Threading.CancellationToken cancellationToken = default,
-            System.Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, long, System.Collections.Generic.IReadOnlyCollection<long>, System.Threading.CancellationToken, System.Threading.Tasks.Task>? beforeCommitAsync = null) =>
+            System.Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, long, System.Collections.Generic.IReadOnlyCollection<long>, System.Threading.CancellationToken, System.Threading.Tasks.Task>? beforeCommitAsync = null,
+            System.Func<Eve.Calendar.CalendarEvent, System.Collections.Generic.IReadOnlyCollection<long>, System.Threading.CancellationToken, System.Threading.Tasks.Task>? afterCommitAsync = null) =>
             beforeCommitAsync is null
                 ? System.Threading.Tasks.Task.FromException<long>(new System.NotSupportedException())
                 : throw new System.NotSupportedException("The fake calendar store has no PostgreSQL transaction.");
 
         public System.Threading.Tasks.Task<bool> EditEventAsync(
             long eventId, long ownerId, long oldEventDateTime, Eve.Calendar.CalendarEventInput input,
-            System.Threading.CancellationToken cancellationToken = default) =>
+            System.Threading.CancellationToken cancellationToken = default,
+            System.Func<Eve.Calendar.CalendarEvent, System.Collections.Generic.IReadOnlyCollection<long>, System.Threading.CancellationToken, System.Threading.Tasks.Task>? afterCommitAsync = null) =>
             System.Threading.Tasks.Task.FromResult(false);
 
         public System.Threading.Tasks.Task<bool> DeleteEventAsync(
-            long eventId, long ownerId, long dateModified, System.Threading.CancellationToken cancellationToken = default) =>
+            long eventId, long ownerId, long dateModified, System.Threading.CancellationToken cancellationToken = default,
+            System.Func<Eve.Calendar.CalendarEvent, System.Collections.Generic.IReadOnlyCollection<long>, System.Threading.CancellationToken, System.Threading.Tasks.Task>? afterCommitAsync = null) =>
             System.Threading.Tasks.Task.FromResult(false);
 
         public System.Threading.Tasks.Task<Eve.Calendar.CalendarParticipantUpdateResult> UpdateParticipantsAsync(
             long eventId, long ownerId, System.Collections.Generic.IReadOnlyCollection<long> add,
             System.Collections.Generic.IReadOnlyCollection<long> remove,
             System.Threading.CancellationToken cancellationToken = default,
-            System.Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, long, System.Collections.Generic.IReadOnlyCollection<long>, System.Threading.CancellationToken, System.Threading.Tasks.Task>? beforeCommitAsync = null) =>
+            System.Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, long, System.Collections.Generic.IReadOnlyCollection<long>, System.Threading.CancellationToken, System.Threading.Tasks.Task>? beforeCommitAsync = null,
+            System.Func<Eve.Calendar.CalendarEvent, System.Collections.Generic.IReadOnlyCollection<long>, System.Collections.Generic.IReadOnlyCollection<long>, System.Threading.CancellationToken, System.Threading.Tasks.Task>? afterCommitAsync = null) =>
             beforeCommitAsync is null
                 ? System.Threading.Tasks.Task.FromResult(Eve.Calendar.CalendarParticipantUpdateResult.EventNotFound)
                 : throw new System.NotSupportedException("The fake calendar store has no PostgreSQL transaction.");
 
         public System.Threading.Tasks.Task<bool> SendResponseAsync(
             long eventId, long ownerId, long characterId, short response,
-            System.Threading.CancellationToken cancellationToken = default) =>
+            System.Threading.CancellationToken cancellationToken = default,
+            System.Func<Eve.Calendar.CalendarEvent, System.Collections.Generic.IReadOnlyCollection<long>, System.Threading.CancellationToken, System.Threading.Tasks.Task>? afterCommitAsync = null) =>
             System.Threading.Tasks.Task.FromResult(false);
     }
 

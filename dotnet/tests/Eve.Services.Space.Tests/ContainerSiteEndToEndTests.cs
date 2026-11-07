@@ -16,13 +16,32 @@ namespace Eve.Services.Space.Tests;
 /// <summary>The site's containers as the hacking service sees them: the lookup and the end of an attempt go to the site container store.</summary>
 internal sealed class ContainerSite(SiteContainerHacks hacks) : IHackingSite
 {
-    public ValueTask<HackableTarget?> FindAsync(long characterId, long targetId, CancellationToken cancellationToken) =>
-        hacks.FindAsync(targetId, cancellationToken);
+    public Action? AfterSettlement { get; set; }
+    public Func<Task>? BeforeReservation { get; set; }
+
+    public async ValueTask<HackableTarget?> FindAsync(long characterId, long targetId, CancellationToken cancellationToken)
+    {
+        var target = await hacks.FindAsync(targetId, cancellationToken);
+        if (target is not null && BeforeReservation is { } beforeReservation)
+            await beforeReservation();
+        return target;
+    }
 
     public ValueTask<bool> InReachAsync(ClientSession session, long targetId, double maxRange, CancellationToken cancellationToken) => ValueTask.FromResult(true);
 
-    public ValueTask AttemptEndedAsync(ClientSession session, HackableTarget target, bool won, CancellationToken cancellationToken) =>
-        hacks.EndedAsync(target, won, session.CharacterId ?? 0, cancellationToken);
+    public ValueTask<bool> TryReserveAsync(ClientSession session, HackableTarget target, Guid reservationId, CancellationToken cancellationToken) =>
+        hacks.TryReserveAsync(target, reservationId, session.CharacterId ?? 0, session.SessionId, cancellationToken);
+
+    public ValueTask ReleaseReservationAsync(Guid reservationId, CancellationToken cancellationToken) =>
+        hacks.ReleaseReservationAsync(reservationId, cancellationToken);
+
+    public async ValueTask<IReadOnlyList<HackingLootItem>> AttemptEndedAsync(
+        ClientSession session, HackableTarget target, Guid reservationId, bool won, CancellationToken cancellationToken)
+    {
+        var contents = await hacks.EndedAsync(target, reservationId, won, session.CharacterId ?? 0, cancellationToken);
+        AfterSettlement?.Invoke();
+        return contents;
+    }
 }
 
 /// <summary>
@@ -106,7 +125,7 @@ public sealed class ContainerSiteEndToEndTests
         var analyzer = new AnalyzerValues(22329, CanHackData: true, CanHackRelic: true, MaxRange: 54_000, VirusCoherence: 40, VirusStrength: 20, VirusSlots: 3, AccessDifficultyBonus: 0);
         foreach (var container in containers)
         {
-            Assert.Null(await service.AnalyzerRefusalAsync(Character, container.ContainerId, analyzer, CancellationToken.None));
+            Assert.Null(await service.AnalyzerRefusalAsync(session, Character, container.ContainerId, analyzer, CancellationToken.None));
             await service.OpenAnalyzerAttemptAsync(session, Character, container.ContainerId, analyzer, CancellationToken.None);
             await service.CallAsync(new ServiceCall
             {
@@ -140,6 +159,193 @@ public sealed class ContainerSiteEndToEndTests
         }
         Assert.DoesNotContain(await director.ActiveAsync(Jita), active => active.InstanceId == site.InstanceId);
     }
+
+    [PgFact]
+    public async Task Concurrent_analyzer_starts_cannot_both_reserve_the_same_database_container()
+    {
+        await using var rig = await SiteContainerRig.CreateAsync();
+        const long containerId = 7_000_000_000_000_901L;
+        await rig.InsertAsync(new SiteContainerRecord(containerId, 5_300_000_000_901, SiteContainerRig.SolarSystemId,
+            "research_laboratory", true, 17, Relic, [1_000, 2_000, 3_000], 50, 4, 0, "secure", rig.Now + 86_400_000));
+
+        var bothLookedUp = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lookupCount = 0;
+        var site = new ContainerSite(rig.Hacks());
+        site.BeforeReservation = async () =>
+        {
+            if (Interlocked.Increment(ref lookupCount) == 2)
+                bothLookedUp.TrySetResult();
+            await bothLookedUp.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        };
+        var first = new HackingMgrService(new HackingAttempts(), site, WinningGame);
+        var second = new HackingMgrService(new HackingAttempts(), site, WinningGame);
+        var firstSession = new ClientSession(new Sink()) { CharacterId = 99_101 };
+        var secondSession = new ClientSession(new Sink()) { CharacterId = 99_102 };
+        var analyzer = new AnalyzerValues(22329, CanHackData: true, CanHackRelic: true, MaxRange: 54_000,
+            VirusCoherence: 40, VirusStrength: 20, VirusSlots: 3, AccessDifficultyBonus: 0);
+
+        var results = await Task.WhenAll(
+            first.AnalyzerRefusalAsync(firstSession, firstSession.CharacterId!.Value, containerId, analyzer, CancellationToken.None).AsTask(),
+            second.AnalyzerRefusalAsync(secondSession, secondSession.CharacterId!.Value, containerId, analyzer, CancellationToken.None).AsTask());
+
+        Assert.Single(results, result => result is null);
+        Assert.Equal("ANALYZER_TARGET_BUSY", Assert.Single(results, result => result is not null));
+    }
+
+    [PgFact]
+    public async Task A_winning_turn_is_not_sent_until_the_database_settlement_commits()
+    {
+        await using var rig = await SiteContainerRig.CreateAsync();
+        const long containerId = 7_000_000_000_000_902L;
+        await rig.InsertAsync(new SiteContainerRecord(containerId, 5_300_000_000_902, SiteContainerRig.SolarSystemId,
+            "research_laboratory", true, 17, Relic, [1_000, 2_000, 3_000], 50, 4, 0, "secure", rig.Now + 86_400_000));
+
+        var committed = false;
+        var observeNotification = false;
+        bool? committedWhenNotified = null;
+        var sink = new Sink(_ =>
+        {
+            if (observeNotification)
+                committedWhenNotified = committed;
+        });
+        var session = new ClientSession(sink) { CharacterId = Character };
+        var site = new ContainerSite(rig.Hacks()) { AfterSettlement = () => committed = true };
+        var service = new HackingMgrService(new HackingAttempts(), site, WinningGame);
+        var analyzer = new AnalyzerValues(22329, CanHackData: true, CanHackRelic: true, MaxRange: 54_000,
+            VirusCoherence: 40, VirusStrength: 20, VirusSlots: 3, AccessDifficultyBonus: 0);
+
+        Assert.Null(await service.AnalyzerRefusalAsync(session, Character, containerId, analyzer, CancellationToken.None));
+        await service.OpenAnalyzerAttemptAsync(session, Character, containerId, analyzer, CancellationToken.None);
+        Events.Of(session);
+        observeNotification = true;
+
+        await service.CallAsync(new ServiceCall
+        {
+            Session = session,
+            Method = "ClickedOnTile",
+            Args = [Py.Tuple(new PyInt(0), new PyInt(3))],
+            CallId = new PyInt(1),
+        });
+
+        Assert.True(committedWhenNotified);
+        Assert.Equal("looted", (await rig.Store.GetAsync(containerId))!.State);
+        Assert.NotEmpty(await new PgItemStore(rig.Source, rig.ItemsSchema).InLocationAsync(containerId, Character));
+    }
+
+    [PgFact]
+    public async Task A_winning_turn_sends_settled_core_contents_in_the_client_wire_shape_before_the_win()
+    {
+        await using var rig = await SiteContainerRig.CreateAsync();
+        const long containerId = 7_000_000_000_000_903L;
+        await rig.InsertAsync(new SiteContainerRecord(containerId, 5_300_000_000_903, SiteContainerRig.SolarSystemId,
+            "research_laboratory", true, 17, Relic, [1_000, 2_000, 3_000], 50, 4, 0, "secure", rig.Now + 86_400_000));
+
+        var session = new ClientSession(new Sink()) { CharacterId = Character };
+        var service = new HackingMgrService(new HackingAttempts(), new ContainerSite(rig.Hacks()), WinningGame);
+        var analyzer = new AnalyzerValues(22329, CanHackData: true, CanHackRelic: true, MaxRange: 54_000,
+            VirusCoherence: 40, VirusStrength: 20, VirusSlots: 3, AccessDifficultyBonus: 0);
+
+        Assert.Null(await service.AnalyzerRefusalAsync(session, Character, containerId, analyzer, CancellationToken.None));
+        await service.OpenAnalyzerAttemptAsync(session, Character, containerId, analyzer, CancellationToken.None);
+        Events.Of(session);
+        await service.CallAsync(new ServiceCall
+        {
+            Session = session,
+            Method = "ClickedOnTile",
+            Args = [Py.Tuple(new PyInt(0), new PyInt(3))],
+            CallId = new PyInt(1),
+        });
+
+        var turn = Assert.IsType<PyTuple>(Assert.Single(Events.Of(session)).Args[0]);
+        var eventObjects = turn.Items.Cast<PyValue>().ToArray();
+        var eventIds = eventObjects.Select(item => (int)Number(Field(item, "eventID"))).ToArray();
+        Assert.Contains(400, eventIds); // EVENT_CORE_CONTENTS from V24.01 hackingConstants.py
+        var contentsIndex = Array.IndexOf(eventIds, 400);
+        var wonIndex = Array.IndexOf(eventIds, HackingWire.EventGameWon);
+        Assert.True(contentsIndex >= 0 && contentsIndex < wonIndex);
+
+        var contentsData = Assert.IsType<PyDict>(Assert.IsType<PyObject>(Field(eventObjects[contentsIndex], "eventData")).Args);
+        Assert.Equal(Py.Tuple(new PyInt(0), new PyInt(3)), Field(contentsData, "coord"));
+        var wireContents = Assert.IsType<PyList>(Field(contentsData, "contentsList")).Items
+            .Select(value => Assert.IsType<PyTuple>(value).Items)
+            .Select(values => (TypeId: checked((int)Number(values[0])), Quantity: Number(values[1])))
+            .OrderBy(item => item.TypeId)
+            .ToArray();
+        var storedContents = (await new PgItemStore(rig.Source, rig.ItemsSchema).InLocationAsync(containerId, Character))
+            .GroupBy(item => item.TypeId)
+            .Select(group => (TypeId: group.Key, Quantity: group.Sum(item => item.Quantity)))
+            .OrderBy(item => item.TypeId)
+            .ToArray();
+        Assert.Equal(storedContents, wireContents);
+    }
+
+    [PgFact]
+    public async Task A_failed_database_settlement_rolls_back_loot_and_the_same_reservation_can_retry()
+    {
+        await using var rig = await SiteContainerRig.CreateAsync();
+        const long containerId = 7_000_000_000_000_904L;
+        await rig.InsertAsync(new SiteContainerRecord(containerId, 5_300_000_000_904, SiteContainerRig.SolarSystemId,
+            "research_laboratory", true, 17, Relic, [1_000, 2_000, 3_000], 50, 4, 0, "secure", rig.Now + 86_400_000));
+
+        var target = (await rig.Hacks().FindAsync(containerId, CancellationToken.None))!;
+        var reservationId = Guid.NewGuid();
+        Assert.True(await rig.Hacks().TryReserveAsync(target, reservationId, Character, 77, CancellationToken.None));
+        var triggerSuffix = Guid.NewGuid().ToString("N")[..10];
+        var function = $"reject_hack_{triggerSuffix}";
+        var trigger = $"reject_hack_state_{triggerSuffix}";
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        {
+            await using var createFunction = new NpgsqlCommand($"""
+                CREATE FUNCTION {rig.SitesSchema}.{function}() RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.state = 'looted' THEN
+                        RAISE EXCEPTION 'injected hacking settlement failure';
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$
+                """, connection);
+            await createFunction.ExecuteNonQueryAsync();
+            await using var createTrigger = new NpgsqlCommand($"""
+                CREATE TRIGGER {trigger} BEFORE UPDATE ON {rig.SitesSchema}.site_containers
+                FOR EACH ROW EXECUTE FUNCTION {rig.SitesSchema}.{function}()
+                """, connection);
+            await createTrigger.ExecuteNonQueryAsync();
+        }
+
+        var hacks = rig.Hacks();
+        await Assert.ThrowsAsync<PostgresException>(() => hacks.EndedAsync(target, reservationId, won: true, Character, CancellationToken.None).AsTask());
+        Assert.Equal("secure", (await rig.Store.GetAsync(containerId))!.State);
+        Assert.Empty(await new PgItemStore(rig.Source, rig.ItemsSchema).InLocationAsync(containerId, Character));
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        {
+            await using var dropTrigger = new NpgsqlCommand($"DROP TRIGGER {trigger} ON {rig.SitesSchema}.site_containers", connection);
+            await dropTrigger.ExecuteNonQueryAsync();
+            await using var dropFunction = new NpgsqlCommand($"DROP FUNCTION {rig.SitesSchema}.{function}()", connection);
+            await dropFunction.ExecuteNonQueryAsync();
+        }
+
+        var contents = await hacks.EndedAsync(target, reservationId, won: true, Character, CancellationToken.None);
+        var persisted = await new PgItemStore(rig.Source, rig.ItemsSchema).InLocationAsync(containerId, Character);
+        Assert.Equal("looted", (await rig.Store.GetAsync(containerId))!.State);
+        Assert.Equal(contents.OrderBy(item => item.TypeId).Select(item => (item.TypeId, item.Quantity)),
+            persisted.GroupBy(item => item.TypeId).OrderBy(group => group.Key).Select(group => (group.Key, group.Sum(item => item.Quantity))));
+        Assert.NotEmpty(persisted);
+    }
+
+    private static PyValue Field(PyValue keyVal, string key) => keyVal switch
+    {
+        PyObject obj => Field(Assert.IsType<PyDict>(obj.Args), key),
+        PyDict dict => dict.Entries.Single(entry => Eve.Macho.JsSemantics.StringValue(entry.Key) == key).Value,
+        _ => throw new InvalidOperationException($"expected a key/value object, found {keyVal.GetType().Name}"),
+    };
+
+    private static long Number(PyValue value) => value switch
+    {
+        PyInt i => i.Value,
+        PyLong l => l.Value,
+        _ => throw new InvalidOperationException(value.ToString()),
+    };
 
     private static async Task DrainAsync(EventBus bus)
     {

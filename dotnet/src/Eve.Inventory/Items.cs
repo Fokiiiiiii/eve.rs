@@ -16,6 +16,7 @@ public static class ItemFlags
 
     public const int CorpDeliveries = 62;
     public const int Deliveries = 184;
+    public const int CapsuleerDeliveries = 187;
 
     /// <summary>The seven corporation hangar divisions (the client flagCorpSAG1 = 115 to flagCorpSAG7 = 121, eve-logic inventorycommon/const.py).</summary>
     public const int CorpSAG1 = 115;

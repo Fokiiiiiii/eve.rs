@@ -53,7 +53,8 @@ internal sealed class Rig : IAsyncDisposable
         DogmaStatic statics,
         CorporationHangarAccess? corporationHangarAccess,
         Func<Eve.Services.ClientSession, long, CancellationToken, ValueTask<ControlledStructureInventory?>>? controlledStructureInventory,
-        Func<long, CancellationToken, ValueTask<DockableAssetLocation?>>? dockableAssetLocation)
+        Func<long, CancellationToken, ValueTask<DockableAssetLocation?>>? dockableAssetLocation,
+        Func<long, long, CancellationToken, ValueTask<bool>>? capsuleerDeliveriesAccess)
     {
         Source = source;
         Statics = statics;
@@ -66,6 +67,7 @@ internal sealed class Rig : IAsyncDisposable
             () => ClockMs, corporationHangarAccess: corporationHangarAccess,
             controlledStructureInventory: controlledStructureInventory,
             dockableAssetLocation: dockableAssetLocation,
+            capsuleerDeliveriesAccess: capsuleerDeliveriesAccess,
             crystalDamage: async (itemIds, token) => (await Modules.ModuleConditionsAsync(itemIds, token))
                 .ToDictionary(entry => entry.Key, entry => entry.Value.Damage));
     }
@@ -95,13 +97,14 @@ internal sealed class Rig : IAsyncDisposable
         CorporationHangarAccess? corporationHangarAccess = null,
         int characterTypeId = 1,
         Func<Eve.Services.ClientSession, long, CancellationToken, ValueTask<ControlledStructureInventory?>>? controlledStructureInventory = null,
-        Func<long, CancellationToken, ValueTask<DockableAssetLocation?>>? dockableAssetLocation = null)
+        Func<long, CancellationToken, ValueTask<DockableAssetLocation?>>? dockableAssetLocation = null,
+        Func<long, long, CancellationToken, ValueTask<bool>>? capsuleerDeliveriesAccess = null)
     {
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
         var sde = new SdeReader(source);
         Assert.True(await sde.BuildAsync() is not null, "no SDE is loaded: run `cargo run -p eve-sde -- ensure --pg $EVE_PG_URL`");
         var rig = new Rig(source, await DogmaStatic.LoadAsync(sde), corporationHangarAccess,
-            controlledStructureInventory, dockableAssetLocation);
+            controlledStructureInventory, dockableAssetLocation, capsuleerDeliveriesAccess);
         await PgItemStore.MigrateAsync(source, rig._schema);
         await PgCharacterStore.MigrateAsync(source, rig._schema + "c");
         await PgSkillStore.MigrateAsync(source, rig._schema + "s");
@@ -346,17 +349,17 @@ public class InvBrokerTests
     }
 
     [PgFact]
-    public async Task Listing_by_flags_answers_a_list_even_when_nothing_is_there()
+    public async Task Listing_by_flags_answers_a_python_set_even_when_nothing_is_there()
     {
         await using var rig = await Rig.CreateAsync();
         await rig.AddAsync(Rig.Cockroach, Rig.Character, Rig.Station, singleton: true);
         var session = Rig.Session();
         var hangar = await rig.HangarAsync(session);
-        Assert.Single(Rows(await rig.CallAsync(session, "ListByFlags", hangar, new PyTuple([new PyInt(4), new PyInt(5)]))));
-        Assert.Single(Rows(await rig.CallAsync(session, "ListByFlags", hangar, new PyList([new PyInt(4)]))));
-        Assert.Equal(new PyList([]), await rig.CallAsync(session, "ListByFlags", hangar, new PyTuple([new PyInt(5)])));
-        Assert.Equal(new PyList([]), await rig.CallAsync(session, "ListByFlags", hangar, new PyTuple([])));
-        Assert.Equal(new PyList([]), await rig.CallAsync(session, "ListByFlags", hangar));
+        Assert.Single(SetRows(await rig.CallAsync(session, "ListByFlags", hangar, new PyTuple([new PyInt(4), new PyInt(5)]))));
+        Assert.Single(SetRows(await rig.CallAsync(session, "ListByFlags", hangar, new PyList([new PyInt(4)]))));
+        Assert.Equal(InventoryWire.EmptySet(), await rig.CallAsync(session, "ListByFlags", hangar, new PyTuple([new PyInt(5)])));
+        Assert.Equal(InventoryWire.EmptySet(), await rig.CallAsync(session, "ListByFlags", hangar, new PyTuple([])));
+        Assert.Equal(InventoryWire.EmptySet(), await rig.CallAsync(session, "ListByFlags", hangar));
     }
 
     [PgFact]
@@ -874,7 +877,7 @@ public class InvBrokerTests
 
         Assert.Equal(InventoryWire.EmptySet(), await rig.CallAsync(session, "List", inventory)); // a docked ship asked for everything answers a set, empty or not
         Assert.Equal(InventoryWire.EmptySet(), await rig.CallAsync(session, "List", inventory, new PyInt(5))); // a flag with nothing in it, as in the hangar
-        Assert.Equal(new PyList([]), await rig.CallAsync(session, "ListByFlags", inventory, new PyTuple([new PyInt(5), new PyInt(27)])));
+        Assert.Equal(InventoryWire.EmptySet(), await rig.CallAsync(session, "ListByFlags", inventory, new PyTuple([new PyInt(5), new PyInt(27)])));
         Assert.Equal(new PyList([]), await rig.CallAsync(session, "GetItems", inventory));
         var lines = ((PyDict)((PyObject)await rig.CallAsync(session, "GetContainerContents", inventory)).Args).Entries.Single(e => JsSemantics.StringValue(e.Key) == "lines").Value;
         Assert.Equal(new PyList([]), lines);
@@ -904,7 +907,7 @@ public class InvBrokerTests
         // the rows have no custom info, as in the reference
         Assert.All(everything, row => Assert.IsType<PyNone>(row.Values[8]));
         Assert.Equal(new[] { weapon }, Rows(await rig.CallAsync(session, "List", inventory, new PyInt(27))).Select(IdOf));
-        Assert.Equal(new[] { afterburner, weapon }, Rows(await rig.CallAsync(session, "ListByFlags", inventory, new PyTuple([new PyInt(19), new PyInt(27)]))).Select(IdOf).Order());
+        Assert.Equal(new[] { afterburner, weapon }, SetRows(await rig.CallAsync(session, "ListByFlags", inventory, new PyTuple([new PyInt(19), new PyInt(27)]))).Select(PackedItemId).Order());
         Assert.Equal(new[] { cargo }, Rows(await rig.CallAsync(session, "GetItems", inventory, new PyTuple([new PyLong(cargo), new PyLong(other)]))).Select(IdOf));
         var lines = (PyList)((PyDict)((PyObject)await rig.CallAsync(session, "GetContainerContents", inventory)).Args).Entries.Single(e => JsSemantics.StringValue(e.Key) == "lines").Value;
         Assert.Equal(3, lines.Items.Count);

@@ -1497,7 +1497,8 @@ public sealed class CharacterHostTests
     {
         await using var rig = await CharacterHostRig.CreateAsync();
         var character = await rig.CreateCharacterAsync();
-        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = new RecordingPacketSink() };
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = sink };
         var charMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charMgr"));
 
         Assert.Equal(new PyInt(1), await CallAsync(charMgr, "CreateLabel", session, new PyStr("Fleet"), new PyInt(7)));
@@ -1820,6 +1821,46 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         Assert.Equal(string.Empty, Assert.IsType<PyWString>(answer.Items[0]).Value);
         Assert.IsType<PyNone>(answer.Items[1]);
         Assert.Empty(Notifications(sink));
+    }
+
+    [PgFact]
+    public async Task DogmaIM_skill_injection_consumes_the_skillbook_and_persists_the_skill_through_the_host()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = sink };
+        session.Set("stationid", new PyInt(rig.Station));
+        var catalog = await SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        var skill = catalog.Skills.First(candidate => candidate.Published && candidate.Rank == 1 && !candidate.Needs.Any());
+        var skillbook = await GiveItemAsync(rig, character, skill.TypeId, rig.Station, 4, singleton: true);
+        var dogma = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("dogmaIM"));
+
+        var result = await CallAsync(dogma, "InjectSkillIntoBrain", session, new PyList([new PyLong(skillbook)]));
+
+        Assert.Equal(new PyList([new PyInt(skill.TypeId)]), result);
+        Assert.Null(await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(skillbook));
+        Assert.Contains(await new PgSkillStore(rig.Source, rig.SkillsSchema).ForCharacterAsync(character),
+            saved => saved.TypeId == skill.TypeId && saved.Level == 0 && saved.SkillPoints == 0);
+        var notifications = Notifications(sink);
+        Assert.Equal(["OnServerSkillsChanged", "OnSkillsChanged"], notifications.Select(notification => notification.Name).Take(2));
+        Assert.Equal(new PyInt(skill.TypeId), Assert.Single(Assert.IsType<PyDict>(notifications[0].Args[0]).Entries).Key);
+        Assert.Equal(new PyInt(skill.TypeId), Assert.Single(Assert.IsType<PyDict>(notifications[1].Args[0]).Entries).Key);
+        Assert.Equal("OnItemChange", notifications.Last().Name);
+        var itemChange = notifications.Last().Args;
+        Assert.Equal(3, itemChange.Length);
+        var changedItem = Assert.IsType<PyPackedRow>(itemChange[0]);
+        Assert.Equal(InventoryWire.Id(skillbook), changedItem.Values[0]);
+        Assert.Equal(InventoryWire.Id(6), changedItem.Values[3]);
+        Assert.Equal(new PyInt(skill.GroupId), changedItem.Values[6]);
+        Assert.Equal(new PyInt(SkillCatalog.SkillCategoryId), changedItem.Values[7]);
+        var itemDiff = Assert.IsType<PyDict>(itemChange[1]);
+        Assert.Equal(new PyInt(3), Assert.Single(itemDiff.Entries).Key);
+        Assert.Equal(InventoryWire.Id(rig.Station), itemDiff.Entries[0].Value);
+
+        await rig.RestartAsync();
+        Assert.Contains(await new PgSkillStore(rig.Source, rig.SkillsSchema).ForCharacterAsync(character),
+            saved => saved.TypeId == skill.TypeId && saved.Level == 0 && saved.SkillPoints == 0);
     }
 
     [PgFact]

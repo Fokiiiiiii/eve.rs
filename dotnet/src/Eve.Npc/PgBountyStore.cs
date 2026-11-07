@@ -55,9 +55,9 @@ public sealed class PgBountyStore
     private static BountyBucket ReadBucket(NpgsqlDataReader reader) => new(
         reader.GetString(0), reader.GetInt64(1), reader.GetInt32(2), reader.GetInt64(3), reader.GetInt64(4), reader.GetDecimal(5), reader.GetInt32(6),
         (JsonSerializer.Deserialize<Dictionary<string, int>>(reader.GetString(7)) ?? []).ToDictionary(pair => int.Parse(pair.Key, System.Globalization.CultureInfo.InvariantCulture), pair => pair.Value),
-        reader.GetFieldValue<long[]>(8));
+        reader.GetFieldValue<long[]>(8), reader.IsDBNull(9) ? null : JsonSerializer.Deserialize<BountyTaxSplit>(reader.GetString(9)));
 
-    private const string Columns = "key, character_id, solar_system_id, payout_at_ms, payout_time, amount, kills, npc_types::text, source_references";
+    private const string Columns = "key, character_id, solar_system_id, payout_at_ms, payout_time, amount, kills, npc_types::text, source_references, tax_split::text";
 
     /// <summary>
     /// Adds a kill to the killer's bucket (<c>recordNpcBountyKill</c>): the bucket of the solar system that comes due first, a new one a window from now when
@@ -101,7 +101,7 @@ public sealed class PgBountyStore
             """
             INSERT INTO {schema}.pending_bounties (key, character_id, solar_system_id, payout_at_ms, payout_time, amount, kills, npc_types, source_references)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            ON CONFLICT (key) DO UPDATE SET amount = EXCLUDED.amount, kills = EXCLUDED.kills, npc_types = EXCLUDED.npc_types, source_references = EXCLUDED.source_references
+            ON CONFLICT (key) DO UPDATE SET amount = EXCLUDED.amount, kills = EXCLUDED.kills, npc_types = EXCLUDED.npc_types, source_references = EXCLUDED.source_references, tax_split = NULL
             """,
             connection, transaction, bucket.Key, bucket.CharacterId, bucket.SolarSystemId, bucket.PayoutAtMs, bucket.PayoutTime, bucket.Amount, bucket.Kills,
             JsonSerializer.Serialize(bucket.NpcTypes), bucket.SourceReferences.ToArray()))
@@ -181,11 +181,8 @@ public sealed class PgBountyStore
         return buckets;
     }
 
-    /// <summary>
-    /// Pays one bucket into the wallet of its character and deletes it, in one transaction (<c>payoutBucket</c>); null when it is gone or another payout has it.
-    /// A bucket that cannot be paid raises what the wallet raised (<see cref="WalletNotFoundException"/>, <see cref="MoneyLimitException"/>) and stays.
-    /// </summary>
-    public async Task<BountyPaid?> PayAsync(string key, long nowMs, CancellationToken cancellationToken = default)
+    /// <summary>Persists the first attempt's tax terms before wallet changes; null when the bucket is gone or another payer holds it.</summary>
+    private async Task<BountyBucket?> LockTaxSplitAsync(string key, CancellationToken cancellationToken)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -202,26 +199,68 @@ public sealed class PgBountyStore
         {
             return null;
         }
-        // The corporation's tax is taken from the payout here and credited to the corporation in the same transaction (the reference's
-        // payoutBucket: the member's net, then the corporation's tax). An NPC corporation takes its tax from the member but is not credited.
-        var terms = _taxTerms is null ? null : await _taxTerms(bucket.CharacterId, cancellationToken);
-        var tax = terms is null ? 0m : NpcBounty.CorporationTaxOf(bucket.Amount, terms.TaxRate);
+        if (bucket.TaxSplit is null)
+        {
+            var terms = _taxTerms is null ? null : await _taxTerms(bucket.CharacterId, cancellationToken);
+            var split = NpcBounty.SplitOf(bucket.Amount, terms);
+            await using var save = Command("UPDATE {schema}.pending_bounties SET tax_split = $2 WHERE key = $1", connection, transaction, key,
+                JsonSerializer.Serialize(split));
+            save.Parameters[1].NpgsqlDbType = NpgsqlDbType.Jsonb;
+            await save.ExecuteNonQueryAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return bucket with { TaxSplit = split };
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return bucket;
+    }
+
+    /// <summary>
+    /// Pays one bucket into the wallet of its character and deletes it, in one transaction (<c>payoutBucket</c>); null when it is gone or another payout has it.
+    /// A bucket that cannot be paid raises what the wallet raised (<see cref="WalletNotFoundException"/>, <see cref="MoneyLimitException"/>) and stays.
+    /// </summary>
+    public async Task<BountyPaid?> PayAsync(string key, long nowMs, CancellationToken cancellationToken = default)
+    {
+        if (await LockTaxSplitAsync(key, cancellationToken) is null)
+        {
+            return null;
+        }
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        BountyBucket? bucket = null;
+        await using (var find = Command($"SELECT {Columns} FROM {{schema}}.pending_bounties WHERE key = $1 FOR UPDATE SKIP LOCKED", connection, transaction, key))
+        await using (var reader = await find.ExecuteReaderAsync(cancellationToken))
+        {
+            if (await reader.ReadAsync(cancellationToken))
+            {
+                bucket = ReadBucket(reader);
+            }
+        }
+        if (bucket is null)
+        {
+            return null;
+        }
+        // The tax split was committed before wallet writes, so it remains unchanged when this transaction fails.
+        if (bucket.TaxSplit is not { } split || split.Gross != bucket.Amount)
+        {
+            return null;
+        }
+        var corporationId = split.CorporationId ?? 0;
         decimal balance;
-        if (bucket.Amount - tax > 0)
+        if (split.Net > 0)
         {
             balance = await _wallet.AdjustAsync(
-                connection, transaction, bucket.CharacterId, bucket.Amount - tax, bucket.CharacterId, NpcBounty.RefType(bucket.Kills),
-                tax > 0 ? NpcBounty.DescriptionWithTax(bucket, terms!.CorporationId, tax) : NpcBounty.Description(bucket), nowMs,
+                connection, transaction, bucket.CharacterId, split.Net, bucket.CharacterId, NpcBounty.RefType(bucket.Kills),
+                split.Tax > 0 ? NpcBounty.DescriptionWithTax(bucket, corporationId, split.Tax) : NpcBounty.Description(bucket), nowMs,
                 NpcBounty.OperationKey(bucket.Key), cancellationToken);
         }
         else
         {
             balance = (await _wallet.LockBalancesAsync(connection, transaction, [new WalletAccount(bucket.CharacterId)], cancellationToken))[new WalletAccount(bucket.CharacterId)];
         }
-        if (tax > 0 && terms is { IsNpc: false, CorporationId: > 0 })
+        if (split.Credit)
         {
             await _wallet.AdjustAsync(
-                connection, transaction, new WalletAccount(terms.CorporationId), tax, bucket.CharacterId, NpcBounty.CorporationTaxRefType,
+                connection, transaction, new WalletAccount(corporationId), split.Tax, bucket.CharacterId, NpcBounty.CorporationTaxRefType,
                 "Corporation tax on pirate bounties", nowMs, NpcBounty.OperationKey(bucket.Key) + ":corp-tax",
                 NpcBounty.OperationKey(bucket.Key) + ":corp-tax", cancellationToken);
         }

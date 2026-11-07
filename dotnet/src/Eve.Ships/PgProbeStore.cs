@@ -40,13 +40,28 @@ public sealed class PgProbeStore
     public async Task<long> NextIdAsync(CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
-        await using var command = new NpgsqlCommand($"SELECT nextval('{_schema}.scan_probe_seq')", connection);
+        return await NextIdAsync(connection, null, cancellationToken);
+    }
+
+    /// <summary>The id of the next probe inside the transaction that creates its record.</summary>
+    public async Task<long> NextIdAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"SELECT nextval('{_schema}.scan_probe_seq')", connection, transaction);
         return ProbeIdBase + (long)(await command.ExecuteScalarAsync(cancellationToken))!;
     }
 
     public async Task SaveAsync(ScanProbeRecord record, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await SaveCoreAsync(connection, null, record, cancellationToken);
+    }
+
+    /// <summary>Saves a probe record in the launch or recovery transaction that owns the corresponding charge change.</summary>
+    public Task SaveAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, ScanProbeRecord record, CancellationToken cancellationToken = default) =>
+        SaveCoreAsync(connection, transaction, record, cancellationToken);
+
+    private async Task SaveCoreAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, ScanProbeRecord record, CancellationToken cancellationToken)
+    {
         await using var command = new NpgsqlCommand(
             $"""
             INSERT INTO {_schema}.scan_probes ({Columns}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
@@ -54,7 +69,7 @@ public sealed class PgProbeStore
                 state = EXCLUDED.state, x = EXCLUDED.x, y = EXCLUDED.y, z = EXCLUDED.z, dest_x = EXCLUDED.dest_x, dest_y = EXCLUDED.dest_y,
                 dest_z = EXCLUDED.dest_z, scan_range = EXCLUDED.scan_range, range_step = EXCLUDED.range_step, expires_at_ms = EXCLUDED.expires_at_ms
             """,
-            connection);
+            connection, transaction);
         foreach (var value in new object[]
         {
             record.ProbeId, record.CharacterId, record.SolarSystemId, record.TypeId, record.GroupId, record.LauncherId, record.ShipId,
@@ -89,11 +104,60 @@ public sealed class PgProbeStore
     public async Task<int> ActiveCountAsync(long characterId, int solarSystemId, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        return await ActiveCountAsync(connection, null, characterId, solarSystemId, cancellationToken);
+    }
+
+    /// <summary>The active probe count read inside the launch transaction.</summary>
+    public async Task<int> ActiveCountAsync(
+        NpgsqlConnection connection, NpgsqlTransaction? transaction, long characterId, int solarSystemId, CancellationToken cancellationToken = default)
+    {
         await using var command = new NpgsqlCommand(
-            $"SELECT count(*) FROM {_schema}.scan_probes WHERE character_id = $1 AND solar_system_id = $2 AND state > 0", connection);
+            $"SELECT count(*) FROM {_schema}.scan_probes WHERE character_id = $1 AND solar_system_id = $2 AND state > 0", connection, transaction);
         command.Parameters.Add(new NpgsqlParameter { Value = characterId });
         command.Parameters.Add(new NpgsqlParameter { Value = solarSystemId });
         return (int)(long)(await command.ExecuteScalarAsync(cancellationToken))!;
+    }
+
+    /// <summary>Locks the probes a character asked to recover, so competing recalls and recoveries cannot return their charges twice.</summary>
+    public async Task<IReadOnlyList<ScanProbeRecord>> LockOwnedAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, IReadOnlyCollection<long> probeIds, long characterId, int solarSystemId,
+        CancellationToken cancellationToken = default)
+    {
+        var ids = probeIds.Distinct().ToArray();
+        if (ids.Length == 0)
+            return [];
+        await using var command = new NpgsqlCommand(
+            $"SELECT {Columns} FROM {_schema}.scan_probes WHERE probe_id = ANY($1) AND character_id = $2 AND solar_system_id = $3 ORDER BY probe_id FOR UPDATE",
+            connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = ids });
+        command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        command.Parameters.Add(new NpgsqlParameter { Value = solarSystemId });
+        var records = new List<ScanProbeRecord>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            records.Add(Read(reader));
+        return records;
+    }
+
+    /// <summary>Removes locked recovery rows in their charge-return transaction and returns the rows that were actually removed.</summary>
+    public async Task<IReadOnlyList<ScanProbeRecord>> RemoveOwnedAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, IReadOnlyCollection<long> probeIds, long characterId, int solarSystemId,
+        CancellationToken cancellationToken = default)
+    {
+        var ids = probeIds.Distinct().ToArray();
+        if (ids.Length == 0)
+            return [];
+        await using var command = new NpgsqlCommand(
+            $"DELETE FROM {_schema}.scan_probes WHERE probe_id = ANY($1) AND character_id = $2 AND solar_system_id = $3 RETURNING {Columns}",
+            connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = ids });
+        command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        command.Parameters.Add(new NpgsqlParameter { Value = solarSystemId });
+        var records = new List<ScanProbeRecord>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            records.Add(Read(reader));
+        return records;
     }
 
     /// <summary>The probes in a system that are still in their life at <paramref name="nowMs"/> (the balls to put back in space after a restart).</summary>

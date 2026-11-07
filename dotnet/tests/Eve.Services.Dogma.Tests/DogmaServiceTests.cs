@@ -1,4 +1,5 @@
 using Eve.Characters;
+using Eve.Dogma;
 using Eve.Macho;
 using Eve.Marshal;
 
@@ -303,6 +304,66 @@ public class ShipEventTests
         rig.InventoryAsync(session, method, bound, args, kwargs);
 
     private static PyValue Kw(string name, long value) => new PyDict([new(new PyStr(name), new PyInt(value))]);
+
+    private static Dictionary<string, PyValue> ErrorArguments(MachoWrappedException error)
+    {
+        var arguments = ((PyTuple)((PyTuple)((PyObjectEx)error.Error.Payload).Header).Items[1]).Items;
+        return ((PyDict)arguments[1]).Entries.ToDictionary(entry => ((PyStr)entry.Key).Value, entry => entry.Value);
+    }
+
+    [PgFact]
+    public async Task Onlining_a_module_without_CPU_or_power_returns_the_clients_UserError_arguments()
+    {
+        static async Task<Eve.Dogma.DogmaStatic> ChangeShipOutput(Eve.Dogma.DogmaStatic statics, int attribute, double output)
+        {
+            await statics.EnsureTypesAsync([Rig.Cockroach]);
+            var shipType = statics.Type(Rig.Cockroach)!;
+            var attributes = new Dictionary<int, double>(shipType.Attributes) { [attribute] = output };
+            return statics.WithFixtures([shipType with { Attributes = attributes }]);
+        }
+
+        foreach (var (attribute, output, userError, requiredAttribute, outputAttribute, loadAttribute) in new[]
+        {
+            (48, 1d, "NotEnoughCpu", BuiltInEffects.Cpu, 48, BuiltInEffects.CpuLoad),
+            (11, 0.5, "NotEnoughPower", BuiltInEffects.Power, 11, BuiltInEffects.PowerLoad),
+        })
+        {
+            var rig = await Rig.CreateAsync(staticsOverride: statics => ChangeShipOutput(statics, attribute, output));
+            await using (rig)
+            {
+                var character = await rig.NewCharacterAsync();
+                await using (var connection = await rig.Source.OpenConnectionAsync())
+                await using (var transaction = await connection.BeginTransactionAsync())
+                {
+                    foreach (var itemId in new[] { character.ShipId + 1, character.ShipId + 2, character.ShipId + 3 })
+                    {
+                        await rig.Modules.SetAsync(connection, transaction, itemId, Eve.Dogma.ItemState.Offline);
+                    }
+                    await transaction.CommitAsync();
+                }
+                var session = Rig.Session(character.CharacterId);
+                var dogma = await rig.BindAsync(session);
+                var moduleId = character.ShipId + 1; // the fitted 1MN Afterburner I in the character's starter hull
+                var world = (await rig.Ships.LoadAsync(character.CharacterId))!.World;
+                var require = world.Get(moduleId, requiredAttribute);
+                var total = world.Get(character.ShipId, outputAttribute);
+                var remaining = total - world.Get(character.ShipId, loadAttribute);
+
+                var error = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.CallAsync(
+                    session, "SetModuleOnline", dogma, new PyLong(character.ShipId), new PyLong(moduleId)));
+
+                Assert.Equal(userError, error.Error.UserErrorMessage);
+                var values = ErrorArguments(error);
+                Assert.Equal(Py.Tuple(new PyInt(4), new PyInt(21857)), values["moduleName"]);
+                Assert.Equal(new PyInt(21857), values["moduleType"]);
+                Assert.Equal(Py.Number(require), values["require"]);
+                Assert.Equal(Py.Number(remaining), values["remaining"]);
+                Assert.Equal(Py.Number(total), values["total"]);
+                Assert.Empty(Events.Of(session));
+                Assert.True((await rig.Ships.LoadAsync(character.CharacterId))!.World.Item(moduleId)!.State < Eve.Dogma.ItemState.Online);
+            }
+        }
+    }
 
     [PgFact]
     public async Task GetAllInfo_is_followed_by_the_characters_attributes_and_the_brain_and_the_brain_version_counts()

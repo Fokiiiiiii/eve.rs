@@ -83,6 +83,7 @@ internal sealed partial class CharacterServicesComposition
             new DogmaIMService(
                 dogma, ships, now,
                 skillHandler.TryActivateBoosterAsync,
+                injectSkillBooks: skillHandler.InjectSkillBooksAsync,
                 sync: dogmaSync,
                 space: spaceSessions,
                 modules: spaceSessions,

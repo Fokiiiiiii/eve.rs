@@ -1,6 +1,8 @@
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Characters;
+using Eve.Inventory;
+using Eve.Services;
 using Eve.Skills;
 using Npgsql;
 
@@ -37,8 +39,10 @@ public sealed partial class SkillHandlerService
                 characterLock.Parameters.Add(new NpgsqlParameter { Value = $"skill-inject:{character}" });
                 await characterLock.ExecuteScalarAsync(token);
             }
-            var current = (await store.ForCharacterAsync(connection, transaction, character, token)).Select(skill => skill.TypeId).ToHashSet();
-            var result = new List<int>();
+            var before = await store.ForCharacterAsync(connection, transaction, character, token);
+            var current = before.Select(skill => skill.TypeId).ToHashSet();
+            var changed = new List<CharacterSkill>();
+            var itemChanges = new List<(Item Before, Item After, int GroupId)>();
             foreach (var itemId in requested)
             {
                 if (await items.LockAndGetAsync(connection, transaction, itemId, token) is not { } item
@@ -48,18 +52,44 @@ public sealed partial class SkillHandlerService
                     throw MachoErrors.ThrowUserError("ItemNotASkill", ("skillName", new PyLong(itemId)));
                 if (current.Contains(skill.TypeId))
                     throw MachoErrors.ThrowUserError("CharacterAlreadyKnowsSkill", ("skillName", new PyInt(skill.TypeId)));
-                await store.GrantAsync(connection, transaction, character, [new CharacterSkill(skill.TypeId, 0, 0)], token);
+                var granted = new CharacterSkill(skill.TypeId, 0, 0);
+                await store.GrantAsync(connection, transaction, character, [granted], token);
                 if (item.Singleton || item.Quantity <= 1)
+                {
                     await items.DeleteAsync(connection, transaction, itemId, token);
+                    itemChanges.Add((item, item with { LocationId = 6 }, skill.GroupId));
+                }
                 else
+                {
                     await items.SetQuantityAsync(connection, transaction, itemId, item.Quantity - 1, token);
+                    itemChanges.Add((item, item with { Quantity = item.Quantity - 1 }, skill.GroupId));
+                }
                 current.Add(skill.TypeId);
-                result.Add(skill.TypeId);
+                changed.Add(granted);
             }
-            return result;
+            return new InjectedSkillBookBatch(before, changed, itemChanges);
         }, cancellationToken);
-        return new PyList([.. injected.Select(typeId => (PyValue)new PyInt(typeId))]);
+        await announcer.AnnounceSkillsChangedAsync(session, character, injected.Before, injected.Changed);
+        foreach (var (before, after, groupId) in injected.Items)
+            TellInjectedSkillBookChange(session, before, after, groupId);
+        return new PyList([.. injected.Changed.Select(skill => (PyValue)new PyInt(skill.TypeId))]);
     }
+
+    private static void TellInjectedSkillBookChange(ClientSession session, Item before, Item after, int groupId)
+    {
+        var row = new ItemRow(after.Id, after.TypeId, after.OwnerId, after.LocationId, after.Flag, after.Quantity, groupId, SkillCatalog.SkillCategoryId);
+        var changes = new List<KeyValuePair<PyValue, PyValue>>();
+        if (after.LocationId != before.LocationId)
+            changes.Add(new(new PyInt(3), InventoryWire.Id(before.LocationId)));
+        if (after.Quantity != before.Quantity)
+            changes.Add(new(new PyInt(9), InventoryWire.Id(before.Quantity)));
+        session.SendNotification("OnItemChange", "clientID", InventoryWire.PackedRow(row), new PyDict(changes), PyNone.Instance);
+    }
+
+    private sealed record InjectedSkillBookBatch(
+        IReadOnlyList<CharacterSkill> Before,
+        IReadOnlyList<CharacterSkill> Changed,
+        IReadOnlyList<(Item Before, Item After, int GroupId)> Items);
 
 private static long DiminishingTotal(long trained, long free)
     {

@@ -1,10 +1,46 @@
+using Eve.Characters;
 using Eve.Dogma;
+using Eve.Inventory;
 using Eve.Marshal;
+using Eve.Services;
+using Eve.Ships;
 
 namespace Eve.Services.Dogma.Tests;
 
 public class DogmaWireTests
 {
+    [Fact]
+    public void Structure_brain_update_targets_the_same_structure_as_the_get_all_info_brain()
+    {
+        const long characterId = 140_000_001;
+        const long shipId = 900_000_001;
+        const long structureId = 9_800_000_001;
+        var statics = new DogmaStatic([], [], []);
+        var character = new Character(characterId, 1, "Pilot", 0, 1, 1, 1, 1, 1373, 1, null, null,
+            600_001, 600_001, 30_000_001, 20_000_001, 10_000_001, shipId, DateTimeOffset.UnixEpoch, null, null);
+        var ship = new Item(shipId, 601, characterId, 600_001, ItemFlags.Hangar, 1, true, null);
+        var world = new DogmaWorld(statics, characterId, shipId, structureId);
+        var snapshot = new ShipSnapshot { Character = character, Ship = ship, Fitted = [], Skills = [], World = world };
+        var brain = new Brain([], [], [new BrainEffect(3301, "M", BrainDomain.Structure, 9, 0, [], 1)]);
+        var info = new DogmaInfo(statics);
+
+        var response = Assert.IsType<PyObject>(info.GetAllInfo(snapshot, getCharInfo: true, getShipInfo: false,
+            getStructureInfo: false, fileTime: 0, brain: brain));
+        var fields = Assert.IsType<PyDict>(response.Args);
+        var charInfo = fields.Entries.Single(entry => Assert.IsType<PyStr>(entry.Key).Value == "charInfo").Value;
+        var responseBrain = Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(charInfo).Items[1]);
+        var responseEffect = Assert.IsType<PyObjectEx>(Assert.Single(Assert.IsType<PyTuple>(responseBrain.Items[3]).Items));
+        var responseArguments = Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(responseEffect.Header).Items[1]);
+
+        var update = Assert.IsType<PyTuple>(info.BrainUpdate(snapshot, 1, brain));
+        var groups = Assert.IsType<PyTuple>(MarshalCodec.Decode(Assert.IsType<PyBuffer>(update.Items[1]).Value.ToArray()));
+        var structureEffect = Assert.IsType<PyObjectEx>(Assert.Single(Assert.IsType<PyList>(groups.Items[2]).Items));
+        var effectArguments = Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(structureEffect.Header).Items[1]);
+
+        Assert.Equal(InventoryWire.Id(structureId), responseArguments.Items[1]);
+        Assert.Equal(responseArguments.Items[1], effectArguments.Items[1]);
+    }
+
     [Theory]
     [InlineData(9, 175.0, "int")]      // a whole number is an integer, as JavaScript's marshal writes it
     [InlineData(9, 201.25, "real")]

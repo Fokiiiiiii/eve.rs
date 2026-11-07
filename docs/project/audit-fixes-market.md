@@ -43,6 +43,8 @@ Corp hangar では、station hangar の bound object に対して `List` / `List
 
 ## 検証済みと未確認
 
-**検証済み:** PostgreSQL の専用 DB `eve_p3` を使う Host／RPC／Inventory 回帰テストで、wire 行、通知順、数量、残高、注文状態、権限の境界、取消後の返却を確認しました。実クライアントの呼び出しとキャッシュ更新は上記の V24.01 ソースで追跡しました。
+**検証済み:** PostgreSQL の専用 DB `eve_p3` を使う Host／RPC／Inventory 回帰テストで、wire 行、通知順、数量、残高、注文状態、権限の境界、取消後の返却を確認しました。修正した headless live ケースも `tools/dev/run-eve-live.sh` で 1 件実行し pass しました。main CI run 1592 (`d4443b39`) は Required CI gate を含め成功しました。実クライアントの呼び出しとキャッシュ更新は上記の V24.01 ソースで追跡しました。
 
-**未確認:** V24.01 グラフィカルクライアントでの実操作と UI 表示、main ブランチへの push 後の GitHub Actions 結果。この記録時点で対象差分のテストスイートはスキップなしで実行しています。
+**Skip の内訳:** inventory と market の focused RPC テストおよび修正した live ケースは skip なしです。Host の関連クラス選択では 46 件 pass、20 件 skip でした。skip は `AbyssalHostFlowTests` が外部シミュレータ環境変数を必要としたためで、pass には数えていません。
+
+**未確認:** V24.01 グラフィカルクライアントでの実操作と UI 表示。

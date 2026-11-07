@@ -310,6 +310,13 @@ internal sealed partial class CharacterServicesComposition
             var located = context.Event.Payload<LocateDelivered>()!;
             await mailSendWriter!.WriteLocateNotificationAsync(located.CharacterId, located.AgentId, located.Data, $"locate:{context.Event.Id}", ct);
         });
+        new AgentMissionAcceptedEvents(foundations.Events, async (change, context, ct) =>
+        {
+            if (missionDungeons is { } acceptedDungeons)
+                await acceptedDungeons.OnAcceptedAsync(change.CharacterId, change.AgentId, ct);
+            if (agentMissionAgentById.TryGetValue(change.AgentId, out var acceptedAgent))
+                await StorylineOffersService.MarkAcceptedAsync(acceptedAgent, change, context.Connection, context.Transaction, ct);
+        }).Register();
         agentMissionService = new AgentMissionService(
             async (characterId, ct) =>
             {
@@ -377,13 +384,18 @@ internal sealed partial class CharacterServicesComposition
                         : atLocation;
                     await missionDungeons.OnConversationAsync(characterId, agent.AgentId, together, ct);
                 }, researchPort, locatorPort,
-                async (characterId, agentId, token) =>
+                OnAccepted: async (change, token) =>
                 {
-                    if (missionDungeons is { } dungeons) await dungeons.OnAcceptedAsync(characterId, agentId, token);
-                    if (agentMissionAgentById.TryGetValue(agentId, out var acceptedAgent)) await StorylineOffersService.MarkAcceptedAsync(acceptedAgent, characterId, token);
+                    if (missionDungeons is { } dungeons)
+                        await dungeons.OnAcceptedAsync(change.CharacterId, change.AgentId, token);
+                    if (agentMissionAgentById.TryGetValue(change.AgentId, out var acceptedAgent))
+                        await StorylineOffersService.MarkAcceptedAsync(acceptedAgent, change, token);
                 },
-                async (characterId, agentId, token) => { if (missionDungeons is { } dungeons) await dungeons.OnQuitAsync(characterId, agentId, token); },
-                async (characterId, agentId, token) => missionDungeons is { } dungeons &&
+                OnQuit: async (characterId, agentId, token) =>
+                {
+                    if (missionDungeons is { } dungeons) await dungeons.OnQuitAsync(characterId, agentId, token);
+                },
+                OnMissionTurnIn: async (characterId, agentId, token) => missionDungeons is { } dungeons &&
                     await dungeons.OnMissionTurnInAsync(characterId, agentId, token)));
         await AttachMissionDungeonsAsync();
     }
@@ -574,6 +586,9 @@ internal sealed partial class CharacterServicesComposition
         if (spaceSessions is not null) spaceSessions.PilotDocked = (characterId, stationId, token) => runtime.OnDockedAsync(characterId, stationId, token);
         foundations.Scheduler.Register(MissionDungeonSweepJob, (context, token) => runtime.SweepAsync(token));
         await foundations.Scheduler.EnsureRecurringAsync(MissionDungeonSweepJob, "sweep", TimeSpan.FromSeconds(10));
+        var missionExpiry = new AgentMissionExpiryJobs(agentMissionStore, foundations.Scheduler, foundations.Events);
+        missionExpiry.Register();
+        await missionExpiry.RestoreAsync(missionId => agentMissionStatic.Mission(missionId)?.ExpirationMinutes);
         foreach (var (topic, outcome) in new[] { ("content.dungeon.completed", "completed"), ("content.dungeon.failed", "failed"),
                      ("content.dungeon.abandoned", "abandoned"), ("content.dungeon.expired", "expired") })
         {
@@ -962,6 +977,17 @@ internal sealed partial class CharacterServicesComposition
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using (var gate = new NpgsqlCommand("SELECT pg_advisory_xact_lock(hashtext($1))", connection, transaction))
+        {
+            gate.Parameters.AddWithValue($"agent-courier:{characterId}:{missionId}");
+            await gate.ExecuteNonQueryAsync(cancellationToken);
+        }
+        var owned = await items.LockOwnedOfTypeAsync(connection, transaction, characterId, typeId, cancellationToken);
+        if (owned.Any(item => item.CustomInfo == CourierCargoTag(missionId)))
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return;
+        }
         await items.CreateAsync(connection, transaction,
             new Eve.Inventory.NewItem(typeId, characterId, stationId, Eve.Inventory.ItemFlags.Hangar, quantity, Singleton: singleton,
                 CustomInfo: CourierCargoTag(missionId)), cancellationToken);
@@ -1036,7 +1062,8 @@ internal sealed partial class CharacterServicesComposition
             agentMissionStatic.Mission(missionId) is not { } mission)
             return null;
 
-        return new Eve.Agents.AgentMissionContent(mission.MissionId, mission.NameId, mission.NameEn, agent.MissionKind, agent.ImportantMission);
+        return new Eve.Agents.AgentMissionContent(mission.MissionId, mission.NameId, mission.NameEn, agent.MissionKind,
+            agent.ImportantMission, mission.ExpirationMinutes);
     }
 }
 

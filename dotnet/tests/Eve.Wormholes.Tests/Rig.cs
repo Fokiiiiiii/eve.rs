@@ -24,6 +24,7 @@ internal sealed class Rig : IAsyncDisposable
 
     public NpgsqlDataSource Source { get; }
     public string WormholeSchema => _wormholeSchema;
+    public string SchedulerSchema => _schedulerSchema;
 
     public IReadOnlyDictionary<int, int> Classes => _classes;
 

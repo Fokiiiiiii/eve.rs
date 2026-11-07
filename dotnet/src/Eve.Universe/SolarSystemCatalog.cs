@@ -17,6 +17,7 @@ public sealed record SolarSystemInfo(int Id, string Name, int ConstellationId, i
     double GateRadius = 0, string? GateName = null)
 {
     public string RegionName { get; init; } = "";
+    public int NebulaTypeId { get; init; }
     public IReadOnlyList<SolarSystemGate> Gates { get; init; } = [];
 }
 
@@ -45,8 +46,8 @@ public sealed class SolarSystemCatalog
         return Math.Sqrt(dx * dx + dy * dy + dz * dz) / MetersPerLightYear;
     }
 
-    /// <summary>One light year in metres (the exact value of the light year the game uses).</summary>
-    public const double MetersPerLightYear = 9_460_730_472_580_800.0;
+    /// <summary>One light year in metres for jump range calculations (V24.01: 9,460,000,000,000,000 m).</summary>
+    public const double MetersPerLightYear = 9_460_000_000_000_000.0;
 
     public static async Task<SolarSystemCatalog> LoadAsync(SdeReader sde, IReadOnlyDictionary<int, ClientSystemFlags>? clientFlags = null, CancellationToken cancellationToken = default)
     {
@@ -55,6 +56,8 @@ public sealed class SolarSystemCatalog
         var regionFactions = regionRows.Select(row => (Id: (int)row.Key, Faction: FactionOf(row.Doc)))
             .Where(row => row.Faction > 0).ToDictionary(row => row.Id, row => row.Faction);
         var regionNames = regionRows.ToDictionary(row => (int)row.Key, row => SdeReader.English(row.Doc.GetProperty("name")));
+        var regionNebulas = regionRows.ToDictionary(row => (int)row.Key,
+            row => row.Doc.TryGetProperty("nebulaID", out var nebula) && nebula.ValueKind == JsonValueKind.Number ? nebula.GetInt32() : 0);
         var rows = await sde.ReadAsync("mapSolarSystems", cancellationToken: cancellationToken);
         var gates = (await sde.ReadAsync("mapStargates", cancellationToken: cancellationToken))
             .Where(row => row.Doc.TryGetProperty("solarSystemID", out var system) && system.ValueKind == JsonValueKind.Number)
@@ -104,6 +107,7 @@ public sealed class SolarSystemCatalog
                 null)
             {
                 RegionName = regionNames.GetValueOrDefault(region) ?? "",
+                NebulaTypeId = regionNebulas.GetValueOrDefault(region),
                 Gates = gatePositions,
             };
         }));

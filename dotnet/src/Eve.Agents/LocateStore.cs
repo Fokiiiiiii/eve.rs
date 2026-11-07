@@ -50,17 +50,25 @@ public sealed class LocateStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    /// <summary>Records a located result on the caller's transaction: the cooldown starts now and the open request is cleared.</summary>
-    public async Task MarkLocatedAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long agentId, DateTimeOffset at, CancellationToken cancellationToken = default)
+    /// <summary>Claims the expected pending target and starts its cooldown on the caller's transaction.</summary>
+    public async Task<bool> TryMarkLocatedAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long agentId,
+        long expectedTargetCharacterId, DateTimeOffset at, TimeSpan cooldown, CancellationToken cancellationToken = default)
     {
+        if (cooldown < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(cooldown));
         await using var command = new NpgsqlCommand($"""
-            INSERT INTO {_schema}.locate_requests (character_id, agent_id, target_character_id, located_at_ms) VALUES ($1, $2, NULL, $3)
-            ON CONFLICT (character_id, agent_id) DO UPDATE SET target_character_id = NULL, located_at_ms = EXCLUDED.located_at_ms
+            UPDATE {_schema}.locate_requests SET target_character_id = NULL, located_at_ms = $4
+            WHERE character_id = $1 AND agent_id = $2 AND target_character_id = $3
+              AND (located_at_ms IS NULL OR located_at_ms <= $4 - $5)
             """, connection, transaction)
         {
-            Parameters = { new() { Value = characterId }, new() { Value = agentId }, new() { Value = at.ToUnixTimeMilliseconds() } },
+            Parameters =
+            {
+                new() { Value = characterId }, new() { Value = agentId }, new() { Value = expectedTargetCharacterId },
+                new() { Value = at.ToUnixTimeMilliseconds() }, new() { Value = checked((long)cooldown.TotalMilliseconds) },
+            },
         };
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
     }
 
     private static LocateRecord Read(NpgsqlDataReader reader) => new(

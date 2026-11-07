@@ -1543,7 +1543,9 @@ private static void WriteStructureDamageCorrelation(
                 break;
             case SimPlaceWormhole m:
                 if (!(double.IsFinite(m.Radius) && m.Radius >= 0 && double.IsFinite(m.DestinationRadius) && m.DestinationRadius >= 0
-                      && double.IsFinite(m.MaxJumpMass) && m.MaxJumpMass >= 0))
+                      && double.IsFinite(m.MaxJumpMass) && m.MaxJumpMass >= 0 && double.IsFinite(m.WormholeSize)
+                      && m.WormholeSize is >= 0 and <= 1 && m.WormholeAge is >= 0 and <= 4
+                      && m.MaxShipJumpMassCategory is >= 1 and <= 4 && m.NebulaTypeId >= 0))
                     throw new SimLinkException(SimLinkError.BadValue, "wormhole");
                 w.U8(Kind.PlaceWormhole);
                 w.I64(m.WormholeId);
@@ -1556,6 +1558,10 @@ private static void WriteStructureDamageCorrelation(
                 w.I32(m.DestinationSystemId);
                 w.I64(m.DestinationEnd);
                 w.I32(m.DestinationClass);
+                w.I32(m.NebulaTypeId);
+                w.I32(m.WormholeAge);
+                w.F64(m.WormholeSize);
+                w.I32(m.MaxShipJumpMassCategory);
                 WriteVector(w, m.DestinationPosition);
                 w.F64(m.DestinationRadius);
                 w.F64(m.MaxJumpMass);

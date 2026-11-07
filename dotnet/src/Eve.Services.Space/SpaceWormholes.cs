@@ -63,18 +63,14 @@ public sealed partial class SpaceSessions
         }
     }
 
-    private static readonly long PolarizationMs = (long)WormholeRules.Polarization.TotalMilliseconds;
-
     /// <summary>The wormhole world, or null when the host has no client data for it (then no wormhole exists).</summary>
     public WormholeWorld? Wormholes { get; set; }
-
-    /// <summary>Until when each pilot of a character may not go into a wormhole end again (in memory; the rule is the pilot's, not the account's).</summary>
-    private readonly Dictionary<(long Character, long EndId), long> _polarizedUntil = new();
 
     private readonly ConcurrentDictionary<long, SemaphoreSlim> _wormholeTransitGates = new();
 
     public static SimPlaceWormhole ToSim(WormholeEnd end) => new(end.BodyId, end.SolarSystemId, end.Name, end.TypeId, end.GroupId, end.Position, end.Radius,
-        end.DestinationSystemId, end.DestinationEnd, end.DestinationClass, end.DestinationPosition, end.DestinationRadius, end.MaxJumpMass);
+        end.DestinationSystemId, end.DestinationEnd, end.DestinationClass, end.NebulaTypeId, end.AgeState, end.Size,
+        end.MaxShipJumpMassCategory, end.DestinationPosition, end.DestinationRadius, end.MaxJumpMass);
 
     /// <summary>Places the ends of every active connection with an end in the system (the simulation makes the system's scene for them when it has none).</summary>
     internal async Task PlaceWormholeEndsAsync(int systemId, CancellationToken cancellationToken)
@@ -102,16 +98,35 @@ public sealed partial class SpaceSessions
         }
     }
 
+    /// <summary>Publishes a committed age or mass-state change to the slim item of both active ends.</summary>
+    public async Task PublishWormholeStateChangeAsync(long connectionId, CancellationToken cancellationToken = default)
+    {
+        if (_sim is null || Wormholes is not { } world)
+            return;
+        try
+        {
+            foreach (var end in await world.EndsForConnectionAsync(connectionId, cancellationToken))
+            {
+                _sim.SetSlimField(end.BodyId, "wormholeAge", new SimSlimInt(end.AgeState));
+                _sim.SetSlimField(end.BodyId, "wormholeSize", new SimSlimReal(end.Size));
+            }
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            _log?.Invoke($"the slim state of wormhole connection {connectionId} could not be sent to the simulation: {error.Message}");
+        }
+    }
+
     /// <summary>The polarization of an end for a character, or null when it has none (<c>GetWormholePolarization</c>).</summary>
-    public WormholePolarization? PolarizationOf(long endId, long characterId)
+    public async Task<WormholePolarization?> PolarizationOfAsync(long endId, long characterId, CancellationToken cancellationToken = default)
     {
         var now = _nowUnixMs();
-        lock (_polarizedUntil)
-        {
-            return _polarizedUntil.TryGetValue((characterId, endId), out var until) && until > now
-                ? new WormholePolarization(until, (int)Math.Ceiling((until - now) / 1000.0))
-                : null;
-        }
+        var until = Wormholes is { } world
+            ? await world.PolarizedUntilAsync(endId, characterId, now, cancellationToken)
+            : null;
+        return until is > 0
+            ? new WormholePolarization(until.Value, (int)Math.Ceiling((until.Value - now) / 1000.0))
+            : null;
     }
 
     /// <summary>
@@ -139,59 +154,48 @@ public sealed partial class SpaceSessions
         var world = Wormholes ?? throw JumpRefused("STARGATE_NOT_FOUND");
         var connectionId = endId / 2;
         var transitGate = _wormholeTransitGates.GetOrAdd(connectionId, static _ => new SemaphoreSlim(1, 1));
-        // The simulation accepts before PostgreSQL commits the mass debit, so serialize this whole interval per connection.
-        // shortcut: this gate covers one Host process; use a store reservation if wormhole jumps run across multiple Hosts.
+        // This gate avoids duplicate database work within one Host. AttemptJumpAsync also locks the connection row, which serializes other Hosts.
         await transitGate.WaitAsync(cancellationToken);
         try
         {
-            var end = await world.EndAsync(endId, cancellationToken) ?? throw JumpRefused("STARGATE_NOT_FOUND");
-            if (end.SolarSystemId != pilot.SolarSystemId)
-            {
-                throw JumpRefused("STARGATE_NOT_FOUND");
-            }
             var now = _nowUnixMs();
-            if (PolarizationOf(endId, pilot.CharacterId) is not null)
-            {
-                throw Notify("You are polarized to this wormhole: you cannot go into it from this side yet.");
-            }
             var mass = await ShipMassAsync(pilot, cancellationToken);
-            var preview = await world.PreviewAsync(connectionId, mass, cancellationToken) ?? throw JumpRefused("STARGATE_NOT_FOUND");
-            if (preview.Outcome == TransitOutcome.Refused)
-            {
-                throw Notify("Your ship is too large for this wormhole.");
-            }
-
-            CommandReply reply;
+            CommandReply? reply = null;
+            WormholeJumpAttempt attempt;
             try
             {
-                reply = await _sim.CommandAsync((ulong)session.SessionId, SimCommands.Jump, [endId, 0], cancellationToken);
+                attempt = await world.AttemptJumpAsync(endId, pilot.SolarSystemId, pilot.CharacterId, mass, now, async token =>
+                {
+                    reply = await _sim.CommandAsync((ulong)session.SessionId, SimCommands.Jump, [endId, 0], token);
+                    return reply.Accepted && reply.DestinationSystem is not null;
+                }, cancellationToken);
             }
             catch (SimUnavailableException error)
             {
                 _log?.Invoke($"wormhole jump of session {session.SessionId}: {error.Message}");
                 throw JumpRefused("SCENE_NOT_FOUND");
             }
-            if (!reply.Accepted || reply.DestinationSystem is not { } destination)
+
+            switch (attempt.Rejection)
             {
-                _log?.Invoke($"wormhole jump of session {session.SessionId} through {endId} refused: {reply.Reason}");
-                throw JumpRefused(reply.Reason);
+                case WormholeJumpRejection.Collapsed:
+                case WormholeJumpRejection.Expired:
+                    session.SendNotification("OnWormholeJumpCancel", "clientID");
+                    return PyNone.Instance;
+                case WormholeJumpRejection.Polarized:
+                    throw Notify("You are polarized to this wormhole: you cannot go into it from this side yet.");
+                case WormholeJumpRejection.ShipTooMassive:
+                    throw Notify("Your ship is too large for this wormhole.");
+                case WormholeJumpRejection.UnknownEnd:
+                case WormholeJumpRejection.WrongSystem:
+                    throw JumpRefused("STARGATE_NOT_FOUND");
+                case WormholeJumpRejection.SimulationRefused:
+                    _log?.Invoke($"wormhole jump of session {session.SessionId} through {endId} refused: {reply?.Reason}");
+                    throw JumpRefused(string.IsNullOrWhiteSpace(reply?.Reason) ? "SCENE_NOT_FOUND" : reply.Reason);
             }
 
+            var destination = reply?.DestinationSystem ?? throw JumpRefused("SCENE_NOT_FOUND");
             await CancelShipSelfDestructAsync(pilot.ShipId, cancellationToken);
-            var changes = new List<WormholeChange>();
-            var transit = await world.TransitAsync(connectionId, mass, now, changes.Add, cancellationToken);
-            if (transit.Outcome == TransitOutcome.Refused)
-            {
-                _log?.Invoke($"wormhole {connectionId}: the transit of session {session.SessionId} was refused after the simulation accepted the jump");
-            }
-            foreach (var change in changes)
-            {
-                PublishWormholeChange(change);
-            }
-            lock (_polarizedUntil)
-            {
-                _polarizedUntil[(pilot.CharacterId, endId)] = now + PolarizationMs;
-            }
             await PlaceWormholeEndsAsync(destination, cancellationToken);
             SendJumpQueueUpdate(session, pilot.CharacterId, destination);
             return Py.Tuple(boundObjectId is null ? None : new PyStr(boundObjectId), new PyLong(Py.FileTimeFromUnixMs(now + SessionChangeCooldownMs)));

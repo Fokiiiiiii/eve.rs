@@ -1321,16 +1321,21 @@ public static partial class SimCodec
                     var destinationSystem = r.I32();
                     var destinationEnd = r.I64();
                     var destinationClass = r.I32();
+                    var nebulaType = r.I32();
+                    var wormholeAge = r.I32();
+                    var wormholeSize = r.F64();
+                    var maxShipJumpMass = r.I32();
                     var destinationPosition = ReadVector(ref r);
                     var destinationRadius = r.F64();
-                    var maxJumpMass = r.F64();
+                    var maxJumpMassKg = r.F64();
                     if (!(double.IsFinite(radius) && radius >= 0 && double.IsFinite(destinationRadius) && destinationRadius >= 0
-                          && double.IsFinite(maxJumpMass) && maxJumpMass >= 0))
+                          && double.IsFinite(maxJumpMassKg) && maxJumpMassKg >= 0 && double.IsFinite(wormholeSize)
+                          && wormholeSize is >= 0 and <= 1 && wormholeAge is >= 0 and <= 4 && maxShipJumpMass is >= 1 and <= 4 && nebulaType >= 0))
                     {
                         throw new SimLinkException(SimLinkError.BadValue, "bad wormhole");
                     }
                     message = new SimPlaceWormhole(wormhole, system, name, type, group, position, radius, destinationSystem, destinationEnd,
-                        destinationClass, destinationPosition, destinationRadius, maxJumpMass);
+                        destinationClass, nebulaType, wormholeAge, wormholeSize, maxShipJumpMass, destinationPosition, destinationRadius, maxJumpMassKg);
                     break;
                 }
             case Kind.RemoveWormhole:

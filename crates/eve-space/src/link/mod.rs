@@ -312,8 +312,8 @@ pub struct StructurePlacement {
     pub planet_id: i64,
 }
 
-/// A wormhole end the host puts in space (protocol 63): its body in `solar_system_id`, and the far end it leads to (the other system, the far end's body ID,
-/// that system's class, the far end's position and radius, and the largest ship the wormhole takes).
+/// A wormhole end the host puts in space (protocol 63): its body in `solar_system_id`, its client-visible slim state and the far end it leads to (the other
+/// system, the far end's body ID, that system's class, the far end's position and radius, and the largest ship the wormhole takes).
 #[derive(Debug, Clone, PartialEq)]
 pub struct WormholePlacement {
     pub wormhole_id: i64,
@@ -326,6 +326,10 @@ pub struct WormholePlacement {
     pub destination_system_id: i32,
     pub destination_end: i64,
     pub destination_class: i32,
+    pub nebula_type_id: i32,
+    pub wormhole_age: i32,
+    pub wormhole_size: f64,
+    pub max_ship_jump_mass_category: i32,
     pub destination_position: [f64; 3],
     pub destination_radius: f64,
     pub max_jump_mass: f64,

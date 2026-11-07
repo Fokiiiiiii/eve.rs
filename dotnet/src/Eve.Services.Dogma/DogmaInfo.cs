@@ -138,11 +138,13 @@ public sealed class DogmaInfo(DogmaStatic statics)
     /// <summary>The brain as the client is told it changed: its version and the effects, marshalled (a list each for the character, the ship and the structure).</summary>
     public Brain BuildBrain(ShipSnapshot s) => BrainBuilder.Build(s.World, statics);
 
+    private static long StructureEffectTarget(ShipSnapshot s) => s.World.StructureId != 0 ? s.World.StructureId : s.Character.Id;
+
     public PyValue BrainUpdate(ShipSnapshot s, int version, Brain? brain = null)
     {
         brain ??= BuildBrain(s);
         PyValue List(IEnumerable<BrainEffect> effects, long target) => new PyList([.. effects.Select(e => DogmaWire.BrainEffect(e, target))]);
-        var grayMatter = MarshalCodec.Encode(Py.Tuple(List(brain.Character, s.Character.Id), List(brain.Ship, s.Ship.Id), List(brain.Structure, s.Character.Id)));
+        var grayMatter = MarshalCodec.Encode(Py.Tuple(List(brain.Character, s.Character.Id), List(brain.Ship, s.Ship.Id), List(brain.Structure, StructureEffectTarget(s))));
         return Py.Tuple(new PyInt(version), new PyBuffer(grayMatter));
     }
 
@@ -269,7 +271,8 @@ public sealed class DogmaInfo(DogmaStatic statics)
                 s.Ship.Id, Row(RowOf(s.Ship, statics.Type(s.Ship.TypeId)), false), new PyDict([]),
                 DogmaWire.Attributes(WithIntrinsics(s, s.Ship.Id)), fileTime))])
             : new PyDict([]);
-        var dockedShipOnly = getShipInfo && !getCharInfo;
+        var dockedShipOnly = getShipInfo && !getCharInfo && docked;
+        var spaceShipOnlyPrime = getShipInfo && !getCharInfo && !docked && !getStructureInfo && s.World.StructureId == 0;
         var includeCharacter = getCharInfo || dockedShipOnly;
         if (includeCharacter)
         {
@@ -277,7 +280,7 @@ public sealed class DogmaInfo(DogmaStatic statics)
         }
         return Py.KeyVal(
             ("systemWideEffectsOnShip", new PyDict([])),
-            ("shipModifiedCharAttribs", getShipInfo && getCharInfo ? CharacterInfo(s, ShipModifiedCharacterAttributes(s), fileTime) : PyNone.Instance),
+            ("shipModifiedCharAttribs", getShipInfo ? CharacterInfo(s, ShipModifiedCharacterAttributes(s), fileTime) : PyNone.Instance),
             ("structureInfo", structureInfo),
             ("locationInfo", new PyDict([])),
             ("shipInfo", getShipInfo ? ShipInfo(s, fileTime, docked) : new PyDict([])),
@@ -286,7 +289,8 @@ public sealed class DogmaInfo(DogmaStatic statics)
             ("charInfo", includeCharacter
                 ? Py.Tuple(
                     new PyDict([new(InventoryWire.Id(s.Character.Id), CharacterInfo(s, CharacterAttributes(s), fileTime))]),
-                    DogmaWire.Brain(brain!, s.Character.Id, s.Ship.Id, s.World.StructureId != 0 ? s.World.StructureId : s.Character.Id))
+                    DogmaWire.Brain(brain!, s.Character.Id, s.Ship.Id, StructureEffectTarget(s)))
+                : spaceShipOnlyPrime ? new PyDict([])
                 : PyNone.Instance));
     }
 }

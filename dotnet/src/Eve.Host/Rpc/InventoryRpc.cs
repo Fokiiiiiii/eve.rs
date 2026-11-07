@@ -178,6 +178,29 @@ internal sealed partial class CharacterServicesComposition
         ClientSession session, long characterId, long shipId, IReadOnlyList<long> moduleIds, long containerId,
         long? namedOwnerId, int? flag, long? quantity, CancellationToken cancellationToken)
     {
+        if (tradeAuthority is not null && await tradeAuthority.ViewAsync(containerId, cancellationToken).ConfigureAwait(false) is { IsOpen: true } trade)
+        {
+            if (namedOwnerId is { } stagedNamedOwnerId && stagedNamedOwnerId != characterId)
+                return new NothingHappened();
+            if (flag is { } requestedFlag && requestedFlag != ItemFlags.Hangar)
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Unload into the trade container by its inventory ID.")));
+            if (quantity is > 0 && await ships.LoadAsync(characterId, cancellationToken).ConfigureAwait(false) is { } snapshot)
+            {
+                foreach (var moduleId in moduleIds.Distinct())
+                    if (snapshot.Fitted.FirstOrDefault(module => module.Id == moduleId) is { } module
+                        && snapshot.ChargeOf(module) is { } charge && quantity != charge.Quantity)
+                        throw MachoErrors.ThrowUserError("CustomNotify",
+                            ("notify", new PyStr("Unload the whole charge stack into trade; partial fitted-charge trade is not available yet.")));
+            }
+
+            return await ships.UnloadAmmoToTradeAsync(characterId, shipId, moduleIds, async (charges, token) =>
+            {
+                var change = await TradeMgrService.StageFittedChargesAsync(session, trade.TradeId, shipId, charges, token).ConfigureAwait(false);
+                return change.Moves.Where(move => !move.Removed && move.After.LocationId == trade.TradeId)
+                    .ToDictionary(move => move.After.Id, move => move.After);
+            }, cancellationToken).ConfigureAwait(false);
+        }
+
         if (session.DockedLocationId is not { } stationId
             || await items.GetAsync(containerId, cancellationToken) is not { } container)
             return new NothingHappened();

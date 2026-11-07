@@ -45,8 +45,8 @@ public sealed class SolarSystemCatalog
         return Math.Sqrt(dx * dx + dy * dy + dz * dz) / MetersPerLightYear;
     }
 
-    /// <summary>One light year in metres (the exact value of the light year the game uses).</summary>
-    public const double MetersPerLightYear = 9_460_730_472_580_800.0;
+    /// <summary>One light year in metres for jump range calculations (V24.01: 9,460,000,000,000,000 m).</summary>
+    public const double MetersPerLightYear = 9_460_000_000_000_000.0;
 
     public static async Task<SolarSystemCatalog> LoadAsync(SdeReader sde, IReadOnlyDictionary<int, ClientSystemFlags>? clientFlags = null, CancellationToken cancellationToken = default)
     {

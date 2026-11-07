@@ -34,6 +34,12 @@ public enum CalendarParticipantUpdateResult
     TooManyInvitees,
 }
 
+public sealed record CalendarParticipantUpdate(
+    CalendarParticipantUpdateResult Result,
+    CalendarEvent? Event,
+    IReadOnlyCollection<long> AddedCharacterIds,
+    IReadOnlyCollection<long> RemovedCharacterIds);
+
 public sealed record CalendarEvent(
     long EventId,
     long OwnerId,
@@ -72,7 +78,7 @@ public interface ICalendarStore
         Func<NpgsqlConnection, NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null);
     Task<bool> EditEventAsync(long eventId, long ownerId, long oldEventDateTime, CalendarEventInput input, CancellationToken cancellationToken = default);
     Task<bool> DeleteEventAsync(long eventId, long ownerId, long dateModified, CancellationToken cancellationToken = default);
-    Task<CalendarParticipantUpdateResult> UpdateParticipantsAsync(long eventId, long ownerId, IReadOnlyCollection<long> add, IReadOnlyCollection<long> remove,
+    Task<CalendarParticipantUpdate> UpdateParticipantsAsync(long eventId, long ownerId, IReadOnlyCollection<long> add, IReadOnlyCollection<long> remove,
         CancellationToken cancellationToken = default,
         Func<NpgsqlConnection, NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null);
     Task<bool> SendResponseAsync(long eventId, long ownerId, long characterId, short response, CancellationToken cancellationToken = default);
@@ -242,19 +248,24 @@ public sealed class CalendarStore : ICalendarStore
         return true;
     }
 
-    public async Task<CalendarParticipantUpdateResult> UpdateParticipantsAsync(
+    public async Task<CalendarParticipantUpdate> UpdateParticipantsAsync(
         long eventId, long ownerId, IReadOnlyCollection<long> add, IReadOnlyCollection<long> remove,
         CancellationToken cancellationToken = default,
         Func<NpgsqlConnection, NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        await using var exists = Command(connection, transaction,
-            Q("SELECT creator_id FROM {schema}.events WHERE event_id=$1 AND owner_id=$2 AND is_deleted=false FOR UPDATE"),
-            eventId, ownerId);
-        if (await exists.ExecuteScalarAsync(cancellationToken) is not { } creatorValue)
-            return CalendarParticipantUpdateResult.EventNotFound;
-        var creatorId = Convert.ToInt64(creatorValue, System.Globalization.CultureInfo.InvariantCulture);
+        CalendarEvent? eventSnapshot;
+        await using (var exists = Command(connection, transaction,
+            Q($"SELECT {EventColumns} FROM {{schema}}.events WHERE event_id=$1 AND owner_id=$2 AND is_deleted=false FOR UPDATE"),
+            eventId, ownerId))
+        await using (var reader = await exists.ExecuteReaderAsync(cancellationToken))
+        {
+            eventSnapshot = await reader.ReadAsync(cancellationToken) ? ReadEvent(reader) : null;
+        }
+        if (eventSnapshot is null)
+            return new(CalendarParticipantUpdateResult.EventNotFound, null, [], []);
+        var creatorId = eventSnapshot.CreatorId;
 
         var activeInvitees = new HashSet<long>();
         await using (var responses = Command(connection, transaction,
@@ -271,12 +282,13 @@ public sealed class CalendarStore : ICalendarStore
 
         var existingActive = activeInvitees.ToHashSet();
         var removed = remove.Where(id => id > 0 && id != creatorId).ToHashSet();
+        var actuallyRemoved = activeInvitees.Where(removed.Contains).ToArray();
         activeInvitees.ExceptWith(removed);
         var additions = add.Where(id => id > 0 && id != creatorId && !removed.Contains(id)).Distinct().ToArray();
         var newlyAdded = additions.Where(id => !existingActive.Contains(id)).ToArray();
         activeInvitees.UnionWith(additions);
         if (activeInvitees.Count > CalendarLimits.MaxInvitees)
-            return CalendarParticipantUpdateResult.TooManyInvitees;
+            return new(CalendarParticipantUpdateResult.TooManyInvitees, null, [], []);
 
         if (beforeCommitAsync is not null)
             await beforeCommitAsync(connection, transaction, eventId, newlyAdded, cancellationToken);
@@ -292,7 +304,7 @@ public sealed class CalendarStore : ICalendarStore
         }
 
         await transaction.CommitAsync(cancellationToken);
-        return CalendarParticipantUpdateResult.Updated;
+        return new(CalendarParticipantUpdateResult.Updated, eventSnapshot, newlyAdded, actuallyRemoved);
     }
 
     public async Task<bool> SendResponseAsync(

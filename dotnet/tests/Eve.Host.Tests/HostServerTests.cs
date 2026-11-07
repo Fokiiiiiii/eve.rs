@@ -1919,13 +1919,14 @@ public partial class HostServerTests : IAsyncLifetime
             long eventId, long ownerId, long dateModified, System.Threading.CancellationToken cancellationToken = default) =>
             System.Threading.Tasks.Task.FromResult(false);
 
-        public System.Threading.Tasks.Task<Eve.Calendar.CalendarParticipantUpdateResult> UpdateParticipantsAsync(
+        public System.Threading.Tasks.Task<Eve.Calendar.CalendarParticipantUpdate> UpdateParticipantsAsync(
             long eventId, long ownerId, System.Collections.Generic.IReadOnlyCollection<long> add,
             System.Collections.Generic.IReadOnlyCollection<long> remove,
             System.Threading.CancellationToken cancellationToken = default,
             System.Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, long, System.Collections.Generic.IReadOnlyCollection<long>, System.Threading.CancellationToken, System.Threading.Tasks.Task>? beforeCommitAsync = null) =>
             beforeCommitAsync is null
-                ? System.Threading.Tasks.Task.FromResult(Eve.Calendar.CalendarParticipantUpdateResult.EventNotFound)
+                ? System.Threading.Tasks.Task.FromResult(new Eve.Calendar.CalendarParticipantUpdate(
+                    Eve.Calendar.CalendarParticipantUpdateResult.EventNotFound, null, [], []))
                 : throw new System.NotSupportedException("The fake calendar store has no PostgreSQL transaction.");
 
         public System.Threading.Tasks.Task<bool> SendResponseAsync(

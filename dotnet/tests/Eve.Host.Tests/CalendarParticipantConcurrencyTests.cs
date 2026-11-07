@@ -28,8 +28,7 @@ public sealed class CalendarParticipantConcurrencyTests
             invitees);
         try
         {
-            var synchronizedStore = new FirstConcurrentReadStore(store);
-            IService service = new CalendarMgrService(synchronizedStore, cspaBilling: FreeCspaBilling());
+            IService service = new CalendarMgrService(store, cspaBilling: FreeCspaBilling());
             var session = new ClientSession { CharacterId = CreatorId };
             var calls = new[] { CreatorId + 100, CreatorId + 101 }.Select(characterId =>
                 service.CallAsync(Call(session, eventId, characterId)).AsTask()).ToArray();
@@ -301,7 +300,7 @@ public sealed class CalendarParticipantConcurrencyTests
             CancellationToken cancellationToken = default) =>
             inner.DeleteEventAsync(eventId, ownerId, dateModified, cancellationToken);
 
-        public Task<CalendarParticipantUpdateResult> UpdateParticipantsAsync(long eventId, long ownerId, IReadOnlyCollection<long> add,
+        public Task<CalendarParticipantUpdate> UpdateParticipantsAsync(long eventId, long ownerId, IReadOnlyCollection<long> add,
             IReadOnlyCollection<long> remove, CancellationToken cancellationToken = default,
             Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null) =>
             inner.UpdateParticipantsAsync(eventId, ownerId, add, remove, cancellationToken, beforeCommitAsync);

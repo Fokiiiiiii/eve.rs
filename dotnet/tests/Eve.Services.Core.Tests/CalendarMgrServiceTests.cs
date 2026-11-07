@@ -499,15 +499,16 @@ public class CalendarMgrServiceTests
             return Task.FromResult(true);
         }
 
-        public async Task<CalendarParticipantUpdateResult> UpdateParticipantsAsync(
+        public async Task<CalendarParticipantUpdate> UpdateParticipantsAsync(
             long eventId, long ownerId, IReadOnlyCollection<long> add, IReadOnlyCollection<long> remove, CancellationToken cancellationToken = default,
             Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null)
         {
             var calendarEvent = Events.FirstOrDefault(row => row.EventId == eventId && row.OwnerId == ownerId && !row.IsDeleted);
-            if (calendarEvent is null) return CalendarParticipantUpdateResult.EventNotFound;
+            if (calendarEvent is null) return new(CalendarParticipantUpdateResult.EventNotFound, null, [], []);
             var removed = remove.Where(id => id > 0 && id != calendarEvent.CreatorId).ToHashSet();
             var active = Responses.Where(row => row.EventId == eventId && row.CharacterId != calendarEvent.CreatorId &&
                 row.Status != CalendarResponseStates.Uninvited).Select(row => row.CharacterId).ToHashSet();
+            var actuallyRemoved = active.Where(removed.Contains).ToArray();
             var newlyAdded = add.Where(id => id > 0 && id != calendarEvent.CreatorId && !removed.Contains(id))
                 .Distinct().Where(id => !active.Contains(id)).ToArray();
             if (beforeCommitAsync is not null)
@@ -517,7 +518,7 @@ public class CalendarMgrServiceTests
                 for (var i = 0; i < Responses.Count; i++)
                     if (Responses[i].EventId == eventId && Responses[i].CharacterId == id)
                         Responses[i] = Responses[i] with { Status = CalendarResponseStates.Uninvited };
-            return CalendarParticipantUpdateResult.Updated;
+            return new(CalendarParticipantUpdateResult.Updated, calendarEvent, newlyAdded, actuallyRemoved);
         }
 
         public Task<bool> SendResponseAsync(

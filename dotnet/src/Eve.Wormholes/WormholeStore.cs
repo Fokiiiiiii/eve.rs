@@ -95,6 +95,35 @@ public sealed class WormholeStore
             throw new InvalidOperationException($"wormhole connection {stored.Id} is not stored");
     }
 
+    /// <summary>The end of a character's polarization to one connection, or null after it has elapsed.</summary>
+    public async Task<long?> PolarizedUntilAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long characterId, long connectionId,
+        long nowMs, CancellationToken cancellationToken = default)
+    {
+        var until = await Sql.ScalarAsync(connection, transaction,
+            Q("SELECT until_ms FROM {schema}.wormhole_polarizations WHERE character_id = $1 AND connection_id = $2"),
+            cancellationToken, characterId, connectionId);
+        if (until is null)
+            return null;
+        var untilMs = (long)until;
+        if (untilMs > nowMs)
+            return untilMs;
+        await Sql.ExecuteAsync(connection, transaction,
+            Q("DELETE FROM {schema}.wormhole_polarizations WHERE character_id = $1 AND connection_id = $2 AND until_ms <= $3"),
+            cancellationToken, characterId, connectionId, nowMs);
+        return null;
+    }
+
+    /// <summary>Persists the five-minute polarization against the connection, so it applies at both ends and after a Host restart.</summary>
+    public async Task SetPolarizationAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long connectionId, long untilMs,
+        CancellationToken cancellationToken = default)
+    {
+        await Sql.ExecuteAsync(connection, transaction, Q("""
+            INSERT INTO {schema}.wormhole_polarizations (character_id, connection_id, until_ms)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (character_id, connection_id) DO UPDATE SET until_ms = EXCLUDED.until_ms
+            """), cancellationToken, characterId, connectionId, untilMs);
+    }
+
     private static StoredConnection Read(NpgsqlDataReader reader) => new(
         reader.GetInt64(0), reader.GetInt32(1), reader.GetInt32(2), reader.GetInt32(3), reader.GetString(4), reader.GetBoolean(5), reader.GetDouble(6),
         reader.GetDouble(7), reader.GetInt64(8), reader.GetInt64(9), reader.GetBoolean(10), unchecked((ulong)reader.GetInt64(11)));

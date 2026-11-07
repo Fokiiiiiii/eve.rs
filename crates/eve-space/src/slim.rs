@@ -134,12 +134,24 @@ pub fn body_entries(system: &SolarSystem, body: &Body) -> Entries {
     entries
 }
 
-/// A wormhole end's slim fields: the class of the system it leads to (the client's info window reads `otherSolarSystemClass`).
+/// A wormhole end's client-visible slim fields: destination class, nebula texture, remaining age and size, and allowed ship-mass category.
 fn wormhole_fields(body: &Body, entries: &mut Entries) {
-    let Detail::Wormhole { destination_class, .. } = &body.detail else {
+    let Detail::Wormhole {
+        destination_class,
+        nebula_type_id,
+        wormhole_age,
+        wormhole_size,
+        max_ship_jump_mass_category,
+        ..
+    } = &body.detail
+    else {
         return;
     };
     entries.push(("otherSolarSystemClass", int(i64::from(*destination_class))));
+    entries.push(("nebulaType", int(i64::from(*nebula_type_id))));
+    entries.push(("wormholeAge", int(i64::from(*wormhole_age))));
+    entries.push(("wormholeSize", Value::Real(*wormhole_size)));
+    entries.push(("maxShipJumpMass", int(i64::from(*max_ship_jump_mass_category))));
 }
 
 /// `(start, end, paused)`, its unanchoring time and whether it is repaired.

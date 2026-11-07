@@ -19,6 +19,12 @@ public sealed class WormholeJumpServiceTests
 
     private static WormholeType Type(int typeId, double maxStableMassKg, double maxJumpMassKg) => new(typeId, 7, 60, maxStableMassKg, 0, maxJumpMassKg, 302);
 
+    private sealed class PacketSink : Eve.Services.IPacketSink
+    {
+        public List<PyValue> Packets { get; } = [];
+        public void Send(PyValue packet) => Packets.Add(packet);
+    }
+
     /// <summary>A world in its own schema, with one J-system whose static (type <paramref name="type"/>) leads to the class 7 system of the test.</summary>
     private sealed class JWorld : IAsyncDisposable
     {
@@ -33,6 +39,20 @@ public sealed class WormholeJumpServiceTests
         }
 
         public WormholeWorld World { get; }
+        public string Schema => _schema;
+
+        public WormholeWorld Reopen(Rig rig, WormholeType type)
+        {
+            var classes = new Dictionary<int, int> { [JSystem] = 1, [OtherJSystem] = 2, [KSystem] = 7 };
+            var systems = new[]
+            {
+                new JSpaceSystem(JSystem, "J1", 1, null, null, null, [new JSpaceStatic("AAA", type.TypeId)], "test"),
+                new JSpaceSystem(OtherJSystem, "J2", 2, null, null, null, [], "test"),
+            };
+            return new WormholeWorld(rig.Source, rig.Scheduler, _schema,
+                new Dictionary<int, WormholeType> { [type.TypeId] = type }, classes, systems,
+                new Dictionary<int, int> { [JSystem] = 111, [OtherJSystem] = 222, [KSystem] = 333 });
+        }
 
         public static async Task<JWorld> CreateAsync(Rig rig, WormholeType type)
         {
@@ -44,11 +64,13 @@ public sealed class WormholeJumpServiceTests
                 new JSpaceSystem(JSystem, "J1", 1, null, null, null, [new JSpaceStatic("AAA", type.TypeId)], "test"),
                 new JSpaceSystem(OtherJSystem, "J2", 2, null, null, null, [], "test"),
             };
-            var world = new WormholeWorld(rig.Source, rig.Scheduler, schema, new Dictionary<int, WormholeType> { [type.TypeId] = type }, classes, systems);
+            var world = new WormholeWorld(rig.Source, rig.Scheduler, schema, new Dictionary<int, WormholeType> { [type.TypeId] = type }, classes, systems,
+                new Dictionary<int, int> { [JSystem] = 111, [OtherJSystem] = 222, [KSystem] = 333 });
             await world.EnsureWorldAsync(7, rig.Now);
             world.RegisterJobs();
             rig.Space.Wormholes = world;
             world.Changed += rig.Space.PublishWormholeChange;
+            world.StateChanged += rig.Space.PublishWormholeStateChangeAsync;
             return new JWorld(rig.Source, schema, world);
         }
 
@@ -108,6 +130,19 @@ public sealed class WormholeJumpServiceTests
         await using var world = await JWorld.CreateAsync(rig, Type(1001, 1e9, 1e8));
         var (session, character, oid) = await PilotInJSpaceAsync(rig);
         var end = Assert.Single(await world.World.EndsInSystemAsync(JSystem));
+        var placement = Assert.Single(rig.Sim.Heard.OfType<SimPlaceWormhole>(), message => message.WormholeId == end.BodyId);
+        Assert.Equal(333, placement.NebulaTypeId);
+        Assert.Equal(3, placement.WormholeAge);
+        Assert.InRange(placement.WormholeSize, 0.5, 1.0);
+        Assert.Equal(2, placement.MaxShipJumpMassCategory);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            var stored = await world.World.Store.GetAsync(connection, transaction, end.BodyId / 2, forUpdate: true)
+                ?? throw new InvalidOperationException("test wormhole is missing");
+            await world.World.Store.UpdateAsync(connection, transaction, stored with { MassKg = stored.MaxStableMassKg * 0.5005 });
+            await transaction.CommitAsync();
+        }
         rig.Sim.JumpAnswer = new CommandReply(true, 0, null, null, KSystem, 0);
         var before = rig.Sim.Heard.Count;
 
@@ -117,10 +152,90 @@ public sealed class WormholeJumpServiceTests
         var jump = Assert.Single(rig.Sim.Heard.Skip(before).OfType<SimCommand>(), command => command.Code == SimCommands.Jump);
         Assert.Equal(new double[] { end.BodyId, 0 }, jump.Args);
         Assert.Contains(rig.Sim.Heard.Skip(before), message => message is SimPlaceWormhole);
-        Assert.NotNull(rig.Space.PolarizationOf(end.BodyId, character.CharacterId));
+        var sizeChanges = rig.Sim.Heard.Skip(before).OfType<SimSetSlimField>().Where(message => message.FieldName == "wormholeSize").ToArray();
+        Assert.Equal(new[] { end.BodyId, end.DestinationEnd }, sizeChanges.Select(message => message.ItemId).Order());
+        Assert.All(sizeChanges, message => Assert.Equal(new SimSlimReal(0.4), message.Value));
+        Assert.NotNull(await rig.Space.PolarizationOfAsync(end.BodyId, character.CharacterId));
+        var reloaded = world.Reopen(rig, Type(1001, 1e9, 1e8));
+        Assert.Equal(rig.Now + (long)WormholeRules.Polarization.TotalMilliseconds,
+            await reloaded.PolarizedUntilAsync(end.DestinationEnd, character.CharacterId, rig.Now));
 
         var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Space.WormholeJumpAsync(session, end.BodyId, oid, CancellationToken.None));
         Assert.Equal("You are polarized to this wormhole: you cannot go into it from this side yet.", NotifyOf(refused));
+    }
+
+    [PgFact]
+    public async Task A_durable_age_bucket_transition_updates_both_wormhole_ends_in_the_simulation()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var world = await JWorld.CreateAsync(rig, new WormholeType(1001, 7, 25 * 60, 1e9, 0, 1e8, 302));
+        var end = Assert.Single(await world.World.EndsInSystemAsync(JSystem));
+        Assert.Equal(0, end.AgeState);
+        rig.Sim.Heard.Clear();
+
+        rig.Now += (long)TimeSpan.FromHours(1).TotalMilliseconds;
+        await rig.Scheduler.RunDueAsync();
+
+        var changes = rig.Sim.Heard.OfType<SimSetSlimField>().Where(message => message.FieldName == "wormholeAge").ToArray();
+        Assert.Equal(new[] { end.BodyId, end.DestinationEnd }, changes.Select(message => message.ItemId).Order());
+        Assert.All(changes, message => Assert.Equal(new SimSlimInt(1), message.Value));
+    }
+
+    [PgFact]
+    public async Task A_pilot_is_polarized_at_the_arrival_end_and_cannot_immediately_jump_back()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var world = await JWorld.CreateAsync(rig, Type(1001, 1e9, 1e8));
+        var (session, character, oid) = await PilotInJSpaceAsync(rig);
+        var source = Assert.Single(await world.World.EndsInSystemAsync(JSystem));
+        rig.Sim.JumpAnswer = new CommandReply(true, 0, null, null, KSystem, 0);
+
+        await rig.Space.WormholeJumpAsync(session, source.BodyId, oid, CancellationToken.None);
+        rig.Sim.Say(new SimJumped((ulong)session.SessionId, JSystem, source.BodyId, KSystem, source.DestinationEnd));
+        await Rig.UntilAsync(() => session.GetInt("solarsystemid") == KSystem);
+        var arrival = Assert.Single(await world.World.EndsInSystemAsync(KSystem));
+        var jumpsBeforeReturn = rig.Sim.Heard.OfType<SimCommand>().Count(command => command.Code == SimCommands.Jump);
+
+        Assert.NotNull(await rig.Space.PolarizationOfAsync(arrival.BodyId, character.CharacterId));
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(
+            () => rig.Space.WormholeJumpAsync(session, arrival.BodyId, oid, CancellationToken.None));
+
+        Assert.Equal("You are polarized to this wormhole: you cannot go into it from this side yet.", NotifyOf(refused));
+        Assert.Equal(jumpsBeforeReturn, rig.Sim.Heard.OfType<SimCommand>().Count(command => command.Code == SimCommands.Jump));
+    }
+
+    [PgFact]
+    public async Task An_expired_connection_is_collapsed_and_the_registered_rpc_sends_the_client_cancel_notification()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var world = await JWorld.CreateAsync(rig, Type(1001, 1e9, 1e8));
+        var (session, _, oid) = await PilotInJSpaceAsync(rig);
+        var end = Assert.Single(await world.World.EndsInSystemAsync(JSystem));
+        rig.Now += (long)TimeSpan.FromMinutes(60).TotalMilliseconds + 1;
+        rig.Sim.JumpAnswer = new CommandReply(true, 0, null, null, KSystem, 0);
+        var before = rig.Sim.Heard.Count;
+        var packets = new PacketSink();
+        session.Sink = packets;
+        var service = new WormholeMgrService(rig.Space,
+            jump: async (call, endId, cancellationToken) =>
+                await rig.Space.WormholeJumpAsync(call.Session, endId, call.BoundObjectId, cancellationToken));
+
+        var result = await service.CallAsync(new ServiceCall
+        {
+            Method = "WormholeJump",
+            Args = [new PyLong(end.BodyId)],
+            Session = session,
+            BoundObjectId = oid,
+            Cancellation = CancellationToken.None,
+        });
+
+        Assert.IsType<PyNone>(result);
+        Assert.DoesNotContain(rig.Sim.Heard.Skip(before).OfType<SimCommand>(), command => command.Code == SimCommands.Jump);
+        Assert.Empty(await world.World.EndsInSystemAsync(JSystem));
+        Assert.Equal(2, rig.Sim.Heard.Skip(before).OfType<SimRemoveWormhole>().Count());
+        var notification = Assert.IsType<PyObject>(Assert.Single(packets.Packets));
+        var notificationPacket = Assert.IsType<PyTuple>(notification.Args);
+        Assert.Equal("OnWormholeJumpCancel", MachoAddress.Decode(notificationPacket.Items[2]).BroadcastId);
     }
 
     [PgFact]
@@ -130,6 +245,8 @@ public sealed class WormholeJumpServiceTests
         await using var world = await JWorld.CreateAsync(rig, Type(1001, 1e4, 1e8));
         var (firstSession, _, firstOid) = await PilotInJSpaceAsync(rig, id: 1);
         var (secondSession, _, secondOid) = await PilotInJSpaceAsync(rig, id: 2);
+        var secondPackets = new PacketSink();
+        secondSession.Sink = secondPackets;
         var end = Assert.Single(await world.World.EndsInSystemAsync(JSystem));
         var firstAtSimulation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseSimulation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -148,9 +265,67 @@ public sealed class WormholeJumpServiceTests
 
         releaseSimulation.TrySetResult();
         await firstJump;
-        await Assert.ThrowsAsync<MachoWrappedException>(() => secondJump);
+        Assert.IsType<PyNone>(await secondJump);
         Assert.Single(rig.Sim.Heard.OfType<SimCommand>(), command => command.Code == SimCommands.Jump);
-        Assert.Single(await world.World.EndsInSystemAsync(JSystem));
+        Assert.Empty(await world.World.EndsInSystemAsync(JSystem));
+        var notification = Assert.IsType<PyObject>(Assert.Single(secondPackets.Packets));
+        Assert.Equal("OnWormholeJumpCancel", MachoAddress.Decode(Assert.IsType<PyTuple>(notification.Args).Items[2]).BroadcastId);
+    }
+
+    [PgFact]
+    public async Task Concurrent_jumps_from_separate_host_instances_are_serialized_before_simulation_acceptance()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var world = await JWorld.CreateAsync(rig, Type(1001, 10_000, 1e8));
+        var (firstSession, _, firstOid) = await PilotInJSpaceAsync(rig, id: 1);
+        var (secondSession, secondCharacter, secondOid) = await PilotInJSpaceAsync(rig, id: 2);
+        var end = Assert.Single(await world.World.EndsInSystemAsync(JSystem));
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            var stored = await world.World.Store.GetAsync(connection, transaction, end.BodyId / 2, forUpdate: true)
+                ?? throw new InvalidOperationException("test wormhole is missing");
+            await world.World.Store.UpdateAsync(connection, transaction, stored with { MassKg = 10_000 });
+            await transaction.CommitAsync();
+        }
+
+        using var secondHostSpace = new SpaceSessions(rig.Sim, rig.Ships, rig.Statics, rig.Stations, rig.Systems, () => rig.Now, rig.Log.Add)
+        {
+            Wormholes = world.World,
+        };
+        secondHostSpace.EnterPilotForTest(secondSession, secondCharacter.CharacterId, secondSession.GetInt("shipid")!.Value, 601, JSystem);
+
+        var firstInSimulation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondInSimulation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var simJumpCount = 0;
+        rig.Sim.JumpHandler = async (_, cancellationToken) =>
+        {
+            if (Interlocked.Increment(ref simJumpCount) == 1)
+            {
+                firstInSimulation.TrySetResult();
+                await releaseFirst.Task.WaitAsync(cancellationToken);
+            }
+            else
+            {
+                secondInSimulation.TrySetResult();
+            }
+            return new CommandReply(true, 0, null, null, KSystem, 0);
+        };
+
+        var firstJump = rig.Space.WormholeJumpAsync(firstSession, end.BodyId, firstOid, CancellationToken.None);
+        await firstInSimulation.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var secondJump = secondHostSpace.WormholeJumpAsync(secondSession, end.BodyId, secondOid, CancellationToken.None);
+        var racedIntoSimulation = await Task.WhenAny(secondInSimulation.Task, Task.Delay(TimeSpan.FromMilliseconds(100)));
+        var secondWasAcceptedBySimulationBeforeRelease = ReferenceEquals(secondInSimulation.Task, racedIntoSimulation);
+
+        releaseFirst.TrySetResult();
+        var firstResult = await firstJump;
+        var secondResult = await secondJump;
+        Assert.False(secondWasAcceptedBySimulationBeforeRelease);
+        Assert.IsType<PyTuple>(firstResult);
+        Assert.IsType<PyNone>(secondResult);
+        Assert.Equal(1, rig.Sim.Heard.OfType<SimCommand>().Count(command => command.Code == SimCommands.Jump));
     }
 
     [PgFact]
@@ -193,11 +368,11 @@ public sealed class WormholeJumpServiceTests
         var end = Assert.Single(await world.World.EndsInSystemAsync(JSystem));
         rig.Sim.JumpAnswer = new CommandReply(true, 0, null, null, KSystem, 0);
         await rig.Space.WormholeJumpAsync(session, end.BodyId, oid, CancellationToken.None);
-        Assert.NotNull(rig.Space.PolarizationOf(end.BodyId, character.CharacterId));
+        Assert.NotNull(await rig.Space.PolarizationOfAsync(end.BodyId, character.CharacterId));
 
         rig.Now += (long)WormholeRules.Polarization.TotalMilliseconds + 1_000;
 
-        Assert.Null(rig.Space.PolarizationOf(end.BodyId, character.CharacterId));
+        Assert.Null(await rig.Space.PolarizationOfAsync(end.BodyId, character.CharacterId));
     }
 
     [PgFact]
@@ -211,7 +386,7 @@ public sealed class WormholeJumpServiceTests
         // the service as the composition builds it: the jump and the polarization are the space sessions'
         var service = new WormholeMgrService(
             rig.Space,
-            readPolarization: (endId, characterId, _) => ValueTask.FromResult(rig.Space.PolarizationOf(endId, characterId)),
+            readPolarization: async (endId, characterId, cancellationToken) => await rig.Space.PolarizationOfAsync(endId, characterId, cancellationToken),
             jump: async (call, endId, cancellation) => await rig.Space.WormholeJumpAsync(call.Session, endId, call.BoundObjectId, cancellation));
         var before = rig.Sim.Heard.Count;
 

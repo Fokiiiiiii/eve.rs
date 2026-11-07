@@ -325,7 +325,7 @@ public class CharacterTrainingTests
     }
 
     [PgFact]
-    public async Task Saving_an_alpha_queue_with_an_unchanged_running_head_counts_elapsed_points_once()
+    public async Task Saving_an_alpha_queue_over_the_live_cap_is_refused_even_when_the_panel_forecast_fits()
     {
         await using var rig = await TrainingRig.CreateAsync();
         var started = await rig.SavedAsync(await rig.SaveAsync(true, (3301, 2)));
@@ -343,7 +343,9 @@ public class CharacterTrainingTests
         var fullQueueIncrement = view.Queue.Sum(line => line.DestinationPoints - line.StartPoints);
         Assert.Equal(persistedPoints, await rig.PersistedSkillPointsAsync(TrainingRig.Character));
         Assert.Equal(1_165, fullQueueIncrement);
-        // The hard cap uses current trained SP plus the remaining queue; a cached panel total can lag the running head.
+        // V24.01 reduces each line by estimated current-level SP; the server validates the live total and queue.
+        var panelForecast = persistedPoints + fullQueueIncrement - elapsed;
+        Assert.True(panelForecast <= Training.AlphaMaxTrainingSkillPoints);
         var overCap = persistedPoints + fullQueueIncrement - Training.AlphaMaxTrainingSkillPoints;
         Assert.True(overCap > 0 && overCap < elapsed);
 

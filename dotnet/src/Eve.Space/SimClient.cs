@@ -741,7 +741,7 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         lock (_pendingGate)
         {
             if (!_connected)
-                throw _outboundFailure ?? new SimUnavailableException("the simulation is not running");
+                return Task.FromException<string?>(_outboundFailure ?? new SimUnavailableException("the simulation is not running"));
         }
         if (requestId == 0) throw new ArgumentOutOfRangeException(nameof(requestId));
         return AwaitAsync(

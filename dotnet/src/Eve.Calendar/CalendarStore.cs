@@ -40,6 +40,8 @@ public sealed record CalendarParticipantUpdate(
     IReadOnlyCollection<long> AddedCharacterIds,
     IReadOnlyCollection<long> RemovedCharacterIds);
 
+public sealed record CalendarResponseUpdate(bool Updated, CalendarEvent? Event);
+
 public sealed record CalendarEvent(
     long EventId,
     long OwnerId,
@@ -81,7 +83,8 @@ public interface ICalendarStore
     Task<CalendarParticipantUpdate> UpdateParticipantsAsync(long eventId, long ownerId, IReadOnlyCollection<long> add, IReadOnlyCollection<long> remove,
         CancellationToken cancellationToken = default,
         Func<NpgsqlConnection, NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null);
-    Task<bool> SendResponseAsync(long eventId, long ownerId, long characterId, short response, CancellationToken cancellationToken = default);
+    Task<CalendarResponseUpdate> SendResponseAsync(
+        long eventId, long ownerId, long characterId, short response, CancellationToken cancellationToken = default);
 }
 
 
@@ -307,16 +310,21 @@ public sealed class CalendarStore : ICalendarStore
         return new(CalendarParticipantUpdateResult.Updated, eventSnapshot, newlyAdded, actuallyRemoved);
     }
 
-    public async Task<bool> SendResponseAsync(
+    public async Task<CalendarResponseUpdate> SendResponseAsync(
         long eventId, long ownerId, long characterId, short response, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        await using var exists = Command(connection, transaction,
-            Q("SELECT tag FROM {schema}.events WHERE event_id=$1 AND owner_id=$2 AND is_deleted=false FOR UPDATE"),
-            eventId, ownerId);
-        if (await exists.ExecuteScalarAsync(cancellationToken) is not { } tagValue) return false;
-        if (Convert.ToInt16(tagValue, System.Globalization.CultureInfo.InvariantCulture) == CalendarTags.Personal &&
+        CalendarEvent? eventSnapshot;
+        await using (var exists = Command(connection, transaction,
+            Q($"SELECT {EventColumns} FROM {{schema}}.events WHERE event_id=$1 AND owner_id=$2 AND is_deleted=false FOR UPDATE"),
+            eventId, ownerId))
+        await using (var reader = await exists.ExecuteReaderAsync(cancellationToken))
+        {
+            eventSnapshot = await reader.ReadAsync(cancellationToken) ? ReadEvent(reader) : null;
+        }
+        if (eventSnapshot is null) return new(false, null);
+        if (eventSnapshot.Tag == CalendarTags.Personal &&
             characterId != ownerId)
         {
             await using var invitation = Command(connection, transaction,
@@ -325,12 +333,12 @@ public sealed class CalendarStore : ICalendarStore
             var statusValue = await invitation.ExecuteScalarAsync(cancellationToken);
             if (statusValue is null ||
                 Convert.ToInt16(statusValue, System.Globalization.CultureInfo.InvariantCulture) == CalendarResponseStates.Uninvited)
-                return false;
+                return new(false, null);
         }
 
         await UpsertResponseAsync(connection, transaction, eventId, characterId, response, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return true;
+        return new(true, eventSnapshot);
     }
 
     private async Task UpsertResponseAsync(

@@ -305,7 +305,7 @@ public sealed class CalendarParticipantConcurrencyTests
             Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null) =>
             inner.UpdateParticipantsAsync(eventId, ownerId, add, remove, cancellationToken, beforeCommitAsync);
 
-        public async Task<bool> SendResponseAsync(long eventId, long ownerId, long characterId, short response,
+        public async Task<CalendarResponseUpdate> SendResponseAsync(long eventId, long ownerId, long characterId, short response,
             CancellationToken cancellationToken = default)
         {
             _responseReached.TrySetResult();

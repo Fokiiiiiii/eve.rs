@@ -12,7 +12,7 @@ Base: `75e7de4668a9` (`origin/main`)
 - Per-wreck outcomes intentionally follow EVE University: loot and salvage are calculated at ship destruction and access bonuses affect success speed, not yield ([Salvaging](https://wiki.eveuniversity.org/Salvage#Salvaging_wrecks)). EveJS 261028.1 rolls rewards during `executeSalvagerCycle` (`/home/user/evejs-261028.1/src/server/src/space/modules/salvagerRuntime.js:1476-1484`); the intentional difference is already recorded in `DEVIATIONS.md`.
 - `PgSpaceItemStore.RemoveAsync(connection, transaction, ...)` calls `PgWreckSalvageStore.DeleteAsync` before deleting the space item, in the same transaction (`PgSpaceItemStore.cs:97-102`). Finding 5 needs no code change.
 - The client salvage path was checked across eve-logic: `eve/client/script/ui/services/menuSvcExtras/droneFunctions.py:18-34, 155-160` calls `CmdSalvage` and turns per-drone refusals into UI errors; `eve/client/script/ui/services/menusvc.py:3609-3610` is the menu wrapper. Salvage objective notifications are consumed in `objectives/client/objective_task/container.py:106-119`. No client wire shape or notification behavior is changed here.
-- SimClient's abyssal await path returned a canceled Task for pre-cancellation but threw synchronously for a disconnected link. It now returns a faulted Task for the link failure. Tests assert the Task error channel and use names that match their actual scope: cancellation after accepted send, and direct `CancelPending` map replacement coverage.
+- SimClient's abyssal await path returned a canceled Task for pre-cancellation but threw synchronously for a disconnected link. It now returns a faulted Task for the link failure. Tests assert the Task error channel and use names that match their actual scope: cancellation after accepted send, and direct `CancelPending` map replacement coverage. The proposed tokenless enqueue race is closed by existing locking: `AwaitAsync` holds `_pendingGate` across its connection check, pending registration, and enqueue (`SimClient.cs:668-693`), while `FailPendingAfterLinkLoss` takes that same gate before failing pending requests (`SimClient.cs:438-445`).
 - No other agent is attached to this session, so job 866 was not directly coordinated.
 
 ## Implementation and validation record
@@ -36,4 +36,4 @@ Local checks (PostgreSQL-backed tests used `eve_p4`):
 
 Main CI:
 - Run 1577 for base `75e7de4668a9`: completed green, including the end-to-end job.
-- Latest completed CI before new pushes must be checked again. Record each pushed SHA and resulting Actions runs here after they finish.
+- Latest completed CI before the first push was run 1577 for base `75e7de4668a9`, green. Finding 1 was pushed as `4c9cf157c500b1c2c7ff509748eebf6d02a997ff`; push-triggered CI run 1578 (`42331039469`) and selected Agent Test run 1375 (`42331097595`) both completed successfully with no failed tests.

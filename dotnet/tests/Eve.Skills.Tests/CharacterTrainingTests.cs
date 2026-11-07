@@ -343,6 +343,7 @@ public class CharacterTrainingTests
         var fullQueueIncrement = view.Queue.Sum(line => line.DestinationPoints - line.StartPoints);
         Assert.Equal(persistedPoints, await rig.PersistedSkillPointsAsync(TrainingRig.Character));
         Assert.Equal(1_165, fullQueueIncrement);
+        // The hard cap uses current trained SP plus the remaining queue; a cached panel total can lag the running head.
         var overCap = persistedPoints + fullQueueIncrement - Training.AlphaMaxTrainingSkillPoints;
         Assert.True(overCap > 0 && overCap < elapsed);
 

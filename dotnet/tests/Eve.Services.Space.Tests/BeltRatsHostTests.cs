@@ -7,13 +7,14 @@ namespace Eve.Services.Space.Tests;
 public class BeltRatsHostTests
 {
     private const long Belt = 40_009_256;
+    private const int GuristasNullSecSystem = 30_001_261;
     private static readonly double[] BeltPosition = [3_000_000, -40_000, 12_000_000];
 
-    private static readonly BeltRatConfig Always = BeltRatConfig.Reference with { ChanceHighSec = 1, ChanceLowSec = 1, ChanceNullSec = 1 };
+    private static readonly BeltRatConfig Always = BeltRatConfig.Reference with { ChanceHighSec = 1, ChanceLowSec = 1, ChanceNullSec = 1, SpecialsEnabled = false };
 
-    private static async Task<(Rig Rig, ClientSession Session)> InSpaceAsync(BeltRatConfig? rats)
+    private static async Task<(Rig Rig, ClientSession Session)> InSpaceAsync(BeltRatConfig? rats, NpcAuthority? authority = null)
     {
-        var rig = await Rig.CreateAsync(beltRats: rats);
+        var rig = await Rig.CreateAsync(beltRats: rats, npcAuthority: authority);
         var character = await rig.NewCharacterAsync();
         var session = await rig.SessionAsync(character);
         var oid = await rig.BindShipAsync(session);
@@ -22,6 +23,83 @@ public class BeltRatsHostTests
     }
 
     private static double Distance(IReadOnlyList<double> a, IReadOnlyList<double> b) => Math.Sqrt(a.Zip(b, (x, y) => (x - y) * (x - y)).Sum());
+
+    private static async Task JumpToGuristasNullSecAsync(Rig rig, ClientSession session)
+    {
+        var from = (int)session.GetInt("solarsystemid2")!.Value;
+        rig.Sim.Say(new SimJumped((ulong)session.SessionId, from, 1, GuristasNullSecSystem, 2));
+        await Rig.UntilAsync(() => session.GetInt("solarsystemid2") == GuristasNullSecSystem);
+    }
+
+    [PgFact]
+    public async Task A_guristas_commander_arrival_uses_its_special_pool_and_spawns_even_when_the_ordinary_roll_is_zero()
+    {
+        var source = NpcAuthority.Load();
+        var standard = Assert.IsType<NpcProfile>(source.Profile("parity_guristas_missile_frigate"));
+        var commander = Assert.IsType<NpcProfile>(source.Profile("parity_dread_guristas_assassin"));
+        var pools = source.Pools.Where(pool => !pool.Derived && pool.Id is not ("guristas" or "guristas_deadspace")).ToList();
+        pools.Add(new NpcPool("guristas", "Guristas Standard Hostiles", [], "npc", [new NpcPoolEntry(standard.Id, 1)]));
+        pools.Add(new NpcPool("guristas_deadspace", "Guristas Commander Hostiles", ["dread guristas"], "npc", [new NpcPoolEntry(commander.Id, 1)]));
+        var authority = new NpcAuthority(source.Profiles, [], pools).WithPirateRegions([new KeyValuePair<int, string>(10000015, "guristas")]);
+        var config = BeltRatConfig.Reference with
+        {
+            ChanceHighSec = 0,
+            ChanceLowSec = 0,
+            ChanceNullSec = 0,
+            RollCooldownMs = 0,
+            RespawnCooldownMs = 0,
+            HaulerChance = 0,
+            CommanderChance = 1,
+            OfficerChance = 0,
+            CapitalChance = 0,
+        };
+        var (rig, session) = await InSpaceAsync(config, authority);
+        await using var _ = rig;
+        await JumpToGuristasNullSecAsync(rig, session);
+
+        rig.Sim.Say(new SimArrived((ulong)session.SessionId, Belt, BeltPosition));
+        await Rig.UntilAsync(() => rig.Log.Any(line => line.Contains(" commander rats", StringComparison.Ordinal)));
+
+        Assert.Equal(commander.ShipTypeId, Assert.Single(rig.Sim.Heard.OfType<SimSpawn>()).Ship.TypeId);
+    }
+
+    [PgFact]
+    public async Task A_capital_belt_spawn_uses_its_SDE_hull_weapon_and_the_solar_system_limit_blocks_a_second_belt()
+    {
+        var config = BeltRatConfig.Reference with
+        {
+            ChanceHighSec = 0,
+            ChanceLowSec = 0,
+            ChanceNullSec = 0,
+            RollCooldownMs = 0,
+            RespawnCooldownMs = 0,
+            HaulerChance = 0,
+            CommanderChance = 0,
+            OfficerChance = 0,
+            CapitalChance = 1,
+        };
+        var (rig, session) = await InSpaceAsync(config);
+        await using var _ = rig;
+        await JumpToGuristasNullSecAsync(rig, session);
+
+        var authority = NpcAuthority.Load();
+        var expectedDreadTypes = authority.Pool("capital_npc_guristas")!.Entries
+            .Select(entry => authority.Profile(entry.ProfileId)!)
+            .Where(profile => profile.CapitalClassId == "dreadnought")
+            .Select(profile => profile.ShipTypeId)
+            .ToHashSet();
+        rig.Sim.Say(new SimArrived((ulong)session.SessionId, Belt, BeltPosition));
+        await Rig.UntilAsync(() => rig.Log.Any(line => line.Contains(" capital rats", StringComparison.Ordinal)));
+
+        var spawn = Assert.Single(rig.Sim.Heard.OfType<SimSpawn>());
+        Assert.Contains(spawn.Ship.TypeId, expectedDreadTypes);
+        Assert.NotEmpty(spawn.Identity.Weapons);
+
+        var second = await rig.Space.BeltArrivalAsync((ulong)session.SessionId, Belt + 1, BeltPosition);
+
+        Assert.Equal(BeltOutcome.CapitalSystemLimit, second!.Outcome);
+        Assert.Single(rig.Sim.Heard.OfType<SimSpawn>());
+    }
 
     [PgFact]
     public async Task An_arrival_that_rolls_a_group_brings_it_into_space_around_the_belt_not_around_the_ship()
@@ -151,6 +229,24 @@ public class BeltRatsHostTests
         Assert.True(Config(("EVE_BELT_RATS", "on")).Enabled);
         var sure = Config(("EVE_BELT_RAT_CHANCE", "1"), ("EVE_BELT_RAT_ROLL_COOLDOWN_MS", "0"), ("EVE_BELT_RAT_RESPAWN_COOLDOWN_MS", "5000.5"));
         Assert.Equal((1d, 1d, 1d, 0L, 5000L), (sure.ChanceHighSec, sure.ChanceLowSec, sure.ChanceNullSec, sure.RollCooldownMs, sure.RespawnCooldownMs));
+        var specials = Config(
+            ("EVE_BELT_RAT_SPECIALS", "off"),
+            ("EVE_BELT_RAT_HAULER_CHANCE", "0.07"),
+            ("EVE_BELT_RAT_COMMANDER_CHANCE", "0.08"),
+            ("EVE_BELT_RAT_OFFICER_CHANCE", "0.0009"),
+            ("EVE_BELT_RAT_OFFICER_MAX_SECURITY", "-0.6"),
+            ("EVE_BELT_RAT_OFFICER_REQUIRE_HOME_REGION", "false"),
+            ("EVE_BELT_RAT_CAPITAL_ENABLED", "0"),
+            ("EVE_BELT_RAT_CAPITAL_CHANCE", "0.0003"),
+            ("EVE_BELT_RAT_CAPITAL_MAX_SECURITY", "-0.2"),
+            ("EVE_BELT_RAT_CAPITAL_CLASSES", "dread,titan"),
+            ("EVE_BELT_RAT_CAPITAL_MAX_ACTIVE_GROUPS_PER_SYSTEM", "0"),
+            ("EVE_BELT_RAT_HAULER_MIN_COUNT", "3"),
+            ("EVE_BELT_RAT_HAULER_MAX_COUNT", "5"));
+        Assert.Equal((false, 0.07, 0.08, 0.0009, -0.6, false, false, 0.0003, -0.2, "dread,titan", 0, 3, 5),
+            (specials.SpecialsEnabled, specials.HaulerChance, specials.CommanderChance, specials.OfficerChance, specials.OfficerMaxSecurity,
+                specials.OfficerRequireHomeRegion, specials.CapitalEnabled, specials.CapitalChance, specials.CapitalMaxSecurity, specials.CapitalClasses,
+                specials.CapitalMaxActiveGroupsPerSystem, specials.HaulerMinCount, specials.HaulerMaxCount));
         Assert.Equal(BeltRatConfig.Reference, Config(("EVE_BELT_RAT_CHANCE", "2"), ("EVE_BELT_RAT_ROLL_COOLDOWN_MS", "-1"), ("EVE_BELT_RAT_RESPAWN_COOLDOWN_MS", "soon")));
         Assert.Equal(BeltRatConfig.Reference, Config(("EVE_BELT_RAT_CHANCE", "NaN")));
     }

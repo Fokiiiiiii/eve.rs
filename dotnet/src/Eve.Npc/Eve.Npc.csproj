@@ -7,6 +7,7 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Data/npc_authority.json" LogicalName="npc_authority.json" />
+    <EmbeddedResource Include="Data/capital_npc_authority.json" LogicalName="capital_npc_authority.json" />
     <EmbeddedResource Include="Migrations/*.sql" />
   </ItemGroup>
   <ItemGroup>

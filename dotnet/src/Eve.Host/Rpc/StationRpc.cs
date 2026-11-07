@@ -47,7 +47,10 @@ internal sealed partial class CharacterServicesComposition
     [
             new StationService(stations, characters, online, now, sovereigntyReadModel.ReadAllianceSystemsAsync, officeManager: officeManager, beginObserverGuestLedgerSeed: stationGuestLedger.BeginObserverGuestLedgerSeed, characterSessions: characterSessions, allAllianceSystems: sovereigntyReadModel.ReadAllAllianceSystemsAsync, solarSystems: solarSystems),
             TradeMgrService,
-            new Eve.Services.Station.ReprocessingService(source, items, itemTypes, stations, new Eve.Services.Station.SdeReprocessingData(sde, adjustedPrices), foundations.Relations, skills, economyWallets, wallets, characters, dogma, now, corporations, corporationOfficeStore),
+            new Eve.Services.Station.ReprocessingService(source, items, itemTypes, stations, new Eve.Services.Station.SdeReprocessingData(sde, adjustedPrices), foundations.Relations, skills, economyWallets, wallets, characters, dogma, now,
+                corporations, corporationOfficeStore, structureStore,
+                (characterId, structureId, token) => structureDirectoryReadModel.CharacterHasServiceAsync(
+                    characterId, structureId, Eve.Structures.StructureServiceIds.Reprocessing, token), solarSystems),
             new Eve.Services.Station.RepairService(source, items, itemTypes, stations, dogma, modules, adjustedPrices, economyWallets, wallets, now, structureStore,
                 (characterId, structureId, token) => structureDirectoryReadModel.CharacterHasSettingAsync(characterId, structureId, 19, token)),
             new Eve.Host.DevIndexManagerRpcService(sovereigntyReadModel.ReadAllDevelopmentIndicesAsync, sovereigntyReadModel.ReadDevelopmentIndicesForSystemAsync),

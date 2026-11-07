@@ -118,15 +118,16 @@ impl Scene {
     pub(super) fn position_of(&self, session: SessionId, target_id: i64) -> Vec<Out> {
         let command = Command::PositionOf { target_id }.code();
         let refused = |reason| vec![Out::Refused { session, command, reason }];
-        let Some(position) = self.system.body(target_id).map(|body| body.position).or_else(|| {
-            self.pilots
-                .values()
-                .find(|pilot| pilot.ship.spec.ship_id == target_id)
-                .map(|pilot| pilot.ship.position)
-        }) else {
+        let target =
+            self.system.body(target_id).map(|body| (body.position, None, Some(body.radius))).or_else(|| {
+                self.pilots.values().find(|pilot| pilot.ship.spec.ship_id == target_id).map(|pilot| {
+                    (pilot.ship.position, Some(pilot.ship.direction), Some(pilot.ship.spec.radius))
+                })
+            });
+        let Some((position, direction, radius)) = target else {
             return refused("TARGET_NOT_FOUND");
         };
-        vec![Out::Position { session, command, position }]
+        vec![Out::Position { session, command, position, direction, radius }]
     }
 
     /// The point `distance` metres ahead of a ship along its heading (EVE.js `buildDeployableSpawnState`: the ship's position plus its direction times the distance).
@@ -149,7 +150,7 @@ impl Scene {
         };
         let at = pilot.ship.position;
         let position = Vec3::new(at.x + ux * distance, at.y + uy * distance, at.z + uz * distance);
-        vec![Out::Position { session, command, position }]
+        vec![Out::Position { session, command, position, direction: None, radius: None }]
     }
 
     /// A movement command of a ship that is in the scene (settled first, at `now`).

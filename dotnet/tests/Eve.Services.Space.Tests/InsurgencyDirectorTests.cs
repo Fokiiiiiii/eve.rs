@@ -95,9 +95,10 @@ public sealed class InsurgencyDirectorTests
         Assert.Equal(StructureState.ShieldVulnerable, (await rig.FobAsync(campaign.StructureId)).Snapshot.State);
         Assert.Equal(Ins.CampaignStates.Active, (await rig.CampaignAsync(campaign.CampaignId)).State);
 
-        // the shield, then the one reinforcement (3 hours at the middle roll), the armor and the hull: the FOB is destroyed
+        // let the actual armor reinforcement deadline elapse, then damage armor and hull: the FOB is destroyed
         await rig.HitAsync(campaign.StructureId, new Damaged(StructureLayer.Shield, true, false));
-        rig.Advance(TimeSpan.FromHours(3) + TimeSpan.FromMinutes(1));
+        var shieldReinforcement = await rig.FobAsync(campaign.StructureId);
+        rig.Advance(TimeSpan.FromMilliseconds(shieldReinforcement.Snapshot.StateEndsMs - rig.Now + 1));
         await rig.RunDueAsync();
         await rig.HitAsync(campaign.StructureId, new Damaged(StructureLayer.Armor, true, false));
         await rig.HitAsync(campaign.StructureId, new Damaged(StructureLayer.Hull, true, false));
@@ -198,6 +199,7 @@ public sealed class InsurgencyDirectorTests
         public Ins.InsurgencyStore Store { get; }
         public Ins.InsurgencyCampaigns Campaigns { get; }
         public LoyaltyPointStore Loyalty { get; }
+        public long Now => _now;
 
         public static async Task<InsurgencyRig> CreateAsync()
         {

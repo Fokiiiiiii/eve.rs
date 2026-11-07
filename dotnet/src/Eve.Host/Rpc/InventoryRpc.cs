@@ -31,6 +31,7 @@ using Eve.Services.Space;
 using Eve.Space;
 using Eve.Services.Station;
 using Eve.Services.Wallet;
+using Eve.Services.Ships;
 using static Eve.Host.HostConfiguration;
 
 namespace Eve.Host;
@@ -88,6 +89,7 @@ internal sealed partial class CharacterServicesComposition
             new DogmaIMService(
                 dogma, ships, now,
                 skillHandler.TryActivateBoosterAsync,
+                injectSkillBooks: skillHandler.InjectSkillBooksAsync,
                 sync: dogmaSync,
                 space: spaceSessions,
                 modules: spaceSessions,
@@ -99,7 +101,127 @@ internal sealed partial class CharacterServicesComposition
                 localTimers: foundations.LocalTimers,
                 augmentations: new PilotAugmentationRpc(pilotImplants, skillHandler.UseBoosterAsync, announcer, dogma),
                 prepareSpaceDogma: spaceSessions is null ? null : spaceSessions.PrepareSpaceDogmaAsync,
-                structureServiceModuleToggle: structureServiceModuleAuthority.ToggleAsync).ListeningForDryGuns(),
+                structureServiceModuleToggle: structureServiceModuleAuthority.ToggleAsync,
+                updateDroneSettings: characters.UpdateDroneSettingsAsync,
+                createNewbieShip: CreateNewbieShipAsync,
+                unloadAmmoToContainer: UnloadAmmoToContainerAsync).ListeningForDryGuns(),
         ];
+    }
+
+    private async ValueTask CreateNewbieShipAsync(ClientSession session, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var characterId = session.CharacterId;
+            var locationId = session.GetInt("stationid") ?? session.GetInt("structureid");
+            if (characterId is not > 0 || locationId is not > 0)
+                throw MachoErrors.ThrowUserError("MustBeDocked");
+
+            if (await characters.GetAsync(characterId.Value, cancellationToken) is not { ShipId: { } currentShipId } character
+                || session.GetInt("shipid") != currentShipId
+                || catalog.Race(character.RaceId) is not { } race)
+                throw MachoErrors.ThrowUserError("ErrorCreatingNewbieShip");
+
+            var prepared = await ships.PrepareNewbieShipAsync(
+                characterId.Value, locationId.Value, currentShipId, race.ShipTypeId, cancellationToken);
+            if (prepared.AlreadyInNewbieShip)
+                throw MachoErrors.ThrowUserError("AlreadyInNewbieShip");
+            if (prepared.Preparation is not { } shipPreparation)
+                throw MachoErrors.ThrowUserError("ErrorCreatingNewbieShip");
+
+            await dogma.EnsureTypesAsync(
+                [shipPreparation.Ship.TypeId, .. shipPreparation.FittedModules.Select(change => change.After.TypeId)], cancellationToken);
+            ItemRow RowOf(Eve.Inventory.Item item)
+            {
+                var type = dogma.Type(item.TypeId);
+                return new ItemRow(item.Id, item.TypeId, item.OwnerId, item.LocationId, item.Flag,
+                    item.Singleton ? -1 : item.Quantity, type?.GroupId ?? 0, type?.CategoryId ?? 0);
+            }
+
+            if (shipPreparation.Created)
+            {
+                var ship = shipPreparation.Ship;
+                session.SendNotification("OnItemChange", "clientID", InventoryWire.PackedRow(RowOf(ship)), new PyDict([]), PyNone.Instance);
+            }
+            foreach (var fitted in shipPreparation.FittedModules)
+                ShipNotifications.SendItemChange(session, fitted, RowOf);
+
+            if (spaceSessions is { } space)
+            {
+                if (await space.BoardAsync(session, shipPreparation.Ship.Id, currentShipId, cancellationToken) is not PyTuple)
+                    throw MachoErrors.ThrowUserError("ErrorCreatingNewbieShip");
+            }
+            else
+            {
+                if (!await ships.BoardAsync(characterId.Value, locationId.Value, currentShipId, shipPreparation.Ship.Id, cancellationToken))
+                    throw MachoErrors.ThrowUserError("ErrorCreatingNewbieShip");
+                session.Change(("shipid", new PyLong(shipPreparation.Ship.Id)));
+            }
+
+            await ships.HealAsync(characterId.Value, shipPreparation.Ship.Id, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (MachoWrappedException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            throw MachoErrors.ThrowUserError("ErrorCreatingNewbieShip");
+        }
+    }
+
+    private async Task<ShipOutcome> UnloadAmmoToContainerAsync(
+        ClientSession session, long characterId, long shipId, IReadOnlyList<long> moduleIds, long containerId,
+        long? namedOwnerId, int? flag, long? quantity, CancellationToken cancellationToken)
+    {
+        if (session.DockedLocationId is not { } stationId
+            || await items.GetAsync(containerId, cancellationToken) is not { } container)
+            return new NothingHappened();
+
+        if (namedOwnerId is { } named && named != container.OwnerId)
+            return new NothingHappened();
+
+        var destinationOwnerId = container.OwnerId;
+        if (destinationOwnerId != characterId)
+        {
+            var corporationId = session.GetInt("corporationID") is { } corporation && corporation != 0
+                ? corporation
+                : session.GetInt("corpid") ?? 0;
+            if (corporationId <= 0 || destinationOwnerId != corporationId
+                || !await CanDepositIntoCorporationContainerAsync(characterId, corporationId, stationId, container, cancellationToken))
+            {
+                throw MachoErrors.ThrowUserError("CrpAccessDenied",
+                    ("reason", Py.Tuple(new PyInt(101), new PyStr("UI/Corporations/AccessRestrictions/InsufficientRoles"))));
+            }
+        }
+
+        return await ships.UnloadAmmoToContainerAsync(characterId, shipId, moduleIds, containerId,
+            destinationOwnerId, flag, quantity, cancellationToken);
+    }
+
+    private async Task<bool> CanDepositIntoCorporationContainerAsync(
+        long characterId, long corporationId, long stationId, Eve.Inventory.Item container, CancellationToken cancellationToken)
+    {
+        var current = container;
+        var seen = new HashSet<long>();
+        for (var depth = 0; depth < 32; depth++)
+        {
+            if (!seen.Add(current.Id) || current.OwnerId != corporationId)
+                return false;
+            if (current.LocationId == stationId)
+            {
+                return (current.Flag == ItemFlags.Hangar || ItemFlags.IsCorporationHangar(current.Flag))
+                    && await HostInventoryServiceFactory.HangarAccessOf(corporations)(characterId, corporationId,
+                        stationId, current.Flag, CorporationHangarOperation.Deposit, cancellationToken);
+            }
+            if (await items.GetAsync(current.LocationId, cancellationToken) is not { } parent)
+                return false;
+            current = parent;
+        }
+        return false;
     }
 }

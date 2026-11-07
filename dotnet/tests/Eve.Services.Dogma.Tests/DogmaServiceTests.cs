@@ -177,10 +177,16 @@ public class DogmaServiceTests
 
         // the ship alone, docked: the character comes with it
         var shipOnly = await rig.CallAsync(session, "GetAllInfo", oid, PyBool.False, PyBool.True, PyNone.Instance);
-        Assert.Equal(PyNone.Instance, Field(shipOnly, "shipModifiedCharAttribs"));
+        Assert.IsType<PyObject>(Field(shipOnly, "shipModifiedCharAttribs"));
         Assert.Equal(4, Dict(Field(shipOnly, "shipInfo")).Entries.Count);
         Assert.IsType<PyTuple>(Field(shipOnly, "shipState"));
         Assert.IsType<PyTuple>(Field(shipOnly, "charInfo"));
+
+        // In space, a ship-only prime still includes modified character attributes but uses an empty charInfo dict.
+        session.Set("stationid", PyNone.Instance);
+        var spaceShipOnly = await rig.CallAsync(session, "GetAllInfo", oid, PyBool.False, PyBool.True, PyNone.Instance);
+        Assert.IsType<PyObject>(Field(spaceShipOnly, "shipModifiedCharAttribs"));
+        Assert.Empty(Dict(Field(spaceShipOnly, "charInfo")).Entries);
 
         // neither
         var neither = await rig.CallAsync(session, "GetAllInfo", oid, PyBool.False, PyBool.False, PyNone.Instance);

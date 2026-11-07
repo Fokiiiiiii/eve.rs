@@ -28,6 +28,7 @@ public class AccelerationGateContainersTests
         Assert.Equal(["room:entry", "room:17492", "room:17493", "room:17494"], layout.Rooms.Select(room => room.Key).ToArray());
         Assert.Equal(2, layout.Gates.Count);
         Assert.All(layout.Gates, gate => Assert.Equal("room:entry", gate.SourceRoomKey));
+        Assert.Equal(["room:entry", "room:17492"], layout.Gates.Select(gate => gate.ClearanceRoomKey!).ToArray());
 
         rig.Sim.IsConnected = false;
         await rig.Containers.ReconcileDeadspacePocketsAsync([pocket]);

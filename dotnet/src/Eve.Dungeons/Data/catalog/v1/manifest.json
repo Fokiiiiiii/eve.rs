@@ -6,12 +6,14 @@
   "dungeons-02.json"
  ],
  "missionFile": "missions.json",
+ "layoutProfilesFile": "layout-profiles.json",
  "knownGapsFile": "known-gaps.json",
  "counts": {
   "dungeonTemplates": 4653,
   "fromAuthority": 4613,
   "fromMiningPack": 40,
   "overlayApplied": 26,
+  "layoutProfiles": 81,
   "killMissionBindings": 1661,
   "missionDungeonIDs": 1460,
   "missionDungeonIDsWithTemplate": 1453,

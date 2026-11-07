@@ -51,6 +51,7 @@ public sealed class DungeonRoomLayoutTests
 
         var gate = Assert.Single(layout.Gates, g => g.DestinationRoomKey == "room:13850");
         Assert.Equal("room:13849", gate.SourceRoomKey);
+        Assert.Equal("room:13849", gate.ClearanceRoomKey);
         Assert.Equal([Origin[0], Origin[1] - 750, Origin[2]], gate.Position);
     }
 
@@ -64,6 +65,7 @@ public sealed class DungeonRoomLayoutTests
         Assert.Equal([Origin[0] + 31_457_280, Origin[1], Origin[2]], layout.Room("room:20191")!.Anchor);
         var gate = Assert.Single(layout.Gates);
         Assert.Equal(("room:20206", "room:20191"), (gate.SourceRoomKey, gate.DestinationRoomKey));
+        Assert.Equal("room:20206", gate.ClearanceRoomKey);
         Assert.Equal([Origin[0] + 13_000, Origin[1], Origin[2]], gate.Position);
     }
 

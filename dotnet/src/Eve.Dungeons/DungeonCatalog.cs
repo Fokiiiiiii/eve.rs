@@ -12,6 +12,7 @@ public sealed class DungeonCatalog
 {
     public const string ManifestSchema = "eve.dungeon-catalog.manifest.v1";
     public const string DungeonSchema = "eve.dungeon-catalog.dungeon.v1";
+    public const string LayoutProfilesSchema = "eve.dungeon-catalog.layout-profiles.v1";
     public const string MissionSchema = "eve.dungeon-catalog.missions.v1";
     public const string GapSchema = "eve.dungeon-catalog.known-gaps.v1";
 
@@ -72,6 +73,10 @@ public sealed class DungeonCatalog
             }
         }
 
+        DungeonLayoutProfilesFile layoutProfiles = Read<DungeonLayoutProfilesFile>(open, manifest.LayoutProfilesFile);
+        Expect(layoutProfiles.Schema, LayoutProfilesSchema, manifest.LayoutProfilesFile);
+        catalog.ApplyLayoutProfiles(layoutProfiles.Profiles, manifest.LayoutProfilesFile);
+
         MissionFile missions = Read<MissionFile>(open, manifest.MissionFile);
         Expect(missions.Schema, MissionSchema, manifest.MissionFile);
         foreach (MissionBinding binding in missions.KillMissionDungeons)
@@ -110,6 +115,70 @@ public sealed class DungeonCatalog
             catalog._epicLike[epic.MissionID] = epic.Reason;
         }
         return catalog;
+    }
+
+    private void ApplyLayoutProfiles(IReadOnlyList<DungeonLayoutProfile> profiles, string file)
+    {
+        var seenDungeons = new HashSet<long>();
+        foreach (DungeonLayoutProfile profile in profiles)
+        {
+            if (!seenDungeons.Add(profile.DungeonID))
+            {
+                throw new InvalidDataException($"dungeon {profile.DungeonID} has two layout profiles in '{file}'");
+            }
+            if (!_dungeons.TryGetValue(profile.DungeonID, out Dungeon? dungeon))
+            {
+                throw new InvalidDataException($"layout profile in '{file}' names missing dungeon {profile.DungeonID}");
+            }
+
+            var rooms = dungeon.Rooms.ToDictionary(room => room.Key, StringComparer.Ordinal);
+            var gates = dungeon.Gates.ToDictionary(gate => gate.Key, StringComparer.Ordinal);
+            var roomProfiles = new Dictionary<string, DungeonRoomLayoutProfile>(StringComparer.Ordinal);
+            foreach (DungeonRoomLayoutProfile room in profile.Rooms)
+            {
+                if (!rooms.ContainsKey(room.RoomKey) || !roomProfiles.TryAdd(room.RoomKey, room))
+                {
+                    throw new InvalidDataException($"layout profile in '{file}' has an unknown or repeated room '{room.RoomKey}' in dungeon {profile.DungeonID}");
+                }
+                ValidatePosition(room.PositionOffset, file, profile.DungeonID, room.RoomKey);
+            }
+            if (profile.Rooms.Count(room => string.Equals(room.InitialState, "active", StringComparison.OrdinalIgnoreCase)) > 1)
+            {
+                throw new InvalidDataException($"layout profile in '{file}' has multiple active rooms in dungeon {profile.DungeonID}");
+            }
+
+            var gateProfiles = new Dictionary<string, DungeonGateLayoutProfile>(StringComparer.Ordinal);
+            foreach (DungeonGateLayoutProfile gate in profile.Gates)
+            {
+                if (!gates.ContainsKey(gate.GateKey) || !gateProfiles.TryAdd(gate.GateKey, gate))
+                {
+                    throw new InvalidDataException($"layout profile in '{file}' has an unknown or repeated gate '{gate.GateKey}' in dungeon {profile.DungeonID}");
+                }
+                if (gate.SourceRoomKey is { } sourceRoom && !rooms.ContainsKey(sourceRoom))
+                {
+                    throw new InvalidDataException($"layout profile in '{file}' names unknown source room '{sourceRoom}' for gate '{gate.GateKey}' in dungeon {profile.DungeonID}");
+                }
+                ValidatePosition(gate.PositionOffset, file, profile.DungeonID, gate.GateKey);
+            }
+
+            _dungeons[profile.DungeonID] = dungeon with
+            {
+                Rooms = [.. dungeon.Rooms.Select(room => roomProfiles.TryGetValue(room.Key, out DungeonRoomLayoutProfile? scene)
+                    ? room with { InitialState = scene.InitialState, PositionOffset = scene.PositionOffset }
+                    : room)],
+                Gates = [.. dungeon.Gates.Select(gate => gateProfiles.TryGetValue(gate.Key, out DungeonGateLayoutProfile? scene)
+                    ? gate with { SourceRoomKey = scene.SourceRoomKey, PositionOffset = scene.PositionOffset }
+                    : gate)],
+            };
+        }
+    }
+
+    private static void ValidatePosition(DungeonPosition? position, string file, long dungeonId, string key)
+    {
+        if (position is not null && (position.X is null || position.Y is null || position.Z is null))
+        {
+            throw new InvalidDataException($"layout profile in '{file}' has a partial position for '{key}' in dungeon {dungeonId}");
+        }
     }
 
     /// <summary>The content of a client dungeon, or why there is none.</summary>

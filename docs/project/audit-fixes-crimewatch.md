@@ -36,11 +36,18 @@ push後のActions run 1614では、既存の `WeaponHostTests` が60秒を超え
 
 同runの `HackingMgrServiceTests.Closing_the_session_retries_a_failed_settlement_until_the_target_is_released` は、fake siteが2回目のsettlement開始時に通知した直後、serviceがHackingWindowを削除する前にassertしていた。テストは実装処理の完了まで待ち、window削除とtarget reservation解放を確認するようにした。service実装自体は変更していない。
 
-run 1614は上記2件がfailとなり、Required CI gateもfailureで完了した。原因は、Host testがCrimewatchの60秒境界を古い15分期待で固定していたことと、settlement retry testの完了通知位置が早すぎたこと。2件ともassertionを弱めず、期待仕様と処理完了条件に合わせて修正した。この追補後のローカル確認はRelease build 0 warning、`HackingMgrServiceTests` 16件、`WeaponHostTests` 36件がすべてpass、skipなし。いずれも `eve_p4` を使用した。修正を含む次のmain CI runはまだ実施していない。
+run 1614は上記2件がfailとなり、Required CI gateもfailureで完了した。原因は、Host testがCrimewatchの60秒境界を古い15分期待で固定していたことと、settlement retry testの完了通知位置が早すぎたこと。2件ともassertionを弱めず、期待仕様と処理完了条件に合わせて修正した。この追補後のローカル確認はRelease build 0 warning、`HackingMgrServiceTests` 16件、`WeaponHostTests` 36件がすべてpass、skipなし。いずれも `eve_p4` を使用した。
+
+修正を含む[Actions run 1615](https://github.com/Fokiiiiiii/eve.rs/actions/runs/42419481445)は50/50 job successで完了した。CIのskipはpassとして数えず、ログで次の通り確認した。
+
+- .NET test jobは25 caseをskipした。Hostの22 caseは `EVE_ABYSSAL_SIM_BINARY` / `EVE_ABYSSAL_SIM_SDE` が未設定、Universeの1 caseは `EVE_CLIENT_SDE_DIR` が未設定、MarketとServices.Dogmaの各1 caseはopt-in benchmark変数が未設定だった。
+- Linux Python client jobは234 case、Windows jobは312 caseをskipした。大半は接続先の `EVE_LIVE_HOST` がない状態では動かせないserver integration/walk testである。
+- End-to-end jobは10 caseをskipした。3 caseはskill-training speed設定の差、残り7 caseは `EVE_LIVE_SLOW=1` が必要な長時間テストだった。
+- Rust testsのsummaryはignored 0件。CIを通った関連space shards（15/32、23/32）にはskipがなく、ローカルの変更クラス2つもskipなしで全件passした。
 
 ## 未確認
 
 - V24.01のグラフィカルクライアントへの実接続は行っていない。wireと遷移の確認はDB-backed Hostテストとソース照合による。
 - EveJSのサーバーフローはソースを追跡したが、EveJS実行環境でのシナリオ再生は行っていない。
 - `codebase-memory-mcp` / Serenaはこの作業環境で使用できなかったため、全体検索と行番号付きのソース読み取りで照合した。
-- V24.01の実クライアント接続、EveJS実行、修正後のActions main CI結果は未確認。
+- V24.01のグラフィカルクライアントへの実接続と、EveJS環境でのシナリオ実行は未確認。

@@ -50,8 +50,8 @@ internal sealed partial class CharacterServicesComposition
         crimewatchRuntime.WarAssistanceFactsOf = relationWars.AssistanceFactsAsync;
         crimewatchRuntime.SecurityOfSystem = (systemId, _) => Task.FromResult(
             systemId is > 0 and <= int.MaxValue ? solarSystems.Get((int)systemId)?.Security : null);
-        crimewatchRuntime.CreateKillRight = (request, token) => crimewatchStore.CreateKillRightAsync(
-            request.OwnerCharacterId, request.TargetCharacterId, request.SolarSystemId, request.CreatedAtUnixMs, token);
+        crimewatchRuntime.CreateKillRight = (request, token) => CrimewatchKillRightEvents.CreateAndPublishAsync(
+            source, crimewatchStore, foundations.Events, request, token);
         return Task.CompletedTask;
     }
 }

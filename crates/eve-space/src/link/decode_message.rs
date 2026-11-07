@@ -1547,10 +1547,20 @@ impl Message {
                 let destination_system_id = r.i32()?;
                 let destination_end = r.i64()?;
                 let destination_class = r.i32()?;
+                let nebula_type_id = r.i32()?;
+                let wormhole_age = r.i32()?;
+                let wormhole_size = r.f64()?;
+                let max_ship_jump_mass_category = r.i32()?;
                 let destination_position = read_vector(&mut r)?;
                 let destination_radius = r.f64()?;
                 let max_jump_mass = r.f64()?;
-                if ![radius, destination_radius, max_jump_mass].iter().all(|v| v.is_finite() && *v >= 0.0) {
+                if ![radius, destination_radius, max_jump_mass].iter().all(|v| v.is_finite() && *v >= 0.0)
+                    || nebula_type_id < 0
+                    || !(0..=4).contains(&wormhole_age)
+                    || !wormhole_size.is_finite()
+                    || !(0.0..=1.0).contains(&wormhole_size)
+                    || !(1..=4).contains(&max_ship_jump_mass_category)
+                {
                     return Err(DecodeError::BadValue("wormhole"));
                 }
                 Message::PlaceWormhole(Box::new(WormholePlacement {
@@ -1564,6 +1574,10 @@ impl Message {
                     destination_system_id,
                     destination_end,
                     destination_class,
+                    nebula_type_id,
+                    wormhole_age,
+                    wormhole_size,
+                    max_ship_jump_mass_category,
                     destination_position,
                     destination_radius,
                     max_jump_mass,

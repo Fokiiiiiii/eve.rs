@@ -1274,8 +1274,8 @@ public sealed record SimRemoveStructure(long StructureId) : SimMessage;
 /// appears by the far end. It stays until <see cref="SimRemoveWormhole"/>.</summary>
 public sealed record SimPlaceWormhole(
     long WormholeId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius,
-    int DestinationSystemId, long DestinationEnd, int DestinationClass, IReadOnlyList<double> DestinationPosition, double DestinationRadius,
-    double MaxJumpMass) : SimMessage;
+    int DestinationSystemId, long DestinationEnd, int DestinationClass, int NebulaTypeId, int WormholeAge, double WormholeSize,
+    int MaxShipJumpMassCategory, IReadOnlyList<double> DestinationPosition, double DestinationRadius, double MaxJumpMass) : SimMessage;
 
 /// <summary>The host takes a wormhole end out of space (protocol 63); a body that is not a wormhole end is left alone.</summary>
 public sealed record SimRemoveWormhole(long WormholeId) : SimMessage;

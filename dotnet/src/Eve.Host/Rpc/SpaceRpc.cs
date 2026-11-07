@@ -86,12 +86,7 @@ internal sealed partial class CharacterServicesComposition
                 localTimers: foundations.LocalTimers),
             new Eve.Services.Space.RandomJumpMgrService(ReadTravelRpcItemAsync, activateRandomJump, replayRandomJump),
             new Eve.Services.Space.WarpVectorMgrService(ReadTravelRpcItemAsync),
-            new Eve.Services.Space.WormholeMgrService(
-                spaceSessions,
-                readPolarization: (endId, characterId, _) => ValueTask.FromResult(spaceSessions?.PolarizationOf(endId, characterId)),
-                jump: async (call, endId, cancellationToken) => spaceSessions is null
-                    ? null
-                    : await spaceSessions.WormholeJumpAsync(call.Session, endId, call.BoundObjectId, cancellationToken)),
+            CreateWormholeMgrService(),
             new Eve.Services.Core.StructureGuestsService(
             (structureId, cancellationToken) =>
             {
@@ -108,4 +103,14 @@ internal sealed partial class CharacterServicesComposition
             }, seedObserverGuestLedger: stationGuestLedger.SeedObserverGuestLedger),
     ];
     }
+
+    private Eve.Services.Space.WormholeMgrService CreateWormholeMgrService() => new(
+        spaceSessions,
+        readPolarization: async (endId, characterId, cancellationToken) => spaceSessions is null
+            ? null
+            : await spaceSessions.PolarizationOfAsync(endId, characterId, cancellationToken),
+        jump: async (call, endId, cancellationToken) => spaceSessions is null
+            ? null
+            : await spaceSessions.WormholeJumpAsync(call.Session, endId, call.BoundObjectId, cancellationToken),
+        isPilotWarpLandingPending: call => spaceSessions?.IsWarping(call.Session) == true);
 }

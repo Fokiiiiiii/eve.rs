@@ -129,6 +129,8 @@ public class SolarSystemCatalogTests
         var to = systems.Get(30100034)!;
         Assert.Equal((20010001, 20010002), (from.ConstellationId, to.ConstellationId));
         Assert.Equal(from.RegionId, to.RegionId);
+        var region = Assert.Single(await reader.ReadAsync("mapRegions", [from.RegionId]));
+        Assert.Equal(region.Doc.GetProperty("nebulaID").GetInt32(), from.NebulaTypeId);
         Assert.Equal(30000142, systems.Get(30000142)!.Id);
         Assert.Equal("Jita", systems.Get(30000142)!.Name);
         // the faction a system belongs to is its own (Jita's is CONCORD's), else its constellation's or its region's (Perimeter's is the Caldari State's)

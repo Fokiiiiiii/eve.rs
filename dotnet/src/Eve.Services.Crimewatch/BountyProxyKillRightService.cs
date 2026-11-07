@@ -9,6 +9,7 @@ public static class KillRightNotificationTypes
     public const int MiscGroup = 4;
     public const int Available = 115;
     public const int AvailableOpen = 116;
+    public const int Earned = 117;
     public const int Used = 118;
     public const int Unavailable = 119;
     public const int UnavailableOpen = 120;

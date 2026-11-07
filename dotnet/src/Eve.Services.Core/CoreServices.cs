@@ -43,8 +43,7 @@ public static class CoreServices
         Func<long, long, CancellationToken, ValueTask<bool>>? isCharacterInCurrentCorporation = null,
         TourneyMatchCallbacks? tournamentMatchCallbacks = null,
         CalendarCspaBilling? calendarCspaBilling = null,
-        ReadDynamicBountyCallback? readDynamicBounty = null,
-        ReadCommunityTrackAttributesCallback? readCommunityTrackAttributes = null)
+        ReadDynamicBountyCallback? readDynamicBounty = null)
     {
         gameRpcCallbacks ??= new GameRpcCallbacks();
         var licenses = new OmegaLicenses(accounts, nowUnixMs);
@@ -95,7 +94,7 @@ public static class CoreServices
             new CacheService(),
             new ActivityMgrService(),
               new ChatAuthenticationService(),
-            new CommunityTrackMgrService(readCommunityTrackAttributes),
+            new CommunityTrackMgrService(),
             new ContextualOfferMgrService(),
               new DynamicBountyMgrService(readDynamicBounty),
                 new JumpTimersService(readJumpTimers),

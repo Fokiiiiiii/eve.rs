@@ -18,9 +18,9 @@ Base: `75e7de4668a9` (`origin/main`)
 ## Implementation and validation record
 
 Work in this worktree:
-- Finding 1 (missing SDE data during ship death): code and regression test are ready.
+- Finding 1 (missing SDE data during ship death): code and regression test were pushed as `4c9cf157c500b1c2c7ff509748eebf6d02a997ff`.
 - Finding 3 (missing saved outcome during salvage): refusal, log, and regression test were pushed as `e5e52a5d10482079e9f7efd046494008349a8d63`.
-- SimClient cancellation finding from 9bf04318: disconnected abyssal calls now return a faulted Task; test scope names are corrected.
+- SimClient cancellation finding from 9bf04318: disconnected abyssal calls now return a faulted Task; test scope names are corrected. The signed fix commit is `3a5fe2cc05595eaac4d1c30e0a6591f1c9634402`, pushed to main in merge commit `186c2335eb428b5a3dfb878c88c45e1bea603cd4`.
 - Findings 2 and 4 are already covered by the compatibility note above. Finding 5 is already handled transactionally at `PgSpaceItemStore.cs:97-102`.
 
 Local checks (PostgreSQL-backed tests used `eve_p4`):
@@ -35,5 +35,4 @@ Local checks (PostgreSQL-backed tests used `eve_p4`):
 - An initial test build caught xUnit2012 in the missing-outcome assertion and CS0619 in the synchronous exception probe. Both were fixed; the later affected test projects built and passed.
 
 Main CI:
-- Run 1577 for base `75e7de4668a9`: completed green, including the end-to-end job.
-- Latest completed CI before the first push was run 1577 for base `75e7de4668a9`, green. Finding 1 was pushed as `4c9cf157c500b1c2c7ff509748eebf6d02a997ff`; push-triggered CI run 1578 (`42331039469`) and selected Agent Test run 1375 (`42331097595`) both completed successfully with no failed tests. Finding 3 was pushed as `e5e52a5d10482079e9f7efd046494008349a8d63`; push-triggered CI run 1579 (`42333649695`) and selected Agent Test run 1376 (`42333680211`) both completed successfully with no failed tests.
+- Run 1577 for base `75e7de4668a9` was green before work began. Finding 1 was pushed as `4c9cf157c500b1c2c7ff509748eebf6d02a997ff`; CI 1578 (`42331039469`) and Agent Test 1375 (`42331097595`) succeeded. Finding 3 was pushed as `e5e52a5d10482079e9f7efd046494008349a8d63`; CI 1579 (`42333649695`) and Agent Test 1376 (`42333680211`) succeeded. Main then advanced to `2641c2b88414`; its CI 1580 (`42335367171`) succeeded before the SimClient push. SimClient fix `3a5fe2cc05595eaac4d1c30e0a6591f1c9634402` was pushed in merge commit `186c2335eb428b5a3dfb878c88c45e1bea603cd4`; CI 1581 (`42336819637`) and Agent Test 1377 (`42336855419`) both completed successfully with no failed tests. `failures 186c2335eb428b5a3dfb878c88c45e1bea603cd4` reported no failed tests or jobs.

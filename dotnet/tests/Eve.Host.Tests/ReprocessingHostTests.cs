@@ -2,11 +2,15 @@ using Eve.Characters;
 using Eve.Corporations;
 using Eve.Data;
 using Eve.Host;
+using Eve.Fitting;
 using Eve.Identity;
 using Eve.Inventory;
+using Eve.Inventory.Mutation;
 using Eve.Macho;
+using Eve.Market;
 using Eve.Marshal;
 using Eve.Skills;
+using Eve.Structures;
 using Eve.Services;
 using Eve.Wallet;
 using Npgsql;
@@ -176,29 +180,272 @@ public sealed class ReprocessingHostTests : IAsyncLifetime
             var service = host.Registry.Lookup("reprocessingSvc") ?? throw new InvalidOperationException("reprocessingSvc is not registered");
             await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.CallAsync(PlantCall(Session(founder), "Reprocess",
                 new PyList([new PyLong(founderInput)]), new PyLong(StationId), new PyLong(corporation.Id),
-                new PyLong(office.OfficeId + 1), new PyInt(115))));
+                new PyLong(office.OfficeFolderId + 1), new PyInt(115))));
             Assert.NotNull(await items.GetAsync(founderInput));
-            Assert.Empty(await items.InLocationAsync(office.OfficeId, corporation.Id, default));
+            Assert.Empty(await items.InLocationAsync(office.OfficeFolderId, corporation.Id, default));
 
             var capture = new Capture();
             var founderSession = Session(founder, capture);
             var dispatcher = new PacketDispatcher(host.Registry, () => now);
             Assert.True(await dispatcher.DispatchAsync(ClientCallPacket(1,
                 new PyList([new PyLong(founderInput)]), new PyLong(StationId), new PyLong(corporation.Id),
-                new PyLong(office.OfficeId), new PyInt(115)), founderSession));
+                new PyLong(office.OfficeFolderId), new PyInt(115)), founderSession));
             var founderResponsePacket = capture.Packets.Single(packet => packet is PyObject { Name: PyStr name } && name.Value.EndsWith(".CallRsp", StringComparison.Ordinal));
             var founderResponse = Assert.IsType<PyTuple>(Result(founderResponsePacket));
             var founderResult = Assert.IsType<PyList>(founderResponse.Items[1]);
             Assert.Equal(founderInput, Assert.IsType<PyLong>(Assert.Single(Assert.IsType<PyList>(founderResult.Items[0]).Items)).Value);
-            var corporationYields = await items.InLocationAsync(office.OfficeId, corporation.Id, default);
+            var corporationYields = await items.InLocationAsync(office.OfficeFolderId, corporation.Id, default);
             Assert.Contains(corporationYields, item => item.TypeId == Tritanium && item.Flag == 115);
 
-            var yieldsBeforeDeniedCall = corporationYields.Count;
+            long corporationInput;
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                corporationInput = await items.CreateAsync(connection, transaction,
+                    new NewItem(Veldspar, corporation.Id, office.OfficeFolderId, 115, 100));
+                await transaction.CommitAsync();
+            }
+            founderSession.Set("corpid", new PyLong(corporation.Id));
+            var founderQuotesResponse = Assert.IsType<PyTuple>(await service.CallAsync(PlantCall(founderSession, "GetQuotes",
+                new PyList([new PyLong(corporationInput)]), new PyInt(0))));
+            Assert.Single(Assert.IsType<PyDict>(Assert.IsType<PyList>(founderQuotesResponse.Items[1]).Items[2]).Entries);
+
+            var memberSession = Session(member);
+            memberSession.Set("corpid", new PyLong(corporation.Id));
+            var memberQuotesResponse = Assert.IsType<PyTuple>(await service.CallAsync(PlantCall(memberSession, "GetQuotes",
+                new PyList([new PyLong(corporationInput)]), new PyInt(0))));
+            Assert.Empty(Assert.IsType<PyDict>(Assert.IsType<PyList>(memberQuotesResponse.Items[1]).Items[2]).Entries);
+            Assert.NotNull(await items.GetAsync(corporationInput));
+
+            var corporationResultResponse = Assert.IsType<PyTuple>(await service.CallAsync(PlantCall(founderSession, "Reprocess",
+                new PyList([new PyLong(corporationInput)]), new PyLong(office.OfficeFolderId), new PyLong(corporation.Id),
+                new PyLong(office.OfficeFolderId), new PyInt(115))));
+            var corporationResult = Assert.IsType<PyList>(corporationResultResponse.Items[1]);
+            Assert.Equal(corporationInput, Assert.IsType<PyLong>(Assert.Single(Assert.IsType<PyList>(corporationResult.Items[0]).Items)).Value);
+            Assert.Null(await items.GetAsync(corporationInput));
+            Assert.Contains(await items.InLocationAsync(office.OfficeFolderId, corporation.Id, default), item => item.TypeId == Tritanium && item.Flag == 115);
+
+            var yieldsBeforeDeniedCall = (await items.InLocationAsync(office.OfficeFolderId, corporation.Id, default)).Count;
             await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.CallAsync(PlantCall(Session(member), "Reprocess",
                 new PyList([new PyLong(memberInput)]), new PyLong(StationId), new PyLong(corporation.Id),
-                new PyLong(office.OfficeId), new PyInt(115))));
+                new PyLong(office.OfficeFolderId), new PyInt(115))));
             Assert.NotNull(await items.GetAsync(memberInput));
-            Assert.Equal(yieldsBeforeDeniedCall, (await items.InLocationAsync(office.OfficeId, corporation.Id, default)).Count);
+            Assert.Equal(yieldsBeforeDeniedCall, (await items.InLocationAsync(office.OfficeFolderId, corporation.Id, default)).Count);
+        }
+        finally
+        {
+            await host.ShutdownAsync();
+        }
+    }
+
+    [PgFact]
+    public async Task Reprocess_uses_a_structure_service_profile_and_rejects_offline_or_inaccessible_structures()
+    {
+        var host = await HostComposition.BuildAsync(Settings());
+        try
+        {
+            await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url));
+            var characters = new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA"));
+            var character = await InsertPilotAsync(source, characters);
+            var outsider = await InsertPilotAsync(source, characters);
+            const long structureId = 1_000_000_000_999;
+            var walletStore = new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA"));
+            var walletTransactions = new WalletTransactions(source, Schema("EVE_WALLET_SCHEMA"));
+            var skills = new PgSkillStore(source, Schema("EVE_SKILLS_SCHEMA"));
+            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await walletStore.OpenAsync(connection, transaction, character, 5_000_000m, now);
+                await skills.GrantAsync(connection, transaction, character, [new CharacterSkill(3363, 1, 0)]);
+                await transaction.CommitAsync();
+            }
+            var corporations = new CorporationStore(source, characters, walletStore, walletTransactions,
+                skills, () => now,
+                Schema("EVE_CORPORATIONS_SCHEMA"));
+            var corporation = await corporations.CreateAsync(character,
+                new NewCorporation("Structure Reprocessing Test", "SRT", "", "", 0.05m), $"reprocess-structure:{character}");
+            var corporationId = corporation.Id;
+            await using (var scheduler = new Eve.Scheduler.DurableScheduler(source, () => now, schema: Schema("EVE_SCHEDULER_SCHEMA")))
+            {
+                var relations = new Eve.Relations.RelationStore(source, scheduler,
+                    new Eve.Events.EventBus(source, scheduler, schema: Schema("EVE_EVENTS_SCHEMA")), Schema("EVE_RELATIONS_SCHEMA"));
+                await relations.SetAsync(Eve.Relations.RelationKinds.CorporationMember.Name, character, corporationId, 1,
+                    "structure reprocessing test affiliation");
+            }
+            var structures = new StructureStore(source, Schema("EVE_STRUCTURES_SCHEMA"));
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await structures.CreateAsync(connection, transaction,
+                    new NewStructure(structureId, 35836, Jita, 0, 0, 0, 0, corporationId, 0, "Reprocessing Test", ""));
+                await structures.SaveAsync(connection, transaction, new StructureSnapshot
+                {
+                    StructureId = structureId,
+                    State = StructureState.ShieldVulnerable,
+                    Upkeep = UpkeepState.FullPower,
+                    CoreInstalled = true,
+                });
+                await structures.SetServiceAsync(connection, transaction, structureId, StructureServiceIds.Reprocessing,
+                    ServiceState.Online, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                await using var tax = new NpgsqlCommand(
+                    $"UPDATE {Schema("EVE_STRUCTURES_SCHEMA")}.structures SET doc = doc || '{{\"industryTaxRate\":0.05}}'::jsonb WHERE structure_id = $1",
+                    connection, transaction);
+                tax.Parameters.AddWithValue(structureId);
+                await tax.ExecuteNonQueryAsync();
+                await transaction.CommitAsync();
+            }
+
+            var items = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
+            var ownerBalanceBeforeSettlement = (await walletStore.GetAsync(corporationId))!.Isk;
+            long input;
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                input = await items.CreateAsync(connection, transaction,
+                    new NewItem(Veldspar, character, structureId, ItemFlags.Hangar, 100));
+                await items.CreateAsync(connection, transaction,
+                    new NewItem(46640, corporationId, structureId, 92, 1));
+                await transaction.CommitAsync();
+            }
+
+            var service = host.Registry.Lookup("reprocessingSvc") ?? throw new InvalidOperationException("reprocessingSvc is not registered");
+            var notices = new Capture();
+            var session = StructureSession(character, structureId, corporationId, notices);
+            var response = Assert.IsType<PyTuple>(await service.CallAsync(PlantCallAt(structureId, session, "GetQuotes",
+                new PyList([new PyLong(input)]), new PyInt(0))));
+            var quoteResults = Assert.IsType<PyList>(response.Items[1]);
+            Assert.Equal(0.05, Number(quoteResults.Items[0]), 6);
+            var efficiencies = Assert.IsType<PyDict>(quoteResults.Items[1]);
+            Assert.Equal(0.55915, Number(efficiencies.Entries.Single(entry => entry.Key is PyInt type && type.Value == Veldspar).Value), 6);
+            var quote = Assert.Single(Assert.IsType<PyDict>(quoteResults.Items[2]).Entries).Value;
+            Assert.Equal(0.55915, Number(QuoteField(quote, "efficiency")), 6);
+
+            var reprocessed = Assert.IsType<PyTuple>(await service.CallAsync(PlantCallAt(structureId, session, "Reprocess",
+                new PyList([new PyLong(input)]), new PyLong(structureId), new PyLong(character),
+                new PyLong(structureId), new PyInt(ItemFlags.Hangar))));
+            Assert.Single(Assert.IsType<PyList>(Assert.IsType<PyList>(reprocessed.Items[1]).Items[0]).Items);
+            Assert.Null(await items.GetAsync(input));
+            Assert.Contains(await items.InLocationAsync(structureId, character, default), item => item.TypeId == Tritanium);
+            Assert.Equal(2, notices.Packets.Count);
+            Assert.True((await walletStore.GetAsync(character))!.Isk < 5_000_000m);
+            Assert.True((await walletStore.GetAsync(corporationId))!.Isk > ownerBalanceBeforeSettlement);
+
+            var outputCountAfterSettlement = (await items.InLocationAsync(structureId, character, default)).Count(item => item.TypeId == Tritanium);
+            var balanceAfterSettlement = (await walletStore.GetAsync(character))!.Isk;
+            var ownerBalanceAfterSettlement = (await walletStore.GetAsync(corporationId))!.Isk;
+            await host.ShutdownAsync();
+            host = await HostComposition.BuildAsync(Settings());
+            service = host.Registry.Lookup("reprocessingSvc") ?? throw new InvalidOperationException("reprocessingSvc is not registered after restart");
+            var retry = Assert.IsType<PyTuple>(await service.CallAsync(PlantCallAt(structureId, session, "Reprocess",
+                new PyList([new PyLong(input)]), new PyLong(structureId), new PyLong(character),
+                new PyLong(structureId), new PyInt(ItemFlags.Hangar))));
+            var retryResult = Assert.IsType<PyList>(retry.Items[1]);
+            Assert.Empty(Assert.IsType<PyList>(retryResult.Items[0]).Items);
+            Assert.Empty(Assert.IsType<PyDict>(retryResult.Items[1]).Entries);
+            Assert.Equal(outputCountAfterSettlement, (await items.InLocationAsync(structureId, character, default)).Count(item => item.TypeId == Tritanium));
+            Assert.Equal(balanceAfterSettlement, (await walletStore.GetAsync(character))!.Isk);
+            Assert.Equal(ownerBalanceAfterSettlement, (await walletStore.GetAsync(corporationId))!.Isk);
+            Assert.Equal(2, notices.Packets.Count);
+
+            long protectedInput;
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                protectedInput = await items.CreateAsync(connection, transaction,
+                    new NewItem(Veldspar, character, structureId, ItemFlags.Hangar, 100));
+                await structures.SetServiceAsync(connection, transaction, structureId, StructureServiceIds.Reprocessing,
+                    ServiceState.Offline, 0);
+                await transaction.CommitAsync();
+            }
+            var outputCountBeforeOfflineAttempt = (await items.InLocationAsync(structureId, character, default)).Count(item => item.TypeId == Tritanium);
+            await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(PlantCallAt(structureId, session, "Reprocess",
+                new PyList([new PyLong(protectedInput)]), new PyLong(structureId), new PyLong(character),
+                new PyLong(structureId), new PyInt(ItemFlags.Hangar))).AsTask());
+            Assert.NotNull(await items.GetAsync(protectedInput));
+            Assert.Equal(outputCountBeforeOfflineAttempt, (await items.InLocationAsync(structureId, character, default)).Count(item => item.TypeId == Tritanium));
+
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await structures.SetServiceAsync(connection, transaction, structureId, StructureServiceIds.Reprocessing,
+                    ServiceState.Online, now);
+                await transaction.CommitAsync();
+            }
+            var outsiderSession = StructureSession(outsider, structureId, 98_000_031);
+            await Assert.ThrowsAsync<MachoWrappedException>(() => service.CallAsync(PlantCallAt(structureId, outsiderSession, "Reprocess",
+                new PyList([new PyLong(protectedInput)]), new PyLong(structureId), new PyLong(outsider),
+                new PyLong(structureId), new PyInt(ItemFlags.Hangar))).AsTask());
+            Assert.NotNull(await items.GetAsync(protectedInput));
+            Assert.Equal(outputCountBeforeOfflineAttempt, (await items.InLocationAsync(structureId, character, default)).Count(item => item.TypeId == Tritanium));
+            Assert.Equal(2, notices.Packets.Count);
+        }
+        finally
+        {
+            await host.ShutdownAsync();
+        }
+    }
+
+    [PgFact]
+    public async Task Repair_quotes_and_repairs_a_mutated_module_through_the_registered_host_service()
+    {
+        var host = await HostComposition.BuildAsync(Settings());
+        try
+        {
+            await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url));
+            var characters = new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA"));
+            var character = await InsertPilotAsync(source, characters);
+            var items = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
+            var modules = new PgModuleStateStore(source, Schema("EVE_FITTING_SCHEMA"));
+            var prices = new AdjustedPriceStore(source, Schema("EVE_MARKET_SCHEMA"));
+            var wallets = new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA"));
+            var dogma = await Eve.Dogma.DogmaStatic.LoadAsync(new Eve.Sde.SdeReader(source));
+            await dogma.EnsureTypesAsync([12052]);
+            var hpAttributeId = dogma.AttributeId("hp") ?? throw new InvalidOperationException("SDE has no hp attribute");
+            var sourceHp = dogma.Type(12052)!.Attributes[hpAttributeId];
+            var mutatedHp = sourceHp * 1.25;
+            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            await prices.ReplaceAsync([new AdjustedPriceRow(47408, 1000, null)], now);
+            long mutatedItem;
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await wallets.OpenAsync(connection, transaction, character, 100_000m, now);
+                mutatedItem = await items.CreateAsync(connection, transaction,
+                    new NewItem(47408, character, StationId, ItemFlags.Hangar, 1, Singleton: true));
+                await modules.SetModuleConditionsAsync(connection, transaction,
+                    new Dictionary<long, ModuleCondition> { [mutatedItem] = new(0.5, 0.25, 0.5, false) });
+                await items.Mutations.InsertAsync(connection, transaction, new ItemMutationRecord(
+                    mutatedItem, 47297, 9_000_001, 12052, 9_000_002, character, now,
+                    new Dictionary<int, double> { [hpAttributeId] = 1.25 },
+                    new Dictionary<int, double> { [hpAttributeId] = sourceHp },
+                    new Dictionary<int, double> { [hpAttributeId] = mutatedHp }));
+                await transaction.CommitAsync();
+            }
+
+            await host.ShutdownAsync();
+            host = await HostComposition.BuildAsync(Settings());
+            var repair = host.Registry.Lookup("repairSvc") ?? throw new InvalidOperationException("repairSvc is not registered");
+            var notices = new Capture();
+            var session = Session(character, notices);
+            var quotes = Assert.IsType<PyTuple>(await repair.CallAsync(RepairCall(session, "GetRepairQuotes", new PyList([new PyLong(mutatedItem)]))));
+            var quote = Assert.Single(Assert.IsType<PyDict>(quotes.Items[1]).Entries).Value;
+            var row = Assert.Single(Assert.IsType<PyList>(quote).Items);
+            Assert.True(Number(QuoteField(row, "damage")) > 0);
+            Assert.Equal(mutatedHp, Number(QuoteField(row, "maxHealth")), 6);
+
+            var balanceBefore = (await wallets.GetAsync(character))!.Isk;
+            await repair.CallAsync(RepairCall(session, "RepairItemsInStation", new PyList([new PyLong(mutatedItem)]), PyNone.Instance));
+            Assert.Equal(ModuleCondition.Mended, (await modules.ModuleConditionsAsync([mutatedItem])).GetValueOrDefault(mutatedItem));
+            Assert.True((await wallets.GetAsync(character))!.Isk < balanceBefore);
+            Assert.Equal(["OnModuleAttributeChanges", "OnItemChange"], NotificationNames(notices));
+            await using var journalConnection = await source.OpenConnectionAsync();
+            await using var journal = new NpgsqlCommand(
+                $"SELECT count(*) FROM {Schema("EVE_WALLET_SCHEMA")}.journal WHERE owner_id = $1 AND ref_type_id = $2",
+                journalConnection);
+            journal.Parameters.AddWithValue(character);
+            journal.Parameters.AddWithValue(Eve.Services.Station.RepairService.RepairBillRefType);
+            Assert.Equal(1L, (long)(await journal.ExecuteScalarAsync())!);
         }
         finally
         {
@@ -268,6 +515,50 @@ public sealed class ReprocessingHostTests : IAsyncLifetime
         Session = session,
     };
 
+    private static ServiceCall PlantCallAt(long location, ClientSession session, string method, params PyValue[] args) => new()
+    {
+        Method = "MachoBindObject",
+        Args =
+        [
+            new PyLong(location),
+            new PyTuple([new PyStr(method), new PyTuple(args), PyNone.Instance]),
+        ],
+        Session = session,
+    };
+
+    private static ClientSession StructureSession(long character, long structureId, long corporationId, IPacketSink? sink = null)
+    {
+        var session = sink is null
+            ? new ClientSession { SessionId = 42, CharacterId = character }
+            : new ClientSession(sink) { SessionId = 42, CharacterId = character };
+        session.Set("structureid", new PyLong(structureId));
+        session.Set("corpid", new PyLong(corporationId));
+        session.Set("solarsystemid2", new PyLong(Jita));
+        return session;
+    }
+
+    private static ServiceCall RepairCall(ClientSession session, string method, params PyValue[] args) => new()
+    {
+        Method = "MachoBindObject",
+        Args =
+        [
+            new PyTuple([new PyLong(StationId), new PyLong(Jita), new PyInt(1)]),
+            new PyTuple([new PyStr(method), new PyTuple(args), PyNone.Instance]),
+        ],
+        Session = session,
+    };
+
+    private static PyValue QuoteField(PyValue quote, string name) => Assert.IsType<PyDict>(Assert.IsType<PyObject>(quote).Args)
+        .Entries.Single(entry => entry.Key is PyStr key && key.Value == name).Value;
+
+    private static double Number(PyValue value) => value switch
+    {
+        PyInt number => number.Value,
+        PyLong number => number.Value,
+        PyReal number => number.Value,
+        _ => throw new InvalidOperationException(value.ToString()),
+    };
+
     private static async Task<long> InsertPilotAsync(NpgsqlDataSource source, PgCharacterStore characters)
     {
         var pilot = new NewCharacter(AccountId, $"Reprocessing Host Pilot {Guid.NewGuid():N}", Gender: 1, RaceId: 1, BloodlineId: 1, AncestryId: 10,
@@ -313,6 +604,14 @@ public sealed class ReprocessingHostTests : IAsyncLifetime
         session.Set("solarsystemid2", new PyLong(Jita));
         return session;
     }
+
+    private static string[] NotificationNames(Capture capture) => capture.Packets.OfType<PyObject>().Select(packet =>
+    {
+        var args = Assert.IsType<PyTuple>(packet.Args).Items;
+        Assert.Equal(MachoMessage.Notification, Assert.IsType<PyInt>(args[0]).Value);
+        var address = Assert.IsType<PyObject>(args[2]);
+        return Assert.IsType<PyStr>(Assert.IsType<PyTuple>(address.Args).Items[1]).Value;
+    }).ToArray();
 
     private static HostSettings Settings() => new(
         "", "disabled", new ClusterOptions { NewCharacterExperienceEnabled = false, NewCharacterExperienceMode = "disabled" },

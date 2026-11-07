@@ -14,6 +14,71 @@ public class AccelerationGateContainersTests
     private static readonly double[] Origin = [5.0e11, 0.0, 2.0e11];
     private static readonly Dictionary<long, double> Radii = new() { [17831] = 12706, [35776] = 14000 };
 
+    private static double Distance(double[] left, double[] right) =>
+        Math.Sqrt(Math.Pow(left[0] - right[0], 2) + Math.Pow(left[1] - right[1], 2) + Math.Pow(left[2] - right[2], 2));
+
+    [PgFact]
+    public async Task Gates_without_an_authored_source_room_are_placed_at_the_entry_site()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var dungeon = ((DungeonFound)DungeonCatalog.LoadEmbedded().GetDungeon(1215)).Dungeon;
+        var layout = DungeonRoomLayout.Build(dungeon, Origin, Radii);
+        var pocket = new DungeonPocket(Instance, System, Origin, layout);
+
+        Assert.Equal(["room:entry", "room:17492", "room:17493", "room:17494"], layout.Rooms.Select(room => room.Key).ToArray());
+        Assert.Equal(2, layout.Gates.Count);
+        Assert.All(layout.Gates, gate => Assert.Equal("room:entry", gate.SourceRoomKey));
+        Assert.Equal(["room:entry", "room:17492"], layout.Gates.Select(gate => gate.ClearanceRoomKey!).ToArray());
+
+        rig.Sim.IsConnected = false;
+        await rig.Containers.ReconcileDeadspacePocketsAsync([pocket]);
+        rig.Sim.IsConnected = true;
+        await rig.Containers.ReconcileDeadspacePocketsAsync([pocket]);
+
+        var placed = rig.Sim.Heard.OfType<SimPlaceAccelerationGate>().OrderBy(gate => gate.DeployableId).ToArray();
+        Assert.Equal(2, placed.Length);
+        Assert.All(placed, gate => Assert.Equal(DungeonRoomLayout.GateRingMeters, Distance(gate.Position.ToArray(), Origin), 3));
+    }
+
+    [PgFact]
+    public async Task Mission_scene_profiles_place_rooms_and_gates_at_their_recorded_relative_positions()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var catalog = DungeonCatalog.LoadEmbedded();
+        var missionLayout = DungeonRoomLayout.Build(((DungeonFound)catalog.GetDungeon(2734)).Dungeon, Origin, Radii);
+        var combatLayout = DungeonRoomLayout.Build(((DungeonFound)catalog.GetDungeon(283)).Dungeon, Origin, Radii);
+        const long missionInstance = 89;
+        const long combatInstance = 90;
+        var pockets = new[]
+        {
+            new DungeonPocket(missionInstance, System, Origin, missionLayout),
+            new DungeonPocket(combatInstance, System, Origin, combatLayout),
+        };
+
+        rig.Sim.IsConnected = false;
+        await rig.Containers.ReconcileDeadspacePocketsAsync(pockets);
+        rig.Sim.IsConnected = true;
+        await rig.Containers.ReconcileDeadspacePocketsAsync(pockets);
+
+        var missionRoomId = SpaceContainers.RoomPocketDeployableId(missionInstance, 1);
+        var combatRoomId = SpaceContainers.RoomPocketDeployableId(combatInstance, 1);
+        var missionGateId = SpaceContainers.AccelerationGateDeployableId(missionInstance, 0);
+        var combatGateId = SpaceContainers.AccelerationGateDeployableId(combatInstance, 0);
+        double[] missionRoomPosition = [Origin[0] + 31_457_280, Origin[1], Origin[2]];
+        double[] combatRoomPosition = [Origin[0] - 31_457_280, Origin[1], Origin[2]];
+        double[] missionGatePosition = [Origin[0] + 13_000, Origin[1], Origin[2]];
+        double[] combatGatePosition = [Origin[0], Origin[1] - 750, Origin[2]];
+
+        Assert.Equal(missionRoomPosition, (await rig.Deployed.GetAsync(missionRoomId))!.Position);
+        Assert.Equal(combatRoomPosition, (await rig.Deployed.GetAsync(combatRoomId))!.Position);
+        Assert.Equal(missionGatePosition, (await rig.Deployed.GetAsync(missionGateId))!.Position);
+        Assert.Equal(combatGatePosition, (await rig.Deployed.GetAsync(combatGateId))!.Position);
+        Assert.Contains(rig.Sim.Heard.OfType<SimPlaceDeadspacePocket>(), body => body.DeployableId == missionRoomId && body.Position.SequenceEqual(missionRoomPosition));
+        Assert.Contains(rig.Sim.Heard.OfType<SimPlaceDeadspacePocket>(), body => body.DeployableId == combatRoomId && body.Position.SequenceEqual(combatRoomPosition));
+        Assert.Contains(rig.Sim.Heard.OfType<SimPlaceAccelerationGate>(), body => body.DeployableId == missionGateId && body.Position.SequenceEqual(missionGatePosition));
+        Assert.Contains(rig.Sim.Heard.OfType<SimPlaceAccelerationGate>(), body => body.DeployableId == combatGateId && body.Position.SequenceEqual(combatGatePosition));
+    }
+
     [PgFact]
     public async Task A_running_site_places_its_gates_and_room_pockets_and_takes_them_out_when_it_ends()
     {

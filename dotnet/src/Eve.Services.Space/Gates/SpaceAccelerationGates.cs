@@ -50,7 +50,8 @@ public sealed class SpaceAccelerationGates(
         var pocket = (await activePockets(cancellationToken)).FirstOrDefault(p => p.InstanceId == where.InstanceId);
         if (pocket?.Layout is not { } layout || layout.Gates.FirstOrDefault(g => g.GateIndex == where.GateIndex) is not { } gate)
             throw MachoErrors.ThrowUserError("DeniedTargetAttemptFailed");
-        if (layout.Room(gate.DestinationRoomKey)?.Index != 0 && !(await clearedRooms(where.InstanceId, cancellationToken)).Contains(gate.SourceRoomKey))
+        var clearanceRoomKey = gate.ClearanceRoomKey ?? gate.SourceRoomKey;
+        if (layout.Room(gate.DestinationRoomKey)?.Index != 0 && !(await clearedRooms(where.InstanceId, cancellationToken)).Contains(clearanceRoomKey))
             throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr("The acceleration gate is locked.")));
         if (await shipClassOf(session, cancellationToken) is not { } ship)
             throw MachoErrors.ThrowUserError("DeniedShipChanged");

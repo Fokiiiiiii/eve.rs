@@ -69,13 +69,19 @@ public interface ICalendarStore
     Task<IReadOnlyList<CalendarResponse>> GetResponsesForCharacterAsync(long characterId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<CalendarResponse>> GetResponsesToEventAsync(long eventId, long ownerId, CancellationToken cancellationToken = default);
     Task<long> CreateEventAsync(CalendarEventInput input, IReadOnlyCollection<long> invitees, CancellationToken cancellationToken = default,
-        Func<NpgsqlConnection, NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null);
-    Task<bool> EditEventAsync(long eventId, long ownerId, long oldEventDateTime, CalendarEventInput input, CancellationToken cancellationToken = default);
-    Task<bool> DeleteEventAsync(long eventId, long ownerId, long dateModified, CancellationToken cancellationToken = default);
+        Func<NpgsqlConnection, NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null,
+        Func<CalendarEvent, IReadOnlyCollection<long>, CancellationToken, Task>? afterCommitAsync = null);
+    Task<bool> EditEventAsync(long eventId, long ownerId, long oldEventDateTime, CalendarEventInput input,
+        CancellationToken cancellationToken = default,
+        Func<CalendarEvent, IReadOnlyCollection<long>, CancellationToken, Task>? afterCommitAsync = null);
+    Task<bool> DeleteEventAsync(long eventId, long ownerId, long dateModified, CancellationToken cancellationToken = default,
+        Func<CalendarEvent, IReadOnlyCollection<long>, CancellationToken, Task>? afterCommitAsync = null);
     Task<CalendarParticipantUpdateResult> UpdateParticipantsAsync(long eventId, long ownerId, IReadOnlyCollection<long> add, IReadOnlyCollection<long> remove,
         CancellationToken cancellationToken = default,
-        Func<NpgsqlConnection, NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null);
-    Task<bool> SendResponseAsync(long eventId, long ownerId, long characterId, short response, CancellationToken cancellationToken = default);
+        Func<NpgsqlConnection, NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null,
+        Func<CalendarEvent, IReadOnlyCollection<long>, IReadOnlyCollection<long>, CancellationToken, Task>? afterCommitAsync = null);
+    Task<bool> SendResponseAsync(long eventId, long ownerId, long characterId, short response, CancellationToken cancellationToken = default,
+        Func<CalendarEvent, IReadOnlyCollection<long>, CancellationToken, Task>? afterCommitAsync = null);
 }
 
 
@@ -173,7 +179,8 @@ public sealed class CalendarStore : ICalendarStore
 
     public async Task<long> CreateEventAsync(
         CalendarEventInput input, IReadOnlyCollection<long> invitees, CancellationToken cancellationToken = default,
-        Func<NpgsqlConnection, NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null)
+        Func<NpgsqlConnection, NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null,
+        Func<CalendarEvent, IReadOnlyCollection<long>, CancellationToken, Task>? afterCommitAsync = null)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -198,14 +205,22 @@ public sealed class CalendarStore : ICalendarStore
 
         if (beforeCommitAsync is not null)
             await beforeCommitAsync(connection, transaction, eventId, actualInvitees, cancellationToken);
+        // Keep the event's mutation and its post-commit client notification in one cross-process sequence.
+        await using var notificationLock = await AcquireEventNotificationLockAsync(connection, eventId, cancellationToken);
+        var createdEvent = await ReadEventAsync(connection, transaction, eventId, cancellationToken);
+        var activeParticipantIds = await ReadActiveParticipantIdsAsync(connection, transaction, eventId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        if (createdEvent is not null && afterCommitAsync is not null)
+            await afterCommitAsync(createdEvent, activeParticipantIds, cancellationToken);
         return eventId;
     }
 
     public async Task<bool> EditEventAsync(
-        long eventId, long ownerId, long oldEventDateTime, CalendarEventInput input, CancellationToken cancellationToken = default)
+        long eventId, long ownerId, long oldEventDateTime, CalendarEventInput input, CancellationToken cancellationToken = default,
+        Func<CalendarEvent, IReadOnlyCollection<long>, CancellationToken, Task>? afterCommitAsync = null)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var notificationLock = await AcquireEventNotificationLockAsync(connection, eventId, cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await using var command = Command(connection, transaction,
             Q("UPDATE {schema}.events SET event_date_time=$1, duration_minutes=$2, title=$3, event_text=$4, importance=$5, date_modified=$6 WHERE event_id=$7 AND owner_id=$8 AND event_date_time=$9 AND is_deleted=false"),
@@ -221,40 +236,56 @@ public sealed class CalendarStore : ICalendarStore
             await reset.ExecuteNonQueryAsync(cancellationToken);
         }
 
+        var updatedEvent = await ReadEventAsync(connection, transaction, eventId, cancellationToken);
+        var activeParticipantIds = await ReadActiveParticipantIdsAsync(connection, transaction, eventId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        if (updatedEvent is not null && afterCommitAsync is not null)
+            await afterCommitAsync(updatedEvent, activeParticipantIds, cancellationToken);
         return true;
     }
 
     public async Task<bool> DeleteEventAsync(
-        long eventId, long ownerId, long dateModified, CancellationToken cancellationToken = default)
+        long eventId, long ownerId, long dateModified, CancellationToken cancellationToken = default,
+        Func<CalendarEvent, IReadOnlyCollection<long>, CancellationToken, Task>? afterCommitAsync = null)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var notificationLock = await AcquireEventNotificationLockAsync(connection, eventId, cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var existingEvent = await ReadEventAsync(connection, transaction, eventId, cancellationToken, forUpdate: true);
+        if (existingEvent is null || existingEvent.OwnerId != ownerId || existingEvent.IsDeleted)
+            return false;
         await using var command = Command(connection, transaction,
             Q("UPDATE {schema}.events SET is_deleted=true, date_modified=$1 WHERE event_id=$2 AND owner_id=$3 AND is_deleted=false"),
             dateModified, eventId, ownerId);
         if (await command.ExecuteNonQueryAsync(cancellationToken) == 0) return false;
-        await using var responses = Command(connection, transaction,
-            Q("UPDATE {schema}.responses SET status=$1 WHERE event_id=$2 AND status <> $1 AND status <> $3"),
-            CalendarResponseStates.Deleted, eventId, CalendarResponseStates.Uninvited);
-        await responses.ExecuteNonQueryAsync(cancellationToken);
+        var activeParticipantIds = await ReadActiveParticipantIdsAsync(connection, transaction, eventId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        if (afterCommitAsync is not null)
+            await afterCommitAsync(existingEvent with { IsDeleted = true, DateModified = dateModified },
+                activeParticipantIds, cancellationToken);
         return true;
     }
 
     public async Task<CalendarParticipantUpdateResult> UpdateParticipantsAsync(
         long eventId, long ownerId, IReadOnlyCollection<long> add, IReadOnlyCollection<long> remove,
         CancellationToken cancellationToken = default,
-        Func<NpgsqlConnection, NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null)
+        Func<NpgsqlConnection, NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null,
+        Func<CalendarEvent, IReadOnlyCollection<long>, IReadOnlyCollection<long>, CancellationToken, Task>? afterCommitAsync = null)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var notificationLock = await AcquireEventNotificationLockAsync(connection, eventId, cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await using var exists = Command(connection, transaction,
-            Q("SELECT creator_id FROM {schema}.events WHERE event_id=$1 AND owner_id=$2 AND is_deleted=false FOR UPDATE"),
+            Q($"SELECT {EventColumns} FROM {{schema}}.events WHERE event_id=$1 AND owner_id=$2 AND is_deleted=false FOR UPDATE"),
             eventId, ownerId);
-        if (await exists.ExecuteScalarAsync(cancellationToken) is not { } creatorValue)
-            return CalendarParticipantUpdateResult.EventNotFound;
-        var creatorId = Convert.ToInt64(creatorValue, System.Globalization.CultureInfo.InvariantCulture);
+        CalendarEvent calendarEvent;
+        await using (var eventReader = await exists.ExecuteReaderAsync(cancellationToken))
+        {
+            if (!await eventReader.ReadAsync(cancellationToken))
+                return CalendarParticipantUpdateResult.EventNotFound;
+            calendarEvent = ReadEvent(eventReader);
+        }
+        var creatorId = calendarEvent.CreatorId;
 
         var activeInvitees = new HashSet<long>();
         await using (var responses = Command(connection, transaction,
@@ -269,11 +300,12 @@ public sealed class CalendarStore : ICalendarStore
             }
         }
 
-        var existingActive = activeInvitees.ToHashSet();
         var removed = remove.Where(id => id > 0 && id != creatorId).ToHashSet();
+        var removedInvitees = activeInvitees.Where(removed.Contains).Order().ToArray();
+        var existingActive = activeInvitees.ToHashSet();
         activeInvitees.ExceptWith(removed);
         var additions = add.Where(id => id > 0 && id != creatorId && !removed.Contains(id)).Distinct().ToArray();
-        var newlyAdded = additions.Where(id => !existingActive.Contains(id)).ToArray();
+        var newlyAdded = additions.Where(id => !existingActive.Contains(id)).Order().ToArray();
         activeInvitees.UnionWith(additions);
         if (activeInvitees.Count > CalendarLimits.MaxInvitees)
             return CalendarParticipantUpdateResult.TooManyInvitees;
@@ -292,19 +324,28 @@ public sealed class CalendarStore : ICalendarStore
         }
 
         await transaction.CommitAsync(cancellationToken);
+        if (afterCommitAsync is not null && (newlyAdded.Length > 0 || removedInvitees.Length > 0))
+            await afterCommitAsync(calendarEvent, newlyAdded, removedInvitees, cancellationToken);
         return CalendarParticipantUpdateResult.Updated;
     }
 
     public async Task<bool> SendResponseAsync(
-        long eventId, long ownerId, long characterId, short response, CancellationToken cancellationToken = default)
+        long eventId, long ownerId, long characterId, short response, CancellationToken cancellationToken = default,
+        Func<CalendarEvent, IReadOnlyCollection<long>, CancellationToken, Task>? afterCommitAsync = null)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var notificationLock = await AcquireEventNotificationLockAsync(connection, eventId, cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await using var exists = Command(connection, transaction,
-            Q("SELECT tag FROM {schema}.events WHERE event_id=$1 AND owner_id=$2 AND is_deleted=false FOR UPDATE"),
+            Q($"SELECT {EventColumns} FROM {{schema}}.events WHERE event_id=$1 AND owner_id=$2 AND is_deleted=false FOR UPDATE"),
             eventId, ownerId);
-        if (await exists.ExecuteScalarAsync(cancellationToken) is not { } tagValue) return false;
-        if (Convert.ToInt16(tagValue, System.Globalization.CultureInfo.InvariantCulture) == CalendarTags.Personal &&
+        CalendarEvent calendarEvent;
+        await using (var eventReader = await exists.ExecuteReaderAsync(cancellationToken))
+        {
+            if (!await eventReader.ReadAsync(cancellationToken)) return false;
+            calendarEvent = ReadEvent(eventReader);
+        }
+        if (calendarEvent.Tag == CalendarTags.Personal &&
             characterId != ownerId)
         {
             await using var invitation = Command(connection, transaction,
@@ -317,8 +358,53 @@ public sealed class CalendarStore : ICalendarStore
         }
 
         await UpsertResponseAsync(connection, transaction, eventId, characterId, response, cancellationToken);
+        var activeParticipantIds = await ReadActiveParticipantIdsAsync(connection, transaction, eventId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        if (afterCommitAsync is not null)
+            await afterCommitAsync(calendarEvent, activeParticipantIds, cancellationToken);
         return true;
+    }
+
+    private static async Task<EventNotificationLock> AcquireEventNotificationLockAsync(
+        NpgsqlConnection connection, long eventId, CancellationToken cancellationToken)
+    {
+        await using var command = Command(connection, null,
+            "SELECT pg_advisory_lock(hashtextextended('eve.calendar.event.' || $1::text, 0))", eventId);
+        await command.ExecuteScalarAsync(cancellationToken);
+        return new EventNotificationLock(connection, eventId);
+    }
+
+    private async Task<CalendarEvent?> ReadEventAsync(
+        NpgsqlConnection connection, NpgsqlTransaction? transaction, long eventId, CancellationToken cancellationToken,
+        bool forUpdate = false)
+    {
+        await using var command = Command(connection, transaction,
+            Q($"SELECT {EventColumns} FROM {{schema}}.events WHERE event_id=$1{(forUpdate ? " FOR UPDATE" : string.Empty)}"),
+            eventId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? ReadEvent(reader) : null;
+    }
+
+    private async Task<IReadOnlyCollection<long>> ReadActiveParticipantIdsAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long eventId, CancellationToken cancellationToken)
+    {
+        await using var command = Command(connection, transaction,
+            Q("SELECT character_id FROM {schema}.responses WHERE event_id=$1 AND status <> $2 ORDER BY character_id"),
+            eventId, CalendarResponseStates.Uninvited);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var characterIds = new List<long>();
+        while (await reader.ReadAsync(cancellationToken)) characterIds.Add(reader.GetInt64(0));
+        return characterIds;
+    }
+
+    private sealed class EventNotificationLock(NpgsqlConnection connection, long eventId) : IAsyncDisposable
+    {
+        public async ValueTask DisposeAsync()
+        {
+            await using var command = Command(connection, null,
+                "SELECT pg_advisory_unlock(hashtextextended('eve.calendar.event.' || $1::text, 0))", eventId);
+            await command.ExecuteScalarAsync();
+        }
     }
 
     private async Task UpsertResponseAsync(

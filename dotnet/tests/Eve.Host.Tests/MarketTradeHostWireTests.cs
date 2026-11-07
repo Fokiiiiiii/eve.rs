@@ -11,6 +11,7 @@ using Eve.Services;
 using Eve.Services.Station;
 using Eve.Sde;
 using Eve.Ships;
+using Eve.Structures;
 using Eve.Skills;
 using Eve.Universe;
 using Eve.Wallet;
@@ -701,6 +702,446 @@ public sealed class MarketTradeHostWireTests : IAsyncLifetime
             command.Parameters.AddWithValue(tradeId);
             Assert.Equal("open", await command.ExecuteScalarAsync());
         }
+    }
+
+    [PgFact]
+    public async Task Registered_dogma_trade_unload_stages_a_fitted_charge_and_abort_restores_its_slot()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        host = await HostComposition.BuildAsync(Settings());
+        var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
+        var actor = await CreateTraderAsync(source, station, "Trade fitted charge abort pilot");
+        var target = await CreateTraderAsync(source, station, "Trade fitted charge abort peer");
+        var (shipId, moduleId, chargeId) = await AddFittedRailgunAsync(source, station, actor, 28);
+        var inventory = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
+        var sessions = host.CharacterSessions ?? throw new InvalidOperationException("character sessions are not registered");
+        var actorSink = new Sink();
+        var targetSink = new Sink();
+        var actorSession = DockedSession(actor, 811, station, actorSink);
+        var targetSession = DockedSession(target, 812, station, targetSink);
+        actorSession.Set("shipid", new PyLong(shipId));
+        sessions.Enter(actor, actorSession);
+        sessions.Enter(target, targetSession);
+
+        var trade = host.Registry.Lookup("trademgr") ?? throw new InvalidOperationException("trademgr is not registered");
+        var dogma = host.Registry.Lookup("dogmaIM") ?? throw new InvalidOperationException("dogmaIM is not registered");
+        var (tradeId, tradeObject) = await BindTradeAsync(trade, actorSession, target, 1);
+        var dogmaObject = await BindDogmaAsync(dogma, actorSession, station.Id, 2);
+
+        var unload = await dogma.CallAsync(BoundCall(actorSession, "UnloadAmmo", 3, dogmaObject,
+            new PyLong(shipId), new PyList([new PyLong(moduleId)]),
+            Py.Tuple(new PyLong(tradeId), new PyLong(actor), PyNone.Instance), PyNone.Instance));
+
+        Assert.Equal([chargeId], Assert.IsType<PyList>(unload).Items.Select(IntegerValue));
+        Assert.Equal([chargeId], await TradeItemIdsAsync(trade, actorSession, tradeObject, 4));
+        Assert.DoesNotContain((await inventory.InLocationAsync(shipId, actor)).Select(item => item.Id), id => id == chargeId);
+        var priming = Assert.Single(NamedNotifications(actorSink, "OnPrimingNeededForTradeItems"));
+        Assert.Equal([chargeId], Assert.IsType<PyList>(Assert.Single(NotificationArguments(priming).Items))
+            .Items.Select(IntegerValue));
+        Assert.Single(NamedNotifications(targetSink, "OnPrimingNeededForTradeItems"));
+        Assert.NotEmpty(NamedNotifications(actorSink, "OnModuleAttributeChanges"));
+        Assert.Equal(2, NamedNotifications(actorSink, "OnItemChange").Count);
+
+        Assert.Equal(PyBool.True, await trade.CallAsync(BoundCall(actorSession, "Abort", 5, tradeObject)));
+        var restored = await inventory.GetAsync(chargeId);
+        Assert.NotNull(restored);
+        Assert.Equal((actor, shipId, 28), (restored.OwnerId, restored.LocationId, restored.Flag));
+        await using var status = source.CreateCommand($"SELECT status FROM {Schema("EVE_TRADE_SCHEMA")}.sessions WHERE trade_id=$1");
+        status.Parameters.AddWithValue(tradeId);
+        Assert.Equal("aborted", await status.ExecuteScalarAsync());
+    }
+
+    [PgFact]
+    public async Task Registered_trade_restart_restores_a_staged_fitted_charge_to_its_slot()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        host = await HostComposition.BuildAsync(Settings());
+        var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
+        var actor = await CreateTraderAsync(source, station, "Trade fitted charge restart pilot");
+        var target = await CreateTraderAsync(source, station, "Trade fitted charge restart peer");
+        var (shipId, moduleId, chargeId) = await AddFittedRailgunAsync(source, station, actor, 30);
+        var inventory = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
+        var sessions = host.CharacterSessions ?? throw new InvalidOperationException("character sessions are not registered");
+        var actorSession = DockedSession(actor, 823, station, new Sink());
+        var targetSession = DockedSession(target, 824, station, new Sink());
+        actorSession.Set("shipid", new PyLong(shipId));
+        sessions.Enter(actor, actorSession);
+        sessions.Enter(target, targetSession);
+        var trade = host.Registry.Lookup("trademgr") ?? throw new InvalidOperationException("trademgr is not registered");
+        var dogma = host.Registry.Lookup("dogmaIM") ?? throw new InvalidOperationException("dogmaIM is not registered");
+        var (tradeId, _) = await BindTradeAsync(trade, actorSession, target, 1);
+        var dogmaObject = await BindDogmaAsync(dogma, actorSession, station.Id, 2);
+
+        var unloaded = await dogma.CallAsync(BoundCall(actorSession, "UnloadAmmo", 3, dogmaObject,
+            new PyLong(shipId), new PyList([new PyLong(moduleId)]),
+            Py.Tuple(new PyLong(tradeId), new PyLong(actor), PyNone.Instance), PyNone.Instance));
+        Assert.Equal([chargeId], Assert.IsType<PyList>(unloaded).Items.Select(IntegerValue));
+        Assert.Equal((actor, tradeId), ((await inventory.GetAsync(chargeId))!.OwnerId,
+            (await inventory.GetAsync(chargeId))!.LocationId));
+
+        await host.ShutdownAsync();
+        host = null;
+        host = await HostComposition.BuildAsync(Settings());
+
+        var restored = await inventory.GetAsync(chargeId);
+        Assert.NotNull(restored);
+        Assert.Equal((actor, shipId, 30), (restored.OwnerId, restored.LocationId, restored.Flag));
+        Assert.Equal("aborted", await TradeStatusAsync(source, tradeId));
+    }
+
+    [PgFact]
+    public async Task Registered_dogma_unloads_fitted_charge_before_trade_stages_module_and_both_items_settle()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        host = await HostComposition.BuildAsync(Settings());
+        var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
+        var actor = await CreateTraderAsync(source, station, "Trade fitted module pilot");
+        var target = await CreateTraderAsync(source, station, "Trade fitted module peer");
+        var (shipId, moduleId, chargeId) = await AddFittedRailgunAsync(source, station, actor, 29);
+        var inventory = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
+        var sessions = host.CharacterSessions ?? throw new InvalidOperationException("character sessions are not registered");
+        var actorSink = new Sink();
+        var targetSink = new Sink();
+        var actorSession = DockedSession(actor, 813, station, actorSink);
+        var targetSession = DockedSession(target, 814, station, targetSink);
+        actorSession.Set("shipid", new PyLong(shipId));
+        sessions.Enter(actor, actorSession);
+        sessions.Enter(target, targetSession);
+
+        var trade = host.Registry.Lookup("trademgr") ?? throw new InvalidOperationException("trademgr is not registered");
+        var dogma = host.Registry.Lookup("dogmaIM") ?? throw new InvalidOperationException("dogmaIM is not registered");
+        var (tradeId, actorTradeObject) = await BindTradeAsync(trade, actorSession, target, 1);
+        var (_, targetTradeObject) = await BindTradeAsync(trade, targetSession, actor, 2, tradeId);
+        var dogmaObject = await BindDogmaAsync(dogma, actorSession, station.Id, 3);
+
+        var unloaded = await dogma.CallAsync(BoundCall(actorSession, "UnloadAmmo", 4, dogmaObject,
+            new PyLong(shipId), new PyList([new PyLong(moduleId)]), new PyLong(tradeId), PyNone.Instance));
+        Assert.Equal([chargeId], Assert.IsType<PyList>(unloaded).Items.Select(IntegerValue));
+        Assert.Equal(PyBool.True, await trade.CallAsync(BoundCall(actorSession, "Add", 5, actorTradeObject,
+            new PyLong(moduleId), new PyLong(shipId))));
+
+        Assert.Equal(new[] { chargeId, moduleId }.Order(),
+            (await TradeItemIdsAsync(trade, actorSession, actorTradeObject, 6)).Order());
+        Assert.Equal((actor, tradeId),
+            ((await inventory.GetAsync(chargeId))!.OwnerId, (await inventory.GetAsync(chargeId))!.LocationId));
+        Assert.Equal((actor, tradeId),
+            ((await inventory.GetAsync(moduleId))!.OwnerId, (await inventory.GetAsync(moduleId))!.LocationId));
+
+        await AcceptTradeAsync(trade, actorSession, actorTradeObject, 7);
+        await AcceptTradeAsync(trade, targetSession, targetTradeObject, 8);
+
+        Assert.Equal((target, station.Id, ItemFlags.Hangar),
+            ((await inventory.GetAsync(chargeId))!.OwnerId, (await inventory.GetAsync(chargeId))!.LocationId,
+                (await inventory.GetAsync(chargeId))!.Flag));
+        Assert.Equal((target, station.Id, ItemFlags.Hangar),
+            ((await inventory.GetAsync(moduleId))!.OwnerId, (await inventory.GetAsync(moduleId))!.LocationId,
+                (await inventory.GetAsync(moduleId))!.Flag));
+        Assert.NotEmpty(NamedNotifications(targetSink, "OnTradeComplete"));
+    }
+
+    [PgFact]
+    public async Task Registered_trade_mutation_aborts_and_restores_items_when_the_peer_is_no_longer_docked()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        host = await HostComposition.BuildAsync(Settings());
+        var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
+        var actor = await CreateTraderAsync(source, station, "Trade peer dock pilot");
+        var target = await CreateTraderAsync(source, station, "Trade peer dock peer");
+        var items = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
+        long itemId;
+        await using (var connection = await source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            itemId = await items.CreateAsync(connection, transaction,
+                new NewItem(34, actor, station.Id, ItemFlags.Hangar, 5));
+            await transaction.CommitAsync();
+        }
+        var sessions = host.CharacterSessions ?? throw new InvalidOperationException("character sessions are not registered");
+        var actorSink = new Sink();
+        var targetSink = new Sink();
+        var actorSession = DockedSession(actor, 815, station, actorSink);
+        var targetSession = DockedSession(target, 816, station, targetSink);
+        sessions.Enter(actor, actorSession);
+        sessions.Enter(target, targetSession);
+        var trade = host.Registry.Lookup("trademgr") ?? throw new InvalidOperationException("trademgr is not registered");
+        var (tradeId, actorTradeObject) = await BindTradeAsync(trade, actorSession, target, 1);
+        Assert.Equal(PyBool.True, await trade.CallAsync(BoundCall(actorSession, "Add", 2, actorTradeObject,
+            new PyLong(itemId), new PyLong(station.Id))));
+
+        targetSession.Change(("stationid", PyNone.Instance));
+        await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await trade.CallAsync(BoundCall(actorSession, "OfferMoney", 3, actorTradeObject, new PyReal(1))));
+
+        Assert.Equal("aborted", await TradeStatusAsync(source, tradeId));
+        Assert.Equal((actor, station.Id, ItemFlags.Hangar),
+            ((await items.GetAsync(itemId))!.OwnerId, (await items.GetAsync(itemId))!.LocationId,
+                (await items.GetAsync(itemId))!.Flag));
+        Assert.Single(NamedNotifications(actorSink, "OnTradeCancel"));
+        Assert.Single(NamedNotifications(targetSink, "OnTradeCancel"));
+    }
+
+    [PgFact]
+    public async Task Registered_trade_stages_corporation_office_items_and_restores_or_transfers_the_original_owner()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        host = await HostComposition.BuildAsync(Settings());
+        var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
+        var (actor, corporationId) = await CreateCorporationBuyerAsync(source, station, "Trade office item CEO");
+        var target = await CreateTraderAsync(source, station, "Trade office item peer");
+        var items = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
+        long officeItemId;
+        await using (var connection = await source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            var officeFolderId = await items.CreateAsync(connection, transaction,
+                new NewItem(CorporationOfficeStore.OfficeFolderTypeId, corporationId, station.Id, ItemFlags.Hangar, 1, true));
+            await using (var office = new NpgsqlCommand($"""
+                INSERT INTO {Schema("EVE_CORPORATIONS_SCHEMA")}.office_rentals
+                    (office_folder_id,corporation_id,station_id,solar_system_id,rent_isk,rented_at_ms,expires_at_ms)
+                VALUES ($1,$2,$3,$4,10000,1,9999999999999)
+                """, connection, transaction))
+            {
+                office.Parameters.AddWithValue(officeFolderId);
+                office.Parameters.AddWithValue(corporationId);
+                office.Parameters.AddWithValue(station.Id);
+                office.Parameters.AddWithValue(station.SolarSystemId);
+                await office.ExecuteNonQueryAsync();
+            }
+            officeItemId = await items.CreateAsync(connection, transaction,
+                new NewItem(34, corporationId, station.Id, ItemFlags.CorpSAG1, 5));
+            await using (var locked = new NpgsqlCommand($"""
+                INSERT INTO {Schema("EVE_CORPORATIONS_SCHEMA")}.item_locks
+                    (item_id,corporation_id,type_id,location_id,locked_filetime)
+                VALUES ($1,$2,34,$3,$4)
+                """, connection, transaction))
+            {
+                locked.Parameters.AddWithValue(officeItemId);
+                locked.Parameters.AddWithValue(corporationId);
+                locked.Parameters.AddWithValue(station.Id);
+                locked.Parameters.AddWithValue(DateTime.UtcNow.ToFileTimeUtc());
+                await locked.ExecuteNonQueryAsync();
+            }
+            await transaction.CommitAsync();
+        }
+
+        var sessions = host.CharacterSessions ?? throw new InvalidOperationException("character sessions are not registered");
+        var actorSink = new Sink();
+        var actorSession = DockedSession(actor, 821, station, actorSink, corporationId: corporationId);
+        actorSession.Set("corporationID", new PyLong(corporationId));
+        var targetSession = DockedSession(target, 822, station, new Sink());
+        sessions.Enter(actor, actorSession);
+        sessions.Enter(target, targetSession);
+        var trade = host.Registry.Lookup("trademgr") ?? throw new InvalidOperationException("trademgr is not registered");
+
+        var (_, unauthorizedTradeObject) = await BindTradeAsync(trade, targetSession, actor, 1);
+        await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await trade.CallAsync(BoundCall(targetSession, "Add", 2, unauthorizedTradeObject,
+                new PyLong(officeItemId), new PyLong(station.Id))));
+        Assert.Equal(PyBool.True, await trade.CallAsync(BoundCall(targetSession, "Abort", 3, unauthorizedTradeObject)));
+
+        var (_, lockedTradeObject) = await BindTradeAsync(trade, actorSession, target, 4);
+        await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await trade.CallAsync(BoundCall(actorSession, "Add", 5, lockedTradeObject,
+                new PyLong(officeItemId), new PyLong(station.Id))));
+        Assert.Equal((corporationId, station.Id, ItemFlags.CorpSAG1),
+            ((await items.GetAsync(officeItemId))!.OwnerId, (await items.GetAsync(officeItemId))!.LocationId,
+                (await items.GetAsync(officeItemId))!.Flag));
+        Assert.Equal(PyBool.True, await trade.CallAsync(BoundCall(actorSession, "Abort", 6, lockedTradeObject)));
+        await using (var unlock = source.CreateCommand($"DELETE FROM {Schema("EVE_CORPORATIONS_SCHEMA")}.item_locks WHERE item_id=$1"))
+        {
+            unlock.Parameters.AddWithValue(officeItemId);
+            Assert.Equal(1, await unlock.ExecuteNonQueryAsync());
+        }
+
+        var (abortTradeId, abortTradeObject) = await BindTradeAsync(trade, actorSession, target, 7);
+        Assert.Equal(PyBool.True, await trade.CallAsync(BoundCall(actorSession, "Add", 8, abortTradeObject,
+            new PyLong(officeItemId), new PyLong(station.Id))));
+        Assert.Equal((actor, abortTradeId), ((await items.GetAsync(officeItemId))!.OwnerId,
+            (await items.GetAsync(officeItemId))!.LocationId));
+        Assert.Equal(PyBool.True, await trade.CallAsync(BoundCall(actorSession, "Abort", 9, abortTradeObject)));
+        Assert.Equal((corporationId, station.Id, ItemFlags.CorpSAG1),
+            ((await items.GetAsync(officeItemId))!.OwnerId, (await items.GetAsync(officeItemId))!.LocationId,
+                (await items.GetAsync(officeItemId))!.Flag));
+
+        var (completeTradeId, completeActorObject) = await BindTradeAsync(trade, actorSession, target, 10);
+        var (_, completeTargetObject) = await BindTradeAsync(trade, targetSession, actor, 11, completeTradeId);
+        Assert.Equal(PyBool.True, await trade.CallAsync(BoundCall(actorSession, "Add", 12, completeActorObject,
+            new PyLong(officeItemId), new PyLong(station.Id))));
+        await AcceptTradeAsync(trade, actorSession, completeActorObject, 13);
+        await AcceptTradeAsync(trade, targetSession, completeTargetObject, 14);
+        Assert.Equal((target, station.Id, ItemFlags.Hangar),
+            ((await items.GetAsync(officeItemId))!.OwnerId, (await items.GetAsync(officeItemId))!.LocationId,
+                (await items.GetAsync(officeItemId))!.Flag));
+    }
+
+    [PgFact]
+    public async Task Registered_trade_priming_includes_nested_inventory_items()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        host = await HostComposition.BuildAsync(Settings());
+        var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
+        var actor = await CreateTraderAsync(source, station, "Trade contained-item pilot");
+        var target = await CreateTraderAsync(source, station, "Trade contained-item peer");
+        var items = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
+        await using var connection = await source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var containerId = await items.CreateAsync(connection, transaction,
+            new NewItem(23, actor, station.Id, ItemFlags.Hangar, 1, true));
+        var childId = await items.CreateAsync(connection, transaction,
+            new NewItem(34, actor, containerId, ItemFlags.Hangar, 10));
+        await transaction.CommitAsync();
+        var sessions = host.CharacterSessions ?? throw new InvalidOperationException("character sessions are not registered");
+        var actorSink = new Sink();
+        var actorSession = DockedSession(actor, 817, station, actorSink);
+        var targetSession = DockedSession(target, 818, station, new Sink());
+        sessions.Enter(actor, actorSession);
+        sessions.Enter(target, targetSession);
+        var trade = host.Registry.Lookup("trademgr") ?? throw new InvalidOperationException("trademgr is not registered");
+        var (_, tradeObject) = await BindTradeAsync(trade, actorSession, target, 1);
+
+        Assert.Equal(PyBool.True, await trade.CallAsync(BoundCall(actorSession, "Add", 2, tradeObject,
+            new PyLong(containerId), new PyLong(station.Id))));
+
+        var priming = Assert.Single(NamedNotifications(actorSink, "OnPrimingNeededForTradeItems"));
+        Assert.Equal([containerId, childId], Assert.IsType<PyList>(Assert.Single(NotificationArguments(priming).Items))
+            .Items.Select(IntegerValue));
+    }
+
+    [PgFact]
+    public async Task Registered_trade_self_item_uses_the_default_station_type_at_a_structure()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        await StructureStore.MigrateAsync(source, Schema("EVE_STRUCTURES_SCHEMA"));
+        const long structureId = 9000000000001234;
+        const int structureTypeId = 35832;
+        await using (var structure = source.CreateCommand($"""
+            INSERT INTO {Schema("EVE_STRUCTURES_SCHEMA")}.structures
+                (structure_id,type_id,solar_system_id,owner_corporation_id,state,destroyed_ms)
+            VALUES ({structureId},{structureTypeId},30000142,98000001,110,0)
+            """))
+            await structure.ExecuteNonQueryAsync();
+        host = await HostComposition.BuildAsync(Settings());
+        var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
+        var actor = await CreateTraderAsync(source, station, "Trade structure type pilot");
+        var target = await CreateTraderAsync(source, station, "Trade structure type peer");
+        var sessions = host.CharacterSessions ?? throw new InvalidOperationException("character sessions are not registered");
+        var actorSession = DockedSession(actor, 819, station, new Sink());
+        var targetSession = DockedSession(target, 820, station, new Sink());
+        actorSession.Change(("stationid", PyNone.Instance), ("structureid", new PyLong(structureId)));
+        targetSession.Change(("stationid", PyNone.Instance), ("structureid", new PyLong(structureId)));
+        sessions.Enter(actor, actorSession);
+        sessions.Enter(target, targetSession);
+        var trade = host.Registry.Lookup("trademgr") ?? throw new InvalidOperationException("trademgr is not registered");
+        var (_, tradeObject) = await BindTradeAsync(trade, actorSession, target, 1);
+
+        var selfItem = await trade.CallAsync(BoundCall(actorSession, "GetSelfInvItem", 2, tradeObject));
+
+        Assert.Equal(new PyInt(1529), KeyValField(selfItem, "typeID"));
+        Assert.Equal(new PyLong(structureId), KeyValField(selfItem, "locationID"));
+    }
+
+    private static PyValue KeyValField(PyValue value, string name)
+    {
+        var entries = value switch
+        {
+            PyObjectEx ex => ex.Dict,
+            PyObject { Args: PyDict dict } => dict.Entries,
+            PyDict dict => dict.Entries,
+            _ => throw new InvalidOperationException($"not a KeyVal: {value}"),
+        };
+        return entries.Single(pair => JsSemantics.PlainText(pair.Key) == name).Value;
+    }
+
+    private async Task<string> TradeStatusAsync(NpgsqlDataSource source, long tradeId)
+    {
+        await using var command = source.CreateCommand($"SELECT status FROM {Schema("EVE_TRADE_SCHEMA")}.sessions WHERE trade_id=$1");
+        command.Parameters.AddWithValue(tradeId);
+        return (string)(await command.ExecuteScalarAsync())!;
+    }
+
+    private async Task<(long ShipId, long ModuleId, long ChargeId)> AddFittedRailgunAsync(
+        NpgsqlDataSource source, Station station, long characterId, int slot)
+    {
+        var characters = new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA"));
+        var items = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
+        await using var connection = await source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var shipId = await items.CreateAsync(connection, transaction,
+            new NewItem(603, characterId, station.Id, ItemFlags.Hangar, 1, true));
+        await characters.SetShipAsync(connection, transaction, characterId, shipId);
+        var moduleId = await items.CreateAsync(connection, transaction,
+            new NewItem(10678, characterId, shipId, slot, 1, true));
+        var chargeId = await items.CreateAsync(connection, transaction,
+            new NewItem(222, characterId, shipId, slot, 80));
+        await transaction.CommitAsync();
+        return (shipId, moduleId, chargeId);
+    }
+
+    private static async Task<(long TradeId, string ObjectId)> BindTradeAsync(
+        IService trade, ClientSession session, long otherCharacterId, long callId, long? tradeId = null)
+    {
+        PyTuple parameters;
+        if (tradeId is { } knownTradeId)
+        {
+            parameters = new PyTuple([new PyLong(knownTradeId)]);
+        }
+        else
+        {
+            var moniker = Assert.IsType<PyObject>(await trade.CallAsync(
+                Call(session, "InitiateTrade", callId, new PyLong(otherCharacterId))));
+            var monikerArgs = Assert.IsType<PyTuple>(moniker.Args);
+            parameters = Assert.IsType<PyTuple>(monikerArgs.Items[2]);
+        }
+        var nested = Py.Tuple(new PyStr("List"), new PyTuple([]), new PyDict([]));
+        var boundResult = Assert.IsType<PyTuple>(await trade.CallAsync(
+            Call(session, "MachoBindObject", callId + 100, parameters, nested)));
+        var bound = Assert.IsType<PySubStruct>(boundResult.Items[0]);
+        var encoded = Assert.IsType<PyTuple>(Assert.IsType<PySubStream>(bound.Value).Decoded);
+        var objectId = Assert.IsType<PyStr>(encoded.Items[0]).Value;
+        return (IntegerValue(parameters.Items[0]), objectId);
+    }
+
+    private static async Task<string> BindDogmaAsync(IService dogma, ClientSession session, long locationId, long callId)
+    {
+        var boundResult = Assert.IsType<PyTuple>(await dogma.CallAsync(
+            Call(session, "MachoBindObject", callId, new PyTuple([new PyLong(locationId), new PyInt(15)]))));
+        var bound = Assert.IsType<PySubStruct>(boundResult.Items[0]);
+        var encoded = Assert.IsType<PyTuple>(Assert.IsType<PySubStream>(bound.Value).Decoded);
+        return Assert.IsType<PyStr>(encoded.Items[0]).Value;
+    }
+
+    private static ServiceCall BoundCall(ClientSession session, string method, long callId, string objectId, params PyValue[] args) =>
+        new() { Session = session, Method = method, Args = args, CallId = new PyInt(callId), BoundObjectId = objectId };
+
+    private static async Task<IReadOnlyList<long>> TradeItemIdsAsync(
+        IService trade, ClientSession session, string objectId, long callId)
+    {
+        var row = Assert.IsType<PyObject>(await trade.CallAsync(BoundCall(session, "List", callId, objectId)));
+        var fields = Assert.IsType<PyDict>(row.Args);
+        var line = Assert.IsType<PyList>(Field(fields, "line"));
+        var itemSet = Assert.IsType<PyObjectEx>(line.Items[4]);
+        var setHeader = Assert.IsType<PyTuple>(itemSet.Header);
+        var itemRows = Assert.IsType<PyList>(Assert.Single(Assert.IsType<PyTuple>(setHeader.Items[1]).Items));
+        return itemRows.Items.Select(item => IntegerValue(Assert.IsType<PyPackedRow>(item).Values[0])).ToArray();
+    }
+
+    private static async Task AcceptTradeAsync(IService trade, ClientSession session, string objectId, long callId)
+    {
+        var row = Assert.IsType<PyObject>(await trade.CallAsync(BoundCall(session, "List", callId, objectId)));
+        var fields = Assert.IsType<PyDict>(row.Args);
+        var line = Assert.IsType<PyList>(Field(fields, "line"));
+        var offer = Py.KeyVal(
+            ("tradeContainerID", line.Items[0]),
+            ("money", line.Items[3]),
+            ("tradeItems", line.Items[4]));
+        Assert.Equal(PyBool.True, await trade.CallAsync(BoundCall(session, "MakeOffer", callId + 100, objectId, offer)));
     }
 
     private static PyTuple PacketFields(PyValue packet) =>

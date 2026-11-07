@@ -394,6 +394,44 @@ public sealed partial class CharacterShips
         WithFreshRowsAsync(() => UnloadAmmoOnceAsync(characterId, shipId, moduleIds, containerId, destinationFlag, quantity,
             AmmoWhere.Station, null, cancellationToken, destinationOwnerId, containerDestination: true));
 
+    /// <summary>Stages whole fitted charge items in a direct trade and returns the matching dogma transition.</summary>
+    public async Task<ShipOutcome> UnloadAmmoToTradeAsync(long characterId, long shipId, IReadOnlyList<long> moduleIds,
+        Func<IReadOnlyList<(long ModuleId, long ChargeId)>, CancellationToken, Task<IReadOnlyDictionary<long, Item>>> stageCharges,
+        CancellationToken cancellationToken = default)
+    {
+        if (await LoadAsync(characterId, cancellationToken).ConfigureAwait(false) is not { } before || before.Ship.Id != shipId
+            || before.Ship.Flag != ItemFlags.Hangar)
+            return new NothingHappened();
+
+        var selected = new List<(Item Module, Item Charge)>();
+        foreach (var moduleId in moduleIds.Distinct())
+        {
+            if (before.Fitted.FirstOrDefault(module => module.Id == moduleId) is { } module
+                && before.ChargeOf(module) is { } charge)
+                selected.Add((module, charge));
+        }
+        if (selected.Count == 0)
+            return new NothingHappened();
+
+        var pairs = selected.Select(entry => (ModuleId: entry.Module.Id, ChargeId: entry.Charge.Id)).ToArray();
+        var staged = await stageCharges(pairs, cancellationToken).ConfigureAwait(false);
+        if (pairs.Any(pair => !staged.ContainsKey(pair.ChargeId)))
+            throw new InvalidOperationException("the trade did not stage every fitted charge");
+        var after = await LoadAsync(characterId, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("the ship disappeared after fitted charges entered trade");
+
+        var events = new List<AmmoEvent>();
+        foreach (var (module, charge) in selected)
+        {
+            events.Add(new ItemChanged(staged[charge.Id], shipId, charge.Flag, charge.Quantity, charge.OwnerId));
+            events.Add(new ChargeQuantityChanged(shipId, module.Flag, charge.TypeId, 0, charge.Quantity));
+            if (ModuleChanges(module.Id, before.World.Attributes(module.Id), after.World.Attributes(module.Id)) is { Count: > 0 } changed)
+                events.Add(new ModuleAttributesChanged(changed));
+        }
+        events.Add(new FittingRefreshed(after.Fitted));
+        return new AmmoChanged(shipId, events, ItemChangesAnnouncedExternally: true);
+    }
+
     /// <summary>
     /// <c>UnloadAmmo</c> of a ship in space: what the module holds goes to the hold, at once (all of it, or <paramref name="quantity"/> rounds). The gun may be running: the
     /// simulation has its rounds and has taken them out (<paramref name="gun"/>); what is taken out of the charge item is what it took.

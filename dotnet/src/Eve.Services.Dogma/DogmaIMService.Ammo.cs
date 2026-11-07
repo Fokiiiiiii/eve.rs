@@ -138,6 +138,8 @@ public sealed partial class DogmaIMService
         {
             switch (e)
             {
+                case ItemChanged when changed.ItemChangesAnnouncedExternally:
+                    break;
                 case ItemChanged item when inSpace:
                     ShipNotifications.SendItemsChanged(session, item, i => DogmaInfo.RowOf(i, statics.Type(i.TypeId)), cargo, "charid");
                     break;

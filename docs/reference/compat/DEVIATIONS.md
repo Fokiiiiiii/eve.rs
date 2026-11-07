@@ -3382,7 +3382,7 @@ Status: implemented. Tests: `Eve.Corporations.Tests` (`ItemLockTests`, 3, Postgr
 
 ## Reprocessing (reprocessingSvc, 37a)
 
-Status: the server side is implemented for NPC stations. The client has not been driven through a reprocess.
+Status: NPC station and cored structure service paths are implemented and covered by registered Host regressions. The client has not been driven through a reprocess.
 
 - **Rules (sources).** Base station efficiency is the SDE station row (`npcStations.reprocessingEfficiency`, 0.5 at the station used
   here); the wiki gives 30%–50% by station equipment (EVE University, "Refining"). Skill bonuses are the SDE's `refiningYieldMutator`
@@ -3404,16 +3404,24 @@ Status: the server side is implemented for NPC stations. The client has not been
   The output selector offers `(None, None)`, the docked station hangar, and divisions from the office at that station
   (`reprocessing/ui/reprocessingWnd.py:343-366`); `itemReprocessor.py:17-46,69-70` derives the owner and sends those values.
 
-Differences and cuts, all listed:
-1. Sources: the caller's items rooted at this station: its hangar, its containers and the cargo of its ships (`RootAtStationAsync`).
-   Corporation hangars are not quoted.
+Remaining differences and cuts:
+1. Sources: the caller's personal items rooted at the facility and corporation hangar items in the facility's office divisions when the
+   caller has persisted Hangar Take permission (`RootAtFacilityAsync`). The client accepts corporation-owned items (`controller.py:41-49`);
+   EveJS resolves the office and division take permission (`reprocessingRuntime.js:852-883`). Regressions cover a corporation input quote,
+   settlement, persisted output, and member role/office denials.
 2. Outputs: `(None, None)` keeps the sample item's owner/location/flag; explicit personal output is limited to the docked station hangar,
    matching the client selector. Other personal flag/location pairs are refused before opening the mutation transaction. Corporation division
    output requires an active office at this station, a selectable division flag and the caller's scoped Hangar Query access; yielded items are
    owned by the corporation. EveJS 261028.1 uses the same-location default and checks the station hangar, office and accessible division
    (`server/src/services/reprocessing/reprocessingRuntime.js:949-1048`).
-3. Structures: refused with a named notice (`Reprocessing is available in the NPC station you are docked in.`). The structure rigs and
-   profiles of `reprocessingRuntime.js` are not built.
+3. Structures: supported when the cored structure is accessible and its Reprocessing service is online. Efficiency uses the structure's SDE
+   profile and compatible installed rig, system security, and structure yield bonus; tax comes from the saved facility document and is
+   credited to the owner corporation's first wallet division in the same transaction. Host `GetFacilityTaxes` reads the same saved rate
+   (`IndustryComposition.cs:399-421`), and EveJS credits structure tax income to the owner wallet (`reprocessingSettlementState.js:1061-1074`).
+   Output stays at the structure location. The client binds to `session.structureid` (`eveMoniker.py:88-101`), and EveJS validates service,
+   profile/rig efficiency, and facility tax (`reprocessingRuntime.js:355-393,466-520,536-586`). Host regression checks the registered service,
+   quoted efficiency and tax, character debit and corporation credit, input consumption, yield, restart/retry, offline refusal, access refusal
+   and notices. No graphical-client check was run.
 4. Implants: the implants plugged in the character (flags 89 to 98) add their refining yield mutator to the skill multiplier of the
    ore types, as the reference's legacy path does (`getLegacyReprocessingImplantMultiplier`). The active implant modifiers of
    `getActiveReprocessingImplantMultiplier` are not read.
@@ -3465,7 +3473,10 @@ Status: implemented. Tests: `Eve.Corporations.Tests` (`CorpStationMgrTests`, 4, 
 Status: NPC station and Upwell structure repair are implemented and covered by PostgreSQL service and Host wire tests (`RepairServiceTests`, `RepairStructureHostWireTests`). The graphical client has not been driven through the repair shop.
 
 - **Damage and state.** Hull and fitted-module damage fractions are stored by item in `ship_condition` and `module_condition`. Health is
-  calculated from the SDE dogma attributes `shieldCapacity`, `armorHP` and `hp`; repair writes the resulting condition in the same transaction.
+  calculated from the SDE dogma attributes `shieldCapacity`, `armorHP` and `hp`; for mutated modules the source type's attributes are layered
+  with the stored mutated values (`item_mutations`) before quoting, following EveJS `repairRuntime.js:357-363` and
+  `liveFittingState.js:1786-1792`. Repair writes the resulting condition in the same transaction. A registered Host regression checks a
+  damaged mutated module's quote, repair, wallet debit, journal and ordered notifications.
 - **Cost.** NPC station repair uses the adjusted price x 0.1 divided by maximum HP, rounds unit cost to six decimals and charges the rounded
   full cost (or a partial payment). Upwell structure repair quotes and repairs are free, with zero unit cost and zero structure tax; this
   matches EveJS `repairRuntime.js:431-469` and its free structure repair plan.

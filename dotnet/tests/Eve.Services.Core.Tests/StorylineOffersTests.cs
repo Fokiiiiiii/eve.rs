@@ -28,12 +28,22 @@ public class StorylineOffersTests
         MissionTypeLabel: "", SpecialityId: null, StationTypeId: 1531, BloodlineId: null, SolarSystemId: System, DungeonId: null,
         SpawnPointId: null, TypeId: null, BaseLocationId: 60015249);
 
-    private sealed class Rig(NpgsqlDataSource source, string schema, AgentMissionStore store, StorylineCounters counters, StorylineOffers offers) : IAsyncDisposable
+    private sealed class Rig : IAsyncDisposable
     {
-        public NpgsqlDataSource Source { get; } = source;
-        public AgentMissionStore Store { get; } = store;
-        public StorylineCounters Counters { get; } = counters;
-        public StorylineOffers Offers { get; } = offers;
+        public NpgsqlDataSource Source { get; }
+        public string Schema { get; }
+        public AgentMissionStore Store { get; }
+        public StorylineCounters Counters { get; }
+        public StorylineOffers Offers { get; }
+
+        private Rig(NpgsqlDataSource source, string schema, AgentMissionStore store, StorylineCounters counters, StorylineOffers offers)
+        {
+            Source = source;
+            Schema = schema;
+            Store = store;
+            Counters = counters;
+            Offers = offers;
+        }
 
         public static async Task<Rig> CreateAsync(string pgUrl)
         {
@@ -58,7 +68,7 @@ public class StorylineOffersTests
 
         public async ValueTask DisposeAsync()
         {
-            await using (var drop = Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE"))
+            await using (var drop = Source.CreateCommand($"DROP SCHEMA IF EXISTS {Schema} CASCADE"))
             {
                 await drop.ExecuteNonQueryAsync();
             }
@@ -96,5 +106,27 @@ public class StorylineOffersTests
         await rig.Offers.MarkAcceptedAsync(agent, PilotAccepts);
         Assert.Equal((16L, 1L), await rig.Counters.ReadAsync(PilotAccepts, Faction, Level));
         Assert.Null(await rig.Offers.PickAsync(agent, PilotAccepts));
+    }
+
+    [AgentsPgFact]
+    public async Task Replaying_the_same_accepted_mission_event_consumes_one_storyline_offer()
+    {
+        await using var rig = await Rig.CreateAsync(Environment.GetEnvironmentVariable("EVE_PG_URL")!);
+        var agent = StorylineAgentData();
+        for (var i = 0; i < 16; i++) await rig.CompleteRegularAsync(PilotAccepts);
+        await rig.Store.OfferAsync(PilotAccepts, StorylineAgent,
+            new AgentMissionContent(9601, 1250, "Storyline Trade", "storyline", true), Start, "offer:receipt");
+        var accepted = Assert.IsType<AgentMissionChange>(await rig.Store.AcceptAsync(
+            PilotAccepts, StorylineAgent, Start.AddMinutes(1), "accept:receipt"));
+
+        await rig.Offers.MarkAcceptedAsync(agent, accepted);
+        await rig.Offers.MarkAcceptedAsync(agent, accepted);
+
+        Assert.Equal((16L, 1L), await rig.Counters.ReadAsync(PilotAccepts, Faction, Level));
+        await using var receipt = rig.Source.CreateCommand(
+            $"SELECT count(*) FROM {rig.Schema}.storyline_offer_receipts WHERE character_id = $1 AND acceptance_reference = $2");
+        receipt.Parameters.AddWithValue(PilotAccepts);
+        receipt.Parameters.AddWithValue(accepted.Reference);
+        Assert.Equal(1L, (long)(await receipt.ExecuteScalarAsync())!);
     }
 }

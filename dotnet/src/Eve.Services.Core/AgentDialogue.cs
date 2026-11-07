@@ -88,7 +88,7 @@ public sealed record AgentDialogueSources(
     Func<long, AgentMissionAgentData, bool, CancellationToken, ValueTask>? OnConversation = null,
     IAgentResearchPort? Research = null,
     IAgentLocatorPort? Locator = null,
-    Func<long, long, CancellationToken, ValueTask>? OnAccepted = null,
+    Func<AgentMissionChange, CancellationToken, ValueTask>? OnAccepted = null,
     Func<long, long, CancellationToken, ValueTask>? OnQuit = null,
     Func<long, long, CancellationToken, ValueTask<bool>>? OnMissionTurnIn = null);
 
@@ -181,9 +181,10 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
             case AgentDialogueButton.Accept when mission?.State == AgentMissionState.Offered:
                 try
                 {
-                    await sources.Store.AcceptAsync(characterId, agent.AgentId, now,
+                    var accepted = await sources.Store.AcceptAsync(characterId, agent.AgentId, now,
                         $"accept:{characterId}:{agent.AgentId}:{now.ToUnixTimeMilliseconds()}", cancellationToken);
-                    if (sources.OnAccepted is { } onAccepted) await onAccepted(characterId, agent.AgentId, cancellationToken);
+                    if (accepted is not null && sources.OnAccepted is { } onAccepted)
+                        await onAccepted(accepted, cancellationToken);
                 }
                 catch (AgentMissionRefusedException)
                 {

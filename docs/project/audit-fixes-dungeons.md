@@ -24,13 +24,15 @@ The catalog extractor now writes a separate `layout-profiles.json` containing au
 
 The regression tests were committed before the implementation (`12c462add`) and run in a detached worktree against that pre-fix code. They failed on the wrong inferred source for dungeon 1215, the wrong active-room order for dungeon 2734, and the missing recorded room offset. While separating physical gate placement from clearance, an additional test failed against the intermediate implementation because the 17493 gate unlocked after only the entry cleared; it passes with the final separation.
 
-Verified locally:
+Verified locally after merging `origin/main`:
 
-- Release builds with zero warnings and zero errors: `Eve.Dungeons`, `Eve.Dungeons.Tests`, `Eve.Services.Space`, and `Eve.Services.Space.Tests`.
+- Release builds with zero warnings and zero errors: `Eve.Dungeons`, `Eve.Dungeons.Tests`, `Eve.Services.Core`, `Eve.Services.Space`, `Eve.Services.Space.Tests`, `Eve.Host`, and `Eve.Host.Tests`.
 - Referenced Dungeons test classes: 61 passed, 0 failed, 0 skipped.
 - Referenced Core `MissionSdeDataTests`: 5 passed, 0 failed, 0 skipped.
 - Referenced Space test classes, including database-backed tests on `eve_p6`: 54 passed, 0 failed, 0 skipped.
-- Registered Host Keeper gate wire test: 1 passed, 0 failed, 0 skipped. The worktree already contained the unrelated untracked `InventoryAuditHostWireTests.cs`, which does not compile (`CS1503`); the Host test was built with only that untracked file excluded. It was not edited or staged.
+- Registered Host Keeper gate and Keeper response-shape tests: 2 passed, 0 failed, 0 skipped. The worktree already contained the unrelated untracked `InventoryAuditHostWireTests.cs`, which does not compile (`CS1503`); the Host test project was built with only that untracked file excluded. It was not edited or staged.
 - `dotnet/src/Eve.Dungeons/Waves/WaveRules.cs:165-168` still rejects `on_room_active`; these layout tests do not establish that dungeons 283 or 2734 can start or complete in the current live runtime.
 
-Not checked: graphical-client gameplay, live/headless server transitions, the complete catalog extraction against the pinned SDE (the required 3405148 dataset was not available in this worktree), and post-push GitHub Actions. The source/client checks and tests above do not claim graphical-client verification.
+The full V24 client tree search found the `OnEnteringDungeonRoom` consumer in `dungeonTracking.py` and `environmentSvc.py`. EveJS sends the notification after resolving an accepted destination warp (`server/src/space/runtime/scene/missionAccess.js:240-258`, using `dungeonTrackingRuntime.js:431-448`). In the current eve.rs source tree, the only sender is the Abyssal notification adapter (`dotnet/src/Eve.Host/AbyssalNotificationAdapter.cs:113-120`); the generic dungeon gate path does not send that notification. This audit repair leaves that separate room-notification path unchanged.
+
+Not checked: graphical-client gameplay, live/headless server transitions, generic-gate room-notification delivery, the complete catalog extraction against the pinned SDE (the required 3405148 dataset was not available in this worktree), and post-push GitHub Actions. The source/client checks and tests above do not claim graphical-client verification.

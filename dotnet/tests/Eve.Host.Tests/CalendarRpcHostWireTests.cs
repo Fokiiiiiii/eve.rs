@@ -205,13 +205,13 @@ public partial class HostServerTests
             new PyLong(editedTime), new PyInt(30), new PyStr("Deleted event"), new PyStr(""), new PyInt(0));
 
         var responsesAfterDelete = await store.GetResponsesToEventAsync(eventId, ownerId);
-        Assert.Equal(CalendarResponseStates.Deleted,
+        Assert.Equal(CalendarResponseStates.Accepted,
             responsesAfterDelete.Single(row => row.CharacterId == ownerId).Status);
-        Assert.Equal(CalendarResponseStates.Deleted,
+        Assert.Equal(CalendarResponseStates.Undecided,
             responsesAfterDelete.Single(row => row.CharacterId == inviteeId).Status);
         Assert.Equal(CalendarResponseStates.Uninvited,
             responsesAfterDelete.Single(row => row.CharacterId == removedInviteeId).Status);
-        Assert.Equal(CalendarResponseStates.Deleted,
+        Assert.Equal(CalendarResponseStates.Undecided,
             responsesAfterDelete.Single(row => row.CharacterId == addedInviteeId).Status);
 
         var inviteeDeletedEvents = Assert.IsType<PyTuple>(await HostRpcAsync(

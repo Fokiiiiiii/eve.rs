@@ -613,6 +613,28 @@ public class SimClientTests
     }
 
     [Fact]
+    public async Task A_disconnected_abyssal_request_returns_a_faulted_task()
+    {
+        await using var client = new SimClient(_ => Task.FromResult<Stream>(new MemoryStream()));
+        var scene = new SimSceneKey(31_000_201, 42, 2);
+        var profile = new SimAbyssalSceneSpec(
+            scene,
+            new SimAbyssalEnvironmentProfile([], []),
+            new SimAbyssalBoundaryProfile([0.0, 0.0, 0.0], 75_000.0, 1_000,
+                [new SimAbyssalBoundaryDamagePoint(0.0, 12.5)]),
+            134_351_527_136_350_000);
+
+        Task<string?> request = null!;
+        var synchronousError = Record.Exception(() =>
+        {
+            request = client.EnsureAbyssalSceneAsync(new SimEnsureAbyssalScene(101, profile));
+        });
+
+        Assert.Null(synchronousError);
+        await Assert.ThrowsAsync<SimUnavailableException>(() => request);
+    }
+
+    [Fact]
     public async Task Cancellation_after_the_connection_check_prevents_enqueue()
     {
         using var canceled = new CancellationTokenSource();
@@ -644,7 +666,7 @@ public class SimClientTests
     }
 
     [Fact]
-    public async Task Cancellation_at_the_enqueue_boundary_keeps_the_accepted_send_and_cancels_the_wait()
+    public async Task Cancellation_after_send_is_accepted_cancels_the_wait_without_retracting_the_send()
     {
         using var canceled = new CancellationTokenSource();
         var seen = 0;
@@ -698,7 +720,7 @@ public class SimClientTests
     }
 
     [Fact]
-    public void Late_cancellation_cleanup_keeps_retries_with_the_same_key_in_every_pending_map()
+    public void CancelPending_preserves_same_key_replacements_for_each_pending_map()
     {
         using var canceled = new CancellationTokenSource();
         canceled.Cancel();
@@ -706,14 +728,14 @@ public class SimClientTests
         var answeredKey = (Session: 7UL, Code: SimCommands.Dock);
         var oldAnswer = new TaskCompletionSource<CommandReply>(TaskCreationOptions.RunContinuationsAsynchronously);
         var retryAnswer = new TaskCompletionSource<CommandReply>(TaskCreationOptions.RunContinuationsAsynchronously);
-        AssertLateCancellationLeavesRetry(
+        AssertCancelPendingPreservesRetry(
             new System.Collections.Concurrent.ConcurrentDictionary<(ulong Session, byte Code), TaskCompletionSource<CommandReply>>(),
             answeredKey, oldAnswer, retryAnswer, oldAnswer, new CommandReply(true, 1, null), canceled.Token);
 
         var abyssalKey = (ReplyType: typeof(SimEnsureAbyssalSceneReply), RequestId: 101UL);
         var oldAbyssal = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var retryAbyssal = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        AssertLateCancellationLeavesRetry(
+        AssertCancelPendingPreservesRetry(
             new System.Collections.Concurrent.ConcurrentDictionary<(Type ReplyType, ulong RequestId), TaskCompletionSource<string?>>(),
             abyssalKey, oldAbyssal, retryAbyssal, oldAbyssal, null, canceled.Token);
 
@@ -721,7 +743,7 @@ public class SimClientTests
         var retryCharge = new TaskCompletionSource<SimChargeAdjusted>(TaskCreationOptions.RunContinuationsAsynchronously);
         var oldChargePending = (Completion: oldCharge, InOrder: (Action<SimChargeAdjusted>?)null);
         var retryChargePending = (Completion: retryCharge, InOrder: (Action<SimChargeAdjusted>?)null);
-        AssertLateCancellationLeavesRetry(
+        AssertCancelPendingPreservesRetry(
             new System.Collections.Concurrent.ConcurrentDictionary<ulong, (TaskCompletionSource<SimChargeAdjusted> Completion, Action<SimChargeAdjusted>? InOrder)>(),
             102UL, oldChargePending, retryChargePending, oldCharge, new SimChargeAdjusted(102, true, 4, 5), canceled.Token);
     }
@@ -741,7 +763,7 @@ public class SimClientTests
         Assert.Equal(request, Assert.Single(sim.HeardNow().OfType<SimAdjustCharge>()));
     }
 
-    private static void AssertLateCancellationLeavesRetry<TKey, TValue, T>(
+    private static void AssertCancelPendingPreservesRetry<TKey, TValue, T>(
         System.Collections.Concurrent.ConcurrentDictionary<TKey, TValue> pending,
         TKey key,
         TValue original,

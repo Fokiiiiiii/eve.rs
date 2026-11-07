@@ -19,7 +19,7 @@ Base: `75e7de4668a9` (`origin/main`)
 
 Work in this worktree:
 - Finding 1 (missing SDE data during ship death): code and regression test are ready.
-- Finding 3 (missing saved outcome during salvage): refusal, log, and regression test are ready.
+- Finding 3 (missing saved outcome during salvage): refusal, log, and regression test were pushed as `e5e52a5d10482079e9f7efd046494008349a8d63`.
 - SimClient cancellation finding from 9bf04318: disconnected abyssal calls now return a faulted Task; test scope names are corrected.
 - Findings 2 and 4 are already covered by the compatibility note above. Finding 5 is already handled transactionally at `PgSpaceItemStore.cs:97-102`.
 
@@ -30,10 +30,10 @@ Local checks (PostgreSQL-backed tests used `eve_p4`):
 - `Eve.Ships.Tests`, DeathTests and WreckTests: 19 passed, 0 skipped.
 - `Eve.Host.Tests`, full AbyssalHostFlowTests class: 21 passed, 20 skipped; the specific `Tournament_death_chain_follows_committed_ship_and_pod_deaths_before_outbox_pump` test passed separately (1 passed, 0 skipped).
 - `Eve.Services.Space.Tests`, AbyssalSpaceSessionsTests, PlayerDeathTests, NpcLootHostTests, DroneHostTests, SpaceContainerTests: 100 passed, 0 skipped.
-- `Eve.Services.Space.Tests`, WorkCycleHostTests: 19 passed, 0 skipped.
+- `Eve.Services.Space.Tests`, WorkCycleHostTests: 19 passed, 0 skipped. After the second fetch/merge, all 6 salvage-related Space classes (including WorkCycleHostTests) passed: 119 passed, 0 skipped.
 - `Eve.Space.Tests`, SimClientTests: 36 passed, 0 skipped.
 - An initial test build caught xUnit2012 in the missing-outcome assertion and CS0619 in the synchronous exception probe. Both were fixed; the later affected test projects built and passed.
 
 Main CI:
 - Run 1577 for base `75e7de4668a9`: completed green, including the end-to-end job.
-- Latest completed CI before the first push was run 1577 for base `75e7de4668a9`, green. Finding 1 was pushed as `4c9cf157c500b1c2c7ff509748eebf6d02a997ff`; push-triggered CI run 1578 (`42331039469`) and selected Agent Test run 1375 (`42331097595`) both completed successfully with no failed tests.
+- Latest completed CI before the first push was run 1577 for base `75e7de4668a9`, green. Finding 1 was pushed as `4c9cf157c500b1c2c7ff509748eebf6d02a997ff`; push-triggered CI run 1578 (`42331039469`) and selected Agent Test run 1375 (`42331097595`) both completed successfully with no failed tests. Finding 3 was pushed as `e5e52a5d10482079e9f7efd046494008349a8d63`; push-triggered CI run 1579 (`42333649695`) and selected Agent Test run 1376 (`42333680211`) both completed successfully with no failed tests.

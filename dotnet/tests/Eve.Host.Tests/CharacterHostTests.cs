@@ -1864,6 +1864,47 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
     }
 
     [PgFact]
+    public async Task DogmaIM_drone_settings_merge_partial_changes_and_survive_a_host_restart()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var session = new ClientSession { CharacterId = character, UserId = 1 };
+        session.Set("stationid", new PyInt(rig.Station));
+        var dogma = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("dogmaIM"));
+        Assert.True(dogma.HasMethod("ChangeDroneSettings"));
+
+        async Task<PyValue> ChangeAsync(PyValue changes)
+        {
+            var nested = Py.Tuple(new PyStr("ChangeDroneSettings"), Py.Tuple(changes), PyNone.Instance);
+            var bound = Assert.IsType<PyTuple>(await CallAsync(dogma, "MachoBindObject", session,
+                Py.Tuple(new PyInt(rig.Station), new PyInt(3)), nested));
+            return bound.Items[1];
+        }
+
+        async Task<Dictionary<int, bool>> ReadSettingsAsync()
+        {
+            var saved = new Dictionary<int, bool>();
+            await using var connection = await rig.Source.OpenConnectionAsync();
+            await using var command = new NpgsqlCommand(
+                $"SELECT attribute_id, value FROM {rig.CharactersSchema}.character_drone_settings WHERE character_id = $1 ORDER BY attribute_id", connection);
+            command.Parameters.AddWithValue(character);
+            await using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+                saved.Add(reader.GetInt32(0), reader.GetBoolean(1));
+            return saved;
+        }
+
+        Assert.Equal(PyBool.True, await ChangeAsync(new PyDict([new(new PyInt(1275), PyBool.True), new(new PyInt(1297), PyBool.False)])));
+        var first = await ReadSettingsAsync();
+        Assert.Equal(new Dictionary<int, bool> { [1275] = true, [1297] = false }, first);
+
+        await rig.RestartAsync();
+        dogma = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("dogmaIM"));
+        Assert.Equal(PyBool.True, await ChangeAsync(new PyDict([new(new PyInt(1275), PyBool.False), new(new PyInt(9999), PyBool.True)])));
+        Assert.Equal(new Dictionary<int, bool> { [1275] = false, [1297] = false }, await ReadSettingsAsync());
+    }
+
+    [PgFact]
     public async Task CharMgr_global_assets_moniker_resolves_and_lists_through_the_host_wrapper()
     {
         await using var rig = await CharacterHostRig.CreateAsync();

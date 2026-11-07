@@ -602,6 +602,12 @@ public sealed class PersistenceMailSendHostAdapter(
             new JsonObject { ["itemID"] = shipId, ["amount"] = amount, ["payout"] = defaultPayout },
             $"insurance-payout:{lossId}", cancellationToken);
 
+    /// <summary>Persists and delivers a war notice using the V24.01 war notification group.</summary>
+    public Task WriteWarNotificationAsync(
+        long recipientId, long senderId, int typeId, JsonObject data, string idempotencyKey,
+        CancellationToken cancellationToken) =>
+        WriteNotificationAsync(recipientId, senderId, typeId, groupId: 8, data, idempotencyKey, cancellationToken);
+
     public Task WriteJumpCloneDeletedNotificationAsync(
         long characterId,
         long cloneId,

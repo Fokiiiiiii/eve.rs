@@ -537,9 +537,15 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
             await locator.Locates.SetTargetAsync(characterId, agent.AgentId, null, cancellationToken);
             return Say(LocateUnavailableText, idle);
         }
-        if (!await locator.DeliverAsync(characterId, agent.AgentId, quote.Fee, LocateResult(target, agent, quote), cancellationToken))
-            return Say(LocateNoFundsText, idle);
-        return Say(LocateDoneText, await IdleActionsAsync(characterId, agent, standing, now, cancellationToken));
+        var delivered = await locator.DeliverAsync(characterId, agent.AgentId, target, quote.Fee,
+            LocatorRules.CooldownMinutesFor((int)agent.Level), LocateResult(target, agent, quote), cancellationToken);
+        return delivered switch
+        {
+            LocateDeliveryResult.Delivered => Say(LocateDoneText,
+                await IdleActionsAsync(characterId, agent, standing, now, cancellationToken)),
+            LocateDeliveryResult.InsufficientFunds => Say(LocateNoFundsText, idle),
+            _ => Say(LocateUnavailableText, await IdleActionsAsync(characterId, agent, standing, now, cancellationToken)),
+        };
     }
 
     /// <summary>

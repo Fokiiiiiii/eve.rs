@@ -58,6 +58,9 @@ using `dotnet build <project> -c Release -warnaserror --no-restore`. Regression 
 - `dotnet test dotnet/tests/Eve.Services.Core.Tests/Eve.Services.Core.Tests.csproj -c Release --no-build --filter 'FullyQualifiedName~UnportedSupportRpcTests|FullyQualifiedName~CompatibilityRpcServicesTests'` — 15 passed.
 - `EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p3 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -c Release --no-build --filter 'FullyQualifiedName~InGameReportPersistenceHostTests|FullyQualifiedName~Support_and_insurgency_rpcs_return_client_shapes_through_host_registration|FullyQualifiedName~Client_calls_for_chat_community_offers_employment_and_agency_cross_host_wire'` — 3 passed, 0 skipped; the PostgreSQL test covers all report shapes, concurrent submissions and persistence across restart.
 - `EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p3 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -c Release --no-build --filter 'FullyQualifiedName~HostServerTests'` — 412 passed.
+- `/root/.dotnet/dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -c Release --no-build --filter 'FullyQualifiedName~LiveScriptIsolationTests'` — 3 passed, 0 skipped after adding `EVE_SUPPORT_SCHEMA` to `tools/dev/run-eve-live.sh` scratch setup and cleanup; `bash -n tools/dev/run-eve-live.sh` passed.
+
+GitHub CI run 1584 initially failed only `LiveScriptIsolationTests.Every_schema_the_host_reads_is_scratch_in_the_live_script_and_dropped_at_its_end` because `EVE_SUPPORT_SCHEMA` was not isolated. After the script fix, run 1585 passed. Its six Host shards reported 21 skipped tournament/real-simulation tests; these are reported separately and are not counted as passing tests. All other CI jobs succeeded.
 
 No finding in the two-item audit was judged false. P1 is fixed. P2 remains open because its authoritative event producer is absent; no
 graphical V24.01 client session was run.

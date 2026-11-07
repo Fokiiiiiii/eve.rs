@@ -15,6 +15,72 @@ public class FitFittingTests
     private const int Ibis = 601, Afterburner = 21857, CivilianMiner = 3651;
     private const int MediumSlot = 19, HighSlot = 27;
 
+    private static Dictionary<string, PyValue> UserErrorArguments(MachoWrappedException error)
+    {
+        var arguments = ((PyTuple)((PyTuple)((PyObjectEx)error.Error.Payload).Header).Items[1]).Items;
+        return ((PyDict)arguments[1]).Entries.ToDictionary(entry => ((PyStr)entry.Key).Value, entry => entry.Value);
+    }
+
+    private static Task<PyValue> AddToShipAsync(Rig rig, ClientSession session, string inventory, long itemId, int flag) =>
+        ((IService)rig.Service).CallAsync(new ServiceCall
+        {
+            Method = "Add",
+            BoundObjectId = inventory,
+            Session = session,
+            Args = [new PyLong(itemId), new PyLong(Rig.Station)],
+            Kwargs = new PyDict([new(new PyStr("flag"), new PyInt(flag))]),
+        }).AsTask();
+
+    [PgFact]
+    public async Task Fitting_a_module_with_multiple_missing_skills_returns_all_prerequisites_in_the_client_error()
+    {
+        await using var rig = await Rig.CreateAsync(activeShip: true);
+        var ship = (await rig.Ships.LoadAsync(Rig.Character))!.Ship.Id;
+        var module = await rig.AddAsync(450, Rig.Character, Rig.Station, singleton: true); // Gatling Pulse Laser I: Amarr Frigate I and Small Energy Turret I
+        var session = Rig.Session();
+        var shipInventory = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, new PyLong(ship)));
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => AddToShipAsync(rig, session, shipInventory, module, HighSlot));
+
+        Assert.Equal("FittingHasSkillPrerequisites", error.Error.UserErrorMessage);
+        var values = UserErrorArguments(error);
+        Assert.Equal(new PyStr("Small Energy Turret : Level 1, Gunnery : Level 1"), values["requiredSkills"]);
+        Assert.Equal(new PyInt(450), values["item"]);
+        Assert.Equal(new PyInt(2), values["skillCount"]);
+        Assert.Equal(Rig.Station, (await rig.Items.GetAsync(module))!.LocationId);
+    }
+
+    [PgFact]
+    public async Task Fitting_past_the_last_turret_hardpoint_reports_that_the_hardpoints_are_full()
+    {
+        await using var rig = await Rig.CreateAsync(activeShip: true);
+        var ship = await rig.AddAsync(17738, Rig.Character, Rig.Station, singleton: true); // Machariel: eight high slots and seven turret hardpoints
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Skills.GrantAsync(connection, transaction, Rig.Character,
+                [new CharacterSkill(3303, 1, 0), new CharacterSkill(3300, 1, 0)]);
+            await rig.Characters.SetShipAsync(connection, transaction, Rig.Character, ship);
+            await transaction.CommitAsync();
+        }
+        var session = Rig.Session();
+        var shipInventory = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, new PyLong(ship)));
+
+        for (var slot = 0; slot < 7; slot++)
+        {
+            var turret = await rig.AddAsync(450, Rig.Character, Rig.Station, singleton: true);
+            Assert.Equal(InventoryWire.Id(turret), await AddToShipAsync(rig, session, shipInventory, turret, HighSlot + slot));
+        }
+        var eighthTurret = await rig.AddAsync(450, Rig.Character, Rig.Station, singleton: true);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => AddToShipAsync(rig, session, shipInventory, eighthTurret, HighSlot + 7));
+
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+        var notify = Assert.IsType<PyStr>(UserErrorArguments(error)["notify"]);
+        Assert.Equal("All turret hardpoints on this ship are already in use.", notify.Value);
+        Assert.Equal(Rig.Station, (await rig.Items.GetAsync(eighthTurret))!.LocationId);
+    }
+
     /// <summary>The character trains what the test items ask: Civilian Miner (3386), Hobgoblin I (24241 and 3436), each at level 1 (the SDE's 182 and 277).</summary>
     private static async Task TrainAsync(Rig rig)
     {

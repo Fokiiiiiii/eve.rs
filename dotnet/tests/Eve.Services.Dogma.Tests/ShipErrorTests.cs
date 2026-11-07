@@ -47,28 +47,44 @@ public class ShipErrorTests
     }
 
     [Fact]
-    public void Onlining_what_the_ship_cannot_carry_says_which_resource_is_short()
+    public void Onlining_what_the_ship_cannot_carry_returns_the_client_user_error_and_all_capacity_values()
     {
-        Assert.Equal("You do not have enough CPU to online that module.", Notified(new ShipRefused(ShipRefusal.NotEnoughCpu, null, Module, Ship)));
-        Assert.Equal("You do not have enough powergrid to online that module.", Notified(new ShipRefused(ShipRefusal.NotEnoughPower, null, Module, Ship)));
+        foreach (var (reason, fitError, name, require, remaining, total) in new[]
+        {
+            (ShipRefusal.NotEnoughCpu, FitError.NotEnoughCpu, "NotEnoughCpu", 12d, 8d, 10d),
+            (ShipRefusal.NotEnoughPower, FitError.NotEnoughPower, "NotEnoughPower", 20d, 4d, 15d),
+        })
+        {
+            var refusal = new ShipRefused(reason, FitFailure.Of(fitError,
+                ("require", require), ("remaining", remaining), ("total", total)), Module, Ship);
+            var (actual, values) = Say(refusal);
+            Assert.Equal(name, actual);
+            Assert.Equal(Py.Tuple(new PyInt(4), new PyInt(Module)), values["moduleName"]);
+            Assert.Equal(new PyInt(Module), values["moduleType"]);
+            Assert.Equal(Py.Number(require), values["require"]);
+            Assert.Equal(Py.Number(remaining), values["remaining"]);
+            Assert.Equal(Py.Number(total), values["total"]);
+        }
     }
 
     [Fact]
-    public void A_missing_skill_is_named_with_its_level_when_there_is_one()
+    public void A_missing_skill_uses_the_clients_prerequisite_error_and_all_required_arguments()
     {
         var failure = FitFailure.Of(FitError.SkillRequired, ("skillTypeID", Skill), ("requiredLevel", 3), ("currentLevel", 1));
-        Assert.Equal("You need Gunnery level 3 to fit that module.", Notified(new ShipRefused(ShipRefusal.CannotFit, failure, Module, Ship)));
-        Assert.Equal("You need Gunnery level 3 to fit that module.", Notified(new ShipRefused(ShipRefusal.SkillRequired, failure, Module, Ship)));
-        Assert.Equal("You do not have the required skills to fit that module.", Notified(new ShipRefused(ShipRefusal.SkillRequired, null, Module, Ship)));
+        var (name, values) = Say(new ShipRefused(ShipRefusal.CannotFit, failure, Module, Ship));
+        Assert.Equal("FittingHasSkillPrerequisites", name);
+        Assert.Equal(new PyStr("Gunnery : Level 3"), values["requiredSkills"]);
+        Assert.Equal(new PyInt(Module), values["item"]);
+        Assert.Equal(new PyInt(1), values["skillCount"]);
     }
 
     [Fact]
     public void Hard_points_and_slots_have_their_own_words()
     {
         Assert.Equal("This ship has no turret hardpoints.", Notified(Cannot(FitError.NoTurretHardpoints, ("turretHardpoints", 0))));
-        Assert.Equal("All turret hardpoints on this ship are already in use.", Notified(Cannot(FitError.NoTurretHardpoints, ("turretHardpoints", 2))));
+        Assert.Equal("All turret hardpoints on this ship are already in use.", Notified(Cannot(FitError.NoTurretHardpoints, ("turretHardpoints", 2), ("usedTurrets", 2))));
         Assert.Equal("This ship has no launcher hardpoints.", Notified(Cannot(FitError.NoLauncherHardpoints, ("launcherHardpoints", 0))));
-        Assert.Equal("All launcher hardpoints on this ship are already in use.", Notified(Cannot(FitError.NoLauncherHardpoints, ("launcherHardpoints", 1))));
+        Assert.Equal("All launcher hardpoints on this ship are already in use.", Notified(Cannot(FitError.NoLauncherHardpoints, ("launcherHardpoints", 1), ("usedLaunchers", 1))));
         Assert.Equal("That fitting slot is already occupied.", Notified(Cannot(FitError.SlotOccupied)));
     }
 

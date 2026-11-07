@@ -44,7 +44,8 @@ public sealed partial class DogmaIMService(
     Func<long, long, IReadOnlyList<long>, long, int?, long?, CancellationToken, Task<ShipOutcome>>? unloadAmmo = null,
     IWeaponBankStore? weaponBankStore = null,
     StructureServiceModuleToggleHandler? structureServiceModuleToggle = null,
-    Func<long, IReadOnlyDictionary<int, bool>, CancellationToken, Task>? updateDroneSettings = null) : IBoundObjectReleaseHandler
+    Func<long, IReadOnlyDictionary<int, bool>, CancellationToken, Task>? updateDroneSettings = null,
+    Func<ClientSession, long, long, IReadOnlyList<long>, long, long?, int?, long?, CancellationToken, Task<ShipOutcome>>? unloadAmmoToContainer = null) : IBoundObjectReleaseHandler
 {
     private readonly CharacterDogmaSync _sync = sync ?? new CharacterDogmaSync(statics, ships, nowUnixMs);
 
@@ -206,7 +207,8 @@ public sealed partial class DogmaIMService(
     public async ValueTask<PyValue> CreateNewbieShip(ServiceCall call)
     {
         call.Cancellation.ThrowIfCancellationRequested();
-        if (call.Session.CharacterId is not > 0 || call.Session.GetInt("stationid") is not > 0)
+        if (call.Session.CharacterId is not > 0
+            || (call.Session.GetInt("stationid") ?? call.Session.GetInt("structureid")) is not > 0)
         {
             throw Eve.Services.MachoErrors.ThrowUserError("MustBeDocked");
         }

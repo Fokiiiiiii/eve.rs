@@ -34,7 +34,7 @@ public sealed class BeltRatsTests
         public int Left => _values.Count;
     }
 
-    private static readonly BeltRatConfig Always = BeltRatConfig.Reference with { ChanceHighSec = 1, ChanceLowSec = 1, ChanceNullSec = 1 };
+    private static readonly BeltRatConfig Always = BeltRatConfig.Reference with { ChanceHighSec = 1, ChanceLowSec = 1, ChanceNullSec = 1, SpecialsEnabled = false };
 
     private static BeltSystem System(double security, int region = 10000012, int faction = 500007, int id = 30000142) => new(id, security, region, faction);
 
@@ -133,7 +133,7 @@ public sealed class BeltRatsTests
     [Fact]
     public void A_roll_at_or_above_the_chance_finds_nothing_and_what_is_below_it_spawns()
     {
-        var chance = BeltRatConfig.Reference with { ChanceHighSec = 0.25 };
+        var chance = BeltRatConfig.Reference with { ChanceHighSec = 0.25, SpecialsEnabled = false };
         // the hull, the profile, then the chance (a band of one number rolls no count): 0.25 is not below 0.25
         var miss = new BeltRats(Authority(), chance).Decide(System(0.9), 1, 0, 0, new Dice(0.0, 0.0, 0.25).Next);
         Assert.Equal(BeltOutcome.ChanceMiss, miss.Outcome);
@@ -144,7 +144,7 @@ public sealed class BeltRatsTests
     [Fact]
     public void A_belt_has_one_group_at_a_time_waits_a_cooldown_after_a_roll_and_longer_after_a_group()
     {
-        var rats = new BeltRats(Authority(), BeltRatConfig.Reference with { ChanceHighSec = 0 });
+        var rats = new BeltRats(Authority(), BeltRatConfig.Reference with { ChanceHighSec = 0, SpecialsEnabled = false });
         var system = System(0.9);
 
         // a roll that finds nothing: rolled again only after two minutes
@@ -203,4 +203,98 @@ public sealed class BeltRatsTests
 
     private static int PirateRegionOf(NpcAuthority authority, string faction) =>
         new[] { 10000002, 10000006, 10000060, 10000022, 10000058 }.First(region => authority.PirateOfRegion(region) == faction);
+
+    [Fact]
+    public void Eligible_hauler_and_commander_pools_spawn_before_a_zero_ordinary_chance()
+    {
+        var authority = NpcAuthority.Load();
+        var nullsec = new BeltSystem(30001261, -0.16016, 10000015, 0);
+        var haulerConfig = BeltRatConfig.Reference with
+        {
+            ChanceNullSec = 0,
+            SpecialsEnabled = true,
+            HaulerChance = 1,
+            CommanderChance = 0,
+            OfficerChance = 0,
+            CapitalChance = 0,
+        };
+
+        var hauler = new BeltRats(authority, haulerConfig).Decide(nullsec, 1, 0, 0, () => 0);
+
+        Assert.Equal(BeltOutcome.Spawn, hauler.Outcome);
+        Assert.Equal(BeltSpecialKind.Hauler, hauler.Plan!.SpecialKind);
+        Assert.Equal("guristas_asteroid_haulers", hauler.Plan.PoolId);
+        Assert.Equal(2, hauler.Plan.Profiles.Count);
+
+        var commanderConfig = haulerConfig with { HaulerChance = 0, CommanderChance = 1 };
+        var commander = new BeltRats(authority, commanderConfig).Decide(nullsec, 2, 0, 0, () => 0);
+
+        Assert.Equal(BeltOutcome.Spawn, commander.Outcome);
+        Assert.Equal(BeltSpecialKind.Commander, commander.Plan!.SpecialKind);
+        Assert.Equal("guristas_deadspace", commander.Plan.PoolId);
+        Assert.Single(commander.Plan.Profiles);
+    }
+
+    [Fact]
+    public void Officers_require_the_faction_home_region_by_default_and_capitals_require_nullsec_and_respect_class_and_system_limits()
+    {
+        var authority = NpcAuthority.Load();
+        var home = new BeltSystem(30001261, -0.16016, 10000015, 0);
+        var nonHome = home with { SolarSystemId = 30000142, RegionId = 10000002, SecurityStatus = -0.8 };
+        var officerConfig = BeltRatConfig.Reference with
+        {
+            ChanceHighSec = 0,
+            ChanceLowSec = 0,
+            ChanceNullSec = 0,
+            SpecialsEnabled = true,
+            HaulerChance = 0,
+            CommanderChance = 0,
+            OfficerChance = 1,
+            CapitalChance = 0,
+        };
+
+        var officer = new BeltRats(authority, officerConfig).Decide(home, 1, 0, 0, () => 0);
+        Assert.Equal(BeltSpecialKind.Officer, officer.Plan!.SpecialKind);
+        Assert.Equal("guristas_officer", officer.Plan.PoolId);
+        Assert.Equal(BeltOutcome.ChanceMiss, new BeltRats(authority, officerConfig).Decide(nonHome, 2, 0, 0, () => 0).Outcome);
+        var nonHomeOfficer = new BeltRats(authority, officerConfig with { OfficerRequireHomeRegion = false })
+            .Decide(nonHome, 3, 0, 0, () => 0);
+        Assert.Equal(BeltSpecialKind.Officer, nonHomeOfficer.Plan!.SpecialKind);
+
+        var capitalConfig = officerConfig with { OfficerChance = 0, CapitalChance = 1 };
+        var capital = new BeltRats(authority, capitalConfig).Decide(home, 4, 0, 0, () => 0);
+        Assert.Equal(BeltSpecialKind.Capital, capital.Plan!.SpecialKind);
+        Assert.Equal("capital_npc_guristas", capital.Plan.PoolId);
+        Assert.Equal("dreadnought", Assert.Single(capital.Plan.Profiles).CapitalClassId);
+        Assert.Equal(BeltOutcome.CapitalSystemLimit, new BeltRats(authority, capitalConfig)
+            .Decide(home, 5, 0, 0, () => 0, activeCapitalGroups: 1).Outcome);
+        var titan = new BeltRats(authority, capitalConfig with { CapitalClasses = "titan", CapitalMaxActiveGroupsPerSystem = 0 })
+            .Decide(home, 6, 0, 0, () => 0);
+        Assert.Equal("titan", Assert.Single(titan.Plan!.Profiles).CapitalClassId);
+        Assert.Equal(BeltOutcome.ChanceMiss, new BeltRats(authority, capitalConfig with { CapitalMaxSecurity = -0.2 })
+            .Decide(home, 7, 0, 0, () => 0).Outcome);
+        Assert.Equal(BeltOutcome.ChanceMiss, new BeltRats(authority, capitalConfig)
+            .Decide(home with { SecurityStatus = 0.5 }, 8, 0, 0, () => 0).Outcome);
+    }
+
+    [Fact]
+    public void Special_pool_hulls_are_loaded_and_capital_has_priority_over_the_other_specials()
+    {
+        var authority = NpcAuthority.Load();
+        var rats = new BeltRats(authority, BeltRatConfig.Reference with
+        {
+            ChanceNullSec = 0,
+            CapitalChance = 1,
+            OfficerChance = 1,
+            CommanderChance = 1,
+            HaulerChance = 1,
+        });
+
+        Assert.Contains(37463, rats.PoolShipTypes());
+        Assert.Contains(authority.Pool("guristas_asteroid_haulers")!.Entries.Select(e => authority.Profile(e.ProfileId)!.ShipTypeId).First(), rats.PoolShipTypes());
+        var decision = rats.Decide(new BeltSystem(30001261, -0.16016, 10000015, 0), 1, 0, 0, () => 0);
+
+        Assert.Equal(BeltOutcome.Spawn, decision.Outcome);
+        Assert.Equal(BeltSpecialKind.Capital, decision.Plan!.SpecialKind);
+    }
 }

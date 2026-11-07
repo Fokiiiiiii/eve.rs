@@ -48,4 +48,33 @@ public sealed class NpcLootSdeTests
         Assert.All(drops, d => Assert.False(string.IsNullOrWhiteSpace(d.Name)));
         Assert.All(drops, d => Assert.InRange(d.Quantity, 1, 25));
     }
+
+    [PgFact]
+    public async Task Capital_npc_loot_uses_only_its_authored_sde_types_and_keeps_guaranteed_charges()
+    {
+        var loot = await LoadAsync();
+        var authority = NpcAuthority.Load();
+        var capitals = authority.Profiles.Where(profile => profile.CapitalClassId is not null).ToArray();
+
+        Assert.Equal(18, capitals.Length);
+        foreach (var profile in capitals)
+        {
+            var table = authority.LootTable(profile.LootTableId)!;
+            var rolled = loot.Roll(table, () => 0);
+            var maximum = loot.Roll(table, () => 0.999);
+            foreach (var guaranteed in table.GuaranteedEntries!)
+            {
+                Assert.Contains(rolled, drop => drop.TypeId == guaranteed.TypeId && drop.Quantity == guaranteed.Quantity && drop.Singleton == guaranteed.Singleton);
+                Assert.Contains(maximum, drop => drop.TypeId == guaranteed.TypeId && drop.Quantity == (guaranteed.MaxQuantity ?? guaranteed.Quantity) && drop.Singleton == guaranteed.Singleton);
+            }
+            foreach (var selector in table.Selectors)
+            {
+                Assert.NotNull(selector.TypeIds);
+                Assert.Single(selector.TypeIds!);
+                var single = table with { MinEntries = 1, MaxEntries = 1, Selectors = [selector], GuaranteedEntries = [] };
+                var drop = Assert.Single(loot.Roll(single, () => 0));
+                Assert.Equal(selector.TypeIds[0], drop.TypeId);
+            }
+        }
+    }
 }

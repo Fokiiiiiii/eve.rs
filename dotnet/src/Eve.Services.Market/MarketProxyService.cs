@@ -5,6 +5,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Market;
 using Eve.Wallet;
+using Eve.Ships;
 using Npgsql;
 
 namespace Eve.Services.Market;
@@ -12,7 +13,8 @@ namespace Eve.Services.Market;
 [Service("marketProxy")]
 public sealed partial class MarketProxyService(MarketStore store,MarketTrading trading,MarketTopology topology,
     PgCharacterStore characters,Eve.Corporations.CorporationStore corporations,WalletTransactions wallets,MarketCatalog catalog,Func<long> now,
-    MarketExpiryWorker expiry,PgItemStore items,ItemTypeCatalog itemTypes,CharacterSessions? characterSessions=null) : IServiceExceptionMapper
+    MarketExpiryWorker expiry,PgItemStore items,ItemTypeCatalog itemTypes,CharacterSessions? characterSessions=null,
+    Func<IReadOnlyList<ItemChanged>,ClientSession?,Task>? corporationInventoryObservers=null) : IServiceExceptionMapper
 {
     private const string MarketUnavailableMessage = "Market is currently offline, elysian says sorry!";
 
@@ -113,8 +115,9 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
         "MARKET_ARGUMENT_OUT_OF_RANGE" => "One of the market values is outside the supported range.",
         _ => "The market refused the request.",
     };
-    private readonly MarketNotifier notifier = new(wallets,characterSessions,items,itemTypes);
-    private Task Publish(MarketReceipt receipt, MarketRequest? immediateFill = null) => notifier.PublishAsync(receipt, immediateFill);
+    private readonly MarketNotifier notifier = new(wallets,characterSessions,items,itemTypes,corporationInventoryObservers);
+    private Task Publish(MarketReceipt receipt, MarketRequest? immediateFill = null, ClientSession? actorSession = null) =>
+        notifier.PublishAsync(receipt, immediateFill, actorSession);
 
     internal static PyValue OrderNotificationEntry(MarketOwnedOrder owned)
     {
@@ -497,7 +500,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
             if(receipt.OrderId is null && receipt.FilledQuantity == 0)
                 throw MachoErrors.ThrowUserError("CustomInfo",("info",new PyStr("No matching sell orders were available at the requested price.")));
             RecordPlacement(call,request);
-            await Publish(receipt,request);
+            await Publish(receipt,request,call.Session);
             return PyNone.Instance;
         }
         catch (Exception e) when (e is MarketError or MoneyLimitException or InsufficientFundsException or Eve.Corporations.CorporationError) { throw Error(e); }
@@ -542,7 +545,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
             RefuseRepeatedPlacement(call, request);
             var receipt = await trading.PlaceAsync(request, key, call.Cancellation);
             RecordPlacement(call, request);
-            await Publish(receipt, request);
+            await Publish(receipt, request, call.Session);
             return receipt.OrderId is not null || receipt.FilledQuantity > 0;
         }
         catch (Exception e) when (e is MarketError or MoneyLimitException or InsufficientFundsException or Eve.Corporations.CorporationError) { throw Error(e); }
@@ -555,7 +558,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
         {
             var receipt=await trading.CancelAsync(Actor(call),Integer(call.Arg(0)),Key(call,"cancel"),call.Cancellation);
             _lastPlacement.TryRemove(call.Session.SessionId,out _);
-            await Publish(receipt);
+            await Publish(receipt,actorSession:call.Session);
             return PyNone.Instance;
         }
         catch (Exception e) when (e is MarketError or MoneyLimitException or InsufficientFundsException or Eve.Corporations.CorporationError) { throw Error(e); }
@@ -611,14 +614,16 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
         {
             var receipts = await trading.PlaceBuyOrdersAsync(requests, call.Cancellation);
             foreach (var line in requests) RecordPlacement(call, line.Request);
-            var created = new List<MarketOwnedOrder>();
+            var immediateOrders = new List<MarketOwnedOrder>(receipts.Count);
             for (var i = 0; i < receipts.Count; i++)
             {
                 var receipt = receipts[i];
-                await Publish(receipt, requests[i].Request);
-                created.AddRange(receipt.ChangedOrders.Where(change => change.Reason == "Created").Select(change => change.Order));
+                await Publish(receipt);
+                if (receipt.ImmediateOrder is { } immediateOrder)
+                    immediateOrders.Add(immediateOrder);
             }
-            return OwnerOrderRowset(created, null);
+            notifier.PublishImmediateBuyOrders(immediateOrders);
+            return Py.List([.. immediateOrders.Select(OrderNotificationEntry)]);
         }
         catch (Exception e) when (e is MarketError or MoneyLimitException or InsufficientFundsException or Eve.Corporations.CorporationError) { throw Error(e); }
     }

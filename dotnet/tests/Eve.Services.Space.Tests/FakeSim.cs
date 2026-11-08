@@ -484,7 +484,8 @@ internal sealed class FakeSim : ISimulation
             return Task.FromResult(new CommandReply(true, 0, null)
             {
                 Position = PositionAnswers.GetValueOrDefault(targetId, [0, 0, 0]),
-                Direction = [1, 0, 0]
+                Direction = [1, 0, 0],
+                Radius = PositionRadiusAnswers.GetValueOrDefault(targetId),
             });
         }
         if (code == SimCommands.Jump && JumpHandler is { } jumpHandler)
@@ -512,6 +513,8 @@ internal sealed class FakeSim : ISimulation
     public IReadOnlyList<double> WarpDestinationAnswer { get; set; } = [1_000_000, 0, 0];
 
     public Dictionary<long, IReadOnlyList<double>> PositionAnswers { get; } = [];
+
+    public Dictionary<long, double?> PositionRadiusAnswers { get; } = [];
 
     /// <summary>The drop point the simulation answers for a distance ahead of the pilot's ship (the default: along +x).</summary>
     public Func<ulong, double, IReadOnlyList<double>> DropPointAnswer { get; set; } = (_, distance) => [distance, 0, 0];

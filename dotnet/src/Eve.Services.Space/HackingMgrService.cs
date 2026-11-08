@@ -10,6 +10,7 @@ public sealed record HackingWindow(HackingGame Game, HackableTarget Target, doub
 {
     public IReadOnlyList<HackingEvent>? PendingTerminalEvents { get; set; }
     public Action? ClosedHandler { get; set; }
+    public bool QaPractice { get; init; }
     public SemaphoreSlim Gate { get; } = new(1, 1);
 }
 
@@ -89,6 +90,26 @@ public sealed class HackingAttempts
         return true;
     }
 
+    public bool TryAddPracticeWindow(long characterId, HackingWindow window, Action closedHandler)
+    {
+        if (window.Session is not { IsClosed: false } session)
+            return false;
+        lock (_gate)
+        {
+            if (_windows.ContainsKey(characterId) || _reservations.Values.Any(reservation => reservation.CharacterId == characterId))
+                return false;
+            window.ClosedHandler = closedHandler;
+            _windows.Add(characterId, window);
+        }
+        session.Closed += closedHandler;
+        if (session.IsClosed)
+        {
+            Remove(characterId, window);
+            return false;
+        }
+        return true;
+    }
+
     public HackingReservation? Reservation(ClientSession session, long targetId)
     {
         lock (_gate) return _reservations.GetValueOrDefault((session, targetId));
@@ -161,12 +182,104 @@ public sealed class HackingMgrService : IService
 
     private static readonly HashSet<string> Methods = new(StringComparer.Ordinal)
     {
-        "ClickedOnTile", "UsedUtilityElement", "UsedUtilityElementOnVirus", "QuitHackingAttempt",
+        "ClickedOnTile", "UsedUtilityElement", "UsedUtilityElementOnVirus", "QuitHackingAttempt", "StartNewGameInstance",
     };
 
     public string Name => "hackingMgr";
 
     public bool HasMethod(string method) => Methods.Contains(method);
+
+    public bool HasOpenAttempt(ClientSession session, long characterId) =>
+        attempts.Get(characterId) is { } window && ReferenceEquals(window.Session, session);
+
+    private async ValueTask<PyValue> StartNewGameInstanceAsync(ServiceCall call, long characterId)
+    {
+        const string qaOnly = "Activate an analyzer to hack a container. Standalone practice boards require the QA role.";
+        if (!HasQaRole(call.Session) || call.Args.Count != 7 || call.Arg(0) is not PyNone)
+        {
+            throw MachoErrors.ThrowUserError(qaOnly);
+        }
+        if (!TryInt32(call.Arg(1), out var gameType) || !TryInt32(call.Arg(2), out var moduleTypeId)
+            || !TryInt32(call.Arg(3), out var difficulty) || !TryInt32(call.Arg(4), out var coherence)
+            || !TryInt32(call.Arg(5), out var strength) || !TryInt32(call.Arg(6), out var slots)
+            || moduleTypeId <= 0 || slots < 0)
+        {
+            throw MachoErrors.ThrowUserError("HACKING_PRACTICE_ARGUMENTS_INVALID");
+        }
+
+        var session = call.Session;
+        if (attempts.Get(characterId) is { } previous)
+        {
+            await LoseAsync(previous.Session ?? session, characterId, previous, call.Cancellation, send: previous.Session?.IsClosed != true);
+            if (ReferenceEquals(attempts.Get(characterId), previous))
+                throw MachoErrors.ThrowUserError("ANALYZER_TARGET_BUSY");
+        }
+
+        var tier = Math.Clamp(difficulty, 0, 5);
+        var attempt = new HackingAttempt(null, moduleTypeId, gameType, tier, coherence, strength, slots, Random.Shared.Next());
+        var target = new HackableTarget(0, 0, tier, Relic: false);
+        var window = new HackingWindow(newGame(attempt), target, 0, session) { QaPractice = true };
+        Action closedHandler = () => _ = EndAfterSessionCloseAsync(session, characterId, window);
+        if (!attempts.TryAddPracticeWindow(characterId, window, closedHandler))
+            throw MachoErrors.ThrowUserError("ANALYZER_TARGET_BUSY");
+        Send(session, window.Game.Start());
+        return PyNone.Instance;
+    }
+
+    private static bool TryInt32(PyValue value, out int result)
+    {
+        var number = value switch
+        {
+            PyInt integer => integer.Value,
+            PyLong integer => integer.Value,
+            _ => long.MinValue,
+        };
+        result = number is >= int.MinValue and <= int.MaxValue ? (int)number : 0;
+        return number is >= int.MinValue and <= int.MaxValue;
+    }
+
+    private static bool HasQaRole(ClientSession session)
+    {
+        var role = session.GetInt("role") ?? session.GetInt("accountRole") ?? 0;
+        return (role & GameMasterRoles.Qa) != 0;
+    }
+
+    /// <summary>Ends an open attempt after a movement or target-lock update makes its authoritative start conditions false.</summary>
+    public async ValueTask RecheckReachAsync(ClientSession session, long characterId, CancellationToken cancellationToken)
+    {
+        if (attempts.Get(characterId) is not { } window || !ReferenceEquals(window.Session, session) || window.MaxRange <= 0)
+            return;
+
+        await window.Gate.WaitAsync(cancellationToken);
+        try
+        {
+            if (!ReferenceEquals(attempts.Get(characterId), window))
+                return;
+            try
+            {
+                if (window.PendingTerminalEvents is not null)
+                {
+                    await EndIfOverAsync(session, characterId, window, [Ack()], send: true, cancellationToken);
+                    return;
+                }
+                if (await site.AnalyzerStartRefusalAsync(session, window.Target, window.MaxRange, cancellationToken) is null)
+                    return;
+
+                var terminal = window.Game.Quit();
+                await EndIfOverAsync(session, characterId, window, terminal, send: true, cancellationToken);
+            }
+            catch (Exception error) when (error is not OperationCanceledException)
+            {
+                log?.Invoke($"the hacking attempt for container {window.Target.ItemId} could not settle after losing reach: {error.Message}");
+                localTimers?.Set(SettlementRetryKey(window.ReservationId), ClosedSessionSettlementRetryDelay,
+                    () => RecheckReachAsync(session, characterId, CancellationToken.None).AsTask());
+            }
+        }
+        finally
+        {
+            window.Gate.Release();
+        }
+    }
 
     public async ValueTask<PyValue> CallAsync(ServiceCall call)
     {
@@ -174,6 +287,9 @@ public sealed class HackingMgrService : IService
             return PyNone.Instance;
 
         var session = call.Session;
+        if (call.Method == "StartNewGameInstance")
+            return await StartNewGameInstanceAsync(call, characterId);
+
         if (attempts.Get(characterId) is not { } window)
         {
             // EVE.js Handle_QuitHackingAttempt returns null with no open attempt and sends nothing; a tile click answers with the ACK turn
@@ -240,6 +356,8 @@ public sealed class HackingMgrService : IService
             return "ANALYZER_TARGET_INVALID";
         if (target.Relic ? !values.CanHackRelic : !values.CanHackData)
             return "ANALYZER_TYPE_MISMATCH";
+        if (await site.AnalyzerStartRefusalAsync(session, target, values.MaxRange, cancellationToken) is { } startRefusal)
+            return startRefusal;
 
         if (attempts.Get(characterId) is { } previous && !ReferenceEquals(previous.Session, session))
         {
@@ -300,6 +418,12 @@ public sealed class HackingMgrService : IService
             await CancelAnalyzerReservationAsync(session, targetId, CancellationToken.None);
             return;
         }
+        if (reservation.CharacterId != characterId || reservation.Target.ItemId != target.ItemId
+            || await site.AnalyzerStartRefusalAsync(session, target, values.MaxRange, cancellationToken) is not null)
+        {
+            await CancelAnalyzerReservationAsync(session, targetId, CancellationToken.None);
+            return;
+        }
         if (attempts.Get(characterId) is { } previous)
         {
             await LoseAsync(previous.Session ?? session, characterId, previous, cancellationToken, send: previous.Session?.IsClosed != true);
@@ -314,7 +438,7 @@ public sealed class HackingMgrService : IService
             target.ItemId,
             values.ModuleTypeId,
             target.Relic ? HackingWire.GameTypeArchaeology : HackingWire.GameTypeHacking,
-            Math.Max(1, (int)Math.Floor(target.Difficulty - values.AccessDifficultyBonus / 5)),
+            EffectiveDifficulty(target.Difficulty, values.AccessDifficultyBonus),
             (int)Math.Round(values.VirusCoherence),
             (int)Math.Round(values.VirusStrength),
             (int)Math.Round(values.VirusSlots),
@@ -334,9 +458,15 @@ public sealed class HackingMgrService : IService
         Send(session, window.Game.Start());
     }
 
+    private static int EffectiveDifficulty(int difficulty, double accessDifficultyBonus)
+    {
+        var adjusted = difficulty - accessDifficultyBonus / 5;
+        return double.IsFinite(adjusted) ? (int)Math.Clamp(Math.Floor(adjusted), 0d, 5d) : 0;
+    }
+
     /// <summary>The window closes at a warp: the attempt is lost.</summary>
     public ValueTask CloseOnWarpAsync(ClientSession session, long characterId, CancellationToken cancellationToken) =>
-        attempts.Get(characterId) is { } window && ReferenceEquals(window.Session, session)
+        attempts.Get(characterId) is { QaPractice: false } window && ReferenceEquals(window.Session, session)
             ? LoseAsync(session, characterId, window, cancellationToken, send: true)
             : ValueTask.CompletedTask;
 
@@ -366,6 +496,14 @@ public sealed class HackingMgrService : IService
             return;
         }
         window.PendingTerminalEvents ??= events;
+        if (window.QaPractice)
+        {
+            attempts.Remove(characterId, window);
+            localTimers?.Cancel(SettlementRetryKey(window.ReservationId));
+            if (send && !session.IsClosed)
+                Send(session, window.PendingTerminalEvents);
+            return;
+        }
         var contents = await site.AttemptEndedAsync(
             session, window.Target, window.ReservationId, window.Game.Outcome == HackingOutcome.Won, cancellationToken);
         var terminalEvents = window.Game.Outcome == HackingOutcome.Won
@@ -442,13 +580,13 @@ public sealed class HackingMgrService : IService
             session.SendNotification("OnHackingTurnComplete", "clientID", new PyTuple(events.Select(e => ToPy(e)).ToArray()));
     }
 
-    /// <summary>A util.KeyVal per event and per record, as the client reads them (<c>event['eventID']</c>, <c>TileData(**eventData)</c>).</summary>
+    /// <summary>The outer event is a util.KeyVal; the client expands event data and its records with Python <c>**kwargs</c>.</summary>
     public static PyValue ToPy(HackingEvent e) => Py.KeyVal(
         ("eventID", new PyInt(e.EventId)),
         ("eventData", ToPy(e.Data)));
 
     private static PyValue ToPy(IReadOnlyDictionary<string, object?> data) =>
-        Py.KeyVal(data.Select(kv => (kv.Key, ToPy(kv.Value))).ToArray());
+        new PyDict(data.Select(kv => new KeyValuePair<PyValue, PyValue>(new PyStr(kv.Key), ToPy(kv.Value))).ToArray());
 
     private static PyValue ToPy(object? value) => value switch
     {

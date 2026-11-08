@@ -521,8 +521,11 @@ public class CalendarMgrServiceTests
         public Task<CalendarResponseUpdate> SendResponseAsync(
             long eventId, long ownerId, long characterId, short response, CancellationToken cancellationToken = default)
         {
-            var calendarEvent = Events.SingleOrDefault(row => row.EventId == eventId && row.OwnerId == ownerId && !row.IsDeleted);
-            if (calendarEvent is null)
+            var calendarEvent = Events.FirstOrDefault(row => row.EventId == eventId && row.OwnerId == ownerId && !row.IsDeleted);
+            if (calendarEvent is null ||
+                (calendarEvent.Tag == CalendarTags.Personal && characterId != ownerId &&
+                    !Responses.Any(row => row.EventId == eventId && row.CharacterId == characterId &&
+                        row.Status != CalendarResponseStates.Uninvited)))
                 return Task.FromResult(new CalendarResponseUpdate(false, null));
             Upsert(eventId, characterId, response);
             return Task.FromResult(new CalendarResponseUpdate(true, calendarEvent));

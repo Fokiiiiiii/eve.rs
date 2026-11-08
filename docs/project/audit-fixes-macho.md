@@ -46,7 +46,7 @@ After the fixes:
 
 - `Eve.Services.Tests.MachoTests`: 21 passed, 0 failed, 0 skipped.
 - Selected Host regression tests, including the PostgreSQL-backed restart test on `eve_p4`: 9 passed, 0 failed, 0 skipped.
-- The full referenced Host test classes (`HostServerTests`, `GlobalConfigStoreTests`, `GlobalConfigWireTests`, and `GlobalConfigPersistenceTests`) on `eve_p4`: 437 passed, 0 failed, 0 skipped.
+- The full referenced Host test classes (`HostServerTests`, `GlobalConfigStoreTests`, `GlobalConfigWireTests`, and `GlobalConfigPersistenceTests`) on `eve_p4`: 438 passed, 0 failed, 0 skipped (including the merge-updated Host test class).
 - Release builds with `-warnaserror` for `Eve.Macho`, `Eve.Host`, `Eve.Services.Tests`, and `Eve.Host.Tests`: all succeeded with 0 warnings and 0 errors.
 - EveJS runtime checks: `decodeCallRequest` returned a tagged PyList as one list argument; `decodePacket` retained command `6.5` as `UNKNOWN(6.5)`, and `decodeAddress` returned `unknown` for address type `8.5`. Calling EveJS's PingReq handler with one client timing entry returned six synthetic entries and did not preserve the client entry. Its global-config store refused the Honeycomb key (`false` result), hid it from the client config, and retained a `None` override.
 

@@ -87,6 +87,71 @@ public sealed class PublicGatewayTests
     }
 
     [Fact]
+    public async Task Durable_notice_is_acknowledged_only_after_the_http2_stream_flushes_it()
+    {
+        const long accountId = 90_000_001;
+        const long characterId = 90_000_002;
+        var now = DateTimeOffset.UtcNow;
+        var notices = new NoticeHub();
+        var routes = new PublicGatewayRoutes(
+            new Dictionary<string, GatewayHandler>(),
+            notices,
+            new GatewayAuthority((character, _) => Task.FromResult<long?>(character == characterId ? accountId : null), () => now));
+        await using var server = await PublicGatewayServer.StartAsync(IPAddress.Loopback, 0, routes);
+        using var http = new HttpClient(new SocketsHttpHandler())
+        {
+            DefaultRequestVersion = HttpVersion.Version20,
+            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
+        };
+        using var content = new ByteArrayContent(GatewayEnvelope.Frame(RequestFrame("eve_public.test.IdentifyRequest", characterId, [])));
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/grpc+proto");
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"http://127.0.0.1:{server.Port}/eve_public.gateway.Notices/Consume")
+        {
+            Content = content,
+            Version = HttpVersion.Version20,
+            VersionPolicy = HttpVersionPolicy.RequestVersionExact,
+        };
+        request.Headers.TryAddWithoutValidation("authorization", GatewayTokens.Issue(accountId, null, now));
+        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!notices.PublishDurable("durable-test", 0, "eve_public.test.DurableNotice", [], characterId))
+            await Task.Delay(1, timeout.Token);
+
+        var stream = await response.Content.ReadAsStreamAsync(timeout.Token);
+        var message = await ReadFrameAsync(stream, timeout.Token);
+        var any = SkillPlanWire.Message(message, 5) ?? throw new InvalidOperationException("no payload in durable notice");
+        var typeUrl = SkillPlanWire.StringOf(any, 1);
+        Assert.Equal("eve_public.test.DurableNotice", typeUrl[(typeUrl.LastIndexOf('/') + 1)..]);
+        Assert.True(notices.IsDelivered("durable-test", 0));
+    }
+
+    [Fact]
+    public async Task Durable_notice_waits_for_every_matching_open_stream_to_flush()
+    {
+        const long characterId = 90_000_003;
+        var notices = new NoticeHub();
+        var first = notices.Subscribe(account: 90_000_001);
+        first.Character = characterId;
+        var second = notices.Subscribe(account: 90_000_001);
+        second.Character = characterId;
+
+        Assert.True(notices.PublishDurable("two-streams", 0, "eve_public.test.DurableNotice", [], characterId));
+        var firstFrame = await first.Frames.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(1));
+        var secondFrame = await second.Frames.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(1));
+        notices.Acknowledge(first, firstFrame);
+
+        Assert.False(notices.IsDelivered("two-streams", 0));
+        notices.Acknowledge(second, secondFrame);
+        Assert.True(notices.IsDelivered("two-streams", 0));
+
+        notices.Unsubscribe(first);
+        notices.Unsubscribe(second);
+        notices.Forget("two-streams");
+    }
+
+    [Fact]
     public void Arbitrary_gateway_frame_buffers_never_escape_the_format_error_contract()
     {
         var random = new Random(0x51a7);

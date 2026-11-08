@@ -192,7 +192,11 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
         try
         {
             await foreach (var frame in subscriber.Frames.Reader.ReadAllAsync(context.RequestAborted))
-                await context.Response.BodyWriter.WriteAsync(frame, context.RequestAborted);
+            {
+                var flushed = await context.Response.BodyWriter.WriteAsync(frame, context.RequestAborted);
+                if (!flushed.IsCanceled && !flushed.IsCompleted)
+                    routes.Notices.Acknowledge(subscriber, frame);
+            }
         }
         catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
         {

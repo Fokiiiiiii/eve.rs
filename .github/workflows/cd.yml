@@ -1,0 +1,137 @@
+name: CD
+
+# Builds the deliverables in GitHub Actions so nobody has to build them locally: the Linux server binaries plus the
+# published C# host (one tarball), and the container image from the repository Dockerfile. Runs only on a version tag
+# (v*) or by hand, so it never gates main. Build caches: cargo (Swatinem/rust-cache), NuGet packages, and the Docker
+# layer cache (a buildx local cache restored and saved with actions/cache). No secrets: the image goes to GHCR and the
+# release to this repository with the workflow's own GITHUB_TOKEN.
+
+'on':
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      push_image:
+        description: Push the container image to GHCR (tags always push)
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  RUST_TOOLCHAIN: "1.99.0"
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  DOTNET_NOLOGO: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+
+jobs:
+  binaries:
+    name: Server binaries and C# host
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master as of 2026-10-19
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: cd-release
+      - uses: actions/setup-dotnet@349aa191ae05aee6d53db4bcba37bd6980e812fe # v6 with skip-lts-prepass
+        with:
+          dotnet-version: 10.0.401
+          skip-lts-prepass: true
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('dotnet/Directory.Packages.props', 'dotnet/**/*.csproj', 'dotnet/**/*.props', 'dotnet/**/*.targets') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - name: Build the Rust binaries
+        run: cargo build --release --locked -p eve-net -p eve-sim -p eve-sde
+      - name: Publish the C# host
+        run: dotnet publish dotnet/src/Eve.Host -c Release -o dist/host --nologo -nodeReuse:false
+      - name: Package
+        env:
+          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
+        run: |
+          mkdir -p dist/bin
+          cp target/release/eve-net target/release/eve-sim target/release/eve-sde dist/bin/
+          cp server.env.example dist/
+          tar -C dist -czf "eve-rs-linux-x64-${VERSION}.tar.gz" bin host server.env.example
+          ls -l eve-rs-linux-x64-*.tar.gz
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eve-rs-linux-x64
+          path: eve-rs-linux-x64-*.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+  image:
+    name: Container image
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /tmp/buildx-cache
+          key: buildx-${{ runner.os }}-${{ hashFiles('Dockerfile', 'Cargo.lock', 'dotnet/Directory.Packages.props') }}-${{ github.run_id }}
+          restore-keys: |
+            buildx-${{ runner.os }}-${{ hashFiles('Dockerfile', 'Cargo.lock', 'dotnet/Directory.Packages.props') }}-
+            buildx-${{ runner.os }}-
+      - name: Set up buildx
+        run: docker buildx create --name eve --driver docker-container --use
+      - name: Build and optionally push
+        env:
+          GH_ACTOR: ${{ github.actor }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUSH: ${{ github.ref_type == 'tag' || inputs.push_image }}
+          TAG_NAME: ${{ github.ref_type == 'tag' && github.ref_name || 'sha-' }}
+        run: |
+          repo="ghcr.io/${GITHUB_REPOSITORY,,}"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then tag="$GITHUB_REF_NAME"; else tag="sha-${GITHUB_SHA::12}"; fi
+          args="--tag $repo:$tag --cache-to type=local,dest=/tmp/buildx-cache-new,mode=max"
+          if [ -d /tmp/buildx-cache ]; then args="$args --cache-from type=local,src=/tmp/buildx-cache"; fi
+          if [ "$PUSH" = "true" ]; then
+            echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+            args="$args --push"
+          else
+            args="$args --output type=cacheonly"
+          fi
+          docker buildx build $args .
+          # keep only the newest cache so it does not grow with every run
+          rm -rf /tmp/buildx-cache
+          mv /tmp/buildx-cache-new /tmp/buildx-cache
+
+  release:
+    name: GitHub release
+    if: github.ref_type == 'tag'
+    needs: [binaries, image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: eve-rs-linux-x64
+          path: release
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" release/*.tar.gz --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$GITHUB_REF_NAME" release/*.tar.gz --generate-notes --title "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY"
+          fi

@@ -3,6 +3,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Dogma;
 using Eve.Planets;
+using Eve.Scheduler;
 using Eve.Services;
 using Eve.Ships;
 using Eve.Skills;
@@ -30,7 +31,22 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
     private readonly Dictionary<string, long> _boundPlanets = [];
     private readonly Dictionary<long, PlanetBody> _bodies = [];
     private readonly object _rawResourceTypeIdsGate = new();
+    private DurableScheduler? _scheduler;
     private Task<int[]>? _rawResourceTypeIds;
+
+    private const string LaunchPlacementJobKind = "planet.launch.place";
+    private const long LaunchPlacementRetryMs = 5_000;
+
+    private sealed record LaunchPlacementPayload(long OwnerId, LaunchRecord Launch);
+
+    /// <summary>Registers the durable launch placement worker before the host starts the shared scheduler.</summary>
+    public void RegisterJobs(DurableScheduler scheduler)
+    {
+        ArgumentNullException.ThrowIfNull(scheduler);
+        if (Interlocked.CompareExchange(ref _scheduler, scheduler, null) is not null)
+            throw new InvalidOperationException("The planet launch placement handler is already registered.");
+        scheduler.Register(LaunchPlacementJobKind, PlaceLaunchCanJobAsync);
+    }
 
     /// <summary><c>MachoBindObject(planetID, (method, args, kwargs))</c>: binds the planet, then makes the nested call.</summary>
     [Method("MachoResolveObject")]
@@ -314,54 +330,77 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
     [Method("UserLaunchCommodities")]
     public async ValueTask<PyValue> UserLaunchCommodities(ServiceCall call)
     {
+        var scheduler = _scheduler ?? throw new InvalidOperationException("The planet launch placement handler has not been registered.");
         var planetId = PlanetOf(call);
         var owner = RequireOwner(call);
         var pinId = Integral(call.Arg(0)) ?? 0;
         var commodities = Commodities(call.Arg(1));
         var body = await BodyAsync(planetId, call.Cancellation);
         long launchTime = 0;
-        long canId = 0;
         await ChangeAsync(owner, planetId, (colony, _) =>
         {
             launchTime = colony.Launch(pinId, commodities);
             return Task.FromResult<List<ColonyCommand>>([]);
         }, call.Cancellation, extra: async (connection, transaction) =>
         {
-
             var container = await items.CreateAsync(connection, transaction, new NewItem(LaunchContainerType, owner, body.SolarSystemId, ContainerFlag, 1, Singleton: true), call.Cancellation);
-            canId = container;
             foreach (var (type, quantity) in commodities)
                 await items.CreateAsync(connection, transaction, new NewItem(type, owner, container, ContainerFlag, quantity), call.Cancellation);
             // near the planet: two radii out along x from its centre (the launch's place in the system)
-            await store.InsertLaunchAsync(connection, transaction, new LaunchRecord(0, owner, planetId, body.SolarSystemId, container, true,
+            var launch = new LaunchRecord(0, owner, planetId, body.SolarSystemId, container, true,
                 launchTime, launchTime + PlanetRules.LaunchLifetime, body.X + 2 * body.Radius, body.Y, body.Z,
-                System.Text.Json.JsonSerializer.Serialize(commodities.ToDictionary(kv => kv.Key.ToString(System.Globalization.CultureInfo.InvariantCulture), kv => kv.Value))),
-                call.Cancellation);
+                System.Text.Json.JsonSerializer.Serialize(commodities.ToDictionary(kv => kv.Key.ToString(System.Globalization.CultureInfo.InvariantCulture), kv => kv.Value)));
+            var launchId = await store.InsertLaunchAsync(connection, transaction, launch, call.Cancellation);
+            await scheduler.ScheduleAsync(connection, transaction, new JobSpec(LaunchPlacementJobKind, nowMs())
+            {
+                Key = $"launch:{launchId}",
+                Payload = new LaunchPlacementPayload(owner, launch with { LaunchId = launchId }),
+            }, call.Cancellation);
         });
-        await PlaceLaunchCanAsync(body, canId, owner, call.Cancellation);
-
-        await notifyLaunches(owner);
+        // The scheduler may run the job immediately; start it only after the client's RPC response is on the wire.
+        call.Session.AfterResponse(scheduler.Wake);
         return new PyLong(launchTime);
     }
 
     /// <summary>
     /// Puts a launch's can in space two radii out from its planet, where the launch record says: the simulation's ball of a can, and its space row
     /// </summary>
-    private async Task PlaceLaunchCanAsync(PlanetBody body, long canId, long owner, CancellationToken cancellationToken)
+    private async Task PlaceLaunchCanJobAsync(JobContext job, CancellationToken cancellationToken)
     {
-        if (simulation is null || spaceItems is null || dogma is null) return;
+        var payload = job.Payload<LaunchPlacementPayload>()
+            ?? throw new InvalidDataException("Planet launch placement job payload is missing.");
+        try
+        {
+            await PlaceLaunchCanAsync(payload.Launch, payload.OwnerId, cancellationToken);
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            Console.Error.WriteLine($"eve-host: launch can {payload.Launch.ItemId} placement failed; retrying: {error.Message}");
+            job.RunAgainAt(job.NowMs + LaunchPlacementRetryMs, payload);
+            return;
+        }
+        job.AfterCommit(_ => notifyLaunches(payload.OwnerId));
+    }
+
+    private async Task PlaceLaunchCanAsync(LaunchRecord launch, long owner, CancellationToken cancellationToken)
+    {
+        if (simulation is null || spaceItems is null || dogma is null)
+            throw new InvalidOperationException("Planet launch placement needs the simulation, space item store, and dogma data.");
         await dogma.EnsureTypesAsync([LaunchContainerType], cancellationToken);
         var type = dogma.Type(LaunchContainerType);
         var radius = type?.Attributes.GetValueOrDefault(162, LaunchCanRadius) ?? LaunchCanRadius;
-        double[] position = [body.X + 2 * body.Radius, body.Y, body.Z];
+        double[] position = [launch.X, launch.Y, launch.Z];
         double[] direction = [1, 0, 0];
-        var expiresMs = nowMs() + PlanetRules.LaunchLifetime / 10_000;
-        await spaceItems.SaveAsync(new SpaceItem(canId, (int)body.SolarSystemId, position, direction, radius, LaunchCanGroup, 0, owner, 0, 0, 0, expiresMs),
+        var expiresMs = (launch.ExpiresTicks - FileTimeUnixEpochTicks) / FileTimeTicksPerMillisecond;
+        await spaceItems.SaveAsync(new SpaceItem(launch.ItemId, (int)launch.SolarSystemId, position, direction, radius, LaunchCanGroup, 0, owner, 0, 0, 0, expiresMs),
             cancellationToken);
-        simulation.PlaceWreck(new SimPlaceWreck(SimSceneKey.SolarSystem((int)body.SolarSystemId), canId, LaunchCanGroup,
+        simulation.PlaceWreck(new SimPlaceWreck(SimSceneKey.SolarSystem((int)launch.SolarSystemId), launch.ItemId, LaunchCanGroup,
             new SimWreckKind(LaunchContainerType, type?.Name ?? "Cargo Container", type?.GraphicId ?? 0), position, direction, radius, 0,
             new SimCredit(owner, 0, 0, 0), false));
     }
+
+    private const long FileTimeUnixEpochTicks = 116_444_736_000_000_000L;
+    private const long FileTimeTicksPerMillisecond = 10_000L;
 
     /// <summary>UserTransferCommodities(path, commodities): an expedited transfer between two of the colony's pins.</summary>
     [Method("UserTransferCommodities")]

@@ -111,24 +111,24 @@ public sealed partial class InvBrokerService
                 missing[typeId] = missing.GetValueOrDefault(typeId) + quantity;
             }
         }
-        async Task<long> PlaceAsync(long itemId, long typeId, long flag, long want, Func<ItemType, bool>? allowed)
+        async Task<(long Quantity, long ItemId)> PlaceAsync(long itemId, long typeId, long flag, long want, Func<ItemType, bool>? allowed)
         {
             if (await items.GetAsync(itemId, ct) is not { } item || item.TypeId != typeId || item.LocationId != source || item.OwnerId != character)
             {
-                return 0;
+                return (0, 0);
             }
             if (allowed is not null && (await types.GetAsync((int)typeId, ct) is not { } itemType || !allowed(itemType)))
             {
-                return 0;
+                return (0, 0);
             }
             var quantity = item.Singleton ? 1 : Math.Min(want, item.Quantity);
             var outcome = await ships.MoveAsync(character, itemId, source, context.ItemId, (int)flag, item.Singleton ? null : quantity, ct);
             if (outcome is not ShipChanged changed)
             {
-                return 0;
+                return (0, 0);
             }
             outcomes.Add(changed);
-            return quantity;
+            return (quantity, changed.ItemId);
         }
 
         var fittedItems = (await items.InLocationAsync(ship.Id, character, ct)).ToDictionary(i => i.Id);
@@ -164,11 +164,17 @@ public sealed partial class InvBrokerService
             {
                 foreach (var itemId in list.ToList())
                 {
-                    if (await PlaceAsync(itemId, typeId, flag, 1, null) == 1)
+                    var placement = await PlaceAsync(itemId, typeId, flag, 1, null);
+                    if (placement.Quantity == 1)
                     {
-                        list.Remove(itemId);
+                        var remainder = await items.GetAsync(itemId, ct);
+                        if (remainder is null || remainder.TypeId != typeId || remainder.OwnerId != character
+                            || remainder.LocationId != source || remainder.Singleton || remainder.Quantity <= 0)
+                        {
+                            list.Remove(itemId);
+                        }
                         fitted.Add((flag, typeId));
-                        placedModules.Add((itemId, flag, typeId));
+                        placedModules.Add((placement.ItemId, flag, typeId));
                         placed = true;
                         break;
                     }
@@ -213,7 +219,7 @@ public sealed partial class InvBrokerService
                         {
                             break;
                         }
-                        remaining -= await PlaceAsync(itemId, typeId, flag, remaining, allowed);
+                        remaining -= (await PlaceAsync(itemId, typeId, flag, remaining, allowed)).Quantity;
                     }
                 }
                 Missing(typeId, remaining);

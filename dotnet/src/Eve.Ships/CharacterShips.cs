@@ -245,7 +245,8 @@ public sealed partial class CharacterShips(
 
         // the item is held in the hangar, out of any slot, while it is worked out where it goes
         world.Remove(item.Id);
-        var candidate = world.Add(ItemDogma.Of(item, characterId, station, ItemFlags.Hangar, mutation: provenance));
+        var fittingCandidate = item.Singleton || type?.CategoryId == ChargeCategory ? item : item with { Quantity = 1, Singleton = true };
+        var candidate = world.Add(ItemDogma.Of(fittingCandidate, characterId, station, ItemFlags.Hangar, mutation: provenance));
 
         int destinationFlag;
         if (toHangar)
@@ -313,9 +314,12 @@ public sealed partial class CharacterShips(
 
         // what the ship is once the item is where it goes
         var landsInSlot = toShip && Slots.IsSlotFlag(destinationFlag);
-        if (splits && landsInSlot)
+        var fitStackAsSingleton = landsInSlot && type?.CategoryId != ChargeCategory && !item.Singleton;
+        var movedQuantity = fitStackAsSingleton ? 1 : quantity;
+        splits = movedQuantity is { } move && !item.Singleton && move < item.Quantity;
+        if (splits && landsInSlot && !fitStackAsSingleton)
         {
-            return new NothingHappened(); // a stack of modules is not split into a slot
+            return new NothingHappened();
         }
         if (toShip && IsShipHoldFlag(destinationFlag) && !(inShip && item.Flag == destinationFlag)
             && await RefuseWhatDoesNotFitAsync(snapshot, item, splits ? quantity!.Value : item.Quantity, destinationFlag, cancellationToken) is { } full)
@@ -326,7 +330,7 @@ public sealed partial class CharacterShips(
         world.Remove(item.Id);
         if (landsInSlot)
         {
-            world.Add(ItemDogma.Of(item, characterId, ship.Id, destinationFlag, newState, provenance));
+            world.Add(ItemDogma.Of(fittingCandidate, characterId, ship.Id, destinationFlag, newState, provenance));
         }
         if (wasInSlot && cargoCapacityAttribute is { } cargoAttributeAfter)
         {
@@ -350,11 +354,17 @@ public sealed partial class CharacterShips(
             await items.MakeSingletonAsync(connection, transaction, ship.Id, cancellationToken);
         }
 
-        // part of a stack is split off into a stack of its own where it goes; a whole stack goes as it is
-        Item? split = null;
-        if (splits)
+        // A module slot holds one assembled item. Split one unit out of a hangar stack and assemble that unit there.
+        // For non-slot destinations, a partial move remains a stack as before.
+        Item? movedStack = null;
+        if (splits || fitStackAsSingleton)
         {
-            split = await items.MoveStackAsync(connection, transaction, item, quantity!.Value, destinationItemOwnerId, destinationLocationId, destinationFlag, cancellationToken);
+            movedStack = await items.MoveStackAsync(connection, transaction, item, movedQuantity!.Value, destinationItemOwnerId, destinationLocationId, destinationFlag, cancellationToken);
+            if (fitStackAsSingleton)
+            {
+                await items.MakeSingletonAsync(connection, transaction, movedStack.Id, cancellationToken);
+                movedStack = movedStack with { Quantity = 1, Singleton = true };
+            }
         }
         else
         {
@@ -363,9 +373,10 @@ public sealed partial class CharacterShips(
             else
                 await items.MoveToOwnerAsync(connection, transaction, item.Id, destinationItemOwnerId, destinationLocationId, destinationFlag, cancellationToken);
         }
+        var movedItem = movedStack ?? item;
         if (wasInSlot || landsInSlot)
         {
-            await modules.SetAsync(connection, transaction, item.Id, newState, cancellationToken);
+            await modules.SetAsync(connection, transaction, movedItem.Id, newState, cancellationToken);
         }
         if (wasInSlot && !landsInSlot)
         {
@@ -377,14 +388,14 @@ public sealed partial class CharacterShips(
         if (wasInSlot)
         {
             var moduleAfter = landsInSlot ? (newState >= ItemState.Online ? 1d : 0d) : 0d;
-            if (Changed(item.Id, IsOnline, moduleBefore, moduleAfter) is { } switched)
+            if (Changed(movedItem.Id, IsOnline, moduleBefore, moduleAfter) is { } switched)
             {
                 events.Add(switched);
             }
             if (!landsInSlot)
             {
                 // the reference says the online effect stops whether or not it was running
-                events.Add(new EffectChanged(item.Id, BuiltInEffects.Online, Started: false));
+                events.Add(new EffectChanged(movedItem.Id, BuiltInEffects.Online, Started: false));
             }
         }
         ItemChanged? assembled = unpack
@@ -394,14 +405,23 @@ public sealed partial class CharacterShips(
         {
             var stacks = new List<ItemChanged>();
             if (assembled is not null) stacks.Add(assembled);
-            if (split is { } created)
+            if (movedStack is { } created)
                 stacks.AddRange([new(item with { Quantity = item.Quantity - created.Quantity }, item.LocationId, item.Flag, item.Quantity), new(created, 0, created.Flag, 0, item.OwnerId)]);
             else
                 stacks.Add(new(item with { OwnerId = destinationItemOwnerId, LocationId = destinationLocationId, Flag = destinationFlag }, item.LocationId, item.Flag, item.Quantity, item.OwnerId));
-            return new ShipChanged(split?.Id ?? item.Id, ship.Id, [], events, stacks);
+            return new ShipChanged(movedItem.Id, ship.Id, [], events, stacks);
         }
-        var moved = new ItemMoved(item with { OwnerId = destinationItemOwnerId, LocationId = destinationLocationId, Flag = destinationFlag }, item.LocationId, item.Flag, item.OwnerId);
-        return new ShipChanged(item.Id, ship.Id, [moved], events, assembled is null ? null : [assembled]);
+        var moved = new ItemMoved(movedItem with { OwnerId = destinationItemOwnerId, LocationId = destinationLocationId, Flag = destinationFlag }, item.LocationId, item.Flag, item.OwnerId);
+        var stacksChanged = new List<ItemChanged>();
+        if (assembled is { } assembly)
+        {
+            stacksChanged.Add(assembly);
+        }
+        if (movedStack is { } slotSplit && slotSplit.Id != item.Id)
+        {
+            stacksChanged.Add(new(item with { Quantity = item.Quantity - slotSplit.Quantity }, item.LocationId, item.Flag, item.Quantity));
+        }
+        return new ShipChanged(movedItem.Id, ship.Id, [moved], events, stacksChanged.Count == 0 ? null : stacksChanged);
     }
 
     /// <summary>Repackages eligible items in the active station hangar.</summary>

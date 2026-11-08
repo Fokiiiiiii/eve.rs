@@ -138,6 +138,7 @@ public static class ShipNotifications
             session.SendNotification("OnMultiEvent", "clientID", MultiEvent(characterId, outcomes[^1].ShipId, events, fileTime));
         }
         var moved = outcomes.SelectMany(o => o.Items).ToList();
+        var movedItemIds = moved.Select(item => item.After.Id).ToHashSet();
         for (var i = 0; i < moved.Count;)
         {
             var place = (moved[i].PreviousLocationId, moved[i].PreviousFlag);
@@ -153,8 +154,10 @@ public static class ShipNotifications
                 new PyDict([new(new PyInt(3), InventoryWire.Id(place.PreviousLocationId)), new(new PyInt(4), new PyInt(place.PreviousFlag))]),
                 PyNone.Instance);
         }
-        foreach (var stack in outcomes.SelectMany(o => o.Stacks ?? []))
+        foreach (var stack in outcomes.SelectMany(o => o.Stacks ?? []).Where(change => !movedItemIds.Contains(change.After.Id)))
         {
+            // A source stack can be reused for another slot in the same FitFitting call. If its last unit is moved,
+            // the final OnItemsChanged row supersedes the intermediate remainder row from an earlier split.
             SendItemChange(session, stack, row);
         }
     }

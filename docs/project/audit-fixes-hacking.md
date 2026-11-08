@@ -62,7 +62,7 @@ Host composition の `HackingCompositionTests.Qa_practice_board_is_QA_role_gated
 - `HackingBoardTests` / `HackingGameTests`: 46件成功、skip 0。
 - `HackingMgrServiceTests` / `ContainerSiteEndToEndTests` / `AnalyzerSkillTests`: `eve_p6` で30件成功、skip 0。
 - `HackingCompositionTests` と hacking practice packet-wire: `eve_p6` を指定して3件成功、skip 0。
-- Host の `HostServerTests` 全体: 422/423成功、skip 0。唯一の失敗は未追跡 `InventoryAuditHostWireTests.Registered_invbroker_binds_capsuleer_deliveries_and_the_client_can_take_the_item` line 253 の `Assert.Single()` が空になる既知の inventory wire 失敗で、hacking の変更ではありません。
+- `origin/main` をマージした後の Host `HostServerTests` 全体: 426/427成功、skip 0。唯一の失敗は未追跡 `InventoryAuditHostWireTests.Registered_invbroker_binds_capsuleer_deliveries_and_the_client_can_take_the_item` line 253 の `Assert.Single()` が空になる既知の inventory wire 失敗で、hacking の変更ではありません。テスト実行後、同ファイルは作業開始前のバックアップと一致する状態に復元しました。
 - テスト先行の red: board profile test は旧 10x9 の64 tileを返し EveJS tier2 seed 2026 の50と不一致、穴越し距離は期待3で旧計算2、QA `role` のみの practice 呼び出しは `accountRole` 限定で拒否しました。各修正後の focused tests はすべて成功しました。
 
 ## 未確認

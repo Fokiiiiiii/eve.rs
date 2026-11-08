@@ -6,7 +6,8 @@ namespace Eve.Inventory.Mutation;
 
 /// <summary>
 /// What a mutated item was made of: the mutaplasmid and the input consumed to make it, the rolled multiplier of each mutated
-/// attribute, the source base value it was applied to, and the value it gave. The item is the result of the mutation.
+/// attribute, the source base value it was applied to, the value it gave, and (when recorded) the original uniform draw fraction.
+/// The item is the result of the mutation.
 /// </summary>
 public sealed record ItemMutationRecord(
     long ItemId,
@@ -16,12 +17,14 @@ public sealed record ItemMutationRecord(
     long SourceItemId,
     long CharacterId,
     long CreatedAtMs,
-    IReadOnlyDictionary<int, double> Rolls,
+    IReadOnlyDictionary<int, double> Multipliers,
     IReadOnlyDictionary<int, double> BaseValues,
-    IReadOnlyDictionary<int, double> MutatedValues);
+    IReadOnlyDictionary<int, double> MutatedValues,
+    IReadOnlyDictionary<int, double>? RollFractions = null);
 
 /// <summary>
-/// The provenance of mutated items, in <c>inventory.item_mutations</c> (migration <c>0005_item_mutation</c>, applied with the
+/// The provenance of mutated items, in <c>inventory.item_mutations</c> (migrations <c>0005_item_mutation</c> and
+/// <c>0006_mutation_roll_fractions</c>, applied with the
 /// item store's migrations because the table references <c>items</c>). One row per mutated item. A row is written in the caller's
 /// transaction, together with the item it describes, and it is read back as stored: it is never recomputed from the static data
 /// and never re-rolled.
@@ -48,17 +51,19 @@ public sealed class ItemMutationStore
         {
             throw new ArgumentOutOfRangeException(nameof(record), "a mutated item and its character are positive ids");
         }
-        if (record.Rolls.Count == 0 || record.Rolls.Count != record.BaseValues.Count || record.Rolls.Count != record.MutatedValues.Count)
+        if (record.Multipliers.Count == 0 || record.Multipliers.Count != record.BaseValues.Count
+            || record.Multipliers.Count != record.MutatedValues.Count
+            || record.RollFractions is null || record.RollFractions.Count != record.Multipliers.Count)
         {
-            throw new ArgumentException("a mutation records one roll, one base value and one value for each mutated attribute", nameof(record));
+            throw new ArgumentException("a mutation records one multiplier, fraction, base value and result for each mutated attribute", nameof(record));
         }
         await Sql.ExecuteAsync(connection, transaction, Q("""
             INSERT INTO {schema}.item_mutations (item_id, mutator_type_id, mutator_item_id, source_type_id, source_item_id, character_id, created_at_ms,
-                                                 rolls, base_values, mutated_values)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::jsonb, $9::text::jsonb, $10::text::jsonb)
+                                                 rolls, base_values, mutated_values, roll_fractions)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::jsonb, $9::text::jsonb, $10::text::jsonb, $11::text::jsonb)
             """), cancellationToken,
             record.ItemId, record.MutatorTypeId, record.MutatorItemId, record.SourceTypeId, record.SourceItemId, record.CharacterId, record.CreatedAtMs,
-            Serialize(record.Rolls), Serialize(record.BaseValues), Serialize(record.MutatedValues));
+            Serialize(record.Multipliers), Serialize(record.BaseValues), Serialize(record.MutatedValues), Serialize(record.RollFractions));
     }
 
     /// <summary>The provenance of an item, or <c>null</c> when the item is not a mutated one.</summary>
@@ -66,7 +71,7 @@ public sealed class ItemMutationStore
     {
         await using var command = _source.CreateCommand(Q("""
             SELECT item_id, mutator_type_id, mutator_item_id, source_type_id, source_item_id, character_id, created_at_ms,
-                   rolls::text, base_values::text, mutated_values::text
+                   rolls::text, base_values::text, mutated_values::text, roll_fractions::text
             FROM {schema}.item_mutations WHERE item_id = $1
             """));
         command.Parameters.Add(new NpgsqlParameter { Value = itemId });
@@ -83,7 +88,7 @@ public sealed class ItemMutationStore
         }
         await using var command = _source.CreateCommand(Q("""
             SELECT item_id, mutator_type_id, mutator_item_id, source_type_id, source_item_id, character_id, created_at_ms,
-                   rolls::text, base_values::text, mutated_values::text
+                   rolls::text, base_values::text, mutated_values::text, roll_fractions::text
             FROM {schema}.item_mutations WHERE item_id = ANY($1)
             """));
         command.Parameters.Add(new NpgsqlParameter { Value = itemIds.Distinct().ToArray() });
@@ -99,7 +104,8 @@ public sealed class ItemMutationStore
 
     private static ItemMutationRecord Read(NpgsqlDataReader reader) => new(
         reader.GetInt64(0), reader.GetInt32(1), reader.GetInt64(2), reader.GetInt32(3), reader.GetInt64(4), reader.GetInt64(5), reader.GetInt64(6),
-        Deserialize(reader.GetString(7)), Deserialize(reader.GetString(8)), Deserialize(reader.GetString(9)));
+        Deserialize(reader.GetString(7)), Deserialize(reader.GetString(8)), Deserialize(reader.GetString(9)),
+        reader.IsDBNull(10) ? null : Deserialize(reader.GetString(10)));
 
     private static string Serialize(IReadOnlyDictionary<int, double> values) => JsonSerializer.Serialize(values, Json);
 

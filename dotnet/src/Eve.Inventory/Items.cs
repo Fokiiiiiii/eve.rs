@@ -8,6 +8,9 @@ namespace Eve.Inventory;
 /// <summary>The client's inventory flags that S2 needs.</summary>
 public static class ItemFlags
 {
+    /// <summary>An item in space rather than in a station inventory.</summary>
+    public const int InSpace = 0;
+
     /// <summary>The hangar of a station.</summary>
     public const int Hangar = 4;
 

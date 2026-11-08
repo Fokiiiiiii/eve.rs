@@ -276,9 +276,10 @@ public class ItemMutationServiceTests
         Assert.NotNull(record);
         Assert.Equal((Mutaplasmid, mutator, Microwarpdrive, source, Character, ClockMs),
             (record.MutatorTypeId, record.MutatorItemId, record.SourceTypeId, record.SourceItemId, record.CharacterId, record.CreatedAtMs));
-        AssertValues(new Dictionary<int, double> { [6] = 1.0, [20] = 0.95, [30] = 1.325, [50] = 0.8, [554] = 1.3 }, record.Rolls, 9);
+        AssertValues(new Dictionary<int, double> { [6] = 1.0, [20] = 0.95, [30] = 1.325, [50] = 0.8, [554] = 1.3 }, record.Multipliers, 9);
+        AssertValues(new Dictionary<int, double> { [6] = 0.5, [20] = 0.25, [30] = 0.75, [50] = 0, [554] = 1 }, record.RollFractions!, 9);
         AssertValues(new Dictionary<int, double> { [6] = 180, [20] = 500, [30] = 150, [50] = 50, [554] = 500 }, record.BaseValues, 9);
-        AssertSameBits(receipt.Rolls, record.Rolls);
+        AssertSameBits(receipt.Rolls, record.RollFractions!);
         AssertSameBits(receipt.MutatedValues, record.MutatedValues);
     }
 
@@ -537,7 +538,8 @@ public class ItemMutationServiceTests
         var reloaded = await new ItemMutationStore(m.Source, m.Schema).GetAsync(made.ItemId);
         Assert.NotNull(reloaded);
         AssertSameBits(made.MutatedValues, reloaded.MutatedValues);
-        AssertSameBits(made.Rolls, reloaded.Rolls);
+        AssertSameBits(made.Rolls, reloaded.RollFractions!);
+        AssertValues(new Dictionary<int, double> { [6] = 1.0, [20] = 0.95, [30] = 1.325, [50] = 0.8, [554] = 1.3 }, reloaded.Multipliers, 9);
         Assert.Equal(Abyssal, (await new PgItemStore(m.Source, m.Schema).GetAsync(made.ItemId))!.TypeId);
 
         // the restarted authority never draws again for a stored item; the made item is an output, so it is refused as an input

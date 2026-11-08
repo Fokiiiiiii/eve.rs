@@ -83,6 +83,50 @@ public class MutationHarnessTests
         NumberOf(MutatedDroneHostTests.AttributesOf([info]).Entries.Single(e => e.Key is PyInt key && key.Value == attribute).Value);
 
     [PgFact]
+    public async Task The_host_route_refuses_a_pair_in_a_remote_station_without_consuming_or_notifying()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var character = await rig.NewCharacterAsync();
+        var session = await rig.SessionAsync(character, 1);
+        Events.Of(session);
+        rig.Registry.Register(await RouteAsync(rig));
+
+        var remoteStation = Rig.Station + 1_000_000;
+        var mutator = await GiveAsync(rig, character.CharacterId, ModuleMutaplasmid, remoteStation, ItemFlags.Hangar, singleton: true);
+        var source = await GiveAsync(rig, character.CharacterId, MicrowarpdriveI, remoteStation, ItemFlags.Hangar, singleton: true);
+
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => MutateAsync(rig, rig.Registry, session, mutator, source));
+
+        Assert.Equal("CustomNotify", refused.Error.UserErrorMessage);
+        Assert.NotNull(await rig.Items.GetAsync(mutator));
+        Assert.NotNull(await rig.Items.GetAsync(source));
+        Assert.Empty(Events.Of(session));
+    }
+
+    [PgFact]
+    public async Task The_host_route_mutates_between_a_local_container_and_the_station_hangar_into_the_mutator_location()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var character = await rig.NewCharacterAsync();
+        var session = await rig.SessionAsync(character, 1);
+        Events.Of(session);
+        rig.Registry.Register(await RouteAsync(rig));
+
+        var container = await GiveAsync(rig, character.CharacterId, 3465, Rig.Station, ItemFlags.Hangar, singleton: true);
+        var mutator = await GiveAsync(rig, character.CharacterId, ModuleMutaplasmid, container, ItemFlags.Hangar, singleton: true);
+        var source = await GiveAsync(rig, character.CharacterId, MicrowarpdriveI, Rig.Station, ItemFlags.Hangar, singleton: true);
+
+        var resultId = await MutateAsync(rig, rig.Registry, session, mutator, source);
+
+        var result = Assert.IsType<Eve.Inventory.Item>(await rig.Items.GetAsync(resultId));
+        Assert.Equal(AbyssalMicrowarpdrive, result.TypeId);
+        Assert.Equal((container, ItemFlags.Hangar), (result.LocationId, result.Flag));
+        Assert.Equal(3, Events.Of(session).Count(e => e.Name == "OnItemChange"));
+        Assert.Null(await rig.Items.GetAsync(mutator));
+        Assert.Null(await rig.Items.GetAsync(source));
+    }
+
+    [PgFact]
     public async Task A_mutated_module_and_drone_made_through_the_host_route_are_fitted_launched_and_their_numbers_reach_dogma_and_the_client()
     {
         await using var rig = await Rig.CreateAsync();

@@ -101,6 +101,19 @@ public partial class HostServerTests : IAsyncLifetime
         }
     }
 
+    private sealed class ArgumentCaptureService : IService
+    {
+        public string Name => "argumentCapture";
+        public List<IReadOnlyList<PyValue>> Calls { get; } = [];
+        public bool HasMethod(string method) => method == "Echo";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls.Add(call.Args.ToArray());
+            return ValueTask.FromResult<PyValue>(new PyTuple(call.Args.ToArray()));
+        }
+    }
+
     private sealed class BillManagerBudgetService : IService
     {
         public string Name => "billMgr";
@@ -1962,12 +1975,124 @@ public partial class HostServerTests : IAsyncLifetime
 
         await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Ping(open, 1))));
         var pong = Assert.IsType<Send>(await front.ReceiveAsync());
-        Assert.Equal(21, ((PyInt)((PyTuple)((PyObject)MarshalCodec.Decode(pong.Payload)).Args).Items[0]).Value);
+        var ping = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(pong.Payload)));
+        Assert.Equal(MachoMessage.PingRsp, ping.Type);
+        var times = Assert.IsType<PyList>(Assert.IsType<PyTuple>(ping.Payload).Items[0]);
+        var turnaround = Assert.IsType<PyTuple>(Assert.Single(times.Items));
+        Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(FixedNowMs)), turnaround.Items[0]);
+        Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(FixedNowMs)), turnaround.Items[1]);
+        Assert.Equal("proxy::turnaround", JsSemantics.StringValue(turnaround.Items[2]));
 
         // The V24.01 server's answer to a service it does not have: a wrapped ServiceNotFound, not a None result.
         await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(open, 2, "noSuchService", "Nothing"))));
         var error = Assert.IsType<Send>(await front.ReceiveAsync());
         AssertWrappedError(error, "eveexceptions.ServiceNotFound", "noSuchService");
+    }
+
+    [Fact]
+    public async Task A_ping_response_keeps_the_request_times_and_appends_the_proxy_turnaround()
+    {
+        Start();
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+
+        var start = new PyTuple([new PyLong(1234), new PyLong(5678), new PyStr("client::start")]);
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Ping(open, 1, new PyList([start])))));
+
+        var response = Assert.IsType<Send>(await front.ReceiveAsync());
+        var ping = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(response.Payload)));
+        Assert.Equal(MachoMessage.PingRsp, ping.Type);
+        var times = Assert.IsType<PyList>(Assert.IsType<PyTuple>(ping.Payload).Items[0]);
+        Assert.Equal(2, times.Items.Count);
+        var returnedStart = Assert.IsType<PyTuple>(times.Items[0]);
+        Assert.Equal(new PyLong(1234), returnedStart.Items[0]);
+        Assert.Equal(new PyLong(5678), returnedStart.Items[1]);
+        Assert.Equal("client::start", JsSemantics.StringValue(returnedStart.Items[2]));
+        var turnaround = Assert.IsType<PyTuple>(times.Items[1]);
+        Assert.Equal(3, turnaround.Items.Count);
+        Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(FixedNowMs)), turnaround.Items[0]);
+        Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(FixedNowMs)), turnaround.Items[1]);
+        Assert.Equal("proxy::turnaround", JsSemantics.StringValue(turnaround.Items[2]));
+    }
+
+    [Fact]
+    public async Task A_fractional_packet_type_does_not_dispatch_as_a_call()
+    {
+        var service = new MutationService();
+        Start(configure: registry => registry.Register(service));
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.CallWithShape(
+            open, 1, "budgetMutation", "Mutate", new PyTuple([]), PyNone.Instance, new PyReal(6.5), new PyInt(8)))));
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(open, 2, "budgetMutation", "Mutate"))));
+
+        var response = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(
+            Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
+        Assert.Equal(MachoMessage.CallRsp, response.Type);
+        Assert.Equal(new PyInt(2), response.CallId);
+        Assert.Equal(1, service.Mutations);
+    }
+
+    [Fact]
+    public async Task A_fractional_address_type_cannot_route_a_call_as_any()
+    {
+        var service = new MutationService();
+        Start(configure: registry => registry.Register(service));
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.CallWithShape(
+            open, 1, "budgetMutation", "Mutate", new PyTuple([]), PyNone.Instance, new PyInt(6), new PyReal(8.5)))));
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.Call(open, 2, "budgetMutation", "Mutate"))));
+
+        var rejectedSend = Assert.IsType<Send>(await front.ReceiveAsync());
+        var rejected = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(rejectedSend.Payload)));
+        Assert.Equal(MachoMessage.ErrorResponse, rejected.Type);
+        Assert.Equal(new PyInt(1), rejected.CallId);
+        Assert.Contains("UnMachoDestination", Encoding.ASCII.GetString(rejectedSend.Payload.Span));
+
+        var accepted = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(
+            Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
+        Assert.Equal(MachoMessage.CallRsp, accepted.Type);
+        Assert.Equal(new PyInt(2), accepted.CallId);
+        Assert.Equal(1, service.Mutations);
+    }
+
+    [Fact]
+    public async Task A_list_cannot_replace_the_call_request_positional_tuple()
+    {
+        var service = new ArgumentCaptureService();
+        Start(configure: registry => registry.Register(service));
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.CallWithKwargs(
+            open, 1, "argumentCapture", "Echo", new PyList([new PyInt(7)]), PyNone.Instance))));
+
+        var response = Assert.IsType<Send>(await front.ReceiveAsync());
+        var packet = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(response.Payload)));
+        Assert.Equal(MachoMessage.ErrorResponse, packet.Type);
+        Assert.Contains("UnMachoDestination", Encoding.ASCII.GetString(response.Payload.Span));
+        Assert.Empty(service.Calls);
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.CallWithKwargs(
+            open, 2, "argumentCapture", "Echo", new PyTuple([new PyList([new PyInt(7)])]), PyNone.Instance))));
+        var accepted = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.CallRsp, Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(accepted.Payload))).Type);
+        var echoed = Assert.IsType<PyTuple>(Result(MarshalCodec.Decode(accepted.Payload)));
+        var echoedList = Assert.IsType<PyList>(Assert.Single(echoed.Items));
+        Assert.Equal(new PyInt(7), Assert.Single(echoedList.Items));
+        var invocation = Assert.Single(service.Calls);
+        Assert.IsType<PyList>(Assert.Single(invocation));
     }
 
     [Fact]

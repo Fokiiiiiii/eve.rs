@@ -127,6 +127,61 @@ public sealed class InsurgencyCampaignTests
     }
 
     [PgFact]
+    public async Task A_fob_destroyed_after_the_campaign_deadline_does_not_award_an_empire_win()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var campaign = await StartCovering(rig, 9, Covered, structureId: 5002);
+        var maximumEnd = Rig.Epoch + 7 * 24 * Hour;
+        await rig.RunAt(Rig.Epoch + 48 * Hour);
+
+        // Let the deadline pass without running its durable job, then let the FOB event acquire the campaign row first.
+        rig.Now = maximumEnd + 1;
+        Assert.False(await rig.Commit((connection, transaction) =>
+            rig.Campaigns.FobDestroyedAsync(connection, transaction, campaign.StructureId)));
+
+        var ended = await rig.Get(campaign.CampaignId);
+        Assert.Equal(CampaignStates.NoWinner, ended!.State);
+        Assert.Equal(maximumEnd, ended.EndedMs);
+        Assert.Equal(maximumEnd + 48 * Hour, (await rig.Job(campaign.CampaignId))!.RunAtMs);
+        Assert.Equal((0, 0), await rig.Commit((connection, transaction) =>
+            rig.Store.AmbitionAsync(connection, transaction, campaign.WarzoneId)));
+    }
+
+    [PgFact]
+    public async Task A_deadline_job_racing_a_post_deadline_fob_event_cannot_award_an_empire_win()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var campaign = await StartCovering(rig, 10, Covered, structureId: 5003);
+        var maximumEnd = Rig.Epoch + 7 * 24 * Hour;
+        await rig.RunAt(Rig.Epoch + 48 * Hour);
+        rig.Now = maximumEnd + 1;
+
+        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var fob = Task.Run(async () =>
+        {
+            await start.Task;
+            return await rig.Commit((connection, transaction) =>
+                rig.Campaigns.FobDestroyedAsync(connection, transaction, campaign.StructureId));
+        });
+        var deadline = Task.Run(async () =>
+        {
+            await start.Task;
+            return await rig.Scheduler.RunDueAsync();
+        });
+        start.SetResult();
+        await Task.WhenAll(fob, deadline).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.False(await fob);
+        Assert.InRange(await deadline, 0, 1);
+        var ended = await rig.Get(campaign.CampaignId);
+        Assert.Equal(CampaignStates.NoWinner, ended!.State);
+        Assert.Equal(maximumEnd, ended.EndedMs);
+        Assert.Equal(maximumEnd + 48 * Hour, (await rig.Job(campaign.CampaignId))!.RunAtMs);
+        Assert.Equal((0, 0), await rig.Commit((connection, transaction) =>
+            rig.Store.AmbitionAsync(connection, transaction, campaign.WarzoneId)));
+    }
+
+    [PgFact]
     public async Task A_point_for_a_system_the_campaign_does_not_cover_is_refused()
     {
         await using var rig = await Rig.CreateAsync();

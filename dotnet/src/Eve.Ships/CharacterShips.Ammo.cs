@@ -493,7 +493,7 @@ public sealed partial class CharacterShips
             {
                 var units = quantity is > 0 ? Math.Min(quantity.Value, charge.Quantity) : charge.Quantity;
                 return statics.Type(charge.TypeId) is { } type
-                    ? ItemVolumes.Unit(charge.TypeId, type.GroupId, charge.Singleton, ItemVolumeOf(type)) * units
+                    ? ItemVolumes.Of(charge with { Quantity = charge.Singleton ? charge.Quantity : units }, type.GroupId, ItemVolumeOf(type))
                     : 0;
             });
             if (required > Math.Max(0, capacity - used) + RoomTolerance)

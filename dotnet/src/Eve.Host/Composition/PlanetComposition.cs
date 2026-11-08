@@ -24,6 +24,7 @@ internal sealed partial class CharacterServicesComposition
             skills, now, NotifyPlanetChanged, NotifyLaunchesChanged, Env("EVE_INVENTORY_SCHEMA", PgItemStore.DefaultSchema), sim, spaceItemStore, dogma,
             (characterId, corporationId, token) => corporations.HasRoleAsync(characterId, corporationId,
                 Eve.Corporations.CorporationRoles.Director, token));
+        planetMgr.RegisterJobs(foundations.Scheduler);
         await planetMgr.PlaceOfficesAsync();
         // a pilot that enters a system brings its offices back into the simulation's scene (as the cans and the structures are)
         if (spaceSessions is not null)

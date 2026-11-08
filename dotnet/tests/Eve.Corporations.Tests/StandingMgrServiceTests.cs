@@ -89,12 +89,8 @@ public sealed class StandingMgrServiceTests
 
     private static ClientSession Session(long characterId) => new() { CharacterId = characterId };
 
-    private static PyList CompositionLines(PyValue result)
-    {
-        var rowset = Assert.IsType<PyObject>(result);
-        var fields = Assert.IsType<PyDict>(rowset.Args);
-        return Assert.IsType<PyList>(fields.Entries.Single(entry => entry.Key == new PyStr("lines")).Value);
-    }
+    /// <summary>The rows of a CRowset: it is an object-ex whose list holds one packed row per row.</summary>
+    private static PyList CompositionLines(PyValue result) => new(Assert.IsType<PyObjectEx>(result).List);
 
     private static PyValue UnwrapCached(PyValue result)
     {

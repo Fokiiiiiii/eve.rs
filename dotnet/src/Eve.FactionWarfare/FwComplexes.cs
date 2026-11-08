@@ -50,8 +50,8 @@ public interface IFwComplexSites
     Task<IReadOnlyList<FwComplexPilot>> PilotsNearAsync(long solarSystemId, double[] at, double radius, CancellationToken cancellationToken);
 }
 
-/// <summary>A pilot inside a complex: its character and its war faction (0 for none).</summary>
-public sealed record FwComplexPilot(long CharacterId, long WarFactionId);
+/// <summary>A pilot inside a complex: its character, war faction (0 for none), and corporation (0 when unknown).</summary>
+public sealed record FwComplexPilot(long CharacterId, long WarFactionId, long CorporationId = 0);
 
 /// <summary>
 /// What one tick resolved: a complex captured by the attackers (its victory points added) or by the defenders (subtracted). The winning side's pilots inside
@@ -163,12 +163,17 @@ public static class FwComplexTicker
                 nowMs, cancellationToken);
 
             long winningFaction = won.Value ? attackerFaction : system.OccupierId;
-            var winners = inside.Where(pilot => pilot.WarFactionId == winningFaction).Select(pilot => pilot.CharacterId).Distinct().ToList();
+            var winningPilots = inside.Where(pilot => pilot.WarFactionId == winningFaction).DistinctBy(pilot => pilot.CharacterId).ToList();
+            var winners = winningPilots.Select(pilot => pilot.CharacterId).ToList();
             long share = winners.Count == 0 ? 0 : spec.VictoryPoints / winners.Count;
             if (share > 0)
             {
-                foreach (long characterId in winners)
-                    await store.AddPilotDailyAsync(connection, transaction, characterId, day, 0, share, cancellationToken);
+                foreach (var pilot in winningPilots)
+                {
+                    await store.AddPilotDailyAsync(connection, transaction, pilot.CharacterId, day, 0, share, cancellationToken);
+                    if (pilot.CorporationId > 0)
+                        await store.AddCorporationDailyAsync(connection, transaction, pilot.CorporationId, day, 0, share, cancellationToken);
+                }
             }
             await store.CloseComplexAsync(connection, transaction, complex.ComplexId, nowMs, cancellationToken);
             await sites.EndAsync(connection, transaction, complex.InstanceId, cancellationToken);

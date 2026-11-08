@@ -34,7 +34,7 @@ public class DispatchGoldenTests
         ("errors:plain", "unknown service"),
         ("errors:plain", "service name is not a string"),
         ("packets:arguments", "a table-string method name"),
-        ("packets:arguments", "a list positional-argument sequence"),
+        ("packets:arguments", "a list-valued argument"),
         ("packets:malformed", "not a call body"),
     ];
 

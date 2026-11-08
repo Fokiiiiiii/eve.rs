@@ -8,8 +8,10 @@ namespace Eve.Events;
 /// <summary>
 /// The server's domain events, with a transactional outbox. <see cref="PublishAsync(NpgsqlConnection, NpgsqlTransaction, string, object?, string?, CancellationToken)"/> writes the event
 /// into the caller's transaction, so the event exists exactly when the change it announces does. The bus's own pump loop (started by <see cref="StartAsync"/>) delivers each event, in order, to every subscriber whose topics match; each subscriber has a cursor, and a handler's writes are committed together with its cursor, so a
-/// PostgreSQL-only handler sees each event exactly once and any other handler at least once. A failing handler is retried with a back-off and, after its attempts, the event
-/// is set aside as a dead letter and the subscriber goes on. Features subscribe instead of calling each other, and publish instead of keeping their own event lists.
+/// PostgreSQL-only handler sees each event exactly once. External effects performed by the handler before commit may run more than once; <see cref="EventContext.AfterCommit"/>
+/// callbacks are best-effort and are not retried after the cursor commits. Persist effects that need durable delivery in the handler transaction. A failing handler is retried with
+/// a back-off and, after its attempts, the event is set aside as a dead letter and the subscriber goes on. Features subscribe instead of calling each other, and publish instead of
+/// keeping their own event lists.
 /// </summary>
 /// <remarks>
 /// Visibility: row ids are handed out in the order publishers ask for them but become visible in the order they commit, so a cursor over ids alone could skip a row that commits
@@ -39,9 +41,28 @@ public sealed class EventBus
         _source = source;
         _scheduler = scheduler;
         _options = options ?? new EventBusOptions();
+        Validate(_options);
         _schema = Sql.CheckSchema(schema);
         _log = log;
         scheduler.Register(PurgeKind, async (_, token) => await PurgeAsync(token));
+    }
+
+    private static void Validate(EventBusOptions options)
+    {
+        if (options.MaxAttempts < 1)
+            throw new ArgumentOutOfRangeException(nameof(options.MaxAttempts), options.MaxAttempts, "must be at least one");
+        if (options.BackoffBaseMs < 1)
+            throw new ArgumentOutOfRangeException(nameof(options.BackoffBaseMs), options.BackoffBaseMs, "must be positive");
+        if (options.BackoffMaxMs < 1 || options.BackoffMaxMs < options.BackoffBaseMs)
+            throw new ArgumentOutOfRangeException(nameof(options.BackoffMaxMs), options.BackoffMaxMs, "must be positive and at least BackoffBaseMs");
+        if (options.PollMs < 5)
+            throw new ArgumentOutOfRangeException(nameof(options.PollMs), options.PollMs, "must be at least five milliseconds");
+        if (options.BatchPerPump < 1)
+            throw new ArgumentOutOfRangeException(nameof(options.BatchPerPump), options.BatchPerPump, "must be at least one");
+        if (options.RetentionMs < 1)
+            throw new ArgumentOutOfRangeException(nameof(options.RetentionMs), options.RetentionMs, "must be positive");
+        if (options.HardRetentionMs < options.RetentionMs)
+            throw new ArgumentOutOfRangeException(nameof(options.HardRetentionMs), options.HardRetentionMs, "must be at least RetentionMs");
     }
 
     public static IReadOnlyList<Migration> MigrationSet() => Migrations.Embedded(typeof(EventBus).Assembly, "Migrations");
@@ -460,7 +481,11 @@ public sealed class EventBus
         }
         else
         {
-            retryAt = Now + Math.Min(_options.BackoffMaxMs, _options.BackoffBaseMs << Math.Min(failures - 1, 20));
+            var multiplier = 1L << Math.Min(failures - 1, 20);
+            var delayMs = _options.BackoffBaseMs > _options.BackoffMaxMs / multiplier
+                ? _options.BackoffMaxMs
+                : _options.BackoffBaseMs * multiplier;
+            retryAt = Now + delayMs;
             await Sql.ExecuteAsync(connection, transaction, Q("UPDATE {schema}.subscribers SET retry_at_ms = $2 WHERE name = $1"), CancellationToken.None, subscription.Name, retryAt);
             _log?.Invoke($"events: {subscription.Name} failed on event {@event.Id} ({@event.Topic}), try {failures}/{_options.MaxAttempts}: {message}");
         }

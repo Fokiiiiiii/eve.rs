@@ -370,8 +370,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         var changed = await store.UpdateMembersAsync(actor,updates,call.Cancellation);
         foreach (var member in changed)
             CorporationNotificationAdapter.MemberChanged(characterSessions,call,corp.Id,member.CharacterId,beforeById[member.CharacterId],member);
-        if (updates.Any(member => member.CharacterId == actor))
-            await new CorporationLoginHook(store,characters,readWarFaction).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
+        await RefreshRoleSessionsAsync(updates.Select(member => member.CharacterId),call);
         return PyNone.Instance;
     }
 
@@ -1201,6 +1200,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         var fallback = await store.GetAsync(StarterCorporation(kicked),call.Cancellation) ?? throw new CorporationError("NPC_CORPORATION_REQUIRED");
         await store.KickAsync(actor,target,fallback.Id,call.Cancellation);
         CorporationNotificationAdapter.MemberChanged(characterSessions,call,corp.Id,target,member,null);
+        await RefreshRoleSessionsAsync([target],call);
         return MoveResult(target,fallback);
     }
 
@@ -1213,6 +1213,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         if (requested.Count > MaxBulkMemberIds)
             throw new CorporationError("CORPORATION_BULK_LIMIT_EXCEEDED");
         var kicked = new List<PyValue>();
+        var kickedCharacterIds = new List<long>();
         var notKicked = new List<PyValue>();
         foreach (var raw in requested)
         {
@@ -1238,7 +1239,9 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
             await store.KickAsync(actor,target,StarterCorporation(character),call.Cancellation);
             CorporationNotificationAdapter.MemberChanged(characterSessions,call,corporationId,target,before,null);
             kicked.Add(new PyInt(target));
+            kickedCharacterIds.Add(target);
         }
+        await RefreshRoleSessionsAsync(kickedCharacterIds,call);
         return Py.Dict(("kicked",new PyList(kicked)),("notKicked",new PyList(notKicked)));
     }
 
@@ -1268,7 +1271,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
             };
             CorporationNotificationAdapter.MemberChanged(characterSessions,call,corp.Id,actor,actorBefore,actorAfter);
             CorporationNotificationAdapter.MemberChanged(characterSessions,call,corp.Id,successor,successorBefore,successorAfter);
-            await new CorporationLoginHook(store,characters,readWarFaction).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
+            await RefreshRoleSessionsAsync([actor,successor],call);
             return PyNone.Instance;
         }
         var members = await store.MembersAsync(corp.Id,call.Cancellation);
@@ -1285,7 +1288,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         var (before,desired) = await MemberUpdate(target,call.Args,false,corp.Id,call.Cancellation);
         var after = await store.UpdateMemberAsync(actor,desired,call.Cancellation);
         CorporationNotificationAdapter.MemberChanged(characterSessions,call,corp.Id,target,before,after);
-        if (target == actor) await new CorporationLoginHook(store,characters,readWarFaction).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
+        await RefreshRoleSessionsAsync([target],call);
         return PyNone.Instance;
     }
 
@@ -1318,8 +1321,7 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         var changed = await store.UpdateMembersAsync(actor,updates,call.Cancellation);
         foreach (var member in changed)
             CorporationNotificationAdapter.MemberChanged(characterSessions,call,corp.Id,member.CharacterId,beforeById[member.CharacterId],member);
-        if (updates.Any(m => m.CharacterId == actor))
-            await new CorporationLoginHook(store,characters,readWarFaction).OnCharacterEnteredAsync(call.Session,actor,call.Cancellation);
+        await RefreshRoleSessionsAsync(updates.Select(member => member.CharacterId),call);
         return PyNone.Instance;
     }
 
@@ -1333,6 +1335,8 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         var updated = title with { Name=title.Name.Length > 100 ? title.Name[..100] : title.Name };
         await store.UpdateTitleAsync(actor,corp.Id,updated,call.Cancellation);
         CorporationNotificationAdapter.TitleChanged(characterSessions,call,corp.Id,before,updated);
+        if (before is null || before.Masks != updated.Masks)
+            await RefreshCorporationRoleSessionsAsync(corp.Id,call);
         return PyNone.Instance;
     }
 
@@ -1351,6 +1355,13 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         foreach (var title in titles)
             CorporationNotificationAdapter.TitleChanged(characterSessions,call,corp.Id,
                 before.FirstOrDefault(t => t.Id == title.Id),title);
+        var roleMasksChanged = titles.Any(title =>
+        {
+            var previous = before.FirstOrDefault(candidate => candidate.Id == title.Id);
+            return previous is null || previous.Masks != title.Masks;
+        });
+        if (roleMasksChanged)
+            await RefreshCorporationRoleSessionsAsync(corp.Id,call);
         return PyNone.Instance;
     }
 
@@ -1364,7 +1375,10 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         var before = (await store.TitlesAsync(corp.Id,call.Cancellation)).FirstOrDefault(t => t.Id == (int)titleId);
         await store.DeleteTitleAsync(actor,corp.Id,(int)titleId,call.Cancellation);
         if (before is not null)
+        {
             CorporationNotificationAdapter.TitleChanged(characterSessions,call,corp.Id,before,null);
+            await RefreshCorporationRoleSessionsAsync(corp.Id,call);
+        }
         return PyNone.Instance;
     }
 
@@ -1374,6 +1388,29 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
     private bool Kickable(Member member) =>
         RoleFields(member).All(r => r.Value == 0) && member.TitleMask == 0 &&
         (member.StasisUntilMs is null || member.StasisUntilMs <= now());
+
+    private async Task RefreshRoleSessionsAsync(IEnumerable<long> characterIds, ServiceCall call)
+    {
+        var hook = new CorporationLoginHook(store,characters,readWarFaction);
+        foreach (var characterId in characterIds.Distinct().Order())
+        {
+            var session = characterId == call.Session.CharacterId
+                ? call.Session
+                : characterSessions?.Of(characterId);
+            if (session is not null)
+                await hook.OnCharacterEnteredAsync(session,characterId,call.Cancellation);
+        }
+    }
+
+    private async Task RefreshCorporationRoleSessionsAsync(long corporationId, ServiceCall call)
+    {
+        var characterIds = characterSessions?.OfCorporation(corporationId)
+            .Select(session => session.CharacterId ?? 0).Where(characterId => characterId > 0)
+            ?? [];
+        if (call.Session.CharacterId is { } actor)
+            characterIds = characterIds.Append(actor);
+        await RefreshRoleSessionsAsync(characterIds,call);
+    }
 
     private static (string Name,long Value)[] RoleFields(Member m) =>
     [

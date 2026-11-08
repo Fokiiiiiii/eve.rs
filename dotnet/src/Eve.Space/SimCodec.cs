@@ -23,7 +23,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// <summary>The wire uses little-endian integers and length-prefixed text and byte strings.</summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 92;
+    public const ushort ProtocolVersion = 93;
 
     /// <summary>The longest name of a dynamic slim-item field, in bytes (protocol 76).</summary>
     public const int SlimFieldNameMax = 64;
@@ -622,8 +622,22 @@ public static partial class SimCodec
                 message = new SimAccepted(r.U64(), r.U8(), r.I64());
                 break;
             case Kind.Position:
-                message = new SimPosition(r.U64(), r.U8(), ReadVector(ref r));
-                break;
+                {
+                    var sessionId = r.U64();
+                    var command = r.U8();
+                    var position = ReadVector(ref r);
+                    var direction = ReadOptionalVector(ref r);
+                    var radius = r.U8() switch
+                    {
+                        0 => (double?)null,
+                        1 => r.F64(),
+                        _ => throw new SimLinkException(SimLinkError.BadValue, "bad position radius presence"),
+                    };
+                    if (radius is { } value && (!double.IsFinite(value) || value < 0))
+                        throw new SimLinkException(SimLinkError.BadValue, "bad position radius");
+                    message = new SimPosition(sessionId, command, position) { Direction = direction, Radius = radius };
+                    break;
+                }
             case Kind.DirectionalTargets:
                 {
                     var session = r.U64();
@@ -1321,16 +1335,21 @@ public static partial class SimCodec
                     var destinationSystem = r.I32();
                     var destinationEnd = r.I64();
                     var destinationClass = r.I32();
+                    var nebulaType = r.I32();
+                    var wormholeAge = r.I32();
+                    var wormholeSize = r.F64();
+                    var maxShipJumpMass = r.I32();
                     var destinationPosition = ReadVector(ref r);
                     var destinationRadius = r.F64();
-                    var maxJumpMass = r.F64();
+                    var maxJumpMassKg = r.F64();
                     if (!(double.IsFinite(radius) && radius >= 0 && double.IsFinite(destinationRadius) && destinationRadius >= 0
-                          && double.IsFinite(maxJumpMass) && maxJumpMass >= 0))
+                          && double.IsFinite(maxJumpMassKg) && maxJumpMassKg >= 0 && double.IsFinite(wormholeSize)
+                          && wormholeSize is >= 0 and <= 1 && wormholeAge is >= 0 and <= 4 && maxShipJumpMass is >= 1 and <= 4 && nebulaType >= 0))
                     {
                         throw new SimLinkException(SimLinkError.BadValue, "bad wormhole");
                     }
                     message = new SimPlaceWormhole(wormhole, system, name, type, group, position, radius, destinationSystem, destinationEnd,
-                        destinationClass, destinationPosition, destinationRadius, maxJumpMass);
+                        destinationClass, nebulaType, wormholeAge, wormholeSize, maxShipJumpMass, destinationPosition, destinationRadius, maxJumpMassKg);
                     break;
                 }
             case Kind.RemoveWormhole:

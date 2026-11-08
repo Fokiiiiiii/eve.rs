@@ -60,6 +60,12 @@ public sealed class AccessRulesTests
     [Fact]
     public void Only_an_admin_or_a_manager_manages_and_a_member_sees_nothing_but_a_corporation_list()
     {
+        Assert.True(AccessRules.CanReadSummary(MembershipType.Member));
+        Assert.True(AccessRules.CanReadSummary(MembershipType.Manager));
+        Assert.True(AccessRules.CanReadSummary(MembershipType.Admin));
+        Assert.False(AccessRules.CanReadSummary(MembershipType.None));
+        Assert.False(AccessRules.CanReadSummary(MembershipType.Excluded));
+
         var plain = Group();
         Assert.False(AccessRules.CanSee(MembershipType.Member, plain));
         Assert.True(AccessRules.CanSee(MembershipType.Manager, plain));

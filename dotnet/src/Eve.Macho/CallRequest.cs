@@ -7,7 +7,7 @@ namespace Eve.Macho;
 /// <c>((isBound, SubStream((remoteObject, method, args, kwargs))),)</c>.
 /// </summary>
 /// <param name="Method">The method name; <c>"unknown"</c> when the body cannot be read.</param>
-/// <param name="Args">Positional arguments (a call that sends a non-tuple gets it wrapped in one).</param>
+/// <param name="Args">Positional arguments decoded from the call's argument tuple.</param>
 /// <param name="Kwargs">The keyword dict as sent, or None.</param>
 /// <param name="RemoteObject">The bound-object reference, or the constant 1 for an unbound service call.</param>
 public sealed record CallRequest(string Method, IReadOnlyList<PyValue> Args, PyValue Kwargs, PyValue? RemoteObject)
@@ -75,10 +75,13 @@ public sealed record CallRequest(string Method, IReadOnlyList<PyValue> Args, PyV
         {
             args = StreamValue(argsStream);
         }
+        if (args is PyList)
+        {
+            return null;
+        }
         IReadOnlyList<PyValue> argList = args switch
         {
             PyTuple tuple => tuple.Items,
-            PyList list => list.Items,
             null or PyNone => [],
             var other => [other],
         };

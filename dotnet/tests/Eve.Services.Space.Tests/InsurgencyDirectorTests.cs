@@ -44,6 +44,32 @@ public sealed class InsurgencyDirectorTests
     }
 
     [PgFact]
+    public async Task A_campaign_covers_enough_systems_for_the_more_ambitious_empire_side_to_expose_its_fob()
+    {
+        await using var rig = await InsurgencyRig.CreateAsync();
+        var warzoneId = Ins.InsurgencyWarzones.Angel.WarzoneId;
+        await rig.SetAmbitionAsync(warzoneId, pirate: 0, antipirate: 1);
+        await rig.RunDueAsync();
+
+        var campaign = Assert.Single(await rig.CampaignsAsync(), c => c.WarzoneId == warzoneId);
+        Assert.Equal(6, campaign.AntipiratePointsRequired);
+        Assert.Equal(6, campaign.CoveredSolarSystemIds.Count);
+
+        rig.Advance(Forecast + TimeSpan.FromMinutes(1));
+        await rig.RunDueAsync();
+        var empireSites = (await rig.SitesAsync())
+            .Where(site => site.CampaignId == campaign.CampaignId && site.Side == "antipirate")
+            .ToList();
+        Assert.Equal(6, empireSites.Count);
+        foreach (var site in empireSites)
+            await rig.CompleteAsync(site.Instance);
+
+        var completed = await rig.CampaignAsync(campaign.CampaignId);
+        Assert.Equal(6, completed.AntipiratePointsScored);
+        Assert.Equal(StructureState.ShieldVulnerable, (await rig.FobAsync(campaign.StructureId)).Snapshot.State);
+    }
+
+    [PgFact]
     public async Task A_campaign_starts_its_sites_when_it_becomes_active_and_a_completed_site_scores_its_system_once()
     {
         await using var rig = await InsurgencyRig.CreateAsync();
@@ -95,10 +121,22 @@ public sealed class InsurgencyDirectorTests
         Assert.Equal(StructureState.ShieldVulnerable, (await rig.FobAsync(campaign.StructureId)).Snapshot.State);
         Assert.Equal(Ins.CampaignStates.Active, (await rig.CampaignAsync(campaign.CampaignId)).State);
 
-        // the shield, then the one reinforcement (3 hours at the middle roll), the armor and the hull: the FOB is destroyed
+        // A FOB uses the normal 24-hour armor timer (plus its reinforce-time jitter), then armor and hull can be destroyed.
         await rig.HitAsync(campaign.StructureId, new Damaged(StructureLayer.Shield, true, false));
-        rig.Advance(TimeSpan.FromHours(3) + TimeSpan.FromMinutes(1));
+        var reinforcement = (await rig.FobAsync(campaign.StructureId)).Snapshot;
+        Assert.Equal(StructureState.ArmorReinforce, reinforcement.State);
+        Assert.True(reinforcement.StateEndsMs >= reinforcement.StateStartedMs + (long)TimeSpan.FromDays(1).TotalMilliseconds);
+
+        var earlyCheck = TimeSpan.FromHours(3) + TimeSpan.FromMinutes(1);
+        rig.Advance(earlyCheck);
         await rig.RunDueAsync();
+        var stillReinforced = (await rig.FobAsync(campaign.StructureId)).Snapshot;
+        Assert.Equal(StructureState.ArmorReinforce, stillReinforced.State);
+        Assert.Equal(reinforcement.StateEndsMs, stillReinforced.StateEndsMs);
+
+        rig.Advance(TimeSpan.FromMilliseconds(reinforcement.StateEndsMs - reinforcement.StateStartedMs - earlyCheck.TotalMilliseconds + 1));
+        await rig.RunDueAsync();
+        Assert.Equal(StructureState.ArmorVulnerable, (await rig.FobAsync(campaign.StructureId)).Snapshot.State);
         await rig.HitAsync(campaign.StructureId, new Damaged(StructureLayer.Armor, true, false));
         await rig.HitAsync(campaign.StructureId, new Damaged(StructureLayer.Hull, true, false));
 
@@ -249,6 +287,14 @@ public sealed class InsurgencyDirectorTests
         {
             await using var connection = await _source.OpenConnectionAsync();
             return (await StructureStore.GetAsync(connection, null, structureId, false))!;
+        }
+
+        public async Task SetAmbitionAsync(long warzoneId, int pirate, int antipirate)
+        {
+            await using var connection = await _source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await Store.SetAmbitionAsync(connection, transaction, warzoneId, pirate, antipirate);
+            await transaction.CommitAsync();
         }
 
         /// <summary>A point for a side, as the space scores it (the campaign's own transaction), then the announcements.</summary>

@@ -104,7 +104,9 @@ public sealed class AgentMissionDispatchTests
                 new PyInt(AgentDialogueToken.Request)), session));
             var offered = DialogueActions(sink.Packets[^1]);
             Assert.Contains(offered, action => action.Items[0] is PyInt id && id.Value == AgentDialogueToken.Accept);
-            Assert.Equal(AgentMissionState.Offered, (await store.ReadAsync(Pilot, Agent))!.State);
+            var offeredMission = await store.ReadAsync(Pilot, Agent);
+            Assert.Equal(AgentMissionState.Offered, offeredMission!.State);
+            Assert.Equal(Start + TimeSpan.FromDays(7), offeredMission.ExpiresAt);
 
             Assert.True(await dispatcher.DispatchAsync(Request(4, null, new PyStr(oid!), "DoAction",
                 new PyInt(AgentDialogueToken.Accept)), session));
@@ -112,7 +114,9 @@ public sealed class AgentMissionDispatchTests
             var quitAction = Assert.Single(acceptedActions);
             Assert.Equal(AgentDialogueToken.Quit, ((PyInt)quitAction.Items[0]).Value);
             Assert.Equal(AgentDialogueButton.Quit, ((PyInt)quitAction.Items[1]).Value);
-            Assert.Equal(AgentMissionState.Accepted, (await new AgentMissionStore(source, schema).ReadAsync(Pilot, Agent))!.State);
+            var acceptedMission = await new AgentMissionStore(source, schema).ReadAsync(Pilot, Agent);
+            Assert.Equal(AgentMissionState.Accepted, acceptedMission!.State);
+            Assert.Equal(Start + TimeSpan.FromDays(7), acceptedMission.ExpiresAt);
 
             await store.MarkObjectiveCompletedAsync(Pilot, Agent, Start, "dispatch-objective");
             Assert.True(await dispatcher.DispatchAsync(Request(5, null, new PyStr(oid!), "DoAction", PyNone.Instance), session));
@@ -132,6 +136,80 @@ public sealed class AgentMissionDispatchTests
             Assert.True(await dispatcher.DispatchAsync(Request(9, "agentMgr", new PyInt(1), "MachoBindObject",
                 new PyTuple([new PyInt(3008999)]), PyNone.Instance), session));
             Assert.Equal(MachoErrors.UserErrorClass, ErrorClass(sink.Packets[^1]));
+        }
+        finally
+        {
+            await using (var drop = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE"))
+                await drop.ExecuteNonQueryAsync();
+            await source.DisposeAsync();
+        }
+    }
+
+    [PgFact]
+    public async Task Concurrent_accepts_of_the_same_offer_invoke_the_post_accept_callback_once()
+    {
+        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var schema = "agent_accept_concurrent_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            await AgentMissionStore.MigrateAsync(source, schema);
+            var store = new AgentMissionStore(source, schema);
+            await store.OfferAsync(Pilot, Agent, new AgentMissionContent(5101, 9100, "Courier Job", "courier", false), Start, "concurrent-accept-offer");
+            var callbacks = 0;
+            var dialogue = new AgentDialogueSources(
+                store,
+                (_, _, _, _, _) => ValueTask.FromResult(new AgentStandings(10, 10, 10)),
+                (_, _, _) => ValueTask.FromResult(0),
+                _ => Faction,
+                (_, _, _) => ValueTask.FromResult<AgentMissionContent?>(null),
+                () => Start,
+                OnAccepted: (_, _) =>
+                {
+                    Interlocked.Increment(ref callbacks);
+                    return ValueTask.CompletedTask;
+                });
+            var agent = AgentData();
+            var service = new AgentMissionService(
+                (_, _) => ValueTask.FromResult<System.Text.Json.Nodes.JsonObject?>(null),
+                (_, _, _) => ValueTask.FromResult<IReadOnlyDictionary<long, System.Text.Json.Nodes.JsonObject>>(new Dictionary<long, System.Text.Json.Nodes.JsonObject>()),
+                (_, _) => ValueTask.FromResult<System.Text.Json.Nodes.JsonArray?>(null),
+                (_, _, _) => true,
+                new AgentMissionRpcCallbacks(ReadAgents: _ => ValueTask.FromResult<IReadOnlyList<AgentMissionAgentData>>([agent])),
+                dialogue);
+            var registry = new ServiceRegistry();
+            registry.Register(service);
+            var dispatcher = new PacketDispatcher(registry, () => Start.ToUnixTimeMilliseconds());
+            var sink = new Sink();
+            var session = new ClientSession(sink) { UserId = 7, CharacterId = Pilot };
+            session.Set("userid", new PyInt(7));
+            session.Set("charid", new PyInt(Pilot));
+            Assert.True(await dispatcher.DispatchAsync(Request(1, "agentMgr", new PyInt(1), "MachoBindObject",
+                new PyTuple([new PyInt(Agent)]), PyNone.Instance), session));
+            var binding = Assert.IsType<PyTuple>(ResponseResult(sink.Packets[^1]));
+            var oid = BoundObjects.ExtractName(Assert.IsType<PySubStruct>(binding.Items[0]))!;
+
+            await using var connection = await source.OpenConnectionAsync();
+            await using var heldTransition = await connection.BeginTransactionAsync();
+            await using (var lockRow = new NpgsqlCommand(
+                $"SELECT 1 FROM {schema}.missions WHERE character_id = $1 AND agent_id = $2 FOR UPDATE", connection, heldTransition)
+            {
+                Parameters = { new() { Value = Pilot }, new() { Value = Agent } },
+            })
+                Assert.Equal(1, (int)(await lockRow.ExecuteScalarAsync())!);
+
+            var first = dispatcher.DispatchAsync(Request(2, null, new PyStr(oid), "DoAction", new PyInt(AgentDialogueToken.Accept)), session);
+            var second = dispatcher.DispatchAsync(Request(3, null, new PyStr(oid), "DoAction", new PyInt(AgentDialogueToken.Accept)), session);
+            await WaitForTwoMissionLockWaitersAsync(source, schema);
+            await heldTransition.CommitAsync();
+            await Task.WhenAll(first, second);
+
+            Assert.Equal(AgentMissionState.Accepted, (await store.ReadAsync(Pilot, Agent))!.State);
+            Assert.Equal(1, callbacks);
+            await using var journal = source.CreateCommand(
+                $"SELECT count(*) FROM {schema}.journal WHERE character_id = $1 AND agent_id = $2 AND action = 'accepted'");
+            journal.Parameters.AddWithValue(Pilot);
+            journal.Parameters.AddWithValue(Agent);
+            Assert.Equal(1L, (long)(await journal.ExecuteScalarAsync())!);
         }
         finally
         {
@@ -260,5 +338,21 @@ public sealed class AgentMissionDispatchTests
         var wrapped = Assert.IsType<PySubStream>(errorBody.Items[0]).Decoded;
         var error = Assert.IsType<PyObjectEx>(wrapped);
         return Assert.IsType<PyToken>(Assert.IsType<PyTuple>(error.Header).Items[0]).Value;
+    }
+
+    private static async Task WaitForTwoMissionLockWaitersAsync(NpgsqlDataSource source, string schema)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        do
+        {
+            await using var command = source.CreateCommand("""
+                SELECT count(*) FROM pg_stat_activity
+                WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE $1
+                """);
+            command.Parameters.AddWithValue($"%{schema}.missions%");
+            if ((long)(await command.ExecuteScalarAsync())! >= 2) return;
+            await Task.Delay(10);
+        } while (DateTime.UtcNow < deadline);
+        Assert.Fail("both accept calls should be waiting on the locked mission row before it is released");
     }
 }

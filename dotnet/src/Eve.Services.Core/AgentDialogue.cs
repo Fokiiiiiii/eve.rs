@@ -88,7 +88,7 @@ public sealed record AgentDialogueSources(
     Func<long, AgentMissionAgentData, bool, CancellationToken, ValueTask>? OnConversation = null,
     IAgentResearchPort? Research = null,
     IAgentLocatorPort? Locator = null,
-    Func<long, long, CancellationToken, ValueTask>? OnAccepted = null,
+    Func<AgentMissionChange, CancellationToken, ValueTask>? OnAccepted = null,
     Func<long, long, CancellationToken, ValueTask>? OnQuit = null,
     Func<long, long, CancellationToken, ValueTask<bool>>? OnMissionTurnIn = null);
 
@@ -181,9 +181,10 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
             case AgentDialogueButton.Accept when mission?.State == AgentMissionState.Offered:
                 try
                 {
-                    await sources.Store.AcceptAsync(characterId, agent.AgentId, now,
+                    var accepted = await sources.Store.AcceptAsync(characterId, agent.AgentId, now,
                         $"accept:{characterId}:{agent.AgentId}:{now.ToUnixTimeMilliseconds()}", cancellationToken);
-                    if (sources.OnAccepted is { } onAccepted) await onAccepted(characterId, agent.AgentId, cancellationToken);
+                    if (accepted is not null && sources.OnAccepted is { } onAccepted)
+                        await onAccepted(accepted, cancellationToken);
                 }
                 catch (AgentMissionRefusedException)
                 {
@@ -537,9 +538,15 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
             await locator.Locates.SetTargetAsync(characterId, agent.AgentId, null, cancellationToken);
             return Say(LocateUnavailableText, idle);
         }
-        if (!await locator.DeliverAsync(characterId, agent.AgentId, quote.Fee, LocateResult(target, agent, quote), cancellationToken))
-            return Say(LocateNoFundsText, idle);
-        return Say(LocateDoneText, await IdleActionsAsync(characterId, agent, standing, now, cancellationToken));
+        var delivered = await locator.DeliverAsync(characterId, agent.AgentId, target, quote.Fee,
+            LocatorRules.CooldownMinutesFor((int)agent.Level), LocateResult(target, agent, quote), cancellationToken);
+        return delivered switch
+        {
+            LocateDeliveryResult.Delivered => Say(LocateDoneText,
+                await IdleActionsAsync(characterId, agent, standing, now, cancellationToken)),
+            LocateDeliveryResult.InsufficientFunds => Say(LocateNoFundsText, idle),
+            _ => Say(LocateUnavailableText, await IdleActionsAsync(characterId, agent, standing, now, cancellationToken)),
+        };
     }
 
     /// <summary>

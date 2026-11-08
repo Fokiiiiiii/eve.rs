@@ -30,8 +30,6 @@ public static class FolderAccess
     public const int Manage = 4;
     public const int Admin = 5;
 
-    /// <summary>
-    /// </summary>
     public static int LevelOf(BookmarkFolder folder, long characterId, AccessLists lists)
     {
         if (folder.IsPersonal) return folder.OwnerId == characterId ? Personal : None;

@@ -497,7 +497,8 @@ public sealed class AgentMissionServiceTests
         Assert.Equal(new PyInt(94132), DictField(briefing, "Mission Briefing ID"));
 
         var declineUntil = DateTimeOffset.UtcNow.AddMinutes(1);
-        held = held with { Record = record with { State = AgentMissionState.Offered, AcceptedAt = null, ExpiresAt = null, DeclineUntil = declineUntil } };
+        var offerExpiry = DateTimeOffset.UtcNow.AddDays(7);
+        held = held with { Record = record with { State = AgentMissionState.Offered, AcceptedAt = null, ExpiresAt = offerExpiry, DeclineUntil = declineUntil } };
         var offerBriefing = Assert.IsType<PyDict>(await service.CallAsync(new ServiceCall
         {
             Method = "GetMissionBriefingInfo", Args = [], Session = session, BoundObjectId = oid,
@@ -505,7 +506,7 @@ public sealed class AgentMissionServiceTests
         var declineRemaining = Assert.IsType<PyLong>(DictField(offerBriefing, "Decline Time"));
         Assert.InRange(declineRemaining.Value, 1, TimeSpan.FromMinutes(1).Ticks);
         Assert.Equal(PyNone.Instance, DictField(offerBriefing, "AcceptTimestamp"));
-        Assert.Equal(PyNone.Instance, DictField(offerBriefing, "Expiration Time"));
+        Assert.Equal(new PyLong(offerExpiry.ToFileTime()), DictField(offerBriefing, "Expiration Time"));
     }
 
     [Fact]

@@ -164,7 +164,9 @@ public class ItemMutationStoreTests : IAsyncLifetime
         var again = await PgItemStore.MigrateAsync(source, schema);
 
         Assert.Contains("0005_item_mutation", applied);
+        Assert.Contains("0006_mutation_roll_fractions", applied);
         Assert.DoesNotContain("0005_item_mutation", again);
+        Assert.DoesNotContain("0006_mutation_roll_fractions", again);
         await using var connection = await source.OpenConnectionAsync();
         var tables = (long)(await Sql.ScalarAsync(connection, null,
             "SELECT count(*) FROM information_schema.tables WHERE table_schema = $1 AND table_name = 'item_mutations'", CancellationToken.None, schema))!;
@@ -181,11 +183,13 @@ public class ItemMutationStoreTests : IAsyncLifetime
         var store = new ItemMutationStore(source, schema);
         var itemId = await MakeItemAsync(source, items);
 
-        // Values that do not have short decimal forms: the stored double must be the rolled one, not a rounded copy.
-        var rolls = new Dictionary<int, double> { [6] = 1.0 / 3.0, [30] = 0.8 + 0.75 * 0.7, [50] = 0.8 };
+        // Values that do not have short decimal forms: both the multiplier and its original fraction must survive a restart.
+        var multipliers = new Dictionary<int, double> { [6] = 1.0 / 3.0, [30] = 0.8 + 0.75 * 0.7, [50] = 0.8 };
+        var rollFractions = new Dictionary<int, double> { [6] = 1.0 / 3.0, [30] = 0.75, [50] = 0.0 };
         var baseValues = new Dictionary<int, double> { [6] = 180, [30] = 150, [50] = 50 };
         var mutated = new Dictionary<int, double> { [6] = 180 * (1.0 / 3.0), [30] = 150 * (0.8 + 0.75 * 0.7), [50] = 50 * 0.8 };
-        var record = new ItemMutationRecord(itemId, Mutaplasmid, 9_000_001, Microwarpdrive, 9_000_002, Character, 1_700_000_000_123, rolls, baseValues, mutated);
+        var record = new ItemMutationRecord(itemId, Mutaplasmid, 9_000_001, Microwarpdrive, 9_000_002, Character, 1_700_000_000_123,
+            multipliers, baseValues, mutated, rollFractions);
 
         await using (var connection = await source.OpenConnectionAsync())
         await using (var transaction = await connection.BeginTransactionAsync())
@@ -205,10 +209,15 @@ public class ItemMutationStoreTests : IAsyncLifetime
         Assert.Equal(9_000_002, reloaded.SourceItemId);
         Assert.Equal(Character, reloaded.CharacterId);
         Assert.Equal(1_700_000_000_123, reloaded.CreatedAtMs);
-        Assert.Equal(rolls.Keys.Order(), reloaded.Rolls.Keys.Order());
-        foreach (var (attribute, value) in rolls)
+        Assert.Equal(multipliers.Keys.Order(), reloaded.Multipliers.Keys.Order());
+        foreach (var (attribute, value) in multipliers)
         {
-            Assert.True(SameBits(value, reloaded.Rolls[attribute]), $"roll of {attribute} changed on the way back");
+            Assert.True(SameBits(value, reloaded.Multipliers[attribute]), $"multiplier of {attribute} changed on the way back");
+        }
+        Assert.Equal(rollFractions.Keys.Order(), reloaded.RollFractions!.Keys.Order());
+        foreach (var (attribute, value) in rollFractions)
+        {
+            Assert.True(SameBits(value, reloaded.RollFractions[attribute]), $"roll fraction of {attribute} changed on the way back");
         }
         foreach (var (attribute, value) in baseValues)
         {
@@ -246,7 +255,8 @@ public class ItemMutationStoreTests : IAsyncLifetime
         await using (var transaction = await connection.BeginTransactionAsync())
         {
             await store.InsertAsync(connection, transaction, new ItemMutationRecord(itemId, Mutaplasmid, 1, Microwarpdrive, 2, Character, 1,
-                new Dictionary<int, double> { [6] = 1.0 }, new Dictionary<int, double> { [6] = 180 }, new Dictionary<int, double> { [6] = 180 }));
+                new Dictionary<int, double> { [6] = 1.0 }, new Dictionary<int, double> { [6] = 180 }, new Dictionary<int, double> { [6] = 180 },
+                new Dictionary<int, double> { [6] = 0.5 }));
             await transaction.CommitAsync();
         }
 
@@ -273,7 +283,8 @@ public class ItemMutationStoreTests : IAsyncLifetime
         await using var connection = await source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
         var mismatched = new ItemMutationRecord(itemId, Mutaplasmid, 1, Microwarpdrive, 2, Character, 1,
-            new Dictionary<int, double> { [6] = 1.0, [20] = 0.95 }, new Dictionary<int, double> { [6] = 180 }, new Dictionary<int, double> { [6] = 180 });
+            new Dictionary<int, double> { [6] = 1.0, [20] = 0.95 }, new Dictionary<int, double> { [6] = 180 }, new Dictionary<int, double> { [6] = 180 },
+            new Dictionary<int, double> { [6] = 0.5, [20] = 0.75 });
         await Assert.ThrowsAsync<ArgumentException>(() => store.InsertAsync(connection, transaction, mismatched));
     }
 }

@@ -910,6 +910,10 @@ fn a_wormhole_end_placed_in_a_system_nobody_is_in_is_still_there_after_a_poll() 
         destination_system_id: 31_000_001,
         destination_end: 1_050_000_002,
         destination_class: 2,
+        nebula_type_id: 6_543,
+        wormhole_age: 0,
+        wormhole_size: 1.0,
+        max_ship_jump_mass_category: 3,
         destination_position: [0.0, 0.0, 5_000.0],
         destination_radius: 3_000.0,
         max_jump_mass: 1.0e8,
@@ -921,6 +925,74 @@ fn a_wormhole_end_placed_in_a_system_nobody_is_in_is_still_there_after_a_poll() 
             .get(&SceneKey::solar_system(SYSTEM))
             .is_some_and(|scene| scene.wormhole_index(1_050_000_001).is_some()),
         "the end was dropped with its scene"
+    );
+}
+
+#[test]
+fn host_wormhole_slim_updates_reach_bound_pilots_as_slim_item_changes() {
+    let mut sim = undocked();
+    sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
+    let end = crate::link::WormholePlacement {
+        wormhole_id: 1_050_000_001,
+        solar_system_id: SYSTEM,
+        name: "Wormhole E004".to_string(),
+        type_id: 34_134,
+        group_id: 988,
+        position: [1_100_000.0, 0.0, 0.0],
+        radius: 3_000.0,
+        destination_system_id: 31_000_001,
+        destination_end: 1_050_000_002,
+        destination_class: 2,
+        nebula_type_id: 1_234,
+        wormhole_age: 0,
+        wormhole_size: 1.0,
+        max_ship_jump_mass_category: 3,
+        destination_position: [0.0, 0.0, 5_000.0],
+        destination_radius: 3_000.0,
+        max_jump_mass: 1.0e8,
+    };
+    sim.handle(Message::PlaceWormhole(Box::new(end)), NOON).unwrap();
+
+    let age = sim
+        .handle(
+            Message::SetSlimField {
+                item_id: 1_050_000_001,
+                name: "wormholeAge".into(),
+                value: crate::link::SlimValue::Int(2),
+            },
+            NOON + 1,
+        )
+        .unwrap();
+    let size = sim
+        .handle(
+            Message::SetSlimField {
+                item_id: 1_050_000_001,
+                name: "wormholeSize".into(),
+                value: crate::link::SlimValue::Real(0.4),
+            },
+            NOON + 2,
+        )
+        .unwrap();
+
+    assert_eq!(age.len(), 1, "a bound pilot receives one complete slim update");
+    assert_eq!(size.len(), 1, "a bound pilot receives one complete slim update");
+    let decode_notification = |message: &Message| {
+        let Message::Notify { args, .. } = message else { panic!("expected a notification: {message:?}") };
+        format!("{:?}", eve_marshal::decode_exact(args).unwrap())
+    };
+    let age_update = decode_notification(&age[0]);
+    let size_update = decode_notification(&size[0]);
+    assert!(
+        age_update.contains("OnSlimItemChange")
+            && age_update.contains("wormholeAge")
+            && age_update.contains("Int(2)"),
+        "{age_update}"
+    );
+    assert!(
+        size_update.contains("OnSlimItemChange")
+            && size_update.contains("wormholeSize")
+            && size_update.contains("Real(0.4)"),
+        "{size_update}"
     );
 }
 
@@ -4710,5 +4782,5 @@ fn tether_host_policy_dispatches_to_the_real_scene_and_transitions_return_to_the
         )
         .unwrap_err();
     assert!(wrong_direction.0.contains("kind 81"));
-    assert_eq!(crate::link::PROTOCOL_VERSION, 92);
+    assert_eq!(crate::link::PROTOCOL_VERSION, 93);
 }

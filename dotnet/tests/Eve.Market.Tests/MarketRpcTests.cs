@@ -23,6 +23,22 @@ public class MarketRpcTests
     private static PyDict Fields(PyValue value) => Assert.IsType<PyDict>(Assert.IsType<PyObject>(value).Args);
     private static PyValue Field(PyDict dict, string name) => dict.Entries.Single(e => JsSemantics.PlainText(e.Key) == name).Value;
 
+    private static string? NotificationName(PyValue packet)
+    {
+        if (packet is not PyObject { Name: var name } notification || JsSemantics.PlainText(name) != ClientNotification.ClassName) return null;
+        var fields = Assert.IsType<PyTuple>(notification.Args).Items;
+        var address = Assert.IsType<PyTuple>(Assert.IsType<PyObject>(fields[2]).Args);
+        return JsSemantics.PlainText(address.Items[1]);
+    }
+
+    private static PyTuple NotificationPayload(PyValue packet)
+    {
+        var fields=Assert.IsType<PyTuple>(Assert.IsType<PyObject>(packet).Args).Items;
+        var entry=Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(fields[4]).Items.Single());
+        var notification=Assert.IsType<PyTuple>(MarshalCodec.Decode(Assert.IsType<PyBuffer>(entry.Items[1]).Value.ToArray()));
+        return Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(notification.Items[1]).Items[1]);
+    }
+
     /// <summary>The value after a marshal round trip, as the client receives it; a cached result is unwrapped to its payload.</summary>
     private static PyValue Received(PyValue value)
     {
@@ -69,7 +85,7 @@ public class MarketRpcTests
         var sessions = new CharacterSessions();
         sessions.Enter(actor, session);
         var catalog = await MarketCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
-        var proxy = new MarketProxyService(rig.Book, rig.Trading, rig.Topology, rig.Characters, rig.Corporations, rig.Wallets, catalog, () => rig.Now, rig.Expiry, sessions);
+        var proxy = new MarketProxyService(rig.Book, rig.Trading, rig.Topology, rig.Characters, rig.Corporations, rig.Wallets, catalog, () => rig.Now, rig.Expiry, rig.Items, rig.ItemTypes, sessions);
         return new Seat(rig, actor, sink, session, proxy);
     }
 
@@ -94,6 +110,52 @@ public class MarketRpcTests
         return id;
     }
 
+    private static IReadOnlyList<PyTuple> MarketHistoryRows(PyValue value) =>
+        Assert.IsType<PyList>(Field(Fields(Received(value)), "lines")).Items.Select(row => Assert.IsType<PyTuple>(row)).ToArray();
+
+    private static async Task<MarketOwnedOrder> CompleteBuyOrderAsync(Seat seat, bool corporation, long callId)
+    {
+        await seat.Proxy.PlaceBuyOrder(Call(seat.Session, "PlaceBuyOrder", callId, new PyInt(seat.Rig.Station.Id), new PyInt(Tritanium),
+            new PyReal(5), new PyInt(2), new PyInt(-1), new PyInt(1), new PyInt(90), corporation ? PyBool.True : PyBool.False, PyNone.Instance));
+        var active = Assert.Single(await seat.Rig.Trading.OwnerOrdersAsync(seat.Actor, corporation, false));
+        await seat.Proxy.CancelCharOrder(Call(seat.Session, "CancelCharOrder", callId + 1, new PyLong(active.Order.Id)));
+        var completed = Assert.Single(await seat.Rig.Trading.OwnerOrdersAsync(seat.Actor, corporation, true));
+        Assert.NotEqual(0, completed.State);
+        return completed;
+    }
+
+    private static async Task<(long Founder, long CorporationId, long NpcCorporationId)> CorporationHistoryAsync(TradeRig rig)
+    {
+        await rig.Corporations.SeedNpcAsync(new Eve.Sde.SdeReader(rig.Source));
+        var founder = await rig.Actor("Market history founder", 10_000_000m);
+        var npcCorporationId = (await rig.Characters.GetAsync(founder))!.CorporationId;
+        var corporation = await rig.Corporations.CreateAsync(founder, new("Market History", "MHST", "", "", 0), "corporation");
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var tx = await connection.BeginTransactionAsync())
+        {
+            await rig.Wallets.TransferAsync(connection, tx, new WalletAccount(founder), new WalletAccount(corporation.Id, 1006),
+                1000m, 10, "Market history order", rig.Now, "history corp deposit", "test");
+            await tx.CommitAsync();
+        }
+        await rig.Corporations.SetAccountKeyAsync(founder, 1006);
+        await CompleteBuyOrderAsync(await SeatAsync(rig, founder), true, 50);
+        return (founder, corporation.Id, npcCorporationId);
+    }
+
+    private static async Task<long> JoinHistoryCorporationAsync(TradeRig rig, long founder, long corporationId, string name, long? roles = null)
+    {
+        var character = await rig.Actor(name, 10_000_000m);
+        var application = await rig.Corporations.ApplyAsync(character, corporationId, "Please accept.");
+        await rig.Corporations.RespondAsync(founder, application, 6, "Please accept.", "Welcome");
+        await rig.Corporations.RespondAsync(character, application, 2, "Please accept.", "Accepted");
+        if (roles is { } roleMask)
+        {
+            var member = (await rig.Corporations.MemberAsync(character))!;
+            await rig.Corporations.UpdateMemberAsync(founder, member with { Masks = new RoleMasks(roleMask) });
+        }
+        return character;
+    }
+
     [PgFact]
     public async Task Station_and_system_ask_rows_match_the_client_attribute_and_sequence_contract()
     {
@@ -101,7 +163,11 @@ public class MarketRpcTests
         var actor = await r.Actor("Ask Reader");
         var seat = await SeatAsync(r, actor);
         await r.Book.SeedNpcAsync([new("ask", Tritanium, false, 10, 100, 32767, MarketLocation.From(r.Station), r.Now)]);
-        foreach (var asks in new[] { await seat.Proxy.GetStationAsks(Call(seat.Session, "GetStationAsks", 1)), await seat.Proxy.GetSystemAsks(Call(seat.Session, "GetSystemAsks", 2)) })
+        var stationAsks = await seat.Proxy.GetStationAsks(Call(seat.Session, "GetStationAsks", 1));
+        var stationDetails = Assert.IsType<PyDict>(Assert.IsType<PyTuple>(Assert.IsType<PyObject>(stationAsks).Args).Items[0]);
+        Assert.Equal(new PyBytes("stationid"u8.ToArray()), Field(stationDetails, "sessionInfo"));
+        Assert.Equal(new PyLong(r.Station.Id), Field(stationDetails, "sessionInfoValue"));
+        foreach (var asks in new[] { stationAsks, await seat.Proxy.GetSystemAsks(Call(seat.Session, "GetSystemAsks", 2)) })
         {
             var row = Assert.IsType<PyObject>(Assert.Single(Assert.IsType<PyDict>(Received(asks)).Entries).Value);
             Assert.Equal("util.Row", Eve.Macho.JsSemantics.PlainText(row.Name));
@@ -322,19 +388,23 @@ public class MarketRpcTests
         await r.Book.SeedNpcAsync([new("ask",Tritanium,false,10,100,32767,MarketLocation.From(r.Station),r.Now)]);
         var created=await seat.Proxy.BuyMultipleItems(Call(seat.Session,"BuyMultipleItems",3,new PyInt(r.Station.Id),
             new PyList([Line(Tritanium,5,10),Line(Tritanium,4,9)]),PyBool.False));
-        var rows=Assert.IsType<PyObject>(Received(created));
-        Assert.Empty(Assert.IsType<PyList>(Field(Fields(rows),"lines")).Items);
+        var rows=Assert.IsType<PyList>(Received(created));
+        Assert.Equal(2,rows.Items.Count);
+        var returnedOrders=rows.Items.Select(row => Fields(row)).ToArray();
+        Assert.Equal(new long[] { 5, 4 },returnedOrders.Select(row => Convert.ToInt64(Num(Field(row,"volEntered")))));
+        Assert.Equal(new long[] { 0, 4 },returnedOrders.Select(row => Convert.ToInt64(Num(Field(row,"volRemaining")))));
         Assert.Empty((await r.Book.BookAsync(r.Station.RegionId,Tritanium,r.Now)).Bids);
         Assert.Equal(9950m,(await r.WalletStore.GetAsync(actor))!.Isk);
         Assert.NotEmpty(seat.Sink.Packets);
-        var packet = Assert.IsType<PyObject>(seat.Sink.Packets[^1]);
-        var packetFields = Assert.IsType<PyTuple>(packet.Args).Items;
-        var sequence = checked((int)Assert.IsType<PyInt>(Field(Assert.IsType<PyDict>(packetFields[5]), "sn")).Value);
-        var expectedNotification = ClientNotification.Build(seat.Session.UserId ?? 0, seat.Session.NodeId,
-            "OnOwnOrdersChanged", "charid",
-            [Py.List(),
-                new PyStr("Filled"), new PyInt(0)], sequence);
-        Assert.Equal(MarshalCodec.Encode(expectedNotification), MarshalCodec.Encode(packet));
+        var packet = Assert.IsType<PyObject>(Assert.Single(
+            seat.Sink.Packets, packet => NotificationName(packet) == "OnOwnOrdersChanged"));
+        var notice=NotificationPayload(packet);
+        var notifiedOrders=Assert.IsType<PyList>(notice.Items[0]).Items.Select(Fields).ToArray();
+        Assert.Equal("Expiry",JsSemantics.PlainText(notice.Items[1]));
+        Assert.Equal(new PyInt(0),notice.Items[2]);
+        Assert.Equal(returnedOrders.Select(row => Convert.ToInt64(Num(Field(row,"orderID")))),
+            notifiedOrders.Select(row => Convert.ToInt64(Num(Field(row,"orderID")))));
+        Assert.Equal(new long[] { 0, 4 },notifiedOrders.Select(row => Convert.ToInt64(Num(Field(row,"volRemaining")))));
         Assert.Equal(95,(await r.Book.BookAsync(r.Station.RegionId,Tritanium,r.Now)).Asks.Single().VolumeRemaining);
     }
 
@@ -359,7 +429,8 @@ public class MarketRpcTests
 
         var result=await seat.Proxy.BuyMultipleItems(Call(seat.Session,"BuyMultipleItems",77,
             new PyInt(r.Station.Id),new PyList([Line(Tritanium,10,10),Line(35,20,1)]),PyBool.False));
-        Assert.IsType<PyObject>(result);
+        var immediateOrders=Assert.IsType<PyList>(Received(result)).Items.Select(Fields).ToArray();
+        Assert.Equal(new long[] { 0, 0 },immediateOrders.Select(row => Convert.ToInt64(Num(Field(row,"volRemaining")))));
         Assert.Equal(9880m,(await r.WalletStore.GetAsync(actor))!.Isk);
         Assert.Empty((await r.Book.BookAsync(r.Station.RegionId,Tritanium,r.Now)).Bids);
         Assert.Empty((await r.Book.BookAsync(r.Station.RegionId,35,r.Now)).Bids);
@@ -414,8 +485,13 @@ public class MarketRpcTests
             PyBool.False, new PyInt(r.Station.Id), new PyInt(r.Station.SolarSystemId), new PyReal(12), new PyInt(-1), new PyInt(5),
             new PyLong(Py.FileTimeFromUnixMs(order.IssuedMs)))));
         Assert.Equal(13m, (await r.Book.BookAsync(r.Station.RegionId, Plex, r.Now)).Asks.Single().Price);
-        // the Created notification of the sell and the Modified notification of the modify
-        Assert.Equal(2, seat.Sink.Packets.Count);
+        // A resting sell first updates its own-order and hangar caches, then the price modification updates the own-order cache.
+        Assert.Equal(2, seat.Sink.Packets.Count(packet => NotificationName(packet)=="OnOwnOrdersChanged"));
+        var stockChange=Assert.Single(seat.Sink.Packets,packet => NotificationName(packet)=="OnItemChange");
+        var stockChangeArgs=NotificationPayload(stockChange);
+        Assert.Equal(stock,Convert.ToInt64(Num(Assert.IsType<PyPackedRow>(stockChangeArgs.Items[0]).Values[0])));
+        Assert.Equal(r.Station.Id,Convert.ToInt64(Num(Assert.IsType<PyDict>(stockChangeArgs.Items[1]).Entries
+            .Single(entry => Convert.ToInt32(Num(entry.Key))==3).Value)));
     }
 
     [PgFact]
@@ -478,6 +554,81 @@ public class MarketRpcTests
             await seat.Proxy.GetCorporationOrders(Call(seat.Session, "GetCorporationOrders", 11)));
 
         Assert.Equal("CustomInfo", UserError(error).Label);
+    }
+
+    [PgFact]
+    public async Task Market_order_history_includes_corporation_rows_for_the_persisted_accountant_with_stale_session_roles()
+    {
+        await using var r = await TradeRig.Create();
+        var (founder, corporationId, npcCorporationId) = await CorporationHistoryAsync(r);
+        var accountant = await JoinHistoryCorporationAsync(r, founder, corporationId, "Market history accountant", CorporationRoles.Accountant);
+        var seat = await SeatAsync(r, accountant);
+        seat.Session.Set("corpid", new PyLong(npcCorporationId));
+        seat.Session.Set("corprole", new PyLong(CorporationRoles.Trader));
+        await CompleteBuyOrderAsync(seat, false, 60);
+
+        var rows = MarketHistoryRows(await seat.Proxy.GetMarketOrderHistory(Call(seat.Session, "GetMarketOrderHistory", 62)));
+
+        Assert.Equal(2, rows.Count);
+        var personal = Assert.Single(rows, row => Num(row.Items[14]) == 0);
+        var corporation = Assert.Single(rows, row => Num(row.Items[14]) == 1);
+        Assert.Equal(accountant, (long)Num(personal.Items[2]));
+        Assert.Equal(Tritanium, (int)Num(personal.Items[1]));
+        Assert.Equal(Tritanium, (int)Num(corporation.Items[1]));
+        Assert.Equal(1006, (int)Num(corporation.Items[18]));
+        Assert.NotEqual(0, Num(personal.Items[19]));
+        Assert.NotEqual(0, Num(corporation.Items[19]));
+        Assert.Equal(21, personal.Items.Count);
+        Assert.Equal(21, corporation.Items.Count);
+    }
+
+    [PgFact]
+    public async Task Market_order_history_hides_corporation_rows_from_plain_and_trader_only_members_despite_stale_accountant_session_role()
+    {
+        await using var r = await TradeRig.Create();
+        var (founder, corporationId, _) = await CorporationHistoryAsync(r);
+        var plain = await JoinHistoryCorporationAsync(r, founder, corporationId, "Market history plain member");
+        var trader = await JoinHistoryCorporationAsync(r, founder, corporationId, "Market history trader", CorporationRoles.Trader);
+        var plainSeat = await SeatAsync(r, plain);
+        var traderSeat = await SeatAsync(r, trader);
+        foreach (var seat in new[] { plainSeat, traderSeat })
+        {
+            seat.Session.Set("corpid", new PyLong(corporationId));
+            seat.Session.Set("corprole", new PyLong(CorporationRoles.Accountant));
+        }
+        await CompleteBuyOrderAsync(plainSeat, false, 70);
+        await CompleteBuyOrderAsync(traderSeat, false, 80);
+
+        foreach (var (seat, actor, callId) in new[] { (plainSeat, plain, 72L), (traderSeat, trader, 82L) })
+        {
+            var row = Assert.Single(MarketHistoryRows(await seat.Proxy.GetMarketOrderHistory(Call(seat.Session, "GetMarketOrderHistory", callId))));
+            Assert.Equal(actor, (long)Num(row.Items[2]));
+            Assert.Equal(Tritanium, (int)Num(row.Items[1]));
+            Assert.Equal(0, Num(row.Items[14]));
+            Assert.NotEqual(0, Num(row.Items[19]));
+            Assert.Equal(21, row.Items.Count);
+        }
+    }
+
+    [PgFact]
+    public async Task Market_order_history_does_not_restore_a_former_corporation_from_stale_session_attributes()
+    {
+        await using var r = await TradeRig.Create();
+        var (founder, corporationId, npcCorporationId) = await CorporationHistoryAsync(r);
+        var former = await JoinHistoryCorporationAsync(r, founder, corporationId, "Market history former member");
+        var seat = await SeatAsync(r, former);
+        await CompleteBuyOrderAsync(seat, false, 90);
+        await r.Corporations.LeaveAsync(former, npcCorporationId);
+        seat.Session.Set("corpid", new PyLong(corporationId));
+        seat.Session.Set("corprole", new PyLong(CorporationRoles.Accountant));
+
+        var row = Assert.Single(MarketHistoryRows(await seat.Proxy.GetMarketOrderHistory(Call(seat.Session, "GetMarketOrderHistory", 92))));
+
+        Assert.Equal(former, (long)Num(row.Items[2]));
+        Assert.Equal(Tritanium, (int)Num(row.Items[1]));
+        Assert.Equal(0, Num(row.Items[14]));
+        Assert.NotEqual(0, Num(row.Items[19]));
+        Assert.Equal(21, row.Items.Count);
     }
 
     [PgFact]

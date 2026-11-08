@@ -3,6 +3,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Dogma;
 using Eve.Planets;
+using Eve.Scheduler;
 using Eve.Services;
 using Eve.Ships;
 using Eve.Skills;
@@ -30,7 +31,22 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
     private readonly Dictionary<string, long> _boundPlanets = [];
     private readonly Dictionary<long, PlanetBody> _bodies = [];
     private readonly object _rawResourceTypeIdsGate = new();
+    private DurableScheduler? _scheduler;
     private Task<int[]>? _rawResourceTypeIds;
+
+    private const string LaunchPlacementJobKind = "planet.launch.place";
+    private const long LaunchPlacementRetryMs = 5_000;
+
+    private sealed record LaunchPlacementPayload(long OwnerId, LaunchRecord Launch);
+
+    /// <summary>Registers the durable launch placement worker before the host starts the shared scheduler.</summary>
+    public void RegisterJobs(DurableScheduler scheduler)
+    {
+        ArgumentNullException.ThrowIfNull(scheduler);
+        if (Interlocked.CompareExchange(ref _scheduler, scheduler, null) is not null)
+            throw new InvalidOperationException("The planet launch placement handler is already registered.");
+        scheduler.Register(LaunchPlacementJobKind, PlaceLaunchCanJobAsync);
+    }
 
     /// <summary><c>MachoBindObject(planetID, (method, args, kwargs))</c>: binds the planet, then makes the nested call.</summary>
     [Method("MachoResolveObject")]
@@ -133,16 +149,43 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         var planetId = PlanetOf(call);
         var owner = Integral(call.Arg(1)) ?? 0;
         var colony = owner == 0 ? null : await SnapshotAsync(owner, planetId, call.Cancellation);
-        return colony is null ? PyNone.Instance : Py.KeyVal([.. colony.Value.Fields]);
+        if (colony is null) return Py.Tuple(new PyList([]), new PyList([]));
+        var pins = PinRows(colony.Value.Colony, null);
+        var links = colony.Value.Colony.Links.Values.OrderBy(l => l.End1).ThenBy(l => l.End2)
+            .Select(l => (PyValue)new PyList([new PyLong(l.End1), new PyLong(l.End2)]));
+        return Py.Tuple(new PyList([.. pins]), new PyList([.. links]));
     }
 
     /// <summary>GetCommandPinsForPlanet(planetID): the command centers on the planet (planetSvc.py:116).</summary>
     [Method("GetCommandPinsForPlanet")]
-    public async ValueTask<PyValue> GetCommandPinsForPlanet(ServiceCall call) => await PinsOfKindAsync(call, PinKind.CommandCenter);
+    public async ValueTask<PyValue> GetCommandPinsForPlanet(ServiceCall call)
+    {
+        var planetId = PlanetOf(call);
+        var entries = new List<KeyValuePair<PyValue, PyValue>>();
+        foreach (var document in await store.ColoniesOnAsync(planetId, call.Cancellation))
+        {
+            var colony = document.ToColony(catalog, field);
+            colony.RunTo(Ticks());
+            if (colony.CommandCenter is { } pin)
+                entries.Add(new(new PyLong(document.OwnerId), PinSummary(pin)));
+        }
+        return new PyDict(entries);
+    }
 
     /// <summary>GetExtractorsForPlanet(planetID): the extraction control units on the planet (planetSvc.py:126).</summary>
     [Method("GetExtractorsForPlanet")]
-    public async ValueTask<PyValue> GetExtractorsForPlanet(ServiceCall call) => await PinsOfKindAsync(call, PinKind.Ecu);
+    public async ValueTask<PyValue> GetExtractorsForPlanet(ServiceCall call)
+    {
+        var planetId = PlanetOf(call);
+        var rows = new List<PyValue>();
+        foreach (var document in await store.ColoniesOnAsync(planetId, call.Cancellation))
+        {
+            var colony = document.ToColony(catalog, field);
+            colony.RunTo(Ticks());
+            rows.AddRange(colony.Pins.Values.Where(pin => pin.Kind == PinKind.Ecu).OrderBy(pin => pin.Id).Select(PinSummary));
+        }
+        return new PyList(rows);
+    }
 
     /// <summary>GetProgramResultInfo(pinID, typeID, heads, headRadius): what a program would distribute (clientPlanet.InstallProgram).</summary>
     [Method("GetProgramResultInfo")]
@@ -287,54 +330,77 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
     [Method("UserLaunchCommodities")]
     public async ValueTask<PyValue> UserLaunchCommodities(ServiceCall call)
     {
+        var scheduler = _scheduler ?? throw new InvalidOperationException("The planet launch placement handler has not been registered.");
         var planetId = PlanetOf(call);
         var owner = RequireOwner(call);
         var pinId = Integral(call.Arg(0)) ?? 0;
         var commodities = Commodities(call.Arg(1));
         var body = await BodyAsync(planetId, call.Cancellation);
         long launchTime = 0;
-        long canId = 0;
         await ChangeAsync(owner, planetId, (colony, _) =>
         {
             launchTime = colony.Launch(pinId, commodities);
             return Task.FromResult<List<ColonyCommand>>([]);
         }, call.Cancellation, extra: async (connection, transaction) =>
         {
-
             var container = await items.CreateAsync(connection, transaction, new NewItem(LaunchContainerType, owner, body.SolarSystemId, ContainerFlag, 1, Singleton: true), call.Cancellation);
-            canId = container;
             foreach (var (type, quantity) in commodities)
                 await items.CreateAsync(connection, transaction, new NewItem(type, owner, container, ContainerFlag, quantity), call.Cancellation);
             // near the planet: two radii out along x from its centre (the launch's place in the system)
-            await store.InsertLaunchAsync(connection, transaction, new LaunchRecord(0, owner, planetId, body.SolarSystemId, container, true,
+            var launch = new LaunchRecord(0, owner, planetId, body.SolarSystemId, container, true,
                 launchTime, launchTime + PlanetRules.LaunchLifetime, body.X + 2 * body.Radius, body.Y, body.Z,
-                System.Text.Json.JsonSerializer.Serialize(commodities.ToDictionary(kv => kv.Key.ToString(System.Globalization.CultureInfo.InvariantCulture), kv => kv.Value))),
-                call.Cancellation);
+                System.Text.Json.JsonSerializer.Serialize(commodities.ToDictionary(kv => kv.Key.ToString(System.Globalization.CultureInfo.InvariantCulture), kv => kv.Value)));
+            var launchId = await store.InsertLaunchAsync(connection, transaction, launch, call.Cancellation);
+            await scheduler.ScheduleAsync(connection, transaction, new JobSpec(LaunchPlacementJobKind, nowMs())
+            {
+                Key = $"launch:{launchId}",
+                Payload = new LaunchPlacementPayload(owner, launch with { LaunchId = launchId }),
+            }, call.Cancellation);
         });
-        await PlaceLaunchCanAsync(body, canId, owner, call.Cancellation);
-
-        await notifyLaunches(owner);
+        // The scheduler may run the job immediately; start it only after the client's RPC response is on the wire.
+        call.Session.AfterResponse(scheduler.Wake);
         return new PyLong(launchTime);
     }
 
     /// <summary>
     /// Puts a launch's can in space two radii out from its planet, where the launch record says: the simulation's ball of a can, and its space row
     /// </summary>
-    private async Task PlaceLaunchCanAsync(PlanetBody body, long canId, long owner, CancellationToken cancellationToken)
+    private async Task PlaceLaunchCanJobAsync(JobContext job, CancellationToken cancellationToken)
     {
-        if (simulation is null || spaceItems is null || dogma is null) return;
+        var payload = job.Payload<LaunchPlacementPayload>()
+            ?? throw new InvalidDataException("Planet launch placement job payload is missing.");
+        try
+        {
+            await PlaceLaunchCanAsync(payload.Launch, payload.OwnerId, cancellationToken);
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            Console.Error.WriteLine($"eve-host: launch can {payload.Launch.ItemId} placement failed; retrying: {error.Message}");
+            job.RunAgainAt(job.NowMs + LaunchPlacementRetryMs, payload);
+            return;
+        }
+        job.AfterCommit(_ => notifyLaunches(payload.OwnerId));
+    }
+
+    private async Task PlaceLaunchCanAsync(LaunchRecord launch, long owner, CancellationToken cancellationToken)
+    {
+        if (simulation is null || spaceItems is null || dogma is null)
+            throw new InvalidOperationException("Planet launch placement needs the simulation, space item store, and dogma data.");
         await dogma.EnsureTypesAsync([LaunchContainerType], cancellationToken);
         var type = dogma.Type(LaunchContainerType);
         var radius = type?.Attributes.GetValueOrDefault(162, LaunchCanRadius) ?? LaunchCanRadius;
-        double[] position = [body.X + 2 * body.Radius, body.Y, body.Z];
+        double[] position = [launch.X, launch.Y, launch.Z];
         double[] direction = [1, 0, 0];
-        var expiresMs = nowMs() + PlanetRules.LaunchLifetime / 10_000;
-        await spaceItems.SaveAsync(new SpaceItem(canId, (int)body.SolarSystemId, position, direction, radius, LaunchCanGroup, 0, owner, 0, 0, 0, expiresMs),
+        var expiresMs = (launch.ExpiresTicks - FileTimeUnixEpochTicks) / FileTimeTicksPerMillisecond;
+        await spaceItems.SaveAsync(new SpaceItem(launch.ItemId, (int)launch.SolarSystemId, position, direction, radius, LaunchCanGroup, 0, owner, 0, 0, 0, expiresMs),
             cancellationToken);
-        simulation.PlaceWreck(new SimPlaceWreck(SimSceneKey.SolarSystem((int)body.SolarSystemId), canId, LaunchCanGroup,
+        simulation.PlaceWreck(new SimPlaceWreck(SimSceneKey.SolarSystem((int)launch.SolarSystemId), launch.ItemId, LaunchCanGroup,
             new SimWreckKind(LaunchContainerType, type?.Name ?? "Cargo Container", type?.GraphicId ?? 0), position, direction, radius, 0,
             new SimCredit(owner, 0, 0, 0), false));
     }
+
+    private const long FileTimeUnixEpochTicks = 116_444_736_000_000_000L;
+    private const long FileTimeTicksPerMillisecond = 10_000L;
 
     /// <summary>UserTransferCommodities(path, commodities): an expedited transfer between two of the colony's pins.</summary>
     [Method("UserTransferCommodities")]
@@ -394,12 +460,13 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         var context = new ChangeContext(connection, transaction, owner, planetId);
+        await LockOwnerColoniesAsync(connection, transaction, owner, cancellationToken);
         var doc = await store.LockAsync(connection, transaction, owner, planetId, cancellationToken);
         var colony = doc?.ToColony(catalog, field) ?? await NewColonyAsync(owner, planetId, now, cancellationToken);
         colony.RunTo(now);
         var before = colony.Pins.Keys.ToHashSet();
         var commands = await build(colony, context);
-        var ctx = new ColonyContext(await OtherColoniesAsync(owner, planetId, cancellationToken),
+        var ctx = new ColonyContext(await store.OtherColoniesAsync(connection, transaction, owner, planetId, cancellationToken),
             await SkillLevelAsync(connection, transaction, owner, TypeInterplanetaryConsolidation, cancellationToken),
             await SkillLevelAsync(connection, transaction, owner, TypeCommandCenterUpgrade, cancellationToken), long.MaxValue);
         var outcome = colony.ApplyCommands(commands, ctx);
@@ -419,8 +486,16 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         var office = !outcome.Abandoned && colony.Pins.Count > 0;
         if (office) await EnsureOfficeAsync(connection, transaction, planetId, body.SolarSystemId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        if (office) PlaceOffice(planetId, body);
-        if (before.Count > 0 || colony.Pins.Count > 0) await notify(owner, new PyInt(planetId));
+        if (office)
+        {
+            try { PlaceOffice(planetId, body); }
+            catch (Exception error) { Console.Error.WriteLine($"eve-host: customs office placement failed after planet {planetId} committed: {error.Message}"); }
+        }
+        if (before.Count > 0 || colony.Pins.Count > 0)
+        {
+            try { await notify(owner, new PyInt(planetId)); }
+            catch (Exception error) { Console.Error.WriteLine($"eve-host: planet {planetId} notification failed after colony commit: {error.Message}"); }
+        }
         return new ChangeResult(owner, planetId, snapshot);
     }
 
@@ -431,8 +506,16 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         return new Colony(catalog, field, planetId, body.TypeId, body.Radius, owner) { CurrentSimTime = now };
     }
 
-    private async Task<int> OtherColoniesAsync(long owner, long planetId, CancellationToken cancellationToken) =>
-        (await store.ColoniesOfAsync(owner, cancellationToken)).Count(c => c.PlanetId != planetId);
+    private static async Task LockOwnerColoniesAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+        long owner, CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(
+            "SELECT pg_advisory_xact_lock(hashtextextended('eve.pi.owner:' || $1::text, 0))", connection, transaction)
+        {
+            Parameters = { new() { Value = owner } },
+        };
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
 
     private async Task<int> SkillLevelAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long owner, int typeId, CancellationToken cancellationToken) =>
         await skills.LevelAsync(connection, transaction, owner, typeId, cancellationToken);
@@ -527,15 +610,6 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         }
     }
 
-    private async ValueTask<PyValue> PinsOfKindAsync(ServiceCall call, PinKind kind)
-    {
-        var planetId = PlanetOf(call);
-        var owner = call.Session.CharacterId ?? 0;
-        var colony = owner == 0 ? null : await SnapshotAsync(owner, planetId, call.Cancellation);
-        var rows = colony is null ? new List<PyValue>() : PinRows(colony.Value.Colony, kind);
-        return new PyList([.. rows]);
-    }
-
     /// <summary>The colony as the client reads it (clientPlanet._PrimeColony), run to now, not saved.</summary>
     private async Task<(Colony Colony, List<(string, PyValue)> Fields)?> SnapshotAsync(long owner, long planetId, CancellationToken cancellationToken)
     {
@@ -566,6 +640,7 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
     {
         var fields = new List<(string, PyValue)>
         {
+            ("pinID", new PyLong(p.Id)),
             ("id", new PyLong(p.Id)),
             ("typeID", new PyInt(p.TypeId)),
             ("ownerID", new PyInt(p.OwnerId)),
@@ -598,6 +673,15 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         }
         return Py.KeyVal([.. fields]);
     }
+
+    /// <summary>The compact pin summary used by planetSvc's other-owner views.</summary>
+    private static PyValue PinSummary(Pin pin) => Py.KeyVal(
+        ("pinID", new PyLong(pin.Id)),
+        ("id", new PyLong(pin.Id)),
+        ("typeID", new PyInt(pin.TypeId)),
+        ("ownerID", new PyLong(pin.OwnerId)),
+        ("latitude", new PyReal(pin.Latitude)),
+        ("longitude", new PyReal(pin.Longitude)));
 
     private async Task<PlanetBody> BodyAsync(long planetId, CancellationToken cancellationToken)
     {

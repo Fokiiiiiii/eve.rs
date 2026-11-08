@@ -2,7 +2,7 @@ namespace Eve.Hacking;
 
 /// <summary>One hacking attempt as the analyzer starts it: the virus stats are the module's values after dogma.</summary>
 public sealed record HackingAttempt(
-    long TargetId,
+    long? TargetId,
     int ModuleTypeId,
     int GameType,
     int Difficulty,
@@ -181,7 +181,7 @@ public sealed class HackingGame
 
     /// <summary>Whether a hidden tile can be explored: a revealed, unblocked neighbour exists.</summary>
     public bool Explorable(Coord coord) =>
-        HackingBoard.Neighbours(coord).Any(n => Board.Tiles.TryGetValue(n, out var t) && !t.Hidden && !t.Blocked);
+        HackingBoard.Neighbours(coord, Board.Columns, Board.Rows).Any(n => Board.Tiles.TryGetValue(n, out var t) && !t.Hidden && !t.Blocked);
 
     private static IReadOnlyList<HackingEvent> Ack() => [new HackingEvent(HackingWire.EventAck, Dict())];
 
@@ -193,7 +193,7 @@ public sealed class HackingGame
         tile.Subtype = subtype;
         if (type == HackingWire.TypeDefenseSoftware)
         {
-            HackingBoard.ApplyDefenceStats(tile);
+            HackingBoard.ApplyDefenceStats(tile, _attempt.Difficulty, fromDataCache: true);
             tile.Blocked = true;
         }
         events.Add(new HackingEvent(HackingWire.EventDataCacheOpen, TileView(tile)));
@@ -369,7 +369,7 @@ public sealed class HackingGame
     /// <summary>Steps from an empty node to the nearest core, utility subsystem or data cache, capped at 5 (5 means five or more).</summary>
     private int DistanceToResource(Coord from)
     {
-        var distances = HackingBoard.DistancesFrom(from);
+        var distances = HackingBoard.DistancesThrough(from, Board.Tiles.Keys, Board.Columns, Board.Rows);
         var nearest = Board.Tiles.Values
             .Where(t => t.Type is HackingWire.TypeCore or HackingWire.TypeUtilityElementTile or HackingWire.TypeDataCache)
             .Select(t => distances.TryGetValue(t.Coord, out var d) ? d : int.MaxValue)

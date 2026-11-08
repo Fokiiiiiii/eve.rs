@@ -37,6 +37,7 @@ public class AnnouncementsTests
         var allowedSink=new Sink();
         var otherDivisionSink=new Sink();
         var accountantSink=new Sink();
+        var juniorAccountantSink=new Sink();
         var unprivilegedSink=new Sink();
         var outsiderSink=new Sink();
         var allowed=new ClientSession(allowedSink) { UserId=7,CharacterId=140000001 };
@@ -45,16 +46,20 @@ public class AnnouncementsTests
         otherDivision.Set("rolesAtAll",new PyInt(CorporationRoles.WalletTakeRole(1000)));
         var accountant=new ClientSession(accountantSink) { UserId=9,CharacterId=140000005 };
         accountant.Set("rolesAtAll",new PyInt(CorporationRoles.Accountant));
+        var juniorAccountant=new ClientSession(juniorAccountantSink) { UserId=11,CharacterId=140000006 };
+        juniorAccountant.Set("rolesAtAll",new PyInt(CorporationRoles.JuniorAccountant));
         var unprivileged=new ClientSession(unprivilegedSink) { UserId=9,CharacterId=140000003 };
         allowed.Set("corpid",new PyInt(98000000));
         otherDivision.Set("corpid",new PyInt(98000000));
         accountant.Set("corpid",new PyInt(98000000));
+        juniorAccountant.Set("corpid",new PyInt(98000000));
         unprivileged.Set("corpid",new PyInt(98000000));
         var outsider=new ClientSession(outsiderSink) { UserId=10,CharacterId=140000004 };
         outsider.Set("corpid",new PyInt(98000001));
         sessions.Enter(140000001,allowed);
         sessions.Enter(140000002,otherDivision);
         sessions.Enter(140000005,accountant);
+        sessions.Enter(140000006,juniorAccountant);
         sessions.Enter(140000003,unprivileged);
         sessions.Enter(140000004,outsider);
         using var announcer=new WalletAnnouncer(transactions,sessions);
@@ -62,8 +67,13 @@ public class AnnouncementsTests
         var expected=ClientNotification.Build(7,allowed.NodeId,"OnAccountChange","*corpid&corpAccountKey",
             new PyValue[] { new PyStr("cash7"),new PyInt(98000000),new PyReal(10) },0);
         Assert.Equal(MarshalCodec.Encode(expected),MarshalCodec.Encode(Assert.Single(allowedSink.Packets)));
+        var expectedAccountant=ClientNotification.Build(9,accountant.NodeId,"OnAccountChange","*corpid&corpAccountKey",
+            new PyValue[] { new PyStr("cash7"),new PyInt(98000000),new PyReal(10) },0);
+        Assert.Equal(MarshalCodec.Encode(expectedAccountant),MarshalCodec.Encode(Assert.Single(accountantSink.Packets)));
+        var expectedJuniorAccountant=ClientNotification.Build(11,juniorAccountant.NodeId,"OnAccountChange","*corpid&corpAccountKey",
+            new PyValue[] { new PyStr("cash7"),new PyInt(98000000),new PyReal(10) },0);
+        Assert.Equal(MarshalCodec.Encode(expectedJuniorAccountant),MarshalCodec.Encode(Assert.Single(juniorAccountantSink.Packets)));
         Assert.Empty(otherDivisionSink.Packets);
-        Assert.Empty(accountantSink.Packets);
         Assert.Empty(unprivilegedSink.Packets);
         Assert.Empty(outsiderSink.Packets);
     }

@@ -62,18 +62,28 @@ no source confirms it [U].
 source module is consumed. The source must be a singleton. This follows the existing consume rule in `SkillHandlerService.cs:894-905`.
 EveJS consumes one unit too (`dynamicItemService.js:38, 456-463`).
 
-**D5. Source eligibility.** A **fitted** source is refused. A source must also be in a hangar or the cargo hold of the character
-(the flags the client's gate and station inventory use). A **damaged** source is allowed: neither the client gate nor EveJS checks
-damage, and no recorded rule does. Owner, distinct ids, quantity and the published mapping are checked as in the refusals below.
+**D5. Input eligibility and reach.** A **fitted** source is refused. Both items must be owned by the active character, loose in an
+inventory reachable from the pilot's current location, and have a published mutaplasmid/input mapping. The client checks each item with
+`IsInPilotLocation()` and permits items in separate reachable inventories (`craftingWindow.py:204-230,322-327`;
+`menucheckers/itemCheckers.py:1050-1106`). The Host validates the current station, active ship and its local cargo containers rather
+than trusting a location supplied by the item. A **damaged** source is allowed: neither the client gate nor EveJS checks damage, and
+no recorded rule does.
 
-**D6. Stored roll.** The roll is stored as an exact double in `inventory.item_mutations.rolls`, and the computed `values` are stored
-too. The mutation layer applies them **without extra rounding**. The existing `DogmaWorld` rounding of attributes 30 and 50 to two
-decimal places stays where it is (`DogmaWorld.cs:385-387`). A stored item is **never re-rolled and never recomputed on load**. An SDE
-change cannot move an existing item. EveJS rounds to six decimal places (`dynamicItemService.js:355-357`); we do not adopt that as a
-rule. The wire rounding is not specified by CCP [U].
+**D6. Stored roll and multiplier.** `inventory.item_mutations.rolls` stores the exact multiplier applied to each source attribute;
+`roll_fractions` stores the original uniform draw fraction; `GetDynamicItemInfo.modifiers` returns it rounded to six decimal places,
+matching EveJS (migration `0006_mutation_roll_fractions`). The computed `mutated_values` are stored too. The mutation layer applies multipliers **without extra
+rounding**. The existing `DogmaWorld` rounding of attributes 30 and 50 to two decimal places stays where it is (`DogmaWorld.cs:385-387`).
+A stored item is **never re-rolled and never recomputed on load**. An SDE change cannot move an existing item. EveJS rounds the raw
+fraction in `modifiers` and the computed value to six decimal places (`dynamicItemService.js:343-357`); we retain the exact fraction
+for reproducibility and use its six-place form on the wire, while retaining eve.rs dogma's existing value rounding. For legacy rows
+without a fraction, the original fraction is recovered from the
+stored multiplier and pinned mutator range; equal-ended ranges cannot recover the old draw and report `0`. The V24 tooltip reads only
+modifier keys (`tooltip/dynamicItem.py:47-61`), so that historical value does not affect its rendering.
 
-**D7. Result location and flag.** The result takes the **source's** location and flag. The client's shown location is therefore the
-one the source had. The source is consumed and the result created in the same transaction. CCP is silent [U].
+**D7. Result location and flag.** The result takes the **mutator's** location and flag. The V24 crafting window uses the mutator's
+`locationID` and `flagID` for the result drag data (`craftingWindow.py:329-331`), matching EveJS (`dynamicItemService.js:472-481`).
+Each input can be in a different inventory reachable from the pilot; the source is consumed and the result is created beside the
+mutator in the same transaction.
 
 **D8. Roll distribution.** The roll is **uniform within [min, max] taken as an interval**. This matches the wiki [W]; CCP is
 silent. Where min > max (6 rows) the result is still the interval, so the endpoints are r = 0 giving `min`-side values and r = 1
@@ -106,7 +116,8 @@ result. CCP shows the mutaplasmid and the input in the tooltip (patch 1.5 [C]), 
   attribute values). The sim wire epoch stays at 20 (`SimCodec.cs:30`, `crates/eve-space/src/link.rs:17`). `GetDynamicItemInfo` keeps
   its keys (itemID, typeID, sourceTypeID, sourceItemID, mutatorTypeID, mutatorItemID, characterID, createdAtMs, attributes,
   modifiers, baseAttributes). `attributes` is the full effective map that the server's dogma uses, so the client and the server agree.
-  `modifiers` carries the mutator's attribute ids (the client reads only its keys, `tooltip/dynamicItem.py:47`).
+  `modifiers` carries the mutator's attribute ids and original [0, 1] roll fractions; the client reads only its keys,
+  `tooltip/dynamicItem.py:47-61`.
 
 ## Web evidence summary
 

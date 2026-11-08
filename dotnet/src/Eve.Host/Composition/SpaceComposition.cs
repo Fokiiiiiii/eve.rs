@@ -226,6 +226,8 @@ internal sealed partial class CharacterServicesComposition
             // container groups (306 Spawn, 314, 1207 Scatter); a name the static data does not have falls back to the lowest type id of the kind's group
             var siteContainers = new Eve.Services.Space.SiteContainerStore(source);
             await Eve.Services.Space.SiteContainerStore.MigrateAsync(source);
+            // Hacking windows live in this Host's memory. Any active reservation from its previous process has no board to resume.
+            await siteContainers.ResetActiveHackAttemptsAsync(now());
             var containerRows = (await sde.ReadByFieldAsync("types", "groupID", new long[] { 306, 314, 1207 }))
                 .Select(row => (Name: row.Doc.GetProperty("name").GetProperty("en").GetString() ?? "", TypeId: (int)row.Key, GroupId: row.Doc.GetProperty("groupID").GetInt32(),
                     Published: row.Doc.TryGetProperty("published", out var published) && published.ValueKind == System.Text.Json.JsonValueKind.True))
@@ -251,6 +253,7 @@ internal sealed partial class CharacterServicesComposition
             foundations.Events.Subscribe(DailyGoalRecorder.SubscriberName, [Eve.Ships.OreMinedEvent.Topic, Eve.Ships.SalvageWreckedEvent.Topic], (context, token) => dailyGoals.RecordAsync(context, token));
             var npcWrecks = new NpcWrecks(npcAuthority, () => NpcLoot.LoadAsync(sde), ships);
             spaceSessions = new SpaceSessions(sim, ships, dogma, stations, solarSystems, now, message => Console.Error.WriteLine($"eve-host: space: {message}"), localTimers: foundations.LocalTimers, spaceItems: spaceItemStore) { RookieShipOfRace = race => catalog.Race(race)?.ShipTypeId, Npcs = new NpcSelector(npcAuthority), NpcWrecks = npcWrecks, BeltRats = new BeltRats(npcAuthority, BeltRatConfig.FromEnvironment(Environment.GetEnvironmentVariable), type => NpcHull.HasHitPoints(dogma.Type(type))), AutoReloadUsers = AutoReloadUserIds(Env("EVE_AUTO_RELOAD_ACCOUNTS", "")), WarpAcceptedAsync = (characterId, token) => AchievementTracker.RecordWarpAsync(characterId, now(), token) };
+            WireKillRightCallbacks();
             dogmaSync.RefreshSpaceShip = (session, token) => spaceSessions.RefreshShipAsync(session, token);
             spaceSessions.TimedActions = foundations.Scheduler;
             foundations.Scheduler.Register(Eve.Services.Space.SpaceSessions.ShipSelfDestructJobKind, async (context, token) =>
@@ -284,11 +287,13 @@ internal sealed partial class CharacterServicesComposition
                 var wormholes = new Eve.Wormholes.WormholeWorld(source, foundations.Scheduler, wormholeSchema,
                     await Eve.Universe.WormholeTypeCatalog.LoadAsync(sde),
                     await Eve.Universe.WormholeSystemClasses.LoadAllAsync(clientDirectory),
-                    Eve.Universe.JSpaceSystems.Load());
+                    Eve.Universe.JSpaceSystems.Load(),
+                    solarSystems.Systems.ToDictionary(system => system.Id, system => system.NebulaTypeId));
                 await wormholes.EnsureWorldAsync(ulong.Parse(Env("EVE_WORMHOLE_SEED", "20261012"), System.Globalization.CultureInfo.InvariantCulture), now());
                 wormholes.RegisterJobs();
                 spaceSessions.Wormholes = wormholes;
                 wormholes.Changed += spaceSessions.PublishWormholeChange;
+                wormholes.StateChanged += spaceSessions.PublishWormholeStateChangeAsync;
             }
 
             var tollWallets = new Eve.Wallet.WalletTransactions(source, walletSchema);

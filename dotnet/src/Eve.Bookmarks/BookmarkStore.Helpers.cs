@@ -7,13 +7,15 @@ public sealed partial class BookmarkStore
     private const string FolderColumns = "folder_id, owner_id, folder_name, description, is_personal, is_active, created_ms, admin_group_id, manage_group_id, use_group_id, view_group_id";
     private const string FolderColumnsF = "f.folder_id, f.owner_id, f.folder_name, f.description, f.is_personal, f.is_active, f.created_ms, f.admin_group_id, f.manage_group_id, f.use_group_id, f.view_group_id";
     private const string BookmarkColumns = "bookmark_id, folder_id, subfolder_id, item_id, type_id, location_id, memo, note, creator_id, created_ms, expiry_ms, x, y, z";
-    private const string BookmarkSelect = "b.bookmark_id, b.folder_id, b.subfolder_id, b.item_id, b.type_id, b.location_id, b.memo, b.note, b.creator_id, b.created_ms, b.expiry_ms, b.x, b.y, b.z";
     private const string SubfolderColumns = "subfolder_id, folder_id, subfolder_name, creator_id, created_ms";
 
     /// <summary>The column after the folder columns of a folder view query: the character's connection state (null when it has none).</summary>
     private const int ConnectionColumn = 11;
 
-    /// <summary>Runs one change of a character's bookmarks: the character's lock, the default folder if there is none, then the work, all in one transaction.</summary>
+    /// <summary>
+    /// Runs the operation in a transaction under the character lock. This serializes default-folder creation and per-character limits; each
+    /// operation first ensures the default folder.
+    /// </summary>
     private async Task<T> InTransactionAsync<T>(long owner, Func<NpgsqlConnection, NpgsqlTransaction, Task<T>> action, CancellationToken token)
     {
         await using var connection = await _source.OpenConnectionAsync(token);
@@ -25,7 +27,7 @@ public sealed partial class BookmarkStore
         return result;
     }
 
-    /// <summary>A shared folder's bookmark writes are serialised per folder, so its capacity holds under concurrent calls from several characters.</summary>
+    /// <summary>Serializes shared-folder capacity checks with the write that follows, even when different characters add bookmarks concurrently.</summary>
     private static async Task LockFolderAsync(NpgsqlConnection connection, NpgsqlTransaction tx, string schema, long folderId, CancellationToken token) =>
         await Execute(connection, tx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", token, $"bookmarks:{schema}:folder:{folderId}");
 

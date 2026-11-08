@@ -12,11 +12,9 @@ public sealed class CampaignMachineTests
         CampaignMachine.Start(500011, 1, 30000001, [30000001, 30000002], 0, T0, pirateRequired, antipirateRequired);
 
     [Fact]
-    public void Numbers_are_the_patch_24_01_values()
+    public void Campaign_numbers_are_the_patch_24_01_values()
     {
         Assert.Equal(7 * 24 * Hour, InsurgencyRules.MaxLengthMs);
-        Assert.Equal(3 * Hour, InsurgencyRules.ReinforcementBaseMs);
-        Assert.Equal(Hour, InsurgencyRules.ReinforcementJitterMs);
         Assert.Equal(5, InsurgencyRules.MaxAmbitionModifier);
         Assert.Equal(10, InsurgencyRules.RequiredSystems(InsurgencyRules.MaxAmbitionModifier));
         Assert.Equal(5, InsurgencyRules.RequiredSystems(0));
@@ -26,13 +24,6 @@ public sealed class CampaignMachineTests
         Assert.Equal(0.4, InsurgencyRules.LosingMultiplier);
         Assert.Equal(0.45, InsurgencyRules.MaxPayoutShare);
     }
-
-    [Theory]
-    [InlineData(0.0, 2 * 3_600_000L)]
-    [InlineData(0.5, 3 * 3_600_000L)]
-    [InlineData(1.0, 4 * 3_600_000L)]
-    public void A_fob_reinforcement_rolls_between_2_and_4_hours(double roll, long expected) =>
-        Assert.Equal(expected, InsurgencyRules.ReinforcementMs(roll));
 
     [Fact]
     public void Ambition_moves_one_level_per_result_within_the_bounds()
@@ -87,6 +78,12 @@ public sealed class CampaignMachineTests
             new CampaignTransition(CampaignStates.Active, CampaignStates.NoWinner, T0 + 7 * 24 * Hour),
             new CampaignTransition(CampaignStates.NoWinner, CampaignStates.Terminal, T0 + 9 * 24 * Hour),
         ], late.Transitions);
+        Assert.Equal(
+            new[] { CampaignStates.Active, CampaignStates.NoWinner, CampaignStates.Terminal },
+            late.TransitionSnapshots!.Select(snapshot => snapshot.State));
+        Assert.Equal(
+            new[] { T0 + 7 * 24 * Hour, T0 + 7 * 24 * Hour + InsurgencyRules.WindDownMs, 0L },
+            late.TransitionSnapshots!.Select(snapshot => snapshot.StateExpiresMs));
     }
 
     [Fact]

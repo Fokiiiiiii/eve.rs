@@ -19,6 +19,7 @@ public sealed class MarketError(string code,params (string Name,object Value)[] 
 public sealed record MarketRequest(long ActorId,int TypeId,bool Buying,decimal Price,long Quantity,long StationId,
     int Duration = 0,int Range = -1,long MinimumVolume = 1,long? ItemId = null,bool UseCorporation = false,double? ExpectedBrokerFee = null);
 public sealed record MarketOrderChange(MarketOwnedOrder Order,string Reason,IReadOnlyList<long> RecipientCharacterIds);
+public sealed record MarketInventoryChange(long CharacterId,Item Before,Item? After);
 
 public sealed record MarketReceipt(string OperationKey,long? OrderId,long FilledQuantity,decimal GrossAmount,
     IReadOnlyList<long> DeliveredItemIds,IReadOnlyList<WalletAccount> ChangedWallets)
@@ -26,6 +27,10 @@ public sealed record MarketReceipt(string OperationKey,long? OrderId,long Filled
     public IReadOnlyList<MarketOrderChange> ChangedOrders { get; init; } = [];
     public MarketOwnedOrder? ChangedOrder { get; init; }
     public string? ChangedOrderReason { get; init; }
+    /// <summary>The transient, already-expired row that BuyMultipleItems returns for one immediate client line.</summary>
+    public MarketOwnedOrder? ImmediateOrder { get; init; }
+    /// <summary>The seller's inventory rows changed by placing or closing a sell order.</summary>
+    public IReadOnlyList<MarketInventoryChange> InventoryChanges { get; init; } = [];
 
     /// <summary>The region and type books whose resting orders or fills changed; cached books for them are stale.</summary>
     public IReadOnlyList<TouchedBook> TouchedBooks { get; init; } = [];
@@ -50,6 +55,7 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
 
     private string Schema => store.Schema;
     private const long EscrowBase = 9200000000;
+    private static long _lastImmediateBuyOrderId;
     public IMarketStructureDirectory? StructureDirectory { get; set; }
     public long CandidateRowsLocked => Interlocked.Read(ref _candidateRowsLocked);
     private long _candidateRowsLocked;
@@ -228,13 +234,13 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
         {
             var receipts=new List<MarketReceipt>(prepared.Length);
             foreach (var line in prepared)
-                receipts.Add(await PlaceWithinTransactionAsync(c,tx,line.Request,line.OperationKey,token));
+                receipts.Add(await PlaceWithinTransactionAsync(c,tx,line.Request,line.OperationKey,token,immediateMultiBuy:true));
             return (IReadOnlyList<MarketReceipt>)receipts;
         },token);
     }
 
     private async Task<MarketReceipt> PlaceWithinTransactionAsync(
-        NpgsqlConnection c,NpgsqlTransaction tx,MarketRequest request,string operationKey,CancellationToken token)
+        NpgsqlConnection c,NpgsqlTransaction tx,MarketRequest request,string operationKey,CancellationToken token,bool immediateMultiBuy = false)
     {
         // A replay key must keep the same participants and terms; collisions are conflicts.
         await using (var guard = Command(c,tx,"SELECT pg_advisory_xact_lock(hashtextextended($1,0))","market:"+Schema+":command:"+operationKey))
@@ -250,14 +256,28 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
         }
         var terms = new CommandTerms(request,account);
         var fingerprint = JsonSerializer.Serialize(terms);
+        MarketReceipt? replay=null;
         await using (var prior = Command(c,tx,$"SELECT fingerprint,result::text FROM {Schema}.commands WHERE operation_key=$1",operationKey))
         await using (var reader = await prior.ExecuteReaderAsync(token))
-        {
             if (await reader.ReadAsync(token))
             {
                 if (JsonSerializer.Deserialize<CommandTerms>(reader.GetString(0)) != terms) throw new MarketError("MARKET_OPERATION_CONFLICT");
-                return JsonSerializer.Deserialize<MarketReceipt>(reader.GetString(1))!;
+                replay=JsonSerializer.Deserialize<MarketReceipt>(reader.GetString(1))!;
             }
+        if (replay is not null)
+        {
+            if (immediateMultiBuy && replay.ImmediateOrder is null)
+            {
+                var venue = await ResolveVenueAsync(actor.Id,request.StationId,true,token);
+                replay = replay with
+                {
+                    ImmediateOrder = ImmediateBuyOrder(request,actor.Id,account,venue.Location,now(),replay.FilledQuantity),
+                };
+                await using var update = Command(c,tx,$"UPDATE {Schema}.commands SET result=$2::jsonb WHERE operation_key=$1",
+                    operationKey,JsonSerializer.Serialize(replay));
+                await update.ExecuteNonQueryAsync(token);
+            }
+            return replay;
         }
         var station=await ResolveVenueAsync(actor.Id,request.StationId,true,token);
         var time = now();
@@ -436,11 +456,46 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
             var created=new MarketOwnedOrder(openedRow,actor.Id,account.OwnerId,account.AccountKey,openedEscrow,0,time);
             changes.Add(new(created,"Created",await NoticeRecipientsAsync(c,tx,account.OwnerId,actor.Id,station.Id,[],token)));
         }
+        IReadOnlyList<MarketInventoryChange> inventoryChanges=[];
+        if (stock is { } originalStock)
+        {
+            var currentStock=await items.LockAndGetAsync(c,tx,originalStock.Id,token);
+            if (currentStock != originalStock)
+                inventoryChanges=[new(actor.Id,originalStock,currentStock)];
+        }
         var receipt = new MarketReceipt(operationKey,opened,filled,grossTotal,delivered,participants) { ChangedOrders=changes,
+            ImmediateOrder=immediateMultiBuy ? ImmediateBuyOrder(request,actor.Id,account,location,time,filled) : null,
+            InventoryChanges=inventoryChanges,
             TouchedBooks=filled>0 || opened is not null ? [new TouchedBook(station.RegionId,request.TypeId)] : [] };
         await using (var finish = Command(c,tx,$"INSERT INTO {Schema}.commands(operation_key,fingerprint,time_ms,result) VALUES($1,$2,$3,$4::jsonb)",
             operationKey,fingerprint,time,JsonSerializer.Serialize(receipt))) await finish.ExecuteNonQueryAsync(token);
         return receipt;
+    }
+
+    private static MarketOwnedOrder ImmediateBuyOrder(
+        MarketRequest request,long actorId,WalletAccount account,MarketLocation location,long issuedMs,long filledQuantity)
+    {
+        var remaining=request.Quantity-filledQuantity;
+        if (remaining < 0) throw new InvalidOperationException("A multi-buy receipt exceeded its requested quantity.");
+        var id=NextImmediateBuyOrderId(issuedMs);
+        var order=new MarketOrder(id,request.TypeId,true,request.Price,remaining,request.Quantity,request.MinimumVolume,
+            request.Range,location,issuedMs,0);
+        return new(order,actorId,account.OwnerId,account.AccountKey,checked(request.Price*remaining),2,issuedMs);
+    }
+
+    // Stored orders use the market schema's 1..99,999,999 sequence. This response-only range is generated from the
+    // injected clock, as in EveJS; a process-local counter keeps concurrent lines distinct and the ID never persists as an order.
+    private static long NextImmediateBuyOrderId(long nowMs)
+    {
+        var timeComponent=Math.Max(0,nowMs%1_000_000_000L);
+        var candidate=8_000_000_000_000_000L+timeComponent*1_000L;
+        while (true)
+        {
+            var current=Volatile.Read(ref _lastImmediateBuyOrderId);
+            var next=Math.Max(candidate,checked(current+1));
+            if (Interlocked.CompareExchange(ref _lastImmediateBuyOrderId,next,current)==current)
+                return next;
+        }
     }
 
     private sealed record ControlTerms(string Action,long ActorId,long OrderId);
@@ -764,7 +819,7 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
             if (expired && (decimal)order.Row.IssuedMs + (decimal)order.Row.Duration*86400000 > nowMs)
                 throw new MarketError("MARKET_ORDER_NOT_EXPIRED");
             await wallets.LockBalancesAsync(c,tx,[order.Wallet],token);
-            var movedIds=new List<long>();
+            var inventoryChanges=new List<MarketInventoryChange>();
             if (order.Row.Bid)
             {
                 if (order.Escrow != checked(order.Row.Price*order.Row.VolumeRemaining)) throw new MarketError("MARKET_ESCROW_INCONSISTENT");
@@ -777,7 +832,7 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
                 if (item is null || item.OwnerId != order.SourceOwner || item.LocationId != EscrowBase+order.Row.Id ||
                     item.Flag != ItemFlags.Hangar || item.Quantity != order.Row.VolumeRemaining) throw new MarketError("MARKET_ITEM_CUSTODY_INVALID");
                 var moved=await items.MoveStackAsync(c,tx,item,item.Quantity,order.SourceOwner,order.SourceLocation,order.SourceFlag,token);
-                movedIds.Add(moved.Id);
+                inventoryChanges.Add(new(order.Actor,item,moved));
             }
             await using (var close=Command(c,tx,$"UPDATE {Schema}.orders SET state=$2,escrow_isk=0,escrow_item_id=NULL,last_state_change_ms=$3 WHERE id=$1",
                 orderId,expired ? 2 : 3,nowMs))
@@ -787,8 +842,9 @@ public Task<MarketReceipt> ModifyAsync(long actorId,long orderId,decimal newPric
             var reason=expired ? "Expiry" : "Cancelled";
             var closedOrder=new MarketOwnedOrder(order.Row,order.Actor,order.Wallet.OwnerId,order.Wallet.AccountKey,0m,state,nowMs);
             var recipients=await NoticeRecipientsAsync(c,tx,order.Wallet.OwnerId,order.Actor,station.Id,[actorId],token);
-            var result=new MarketReceipt(operationKey,orderId,0,0m,movedIds,[order.Wallet])
+            var result=new MarketReceipt(operationKey,orderId,0,0m,[],[order.Wallet])
             {
+                InventoryChanges=inventoryChanges,
                 ChangedOrders=[new(closedOrder,reason,recipients)],
                 ChangedOrder=closedOrder,
                 ChangedOrderReason=reason,

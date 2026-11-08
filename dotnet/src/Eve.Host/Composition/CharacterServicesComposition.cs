@@ -208,6 +208,7 @@ internal sealed partial class CharacterServicesComposition
     private int stranded;
     private CharacterDogmaSync dogmaSync = default!;
     private CharacterSessions characterSessions = default!;
+    private Eve.Services.Inventory.InvBrokerService marketInventoryBroker = default!;
     private OnlineStatusNotifications? onlineStatusNotifications;
     private SignalTrackerRegistrationProvider signalTrackerRegistrationProvider = default!;
     private Func<long, CancellationToken, Task<double>> securityStatusOf = default!;

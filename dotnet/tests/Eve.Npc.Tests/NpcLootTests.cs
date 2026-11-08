@@ -90,9 +90,28 @@ public sealed class NpcLootTests
     {
         var charge = Roll(Rules(1, 1, 0, false, Rule("ammo", "small", min: 15, max: 60)), new Dice(0, 0, 0, 0.5)).Single();
         Assert.Equal((AntimatterS, 15 + (long)Math.Floor(0.5 * 46), false), charge);
-        Assert.Equal((RailgunS, 1L, true), Roll(Rules(1, 1, 0, false, Rule("module", "small")), new Dice(0, 0, 0)).Single());
+        Assert.Equal((RailgunS, 1L, false), Roll(Rules(1, 1, 0, false, Rule("module", "small")), new Dice(0, 0, 0)).Single());
+        Assert.Equal((RailgunS, 1L, true), Roll(Rules(1, 1, 0, false, Rule("module", "small") with { Singleton = true }), new Dice(0, 0, 0)).Single());
+        Assert.Equal((RailgunS, 3L, false), Roll(Rules(1, 1, 0, false, Rule("module", "small", min: 3, max: 3) with { Singleton = false }), new Dice(0, 0, 0, 0)).Single());
         // from the table when the rule has no quantity of its own (25 at the most)
         Assert.Equal((Scraps, 1 + (long)Math.Floor(0.999 * 25), false), Roll(Rules(1, 1, 0, false, Rule("trash")), new Dice(0, 0, 0, 0.999)).Single());
+    }
+
+    [Fact]
+    public void A_module_from_a_generic_table_is_packaged_by_default()
+    {
+        var generic = new LootTable("generic", "", 1, 1, 0, false, false, 7, 9, [], false);
+        Assert.Equal((RailgunS, 1L, false), Roll(generic, new Dice(0, 0), [Types[RailgunS - 1]]).Single());
+    }
+
+    [Fact]
+    public void An_authored_exact_type_selector_can_give_a_guaranteed_stack_and_a_separate_explicit_module()
+    {
+        var selector = new LootSelector("any", "", "", [], [], [], [], 1, 1, 1, true, [RailgunS]);
+        var table = new LootTable("capital", "rule", 1, 1, 0, false, false, null, null, [selector], true,
+            [new LootGuaranteedEntry(AntimatterS, 6, false)]);
+
+        Assert.Equal([(AntimatterS, 6L, false), (RailgunS, 1L, true)], Roll(table, new Dice(0, 0, 0, 0)));
     }
 
     [Fact]
@@ -182,7 +201,7 @@ public sealed class NpcLootTests
     public void The_authored_tables_load_and_every_profile_names_one_of_them()
     {
         var authority = NpcAuthority.Load();
-        Assert.Equal(61, authority.LootTableCount);
+        Assert.Equal(79, authority.LootTableCount);
         Assert.All(authority.Profiles, p => Assert.NotNull(authority.LootTable(p.LootTableId)));
 
         var small = authority.LootTable("loot_belt_normal_small")!;
@@ -195,6 +214,22 @@ public sealed class NpcLootTests
         Assert.Equal((1, 3, 1, 25, false), (generic.MinEntries, generic.MaxEntries, generic.StackableMin, generic.StackableMax, generic.HasSelectors));
         var empty = authority.LootTable("parity_rogue_drone_standard")!;
         Assert.True(empty.DisableRandomLoot);
+        var capital = authority.LootTable("capital_blood_dreadnought_loot")!;
+        Assert.Equal((1, 2), (capital.MinEntries, capital.MaxEntries));
+        Assert.Equal([new LootGuaranteedEntry(17686, 6, false)], capital.GuaranteedEntries);
+        Assert.All(capital.Selectors, selector => Assert.Single(selector.TypeIds!));
         Assert.Null(authority.LootTable("nothing_like_it"));
+    }
+
+    [Fact]
+    public void A_guaranteed_charge_entry_rolls_its_authored_quantity_range()
+    {
+        const int CapitalCharge = 901;
+        var loot = new NpcLoot([new LootType(CapitalCharge, "Capital Charge", "Hybrid Charge", 8)]);
+        var table = new LootTable("capital", "rule", 0, 0, 0, false, false, null, null, [], true,
+            [new LootGuaranteedEntry(CapitalCharge, 8, false, 12)]);
+
+        Assert.Equal(8, Assert.Single(loot.Roll(table, () => 0)).Quantity);
+        Assert.Equal(12, Assert.Single(loot.Roll(table, () => 0.999)).Quantity);
     }
 }

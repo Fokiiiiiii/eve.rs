@@ -277,6 +277,35 @@ public class EngineTests
         Assert.Equal(100, Fit(Operation.ModAdd, 1, 1, ItemState.Active, EffectDef.Area).Get(1000, 1));
     }
 
+    [PgFact]
+    public async Task An_incursion_system_effect_applies_in_every_item_state()
+    {
+        const int Rifter = 587;
+        const int IncursionEffectAssault = 3072;
+        const int ArmorEmResistance = 267;
+        const long ShipId = 1000;
+        const long EffectItemId = 2000;
+
+        var sde = await PgFactAttribute.SdeAsync();
+        var statics = await DogmaStatic.LoadAsync(sde);
+        await statics.EnsureTypesAsync([Rifter, IncursionEffectAssault]);
+
+        var baseline = new DogmaWorld(statics, shipId: ShipId);
+        baseline.Add(new DogmaItem(ShipId, Rifter, 1, 60015249));
+        Assert.Equal(0.4, baseline.Get(ShipId, ArmorEmResistance), 9);
+
+        var world = new DogmaWorld(statics, shipId: ShipId);
+        world.Add(new DogmaItem(ShipId, Rifter, 1, 60015249));
+        world.Add(new DogmaItem(EffectItemId, IncursionEffectAssault, 1, ShipId, state: ItemState.Offline));
+
+        Assert.Equal(0.5, world.Get(ShipId, ArmorEmResistance), 9);
+        foreach (var state in new[] { ItemState.Offline, ItemState.Online, ItemState.Active, ItemState.Overloaded })
+        {
+            world.SetState(EffectItemId, state);
+            Assert.Equal(0.5, world.Get(ShipId, ArmorEmResistance), 9);
+        }
+    }
+
     [Fact]
     public void Switching_a_module_changes_what_is_read_next()
     {

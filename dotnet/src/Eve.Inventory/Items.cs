@@ -8,6 +8,9 @@ namespace Eve.Inventory;
 /// <summary>The client's inventory flags that S2 needs.</summary>
 public static class ItemFlags
 {
+    /// <summary>An item in space rather than in a station inventory.</summary>
+    public const int InSpace = 0;
+
     /// <summary>The hangar of a station.</summary>
     public const int Hangar = 4;
 
@@ -16,6 +19,7 @@ public static class ItemFlags
 
     public const int CorpDeliveries = 62;
     public const int Deliveries = 184;
+    public const int CapsuleerDeliveries = 187;
 
     /// <summary>The seven corporation hangar divisions (the client flagCorpSAG1 = 115 to flagCorpSAG7 = 121, eve-logic inventorycommon/const.py).</summary>
     public const int CorpSAG1 = 115;
@@ -809,6 +813,34 @@ public sealed class PgItemStore
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken)) result.Add(Read(reader));
         return result;
+    }
+
+    /// <summary>Locks items in a flag range in deterministic order on the caller's transaction.</summary>
+    public async Task<IReadOnlyList<Item>> LockInLocationFlagRangeAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long locationId,
+        long ownerId,
+        int firstFlag,
+        int lastFlag,
+        CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"SELECT {Columns} FROM {_schema}.items WHERE location_id=$1 AND owner_id=$2 AND flag >= $3 AND flag <= $4 ORDER BY id FOR UPDATE",
+            connection, transaction)
+        {
+            Parameters =
+            {
+                new() { Value = locationId },
+                new() { Value = ownerId },
+                new() { Value = firstFlag },
+                new() { Value = lastFlag },
+            },
+        };
+        var items = new List<Item>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) items.Add(Read(reader));
+        return items;
     }
 
 /// <summary>Locks candidate material rows in deterministic item order on the caller's transaction.</summary>

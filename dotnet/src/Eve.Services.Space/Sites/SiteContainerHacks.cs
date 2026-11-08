@@ -21,23 +21,40 @@ public sealed class SiteContainerHacks(NpgsqlDataSource source, SiteContainerSto
         return new HackableTarget(record.ContainerId, record.SolarSystemId, record.Difficulty, record.Relic);
     }
 
+    public ValueTask<bool> TryReserveAsync(HackableTarget target, Guid reservationId, long characterId, long sessionId, CancellationToken cancellationToken) =>
+        new(store.TryReserveHackAsync(target.ItemId, reservationId, characterId, sessionId, nowMs(), cancellationToken));
+
+    public ValueTask ReleaseReservationAsync(Guid reservationId, CancellationToken cancellationToken) =>
+        new(store.ReleaseHackReservationAsync(reservationId, nowMs(), cancellationToken));
+
     /// <summary>
     /// An attempt ended. A win puts the loot in the container's cargo (owned by the character who won it) and the container is <c>looted</c>; the
     /// maybeCompleteMaterializedDataRelicSite: the loot is the container's contents). A win with nothing to roll clears it at once.
     /// </summary>
-    public async ValueTask EndedAsync(HackableTarget target, bool won, long characterId, CancellationToken cancellationToken)
+    public async ValueTask<IReadOnlyList<HackingLootItem>> EndedAsync(
+        HackableTarget target, Guid reservationId, bool won, long characterId, CancellationToken cancellationToken)
     {
-        if (await store.GetAsync(target.ItemId, cancellationToken) is not { } record)
-        {
-            return;
-        }
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var attempt = await store.GetHackAttemptAsync(connection, transaction, reservationId, cancellationToken);
+        if (attempt is null || attempt.ContainerId != target.ItemId || attempt.CharacterId != characterId)
+            throw new InvalidOperationException($"hacking reservation {reservationId} does not own container {target.ItemId}");
+        if (attempt.State is "won" or "lost")
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return attempt.Contents;
+        }
+        if (attempt.State != "active")
+            throw new InvalidOperationException($"hacking reservation {reservationId} is {attempt.State}");
+        if (await store.GetAsync(connection, transaction, target.ItemId, forUpdate: true, cancellationToken) is not { State: "secure" } record)
+            throw new InvalidOperationException($"container {target.ItemId} is no longer secure");
+
         if (won)
         {
             var profile = SiteLoot.ProfileOf(record.Relic);
             var typeIds = await SiteLoot.TypeIdsAsync(connection, transaction, SiteLoot.TagsOf(profile).SelectMany(tag => tag.Candidates), cancellationToken);
-            var loot = SiteLoot.Roll(profile, record.ContainerId, typeIds).ToList();
+            var loot = SiteLoot.Roll(profile, record.ContainerId, typeIds)
+                .Select(item => new HackingLootItem(item.TypeId, item.Quantity)).ToList();
             foreach (var (typeId, quantity) in loot)
             {
                 await items.CreateAsync(connection, transaction, new NewItem(typeId, characterId, record.ContainerId, ItemFlags.Hangar, quantity), cancellationToken);
@@ -48,22 +65,31 @@ public sealed class SiteContainerHacks(NpgsqlDataSource source, SiteContainerSto
             }
             else
             {
-                await store.SetStateAsync(connection, transaction, record.ContainerId, "looted", cancellationToken);
+                if (!await store.SetStateIfSecureAsync(connection, transaction, record.ContainerId, "looted", cancellationToken))
+                    throw new InvalidOperationException($"container {record.ContainerId} could not be settled as looted");
             }
+            if (!await store.CompleteHackAttemptAsync(connection, transaction, reservationId, "won", loot, nowMs(), cancellationToken))
+                throw new InvalidOperationException($"hacking reservation {reservationId} was already settled");
             await transaction.CommitAsync(cancellationToken);
-            return;
+            return loot;
         }
         var failures = await store.RecordFailureAsync(connection, transaction, record.ContainerId, cancellationToken);
+        if (failures is null)
+            throw new InvalidOperationException($"container {record.ContainerId} could not record the hacking failure");
         var destroyed = failures is >= DestroyAfterFailures;
         if (destroyed)
         {
-            await store.SetStateAsync(connection, transaction, record.ContainerId, "destroyed", cancellationToken);
+            if (!await store.SetStateIfSecureAsync(connection, transaction, record.ContainerId, "destroyed", cancellationToken))
+                throw new InvalidOperationException($"container {record.ContainerId} could not be destroyed after hacking failures");
         }
+        if (!await store.CompleteHackAttemptAsync(connection, transaction, reservationId, "lost", [], nowMs(), cancellationToken))
+            throw new InvalidOperationException($"hacking reservation {reservationId} was already settled");
         await transaction.CommitAsync(cancellationToken);
         if (destroyed)
         {
             removeFromScene(record.ContainerId);
         }
+        return [];
     }
 
     /// <summary>

@@ -283,7 +283,7 @@ public sealed partial class MapService
                 Eve.ReadSide.Column.Of("regionID", Eve.ReadSide.ColumnType.Int, "s.doc #>> '{regionID}'"),
             ])
         {
-            OrderBy = "stationID",
+            OrderBy = "\"stationID\"",
             Cache = true,
         });
         reads.Register(new Eve.ReadSide.RowsetQuery(
@@ -294,7 +294,7 @@ public sealed partial class MapService
             ])
         {
             Where = "false",
-            OrderBy = "solarSystemID",
+            OrderBy = "\"solarSystemID\"",
             Cache = true,
         });
         reads.Register(new Eve.ReadSide.RowsetQuery(
@@ -313,7 +313,7 @@ public sealed partial class MapService
                 Eve.ReadSide.Column.Of("stationCount", Eve.ReadSide.ColumnType.Int, "mapStationCounts.stationCount"),
             ])
         {
-            OrderBy = "solarSystemID",
+            OrderBy = "\"solarSystemID\"",
             Cache = true,
         });
     }

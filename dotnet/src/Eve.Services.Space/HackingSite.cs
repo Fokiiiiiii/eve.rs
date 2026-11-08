@@ -11,6 +11,10 @@ public interface IHackingSite
     /// <summary>The hackable container with this id that the character may work on, or null.</summary>
     ValueTask<HackableTarget?> FindAsync(long characterId, long targetId, CancellationToken cancellationToken);
 
+    /// <summary>Whether the current session may start an analyzer on this target: null when valid, or the client refusal code.</summary>
+    ValueTask<string?> AnalyzerStartRefusalAsync(
+        ClientSession session, HackableTarget target, double maxRange, CancellationToken cancellationToken);
+
     /// <summary>Whether the pilot's ship is within the analyzer's reach of the container (surface distance, the simulation's positions).</summary>
     ValueTask<bool> InReachAsync(ClientSession session, long targetId, double maxRange, CancellationToken cancellationToken);
 
@@ -47,6 +51,12 @@ public sealed class SpaceHackingSite(SpaceSessions? space) : IHackingSite
 
     public ValueTask<HackableTarget?> FindAsync(long characterId, long targetId, CancellationToken cancellationToken) =>
         Find(characterId, targetId, cancellationToken);
+
+    public ValueTask<string?> AnalyzerStartRefusalAsync(
+        ClientSession session, HackableTarget target, double maxRange, CancellationToken cancellationToken) =>
+        space is null
+            ? ValueTask.FromResult<string?>("NOT_IN_SPACE")
+            : space.AnalyzerStartRefusalAsync(session, target, maxRange, cancellationToken);
 
     /// <summary>Without a space simulation nothing is in reach, so an open window closes.</summary>
     public async ValueTask<bool> InReachAsync(ClientSession session, long targetId, double maxRange, CancellationToken cancellationToken) =>

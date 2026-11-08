@@ -78,6 +78,12 @@ public sealed class CampaignMachineTests
             new CampaignTransition(CampaignStates.Active, CampaignStates.NoWinner, T0 + 7 * 24 * Hour),
             new CampaignTransition(CampaignStates.NoWinner, CampaignStates.Terminal, T0 + 9 * 24 * Hour),
         ], late.Transitions);
+        Assert.Equal(
+            new[] { CampaignStates.Active, CampaignStates.NoWinner, CampaignStates.Terminal },
+            late.TransitionSnapshots!.Select(snapshot => snapshot.State));
+        Assert.Equal(
+            new[] { T0 + 7 * 24 * Hour, T0 + 7 * 24 * Hour + InsurgencyRules.WindDownMs, 0L },
+            late.TransitionSnapshots!.Select(snapshot => snapshot.StateExpiresMs));
     }
 
     [Fact]

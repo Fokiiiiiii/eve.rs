@@ -44,6 +44,32 @@ public sealed class InsurgencyDirectorTests
     }
 
     [PgFact]
+    public async Task A_campaign_covers_enough_systems_for_the_more_ambitious_empire_side_to_expose_its_fob()
+    {
+        await using var rig = await InsurgencyRig.CreateAsync();
+        var warzoneId = Ins.InsurgencyWarzones.Angel.WarzoneId;
+        await rig.SetAmbitionAsync(warzoneId, pirate: 0, antipirate: 1);
+        await rig.RunDueAsync();
+
+        var campaign = Assert.Single(await rig.CampaignsAsync(), c => c.WarzoneId == warzoneId);
+        Assert.Equal(6, campaign.AntipiratePointsRequired);
+        Assert.Equal(6, campaign.CoveredSolarSystemIds.Count);
+
+        rig.Advance(Forecast + TimeSpan.FromMinutes(1));
+        await rig.RunDueAsync();
+        var empireSites = (await rig.SitesAsync())
+            .Where(site => site.CampaignId == campaign.CampaignId && site.Side == "antipirate")
+            .ToList();
+        Assert.Equal(6, empireSites.Count);
+        foreach (var site in empireSites)
+            await rig.CompleteAsync(site.Instance);
+
+        var completed = await rig.CampaignAsync(campaign.CampaignId);
+        Assert.Equal(6, completed.AntipiratePointsScored);
+        Assert.Equal(StructureState.ShieldVulnerable, (await rig.FobAsync(campaign.StructureId)).Snapshot.State);
+    }
+
+    [PgFact]
     public async Task A_campaign_starts_its_sites_when_it_becomes_active_and_a_completed_site_scores_its_system_once()
     {
         await using var rig = await InsurgencyRig.CreateAsync();
@@ -261,6 +287,14 @@ public sealed class InsurgencyDirectorTests
         {
             await using var connection = await _source.OpenConnectionAsync();
             return (await StructureStore.GetAsync(connection, null, structureId, false))!;
+        }
+
+        public async Task SetAmbitionAsync(long warzoneId, int pirate, int antipirate)
+        {
+            await using var connection = await _source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await Store.SetAmbitionAsync(connection, transaction, warzoneId, pirate, antipirate);
+            await transaction.CommitAsync();
         }
 
         /// <summary>A point for a side, as the space scores it (the campaign's own transaction), then the announcements.</summary>

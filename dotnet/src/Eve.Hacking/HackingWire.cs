@@ -16,7 +16,9 @@ public static class HackingWire
     public const int TypeDataCache = 6;
 
     public const int SubtypeNone = -1;
+    public const int SubtypeCoreHigh = 10;
     public const int SubtypeCoreLow = 11;
+    public const int SubtypeCoreMedium = 12;
     public const int SubtypeUeSelfRepair = 0;
     public const int SubtypeUeKernelRot = 1;
     public const int SubtypeUeSecondaryVector = 2;

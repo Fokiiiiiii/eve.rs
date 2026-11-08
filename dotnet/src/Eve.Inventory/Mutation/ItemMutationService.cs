@@ -42,8 +42,25 @@ public enum ItemMutationRefusal
     AttributeMissingInSource,
 }
 
-/// <summary>What the caller asks: the mutaplasmid and the source, both of the character, both in <see cref="LocationId"/> (a station or a ship).</summary>
-public sealed record ItemMutationRequest(long CharacterId, long LocationId, long MutatorItemId, long SourceItemId);
+/// <summary>
+/// What the caller asks: the mutaplasmid and source items, with <see cref="LocationId"/> naming the mutaplasmid's inventory (where the
+/// result is placed). The client can select the inputs from separate inventories it can reach in its current location.
+/// </summary>
+public sealed record ItemMutationRequest(long CharacterId, long LocationId, long MutatorItemId, long SourceItemId)
+{
+    /// <summary>The source's location observed by the Host before the authority locks both inputs.</summary>
+    public long? SourceLocationId { get; init; }
+
+    /// <summary>The input flags observed by the Host before the authority locks both inputs.</summary>
+    public int? MutatorFlag { get; init; }
+    public int? SourceFlag { get; init; }
+
+    /// <summary>The server-managed position of the calling pilot.</summary>
+    public ItemMutationPosition? Position { get; init; }
+}
+
+/// <summary>The session position against which mutation input inventories are checked.</summary>
+public sealed record ItemMutationPosition(long? DockedLocationId, long? ShipId, long? SolarSystemId);
 
 /// <summary>
 /// What became of one item in a mutation: its row after (a consumed item has quantity 0), and the place, flag and stack size it had before
@@ -95,7 +112,7 @@ public interface IItemMutationEvents
 
 /// <summary>
 /// The authority of an abyssal mutation (ADR 0016). One PostgreSQL transaction consumes one unit of the mutaplasmid and the source
-/// module, creates the mutated module in the source's place (same location and flag), records its provenance, and publishes
+/// module, creates the mutated module in the mutaplasmid's place, records its provenance, and publishes
 /// <c>item.mutated</c> through the Event Bus in that transaction. The bus is woken after the commit. Any failure before the commit
 /// leaves both inputs, no record and no event.
 /// </summary>
@@ -133,6 +150,31 @@ public sealed class ItemMutationService
         Span<byte> bytes = stackalloc byte[8];
         RandomNumberGenerator.Fill(bytes);
         return (BitConverter.ToUInt64(bytes) >> 11) * (1.0 / (1UL << 53));
+    }
+
+    /// <summary>The modifier fractions sent by V24.01; old records recover the fraction from their stored multiplier when possible.</summary>
+    public IReadOnlyDictionary<int, double> ModifierFractions(ItemMutationRecord record)
+    {
+        if (record.RollFractions is { } fractions)
+        {
+            return fractions;
+        }
+        if (_catalog.Plan(record.MutatorTypeId, record.SourceTypeId) is not Accepted<MutationPlan> plan)
+        {
+            throw new InvalidDataException($"stored mutation {record.ItemId} has no roll fractions and its mutator mapping is unavailable");
+        }
+        var recovered = new Dictionary<int, double>();
+        foreach (var range in plan.Value.Ranges)
+        {
+            if (!record.Multipliers.TryGetValue(range.AttributeId, out var multiplier))
+            {
+                throw new InvalidDataException($"stored mutation {record.ItemId} has no multiplier for attribute {range.AttributeId}");
+            }
+            var width = range.Max - range.Min;
+            // A prior version stored only the multiplier; an equal-ended interval cannot preserve the original draw.
+            recovered[range.AttributeId] = width == 0 ? 0 : Math.Clamp((multiplier - range.Min) / width, 0, 1);
+        }
+        return recovered;
     }
 
     /// <summary>The event payload of <see cref="MutatedTopic"/>.</summary>
@@ -181,13 +223,22 @@ public sealed class ItemMutationService
         {
             return Refuse(ItemMutationRefusal.NotOwner);
         }
-        if (mutator.LocationId != request.LocationId || source.LocationId != request.LocationId)
+        if (mutator.LocationId != request.LocationId
+            || source.LocationId != (request.SourceLocationId ?? request.LocationId)
+            || request.MutatorFlag is { } mutatorFlag && mutator.Flag != mutatorFlag
+            || request.SourceFlag is { } sourceFlag && source.Flag != sourceFlag)
         {
             return Refuse(ItemMutationRefusal.NotInReach);
         }
         if (!IsLoose(mutator) || !IsLoose(source))
         {
             return Refuse(ItemMutationRefusal.NotStowed);
+        }
+        if (request.Position is { } position
+            && (!await IsReachableAsync(connection, transaction, request.CharacterId, mutator, position, cancellationToken)
+                || !await IsReachableAsync(connection, transaction, request.CharacterId, source, position, cancellationToken)))
+        {
+            return Refuse(ItemMutationRefusal.NotInReach);
         }
         if (!source.Singleton)
         {
@@ -213,12 +264,15 @@ public sealed class ItemMutationService
 
         // One roll per attribute, in the plan's order. A roll outside [0, 1] is a caller bug and throws (rolls back).
         var rolls = new Dictionary<int, double>();
+        var multipliers = new Dictionary<int, double>();
         foreach (var range in accepted.Value.Ranges)
         {
-            var multiplier = MutationMath.MultiplierAt(range, _roll(range.AttributeId));
-            rolls[range.AttributeId] = Math.Clamp(multiplier, range.Low, range.High);
+            var fraction = _roll(range.AttributeId);
+            var multiplier = MutationMath.MultiplierAt(range, fraction);
+            rolls[range.AttributeId] = fraction;
+            multipliers[range.AttributeId] = Math.Clamp(multiplier, range.Low, range.High);
         }
-        var values = MutationMath.MutatedValues(sourceAttributes, accepted.Value.Ranges, rolls);
+        var values = MutationMath.MutatedValues(sourceAttributes, accepted.Value.Ranges, multipliers);
         if (values is Refused<IReadOnlyDictionary<int, double>> refusedValues)
         {
             return refusedValues.Reason == MutationRefusal.AttributeMissingInSource
@@ -243,24 +297,101 @@ public sealed class ItemMutationService
         await _items.DeleteAsync(connection, transaction, source.Id, cancellationToken);
         changes.Add(new ItemMutationChange(source with { Quantity = 0 }, source.LocationId, source.Flag, source.Quantity));
 
-        // The result takes the source's place: its location and flag (ADR 0016, D7).
+        // The client presents the result at the mutaplasmid's location and flag (V24.01 craftingWindow.py:329-331).
         var resultId = await _items.CreateAsync(connection, transaction,
-            new NewItem(accepted.Value.OutputTypeId, request.CharacterId, source.LocationId, source.Flag, 1, Singleton: true), cancellationToken);
-        var result = new Item(resultId, accepted.Value.OutputTypeId, request.CharacterId, source.LocationId, source.Flag, 1, Singleton: true, CustomName: null);
+            new NewItem(accepted.Value.OutputTypeId, request.CharacterId, mutator.LocationId, mutator.Flag, 1, Singleton: true), cancellationToken);
+        var result = new Item(resultId, accepted.Value.OutputTypeId, request.CharacterId, mutator.LocationId, mutator.Flag, 1, Singleton: true, CustomName: null);
         changes.Add(new ItemMutationChange(result, 0, 0, 0));
 
         var createdAtMs = _nowUnixMs();
         await _mutations.InsertAsync(connection, transaction, new ItemMutationRecord(
             resultId, mutator.TypeId, mutator.Id, source.TypeId, source.Id, request.CharacterId, createdAtMs,
-            rolls, baseValues, mutatedValues), cancellationToken);
+            multipliers, baseValues, mutatedValues, rolls), cancellationToken);
 
         await _events.PublishMutatedAsync(connection, transaction,
             new ItemMutated(resultId, accepted.Value.OutputTypeId, mutator.TypeId, source.TypeId, request.CharacterId),
             $"char:{request.CharacterId}", cancellationToken);
 
         return new ItemMutationAccepted(new ItemMutationReceipt(
-            resultId, accepted.Value.OutputTypeId, source.LocationId, source.Flag,
+            resultId, accepted.Value.OutputTypeId, mutator.LocationId, mutator.Flag,
             mutator.Id, mutator.TypeId, source.Id, source.TypeId, rolls, mutatedValues, changes));
+    }
+
+    /// <summary>Checks that an input is in the current hangar, current ship cargo, or an owned inventory under the current station/ship.</summary>
+    private async Task<bool> IsReachableAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, Item item, ItemMutationPosition position,
+        CancellationToken cancellationToken)
+    {
+        if (position.DockedLocationId is { } dockedLocationId && dockedLocationId > 0 && item.LocationId == dockedLocationId)
+        {
+            return item.Flag == ItemFlags.Hangar;
+        }
+        if (position.ShipId is { } shipId && shipId > 0 && item.LocationId == shipId && item.Flag == ItemFlags.Cargo)
+        {
+            var ship = await _items.LockAndGetAsync(connection, transaction, shipId, cancellationToken);
+            return ship is not null && ship.OwnerId == characterId && await IsShipAsync(ship.TypeId, cancellationToken)
+                && (position.DockedLocationId is { } docked && docked > 0
+                    ? ship.LocationId == docked && ship.Flag == ItemFlags.Hangar
+                    : position.SolarSystemId is { } solarSystemId && solarSystemId > 0
+                        && ship.LocationId == solarSystemId && ship.Flag == ItemFlags.InSpace);
+        }
+        if (item.Flag != ItemFlags.Hangar)
+        {
+            return false;
+        }
+
+        var seen = new HashSet<long>();
+        var currentLocationId = item.LocationId;
+        for (var depth = 0; depth < 32; depth++)
+        {
+            if (position.DockedLocationId is { } stationId && stationId > 0 && currentLocationId == stationId)
+            {
+                return true;
+            }
+            if (currentLocationId <= 0 || !seen.Add(currentLocationId)
+                || await _items.LockAndGetAsync(connection, transaction, currentLocationId, cancellationToken) is not { } container
+                || container.OwnerId != characterId)
+            {
+                return false;
+            }
+            if (await IsShipAsync(container.TypeId, cancellationToken))
+            {
+                return (position.DockedLocationId is { } docked && docked > 0
+                        && container.LocationId == docked && container.Flag == ItemFlags.Hangar)
+                    || (container.Id == position.ShipId && position.SolarSystemId is { } solarSystemId && solarSystemId > 0
+                        && container.LocationId == solarSystemId && container.Flag == ItemFlags.InSpace);
+            }
+            if (!await IsContainerAsync(container.TypeId, cancellationToken))
+            {
+                return false;
+            }
+            currentLocationId = container.LocationId;
+        }
+        return false;
+    }
+
+    private async Task<bool> IsShipAsync(int typeId, CancellationToken cancellationToken)
+    {
+        await _statics.EnsureTypesAsync([typeId], cancellationToken);
+        return _statics.Type(typeId) is { } type
+            && string.Equals(_statics.CategoryName(type.CategoryId), "Ship", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task<bool> IsContainerAsync(int typeId, CancellationToken cancellationToken)
+    {
+        await _statics.EnsureTypesAsync([typeId], cancellationToken);
+        var type = _statics.Type(typeId);
+        if (type is null)
+        {
+            return false;
+        }
+        if (typeId == ItemVolumes.PlasticWrapTypeId) // which the V24.01 ItemChecker treats as a local container
+        {
+            return true;
+        }
+        var capacityId = _statics.AttributeId("capacity");
+        return _statics.GroupName(type.GroupId).Contains("container", StringComparison.OrdinalIgnoreCase)
+            && capacityId is { } attributeId && type.Attributes.GetValueOrDefault(attributeId, 0) > 0;
     }
 
     /// <summary>Loose in a hangar or a cargo hold: a fitted item (a slot flag) is not usable as an input.</summary>

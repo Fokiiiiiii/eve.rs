@@ -5,11 +5,12 @@ using Eve.Services;
 
 namespace Eve.Services.Core;
 
+public sealed record FittingTypeInfo(int CategoryId, string Name);
 
 public interface IFittingHost
 {
-    /// <summary>The category of each type that exists; a type that does not exist is absent.</summary>
-    Task<IReadOnlyDictionary<int, int>> CategoriesAsync(IReadOnlyCollection<int> typeIds, CancellationToken cancellationToken);
+    /// <summary>The category and English display name of each type that exists; a type that does not exist is absent.</summary>
+    Task<IReadOnlyDictionary<int, FittingTypeInfo>> TypesAsync(IReadOnlyCollection<int> typeIds, CancellationToken cancellationToken);
 
 
     Task<bool> HasFittingManagerRoleAsync(long characterId, CancellationToken cancellationToken);
@@ -264,10 +265,13 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
         {
             typeIds.Add(item.TypeId);
         }
-        var categories = await host.CategoriesAsync(typeIds, call.Cancellation);
-        if (SavedFittingRules.Check(draft, id => categories.TryGetValue(id, out var category) ? category : null) is { } fault)
+        var types = await host.TypesAsync(typeIds, call.Cancellation);
+        if (SavedFittingRules.Check(draft, id => types.TryGetValue(id, out var type) ? type.CategoryId : null) is { } fault)
         {
-            throw Refusal(fault.Code, fault.Value);
+            var typeName = fault.Code == "FITTING_INVALID_SHIP_TYPE" && types.TryGetValue(draft.ShipTypeId, out var shipType)
+                ? shipType.Name
+                : null;
+            throw Refusal(fault.Code, fault.Value, typeName);
         }
         return draft;
     }
@@ -342,13 +346,14 @@ public sealed class FittingMgrCalls(PgSavedFittingStore store, IFittingHost host
     };
 
 
-    public static MachoWrappedException Refusal(string code, long value = 0) => code switch
+    public static MachoWrappedException Refusal(string code, long value = 0, string? typeName = null) => code switch
     {
         "FITTING_NAME_REQUIRED" => MachoErrors.ThrowUserError("FittingNeedsToHaveAName"),
         "OWNER_MAX_FITTINGS" => MachoErrors.ThrowUserError(Community, ("notify", new PyStr($"That fitting collection is full ({value} max)."))),
         "FITTING_INVALID_TEXT" => MachoErrors.ThrowUserError("InvalidFittingInvalidCharacter"),
         "FITTING_INVALID_TYPE_ID" => MachoErrors.ThrowUserError("InvalidFittingDataTypeID", ("typeID", new PyInt(value)), ("typeName", new PyInt(value))),
-        "FITTING_INVALID_SHIP_TYPE" => MachoErrors.ThrowUserError("InvalidFittingDataShipNotShip", ("typeName", new PyInt(value))),
+        "FITTING_INVALID_SHIP_TYPE" => MachoErrors.ThrowUserError("InvalidFittingDataShipNotShip",
+            ("typeName", new PyStr(string.IsNullOrWhiteSpace(typeName) ? value.ToString(System.Globalization.CultureInfo.InvariantCulture) : typeName))),
         "FITTING_DATA_EMPTY" => MachoErrors.ThrowUserError("ParseFittingFittingDataEmpty"),
         "FITTING_INVALID_FLAG" => MachoErrors.ThrowUserError("InvalidFittingDataInvalidFlag", ("type", new PyInt(value))),
         "FITTING_INVALID_QUANTITY" => MachoErrors.ThrowUserError("InvalidFittingDataInvalidQuantity", ("type", new PyInt(value))),

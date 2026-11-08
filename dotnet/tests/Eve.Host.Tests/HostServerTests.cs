@@ -422,14 +422,14 @@ public partial class HostServerTests : IAsyncLifetime
         const string subject = "CHARACTER:EVE:90000001";
         const string token = "opaque-test-token";
         const ulong role = 0x0100_0000_0000_0001;
-        var accounts = new InMemoryAccountDirectory(new AccountOptions { AutoCreate = true, CountryCode = "JP", NewAccountRole = role });
-        var created = Assert.IsType<LoggedIn>(await accounts.LoginAsync(
+        var directory = new InMemoryAccountDirectory(new AccountOptions { AutoCreate = true, CountryCode = "JP", NewAccountRole = role });
+        var created = Assert.IsType<LoggedIn>(await directory.LoginAsync(
             new LoginAttempt("linked-account", new byte[] { 1 }, "EN", "127.0.0.1"), CancellationToken.None));
-        Assert.True(await accounts.LinkSsoIdentityAsync(
+        Assert.True(await directory.LinkSsoIdentityAsync(
             created.AccountId, new VerifiedSsoIdentity(issuer, subject), CancellationToken.None));
         var verifier = new FixedSsoTokenVerifier(token, new VerifiedSsoIdentity(issuer, subject));
 
-        Start(accounts: accounts, ssoTokenVerifier: verifier);
+        Start(accounts: directory.WithOptions(new AccountOptions { CountryCode = "GB" }), ssoTokenVerifier: verifier);
         var front = await Handshaken(await ConnectAsync());
         await front.SendAsync(new AuthRequest(
             1, AuthCredentialKind.Sso, "EVE-SSO-CONNECTION", new byte[] { 2 }, token, "FR", "127.0.0.1"));
@@ -455,6 +455,22 @@ public partial class HostServerTests : IAsyncLifetime
         Assert.Equal(new PyInt(created.AccountId), values["userid"]);
         Assert.Equal(new PyLong(unchecked((long)(role | CharUnboundMgrService.SessionBaseRole))), values["role"]);
         Assert.Equal("FR", T(values["languageID"]));
+        Assert.Equal("JP", T(values["countryCode"]));
+    }
+
+    [Fact]
+    public async Task Password_host_login_uses_the_country_code_saved_when_the_account_was_created()
+    {
+        var directory = new InMemoryAccountDirectory(new AccountOptions { AutoCreate = true, CountryCode = "JP" });
+        var created = Assert.IsType<LoggedIn>(await directory.LoginAsync(
+            new LoginAttempt("country-pilot", PasswordHash(1), "EN", "127.0.0.1"), CancellationToken.None));
+        Start(accounts: directory.WithOptions(new AccountOptions { CountryCode = "GB" }));
+        var front = await Handshaken(await ConnectAsync());
+
+        var accepted = Assert.IsType<Accepted>((await front.AuthenticateAsync("country-pilot", PasswordHash(1), 1)).Outcome);
+
+        Assert.Equal(created.AccountId, accepted.UserId);
+        Assert.Equal("JP", accepted.CountryCode);
     }
 
     [Fact]

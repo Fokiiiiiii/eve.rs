@@ -315,6 +315,163 @@ public class FitFittingTests
     }
 
     [PgFact]
+    public async Task A_module_stack_used_by_a_saved_fit_splits_one_singleton_and_switches_on_the_new_item()
+    {
+        await using var rig = await Rig.CreateAsync(activeShip: true);
+        await TrainAsync(rig);
+        var ship = await rig.AddAsync(Ibis, Rig.Character, Rig.Station, singleton: true);
+        var stack = await rig.AddAsync(Afterburner, Rig.Character, Rig.Station, quantity: 3);
+        var sink = new RecordingSink();
+        var session = new ClientSession(sink) { SessionId = 1, ClientId = 1, UserId = 34, CharacterId = Rig.Character };
+        session.Set("stationid", new PyInt(Rig.Station));
+        var inventory = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, new PyLong(ship)));
+
+        var reply = Assert.IsType<PyList>(await FitAsync(rig, session, ship, inventory,
+            Map((new PyInt(Afterburner), new PyList([new PyLong(stack)]))),
+            Map((new PyInt(MediumSlot), new PyInt(Afterburner))), Map(), Map(), true));
+
+        Assert.Empty(reply.Items);
+        var remainder = (await rig.Items.GetAsync(stack))!;
+        Assert.Equal((Rig.Station, Eve.Inventory.ItemFlags.Hangar, 2L, false),
+            (remainder.LocationId, remainder.Flag, remainder.Quantity, remainder.Singleton));
+        var fitted = Assert.Single(await rig.Items.InLocationAsync(ship, Rig.Character),
+            item => item.TypeId == Afterburner && item.Flag == MediumSlot);
+        Assert.NotEqual(stack, fitted.Id);
+        Assert.Equal((1L, true), (fitted.Quantity, fitted.Singleton));
+        Assert.True((await rig.Modules.StatesAsync([fitted.Id]))[fitted.Id] >= ItemState.Online);
+
+        var notifications = sink.Packets
+            .Select(packet => new[] { "OnMultiEvent", "OnItemsChanged", "OnItemChange" }.FirstOrDefault(name => RecordingSink.Mentions(packet, name)))
+            .OfType<string>()
+            .ToArray();
+        Assert.Equal(["OnMultiEvent", "OnItemsChanged", "OnItemChange"], notifications);
+        var moduleEvent = Assert.Single(sink.Packets, packet => RecordingSink.Mentions(packet, "OnMultiEvent"));
+        Assert.True(RecordingSink.ContainsId(RecordingSink.NotificationPayload(moduleEvent)!, fitted.Id));
+        var itemMove = Assert.Single(sink.Packets, packet => RecordingSink.Mentions(packet, "OnItemsChanged"));
+        Assert.True(RecordingSink.ContainsId(RecordingSink.NotificationPayload(itemMove)!, fitted.Id));
+        Assert.False(RecordingSink.ContainsId(RecordingSink.NotificationPayload(itemMove)!, stack));
+        var stackChange = Assert.Single(sink.Packets, packet => RecordingSink.Mentions(packet, "OnItemChange"));
+        Assert.True(RecordingSink.ContainsId(RecordingSink.NotificationPayload(stackChange)!, stack));
+
+        var packetCount = sink.Packets.Count;
+        var retry = Assert.IsType<PyList>(await FitAsync(rig, session, ship, inventory,
+            Map((new PyInt(Afterburner), new PyList([new PyLong(stack)]))),
+            Map((new PyInt(MediumSlot), new PyInt(Afterburner))), Map(), Map(), true));
+
+        Assert.Empty(retry.Items);
+        Assert.Equal(packetCount, sink.Packets.Count);
+        Assert.Equal((Rig.Station, 2L), ((await rig.Items.GetAsync(stack))!.LocationId, (await rig.Items.GetAsync(stack))!.Quantity));
+        Assert.Equal(fitted.Id, Assert.Single(await rig.Items.InLocationAsync(ship, Rig.Character),
+            item => item.TypeId == Afterburner && item.Flag == MediumSlot).Id);
+    }
+
+    [PgFact]
+    public async Task Fitting_a_module_stack_through_inventory_add_takes_one_unit_without_a_quantity_argument()
+    {
+        await using var rig = await Rig.CreateAsync(activeShip: true);
+        await TrainAsync(rig);
+        var ship = await rig.AddAsync(Ibis, Rig.Character, Rig.Station, singleton: true);
+        var stack = await rig.AddAsync(Afterburner, Rig.Character, Rig.Station, quantity: 3);
+        var sink = new RecordingSink();
+        var session = new ClientSession(sink) { SessionId = 1, ClientId = 1, UserId = 34, CharacterId = Rig.Character };
+        session.Set("stationid", new PyInt(Rig.Station));
+        var inventory = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, new PyLong(ship)));
+
+        var reply = await AddToShipAsync(rig, session, inventory, stack, MediumSlot);
+
+        var remainder = (await rig.Items.GetAsync(stack))!;
+        Assert.Equal((Rig.Station, Eve.Inventory.ItemFlags.Hangar, 2L, false),
+            (remainder.LocationId, remainder.Flag, remainder.Quantity, remainder.Singleton));
+        var fitted = Assert.Single(await rig.Items.InLocationAsync(ship, Rig.Character),
+            item => item.TypeId == Afterburner && item.Flag == MediumSlot);
+        Assert.NotEqual(stack, fitted.Id);
+        Assert.Equal((1L, true), (fitted.Quantity, fitted.Singleton));
+        Assert.Equal(InventoryWire.Id(fitted.Id), reply);
+        var itemMove = Assert.Single(sink.Packets, packet => RecordingSink.Mentions(packet, "OnItemsChanged"));
+        Assert.True(RecordingSink.ContainsId(RecordingSink.NotificationPayload(itemMove)!, fitted.Id));
+        Assert.False(RecordingSink.ContainsId(RecordingSink.NotificationPayload(itemMove)!, stack));
+        var stackChange = Assert.Single(sink.Packets, packet => RecordingSink.Mentions(packet, "OnItemChange"));
+        Assert.True(RecordingSink.ContainsId(RecordingSink.NotificationPayload(stackChange)!, stack));
+    }
+
+    [PgFact]
+    public async Task A_single_module_stack_can_supply_every_matching_slot_in_a_saved_fit()
+    {
+        await using var rig = await Rig.CreateAsync(activeShip: true);
+        await TrainAsync(rig);
+        var ship = await rig.AddAsync(Ibis, Rig.Character, Rig.Station, singleton: true);
+        var stack = await rig.AddAsync(Afterburner, Rig.Character, Rig.Station, quantity: 2);
+        var sink = new RecordingSink();
+        var session = new ClientSession(sink) { SessionId = 1, ClientId = 1, UserId = 34, CharacterId = Rig.Character };
+        session.Set("stationid", new PyInt(Rig.Station));
+        var inventory = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, new PyLong(ship)));
+
+        var reply = Assert.IsType<PyList>(await FitAsync(rig, session, ship, inventory,
+            Map((new PyInt(Afterburner), new PyList([new PyLong(stack)]))),
+            Map((new PyInt(MediumSlot), new PyInt(Afterburner)), (new PyInt(MediumSlot + 1), new PyInt(Afterburner))),
+            Map(), Map(), true));
+
+        Assert.Empty(reply.Items);
+        var fitted = (await rig.Items.InLocationAsync(ship, Rig.Character))
+            .Where(item => item.TypeId == Afterburner && item.Flag is MediumSlot or MediumSlot + 1)
+            .ToList();
+        Assert.Equal(2, fitted.Count);
+        Assert.All(fitted, item => Assert.Equal((1L, true), (item.Quantity, item.Singleton)));
+        var itemMove = Assert.Single(sink.Packets, packet => RecordingSink.Mentions(packet, "OnItemsChanged"));
+        var payload = RecordingSink.NotificationPayload(itemMove)!;
+        Assert.All(fitted, item => Assert.True(RecordingSink.ContainsId(payload, item.Id)));
+        Assert.DoesNotContain(sink.Packets, packet => RecordingSink.Mentions(packet, "OnItemChange"));
+    }
+
+    [PgFact]
+    public async Task A_module_stack_that_fails_fit_rules_stays_in_the_hangar_and_is_reported_missing()
+    {
+        await using var rig = await Rig.CreateAsync(activeShip: true);
+        var ship = await rig.AddAsync(Ibis, Rig.Character, Rig.Station, singleton: true);
+        var stack = await rig.AddAsync(450, Rig.Character, Rig.Station, quantity: 2);
+        var sink = new RecordingSink();
+        var session = new ClientSession(sink) { SessionId = 1, ClientId = 1, UserId = 34, CharacterId = Rig.Character };
+        session.Set("stationid", new PyInt(Rig.Station));
+        var inventory = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, new PyLong(ship)));
+
+        var reply = Assert.IsType<PyList>(await FitAsync(rig, session, ship, inventory,
+            Map((new PyInt(450), new PyList([new PyLong(stack)]))),
+            Map((new PyInt(HighSlot), new PyInt(450))), Map(), Map(), true));
+
+        var missing = Assert.IsType<PyTuple>(Assert.Single(reply.Items));
+        Assert.Equal([new PyInt(450), new PyInt(1)], missing.Items);
+        var remainder = (await rig.Items.GetAsync(stack))!;
+        Assert.Equal((Rig.Station, 2L, false), (remainder.LocationId, remainder.Quantity, remainder.Singleton));
+        Assert.DoesNotContain(await rig.Items.InLocationAsync(ship, Rig.Character), item => item.TypeId == 450);
+        Assert.Empty(sink.Packets);
+    }
+
+    [PgFact]
+    public async Task Concurrent_moves_split_one_module_stack_into_distinct_slots_without_losing_items()
+    {
+        await using var rig = await Rig.CreateAsync(activeShip: true);
+        await TrainAsync(rig);
+        var ship = (await rig.Ships.LoadAsync(Rig.Character))!.Ship.Id;
+        var stack = await rig.AddAsync(Afterburner, Rig.Character, Rig.Station, quantity: 2);
+
+        var outcomes = await Task.WhenAll(
+            rig.Ships.MoveAsync(Rig.Character, stack, Rig.Station, ship, MediumSlot, 1),
+            rig.Ships.MoveAsync(Rig.Character, stack, Rig.Station, ship, MediumSlot + 1, 1));
+
+        var changes = outcomes.Select(outcome => Assert.IsType<ShipChanged>(outcome)).ToArray();
+        Assert.Equal(2, changes.Select(change => change.ItemId).Distinct().Count());
+        var fitted = (await rig.Items.InLocationAsync(ship, Rig.Character))
+            .Where(item => item.TypeId == Afterburner && item.Flag is MediumSlot or MediumSlot + 1)
+            .ToList();
+        Assert.Equal(2, fitted.Count);
+        Assert.Equal(changes.Select(change => change.ItemId).Order(), fitted.Select(item => item.Id).Order());
+        Assert.All(fitted, item => Assert.Equal((1L, true), (item.Quantity, item.Singleton)));
+        var original = (await rig.Items.GetAsync(stack))!;
+        Assert.Equal(ship, original.LocationId);
+        Assert.Contains(original.Flag, new[] { MediumSlot, MediumSlot + 1 });
+    }
+
+    [PgFact]
     public async Task A_rig_is_fitted_into_its_slot_when_rigs_are_asked_for()
     {
         await using var rig = await Rig.CreateAsync(activeShip: true);
@@ -426,7 +583,7 @@ public class FitFittingTests
         public void Send(PyValue packet) => Packets.Add(packet);
         public int Named(string name) => Packets.Count(packet => Mentions(packet, name));
 
-        private static bool Mentions(PyValue value, string name) => value switch
+        public static bool Mentions(PyValue value, string name) => value switch
         {
             PyStr text => text.Value == name,
             PyObject obj => Mentions(obj.Args, name),
@@ -434,5 +591,32 @@ public class FitFittingTests
             PyList list => list.Items.Any(item => Mentions(item, name)),
             _ => false,
         };
+
+        public static bool ContainsId(PyValue value, long id) => value switch
+        {
+            PyInt integer => integer.Value == id,
+            PyLong integer => integer.Value == id,
+            PyPackedRow row => row.Values.Any(item => ContainsId(item, id)),
+            PyObject obj => ContainsId(obj.Name, id) || ContainsId(obj.Args, id),
+            PyObjectEx obj => ContainsId(obj.Header, id) || obj.List.Any(item => ContainsId(item, id))
+                || obj.Dict.Any(entry => ContainsId(entry.Key, id) || ContainsId(entry.Value, id)),
+            PyTuple tuple => tuple.Items.Any(item => ContainsId(item, id)),
+            PyList list => list.Items.Any(item => ContainsId(item, id)),
+            PyDict dict => dict.Entries.Any(entry => ContainsId(entry.Key, id) || ContainsId(entry.Value, id)),
+            PySubStruct sub => ContainsId(sub.Value, id),
+            _ => false,
+        };
+
+        public static PyValue? NotificationPayload(PyValue value)
+        {
+            if (value is not PyObject { Args: PyTuple packet } || packet.Items.Count <= 4
+                || packet.Items[4] is not PyTuple streams || streams.Items.Count == 0
+                || streams.Items[0] is not PyTuple { Items.Count: > 1 } stream
+                || stream.Items[1] is not PyBuffer buffer)
+            {
+                return null;
+            }
+            return MarshalCodec.Decode(buffer.Value);
+        }
     }
 }

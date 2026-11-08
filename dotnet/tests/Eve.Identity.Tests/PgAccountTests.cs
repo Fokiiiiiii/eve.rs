@@ -122,6 +122,53 @@ public class PgAccountTests
         Assert.False(await restartedDirectory.LinkSsoIdentityAsync(account.AccountId + 1, identity, CancellationToken.None));
     }
 
+    [PgFact]
+    public async Task Password_and_sso_logins_return_the_country_code_saved_when_the_account_was_created()
+    {
+        await using var schema = await PgSchema.CreateAsync();
+        var firstDirectory = new PgAccountDirectory(
+            schema.Source, new AccountOptions { AutoCreate = true, CountryCode = "JP" }, schema.Name);
+        var created = Assert.IsType<LoggedIn>(await firstDirectory.LoginAsync(
+            new LoginAttempt("country-pilot", new byte[] { 1, 2, 3 }, "EN", "127.0.0.1"), CancellationToken.None));
+        var identity = new VerifiedSsoIdentity("https://login.eveonline.com/", "CHARACTER:EVE:9000124");
+        Assert.True(await firstDirectory.LinkSsoIdentityAsync(created.AccountId, identity, CancellationToken.None));
+
+        var restartedDirectory = new PgAccountDirectory(
+            schema.Source, new AccountOptions { AutoCreate = true, CountryCode = "GB" }, schema.Name);
+        var passwordLogin = Assert.IsType<LoggedIn>(await restartedDirectory.LoginAsync(
+            new LoginAttempt("country-pilot", new byte[] { 1, 2, 3 }, "EN", "127.0.0.1"), CancellationToken.None));
+        var ssoLogin = Assert.IsType<LoggedIn>(await restartedDirectory.LoginSsoAsync(identity, CancellationToken.None));
+
+        Assert.Equal(created, passwordLogin);
+        Assert.Equal(created, ssoLogin);
+    }
+
+    [PgFact]
+    public async Task PostgreSQL_identity_links_refuse_subjects_that_do_not_fit_the_persisted_format()
+    {
+        await using var schema = await PgSchema.CreateAsync();
+        var directory = new PgAccountDirectory(schema.Source, new AccountOptions { AutoCreate = true }, schema.Name);
+        var account = Assert.IsType<LoggedIn>(await directory.LoginAsync(
+            new LoginAttempt("invalid-subjects", new byte[] { 1, 2, 3 }, "EN", "127.0.0.1"), CancellationToken.None));
+        var invalidSubjects = new[]
+        {
+            "CHARACTER:EVE:00123",
+            "CHARACTER:EVE:0",
+            "CHARACTER:EVE:",
+            "CHARACTER:EVE:12x",
+            "CHARACTER:EVE:18446744073709551616",
+        };
+
+        foreach (var subject in invalidSubjects)
+        {
+            var identity = new VerifiedSsoIdentity("https://login.eveonline.com/", subject);
+            Assert.False(await directory.LinkSsoIdentityAsync(account.AccountId, identity, CancellationToken.None));
+            Assert.IsType<LoginRefused>(await directory.LoginSsoAsync(identity, CancellationToken.None));
+        }
+
+        Assert.Equal(0L, await schema.ScalarAsync<long>($"SELECT count(*) FROM {schema.Name}.external_identity_links"));
+    }
+
     [Fact]
     public void A_schema_name_that_could_carry_sql_is_refused()
     {

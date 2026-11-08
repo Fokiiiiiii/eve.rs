@@ -2922,6 +2922,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             "EVE_ASSET_SAFETY_SCHEMA", "EVE_CRIMEWATCH_SCHEMA", "EVE_CORPORATIONS_SCHEMA", "EVE_MARKET_SCHEMA", "EVE_FLEET_SCHEMA",
             "EVE_GAMESTORE_SCHEMA", "EVE_SCHEDULER_SCHEMA", "EVE_EVENTS_SCHEMA", "EVE_RELATIONS_SCHEMA", "EVE_CONTENT_SCHEMA",
             "EVE_STRUCTURES_SCHEMA", "EVE_AGENTS_SCHEMA", "EVE_FACTIONWARFARE_SCHEMA",
+            "EVE_SKINR_SCHEMA",
         ];
 
         private const long CorporationId = 900_001_001;
@@ -2946,6 +2947,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         public NpgsqlDataSource Source { get; }
         public ServiceRegistry Registry => _runtime.Registry;
         internal Eve.Host.PublicGateway.PublicGatewayRoutes Gateway => _runtime.PublicGateway;
+        internal Eve.Events.EventBus Events => _runtime.Events ?? throw new InvalidOperationException("the event bus is not composed");
         public CharacterSessions Sessions => Assert.IsType<CharacterSessions>(_runtime.CharacterSessions);
         public async Task WaitForSimulationConnectionAsync()
         {
@@ -2967,6 +2969,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         public string GameStoreSchema => _schemas["EVE_GAMESTORE_SCHEMA"];
         public string SchedulerSchema => _schemas["EVE_SCHEDULER_SCHEMA"];
         public string StructuresSchema => _schemas["EVE_STRUCTURES_SCHEMA"];
+        public string SkinrSchema => _schemas["EVE_SKINR_SCHEMA"];
         public long NowUnixMs => _clock?.Read() ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         public void AdvanceTo(long unixMs) => (_clock ?? throw new InvalidOperationException("This rig uses the system clock.")).Set(unixMs);
 

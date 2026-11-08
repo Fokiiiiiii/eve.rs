@@ -1,5 +1,11 @@
 # Deviations from the reference server
 
+## SKINR completion notice recovery (2026-11-07)
+
+V24.01 consumes `CompletedNotice` and then `UpdatedNotice` for ship skin sequencing (`cosmetics/client/messengers/cosmetics/ship/shipSkinSequencingNoticeMessenger.py:16-31`, `shipSkinLicenseNoticeMessenger.py:17-29`). EveJS 261028.1 broadcasts both notices to currently connected matching streams (`server/src/_secondary/express/gatewayServices/shipSkinSequencingGatewayService.js:28-38`; `server/src/_secondary/express/publicGatewayLocal.js:2074-2087`).
+
+eve.rs persists these notices in the Host scheduler transactionally with the EventBus cursor and retries for up to seven days until each notice has been flushed to the matching live HTTP/2 stream. This intentionally retains the notices across a short disconnect or process restart, unlike EveJS's active-stream-only broadcast. V24 has no inspected application acknowledgement, so a stream flush does not prove that the client processed the frame. If the Host stops after flush and before the scheduler marks the job complete, it may resend the notice after restart. The Host regression verifies recovery after restart both before and after frames are queued, notice order, wire payload fields, and the persisted SKINR license update.
+
 ## Market buyer delivery notifications (2026-11-06)
 
 V24.01 `invCache.OnItemsChanged(items, change, location)` validates item locations, scatters `OnItemChange` per row, then emits `OnMultipleItemChange` (`eve/client/script/environment/invCache.py:218-227`). The whole client tree has two other direct handlers: the mission objective tracker checks arriving type and flag (`missions/client/missionObjectivesTracker.py:103-126`), and skin sequencing checks for sequence binders (`cosmetics/client/shipSkinSequencingSvc.py:43,100-104`). `MarketQuote` registers `OnMarketItemReceived` and forwards its four arguments to `OnClientEvent_MarketItemReceived` (`eve/client/script/ui/services/marketsvc.py:80-85,140-142`); inventory badging marks remote hangar purchases unseen (`eve/client/script/ui/shared/inventory/neocomInventoryBadging.py:529-541`).

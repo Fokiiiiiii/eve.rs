@@ -13,7 +13,7 @@ namespace Eve.Host.Tests;
 public partial class HostServerTests
 {
     [PgFact]
-    public async Task Calendar_host_response_notification_uses_the_event_snapshot_after_a_concurrent_edit()
+    public async Task Calendar_host_serializes_response_and_edit_notifications_in_mutation_order()
     {
         var ownerId = Random.Shared.NextInt64(92_000_000, 93_000_000);
         var inviteeId = ownerId + 1;
@@ -60,28 +60,98 @@ public partial class HostServerTests
             await store.ResponseReached.WaitAsync(TimeSpan.FromSeconds(10));
 
             var editedTime = DateTime.FromFileTimeUtc(originalTime).AddDays(1).ToFileTimeUtc();
-            var editSend = await SendCalendarCallAsync(ownerFront, ownerOpen, 2, "calendarMgr", "EditPersonalEvent",
-                [new PyLong(eventId), new PyLong(originalTime), new PyLong(editedTime),
-                    new PyInt(30), new PyStr("Edited response race"), new PyStr(""), new PyInt(0)]);
-            var editPacket = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(editSend.Payload)));
-            if (editPacket.Type == MachoMessage.Notification)
-            {
-                Assert.Equal("OnEditCalendarEvent", editPacket.Dest.BroadcastId);
-                editSend = Assert.IsType<Send>(await ownerFront.ReceiveAsync());
-                editPacket = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(editSend.Payload)));
-            }
-            Assert.Equal(MachoMessage.CallRsp, editPacket.Type);
-            Assert.IsType<PyNone>(Result(MarshalCodec.Decode(editSend.Payload)));
-            await AssertCalendarNotificationAsync(inviteeFront, "OnEditCalendarEvent");
+            await ownerFront.SendAsync(new Packet(ownerOpen.SessionId, MarshalCodec.Encode(
+                Packets.CallWithKwargs(ownerOpen, 2, "calendarMgr", "EditPersonalEvent",
+                    new PyTuple([new PyLong(eventId), new PyLong(originalTime), new PyLong(editedTime),
+                        new PyInt(30), new PyStr("Edited response race"), new PyStr(""), new PyInt(0)]),
+                    TransportKwargs()))));
+            store.ReleaseResponse();
+            Assert.Equal(originalTime, await CalendarResponseNotificationDateAsync(ownerFront));
+            Assert.Equal((originalTime, editedTime), await CalendarEditNotificationTimesAsync(ownerFront));
+            var editReply = Assert.IsType<Send>(await ownerFront.ReceiveAsync());
+            var editReplyPacket = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(editReply.Payload)));
+            Assert.Equal(MachoMessage.CallRsp, editReplyPacket.Type);
+            Assert.IsType<PyNone>(Result(MarshalCodec.Decode(editReply.Payload)));
 
             Assert.Equal(editedTime, (await actualStore.GetEventByIdAsync(eventId))!.EventDateTime);
+            var response = Assert.Single(await actualStore.GetResponsesToEventAsync(eventId, ownerId),
+                row => row.CharacterId == inviteeId);
+            Assert.Equal(CalendarResponseStates.Undecided, response.Status);
+        }
+        finally
+        {
             store.ReleaseResponse();
-            var responseSend = Assert.IsType<Send>(await inviteeFront.ReceiveAsync());
-            var responsePacket = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(responseSend.Payload)));
+            if (eventId > 0)
+            {
+                await using var command = dataSource.CreateCommand(
+                    "DELETE FROM calendar.events WHERE event_id = $1");
+                command.Parameters.AddWithValue(eventId);
+                await command.ExecuteNonQueryAsync();
+            }
+        }
+    }
+
+    [PgFact]
+    public async Task Calendar_host_response_notification_uses_the_locked_event_snapshot_after_another_writer_edits()
+    {
+        var ownerId = Random.Shared.NextInt64(94_000_000, 95_000_000);
+        var inviteeId = ownerId + 1;
+        await using var dataSource = NpgsqlDataSource.Create(
+            PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        await CalendarStore.MigrateAsync(dataSource);
+        var actualStore = new CalendarStore(dataSource);
+        var store = new PauseCalendarResponseStore(actualStore);
+        var sessions = new CharacterSessions();
+        var opened = 0;
+
+        Start(
+            strictRpc: true,
+            configure: registry =>
+            {
+                registry.Register(new CalendarMgrService(store, sessions: sessions,
+                    cspaBilling: FreeCalendarCspaBilling()));
+                registry.Register(new CalendarProxyService(actualStore));
+            },
+            sessionOpened: session =>
+            {
+                var characterId = Interlocked.Increment(ref opened) == 1 ? ownerId : inviteeId;
+                session.Set("charid", new PyLong(characterId));
+                sessions.Enter(characterId, session);
+            });
+
+        var eventId = 0L;
+        try
+        {
+            var (ownerFront, ownerOpen) = await OpenCalendarFrontAsync(633);
+            var (inviteeFront, inviteeOpen) = await OpenCalendarFrontAsync(634);
+            var originalTime = DateTime.UtcNow.AddDays(3).ToFileTimeUtc();
+            eventId = WireInteger(await HostRpcAsync(
+                ownerFront, ownerOpen, 1, "calendarMgr", "CreatePersonalEvent",
+                new PyLong(originalTime), new PyInt(30), new PyStr("External writer race"),
+                new PyStr(""), new PyInt(0), new PyList([new PyLong(inviteeId)])));
+            await AssertCalendarNotificationAsync(inviteeFront, "OnNewCalendarEvent");
+
+            store.PauseNextResponse();
+            await inviteeFront.SendAsync(new Packet(inviteeOpen.SessionId, MarshalCodec.Encode(
+                Packets.CallWithKwargs(inviteeOpen, 1, "calendarMgr", "SendEventResponse",
+                    new PyTuple([new PyLong(eventId), new PyLong(ownerId),
+                        new PyLong(CalendarResponseStates.Accepted)]), TransportKwargs()))));
+            await store.ResponseReached.WaitAsync(TimeSpan.FromSeconds(10));
+
+            var editedTime = DateTime.FromFileTimeUtc(originalTime).AddDays(1).ToFileTimeUtc();
+            Assert.True(await actualStore.EditEventAsync(eventId, ownerId, originalTime,
+                new CalendarEventInput(ownerId, ownerId, CalendarTags.Personal, editedTime,
+                    30, "External writer edit", string.Empty, 0)));
+            store.ReleaseResponse();
+
+            var responseReply = Assert.IsType<Send>(await inviteeFront.ReceiveAsync());
+            var responsePacket = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(responseReply.Payload)));
             Assert.Equal(MachoMessage.CallRsp, responsePacket.Type);
-            Assert.IsType<PyNone>(Result(MarshalCodec.Decode(responseSend.Payload)));
+            Assert.IsType<PyNone>(Result(MarshalCodec.Decode(responseReply.Payload)));
             Assert.Equal(editedTime, await CalendarResponseNotificationDateAsync(ownerFront));
 
+            var persistedEvent = await actualStore.GetEventByIdAsync(eventId);
+            Assert.Equal(editedTime, persistedEvent?.EventDateTime);
             var response = Assert.Single(await actualStore.GetResponsesToEventAsync(eventId, ownerId),
                 row => row.CharacterId == inviteeId);
             Assert.Equal(CalendarResponseStates.Accepted, response.Status);
@@ -147,14 +217,16 @@ public partial class HostServerTests
             await AssertCalendarNotificationAsync(secondOwnerFront, "OnNewCalendarEvent");
             await AssertCalendarNotificationAsync(inviteeFront, "OnNewCalendarEvent");
 
-            store.EnableRace();
             removeCall = CalendarAuditHostRpcAsync(firstOwnerFront, firstOwnerOpen, 2, "UpdateEventParticipants",
                 new PyLong(eventId), new PyList([]), new PyList([new PyLong(inviteeId)]));
             await store.RemovalCommitted.WaitAsync(TimeSpan.FromSeconds(10));
             addCall = CalendarAuditHostRpcAsync(secondOwnerFront, secondOwnerOpen, 1, "UpdateEventParticipants",
                 new PyLong(eventId), new PyList([new PyLong(inviteeId)]), new PyList([]));
-            await store.AddRequestReached.WaitAsync(TimeSpan.FromSeconds(10));
-            Assert.NotSame(addCall, await Task.WhenAny(addCall, Task.Delay(TimeSpan.FromSeconds(2))));
+            await Task.Delay(TimeSpan.FromMilliseconds(100));
+            Assert.False(addCall.IsCompleted);
+            var responseDuringRemoval = Assert.Single(await actualStore.GetResponsesToEventAsync(eventId, ownerId),
+                row => row.CharacterId == inviteeId);
+            Assert.Equal(CalendarResponseStates.Uninvited, responseDuringRemoval.Status);
 
             store.ReleaseRemoval();
             Assert.IsType<PyNone>(await removeCall.WaitAsync(TimeSpan.FromSeconds(10)));
@@ -207,33 +279,41 @@ public partial class HostServerTests
 
     private async Task<long> CalendarResponseNotificationDateAsync(TestFront front)
     {
+        var (name, args) = await CalendarNotificationArgsAsync(front);
+        Assert.Equal("OnEventResponseByExternal", name);
+        Assert.Equal(3, args.Items.Count);
+        Assert.Equal(CalendarResponseStates.Accepted, WireInteger(args.Items[2]));
+        return WireInteger(WireField(args.Items[1], "eventDateTime"));
+    }
+
+    private async Task<(long OldDateTime, long EventDateTime)> CalendarEditNotificationTimesAsync(TestFront front)
+    {
+        var (name, args) = await CalendarNotificationArgsAsync(front);
+        Assert.Equal("OnEditCalendarEvent", name);
+        Assert.Equal(8, args.Items.Count);
+        return (WireInteger(args.Items[2]), WireInteger(args.Items[3]));
+    }
+
+    private async Task<(string? Name, PyTuple Args)> CalendarNotificationArgsAsync(TestFront front)
+    {
         var send = Assert.IsType<Send>(await front.ReceiveAsync());
         var packet = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(send.Payload)));
         Assert.Equal(MachoMessage.Notification, packet.Type);
-        Assert.Equal("OnEventResponseByExternal", packet.Dest.BroadcastId);
-
         var fields = Assert.IsType<PyTuple>(Assert.IsType<PyObject>(MarshalCodec.Decode(send.Payload)).Args);
         var envelope = Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(fields.Items[4]).Items[0]);
         var notification = Assert.IsType<PyTuple>(MarshalCodec.Decode(
             Assert.IsType<PyBuffer>(envelope.Items[1]).Value));
         var args = Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(notification.Items[1]).Items[1]);
-        Assert.Equal(3, args.Items.Count);
-        Assert.Equal(CalendarResponseStates.Accepted, WireInteger(args.Items[2]));
-        return WireInteger(WireField(args.Items[1], "eventDateTime"));
+        return (packet.Dest.BroadcastId, args);
     }
 
     private sealed class ParticipantRaceCalendarStore(ICalendarStore inner, long inviteeId) : ICalendarStore
     {
         private readonly TaskCompletionSource _removalCommitted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _releaseRemoval = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private readonly TaskCompletionSource _addRequestReached = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private int _mutationReads;
-        private int _raceEnabled;
 
         public Task RemovalCommitted => _removalCommitted.Task;
-        public Task AddRequestReached => _addRequestReached.Task;
         public void ReleaseRemoval() => _releaseRemoval.TrySetResult();
-        public void EnableRace() => Volatile.Write(ref _raceEnabled, 1);
 
         public Task<IReadOnlyList<CalendarEvent>> ListMonthAsync(long characterId, long corporationId, long allianceId,
             int month, int year, CancellationToken cancellationToken = default) =>
@@ -242,13 +322,8 @@ public partial class HostServerTests
         public Task<CalendarEvent?> GetEventAsync(long eventId, long ownerId, CancellationToken cancellationToken = default) =>
             inner.GetEventAsync(eventId, ownerId, cancellationToken);
 
-        public async Task<CalendarEvent?> GetEventByIdAsync(long eventId, CancellationToken cancellationToken = default)
-        {
-            var calendarEvent = await inner.GetEventByIdAsync(eventId, cancellationToken);
-            if (Volatile.Read(ref _raceEnabled) != 0 && Interlocked.Increment(ref _mutationReads) == 2)
-                _addRequestReached.TrySetResult();
-            return calendarEvent;
-        }
+        public Task<CalendarEvent?> GetEventByIdAsync(long eventId, CancellationToken cancellationToken = default) =>
+            inner.GetEventByIdAsync(eventId, cancellationToken);
 
         public Task<IReadOnlyList<CalendarResponse>> GetResponsesForCharacterAsync(long characterId,
             CancellationToken cancellationToken = default) => inner.GetResponsesForCharacterAsync(characterId, cancellationToken);

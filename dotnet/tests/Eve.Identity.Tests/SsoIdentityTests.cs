@@ -43,6 +43,44 @@ public class SsoIdentityTests
         Assert.Null(identity);
     }
 
+    [Theory]
+    [InlineData("CHARACTER:EVE:00123")]
+    [InlineData("CHARACTER:EVE:0")]
+    [InlineData("CHARACTER:EVE:")]
+    [InlineData("CHARACTER:EVE:12x")]
+    [InlineData("CHARACTER:EVE:18446744073709551616")]
+    public async Task Signed_tokens_with_noncanonical_character_subjects_are_refused(string subject)
+    {
+        using var signingKey = RSA.Create(2048);
+        var token = Token(signingKey, Issuer, ["eve.rs-test-client", "EVE Online"], Now.AddMinutes(5), subject);
+
+        var identity = await Verifier(signingKey).VerifyAsync(token, CancellationToken.None);
+
+        Assert.Null(identity);
+    }
+
+    [Fact]
+    public async Task In_memory_identity_links_and_sso_logins_refuse_subjects_that_do_not_fit_the_persisted_format()
+    {
+        var directory = new InMemoryAccountDirectory(new AccountOptions { AutoCreate = true });
+        var account = Assert.IsType<LoggedIn>(await directory.LoginAsync(Attempt("invalid-subjects"), CancellationToken.None));
+        var invalidSubjects = new[]
+        {
+            "CHARACTER:EVE:00123",
+            "CHARACTER:EVE:0",
+            "CHARACTER:EVE:",
+            "CHARACTER:EVE:12x",
+            "CHARACTER:EVE:18446744073709551616",
+        };
+
+        foreach (var subject in invalidSubjects)
+        {
+            var identity = new VerifiedSsoIdentity(Issuer, subject);
+            Assert.False(await directory.LinkSsoIdentityAsync(account.AccountId, identity, CancellationToken.None));
+            Assert.IsType<LoginRefused>(await directory.LoginSsoAsync(identity, CancellationToken.None));
+        }
+    }
+
     [Fact]
     public async Task Explicit_identity_links_resolve_repeatably_and_never_cross_accounts()
     {
@@ -65,7 +103,10 @@ public class SsoIdentityTests
         Assert.Equal(firstLogin, repeatedFirstLogin);
         Assert.Equal(second.AccountId, secondLogin.AccountId);
         Assert.NotEqual(firstLogin.AccountId, secondLogin.AccountId);
-        Assert.Equal("JP", firstLogin.CountryCode);
+        Assert.Equal("GB", firstLogin.CountryCode);
+        var passwordLogin = Assert.IsType<LoggedIn>(await restartedView.LoginAsync(
+            Attempt("first"), CancellationToken.None));
+        Assert.Equal("GB", passwordLogin.CountryCode);
         Assert.IsType<LoginRefused>(await restartedView.LoginSsoAsync(
             new VerifiedSsoIdentity(Issuer, "CHARACTER:EVE:10003"), CancellationToken.None));
     }

@@ -46,8 +46,10 @@ public sealed class CalendarBatchWriteTests
             Assert.Collection(groupResponses,
                 row => Assert.Equal(new CalendarResponse(groupEventId, CreatorId, CalendarResponseStates.Accepted), row));
 
-            Assert.True(await store.SendResponseAsync(
-                personalEventId, CreatorId, inviteeId, CalendarResponseStates.Accepted));
+            var responseUpdate = await store.SendResponseAsync(
+                personalEventId, CreatorId, inviteeId, CalendarResponseStates.Accepted);
+            Assert.True(responseUpdate.Updated);
+            Assert.Equal(personalEventId, responseUpdate.Event?.EventId);
             var update = await store.UpdateParticipantsAsync(
                 personalEventId, CreatorId,
                 [inviteeId, addedId, addedId, CreatorId, 0, -1],

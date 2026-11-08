@@ -27,6 +27,10 @@ internal sealed class ContainerSite(SiteContainerHacks hacks) : IHackingSite
         return target;
     }
 
+    public ValueTask<string?> AnalyzerStartRefusalAsync(
+        ClientSession session, HackableTarget target, double maxRange, CancellationToken cancellationToken) =>
+        ValueTask.FromResult<string?>(null);
+
     public ValueTask<bool> InReachAsync(ClientSession session, long targetId, double maxRange, CancellationToken cancellationToken) => ValueTask.FromResult(true);
 
     public ValueTask<bool> TryReserveAsync(ClientSession session, HackableTarget target, Guid reservationId, CancellationToken cancellationToken) =>
@@ -264,7 +268,7 @@ public sealed class ContainerSiteEndToEndTests
         var wonIndex = Array.IndexOf(eventIds, HackingWire.EventGameWon);
         Assert.True(contentsIndex >= 0 && contentsIndex < wonIndex);
 
-        var contentsData = Assert.IsType<PyDict>(Assert.IsType<PyObject>(Field(eventObjects[contentsIndex], "eventData")).Args);
+        var contentsData = Assert.IsType<PyDict>(Field(eventObjects[contentsIndex], "eventData"));
         Assert.Equal(Py.Tuple(new PyInt(0), new PyInt(3)), Field(contentsData, "coord"));
         var wireContents = Assert.IsType<PyList>(Field(contentsData, "contentsList")).Items
             .Select(value => Assert.IsType<PyTuple>(value).Items)
@@ -277,6 +281,92 @@ public sealed class ContainerSiteEndToEndTests
             .OrderBy(item => item.TypeId)
             .ToArray();
         Assert.Equal(storedContents, wireContents);
+    }
+
+    [PgFact]
+    public async Task Hacking_turn_records_are_mappings_for_the_clients_kwargs_expansion()
+    {
+        await using var rig = await SiteContainerRig.CreateAsync();
+        const long containerId = 7_000_000_000_000_905L;
+        await rig.InsertAsync(new SiteContainerRecord(containerId, 5_300_000_000_905,
+            SiteContainerRig.SolarSystemId, "containment_facility", false, 17, Data,
+            [1_000, 2_000, 3_000], 50, 1, 0, "secure", rig.Now + 86_400_000));
+
+        var board = HackingBoard.Blank();
+        board.Tiles[new Coord(1, 4)].Type = HackingWire.TypeUtilityElementTile;
+        board.Tiles[new Coord(1, 4)].Subtype = HackingWire.SubtypeUeSelfRepair;
+        var cache = board.Tiles[new Coord(0, 3)];
+        cache.Type = HackingWire.TypeDataCache;
+        cache.Contents = (HackingWire.TypeDefenseSoftware, HackingWire.SubtypeDsFirewall);
+        var firewall = board.Tiles[new Coord(0, 5)];
+        firewall.Type = HackingWire.TypeDefenseSoftware;
+        firewall.Subtype = HackingWire.SubtypeDsFirewall;
+        firewall.Coherence = 60;
+        firewall.Strength = 10;
+
+        var session = new ClientSession(new Sink()) { CharacterId = Character };
+        var service = new HackingMgrService(new HackingAttempts(), new ContainerSite(rig.Hacks()),
+            attempt => new HackingGame(attempt, board));
+        var analyzer = new AnalyzerValues(22329, CanHackData: true, CanHackRelic: false, MaxRange: 54_000,
+            VirusCoherence: 40, VirusStrength: 20, VirusSlots: 3, AccessDifficultyBonus: 0);
+        Assert.Null(await service.AnalyzerRefusalAsync(session, Character, containerId, analyzer, CancellationToken.None));
+        await service.OpenAnalyzerAttemptAsync(session, Character, containerId, analyzer, CancellationToken.None);
+
+        var start = Assert.IsType<PyTuple>(Assert.Single(Events.Of(session)).Args[0]);
+        Assert.All(start.Items, item => Assert.IsType<PyObject>(item));
+        Assert.All(start.Items, AssertEventDataIsMapping);
+        var tile = start.Items.First(item => Number(Field(item, "eventID")) == HackingWire.EventTileCreated);
+        Assert.IsType<PyTuple>(Field(Assert.IsType<PyDict>(Field(tile, "eventData")), "coord"));
+        var virus = Assert.Single(start.Items, item => Number(Field(item, "eventID")) == HackingWire.EventVirusCreated);
+        var inventory = Assert.IsType<PyList>(Field(Field(virus, "eventData"), "inventory"));
+        Assert.All(inventory.Items, item => Assert.IsType<PyDict>(item));
+
+        foreach (var coord in new[] { new Coord(1, 4), new Coord(0, 3), new Coord(0, 5) })
+        {
+            await service.CallAsync(new ServiceCall
+            {
+                Session = session,
+                Method = "ClickedOnTile",
+                Args = [Py.Tuple(new PyInt(coord.X), new PyInt(coord.Y))],
+                CallId = new PyInt(1),
+            });
+            var turn = Assert.IsType<PyTuple>(Assert.Single(Events.Of(session)).Args[0]);
+            Assert.All(turn.Items, AssertEventDataIsMapping);
+        }
+
+        // Pick-up and attack records contain nested mappings that the UI also expands or reads by field.
+        var restart = new ClientSession(new Sink()) { CharacterId = Character + 1 };
+        var utilityBoard = HackingBoard.Blank();
+        utilityBoard.Tiles[new Coord(1, 4)].Type = HackingWire.TypeUtilityElementTile;
+        utilityBoard.Tiles[new Coord(1, 4)].Subtype = HackingWire.SubtypeUeSelfRepair;
+        utilityBoard.Tiles[new Coord(0, 3)].Type = HackingWire.TypeDefenseSoftware;
+        utilityBoard.Tiles[new Coord(0, 3)].Coherence = 60;
+        utilityBoard.Tiles[new Coord(0, 3)].Strength = 10;
+        var secondService = new HackingMgrService(new HackingAttempts(), new ContainerSite(rig.Hacks()),
+            attempt => new HackingGame(attempt, utilityBoard));
+        const long secondContainerId = 7_000_000_000_000_906L;
+        await rig.InsertAsync(new SiteContainerRecord(secondContainerId, 5_300_000_000_906,
+            SiteContainerRig.SolarSystemId, "containment_facility", false, 17, Data,
+            [1_000, 2_000, 3_000], 50, 1, 0, "secure", rig.Now + 86_400_000));
+        Assert.Null(await secondService.AnalyzerRefusalAsync(restart, restart.CharacterId!.Value,
+            secondContainerId, analyzer, CancellationToken.None));
+        await secondService.OpenAnalyzerAttemptAsync(restart, restart.CharacterId!.Value,
+            secondContainerId, analyzer, CancellationToken.None);
+        Events.Of(restart);
+        await secondService.CallAsync(new ServiceCall
+        {
+            Session = restart,
+            Method = "ClickedOnTile",
+            Args = [Py.Tuple(new PyInt(1), new PyInt(4))],
+            CallId = new PyInt(2),
+        });
+        var pickedUp = Assert.IsType<PyTuple>(Assert.Single(Events.Of(restart)).Args[0]);
+        Assert.All(pickedUp.Items, AssertEventDataIsMapping);
+        var pickupData = Field(Assert.Single(pickedUp.Items,
+            item => Number(Field(item, "eventID")) == HackingWire.EventUePickedUp), "eventData");
+        Assert.IsType<PyDict>(Field(pickupData, "replacementObject"));
+        var updatedInventory = Assert.IsType<PyList>(Field(pickupData, "inventory"));
+        Assert.All(updatedInventory.Items, item => Assert.IsType<PyDict>(item));
     }
 
     [PgFact]
@@ -346,6 +436,34 @@ public sealed class ContainerSiteEndToEndTests
         PyLong l => l.Value,
         _ => throw new InvalidOperationException(value.ToString()),
     };
+
+    private static void AssertEventDataIsMapping(PyValue eventValue)
+    {
+        var data = Assert.IsType<PyDict>(Field(eventValue, "eventData"));
+        AssertNoKeyVal(data);
+    }
+
+    private static void AssertNoKeyVal(PyValue value)
+    {
+        switch (value)
+        {
+            case PyObject:
+                Assert.Fail("nested hacking event data must be a mapping, not util.KeyVal");
+                break;
+            case PyDict dict:
+                foreach (var entry in dict.Entries)
+                    AssertNoKeyVal(entry.Value);
+                break;
+            case PyList list:
+                foreach (var item in list.Items)
+                    AssertNoKeyVal(item);
+                break;
+            case PyTuple tuple:
+                foreach (var item in tuple.Items)
+                    AssertNoKeyVal(item);
+                break;
+        }
+    }
 
     private static async Task DrainAsync(EventBus bus)
     {

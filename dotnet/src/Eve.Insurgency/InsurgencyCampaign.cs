@@ -23,7 +23,12 @@ public sealed record Campaign(
 /// <summary>A state change: the states before and after, and the moment it happened (the campaign's own deadline, not the time it was noticed).</summary>
 public sealed record CampaignTransition(int From, int To, long AtMs);
 
-public sealed record MachineStep(Campaign Campaign, IReadOnlyList<CampaignTransition> Transitions, bool Accepted = false);
+/// <summary>The final campaign and the campaign snapshot after each transition, in the same order as <see cref="Transitions"/>.</summary>
+public sealed record MachineStep(
+    Campaign Campaign,
+    IReadOnlyList<CampaignTransition> Transitions,
+    bool Accepted = false,
+    IReadOnlyList<Campaign>? TransitionSnapshots = null);
 
 /// <summary>The campaign state machine: pure functions over <see cref="Campaign"/>; the service stores the result and publishes the transitions.</summary>
 public static class CampaignMachine
@@ -42,6 +47,7 @@ public static class CampaignMachine
     public static MachineStep Advance(Campaign campaign, long nowMs)
     {
         var transitions = new List<CampaignTransition>();
+        var snapshots = new List<Campaign>();
         var c = campaign;
         while (true)
         {
@@ -52,6 +58,7 @@ public static class CampaignMachine
                     var at = c.StateExpiresMs;
                     c = c with { State = CampaignStates.Active, StateExpiresMs = c.MaxEndsMs };
                     transitions.Add(new CampaignTransition(CampaignStates.Forecasting, CampaignStates.Active, at));
+                    snapshots.Add(c);
                     continue;
                 }
                 case CampaignStates.Active when nowMs >= c.MaxEndsMs:
@@ -59,17 +66,20 @@ public static class CampaignMachine
                     var at = c.MaxEndsMs;
                     c = c with { State = CampaignStates.NoWinner, EndedMs = at, StateExpiresMs = at + InsurgencyRules.WindDownMs };
                     transitions.Add(new CampaignTransition(CampaignStates.Active, CampaignStates.NoWinner, at));
+                    snapshots.Add(c);
                     continue;
                 }
                 case CampaignStates.PirateWin or CampaignStates.AntipirateWin or CampaignStates.NoWinner when nowMs >= c.StateExpiresMs:
                 {
                     var at = c.StateExpiresMs;
-                    transitions.Add(new CampaignTransition(c.State, CampaignStates.Terminal, at));
+                    var from = c.State;
                     c = c with { State = CampaignStates.Terminal, StateExpiresMs = 0 };
+                    transitions.Add(new CampaignTransition(from, CampaignStates.Terminal, at));
+                    snapshots.Add(c);
                     continue;
                 }
                 default:
-                    return new MachineStep(c, transitions);
+                    return new MachineStep(c, transitions, TransitionSnapshots: snapshots);
             }
         }
     }
@@ -97,6 +107,6 @@ public static class CampaignMachine
     private static MachineStep Won(Campaign c, int winState, long nowMs)
     {
         var won = c with { State = winState, EndedMs = nowMs, StateExpiresMs = nowMs + InsurgencyRules.WindDownMs };
-        return new MachineStep(won, [new CampaignTransition(CampaignStates.Active, winState, nowMs)], true);
+        return new MachineStep(won, [new CampaignTransition(CampaignStates.Active, winState, nowMs)], true, [won]);
     }
 }

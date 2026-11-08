@@ -189,9 +189,9 @@ public class CalendarMgrServiceTests
         Assert.IsType<PyNone>(await manager.CallAsync(Request(
             "DeleteEvent", Session(), new PyLong(created.Value), new PyLong(CharacterId))));
         Assert.True(store.Events.Single().IsDeleted);
-        Assert.Equal(CalendarResponseStates.Deleted, ResponseStatus(store, created.Value, CharacterId));
+        Assert.Equal(CalendarResponseStates.Accepted, ResponseStatus(store, created.Value, CharacterId));
         Assert.Equal(CalendarResponseStates.Uninvited, ResponseStatus(store, created.Value, OtherCharacterId));
-        Assert.Equal(CalendarResponseStates.Deleted, ResponseStatus(store, created.Value, nextAttendee));
+        Assert.Equal(CalendarResponseStates.Accepted, ResponseStatus(store, created.Value, nextAttendee));
     }
 
     [Fact]
@@ -493,9 +493,6 @@ public class CalendarMgrServiceTests
             var index = Events.FindIndex(row => row.EventId == eventId && row.OwnerId == ownerId && !row.IsDeleted);
             if (index < 0) return Task.FromResult(false);
             Events[index] = Events[index] with { IsDeleted = true, DateModified = dateModified };
-            for (var i = 0; i < Responses.Count; i++)
-                if (Responses[i].EventId == eventId && Responses[i].Status != CalendarResponseStates.Uninvited)
-                    Responses[i] = Responses[i] with { Status = CalendarResponseStates.Deleted };
             return Task.FromResult(true);
         }
 
@@ -521,13 +518,14 @@ public class CalendarMgrServiceTests
             return new(CalendarParticipantUpdateResult.Updated, calendarEvent, newlyAdded, actuallyRemoved);
         }
 
-        public Task<bool> SendResponseAsync(
+        public Task<CalendarResponseUpdate> SendResponseAsync(
             long eventId, long ownerId, long characterId, short response, CancellationToken cancellationToken = default)
         {
-            if (!Events.Any(row => row.EventId == eventId && row.OwnerId == ownerId && !row.IsDeleted))
-                return Task.FromResult(false);
+            var calendarEvent = Events.SingleOrDefault(row => row.EventId == eventId && row.OwnerId == ownerId && !row.IsDeleted);
+            if (calendarEvent is null)
+                return Task.FromResult(new CalendarResponseUpdate(false, null));
             Upsert(eventId, characterId, response);
-            return Task.FromResult(true);
+            return Task.FromResult(new CalendarResponseUpdate(true, calendarEvent));
         }
 
         private void Upsert(long eventId, long characterId, short status)

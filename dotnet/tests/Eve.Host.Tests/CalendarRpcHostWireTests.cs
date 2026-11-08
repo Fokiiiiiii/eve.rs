@@ -205,13 +205,13 @@ public partial class HostServerTests
             new PyLong(editedTime), new PyInt(30), new PyStr("Deleted event"), new PyStr(""), new PyInt(0));
 
         var responsesAfterDelete = await store.GetResponsesToEventAsync(eventId, ownerId);
-        Assert.Equal(CalendarResponseStates.Deleted,
+        Assert.Equal(CalendarResponseStates.Accepted,
             responsesAfterDelete.Single(row => row.CharacterId == ownerId).Status);
-        Assert.Equal(CalendarResponseStates.Deleted,
+        Assert.Equal(CalendarResponseStates.Undecided,
             responsesAfterDelete.Single(row => row.CharacterId == inviteeId).Status);
         Assert.Equal(CalendarResponseStates.Uninvited,
             responsesAfterDelete.Single(row => row.CharacterId == removedInviteeId).Status);
-        Assert.Equal(CalendarResponseStates.Deleted,
+        Assert.Equal(CalendarResponseStates.Undecided,
             responsesAfterDelete.Single(row => row.CharacterId == addedInviteeId).Status);
 
         var inviteeDeletedEvents = Assert.IsType<PyTuple>(await HostRpcAsync(
@@ -615,16 +615,16 @@ public partial class HostServerTests
             return new(CalendarParticipantUpdateResult.Updated, value, newlyAdded, actuallyRemoved);
         }
 
-        public Task<bool> SendResponseAsync(
+        public Task<CalendarResponseUpdate> SendResponseAsync(
             long eventId, long ownerId, long characterId, short response,
             CancellationToken cancellationToken = default)
         {
             if (!_events.TryGetValue(eventId, out var value) || value.OwnerId != ownerId ||
                 !_responses.TryGetValue((eventId, characterId), out var existing) ||
                 existing.Status == CalendarResponseStates.Uninvited)
-                return Task.FromResult(false);
+                return Task.FromResult(new CalendarResponseUpdate(false, null));
             _responses[(eventId, characterId)] = existing with { Status = response };
-            return Task.FromResult(true);
+            return Task.FromResult(new CalendarResponseUpdate(true, value));
         }
     }
 }

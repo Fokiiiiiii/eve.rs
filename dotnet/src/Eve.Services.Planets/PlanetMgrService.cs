@@ -133,16 +133,43 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         var planetId = PlanetOf(call);
         var owner = Integral(call.Arg(1)) ?? 0;
         var colony = owner == 0 ? null : await SnapshotAsync(owner, planetId, call.Cancellation);
-        return colony is null ? PyNone.Instance : Py.KeyVal([.. colony.Value.Fields]);
+        if (colony is null) return Py.Tuple(new PyList([]), new PyList([]));
+        var pins = PinRows(colony.Value.Colony, null);
+        var links = colony.Value.Colony.Links.Values.OrderBy(l => l.End1).ThenBy(l => l.End2)
+            .Select(l => (PyValue)new PyList([new PyLong(l.End1), new PyLong(l.End2)]));
+        return Py.Tuple(new PyList([.. pins]), new PyList([.. links]));
     }
 
     /// <summary>GetCommandPinsForPlanet(planetID): the command centers on the planet (planetSvc.py:116).</summary>
     [Method("GetCommandPinsForPlanet")]
-    public async ValueTask<PyValue> GetCommandPinsForPlanet(ServiceCall call) => await PinsOfKindAsync(call, PinKind.CommandCenter);
+    public async ValueTask<PyValue> GetCommandPinsForPlanet(ServiceCall call)
+    {
+        var planetId = PlanetOf(call);
+        var entries = new List<KeyValuePair<PyValue, PyValue>>();
+        foreach (var document in await store.ColoniesOnAsync(planetId, call.Cancellation))
+        {
+            var colony = document.ToColony(catalog, field);
+            colony.RunTo(Ticks());
+            if (colony.CommandCenter is { } pin)
+                entries.Add(new(new PyLong(document.OwnerId), PinSummary(pin)));
+        }
+        return new PyDict(entries);
+    }
 
     /// <summary>GetExtractorsForPlanet(planetID): the extraction control units on the planet (planetSvc.py:126).</summary>
     [Method("GetExtractorsForPlanet")]
-    public async ValueTask<PyValue> GetExtractorsForPlanet(ServiceCall call) => await PinsOfKindAsync(call, PinKind.Ecu);
+    public async ValueTask<PyValue> GetExtractorsForPlanet(ServiceCall call)
+    {
+        var planetId = PlanetOf(call);
+        var rows = new List<PyValue>();
+        foreach (var document in await store.ColoniesOnAsync(planetId, call.Cancellation))
+        {
+            var colony = document.ToColony(catalog, field);
+            colony.RunTo(Ticks());
+            rows.AddRange(colony.Pins.Values.Where(pin => pin.Kind == PinKind.Ecu).OrderBy(pin => pin.Id).Select(PinSummary));
+        }
+        return new PyList(rows);
+    }
 
     /// <summary>GetProgramResultInfo(pinID, typeID, heads, headRadius): what a program would distribute (clientPlanet.InstallProgram).</summary>
     [Method("GetProgramResultInfo")]
@@ -394,12 +421,13 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         var context = new ChangeContext(connection, transaction, owner, planetId);
+        await LockOwnerColoniesAsync(connection, transaction, owner, cancellationToken);
         var doc = await store.LockAsync(connection, transaction, owner, planetId, cancellationToken);
         var colony = doc?.ToColony(catalog, field) ?? await NewColonyAsync(owner, planetId, now, cancellationToken);
         colony.RunTo(now);
         var before = colony.Pins.Keys.ToHashSet();
         var commands = await build(colony, context);
-        var ctx = new ColonyContext(await OtherColoniesAsync(owner, planetId, cancellationToken),
+        var ctx = new ColonyContext(await store.OtherColoniesAsync(connection, transaction, owner, planetId, cancellationToken),
             await SkillLevelAsync(connection, transaction, owner, TypeInterplanetaryConsolidation, cancellationToken),
             await SkillLevelAsync(connection, transaction, owner, TypeCommandCenterUpgrade, cancellationToken), long.MaxValue);
         var outcome = colony.ApplyCommands(commands, ctx);
@@ -419,8 +447,16 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         var office = !outcome.Abandoned && colony.Pins.Count > 0;
         if (office) await EnsureOfficeAsync(connection, transaction, planetId, body.SolarSystemId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        if (office) PlaceOffice(planetId, body);
-        if (before.Count > 0 || colony.Pins.Count > 0) await notify(owner, new PyInt(planetId));
+        if (office)
+        {
+            try { PlaceOffice(planetId, body); }
+            catch (Exception error) { Console.Error.WriteLine($"eve-host: customs office placement failed after planet {planetId} committed: {error.Message}"); }
+        }
+        if (before.Count > 0 || colony.Pins.Count > 0)
+        {
+            try { await notify(owner, new PyInt(planetId)); }
+            catch (Exception error) { Console.Error.WriteLine($"eve-host: planet {planetId} notification failed after colony commit: {error.Message}"); }
+        }
         return new ChangeResult(owner, planetId, snapshot);
     }
 
@@ -431,8 +467,16 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         return new Colony(catalog, field, planetId, body.TypeId, body.Radius, owner) { CurrentSimTime = now };
     }
 
-    private async Task<int> OtherColoniesAsync(long owner, long planetId, CancellationToken cancellationToken) =>
-        (await store.ColoniesOfAsync(owner, cancellationToken)).Count(c => c.PlanetId != planetId);
+    private static async Task LockOwnerColoniesAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+        long owner, CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(
+            "SELECT pg_advisory_xact_lock(hashtextextended('eve.pi.owner:' || $1::text, 0))", connection, transaction)
+        {
+            Parameters = { new() { Value = owner } },
+        };
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
 
     private async Task<int> SkillLevelAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long owner, int typeId, CancellationToken cancellationToken) =>
         await skills.LevelAsync(connection, transaction, owner, typeId, cancellationToken);
@@ -527,15 +571,6 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         }
     }
 
-    private async ValueTask<PyValue> PinsOfKindAsync(ServiceCall call, PinKind kind)
-    {
-        var planetId = PlanetOf(call);
-        var owner = call.Session.CharacterId ?? 0;
-        var colony = owner == 0 ? null : await SnapshotAsync(owner, planetId, call.Cancellation);
-        var rows = colony is null ? new List<PyValue>() : PinRows(colony.Value.Colony, kind);
-        return new PyList([.. rows]);
-    }
-
     /// <summary>The colony as the client reads it (clientPlanet._PrimeColony), run to now, not saved.</summary>
     private async Task<(Colony Colony, List<(string, PyValue)> Fields)?> SnapshotAsync(long owner, long planetId, CancellationToken cancellationToken)
     {
@@ -566,6 +601,7 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
     {
         var fields = new List<(string, PyValue)>
         {
+            ("pinID", new PyLong(p.Id)),
             ("id", new PyLong(p.Id)),
             ("typeID", new PyInt(p.TypeId)),
             ("ownerID", new PyInt(p.OwnerId)),
@@ -598,6 +634,15 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         }
         return Py.KeyVal([.. fields]);
     }
+
+    /// <summary>The compact pin summary used by planetSvc's other-owner views.</summary>
+    private static PyValue PinSummary(Pin pin) => Py.KeyVal(
+        ("pinID", new PyLong(pin.Id)),
+        ("id", new PyLong(pin.Id)),
+        ("typeID", new PyInt(pin.TypeId)),
+        ("ownerID", new PyLong(pin.OwnerId)),
+        ("latitude", new PyReal(pin.Latitude)),
+        ("longitude", new PyReal(pin.Longitude)));
 
     private async Task<PlanetBody> BodyAsync(long planetId, CancellationToken cancellationToken)
     {

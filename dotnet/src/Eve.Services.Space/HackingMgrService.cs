@@ -442,13 +442,13 @@ public sealed class HackingMgrService : IService
             session.SendNotification("OnHackingTurnComplete", "clientID", new PyTuple(events.Select(e => ToPy(e)).ToArray()));
     }
 
-    /// <summary>A util.KeyVal per event and per record, as the client reads them (<c>event['eventID']</c>, <c>TileData(**eventData)</c>).</summary>
+    /// <summary>The outer event is a util.KeyVal; the client expands event data and its records with Python <c>**kwargs</c>.</summary>
     public static PyValue ToPy(HackingEvent e) => Py.KeyVal(
         ("eventID", new PyInt(e.EventId)),
         ("eventData", ToPy(e.Data)));
 
     private static PyValue ToPy(IReadOnlyDictionary<string, object?> data) =>
-        Py.KeyVal(data.Select(kv => (kv.Key, ToPy(kv.Value))).ToArray());
+        new PyDict(data.Select(kv => new KeyValuePair<PyValue, PyValue>(new PyStr(kv.Key), ToPy(kv.Value))).ToArray());
 
     private static PyValue ToPy(object? value) => value switch
     {

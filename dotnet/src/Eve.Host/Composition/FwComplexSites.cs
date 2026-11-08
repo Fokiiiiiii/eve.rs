@@ -19,7 +19,7 @@ internal sealed class FwComplexSites(
     ContentRuntime content,
     Func<int, IReadOnlyList<ClientSession>> sessionsInSystem,
     Func<ClientSession, CancellationToken, Task<WarpCoordinates?>> positionOf,
-    Func<long, CancellationToken, Task<long>> warFactionOfCharacter,
+    Func<long, CancellationToken, Task<FwComplexPilot>> pilotOfCharacter,
     Func<long, CancellationToken, Task<IReadOnlyList<long>>> openInstancesIn) : IFwComplexSites
 {
     /// <summary>The site templates of each complex size: the dungeons of its archetype that can start (ids in order).</summary>
@@ -120,7 +120,7 @@ internal sealed class FwComplexSites(
             var (dx, dy, dz) = (where.X - at[0], where.Y - at[1], where.Z - at[2]);
             if (Math.Sqrt(dx * dx + dy * dy + dz * dz) > radius)
                 continue;
-            pilots.Add(new FwComplexPilot(characterId, await warFactionOfCharacter(characterId, cancellationToken)));
+            pilots.Add(await pilotOfCharacter(characterId, cancellationToken));
         }
         return pilots;
     }

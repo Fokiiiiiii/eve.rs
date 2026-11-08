@@ -24,10 +24,8 @@ public sealed class HostInputHardeningTests
         Assert.Contains("UnMachoDestination", wire);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Positional_arguments_accept_tuple_or_list_and_ignore_macho_version(bool listArguments)
+    [Fact]
+    public async Task Positional_arguments_accept_a_tuple_and_ignore_macho_version()
     {
         var service = new ArgumentCaptureService();
         var registry = new ServiceRegistry();
@@ -35,15 +33,44 @@ public sealed class HostInputHardeningTests
         var sink = new PacketCapture();
         var session = new ClientSession(sink);
         var args = new PyValue[] { new PyInt(7), new PyStr("valid") };
-        PyValue positional = listArguments ? new PyList(args) : new PyTuple(args);
         var kwargs = new PyDict([new(new PyStr("machoVersion"), new PyInt(1))]);
 
         Assert.True(await new PacketDispatcher(registry).DispatchAsync(
-            CallPacket("argumentCapture", positional, kwargs), session));
+            CallPacket("argumentCapture", new PyTuple(args), kwargs), session));
 
         Assert.Equal(args, service.Arguments);
         Assert.Equal(PyNone.Instance, service.Kwargs);
         Assert.Equal(MachoMessage.CallRsp, Assert.IsType<MachoPacket>(MachoPacket.Decode(Assert.Single(sink.Packets))).Type);
+    }
+
+    [Fact]
+    public async Task A_list_cannot_replace_the_positional_tuple_but_can_be_nested_in_it()
+    {
+        var service = new ArgumentCaptureService();
+        var registry = new ServiceRegistry();
+        registry.Register(service);
+        var sink = new PacketCapture();
+        var session = new ClientSession(sink);
+        var args = new PyValue[] { new PyInt(7), new PyStr("valid") };
+        var kwargs = new PyDict([new(new PyStr("machoVersion"), new PyInt(1))]);
+
+        Assert.True(await new PacketDispatcher(registry).DispatchAsync(
+            CallPacket("argumentCapture", new PyList(args), kwargs), session));
+
+        var rejected = Assert.IsType<MachoPacket>(MachoPacket.Decode(Assert.Single(sink.Packets)));
+        Assert.Equal(MachoMessage.ErrorResponse, rejected.Type);
+        Assert.Empty(service.Arguments);
+        Assert.Equal(PyNone.Instance, service.Kwargs);
+
+        sink.Packets.Clear();
+        var nested = new PyList(args);
+        Assert.True(await new PacketDispatcher(registry).DispatchAsync(
+            CallPacket("argumentCapture", new PyTuple([nested]), kwargs), session));
+
+        var accepted = Assert.IsType<MachoPacket>(MachoPacket.Decode(Assert.Single(sink.Packets)));
+        Assert.Equal(MachoMessage.CallRsp, accepted.Type);
+        Assert.Equal([nested], service.Arguments);
+        Assert.Equal(PyNone.Instance, service.Kwargs);
     }
 
     private static PyValue CallPacket(string serviceName, PyValue args, PyValue kwargs, PyValue? requestPayload = null)

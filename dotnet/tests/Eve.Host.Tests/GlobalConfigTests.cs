@@ -58,18 +58,29 @@ public class GlobalConfigStoreTests
     }
 
     [Fact]
-    public async Task A_delete_or_a_none_value_removes_the_key_and_the_removal_survives_a_restart()
+    public async Task An_explicit_delete_removes_the_key_and_the_removal_survives_a_restart()
     {
         var persistence = new InMemoryGlobalConfigPersistence();
         var store = await GlobalConfigStore.OpenAsync(Base, persistence);
 
         Assert.Null(await store.ApplyAsync("defaultPortraitSaveSize", new PyInt(0), isDelete: true));
-        Assert.Null(await store.ApplyAsync("HyperNetKillSwitch", PyNone.Instance, isDelete: false));
-        Assert.Equal(["imageserverurl"], Keys(store.Current()));
+        Assert.Equal(["imageserverurl", "HyperNetKillSwitch"], Keys(store.Current()));
 
-        // The reopened store does not bring the base entries back over the saved removals.
+        // The reopened store does not bring the deleted base entry back.
         var reopened = await GlobalConfigStore.OpenAsync(Base, persistence);
-        Assert.Equal(["imageserverurl"], Keys(reopened.Current()));
+        Assert.Equal(["imageserverurl", "HyperNetKillSwitch"], Keys(reopened.Current()));
+    }
+
+    [Fact]
+    public async Task None_without_is_delete_is_saved_as_a_value_and_survives_a_restart()
+    {
+        var persistence = new InMemoryGlobalConfigPersistence();
+        var store = await GlobalConfigStore.OpenAsync(Base, persistence);
+
+        Assert.Equal(PyNone.Instance, await store.ApplyAsync("nullable_setting", PyNone.Instance, isDelete: false));
+
+        var restarted = Map((await GlobalConfigStore.OpenAsync(Base, persistence)).Current());
+        Assert.Equal(PyNone.Instance, restarted["nullable_setting"]);
     }
 
     [Fact]
@@ -279,6 +290,59 @@ public class GlobalConfigWireTests : IAsyncLifetime
         Assert.Equal(2, removal.Count);
         Assert.False(ConfigOf(afterRemoval!).ContainsKey("new_mission_giver_enabled"));
     }
+
+    [Fact]
+    public async Task A_honeycomb_write_key_is_rejected_and_never_reaches_a_later_handshake()
+    {
+        var (front, initial) = await ConnectAsync();
+        const string honeycombKey = "monolith_honeycomb_public_write_key";
+        Assert.False(initial.ContainsKey(honeycombKey));
+        var admin = Open(3, 44, AdminRole);
+        await front.SendAsync(admin);
+        Assert.IsType<Send>(await front.ReceiveAsync());
+
+        await front.SendAsync(new Packet(admin.SessionId, MarshalCodec.Encode(
+            Packets.Call(admin, 1, "machoNet", "SetGlobalConfigValue", new PyStr(honeycombKey), new PyStr("sensitive")))));
+        var refused = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Contains("ProtectedGlobalConfigKey", Ascii(refused.Payload));
+
+        var (_, later) = await ConnectAsync();
+        Assert.False(later.ContainsKey(honeycombKey));
+    }
+
+    [Fact]
+    public async Task A_none_value_without_delete_is_stored_and_reaches_the_front_config()
+    {
+        var (front, _) = await ConnectAsync();
+        var admin = Open(4, 45, AdminRole);
+        await front.SendAsync(admin);
+        Assert.IsType<Send>(await front.ReceiveAsync());
+        const string key = "nullable_setting";
+
+        await front.SendAsync(new Packet(admin.SessionId, MarshalCodec.Encode(
+            Packets.Call(admin, 1, "machoNet", "SetGlobalConfigValue", new PyStr(key), PyNone.Instance, new PyInt(0)))));
+
+        ClusterConfig? updated = null;
+        var notifications = 0;
+        for (var i = 0; i < 3; i++)
+        {
+            switch (await front.ReceiveAsync())
+            {
+                case ClusterConfig config:
+                    updated = config;
+                    break;
+                case Send send when Ascii(send.Payload).Contains("OnGlobalConfigUpdated", StringComparison.Ordinal):
+                    notifications++;
+                    break;
+                case Send send:
+                    Assert.Equal(MachoMessage.CallRsp, Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(send.Payload))).Type);
+                    break;
+            }
+        }
+
+        Assert.Equal(1, notifications);
+        Assert.Equal(PyNone.Instance, ConfigOf(updated!)[key]);
+    }
 }
 
 /// <summary>The overrides in PostgreSQL: their own schema, migrated once, and read back by a new store after a restart.</summary>
@@ -301,12 +365,16 @@ public class GlobalConfigPersistenceTests
             var store = await GlobalConfigStore.OpenAsync(Base, new PgGlobalConfigPersistence(source, schema));
             await store.ApplyAsync("imageserverurl", new PyStr("http://cdn/"), isDelete: false);
             await store.ApplyAsync("flag", new PyInt(1), isDelete: false);
-            await store.ApplyAsync("HyperNetKillSwitch", PyNone.Instance, isDelete: false);
+            await store.ApplyAsync("nullable_setting", PyNone.Instance, isDelete: false);
+            await store.ApplyAsync("deleted_setting", new PyInt(5), isDelete: true);
+            await store.ApplyAsync("monolith_honeycomb_public_write_key", new PyStr("stale-secret"), isDelete: false);
 
             var restarted = Map((await GlobalConfigStore.OpenAsync(Base, new PgGlobalConfigPersistence(source, schema))).Current());
             Assert.Equal("http://cdn/", JsSemantics.StringValue(restarted["imageserverurl"]));
             Assert.Equal(new PyInt(1), restarted["flag"]);
-            Assert.False(restarted.ContainsKey("HyperNetKillSwitch"));
+            Assert.Equal(PyNone.Instance, restarted["nullable_setting"]);
+            Assert.False(restarted.ContainsKey("deleted_setting"));
+            Assert.False(restarted.ContainsKey("monolith_honeycomb_public_write_key"));
         }
         finally
         {

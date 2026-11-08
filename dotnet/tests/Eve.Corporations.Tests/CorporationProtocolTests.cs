@@ -1697,8 +1697,19 @@ private static PyValue RowField(PyValue value,string key)
 
             var compositionPayload = CachedPayload(await service.GetStandingCompositions(
                 Call(characterSession, "GetStandingCompositions", new PyInt(500001), new PyInt(corporation.Id))));
-            Assert.Equal(new PyStr("carbon.common.script.sys.crowset.CRowset"), Assert.IsType<PyObject>(compositionPayload).Name);
-            Assert.Equal(2, Lines(compositionPayload).Count);
+            var compositionRowset = Assert.IsType<PyObjectEx>(compositionPayload);
+            Assert.Equal(ObjectExKind.Ex2, compositionRowset.Kind);
+            Assert.Equal(2, compositionRowset.List.Count);
+            Assert.Empty(compositionRowset.Dict);
+            var compositionRows = compositionRowset.List.Select(row => Assert.IsType<PyPackedRow>(row)).ToArray();
+            Assert.Equal([("standing", 5L), ("ownerID", 3L)], compositionRows[0].Descriptor.Columns
+                .Select(column => (column.Name, column.DbType)));
+            Assert.Equal([new PyReal(2.75), new PyInt(member)], compositionRows[0].Values);
+            Assert.Equal([new PyReal(1.25), new PyInt(founder)], compositionRows[1].Values);
+            var encodedCompositionRowset = Assert.IsType<PyObjectEx>(MarshalCodec.DecodeExact(
+                MarshalCodec.Encode(compositionRowset)));
+            Assert.Equal(2, encodedCompositionRowset.List.Count);
+            Assert.All(encodedCompositionRowset.List, row => Assert.IsType<PyPackedRow>(row));
         }
         finally
         {

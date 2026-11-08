@@ -53,10 +53,10 @@ public sealed class RowSet
     public PyValue ToCRowset()
     {
         var descriptor = Descriptor();
-        return new PyObject(new PyStr("carbon.common.script.sys.crowset.CRowset"), Py.Dict(
-            ("header", descriptor.Header),
-            ("RowClass", new PyToken("util.Row")),
-            ("lines", new PyList(ToPackedRows()))));
+        return new PyObjectEx(ObjectExKind.Ex2,
+            Py.Tuple(Py.Tuple(new PyToken("carbon.common.script.sys.crowset.CRowset")),
+                Py.Dict(("header", descriptor.Header))),
+            PackedRows(descriptor), []);
     }
 
     private Descriptor Descriptor() => Eve.Marshal.Descriptor.FromHeader(new PyObjectEx(ObjectExKind.Ex1,
@@ -66,8 +66,11 @@ public sealed class RowSet
     public IReadOnlyList<PyValue> ToPackedRows()
     {
         var descriptor = Descriptor();
-        return [.. Rows.Select(row => (PyValue)new PyPackedRow(descriptor, Values(row)))];
+        return PackedRows(descriptor);
     }
+
+    private IReadOnlyList<PyValue> PackedRows(Descriptor descriptor) =>
+        [.. Rows.Select(row => (PyValue)new PyPackedRow(descriptor, Values(row)))];
 
     /// <summary>A <c>CIndexedRowset</c>: packed rows by the value of the key column (the query's, or the first column).</summary>
     public PyValue ToIndexedRowset()

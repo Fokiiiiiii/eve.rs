@@ -27,7 +27,7 @@ public sealed record ModuleAttributesChanged(IReadOnlyList<AttributeChanged> Cha
 public sealed record FittingRefreshed(IReadOnlyList<Item> Modules) : AmmoEvent;
 
 /// <summary>What a load or an unload did to the character's ship: what the client is told.</summary>
-public sealed record AmmoChanged(long ShipId, IReadOnlyList<AmmoEvent> Events) : ShipOutcome;
+public sealed record AmmoChanged(long ShipId, IReadOnlyList<AmmoEvent> Events, bool ItemChangesAnnouncedExternally = false) : ShipOutcome;
 
 /// <summary>
 /// What the simulation says of a gun when the rounds in it are changed: whether the gun runs (then it keeps its rounds, and <paramref name="Before"/> and

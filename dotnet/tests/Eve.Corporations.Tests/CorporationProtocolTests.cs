@@ -494,7 +494,7 @@ private static PyValue RowField(PyValue value,string key)
         Assert.Equal("versionCheck", Eve.Macho.JsSemantics.StringValue(detail.Key));
         Assert.Equal("run", Eve.Macho.JsSemantics.StringValue(detail.Value));
         var rows = Assert.IsType<PyList>(Assert.IsType<PySubStream>(args[1]).Decoded);
-        Assert.Equal(26, rows.Items.Count);
+        Assert.Equal(27, rows.Items.Count);
         var version = Assert.IsType<PyList>(args[2]);
         Assert.InRange(Assert.IsType<PyLong>(version.Items[0]).Value,
             Py.FileTimeFromUnixMs(before), Py.FileTimeFromUnixMs(after));
@@ -511,6 +511,12 @@ private static PyValue RowField(PyValue value,string key)
             row => row is PyObject item && HasTransactionField(item, "entryTypeID", new PyInt(13))));
         AssertTransactionField(officeRent, "entryTypeNameID", PyNone.Instance);
         AssertTransactionField(officeRent, "entryJournalMessageID", PyNone.Instance);
+
+        var lpStorePayment = Assert.IsType<PyObject>(Assert.Single(rows.Items,
+            row => row is PyObject item && HasTransactionField(item, "entryTypeID", new PyInt(26))));
+        AssertTransactionField(lpStorePayment, "entryTypeName", new PyStr("PaymentToLPStore"));
+        AssertTransactionField(lpStorePayment, "entryTypeNameID", new PyInt(59818));
+        AssertTransactionField(lpStorePayment, "entryJournalMessageID", PyNone.Instance);
     }
 
     [PgFact]
@@ -949,7 +955,9 @@ private static PyValue RowField(PyValue value,string key)
                 "012_alliance_bill_lifecycle",
                 "013_item_locks",
                 "014_nullable_contact_label_colors",
-                "015_skill_based_member_limits"
+                "015_skill_based_member_limits",
+                "016_war_negotiations",
+                "017_peace_treaties"
             },applied);
 
             await using var read = await rig.Source.OpenConnectionAsync();
@@ -1550,6 +1558,7 @@ private static PyValue RowField(PyValue value,string key)
         await registry.UpdateMember(Call(founderSession,"UpdateMember",new PyInt(member),PyNone.Instance,PyNone.Instance,PyNone.Instance,
             new PyLong(CorporationRoles.JuniorAccountant)));
         Assert.Equal(CorporationRoles.JuniorAccountant,(await rig.Store.MemberAsync(member))!.Masks.Roles);
+        Assert.Equal(CorporationRoles.JuniorAccountant,memberSession.GetInt("rolesAtAll") ?? 0);
         Assert.DoesNotContain(founderSink.Packets,p => NotificationName(p) == "OnCorporationMemberChanged");
         Assert.DoesNotContain(memberSink.Packets,p => NotificationName(p) == "OnCorporationMemberChanged");
         founderSession.RunAfterResponse();
@@ -1558,10 +1567,18 @@ private static PyValue RowField(PyValue value,string key)
         Assert.Equal("corpid",NotificationAddress(founderRole).IdType);
         Assert.Equal("corpid",NotificationAddress(memberRole).IdType);
 
+        await registry.UpdateMember(Call(founderSession,"UpdateMember",new PyInt(member),PyNone.Instance,PyNone.Instance,PyNone.Instance,
+            new PyLong(CorporationRoles.Director)));
+        Assert.NotEqual(0,(memberSession.GetInt("rolesAtAll") ?? 0) & CorporationRoles.Director);
+        await registry.UpdateMember(Call(founderSession,"UpdateMember",new PyInt(member),PyNone.Instance,PyNone.Instance,PyNone.Instance,
+            new PyLong(0)));
+        Assert.Equal(0,memberSession.GetInt("rolesAtAll") ?? -1);
+        founderSession.RunAfterResponse();
+
         founderSink.Packets.Clear();
         memberSink.Packets.Clear();
         await registry.UpdateTitle(Call(founderSession,"UpdateTitle",new PyInt(1),new PyWString("Quartermaster"),
-            new PyLong(0),new PyLong(0),new PyLong(0),new PyLong(0),new PyLong(0),new PyLong(0),new PyLong(0),new PyLong(0)));
+            new PyLong(CorporationRoles.Accountant),new PyLong(0),new PyLong(0),new PyLong(0),new PyLong(0),new PyLong(0),new PyLong(0),new PyLong(0)));
         Assert.DoesNotContain(founderSink.Packets,p => NotificationName(p) == "OnTitleChanged");
         Assert.DoesNotContain(memberSink.Packets,p => NotificationName(p) == "OnTitleChanged");
         founderSession.RunAfterResponse();
@@ -1569,6 +1586,14 @@ private static PyValue RowField(PyValue value,string key)
         var memberTitle = Assert.Single(memberSink.Packets,p => NotificationName(p) == "OnTitleChanged");
         Assert.Equal("corpid",NotificationAddress(founderTitle).IdType);
         Assert.Equal("corpid",NotificationAddress(memberTitle).IdType);
+        await registry.UpdateMember(Call(founderSession,"UpdateMember",new PyInt(member),PyNone.Instance,PyNone.Instance,PyNone.Instance,
+            new PyLong(0),PyNone.Instance,PyNone.Instance,PyNone.Instance,PyNone.Instance,PyNone.Instance,PyNone.Instance,PyNone.Instance,PyNone.Instance,
+            new PyInt(1)));
+        Assert.Equal(CorporationRoles.Accountant,memberSession.GetInt("rolesAtAll") ?? 0);
+        founderSession.RunAfterResponse();
+        await registry.DeleteTitle(Call(founderSession,"DeleteTitle",new PyInt(1)));
+        founderSession.RunAfterResponse();
+        Assert.Equal(0,memberSession.GetInt("rolesAtAll") ?? -1);
 
         founderSink.Packets.Clear();
         memberSink.Packets.Clear();
@@ -1672,8 +1697,19 @@ private static PyValue RowField(PyValue value,string key)
 
             var compositionPayload = CachedPayload(await service.GetStandingCompositions(
                 Call(characterSession, "GetStandingCompositions", new PyInt(500001), new PyInt(corporation.Id))));
-            Assert.Equal(new PyStr("carbon.common.script.sys.crowset.CRowset"), Assert.IsType<PyObject>(compositionPayload).Name);
-            Assert.Equal(2, Lines(compositionPayload).Count);
+            var compositionRowset = Assert.IsType<PyObjectEx>(compositionPayload);
+            Assert.Equal(ObjectExKind.Ex2, compositionRowset.Kind);
+            Assert.Equal(2, compositionRowset.List.Count);
+            Assert.Empty(compositionRowset.Dict);
+            var compositionRows = compositionRowset.List.Select(row => Assert.IsType<PyPackedRow>(row)).ToArray();
+            Assert.Equal([("standing", 5L), ("ownerID", 3L)], compositionRows[0].Descriptor.Columns
+                .Select(column => (column.Name, column.DbType)));
+            Assert.Equal([new PyReal(2.75), new PyInt(member)], compositionRows[0].Values);
+            Assert.Equal([new PyReal(1.25), new PyInt(founder)], compositionRows[1].Values);
+            var encodedCompositionRowset = Assert.IsType<PyObjectEx>(MarshalCodec.DecodeExact(
+                MarshalCodec.Encode(compositionRowset)));
+            Assert.Equal(2, encodedCompositionRowset.List.Count);
+            Assert.All(encodedCompositionRowset.List, row => Assert.IsType<PyPackedRow>(row));
         }
         finally
         {

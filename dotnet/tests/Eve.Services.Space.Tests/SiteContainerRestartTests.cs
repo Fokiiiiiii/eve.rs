@@ -74,7 +74,9 @@ public sealed class SiteContainerRestartTests
         await rig.Events.PumpAsync();
 
         var target = (await hacks.FindAsync(containerId, CancellationToken.None))!;
-        await hacks.EndedAsync(target, won: true, pilot.CharacterId, CancellationToken.None);
+        var reservationId = Guid.NewGuid();
+        Assert.True(await hacks.TryReserveAsync(target, reservationId, pilot.CharacterId, session.SessionId, CancellationToken.None));
+        await hacks.EndedAsync(target, reservationId, won: true, pilot.CharacterId, CancellationToken.None);
         Assert.Equal("looted", (await store.GetAsync(containerId))!.State);
         Assert.Equal(0L, (await rig.Items.GetAsync(containerId))!.OwnerId);
 

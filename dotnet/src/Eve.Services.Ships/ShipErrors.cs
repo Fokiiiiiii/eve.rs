@@ -19,15 +19,26 @@ public static class ShipErrors
         string nameOfType(int type) => statics.Type(type)?.Name ?? "";
         string nameOfGroup(int moduleType) => statics.GroupName(statics.Type(moduleType)?.GroupId ?? 0);
         static MachoWrappedException Notify(string text) => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(text)));
+        MachoWrappedException OnlineError(string name)
+        {
+            double Data(string key) => refused.Fit?.Data.GetValueOrDefault(key) ?? 0;
+            return MachoErrors.ThrowUserError(
+                name,
+                ("moduleName", Py.Tuple(new PyInt(UeTypeId), new PyInt(refused.ModuleTypeId))),
+                ("moduleType", new PyInt(refused.ModuleTypeId)),
+                ("require", Py.Number(Data("require"))),
+                ("remaining", Py.Number(Data("remaining"))),
+                ("total", Py.Number(Data("total"))));
+        }
 
         switch (refused.Reason)
         {
             case ShipRefusal.NotFitted:
                 return MachoErrors.ThrowUserError("DeniedShipChanged");
             case ShipRefusal.NotEnoughCpu:
-                return Notify("You do not have enough CPU to online that module.");
+                return OnlineError("NotEnoughCpu");
             case ShipRefusal.NotEnoughPower:
-                return Notify("You do not have enough powergrid to online that module.");
+                return OnlineError("NotEnoughPower");
             // the client's UserError (locationDogmaItem.py CheckCanOnlineItem): the type and the group are tuples of the client's reference kinds (eveexceptions/const.py:
 
             case ShipRefusal.MaxGroupOnline:
@@ -56,11 +67,25 @@ public static class ShipErrors
             case ShipRefusal.SkillRequired:
             case ShipRefusal.CannotFit when refused.Fit is { Error: FitError.SkillRequired }:
                 {
-                    var skill = (int)(refused.Fit?.Data.GetValueOrDefault("skillTypeID") ?? 0);
-                    var level = (int)(refused.Fit?.Data.GetValueOrDefault("requiredLevel") ?? 0);
-                    return Notify(skill > 0
-                        ? $"You need {nameOfType(skill)}{(level > 0 ? $" level {level}" : "")} to fit that module."
-                        : "You do not have the required skills to fit that module.");
+                    IReadOnlyList<(int SkillTypeId, int RequiredLevel)> requirements = refused.Fit?.MissingSkills ?? [];
+                    if (requirements.Count == 0 && refused.Fit is { } skillFailure
+                        && skillFailure.Data.TryGetValue("skillTypeID", out var skill)
+                        && skill > 0)
+                    {
+                        requirements = [((int)skill, (int)skillFailure.Data.GetValueOrDefault("requiredLevel"))];
+                    }
+                    var names = requirements.Select(requirement =>
+                    {
+                        var skillName = nameOfType(requirement.SkillTypeId);
+                        if (string.IsNullOrEmpty(skillName))
+                            skillName = requirement.SkillTypeId.ToString(CultureInfo.InvariantCulture);
+                        return $"{skillName} : Level {requirement.RequiredLevel.ToString(CultureInfo.InvariantCulture)}";
+                    }).ToArray();
+                    return MachoErrors.ThrowUserError(
+                        "FittingHasSkillPrerequisites",
+                        ("requiredSkills", new PyStr(string.Join(", ", names))),
+                        ("item", new PyInt(refused.ModuleTypeId)),
+                        ("skillCount", new PyInt(names.Length)));
                 }
         }
 
@@ -69,9 +94,13 @@ public static class ShipErrors
         switch (fit.Error)
         {
             case FitError.NoTurretHardpoints:
-                return Notify(Data("turretHardpoints") > 0 ? "All turret hardpoints on this ship are already in use." : "This ship has no turret hardpoints.");
+                return Notify(Data("turretHardpoints") > 0 && Data("usedTurrets") >= Data("turretHardpoints")
+                    ? "All turret hardpoints on this ship are already in use."
+                    : "This ship has no turret hardpoints.");
             case FitError.NoLauncherHardpoints:
-                return Notify(Data("launcherHardpoints") > 0 ? "All launcher hardpoints on this ship are already in use." : "This ship has no launcher hardpoints.");
+                return Notify(Data("launcherHardpoints") > 0 && Data("usedLaunchers") >= Data("launcherHardpoints")
+                    ? "All launcher hardpoints on this ship are already in use."
+                    : "This ship has no launcher hardpoints.");
             case FitError.SlotOccupied:
                 return Notify("That fitting slot is already occupied.");
             case FitError.MaxGroupFitted:

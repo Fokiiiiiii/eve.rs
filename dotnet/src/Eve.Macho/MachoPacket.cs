@@ -97,7 +97,7 @@ public sealed record MachoPacket(
         PyValue At(int index) => items.Count > index ? JsSemantics.AsReceived(items[index]) : PyNone.Instance;
 
         return new MachoPacket(
-            JsSemantics.IsNumber(items[0]) ? (int)JsSemantics.NumberValue(items[0]) : 0,
+            MachoWireNumber.TryGetInteger(items[0], out var type) ? type : 0,
             MachoAddress.Decode(items[1]),
             MachoAddress.Decode(items[2]),
             At(3),
@@ -111,5 +111,23 @@ public sealed record MachoPacket(
             At(11),
             At(12),
             At(13));
+    }
+}
+
+/// <summary>Reads the integral numeric discriminators used by MachoNet's wire tuples.</summary>
+internal static class MachoWireNumber
+{
+    public static bool TryGetInteger(PyValue? value, out int integer)
+    {
+        integer = 0;
+        if (value is null || !JsSemantics.IsNumber(value))
+            return false;
+
+        var number = JsSemantics.NumberValue(value);
+        if (!double.IsFinite(number) || number < int.MinValue || number > int.MaxValue || number != Math.Truncate(number))
+            return false;
+
+        integer = (int)number;
+        return true;
     }
 }

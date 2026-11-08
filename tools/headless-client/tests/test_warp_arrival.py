@@ -13,7 +13,7 @@ import pytest
 from evecli.describe import buffer_bytes
 from evecli.observe import _set_state_fields, wait_quietly
 from tests import test_login_to_character as base
-from tests.test_undock import STATION, SYSTEM, actions_of, add_ball_slim, arrive, keyval, number
+from tests.test_undock import STATION, SYSTEM, actions_of, arrive, keyval, number
 from tests.test_warp import WARP, names
 
 pytestmark = [
@@ -37,25 +37,69 @@ def ego_ball(events, ship_id):
             return (
                 data[at + 8],
                 struct.unpack_from("<f", data, at + 63)[0],
-                struct.unpack_from("<3d", data, at + 67),
+                struct.unpack_from("<3d", data, at + 13),
                 struct.unpack_from("<f", data, at + 91)[0],
                 struct.unpack_from("<f", data, at + 95)[0],
             )
     raise AssertionError("no ego ball in SetState")
 
 
-def wait_for_warp_arrival(who, ballpark, target_id, ship_id, *, kind="item", min_range=0, during_warp=None):
+def wait_for_warp_arrival(who, ballpark, target_id, ship_id, *, kind="item", min_range=0, during_warp=None, fleet=None):
     if kind == "autopilot":
         who.call_bound(ballpark, "CmdWarpToStuffAutopilot", target_id)
+        expected_range = None
     else:
-        who.call_bound(ballpark, "CmdWarpToStuff", kind, target_id, minRange=min_range)
+        kwargs = {"minRange": min_range}
+        if fleet is not None:
+            kwargs["fleet"] = fleet
+        who.call_bound(ballpark, "CmdWarpToStuff", kind, target_id, **kwargs)
+        expected_range = min_range
     if during_warp is not None:
         during_warp()
-    events = wait_quietly(who, 150.0, lambda seen: any("Stop" in names(event) for event in seen))
+    def arrived_after_this_warp(seen):
+        started = False
+        for event in seen:
+            if event.get("name") != "DoDestinyUpdate":
+                continue
+            event_actions = actions_of(event)[0]
+            if started and names(event) == ["SetBallPosition", "SetBallVelocity", "SetSpeedFraction", "Stop"]:
+                if all(number(action[2]["$tuple"][0]) == ship_id for action in event_actions):
+                    return True
+            if any(action[1] == "WarpTo" and number(action[2]["$tuple"][0]) == ship_id for action in event_actions):
+                started = True
+        return False
+
+    events = wait_quietly(who, 150.0, arrived_after_this_warp)
+    actions = [
+        action
+        for event in events
+        if event.get("name") == "DoDestinyUpdate"
+        for action in actions_of(event)[0]
+    ]
+    warp_starts = [
+        action for action in actions
+        if action[1] == "WarpTo" and number(action[2]["$tuple"][0]) == ship_id
+    ]
+    assert warp_starts, f"no own-ship WarpTo start for {target_id}"
+    stop_distance = number(warp_starts[-1][2]["$tuple"][4])
+    assert stop_distance >= 0, warp_starts
+    if expected_range is not None:
+        assert stop_distance >= expected_range, warp_starts
+    if kind == "position":
+        assert stop_distance == expected_range, warp_starts
     arrival = [event for event in events if names(event) == ["SetBallPosition", "SetBallVelocity", "SetSpeedFraction", "Stop"]]
     assert arrival, f"no complete warp arrival update for {target_id}"
-    actions, _ = actions_of(arrival[-1])
-    assert all(action[2]["$tuple"][0] in (ship_id, {"$long": ship_id}) for action in actions)
+    arrival_actions, _ = actions_of(arrival[-1])
+    assert all(number(action[2]["$tuple"][0]) == ship_id for action in arrival_actions)
+    position_action = next(action for action in arrival_actions if action[1] == "SetBallPosition")
+    arrived = tuple(number(value) for value in position_action[2]["$tuple"][1:4])
+    warp_args = warp_starts[-1][2]["$tuple"]
+    warp_point = tuple(number(value) for value in warp_args[1:4])
+    assert math.dist(arrived, warp_point) == pytest.approx(stop_distance, abs=1_000), (arrived, warp_point, stop_distance)
+    if kind == "position":
+        destination = tuple(target_id[axis] for axis in ("x", "y", "z"))
+        assert warp_point == pytest.approx(destination), (warp_point, destination)
+        assert math.dist(arrived, destination) == pytest.approx(expected_range, abs=1_000), (arrived, destination)
     return events
 
 
@@ -65,11 +109,14 @@ def gate_ids(events):
         if event.get("name") != "DoDestinyUpdate":
             continue
         for _, name, args in actions_of(event)[0]:
-            if name != "AddBalls2":
+            if name != "SetState":
                 continue
-            for entry in args["$tuple"][0]["$tuple"][1]:
-                fields = keyval(add_ball_slim(entry))
-                if number(fields.get("groupID", 0)) == 10:
+            slims = _set_state_fields(args).get("slims", [])
+            if isinstance(slims, dict):
+                slims = slims.get("$list", slims.get("$tuple", []))
+            for slim in slims if isinstance(slims, list) else []:
+                fields = keyval(slim)
+                if "itemID" in fields and number(fields.get("groupID", 0)) == 10:
                     gates.add(number(fields["itemID"]))
     return gates
 
@@ -117,7 +164,7 @@ def stop_replacement_simulation(process):
             process.wait(timeout=5.0)
 
 
-def test_undock_align_warp_arrival_and_next_order():
+def test_undock_coordinate_warp_arrival_and_next_order():
     race = WARP["races"][0]
     with base.connect(f"walk-warp-arrival-{uuid.uuid4().hex[:10]}", timeout=120.0) as who:
         _, ship_id, _, _ = arrive(who, race, uuid.uuid4().hex[:10])
@@ -130,30 +177,51 @@ def test_undock_align_warp_arrival_and_next_order():
         initial = ego_ball(bind_events, ship_id)
         assert initial[1] > 0 and initial[3] > 0, initial
 
-        planet = race["planetID"]
-        who.call_bound(ballpark, "CmdAlignTo", planet)
-        wait_quietly(who, 1.0)
-        wait_for_warp_arrival(who, ballpark, planet, ship_id)
-        who.call_bound(ballpark, "UpdateStateRequest")
-        landed = ego_ball(wait_quietly(who, 2.0), ship_id)
-        assert landed[0] == 2, landed
-        assert landed[1] == pytest.approx(initial[1])
-        assert landed[3] == pytest.approx(initial[3])
-        assert math.sqrt(sum(v * v for v in landed[2])) < 1.0
-        assert landed[4] == 0.0
-
-        point = {"x": landed[2][0] + 1_000_000, "y": landed[2][1], "z": landed[2][2]}
+        point = {"x": initial[2][0] + 1_000_000, "y": initial[2][1], "z": initial[2][2]}
         wait_for_warp_arrival(who, ballpark, point, ship_id, kind="position", min_range=25_000)
         who.call_bound(ballpark, "UpdateStateRequest")
         positioned = ego_ball(wait_quietly(who, 2.0), ship_id)
+        assert positioned[0] == 2, positioned
+        assert positioned[1] == pytest.approx(initial[1])
+        assert positioned[3] == pytest.approx(initial[3])
         distance = math.dist(positioned[2], (point["x"], point["y"], point["z"]))
         assert distance == pytest.approx(25_000, abs=1_000), distance
+        assert positioned[4] == 0.0
 
         wait_for_warp_arrival(who, ballpark, STATION, ship_id)
         who.call_bound(ballpark, "CmdDock", STATION)
         docked = wait_quietly(who, 15.0, lambda seen: any(event["name"] == "$sessionchange" for event in seen))
         assert any(event["name"] == "$sessionchange" for event in docked), docked
         assert all(names(e) for e in bind_events if e["name"] == "DoDestinyUpdate"), bind_events
+
+
+@pytest.mark.timeout(600)
+def test_moon_mining_point_warp_arrives_then_accepts_another_warp_and_dock():
+    race = WARP["races"][0]
+    moon_id = 40_491_234
+    with base.connect(f"walk-warp-moon-point-{uuid.uuid4().hex[:10]}", timeout=120.0) as who:
+        _, ship_id, _, _ = arrive(who, race, uuid.uuid4().hex[:10])
+        ship = who.call("ship", "MachoBindObject", (STATION, 15), None)
+        wait_quietly(who, 0.5)
+        who.call_bound(ship[0], "Undock", ship_id, False)
+        wait_quietly(who, 2.0)
+        ballpark = who.call("beyonce", "MachoBindObject", SYSTEM, None)[0]
+        bind_events = wait_quietly(who, 2.5)
+        initial = ego_ball(bind_events, ship_id)
+        assert initial[1] > 0 and initial[3] > 0, initial
+
+        wait_for_warp_arrival(who, ballpark, moon_id, ship_id, kind="moonMiningPoint", min_range=35_000, fleet=False)
+        who.call_bound(ballpark, "UpdateStateRequest")
+        arrived = ego_ball(wait_quietly(who, 2.0), ship_id)
+        assert arrived[0] == 2, arrived
+        assert arrived[1] == pytest.approx(initial[1])
+        assert arrived[3] == pytest.approx(initial[3])
+        assert arrived[4] == 0.0
+
+        wait_for_warp_arrival(who, ballpark, STATION, ship_id)
+        who.call_bound(ballpark, "CmdDock", STATION)
+        docked = wait_quietly(who, 15.0, lambda seen: any(event["name"] == "$sessionchange" for event in seen))
+        assert any(event["name"] == "$sessionchange" for event in docked), docked
 
 
 @pytest.mark.timeout(600)

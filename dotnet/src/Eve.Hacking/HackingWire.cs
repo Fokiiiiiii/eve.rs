@@ -16,7 +16,9 @@ public static class HackingWire
     public const int TypeDataCache = 6;
 
     public const int SubtypeNone = -1;
+    public const int SubtypeCoreHigh = 10;
     public const int SubtypeCoreLow = 11;
+    public const int SubtypeCoreMedium = 12;
     public const int SubtypeUeSelfRepair = 0;
     public const int SubtypeUeKernelRot = 1;
     public const int SubtypeUeSecondaryVector = 2;
@@ -47,6 +49,7 @@ public static class HackingWire
     public const int EventVirusSuppressor = 306;
     public const int EventRestorationHeal = 307;
     public const int EventDistanceIndicator = 308;
+    public const int EventCoreContents = 400;
 
     public const int GridColumns = 10;
     public const int GridRows = 9;

@@ -15,6 +15,7 @@ import os
 import sys
 
 SCHEMA_DUNGEON = "eve.dungeon-catalog.dungeon.v1"
+SCHEMA_LAYOUT_PROFILES = "eve.dungeon-catalog.layout-profiles.v1"
 SCHEMA_MISSIONS = "eve.dungeon-catalog.missions.v1"
 SCHEMA_GAPS = "eve.dungeon-catalog.known-gaps.v1"
 SCHEMA_MANIFEST = "eve.dungeon-catalog.manifest.v1"
@@ -51,6 +52,49 @@ def position(value):
     if not isinstance(value, dict):
         return None
     return {"x": value.get("x"), "y": value.get("y"), "z": value.get("z")}
+
+def scene_position(value):
+    if isinstance(value, list) and len(value) >= 3 and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in value[:3]):
+        return {"x": value[0], "y": value[1], "z": value[2]}
+    if isinstance(value, dict) and all(isinstance(value.get(axis), (int, float)) and not isinstance(value.get(axis), bool) for axis in ("x", "y", "z")):
+        return {"x": value["x"], "y": value["y"], "z": value["z"]}
+    return None
+
+def project_layout_profile(dungeon_id, template):
+    scene = template.get("siteSceneProfile") or {}
+    room_profiles = [room for room in scene.get("roomProfiles") or [] if isinstance(room, dict)]
+    entry_profile = next((room for room in room_profiles if str(room.get("initialState", "")).lower() == "active"), None)
+    if entry_profile is None and room_profiles:
+        entry_profile = room_profiles[0]
+    entry_position = scene_position(entry_profile.get("position")) if entry_profile else None
+
+    rooms = []
+    for room in room_profiles:
+        key = room.get("roomKey")
+        if not isinstance(key, str) or not key:
+            continue
+        position = scene_position(room.get("position"))
+        offset = ({axis: position[axis] - entry_position[axis] for axis in ("x", "y", "z")}
+                  if position is not None and entry_position is not None else None)
+        state = room.get("initialState") if isinstance(room.get("initialState"), str) else None
+        if state is not None or offset is not None:
+            rooms.append({"roomKey": key, "initialState": state, "positionOffset": offset})
+
+    gates = []
+    for gate in scene.get("gateProfiles") or []:
+        if not isinstance(gate, dict):
+            continue
+        key = gate.get("gateKey")
+        if not isinstance(key, str) or not key:
+            continue
+        source_room = gate.get("roomKey") if isinstance(gate.get("roomKey"), str) else None
+        offset = scene_position(gate.get("positionOffset"))
+        if source_room is not None or offset is not None:
+            gates.append({"gateKey": key, "sourceRoomKey": source_room, "positionOffset": offset})
+
+    if not rooms and not gates:
+        return None
+    return {"dungeonID": dungeon_id, "rooms": rooms, "gates": gates}
 
 class Validation:
     def __init__(self, type_ids, archetype_ids):
@@ -266,6 +310,8 @@ def main(argv):
         pack_added += 1
 
     records = [project_template(d, effective[d], check) for d in sorted(effective)]
+    layout_profiles = [profile for d in sorted(effective)
+                       if (profile := project_layout_profile(d, effective[d])) is not None]
 
     bindings = []
     for mission_id in sorted(sde_missions):
@@ -348,6 +394,9 @@ def main(argv):
     with open(os.path.join(out_dir, "missions.json"), "w", encoding="utf-8") as handle:
         json.dump({"schema": SCHEMA_MISSIONS, "killMissionDungeons": bindings, "goldenSecurityMissions": golden_rows}, handle, ensure_ascii=False, separators=(",", ":"))
         handle.write("\n")
+    with open(os.path.join(out_dir, "layout-profiles.json"), "w", encoding="utf-8") as handle:
+        json.dump({"schema": SCHEMA_LAYOUT_PROFILES, "profiles": layout_profiles}, handle, ensure_ascii=False, separators=(",", ":"))
+        handle.write("\n")
     with open(os.path.join(out_dir, "known-gaps.json"), "w", encoding="utf-8") as handle:
         json.dump(gaps, handle, ensure_ascii=False, indent=1)
         handle.write("\n")
@@ -356,12 +405,14 @@ def main(argv):
         "sdeBuild": sde_build,
         "dungeonFiles": files,
         "missionFile": "missions.json",
+        "layoutProfilesFile": "layout-profiles.json",
         "knownGapsFile": "known-gaps.json",
         "counts": {
             "dungeonTemplates": len(records),
             "fromAuthority": len(records) - pack_added,
             "fromMiningPack": pack_added,
             "overlayApplied": applied_overlay,
+            "layoutProfiles": len(layout_profiles),
             "killMissionBindings": len(bindings),
             "missionDungeonIDs": len(binding_dungeons),
             "missionDungeonIDsWithTemplate": len(binding_dungeons) - len(missing),

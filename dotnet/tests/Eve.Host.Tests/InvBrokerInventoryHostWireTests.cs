@@ -54,6 +54,7 @@ public partial class HostServerTests
             session.Set("stationid", new PyInt(stationId));
             session.Set("structureid", new PyInt(structureId));
             session.Set("shipid", new PyInt(structureId));
+            session.Set("corporationID", new PyInt(98000002));
         });
 
         var front = await Handshaken(await ConnectAsync());
@@ -111,5 +112,14 @@ public partial class HostServerTests
         var lines = Assert.IsType<PyList>(Assert.Single(Assert.IsType<PyDict>(rowset.Args).Entries,
             pair => Assert.IsType<PyStr>(pair.Key).Value == "lines").Value);
         Assert.Empty(lines.Items);
+
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.CallWithKwargs(
+            open, 7, "invbroker", "GetInventory", new PyTuple([new PyInt(InvBrokerService.ContainerCapsuleerDeliveries)]), MachoVersion()))));
+        var deliveriesReply = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.CallRsp,
+            Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(deliveriesReply.Payload))).Type);
+        var deliveriesBound = Assert.IsType<PySubStruct>(Result(MarshalCodec.Decode(deliveriesReply.Payload)));
+        var deliveriesBoundData = Assert.IsType<PyTuple>(Assert.IsType<PySubStream>(deliveriesBound.Value).Decoded);
+        Assert.StartsWith("N=", Encoding.UTF8.GetString(Assert.IsType<PyBytes>(deliveriesBoundData.Items[0]).Value.Span));
     }
 }

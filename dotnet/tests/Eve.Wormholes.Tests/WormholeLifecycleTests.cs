@@ -14,12 +14,20 @@ public sealed class WormholeLifecycleTests
         new(source, destination, code, type, mass, seed);
 
     [PgFact]
-    public async Task A_static_that_expires_is_replaced_from_its_source_to_another_eligible_system()
+    public async Task A_static_that_expires_is_replaced_after_the_reference_respawn_delay()
     {
         await using var rig = await Rig.CreateAsync(WormholePlannerTests.Types(), WormholePlannerTests.Classes());
         var first = await rig.OpenAsync(Planned(31000001, 30000001, "AAA", 1001, 5e8, 7), isStatic: true);
 
         rig.Now += Hour + 1;
+        await rig.Scheduler.RunDueAsync();
+
+        Assert.Empty(await rig.ActiveFromAsync(31000001));
+        rig.Now += (long)TimeSpan.FromSeconds(60).TotalMilliseconds - 1;
+        await rig.Scheduler.RunDueAsync();
+        Assert.Empty(await rig.ActiveFromAsync(31000001));
+
+        rig.Now += 1;
         await rig.Scheduler.RunDueAsync();
 
         var replacement = Assert.Single(await rig.ActiveFromAsync(31000001));
@@ -42,6 +50,54 @@ public sealed class WormholeLifecycleTests
     }
 
     [PgFact]
+    public async Task Expiry_notifications_wait_for_commit_and_are_not_published_when_job_completion_rolls_back()
+    {
+        await using var rig = await Rig.CreateAsync(WormholePlannerTests.Types(), WormholePlannerTests.Classes());
+        var id = await rig.OpenAsync(Planned(31000001, 31000002, "BBB", 1002, 5e8, 3), isStatic: false);
+        var changes = new List<WormholeChange>();
+        var callbackSawCommittedCollapse = false;
+        rig.Jobs.Changed += change =>
+        {
+            changes.Add(change);
+            if (change.ConnectionId != id || change.Opened is not null)
+                return;
+            using var connection = rig.Source.OpenConnection();
+            var stored = rig.Store.GetAsync(connection, null, id, forUpdate: false).GetAwaiter().GetResult();
+            callbackSawCommittedCollapse = stored is { Active: false };
+        };
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+            await Sql.ExecuteAsync(connection, null, $"""
+                CREATE FUNCTION {rig.SchedulerSchema}.fail_expiry_job_finish() RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF OLD.kind = '{WormholeJobs.ExpireKind}' THEN RAISE EXCEPTION 'injected expiry finish failure'; END IF;
+                    RETURN OLD;
+                END $$;
+                CREATE TRIGGER fail_expiry_job_finish BEFORE DELETE ON {rig.SchedulerSchema}.jobs
+                FOR EACH ROW EXECUTE FUNCTION {rig.SchedulerSchema}.fail_expiry_job_finish();
+                """, CancellationToken.None);
+
+        rig.Now += Hour + 1;
+        await Assert.ThrowsAsync<PostgresException>(() => rig.Scheduler.RunDueAsync());
+
+        Assert.Empty(changes);
+        Assert.False(callbackSawCommittedCollapse);
+        Assert.Contains(await rig.ActiveFromAsync(31000001), connection => connection.Id == id);
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+            await Sql.ExecuteAsync(connection, null, $"""
+                DROP TRIGGER fail_expiry_job_finish ON {rig.SchedulerSchema}.jobs;
+                DROP FUNCTION {rig.SchedulerSchema}.fail_expiry_job_finish();
+                """, CancellationToken.None);
+
+        rig.Now += 60_001;
+        Assert.Equal(1, await rig.Scheduler.RunDueAsync());
+
+        Assert.True(callbackSawCommittedCollapse);
+        Assert.Equal(new WormholeChange(id, null), Assert.Single(changes));
+    }
+
+    [PgFact]
     public async Task A_transit_that_empties_a_static_collapses_it_once_and_its_replacement_is_not_doubled()
     {
         await using var rig = await Rig.CreateAsync(WormholePlannerTests.Types(), WormholePlannerTests.Classes());
@@ -55,11 +111,12 @@ public sealed class WormholeLifecycleTests
         Assert.Equal(5e7, passed.MassKg, 3);
         Assert.Equal(TransitOutcome.Refused, refused.Outcome);
         Assert.Equal(TransitOutcome.Collapsed, collapsed.Outcome);
+        Assert.Empty(await rig.ActiveFromAsync(31000001));
+
+        rig.Now += (long)TimeSpan.FromSeconds(60).TotalMilliseconds;
+        await rig.Scheduler.RunDueAsync();
         var replacement = Assert.Single(await rig.ActiveFromAsync(31000001));
         Assert.NotEqual(first, replacement.Id);
-
-        rig.Now += 1;
-        await rig.Scheduler.RunDueAsync();
         Assert.Equal(replacement.Id, Assert.Single(await rig.ActiveFromAsync(31000001)).Id);
     }
 
@@ -71,6 +128,10 @@ public sealed class WormholeLifecycleTests
 
         rig.Restart();
         rig.Now += Hour + 1;
+        await rig.Scheduler.RunDueAsync();
+
+        Assert.Empty(await rig.ActiveFromAsync(31000001));
+        rig.Now += (long)TimeSpan.FromSeconds(60).TotalMilliseconds;
         await rig.Scheduler.RunDueAsync();
 
         Assert.Single(await rig.ActiveFromAsync(31000001));

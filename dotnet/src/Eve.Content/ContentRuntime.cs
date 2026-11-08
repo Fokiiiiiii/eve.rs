@@ -14,6 +14,7 @@ public sealed class ContentRuntime
     public const string DefaultSchema = "content";
     public const string SubscriberName = "content.runtime";
     public const string ExpireKind = "content.expire";
+    public const string ReconcileKind = "content.reconcile";
 
     internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -48,6 +49,7 @@ public sealed class ContentRuntime
             var key = context.Payload<TimerObjective.TimerKey>()!;
             await ProgressAsync(context.Connection, context.Transaction, key.InstanceId, key.Index, double.MaxValue, token);
         });
+        scheduler.Register(ReconcileKind, ReconcileSatisfiedInstancesAsync);
     }
 
     private sealed record InstanceKey(long InstanceId);
@@ -78,6 +80,15 @@ public sealed class ContentRuntime
     /// <summary>Adds a definition. Define all of them before <see cref="AttachAsync"/>.</summary>
     public void Define(ContentDefinition definition)
     {
+        ArgumentNullException.ThrowIfNull(definition);
+        foreach (var objective in definition.Objectives)
+        {
+            if (!double.IsFinite(objective.Target) || objective.Target <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(definition), objective.Target,
+                    $"content '{definition.Id}' objective '{objective.Id}' must have a finite, positive target");
+            }
+        }
         if (!_definitions.TryAdd(definition.Id, definition))
         {
             throw new InvalidOperationException($"content '{definition.Id}' is already defined");
@@ -113,17 +124,81 @@ public sealed class ContentRuntime
             }
         }
         await using (var connection = await _source.OpenConnectionAsync(cancellationToken))
-        await using (var command = Sql.Command(connection, null, Q("SELECT DISTINCT topic FROM {schema}.objectives WHERE topic IS NOT NULL AND state IN ('waiting', 'active')")))
+        await using (var command = Sql.Command(connection, null, Q("""
+            SELECT i.id, i.definition, o.id, o.type, o.topic
+            FROM {schema}.instances i
+            JOIN {schema}.objectives o ON o.instance_id = i.id
+            WHERE i.state = 'active' AND o.state IN ('waiting', 'active')
+            ORDER BY i.id, o.idx
+            """)))
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
         {
             while (await reader.ReadAsync(cancellationToken))
             {
-                topics.Add(reader.GetString(0));
+                var instanceId = reader.GetInt64(0);
+                var definition = reader.GetString(1);
+                var objectiveId = reader.GetString(2);
+                var objectiveType = reader.GetString(3);
+                if (!_types.ContainsKey(objectiveType))
+                {
+                    throw new InvalidOperationException(
+                        $"active content instance {instanceId} ('{definition}'), objective '{objectiveId}': unknown objective type '{objectiveType}'");
+                }
+                if (!reader.IsDBNull(4))
+                {
+                    topics.Add(reader.GetString(4));
+                }
+            }
+        }
+        await using (var connection = await _source.OpenConnectionAsync(cancellationToken))
+        await using (var command = Sql.Command(connection, null, Q("""
+            SELECT id, definition, on_complete::text, on_fail::text
+            FROM {schema}.instances
+            WHERE state = 'active'
+            ORDER BY id
+            """)))
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var instanceId = reader.GetInt64(0);
+                var definition = reader.GetString(1);
+                foreach (var actionsJson in new[] { reader.GetString(2), reader.GetString(3) })
+                {
+                    foreach (var action in JsonSerializer.Deserialize<List<ActionRef>>(actionsJson, Json) ?? [])
+                    {
+                        if (string.IsNullOrEmpty(action.Name) || !_actions.ContainsKey(action.Name))
+                        {
+                            throw new InvalidOperationException(
+                                $"active content instance {instanceId} ('{definition}'): unknown action '{action.Name ?? "<missing>"}'");
+                        }
+                    }
+                }
             }
         }
         if (topics.Count > 0)
         {
             _bus.Subscribe(SubscriberName, topics, OnEventAsync);
+        }
+        await using (var connection = await _source.OpenConnectionAsync(cancellationToken))
+        {
+            var reconcileNeeded = (bool)(await Sql.ScalarAsync(connection, null, Q("""
+                SELECT EXISTS (
+                    SELECT 1 FROM {schema}.instances i
+                    WHERE i.state = 'active'
+                      AND i.order_mode = 'parallel'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM {schema}.objectives o WHERE o.instance_id = i.id AND o.required
+                      )
+                )
+                """), cancellationToken))!;
+            if (reconcileNeeded)
+            {
+                await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+                await _scheduler.ScheduleAsync(connection, transaction,
+                    new JobSpec(ReconcileKind, _scheduler.Now) { Key = "startup" }, cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+            }
         }
     }
 
@@ -344,7 +419,47 @@ public sealed class ContentRuntime
             await _scheduler.ScheduleAsync(connection, transaction, new JobSpec(ExpireKind, at) { Key = instanceId.ToString(), Payload = new InstanceKey(instanceId) }, cancellationToken);
         }
         await _bus.PublishAsync(connection, transaction, $"content.{definition.Kind}.started", Announcement(instanceId, definition.Kind, definition.Id, owner, null, instanceData), $"{definition.Kind}:{instanceId}", cancellationToken);
+        if (definition.Order == ObjectiveOrder.Parallel && definition.Objectives.All(objective => !objective.Required))
+        {
+            var row = await LoadAsync(connection, transaction, instanceId, true, cancellationToken);
+            if (row is not null)
+            {
+                await AdvanceAsync(connection, transaction, row, cancellationToken);
+            }
+        }
         return new StartResult(instanceId, true);
+    }
+
+    private async Task ReconcileSatisfiedInstancesAsync(JobContext context, CancellationToken cancellationToken)
+    {
+        var instanceIds = new List<long>();
+        await using (var command = Sql.Command(context.Connection, context.Transaction, Q("""
+            SELECT i.id
+            FROM {schema}.instances i
+            WHERE i.state = 'active'
+              AND i.order_mode = 'parallel'
+              AND NOT EXISTS (
+                  SELECT 1 FROM {schema}.objectives o WHERE o.instance_id = i.id AND o.required
+              )
+            ORDER BY i.id
+            FOR UPDATE
+            """)))
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                instanceIds.Add(reader.GetInt64(0));
+            }
+        }
+
+        foreach (var instanceId in instanceIds)
+        {
+            var row = await LoadAsync(context.Connection, context.Transaction, instanceId, true, cancellationToken);
+            if (row is { Info.State: "active" })
+            {
+                await AdvanceAsync(context.Connection, context.Transaction, row, cancellationToken);
+            }
+        }
     }
 
     private static object Announcement(long id, string kind, string definition, long owner, string? reason, JsonElement data) =>
@@ -473,6 +588,7 @@ public sealed class ContentRuntime
                     await FinishAsync(context.Connection, context.Transaction, row, "failed", $"objective:{objective.Id}", cancellationToken);
                     break;
                 }
+                ValidateProgressDelta(effect.Delta, nameof(effect));
                 if (effect.Delta > 0 && await AddProgressAsync(context.Connection, context.Transaction, row, objective, effect.Delta, cancellationToken))
                 {
                     break;   // the content ended
@@ -484,6 +600,7 @@ public sealed class ContentRuntime
     /// <summary>Adds progress to an active objective, completing it (and maybe the content) when it reaches its target. Returns whether the content ended.</summary>
     private async Task<bool> AddProgressAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Row row, ObjectiveRow objective, double delta, CancellationToken cancellationToken)
     {
+        ValidateProgressDelta(delta, nameof(delta));
         var progress = Math.Min(objective.Target, objective.Progress + delta);
         var done = progress >= objective.Target;
         await Sql.ExecuteAsync(connection, transaction, Q("UPDATE {schema}.objectives SET progress = $3, state = $4, done_ms = $5 WHERE instance_id = $1 AND idx = $2"), cancellationToken,
@@ -528,6 +645,7 @@ public sealed class ContentRuntime
     /// <summary>Adds delta to the named objective and returns whether the objective was active.</summary>
     public async Task<bool> ProgressAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, string objectiveId, double delta = 1, CancellationToken cancellationToken = default)
     {
+        ValidateProgressDelta(delta, nameof(delta));
         var objectives = await ObjectivesAsync(connection, transaction, instanceId, cancellationToken);
         var found = objectives.FirstOrDefault(o => o.Id == objectiveId);
         return found is not null && await ProgressAsync(connection, transaction, instanceId, found.Index, delta, cancellationToken);
@@ -535,6 +653,7 @@ public sealed class ContentRuntime
 
     private async Task<bool> ProgressAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long instanceId, int index, double delta, CancellationToken cancellationToken)
     {
+        ValidateProgressDelta(delta, nameof(delta));
         var row = await LoadAsync(connection, transaction, instanceId, true, cancellationToken);
         if (row is null || row.Info.State != "active")
         {
@@ -547,6 +666,14 @@ public sealed class ContentRuntime
         }
         await AddProgressAsync(connection, transaction, row, objective, delta, cancellationToken);
         return true;
+    }
+
+    private static void ValidateProgressDelta(double delta, string parameterName)
+    {
+        if (!double.IsFinite(delta) || delta < 0)
+        {
+            throw new ArgumentOutOfRangeException(parameterName, delta, "objective progress must be a finite, non-negative value");
+        }
     }
 
     /// <summary>Completes the content now, whatever its objectives say (a feature that decides for itself).</summary>

@@ -301,6 +301,7 @@ internal sealed partial class CharacterServicesComposition
                 else
                     recipientSession.SendNotification("OnMailSent", "clientID", args);
             });
+        CrimewatchKillRightEvents.Subscribe(foundations.Events, mailSendWriter, characterSessions);
         SubscribeMoonOwnerNotifications();
         if (allianceMaintenanceBillWorker is { } maintenanceWorker)
         {

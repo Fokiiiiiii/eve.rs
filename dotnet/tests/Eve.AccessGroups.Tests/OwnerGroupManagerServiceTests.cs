@@ -47,22 +47,27 @@ public sealed class OwnerGroupManagerServiceTests
     }
 
     [PgFact]
-    public async Task A_stranger_gets_a_group_summary_and_a_character_less_reader_gets_no_groups()
+    public async Task Private_group_summaries_require_a_role_and_everyone_membership_makes_a_summary_readable()
     {
         await using var rig = await Rig.CreateAsync();
         var sessions = new CharacterSessions();
         var service = Service(rig, sessions);
         var alice = Connect(sessions, Alice, CorpA, new Sink());
-        var group = Num(Fields(await Call(service, alice, "Create", new PyWString("Private"), new PyWString(""))) ["groupID"]);
+        var privateGroup = Num(Fields(await Call(service, alice, "Create", new PyWString("Private"), new PyWString("")))["groupID"]);
+        var publicGroup = Num(Fields(await Call(service, alice, "Create", new PyWString("Public"), new PyWString("")))["groupID"]);
+        await Call(service, alice, "AddMembers", new PyLong(publicGroup), Dict((0, 0)));
         var stranger = Connect(sessions, Stranger, CorpB, new Sink());
 
-        var summary = Fields(await Call(service, stranger, "GetGroup", new PyLong(group)));
-        Assert.Equal(group, Num(summary["groupID"]));
-        Assert.Equal(Alice, Num(summary["creatorID"]));
-        Assert.Equal("Private", Text(summary["name"]));
-        Assert.Equal("", Text(summary["description"]));
-        Assert.Equal(-1, Num(summary["membershipType"]));
-        Assert.Equal(new[] { Alice }, Assert.IsType<PyList>(summary["admins"]).Items.Select(Num));
+        Assert.IsType<PyNone>(await Call(service, stranger, "GetGroup", new PyLong(privateGroup)));
+        Assert.IsType<PyNone>(await Call(service, stranger, "GetGroup", new PyLong(Unknown)));
+        var publicSummary = Fields(await Call(service, stranger, "GetGroup", new PyLong(publicGroup)));
+        Assert.Equal(publicGroup, Num(publicSummary["groupID"]));
+        Assert.Equal((long)MembershipType.Member, Num(publicSummary["membershipType"]));
+        Assert.Equal(new[] { Alice }, Assert.IsType<PyList>(publicSummary["admins"]).Items.Select(Num));
+
+        var summaries = Assert.IsType<PyList>(await Call(service, stranger, "GetGroupsMany", new PyList(
+            [new PyLong(privateGroup), new PyLong(publicGroup), new PyLong(Unknown)])));
+        Assert.Equal(publicGroup, Num(Fields(Assert.Single(summaries.Items))["groupID"]));
         Assert.Empty(Assert.IsType<PyList>(await Call(service, new ClientSession(), "GetMyGroups")).Items);
     }
 

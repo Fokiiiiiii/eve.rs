@@ -15,7 +15,7 @@ public sealed class MigrationSelectionTests
         var configSchema = $"migration_config_{Guid.NewGuid():N}";
 
         Assert.Equal(
-            new[] { "0001_site_containers", "0002_container_looted" },
+            new[] { "0001_site_containers", "0002_container_looted", "0003_site_container_hack_attempts" },
             SiteContainerStore.MigrationSet().Select(migration => migration.Name).Order(StringComparer.Ordinal));
         Assert.Equal(
             new[] { "0001_global_config" },
@@ -29,14 +29,14 @@ public sealed class MigrationSelectionTests
                 $"INSERT INTO {siteSchema}.previously_deployed_table VALUES (42)");
 
             Assert.Equal(
-                new[] { "0001_site_containers", "0002_container_looted" },
+                new[] { "0001_site_containers", "0002_container_looted", "0003_site_container_hack_attempts" },
                 await SiteContainerStore.MigrateAsync(source, siteSchema));
             Assert.Equal(
                 new[] { "0001_global_config" },
                 await PgGlobalConfigPersistence.MigrateAsync(source, configSchema));
 
             Assert.Equal(
-                new[] { "migrations", "previously_deployed_table", "site_containers" },
+                new[] { "migrations", "previously_deployed_table", "site_container_hack_attempts", "site_containers" },
                 await TablesInAsync(source, siteSchema));
             Assert.Equal(
                 new[] { "global_config", "migrations" },

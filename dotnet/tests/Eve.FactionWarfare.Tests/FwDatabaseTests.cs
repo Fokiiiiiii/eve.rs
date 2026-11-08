@@ -157,6 +157,47 @@ public sealed class FwDatabaseTests
     }
 
     [PgFact]
+    public async Task Concurrent_first_joins_for_one_corporation_keep_only_one_pending_faction()
+    {
+        await using var rig = await FwRig.CreateAsync();
+        long corporationId = 98_100_000 + Random.Shared.Next(1_000_000);
+        await using var blocker = await rig.Source.OpenConnectionAsync();
+        await using var blockerTransaction = await blocker.BeginTransactionAsync();
+        await using (var lockTable = new NpgsqlCommand($"LOCK TABLE {rig.RelationSchema}.relations IN ACCESS EXCLUSIVE MODE", blocker, blockerTransaction))
+            await lockTable.ExecuteNonQueryAsync();
+
+        Task<EnlistOutcome> first = Task.Run(() => rig.Service.JoinAsync(FwStore.CorporationKind, corporationId, FwFactions.AmarrEmpire, 0, rig.Now));
+        Task<EnlistOutcome> second = Task.Run(() => rig.Service.JoinAsync(FwStore.CorporationKind, corporationId, FwFactions.CaldariState, 0, rig.Now));
+        bool bothQueuedAtOwnerOrRelationLocks = false;
+        await using (var monitor = await rig.Source.OpenConnectionAsync())
+        {
+            for (int attempt = 0; attempt < 500; attempt++)
+            {
+                await using var command = new NpgsqlCommand(
+                    "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() " +
+                    "AND state = 'active' AND wait_event_type = 'Lock' AND (query LIKE $1 OR query LIKE $2)", monitor);
+                command.Parameters.AddWithValue("%" + rig.Store.Schema + "%");
+                command.Parameters.AddWithValue("%" + rig.RelationSchema + "%");
+                if ((long)(await command.ExecuteScalarAsync())! >= 2)
+                {
+                    bothQueuedAtOwnerOrRelationLocks = true;
+                    break;
+                }
+                await Task.Delay(10);
+            }
+        }
+
+        await blockerTransaction.CommitAsync();
+        EnlistOutcome[] outcomes = await Task.WhenAll(first, second);
+        Assert.True(bothQueuedAtOwnerOrRelationLocks, "both concurrent enlistment transactions must reach their owner or relation lock");
+        Assert.Equal(1, outcomes.Count(outcome => outcome == EnlistOutcome.Accepted));
+        Assert.Equal(1, outcomes.Count(outcome => outcome == EnlistOutcome.AlreadyEnlisted));
+        var stored = await rig.Service.EnlistmentAsync(FwStore.CorporationKind, corporationId, rig.Now);
+        Assert.Contains(stored.NextFactionId, new[] { FwFactions.AmarrEmpire, FwFactions.CaldariState });
+        Assert.Equal(FwRules.NextDowntimeMs(rig.Now), stored.EffectiveMs);
+    }
+
+    [PgFact]
     public async Task Alliance_enlistment_is_kept_apart_from_the_corporation_enlistment()
     {
         await using var rig = await FwRig.CreateAsync();

@@ -106,7 +106,7 @@ public sealed class InsurgencyCampaigns
             {
                 var scored = CampaignMachine.Score(advanced.Campaign, side, now);
                 outcome = ScoreOutcome.Scored;
-                step = new MachineStep(scored.Campaign, [.. advanced.Transitions, .. scored.Transitions], scored.Accepted);
+                step = Combine(advanced, scored);
             }
         }
         if (step.Transitions.Count > 0 || outcome == ScoreOutcome.Scored)
@@ -132,13 +132,18 @@ public sealed class InsurgencyCampaigns
         if (open is null)
             return false;
         var current = await _store.GetAsync(connection, transaction, open.CampaignId, true, cancellationToken);
-        var step = CampaignMachine.FobDestroyed(current!, _scheduler.Now);
+        var now = _scheduler.Now;
+        var advanced = CampaignMachine.Advance(current!, now);
+        var destroyed = advanced.Campaign.State == CampaignStates.Active
+            ? CampaignMachine.FobDestroyed(advanced.Campaign, now)
+            : new MachineStep(advanced.Campaign, [], false);
+        var step = Combine(advanced, destroyed);
         if (step.Transitions.Count == 0)
             return false;
         await _store.UpdateAsync(connection, transaction, step.Campaign, cancellationToken);
         await ApplyTransitionsAsync(connection, transaction, step, cancellationToken);
         await ScheduleAsync(connection, transaction, step.Campaign, cancellationToken);
-        return true;
+        return destroyed.Accepted;
     }
 
     /// <summary>Makes sure every open campaign has its deadline job (after a restart). Returns how many were scheduled.</summary>
@@ -170,22 +175,36 @@ public sealed class InsurgencyCampaigns
     /// </summary>
     private async Task ApplyTransitionsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, MachineStep step, CancellationToken cancellationToken)
     {
-        foreach (var transition in step.Transitions)
+        if (step.TransitionSnapshots is { } snapshots && snapshots.Count != step.Transitions.Count)
+            throw new InvalidOperationException($"insurgency campaign {step.Campaign.CampaignId}: {step.Transitions.Count} transitions have {snapshots.Count} snapshots");
+        for (var i = 0; i < step.Transitions.Count; i++)
         {
+            var transition = step.Transitions[i];
+            var campaign = step.TransitionSnapshots is { } transitionSnapshots ? transitionSnapshots[i] : step.Campaign;
             if (transition.To is CampaignStates.PirateWin or CampaignStates.AntipirateWin)
             {
-                var (pirate, antipirate) = await _store.AmbitionAsync(connection, transaction, step.Campaign.WarzoneId, cancellationToken);
+                var (pirate, antipirate) = await _store.AmbitionAsync(connection, transaction, campaign.WarzoneId, cancellationToken);
                 var pirateWon = transition.To == CampaignStates.PirateWin;
-                await _store.SetAmbitionAsync(connection, transaction, step.Campaign.WarzoneId,
+                await _store.SetAmbitionAsync(connection, transaction, campaign.WarzoneId,
                     pirateWon ? InsurgencyRules.WinnerModifier(pirate) : InsurgencyRules.LoserModifier(pirate),
                     pirateWon ? InsurgencyRules.LoserModifier(antipirate) : InsurgencyRules.WinnerModifier(antipirate),
                     cancellationToken);
             }
             if (transition.To is CampaignStates.PirateWin or CampaignStates.AntipirateWin && _loyalty is not null)
-                await PayContributorsAsync(connection, transaction, step.Campaign, transition.To == CampaignStates.PirateWin, cancellationToken);
+                await PayContributorsAsync(connection, transaction, campaign, transition.To == CampaignStates.PirateWin, cancellationToken);
             await _events.PublishInTransactionAsync(connection, transaction, CampaignChangedTopic,
-                new CampaignChanged(step.Campaign.CampaignId, transition.From, transition.To, transition.AtMs, step.Campaign), KeyOf(step.Campaign.CampaignId), cancellationToken);
+                new CampaignChanged(campaign.CampaignId, transition.From, transition.To, transition.AtMs, campaign), KeyOf(campaign.CampaignId), cancellationToken);
         }
+    }
+
+    private static MachineStep Combine(MachineStep first, MachineStep second)
+    {
+        var snapshots = new List<Campaign>();
+        if (first.TransitionSnapshots is { } firstSnapshots)
+            snapshots.AddRange(firstSnapshots);
+        if (second.TransitionSnapshots is { } secondSnapshots)
+            snapshots.AddRange(secondSnapshots);
+        return new MachineStep(second.Campaign, [.. first.Transitions, .. second.Transitions], second.Accepted, snapshots);
     }
 
     /// <summary>

@@ -871,8 +871,15 @@ public sealed class CorporationOfficeTests
         Assert.True(await dispatcher.DispatchAsync(MarshalCodec.Decode(MarshalCodec.Encode(request)), session));
         var replies = capture.Sent.Select(packet =>
             Assert.IsType<MachoPacket>(MachoPacket.Decode(packet))).ToArray();
-        Assert.Equal(MachoMessage.CallRsp, Assert.Single(replies).Type);
-        Assert.Equal(PyNone.Instance, CallResult(capture.Sent[0]));
+        Assert.Equal(2, replies.Length);
+        var expectedNotification = ClientNotification.Build(910, session.NodeId, "OnAccountChange",
+            "*corpid&corpAccountKey", new PyValue[]
+            {
+                new PyStr("cash"), new PyInt(corporation.Id), new PyReal((double)(beforePayment - quote)),
+            }, 0);
+        Assert.Equal(MarshalCodec.Encode(expectedNotification), MarshalCodec.Encode(capture.Sent[0]));
+        Assert.Equal(MachoMessage.CallRsp, replies[1].Type);
+        Assert.Equal(PyNone.Instance, CallResult(capture.Sent[1]));
         Assert.Equal(beforePayment - quote, (await rig.Wallets.GetAsync(corporation.Id))!.Isk);
         Assert.Equal(new WalletBalanceChange(corporation.Id, 1000, beforePayment - quote), announced[0]);
         Assert.Equal(new WalletBalanceChange(Station.OwnerId, 1000,

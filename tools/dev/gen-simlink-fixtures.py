@@ -673,10 +673,11 @@ def build(m):
                      + i64(m["planetId"]))  # protocol 67: the planet whose customs office this is (0 for an Upwell structure)
     if k == "RemoveStructure":
         return frame(k, i64(m["structureId"]))
-    if k == "PlaceWormhole":  # protocol 63: the wormhole end, then the far end it leads to (its system, body ID, class, position, radius) and the largest ship
+    if k == "PlaceWormhole":  # protocol 63: end, client slim state, far end (system, body ID, class, position, radius) and largest ship
         return frame(k, i64(m["wormholeId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
                      + struct.pack("<3d", *m["position"]) + struct.pack("<d", m["radius"])
                      + struct.pack("<i", m["destinationSystemId"]) + i64(m["destinationEnd"]) + struct.pack("<i", m["destinationClass"])
+                     + struct.pack("<iidi", m["nebulaTypeId"], m["wormholeAge"], m["wormholeSize"], m["maxShipJumpMassCategory"])
                      + struct.pack("<3d", *m["destinationPosition"]) + struct.pack("<dd", m["destinationRadius"], m["maxJumpMass"]))
     if k == "RemoveWormhole":
         return frame(k, i64(m["wormholeId"]))
@@ -1496,6 +1497,7 @@ valid = [
     {"name": "wormhole end put in space by the host (far end in another system)", "kind": "PlaceWormhole", "wormholeId": "1050000001", "solarSystemId": 30100032,
      "typeName": "Wormhole E004", "typeId": 34134, "groupId": 988, "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 3000.0,
      "destinationSystemId": 31000001, "destinationEnd": "1050000002", "destinationClass": 14,
+     "nebulaTypeId": 1234, "wormholeAge": 2, "wormholeSize": 0.7, "maxShipJumpMassCategory": 1,
      "destinationPosition": [-5610823557120.0, 7676706201600.0, -2034779136000.0], "destinationRadius": 5000.0, "maxJumpMass": 5000000.0},
     {"name": "wormhole end taken out of space by the host", "kind": "RemoveWormhole", "wormholeId": "1050000001"},
     {"name": "mobile warp disruptor dropped from a ship and not yet anchored", "kind": "PlaceDisruptor", "deployableId": "4250000000000009",
@@ -2014,6 +2016,15 @@ invalid = [
     {"name": "buff state with a value that is not a number", "reason": "bad-value",
      "hex": build(dict(buff_state, entries=[{"collectionId": 10, "value": float("nan"), "remainingMs": 1000.0}])).hex()},
 ]
+
+wormhole_frame = named("wormhole end put in space by the host (far end in another system)")
+for label, changes in [
+    ("negative nebula type", {"nebulaTypeId": -1}),
+    ("age outside client categories", {"wormholeAge": 5}),
+    ("size outside ratio", {"wormholeSize": 1.5}),
+    ("unknown ship mass category", {"maxShipJumpMassCategory": 0}),
+]:
+    invalid.append({"name": "wormhole slim " + label, "reason": "bad-value", "hex": build(dict(wormhole_frame, **changes)).hex()})
 
 npc_repair_case = named("spawn of an NPC with a laser, a wreck and a tree")
 valid_repairs = npc_repair_case["identity"]["selfRepairs"]

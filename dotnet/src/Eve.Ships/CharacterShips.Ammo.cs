@@ -46,7 +46,8 @@ public sealed partial class CharacterShips
     }
 
     private sealed class AmmoWork(
-        PgItemStore items, NpgsqlConnection connection, NpgsqlTransaction transaction, ShipSnapshot snapshot, Dictionary<long, Item> stacks, CancellationToken cancellationToken)
+        PgItemStore items, NpgsqlConnection connection, NpgsqlTransaction transaction, ShipSnapshot snapshot, Dictionary<long, Item> stacks,
+        long? destinationOwnerId, CancellationToken cancellationToken)
     {
         public List<AmmoEvent> Events { get; } = [];
 
@@ -64,6 +65,9 @@ public sealed partial class CharacterShips
         public bool Docked => snapshot.Ship.Flag == ItemFlags.Hangar;
 
         public DogmaWorld World => snapshot.World;
+
+        /// <summary>The owner of a container destination; ordinary unloads retain the loaded charge's owner.</summary>
+        public long? DestinationOwnerId { get; } = destinationOwnerId;
 
         /// <summary>
         /// the market's custody (<c>PgItemStore.LockAndGetAsync</c>, then the expected row against the locked one): a stack that a sale or another load moved or
@@ -164,7 +168,15 @@ public sealed partial class CharacterShips
         }
         else
         {
-            var created = charge with { Id = await work.CreateAsync(new NewItem(charge.TypeId, charge.OwnerId, locationId, flag, wanted)), LocationId = locationId, Flag = flag, Quantity = wanted };
+            var ownerId = work.DestinationOwnerId ?? charge.OwnerId;
+            var created = charge with
+            {
+                Id = await work.CreateAsync(new NewItem(charge.TypeId, ownerId, locationId, flag, wanted)),
+                OwnerId = ownerId,
+                LocationId = locationId,
+                Flag = flag,
+                Quantity = wanted,
+            };
             work.Stacks[created.Id] = created;
             work.Events.Add(new ItemChanged(created, 0, 0, created.Quantity));
         }
@@ -195,7 +207,8 @@ public sealed partial class CharacterShips
     }
 
     private async Task<AmmoWork?> BeginAmmoAsync(
-        NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long shipId, long locationId, AmmoWhere where, CancellationToken cancellationToken)
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long shipId, long locationId, AmmoWhere where,
+        CancellationToken cancellationToken, int? destinationFlag = null, long? destinationOwnerId = null, bool containerDestination = false)
     {
         await LockAsync(connection, transaction, characterId, cancellationToken);
         if (await LoadAsync(characterId, cancellationToken) is not { } snapshot || snapshot.Ship.Id != shipId
@@ -204,12 +217,22 @@ public sealed partial class CharacterShips
         {
             return null; // the ship is not where the call is for
         }
-        if (PlaceOf(snapshot, locationId) is not { } place)
+        var place = PlaceOf(snapshot, locationId);
+        if (place is null && !containerDestination)
         {
             return null;
         }
-        var stacks = (await items.InLocationAsync(place.Location, characterId, cancellationToken)).Where(i => i.Flag == place.Flag && !i.Singleton).ToDictionary(i => i.Id);
-        return new AmmoWork(items, connection, transaction, snapshot, stacks, cancellationToken);
+        if (containerDestination && snapshot.Ship.Flag != ItemFlags.Hangar)
+        {
+            return null;
+        }
+        var location = place?.Location ?? locationId;
+        var flag = place?.Flag ?? destinationFlag ?? ContainerFlag;
+        var inventoryOwner = containerDestination ? destinationOwnerId ?? characterId : characterId;
+        var stacks = (await items.InLocationAsync(location, inventoryOwner, cancellationToken))
+            .Where(i => i.Flag == flag && !i.Singleton).ToDictionary(i => i.Id);
+        return new AmmoWork(items, connection, transaction, snapshot, stacks,
+            containerDestination ? inventoryOwner : null, cancellationToken);
     }
 
     /// <summary>
@@ -364,6 +387,51 @@ public sealed partial class CharacterShips
         long characterId, long shipId, IReadOnlyList<long> moduleIds, long destinationLocationId, int? destinationFlag, long? quantity, CancellationToken cancellationToken = default) =>
         WithFreshRowsAsync(() => UnloadAmmoOnceAsync(characterId, shipId, moduleIds, destinationLocationId, destinationFlag, quantity, AmmoWhere.Station, null, cancellationToken));
 
+    /// <summary>Unloads a docked ship's charges into a personal or corporation-owned cargo container.</summary>
+    public Task<ShipOutcome> UnloadAmmoToContainerAsync(
+        long characterId, long shipId, IReadOnlyList<long> moduleIds, long containerId, long destinationOwnerId,
+        int? destinationFlag, long? quantity, CancellationToken cancellationToken = default) =>
+        WithFreshRowsAsync(() => UnloadAmmoOnceAsync(characterId, shipId, moduleIds, containerId, destinationFlag, quantity,
+            AmmoWhere.Station, null, cancellationToken, destinationOwnerId, containerDestination: true));
+
+    /// <summary>Stages whole fitted charge items in a direct trade and returns the matching dogma transition.</summary>
+    public async Task<ShipOutcome> UnloadAmmoToTradeAsync(long characterId, long shipId, IReadOnlyList<long> moduleIds,
+        Func<IReadOnlyList<(long ModuleId, long ChargeId)>, CancellationToken, Task<IReadOnlyDictionary<long, Item>>> stageCharges,
+        CancellationToken cancellationToken = default)
+    {
+        if (await LoadAsync(characterId, cancellationToken).ConfigureAwait(false) is not { } before || before.Ship.Id != shipId
+            || before.Ship.Flag != ItemFlags.Hangar)
+            return new NothingHappened();
+
+        var selected = new List<(Item Module, Item Charge)>();
+        foreach (var moduleId in moduleIds.Distinct())
+        {
+            if (before.Fitted.FirstOrDefault(module => module.Id == moduleId) is { } module
+                && before.ChargeOf(module) is { } charge)
+                selected.Add((module, charge));
+        }
+        if (selected.Count == 0)
+            return new NothingHappened();
+
+        var pairs = selected.Select(entry => (ModuleId: entry.Module.Id, ChargeId: entry.Charge.Id)).ToArray();
+        var staged = await stageCharges(pairs, cancellationToken).ConfigureAwait(false);
+        if (pairs.Any(pair => !staged.ContainsKey(pair.ChargeId)))
+            throw new InvalidOperationException("the trade did not stage every fitted charge");
+        var after = await LoadAsync(characterId, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("the ship disappeared after fitted charges entered trade");
+
+        var events = new List<AmmoEvent>();
+        foreach (var (module, charge) in selected)
+        {
+            events.Add(new ItemChanged(staged[charge.Id], shipId, charge.Flag, charge.Quantity, charge.OwnerId));
+            events.Add(new ChargeQuantityChanged(shipId, module.Flag, charge.TypeId, 0, charge.Quantity));
+            if (ModuleChanges(module.Id, before.World.Attributes(module.Id), after.World.Attributes(module.Id)) is { Count: > 0 } changed)
+                events.Add(new ModuleAttributesChanged(changed));
+        }
+        events.Add(new FittingRefreshed(after.Fitted));
+        return new AmmoChanged(shipId, events, ItemChangesAnnouncedExternally: true);
+    }
+
     /// <summary>
     /// <c>UnloadAmmo</c> of a ship in space: what the module holds goes to the hold, at once (all of it, or <paramref name="quantity"/> rounds). The gun may be running: the
     /// simulation has its rounds and has taken them out (<paramref name="gun"/>); what is taken out of the charge item is what it took.
@@ -374,20 +442,71 @@ public sealed partial class CharacterShips
 
     private async Task<ShipOutcome> UnloadAmmoOnceAsync(
         long characterId, long shipId, IReadOnlyList<long> moduleIds, long destinationLocationId, int? destinationFlag, long? quantity, AmmoWhere where, GunRounds? gun,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, long? destinationOwnerId = null, bool containerDestination = false)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        if (await BeginAmmoAsync(connection, transaction, characterId, shipId, destinationLocationId, where, cancellationToken) is not { } work)
+        if (await BeginAmmoAsync(connection, transaction, characterId, shipId, destinationLocationId, where, cancellationToken,
+                destinationFlag, destinationOwnerId, containerDestination) is not { } work)
         {
             return new NothingHappened();
         }
-        var place = PlaceOf(work.Snapshot, destinationLocationId)!.Value;
-        var flag = destinationFlag ?? place.Flag;
+        var place = PlaceOf(work.Snapshot, destinationLocationId);
+        Item? container = null;
+        if (containerDestination)
+        {
+            if (destinationOwnerId is not { } ownerId
+                || destinationFlag is { } requestedFlag && requestedFlag != ContainerFlag
+                || await items.LockAndGetAsync(connection, transaction, destinationLocationId, cancellationToken) is not { } destination
+                || destination.OwnerId != ownerId || !destination.Singleton || destination.Quantity != 1
+                || !await IsCargoContainerItemAsync(destination, cancellationToken)
+                || !await IsOwnedContainerAtStationAsync(connection, transaction, destination, ownerId,
+                    work.Snapshot.Ship.LocationId, cancellationToken))
+            {
+                return new NothingHappened();
+            }
+            container = destination;
+        }
+        else if (place is null)
+        {
+            return new NothingHappened();
+        }
+
+        var targetLocation = place?.Location ?? destinationLocationId;
+        var flag = containerDestination ? destinationFlag ?? ContainerFlag : destinationFlag ?? place!.Value.Flag;
+        if (container is not null)
+        {
+            var contents = await items.LockContainerAsync(connection, transaction, container.Id, cancellationToken);
+            var charges = moduleIds.Distinct()
+                .Select(id => work.Snapshot.Fitted.FirstOrDefault(module => module.Id == id))
+                .OfType<Item>()
+                .Select(module => work.Charges.GetValueOrDefault(module.Flag))
+                .OfType<Item>()
+                .DistinctBy(charge => charge.Id)
+                .ToArray();
+            await statics.EnsureTypesAsync(charges.Select(charge => charge.TypeId), cancellationToken);
+            var capacity = statics.AttributeId("capacity") is { } capacityId
+                ? statics.Type(container.TypeId)?.Attributes.GetValueOrDefault(capacityId) ?? 0
+                : 0;
+            var used = await VolumeOfAsync(contents, cancellationToken);
+            var required = charges.Sum(charge =>
+            {
+                var units = quantity is > 0 ? Math.Min(quantity.Value, charge.Quantity) : charge.Quantity;
+                return statics.Type(charge.TypeId) is { } type
+                    ? ItemVolumes.Of(charge with { Quantity = charge.Singleton ? charge.Quantity : units }, type.GroupId, ItemVolumeOf(type))
+                    : 0;
+            });
+            if (required > Math.Max(0, capacity - used) + RoomTolerance)
+            {
+                return new ShipRefused(ShipRefusal.NoSpaceForThat, ModuleTypeId: charges.FirstOrDefault()?.TypeId ?? 0,
+                    Available: Math.Round(Math.Max(0, capacity - used), 6), Volume: Math.Round(required, 6));
+            }
+        }
+
         // the charges that go, and the stacks of their kinds where they go (a charge joins the first of them), are locked and checked first
         var leaving = moduleIds.Distinct().Select(id => work.Snapshot.Fitted.FirstOrDefault(m => m.Id == id)).OfType<Item>()
             .Select(m => work.Charges.GetValueOrDefault(m.Flag)).OfType<Item>().ToList();
-        await work.LockAsync(leaving.Concat(work.Stacks.Values.Where(s => s.LocationId == place.Location && s.Flag == flag && leaving.Any(c => c.TypeId == s.TypeId))));
+        await work.LockAsync(leaving.Concat(work.Stacks.Values.Where(s => s.LocationId == targetLocation && s.Flag == flag && leaving.Any(c => c.TypeId == s.TypeId))));
         foreach (var moduleId in moduleIds.Distinct())
         {
             if (work.Snapshot.Fitted.FirstOrDefault(m => m.Id == moduleId) is not { } module || !work.Charges.TryGetValue(module.Flag, out var charge))
@@ -404,7 +523,7 @@ public sealed partial class CharacterShips
                 {
                     continue;
                 }
-                await UnloadAsync(work, module, charge, place.Location, flag, leaves);
+                await UnloadAsync(work, module, charge, targetLocation, flag, leaves);
             }
             finally
             {
@@ -413,6 +532,31 @@ public sealed partial class CharacterShips
         }
         await transaction.CommitAsync(cancellationToken);
         return Finish(work);
+    }
+
+    private async Task<bool> IsCargoContainerItemAsync(Item item, CancellationToken cancellationToken)
+    {
+        await statics.EnsureTypesAsync([item.TypeId], cancellationToken);
+        return statics.Type(item.TypeId) is { } type && IsCargoContainerType(type);
+    }
+
+    private async Task<bool> IsOwnedContainerAtStationAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Item container, long ownerId, long stationId,
+        CancellationToken cancellationToken)
+    {
+        var current = container;
+        var seen = new HashSet<long>();
+        for (var depth = 0; depth < 32; depth++)
+        {
+            if (!seen.Add(current.Id) || current.OwnerId != ownerId)
+                return false;
+            if (current.LocationId == stationId)
+                return current.Flag == ItemFlags.Hangar || ItemFlags.IsCorporationHangar(current.Flag);
+            if (await items.LockAndGetAsync(connection, transaction, current.LocationId, cancellationToken) is not { } parent)
+                return false;
+            current = parent;
+        }
+        return false;
     }
 
     /// <summary>

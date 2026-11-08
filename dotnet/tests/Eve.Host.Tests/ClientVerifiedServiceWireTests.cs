@@ -196,8 +196,8 @@ public partial class HostServerTests
         Assert.Equal("OnHackingTurnComplete", virusTurn.Name);
         AssertHackingEvent(Assert.Single(TurnEvents(virusTurn.Args)), HackingWire.EventUeInUse, data =>
         {
-            Assert.Equal(new PyInt(0), WireField(data, "index"));
-            Assert.Same(PyBool.True, WireField(data, "value"));
+            Assert.Equal(new PyInt(0), HackingField(data, "index"));
+            Assert.Same(PyBool.True, HackingField(data, "value"));
         });
 
         var targetBoard = HackingBoard.Blank();
@@ -216,11 +216,70 @@ public partial class HostServerTests
         var events = TurnEvents(targetTurn.Args);
         AssertHackingEvent(Assert.IsType<PyObject>(events[0]), HackingWire.EventKernelRot, data =>
         {
-            Assert.Equal(new PyInt(HackingWire.TypeCore), WireField(data, "type"));
-            Assert.Equal(new PyInt(5), WireField(data, "coherence"));
-            Assert.Equal(Py.Tuple(new PyInt(0), new PyInt(3)), WireField(data, "coord"));
+            Assert.Equal(new PyInt(HackingWire.TypeCore), HackingField(data, "type"));
+            Assert.Equal(new PyInt(5), HackingField(data, "coherence"));
+            Assert.Equal(Py.Tuple(new PyInt(0), new PyInt(3)), HackingField(data, "coord"));
         });
         Assert.Contains(events, item => WireInteger(WireField(item, "eventID")) == HackingWire.EventUeRemoved);
+    }
+
+    [Fact]
+    public async Task Hacking_practice_rpc_uses_the_client_null_target_and_starts_a_mapping_shaped_board_over_host_wire()
+    {
+        const long characterId = 90_004;
+        var service = new HackingMgrService(new HackingAttempts(), new ClientVerifiedHackingSite());
+        Start(configure: registry => registry.Register(service), sessionOpened: session =>
+        {
+            session.Set("charid", new PyInt(characterId));
+            session.Set("accountRole", new PyLong(GameMasterRoles.Qa));
+        });
+        var (front, open) = await OpenFrontAsync();
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.CallWithKwargs(
+            open,
+            1,
+            "hackingMgr",
+            "StartNewGameInstance",
+            new PyTuple([PyNone.Instance, new PyInt(HackingWire.GameTypeHacking), new PyInt(22_329), new PyInt(2),
+                new PyInt(40), new PyInt(20), new PyInt(3)]),
+            TransportKwargs()))));
+
+        var first = Assert.IsType<Send>(await front.ReceiveAsync());
+        var second = Assert.IsType<Send>(await front.ReceiveAsync());
+        var firstDecoded = MarshalCodec.Decode(first.Payload);
+        var secondDecoded = MarshalCodec.Decode(second.Payload);
+        var firstType = Assert.IsType<MachoPacket>(MachoPacket.Decode(firstDecoded)).Type;
+        var secondType = Assert.IsType<MachoPacket>(MachoPacket.Decode(secondDecoded)).Type;
+        var notification = firstType == MachoMessage.Notification ? first : second;
+        var response = firstType == MachoMessage.CallRsp ? firstDecoded : secondDecoded;
+        Assert.Contains(MachoMessage.CallRsp, new[] { firstType, secondType });
+        Assert.Contains(MachoMessage.Notification, new[] { firstType, secondType });
+        Assert.Same(PyNone.Instance, Result(response));
+
+        var turn = ReadMailNotification(notification);
+        Assert.Equal("OnHackingTurnComplete", turn.Name);
+        var events = TurnEvents(turn.Args);
+        var tiles = events.Where(item => WireInteger(WireField(item, "eventID")) == HackingWire.EventTileCreated).ToList();
+        Assert.InRange(tiles.Count, 39, 64);
+        Assert.All(tiles, item =>
+        {
+            var coord = Assert.IsType<PyTuple>(HackingField(WireField(item, "eventData"), "coord")).Items;
+            Assert.InRange(WireInteger(coord[0]), 0, 7);
+            Assert.InRange(WireInteger(coord[1]), 0, 7);
+        });
+        var start = events.Single(item => WireInteger(WireField(item, "eventID")) == HackingWire.EventGameStart);
+        var eventData = Assert.IsType<PyDict>(WireField(start, "eventData"));
+        Assert.Same(PyNone.Instance, HackingField(eventData, "targetID"));
+    }
+
+    private static PyValue HackingField(PyValue value, string name)
+    {
+        var entries = value switch
+        {
+            PyDict dict => dict.Entries,
+            PyObject { Args: PyDict dict } => dict.Entries,
+            _ => throw new Xunit.Sdk.XunitException($"Expected a hacking event mapping, got {value.GetType().Name}"),
+        };
+        return entries.Single(pair => WireText(pair.Key) == name).Value;
     }
 
     private sealed class ClientVerifiedHackingSite : IHackingSite
@@ -228,11 +287,16 @@ public partial class HostServerTests
         public ValueTask<HackableTarget?> FindAsync(long characterId, long targetId, CancellationToken cancellationToken) =>
             ValueTask.FromResult<HackableTarget?>(null);
 
+        public ValueTask<string?> AnalyzerStartRefusalAsync(
+            ClientSession session, HackableTarget target, double maxRange, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<string?>(null);
+
         public ValueTask<bool> InReachAsync(ClientSession session, long targetId, double maxRange, CancellationToken cancellationToken) =>
             ValueTask.FromResult(true);
 
-        public ValueTask AttemptEndedAsync(ClientSession session, HackableTarget target, bool won, CancellationToken cancellationToken) =>
-            ValueTask.CompletedTask;
+        public ValueTask<IReadOnlyList<HackingLootItem>> AttemptEndedAsync(
+            ClientSession session, HackableTarget target, Guid reservationId, bool won, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<IReadOnlyList<HackingLootItem>>([]);
     }
 
     private static PyValue[] TurnEvents(PyValue[] notificationArgs) =>

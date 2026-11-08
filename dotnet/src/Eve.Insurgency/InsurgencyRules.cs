@@ -30,8 +30,6 @@ public static class InsurgencyRules
     public const long ForecastMs = 48L * 3_600_000;
     public const long MaxLengthMs = 7L * 24 * 3_600_000;
     public const long WindDownMs = 48L * 3_600_000;
-    public const long ReinforcementBaseMs = 3L * 3_600_000;
-    public const long ReinforcementJitterMs = 3_600_000;
     public const int BaseRequiredSystems = 5;
     public const int MaxAmbitionModifier = 5;
     public const int SpreadCorruptionLevel = 3;
@@ -44,10 +42,6 @@ public static class InsurgencyRules
 
     /// <summary>The systems a side must fully corrupt or suppress for its modifier: 5 at no ambition, 10 at the maximum.</summary>
     public static int RequiredSystems(int ambitionModifier) => BaseRequiredSystems + Math.Clamp(ambitionModifier, 0, MaxAmbitionModifier);
-
-    /// <summary>A FOB's armor reinforcement: 3 h with a variance of 1 h, so 2 to 4 h. <paramref name="roll"/> is in [0, 1].</summary>
-    public static long ReinforcementMs(double roll) =>
-        ReinforcementBaseMs - ReinforcementJitterMs + (long)Math.Round(2 * ReinforcementJitterMs * Math.Clamp(roll, 0, 1));
 
     /// <summary>A side that wins a campaign gains one ambition level, up to the maximum.</summary>
     public static int WinnerModifier(int modifier) => Math.Min(modifier + 1, MaxAmbitionModifier);

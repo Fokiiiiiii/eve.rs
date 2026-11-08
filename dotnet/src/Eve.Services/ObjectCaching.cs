@@ -12,14 +12,16 @@ public static class ObjectCaching
     public const string ResultClass = "carbon.common.script.net.objectCaching.CachedMethodCallResult";
 
     /// <summary>
-    /// <c>({versionCheck[, sessionInfo]}, substream(result), [filetime, adler32(marshal(result))])</c>.
+    /// <c>({versionCheck[, sessionInfo[, sessionInfoValue]]}, substream(result), [filetime, adler32(marshal(result))])</c>.
     /// </summary>
-    public static PyValue MethodResult(PyValue result, long nowUnixMs, string versionCheck = "run", string? sessionInfo = null)
+    public static PyValue MethodResult(PyValue result, long nowUnixMs, string versionCheck = "run", string? sessionInfo = null, PyValue? sessionInfoValue = null)
     {
         List<KeyValuePair<PyValue, PyValue>> details = [new(Raw("versionCheck"), Raw(versionCheck))];
         if (sessionInfo is not null)
         {
             details.Add(new(Raw("sessionInfo"), Raw(sessionInfo)));
+            if (sessionInfoValue is not null)
+                details.Add(new(Raw("sessionInfoValue"), sessionInfoValue));
         }
         var version = new PyList([new PyLong(Py.FileTimeFromUnixMs(nowUnixMs)), new PyInt(Checksums.SignedAdler32(MarshalCodec.Encode(result)))]);
         return new PyObject(new PyStr(ResultClass), Py.Tuple(new PyDict(details), new PySubStream(result), version));

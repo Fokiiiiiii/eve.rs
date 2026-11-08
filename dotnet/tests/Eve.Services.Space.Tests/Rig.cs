@@ -39,11 +39,15 @@ public sealed class PgTheoryAttribute : TheoryAttribute
 }
 
 /// <summary>Keeps what the server sent, so a test can read the events.</summary>
-internal sealed class Sink : IPacketSink
+internal sealed class Sink(Action<PyValue>? onSend = null) : IPacketSink
 {
     public SentLog Sent { get; } = new();
 
-    public void Send(PyValue packet) => Sent.Add(packet);
+    public void Send(PyValue packet)
+    {
+        Sent.Add(packet);
+        onSend?.Invoke(packet);
+    }
 }
 
 /// <summary>

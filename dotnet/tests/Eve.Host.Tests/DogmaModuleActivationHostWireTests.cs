@@ -6,6 +6,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Dogma;
+using Eve.Services.Ships;
 using Eve.Ships;
 using Xunit;
 
@@ -13,6 +14,55 @@ namespace Eve.Host.Tests;
 
 public partial class HostServerTests
 {
+    private sealed class RecordingProbes : ISpaceProbes
+    {
+        public List<(long CharacterId, long ModuleId, int Count)> Launches { get; } = [];
+
+        public Task LaunchAsync(ClientSession session, long moduleId, int count, CancellationToken cancellationToken)
+        {
+            Launches.Add((session.CharacterId!.Value, moduleId, count));
+            return Task.CompletedTask;
+        }
+
+        public Task RecallAsync(ClientSession session, long probeId, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task Probe_launch_reaches_the_registered_bound_dogma_route_with_the_client_arguments()
+    {
+        const long stationId = 600;
+        var probes = new RecordingProbes();
+        var service = new DogmaIMService(
+            new DogmaStatic([], [], []), null!, () => FixedNowMs,
+            (_, _, _, _, _, _) => ValueTask.FromResult<bool?>(null), probes: probes);
+        Start(
+            configure: registry => registry.Register(service),
+            sessionOpened: session =>
+            {
+                session.Set("charid", new PyInt(42));
+                session.Set("stationid", new PyInt(stationId));
+            });
+
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        _ = await front.ReceiveAsync();
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.CallWithKwargs(
+            open, 1, "dogmaIM", "MachoBindObject",
+            new PyTuple([new PyTuple([new PyLong(stationId), new PyInt(15)]), PyNone.Instance]),
+            MachoVersion()))));
+        var bindReply = Assert.IsType<Send>(await front.ReceiveAsync());
+        Assert.Equal(MachoMessage.CallRsp, Envelope(bindReply).Type);
+        var bindResult = Assert.IsType<PyTuple>(Result(MarshalCodec.Decode(bindReply.Payload)));
+        var bound = Assert.IsType<PySubStruct>(bindResult.Items[0]);
+        var objectId = BoundObjects.ExtractName(bound)!;
+
+        var answer = await HostBoundRpcAsync(front, open, 2, objectId, "LaunchProbes", new PyTuple([new PyLong(9988400002220), new PyInt(4)]));
+
+        Assert.Same(PyNone.Instance, answer);
+        Assert.Equal((42L, 9988400002220L, 4), Assert.Single(probes.Launches));
+    }
+
     [Fact]
     public async Task Module_activation_uses_the_registered_bound_host_route_for_docked_and_in_space_client_contexts()
     {

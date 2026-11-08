@@ -77,15 +77,29 @@ public sealed class FwService
     /// warzone, and the caller must quote it: a stale quote is refused with the tax now.
     /// </summary>
     public async Task<DonateResult> DonateAsync(long solarSystemId, long characterId, long corporationId, long donorFactionId, long donatedLp, long hubLp, long nowMs,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, string? operationId = null)
     {
+        operationId ??= $"direct:{Guid.NewGuid():N}";
+        if (string.IsNullOrWhiteSpace(operationId) || operationId.Length > 116)
+            throw new ArgumentOutOfRangeException(nameof(operationId), "a donation operation id must have 1 to 116 characters");
+
+        await using var connection = await _store.Source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await _store.LockDonationOperationAsync(connection, transaction, operationId, cancellationToken);
+        if (await _store.DonationByOperationAsync(connection, transaction, operationId, cancellationToken) is { } receipt)
+        {
+            if (receipt.SolarSystemId != solarSystemId || receipt.CharacterId != characterId || receipt.CorporationId != corporationId
+                || receipt.FactionId != donorFactionId || receipt.HubLp != hubLp || receipt.DonatedLp != donatedLp)
+                throw new InvalidOperationException("a factional warfare donation operation id was reused for a different request");
+            await transaction.CommitAsync(cancellationToken);
+            return new DonateResult(DonateOutcome.Accepted, receipt.PoolAfter, 0);
+        }
+
         if (donatedLp < FwRules.MinLpDonation)
             return new DonateResult(DonateOutcome.BelowMinimum, 0, FwRules.MinLpDonation);
         if (!FwFactions.IsOccupier(donorFactionId))
             return new DonateResult(DonateOutcome.NotEnlisted, 0, 0);
         var militiaCorporationId = FwFactions.MilitiaCorporationOf(donorFactionId);
-        await using var connection = await _store.Source.OpenConnectionAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         var system = await _store.SystemAsync(connection, transaction, solarSystemId, true, cancellationToken);
         if (system is null)
             return new DonateResult(DonateOutcome.NotOccupied, 0, 0);
@@ -97,14 +111,16 @@ public sealed class FwService
             return new DonateResult(DonateOutcome.PoolOverloaded, system.LpPool, FwRules.MaxLpPool - system.LpPool);
         try
         {
-            await _loyalty.ApplyAsync(connection, transaction, new LoyaltyHolder(LoyaltyHolderKind.Character, characterId), militiaCorporationId, -donatedLp,
-                "fw.donation", $"fw-donation:{solarSystemId}:{nowMs}:{donatedLp}", cancellationToken);
+            if (await _loyalty.ApplyAsync(connection, transaction, new LoyaltyHolder(LoyaltyHolderKind.Character, characterId), militiaCorporationId, -donatedLp,
+                "fw.donation", $"fw-donation:{operationId}", cancellationToken) is null)
+                throw new InvalidOperationException("a factional warfare donation wallet reference has no matching receipt");
         }
         catch (InsufficientLoyaltyPointsException)
         {
             return new DonateResult(DonateOutcome.InsufficientLp, system.LpPool, 0);
         }
-        var pool = await _store.AddLpAsync(connection, transaction, solarSystemId, characterId, corporationId, donorFactionId, hubLp, nowMs, cancellationToken);
+        var pool = await _store.AddLpAsync(connection, transaction, solarSystemId, characterId, corporationId, donorFactionId, hubLp, donatedLp, operationId, nowMs,
+            cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         SolarSystemLpPoolChanged?.Invoke(solarSystemId, characterId, system.LpPool, pool);
         return new DonateResult(DonateOutcome.Accepted, pool, 0);
@@ -248,6 +264,20 @@ public sealed class FwService
         return await _store.CorporationsInFactionAsync(connection, null, factionId, nowMs, cancellationToken);
     }
 
+    /// <summary>The alliances enlisted in a faction at <paramref name="nowMs"/>.</summary>
+    public async Task<IReadOnlyList<long>> AlliancesInFactionAsync(long factionId, long nowMs, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _store.Source.OpenConnectionAsync(cancellationToken);
+        return await _store.AlliancesInFactionAsync(connection, null, factionId, nowMs, cancellationToken);
+    }
+
+    /// <summary>Corporations with a current direct faction enlistment at <paramref name="nowMs"/>.</summary>
+    public async Task<IReadOnlyList<long>> CorporationsWithActiveFactionAsync(long nowMs, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _store.Source.OpenConnectionAsync(cancellationToken);
+        return await _store.CorporationsWithActiveFactionAsync(connection, null, nowMs, cancellationToken);
+    }
+
     /// <summary>
     /// Requests that a corporation or an alliance join an occupier faction at <paramref name="standing"/>. The join takes effect at the next downtime.
     /// </summary>
@@ -259,9 +289,18 @@ public sealed class FwService
             return EnlistOutcome.BelowStanding;
         await using var connection = await _store.Source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await _store.EnsureEnlistmentRowAsync(connection, transaction, ownerKind, ownerId, cancellationToken);
         var current = await ResolveAsync(connection, transaction, ownerKind, ownerId, nowMs, cancellationToken);
         if (current.FactionId != 0)
+        {
+            await transaction.CommitAsync(cancellationToken);
             return EnlistOutcome.AlreadyEnlisted;
+        }
+        if (current.EffectiveMs > 0 && current.NextFactionId != 0)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return current.NextFactionId == factionId ? EnlistOutcome.Accepted : EnlistOutcome.AlreadyEnlisted;
+        }
         await _store.SaveEnlistmentAsync(connection, transaction,
             current with { NextFactionId = factionId, EffectiveMs = FwRules.NextDowntimeMs(nowMs), ChangedMs = nowMs }, cancellationToken);
         await transaction.CommitAsync(cancellationToken);

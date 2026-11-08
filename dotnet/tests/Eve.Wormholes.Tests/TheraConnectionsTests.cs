@@ -72,10 +72,32 @@ public sealed class TheraConnectionsTests
 
         rig.Now += 60 * 60_000L + 1;
         await rig.Scheduler.RunDueAsync();
+        rig.Now += WormholeJobs.StaticRespawnDelayMs;
+        await rig.Scheduler.RunDueAsync();
 
-        var touching = await rig.ActiveFromAsync(TheraConnections.SystemId);
-        var replacement = Assert.Single(touching);
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        var replacement = Assert.Single(await rig.Store.ActiveAtAsync(connection, null, TheraConnections.SystemId));
         Assert.Equal(("E587", TheraConnections.SystemId), (replacement.Code, replacement.SourceSystemId));
         Assert.Equal(9, Classes()[replacement.DestinationSystemId]);
+    }
+
+    [PgFact]
+    public async Task A_collapsed_static_that_leads_from_a_free_system_to_Thera_respawns_in_the_same_direction()
+    {
+        var types = new Dictionary<int, WormholeType> { [34372] = new(34372, 0, 60, 1e9, 0, 1e8, 0) };
+        await using var rig = await Rig.CreateAsync(types, Classes());
+        var source = Classes().First(pair => pair.Value is 2 or 3).Key;
+        await rig.OpenAsync(new PlannedConnection(source, TheraConnections.SystemId, "F135", 34372, 5e8, 3), isStatic: true);
+
+        rig.Now += 60 * 60_000L + 1;
+        await rig.Scheduler.RunDueAsync();
+        rig.Now += WormholeJobs.StaticRespawnDelayMs;
+        await rig.Scheduler.RunDueAsync();
+
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        var replacement = Assert.Single(await rig.Store.ActiveAtAsync(connection, null, TheraConnections.SystemId));
+        Assert.Equal("F135", replacement.Code);
+        Assert.Equal(TheraConnections.SystemId, replacement.DestinationSystemId);
+        Assert.Contains(Classes()[replacement.SourceSystemId], TheraConnections.TypeOf("F135")!.FreeClasses);
     }
 }

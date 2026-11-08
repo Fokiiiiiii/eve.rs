@@ -87,6 +87,7 @@ public static class SecurityStatusEventTypeIds
 public sealed class PgCrimewatchStore
 {
     public const string DefaultSchema = "crimewatch";
+    public const long KillRightLifetimeMs = 30L * 24 * 60 * 60 * 1000;
 
     private readonly NpgsqlDataSource _source;
     private readonly string _schema;
@@ -219,6 +220,28 @@ public sealed class PgCrimewatchStore
                   PRIMARY KEY (attacker_character_id, target_character_id, offense_level),
                   CHECK (attacker_character_id <> target_character_id)
               );
+          """),
+          new Migration("0009_kill_right_death_receipts", """
+              CREATE TABLE IF NOT EXISTS kill_right_death_receipts (
+                  lost_item_id bigint PRIMARY KEY CHECK (lost_item_id > 0),
+                  target_character_id bigint NOT NULL CHECK (target_character_id > 0),
+                  final_attacker_character_id bigint NOT NULL CHECK (final_attacker_character_id >= 0),
+                  used_at_ms bigint NOT NULL CHECK (used_at_ms > 0),
+                  activation_id bigint REFERENCES kill_right_activations(activation_id)
+              );
+          """),
+          new Migration("0010_security_status_penalty_target_items", """
+              DELETE FROM security_status_penalty_memory;
+              ALTER TABLE security_status_penalty_memory
+                  DROP CONSTRAINT IF EXISTS security_status_penalty_memory_pkey;
+              ALTER TABLE security_status_penalty_memory
+                  DROP COLUMN target_character_id,
+                  DROP COLUMN offense_level;
+              ALTER TABLE security_status_penalty_memory
+                  ADD COLUMN target_item_id bigint NOT NULL CHECK (target_item_id > 0),
+                  ADD COLUMN target_kind smallint NOT NULL CHECK (target_kind IN (0, 1));
+              ALTER TABLE security_status_penalty_memory
+                  ADD PRIMARY KEY (attacker_character_id, target_item_id, target_kind);
           """)
     ];
 
@@ -336,43 +359,17 @@ public sealed class PgCrimewatchStore
         return await row.ReadAsync(cancellationToken) ? ReadState(row) : CombatState.Idle;
     }
 
-      /// <summary>Extends prior security-status offense memories while this attacker still has a legality timer.</summary>
-      public async Task ExtendSecurityStatusPenaltyMemoryAsync(
-          long attackerCharacterId,
-          long expiresAtUnixMs,
-          long nowUnixMs,
-          CancellationToken cancellationToken = default)
-      {
-          if (attackerCharacterId <= 0)
-          {
-              return;
-          }
-          await using var connection = await _source.OpenConnectionAsync(cancellationToken);
-          await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-          await LockSecurityStatusPenaltyMemoryAsync(connection, transaction, attackerCharacterId, cancellationToken);
-          await Sql.ExecuteAsync(connection, transaction,
-              Q("DELETE FROM {schema}.security_status_penalty_memory WHERE attacker_character_id = $1 AND expires_at_ms <= $2"),
-              cancellationToken, attackerCharacterId, nowUnixMs);
-          if (expiresAtUnixMs > nowUnixMs)
-          {
-              await Sql.ExecuteAsync(connection, transaction,
-                  Q("UPDATE {schema}.security_status_penalty_memory SET expires_at_ms = GREATEST(expires_at_ms, $2) WHERE attacker_character_id = $1"),
-                  cancellationToken, attackerCharacterId, expiresAtUnixMs);
-          }
-          await transaction.CommitAsync(cancellationToken);
-      }
-
-      /// <summary>Reserves one attacker/target/ship-or-capsule penalty until the attacker's legality memory expires.</summary>
+      /// <summary>Reserves one attacker/target-item/ship-or-capsule penalty for the one-minute duplicate window.</summary>
       public async Task<bool> TryRememberSecurityStatusPenaltyAsync(
           long attackerCharacterId,
-          long targetCharacterId,
+          long targetItemId,
           bool targetIsCapsule,
           long expiresAtUnixMs,
             long nowUnixMs,
             Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task> applyPenalty,
           CancellationToken cancellationToken = default)
       {
-          if (attackerCharacterId <= 0 || targetCharacterId <= 0 || attackerCharacterId == targetCharacterId || expiresAtUnixMs <= nowUnixMs)
+          if (attackerCharacterId <= 0 || targetItemId <= 0 || expiresAtUnixMs <= nowUnixMs)
           {
               return false;
           }
@@ -382,27 +379,24 @@ public sealed class PgCrimewatchStore
           await Sql.ExecuteAsync(connection, transaction,
               Q("DELETE FROM {schema}.security_status_penalty_memory WHERE attacker_character_id = $1 AND expires_at_ms <= $2"),
               cancellationToken, attackerCharacterId, nowUnixMs);
-          await Sql.ExecuteAsync(connection, transaction,
-              Q("UPDATE {schema}.security_status_penalty_memory SET expires_at_ms = GREATEST(expires_at_ms, $2) WHERE attacker_character_id = $1"),
-              cancellationToken, attackerCharacterId, expiresAtUnixMs);
           await using var command = Sql.Command(connection, transaction,
               Q("""
                   INSERT INTO {schema}.security_status_penalty_memory
-                      (attacker_character_id, target_character_id, offense_level, expires_at_ms)
+                      (attacker_character_id, target_item_id, target_kind, expires_at_ms)
                   VALUES ($1, $2, $3, $4)
-                  ON CONFLICT (attacker_character_id, target_character_id, offense_level) DO NOTHING
+                  ON CONFLICT (attacker_character_id, target_item_id, target_kind) DO NOTHING
                   RETURNING 1
                   """),
-              attackerCharacterId, targetCharacterId, (short)(targetIsCapsule ? 1 : 0), expiresAtUnixMs);
+              attackerCharacterId, targetItemId, (short)(targetIsCapsule ? 1 : 0), expiresAtUnixMs);
           var reserved = await command.ExecuteScalarAsync(cancellationToken);
-            if (reserved is null)
-            {
-                await transaction.CommitAsync(cancellationToken);
-                return false;
-            }
-            await applyPenalty(connection, transaction, cancellationToken);
+          if (reserved is null)
+          {
+              await transaction.CommitAsync(cancellationToken);
+              return false;
+          }
+          await applyPenalty(connection, transaction, cancellationToken);
           await transaction.CommitAsync(cancellationToken);
-            return true;
+          return true;
       }
 
       private async Task LockSecurityStatusPenaltyMemoryAsync(
@@ -505,9 +499,30 @@ public sealed class PgCrimewatchStore
         {
             return null;
         }
-        var expiresAtUnixMs = checked(createdAtUnixMs + 2_592_000_000L);
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var id = await CreateKillRightAsync(
+            connection, transaction, ownerCharacterId, targetCharacterId, solarSystemId, createdAtUnixMs,
+            cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return id;
+    }
+
+    /// <summary>Creates a right within its caller's transaction so the host can publish its durable creation event atomically.</summary>
+    public async Task<long?> CreateKillRightAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long ownerCharacterId,
+        long targetCharacterId,
+        long solarSystemId,
+        long createdAtUnixMs,
+        CancellationToken cancellationToken = default)
+    {
+        if (ownerCharacterId <= 0 || targetCharacterId <= 0 || ownerCharacterId == targetCharacterId
+            || solarSystemId <= 0 || createdAtUnixMs <= 0)
+            return null;
+
+        var expiresAtUnixMs = checked(createdAtUnixMs + KillRightLifetimeMs);
         await Sql.ExecuteAsync(connection, transaction, Q("""
             UPDATE {schema}.kill_rights
             SET used_at_ms = $3, sale_price = NULL, restricted_to_owner_id = NULL
@@ -522,7 +537,6 @@ public sealed class PgCrimewatchStore
             RETURNING kill_right_id
             """), ownerCharacterId, targetCharacterId, solarSystemId, createdAtUnixMs, expiresAtUnixMs);
         var result = await command.ExecuteScalarAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
         return result is long id ? id : null;
     }
 
@@ -770,24 +784,101 @@ public sealed class PgCrimewatchStore
     public async Task<KillRightActivation?> ConsumeKillRightAfterKillAsync(
         long targetCharacterId,
         long finalAttackerCharacterId,
+        long lostItemId,
         long usedAtUnixMs,
         CancellationToken cancellationToken = default)
     {
-        if (targetCharacterId <= 0 || usedAtUnixMs <= 0)
+        if (targetCharacterId <= 0 || lostItemId <= 0 || usedAtUnixMs <= 0)
         {
             return null;
         }
-        var active = await ActiveKillRightActivationsForTargetAsync(
-            targetCharacterId, usedAtUnixMs, cancellationToken);
-        var selected = active.FirstOrDefault(activation =>
-                finalAttackerCharacterId > 0 && activation.ActivatorCharacterId == finalAttackerCharacterId)
-            ?? active.FirstOrDefault();
-        if (selected is null || !await MarkKillRightUsedAsync(
-                selected.OwnerCharacterId, selected.KillRightId, usedAtUnixMs, cancellationToken))
+
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await Sql.ExecuteAsync(connection, transaction, Q("""
+            SELECT pg_advisory_xact_lock(hashtextextended('eve.kill-right-loss:' || $1::text, 0))
+            """), cancellationToken, lostItemId);
+        await Sql.ExecuteAsync(connection, transaction, Q("""
+            SELECT pg_advisory_xact_lock(hashtextextended('eve.kill-right-target:' || $1::text, 0))
+            """), cancellationToken, targetCharacterId);
+
+        await using (var existing = Sql.Command(connection, transaction, Q("""
+            SELECT target_character_id, activation_id
+            FROM {schema}.kill_right_death_receipts
+            WHERE lost_item_id = $1
+            FOR UPDATE
+            """), lostItemId))
         {
-            return null;
+            await using var row = await existing.ExecuteReaderAsync(cancellationToken);
+            if (await row.ReadAsync(cancellationToken))
+            {
+                if (row.GetInt64(0) != targetCharacterId)
+                    throw new InvalidOperationException($"Lost item {lostItemId} was already recorded for another character.");
+                var activationId = row.IsDBNull(1) ? (long?)null : row.GetInt64(1);
+                await row.DisposeAsync();
+                var prior = activationId is { } id
+                    ? await KillRightActivationByIdAsync(connection, transaction, id, cancellationToken)
+                    : null;
+                await transaction.CommitAsync(cancellationToken);
+                return prior;
+            }
         }
+
+        KillRightActivation? selected;
+        await using (var command = Sql.Command(connection, transaction, Q("""
+            SELECT a.activation_id, a.kill_right_id, a.owner_character_id, a.target_character_id,
+                   a.activator_character_id, a.activated_at_ms, a.expires_at_ms, a.price_paid, a.activation_kind
+            FROM {schema}.kill_right_activations a
+            JOIN {schema}.kill_rights r ON r.kill_right_id = a.kill_right_id
+            WHERE a.target_character_id = $1 AND a.used_at_ms IS NULL AND a.expires_at_ms > $2
+              AND r.used_at_ms IS NULL AND r.expires_at_ms > $2
+            ORDER BY (a.activator_character_id = $3 AND $3 > 0) DESC, a.activated_at_ms, a.activation_id
+            LIMIT 1
+            FOR UPDATE OF a, r
+            """), targetCharacterId, usedAtUnixMs, finalAttackerCharacterId))
+        {
+            await using var row = await command.ExecuteReaderAsync(cancellationToken);
+            selected = await row.ReadAsync(cancellationToken) ? ReadKillRightActivation(row) : null;
+        }
+
+        if (selected is not null)
+        {
+            var rightChanged = await Sql.ExecuteAsync(connection, transaction, Q("""
+                UPDATE {schema}.kill_rights SET used_at_ms = $2
+                WHERE kill_right_id = $1 AND used_at_ms IS NULL AND expires_at_ms > $2
+                """), cancellationToken, selected.KillRightId, usedAtUnixMs);
+            if (rightChanged != 1)
+                throw new InvalidOperationException($"Kill right {selected.KillRightId} changed while its death was being recorded.");
+            await Sql.ExecuteAsync(connection, transaction, Q("""
+                UPDATE {schema}.kill_right_activations SET used_at_ms = $2
+                WHERE kill_right_id = $1 AND used_at_ms IS NULL AND expires_at_ms > $2
+                """), cancellationToken, selected.KillRightId, usedAtUnixMs);
+        }
+
+        await Sql.ExecuteAsync(connection, transaction, Q("""
+            INSERT INTO {schema}.kill_right_death_receipts
+                (lost_item_id, target_character_id, final_attacker_character_id, used_at_ms, activation_id)
+            VALUES ($1, $2, $3, $4, $5)
+            """), cancellationToken, lostItemId, targetCharacterId, Math.Max(finalAttackerCharacterId, 0), usedAtUnixMs,
+            selected?.ActivationId);
+        await transaction.CommitAsync(cancellationToken);
         return selected;
+    }
+
+    private async Task<KillRightActivation?> KillRightActivationByIdAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long activationId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = Sql.Command(connection, transaction, Q("""
+            SELECT activation_id, kill_right_id, owner_character_id, target_character_id,
+                   activator_character_id, activated_at_ms, expires_at_ms, price_paid, activation_kind
+            FROM {schema}.kill_right_activations
+            WHERE activation_id = $1
+            """), activationId);
+        await using var row = await command.ExecuteReaderAsync(cancellationToken);
+        return await row.ReadAsync(cancellationToken) ? ReadKillRightActivation(row) : null;
     }
 
     private async Task<KillRight?> LockKillRightAsync(

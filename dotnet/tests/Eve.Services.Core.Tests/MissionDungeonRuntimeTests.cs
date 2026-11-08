@@ -505,7 +505,7 @@ public class MissionDungeonRuntimeTests
     }
 
     [AgentsPgFact]
-    public async Task A_courier_past_its_data_expiry_fails_and_one_before_it_does_not()
+    public async Task Dungeon_sweep_does_not_apply_a_separate_default_expiry_to_an_unlimited_courier()
     {
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
@@ -513,48 +513,27 @@ public class MissionDungeonRuntimeTests
         await AgentMissionStore.MigrateAsync(source, schema);
         var store = new AgentMissionStore(source, schema);
         var host = new FakeHost { Store = store };
-        var runtime = CourierRuntime(store, host, null);
-        await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9401, 1239, "Courier Step", "", false), Start, "offer:c3");
+        var now = Start;
+        var runtime = ZeroExpiryCourierRuntime(store, host, () => now);
+        await store.OfferAsync(Pilot, Agent,
+            new AgentMissionContent(9402, 1239, "Courier Step", "", false, ExpirationMinutes: 0), Start, "offer:c3");
         await store.AcceptAsync(Pilot, Agent, Start, "accept:c3");
         await runtime.OnAcceptedAsync(Pilot, Agent);
 
-        Assert.Equal(0, await runtime.ExpireCouriersAsync(Start + TimeSpan.FromDays(6)));
+        now = Start + TimeSpan.FromDays(4);
+        await runtime.SweepAsync();
+
         Assert.Equal(AgentMissionState.Accepted, (await store.ReadAsync(Pilot, Agent))!.State);
         Assert.Empty(host.TakenBack);
-
-        Assert.Equal(1, await runtime.ExpireCouriersAsync(Start + TimeSpan.FromDays(8)));
-        Assert.Equal(AgentMissionState.Failed, (await store.ReadAsync(Pilot, Agent))!.State);
-
-        Assert.Equal((9401L, Pilot), Assert.Single(host.TakenBack));
         Assert.Empty(host.Standings);
     }
 
     // The same courier with expirationTime 0 (73 courier records of build 3405148 carry 0): no time limit is given.
-    private static MissionDungeonRuntime ZeroExpiryCourierRuntime(AgentMissionStore store, FakeHost host) => new(store,
+    private static MissionDungeonRuntime ZeroExpiryCourierRuntime(
+        AgentMissionStore store, FakeHost host, Func<DateTimeOffset>? now = null) => new(store,
         MissionStaticCatalog.FromRows(3405148, [new SdeRow(9402, JsonDocument.Parse(CourierMission.Replace("9401", "9402").Replace("10080", "0")).RootElement.Clone())], []),
-        host, _ => new MissionAgentPlace(System, Corporation, AgentStation), () => Start, (missionId, characterId, place, level) => null);
-
-    [AgentsPgFact]
-    public async Task A_courier_whose_data_gives_zero_expiry_keeps_the_default_and_is_not_failed_at_once()
-    {
-        var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
-        var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
-        await using var cleanup = new Cleanup(source, schema);
-        await AgentMissionStore.MigrateAsync(source, schema);
-        var store = new AgentMissionStore(source, schema);
-        var host = new FakeHost { Store = store };
-        var runtime = ZeroExpiryCourierRuntime(store, host);
-        await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9402, 1239, "Courier Step", "", false), Start, "offer:c5");
-        await store.AcceptAsync(Pilot, Agent, Start, "accept:c5");
-        await runtime.OnAcceptedAsync(Pilot, Agent);
-
-        Assert.Equal(0, await runtime.ExpireCouriersAsync(Start + TimeSpan.FromMinutes(5)));
-        Assert.Equal(AgentMissionState.Accepted, (await store.ReadAsync(Pilot, Agent))!.State);
-        Assert.Empty(host.TakenBack);
-
-        Assert.Equal(1, await runtime.ExpireCouriersAsync(Start + MissionCourierRules.DefaultExpiry + TimeSpan.FromMinutes(1)));
-        Assert.Equal(AgentMissionState.Failed, (await store.ReadAsync(Pilot, Agent))!.State);
-    }
+        host, _ => new MissionAgentPlace(System, Corporation, AgentStation), now ?? (() => Start),
+        (missionId, characterId, place, level) => null);
 
     [AgentsPgFact]
     public async Task A_courier_quit_takes_the_cargo_back_and_pays_nothing()
@@ -594,7 +573,7 @@ public class MissionDungeonRuntimeTests
         """;
 
     [AgentsPgFact]
-    public async Task A_storyline_trade_is_a_fetch_at_its_agent_with_no_cargo_no_delivery_and_no_courier_expiry()
+    public async Task A_storyline_trade_is_a_fetch_at_its_agent_with_no_cargo_or_delivery()
     {
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var schema = "mdr_" + Guid.NewGuid().ToString("N")[..12];
@@ -608,10 +587,9 @@ public class MissionDungeonRuntimeTests
         await store.OfferAsync(Pilot, Agent, new AgentMissionContent(9501, 1245, "Trade Step", "", false), Start, "offer:t1");
         await store.AcceptAsync(Pilot, Agent, Start, "accept:t1");
 
-        // no cargo at the acceptance, no delivery at a station, and no courier expiry
+        // no cargo at the acceptance and no delivery at a station
         await runtime.OnAcceptedAsync(Pilot, Agent);
         Assert.Empty(host.Cargo);
-        Assert.Equal(0, await runtime.ExpireCouriersAsync(Start + TimeSpan.FromDays(30)));
         await runtime.OnDockedAsync(Pilot, DestinationStation);
         Assert.Equal(AgentMissionState.Accepted, (await store.ReadAsync(Pilot, Agent))!.State);
 

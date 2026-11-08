@@ -53,16 +53,23 @@ internal sealed partial class CharacterServicesComposition
     {
         // without a space simulation (EVE_SIM=off) there is no reach and no analyzer: the service is still registered
         var hackingSite = new Eve.Services.Space.SpaceHackingSite(spaceSessions);
-        var hackingMgr = new Eve.Services.Space.HackingMgrService(hackingAttempts, hackingSite);
+        var hackingMgr = new Eve.Services.Space.HackingMgrService(
+            hackingAttempts, hackingSite, localTimers: foundations.LocalTimers);
         if (spaceSessions is not null)
             spaceSessions.HackingService = hackingMgr;
         // the containers of the sites are the site content's (the space's SiteContainerHacks, set by the space composition)
         hackingSite.Find = (characterId, containerId, cancellationToken) => spaceSessions?.HackableContainers is { } hacks
             ? hacks.FindAsync(containerId, cancellationToken)
             : ValueTask.FromResult<HackableTarget?>(null);
-        hackingSite.Ended = (session, target, won, cancellationToken) => spaceSessions?.HackableContainers is { } hacks
-            ? hacks.EndedAsync(target, won, session.CharacterId ?? 0, cancellationToken)
+        hackingSite.Reserve = (session, target, reservationId, cancellationToken) => spaceSessions?.HackableContainers is { } hacks
+            ? hacks.TryReserveAsync(target, reservationId, session.CharacterId ?? 0, session.SessionId, cancellationToken)
+            : ValueTask.FromResult(false);
+        hackingSite.Released = (reservationId, cancellationToken) => spaceSessions?.HackableContainers is { } hacks
+            ? hacks.ReleaseReservationAsync(reservationId, cancellationToken)
             : ValueTask.CompletedTask;
+        hackingSite.Settle = (session, target, reservationId, won, cancellationToken) => spaceSessions?.HackableContainers is { } hacks
+            ? hacks.EndedAsync(target, reservationId, won, session.CharacterId ?? 0, cancellationToken)
+            : ValueTask.FromResult<IReadOnlyList<HackingLootItem>>([]);
         var randomJump = spaceSessions is null ? null : new NeedlejackActivation(
             source, spaceSchema, items, itemTypes, ships, fleetStore, characterSessions, spaceSessions, solarSystems, stations,
             dogma, crimewatchStore, crimewatchRuntime, structureStore, deployedStore, bountyStore, now);
@@ -75,15 +82,11 @@ internal sealed partial class CharacterServicesComposition
             hackingMgr,
             new Eve.Services.Space.PvpFilamentMgrService(
                 admit: AdmitPvpFilamentQueueAsync,
-                utcNow: () => DateTimeOffset.FromUnixTimeMilliseconds(now())),
+                utcNow: () => DateTimeOffset.FromUnixTimeMilliseconds(now()),
+                localTimers: foundations.LocalTimers),
             new Eve.Services.Space.RandomJumpMgrService(ReadTravelRpcItemAsync, activateRandomJump, replayRandomJump),
             new Eve.Services.Space.WarpVectorMgrService(ReadTravelRpcItemAsync),
-            new Eve.Services.Space.WormholeMgrService(
-                spaceSessions,
-                readPolarization: (endId, characterId, _) => ValueTask.FromResult(spaceSessions?.PolarizationOf(endId, characterId)),
-                jump: async (call, endId, cancellationToken) => spaceSessions is null
-                    ? null
-                    : await spaceSessions.WormholeJumpAsync(call.Session, endId, call.BoundObjectId, cancellationToken)),
+            CreateWormholeMgrService(),
             new Eve.Services.Core.StructureGuestsService(
             (structureId, cancellationToken) =>
             {
@@ -100,4 +103,14 @@ internal sealed partial class CharacterServicesComposition
             }, seedObserverGuestLedger: stationGuestLedger.SeedObserverGuestLedger),
     ];
     }
+
+    private Eve.Services.Space.WormholeMgrService CreateWormholeMgrService() => new(
+        spaceSessions,
+        readPolarization: async (endId, characterId, cancellationToken) => spaceSessions is null
+            ? null
+            : await spaceSessions.PolarizationOfAsync(endId, characterId, cancellationToken),
+        jump: async (call, endId, cancellationToken) => spaceSessions is null
+            ? null
+            : await spaceSessions.WormholeJumpAsync(call.Session, endId, call.BoundObjectId, cancellationToken),
+        isPilotWarpLandingPending: call => spaceSessions?.IsWarping(call.Session) == true);
 }

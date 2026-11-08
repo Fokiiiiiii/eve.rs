@@ -1,5 +1,6 @@
 using System.Globalization;
 using Eve.Marshal;
+using Eve.Scheduler;
 using Eve.Services;
 
 namespace Eve.Services.Space;
@@ -67,12 +68,14 @@ public static class PvpFilamentJumpErrorCodes
 public sealed class PvpFilamentMgrService(
     PvpFilamentEventCatalog? catalog = null,
     Func<ServiceCall, PvpFilamentEvent, CancellationToken, ValueTask<PvpFilamentAdmissionResult>>? admit = null,
-    Func<DateTimeOffset>? utcNow = null) : IService
+    Func<DateTimeOffset>? utcNow = null,
+    LocalTimers? localTimers = null) : IService
 {
+    private static readonly TimeSpan QueueRevalidationInterval = TimeSpan.FromMilliseconds(100);
     private readonly PvpFilamentEventCatalog _catalog = catalog ?? PvpFilamentEventCatalog.LoadDefault();
     private readonly Func<DateTimeOffset> _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
+    private readonly LocalTimers? _localTimers = localTimers;
     private readonly object _queueLock = new();
-    // shortcut: no match runtime or scene-tick hook, queue membership lasts until leave or disconnect; add tick revalidation with the match runtime.
     private readonly Dictionary<long, QueueRecord> _queuedByCharacter = [];
 
     public string Name => "pvpFilamentMgr";
@@ -139,7 +142,18 @@ public sealed class PvpFilamentMgrService(
             admission.Participants.Select(participant => participant.CharacterId).Distinct().Count() != admission.Participants.Count)
             throw PvpError([new PvpFilamentQueueError(PvpFilamentJumpErrorCodes.ShipNotFound, [])]);
 
-        var record = new QueueRecord(admission.Participants);
+        var revalidationCall = new ServiceCall
+        {
+            Method = call.Method,
+            Args = call.Args,
+            Kwargs = call.Kwargs,
+            Session = call.Session,
+            CallId = call.CallId,
+            BoundObjectId = call.BoundObjectId,
+            BoundObjectParameters = call.BoundObjectParameters,
+            Cancellation = CancellationToken.None,
+        };
+        var record = new QueueRecord(admission.Participants, revalidationCall, activeEvent);
         lock (_queueLock)
         {
             if (admission.Participants.Any(participant => _queuedByCharacter.ContainsKey(participant.CharacterId)))
@@ -151,6 +165,16 @@ public sealed class PvpFilamentMgrService(
                 record.CloseHandlers.Add(participant.Session, handler);
                 participant.Session.Closed += handler;
             }
+        }
+        if (_localTimers is null)
+        {
+            // A successful admission without the Host's shared timer must not leave the client queued forever.
+            await RevalidateQueueRecordAsync(record).ConfigureAwait(false);
+        }
+        else
+        {
+            _localTimers.Set(record.TimerKey, QueueRevalidationInterval,
+                () => RevalidateQueueRecordAsync(record));
         }
         return new PyInt(0);
     }
@@ -164,12 +188,9 @@ public sealed class PvpFilamentMgrService(
             if (!_queuedByCharacter.TryGetValue(characterId, out record) ||
                 !record.Participants.Any(participant => participant.CharacterId == characterId && ReferenceEquals(participant.Session, call.Session)))
                 return;
-            RemoveQueueRecord(record);
         }
 
-        var failure = ErrorList([new PvpFilamentQueueError(PvpFilamentJumpErrorCodes.UnknownError, [])]);
-        foreach (var participant in record.Participants)
-            participant.Session.SendNotification("OnMatchMakingFailure", "clientID", failure);
+        FailQueueRecord(record, [new PvpFilamentQueueError(PvpFilamentJumpErrorCodes.UnknownError, [])]);
     }
 
     private void OnSessionClosed(ClientSession session)
@@ -181,16 +202,66 @@ public sealed class PvpFilamentMgrService(
             if (!_queuedByCharacter.TryGetValue(characterId, out record) ||
                 !record.Participants.Any(participant => ReferenceEquals(participant.Session, session)))
                 return;
+        }
+
+        FailQueueRecord(record, [new PvpFilamentQueueError(PvpFilamentJumpErrorCodes.ShipNotFound, [])]);
+    }
+
+    private async Task RevalidateQueueRecordAsync(QueueRecord record)
+    {
+        IReadOnlyList<PvpFilamentQueueError> errors;
+        var activeEvent = _catalog.GetActiveEventByFilamentTypeId(record.Event.FilamentTypeId, _utcNow());
+        if (activeEvent is null || !ReferenceEquals(activeEvent, record.Event))
+        {
+            errors = [new PvpFilamentQueueError(PvpFilamentJumpErrorCodes.EventNotActive, [])];
+        }
+        else if (admit is null)
+        {
+            errors = [new PvpFilamentQueueError(PvpFilamentJumpErrorCodes.UnknownError, [])];
+        }
+        else
+        {
+            try
+            {
+                var admission = await admit(record.Call, record.Event, CancellationToken.None).ConfigureAwait(false);
+                errors = admission.Errors.Where(error => error.Code != PvpFilamentJumpErrorCodes.AlreadyInQueue).ToArray();
+                if (errors.Count == 0)
+                {
+                    var participantsChanged = admission.Participants.Count != record.Participants.Count ||
+                        record.Participants.Any(previous => !admission.Participants.Any(current => current.CharacterId == previous.CharacterId && ReferenceEquals(current.Session, previous.Session)));
+                    errors = participantsChanged
+                        ? [new PvpFilamentQueueError(PvpFilamentJumpErrorCodes.FleetSizeChanged, [])]
+                        : [new PvpFilamentQueueError(PvpFilamentJumpErrorCodes.UnknownError, [])];
+                }
+            }
+            catch (Exception error) when (error is not OperationCanceledException)
+            {
+                errors = [new PvpFilamentQueueError(PvpFilamentJumpErrorCodes.UnknownError, [])];
+            }
+        }
+
+        if (_catalog.GetActiveEventByFilamentTypeId(record.Event.FilamentTypeId, _utcNow()) is not { } currentEvent || !ReferenceEquals(currentEvent, record.Event))
+            errors = [new PvpFilamentQueueError(PvpFilamentJumpErrorCodes.EventNotActive, [])];
+        FailQueueRecord(record, errors);
+    }
+
+    private void FailQueueRecord(QueueRecord record, IReadOnlyList<PvpFilamentQueueError> errors)
+    {
+        lock (_queueLock)
+        {
+            if (!record.Participants.Any(participant => _queuedByCharacter.TryGetValue(participant.CharacterId, out var current) && ReferenceEquals(current, record)))
+                return;
             RemoveQueueRecord(record);
         }
 
-        var failure = ErrorList([new PvpFilamentQueueError(PvpFilamentJumpErrorCodes.ShipNotFound, [])]);
+        var failure = ErrorList(errors);
         foreach (var participant in record.Participants)
             participant.Session.SendNotification("OnMatchMakingFailure", "clientID", failure);
     }
 
     private void RemoveQueueRecord(QueueRecord record)
     {
+        _localTimers?.Cancel(record.TimerKey);
         foreach (var participant in record.Participants)
         {
             if (_queuedByCharacter.TryGetValue(participant.CharacterId, out var queued) && ReferenceEquals(queued, record))
@@ -267,9 +338,15 @@ public sealed class PvpFilamentMgrService(
         [],
         []);
 
-    private sealed class QueueRecord(IReadOnlyList<PvpFilamentQueueParticipant> participants)
+    private sealed class QueueRecord(
+        IReadOnlyList<PvpFilamentQueueParticipant> participants,
+        ServiceCall call,
+        PvpFilamentEvent eventInfo)
     {
         public IReadOnlyList<PvpFilamentQueueParticipant> Participants { get; } = participants;
+        public ServiceCall Call { get; } = call;
+        public PvpFilamentEvent Event { get; } = eventInfo;
+        public string TimerKey { get; } = $"pvp.filament.queue:{Guid.NewGuid():N}";
         public Dictionary<ClientSession, Action> CloseHandlers { get; } = [];
     }
 }

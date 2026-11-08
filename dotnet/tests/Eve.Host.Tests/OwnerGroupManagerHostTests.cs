@@ -11,7 +11,7 @@ namespace Eve.Host.Tests;
 public partial class HostServerTests
 {
     [PgFact]
-    public async Task Owner_group_summary_RPCs_are_readable_without_management_access()
+    public async Task Owner_group_summary_RPCs_require_a_role_or_everyone_membership()
     {
         const long adminId = 90000001;
         const long roleManagerId = 90000004;
@@ -37,6 +37,9 @@ public partial class HostServerTests
                     new NewMember(roleManagerId, MemberKind.Character, MembershipType.Manager),
                     new NewMember(memberId, MemberKind.Character, MembershipType.Member),
                 ]);
+            var publicGroup = (await store.CreateAsync(adminAffiliation, "Public profile", "Everyone can read this summary.")).Result.GroupId;
+            await store.AddMembersAsync(adminAffiliation, publicGroup,
+                [new NewMember(0, MemberKind.Everyone, MembershipType.Member)]);
 
             var pilots = new Dictionary<long, (long CharacterId, long CorporationId)>
             {
@@ -113,27 +116,29 @@ public partial class HostServerTests
                 (await OwnerGroupCall(memberFront, memberOpen, 3, "GetMembers", new PyLong(groupId))).Payload))).Items);
             AssertOwnerGroupDenied(await OwnerGroupCall(memberFront, memberOpen, 4, "GetGroupLogs", new PyLong(groupId)));
 
+            Assert.Same(PyNone.Instance, Result(MarshalCodec.Decode(
+                (await OwnerGroupCall(unrelatedFront, unrelatedOpen, 1, "GetGroup", new PyLong(groupId))).Payload)));
             var publicLinkGroup = Result(MarshalCodec.Decode(
-                (await OwnerGroupCall(unrelatedFront, unrelatedOpen, 1, "GetGroup", new PyLong(groupId))).Payload));
-            AssertOwnerGroupSummary(publicLinkGroup, groupId, adminId, "Profile access", "Readers can see this summary.",
-                (int)MembershipType.None, adminId);
+                (await OwnerGroupCall(unrelatedFront, unrelatedOpen, 2, "GetGroup", new PyLong(publicGroup))).Payload));
+            AssertOwnerGroupSummary(publicLinkGroup, publicGroup, adminId, "Public profile", "Everyone can read this summary.",
+                (int)MembershipType.Member, adminId);
 
             Assert.Same(PyNone.Instance, Result(MarshalCodec.Decode(
-                (await OwnerGroupCall(unrelatedFront, unrelatedOpen, 2, "GetGroup", new PyLong(groupId + 999))).Payload)));
+                (await OwnerGroupCall(unrelatedFront, unrelatedOpen, 3, "GetGroup", new PyLong(groupId + 999))).Payload)));
             var unrelatedProfileGroups = Assert.IsType<PyList>(Result(MarshalCodec.Decode(
-                (await OwnerGroupCall(unrelatedFront, unrelatedOpen, 3, "GetGroupsMany",
-                    new PyList([new PyLong(groupId), new PyLong(groupId + 999)]))).Payload)));
+                (await OwnerGroupCall(unrelatedFront, unrelatedOpen, 4, "GetGroupsMany",
+                    new PyList([new PyLong(groupId), new PyLong(publicGroup), new PyLong(groupId + 999)]))).Payload)));
             Assert.Single(unrelatedProfileGroups.Items);
-            AssertOwnerGroupSummary(unrelatedProfileGroups.Items[0], groupId, adminId, "Profile access",
-                "Readers can see this summary.", (int)MembershipType.None, adminId);
+            AssertOwnerGroupSummary(unrelatedProfileGroups.Items[0], publicGroup, adminId, "Public profile",
+                "Everyone can read this summary.", (int)MembershipType.Member, adminId);
             Assert.Empty(Assert.IsType<PyList>(Result(MarshalCodec.Decode(
-                (await OwnerGroupCall(unrelatedFront, unrelatedOpen, 4, "GetMembers", new PyLong(groupId))).Payload))).Items);
+                (await OwnerGroupCall(unrelatedFront, unrelatedOpen, 5, "GetMembers", new PyLong(groupId))).Payload))).Items);
             Assert.Empty(Assert.IsType<PyDict>(Result(MarshalCodec.Decode(
-                (await OwnerGroupCall(unrelatedFront, unrelatedOpen, 5, "GetMembersForMultipleGroups",
+                (await OwnerGroupCall(unrelatedFront, unrelatedOpen, 6, "GetMembersForMultipleGroups",
                     new PyList([new PyLong(groupId)]))).Payload))).Entries);
-            AssertOwnerGroupDenied(await OwnerGroupCall(unrelatedFront, unrelatedOpen, 6, "GetGroupLogs", new PyLong(groupId)));
+            AssertOwnerGroupDenied(await OwnerGroupCall(unrelatedFront, unrelatedOpen, 7, "GetGroupLogs", new PyLong(groupId)));
 
-            var nextCall = 7u;
+            var nextCall = 8u;
             async Task DeniedWrite(string method, params PyValue[] args) =>
                 AssertOwnerGroupDenied(await OwnerGroupCall(unrelatedFront, unrelatedOpen, nextCall++, method, args));
 
@@ -298,8 +303,7 @@ public partial class HostServerTests
 
             var removedSummary = Result(MarshalCodec.Decode(
                 (await OwnerGroupCall(managerFront, managerOpen, callId, "GetGroup", new PyLong(removeGroup))).Payload));
-            Assert.NotNull(removedSummary);
-            Assert.Equal(new PyInt((int)MembershipType.None), OwnerGroupFields(removedSummary)["membershipType"]);
+            Assert.Same(PyNone.Instance, removedSummary);
         }
         finally
         {

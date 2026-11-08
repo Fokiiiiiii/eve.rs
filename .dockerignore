@@ -4,7 +4,7 @@
 .cache
 .live-logs
 target
-**/bin
+dotnet/**/bin
 **/obj
 **/.venv
 **/__pycache__

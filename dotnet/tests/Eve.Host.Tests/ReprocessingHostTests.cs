@@ -419,7 +419,8 @@ public sealed class ReprocessingHostTests : IAsyncLifetime
                     mutatedItem, 47297, 9_000_001, 12052, 9_000_002, character, now,
                     new Dictionary<int, double> { [hpAttributeId] = 1.25 },
                     new Dictionary<int, double> { [hpAttributeId] = sourceHp },
-                    new Dictionary<int, double> { [hpAttributeId] = mutatedHp }));
+                    new Dictionary<int, double> { [hpAttributeId] = mutatedHp },
+                    new Dictionary<int, double> { [hpAttributeId] = 0.5 }));
                 await transaction.CommitAsync();
             }
 

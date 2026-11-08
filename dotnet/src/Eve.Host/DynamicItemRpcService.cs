@@ -47,11 +47,21 @@ public sealed class DynamicItemRpcService : IService
         if (characterId <= 0) Refuse("You need an active character to mutate an item.");
         var mutatorId = Long(call.Arg(0));
         var sourceId = Long(call.Arg(1));
-        var source = mutatorId > 0 && sourceId > 0 ? await _items.GetAsync(sourceId, call.Cancellation) : null;
+        var mutator = mutatorId > 0 ? await _items.GetAsync(mutatorId, call.Cancellation) : null;
+        var source = sourceId > 0 ? await _items.GetAsync(sourceId, call.Cancellation) : null;
         if (source is null) Refuse(Describe(ItemMutationRefusal.SourceMissing));
 
-        // both items are asked for in the place the source is in: a mutaplasmid elsewhere is refused by the authority
-        var outcome = await _mutations.MutateAsync(new ItemMutationRequest(characterId, source.LocationId, mutatorId, sourceId), call.Cancellation);
+        var request = new ItemMutationRequest(characterId, mutator?.LocationId ?? source.LocationId, mutatorId, sourceId)
+        {
+            SourceLocationId = source.LocationId,
+            MutatorFlag = mutator?.Flag,
+            SourceFlag = source.Flag,
+            Position = new ItemMutationPosition(
+                call.Session.DockedLocationId,
+                call.Session.GetInt("shipid"),
+                call.Session.GetInt("solarsystemid2") ?? call.Session.GetInt("solarsystemid")),
+        };
+        var outcome = await _mutations.MutateAsync(request, call.Cancellation);
         switch (outcome)
         {
             case ItemMutationRefused refused:
@@ -99,9 +109,15 @@ public sealed class DynamicItemRpcService : IService
             ("characterID", new PyInt(record.CharacterId)),
             ("createdAtMs", new PyInt(record.CreatedAtMs)),
             ("attributes", NumericDict(world.Attributes(item.Id))),
-            ("modifiers", NumericDict(record.Rolls)),
+            ("modifiers", NumericDict(ModifierFractionsForWire(record))),
             ("baseAttributes", NumericDict(record.BaseValues)));
     }
+
+    /// <summary>EveJS returns mutation modifier fractions rounded to six decimal places.</summary>
+    private IReadOnlyDictionary<int, double> ModifierFractionsForWire(ItemMutationRecord record) =>
+        _mutations.ModifierFractions(record).ToDictionary(
+            pair => pair.Key,
+            pair => Math.Floor(pair.Value * 1_000_000 + 0.5) / 1_000_000);
 
     /// <summary>
     /// The world the item's attributes are read in. An item fitted to a ship, or in its bays and tubes, is read in that ship's world, so the ship's modifiers
@@ -133,7 +149,7 @@ public sealed class DynamicItemRpcService : IService
         ItemMutationRefusal.MutatorMissing or ItemMutationRefusal.SourceMissing => "The selected mutaplasmid or source item could not be found.",
         ItemMutationRefusal.SameItem => "The mutaplasmid and source item must be different inventory items.",
         ItemMutationRefusal.NotOwner => "You can only mutate items owned by the active character.",
-        ItemMutationRefusal.NotInReach => "The mutaplasmid and the source item must be in the same station or ship.",
+        ItemMutationRefusal.NotInReach => "The mutaplasmid and source item must be in an inventory you can reach from your current location.",
         ItemMutationRefusal.NotStowed => "The source item must be unfitted and kept in a hangar or cargo hold.",
         ItemMutationRefusal.NotSingleton => "Only a single assembled module can be mutated, not a stack.",
         ItemMutationRefusal.ItemLocked => "A blueprint-locked item cannot be mutated.",

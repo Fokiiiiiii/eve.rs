@@ -12,8 +12,9 @@ Commit `72454d069` corrected the stale tests while preserving the existing rejec
 
 ## Verification
 
+- Before adjustment, the focused golden class had 19 passed, 2 failed, 0 skipped; the failures were the stale list and ping byte expectations.
 - The focused `Eve.Services.Tests.MachoTests` and `DispatchGoldenTests` classes: 221 passed, 0 failed, 0 skipped.
 - The seven related Host classes (`HostServerTests`, `HostInputHardeningTests`, `GlobalConfigStoreTests`, `GlobalConfigWireTests`, `GlobalConfigPersistenceTests`, `MachoNetAuditWireTests`, and `MachoNetServiceTests`) on `eve_p4`: 462 passed, 0 failed, 0 skipped.
 - Release builds of `Eve.Macho`, `Eve.Host`, `Eve.Services.Tests`, and `Eve.Host.Tests` with warnings as errors: 0 warnings, 0 errors.
-- Main CI run `42442020309` passed on commit `72454d069`, which already contained the server rejection path and the wrapped-error expectations. This follow-up records the EveJS fixture output and the evidence for that malformed-input difference.
-- The graphical V24 client was not run; the checked RPC and packet paths are headless tests.
+- GitHub Actions run 1627 (`42442020309`) for commit `72454d069bce` completed successfully. Its TRX files recorded 8,658 passed, 0 failed, and 25 `NotExecuted`; those 25 are not counted as passes: 22 abyssal simulation tests require `EVE_ABYSSAL_SIM_BINARY` and `EVE_ABYSSAL_SIM_SDE`, one Universe export test requires `EVE_CLIENT_SDE_DIR`, and the Dogma and Market benchmarks each require their opt-in environment variable.
+- The graphical V24 client was not run.

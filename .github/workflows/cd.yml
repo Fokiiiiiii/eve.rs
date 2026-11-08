@@ -96,7 +96,6 @@ jobs:
           GH_ACTOR: ${{ github.actor }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PUSH: ${{ github.ref_type == 'tag' || inputs.push_image }}
-          TAG_NAME: ${{ github.ref_type == 'tag' && github.ref_name || 'sha-' }}
         run: |
           repo="ghcr.io/${GITHUB_REPOSITORY,,}"
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then tag="$GITHUB_REF_NAME"; else tag="sha-${GITHUB_SHA::12}"; fi

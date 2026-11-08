@@ -12,26 +12,42 @@ Source audit: `/home/user/reports/90-audit-eve-calendar-r14.md`. Each finding be
 
 **Verification.** The new PostgreSQL Host regression first failed because the re-invited character received no `OnNewCalendarEvent`; after the fix it passed and checked `OnRemoveCalendarEvent` then `OnNewCalendarEvent`, with the persisted response ending at `Undecided`. Calendar Host regressions passed 11/11, and `CalendarMgrServiceTests` passed 10/10 on `eve_p7`.
 
-## Finding 2 — response notification may carry a stale event date
+## Audit r14 follow-up (2026-11-08)
 
-**Confirmed.** `CalendarMgrService.SendEventResponse` read the event before the response transaction and used that earlier row for `OnEventResponseByExternal`. A Host regression paused the response store call after the service read, edited the event through the registered Host RPC, then resumed the response. Before the fix, the response notification carried the pre-edit date although PostgreSQL already held the new date.
+No finding in `/home/user/reports/90-audit-eve-calendar-r14.md` was false. Finding 1 was confirmed and already fixed on this branch before this follow-up; findings 2 and 3 were confirmed and repaired here.
 
-**Client and reference evidence.** The V24.01 client calls `SendEventResponse` with the event row's owner and later applies `OnEventResponseByExternal` through `_RespondToEvent`, which uses the supplied `eventDateTime` to update next-event state (`eve/client/script/ui/services/eveCalendarsvc.py:292-310,409-411`). EveJS returns the current event from `sendEventResponse` (`server/src/services/calendar/calendarRuntimeState.js:732-769`) and passes that event to its response notification (`server/src/services/calendar/calendarMgrService.js:112-126`).
+### Finding 1 — already fixed: participant notifications under concurrent remove and re-invite
 
-**Fix.** `CalendarStore.SendResponseAsync` now reads and locks the event row in the same transaction as the response update, then returns that snapshot with the update result. The service builds the notification from the returned row instead of the pre-transaction read.
+The current `CalendarStore.UpdateParticipantsAsync` holds the event row lock while calculating the actual invitee transitions and returns those IDs. `CalendarMgrService.UpdateEventParticipants` sends notifications from that result. The existing PostgreSQL Host regression `Calendar_host_reinvite_after_concurrent_removal_notifies_the_committed_transition` covers the removal/re-invitation race and persistence. No additional code change was needed for this finding.
 
-**Verification.** The new PostgreSQL Host regression first failed because the notification date equaled the old event date; after the fix it passed and asserted the edited date in the actual `OnEventResponseByExternal` payload and `Accepted` in persisted responses.
+### Finding 2 — confirmed and fixed: response notification date and mutation ordering
 
-## Finding 3 — deleting an event overwrites a declined response
+**Evidence.** V24.01 calls `SendEventResponse` and updates its next-event cache in `eve/client/script/ui/services/eveCalendarsvc.py:295-313`; `OnEventResponseByExternal` passes the notification to `_RespondToEvent` at `:409-411`, where `eventDateTime` is used to create the cached next event at `:300-310`. The full client search also found the event edit and participant delta flow in `eve/client/script/ui/shared/eveCalendar.py:1583-1589`, plus cache updates in `eveCalendarsvc.py:333-397`. EveJS returns the current event from `sendEventResponse` (`server/src/services/calendar/calendarRuntimeState.js:732-769`) and passes that event to its notification (`server/src/services/calendar/calendarMgrService.js:112-126`).
 
-**Confirmed.** `CalendarStore.DeleteEventAsync` changed every response other than `Uninvited` to `Deleted`, erasing `Declined`. A Host regression created an event, recorded a `Declined` response, deleted the event, reconnected the invitee, and read the response through Host RPC. Before the fix, the client-visible response was `Deleted`.
+The original PostgreSQL Host regression reproduced the defect before the fix: while the response write was held before its transaction, an owner edit committed a new date, then the response notification sent the old date (the assertion expected the edited FILETIME but received the original one).
 
-**Client and reference evidence.** For a deleted event, the V24.01 client marks the event row deleted and keeps the cached response when it is `Declined` (`eve/client/script/ui/services/eveCalendarsvc.py:379-397`). Its update-event list excludes deleted events when the cached response is `Declined` (`:577-585`). EveJS deletion marks and persists the event record without changing the response root (`server/src/services/calendar/calendarRuntimeState.js:712-729`), and its manager sends the deleted-event notification (`server/src/services/calendar/calendarMgrService.js:102-110`).
+**Fix.** `CalendarStore.SendResponseAsync` now reads the complete event row with `FOR UPDATE` in the same transaction as the response write and returns that committed-operation snapshot. The service uses that snapshot for `OnEventResponseByExternal`. The existing per-event gate now serializes edit, delete, participant, and response mutations through their notifications, so a post-commit notification cannot arrive after a later same-process mutation and restore an obsolete cache value. This also keeps event notifications and their response-state effects in mutation order.
 
-**Fix.** Deletion now soft-deletes only the event row. Existing response states, including `Declined` and `Uninvited`, remain persisted and available after reconnect.
+**Verification.** `Calendar_host_serializes_response_and_edit_notifications_in_mutation_order` checks that the accepted-response notification arrives before the edit notification, that the edit carries the old and new times, and that the date and response reset (`Undecided`) persist after the calls. `Calendar_host_response_notification_uses_the_locked_event_snapshot_after_another_writer_edits` separately changes the database after the service's pre-read and checks that the response notification uses the event snapshot returned by the response transaction. The original Host regression first failed with the edited FILETIME expected and the original FILETIME received; both regressions passed on `eve_p4` after the fix.
 
-**Verification.** The new PostgreSQL Host regression first failed because the reconnected invitee received `Deleted` instead of `Declined`; after the fix it passed, checked the deleted event row from `GetEventList`, and confirmed the persisted response remained `Declined`. The end-to-end calendar wire test now asserts that deletion preserves the owner's `Accepted`, invitee `Undecided`, removed invitee `Uninvited`, and added invitee `Undecided` states.
+### Finding 3 — confirmed and fixed: event deletion preserves an invitee's decline
 
-## Audit scope
+**Evidence.** V24.01 loads response statuses through `GetResponsesForCharacter` (`eve/client/script/ui/services/eveCalendarsvc.py:250-257`). On deletion, `OnRemoveCalendarEvent` marks the event deleted but deliberately retains a cached `Declined` response (`:379-397`); the reconnect update-list logic excludes a deleted event when that response is `Declined` (`:577-585`). EveJS `deleteEventRecord` tombstones the event without rewriting its responses (`server/src/services/calendar/calendarRuntimeState.js:712-729`).
 
-All three findings in the audit report were confirmed; none were skipped as false. Source behavior was compared against V24.01 eve-logic and EveJS 261028.1. No focused EveJS calendar test harness was found, so its implementation was source-traced rather than executed. The graphical client was not run.
+The new PostgreSQL Host regression failed before the fix: after decline, delete, and reconnect, it expected response state `Declined` (2) and read `Deleted` (1). It also verifies the event remains visible in the month rowset with `isDeleted=true` and that the stored response is unchanged.
+
+**Fix.** `CalendarStore.DeleteEventAsync` now changes only the event's `is_deleted` and `date_modified` fields. It leaves all response rows intact; `isDeleted` is the event-cancellation state. The existing wire and service tests now assert that accepted, undecided, declined, and uninvited responses retain their pre-delete values.
+
+**Verification.** The reconnect Host regression passed on `eve_p4` after the pre-fix status mismatch. The existing calendar Host and service slices are included in the follow-up verification for this branch.
+
+### Follow-up verification results
+
+- `dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj --configuration Release --filter 'FullyQualifiedName~Calendar'`: 14 passed, 0 failed, 0 skipped, using `EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p4`.
+- `dotnet test dotnet/tests/Eve.Services.Core.Tests/Eve.Services.Core.Tests.csproj --configuration Release --filter 'FullyQualifiedName~CalendarMgrServiceTests'`: 10 passed, 0 failed, 0 skipped.
+- Release builds of `Eve.Calendar`, `Eve.Services.Core`, `Eve.Host.Tests`, and `Eve.Services.Core.Tests`: 0 warnings, 0 errors each.
+
+### Not checked
+
+- The graphical V24.01 client was not run. Client behavior was checked across the repository by source search and file/line review.
+- EveJS source paths were compared. Its `server/package.json` has no test script and no calendar test files were present, so its calendar RPC flow was not executed as a separate runtime test.
+- `codebase-memory-mcp` and Serena were unavailable in this environment; shell search and line-numbered source reads were used as the fallback.

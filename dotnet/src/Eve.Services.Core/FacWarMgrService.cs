@@ -79,22 +79,20 @@ public sealed class FacWarMgrService(FwService factionWarfare, FacWarMgrCallback
         switch (call.Method)
         {
             case "GetCorporationWarFactionID":
-                return Positive(await factionWarfare.FactionOfAsync((int)CorporationKind, Id(call, 0), now, cancellation));
+                return Positive(await CorporationFactionAsync(Id(call, 0), now, cancellation));
             case "GetAllianceWarFactionID":
                 return Positive(await factionWarfare.FactionOfAsync((int)AllianceKind, Id(call, 0), now, cancellation));
             case "GetFactionCorporations":
-                return new PyList([.. (await factionWarfare.CorporationsInFactionAsync(Id(call, 0), now, cancellation)).Select(id => (PyValue)new PyInt(id))]);
+                return new PyList([.. (await CorporationsInFactionAsync(Id(call, 0), now, cancellation)).Select(id => (PyValue)new PyInt(id))]);
             case "GetFactionMilitiaCorporation":
                 return Positive(FwFactions.MilitiaCorporationOf(Id(call, 0)));
             case "GetCorpFactionalWarStatus":
             {
-                var status = await factionWarfare.StatusAsync((int)CorporationKind, corporationId, now, cancellation);
-                if (status is null)
-                    return PyNone.Instance;
+                var status = await CorporationStatusAsync(corporationId, now, cancellation);
                 return Py.KeyVal(
-                    ("status", new PyInt(status.Status)),
-                    ("factionID", new PyInt(status.FactionId)),
-                    ("startDate", new PyLong(UnixMsToFileTime(status.StartMs))));
+                    ("status", status is null ? PyNone.Instance : new PyInt(status.Status)),
+                    ("factionID", status is null ? PyNone.Instance : new PyInt(status.FactionId)),
+                    ("startDate", status is null ? PyNone.Instance : new PyLong(UnixMsToFileTime(status.StartMs))));
             }
             case "JoinFactionAsCorporation":
                 await RequireCorporationDirectorAsync(call, corporationId);
@@ -179,7 +177,7 @@ public sealed class FacWarMgrService(FwService factionWarfare, FacWarMgrCallback
         var entries = new List<KeyValuePair<PyValue, PyValue>>();
         foreach (var faction in FwFactions.Occupiers)
         {
-            var corporations = await factionWarfare.CorporationsInFactionAsync(faction, now, cancellation);
+            var corporations = await CorporationsInFactionAsync(faction, now, cancellation);
             var count = await members(faction, corporations, cancellation);
             var held = systems.Count(system => system.OccupierId == faction);
             entries.Add(new KeyValuePair<PyValue, PyValue>(new PyInt(faction), Py.KeyVal(
@@ -198,7 +196,7 @@ public sealed class FacWarMgrService(FwService factionWarfare, FacWarMgrCallback
         var perFaction = new List<(long Faction, FwStatsWindow Window)>();
         foreach (var faction in FwFactions.Occupiers)
         {
-            var enlisted = (await factionWarfare.CorporationsInFactionAsync(faction, now, cancellation)).ToHashSet();
+            var enlisted = (await CorporationsInFactionAsync(faction, now, cancellation)).ToHashSet();
             perFaction.Add((faction, FwStore.Sum(windows.Where(row => enlisted.Contains(row.OwnerId)).Select(row => row.Window))));
         }
         var header = new PyList([.. FwFactions.Occupiers.Select(faction => (PyValue)new PyInt(faction))]);
@@ -282,6 +280,62 @@ public sealed class FacWarMgrService(FwService factionWarfare, FacWarMgrCallback
     private const long GroupCorporation = 2;
     private const long GroupAlliance = 32;
 
+    private async ValueTask<long> CorporationFactionAsync(long corporationId, long now, CancellationToken cancellation)
+    {
+        var factionId = await factionWarfare.FactionOfAsync((int)CorporationKind, corporationId, now, cancellation);
+        if (factionId != 0)
+            return factionId;
+        var allianceId = await AllianceOfCorporationAsync(corporationId, cancellation);
+        return allianceId > 0
+            ? await factionWarfare.FactionOfAsync((int)AllianceKind, allianceId, now, cancellation)
+            : 0;
+    }
+
+    private async ValueTask<FwStatus?> CorporationStatusAsync(long corporationId, long now, CancellationToken cancellation)
+    {
+        var status = await factionWarfare.StatusAsync((int)CorporationKind, corporationId, now, cancellation);
+        if (status is not null)
+            return status;
+        var allianceId = await AllianceOfCorporationAsync(corporationId, cancellation);
+        return allianceId > 0
+            ? await factionWarfare.StatusAsync((int)AllianceKind, allianceId, now, cancellation)
+            : null;
+    }
+
+    private async ValueTask<IReadOnlyList<long>> CorporationsInFactionAsync(long factionId, long now, CancellationToken cancellation)
+    {
+        var corporations = await factionWarfare.CorporationsInFactionAsync(factionId, now, cancellation);
+        if (callbacks.AffiliationsAsync is not { } readAffiliations)
+            return corporations;
+        var alliances = (await factionWarfare.AlliancesInFactionAsync(factionId, now, cancellation)).ToHashSet();
+        if (alliances.Count == 0)
+            return corporations;
+        var affiliations = await readAffiliations(cancellation);
+        var affiliatedCorporations = affiliations
+            .Where(row => alliances.Contains(row.AllianceId))
+            .Select(row => row.CorporationId)
+            .Distinct()
+            .ToArray();
+        if (affiliatedCorporations.Length == 0)
+            return corporations;
+
+        var directlyEnlisted = (await factionWarfare.CorporationsWithActiveFactionAsync(now, cancellation)).ToHashSet();
+        return corporations.Concat(affiliatedCorporations.Where(corporation => !directlyEnlisted.Contains(corporation)))
+            .Distinct()
+            .Order()
+            .ToArray();
+    }
+
+    private async ValueTask<long> AllianceOfCorporationAsync(long corporationId, CancellationToken cancellation)
+    {
+        if (corporationId <= 0 || callbacks.AffiliationsAsync is not { } readAffiliations)
+            return 0;
+        return (await readAffiliations(cancellation))
+            .Where(row => row.CorporationId == corporationId)
+            .Select(row => row.AllianceId)
+            .FirstOrDefault();
+    }
+
     private async ValueTask<PyValue> JoinAsync(long kind, long ownerId, long factionId, long now, CancellationToken cancellation)
     {
         var standing = await callbacks.ReadStandingAsync(ownerId, factionId, cancellation);
@@ -355,7 +409,11 @@ public sealed class FacWarMgrService(FwService factionWarfare, FacWarMgrCallback
         var pointsDonated = Id(call, 0);
         var pointsToHub = Id(call, 1);
         var systemId = session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid") ?? 0;
-        var result = await factionWarfare.DonateAsync(systemId, characterId, corporationId, warFactionId, pointsDonated, pointsToHub, now, cancellation);
+        var rpcCallId = Eve.Macho.JsSemantics.ToPositiveInteger(call.CallId);
+        var operationId = session.SessionId > 0 && rpcCallId > 0
+            ? $"rpc:{session.SessionId}:{rpcCallId}"
+            : $"rpc:{Guid.NewGuid():N}";
+        var result = await factionWarfare.DonateAsync(systemId, characterId, corporationId, warFactionId, pointsDonated, pointsToHub, now, cancellation, operationId);
         return result.Outcome switch
         {
             DonateOutcome.Accepted => PyNone.Instance,

@@ -4,6 +4,10 @@ This records the verified findings from `/home/user/reports/90-audit-eve-macho-r
 
 The configured code-search MCP and Serena tools were unavailable in this environment. I used line-numbered source search and reads as the fallback. The existing repository README files were not edited.
 
+## PyList contract and EveJS's malformed-input fallback
+
+The PyList finding is real: eve.rs previously expanded a `PyList` into multiple RPC arguments, unlike EveJS's actual dispatcher, which wraps its tagged list as one argument. The V24.01 client builds the positional container from Python `*args`, producing a tuple (`ServiceCallGPCS.py:675-688,230-234`). The server reads `packet.payload[2]` and passes it to the native `ClockThisWithoutTheStars` helper (`ServiceCallGPCS.py:120-132`); the helper's behavior for a malformed list container is not defined in the available Python source. The standard client contract is tuple-shaped, so eve.rs rejects a top-level PyList rather than expanding it. This keeps valid V24 calls unchanged and avoids relying on EveJS's permissive fallback for an out-of-contract container.
+
 ## Confirmed findings
 
 ### P2: Fractional packet and address discriminators were truncated
@@ -34,20 +38,19 @@ Coverage includes a real Host RPC and notification, in-memory restart behavior, 
 
 ### P3: A `PyList` in the positional-arguments slot was expanded
 
-`CallRequest.Decode` now rejects `PyList` when it occupies the outer positional-arguments slot; it no longer invokes a method with the list's elements as separate arguments. A list remains valid as an argument nested inside the required `PyTuple`.
+`CallRequest.Decode` now rejects a `PyList` in the outer positional-arguments slot. A list nested inside the required `PyTuple` remains a valid list-valued argument. The real Host regression verifies that the malformed request receives a wrapped error and does not invoke the service, then confirms a nested list succeeds.
 
-V24.01 creates the call payload as `(1, method, args, kwargs)` (`eve-logic/carbon/common/script/net/ServiceCallGPCS.py:173-174,233-234`), where Python's `*args` supplies a tuple. EveJS's Marshal decoder preserves Python lists as tagged `{type: "list", items: ...}` objects (`server/src/network/tcp/utils/marshal.js:1818-1836`), and `decodeCallRequest` wraps non-array values as one argument (`server/src/common/pyPacket.js:205-215`). I executed that decoder with a tagged list; it returned one list argument. Since a top-level list is not the V24.01 positional tuple, eve.rs refuses this malformed request before the service executes; the Host regression verifies the error and that the service saw no call. This is a deliberate malformed-input difference from EveJS's fallback handling, with no change to valid client calls.
+EveJS preserves Python lists as tagged `{type: "list", items: ...}` objects (`server/src/network/tcp/utils/marshal.js:1818-1836`) and wraps that non-array value as one argument (`server/src/common/pyPacket.js:205-215`). Its real `PacketDispatcher` was run with the fixture request and an echo service; it accepted one list argument and emitted the nested-list response in the fixture. The golden test compares valid tuple calls byte-for-byte and special-cases this malformed outer-list row to assert eve.rs's wrapped error. This intentional EveJS difference is recorded in `docs/reference/compat/DEVIATIONS.md`.
 
 ## Verification
 
-The new discriminator, ping, Honeycomb, and `None` regressions failed against the original code before their fixes. The new Host `PyList` regression also failed before the parser change: the request returned `CALL_RSP` and invoked the method instead of being refused.
+The discriminator, ping, Honeycomb, and `None` regressions failed against the original code before their fixes. The Host end-to-end PyList rejection regression fails against the original list-expanding parser: the server answers with `CALL_RSP` and invokes the service instead of returning the wrapped error. It passes with the final rejection behavior.
 
 After the fixes:
 
-- `Eve.Services.Tests.MachoTests`: 21 passed, 0 failed, 0 skipped.
-- Selected Host regression tests, including the PostgreSQL-backed restart test on `eve_p4`: 9 passed, 0 failed, 0 skipped.
-- The full referenced Host test classes (`HostServerTests`, `GlobalConfigStoreTests`, `GlobalConfigWireTests`, and `GlobalConfigPersistenceTests`) on `eve_p4`: 438 passed, 0 failed, 0 skipped (including the merge-updated Host test class).
+- `Eve.Services.Tests.MachoTests` and `DispatchGoldenTests`: 221 passed, 0 failed, 0 skipped.
+- The referenced Host test classes (`HostServerTests`, `HostInputHardeningTests`, `GlobalConfigStoreTests`, `GlobalConfigWireTests`, `GlobalConfigPersistenceTests`, `MachoNetAuditWireTests`, and `MachoNetServiceTests`) on `eve_p4`: 462 passed, 0 failed, 0 skipped. This includes the PostgreSQL-backed persistence cases.
 - Release builds with `-warnaserror` for `Eve.Macho`, `Eve.Host`, `Eve.Services.Tests`, and `Eve.Host.Tests`: all succeeded with 0 warnings and 0 errors.
-- EveJS runtime checks: `decodeCallRequest` returned a tagged PyList as one list argument; `decodePacket` retained command `6.5` as `UNKNOWN(6.5)`, and `decodeAddress` returned `unknown` for address type `8.5`. Calling EveJS's PingReq handler with one client timing entry returned six synthetic entries and did not preserve the client entry. Its global-config store refused the Honeycomb key (`false` result), hid it from the client config, and retained a `None` override.
+- EveJS runtime checks: `decodeCallRequest` and the full `PacketDispatcher` returned a tagged PyList as one list argument; the dispatcher output matched the regenerated fixture response. `decodePacket` retained command `6.5` as `UNKNOWN(6.5)`, and `decodeAddress` returned `unknown` for address type `8.5`. Calling EveJS's PingReq handler with one client timing entry returned six synthetic entries and did not preserve the client entry. Its global-config store refused the Honeycomb key (`false` result), hid it from the client config, and retained a `None` override.
 
 The graphical V24.01 client was not run. The PING test uses the Host's injected clock and verifies the marshal wire shape; live-client acceptance remains unchecked.

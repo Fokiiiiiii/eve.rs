@@ -181,12 +181,20 @@ public sealed partial class SpaceSessions
         }
         if (reply.Accepted && reply.Position.Count >= 3)
         {
-            return new WarpCoordinates(system, reply.Position[0], reply.Position[1], reply.Position[2]);
+            return new WarpCoordinates(system, reply.Position[0], reply.Position[1], reply.Position[2])
+            {
+                Direction = reply.Direction.Count >= 3 ? reply.Direction : null,
+                Radius = reply.Radius,
+            };
         }
         // the simulation answers the pilot of a ship only: a boarded ship is put where its saved place is (the place its pilot left it at)
         return _spaceItems is null || await _spaceItems.GetAsync(shipId, cancellationToken) is not { } saved || saved.SolarSystemId != system || saved.Position.Count < 3
             ? null
-            : new WarpCoordinates(system, saved.Position[0], saved.Position[1], saved.Position[2]);
+            : new WarpCoordinates(system, saved.Position[0], saved.Position[1], saved.Position[2])
+            {
+                Direction = saved.Direction.Count >= 3 ? saved.Direction : null,
+                Radius = saved.Radius,
+            };
     }
 
     private async Task<WarpCoordinates?> QueryPositionAsync(
@@ -211,6 +219,10 @@ public sealed partial class SpaceSessions
         }
         return reply.Accepted && reply.Position.Count >= 3
             ? new WarpCoordinates(pilot.SolarSystemId, reply.Position[0], reply.Position[1], reply.Position[2])
+            {
+                Direction = reply.Direction.Count >= 3 ? reply.Direction : null,
+                Radius = reply.Radius,
+            }
             : null;
     }
 

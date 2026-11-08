@@ -243,7 +243,7 @@ impl Scene {
         if distance < warp::MINIMUM_WARP_DISTANCE {
             return refused("WARP_DISTANCE_TOO_CLOSE");
         }
-        vec![Out::Position { session, command, position }]
+        vec![Out::Position { session, command, position, direction: None, radius: None }]
     }
 }
 

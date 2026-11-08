@@ -27,6 +27,8 @@ public sealed record CommandReply(bool Accepted, long At, string? Reason, double
 
     public IReadOnlyList<double> Direction { get; init; } = [];
 
+    public double? Radius { get; init; }
+
     /// <summary>What each drone did with an order to drones (<see cref="SimDroneResult.Reason"/> is empty for one that took it).</summary>
     public IReadOnlyList<SimDroneResult> Drones { get; init; } = [];
 
@@ -101,6 +103,10 @@ public interface ISimulation
     Task<SimEnterPublicParticipantReply> EnterPublicParticipantInOrderAsync(SimEnterPublicParticipant request,
         Action<SimEnterPublicParticipantReply> beforeFollowingMessages, CancellationToken cancellationToken = default) =>
         Task.FromException<SimEnterPublicParticipantReply>(new NotSupportedException("Public participant entry is unavailable."));
+
+    Task<SimEnterPublicParticipantReply> EnterPublicParticipantInOrderAwaitingAsync(SimEnterPublicParticipant request,
+        Func<SimEnterPublicParticipantReply, Task> beforeFollowingMessages, CancellationToken cancellationToken = default) =>
+        Task.FromException<SimEnterPublicParticipantReply>(new NotSupportedException("Awaited public participant entry is unavailable."));
 
     Task<SimMovePublicParticipantReply> MovePublicParticipantInOrderAsync(SimMovePublicParticipant request,
         Action<SimMovePublicParticipantReply> beforeFollowingMessages, CancellationToken cancellationToken = default) =>

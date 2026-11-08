@@ -43,7 +43,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 92;
+pub const PROTOCOL_VERSION: u16 = 93;
 
 /// A battlefield's capture point the host puts in space (protocol 77): a ball the pilots of its system see. Its factions (the attacker and the
 /// occupier, 0 for none) and its next point time (a FILETIME, 0 for none) are the dynamic slim fields the client reads from it.
@@ -1113,6 +1113,8 @@ pub enum Message {
         session_id: u64,
         command: u8,
         position: [f64; 3],
+        direction: Option<[f64; 3]>,
+        radius: Option<f64>,
     },
     /// The scan targets of the scene, for the host's probe scan (answers command 27, protocol 52).
     ScanTargets {

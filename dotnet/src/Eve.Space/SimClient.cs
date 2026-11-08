@@ -51,6 +51,7 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimRemoveTournamentWreckReply>> _tournamentWreckRemovals = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimEnterPublicParticipantReply>> _publicEnters = new();
     private readonly ConcurrentDictionary<ulong, Action<SimEnterPublicParticipantReply>> _publicEnterInOrder = new();
+    private readonly ConcurrentDictionary<ulong, Func<SimEnterPublicParticipantReply, Task>> _publicEnterInOrderAsync = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimMovePublicParticipantReply>> _publicMoves = new();
     private readonly ConcurrentDictionary<ulong, Action<SimMovePublicParticipantReply>> _publicMoveInOrder = new();
     private readonly ConcurrentDictionary<ulong, Action<SimMoveAbyssalParticipantReply>> _abyssalMoveInOrder = new();
@@ -208,7 +209,7 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         {
             while (true)
             {
-                Dispatch(await ReadAsync(stream, session.Token));
+                await DispatchAsync(await ReadAsync(stream, session.Token));
                 if (writer.IsFaulted)
                 {
                     await writer;
@@ -356,7 +357,12 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                 accepting.TrySetResult(new CommandReply(true, accepted.At, null));
                 break;
             case SimPosition position when _answered.TryRemove((position.SessionId, position.Command), out var resolving):
-                resolving.TrySetResult(new CommandReply(true, 0, null) { Position = position.Position });
+                resolving.TrySetResult(new CommandReply(true, 0, null)
+                {
+                    Position = position.Position,
+                    Direction = position.Direction ?? [],
+                    Radius = position.Radius,
+                });
                 break;
             case SimPosition:
                 break; // nobody is waiting for it
@@ -422,6 +428,26 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                 Received?.Invoke(message);
                 break;
         }
+    }
+
+    private async Task DispatchAsync(SimMessage message)
+    {
+        if (message is SimEnterPublicParticipantReply reply &&
+            _publicEnterInOrderAsync.TryRemove(reply.RequestId, out var beforeFollowingMessages) &&
+            _publicEnters.TryRemove(reply.RequestId, out var publicEnter))
+        {
+            try
+            {
+                await beforeFollowingMessages(reply).ConfigureAwait(false);
+                publicEnter.TrySetResult(reply);
+            }
+            catch (Exception error)
+            {
+                publicEnter.TrySetException(error);
+            }
+            return;
+        }
+        Dispatch(message);
     }
 
     private void FailPending()
@@ -828,6 +854,17 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
             throw new InvalidOperationException($"entry {request.RequestId} already has a handoff");
         try { return await AwaitAsync(_publicEnters, request.RequestId, request, cancellationToken).ConfigureAwait(false); }
         finally { _publicEnterInOrder.TryRemove(request.RequestId, out _); }
+    }
+
+    public async Task<SimEnterPublicParticipantReply> EnterPublicParticipantInOrderAwaitingAsync(
+        SimEnterPublicParticipant request, Func<SimEnterPublicParticipantReply, Task> beforeFollowingMessages,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(beforeFollowingMessages);
+        if (!_publicEnterInOrderAsync.TryAdd(request.RequestId, beforeFollowingMessages))
+            throw new InvalidOperationException($"entry {request.RequestId} already has a handoff");
+        try { return await AwaitAsync(_publicEnters, request.RequestId, request, cancellationToken).ConfigureAwait(false); }
+        finally { _publicEnterInOrderAsync.TryRemove(request.RequestId, out _); }
     }
 
     public async Task<SimMovePublicParticipantReply> MovePublicParticipantInOrderAsync(

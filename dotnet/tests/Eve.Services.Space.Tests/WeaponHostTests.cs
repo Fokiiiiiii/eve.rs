@@ -116,7 +116,7 @@ public class WeaponHostTests
     }
 
       [PgFact]
-      public async Task Host_simulation_keeps_one_ship_penalty_after_the_weapon_timer_but_reapplies_after_crimewatch_expires()
+      public async Task Host_simulation_reapplies_the_ship_penalty_each_minute_while_the_criminal_timer_is_active()
       {
           await using var rig = await Rig.CreateAsync();
           var attacker = await rig.NewCharacterAsync("Space Tester", 1);
@@ -159,14 +159,21 @@ public class WeaponHostTests
                     change.SessionId == (ulong)session.SessionId && change.Ship.SecurityStatus == lostStatus);
               Assert.Equal(ModuleResult.Done, await rig.Space.DeactivateAsync(session, gun, "targetAttack", CancellationToken.None));
 
-              rig.Now += Eve.Crimewatch.CombatState.WeaponsDurationMs + 1;
+              rig.Now += Eve.Services.Crimewatch.SecurityStatusPenalties.DuplicateWindowMs - 1;
               Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, gun, "targetAttack", targetShip, 1000, CancellationToken.None));
               Assert.Single(penalties);
+              var activeFlag = await crimewatch.StateOfAsync(attacker.CharacterId);
+              Assert.Equal(Eve.Crimewatch.Flag.Criminal, activeFlag.FlagAt(rig.Now));
 
-              rig.Now += Eve.Crimewatch.CombatState.FlagDurationMs + 1;
               await rig.Space.DeactivateAsync(session, gun, "targetAttack", CancellationToken.None);
+              rig.Now += 1;
               Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, gun, "targetAttack", targetShip, 1000, CancellationToken.None));
               Assert.Equal(2, penalties.Count);
+
+              await rig.Space.DeactivateAsync(session, gun, "targetAttack", CancellationToken.None);
+              rig.Now += Eve.Services.Crimewatch.SecurityStatusPenalties.DuplicateWindowMs;
+              Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, gun, "targetAttack", targetShip, 1000, CancellationToken.None));
+              Assert.Equal(3, penalties.Count);
           }
           finally
           {

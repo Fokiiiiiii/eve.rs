@@ -23,7 +23,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// <summary>The wire uses little-endian integers and length-prefixed text and byte strings.</summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 92;
+    public const ushort ProtocolVersion = 93;
 
     /// <summary>The longest name of a dynamic slim-item field, in bytes (protocol 76).</summary>
     public const int SlimFieldNameMax = 64;
@@ -622,8 +622,22 @@ public static partial class SimCodec
                 message = new SimAccepted(r.U64(), r.U8(), r.I64());
                 break;
             case Kind.Position:
-                message = new SimPosition(r.U64(), r.U8(), ReadVector(ref r));
-                break;
+                {
+                    var sessionId = r.U64();
+                    var command = r.U8();
+                    var position = ReadVector(ref r);
+                    var direction = ReadOptionalVector(ref r);
+                    var radius = r.U8() switch
+                    {
+                        0 => (double?)null,
+                        1 => r.F64(),
+                        _ => throw new SimLinkException(SimLinkError.BadValue, "bad position radius presence"),
+                    };
+                    if (radius is { } value && (!double.IsFinite(value) || value < 0))
+                        throw new SimLinkException(SimLinkError.BadValue, "bad position radius");
+                    message = new SimPosition(sessionId, command, position) { Direction = direction, Radius = radius };
+                    break;
+                }
             case Kind.DirectionalTargets:
                 {
                     var session = r.U64();

@@ -15,13 +15,24 @@ public sealed record JumpCloneSnapshot(IReadOnlyList<JumpCloneRecord> Clones, lo
 
 /// corporation of a structure (its wallet is credited), or the offering pilot of a ship (the journal's counterparty; no wallet is credited).
 /// </summary>
-public sealed record JumpCloneInstall(long LocationId, string LocationKind, decimal Fee, long OwnerCorporationId = 0, long OfferingCharacterId = 0);
+public sealed record JumpCloneInstall(long LocationId, string LocationKind, decimal Fee, long OwnerCorporationId = 0, long OfferingCharacterId = 0,
+    int ShipCapacity = 0);
+
+/// <summary>A serialized install no longer fits the character's clone limit or the destination bay.</summary>
+public sealed class JumpCloneInstallRefusedException(string reason) : Exception(reason)
+{
+    public string Reason { get; } = reason;
+}
 
 
 public sealed record StructureCloneBay(long StructureId, long OwnerCorporationId, decimal Fee);
 
 /// <summary>The active ship of a pilot and its clone bay: the hull's clone capacity and operational range, and whether a Clone Vat Bay is fitted.</summary>
 public sealed record ShipCloneBay(long ShipId, bool CanReceiveCloneJumps, bool HasCloneVatBay, int Capacity, double MaxOperationalDistance);
+
+/// <summary>The authoritative pose of a ship clone destination in space.</summary>
+public sealed record ShipCloneDestination(long ShipId, int SolarSystemId, IReadOnlyList<double> Position,
+    IReadOnlyList<double> Direction, double Radius);
 
 /// <summary>
 /// The outcome of a clone jump's state change. A refusal names the reason (<c>MUST_LEAVE_SHIP</c>, <c>CLONE_NOT_FOUND</c>,
@@ -32,6 +43,9 @@ public sealed record CloneJumpResult(string? Refusal, long StationId = 0, int So
 
 public static class CloneJumpRules
 {
+    /// <summary>The skills that set the character's jump-clone limit.</summary>
+    public static IReadOnlyList<int> CloneLimitSkillIds { get; } = [24242, 33407, 73910];
+
     /// <summary>The Infomorph Synchronizing skill: each level takes an hour off the cooldown.</summary>
     public const int SynchronizingSkillId = 33399;
 
@@ -83,6 +97,16 @@ public interface IJumpCloneSpace
 
     /// <summary>The clone bay of a structure for the character (a medical or jump clone service it has, and the docking right); null when none.</summary>
     ValueTask<StructureCloneBay?> StructureBayAsync(long characterId, long structureId, CancellationToken cancellationToken);
+
+    /// <summary>The active, in-space ship destination and its authoritative pose; null when the ship is unavailable.</summary>
+    ValueTask<ShipCloneDestination?> ShipDestinationAsync(long shipId, CancellationToken cancellationToken) =>
+        ValueTask.FromResult<ShipCloneDestination?>(null);
+
+    /// <summary>Moves a docked capsule into space and runs settlement after the simulator accepts entry, before client notifications.</summary>
+    Task<string?> RelocateForCloneJumpAsync(ClientSession session, ShipCloneDestination destination,
+        IReadOnlyList<double> position, IReadOnlyList<double> direction,
+        Func<CancellationToken, ValueTask<string?>> settle, CancellationToken cancellationToken) =>
+        Task.FromResult<string?>("Space is not available right now. Try again in a moment.");
 }
 
 /// <summary>The late link to the space side: the Host sets <see cref="Space"/> once the space sessions and the structures exist.</summary>
@@ -103,7 +127,6 @@ public sealed class JumpCloneSpaceLink
 public sealed partial class JumpCloneService(Func<long> nowUnixMs, IJumpCloneStore? store = null, JumpCloneSpaceLink? spaceLink = null)
 {
     /// <summary>The skills that set the clone limit: Infomorph Psychology, Advanced, Elite (one clone per level each).</summary>
-    private static readonly int[] CloneLimitSkills = [24242, 33407, 73910];
     private const int CloneNameMaxLength = 100;
 
 
@@ -335,9 +358,16 @@ public sealed partial class JumpCloneService(Func<long> nowUnixMs, IJumpCloneSto
         if (snapshot.Clones.Count >= await CloneLimit(target, call.Cancellation))
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("UI/Medical/JumpCloneSkillReqNotMet")));
 
-        var install = new JumpCloneInstall(offer.ShipId, "ship", JumpCloneInstallFee, 0, offer.OfferingCharacterId);
-        if (await Store().InstallAsync(target, install, call.Cancellation) is null)
-            throw await NotEnoughMoney(target, call.Cancellation);
+        var install = new JumpCloneInstall(offer.ShipId, "ship", JumpCloneInstallFee, 0, offer.OfferingCharacterId, offeringShip.Capacity);
+        try
+        {
+            if (await Store().InstallAsync(target, install, call.Cancellation) is null)
+                throw await NotEnoughMoney(target, call.Cancellation);
+        }
+        catch (JumpCloneInstallRefusedException refused)
+        {
+            throw InstallRefusal(refused);
+        }
         _offers.TryRemove(target, out _);
 
         // the reference's order: the pilot, then the offering pilot, then the clone caches
@@ -410,22 +440,46 @@ public sealed partial class JumpCloneService(Func<long> nowUnixMs, IJumpCloneSto
 
         var (fee, ownerCorporationId) = await CloneJumpFee(call);
         var originLocationKind = IsStationDock(call.Session) ? "station" : "structure";
+        if (target.LocationKind == "ship")
+        {
+            if (!confirmed)
+                throw MachoErrors.ThrowUserError("JumpCheckIntoShip", ("shipID", new PyLong(target.LocationId)));
+
+            var shipDestination = await Space().ShipDestinationAsync(target.LocationId, call.Cancellation);
+            if (shipDestination is null || shipDestination.ShipId != target.LocationId || shipDestination.SolarSystemId <= 0 ||
+                shipDestination.Position.Count != 3 || shipDestination.Direction.Count != 3 ||
+                shipDestination.Position.Any(value => !double.IsFinite(value)) || shipDestination.Direction.Any(value => !double.IsFinite(value)) ||
+                !double.IsFinite(shipDestination.Radius) || shipDestination.Radius < 0)
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Jump clone not found")));
+
+            var headingLength = Math.Sqrt(shipDestination.Direction.Sum(value => value * value));
+            if (!double.IsFinite(headingLength) || headingLength <= 0)
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Jump clone not found")));
+            var direction = shipDestination.Direction.Select(value => value / headingLength).ToArray();
+            var offsetMeters = Math.Max(2_500d, shipDestination.Radius + 1_500d);
+            var position = shipDestination.Position.Select((value, index) => value - direction[index] * offsetMeters).ToArray();
+            CloneJumpResult? shipJump = null;
+            var relocationError = await Space().RelocateForCloneJumpAsync(call.Session, shipDestination, position, direction, async token =>
+            {
+                shipJump = await Store().JumpAsync(characterId, target.JumpCloneId, current, originLocationKind, fee, ownerCorporationId,
+                    cooldownHours, now, token);
+                return shipJump.Refusal is null ? null : "The clone jump settlement was refused.";
+            }, call.Cancellation);
+            if (shipJump?.Refusal is { } shipRefusal)
+                await ThrowCloneJumpRefusal(shipRefusal, characterId, fee, call.Cancellation);
+            if (relocationError is not null)
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(relocationError)));
+
+            Invalidate(call.Session, current, characterId);
+            if (target.LocationId != current)
+                Invalidate(call.Session, target.LocationId, characterId);
+            return PyNone.Instance;
+        }
+
         var result = await Store().JumpAsync(characterId, target.JumpCloneId, current, originLocationKind, fee, ownerCorporationId,
             cooldownHours, now, call.Cancellation);
-        switch (result.Refusal)
-        {
-            case null:
-                break;
-            case "MUST_LEAVE_SHIP":
-                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("You must leave your ship before jumping clones")));
-            case "INSUFFICIENT_FUNDS":
-                var balance = await Store().IskBalanceAsync(characterId, call.Cancellation);
-                throw MachoErrors.ThrowUserError("NotEnoughMoney", ("amount", new PyReal((double)fee)), ("balance", new PyReal((double)balance)));
-            case "COOLDOWN_ACTIVE":
-                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("UI/CharacterSheet/CharacterSheetWindow/JumpCloneScroll/JumpCooldownError")));
-            default:
-                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Jump clone not found")));
-        }
+        if (result.Refusal is not null)
+            await ThrowCloneJumpRefusal(result.Refusal, characterId, fee, call.Cancellation);
         if (result.StructureId > 0)
         {
             call.Session.Change(
@@ -472,8 +526,15 @@ public sealed partial class JumpCloneService(Func<long> nowUnixMs, IJumpCloneSto
                 ?? throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("UI/Medical/Errors/UnknownValidationError")));
             install = new JumpCloneInstall(location, "structure", bay.Fee, bay.OwnerCorporationId);
         }
-        if (await Store().InstallAsync(characterId, install, call.Cancellation) is null)
-            throw await NotEnoughMoney(characterId, call.Cancellation);
+        try
+        {
+            if (await Store().InstallAsync(characterId, install, call.Cancellation) is null)
+                throw await NotEnoughMoney(characterId, call.Cancellation);
+        }
+        catch (JumpCloneInstallRefusedException refused)
+        {
+            throw InstallRefusal(refused);
+        }
         Invalidate(call.Session, location, characterId);
         return PyNone.Instance;
     }
@@ -498,6 +559,32 @@ public sealed partial class JumpCloneService(Func<long> nowUnixMs, IJumpCloneSto
 
     private IJumpCloneSpace Space() => spaceLink?.Space ?? throw new InvalidOperationException("the ship and structure clones are not wired on this server");
 
+    private static MachoWrappedException InstallRefusal(JumpCloneInstallRefusedException refused) =>
+        MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(refused.Reason switch
+        {
+            "SKILL_REQUIRED" => "UI/Medical/JumpCloneSkillReqNotMet",
+            "CLONE_LIMIT" => "UI/Medical/JumpCloneUsageAndCapacity",
+            "LOCATION_OCCUPIED" => "UI/CharacterSheet/CharacterSheetWindow/JumpCloneScroll/InstalledCloneCount",
+            "SHIP_CAPACITY" => "Clone bay is full",
+            _ => "Jump clone installation unavailable",
+        })));
+
+    private async ValueTask ThrowCloneJumpRefusal(string refusal, long characterId, decimal fee, CancellationToken cancellationToken)
+    {
+        switch (refusal)
+        {
+            case "MUST_LEAVE_SHIP":
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("You must leave your ship before jumping clones")));
+            case "INSUFFICIENT_FUNDS":
+                var balance = await Store().IskBalanceAsync(characterId, cancellationToken);
+                throw MachoErrors.ThrowUserError("NotEnoughMoney", ("amount", new PyReal((double)fee)), ("balance", new PyReal((double)balance)));
+            case "COOLDOWN_ACTIVE":
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("UI/CharacterSheet/CharacterSheetWindow/JumpCloneScroll/JumpCooldownError")));
+            default:
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Jump clone not found")));
+        }
+    }
+
     private async ValueTask<StructureCloneBay?> StructureBay(long characterId, long structureId, CancellationToken cancellationToken) =>
         spaceLink?.Space is { } space ? await space.StructureBayAsync(characterId, structureId, cancellationToken) : null;
 
@@ -521,7 +608,7 @@ public sealed partial class JumpCloneService(Func<long> nowUnixMs, IJumpCloneSto
     private async ValueTask<int> CloneLimit(long characterId, CancellationToken cancellationToken)
     {
         var total = 0;
-        foreach (var skill in CloneLimitSkills)
+        foreach (var skill in CloneJumpRules.CloneLimitSkillIds)
             total += await Store().SkillLevelAsync(characterId, skill, cancellationToken);
         return total;
     }

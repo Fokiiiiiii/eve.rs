@@ -1,6 +1,6 @@
 # Market status
 
-Updated 2026-10-29. This status follows the V24.01 call sites, current Host wiring, pinned SDE and EVE University market rules.
+Updated 2026-11-06. This status follows the V24.01 call sites, current Host wiring, pinned SDE and EVE University market rules.
 
 ## Built
 
@@ -25,10 +25,12 @@ The two-account station headless walk passed on `eve_p3`; it checks transfer, ta
 
 `MarketTradeHostWireTests.Registered_market_and_trade_calls_reply_and_update_persisted_state` now also calls the registered `CancelCharOrder` RPC after modifying a resting buy order and verifies the persisted order is removed.
 
+`GetStationAsks` cached-method metadata now carries `sessionInfoValue` for its resolved station or structure location. `MarketHostTests.The_host_dispatches_accessible_structure_market_orders_and_recovers_partial_settlement_after_restart` switches one same-region session between two permitted structures with `stationid` unset and verifies both asks and their location-specific cache values (`MarketHostTests.cs:438-467`). `MarketRpcTests.Station_and_system_ask_rows_match_the_client_attribute_and_sequence_contract` retains the NPC-station row contract and checks its station ID value (`MarketRpcTests.cs:143-152`). On `eve_p3`, the focused Host class passed 4 tests, the selected Market classes passed 40, and `CachedResultTests` passed 7; all had zero skips.
+
 Immediate fills notify the client with an empty changed-order list. This preserves the client-side transaction cache reset and escrow signal without reporting an order ID 0 that does not exist. Client consumers are `marketSvc.py:32-35`, `marketsvc.py:113-127`, `marketHistory.py:61-65`, `orders.py:66-69`, `marketbase.py:536-546`, and `buyMultiFromBase.py:557-564`; the V24 buy call returns no order (`marketsvc.py:256-268`). EveJS 261028.1 still sends a synthetic row (`marketProxyService.js:5687-5702`); the compatibility deviation is recorded in `docs/reference/compat/DEVIATIONS.md`.
 
-The DB-free notifier regression passed locally. No local database or graphical client was used.
+Market delivery now sends committed inventory rows with `OnItemsChanged`, then one `OnMarketItemReceived(itemID, typeID, flag, locationID)` per delivered item to the buyer's live character session. The notifier reloads item state from `PgItemStore` and type/group/category data from the pinned SDE. `MarketTradeHostWireTests` checks immediate multi-item delivery, a corporation-funded resting buy fill, the exact wire packets and recipient, committed inventory, wallet/cache/order notification order, and a trigger-driven rollback with no delivery notices. Selected local database-backed checks on `eve_p4` passed: Host wire class 3/3, selected Host classes 8/8, selected Market classes 49/49; zero skips. The native graphical client was not used.
 
 V24.01 client evidence: `eve/client/script/ui/services/marketsvc.py:280-281` calls `CancelCharOrder(orderID, regionID)`; `eve/client/script/ui/shared/market/orders.py:276-310` offers cancellation for the caller's own order and routes it through `marketutils.CancelOffer`.
 
-For this regression, `Eve.Host.Tests` compiled successfully and the selected non-database Host route test passed. The database cases passed on the Actions run above.
+The `CancelCharOrder` RPC coverage compiled and passed in `MarketTradeHostWireTests` as part of the selected Host checks above.

@@ -61,9 +61,13 @@ public static class ExpertSystemRules
 
     /// <summary>The highest level each granted skill has from the entries that are still installed at <paramref name="nowMs"/>.</summary>
     public static Dictionary<int, int> GrantsOf(ExpertSystemCatalog catalog, IEnumerable<ExpertSystemEntry> entries, long nowMs)
+        => GrantsFromEntries(catalog, entries.Where(entry => entry.ExpiresAtMs > nowMs));
+
+    /// <summary>The highest level each granted skill has from the stored entries, including systems due for expiry cleanup.</summary>
+    public static Dictionary<int, int> GrantsFromEntries(ExpertSystemCatalog catalog, IEnumerable<ExpertSystemEntry> entries)
     {
         var grants = new Dictionary<int, int>();
-        foreach (var entry in entries.Where(entry => entry.ExpiresAtMs > nowMs))
+        foreach (var entry in entries)
         {
             if (catalog.Get(entry.TypeId) is not { } type)
             {

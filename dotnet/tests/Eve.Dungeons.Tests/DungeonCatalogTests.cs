@@ -159,6 +159,10 @@ public sealed class DungeonCatalogTests
             {
                 Assert.Contains(gate.DestinationRoomKey!, rooms);
             }
+            foreach (var gate in dungeon.Gates.Where(g => g.SourceRoomKey is not null))
+            {
+                Assert.Contains(gate.SourceRoomKey!, rooms);
+            }
         }
     }
 
@@ -189,7 +193,7 @@ public sealed class DungeonCatalogTests
     {
         var assembly = typeof(DungeonCatalog).Assembly;
         JsonElement manifest = ReadRaw(assembly, "manifest.json");
-        AssertFields(manifest, "manifest", "schema", "sdeBuild", "dungeonFiles", "missionFile", "knownGapsFile", "counts", "validation");
+        AssertFields(manifest, "manifest", "schema", "sdeBuild", "dungeonFiles", "missionFile", "layoutProfilesFile", "knownGapsFile", "counts", "validation");
 
         foreach (JsonElement file in manifest.GetProperty("dungeonFiles").EnumerateArray())
         {
@@ -228,6 +232,23 @@ public sealed class DungeonCatalogTests
         Each(missions.GetProperty("killMissionDungeons"), binding => AssertFields(binding, "binding", "missionID", "dungeonID"));
         Each(missions.GetProperty("goldenSecurityMissions"), golden => AssertFields(golden, "golden", "missionID", "dungeonID", "agentLevel"));
 
+        JsonElement layoutProfiles = ReadRaw(assembly, manifest.GetProperty("layoutProfilesFile").GetString()!);
+        AssertFields(layoutProfiles, "layout profiles", "schema", "profiles");
+        Each(layoutProfiles.GetProperty("profiles"), profile =>
+        {
+            AssertFields(profile, "layout profile", "dungeonID", "rooms", "gates");
+            Each(profile.GetProperty("rooms"), room =>
+            {
+                AssertFields(room, "layout room", "roomKey", "initialState", "positionOffset");
+                AssertPosition(room);
+            });
+            Each(profile.GetProperty("gates"), gate =>
+            {
+                AssertFields(gate, "layout gate", "gateKey", "sourceRoomKey", "positionOffset");
+                AssertPosition(gate);
+            });
+        });
+
         JsonElement gaps = ReadRaw(assembly, manifest.GetProperty("knownGapsFile").GetString()!);
         AssertFields(gaps, "known gaps", "schema", "missingDungeonTemplates", "missionDefects", "missionsWithoutDungeon", "epicLikeMissionsWithoutOfficialArc");
         Each(gaps.GetProperty("missingDungeonTemplates"), missing => AssertFields(missing, "missing dungeon", "dungeonID", "missionIDs", "reason"));
@@ -240,11 +261,12 @@ public sealed class DungeonCatalogTests
     [Fact]
     public void Loader_rejects_a_field_outside_the_schema()
     {
-        string manifest = """{"schema":"eve.dungeon-catalog.manifest.v1","sdeBuild":1,"dungeonFiles":["d.json"],"missionFile":"m.json","knownGapsFile":"g.json","counts":{},"validation":{}}""";
+        string manifest = """{"schema":"eve.dungeon-catalog.manifest.v1","sdeBuild":1,"dungeonFiles":["d.json"],"missionFile":"m.json","layoutProfilesFile":"l.json","knownGapsFile":"g.json","counts":{},"validation":{}}""";
         string dungeons = """{"schema":"eve.dungeon-catalog.dungeon.v1","dungeons":[{"dungeonID":1,"provenance":"client"}]}""";
         string missions = """{"schema":"eve.dungeon-catalog.missions.v1","killMissionDungeons":[],"goldenSecurityMissions":[]}""";
         string gaps = """{"schema":"eve.dungeon-catalog.known-gaps.v1","missingDungeonTemplates":[],"missionDefects":[],"missionsWithoutDungeon":[],"epicLikeMissionsWithoutOfficialArc":[]}""";
-        var files = new Dictionary<string, string> { ["manifest.json"] = manifest, ["d.json"] = dungeons, ["m.json"] = missions, ["g.json"] = gaps };
+        string layouts = """{"schema":"eve.dungeon-catalog.layout-profiles.v1","profiles":[]}""";
+        var files = new Dictionary<string, string> { ["manifest.json"] = manifest, ["d.json"] = dungeons, ["m.json"] = missions, ["l.json"] = layouts, ["g.json"] = gaps };
 
         Assert.ThrowsAny<JsonException>(() => DungeonCatalog.Load(name => Open(files[name])));
     }

@@ -121,6 +121,32 @@ public sealed class PlanetStore(NpgsqlDataSource source, string schema = PlanetS
         return found;
     }
 
+    /// <summary>The colonies on one planet, including every owner (the client's other-player pin and network views).</summary>
+    public async Task<IReadOnlyList<ColonyDocument>> ColoniesOnAsync(long planetId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand($"SELECT doc::text FROM {schema}.colonies WHERE planet_id = $1 ORDER BY owner_id", connection)
+        {
+            Parameters = { new() { Value = planetId } },
+        };
+        var found = new List<ColonyDocument>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) found.Add(ColonyDocument.FromJson(reader.GetString(0)));
+        return found;
+    }
+
+    /// <summary>Counts the owner's other colonies in the caller's transaction snapshot.</summary>
+    public async Task<int> OtherColoniesAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+        long ownerId, long planetId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"SELECT count(*) FROM {schema}.colonies WHERE owner_id = $1 AND planet_id <> $2", connection, transaction)
+        {
+            Parameters = { new() { Value = ownerId }, new() { Value = planetId } },
+        };
+        return checked((int)(long)(await command.ExecuteScalarAsync(cancellationToken))!);
+    }
+
     public async Task<ColonyDocument?> ReadAsync(long ownerId, long planetId, CancellationToken cancellationToken = default)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);

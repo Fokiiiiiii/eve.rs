@@ -188,13 +188,17 @@ public class StoreTests
             await drop.ExecuteNonQueryAsync();
         }
 
-        var legacyMigrations = PgCharacterStore.MigrationSet().Take(3).ToArray();
+        var migrations = PgCharacterStore.MigrationSet().OrderBy(migration => migration.Name, StringComparer.Ordinal).ToArray();
+        var legacyMigrations = migrations.Take(3).ToArray();
+        Assert.Equal(
+            new[] { "0001_characters", "0002_character_tutorial_state", "0003_character_faction_warfare" },
+            legacyMigrations.Select(migration => migration.Name));
         Assert.Equal(
             new[] { "0001_characters", "0002_character_tutorial_state", "0003_character_faction_warfare" },
             await Eve.Data.Migrations.ApplyAsync(s.Source, s.CharactersSchema, legacyMigrations));
         var id = await Insert(s, Pilot("Legacy Home"));
         Assert.Equal(
-            new[] { "0004_remote_home_station_cooldown", "0005_nes_intro_state", "0006_jump_clones", "0007_character_deletion", "0008_login_milestones", "0009_achievement_tracker", "0010_project_discovery_tutorial", "0011_paperdoll_state", "0012_jump_clone_settlements", "0012_project_discovery_task_pins", "0013_character_titles", "0014_achievement_has_ever_warped", "0015_forced_paperdoll_state", "0016_character_structure_location", "0016_project_discovery_participation", "0017_project_discovery_training", "0018_project_discovery_bonus", "0019_project_discovery_claim_calls", "0020_project_discovery_reward_items", "0021_project_discovery_bonus_receipts", "0022_character_deletion_corporation" },
+            migrations.Skip(legacyMigrations.Length).Select(migration => migration.Name),
             await PgCharacterStore.MigrateAsync(s.Source, s.CharactersSchema));
 
         var migrated = (await s.Characters.GetAsync(id))!;

@@ -85,7 +85,7 @@ public sealed class InsurgencyDirector
 
     /// <summary>
     /// Starts a campaign in each warzone that has none open. The hub is a low-security system of the warzone's map, chosen in turn over the warzone's campaigns;
-    /// the covered systems are the hub and the nearest low-security systems of the warzone by stargate jumps, as many as the victory needs (the ambition of the pirates).
+    /// the covered systems are the hub and nearest low-security systems by stargate jumps, enough to meet the larger of the two sides' victory requirements.
     /// A warzone with too few such systems starts nothing and is looked at again on the next tick.
     /// </summary>
     private async Task StartAsync(JobContext context, CancellationToken cancellationToken)
@@ -104,8 +104,8 @@ public sealed class InsurgencyDirector
                 continue;
             var started = await _store.CountInWarzoneAsync(context.Connection, context.Transaction, warzone.WarzoneId, cancellationToken);
             var hub = candidates[(int)(started % candidates.Count)];
-            var (pirate, _) = await _store.AmbitionAsync(context.Connection, context.Transaction, warzone.WarzoneId, cancellationToken);
-            var required = InsurgencyRules.RequiredSystems(pirate);
+            var (pirate, antipirate) = await _store.AmbitionAsync(context.Connection, context.Transaction, warzone.WarzoneId, cancellationToken);
+            var required = Math.Max(InsurgencyRules.RequiredSystems(pirate), InsurgencyRules.RequiredSystems(antipirate));
             var jumps = _stargates.JumpsFrom(hub.Id);
             var covered = candidates
                 .Where(c => jumps.ContainsKey(c.Id))

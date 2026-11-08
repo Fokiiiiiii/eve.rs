@@ -24,7 +24,7 @@ public class AgentMissionStoreTests
         Assert.NotNull(held);
         Assert.Equal(AgentMissionState.Offered, held.State);
         Assert.Equal(Courier, held.Content);
-        Assert.Null(held.ExpiresAt);
+        Assert.Equal(now + TimeSpan.FromDays(7), held.ExpiresAt);
         Assert.Equal(["offered:0>1"], await rig.JournalAsync(Character, Agent));
         Assert.Equal(change, Assert.Single(rig.Changes));
     }
@@ -127,16 +127,36 @@ public class AgentMissionStoreTests
     }
 
     [PgFact]
-    public async Task An_offer_does_not_expire_so_a_late_accept_is_taken_and_the_sweep_leaves_it_alone()
+    public async Task An_offer_expires_after_seven_days_and_the_late_accept_is_refused()
     {
         await using var rig = await Rig.Create();
         await rig.Store.OfferAsync(Character, Agent, Courier, Rig.Start, "offer:1");
         var late = Rig.Start + TimeSpan.FromDays(30);
 
-        Assert.Empty(await rig.Store.ExpireOffersAsync(late));
-        await rig.Store.AcceptAsync(Character, Agent, late, "accept:late");
-        Assert.Equal(AgentMissionState.Accepted, (await rig.Store.ReadAsync(Character, Agent))!.State);
-        Assert.Equal(["offered:0>1", "accepted:1>2"], await rig.JournalAsync(Character, Agent));
+        var expired = Assert.Single(await rig.Store.ExpireDueAsync(late));
+        Assert.Equal((AgentMissionState.Offered, AgentMissionState.Allocated, "offer_expired"), (expired.From, expired.To, expired.Action));
+        var refused = await Assert.ThrowsAsync<AgentMissionRefusedException>(() =>
+            rig.Store.AcceptAsync(Character, Agent, late, "accept:late"));
+        Assert.Equal("not_offered", refused.Reason);
+        Assert.Equal(AgentMissionState.Allocated, (await rig.Store.ReadAsync(Character, Agent))!.State);
+        Assert.Equal(["offered:0>1", "offer_expired:1>0"], await rig.JournalAsync(Character, Agent));
+    }
+
+    [PgFact]
+    public async Task Accepting_an_offer_restarts_its_authored_mission_deadline()
+    {
+        await using var rig = await Rig.Create();
+        var authored = Courier with { ExpirationMinutes = 30 };
+        await rig.Store.OfferAsync(Character, Agent, authored, Rig.Start, "offer:authored");
+        Assert.Equal(Rig.Start + TimeSpan.FromMinutes(30), (await rig.Store.ReadAsync(Character, Agent))!.ExpiresAt);
+
+        var acceptedAt = Rig.Start + TimeSpan.FromMinutes(5);
+        await rig.Store.AcceptAsync(Character, Agent, acceptedAt, "accept:authored");
+
+        var accepted = await rig.Store.ReadAsync(Character, Agent);
+        Assert.Equal(AgentMissionState.Accepted, accepted!.State);
+        Assert.Equal(acceptedAt + TimeSpan.FromMinutes(30), accepted.ExpiresAt);
+        Assert.Equal(30, accepted.Content.ExpirationMinutes);
     }
 
     [PgFact]

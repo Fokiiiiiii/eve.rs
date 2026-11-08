@@ -39,7 +39,9 @@ public sealed class DynamicItemRpcServiceTests
 
         private Route(string[] schemas) => _schemas = schemas;
 
-        public static async Task<Route> CreateAsync(string pgUrl)
+        public string ItemSchema => _schemas[0];
+
+        public static async Task<Route> CreateAsync(string pgUrl, MutationRoll? roll = null)
         {
             var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(pgUrl));
             var sde = new SdeReader(source);
@@ -54,11 +56,12 @@ public sealed class DynamicItemRpcServiceTests
             var items = new PgItemStore(source, schemas[0]);
             var bus = new EventBus(source, new DurableScheduler(source, () => ClockMs, new SchedulerOptions { Concurrency = 1 }, schemas[2]), null, schemas[1]);
             var mutations = new ItemMutationService(source, items, items.Mutations, catalog, dogma, new BusItemMutationEvents(bus), () => ClockMs,
-                attribute => Rolls[attribute]);
+                roll ?? (attribute => Rolls[attribute]));
             var service = new DynamicItemRpcService(items, mutations, dogma, new ItemTypeCatalog(sde), null);
             var packets = new Sink();
             var session = new ClientSession(packets);
             session.Set("charid", new PyInt(Character));
+            session.Set("stationid", new PyInt(Station));
             return new Route(schemas)
             {
                 Source = source, Items = items, Dogma = dogma, Service = service, Packets = packets, Session = session,
@@ -187,11 +190,57 @@ public sealed class DynamicItemRpcServiceTests
         // the client's GetMutatedAttributes reads every mutator attribute: all of them are present
         foreach (var attribute in new[] { 6, 20, 30, 50, 554 })
             Assert.Contains(attributes.Entries, e => e.Key == new PyInt(attribute));
-        // the modifiers carry the rolled multiplier of each mutator attribute: 20 is 0.9 + 0.25 x 0.2
-        Assert.Equal(0.95, Num(Assert.IsType<PyDict>(Field(fields, "modifiers")), 20), 9);
+        // the modifiers carry the uniform roll fraction for each mutator attribute, as in EveJS and the V24 response contract
+        var modifiers = Assert.IsType<PyDict>(Field(fields, "modifiers"));
+        Assert.Equal(0.5, Num(modifiers, 6), 9);
+        Assert.Equal(0.25, Num(modifiers, 20), 9);
+        Assert.Equal(0.75, Num(modifiers, 30), 9);
+        Assert.Equal(0.0, Num(modifiers, 50), 9);
+        Assert.Equal(1.0, Num(modifiers, 554), 9);
         Assert.Equal(500.0, Num(Assert.IsType<PyDict>(Field(fields, "baseAttributes")), 20), 9);
 
         Assert.IsType<PyNone>(await route.CallAsync("GetDynamicItemInfo", route.Session, plain));
+    }
+
+    [PgFact]
+    public async Task GetDynamicItemInfo_recovers_legacy_modifier_fractions_from_the_stored_multipliers()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        var mutator = await route.GiveAsync(Mutaplasmid, Character, singleton: false);
+        var source = await route.GiveAsync(Input, Character);
+        var made = Assert.IsType<PyInt>(await route.CallAsync("CreateDynamicItem", route.Session, mutator, source)).Value;
+
+        // Rows written before roll_fractions was added have only the stored multiplier map.
+        await using (var connection = await route.Source.OpenConnectionAsync())
+        await using (var command = new NpgsqlCommand($"UPDATE \"{route.ItemSchema}\".item_mutations SET roll_fractions = NULL WHERE item_id = $1", connection))
+        {
+            command.Parameters.AddWithValue(made);
+            Assert.Equal(1, await command.ExecuteNonQueryAsync());
+        }
+
+        var fields = Assert.IsType<PyDict>(Assert.IsType<PyObject>(await route.CallAsync("GetDynamicItemInfo", route.Session, made)).Args);
+        var modifiers = Assert.IsType<PyDict>(Field(fields, "modifiers"));
+        Assert.Equal(0.5, Num(modifiers, 6), 9);
+        Assert.Equal(0.25, Num(modifiers, 20), 9);
+        Assert.Equal(0.75, Num(modifiers, 30), 9);
+        Assert.Equal(0.0, Num(modifiers, 50), 9);
+        Assert.Equal(1.0, Num(modifiers, 554), 9);
+    }
+
+    [PgFact]
+    public async Task GetDynamicItemInfo_rounds_modifier_fractions_to_six_decimal_places_like_evejs()
+    {
+        const double unroundedFraction = 0.123456789;
+        await using var route = await Route.CreateAsync(PgUrl(), attribute => attribute == 6 ? unroundedFraction : Rolls[attribute]);
+        var mutator = await route.GiveAsync(Mutaplasmid, Character, singleton: false);
+        var source = await route.GiveAsync(Input, Character);
+        var made = Assert.IsType<PyInt>(await route.CallAsync("CreateDynamicItem", route.Session, mutator, source)).Value;
+
+        var fields = Assert.IsType<PyDict>(Assert.IsType<PyObject>(await route.CallAsync("GetDynamicItemInfo", route.Session, made)).Args);
+        var modifiers = Assert.IsType<PyDict>(Field(fields, "modifiers"));
+        Assert.Equal(BitConverter.DoubleToInt64Bits(0.123457), BitConverter.DoubleToInt64Bits(Num(modifiers, 6)));
+        Assert.Equal(BitConverter.DoubleToInt64Bits(unroundedFraction),
+            BitConverter.DoubleToInt64Bits((await route.Items.Mutations.GetAsync(made))!.RollFractions![6]));
     }
 
     [PgFact]

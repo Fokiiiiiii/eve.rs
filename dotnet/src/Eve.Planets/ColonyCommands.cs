@@ -577,8 +577,11 @@ public sealed partial class Colony
         if (commodities.Count < 1) throw new PlanetRefusal("PleaseSelectCommoditiesToLaunch");
         if (pin.LastLaunchTime is { } last && last + PlanetRules.LaunchCooldown > CurrentSimTime)
             throw new PlanetRefusal("CannotLaunchCommandPinNotReady");
-        foreach (var (type, _) in commodities)
-            if (pin.Contents.GetValueOrDefault(type) < 1) throw new PlanetRefusal("CannotLaunchCommoditiesNotFound");
+        foreach (var (type, quantity) in commodities)
+        {
+            if (quantity < 1) throw new PlanetRefusal("PleaseSelectCommoditiesToLaunch");
+            if (pin.Contents.GetValueOrDefault(type) < quantity) throw new PlanetRefusal("CannotLaunchCommoditiesNotFound");
+        }
         foreach (var (type, qty) in commodities) RemoveCommodity(pin, type, qty);
         pin.LastLaunchTime = CurrentSimTime;
         return CurrentSimTime;

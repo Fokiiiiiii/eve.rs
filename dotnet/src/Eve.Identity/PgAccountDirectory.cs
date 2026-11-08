@@ -29,7 +29,7 @@ public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLook
         _source = source;
         _options = options;
         Schema = schema;
-        const string Columns = "id, password_hash, role, banned";
+        const string Columns = "id, password_hash, role, banned, country_code";
         _find = $"SELECT {Columns} FROM {schema}.accounts WHERE user_name = $1";
         _create = $"INSERT INTO {schema}.accounts (user_name, password_hash, role, country_code, subscription_end_at) VALUES ($1, $2, $3, $4, $5) " +
                   $"ON CONFLICT (user_name) DO NOTHING RETURNING {Columns}";
@@ -56,13 +56,13 @@ public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLook
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
         Migrations.ApplyAsync(source, schema, MigrationSet(), cancellationToken);
 
-    private sealed record Row(int Id, byte[] Hash, long Role, bool Banned);
+    private sealed record Row(int Id, byte[] Hash, long Role, bool Banned, string CountryCode);
 
     private static async Task<Row?> ReadRowAsync(NpgsqlCommand command, CancellationToken ct)
     {
         await using var reader = await command.ExecuteReaderAsync(ct);
         return await reader.ReadAsync(ct)
-            ? new Row(reader.GetInt32(0), (byte[])reader[1], reader.GetInt64(2), reader.GetBoolean(3))
+            ? new Row(reader.GetInt32(0), (byte[])reader[1], reader.GetInt64(2), reader.GetBoolean(3), reader.GetString(4))
             : null;
     }
 
@@ -270,7 +270,7 @@ public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLook
             }
         }
 
-        var result = InMemoryAccountDirectory.Decide(row.Banned, row.Hash, (uint)row.Id, unchecked((ulong)row.Role), attempt, _options);
+        var result = InMemoryAccountDirectory.Decide(row.Banned, row.Hash, (uint)row.Id, unchecked((ulong)row.Role), attempt, _options, row.CountryCode);
         if (result is LoggedIn)
         {
             await using var touch = new NpgsqlCommand(_touch, connection) { Parameters = { new() { Value = row.Id } } };

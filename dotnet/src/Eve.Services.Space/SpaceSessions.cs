@@ -76,6 +76,7 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
 
         /// <summary>Marks the protection ended; false when it had ended already (each ending is told once).</summary>
         public bool ProtectionEnded;
+        public long LastHackingReachCheckAt;
         public bool InspectContrabandOnJumpArrival;
         public bool CynoJumpPending;
         public bool CynoArrival;
@@ -470,6 +471,11 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
     public bool IsInvulnerable(ClientSession session) =>
         _pilots.TryGetValue((ulong)session.SessionId, out var pilot) && ReferenceEquals(pilot.Session, session) &&
         !pilot.ProtectionEnded && pilot.InvulnerableUntil > FileTimeNow();
+
+    public bool IsCloaked(ClientSession session) =>
+        _pilots.TryGetValue((ulong)session.SessionId, out var pilot) && ReferenceEquals(pilot.Session, session) &&
+        ((!pilot.ProtectionEnded && pilot.JumpCloak && pilot.InvulnerableUntil > FileTimeNow()) ||
+            pilot.RunningModules.Values.Any(module => Effects.CloakingEffect.IsCloakingEffect(module.EffectName)));
 
     public bool IsModuleActive(ClientSession session, long moduleId) =>
         moduleId > 0 && _pilots.TryGetValue((ulong)session.SessionId, out var pilot) && pilot.ActiveModules.ContainsKey(moduleId);
@@ -926,6 +932,30 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         }
     }
 
+    private void TrackHackingReach(SimNotify notify, Pilot pilot)
+    {
+        if (notify.Name is not ("DoDestinyUpdate" or "OnTarget")
+            || HackingService is not { } hacking
+            || !hacking.HasOpenAttempt(pilot.Session, pilot.CharacterId))
+        {
+            return;
+        }
+
+        // Destiny movement updates can be frequent. Match the reference's scene tick cadence without making a pair of
+        // position queries for every packet while a hacker is drifting in range.
+        var now = Environment.TickCount64;
+        while (true)
+        {
+            var last = Interlocked.Read(ref pilot.LastHackingReachCheckAt);
+            if (now - last < 1_000)
+                return;
+            if (Interlocked.CompareExchange(ref pilot.LastHackingReachCheckAt, now, last) == last)
+                break;
+        }
+
+        Background(() => hacking.RecheckReachAsync(pilot.Session, pilot.CharacterId, CancellationToken.None).AsTask());
+    }
+
     private void TrackWarpArrival(SimNotify notify, Pilot pilot)
     {
         if (notify.Name != "DoDestinyUpdate" || !_warping.ContainsKey(notify.SessionId)
@@ -1050,6 +1080,7 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                     TrackWarpArrival(notify, pilot);
                     TrackTargetingNotification(notify);
                     Forward(pilot.Session, notify);
+                    TrackHackingReach(notify, pilot);
                     RecordNpcCombatTimer(notify, pilot);
                     break;
                 case SimServiceNotify serviceNotify when _pilots.TryGetValue(serviceNotify.SessionId, out var servicePilot):

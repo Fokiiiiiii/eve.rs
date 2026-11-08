@@ -15,8 +15,8 @@ public sealed class CrateServicePersistenceTests
 {
     private sealed class FittingHost(long characterId) : IFittingHost
     {
-        public Task<IReadOnlyDictionary<int, int>> CategoriesAsync(IReadOnlyCollection<int> typeIds, CancellationToken cancellationToken) =>
-            throw new NotSupportedException("The fitting list read does not request type categories.");
+        public Task<IReadOnlyDictionary<int, FittingTypeInfo>> TypesAsync(IReadOnlyCollection<int> typeIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("The fitting list read does not request type data.");
         public Task<bool> HasFittingManagerRoleAsync(long requestedCharacterId, CancellationToken cancellationToken) =>
             throw new NotSupportedException("The fitting list read does not check mutation roles.");
         public Task<bool> CanAccessOwnerAsync(long requestedCharacterId, long ownerId, FittingOwnerScope scope, CancellationToken cancellationToken) =>

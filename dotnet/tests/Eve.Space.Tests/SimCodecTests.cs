@@ -649,7 +649,8 @@ public class SimCodecTests
             "RemoveStructure" => new SimRemoveStructure(Wide(c, "structureId")),
             "PlaceWormhole" => new SimPlaceWormhole(Wide(c, "wormholeId"), (int)c["solarSystemId"]!, (string)c["typeName"]!, (int)c["typeId"]!,
                 (int)c["groupId"]!, VectorOf(c["position"]!), (double)c["radius"]!, (int)c["destinationSystemId"]!, Wide(c, "destinationEnd"),
-                (int)c["destinationClass"]!, VectorOf(c["destinationPosition"]!), (double)c["destinationRadius"]!, (double)c["maxJumpMass"]!),
+                (int)c["destinationClass"]!, (int)c["nebulaTypeId"]!, (int)c["wormholeAge"]!, (double)c["wormholeSize"]!,
+                (int)c["maxShipJumpMassCategory"]!, VectorOf(c["destinationPosition"]!), (double)c["destinationRadius"]!, (double)c["maxJumpMass"]!),
             "RemoveWormhole" => new SimRemoveWormhole(Wide(c, "wormholeId")),
             "SetStructureState" => new SimSetStructureState((int)c["solarSystemId"]!, Wide(c, "structureId"), StatusOf(c["status"]!)),
             "PlaceDisruptor" => new SimPlaceDisruptor(Wide(c, "deployableId"), (int)c["solarSystemId"]!, (string)c["typeName"]!, (int)c["typeId"]!, (int)c["groupId"]!,
@@ -798,13 +799,19 @@ public class SimCodecTests
     [Fact]
     public void A_position_query_reply_roundtrips_through_the_sim_codec()
     {
-        var message = new SimPosition(77, SimCommands.ResolveWarpTarget, [1_250_000, -20_000, 3_000]);
+        var message = new SimPosition(77, SimCommands.PositionOf, [1_250_000, -20_000, 3_000])
+        {
+            Direction = [0, 0.6, 0.8],
+            Radius = 125,
+        };
         var frame = SimCodec.Encode(message);
 
         var decoded = Assert.IsType<SimPosition>(SimCodec.Decode(frame.AsMemory(4)));
 
-        Assert.Equal((77UL, SimCommands.ResolveWarpTarget), (decoded.SessionId, decoded.Command));
+        Assert.Equal((77UL, SimCommands.PositionOf), (decoded.SessionId, decoded.Command));
         Assert.Equal(message.Position, decoded.Position);
+        Assert.Equal(message.Direction, decoded.Direction);
+        Assert.Equal(message.Radius, decoded.Radius);
         Assert.Equal(Convert.ToHexString(frame), Convert.ToHexString(SimCodec.Encode(decoded)));
     }
 

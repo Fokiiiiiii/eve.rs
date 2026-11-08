@@ -87,6 +87,25 @@ public class NpcLootHostTests
     }
 
     [PgFact]
+    public async Task A_module_dropped_by_an_npc_is_packaged_in_the_host_made_wreck()
+    {
+        var (rig, c, session) = await InSpaceAsync();
+        await using var _ = rig;
+        rig.LootTable = new Eve.Npc.LootTable(
+            "test_module_loot", "rule", 1, 1, 0, false, false, null, null,
+            [new Eve.Npc.LootSelector("module", "", "special", [], [], [], [], 1, 1, 1)], true);
+        var spawn = await SpawnAsync(rig, session);
+
+        rig.Sim.Say(Destroyed(spawn, c.ShipId));
+        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimPlaceWreck>().Any());
+
+        var placed = rig.Sim.Heard.OfType<SimPlaceWreck>().Single();
+        var dropped = Assert.Single(await rig.Items.InContainerAsync(placed.WreckId));
+        Assert.Equal((3296, c.CharacterId, ItemFlags.Hangar, 1L, false),
+            (dropped.TypeId, dropped.OwnerId, dropped.Flag, dropped.Quantity, dropped.Singleton));
+    }
+
+    [PgFact]
     public async Task A_table_that_gives_nothing_leaves_an_empty_wreck_and_the_pilot_is_still_paid_the_bounty()
     {
         var (rig, c, session) = await InSpaceAsync();

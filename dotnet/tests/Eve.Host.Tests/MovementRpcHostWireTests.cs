@@ -25,7 +25,8 @@ public partial class HostServerTests
             stance = stanceId;
             return ValueTask.FromResult<ShipStanceChange?>(new(true, old, Changed: true));
         });
-        StartWithMovementServices(callbacks, session => session.Set("charid", new PyInt(42)));
+        var starterWarnings = new List<string>();
+        StartWithMovementServices(callbacks, session => session.Set("charid", new PyInt(42)), starterWarnings.Add);
 
         var front = await Handshaken(await ConnectAsync());
         var open = Open();
@@ -66,6 +67,9 @@ public partial class HostServerTests
         var eligible = await Invoke(2, "starterShipcasterTravelMgr", "CanCharacterJump");
         Assert.Equal(MachoMessage.CallRsp, Envelope(eligible).Type);
         Assert.Same(PyBool.False, Result(MarshalCodec.Decode(eligible.Payload)));
+        var eligibleAgain = await Invoke(6, "starterShipcasterTravelMgr", "CanCharacterJump");
+        Assert.Same(PyBool.False, Result(MarshalCodec.Decode(eligibleAgain.Payload)));
+        Assert.Single(starterWarnings);
 
         var shipcasterJump = await Invoke(3, "shipcasterTravelMgr", "CmdJumpThroughShipcaster",
             new PyLong(77), new PyInt(30_000_001), new PyLong(90));
@@ -82,7 +86,8 @@ public partial class HostServerTests
 
     private void StartWithMovementServices(
         GameRpcCallbacks? callbacks = null,
-        Action<ClientSession>? sessionOpened = null)
+        Action<ClientSession>? sessionOpened = null,
+        Action<string>? starterShipcasterLog = null)
     {
         var registry = new ServiceRegistry();
         Func<long> now = () => FixedNowMs;
@@ -92,7 +97,7 @@ public partial class HostServerTests
             registry.Register(service);
         var systems = new SolarSystemCatalog([]);
         registry.Register(new ShipcasterRpcService("shipcasterTravelMgr", systems));
-        registry.Register(new ShipcasterRpcService("starterShipcasterTravelMgr", systems, canCharacterJump: _ => false));
+        registry.Register(Eve.Host.CharacterServicesComposition.CreateStarterShipcasterService(systems, starterShipcasterLog));
 
         var config = GlobalConfig.Build(Options);
         registry.Register(new MachoNetService(new Info(registry, config), now));

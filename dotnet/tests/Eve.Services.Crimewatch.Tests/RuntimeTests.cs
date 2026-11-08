@@ -1329,12 +1329,31 @@ public class RuntimeTests : IAsyncLifetime
         Assert.True(ownerActivation.Success);
         Assert.True(buyerPurchase.Success);
 
-        var consumed = await store.ConsumeKillRightAfterKillAsync(2, 3, _now + 2);
+        var secondRightId = await store.CreateKillRightAsync(4, 2, System, _now + 1);
+        Assert.NotNull(secondRightId);
+        Assert.True(await store.SetKillRightSaleAsync(4, secondRightId.Value, 0m, null, _now + 1));
+        var secondPurchase = await store.BuyKillRightAsync(
+            secondRightId.Value, 5, [5L], null, _now + 2, payment: null);
+        Assert.True(secondPurchase.Success);
 
-        Assert.Equal(buyerPurchase.Activation!.ActivationId, consumed?.ActivationId);
-        Assert.Empty(await store.ActiveKillRightActivationsForTargetAsync(2, _now + 2));
+        const long lostShipId = 9_988_400_003_315;
+        var concurrentReceipts = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ =>
+            store.ConsumeKillRightAfterKillAsync(2, 3, lostShipId, _now + 3)));
+        Assert.All(concurrentReceipts, receipt =>
+            Assert.Equal(buyerPurchase.Activation!.ActivationId, receipt?.ActivationId));
+
+        var restartedStore = new PgCrimewatchStore(_source!, _schema);
+        var retried = await restartedStore.ConsumeKillRightAfterKillAsync(2, 3, lostShipId, _now + 4);
+        Assert.Equal(buyerPurchase.Activation!.ActivationId, retried?.ActivationId);
+        Assert.Equal([secondPurchase.Activation!.ActivationId],
+            (await store.ActiveKillRightActivationsForTargetAsync(2, _now + 4))
+            .Select(activation => activation.ActivationId));
         Assert.Empty(await store.KillRightsOfAsync(1));
-        Assert.Null(await store.ConsumeKillRightAfterKillAsync(2, 3, _now + 3));
+        Assert.Single(await store.KillRightsOfAsync(4));
+
+        Assert.Equal(secondPurchase.Activation!.ActivationId,
+            (await store.ConsumeKillRightAfterKillAsync(2, 3, lostShipId + 1, _now + 5))?.ActivationId);
+        Assert.Empty(await store.ActiveKillRightActivationsForTargetAsync(2, _now + 5));
     }
 
     [PgFact]
@@ -1682,59 +1701,60 @@ public class PenaltyTests : IAsyncLifetime
     }
 
       [PgFact]
-      public async Task Security_status_memory_tracks_the_victim_and_ship_or_capsule_until_crimewatch_expires()
-        {
-            var (runtime, _) = Rig();
-            using var _ = runtime;
-            await runtime.RecordAggressionAsync(Attack());
-            _now += 61_000;
-            await runtime.RecordAggressionAsync(Attack(ship: 9_988_400_003_999));
-            Assert.Single(_written);
+      public async Task Security_status_penalties_are_per_ship_or_capsule_item_for_exactly_one_minute()
+      {
+          var (runtime, _) = Rig();
+          using var _ = runtime;
+          const long ship = 9_988_400_003_311;
+          await runtime.RecordAggressionAsync(Attack(ship: ship));
+          Assert.Single(_written);
 
-            await runtime.RecordAggressionAsync(Attack(target: 3));
-            Assert.Equal(2, _written.Count);
-            Assert.True(_written[1].Value < _written[0].Value);
+          _now += 59_999;
+          await runtime.RecordAggressionAsync(Attack(ship: ship));
+          Assert.Single(_written);
 
-            await runtime.RecordAggressionAsync(Attack(capsule: true));
-            Assert.Equal(3, _written.Count);
+          _now += 1;
+          await runtime.RecordAggressionAsync(Attack(ship: ship));
+          Assert.Equal(2, _written.Count);
 
-            _now += CombatState.FlagDurationMs + 1;
-            await runtime.RecordAggressionAsync(Attack());
-            Assert.Equal(4, _written.Count);
-        }
+          await runtime.RecordAggressionAsync(Attack(ship: ship + 1));
+          Assert.Equal(3, _written.Count);
+
+          await runtime.RecordAggressionAsync(Attack(ship: ship, capsule: true));
+          Assert.Equal(4, _written.Count);
+      }
 
       [PgFact]
-      public async Task Security_status_memory_remains_while_any_limited_engagement_is_active()
+      public async Task Security_status_penalty_window_is_not_extended_by_a_limited_engagement()
       {
           var (runtime, _) = Rig();
           using var _ = runtime;
           await runtime.RecordAggressionAsync(Attack());
 
-          _now += CombatState.FlagDurationMs - 60_000;
+          _now += 30_000;
           _persistence.Engagements[(1, 3)] = _now + 300_000;
           var legal = await runtime.RecordAggressionAsync(Attack(target: 3));
           Assert.Equal(AggressionReason.Legal, legal.Outcome.Reason);
 
-          _now += 120_001;
-          Assert.True(_now > CombatState.FlagDurationMs + Start);
+          _now += 30_000;
           await runtime.RecordAggressionAsync(Attack());
-          Assert.Single(_written);
+          Assert.Equal(2, _written.Count);
       }
 
       [PgFact]
-      public async Task Security_status_memory_survives_a_runtime_restart_until_the_flag_ends()
+      public async Task Security_status_duplicate_window_survives_a_runtime_restart_and_expires_at_one_minute()
       {
           var (runtime, _) = Rig();
           await runtime.RecordAggressionAsync(Attack());
           runtime.Dispose();
 
-          _now += 61_000;
+          _now += 59_999;
           var (restarted, _) = Rig(new CharacterSessions(), enterAttackerSession: false);
           using var _ = restarted;
-          await restarted.RecordAggressionAsync(Attack(ship: 9_988_400_003_999));
+          await restarted.RecordAggressionAsync(Attack());
           Assert.Single(_written);
 
-          _now += CombatState.FlagDurationMs + 1;
+          _now += 1;
           await restarted.RecordAggressionAsync(Attack());
           Assert.Equal(2, _written.Count);
       }
@@ -1773,7 +1793,7 @@ public class PenaltyTests : IAsyncLifetime
     }
 
       [PgFact]
-      public async Task Concurrent_penalties_for_one_victim_are_suppressed_across_ship_changes()
+      public async Task Concurrent_penalties_for_distinct_ship_items_are_each_applied()
     {
         var (runtime, _) = Rig();
         using var _ = runtime;
@@ -1809,9 +1829,10 @@ public class PenaltyTests : IAsyncLifetime
             penalties.OnAggressionAsync(new AggressionResult(Attack(ship: 9_988_400_004_001), offense)),
             penalties.OnAggressionAsync(new AggressionResult(Attack(ship: 9_988_400_004_002), offense)));
 
-          Assert.Single(changes);
+          Assert.Equal(2, changes.Count);
           Assert.Equal(0, changes[0].PreviousStatus);
-          Assert.True(changes[0].NextStatus < 0);
+          Assert.Equal(changes[0].NextStatus, changes[1].PreviousStatus);
+          Assert.True(changes[1].NextStatus < changes[1].PreviousStatus);
     }
 
     [PgFact]

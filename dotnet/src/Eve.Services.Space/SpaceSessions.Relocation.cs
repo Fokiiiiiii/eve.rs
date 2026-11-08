@@ -68,6 +68,24 @@ public sealed partial class SpaceSessions
         finally { gate.Release(); }
     }
 
+    /// <summary>Moves a docked capsule into a ship clone's system, settling the clone jump before the space entry is announced.</summary>
+    public async Task<string?> RelocateForCloneJumpAsync(ClientSession session, int solarSystemId,
+        IReadOnlyList<double> position, IReadOnlyList<double> direction,
+        Func<CancellationToken, ValueTask<string?>> settle, CancellationToken cancellationToken)
+    {
+        var id = (ulong)session.SessionId;
+        var gate = _relocationGates.GetValue(session, _ => new SemaphoreSlim(1, 1));
+        if (!await gate.WaitAsync(0, cancellationToken)) return "A space relocation is still being resolved.";
+        try
+        {
+            if (IsInSpace(session) || _pendingDockedEntries.ContainsKey(id))
+                return "Dock before jumping to a ship clone.";
+            return await RelocateCoreAsync(session, solarSystemId, position, direction, cancellationToken, null,
+                settlement: settle);
+        }
+        finally { gate.Release(); }
+    }
+
     public async Task<string?> RelocatePersistedAsync(ClientSession session, SpaceMove moved, string operationId, CancellationToken cancellationToken)
     {
         var gate = _relocationGates.GetValue(session, _ => new SemaphoreSlim(1, 1));
@@ -92,9 +110,20 @@ public sealed partial class SpaceSessions
         finally { gate.Release(); }
     }
 
+    public void SchedulePersistedRelocationRetry(ClientSession session, SpaceMove moved, string operationId, string firstFailure)
+    {
+        Background(async () =>
+        {
+            var error = await RelocatePersistedAsync(session, moved, operationId, CancellationToken.None);
+            if (error is not null)
+                throw new InvalidOperationException($"Persisted relocation retry failed after '{firstFailure}': {error}");
+        });
+    }
+
     private async Task<string?> RelocateCoreAsync(
         ClientSession session, int solarSystemId, IReadOnlyList<double>? position, IReadOnlyList<double>? direction,
-        CancellationToken cancellationToken, string? operationId, SpaceMove? persistedMove = null)
+        CancellationToken cancellationToken, string? operationId, SpaceMove? persistedMove = null,
+        Func<CancellationToken, ValueTask<string?>>? settlement = null)
     {
         if ((position is null && direction is not null) ||
             (position is not null && (position.Count != 3 || position.Any(x => !double.IsFinite(x)) ||
@@ -122,6 +151,8 @@ public sealed partial class SpaceSessions
         var previousStructureId = session.GetInt("structureid") ?? 0;
         var wasInSpace = _pilots.TryGetValue(sessionId, out var pilot);
         var previousSystemId = wasInSpace ? pilot!.SolarSystemId : snapshot.Character.SolarSystemId;
+        if (settlement is not null && wasInSpace)
+            return "Dock before jumping to a ship clone.";
         if (operationId is not null && !Guid.TryParse(operationId, out _))
             return "The relocation operation is invalid.";
         if (wasInSpace && (pilot!.ShipId != snapshot.Ship.Id || pilot.SimulationScene.InstanceId != 0))
@@ -270,60 +301,108 @@ public sealed partial class SpaceSessions
             return null;
         }
 
+        var spaceEnter = new SimEnter(sessionId, SimSceneKey.SolarSystem(solarSystemId), position is null ? EnterHow.Anchor : EnterHow.InSpace,
+            0, spec, position, direction);
         string? refusal;
+        string? settlementRefusal = null;
+        Exception? settlementError = null;
+        var attachedInHandoff = false;
+        List<Func<CancellationToken, ValueTask>> entryReleases = [];
+
+        void AttachEnteredShip()
+        {
+            TellEnteredBuffs(sessionId, snapshot.Ship.Id, _nowUnixMs());
+            _pilots[sessionId] = new Pilot(session, characterId, moved.Ship.Id, moved.Ship.TypeId, solarSystemId, FileTimeNow());
+            if (!wasInSpace)
+                session.Closed += () => OnSessionClosed(session);
+            var type = _statics.Type(moved.Ship.TypeId);
+            var row = InventoryWire.PackedRow(ShipRow(moved.Ship, type), new PyStr(wasInSpace ? $"Undocking:{previousSystemId}" : $"Undocking:{previousStationId}"));
+            if (wasInSpace)
+            {
+                session.SendNotification("OnItemChange", "clientID", row,
+                    new PyDict([new(new PyInt(3), InventoryWire.Id(moved.PreviousLocationId))]), None);
+                session.Change(
+                    ("solarsystemid", new PyInt(solarSystemId)),
+                    ("solarsystemid2", new PyInt(solarSystemId)),
+                    ("constellationid", new PyInt(place.ConstellationId)),
+                    ("regionid", new PyInt(place.RegionId)),
+                    ("locationid", new PyInt(solarSystemId)));
+            }
+            else
+            {
+                session.SendNotification("OnItemsChanged", "charid", new PyList([row]), ChangedFrom(moved), None);
+                session.Set("stationid2", None);
+                session.Change(
+                    ("stationid", None),
+                    ("structureid", None),
+                    ("solarsystemid", new PyInt(solarSystemId)),
+                    ("solarsystemid2", new PyInt(solarSystemId)),
+                    ("constellationid", new PyInt(place.ConstellationId)),
+                    ("regionid", new PyInt(place.RegionId)),
+                    ("locationid", new PyInt(solarSystemId)));
+                DockedLocationChanged?.Invoke(session, previousStationId, previousStructureId);
+            }
+            entryReleases = DetachBoundObjects(session);
+        }
+
         try
         {
-            refusal = await _sim.EnterAsync(
-                new SimEnter(sessionId, SimSceneKey.SolarSystem(solarSystemId), position is null ? EnterHow.Anchor : EnterHow.InSpace, 0, spec, position, direction),
-                cancellationToken);
+            if (settlement is null)
+            {
+                refusal = await _sim.EnterAsync(spaceEnter, cancellationToken);
+            }
+            else
+            {
+                var request = new SimEnterPublicParticipant(SimClient.NextRequestId(), normalizedOperation, spaceEnter);
+                var answer = await _sim.EnterPublicParticipantInOrderAwaitingAsync(request, async result =>
+                {
+                    if (result.Error is not null)
+                        return;
+                    try
+                    {
+                        settlementRefusal = await settlement(cancellationToken);
+                    }
+                    catch (Exception error)
+                    {
+                        settlementError = error;
+                        return;
+                    }
+                    if (settlementRefusal is null)
+                    {
+                        AttachEnteredShip();
+                        attachedInHandoff = true;
+                    }
+                }, cancellationToken);
+                refusal = answer.Error;
+            }
         }
         catch (SimUnavailableException error)
         {
             refusal = error.Message;
         }
+
+        if (refusal is null && (settlementRefusal is not null || settlementError is not null))
+        {
+            _sim.Leave(sessionId, LeaveWhy.Jumped);
+            if (!await _ships.RecoverFromSpaceAsync(characterId, PlaceOfStation, CancellationToken.None))
+                throw new InvalidOperationException("A refused ship clone jump could not recover its capsule to the origin station.", settlementError);
+            if (settlementError is not null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(settlementError).Throw();
+            return settlementRefusal;
+        }
         if (refusal is not null)
         {
             _log?.Invoke($"the relocation of character {characterId} to system {solarSystemId} was refused by the simulation: {refusal}");
             // the ship is not in any scene: it is recovered to the station its character last was at, as a ship the simulation loses is
-            await _ships.RecoverFromSpaceAsync(characterId, PlaceOfStation, CancellationToken.None);
+            if (!await _ships.RecoverFromSpaceAsync(characterId, PlaceOfStation, CancellationToken.None))
+                throw new InvalidOperationException("The capsule could not be recovered to the origin station after a refused relocation.");
             return "Space is not available right now. Try again in a moment.";
         }
 
-        TellEnteredBuffs(sessionId, snapshot.Ship.Id, _nowUnixMs());
-        _pilots[sessionId] = new Pilot(session, characterId, moved.Ship.Id, moved.Ship.TypeId, solarSystemId, FileTimeNow());
-        if (!wasInSpace)
-        {
-            session.Closed += () => OnSessionClosed(session);
-        }
-
-        var type = _statics.Type(moved.Ship.TypeId);
-        var row = InventoryWire.PackedRow(ShipRow(moved.Ship, type), new PyStr(wasInSpace ? $"Undocking:{previousSystemId}" : $"Undocking:{previousStationId}"));
-        if (wasInSpace)
-        {
-            session.SendNotification("OnItemChange", "clientID", row, new PyDict([new(new PyInt(3), InventoryWire.Id(moved.PreviousLocationId))]), None);
-            session.Change(
-                ("solarsystemid", new PyInt(solarSystemId)),
-                ("solarsystemid2", new PyInt(solarSystemId)),
-                ("constellationid", new PyInt(place.ConstellationId)),
-                ("regionid", new PyInt(place.RegionId)),
-                ("locationid", new PyInt(solarSystemId)));
-        }
-        else
-        {
-            session.SendNotification("OnItemsChanged", "charid", new PyList([row]), ChangedFrom(moved), None);
-            session.Set("stationid2", None);
-            session.Change(
-                ("stationid", None),
-                ("structureid", None),
-                ("solarsystemid", new PyInt(solarSystemId)),
-                ("solarsystemid2", new PyInt(solarSystemId)),
-                ("constellationid", new PyInt(place.ConstellationId)),
-                ("regionid", new PyInt(place.RegionId)),
-                ("locationid", new PyInt(solarSystemId)));
-            DockedLocationChanged?.Invoke(session, previousStationId, previousStructureId);
-        }
+        if (!attachedInHandoff)
+            AttachEnteredShip();
         // the objects bound to the old place let go, as a jump's arrival lets them go (the client binds the new ballpark)
-        await CompleteBoundObjectReleasesAsync(DetachBoundObjects(session), cancellationToken);
+        await CompleteBoundObjectReleasesAsync(entryReleases, cancellationToken);
         if (wasInSpace && !_pilots.Values.Any(other => other.SolarSystemId == previousSystemId))
         {
             ForgetNpcsOf(previousSystemId);

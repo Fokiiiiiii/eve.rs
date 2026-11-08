@@ -9,6 +9,7 @@ public partial class HostServerTests
     {
         Start(
             strictRpc: true,
+            submitInGameReport: (_, _) => ValueTask.CompletedTask,
             sessionOpened: session => session.Set("charid", new PyInt(9001)));
         var front = await Handshaken(await ConnectAsync());
         var open = Open();

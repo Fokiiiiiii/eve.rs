@@ -3,6 +3,8 @@ using Npgsql;
 
 namespace Eve.FactionWarfare;
 
+public sealed record FwBattlefieldPilot(long CharacterId, long CorporationId);
+
 /// <summary>The battlefield tables of the factional warfare store (migration 0005): the open battlefields, their points and their pilots.</summary>
 public sealed partial class FwStore
 {
@@ -73,22 +75,23 @@ public sealed partial class FwStore
 
     /// <summary>Records a pilot that was within a point's range of a battlefield (its war faction at the time).</summary>
     public Task AddBattlefieldPilotAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long battlefieldId, long characterId, long factionId,
-        CancellationToken cancellationToken = default) =>
+        CancellationToken cancellationToken = default, long corporationId = 0) =>
         Sql.ExecuteAsync(connection, transaction, Q(
-            "INSERT INTO {schema}.fw_battlefield_pilots (battlefield_id, character_id, faction_id) VALUES ($1, $2, $3) " +
-            "ON CONFLICT (battlefield_id, character_id) DO UPDATE SET faction_id = EXCLUDED.faction_id"),
-            cancellationToken, battlefieldId, characterId, factionId);
+            "INSERT INTO {schema}.fw_battlefield_pilots AS participant (battlefield_id, character_id, faction_id, corporation_id) VALUES ($1, $2, $3, $4) " +
+            "ON CONFLICT (battlefield_id, character_id) DO UPDATE SET faction_id = EXCLUDED.faction_id, " +
+            "corporation_id = CASE WHEN EXCLUDED.corporation_id > 0 THEN EXCLUDED.corporation_id ELSE participant.corporation_id END"),
+            cancellationToken, battlefieldId, characterId, factionId, corporationId);
 
-    /// <summary>The pilots of a battlefield that were on a faction's side, by character id.</summary>
-    public async Task<IReadOnlyList<long>> BattlefieldPilotsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long battlefieldId, long factionId,
+    /// <summary>The pilots and their recorded corporations that were on a faction's side, by character id.</summary>
+    public async Task<IReadOnlyList<FwBattlefieldPilot>> BattlefieldPilotsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long battlefieldId, long factionId,
         CancellationToken cancellationToken = default)
     {
         await using var command = Sql.Command(connection, transaction, Q(
-            "SELECT character_id FROM {schema}.fw_battlefield_pilots WHERE battlefield_id = $1 AND faction_id = $2 ORDER BY character_id"), battlefieldId, factionId);
+            "SELECT character_id, corporation_id FROM {schema}.fw_battlefield_pilots WHERE battlefield_id = $1 AND faction_id = $2 ORDER BY character_id"), battlefieldId, factionId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        var pilots = new List<long>();
+        var pilots = new List<FwBattlefieldPilot>();
         while (await reader.ReadAsync(cancellationToken))
-            pilots.Add(reader.GetInt64(0));
+            pilots.Add(new FwBattlefieldPilot(reader.GetInt64(0), reader.GetInt64(1)));
         return pilots;
     }
 }

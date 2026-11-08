@@ -586,6 +586,19 @@ public sealed class PersistenceMailSendHostAdapter(
             Eve.Services.Crimewatch.KillRightNotificationTypes.MiscGroup,
             data, idempotencyKey, cancellationToken);
 
+    /// <summary>Persists KillRightEarned and sends its cache invalidation before the standard notification packet.</summary>
+    public Task WriteKillRightEarnedNotificationAsync(
+        long recipientId,
+        long senderId,
+        JsonObject data,
+        string idempotencyKey,
+        Action beforeLiveNotification,
+        CancellationToken cancellationToken) =>
+        WriteNotificationAsync(recipientId, senderId,
+            Eve.Services.Crimewatch.KillRightNotificationTypes.Earned,
+            Eve.Services.Crimewatch.KillRightNotificationTypes.MiscGroup,
+            data, idempotencyKey, cancellationToken, beforeLiveNotification);
+
 
     public Task WriteBountyPlacedNotificationAsync(
         long recipientId,
@@ -601,6 +614,12 @@ public sealed class PersistenceMailSendHostAdapter(
         WriteNotificationAsync(recipientId, 1_000_113, 35, 11,
             new JsonObject { ["itemID"] = shipId, ["amount"] = amount, ["payout"] = defaultPayout },
             $"insurance-payout:{lossId}", cancellationToken);
+
+    /// <summary>Persists and delivers a war notice using the V24.01 war notification group.</summary>
+    public Task WriteWarNotificationAsync(
+        long recipientId, long senderId, int typeId, JsonObject data, string idempotencyKey,
+        CancellationToken cancellationToken) =>
+        WriteNotificationAsync(recipientId, senderId, typeId, groupId: 8, data, idempotencyKey, cancellationToken);
 
     public Task WriteJumpCloneDeletedNotificationAsync(
         long characterId,
@@ -651,7 +670,7 @@ public sealed class PersistenceMailSendHostAdapter(
 
     private async Task WriteNotificationAsync(
         long recipientId, long senderId, int typeId, int groupId, JsonObject data,
-        string? idempotencyKey, CancellationToken cancellationToken)
+        string? idempotencyKey, CancellationToken cancellationToken, Action? beforeLiveNotification = null)
     {
         if (recipientId <= 0 || senderId <= 0 || typeId <= 0 || groupId < 0)
             return;
@@ -662,9 +681,34 @@ public sealed class PersistenceMailSendHostAdapter(
             var recipientKey = Key(recipientId);
             if (idempotencyKey is not null &&
                 (boxes[recipientKey] as JsonObject)?["byID"] is JsonObject existingRows &&
-                existingRows.Any(entry => entry.Value is JsonObject existing &&
-                    string.Equals(Text(existing["idempotencyKey"]), idempotencyKey, StringComparison.Ordinal)))
+                existingRows.FirstOrDefault(entry => entry.Value is JsonObject existing &&
+                    string.Equals(Text(existing["idempotencyKey"]), idempotencyKey, StringComparison.Ordinal)) is { Value: JsonObject existing })
             {
+                if (beforeLiveNotification is null)
+                    return;
+                var existingId = Number(existing["notificationID"]);
+                if (existingId <= 0 || Number(existing["typeID"]) != typeId ||
+                    Number(existing["senderID"]) != senderId || Number(existing["receiverID"]) != recipientId ||
+                    Number(existing["groupID"]) != groupId)
+                    throw new InvalidOperationException($"Notification idempotency key {idempotencyKey} has different terms.");
+                await FlushUntilVisibleAsync("notifications", persisted =>
+                {
+                    var saved = (persisted["boxes"] as JsonObject)?[recipientKey] is JsonObject recipientBox &&
+                        recipientBox["byID"] is JsonObject rows ? rows[Key(existingId)] as JsonObject : null;
+                    return saved is not null && Number(saved["typeID"]) == typeId &&
+                        Number(saved["senderID"]) == senderId && Number(saved["receiverID"]) == recipientId &&
+                        Number(saved["groupID"]) == groupId &&
+                        string.Equals(Text(saved["idempotencyKey"]), idempotencyKey, StringComparison.Ordinal);
+                }, cancellationToken);
+                beforeLiveNotification();
+                sendNotification(recipientId,
+                [
+                    new Eve.Marshal.PyLong(existingId),
+                    new Eve.Marshal.PyInt(typeId),
+                    new Eve.Marshal.PyLong(senderId),
+                    Py.FileTimeLong(Number(existing["created"])),
+                    NotificationWireData(data),
+                ]);
                 return;
             }
 
@@ -692,6 +736,7 @@ public sealed class PersistenceMailSendHostAdapter(
                     Number(saved["senderID"]) == senderId && Number(saved["receiverID"]) == recipientId &&
                     Number(saved["groupID"]) == groupId;
             }, cancellationToken);
+            beforeLiveNotification?.Invoke();
             sendNotification(recipientId,
             [
                 new Eve.Marshal.PyLong(notificationId),

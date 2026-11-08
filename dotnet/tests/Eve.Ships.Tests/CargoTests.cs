@@ -357,6 +357,48 @@ public class SpaceCargoTests
     }
 
     [PgFact]
+    public async Task A_singleton_plastic_wrap_uses_its_encoded_volume_when_calculating_container_capacity()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var character = await rig.NewCharacterAsync();
+        var container = await rig.GiveAsync(character.CharacterId, 3467, singleton: true);
+        await rig.GiveAsync(character.CharacterId, 3468, singleton: true, quantity: -1_000,
+            location: container, flag: CharacterShips.ContainerFlag);
+
+        var room = Assert.NotNull(await rig.Ships.ContainerRoomAsync(container));
+
+        Assert.Equal(10d, room.Used);
+    }
+
+    [Fact]
+    public void A_singleton_plastic_wrap_rejects_a_nonpositive_encoded_volume()
+    {
+        var zero = new Item(1, 3468, 1, 1, ItemFlags.Hangar, 0, Singleton: true, CustomName: null);
+        var positive = zero with { Quantity = 100 };
+
+        Assert.Throws<InvalidOperationException>(() => ItemVolumes.Of(zero, 649, 0.01));
+        Assert.Throws<InvalidOperationException>(() => ItemVolumes.Of(positive, 649, 0.01));
+    }
+
+    [PgFact]
+    public async Task A_packaged_capital_turret_uses_its_client_volume_when_moved_into_a_container()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var character = await rig.NewCharacterAsync();
+        const int hugeSecureContainer = 11488, quad800mmRepeatingCannonI = 37289;
+        var container = await rig.GiveAsync(character.CharacterId, hugeSecureContainer, singleton: true);
+        var turret = await rig.GiveAsync(character.CharacterId, quad800mmRepeatingCannonI, singleton: false);
+
+        var moved = Assert.IsType<ShipChanged>(await rig.Ships.MoveContainerAsync(
+            character.CharacterId, turret, Rig.Station, container, null));
+
+        Assert.Equal((container, CharacterShips.ContainerFlag),
+            (Assert.Single(moved.Stacks!).After.LocationId, moved.Stacks!.Single().After.Flag));
+        var room = Assert.NotNull(await rig.Ships.ContainerRoomAsync(container));
+        Assert.Equal((1950d, 1000d), (room.Capacity, room.Used));
+    }
+
+    [PgFact]
     public async Task Goods_go_between_the_ship_and_a_container_only_and_only_from_where_they_are()
     {
         await using var rig = await Rig.CreateAsync();

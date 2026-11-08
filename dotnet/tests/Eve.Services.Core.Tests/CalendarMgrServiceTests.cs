@@ -189,9 +189,9 @@ public class CalendarMgrServiceTests
         Assert.IsType<PyNone>(await manager.CallAsync(Request(
             "DeleteEvent", Session(), new PyLong(created.Value), new PyLong(CharacterId))));
         Assert.True(store.Events.Single().IsDeleted);
-        Assert.Equal(CalendarResponseStates.Deleted, ResponseStatus(store, created.Value, CharacterId));
+        Assert.Equal(CalendarResponseStates.Accepted, ResponseStatus(store, created.Value, CharacterId));
         Assert.Equal(CalendarResponseStates.Uninvited, ResponseStatus(store, created.Value, OtherCharacterId));
-        Assert.Equal(CalendarResponseStates.Deleted, ResponseStatus(store, created.Value, nextAttendee));
+        Assert.Equal(CalendarResponseStates.Accepted, ResponseStatus(store, created.Value, nextAttendee));
     }
 
     [Fact]
@@ -493,21 +493,19 @@ public class CalendarMgrServiceTests
             var index = Events.FindIndex(row => row.EventId == eventId && row.OwnerId == ownerId && !row.IsDeleted);
             if (index < 0) return Task.FromResult(false);
             Events[index] = Events[index] with { IsDeleted = true, DateModified = dateModified };
-            for (var i = 0; i < Responses.Count; i++)
-                if (Responses[i].EventId == eventId && Responses[i].Status != CalendarResponseStates.Uninvited)
-                    Responses[i] = Responses[i] with { Status = CalendarResponseStates.Deleted };
             return Task.FromResult(true);
         }
 
-        public async Task<CalendarParticipantUpdateResult> UpdateParticipantsAsync(
+        public async Task<CalendarParticipantUpdate> UpdateParticipantsAsync(
             long eventId, long ownerId, IReadOnlyCollection<long> add, IReadOnlyCollection<long> remove, CancellationToken cancellationToken = default,
             Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null)
         {
             var calendarEvent = Events.FirstOrDefault(row => row.EventId == eventId && row.OwnerId == ownerId && !row.IsDeleted);
-            if (calendarEvent is null) return CalendarParticipantUpdateResult.EventNotFound;
+            if (calendarEvent is null) return new(CalendarParticipantUpdateResult.EventNotFound, null, [], []);
             var removed = remove.Where(id => id > 0 && id != calendarEvent.CreatorId).ToHashSet();
             var active = Responses.Where(row => row.EventId == eventId && row.CharacterId != calendarEvent.CreatorId &&
                 row.Status != CalendarResponseStates.Uninvited).Select(row => row.CharacterId).ToHashSet();
+            var actuallyRemoved = active.Where(removed.Contains).ToArray();
             var newlyAdded = add.Where(id => id > 0 && id != calendarEvent.CreatorId && !removed.Contains(id))
                 .Distinct().Where(id => !active.Contains(id)).ToArray();
             if (beforeCommitAsync is not null)
@@ -517,16 +515,20 @@ public class CalendarMgrServiceTests
                 for (var i = 0; i < Responses.Count; i++)
                     if (Responses[i].EventId == eventId && Responses[i].CharacterId == id)
                         Responses[i] = Responses[i] with { Status = CalendarResponseStates.Uninvited };
-            return CalendarParticipantUpdateResult.Updated;
+            return new(CalendarParticipantUpdateResult.Updated, calendarEvent, newlyAdded, actuallyRemoved);
         }
 
-        public Task<bool> SendResponseAsync(
+        public Task<CalendarResponseUpdate> SendResponseAsync(
             long eventId, long ownerId, long characterId, short response, CancellationToken cancellationToken = default)
         {
-            if (!Events.Any(row => row.EventId == eventId && row.OwnerId == ownerId && !row.IsDeleted))
-                return Task.FromResult(false);
+            var calendarEvent = Events.FirstOrDefault(row => row.EventId == eventId && row.OwnerId == ownerId && !row.IsDeleted);
+            if (calendarEvent is null ||
+                (calendarEvent.Tag == CalendarTags.Personal && characterId != ownerId &&
+                    !Responses.Any(row => row.EventId == eventId && row.CharacterId == characterId &&
+                        row.Status != CalendarResponseStates.Uninvited)))
+                return Task.FromResult(new CalendarResponseUpdate(false, null));
             Upsert(eventId, characterId, response);
-            return Task.FromResult(true);
+            return Task.FromResult(new CalendarResponseUpdate(true, calendarEvent));
         }
 
         private void Upsert(long eventId, long characterId, short status)

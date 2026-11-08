@@ -483,7 +483,7 @@ public sealed partial class CharacterShips
                 Available: Math.Max(0, room.Free), Volume: requiredShips);
         }
         var required = batch.Sum(item => statics.Type(item.TypeId) is { } type
-            ? ItemVolumes.Unit(item.TypeId, type.GroupId, item.Singleton, ItemVolumeOf(type)) * Math.Max(1, item.Quantity)
+            ? ItemVolumes.Of(item, type.GroupId, ItemVolumeOf(type))
             : 0);
         var roomByVolume = new Room(snapshot.World.Get(snapshot.Ship.Id, attribute), await VolumeOfAsync(contents, cancellationToken));
         if (required <= 0 || required <= roomByVolume.Free + RoomTolerance)
@@ -500,7 +500,8 @@ public sealed partial class CharacterShips
         {
             return null;
         }
-        var required = ItemVolumes.Unit(item.TypeId, type.GroupId, item.Singleton, ItemVolumeOf(type)) * Math.Max(1, quantity);
+        var moved = item.Singleton ? item : item with { Quantity = Math.Max(1, quantity) };
+        var required = ItemVolumes.Of(moved, type.GroupId, ItemVolumeOf(type));
         if (required <= 0 || required <= room.Free + RoomTolerance)
         {
             return null;

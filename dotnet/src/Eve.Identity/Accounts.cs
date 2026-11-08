@@ -45,10 +45,23 @@ internal static class SsoIdentityRules
         const string prefix = "CHARACTER:EVE:";
         if (!identity.Subject.StartsWith(prefix, StringComparison.Ordinal) ||
             identity.Subject.Length > 128 ||
-            !ulong.TryParse(identity.Subject.AsSpan(prefix.Length), System.Globalization.NumberStyles.None,
-                System.Globalization.CultureInfo.InvariantCulture, out var characterId))
+            !TryCharacterId(identity.Subject.AsSpan(prefix.Length), out var characterId))
             return false;
         return characterId > 0;
+    }
+
+    private static bool TryCharacterId(ReadOnlySpan<char> value, out ulong characterId)
+    {
+        characterId = 0;
+        if (value.IsEmpty || value.Length > 20 || value[0] is < '1' or > '9')
+            return false;
+        foreach (var digit in value)
+        {
+            if (digit is < '0' or > '9')
+                return false;
+        }
+        return ulong.TryParse(value, System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture, out characterId);
     }
 }
 
@@ -153,7 +166,7 @@ public static class AccountNames
 /// </summary>
 public sealed class InMemoryAccountDirectory : IAccountDirectory, IAccountLookup, IAccountSubscriptions, ISsoAccountDirectory, ISsoIdentityLinker
 {
-    private sealed class Account(uint id, string userName, byte[] passwordHash, ulong role, DateTimeOffset createdAt)
+    private sealed class Account(uint id, string userName, byte[] passwordHash, ulong role, DateTimeOffset createdAt, string countryCode)
     {
         public uint Id { get; } = id;
 
@@ -164,6 +177,8 @@ public sealed class InMemoryAccountDirectory : IAccountDirectory, IAccountLookup
         public byte[] PasswordHash { get; } = passwordHash;
 
         public ulong Role { get; } = role;
+
+        public string CountryCode { get; } = countryCode;
 
         public bool Banned { get; set; }
 
@@ -245,7 +260,7 @@ public sealed class InMemoryAccountDirectory : IAccountDirectory, IAccountLookup
             return ValueTask.FromResult<LoginResult>(new LoginRefused(LoginRefused.BadCredentials));
         return ValueTask.FromResult<LoginResult>(account.Banned
             ? new LoginRefused(LoginRefused.Banned)
-            : new LoggedIn(account.Id, account.Role, _options.CountryCode));
+            : new LoggedIn(account.Id, account.Role, account.CountryCode));
     }
 
     public ValueTask<LoginResult> LoginAsync(LoginAttempt attempt, CancellationToken cancellationToken)
@@ -264,22 +279,22 @@ public sealed class InMemoryAccountDirectory : IAccountDirectory, IAccountLookup
             {
                 if (!_store.Accounts.TryGetValue(attempt.UserName, out account))
                 {
-                    account = new Account(++_store.LastId, attempt.UserName, attempt.PasswordHash.ToArray(), _options.NewAccountRole, DateTimeOffset.UtcNow);
+                    account = new Account(++_store.LastId, attempt.UserName, attempt.PasswordHash.ToArray(), _options.NewAccountRole, DateTimeOffset.UtcNow, _options.CountryCode);
                     _store.Accounts[attempt.UserName] = account;
                 }
             }
         }
-        return ValueTask.FromResult(Decide(account.Banned, account.PasswordHash, account.Id, account.Role, attempt, _options));
+        return ValueTask.FromResult(Decide(account.Banned, account.PasswordHash, account.Id, account.Role, attempt, _options, account.CountryCode));
     }
 
     /// <summary>The refusal, or the login, for an account that exists. A ban outranks a wrong password.</summary>
-    internal static LoginResult Decide(bool banned, ReadOnlySpan<byte> storedHash, uint id, ulong role, LoginAttempt attempt, AccountOptions options)
+    internal static LoginResult Decide(bool banned, ReadOnlySpan<byte> storedHash, uint id, ulong role, LoginAttempt attempt, AccountOptions options, string countryCode)
     {
         var passwordOk = options.SkipPasswordCheck || CryptographicOperations.FixedTimeEquals(storedHash, attempt.PasswordHash.Span);
         if (banned)
         {
             return new LoginRefused(LoginRefused.Banned);
         }
-        return passwordOk ? new LoggedIn(id, role, options.CountryCode) : new LoginRefused(LoginRefused.BadCredentials);
+        return passwordOk ? new LoggedIn(id, role, countryCode) : new LoginRefused(LoginRefused.BadCredentials);
     }
 }

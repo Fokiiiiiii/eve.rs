@@ -32,6 +32,12 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
     /// <summary>The persisted, owner-scoped launch point. The caller system is passed so the owner can reject remote launches.</summary>
     public Func<long, long, int, CancellationToken, Task<WarpCoordinates?>>? LaunchTargetForCharacter { get; set; }
 
+    /// <summary>Resolves a V24 moon ID to its authoritative moon-mining point in the pilot's current system.</summary>
+    public Func<long, int, CancellationToken, Task<WarpCoordinates?>>? MoonMiningPointForSystem { get; set; }
+
+    /// <summary>Resolves an active universe site instance to its current-system warp point.</summary>
+    public Func<long, int, CancellationToken, Task<WarpCoordinates?>>? EpicInstanceForSystem { get; set; }
+
     public Func<long, long, CancellationToken, Task<int>>? SkillLevelOfCharacter { get; set; }
 
     /// <summary>The live cosmic signatures the probe scanner reads in each system.</summary>
@@ -390,7 +396,7 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
 
     /// <summary>
     /// <c>CmdWarpToStuff(type, target, minRange=)</c>: resolves system bodies, bookmarks, authorized fleet characters, in-system positions,
-    /// scan results, and a live current-system launch owned by the caller. Unsupported or stale destinations produce the client's warp refusal.
+    /// scan results, live current-system launches, epic instances, and moon-mining points. Unsupported or stale destinations produce the client's warp refusal.
     /// </summary>
     [Method("CmdWarpToStuff")]
     public async ValueTask<PyValue> CmdWarpToStuff(ServiceCall call)
@@ -403,7 +409,7 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
         if (space.IsInAbyssalRun(call.Session))
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(SpaceSessions.AbyssalWarpBlockedMessage)));
         var type = JsSemantics.PlainText(call.Arg(0));
-        if (type is not ("item" or "bookmark" or "char" or "position" or "coords" or "scan" or "launch"))
+        if (type is not ("item" or "bookmark" or "char" or "position" or "coords" or "scan" or "launch" or "epinstance" or "moonMiningPoint"))
         {
             throw WarpRefusal();
         }
@@ -520,6 +526,21 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
                 throw WarpRefusal();
             }
             coordinate = launch;
+        }
+        else if (type is "epinstance" or "moonMiningPoint")
+        {
+            var resolver = type == "epinstance" ? EpicInstanceForSystem : MoonMiningPointForSystem;
+            if (callerSystem is not { } destinationSystem
+                || resolver is null
+                || await resolver(targetId, destinationSystem, call.Cancellation) is not { } destination
+                || destination.SolarSystemId != destinationSystem
+                || !double.IsFinite(destination.X)
+                || !double.IsFinite(destination.Y)
+                || !double.IsFinite(destination.Z))
+            {
+                throw WarpRefusal();
+            }
+            coordinate = destination;
         }
         else if (type == "scan")
         {

@@ -643,7 +643,8 @@ private sealed record ShipHoldRule(
             return new ShipRefused(ShipRefusal.NotEnoughCargoSpace, ModuleTypeId: item.TypeId, ShipTypeId: snapshot.Ship.TypeId,
                 Available: Math.Max(0, room.Free), Volume: requiredShips);
         }
-        var required = ItemVolumes.Unit(item.TypeId, type.GroupId, item.Singleton, ItemVolumeOf(type)) * Math.Max(1, quantity);
+        var moved = item.Singleton ? item : item with { Quantity = Math.Max(1, quantity) };
+        var required = ItemVolumes.Of(moved, type.GroupId, ItemVolumeOf(type));
         var cargoRoom = new Room(capacity, await VolumeOfAsync(contents, cancellationToken));
         if (required <= 0 || required <= cargoRoom.Free + RoomTolerance)
         {

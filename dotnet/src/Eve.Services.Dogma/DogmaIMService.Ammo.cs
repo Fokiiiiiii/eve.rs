@@ -63,12 +63,14 @@ public sealed partial class DogmaIMService
             return None;
         }
         long location;
+        long? destinationOwnerId = null;
         int? flag = null;
         if (call.Arg(2) is PyTuple or PyList)
         {
             var parts = (call.Arg(2) is PyTuple t ? t.Items : ((PyList)call.Arg(2)).Items).Select(IdOf).ToList();
             location = parts.Count > 0 ? parts[0] ?? shipId : shipId;
-            flag = parts.Count > 2 && parts[2] is { } given and > 0 ? (int)given : null;
+            destinationOwnerId = parts.Count > 1 ? parts[1] : null;
+            flag = parts.Count > 2 && parts[2] is { } given and >= int.MinValue and <= int.MaxValue ? (int)given : null;
         }
         else
         {
@@ -84,6 +86,17 @@ public sealed partial class DogmaIMService
             return await UnloadInSpaceAsync(call.Session, character, shipId, [.. IdsOf(call.Arg(1))], location, flag, quantity, call.Cancellation);
         }
         var moduleIds = IdsOf(call.Arg(1)).ToArray();
+        var isDockedContainer = call.Session.DockedLocationId is { } dockedLocation
+            && location != shipId && location != dockedLocation;
+        if (isDockedContainer && unloadAmmoToContainer is { } unloadToContainer)
+        {
+            var containerOutcome = await unloadToContainer(call.Session, character, shipId, moduleIds, location,
+                destinationOwnerId, flag, quantity, call.Cancellation);
+            if (containerOutcome is ShipRefused refused)
+                throw ShipErrors.Of(refused, statics);
+            TellAmmo(call.Session, character, containerOutcome);
+            return UnloadedItemIds(containerOutcome, location, flag);
+        }
         var outcome = unloadAmmo is null
             ? await ships.UnloadAmmoAsync(character, shipId, moduleIds, location, flag, quantity, call.Cancellation)
             : await unloadAmmo(character, shipId, moduleIds, location, flag, quantity, call.Cancellation);
@@ -118,13 +131,15 @@ public sealed partial class DogmaIMService
             return;
         }
         var fileTime = Py.FileTimeFromUnixMs(nowUnixMs());
-        // a ship in space is told what moved in its hold as a batch for the ship (the reference's OnItemsChanged, with the hold named); one in a station as an item that changed
-        var inSpace = session.GetInt("stationid") is null;
+        // a ship in space is told what moved in its hold as a batch for the ship (the reference's OnItemsChanged, with the hold named); docked clients use item changes
+        var inSpace = session.DockedLocationId is null;
         var cargo = Py.Tuple(new PyStr("Ship"), InventoryWire.Id(changed.ShipId), new PyStr("ShipCargo"));
         foreach (var e in changed.Events)
         {
             switch (e)
             {
+                case ItemChanged when changed.ItemChangesAnnouncedExternally:
+                    break;
                 case ItemChanged item when inSpace:
                     ShipNotifications.SendItemsChanged(session, item, i => DogmaInfo.RowOf(i, statics.Type(i.TypeId)), cargo, "charid");
                     break;

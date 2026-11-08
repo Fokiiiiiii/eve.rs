@@ -9,6 +9,10 @@ public sealed record FwSystem(long SolarSystemId, long WarzoneId, long OccupierI
 /// <summary>A corporation's or alliance's enlistment: the faction it is in (0: none) and the change that takes effect at <see cref="EffectiveMs"/> (0: none pending).</summary>
 public sealed record FwEnlistment(int OwnerKind, long OwnerId, long FactionId, long NextFactionId, long EffectiveMs, long ChangedMs);
 
+/// <summary>A committed donation receipt, keyed by the originating RPC operation.</summary>
+public sealed record FwDonationReceipt(string OperationId, long SolarSystemId, long CharacterId, long CorporationId, long FactionId, long HubLp,
+    long DonatedLp, long PoolAfter);
+
 public sealed record FwStatsWindow(long KillsYesterday, long KillsLastWeek, long KillsTotal, long VictoryPointsYesterday, long VictoryPointsLastWeek, long VictoryPointsTotal);
 
 /// <summary>
@@ -77,15 +81,41 @@ public sealed partial class FwStore
 
     /// <summary>Adds an LP donation to a system's pool, records it, and returns the new pool.</summary>
     public async Task<long> AddLpAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId, long characterId, long corporationId,
-        long factionId, long amount, long donatedMs, CancellationToken cancellationToken = default)
+        long factionId, long amount, long donatedLp, string operationId, long donatedMs, CancellationToken cancellationToken = default)
     {
-        await Sql.ExecuteAsync(connection, transaction, Q(
-            "INSERT INTO {schema}.fw_lp_donations (solar_system_id, character_id, corporation_id, faction_id, amount, donated_ms) VALUES ($1, $2, $3, $4, $5, $6)"),
-            cancellationToken, solarSystemId, characterId, corporationId, factionId, amount, donatedMs);
         var pool = await Sql.ScalarAsync(connection, transaction, Q(
             "UPDATE {schema}.fw_systems SET lp_pool = lp_pool + $2, updated_ms = $3 WHERE solar_system_id = $1 RETURNING lp_pool"),
             cancellationToken, solarSystemId, amount, donatedMs);
-        return pool is long value ? value : throw new InvalidOperationException($"solar system {solarSystemId} is not occupied");
+        if (pool is not long value)
+            throw new InvalidOperationException($"solar system {solarSystemId} is not occupied");
+        await Sql.ExecuteAsync(connection, transaction, Q(
+            "INSERT INTO {schema}.fw_lp_donations (solar_system_id, character_id, corporation_id, faction_id, amount, donated_ms, operation_id, donated_lp, pool_after) " +
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"),
+            cancellationToken, solarSystemId, characterId, corporationId, factionId, amount, donatedMs, operationId, donatedLp, value);
+        return value;
+    }
+
+    /// <summary>Serializes requests with the same RPC operation id before the receipt is read or created.</summary>
+    public async Task LockDonationOperationAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string operationId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var command = Sql.Command(connection, transaction,
+            Q("SELECT pg_advisory_xact_lock(748212, hashtext($1))"), operationId);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>The receipt for a previously committed RPC operation, when present.</summary>
+    public async Task<FwDonationReceipt?> DonationByOperationAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string operationId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var command = Sql.Command(connection, transaction,
+            Q("SELECT solar_system_id, character_id, corporation_id, faction_id, amount, donated_lp, pool_after FROM {schema}.fw_lp_donations WHERE operation_id = $1"),
+            operationId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new FwDonationReceipt(operationId, reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), reader.GetInt64(4),
+                reader.GetInt64(5), reader.GetInt64(6))
+            : null;
     }
 
     /// <summary>The enlistment of a corporation or an alliance, or null when it has never enlisted.</summary>
@@ -100,12 +130,46 @@ public sealed partial class FwStore
         return ReadEnlistment(reader);
     }
 
+    /// <summary>Creates the owner's empty enlistment row if needed so a following <see cref="EnlistmentAsync"/> can lock its key.</summary>
+    public Task EnsureEnlistmentRowAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, int ownerKind, long ownerId, CancellationToken cancellationToken = default) =>
+        Sql.ExecuteAsync(connection, transaction, Q(
+            "INSERT INTO {schema}.fw_enlistments (owner_kind, owner_id, faction_id, next_faction_id, effective_ms, changed_ms) VALUES ($1, $2, 0, 0, 0, 0) " +
+            "ON CONFLICT (owner_kind, owner_id) DO NOTHING"), cancellationToken, ownerKind, ownerId);
+
     /// <summary>The corporations whose faction at <paramref name="nowMs"/> is <paramref name="factionId"/> (a join due by then counts, a leave due by then does not).</summary>
     public async Task<IReadOnlyList<long>> CorporationsInFactionAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long factionId, long nowMs, CancellationToken cancellationToken = default)
     {
         await using var command = Sql.Command(connection, transaction,
             Q("SELECT owner_id FROM {schema}.fw_enlistments WHERE owner_kind = $1 AND (CASE WHEN effective_ms > 0 AND effective_ms <= $3 THEN next_faction_id ELSE faction_id END) = $2 ORDER BY owner_id"),
             CorporationKind, factionId, nowMs);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var ids = new List<long>();
+        while (await reader.ReadAsync(cancellationToken))
+            ids.Add(reader.GetInt64(0));
+        return ids;
+    }
+
+    /// <summary>The alliances whose faction at <paramref name="nowMs"/> is <paramref name="factionId"/> (a join due by then counts, a leave due by then does not).</summary>
+    public async Task<IReadOnlyList<long>> AlliancesInFactionAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long factionId, long nowMs,
+        CancellationToken cancellationToken = default)
+    {
+        await using var command = Sql.Command(connection, transaction,
+            Q("SELECT owner_id FROM {schema}.fw_enlistments WHERE owner_kind = $1 AND (CASE WHEN effective_ms > 0 AND effective_ms <= $3 THEN next_faction_id ELSE faction_id END) = $2 ORDER BY owner_id"),
+            AllianceKind, factionId, nowMs);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var ids = new List<long>();
+        while (await reader.ReadAsync(cancellationToken))
+            ids.Add(reader.GetInt64(0));
+        return ids;
+    }
+
+    /// <summary>The corporations with a current faction at <paramref name="nowMs"/> (a due join counts and a due leave does not).</summary>
+    public async Task<IReadOnlyList<long>> CorporationsWithActiveFactionAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long nowMs,
+        CancellationToken cancellationToken = default)
+    {
+        await using var command = Sql.Command(connection, transaction,
+            Q("SELECT owner_id FROM {schema}.fw_enlistments WHERE owner_kind = $1 AND (CASE WHEN effective_ms > 0 AND effective_ms <= $2 THEN next_faction_id ELSE faction_id END) <> 0 ORDER BY owner_id"),
+            CorporationKind, nowMs);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var ids = new List<long>();
         while (await reader.ReadAsync(cancellationToken))

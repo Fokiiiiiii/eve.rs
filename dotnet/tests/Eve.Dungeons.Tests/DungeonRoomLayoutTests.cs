@@ -36,21 +36,37 @@ public sealed class DungeonRoomLayoutTests
     }
 
     [Fact]
-    public void A_multi_room_site_puts_the_second_room_out_a_million_metres_and_its_gate_in_the_first()
+    public void A_multi_room_site_uses_its_recorded_room_and_gate_positions()
     {
-        // dungeon 283: rooms 13849 and 13850, the one gate leads from the first room into the second
+        // dungeon 283: EveJS records room 13849 active, room 13850 pending, and the gate in 13849
         var template = Template(283);
         var layout = DungeonRoomLayout.Build(template, Origin, Radii);
 
         Assert.Equal(["room:13849", "room:13850"], layout.Rooms.Select(room => room.Key).ToArray());
         var second = layout.Room("room:13850")!;
-        var horizontal = Math.Sqrt(Math.Pow(second.Anchor[0] - Origin[0], 2) + Math.Pow(second.Anchor[2] - Origin[2], 2));
-        Assert.Equal(DungeonRoomLayout.RoomBaseDistanceMeters, horizontal, 3);
+        Assert.Equal(-31_457_280, second.Anchor[0] - Origin[0], 3);
+        Assert.Equal(0, second.Anchor[1] - Origin[1], 3);
+        Assert.Equal(0, second.Anchor[2] - Origin[2], 3);
         Assert.Equal(DungeonRoomLayout.EntryOffsetMeters, Distance(second.EntryPoint, second.Anchor), 2);
 
         var gate = Assert.Single(layout.Gates, g => g.DestinationRoomKey == "room:13850");
-        Assert.Equal(DungeonRoomLayout.GateRingMeters, Distance(gate.Position, layout.Rooms[0].Anchor), 6);
-        Assert.True(Distance(gate.Position, second.Anchor) > DungeonRoomLayout.RoomBaseDistanceMeters / 2);
+        Assert.Equal("room:13849", gate.SourceRoomKey);
+        Assert.Equal("room:13849", gate.ClearanceRoomKey);
+        Assert.Equal([Origin[0], Origin[1] - 750, Origin[2]], gate.Position);
+    }
+
+    [Fact]
+    public void A_mission_scene_profile_uses_the_active_room_and_its_gate_source()
+    {
+        var layout = DungeonRoomLayout.Build(Template(2734), Origin, Radii);
+
+        Assert.Equal(["room:20206", "room:20191"], layout.Rooms.Select(room => room.Key).ToArray());
+        Assert.Equal(Origin, layout.Room("room:20206")!.Anchor);
+        Assert.Equal([Origin[0] + 31_457_280, Origin[1], Origin[2]], layout.Room("room:20191")!.Anchor);
+        var gate = Assert.Single(layout.Gates);
+        Assert.Equal(("room:20206", "room:20191"), (gate.SourceRoomKey, gate.DestinationRoomKey));
+        Assert.Equal("room:20206", gate.ClearanceRoomKey);
+        Assert.Equal([Origin[0] + 13_000, Origin[1], Origin[2]], gate.Position);
     }
 
     [Fact]

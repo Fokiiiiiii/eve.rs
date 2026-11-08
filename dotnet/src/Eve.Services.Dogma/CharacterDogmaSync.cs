@@ -156,9 +156,13 @@ public sealed class CharacterDogmaSync(DogmaStatic statics, CharacterShips ships
             session.SendNotification("OnModuleAttributeChanges", "clientID", new Eve.Marshal.PyList(changes));
     }
 
-    public async Task SkillsChangedAsync(ClientSession session, long characterId, IReadOnlyList<CharacterSkill> before, CancellationToken cancellationToken = default)
+    public async Task SkillsChangedAsync(ClientSession session, long characterId, IReadOnlyList<CharacterSkill> before,
+        CancellationToken cancellationToken = default, bool trainingAlreadySettled = false)
     {
-        if (await ships.LoadAsync(characterId, cancellationToken) is not { } snapshot)
+        var snapshot = trainingAlreadySettled
+            ? await ships.LoadAfterTrainingSettledAsync(characterId, cancellationToken)
+            : await ships.LoadAsync(characterId, cancellationToken);
+        if (snapshot is null)
         {
             return;
         }

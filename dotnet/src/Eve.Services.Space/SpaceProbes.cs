@@ -139,26 +139,31 @@ public sealed class SpaceProbes : ISpaceProbes
         {
             throw Notify("You do not have enough loaded scanner probes.");
         }
-        var active = await _store.ActiveCountAsync(character, system, cancellationToken);
-        if (active + count > MaxActiveProbes)
+        var committed = await _ships.LaunchProbesAndRecordAsync(character, shipId, system, state, count, MaxActiveProbes, _store,
+            (active, ids) =>
+            {
+                var now = _nowUnixMs();
+                var records = new List<ScanProbeRecord>(count);
+                for (var index = 0; index < count; index++)
+                {
+                    var offset = RingOffset(active + index, MaxActiveProbes, LaunchRingRadiusMeters);
+                    var position = new[] { origin.X + offset[0], origin.Y + offset[1], origin.Z + offset[2] };
+                    records.Add(new ScanProbeRecord(
+                        ids[index], character, system, state.ProbeTypeId, CharacterShips.ScanProbeGroup, moduleId, shipId,
+                        position, [.. position], 0, LaunchRangeStep, IdleState, now + state.LifetimeMs));
+                }
+                return records;
+            }, cancellationToken);
+        if (committed.Refusal is { } commitRefusal)
         {
-            throw Notify("You cannot control more than eight active probes.");
+            if (commitRefusal == "ACTIVE_PROBE_LIMIT")
+                throw Notify("You cannot control more than eight active probes.");
+            if (commitRefusal == "NO_CHARGES")
+                throw Notify("You do not have enough loaded scanner probes.");
+            throw RefusalOf(commitRefusal, state.ModuleTypeId);
         }
-        if (!await _ships.SpendProbesAsync(character, state.ChargeId, count, cancellationToken))
+        foreach (var record in committed.Records)
         {
-            throw Notify("You do not have enough loaded scanner probes.");
-        }
-
-        var type = _statics.Type(state.ProbeTypeId);
-        var now = _nowUnixMs();
-        for (var index = 0; index < count; index++)
-        {
-            var offset = RingOffset(active + index, MaxActiveProbes, LaunchRingRadiusMeters);
-            var position = new[] { origin.X + offset[0], origin.Y + offset[1], origin.Z + offset[2] };
-            var record = new ScanProbeRecord(
-                await _store.NextIdAsync(cancellationToken), character, system, state.ProbeTypeId, CharacterShips.ScanProbeGroup, moduleId, shipId,
-                position, [.. position], 0, LaunchRangeStep, IdleState, now + state.LifetimeMs);
-            await _store.SaveAsync(record, cancellationToken);
             PlaceBall(record);
             session.SendNotification("OnNewProbe", "clientID", ProbeKeyVal(record));
         }
@@ -208,29 +213,16 @@ public sealed class SpaceProbes : ISpaceProbes
         {
             return [];
         }
-        var records = new List<ScanProbeRecord>();
-        foreach (var id in probeIds.Distinct())
+        var recovered = await _ships.RecoverProbesAsync(character, shipId, system, probeIds, _store, cancellationToken);
+        foreach (var change in recovered.Changes)
         {
-            if (await _store.GetAsync(id, cancellationToken) is { } record && record.CharacterId == character && record.SolarSystemId == system)
-            {
-                records.Add(record);
-            }
+            ShipNotifications.SendItemChange(session, change, RowOf);
         }
-        foreach (var group in records.GroupBy(record => (record.LauncherId, record.TypeId)))
+        foreach (var record in recovered.Probes)
         {
-            var changes = await _ships.RestoreProbesAsync(character, shipId, group.Key.LauncherId, group.Key.TypeId, group.Count(), cancellationToken);
-            foreach (var change in changes)
-            {
-                ShipNotifications.SendItemChange(session, change, RowOf);
-            }
+            TellRemoved(record, session);
         }
-        var removed = new List<long>();
-        foreach (var record in records)
-        {
-            await Forget(record, session, cancellationToken);
-            removed.Add(record.ProbeId);
-        }
-        return removed;
+        return recovered.Probes.Select(record => record.ProbeId).ToArray();
     }
 
     /// <summary>
@@ -268,7 +260,13 @@ public sealed class SpaceProbes : ISpaceProbes
     /// <summary>A probe leaves: its record goes, its ball is taken out of space and its pilot is told (<c>OnRemoveProbe</c>).</summary>
     private async Task Forget(ScanProbeRecord record, ClientSession? session, CancellationToken cancellationToken)
     {
-        await _store.RemoveAsync(record.ProbeId, cancellationToken);
+        if (!await _store.RemoveAsync(record.ProbeId, cancellationToken))
+            return;
+        TellRemoved(record, session);
+    }
+
+    private void TellRemoved(ScanProbeRecord record, ClientSession? session)
+    {
         _sim.RemoveProbe(record.ProbeId);
         session?.SendNotification("OnRemoveProbe", "clientID", new PyLong(record.ProbeId));
     }

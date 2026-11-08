@@ -79,6 +79,27 @@ public sealed class HackingGameTests
     }
 
     [Fact]
+    public void Distance_indicators_follow_the_generated_board_around_holes()
+    {
+        var coords = new[] { new Coord(0, 4), East, new Coord(1, 3), new Coord(2, 3), new Coord(3, 4) };
+        var tiles = coords.Select((coord, index) => new Tile
+        {
+            Id = index + 1,
+            Coord = coord,
+            Type = coord == new Coord(3, 4) ? HackingWire.TypeCore : HackingWire.TypeSegment,
+            Subtype = coord == new Coord(3, 4) ? HackingWire.SubtypeCoreLow : HackingWire.SubtypeNone,
+            Coherence = coord == new Coord(3, 4) ? 10 : 0,
+            Strength = coord == new Coord(3, 4) ? 10 : 0,
+            Hidden = coord != new Coord(0, 4),
+        }).ToList();
+        var game = new HackingGame(Attempt(), new HackingBoard(tiles, columns: 8, rows: 8));
+
+        var events = game.ClickTile(East);
+
+        Assert.Equal(3, Only(events, Distance).Data["distanceIndicator"]);
+    }
+
+    [Fact]
     public void A_firewall_takes_the_virus_strength_and_strikes_back_once()
     {
         var game = Blank(coherence: 40, strength: 20);
@@ -266,7 +287,7 @@ public sealed class HackingGameTests
 
         Assert.Equal(new[] { Flipped, CacheOpen }, Ids(events));
         Assert.Equal(HackingWire.TypeDefenseSoftware, cache.Type);
-        Assert.Equal(60, cache.Coherence);
+        Assert.Equal((50, 20), (cache.Coherence, cache.Strength));
         Assert.True(cache.Blocked);
     }
 
@@ -303,7 +324,7 @@ public sealed class HackingGameTests
         var events = game.Start();
 
         Assert.Equal(HackingWire.EventGameStyle, events[0].EventId);
-        Assert.Equal(90, events.Count(e => e.EventId == HackingWire.EventTileCreated));
+        Assert.InRange(events.Count(e => e.EventId == HackingWire.EventTileCreated), 39, 64);
         Assert.Equal(new[] { HackingWire.EventVirusCreated, HackingWire.EventGameStart }, events.TakeLast(2).Select(e => e.EventId));
         Assert.All(events.Where(e => e.EventId == HackingWire.EventTileCreated && (bool)e.Data["hidden"]!),
             e => Assert.Equal(HackingWire.TypeNone, e.Data["type"]));

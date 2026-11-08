@@ -1,26 +1,32 @@
 using System.Text.Json.Nodes;
 using Eve.Characters;
+using Eve.Corporations;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Relations;
 using Eve.Services;
+using Eve.Wallet;
 
 namespace Eve.Services.Corporations;
 
 /// <summary>
-/// The client's <c>warRegistry</c>: the wars of a corporation or an alliance, read from the war relations, and the two changes a war's
-/// negotiation can be opened here, so the calls that act on one are refused, and the lists of them are empty.
+/// The client's <c>warRegistry</c>: wars and pending negotiations read from authoritative relations and persistent corporation state.
 /// </summary>
 [Service("warRegistry")]
 public sealed partial class WarRegistryService(
     Npgsql.NpgsqlDataSource source,
     RelationStore relations,
+    WarNegotiationStore negotiations,
+    WalletTransactions wallets,
     CharacterSessions? sessions,
     Func<long> nowMs,
-    Func<long, long, CancellationToken, Task<bool>>? canManageWarAsync = null)
+    Func<long, long, CancellationToken, Task<bool>>? canManageWarAsync = null,
+    Func<long, CancellationToken, ValueTask<long?>>? resolveWalletOwnerAsync = null,
+    Func<long, CancellationToken, ValueTask<long>>? readCharacterAllyBaseCostAsync = null,
+    Func<IReadOnlyList<long>, long, int, JsonObject, string, CancellationToken, Task>? notifyWarOwnersAsync = null,
+    Func<long, CancellationToken, ValueTask<bool>>? isAllianceAsync = null)
 {
     private const string WarKind = "war";
-    private const string NegotiationNotice = "War negotiations are not available on this server.";
 
     /// <summary><c>MachoBindObject((allianceOrCorpID, isMaster), (method, args, kwargs))</c>: binds, then makes the nested call.</summary>
     [Method("MachoResolveObject")]
@@ -63,35 +69,6 @@ public sealed partial class WarRegistryService(
             .Select(war => new KeyValuePair<PyValue, PyValue>(InventoryWire.Id(war.WarId), Payload(war)));
         return new PyDict([.. entries]);
     }
-
-    /// <summary>No negotiation can be opened here, so there are none.</summary>
-    [Method("GetNegotiations")]
-    public PyValue GetNegotiations(ServiceCall call) => new PyList([]);
-
-    /// <summary>The negotiation by id: there is none to answer with.</summary>
-    [Method("GetWarNegotiation")]
-    public PyValue GetWarNegotiation(ServiceCall call) => PyNone.Instance;
-
-    [Method("CreateWarAllyOffer")]
-    public PyValue CreateWarAllyOffer(ServiceCall call) => throw Notify(NegotiationNotice);
-
-    [Method("RetractWarAllyOffer")]
-    public PyValue RetractWarAllyOffer(ServiceCall call) => throw Notify(NegotiationNotice);
-
-    [Method("CreateSurrenderNegotiation")]
-    public PyValue CreateSurrenderNegotiation(ServiceCall call) => throw Notify(NegotiationNotice);
-
-    [Method("AcceptAllyNegotiation")]
-    public PyValue AcceptAllyNegotiation(ServiceCall call) => throw Notify(NegotiationNotice);
-
-    [Method("DeclineAllyOffer")]
-    public PyValue DeclineAllyOffer(ServiceCall call) => throw Notify(NegotiationNotice);
-
-    [Method("AcceptSurrender")]
-    public PyValue AcceptSurrender(ServiceCall call) => throw Notify(NegotiationNotice);
-
-    [Method("DeclineSurrender")]
-    public PyValue DeclineSurrender(ServiceCall call) => throw Notify(NegotiationNotice);
 
     /// <summary>
     /// <c>SetOpenForAllies(warID, state)</c>: the defender (the entity the war is against) opens or closes its war for allies. Another
@@ -199,8 +176,6 @@ public sealed partial class WarRegistryService(
     };
 
     private static bool Truthy(PyValue value) => JsSemantics.Truthy(value);
-
-    private static MachoWrappedException Notify(string text) => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(text)));
 
     private static IEnumerable<PyValue> ArgsOf(PyValue value) => value switch
     {

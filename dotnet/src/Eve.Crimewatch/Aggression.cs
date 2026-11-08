@@ -5,7 +5,7 @@ namespace Eve.Crimewatch;
 /// <summary>An attack on the ship of another pilot, as the host reports it to crimewatch.</summary>
 /// <param name="Attacker">The character that started the module.</param>
 /// <param name="Target">The character that flies the ship attacked.</param>
-/// <param name="TargetShipId">The ship attacked (a pilot that lost security status for a ship loses no more for it for a minute).</param>
+/// <param name="TargetShipId">The attacked ship or capsule item (the same item and kind incurs one security-status penalty per minute).</param>
 /// <param name="SolarSystemId">Where it happened.</param>
 /// <param name="Security">The security status of that system (as the game has it, not the class).</param>
 /// <param name="Where">The security class of that system.</param>

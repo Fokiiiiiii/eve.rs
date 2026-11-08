@@ -1195,6 +1195,35 @@ fn a_warp_to_an_arbitrary_coordinate_uses_the_supplied_point() {
 }
 
 #[test]
+fn a_short_coordinate_warp_stops_at_the_requested_range() {
+    let mut scene = scene_with_a_planet();
+    let origin = scene.ship(SESSION, NOON).unwrap().position;
+    let destination = Vec3::new(origin.x + 1_000_000.0, origin.y, origin.z);
+    let range = 25_000.0;
+    let start = NOON + seconds(1);
+
+    let told = scene.command(SESSION, Command::WarpToPoint { destination, range }, start);
+    assert!(matches!(told.last(), Some(Out::Accepted { command: 21, .. })));
+
+    let mut at = start;
+    for _ in 0..2_400 {
+        at += 2_500_000;
+        scene.poll(at);
+        if scene.ship(SESSION, at).is_some_and(|ship| ship.course == Course::Stop) {
+            break;
+        }
+    }
+
+    let ship = scene.ship(SESSION, at).unwrap();
+    let distance = ((destination.x - ship.position.x).powi(2)
+        + (destination.y - ship.position.y).powi(2)
+        + (destination.z - ship.position.z).powi(2))
+    .sqrt();
+    assert_eq!(ship.course, Course::Stop);
+    assert!((distance - range).abs() < 1_000.0, "stopped {distance}m from the destination");
+}
+
+#[test]
 fn a_warp_range_cannot_extend_past_the_destination() {
     let mut scene = scene_with_a_planet();
     scene.pilots.get_mut(&SESSION).unwrap().ship.position = Vec3::new(1_000_000.0, 0.0, 0.0);
@@ -1244,10 +1273,12 @@ fn a_warp_point_with_an_overflowing_distance_is_refused_without_starting_warp() 
 fn fleet_warp_queries_return_positions_without_moving_the_commander() {
     let mut scene = scene_with_a_planet();
     let body_position = scene.system.body(PLANET).unwrap().position;
+    let body_radius = scene.system.body(PLANET).unwrap().radius;
 
     assert!(matches!(
         scene.command(SESSION, Command::PositionOf { target_id: PLANET }, NOON).last(),
-        Some(Out::Position { command: 23, position, .. }) if *position == body_position
+        Some(Out::Position { command: 23, position, direction: None, radius: Some(radius), .. })
+            if *position == body_position && *radius == body_radius
     ));
     let resolved = scene.command(SESSION, Command::ResolveWarpTarget { target_id: PLANET, range: 0.0 }, NOON);
     assert!(matches!(resolved.last(), Some(Out::Position { command: 22, .. })));
@@ -1266,7 +1297,14 @@ fn a_fleet_member_ship_is_a_warp_target_in_its_system() {
 
     let start = scene.ship(SESSION, NOON).unwrap().position;
     let target_position = Vec3::new(start.x + 2_000_000.0, start.y, start.z);
-    scene.pilots.get_mut(&(SESSION + 1)).unwrap().ship.position = target_position;
+    let target = &mut scene.pilots.get_mut(&(SESSION + 1)).unwrap().ship;
+    target.position = target_position;
+    target.direction = Vec3::new(0.0, 0.0, 1.0);
+    assert!(matches!(
+        scene.command(SESSION, Command::PositionOf { target_id: target_spec.ship_id }, NOON).last(),
+        Some(Out::Position { command: 23, position, direction: Some(direction), radius: Some(radius), .. })
+            if *position == target_position && *direction == Vec3::new(0.0, 0.0, 1.0) && *radius == target_spec.radius
+    ));
 
     let result = scene.command(SESSION, Command::WarpTo { target_id: target_spec.ship_id, range: 0.0 }, NOON);
 
@@ -3776,10 +3814,81 @@ fn wormhole_placement(at: Vec3, far: Vec3, far_radius: f64) -> crate::link::Worm
         destination_system_id: OTHER_SYSTEM,
         destination_end: FAR_END,
         destination_class: 2,
+        nebula_type_id: 7_654,
+        wormhole_age: 1,
+        wormhole_size: 0.7,
+        max_ship_jump_mass_category: 3,
         destination_position: [far.x, far.y, far.z],
         destination_radius: far_radius,
         max_jump_mass: 62_000_000.0,
     }
+}
+
+#[test]
+fn a_wormhole_slim_item_has_the_client_fields_for_its_destination_age_size_and_ship_limit() {
+    let mut scene = scene_by_a_gate();
+    scene.place_wormhole(wormhole_placement(Vec3::new(5.0e8, 0.0, 0.0), Vec3::ZERO, 5_000.0), NOON);
+    let index = scene.wormhole_index(WORMHOLE_END).unwrap();
+    let entries = crate::slim::body_entries(&scene.system, &scene.system.bodies[index]);
+    let field = |key: &str| entries.iter().find(|(name, _)| *name == key).map(|(_, value)| value.clone());
+
+    assert_eq!(field("otherSolarSystemClass"), Some(crate::wire::int(2)));
+    assert!(field("nebulaType").is_some(), "client wormhole.py reads slimItem.nebulaType");
+    assert!(field("wormholeAge").is_some(), "client info window reads slimItem.wormholeAge");
+    assert!(field("wormholeSize").is_some(), "client info window reads slimItem.wormholeSize");
+    assert!(field("maxShipJumpMass").is_some(), "client info window reads slimItem.maxShipJumpMass");
+}
+
+#[test]
+fn host_age_and_mass_state_changes_refresh_both_fields_in_the_wormhole_slim_item() {
+    let mut scene = scene_by_a_gate();
+    scene.bind(SESSION, NOON);
+    scene.place_wormhole(wormhole_placement(Vec3::new(5.0e8, 0.0, 0.0), Vec3::ZERO, 5_000.0), NOON);
+
+    let age = scene.set_wormhole_slim_field(
+        WORMHOLE_END,
+        "wormholeAge".into(),
+        crate::link::SlimValue::Int(2),
+        NOON + 1,
+    );
+    assert_eq!(age.len(), 1);
+    assert_eq!(action_names(&age[0]), ["OnSlimItemChange"]);
+    let size = scene.set_wormhole_slim_field(
+        WORMHOLE_END,
+        "wormholeSize".into(),
+        crate::link::SlimValue::Real(0.4),
+        NOON + 2,
+    );
+    assert_eq!(size.len(), 1);
+    assert_eq!(action_names(&size[0]), ["OnSlimItemChange"]);
+
+    let entries = crate::slim::body_entries(
+        &scene.system,
+        &scene.system.bodies[scene.wormhole_index(WORMHOLE_END).unwrap()],
+    );
+    let field = |key: &str| entries.iter().find(|(name, _)| *name == key).map(|(_, value)| value.clone());
+    assert_eq!(field("wormholeAge"), Some(crate::wire::int(2)));
+    assert_eq!(field("wormholeSize"), Some(eve_marshal::Value::Real(0.4)));
+    assert!(
+        scene
+            .set_wormhole_slim_field(
+                WORMHOLE_END,
+                "wormholeAge".into(),
+                crate::link::SlimValue::Int(2),
+                NOON + 3
+            )
+            .is_empty()
+    );
+    assert!(
+        scene
+            .set_wormhole_slim_field(
+                WORMHOLE_END,
+                "wormholeSize".into(),
+                crate::link::SlimValue::Real(1.5),
+                NOON + 4
+            )
+            .is_empty()
+    );
 }
 
 #[test]

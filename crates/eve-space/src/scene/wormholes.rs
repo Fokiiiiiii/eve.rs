@@ -50,6 +50,10 @@ impl Scene {
                 destination_system: placement.destination_system_id,
                 destination_end: placement.destination_end,
                 destination_class: placement.destination_class,
+                nebula_type_id: placement.nebula_type_id,
+                wormhole_age: placement.wormhole_age,
+                wormhole_size: placement.wormhole_size,
+                max_ship_jump_mass_category: placement.max_ship_jump_mass_category,
                 destination_position: Vec3::new(far_x, far_y, far_z),
                 destination_radius: placement.destination_radius,
                 max_jump_mass: placement.max_jump_mass,
@@ -81,6 +85,53 @@ impl Scene {
         self.wormhole_audience()
             .into_iter()
             .map(|session| Self::update(session, vec![removed.clone()]))
+            .collect()
+    }
+
+    /// The host changes a wormhole's age or remaining-mass category (`SetSlimField`). The full slim item is sent again so the client's info window
+    /// and space object observe the same state; unknown ends, fields and values are ignored.
+    pub(crate) fn set_wormhole_slim_field(
+        &mut self,
+        wormhole_id: i64,
+        name: String,
+        value: crate::link::SlimValue,
+        at: i64,
+    ) -> Vec<Out> {
+        let Some(index) = self.wormhole_index(wormhole_id) else { return Vec::new() };
+        let Detail::Wormhole { wormhole_age, wormhole_size, .. } =
+            &mut Arc::make_mut(&mut self.system).bodies[index].detail
+        else {
+            return Vec::new();
+        };
+        let changed = match (name.as_str(), value) {
+            ("wormholeAge", crate::link::SlimValue::Int(next)) if (0..=4).contains(&next) => {
+                if *wormhole_age == next as i32 {
+                    false
+                } else {
+                    *wormhole_age = next as i32;
+                    true
+                }
+            }
+            ("wormholeSize", crate::link::SlimValue::Real(next))
+                if next.is_finite() && (0.0..=1.0).contains(&next) =>
+            {
+                if *wormhole_size == next {
+                    false
+                } else {
+                    *wormhole_size = next;
+                    true
+                }
+            }
+            _ => false,
+        };
+        if !changed {
+            return Vec::new();
+        }
+        let stamp = self.next_stamp(at);
+        let change = payload::wormhole_slim_change(stamp, &self.system, index);
+        self.wormhole_audience()
+            .into_iter()
+            .map(|session| Self::update(session, vec![change.clone()]))
             .collect()
     }
 }

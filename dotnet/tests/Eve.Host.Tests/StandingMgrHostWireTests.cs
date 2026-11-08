@@ -24,10 +24,16 @@ public partial class HostServerTests
             front, open, 2, "standingMgr", "GetStandingCompositions", new PyLong(500001), new PyLong(980001)));
         Assert.Equal("carbon.common.script.net.objectCaching.CachedMethodCallResult", WireText(cached.Name));
         var payload = Assert.IsType<PySubStream>(Assert.IsType<PyTuple>(cached.Args).Items[1]).Decoded!;
-        var rowset = Assert.IsType<PyObject>(payload);
-        Assert.Equal("carbon.common.script.sys.crowset.CRowset", WireText(rowset.Name));
-        Assert.Empty(Assert.IsType<PyList>(WireField(rowset, "lines")).Items);
-        var descriptorColumns = Assert.IsType<PyObjectEx>(WireField(rowset, "header"));
+        var rowset = Assert.IsType<PyObjectEx>(payload);
+        Assert.Equal(ObjectExKind.Ex2, rowset.Kind);
+        Assert.Empty(rowset.List);
+        Assert.Empty(rowset.Dict);
+        var objectHeader = Assert.IsType<PyTuple>(rowset.Header);
+        var classHeader = Assert.IsType<PyTuple>(objectHeader.Items[0]);
+        Assert.Equal(new PyToken("carbon.common.script.sys.crowset.CRowset"), Assert.Single(classHeader.Items));
+        var objectAttributes = Assert.IsType<PyDict>(objectHeader.Items[1]);
+        var descriptorColumns = Assert.IsType<PyObjectEx>(objectAttributes.Entries.Single(entry =>
+            WireText(entry.Key) == "header").Value);
         var fields = Descriptor.DescriptorColumns(descriptorColumns)!;
         Assert.Equal(["standing", "ownerID"], fields.Select(field =>
             WireText(Assert.IsType<PyTuple>(field).Items[0])).ToArray());
@@ -83,9 +89,10 @@ public partial class HostServerTests
         Assert.Equal("carbon.common.script.net.objectCaching.CachedMethodCallResult", WireText(noComposition.Name));
         var noCompositionPayload = Assert.IsType<PySubStream>(
             Assert.IsType<PyTuple>(noComposition.Args).Items[1]).Decoded!;
-        var noCompositionRowset = Assert.IsType<PyObject>(noCompositionPayload);
-        Assert.Equal("carbon.common.script.sys.crowset.CRowset", WireText(noCompositionRowset.Name));
-        Assert.Empty(Assert.IsType<PyList>(WireField(noCompositionRowset, "lines")).Items);
+        var noCompositionRowset = Assert.IsType<PyObjectEx>(noCompositionPayload);
+        Assert.Equal(ObjectExKind.Ex2, noCompositionRowset.Kind);
+        Assert.Empty(noCompositionRowset.List);
+        Assert.Empty(noCompositionRowset.Dict);
     }
 
     [Fact]

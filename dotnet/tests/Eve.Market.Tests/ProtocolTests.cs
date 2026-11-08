@@ -30,6 +30,9 @@ public class ProtocolTests
         return Assert.IsType<PyTuple>(payload.Items[1]);
     }
 
+    private static IReadOnlyList<PyValue> OwnOrderNotifications(RecordingPacketSink sink) =>
+        [.. sink.Packets.Where(packet => NotificationName(packet) == "OnOwnOrdersChanged")];
+
     private sealed class RecordingPacketSink : Eve.Services.IPacketSink
     {
         public List<PyValue> Packets { get; }=[];
@@ -44,11 +47,12 @@ public class ProtocolTests
         var session=new ClientSession(sink) { CharacterId=101,SessionId=101 };
         var sessions=new CharacterSessions();
         sessions.Enter(101,session);
-        var notifier=new MarketNotifier(new Eve.Wallet.WalletTransactions(source),sessions);
+        var notifier=new MarketNotifier(new Eve.Wallet.WalletTransactions(source),sessions,new Eve.Inventory.PgItemStore(source),
+            new Eve.Inventory.ItemTypeCatalog(new Eve.Sde.SdeReader(source)));
         await notifier.PublishAsync(new MarketReceipt("buy",null,2,20m,[],[]),
             new MarketRequest(101,34,true,10m,2,44));
 
-        var notification=NotificationArguments(Assert.Single(sink.Packets));
+        var notification=NotificationArguments(Assert.Single(OwnOrderNotifications(sink)));
         Assert.Empty(Assert.IsType<PyList>(notification.Items[0]).Items);
         Assert.Equal("Filled",Eve.Macho.JsSemantics.PlainText(notification.Items[1]));
         Assert.Equal(new PyInt(0),notification.Items[2]);
@@ -65,7 +69,7 @@ public class ProtocolTests
         var characterSessions=new CharacterSessions();
         characterSessions.Enter(actor,session);
         var catalog=await MarketCatalog.LoadAsync(new Eve.Sde.SdeReader(r.Source));
-        var proxy=new MarketProxyService(r.Book,r.Trading,r.Topology,r.Characters,r.Corporations,r.Wallets,catalog,() => r.Now,r.Expiry,characterSessions);
+        var proxy=new MarketProxyService(r.Book,r.Trading,r.Topology,r.Characters,r.Corporations,r.Wallets,catalog,() => r.Now,r.Expiry,r.Items,r.ItemTypes,characterSessions);
         var events=new List<Eve.Wallet.WalletBalanceChange>();
         r.Wallets.BalanceCommitted+=events.Add;
         var groups=Fields(proxy.GetMarketGroups(Call(session,"GetMarketGroups",0)));
@@ -88,7 +92,7 @@ public class ProtocolTests
         Assert.Equal(new PyInt(-1),line.Items[14]);
         Assert.Equal(PyNone.Instance,await proxy.PlaceBuyOrder(Call(session,"PlaceBuyOrder",2,new PyInt(r.Station.Id),new PyInt(34),
             new PyReal(10),new PyInt(5),new PyInt(-1),new PyInt(1),new PyInt(0),PyBool.False)));
-        Assert.Empty(Assert.IsType<PyList>(NotificationArguments(Assert.Single(sink.Packets)).Items[0]).Items);
+        Assert.Empty(Assert.IsType<PyList>(NotificationArguments(Assert.Single(OwnOrderNotifications(sink))).Items[0]).Items);
         Assert.Equal(9950m,(await r.WalletStore.GetAsync(actor))!.Isk);
         Assert.Equal(9950m,Assert.Single(events).Balance);
         var oldHistory=Fields(await proxy.GetOldPriceHistory(Call(session,"GetOldPriceHistory",3,new PyInt(34))));
@@ -103,12 +107,12 @@ public class ProtocolTests
             ("price",new PyReal(12)),("quantity",new PyInt(5)));
         Assert.Equal(PyBool.True,await proxy.PlaceMultiSellOrder(Call(session,"PlaceMultiSellOrder",6,new PyList([sell]),PyBool.False,new PyInt(90))));
 
-        Assert.Equal(2,sink.Packets.Count);
-        Assert.All(sink.Packets,packet => Assert.Equal("OnOwnOrdersChanged",NotificationName(packet)));
+        Assert.Equal(2,OwnOrderNotifications(sink).Count);
+        Assert.All(OwnOrderNotifications(sink),packet => Assert.Equal("OnOwnOrdersChanged",NotificationName(packet)));
         var own=(await r.Book.BookAsync(r.Station.RegionId,34,r.Now)).Asks.Single(o => !o.IsNpc);
         Assert.Equal(PyNone.Instance,await proxy.CancelCharOrder(Call(session,"CancelCharOrder",7,new PyLong(own.Id))));
-        Assert.Equal(3,sink.Packets.Count);
-        Assert.All(sink.Packets,packet => Assert.Equal("OnOwnOrdersChanged",NotificationName(packet)));
+        Assert.Equal(3,OwnOrderNotifications(sink).Count);
+        Assert.All(OwnOrderNotifications(sink),packet => Assert.Equal("OnOwnOrdersChanged",NotificationName(packet)));
         Assert.Equal(5,Assert.Single(await r.Items.InLocationAsync(r.Station.Id,actor)).Quantity);
     }
 
@@ -138,7 +142,7 @@ public class ProtocolTests
         var characterSessions=new CharacterSessions();
         characterSessions.Enter(actor,session);
         var catalog=await MarketCatalog.LoadAsync(new Eve.Sde.SdeReader(r.Source));
-        var proxy=new MarketProxyService(r.Book,r.Trading,r.Topology,r.Characters,r.Corporations,r.Wallets,catalog,() => r.Now,r.Expiry,characterSessions);
+        var proxy=new MarketProxyService(r.Book,r.Trading,r.Topology,r.Characters,r.Corporations,r.Wallets,catalog,() => r.Now,r.Expiry,r.Items,r.ItemTypes,characterSessions);
         const int plex=44992;
         var location=MarketLocation.From(r.Station);
         await r.Book.SeedNpcAsync([new("ask",plex,false,1000,3,32767,location,r.Now)]);
@@ -146,7 +150,7 @@ public class ProtocolTests
         Assert.Equal(PyNone.Instance,await proxy.PlaceBuyOrder(Call(session,"PlaceBuyOrder",20,
             new PyInt(r.Station.Id),new PyInt(plex),new PyReal(900),new PyInt(2),new PyInt(-1),
             new PyInt(1),new PyInt(90),PyBool.False)));
-        var notification=NotificationArguments(Assert.Single(sink.Packets));
+        var notification=NotificationArguments(Assert.Single(OwnOrderNotifications(sink)));
         var changed=Assert.IsType<PyList>(notification.Items[0]);
         var changedOrder=Fields(Assert.Single(changed.Items));
         Assert.Equal(new PyInt(plex),Field(changedOrder,"typeID"));
@@ -188,8 +192,8 @@ public class ProtocolTests
             new PyInt(r.Station.Id),new PyInt(plex),new PyReal(1000),new PyInt(1),new PyInt(-1),
             new PyInt(1),new PyInt(0),PyBool.False)));
 
-        Assert.Equal(3,sink.Packets.Count);
-        Assert.Empty(Assert.IsType<PyList>(NotificationArguments(sink.Packets[^1]).Items[0]).Items);
+        Assert.Equal(3,OwnOrderNotifications(sink).Count);
+        Assert.Empty(Assert.IsType<PyList>(NotificationArguments(OwnOrderNotifications(sink)[^1]).Items[0]).Items);
         var histories=Assert.IsType<PyDict>(await proxy.GetPlexHistory(Call(session,"GetPlexHistory",25)));
         var pair=Assert.IsType<PyList>(Assert.Single(histories.Entries).Value);
         Assert.Equal(2,pair.Items.Count);
@@ -208,7 +212,7 @@ public class ProtocolTests
         var history=Fields(historyStream.Decoded ?? MarshalCodec.Decode(historyStream.Raw));
         var historyLine=Assert.IsType<PyTuple>(Assert.Single(Assert.IsType<PyList>(Field(history,"lines")).Items));
         Assert.Equal(new PyInt(3),historyLine.Items[19]);
-        Assert.All(sink.Packets,packet => Assert.Equal("OnOwnOrdersChanged",NotificationName(packet)));
+        Assert.All(OwnOrderNotifications(sink),packet => Assert.Equal("OnOwnOrdersChanged",NotificationName(packet)));
     }
 
     [PgFact]
@@ -235,7 +239,7 @@ public class ProtocolTests
         sessions.Enter(firstActor,firstSession);
         sessions.Enter(secondActor,secondSession);
         var catalog=await MarketCatalog.LoadAsync(new Eve.Sde.SdeReader(r.Source));
-        var proxy=new MarketProxyService(r.Book,r.Trading,r.Topology,r.Characters,r.Corporations,r.Wallets,catalog,() => r.Now,r.Expiry,sessions);
+        var proxy=new MarketProxyService(r.Book,r.Trading,r.Topology,r.Characters,r.Corporations,r.Wallets,catalog,() => r.Now,r.Expiry,r.Items,r.ItemTypes,sessions);
         const int type=34;
         await r.Book.SeedNpcAsync([
             new("ask:origin",type,false,10,1,32767,MarketLocation.From(r.Station),r.Now),
@@ -271,7 +275,7 @@ public class ProtocolTests
         characterSessions.Enter(actor,session);
         var catalog=await MarketCatalog.LoadAsync(new Eve.Sde.SdeReader(r.Source));
         Assert.Contains(r.Station.Id,catalog.NpcStationIds);
-        var proxy=new MarketProxyService(r.Book,r.Trading,r.Topology,r.Characters,r.Corporations,r.Wallets,catalog,() => r.Now,r.Expiry,characterSessions);
+        var proxy=new MarketProxyService(r.Book,r.Trading,r.Topology,r.Characters,r.Corporations,r.Wallets,catalog,() => r.Now,r.Expiry,r.Items,r.ItemTypes,characterSessions);
 
         var location=MarketLocation.From(r.Station);
         var remoteStation=Assert.Single(r.Stations.All.Where(s=>s.RegionId==r.Station.RegionId && s.SolarSystemId!=r.Station.SolarSystemId).Take(1));

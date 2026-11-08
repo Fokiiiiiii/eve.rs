@@ -1470,12 +1470,12 @@ public class AccountTests
     }
 
     [PgFact]
-    public async Task Without_a_character_or_a_wallet_there_is_no_balance()
+    public async Task Without_a_character_balance_is_none_and_a_missing_wallet_balance_is_zero()
     {
         await using var rig = await Rig.CreateAsync();
         var (nobody, _) = Rig.Session(null);
         Assert.Equal(PyNone.Instance, await Rig.CallAsync(rig.Account, nobody, "GetCashBalance"));
         var (stranger, _) = Rig.Session(140_999_999);
-        Assert.Equal(PyNone.Instance, await Rig.CallAsync(rig.Account, stranger, "GetCashBalance"));
+        Assert.Equal(new PyReal(0), await Rig.CallAsync(rig.Account, stranger, "GetCashBalance"));
     }
 }

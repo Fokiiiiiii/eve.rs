@@ -47,7 +47,7 @@ public sealed record ShipTransitionEvent(
 public sealed partial class CharacterShips
 {
     /// <summary>The flag of an item that is in space, not in any inventory place.</summary>
-    public const int InSpaceFlag = 0;
+    public const int InSpaceFlag = ItemFlags.InSpace;
 
     /// <summary>
     /// The character's active ship leaves the hangar of the station the character is at and is in the solar system, in space. The character's

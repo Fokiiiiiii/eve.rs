@@ -1,5 +1,17 @@
 # Deviations from the reference server
 
+## MachoNet PING_RSP timing entries follow V24.01 (2026-11-08)
+
+V24.01's `PingReq` handler appends one `(GetWallclockTime(), GetWallclockTimeNow(), mode + '::turnaround')` entry to the received `times` list, then responds with a copy (`/home/user/eve-logic/carbon/common/script/net/machoNet.py:4310-4313`). The client declares that field on both packet classes (`machoNetPacket.py:327-337`) and the keepalive path reads the first returned sample (`machoNet.py:3566-3571`). EveJS v0.12.9 instead synthesizes six timing entries (`/home/user/evejs-261028.1/server/src/network/packetDispatcher.js:881-927`).
+
+eve.rs follows the V24 list shape: it echoes received entries and appends one `proxy::turnaround` sample. `DispatchGoldenTests` checks the decoded response context, preserved timing prefix, exact injected-clock values, and turnaround label; Host wire tests cover empty and non-empty input timing lists (`dotnet/tests/Eve.Services.Tests/DispatchGoldenTests.cs`, `dotnet/tests/Eve.Host.Tests/HostServerTests.cs`). The Host currently uses one injected millisecond clock value for both FILETIME fields. The graphical client was not run.
+
+## Rejecting a PyList as the outer MachoNet argument tuple (2026-11-08)
+
+V24.01's normal `RemoteServiceCall` path receives Python `*args` and encodes them in the `CallReq` payload as a tuple (`/home/user/eve-logic/carbon/common/script/net/ServiceCallGPCS.py:675-688,230-234`). `CallUp` passes `packet.payload[2]` to native `ClockThisWithoutTheStars` (`ServiceCallGPCS.py:120-132`); the helper's treatment of a malformed PyList is not exposed in the available Python source, and no standard client callsite constructs that outer shape. EveJS v0.12.9 does accept it: its Marshal decoder retains a tagged list, `decodeCallRequest` wraps non-array values as one argument, and `PacketDispatcher` calls the service with that value (`/home/user/evejs-261028.1/server/src/network/tcp/utils/marshal.js:1818-1836`, `server/src/common/pyPacket.js:205-215`, `server/src/network/packetDispatcher.js:541-543,619-625`).
+
+eve.rs rejects an outer PyList with a wrapped `UnMachoDestination` error rather than expanding its items. A list nested inside the V24 tuple remains a normal list-valued argument. The Host socket regression verifies the rejected request does not invoke the service and then verifies nested-list success (`dotnet/tests/Eve.Host.Tests/HostServerTests.cs`); the golden fixture retains the EveJS response and the dispatch test asserts the eve.rs error for this malformed shape (`oracle/fixtures/services/dispatch.json`, `dotnet/tests/Eve.Services.Tests/DispatchGoldenTests.cs`). This is a deliberate defensive difference for an input the V24 client does not emit.
+
 ## SKINR completion notice recovery (2026-11-07)
 
 V24.01 consumes `CompletedNotice` and then `UpdatedNotice` for ship skin sequencing (`cosmetics/client/messengers/cosmetics/ship/shipSkinSequencingNoticeMessenger.py:16-31`, `shipSkinLicenseNoticeMessenger.py:17-29`). EveJS 261028.1 broadcasts both notices to currently connected matching streams (`server/src/_secondary/express/gatewayServices/shipSkinSequencingGatewayService.js:28-38`; `server/src/_secondary/express/publicGatewayLocal.js:2074-2087`).

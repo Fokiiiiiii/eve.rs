@@ -1248,6 +1248,16 @@ private static void WriteStructureDamageCorrelation(
                 w.U64(m.SessionId);
                 w.U8(m.Command);
                 WriteVector(w, m.Position);
+                WriteOptionalVector(w, m.Direction);
+                if (m.Radius is not { } radius)
+                    w.U8(0);
+                else
+                {
+                    if (!double.IsFinite(radius) || radius < 0)
+                        throw new ArgumentException("A simulation target radius must be finite and nonnegative.", nameof(message));
+                    w.U8(1);
+                    w.F64(radius);
+                }
                 break;
             case SimDirectionalTargets m:
                 w.U8(Kind.DirectionalTargets);

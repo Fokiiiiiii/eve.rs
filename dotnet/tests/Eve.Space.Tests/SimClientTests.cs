@@ -78,6 +78,37 @@ public class SimClientTests
     }
 
     [Fact]
+    public async Task An_async_public_entry_handoff_finishes_before_following_sim_notifications_are_dispatched()
+    {
+        var (sim, client) = await ConnectedAsync(message => message is SimEnterPublicParticipant request
+            ? [new SimEnterPublicParticipantReply(request.RequestId, null), new SimServiceNotify(7, "ship", "Entered", ReadOnlyMemory<byte>.Empty)]
+            : []);
+        await using var _ = sim;
+        await using var __ = client;
+        var order = new List<string>();
+        var followingNotification = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.Received += message =>
+        {
+            if (message is SimServiceNotify { Method: "Entered" })
+            {
+                order.Add("following-notification");
+                followingNotification.TrySetResult();
+            }
+        };
+
+        var request = new SimEnterPublicParticipant(991, Guid.NewGuid().ToString("D"), Enter() with { How = EnterHow.Anchor });
+        await Within(client.EnterPublicParticipantInOrderAwaitingAsync(request, async reply =>
+        {
+            Assert.Null(reply.Error);
+            await Task.Delay(50);
+            order.Add("settlement-and-session-change");
+        }));
+
+        await followingNotification.Task.WaitAsync(Patience);
+        Assert.Equal(["settlement-and-session-change", "following-notification"], order);
+    }
+
+    [Fact]
     public async Task Cutoff_replies_reject_mismatched_identity_even_when_request_id_matches()
     {
         var (sim, client) = await ConnectedAsync(message => message switch

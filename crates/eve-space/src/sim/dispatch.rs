@@ -155,10 +155,12 @@ impl Sim {
                 }
             }
             Out::Accepted { session, command, at } => Message::Accepted { session_id: session, command, at },
-            Out::Position { session, command, position } => Message::Position {
+            Out::Position { session, command, position, direction, radius } => Message::Position {
                 session_id: session,
                 command,
                 position: [position.x, position.y, position.z],
+                direction: direction.map(|value| [value.x, value.y, value.z]),
+                radius,
             },
             Out::Approaching { session, command, distance } => {
                 Message::Approaching { session_id: session, command, distance }

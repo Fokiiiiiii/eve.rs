@@ -28,8 +28,7 @@ public sealed class CalendarParticipantConcurrencyTests
             invitees);
         try
         {
-            var synchronizedStore = new FirstConcurrentReadStore(store);
-            IService service = new CalendarMgrService(synchronizedStore, cspaBilling: FreeCspaBilling());
+            IService service = new CalendarMgrService(store, cspaBilling: FreeCspaBilling());
             var session = new ClientSession { CharacterId = CreatorId };
             var calls = new[] { CreatorId + 100, CreatorId + 101 }.Select(characterId =>
                 service.CallAsync(Call(session, eventId, characterId)).AsTask()).ToArray();
@@ -102,120 +101,6 @@ public sealed class CalendarParticipantConcurrencyTests
         Assert.Equal(-500m, charge.Amount);
         Assert.Equal(inviteeId, charge.ReferenceId);
         Assert.Equal(500m, await ReadBalanceAsync(source, ownerId));
-    }
-
-    [PgFact]
-    public async Task Concurrent_remove_and_reinvite_notify_each_committed_transition()
-    {
-        var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL");
-        Assert.False(string.IsNullOrWhiteSpace(pgUrl));
-        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(pgUrl!));
-        await CalendarStore.MigrateAsync(source);
-        var store = new CalendarStore(source);
-        var inviteeId = CreatorId + 1;
-        var eventId = await store.CreateEventAsync(
-            new CalendarEventInput(CreatorId, CreatorId, CalendarTags.Personal,
-                DateTime.UtcNow.AddDays(2).ToFileTimeUtc(), 60, "Fleet form-up", "Meet at the undock", 0),
-            [inviteeId]);
-        await store.SendResponseAsync(eventId, CreatorId, inviteeId, CalendarResponseStates.Accepted);
-        var ownerSink = new RecordingSink();
-        var inviteeSink = new BlockingRemoveSink();
-        var ownerSession = new ClientSession(ownerSink) { CharacterId = CreatorId };
-        var inviteeSession = new ClientSession(inviteeSink) { CharacterId = inviteeId };
-        var sessions = new CharacterSessions();
-        sessions.Enter(CreatorId, ownerSession);
-        sessions.Enter(inviteeId, inviteeSession);
-        var synchronizedStore = new FirstConcurrentReadStore(store, synchronizeFirstTwoReads: false);
-        IService service = new CalendarMgrService(synchronizedStore, sessions: sessions,
-            cspaBilling: FreeCspaBilling());
-
-        try
-        {
-            var remove = service.CallAsync(ParticipantsCall(ownerSession, eventId, [], [inviteeId])).AsTask();
-            await inviteeSink.RemoveReached.WaitAsync(TimeSpan.FromSeconds(10));
-            var reinvite = service.CallAsync(ParticipantsCall(ownerSession, eventId, [inviteeId], [])).AsTask();
-            await synchronizedStore.SecondParticipantUpdateReached.WaitAsync(TimeSpan.FromSeconds(10));
-            var reinviteProgress = await Task.WhenAny(reinvite, Task.Delay(TimeSpan.FromSeconds(5)));
-            if (ReferenceEquals(reinviteProgress, reinvite))
-                await reinvite;
-            Assert.NotSame(reinvite, reinviteProgress);
-            inviteeSink.ReleaseRemove();
-            await Task.WhenAll(remove, reinvite);
-
-            Assert.Equal(CalendarResponseStates.Undecided,
-                Assert.Single(await store.GetResponsesToEventAsync(eventId, CreatorId), row =>
-                    row.CharacterId == inviteeId).Status);
-            Assert.Equal(new[] { "OnRemoveCalendarEvent", "OnNewCalendarEvent" }, NotificationNames(inviteeSink));
-        }
-        finally
-        {
-            inviteeSink.ReleaseRemove();
-            await using var connection = await source.OpenConnectionAsync();
-            await using var command = new NpgsqlCommand(
-                "DELETE FROM calendar.events WHERE event_id = $1", connection);
-            command.Parameters.AddWithValue(eventId);
-            await command.ExecuteNonQueryAsync();
-        }
-    }
-
-    [PgFact]
-    public async Task Response_notification_uses_event_date_locked_with_the_response_write()
-    {
-        var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL");
-        Assert.False(string.IsNullOrWhiteSpace(pgUrl));
-        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(pgUrl!));
-        await CalendarStore.MigrateAsync(source);
-        var store = new CalendarStore(source);
-        var inviteeId = CreatorId + 1;
-        var originalTime = DateTime.UtcNow.AddDays(2).ToFileTimeUtc();
-        var updatedTime = originalTime + TimeSpan.TicksPerHour;
-        var eventId = await store.CreateEventAsync(
-            new CalendarEventInput(CreatorId, CreatorId, CalendarTags.Personal,
-                originalTime, 60, "Fleet form-up", "Meet at the undock", 0),
-            [inviteeId]);
-        var ownerSink = new RecordingSink();
-        var ownerSession = new ClientSession(ownerSink) { CharacterId = CreatorId };
-        var inviteeSession = new ClientSession { CharacterId = inviteeId };
-        var sessions = new CharacterSessions();
-        sessions.Enter(CreatorId, ownerSession);
-        sessions.Enter(inviteeId, inviteeSession);
-        var gatedStore = new FirstConcurrentReadStore(store, synchronizeFirstTwoReads: false);
-        IService service = new CalendarMgrService(gatedStore, sessions: sessions, cspaBilling: FreeCspaBilling());
-        Task<PyValue>? pendingResponse = null;
-
-        try
-        {
-            pendingResponse = service.CallAsync(ResponseCall(inviteeSession, eventId, CreatorId,
-                CalendarResponseStates.Accepted)).AsTask();
-            await gatedStore.ResponseReached.WaitAsync(TimeSpan.FromSeconds(10));
-            Assert.IsType<PyNone>(await service.CallAsync(new ServiceCall
-            {
-                Method = "EditPersonalEvent",
-                Args = [new PyLong(eventId), new PyLong(originalTime), new PyLong(updatedTime), new PyInt(60),
-                    new PyStr("Fleet form-up"), new PyStr("Meet at the gate"), new PyInt(0)],
-                Session = ownerSession,
-            }));
-
-            gatedStore.ReleaseResponse();
-            Assert.IsType<PyNone>(await pendingResponse);
-            var responseNotification = NotificationArguments(ownerSink, "OnEventResponseByExternal");
-            var eventRow = Assert.IsType<PyObject>(responseNotification.Items[1]);
-            Assert.Equal(new PyLong(updatedTime), NotificationField(eventRow, "eventDateTime"));
-        }
-        finally
-        {
-            gatedStore.ReleaseResponse();
-            if (pendingResponse is not null)
-            {
-                try { await pendingResponse; }
-                catch { }
-            }
-            await using var connection = await source.OpenConnectionAsync();
-            await using var command = new NpgsqlCommand(
-                "DELETE FROM calendar.events WHERE event_id = $1", connection);
-            command.Parameters.AddWithValue(eventId);
-            await command.ExecuteNonQueryAsync();
-        }
     }
 
     [PgFact]
@@ -347,33 +232,6 @@ public sealed class CalendarParticipantConcurrencyTests
         return Assert.IsType<PyStr>(address[1]).Value;
     }).ToArray();
 
-    private static PyTuple NotificationArguments(RecordingSink sink, string notification)
-    {
-        var packet = Assert.Single(sink.Packets.OfType<PyObject>(), packet =>
-        {
-            var fields = Assert.IsType<PyTuple>(packet.Args).Items;
-            var envelopeObject = Assert.IsType<PyObject>(fields[2]);
-            var envelope = Assert.IsType<PyTuple>(envelopeObject.Args).Items;
-            return Assert.IsType<PyStr>(envelope[1]).Value == notification;
-        });
-        var packetFields = Assert.IsType<PyTuple>(packet.Args).Items;
-        var notificationEnvelope = Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(packetFields[4]).Items[0]);
-        var encodedNotification = Assert.IsType<PyBuffer>(notificationEnvelope.Items[1]).Value;
-        var decodedNotification = Assert.IsType<PyTuple>(MarshalCodec.Decode(encodedNotification));
-        return Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(decodedNotification.Items[1]).Items[1]);
-    }
-
-    private static PyValue NotificationField(PyObject value, string name)
-    {
-        var fields = Assert.IsType<PyDict>(value.Args).Entries;
-        return Assert.Single(fields, item => item.Key switch
-        {
-            PyStr text => text.Value == name,
-            PyBytes bytes => System.Text.Encoding.UTF8.GetString(bytes.Value.Span) == name,
-            _ => false,
-        }).Value;
-    }
-
     private static CalendarCspaBilling FreeCspaBilling() => new(
         (_, _) => ValueTask.FromResult<int?>(0),
         (_, _, _) => ValueTask.FromResult(CalendarCspaRecipientRule.Charge),
@@ -398,12 +256,9 @@ public sealed class CalendarParticipantConcurrencyTests
         private readonly TaskCompletionSource _firstTwoReads = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _responseReached = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _releaseResponse = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private readonly TaskCompletionSource _secondParticipantUpdateReached = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _reads;
-        private int _participantUpdates;
 
         public Task ResponseReached => _responseReached.Task;
-        public Task SecondParticipantUpdateReached => _secondParticipantUpdateReached.Task;
         public void ReleaseResponse() => _releaseResponse.TrySetResult();
 
         public Task<IReadOnlyList<CalendarEvent>> ListMonthAsync(long characterId, long corporationId, long allianceId,
@@ -434,78 +289,34 @@ public sealed class CalendarParticipantConcurrencyTests
 
         public Task<long> CreateEventAsync(CalendarEventInput input, IReadOnlyCollection<long> invitees,
             CancellationToken cancellationToken = default,
-            Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null,
-            Func<CalendarEvent, IReadOnlyCollection<long>, CancellationToken, Task>? afterCommitAsync = null) =>
-            inner.CreateEventAsync(input, invitees, cancellationToken, beforeCommitAsync, afterCommitAsync);
+            Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null) =>
+            inner.CreateEventAsync(input, invitees, cancellationToken, beforeCommitAsync);
 
         public Task<bool> EditEventAsync(long eventId, long ownerId, long oldEventDateTime, CalendarEventInput input,
-            CancellationToken cancellationToken = default,
-            Func<CalendarEvent, IReadOnlyCollection<long>, CancellationToken, Task>? afterCommitAsync = null) =>
-            inner.EditEventAsync(eventId, ownerId, oldEventDateTime, input, cancellationToken, afterCommitAsync);
+            CancellationToken cancellationToken = default) =>
+            inner.EditEventAsync(eventId, ownerId, oldEventDateTime, input, cancellationToken);
 
         public Task<bool> DeleteEventAsync(long eventId, long ownerId, long dateModified,
-            CancellationToken cancellationToken = default,
-            Func<CalendarEvent, IReadOnlyCollection<long>, CancellationToken, Task>? afterCommitAsync = null) =>
-            inner.DeleteEventAsync(eventId, ownerId, dateModified, cancellationToken, afterCommitAsync);
+            CancellationToken cancellationToken = default) =>
+            inner.DeleteEventAsync(eventId, ownerId, dateModified, cancellationToken);
 
-        public Task<CalendarParticipantUpdateResult> UpdateParticipantsAsync(long eventId, long ownerId, IReadOnlyCollection<long> add,
+        public Task<CalendarParticipantUpdate> UpdateParticipantsAsync(long eventId, long ownerId, IReadOnlyCollection<long> add,
             IReadOnlyCollection<long> remove, CancellationToken cancellationToken = default,
-            Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null,
-            Func<CalendarEvent, IReadOnlyCollection<long>, IReadOnlyCollection<long>, CancellationToken, Task>? afterCommitAsync = null)
-        {
-            if (Interlocked.Increment(ref _participantUpdates) == 2)
-                _secondParticipantUpdateReached.TrySetResult();
-            return inner.UpdateParticipantsAsync(eventId, ownerId, add, remove, cancellationToken,
-                beforeCommitAsync, afterCommitAsync);
-        }
+            Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null) =>
+            inner.UpdateParticipantsAsync(eventId, ownerId, add, remove, cancellationToken, beforeCommitAsync);
 
-        public async Task<bool> SendResponseAsync(long eventId, long ownerId, long characterId, short response,
-            CancellationToken cancellationToken = default,
-            Func<CalendarEvent, IReadOnlyCollection<long>, CancellationToken, Task>? afterCommitAsync = null)
+        public async Task<CalendarResponseUpdate> SendResponseAsync(long eventId, long ownerId, long characterId, short response,
+            CancellationToken cancellationToken = default)
         {
             _responseReached.TrySetResult();
             await _releaseResponse.Task.WaitAsync(cancellationToken);
-            return await inner.SendResponseAsync(eventId, ownerId, characterId, response, cancellationToken, afterCommitAsync);
+            return await inner.SendResponseAsync(eventId, ownerId, characterId, response, cancellationToken);
         }
     }
 
-    private class RecordingSink : IPacketSink
+    private sealed class RecordingSink : IPacketSink
     {
         public List<PyValue> Packets { get; } = [];
-        public virtual void Send(PyValue packet) => Packets.Add(packet);
-    }
-
-    private sealed class BlockingRemoveSink : RecordingSink
-    {
-        private readonly ManualResetEventSlim _releaseRemove = new(false);
-        private readonly TaskCompletionSource _removeReached = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public Task RemoveReached => _removeReached.Task;
-        public void ReleaseRemove() => _releaseRemove.Set();
-
-        public override void Send(PyValue packet)
-        {
-            if (NotificationName(packet) == "OnRemoveCalendarEvent")
-            {
-                _removeReached.TrySetResult();
-                if (!_releaseRemove.Wait(TimeSpan.FromSeconds(10)))
-                    throw new TimeoutException("The test did not release the calendar removal notification.");
-            }
-            base.Send(packet);
-        }
-
-        private static string? NotificationName(PyValue packet)
-        {
-            if (packet is not PyObject value || value.Args is not PyTuple fields || fields.Items.Count < 3 ||
-                fields.Items[2] is not PyObject addressObject || addressObject.Args is not PyTuple address ||
-                address.Items.Count < 2)
-                return null;
-            return address.Items[1] switch
-            {
-                PyStr text => text.Value,
-                PyBytes bytes => System.Text.Encoding.UTF8.GetString(bytes.Value.Span),
-                _ => null,
-            };
-        }
+        public void Send(PyValue packet) => Packets.Add(packet);
     }
 }

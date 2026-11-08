@@ -60,6 +60,31 @@ internal sealed class HostJumpCloneStore(PgJumpCloneStore clones, NpgsqlDataSour
         }
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        if (await characters.LockAndGetAsync(connection, transaction, characterId, cancellationToken) is null)
+            throw new JumpCloneInstallRefusedException("CHARACTER_NOT_FOUND");
+
+        // Every install by this character takes the character row lock before reading limits or inserting. Ship installs also
+        // serialize on the physical bay so different recipients cannot consume the same last slot concurrently.
+        if (install.LocationKind == "ship")
+            await LockShipCloneBayAsync(connection, transaction, install.LocationId, cancellationToken);
+
+        var cloneLimit = 0;
+        foreach (var skillId in CloneJumpRules.CloneLimitSkillIds)
+            cloneLimit += await skills.LevelAsync(connection, transaction, characterId, skillId, cancellationToken);
+        if (cloneLimit <= 0)
+            throw new JumpCloneInstallRefusedException("SKILL_REQUIRED");
+
+        if (await clones.CountForCharacterAsync(connection, transaction, characterId, cancellationToken) >= cloneLimit)
+            throw new JumpCloneInstallRefusedException("CLONE_LIMIT");
+
+        if (install.LocationKind is "station" or "structure" &&
+            await clones.CountAtForCharacterAsync(connection, transaction, characterId, install.LocationId, install.LocationKind, cancellationToken) > 0)
+            throw new JumpCloneInstallRefusedException("LOCATION_OCCUPIED");
+
+        if (install.LocationKind == "ship" &&
+            await clones.CountAtAsync(connection, transaction, install.LocationId, install.LocationKind, cancellationToken) >= install.ShipCapacity)
+            throw new JumpCloneInstallRefusedException("SHIP_CAPACITY");
+
         var cloneId = await clones.InsertAsync(connection, transaction, characterId, install.LocationId, install.LocationKind, cancellationToken);
         var timeMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var operationKey = $"jump-clone-install:{cloneId}";
@@ -86,6 +111,15 @@ internal sealed class HostJumpCloneStore(PgJumpCloneStore clones, NpgsqlDataSour
             install.LocationId, install.LocationKind, install.Fee, install.OwnerCorporationId, install.OfferingCharacterId), cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new JumpCloneRecord(cloneId, install.LocationId, install.LocationKind, "", []);
+    }
+
+    private static async Task LockShipCloneBayAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long shipId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(
+            "SELECT pg_advisory_xact_lock(hashtextextended('jump-clone-ship:' || $1::text, 0))", connection, transaction);
+        command.Parameters.AddWithValue(shipId);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async ValueTask<decimal> IskBalanceAsync(long characterId, CancellationToken cancellationToken) =>
@@ -119,6 +153,19 @@ internal sealed class HostJumpCloneStore(PgJumpCloneStore clones, NpgsqlDataSour
         await statics.EnsureTypesAsync(body.Select(item => item.TypeId).ToArray(), cancellationToken);
         var bodyImplants = body.Select(item => (PilotAugmentations.SlotOf(statics.Type(item.TypeId)), item.TypeId)).ToList();
 
+        // A ship clone can be activated only while its physical ship is still in the destination system. Keep the item row locked
+        // until settlement commits, so a concurrent ship relocation cannot make the client arrive at a stale destination.
+        var requestedTarget = await clones.FindAsync(connection, transaction, characterId, targetCloneId, cancellationToken);
+        if (requestedTarget?.LocationKind == "ship")
+        {
+            var targetShip = await items.LockAndGetAsync(connection, transaction, requestedTarget.LocationId, cancellationToken);
+            if (targetShip is not null)
+                await statics.EnsureTypesAsync([targetShip.TypeId], cancellationToken);
+            if (targetShip is null || targetShip.Flag != CharacterShips.InSpaceFlag || targetShip.LocationId != character.SolarSystemId ||
+                statics.Type(targetShip.TypeId)?.CategoryId != 6)
+                return new CloneJumpResult("CLONE_NOT_FOUND");
+        }
+
         var jump = await clones.JumpAsync(connection, transaction, characterId, targetCloneId, originLocationId, originLocationKind,
             bodyImplants, cooldownHours, nowFileTime, cancellationToken);
         if (jump.CooldownActive)
@@ -134,7 +181,7 @@ internal sealed class HostJumpCloneStore(PgJumpCloneStore clones, NpgsqlDataSour
             if (structure is null || structure.Snapshot.DestroyedMs > 0 || solarSystems.Get(structure.SolarSystemId) is null)
                 return new CloneJumpResult("CLONE_NOT_FOUND");
         }
-        if (station is null && structure is null)
+        if (station is null && structure is null && target.LocationKind != "ship")
             return new CloneJumpResult("CLONE_NOT_FOUND");
         try
         {
@@ -159,11 +206,17 @@ internal sealed class HostJumpCloneStore(PgJumpCloneStore clones, NpgsqlDataSour
             await items.DeleteAsync(connection, transaction, implant.Id, cancellationToken);
         foreach (var typeId in target.ImplantTypeIds)
             await items.CreateAsync(connection, transaction, new NewItem(typeId, characterId, characterId, PilotAugmentations.ImplantFlag, 1, Singleton: true), cancellationToken);
-        var solarSystem = station is not null ? solarSystems.Get(station.SolarSystemId) : solarSystems.Get(structure!.SolarSystemId)!;
+        var solarSystem = station is not null ? solarSystems.Get(station.SolarSystemId)
+            : structure is not null ? solarSystems.Get(structure.SolarSystemId)
+            : solarSystems.Get(character.SolarSystemId);
+        if (solarSystem is null)
+            return new CloneJumpResult("CLONE_NOT_FOUND");
         if (station is not null)
             await characters.SetStationAsync(connection, transaction, characterId, station.Id, cancellationToken);
-        else
+        else if (structure is not null)
             await characters.SetStructureAsync(connection, transaction, characterId, structure!.Snapshot.StructureId, cancellationToken);
+        else
+            await characters.SetStructureAsync(connection, transaction, characterId, null, cancellationToken);
         await characters.SetLocationAsync(connection, transaction, characterId, solarSystem!.Id, solarSystem.ConstellationId, solarSystem.RegionId, cancellationToken);
 
         var endedBoosters = await boosters.EndNormalBoostersAsync(connection, transaction, characterId, nowFileTime, statics, cancellationToken);
@@ -172,8 +225,11 @@ internal sealed class HostJumpCloneStore(PgJumpCloneStore clones, NpgsqlDataSour
             await boosters.AnnounceEndedAsync(characterId, cancellationToken);
         return station is not null
             ? new CloneJumpResult(null, station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId)
-            : new CloneJumpResult(null, SolarSystemId: solarSystem!.Id, ConstellationId: solarSystem.ConstellationId,
-                RegionId: solarSystem.RegionId, StructureId: structure!.Snapshot.StructureId);
+            : structure is not null
+                ? new CloneJumpResult(null, SolarSystemId: solarSystem.Id, ConstellationId: solarSystem.ConstellationId,
+                    RegionId: solarSystem.RegionId, StructureId: structure.Snapshot.StructureId)
+                : new CloneJumpResult(null, SolarSystemId: solarSystem.Id, ConstellationId: solarSystem.ConstellationId,
+                    RegionId: solarSystem.RegionId);
     }
 
     private static JumpCloneRecord Map(InstalledJumpClone clone) =>

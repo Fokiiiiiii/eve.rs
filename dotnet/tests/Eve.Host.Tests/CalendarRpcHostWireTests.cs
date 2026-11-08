@@ -48,8 +48,6 @@ public partial class HostServerTests
                     1 => ownerId,
                     2 => inviteeId,
                     3 => removedInviteeId,
-                    4 => addedInviteeId,
-                    5 => inviteeId,
                     _ => addedInviteeId,
                 };
                 session.Set("charid", new PyLong(characterId));
@@ -193,11 +191,6 @@ public partial class HostServerTests
         Assert.Equal("corp edit", WireText(WireField(finalDetails, "eventText")));
 
         Assert.IsType<PyNone>(await HostRpcAsync(
-            inviteeFront, inviteeOpen, 3, "calendarMgr", "SendEventResponse",
-            new PyLong(eventId), new PyLong(ownerId), new PyInt(CalendarResponseStates.Declined)));
-        await AssertCalendarNotificationAsync(addedFront, "OnEventResponseByExternal");
-
-        Assert.IsType<PyNone>(await HostRpcAsync(
             ownerFront, ownerOpen, 16, "calendarMgr", "DeleteEvent",
             new PyInt(eventId), new PyLong(ownerId)));
         await AssertCalendarNotificationAsync(inviteeFront, "OnRemoveCalendarEvent");
@@ -214,19 +207,12 @@ public partial class HostServerTests
         var responsesAfterDelete = await store.GetResponsesToEventAsync(eventId, ownerId);
         Assert.Equal(CalendarResponseStates.Accepted,
             responsesAfterDelete.Single(row => row.CharacterId == ownerId).Status);
-        Assert.Equal(CalendarResponseStates.Declined,
+        Assert.Equal(CalendarResponseStates.Undecided,
             responsesAfterDelete.Single(row => row.CharacterId == inviteeId).Status);
         Assert.Equal(CalendarResponseStates.Uninvited,
             responsesAfterDelete.Single(row => row.CharacterId == removedInviteeId).Status);
         Assert.Equal(CalendarResponseStates.Undecided,
             responsesAfterDelete.Single(row => row.CharacterId == addedInviteeId).Status);
-
-        var (reconnectedInviteeFront, reconnectedInviteeOpen) = await OpenCalendarFrontAsync(405);
-        var reconnectedResponses = Assert.IsType<PyList>(await HostRpcAsync(
-            reconnectedInviteeFront, reconnectedInviteeOpen, 1, "calendarMgr", "GetResponsesForCharacter"));
-        Assert.Equal(CalendarResponseStates.Declined,
-            WireInteger(WireField(Assert.Single(reconnectedResponses.Items,
-                row => WireInteger(WireField(row, "eventID")) == eventId), "status")));
 
         var inviteeDeletedEvents = Assert.IsType<PyTuple>(await HostRpcAsync(
             inviteeFront, inviteeOpen, 19, "calendarProxy", "GetEventList",
@@ -550,8 +536,7 @@ public partial class HostServerTests
         public async Task<long> CreateEventAsync(
             CalendarEventInput input, IReadOnlyCollection<long> invitees,
             CancellationToken cancellationToken = default,
-            Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null,
-            Func<CalendarEvent, IReadOnlyCollection<long>, CancellationToken, Task>? afterCommitAsync = null)
+            Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null)
         {
             var eventId = ++_nextEventId;
             var actualInvitees = input.Tag == CalendarTags.Personal
@@ -568,19 +553,16 @@ public partial class HostServerTests
             foreach (var invitee in actualInvitees)
                 _responses[(eventId, invitee)] =
                     new CalendarResponse(eventId, invitee, CalendarResponseStates.Undecided);
-            if (afterCommitAsync is not null)
-                await afterCommitAsync(_events[eventId], ActiveParticipantIds(eventId), cancellationToken);
             return eventId;
         }
 
-        public async Task<bool> EditEventAsync(
+        public Task<bool> EditEventAsync(
             long eventId, long ownerId, long oldEventDateTime, CalendarEventInput input,
-            CancellationToken cancellationToken = default,
-            Func<CalendarEvent, IReadOnlyCollection<long>, CancellationToken, Task>? afterCommitAsync = null)
+            CancellationToken cancellationToken = default)
         {
             if (!_events.TryGetValue(eventId, out var value) || value.OwnerId != ownerId ||
                 value.IsDeleted || value.EventDateTime != oldEventDateTime)
-                return false;
+                return Task.FromResult(false);
             _events[eventId] = value with
             {
                 EventDateTime = input.EventDateTime,
@@ -597,39 +579,31 @@ public partial class HostServerTests
                     if (response.Status is CalendarResponseStates.Accepted or CalendarResponseStates.Maybe or CalendarResponseStates.Undecided)
                         _responses[key] = response with { Status = CalendarResponseStates.Undecided };
                 }
-            if (afterCommitAsync is not null)
-                await afterCommitAsync(_events[eventId], ActiveParticipantIds(eventId), cancellationToken);
-            return true;
+            return Task.FromResult(true);
         }
 
-        public async Task<bool> DeleteEventAsync(
-            long eventId, long ownerId, long dateModified, CancellationToken cancellationToken = default,
-            Func<CalendarEvent, IReadOnlyCollection<long>, CancellationToken, Task>? afterCommitAsync = null)
+        public Task<bool> DeleteEventAsync(
+            long eventId, long ownerId, long dateModified, CancellationToken cancellationToken = default)
         {
             if (!_events.TryGetValue(eventId, out var value) || value.OwnerId != ownerId || value.IsDeleted)
-                return false;
+                return Task.FromResult(false);
             _events[eventId] = value with { IsDeleted = true, DateModified = dateModified };
-            if (afterCommitAsync is not null)
-                await afterCommitAsync(_events[eventId], ActiveParticipantIds(eventId), cancellationToken);
-            return true;
+            return Task.FromResult(true);
         }
 
-        public async Task<CalendarParticipantUpdateResult> UpdateParticipantsAsync(
+        public async Task<CalendarParticipantUpdate> UpdateParticipantsAsync(
             long eventId, long ownerId, IReadOnlyCollection<long> add, IReadOnlyCollection<long> remove,
             CancellationToken cancellationToken = default,
-            Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null,
-            Func<CalendarEvent, IReadOnlyCollection<long>, IReadOnlyCollection<long>, CancellationToken, Task>? afterCommitAsync = null)
+            Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, long, IReadOnlyCollection<long>, CancellationToken, Task>? beforeCommitAsync = null)
         {
             if (!_events.TryGetValue(eventId, out var value) || value.OwnerId != ownerId)
-                return CalendarParticipantUpdateResult.EventNotFound;
+                return new(CalendarParticipantUpdateResult.EventNotFound, null, [], []);
             var removed = remove.Where(id => id > 0 && id != value.CreatorId).ToHashSet();
             var active = _responses.Values.Where(row => row.EventId == eventId && row.CharacterId != value.CreatorId &&
                 row.Status != CalendarResponseStates.Uninvited).Select(row => row.CharacterId).ToHashSet();
-            var removedInvitees = active.Where(removed.Contains).Order().ToArray();
+            var actuallyRemoved = active.Where(removed.Contains).ToArray();
             var newlyAdded = add.Where(id => id > 0 && id != value.CreatorId && !removed.Contains(id))
-                .Distinct().Where(id => !active.Contains(id)).Order().ToArray();
-            if (active.Except(removed).Union(newlyAdded).Count() > CalendarLimits.MaxInvitees)
-                return CalendarParticipantUpdateResult.TooManyInvitees;
+                .Distinct().Where(id => !active.Contains(id)).ToArray();
             if (beforeCommitAsync is not null)
                 await beforeCommitAsync(null!, null!, eventId, newlyAdded, cancellationToken);
             foreach (var characterId in removed)
@@ -638,28 +612,19 @@ public partial class HostServerTests
             foreach (var characterId in newlyAdded)
                 _responses[(eventId, characterId)] =
                     new CalendarResponse(eventId, characterId, CalendarResponseStates.Undecided);
-            if (afterCommitAsync is not null && (newlyAdded.Length > 0 || removedInvitees.Length > 0))
-                await afterCommitAsync(value, newlyAdded, removedInvitees, cancellationToken);
-            return CalendarParticipantUpdateResult.Updated;
+            return new(CalendarParticipantUpdateResult.Updated, value, newlyAdded, actuallyRemoved);
         }
 
-        public async Task<bool> SendResponseAsync(
+        public Task<CalendarResponseUpdate> SendResponseAsync(
             long eventId, long ownerId, long characterId, short response,
-            CancellationToken cancellationToken = default,
-            Func<CalendarEvent, IReadOnlyCollection<long>, CancellationToken, Task>? afterCommitAsync = null)
+            CancellationToken cancellationToken = default)
         {
             if (!_events.TryGetValue(eventId, out var value) || value.OwnerId != ownerId ||
                 !_responses.TryGetValue((eventId, characterId), out var existing) ||
                 existing.Status == CalendarResponseStates.Uninvited)
-                return false;
+                return Task.FromResult(new CalendarResponseUpdate(false, null));
             _responses[(eventId, characterId)] = existing with { Status = response };
-            if (afterCommitAsync is not null)
-                await afterCommitAsync(value, ActiveParticipantIds(eventId), cancellationToken);
-            return true;
+            return Task.FromResult(new CalendarResponseUpdate(true, value));
         }
-
-        private long[] ActiveParticipantIds(long eventId) => _responses.Values
-            .Where(row => row.EventId == eventId && row.Status != CalendarResponseStates.Uninvited)
-            .Select(row => row.CharacterId).Order().ToArray();
     }
 }

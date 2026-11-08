@@ -178,7 +178,7 @@ public static class FwBattlefieldTicker
                 var pilots = (await sites.PilotsNearAsync(battlefield.SolarSystemId, at, FwBattlefields.PointRangeMeters, cancellationToken))
                     .Where(pilot => pilot.WarFactionId == occupier || pilot.WarFactionId == attacker).ToList();
                 foreach (var pilot in pilots)
-                    await store.AddBattlefieldPilotAsync(connection, transaction, id, pilot.CharacterId, pilot.WarFactionId, cancellationToken);
+                    await store.AddBattlefieldPilotAsync(connection, transaction, id, pilot.CharacterId, pilot.WarFactionId, cancellationToken, pilot.CorporationId);
                 bool occupierPresent = pilots.Any(pilot => pilot.WarFactionId == occupier);
                 bool attackerPresent = pilots.Any(pilot => pilot.WarFactionId == attacker);
                 long holder = point.HolderId;
@@ -219,7 +219,7 @@ public static class FwBattlefieldTicker
             long victoryPoints = decided.Value ? FwBattlefields.VictoryPoints : -FwBattlefields.VictoryPoints;
             long attackerPoints = await store.AddAttackerPointsSignedAsync(connection, transaction, battlefield.SolarSystemId, victoryPoints, nowMs, cancellationToken);
             var winners = await store.BattlefieldPilotsAsync(connection, transaction, id, winner, cancellationToken);
-            var recipients = FwBattlefields.LpRecipients(winners);
+            var recipients = FwBattlefields.LpRecipients(winners.Select(pilot => pilot.CharacterId));
             foreach (long characterId in recipients)
                 await rewards.CreditLpAsync(connection, transaction, characterId, FwFactions.MilitiaCorporationOf(winner), FwBattlefields.LpEach,
                     $"factionwarfare:battlefield:{id}:{characterId}", cancellationToken);
@@ -227,8 +227,12 @@ public static class FwBattlefieldTicker
             if (share > 0)
             {
                 int day = FwRules.DayOf(nowMs);
-                foreach (long characterId in winners)
-                    await store.AddPilotDailyAsync(connection, transaction, characterId, day, 0, share, cancellationToken);
+                foreach (var pilot in winners)
+                {
+                    await store.AddPilotDailyAsync(connection, transaction, pilot.CharacterId, day, 0, share, cancellationToken);
+                    if (pilot.CorporationId > 0)
+                        await store.AddCorporationDailyAsync(connection, transaction, pilot.CorporationId, day, 0, share, cancellationToken);
+                }
             }
             await store.CloseBattlefieldAsync(connection, transaction, id, winner, score, nowMs, cancellationToken);
             if (battlefield.InstanceId > 0)

@@ -228,18 +228,19 @@ public sealed partial class StandingMgrService
             ("RowClass", new PyToken("util.Row")),
             ("lines", new PyList([.. rows.Rows.Select(row => (PyValue)new PyList(rows.Values(row)))]))));
 
-    private static PyValue EmptyCompositionRowset() => new PyObject(
-        new PyStr("carbon.common.script.sys.crowset.CRowset"),
-        Py.Dict(
-            ("header", Eve.Marshal.Descriptor.FromHeader(new PyObjectEx(
+    private static PyValue EmptyCompositionRowset()
+    {
+        var descriptor = Eve.Marshal.Descriptor.FromHeader(new PyObjectEx(
                 ObjectExKind.Ex1,
                 Py.Tuple(new PyToken("blue.DBRowDescriptor"), Py.Tuple(Py.Tuple(
                     Py.Tuple(new PyStr("standing"), new PyInt(5)),
                     Py.Tuple(new PyStr("ownerID"), new PyInt(3))))),
                 [],
-                [])).Header),
-            ("RowClass", new PyToken("util.Row")),
-            ("lines", new PyList([]))));
+                []));
+        return new PyObjectEx(ObjectExKind.Ex2,
+            Py.Tuple(Py.Tuple(new PyToken("carbon.common.script.sys.crowset.CRowset")),
+                Py.Dict(("header", descriptor.Header))), [], []);
+    }
 
     private static long PositiveId(PyValue value) => value switch
     {

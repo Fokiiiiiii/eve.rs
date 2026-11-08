@@ -40,7 +40,7 @@ public sealed partial class CalendarMgrService
     private readonly Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? _readCurrentGroups;
     private readonly CalendarCspaBilling? _cspaBilling;
     private readonly Func<long> _nowUnixMs;
-    private readonly CalendarEventMutationGates _participantMutationGates = new();
+    private readonly CalendarEventMutationGates _eventMutationGates = new();
 
     public CalendarMgrService() => _nowUnixMs = static () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     public CalendarMgrService(
@@ -144,6 +144,7 @@ public sealed partial class CalendarMgrService
     private async Task<PyValue> EditEventAsync(ServiceCall call, short expectedTag)
     {
         var eventId = CalendarWire.LongArg(call, 0);
+        using var mutation = await _eventMutationGates.EnterAsync(eventId, call.Cancellation);
         var oldEventDateTime = CalendarWire.LongArg(call, 1);
         var calendarEvent = await Store.GetEventByIdAsync(eventId, call.Cancellation);
         if (calendarEvent is null) throw EventNotFound();
@@ -174,6 +175,7 @@ public sealed partial class CalendarMgrService
     public async Task<PyValue> DeleteEvent(ServiceCall call)
     {
         var eventId = CalendarWire.LongArg(call, 0);
+        using var mutation = await _eventMutationGates.EnterAsync(eventId, call.Cancellation);
         var ownerId = CalendarWire.LongArg(call, 1);
         var calendarEvent = await Store.GetEventByIdAsync(eventId, call.Cancellation);
         if (calendarEvent is null) throw EventNotFound();
@@ -192,6 +194,7 @@ public sealed partial class CalendarMgrService
     public async Task<PyValue> UpdateEventParticipants(ServiceCall call)
     {
         var eventId = CalendarWire.LongArg(call, 0);
+        using var mutation = await _eventMutationGates.EnterAsync(eventId, call.Cancellation);
         var add = CalendarWire.CharacterIds(call.Arg(1));
         var remove = CalendarWire.CharacterIds(call.Arg(2));
         var calendarEvent = await Store.GetEventByIdAsync(eventId, call.Cancellation);
@@ -204,7 +207,6 @@ public sealed partial class CalendarMgrService
         remove = remove.Where(id => id != calendarEvent.CreatorId).ToArray();
         if (add.Count > 50 || remove.Count > 50) throw CalendarWire.TooManyInvitees();
 
-        using var mutation = await _participantMutationGates.EnterAsync(eventId, call.Cancellation);
         if (calendarEvent.Tag == CalendarTags.Personal)
         {
             var current = await Store.GetResponsesToEventAsync(eventId, calendarEvent.OwnerId, call.Cancellation);
@@ -304,6 +306,7 @@ public sealed partial class CalendarMgrService
     public async Task<PyValue> SendEventResponse(ServiceCall call)
     {
         var eventId = CalendarWire.LongArg(call, 0);
+        using var mutation = await _eventMutationGates.EnterAsync(eventId, call.Cancellation);
         var ownerId = CalendarWire.LongArg(call, 1);
         var response = checked((short)CalendarWire.IntArg(call, 2));
         var characterId = CalendarWire.CharacterId(call);

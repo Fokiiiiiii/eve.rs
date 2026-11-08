@@ -1,6 +1,7 @@
 using Eve.Calendar;
 using Eve.Data;
 using Eve.Host;
+using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Core;
@@ -34,8 +35,7 @@ public partial class HostServerTests
             {
                 var characterId = Interlocked.Increment(ref opened) == 1 ? ownerId : inviteeId;
                 session.Set("charid", new PyLong(characterId));
-                if (characterId == inviteeId)
-                    sessions.Enter(characterId, session);
+                sessions.Enter(characterId, session);
             });
 
         var eventId = 0L;
@@ -53,10 +53,16 @@ public partial class HostServerTests
             Assert.IsType<PyNone>(await HostRpcAsync(
                 inviteeFront, inviteeOpen, 1, "calendarMgr", "SendEventResponse",
                 new PyLong(eventId), new PyLong(ownerId), new PyLong(CalendarResponseStates.Declined)));
-            Assert.IsType<PyNone>(await HostRpcAsync(
-                ownerFront, ownerOpen, 2, "calendarMgr", "DeleteEvent",
-                new PyLong(eventId), new PyLong(ownerId)));
+            await AssertCalendarNotificationAsync(ownerFront, "OnEventResponseByExternal");
+            await ownerFront.SendAsync(new Packet(ownerOpen.SessionId, MarshalCodec.Encode(
+                Packets.CallWithKwargs(ownerOpen, 2, "calendarMgr", "DeleteEvent",
+                    new PyTuple([new PyLong(eventId), new PyLong(ownerId)]), TransportKwargs()))));
+            await AssertCalendarNotificationAsync(ownerFront, "OnRemoveCalendarEvent");
             await AssertCalendarNotificationAsync(inviteeFront, "OnRemoveCalendarEvent");
+            var deleteReply = Assert.IsType<Send>(await ownerFront.ReceiveAsync());
+            var deletePacket = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(deleteReply.Payload)));
+            Assert.Equal(MachoMessage.CallRsp, deletePacket.Type);
+            Assert.IsType<PyNone>(Result(MarshalCodec.Decode(deleteReply.Payload)));
 
             var (reconnectedFront, reconnectedOpen) = await OpenCalendarFrontAsync(643);
             var responses = Assert.IsType<PyList>(await HostRpcAsync(

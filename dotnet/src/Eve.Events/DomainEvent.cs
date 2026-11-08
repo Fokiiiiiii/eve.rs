@@ -43,6 +43,7 @@ public sealed class EventContext
     public Task<long> PublishAsync(string topic, object? payload, string? key = null, CancellationToken cancellationToken = default) =>
         _bus.PublishAsync(Connection, Transaction, topic, payload, key, cancellationToken);
 
+    /// <summary>Runs after the subscriber transaction commits. Failures are logged; durable effects must be persisted in the handler transaction.</summary>
     public void AfterCommit(Func<CancellationToken, Task> callback)
     {
         ArgumentNullException.ThrowIfNull(callback);

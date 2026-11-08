@@ -1,4 +1,5 @@
 using Eve.Events;
+using Eve.Scheduler;
 
 namespace Eve.Host.PublicGateway;
 
@@ -7,39 +8,40 @@ internal static class ShipSkinrNoticeHandlers
 {
     private const string Prefix = "eve_public.cosmetic.ship.skin.thirdparty.";
 
-    public static void Register(EventBus events, NoticeHub notices)
+    public static void Register(EventBus events, DurableScheduler scheduler, NoticeHub notices)
     {
+        GatewayNoticeDelivery.Register(scheduler, notices);
         events.Subscribe("ship-skinr-gateway-notices",
             [ShipSkinrSequenceJobs.CompletedTopic],
-            (context, _) =>
+            async (context, cancellationToken) =>
             {
                 var completed = context.Event.Payload<ShipSkinrSequenceJobs.SequenceCompleted>()
                     ?? throw new InvalidOperationException("a SKINR completion event has no payload");
-                context.AfterCommit(_ =>
-                {
-                    var job = new ProtoWriter();
-                    job.Message(1, Uuid(completed.JobId));
-                    notices.Publish(Prefix + "sequencing.job.api.CompletedNotice", job.ToArray(),
-                        character: completed.CharacterId);
+                var job = new ProtoWriter();
+                job.Message(1, Uuid(completed.JobId));
 
-                    var identifier = new ProtoWriter();
-                    identifier.Message(1, Sequential(completed.CharacterId));
-                    var skin = new ProtoWriter();
-                    skin.String(1, completed.SkinHex);
-                    identifier.Message(2, skin.ToArray());
+                var identifier = new ProtoWriter();
+                identifier.Message(1, Sequential(completed.CharacterId));
+                var skin = new ProtoWriter();
+                skin.String(1, completed.SkinHex);
+                identifier.Message(2, skin.ToArray());
 
-                    var payload = new ProtoWriter();
-                    payload.Message(1, identifier.ToArray());
-                    payload.Message(2, LicenseAttributes(completed.Activated, completed.Unactivated,
-                        completed.Escrowed, completed.FirstAcquiredMs));
-                    payload.Message(3, LicenseAttributes(completed.Activated,
-                        Math.Max(0, completed.Unactivated - completed.Quantity),
-                        completed.Escrowed, completed.FirstAcquiredMs));
-                    notices.Publish(Prefix + "license.api.UpdatedNotice", payload.ToArray(),
-                        character: completed.CharacterId);
-                    return Task.CompletedTask;
-                });
-                return Task.CompletedTask;
+                var payload = new ProtoWriter();
+                payload.Message(1, identifier.ToArray());
+                payload.Message(2, LicenseAttributes(completed.Activated, completed.Unactivated,
+                    completed.Escrowed, completed.FirstAcquiredMs));
+                payload.Message(3, LicenseAttributes(completed.Activated,
+                    Math.Max(0, completed.Unactivated - completed.Quantity),
+                    completed.Escrowed, completed.FirstAcquiredMs));
+                await GatewayNoticeDelivery.EnqueueAsync(scheduler, context.Connection, context.Transaction,
+                    $"skinr:{completed.JobId:N}:completed",
+                    [
+                        new GatewayNoticeDelivery.Notice(
+                            Prefix + "sequencing.job.api.CompletedNotice", job.ToArray()),
+                        new GatewayNoticeDelivery.Notice(
+                            Prefix + "license.api.UpdatedNotice", payload.ToArray()),
+                    ],
+                    completed.CharacterId, cancellationToken);
             },
             StartAt.Beginning);
     }

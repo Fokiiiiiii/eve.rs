@@ -88,6 +88,27 @@ public partial class HostServerTests
             Assert.Equal(900, (await persistedLoyalty.ReadAsync(new LoyaltyHolder(LoyaltyHolderKind.Character, characterId)))
                 .Single().Amount);
             Assert.Equal(17, await new FwService(new FwStore(source, fwSchema), persistedLoyalty, null!).SolarSystemLpsAsync(systemId));
+
+            // The same Host call ID is a retransmission of the accepted RPC. It may not debit once and
+            // increase the system pool twice, while another call in the same millisecond is a new donation.
+            var replay = await Donate(2, 100, 17);
+            Assert.Same(PyNone.Instance, Result(MarshalCodec.Decode(replay.Payload)));
+            Assert.Equal(900, (await persistedLoyalty.ReadAsync(new LoyaltyHolder(LoyaltyHolderKind.Character, characterId)))
+                .Single().Amount);
+            Assert.Equal(17, await new FwService(new FwStore(source, fwSchema), persistedLoyalty, null!).SolarSystemLpsAsync(systemId));
+
+            Assert.Same(PyNone.Instance, Result(MarshalCodec.Decode((await Donate(3, 100, 17)).Payload)));
+            Assert.Equal(800, (await persistedLoyalty.ReadAsync(new LoyaltyHolder(LoyaltyHolderKind.Character, characterId)))
+                .Single().Amount);
+            Assert.Equal(34, await new FwService(new FwStore(source, fwSchema), persistedLoyalty, null!).SolarSystemLpsAsync(systemId));
+            await using (var command = source.CreateCommand(
+                $"SELECT count(*), count(DISTINCT operation_id) FROM {fwSchema}.fw_lp_donations"))
+            await using (var reader = await command.ExecuteReaderAsync())
+            {
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal(2, reader.GetInt64(0));
+                Assert.Equal(2, reader.GetInt64(1));
+            }
         }
         finally
         {

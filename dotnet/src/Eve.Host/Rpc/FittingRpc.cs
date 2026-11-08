@@ -35,18 +35,18 @@ internal sealed class FittingHost(DogmaStatic dogma, CorporationStore corporatio
 
     private const long FittingManagerRole = 1L << 59;
 
-    public async Task<IReadOnlyDictionary<int, int>> CategoriesAsync(IReadOnlyCollection<int> typeIds, CancellationToken cancellationToken)
+    public async Task<IReadOnlyDictionary<int, FittingTypeInfo>> TypesAsync(IReadOnlyCollection<int> typeIds, CancellationToken cancellationToken)
     {
         await dogma.EnsureTypesAsync(typeIds, cancellationToken);
-        var categories = new Dictionary<int, int>();
+        var types = new Dictionary<int, FittingTypeInfo>();
         foreach (var typeId in typeIds)
         {
             if (dogma.Type(typeId) is { } type)
             {
-                categories[typeId] = type.CategoryId;
+                types[typeId] = new FittingTypeInfo(type.CategoryId, type.Name);
             }
         }
-        return categories;
+        return types;
     }
 
     public async Task<bool> HasFittingManagerRoleAsync(long characterId, CancellationToken cancellationToken) =>

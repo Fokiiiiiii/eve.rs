@@ -109,9 +109,15 @@ public sealed class DynamicItemRpcService : IService
             ("characterID", new PyInt(record.CharacterId)),
             ("createdAtMs", new PyInt(record.CreatedAtMs)),
             ("attributes", NumericDict(world.Attributes(item.Id))),
-            ("modifiers", NumericDict(_mutations.ModifierFractions(record))),
+            ("modifiers", NumericDict(ModifierFractionsForWire(record))),
             ("baseAttributes", NumericDict(record.BaseValues)));
     }
+
+    /// <summary>EveJS returns mutation modifier fractions rounded to six decimal places.</summary>
+    private IReadOnlyDictionary<int, double> ModifierFractionsForWire(ItemMutationRecord record) =>
+        _mutations.ModifierFractions(record).ToDictionary(
+            pair => pair.Key,
+            pair => Math.Floor(pair.Value * 1_000_000 + 0.5) / 1_000_000);
 
     /// <summary>
     /// The world the item's attributes are read in. An item fitted to a ship, or in its bays and tubes, is read in that ship's world, so the ship's modifiers

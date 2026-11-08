@@ -70,12 +70,13 @@ than trusting a location supplied by the item. A **damaged** source is allowed: 
 no recorded rule does.
 
 **D6. Stored roll and multiplier.** `inventory.item_mutations.rolls` stores the exact multiplier applied to each source attribute;
-`roll_fractions` stores the original uniform draw fraction sent as `GetDynamicItemInfo.modifiers` (migration
-`0006_mutation_roll_fractions`). The computed `mutated_values` are stored too. The mutation layer applies multipliers **without extra
+`roll_fractions` stores the original uniform draw fraction; `GetDynamicItemInfo.modifiers` returns it rounded to six decimal places,
+matching EveJS (migration `0006_mutation_roll_fractions`). The computed `mutated_values` are stored too. The mutation layer applies multipliers **without extra
 rounding**. The existing `DogmaWorld` rounding of attributes 30 and 50 to two decimal places stays where it is (`DogmaWorld.cs:385-387`).
-A stored item is **never re-rolled and never recomputed on load**. An SDE change cannot move an existing item. EveJS stores the raw
-fraction in `modifiers` and rounds the computed value to six decimal places (`dynamicItemService.js:343-357`); we store both values
-and retain eve.rs dogma's existing rounding behavior. For legacy rows without a fraction, the original fraction is recovered from the
+A stored item is **never re-rolled and never recomputed on load**. An SDE change cannot move an existing item. EveJS rounds the raw
+fraction in `modifiers` and the computed value to six decimal places (`dynamicItemService.js:343-357`); we retain the exact fraction
+for reproducibility and use its six-place form on the wire, while retaining eve.rs dogma's existing value rounding. For legacy rows
+without a fraction, the original fraction is recovered from the
 stored multiplier and pinned mutator range; equal-ended ranges cannot recover the old draw and report `0`. The V24 tooltip reads only
 modifier keys (`tooltip/dynamicItem.py:47-61`), so that historical value does not affect its rendering.
 

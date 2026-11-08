@@ -90,10 +90,15 @@ internal static class Packets
         CallWithKwargs(open, callId, service, method, new PyTuple(args), PyNone.Instance);
 
     public static PyValue CallWithKwargs(SessionOpen open, long callId, string service, string method, PyValue args, PyValue kwargs)
+        => CallWithShape(open, callId, service, method, args, kwargs, new PyInt(6), new PyInt(8));
+
+    public static PyValue CallWithShape(
+        SessionOpen open, long callId, string service, string method, PyValue args, PyValue kwargs,
+        PyValue commandType, PyValue destinationAddressType)
     {
         var body = new PyTuple([new PyInt(1), new PyStr(method), args, kwargs]);
         var payload = new PyTuple([new PyTuple([new PyInt(0), new PySubStream(body)])]);
-        return Packet("CallReq", [new PyInt(6), Source(open, callId), new PyTuple([new PyInt(8), new PyStr(service), PyNone.Instance]), new PyInt(open.UserId), payload, PyNone.Instance]);
+        return Packet("CallReq", [commandType, Source(open, callId), new PyTuple([destinationAddressType, new PyStr(service), PyNone.Instance]), new PyInt(open.UserId), payload, PyNone.Instance]);
     }
 
     public static PyValue BoundCall(SessionOpen open, long callId, string oid, string method, PyValue args, PyValue kwargs)
@@ -103,6 +108,6 @@ internal static class Packets
         return Packet("CallReq", [new PyInt(6), Source(open, callId), new PyTuple([new PyInt(8), PyNone.Instance, PyNone.Instance]), new PyInt(open.UserId), payload, PyNone.Instance]);
     }
 
-    public static PyValue Ping(SessionOpen open, long callId) =>
-        Packet("PingReq", [new PyInt(20), Source(open, callId), new PyTuple([new PyInt(8), PyNone.Instance, PyNone.Instance]), new PyInt(open.UserId), new PyTuple([]), PyNone.Instance]);
+    public static PyValue Ping(SessionOpen open, long callId, PyValue? times = null) =>
+        Packet("PingReq", [new PyInt(20), Source(open, callId), new PyTuple([new PyInt(8), PyNone.Instance, PyNone.Instance]), new PyInt(open.UserId), new PyTuple([times ?? new PyList([])]), PyNone.Instance]);
 }

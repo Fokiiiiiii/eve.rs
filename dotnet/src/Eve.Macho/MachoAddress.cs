@@ -53,7 +53,7 @@ public sealed record MachoAddress(
         var zero = new PyInt(0);
         // Values that identify a peer go back out as the reference would send them.
         PyValue Raw(int index, PyValue fallback) => JsSemantics.AsReceived(At(index, fallback));
-        var type = JsSemantics.IsNumber(items[0]) ? (int)JsSemantics.NumberValue(items[0]) : 0;
+        var type = MachoWireNumber.TryGetInteger(items[0], out var integerType) ? integerType : 0;
 
         return type switch
         {

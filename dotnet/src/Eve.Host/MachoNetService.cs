@@ -121,7 +121,7 @@ public sealed partial class MachoNetService(
     }
 
     /// <summary>
-    /// Sets (or, with <c>isDelete</c> or a None value, removes) a global-config key. The reference allows this call to
+    /// Sets (or, with <c>isDelete</c>, removes) a global-config key. The reference allows this call to
     /// ROLE_ADMIN and ROLE_SERVICE only (<c>machoNet.py</c>, the exported calls). It is saved and answered with None; a write
     /// that cannot be kept is refused, never answered as done.
     /// </summary>

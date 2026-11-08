@@ -71,8 +71,11 @@ public sealed class InsurgencyCompositionTests : IAsyncLifetime
 
     private sealed class Sink : IPacketSink
     {
-        public void Send(PyValue packet) { }
+        public List<PyValue> Packets { get; } = [];
+        public void Send(PyValue packet) => Packets.Add(packet);
     }
+
+    private sealed record ClientNotice(string Name, string IdType, PyTuple Args);
 
     private static HostSettings Settings() => new(
         "", "disabled", new ClusterOptions { NewCharacterExperienceEnabled = false, NewCharacterExperienceMode = "disabled" },
@@ -81,16 +84,43 @@ public sealed class InsurgencyCompositionTests : IAsyncLifetime
     private static ServiceCall Call(ClientSession session, string method, long id, params PyValue[] args) =>
         new() { Session = session, Method = method, Args = args, CallId = new PyInt(id) };
 
-    private static ClientSession PilotIn(long solarSystemId, int sessionId)
+    private static ClientSession PilotIn(long solarSystemId, int sessionId, Sink? sink = null)
     {
-        var session = new ClientSession(new Sink()) { SessionId = sessionId };
+        var session = new ClientSession(sink ?? new Sink()) { SessionId = sessionId, CharacterId = sessionId };
         session.Set("solarsystemid2", new PyInt(solarSystemId));
         return session;
     }
 
+    private static List<ClientNotice> ClientNotices(Sink sink)
+    {
+        var notices = new List<ClientNotice>();
+        foreach (var packet in sink.Packets.OfType<PyObject>())
+        {
+            var fields = ((PyTuple)packet.Args).Items;
+            if (fields[0] is not PyInt { Value: MachoMessage.Notification })
+                continue;
+            var address = ((PyTuple)((PyObject)fields[2]).Args).Items;
+            var envelope = (PyTuple)((PyTuple)fields[4]).Items[0];
+            var call = (PyTuple)MarshalCodec.Decode(((PyBuffer)envelope.Items[1]).Value);
+            var args = (PyTuple)((PyTuple)call.Items[1]).Items[1];
+            notices.Add(new(
+                JsSemantics.StringValue(address[1]) ?? "",
+                JsSemantics.StringValue(address[3]) ?? "",
+                args));
+        }
+        return notices;
+    }
+
+    private static async Task PumpAsync(EventBus events)
+    {
+        for (var i = 0; i < 20; i++)
+            if ((await events.PumpAsync()).Delivered == 0)
+                break;
+    }
+
     /// <summary>The object's field by name, from the CampaignClientSnapshot's dict (the names carry the leading underscore on the wire).</summary>
     private static PyValue Field(PyObjectEx snapshot, string name) =>
-        Assert.IsType<PyDict>(Assert.IsType<PyTuple>(snapshot.Header).Items[1]).Entries.Single(entry => entry.Key is PyStr key && key.Value == name).Value;
+        Assert.IsType<PyDict>(Assert.IsType<PyTuple>(snapshot.Header).Items[1]).Entries.Single(entry => JsSemantics.StringValue(entry.Key) == name).Value;
 
     [PgFact]
     public async Task A_host_with_no_campaign_answers_the_empty_list_and_a_started_campaign_is_read_through_the_real_composition()
@@ -135,5 +165,76 @@ public sealed class InsurgencyCompositionTests : IAsyncLifetime
         Assert.Equal(PyNone.Instance, outside.Items[1]);
 
         await host.ShutdownAsync();
+    }
+
+    [PgFact]
+    public async Task A_delayed_campaign_deadline_sends_each_transition_with_its_own_client_snapshot()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        var host = await HostComposition.BuildAsync(Settings());
+        var schedulerSchema = "ins_phase_" + Guid.NewGuid().ToString("N")[..12];
+        DurableScheduler? scheduler = null;
+        try
+        {
+            Assert.NotNull(host.Events);
+            await PumpAsync(host.Events!); // establish the Host subscriber cursor before the campaign is published
+            await DurableScheduler.MigrateAsync(source, schedulerSchema);
+            long now = 1_700_000_000_000;
+            scheduler = new DurableScheduler(source, () => now, schema: schedulerSchema);
+            var store = new InsurgencyStore(source, Schema("EVE_INSURGENCY_SCHEMA"));
+            var service = new InsurgencyCampaigns(store, scheduler, host.Events!);
+            service.Register();
+            var campaign = await StartOnHostAsync(source, service);
+            await PumpAsync(host.Events!);
+
+            var sink = new Sink();
+            var pilot = PilotIn(Jita, 505, sink);
+            host.CharacterSessions!.Enter(pilot.CharacterId!.Value, pilot);
+            sink.Packets.Clear();
+
+            now = campaign.MaxEndsMs + 1; // skip both the forecast and maximum-length scheduler runs
+            await scheduler.RunDueAsync();
+            await PumpAsync(host.Events!);
+
+            var updates = ClientNotices(sink)
+                .Where(notice => notice.Name == "OnInsurgencyCampaignUpdatedForLocation")
+                .ToList();
+            Assert.Equal(2, updates.Count);
+            Assert.Equal(
+                new long[] { CampaignStates.Active, CampaignStates.NoWinner },
+                updates.Select(notice => Assert.IsType<PyInt>(Field(Assert.IsType<PyObjectEx>(notice.Args.Items[0]), "_fsmState")).Value));
+
+            var campaignRpc = host.Registry.Lookup("insurgencySolarsystem")!;
+            var visible = Assert.IsType<PyList>(await campaignRpc.CallAsync(Call(pilot, "GetAllVisibleCampaigns", 6)));
+            var visibleSnapshot = Assert.Single(visible.Items.OfType<PyObjectEx>(), snapshot =>
+                Field(snapshot, "_campaignID") switch
+                {
+                    PyInt id => id.Value == campaign.CampaignId,
+                    PyLong id => id.Value == campaign.CampaignId,
+                    _ => false,
+                });
+            Assert.Equal(new PyInt(CampaignStates.NoWinner), Field(visibleSnapshot, "_fsmState"));
+            await using var checkConnection = await source.OpenConnectionAsync();
+            Assert.Equal(CampaignStates.NoWinner, (await store.GetAsync(checkConnection, null, campaign.CampaignId, false))!.State);
+        }
+        finally
+        {
+            if (scheduler is not null)
+                await scheduler.StopAsync();
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{schedulerSchema}\" CASCADE", connection))
+                await command.ExecuteNonQueryAsync();
+            await host.ShutdownAsync();
+        }
+    }
+
+    private static async Task<Campaign> StartOnHostAsync(NpgsqlDataSource source, InsurgencyCampaigns service)
+    {
+        await using var connection = await source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var campaign = await service.StartAsync(connection, transaction, new CampaignStart(AngelFaction, 1, Jita, [Jita, Perimeter]));
+        await transaction.CommitAsync();
+        return campaign;
     }
 }

@@ -305,6 +305,7 @@ internal sealed partial class CharacterServicesComposition
             }
             return await TransitionProjectDiscoveryTutorialAsync(character, action, ct);
         }
+        var warNegotiationStore = new Eve.Corporations.WarNegotiationStore(source, corporationSchema);
         gameRpcCallbacks = new Eve.Services.Core.GameRpcCallbacks(
             ReadSharedSettings: () => mailCache.Read("sharedSettings", "/").Data as JsonObject,
                     ReadOverviewPresets: () => mailCache.Read("overviewSharedPresets", "/").Data as JsonObject,
@@ -326,9 +327,13 @@ internal sealed partial class CharacterServicesComposition
                 : new Eve.Host.MiningScanRpcReadModel(spaceSessions, items, spaceItemStore, dogma).ReadAsync,
             ReadPeaceTreaties: async (ownerId, cancellationToken) =>
             {
-                var state = await ReadGameStoreTableAsync("corporationRuntime", cancellationToken);
                 var nowFiletime = DateTimeOffset.FromUnixTimeMilliseconds(now()).ToFileTime();
-                return PersistencePeaceTreatyReadModel.Read(state, ownerId, nowFiletime);
+                var treaties = await warNegotiationStore.PeaceTreatiesForOwnerAsync(ownerId, nowFiletime, cancellationToken);
+                static Eve.Services.Core.PeaceTreaty Row(Eve.Corporations.PeaceTreatyRecord treaty) => new(
+                    treaty.OtherOwnerId, treaty.ExpiryDateTime, treaty.PeaceReason, treaty.WarId, 0, null);
+                return new Eve.Services.Core.PeaceTreatySnapshot(
+                    [.. treaties.Where(treaty => treaty.OwnerId == ownerId).Select(Row)],
+                    [.. treaties.Where(treaty => treaty.OtherOwnerId == ownerId).Select(Row)]);
             },
             PublicQaTools: new Eve.Services.Core.PublicQaToolsRpcCallbacks(
                 IsStaff: Eve.Services.Core.PublicQaToolsServerService.HasStaffAccountRole,

@@ -8,8 +8,8 @@ namespace Eve.Services.Crimewatch;
 /// <summary>
 /// What a crime costs the attacker in security status (<see cref="SecurityPenalty"/>), done when <see cref="CrimewatchRuntime"/> says a crime was committed: the new status is written
 /// (the character's <c>security_status</c> relation, with its history), the pilot is told as the reference tells it (<c>OnModuleAttributeChanges</c> for the pilot's security status attribute on
-/// its ship, then <c>OnSecurityStatusUpdate</c>) and the ship in space is given its new status, which those who see it are shown in its slim item. It remembers each pilot and ship-or-capsule offense while
-/// the attacker has a suspect or criminal timer, or any limited engagement.
+/// its ship, then <c>OnSecurityStatusUpdate</c>) and the ship in space is given its new status, which those who see it are shown in its slim item. It remembers each target ship-or-capsule
+/// item for the one-minute weapon-timer duplicate window.
 /// </summary>
 /// <summary>The exact source values the Host writer must persist in relations.relation_history.attrs.</summary>
 public sealed record SecurityStatusPenaltyChange(
@@ -33,6 +33,9 @@ public sealed class SecurityStatusPenalties(
     Func<long> nowUnixMs,
     Func<long, CancellationToken, Task>? changed = null)
 {
+    /// <summary>The V24/EveJS duplicate security-status penalty window is the 60-second weapon timer.</summary>
+    public const long DuplicateWindowMs = 60_000;
+
     /// <summary>The attribute of a pilot that holds its security status (<c>pilotSecurityStatus</c>).</summary>
     public const int PilotSecurityStatus = 2610;
 
@@ -53,20 +56,11 @@ public sealed class SecurityStatusPenalties(
         try
         {
             var now = nowUnixMs();
-            var engagements = await runtime.LimitedEngagementsOfAsync(request.Attacker, now, CancellationToken.None);
-            var flag = result.Outcome.Attacker.FlagAt(now);
-            var flagUntil = flag is Flag.Criminal or Flag.Suspect ? result.Outcome.Attacker.FlagUntilMs : 0;
-            var memoryUntil = Math.Max(flagUntil, engagements.Values.DefaultIfEmpty(0).Max());
             if (result.Action != PolicyAction.Attack ||
                 result.Outcome.Reason is not (AggressionReason.Criminal or AggressionReason.Suspect) ||
                 request.Attacker <= 0 || request.Target <= 0 || request.Attacker == request.Target)
             {
-                await runtime.ExtendSecurityStatusPenaltyMemoryAsync(request.Attacker, memoryUntil, now, CancellationToken.None);
                 return;
-            }
-            if (memoryUntil <= now)
-            {
-                throw new InvalidOperationException("A criminal or suspect attack did not have an active Crimewatch memory timer.");
             }
 
             var previous = 0d;
@@ -74,9 +68,9 @@ public sealed class SecurityStatusPenalties(
             var statusChanged = false;
             var remembered = await runtime.TryRememberSecurityStatusPenaltyAsync(
                 request.Attacker,
-                request.Target,
+                request.TargetShipId,
                 request.TargetIsCapsule,
-                memoryUntil,
+                checked(now + DuplicateWindowMs),
                 now,
                 async (connection, transaction, cancellationToken) =>
                 {

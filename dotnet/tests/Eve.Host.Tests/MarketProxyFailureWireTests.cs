@@ -17,7 +17,7 @@ public partial class HostServerTests
             "Host=127.0.0.1;Port=1;Database=market_probe;Username=market_probe;Timeout=1;Pooling=false");
         var market = new MarketProxyService(
             new MarketStore(source), null!, null!, new PgCharacterStore(source), null!, null!, null!,
-            () => FixedNowMs, null!);
+            () => FixedNowMs, null!, null!, null!);
 
         Start(
             configure: registry => registry.Register(market),

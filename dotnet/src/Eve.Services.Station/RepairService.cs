@@ -239,8 +239,13 @@ public sealed partial class RepairService(NpgsqlDataSource source, PgItemStore i
     {
         var type = await types.GetAsync(item.TypeId, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"type {item.TypeId} is not in the static data");
-        await statics.EnsureTypesAsync([item.TypeId], cancellationToken).ConfigureAwait(false);
-        var attributes = statics.Type(item.TypeId)?.Attributes;
+        var mutation = await items.Mutations.GetAsync(item.Id, cancellationToken).ConfigureAwait(false);
+        var sourceTypeId = mutation?.SourceTypeId > 0 ? mutation.SourceTypeId : item.TypeId;
+        await statics.EnsureTypesAsync([item.TypeId, sourceTypeId], cancellationToken).ConfigureAwait(false);
+        var attributes = statics.Type(sourceTypeId)?.Attributes.ToDictionary(pair => pair.Key, pair => pair.Value) ?? [];
+        if (mutation is not null)
+            foreach (var (attributeId, value) in mutation.MutatedValues)
+                attributes[attributeId] = value;
         double Attribute(string name) => statics.AttributeId(name) is { } id && attributes is not null && attributes.TryGetValue(id, out var value) ? value : 0;
         var shieldCapacity = Attribute("shieldCapacity");
         var armorHp = Attribute("armorHP");

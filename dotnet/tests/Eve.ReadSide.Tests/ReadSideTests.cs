@@ -29,7 +29,7 @@ public class ReadSideTests
     {
         var read = new ReadSide(null!).Register(Groups());
         Assert.Equal(
-            "SELECT (key)::integer AS groupID, (doc #>> '{categoryID}')::integer AS categoryID, (doc #>> '{name,en}')::text AS groupName FROM sde.\"groups\" WHERE (doc->>'categoryID')::int = $1 ORDER BY ord",
+            "SELECT (key)::integer AS \"groupID\", (doc #>> '{categoryID}')::integer AS \"categoryID\", (doc #>> '{name,en}')::text AS \"groupName\" FROM sde.\"groups\" WHERE (doc->>'categoryID')::int = $1 ORDER BY ord",
             read.SqlOf("groupsOfCategory"));
     }
 
@@ -43,10 +43,67 @@ public class ReadSideTests
         Assert.Throws<ArgumentException>(() => RowsetQuery.Sde("bad", "groups; DROP TABLE groups", Column.Key()));
         read.Register(new RowsetQuery("elsewhere", "{market}.orders", [Column.Key()]));
         Assert.Throws<InvalidOperationException>(() => read.SqlOf("elsewhere"));
-        Assert.Equal("SELECT (key)::bigint AS key FROM trade.orders", new ReadSide(null!, new Dictionary<string, string> { ["market"] = "trade" }).Register(new RowsetQuery("elsewhere", "{market}.orders", [Column.Key()])).SqlOf("elsewhere"));
+        Assert.Equal("SELECT (key)::bigint AS \"key\" FROM trade.orders", new ReadSide(null!, new Dictionary<string, string> { ["market"] = "trade" }).Register(new RowsetQuery("elsewhere", "{market}.orders", [Column.Key()])).SqlOf("elsewhere"));
         Assert.Throws<ArgumentException>(() => new ReadSide(null!, new Dictionary<string, string> { ["market"] = "trade; DROP" }));
         Assert.Throws<InvalidOperationException>(() => read.Register(new RowsetQuery("elsewhere", "x", [Column.Key()])));
         Assert.Throws<KeyNotFoundException>(() => read.SqlOf("missing"));
+    }
+
+    [Fact]
+    public void A_configured_key_column_must_exist_before_query_registration()
+    {
+        var read = new ReadSide(null!);
+        var error = Assert.Throws<ArgumentException>(() => read.Register(new RowsetQuery(
+            "missingKeyColumn", "sde.types", [Column.Key("typeID")]) { KeyColumn = "ownerID" }));
+        Assert.Contains("missingKeyColumn", error.Message);
+        Assert.Contains("ownerID", error.Message);
+    }
+
+    [Fact]
+    public void Keyed_rowset_conversions_report_a_missing_key_column_consistently()
+    {
+        var query = new RowsetQuery("missingKeyColumn", "unused", [Column.Key("typeID")])
+        {
+            KeyColumn = "ownerID",
+        };
+        var rows = RowSet.FromRows(query, [[7L]]);
+
+        var keyValsError = Assert.Throws<InvalidOperationException>(() => rows.ToKeyValsByKey());
+        Assert.Contains("missingKeyColumn", keyValsError.Message);
+        Assert.Contains("ownerID", keyValsError.Message);
+        var indexedError = Assert.Throws<InvalidOperationException>(() => rows.ToIndexedRowset());
+        Assert.Contains("missingKeyColumn", indexedError.Message);
+        Assert.Contains("ownerID", indexedError.Message);
+    }
+
+    [PgFact]
+    public async Task Numeric_and_reserved_column_aliases_execute_as_quoted_postgres_identifiers()
+    {
+        await using var source = Source();
+        var schema = "rs_" + Guid.NewGuid().ToString("N")[..12];
+        await using var connection = await source.OpenConnectionAsync();
+        await Sql.ExecuteAsync(connection, null, $"CREATE SCHEMA {schema}", CancellationToken.None);
+        try
+        {
+            await Sql.ExecuteAsync(connection, null, $"CREATE TABLE {schema}.aliases (id integer NOT NULL)", CancellationToken.None);
+            await Sql.ExecuteAsync(connection, null, $"INSERT INTO {schema}.aliases VALUES (7)", CancellationToken.None);
+            var read = new ReadSide(source, new Dictionary<string, string> { ["mod"] = schema })
+                .Register(new RowsetQuery("quotedAliases", "{mod}.aliases",
+                [
+                    Column.Of("123name", ColumnType.Int, "id"),
+                    Column.Of("select", ColumnType.Int, "id"),
+                ]) { OrderBy = "\"123name\" DESC, \"select\"" });
+
+            Assert.Equal("SELECT (id)::integer AS \"123name\", (id)::integer AS \"select\" FROM " + schema + ".aliases ORDER BY \"123name\" DESC, \"select\"",
+                read.SqlOf("quotedAliases"));
+            var row = Assert.Single((await read.RowsAsync("quotedAliases")).Rows);
+            Assert.Equal(7, (int)row[0]!);
+            Assert.Equal(7, (int)row[1]!);
+        }
+        finally
+        {
+            await Sql.ExecuteAsync(connection, null, $"DROP SCHEMA {schema} CASCADE", CancellationToken.None);
+        }
     }
 
     [PgFact]

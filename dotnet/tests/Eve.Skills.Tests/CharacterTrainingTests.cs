@@ -112,6 +112,14 @@ public class CharacterTrainingTests
         return ((IDictionary)gates.GetValue(training)!).Count;
     }
 
+    private static int SettlementGatePermitCount(CharacterTraining training, long characterId)
+    {
+        var gates = (IDictionary)typeof(CharacterTraining).GetField("settleGates", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(training)!;
+        var gate = gates[characterId]!;
+        var semaphore = (SemaphoreSlim)gate.GetType().GetProperty("Semaphore", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!.GetValue(gate)!;
+        return semaphore.CurrentCount;
+    }
+
     [PgFact]
     public async Task A_new_character_has_an_empty_queue_and_its_skills_as_stored()
     {
@@ -317,7 +325,7 @@ public class CharacterTrainingTests
     }
 
     [PgFact]
-    public async Task Saving_an_alpha_queue_with_an_unchanged_running_head_counts_elapsed_points_once()
+    public async Task Saving_an_alpha_queue_over_the_live_cap_is_refused_even_when_the_panel_forecast_fits()
     {
         await using var rig = await TrainingRig.CreateAsync();
         var started = await rig.SavedAsync(await rig.SaveAsync(true, (3301, 2)));
@@ -335,6 +343,9 @@ public class CharacterTrainingTests
         var fullQueueIncrement = view.Queue.Sum(line => line.DestinationPoints - line.StartPoints);
         Assert.Equal(persistedPoints, await rig.PersistedSkillPointsAsync(TrainingRig.Character));
         Assert.Equal(1_165, fullQueueIncrement);
+        // V24.01 reduces each line by estimated current-level SP; the server validates the live total and queue.
+        var panelForecast = persistedPoints + fullQueueIncrement - elapsed;
+        Assert.True(panelForecast <= Training.AlphaMaxTrainingSkillPoints);
         var overCap = persistedPoints + fullQueueIncrement - Training.AlphaMaxTrainingSkillPoints;
         Assert.True(overCap > 0 && overCap < elapsed);
 
@@ -456,6 +467,12 @@ public class CharacterTrainingTests
                 }
             },
         });
+        var settledUnderGate = false;
+        rig.Training.Settled += _ =>
+        {
+            settledUnderGate = SettlementGatePermitCount(rig.Training, TrainingRig.Character) == 0;
+            return Task.CompletedTask;
+        };
         var started = await rig.SavedAsync(await rig.StartAsync(3301));
         var scheduledEnd = started.Update.View.Queue.Single().End!.Value;
         rig.Wait(TimeSpan.FromMinutes(60));
@@ -477,6 +494,7 @@ public class CharacterTrainingTests
 
             Assert.NotNull(await waiter.WaitAsync(TimeSpan.FromSeconds(15)));
             Assert.Equal(0, overlappingRefreshes);
+            Assert.True(settledUnderGate);
             Assert.Single(rig.Settlements);
             Assert.Equal([new HistoryEntry(scheduledEnd, SkillEvents.TrainingComplete, 3301, 1415, 2)], await rig.Training.HistoryAsync(TrainingRig.Character));
         }

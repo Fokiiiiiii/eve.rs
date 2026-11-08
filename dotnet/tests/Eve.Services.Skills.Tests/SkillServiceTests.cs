@@ -1309,7 +1309,7 @@ public class SkillHandlerTests
     }
 
     [PgFact]
-    public async Task Free_skill_point_preview_and_mutation_fail_when_clone_state_is_missing()
+    public async Task Free_skill_point_previews_return_empty_and_mutations_fail_when_clone_state_is_missing()
     {
         await using var rig = await Rig.CreateAsync(cloneStateAvailable: false);
         var character = rig.CharacterId;
@@ -1320,10 +1320,10 @@ public class SkillHandlerTests
         var target = new PyList([Py.Tuple(new PyInt(3300), new PyInt(2))]);
         var skillsBefore = await rig.Store.ForCharacterAsync(character);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            Rig.CallAsync(rig.Handler, session, "GetFreeSkillPointsAppliedToQueue"));
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            Rig.CallAsync(rig.Handler, session, "GetFreeSkillPointsAppliedToSkills", target));
+        Assert.Equal(new PyDict([]), await Rig.CallAsync(rig.Handler, session, "GetFreeSkillPointsAppliedToQueue"));
+        Assert.Equal(new PyDict([]), await Rig.CallAsync(rig.Handler, session, "GetFreeSkillPointsAppliedToSkills", target));
+        Assert.Equal(new PyDict([]), await Rig.CallAsync(rig.Handler, session, "GetFreeSkillPointsAppliedToSkills", new PyList([])));
+        Assert.Equal(PyNone.Instance, await Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPointsToSkills", new PyList([])));
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPointsToQueue"));
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -1336,27 +1336,61 @@ public class SkillHandlerTests
     }
 
     [PgFact]
-    public async Task Free_skill_point_mutation_fails_when_race_has_no_pinned_clone_grade_data()
+    public async Task Free_skill_point_previews_return_empty_and_mutations_fail_when_race_has_no_pinned_clone_grade_data()
+    {
+        foreach (var raceId in new[] { 0, 999 })
+        {
+            await using var rig = await Rig.CreateAsync(
+                isAlphaClone: _ => true,
+                useCurrentSdeCatalog: true,
+                characterRaceId: raceId);
+            var character = rig.CharacterId;
+            await rig.GrantAsync(character, (3300, 1, 250));
+            await rig.GrantFreeSkillPointsAsync(character, 1_000);
+            var (session, sink) = Rig.Session(character);
+            rig.Sessions.Enter(character, session);
+            var skillsBefore = await rig.Store.ForCharacterAsync(character);
+
+            var target = new PyList([Py.Tuple(new PyInt(3300), new PyInt(2))]);
+            Assert.Equal(new PyDict([]), await Rig.CallAsync(rig.Handler, session, "GetFreeSkillPointsAppliedToQueue"));
+            Assert.Equal(new PyDict([]), await Rig.CallAsync(rig.Handler, session, "GetFreeSkillPointsAppliedToSkills", target));
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPointsToSkills", target));
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPoints", new PyInt(3300), new PyInt(100)));
+            Assert.Equal(skillsBefore, await rig.Store.ForCharacterAsync(character));
+            Assert.Equal(1_000, await rig.Store.FreeSkillPointsAsync(character));
+            Assert.Empty(sink.Sent);
+        }
+    }
+
+    [PgFact]
+    public async Task Omega_free_skill_point_paths_do_not_require_alpha_clone_grade_data()
     {
         await using var rig = await Rig.CreateAsync(
-            isAlphaClone: _ => true,
+            isAlphaClone: _ => false,
             useCurrentSdeCatalog: true,
             characterRaceId: 999);
         var character = rig.CharacterId;
-        await rig.GrantAsync(character, (3300, 1, 250));
-        await rig.GrantFreeSkillPointsAsync(character, 1_000);
-        var (session, sink) = Rig.Session(character);
+        const int skillTypeId = 3300;
+        Assert.False(rig.CatalogForTest.HasAlphaCloneGrade(999));
+        await rig.GrantAsync(character, (skillTypeId, 1, 250));
+        await rig.GrantFreeSkillPointsAsync(character, 100);
+        var (session, _) = Rig.Session(character);
         rig.Sessions.Enter(character, session);
-        var skillsBefore = await rig.Store.ForCharacterAsync(character);
+        var target = new PyList([Py.Tuple(new PyInt(skillTypeId), new PyInt(5))]);
 
-        var target = new PyList([Py.Tuple(new PyInt(3300), new PyInt(2))]);
-        await Assert.ThrowsAsync<InvalidDataException>(() =>
-            Rig.CallAsync(rig.Handler, session, "GetFreeSkillPointsAppliedToSkills", target));
-        await Assert.ThrowsAsync<InvalidDataException>(() =>
-            Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPoints", new PyInt(3300), new PyInt(100)));
-        Assert.Equal(skillsBefore, await rig.Store.ForCharacterAsync(character));
-        Assert.Equal(1_000, await rig.Store.FreeSkillPointsAsync(character));
-        Assert.Empty(sink.Sent);
+        Assert.Equal(new PyDict([]), await Rig.CallAsync(rig.Handler, session, "GetFreeSkillPointsAppliedToQueue"));
+        Assert.Equal(
+            new PyDict([new KeyValuePair<PyValue, PyValue>(new PyInt(skillTypeId), new PyInt(100))]),
+            await Rig.CallAsync(rig.Handler, session, "GetFreeSkillPointsAppliedToSkills", target));
+        Assert.Equal(new PyInt(0), await Rig.CallAsync(rig.Handler, session, "ApplyFreeSkillPointsToSkills", target));
+
+        await rig.GrantFreeSkillPointsAsync(character, 100);
+        Assert.Equal(new PyInt(0), await Rig.CallAsync(
+            rig.Handler, session, "ApplyFreeSkillPoints", new PyInt(skillTypeId), new PyInt(100)));
+        Assert.Equal(450L, Assert.Single(await rig.Store.ForCharacterAsync(character)).SkillPoints);
+        Assert.Equal(0L, await rig.Store.FreeSkillPointsAsync(character));
     }
 
     [PgFact]

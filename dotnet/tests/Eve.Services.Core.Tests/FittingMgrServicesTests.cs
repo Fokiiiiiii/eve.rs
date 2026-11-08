@@ -39,11 +39,13 @@ public sealed class FittingMgrServicesTests : IAsyncLifetime
         public int CategoryReads { get; private set; }
         public List<ClientSession> Sessions { get; } = [];
 
-        public Task<IReadOnlyDictionary<int, int>> CategoriesAsync(IReadOnlyCollection<int> typeIds, CancellationToken cancellationToken)
+        public Task<IReadOnlyDictionary<int, FittingTypeInfo>> TypesAsync(IReadOnlyCollection<int> typeIds, CancellationToken cancellationToken)
         {
             CategoryReads++;
-            return Task.FromResult<IReadOnlyDictionary<int, int>>(typeIds.Where(id => id is Tengu or Ibis or DamageControl)
-                .ToDictionary(id => id, id => id == DamageControl ? 7 : 6));
+            return Task.FromResult<IReadOnlyDictionary<int, FittingTypeInfo>>(typeIds.Where(id => id is Tengu or Ibis or DamageControl)
+                .ToDictionary(id => id, id => new FittingTypeInfo(
+                    id == DamageControl ? 7 : 6,
+                    id == DamageControl ? "Damage Control I" : id == Tengu ? "Tengu" : "Ibis")));
         }
         public Task<bool> HasFittingManagerRoleAsync(long characterId, CancellationToken cancellationToken) => Task.FromResult(FittingManager);
         public Task<bool> CanAccessOwnerAsync(long characterId, long ownerId, FittingOwnerScope scope, CancellationToken cancellationToken) => Task.FromResult(OwnerAccess);
@@ -115,6 +117,12 @@ public sealed class FittingMgrServicesTests : IAsyncLifetime
         ("description", new PyStr("text")),
         ("shipTypeID", new PyInt(Tengu)),
         ("fitData", new PyList(rows)));
+
+    private static Dictionary<string, PyValue> UserErrorArguments(MachoWrappedException error)
+    {
+        var arguments = ((PyTuple)((PyTuple)((PyObjectEx)error.Error.Payload).Header).Items[1]).Items;
+        return ((PyDict)arguments[1]).Entries.ToDictionary(entry => ((PyStr)entry.Key).Value, entry => entry.Value);
+    }
 
     private static PyValue FittingRow() => Py.Tuple(new PyInt(DamageControl), new PyInt(11), new PyInt(1));
 
@@ -223,6 +231,25 @@ public sealed class FittingMgrServicesTests : IAsyncLifetime
         }
 
         Assert.False(sink.Sent("OnFittingAdded"));
+    }
+
+    [FittingPgFact]
+    public async Task An_existing_non_ship_type_is_named_as_text_when_a_fit_is_rejected()
+    {
+        var (_, _, calls) = await SetUpAsync();
+        var session = SessionOf(new Sink(), Character);
+        IService service = new CharFittingMgrService(calls);
+        var invalidShip = Py.KeyVal(
+            ("name", new PyStr("not a ship")),
+            ("description", new PyStr("text")),
+            ("shipTypeID", new PyInt(DamageControl)),
+            ("fitData", new PyList([FittingRow()])));
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            service.CallAsync(Call("SaveFitting", session, new PyInt(Character), invalidShip)).AsTask());
+
+        Assert.Equal("InvalidFittingDataShipNotShip", error.Error.UserErrorMessage);
+        Assert.Equal(new PyStr("Damage Control I"), UserErrorArguments(error)["typeName"]);
     }
 
     [FittingPgFact]

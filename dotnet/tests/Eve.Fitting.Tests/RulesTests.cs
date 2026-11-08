@@ -359,13 +359,22 @@ public class RulesTests
         Fit(world, Turret, Slots.HighFirst, 3000);
         Assert.Null(Why(world, statics, Candidate(world, Turret, 2001), Slots.HighFirst + 1));
         Fit(world, Turret, Slots.HighFirst + 1, 3001);
-        Assert.Equal(FitError.NoTurretHardpoints, Why(world, statics, Candidate(world, Turret, 2002), Slots.HighFirst + 2));
+        Assert.Null(FittingRules.Check(world, statics, ShipId, world.Item(3000)!, Slots.HighFirst));
+        var fullTurretFailure = FittingRules.Check(world, statics, ShipId, Candidate(world, Turret, 2002), Slots.HighFirst + 2)!;
+        Assert.Equal(FitError.NoTurretHardpoints, fullTurretFailure.Error);
+        Assert.Equal(2, fullTurretFailure.Data["turretHardpoints"]);
+        Assert.Equal(2, fullTurretFailure.Data["usedTurrets"]);
         Assert.Null(Why(world, statics, Candidate(world, HighModule, 2003), Slots.HighFirst + 2)); // a module that is no turret does not need one
 
         Assert.Null(Why(world, statics, Candidate(world, Launcher, 2004), Slots.HighFirst + 2));
         Fit(world, Launcher, Slots.HighFirst + 2, 3002);
         var (full, s) = Ship(new Dictionary<int, double> { [14] = 3, [101] = 0, [102] = 0 });
         Assert.Equal(FitError.NoLauncherHardpoints, Why(full, s, Candidate(full, Launcher), Slots.HighFirst));
+        var (noTurrets, noTurretsStatics) = Ship(new Dictionary<int, double> { [14] = 3, [101] = 1, [102] = 0 });
+        var noTurretFailure = FittingRules.Check(noTurrets, noTurretsStatics, ShipId, Candidate(noTurrets, Turret), Slots.HighFirst)!;
+        Assert.Equal(FitError.NoTurretHardpoints, noTurretFailure.Error);
+        Assert.Equal(0, noTurretFailure.Data["turretHardpoints"]);
+        Assert.Equal(0, noTurretFailure.Data["usedTurrets"]);
     }
 
     [Fact]

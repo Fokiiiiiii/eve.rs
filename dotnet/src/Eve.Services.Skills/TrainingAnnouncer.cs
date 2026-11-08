@@ -9,7 +9,8 @@ namespace Eve.Services.Skills;
 public interface ICharacterDogmaSync
 {
     /// <summary>The character's skills went from <paramref name="before"/> to what they are now: the ship's attributes that changed, the character's attributes and its brain.</summary>
-    Task SkillsChangedAsync(ClientSession session, long characterId, IReadOnlyList<CharacterSkill> before, CancellationToken cancellationToken = default);
+    Task SkillsChangedAsync(ClientSession session, long characterId, IReadOnlyList<CharacterSkill> before,
+        CancellationToken cancellationToken = default, bool trainingAlreadySettled = false);
 
     /// <summary>The character's learning attributes changed (an implant or a booster): its attributes and its brain are told, nothing about the ships.</summary>
     Task CharacterChangedAsync(ClientSession session, long characterId, CancellationToken cancellationToken = default);
@@ -65,7 +66,7 @@ public sealed class TrainingAnnouncer(CharacterTraining training, SkillCatalog c
             SkillNotifications.ServerSkillsChanged(session, skills, null, NowFileTime);
             SkillNotifications.LevelsTrained(session, update.Finished);
             SkillNotifications.SkillsChanged(session, skills);
-            await SyncDogmaAsync(session, update);
+            await SyncDogmaAsync(session, update, trainingAlreadySettled: true);
             SkillNotifications.QueueSaved(session, update.View.Queue);
             if (!update.View.State.Running)
                 SkillNotifications.QueuePaused(session);
@@ -75,6 +76,7 @@ public sealed class TrainingAnnouncer(CharacterTraining training, SkillCatalog c
             Reschedule(update.CharacterId, update.AccountId, update.View);
         }
     }
+
 
     /// <summary>Committed skill point changes that did not come from training a level.</summary>
     public Task AnnouncePurchasedAsync(ClientSession session, long characterId,
@@ -237,11 +239,11 @@ public sealed class TrainingAnnouncer(CharacterTraining training, SkillCatalog c
         TellTheAccount(session, update.AccountId);
     }
 
-    private async Task SyncDogmaAsync(ClientSession session, TrainingUpdate update)
+    private async Task SyncDogmaAsync(ClientSession session, TrainingUpdate update, bool trainingAlreadySettled = false)
     {
         if (dogma is not null)
         {
-            await dogma.SkillsChangedAsync(session, update.CharacterId, update.SkillsBefore);
+            await dogma.SkillsChangedAsync(session, update.CharacterId, update.SkillsBefore, trainingAlreadySettled: trainingAlreadySettled);
         }
     }
 

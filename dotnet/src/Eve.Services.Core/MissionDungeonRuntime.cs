@@ -39,17 +39,13 @@ public static class ClientMissionTemplates
 }
 
 /// <summary>
-
 /// The destination is a station chosen by a seed (the mission and the character) among the stations within the level's jump range, reached by
-/// stargates. An accepted courier mission expires after the mission data's <c>expirationTime</c> (minutes), or three days where the data gives none,
-
-/// none): levels 1 and 2 0 to 5 jumps, level 3 0 to 12, level 4 1 to 12, level 5 as level 4.
+/// stargates. Mission deadlines are persisted and enforced by <see cref="AgentMissionStore"/> and its durable expiry jobs:
+/// an authored zero-minute deadline means no expiry, and missing data uses the seven-day agent mission default. Levels 1 and 2 have a 0-to-5
+/// jump range, level 3 has 0-to-12, and levels 4 and 5 have 1-to-12.
 /// </summary>
 public static class MissionCourierRules
 {
-    /// <summary>The expiry of an accepted courier mission whose data gives no expirationTime.</summary>
-    public static readonly TimeSpan DefaultExpiry = TimeSpan.FromDays(3);
-
     /// <summary>The custom info that tags a courier cargo stack with its mission: consumption and take-back touch only the tagged stacks.</summary>
     public static string CargoTag(long missionId) => $"courier:{missionId}";
 
@@ -193,7 +189,6 @@ public sealed class MissionDungeonRuntime(
                 continue;
             if (await host.StartDungeonAsync(record.CharacterId, (int)place.SolarSystemId, dungeonId, cancellationToken) is null) started++;
         }
-        await ExpireCouriersAsync(now(), cancellationToken);
         return started;
     }
 
@@ -221,29 +216,6 @@ public sealed class MissionDungeonRuntime(
             await CompleteWithRewardAsync(owner, record, $"delivery:{record.Content.MissionId}", $"delivery:{record.Content.MissionId}:{record.AgentId}",
                 cancellationToken, [((int)typeId, courier.ObjectiveQuantity, MissionCourierRules.CargoTag(record.Content.MissionId))]);
         }
-    }
-
-    /// <summary>
-    /// An accepted courier mission past its expiry (the data's expirationTime, or three days) fails with the failure's standing (none). The cargo the
-    /// pilot was handed stays with the pilot (shortcut: the failure does not take it back; upgrade with the removal rule).
-    /// </summary>
-    public async Task<int> ExpireCouriersAsync(DateTimeOffset at, CancellationToken cancellationToken = default)
-    {
-        var failed = 0;
-        foreach (var record in await store.ReadAcceptedAsync(cancellationToken))
-        {
-            if (CourierOf(record.Content.MissionId) is not { } courierObjective || catalog.Mission(record.Content.MissionId) is not { } mission || record.AcceptedAt is not { } accepted) continue;
-            // the data gives 0 for many courier missions: no time limit is given, so the default applies (not a limit of zero minutes)
-            var expiry = mission.ExpirationMinutes is { } minutes and > 0 ? TimeSpan.FromMinutes(minutes) : MissionCourierRules.DefaultExpiry;
-            if (accepted + expiry > at) continue;
-            await TransitionAsync(() => store.FailAsync(record.CharacterId, record.AgentId, at,
-                $"courier-expired:{record.Content.MissionId}:{accepted.ToUnixTimeMilliseconds()}", cancellationToken));
-
-            if (courierObjective.ObjectiveTypeId is { } cargoType)
-                await host.TakeCargoAsync(record.CharacterId, record.Content.MissionId, (int)cargoType, cancellationToken);
-            failed++;
-        }
-        return failed;
     }
 
     /// <summary>

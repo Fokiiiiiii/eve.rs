@@ -15,6 +15,7 @@ public sealed class AccelerationGateTests
     private static readonly DungeonCatalog Catalog = DungeonCatalog.LoadEmbedded();
     private const long Instance = 4_242;
     private const long Dungeon283 = 283;
+    private const long Dungeon1215 = 1215;
 
     private static DungeonLayout LayoutOf(long dungeonId) =>
         DungeonRoomLayout.Build(((DungeonFound)Catalog.GetDungeon(dungeonId)).Dungeon, Origin, Radii);
@@ -203,6 +204,32 @@ public sealed class AccelerationGateTests
         Assert.Equal(layout.Room("room:13850")!.EntryPoint, point);
         // the pilot is recorded in the room it leads to
         Assert.Equal((Instance, "room:13850", 13850L), Assert.Single(rig.Rooms));
+    }
+
+    [Fact]
+    public async Task A_gate_at_the_entry_can_still_require_the_previous_room_to_be_cleared()
+    {
+        var layout = LayoutOf(Dungeon1215);
+        var gate = Assert.Single(layout.Gates, candidate => candidate.DestinationRoomKey == "room:17493");
+        Assert.Equal("room:entry", gate.SourceRoomKey);
+        var gateId = SpaceContainers.AccelerationGateDeployableId(Instance, gate.GateIndex);
+        var rig = new Rig(new ShipClass(GroupId: 25, RaceId: 1), new CommandReply(true, 0, null));
+        rig.Build(Instance, Instance, layout);
+        rig.Cleared = new HashSet<string>(StringComparer.Ordinal) { "room:entry" };
+
+        var locked = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Gates.ActivateAsync(rig.Session, gateId, CancellationToken.None));
+        var (name, values) = UserError(locked);
+        Assert.Equal("CustomInfo", name);
+        Assert.Equal("The acceleration gate is locked.", ((PyStr)values["info"]).Value);
+        Assert.Empty(rig.Transits);
+        Assert.Empty(rig.Rooms);
+
+        rig.Cleared.Add("room:17492");
+        var answer = await rig.Gates.ActivateAsync(rig.Session, gateId, CancellationToken.None);
+
+        Assert.IsType<PyNone>(answer);
+        Assert.Equal(layout.Room("room:17493")!.EntryPoint, Assert.Single(rig.Transits).Point);
+        Assert.Equal((Instance, "room:17493", layout.Room("room:17493")!.RoomId ?? 0), Assert.Single(rig.Rooms));
     }
 
     [Fact]

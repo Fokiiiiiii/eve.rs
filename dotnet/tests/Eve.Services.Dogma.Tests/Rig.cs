@@ -198,7 +198,10 @@ internal sealed class Rig : IAsyncDisposable
             source.Bloodlines,
             CreationCatalog.Schools.Select(s => source.StarterFor(s.CorporationId)!));
 
-    public static async Task<Rig> CreateAsync(SkillBoosterActivationHandler? activateBooster = null, Random? skillRandom = null)
+    public static async Task<Rig> CreateAsync(
+        SkillBoosterActivationHandler? activateBooster = null,
+        Random? skillRandom = null,
+        Func<DogmaStatic, Task<DogmaStatic>>? staticsOverride = null)
     {
         CharacterNames.EnsureUnicodeSupport();
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
@@ -222,7 +225,12 @@ internal sealed class Rig : IAsyncDisposable
         var catalog = await SkillCatalog.LoadAsync(sde);
         var creation = new CharacterCreation(
             source, characters, items, skills, catalog, wallets, new StartingWallet(), CockroachCatalog(await CreationCatalog.LoadAsync(sde, Station)), modules);
-        return new Rig(source, suffix, sde, await DogmaStatic.LoadAsync(sde), creation, modules, activateBooster, catalog, skillRandom);
+        var statics = await DogmaStatic.LoadAsync(sde);
+        if (staticsOverride is not null)
+        {
+            statics = await staticsOverride(statics);
+        }
+        return new Rig(source, suffix, sde, statics, creation, modules, activateBooster, catalog, skillRandom);
     }
 
     /// <summary>A new character of a race (Caldari by default), on the Cockroach test hull.</summary>

@@ -58,7 +58,11 @@ internal sealed class CloakingEffect : ShipEffect
     private const string CanCloakName = "canCloak";
     private const string DisallowCloakingName = "disallowCloaking";
 
-    public override IReadOnlyCollection<string> EffectNames { get; } = ["cloaking", "cloakingWarpSafe", "cloakingPrototype"];
+    private static readonly string[] CloakEffectNames = ["cloaking", "cloakingWarpSafe", "cloakingPrototype"];
+
+    public override IReadOnlyCollection<string> EffectNames => CloakEffectNames;
+
+    public static bool IsCloakingEffect(string name) => CloakEffectNames.Contains(name, StringComparer.OrdinalIgnoreCase);
 
     protected override bool Handles(ModuleEffectContext module) => module.Type.GroupId == 330;
 

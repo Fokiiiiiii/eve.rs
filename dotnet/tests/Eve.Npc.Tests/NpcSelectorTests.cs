@@ -342,14 +342,40 @@ public sealed class NpcSelectorTests
     {
         var authority = NpcAuthority.Load();
 
-        Assert.Equal(5620, authority.Profiles.Count);
+        Assert.Equal(5638, authority.Profiles.Count);
         Assert.NotNull(authority.Profile("generic_hostile"));
         Assert.Equal(23245, authority.Profile("generic_hostile")!.ShipTypeId);
+        Assert.Equal("dreadnought", authority.Profile("capital_guristas_dreadnought")!.CapitalClassId);
+        Assert.Equal(10, authority.Pool("capital_npc_dreadnoughts")!.Entries.Count);
         // every profile has the loadout it names, and the pool the command rolls by default is there
         Assert.All(authority.Profiles, profile => Assert.NotNull(authority.Loadout(profile.LoadoutId)));
         Assert.NotNull(authority.Pool("npc_hostiles"));
         Assert.Equal(372, authority.Pool("npc_hostiles")!.Entries.Count);
         Assert.True(authority.Pool("npc_hostiles")!.Entries.All(e => authority.Loadout(authority.Profile(e.ProfileId)!.LoadoutId)!.Modules.Count == 0));
         Assert.Contains(authority.Pools, pool => pool.Derived);
+    }
+
+    [Fact]
+    public void Capital_pools_added_by_the_reference_catalog_are_available_to_NPC_pool_queries()
+    {
+        var (selection, error, suggestions) = new NpcSelector(NpcAuthority.Load()).Select("Capital Supercarriers");
+
+        Assert.Null(error);
+        Assert.Empty(suggestions);
+        Assert.Equal("pool", selection!.Kind);
+        Assert.Equal("capital_npc_supercarriers", selection.Id);
+
+        var (partial, partialError, _) = new NpcSelector(NpcAuthority.Load()).Select("arri");
+
+        Assert.Null(partialError);
+        Assert.Equal("capital_npc_supercarriers", partial!.Id);
+
+        var (superAlias, superError, _) = new NpcSelector(NpcAuthority.Load()).Select("supers");
+        Assert.Null(superError);
+        Assert.Equal("capital_npc_supercarriers", superAlias!.Id);
+
+        var (bloodAlias, bloodError, _) = new NpcSelector(NpcAuthority.Load()).Select("blood raiders capitals");
+        Assert.Null(bloodError);
+        Assert.Equal("Blood Raiders Capitals", bloodAlias!.Name);
     }
 }

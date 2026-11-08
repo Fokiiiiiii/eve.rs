@@ -376,6 +376,7 @@ public sealed class DurableScheduler : IAsyncDisposable
             await Sql.ExecuteAsync(connection, transaction, Q("DELETE FROM {schema}.jobs WHERE id = $1"), CancellationToken.None, job.Id);
         }
         await transaction.CommitAsync(CancellationToken.None);
+        await context.CompleteAsync(error => _log?.Invoke($"scheduler: job {job.Id} ({job.Kind}) post-commit callback failed: {error.Message}"));
     }
 
     /// <summary>The first time after <paramref name="now"/> that a job due at <paramref name="dueMs"/> and recurring every <paramref name="everyMs"/> is due (the runs that were missed are skipped).</summary>

@@ -591,8 +591,11 @@ public sealed partial class SpaceSessions
             await (_beltHulls ??= EnsureNpcTypesAsync(rats.PoolShipTypes(), CancellationToken.None)).ConfigureAwait(false);
             var system = new BeltSystem(place.Id, place.Security, place.RegionId, place.FactionId);
             var active = _npcShips.Values.Where(npc => npc.SolarSystemId == system.SolarSystemId && npc.BeltId == beltId && npc.Group != 0).Select(npc => npc.Group).Distinct().Count();
+            var activeCapitals = _npcShips.Values
+                .Where(npc => npc.SolarSystemId == system.SolarSystemId && npc.BeltId != 0 && npc.Group != 0 && npc.Profile?.CapitalClassId is not null)
+                .Select(npc => npc.Group).Distinct().Count();
             var now = _nowUnixMs();
-            var decision = rats.Decide(system, beltId, now, active, Random.Shared.NextDouble);
+            var decision = rats.Decide(system, beltId, now, active, Random.Shared.NextDouble, activeCapitals);
             if (decision is not { Outcome: BeltOutcome.Spawn, Plan: { } plan })
             {
                 if (decision.Outcome == BeltOutcome.PlanFailed)
@@ -609,7 +612,8 @@ public sealed partial class SpaceSessions
                 return decision with { Outcome = BeltOutcome.SpawnFailed };
             }
             rats.Spawned(system.SolarSystemId, beltId, now);
-            _log?.Invoke($"belt {beltId} of system {system.SolarSystemId}: {plan.Faction} rats ({plan.Band}): {string.Join(", ", composition.Select(part => $"{part.Count} {part.Name}"))}");
+            var kind = plan.SpecialKind is { } special ? $" {special.ToString().ToLowerInvariant()}" : "";
+            _log?.Invoke($"belt {beltId} of system {system.SolarSystemId}: {plan.Faction}{kind} rats ({plan.Band}): {string.Join(", ", composition.Select(part => $"{part.Count} {part.Name}"))}");
             return decision;
         }
         finally

@@ -102,7 +102,9 @@ public sealed class FacWarMgrRpcTests
         Assert.Null(await rig.Service.StatusAsync(FwStore.CorporationKind, Corporation, rig.Now));
 
         var director = Pilot();
-        Assert.Same(PyNone.Instance, await service.CallAsync(Call("GetCorpFactionalWarStatus", director)));
+        Assert.Equal(
+            Py.KeyVal(("status", PyNone.Instance), ("factionID", PyNone.Instance), ("startDate", PyNone.Instance)),
+            await service.CallAsync(Call("GetCorpFactionalWarStatus", director)));
         Assert.Same(PyNone.Instance, await service.CallAsync(Call("JoinFactionAsCorporation", director, new PyInt(Amarr))));
         Assert.Equal(
             Py.KeyVal(("status", new PyInt(FwService.JoiningStatus)), ("factionID", new PyInt(Amarr)), ("startDate", new PyLong(FileTimeOf(rig.Now)))),

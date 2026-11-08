@@ -1,6 +1,9 @@
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Characters;
+using Eve.Inventory;
+using Eve.Ships;
+using Eve.Services;
 using Eve.Skills;
 using Npgsql;
 
@@ -37,8 +40,10 @@ public sealed partial class SkillHandlerService
                 characterLock.Parameters.Add(new NpgsqlParameter { Value = $"skill-inject:{character}" });
                 await characterLock.ExecuteScalarAsync(token);
             }
-            var current = (await store.ForCharacterAsync(connection, transaction, character, token)).Select(skill => skill.TypeId).ToHashSet();
-            var result = new List<int>();
+            var before = await store.ForCharacterAsync(connection, transaction, character, token);
+            var current = before.Select(skill => skill.TypeId).ToHashSet();
+            var changed = new List<CharacterSkill>();
+            var itemChanges = new List<(Item Before, Item After, int GroupId)>();
             foreach (var itemId in requested)
             {
                 if (await items.LockAndGetAsync(connection, transaction, itemId, token) is not { } item
@@ -48,18 +53,44 @@ public sealed partial class SkillHandlerService
                     throw MachoErrors.ThrowUserError("ItemNotASkill", ("skillName", new PyLong(itemId)));
                 if (current.Contains(skill.TypeId))
                     throw MachoErrors.ThrowUserError("CharacterAlreadyKnowsSkill", ("skillName", new PyInt(skill.TypeId)));
-                await store.GrantAsync(connection, transaction, character, [new CharacterSkill(skill.TypeId, 0, 0)], token);
+                var granted = new CharacterSkill(skill.TypeId, 0, 0);
+                await store.GrantAsync(connection, transaction, character, [granted], token);
                 if (item.Singleton || item.Quantity <= 1)
+                {
                     await items.DeleteAsync(connection, transaction, itemId, token);
+                    itemChanges.Add((item, item with { LocationId = 6 }, skill.GroupId));
+                }
                 else
+                {
                     await items.SetQuantityAsync(connection, transaction, itemId, item.Quantity - 1, token);
+                    itemChanges.Add((item, item with { Quantity = item.Quantity - 1 }, skill.GroupId));
+                }
                 current.Add(skill.TypeId);
-                result.Add(skill.TypeId);
+                changed.Add(granted);
             }
-            return result;
+            return new InjectedSkillBookBatch(before, changed, itemChanges);
         }, cancellationToken);
-        return new PyList([.. injected.Select(typeId => (PyValue)new PyInt(typeId))]);
+        await announcer.AnnounceSkillsChangedAsync(session, character, injected.Before, injected.Changed);
+        foreach (var (before, after, groupId) in injected.Items)
+            TellInjectedSkillBookChange(session, before, after, groupId);
+        return new PyList([.. injected.Changed.Select(skill => (PyValue)new PyInt(skill.TypeId))]);
     }
+
+    private static void TellInjectedSkillBookChange(ClientSession session, Item before, Item after, int groupId)
+    {
+        var row = new ItemRow(after.Id, after.TypeId, after.OwnerId, after.LocationId, after.Flag, after.Quantity, groupId, SkillCatalog.SkillCategoryId);
+        var changes = new List<KeyValuePair<PyValue, PyValue>>();
+        if (after.LocationId != before.LocationId)
+            changes.Add(new(new PyInt(3), InventoryWire.Id(before.LocationId)));
+        if (after.Quantity != before.Quantity)
+            changes.Add(new(new PyInt(9), InventoryWire.Id(before.Quantity)));
+        session.SendNotification("OnItemChange", "clientID", InventoryWire.PackedRow(row), new PyDict(changes), PyNone.Instance);
+    }
+
+    private sealed record InjectedSkillBookBatch(
+        IReadOnlyList<CharacterSkill> Before,
+        IReadOnlyList<CharacterSkill> Changed,
+        IReadOnlyList<(Item Before, Item After, int GroupId)> Items);
 
 private static long DiminishingTotal(long trained, long free)
     {
@@ -379,26 +410,49 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Skill injector splitting is unavailable.")));
         var fromType = splitting ? largeType.Value : smallType.Value;
         var toType = splitting ? smallType.Value : largeType.Value;
-        if (!splitting && (quantity < 3 || quantity % 3 != 0))
+        if (!splitting && quantity < 3)
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Three small skill injectors are required to combine.")));
         if (splitting && quantity > long.MaxValue / 3)
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector stack cannot be transformed.")));
 
-        await store.InTransactionAsync(async (connection, transaction, token) =>
+        await dogmaStatic.EnsureTypesAsync([fromType, toType], call.Cancellation);
+        var fromTypeData = dogmaStatic.Type(fromType);
+        var toTypeData = dogmaStatic.Type(toType);
+        if (fromTypeData is null || toTypeData is null)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Skill injector transformation is unavailable.")));
+
+        var transformed = await store.InTransactionAsync(async (connection, transaction, token) =>
         {
             if (await items.LockAndGetAsync(connection, transaction, itemId, token) is not { } item
                 || item.OwnerId != character || item.LocationId != station || item.TypeId != fromType
                 || item.Singleton && quantity != 1 || !item.Singleton && quantity > item.Quantity)
                 throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector stack cannot be transformed.")));
             var outputQuantity = splitting ? quantity * 3 : quantity / 3;
-            if (item.Singleton || quantity == item.Quantity)
+            var consumedQuantity = splitting ? quantity : outputQuantity * 3;
+            var remainingQuantity = item.Quantity - consumedQuantity;
+            var after = remainingQuantity == 0
+                ? item with { LocationId = CharacterShips.JunkLocation }
+                : item with { Quantity = remainingQuantity };
+            if (remainingQuantity == 0)
                 await items.DeleteAsync(connection, transaction, itemId, token);
             else
-                await items.SetQuantityAsync(connection, transaction, itemId, item.Quantity - quantity, token);
-            await items.CreateAsync(connection, transaction,
+                await items.SetQuantityAsync(connection, transaction, itemId, remainingQuantity, token);
+            var outputItemId = await items.CreateAsync(connection, transaction,
                 new Eve.Inventory.NewItem(toType, character, station, HangarFlag, outputQuantity, Singleton: false), token);
-            return true;
+            return (Before: item, After: after, OutputItemId: outputItemId, OutputQuantity: outputQuantity);
         }, call.Cancellation);
+
+        var beforeRow = new ItemRow(transformed.After.Id, transformed.After.TypeId, transformed.After.OwnerId,
+            transformed.After.LocationId, transformed.After.Flag,
+            transformed.After.Singleton ? -1 : transformed.After.Quantity, fromTypeData.GroupId, fromTypeData.CategoryId);
+        var differences = transformed.After.LocationId != transformed.Before.LocationId
+            ? new PyDict([new(new PyInt(3), InventoryWire.Id(transformed.Before.LocationId))])
+            : new PyDict([new(new PyInt(9), InventoryWire.Id(transformed.Before.Quantity))]);
+        call.Session.SendNotification("OnItemChange", "clientID", InventoryWire.PackedRow(beforeRow), differences, PyNone.Instance);
+
+        var outputRow = new ItemRow(transformed.OutputItemId, toType, character, station, HangarFlag,
+            transformed.OutputQuantity, toTypeData.GroupId, toTypeData.CategoryId);
+        call.Session.SendNotification("OnItemChange", "clientID", InventoryWire.PackedRow(outputRow), new PyDict([]), PyNone.Instance);
         return None;
     }
 

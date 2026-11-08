@@ -2223,6 +2223,7 @@ public class SpaceServiceTests
 
         Assert.Equal(activationCount + 1, rig.Sim.Heard.OfType<SimActivate>().Count());
         Assert.DoesNotContain(Events.Of(session), e => e.Name is "OnJumpCloakCancelled" or "OnInvulnCancelled");
+        Assert.True(rig.Space.IsCloaked(session));
     }
 
     [PgFact]
@@ -2244,6 +2245,7 @@ public class SpaceServiceTests
         await rig.Space.ActivateAsync(session, gun, "targetAttack", 1, 1, CancellationToken.None);
 
         Assert.Equal(["OnJumpCloakCancelled", "OnInvulnCancelled"], Events.Of(session).Select(e => e.Name));
+        Assert.False(rig.Space.IsCloaked(session));
     }
 
     [PgFact]
@@ -2266,6 +2268,7 @@ public class SpaceServiceTests
         await rig.Space.ActivateAsync(session, gun, "targetAttack", 1, 1, CancellationToken.None);
 
         Assert.Empty(Events.Of(session));
+        Assert.True(rig.Space.IsCloaked(session));
     }
 
     [PgFact]
@@ -2563,10 +2566,10 @@ public class SpaceServiceTests
         Assert.Equal("CustomNotify", negativeRange.Error.UserErrorMessage);
         Assert.Equal(beforeNegativeRange, rig.Sim.Heard.Count);
 
-        foreach (var unsupportedSubject in new[] { "operationDungeon", "epinstance", "externalDungeon", "moonMiningPoint" })
+        foreach (var unresolvedSubject in new[] { "operationDungeon", "epinstance", "externalDungeon", "moonMiningPoint" })
         {
             var refused = await Assert.ThrowsAsync<MachoWrappedException>(() =>
-                rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr(unsupportedSubject), new PyLong(5)));
+                rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr(unresolvedSubject), new PyLong(5)));
             Assert.Equal("CustomNotify", refused.Error.UserErrorMessage);
         }
         await Assert.ThrowsAsync<MachoWrappedException>(() => rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr("item"), new PyStr("planet")));
@@ -2592,6 +2595,63 @@ public class SpaceServiceTests
         Assert.Null(PlanetLaunchWarpTarget.Resolve(launch, 42, 7124, 30000001, 999));
         Assert.Null(PlanetLaunchWarpTarget.Resolve(launch with { X = double.NaN }, 42, 7123, 30000001, 999));
         Assert.Null(PlanetLaunchWarpTarget.Resolve(null, 42, 7123, 30000001, 999));
+    }
+
+    [Fact]
+    public void MoonMiningPointCatalog_resolves_the_pinned_v24_point_only_in_its_solar_system()
+    {
+        var point = MoonMiningPointCatalog.Resolve(40_491_234, 30_100_032);
+
+        Assert.Equal(new WarpCoordinates(30_100_032, 68_676_650_749.63577, -2_877_423_857.406843, -29_252_593_194.82492), point);
+        Assert.True(MoonMiningPointCatalog.IsAtMoonMiningPoint(40_491_234, 30_100_032, 68_677_891_580d, -2_877_475_844d, -29_251_235_536d));
+        Assert.False(MoonMiningPointCatalog.IsAtMoonMiningPoint(40_491_234, 30_100_032, 68_677_891_584d, -2_877_475_844d, -29_251_235_536d));
+        Assert.Null(MoonMiningPointCatalog.Resolve(40_491_234, 30_100_031));
+        Assert.Null(MoonMiningPointCatalog.Resolve(1, 30_100_032));
+    }
+
+    [PgTheory]
+    [InlineData("moonMiningPoint", 40_491_234L)]
+    [InlineData("epinstance", 40_491_234L)]
+    public async Task CmdWarpToStuff_resolves_current_system_site_subjects_and_arrival_accepts_a_following_order(string subject, long targetId)
+    {
+        var (rig, _, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        var oid = await rig.BindBeyonceAsync(session);
+        var systemId = (int)session.GetInt("solarsystemid")!.Value;
+        var calls = new List<string>();
+        Task<WarpCoordinates?> Resolve(string kind, long requestedId, int requestedSystem)
+        {
+            Assert.Equal(systemId, requestedSystem);
+            calls.Add(kind);
+            return Task.FromResult<WarpCoordinates?>(requestedId switch
+            {
+                _ when requestedId == targetId => new WarpCoordinates(systemId, 101, 202, 303),
+                _ when requestedId == targetId + 1 => new WarpCoordinates(systemId + 1, 404, 505, 606),
+                _ => null,
+            });
+        }
+        rig.Beyonce.MoonMiningPointForSystem = (requestedId, requestedSystem, _) => Resolve("moonMiningPoint", requestedId, requestedSystem);
+        rig.Beyonce.EpicInstanceForSystem = (requestedId, requestedSystem, _) => Resolve("epinstance", requestedId, requestedSystem);
+        var before = rig.Sim.Heard.Count;
+
+        var missing = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr(subject), new PyLong(targetId + 2)));
+        Assert.Equal("CustomNotify", missing.Error.UserErrorMessage);
+        var crossSystem = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            rig.BeyonceCallAsync(session, "CmdWarpToStuff", oid, new PyStr(subject), new PyLong(targetId + 1)));
+        Assert.Equal("CustomNotify", crossSystem.Error.UserErrorMessage);
+        Assert.Equal(before, rig.Sim.Heard.Count);
+
+        var accepted = await rig.BeyonceCallWithAsync(
+            session, "CmdWarpToStuff", oid, [new PyStr(subject), new PyLong(targetId)],
+            ("minRange", new PyInt(35_000)));
+        Assert.Equal(PyNone.Instance, accepted);
+        Assert.Equal(new[] { subject, subject, subject }, calls);
+        Assert.Equal(
+            Describe(new SimCommand((ulong)session.SessionId, SimCommands.WarpToPoint, [101, 202, 303, 35_000])),
+            Describe(rig.Sim.Heard.Last()));
+        await WarpArrivalAssertions.AssertArrivalAllowsAnotherWarpAndDockAsync(rig, session, oid);
     }
 
 [PgFact]
@@ -2734,6 +2794,27 @@ public class SpaceServiceTests
             var beforeSquad = rig.Sim.Heard.Count;
             Assert.Equal(PyNone.Instance, await Warp(squadSession, new PyLong(90_004), true));
             AssertWarpSessions(beforeSquad, squadSession, memberSession);
+
+            const long moonId = 40_491_234;
+            const int pointWarpRange = 35_000;
+            var fleetWarpSystem = (int)leaderSession.GetInt("solarsystemid2")!.Value;
+            rig.Beyonce.MoonMiningPointForSystem = (requestedMoonId, requestedSystemId, _) =>
+                Task.FromResult<WarpCoordinates?>(requestedMoonId == moonId && requestedSystemId == fleetWarpSystem
+                    ? new WarpCoordinates(fleetWarpSystem, 101, 202, 303)
+                    : null);
+            var beforeMoonPointFleet = rig.Sim.Heard.Count;
+            Assert.Equal(PyNone.Instance, await rig.BeyonceCallWithAsync(
+                leaderSession, "CmdWarpToStuff", bounds[leader.CharacterId],
+                [new PyStr("moonMiningPoint"), new PyLong(moonId)],
+                ("minRange", new PyInt(pointWarpRange)), ("fleet", PyBool.True)));
+            var moonPointFleetCommands = rig.Sim.Heard.Skip(beforeMoonPointFleet).OfType<SimCommand>()
+                .Where(command => command.Code == SimCommands.WarpToPoint).ToArray();
+            Assert.Equal(new[] { leaderSession, wingSession, squadSession, memberSession, otherWingSession }
+                .Select(session => (ulong)session.SessionId).OrderBy(id => id),
+                moonPointFleetCommands.Select(command => command.SessionId).OrderBy(id => id));
+            Assert.All(moonPointFleetCommands, command => Assert.Equal(
+                Describe(new SimCommand(command.SessionId, SimCommands.WarpToPoint, [101, 202, 303, pointWarpRange])),
+                Describe(command)));
 
             var otherWingFrom = (int)otherWingSession.GetInt("solarsystemid2")!.Value;
             rig.Sim.Say(new SimJumped((ulong)otherWingSession.SessionId, otherWingFrom, Gate, NextSystem, NextGate));

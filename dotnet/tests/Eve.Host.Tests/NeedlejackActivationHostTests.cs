@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using Eve.Crimewatch;
 using Eve.Content;
 using Eve.Dogma;
+using Eve.Fitting;
 using Eve.Host;
 using Eve.Inventory;
 using Eve.Macho;
@@ -87,6 +88,46 @@ public sealed class NeedlejackActivationHostTests
                 "OnItemChange", "SessionChange", "OnPvpTimerUpdate" }, rig.MessageOrder);
             Assert.Equal((ulong)linkedSession.SessionId, fixture.Simulation!.PositionSessions[linkedShip.Id]);
         }
+    }
+
+    [PgFact]
+    public async Task Host_rejects_a_cloaked_activator_and_cloaked_linked_fleet_member()
+    {
+        await using var rig = await AbyssalHostFlowTests.Rig.Create();
+        using var fixture = await SetupAsync(rig);
+        var cloakHullTypeId = rig.Catalog.AllowedShipTypeIdsByMode[AbyssalGameMode.SoloCruiser].Order().First();
+        var activatorRun = await rig.CreateRun(enter: false, shipTypeId: cloakHullTypeId);
+        var linkedRun = await rig.CreateRun(enter: false, shipTypeId: cloakHullTypeId);
+        var activatorCharacterId = activatorRun.Data.CreatorCharacterId;
+        var linkedCharacterId = linkedRun.Data.CreatorCharacterId;
+        var activatorCloak = await AddCloakModuleAsync(rig, activatorCharacterId, activatorRun.Data.CreatorShipId);
+        var linkedCloak = await AddCloakModuleAsync(rig, linkedCharacterId, linkedRun.Data.CreatorShipId);
+        var activator = await rig.ConnectPublic(activatorRun);
+        var linked = await rig.ConnectPublic(linkedRun);
+
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(activator, activatorCloak, "cloakingPrototype", 0, 1, CancellationToken.None));
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(linked, linkedCloak, "cloakingPrototype", 0, 1, CancellationToken.None));
+        Assert.Equal(2, fixture.Simulation!.Activations.Count);
+        Assert.All(fixture.Simulation.Activations, effect => Assert.IsType<SimAction.Cloak>(effect.Action));
+        Assert.True(rig.Space.IsCloaked(activator));
+        Assert.True(rig.Space.IsCloaked(linked));
+
+        await fixture.CrimewatchStore.SetSafetyAsync(activatorCharacterId, SafetyLevel.Partial, rig.Now);
+        await fixture.CrimewatchStore.SetSafetyAsync(linkedCharacterId, SafetyLevel.Partial, rig.Now);
+        await AddFleetMemberAsync(rig, activatorCharacterId, activatorRun.Data.CreatorShipId, 4, FleetStore.Leader);
+        await AddFleetMemberAsync(rig, linkedCharacterId, linkedRun.Data.CreatorShipId, 4, FleetStore.Member);
+        fixture.Simulation!.Positions[activatorRun.Data.CreatorShipId] = [10, 20, 30];
+        fixture.Simulation.Positions[linkedRun.Data.CreatorShipId] = [10, 20, 30];
+        var filamentTypeId = await FilamentTypeAsync(rig, fixture.Dogma, 0);
+        var filamentId = await CreateFilamentAsync(rig, activatorCharacterId, activatorRun.Data.CreatorShipId, filamentTypeId, 1);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            fixture.Service.CallAsync(ActivateCall(activator, filamentId, 15)).AsTask());
+
+        AssertErrorCode(error, 15);
+        Assert.Equal(new[] { activatorCharacterId, linkedCharacterId }, ErrorCharacterIds(error, 15));
+        Assert.Equal(1, (await rig.Items.GetAsync(filamentId))!.Quantity);
+        Assert.Equal(0, await ActivationCountAsync(rig));
     }
 
     [PgFact]
@@ -302,7 +343,6 @@ public sealed class NeedlejackActivationHostTests
         var session = await rig.ConnectPublic(run);
         var sessionClosed = false;
         session.Closed += () => sessionClosed = true;
-        var sourceSystemId = session.GetInt("solarsystemid");
         var characterId = run.Data.CreatorCharacterId;
         var filamentTypeId = await FilamentTypeAsync(rig, fixture.Dogma, 0);
         var filamentId = await CreateFilamentAsync(rig, characterId, run.Data.CreatorShipId, filamentTypeId, 2);
@@ -315,19 +355,28 @@ public sealed class NeedlejackActivationHostTests
 
         var call = ActivateCall(session, filamentId, 45);
         rig.Simulator.DropNextPublicMoveReply = true;
-        var lostReply = await Assert.ThrowsAsync<MachoWrappedException>(() =>
-            fixture.Service.CallAsync(call).AsTask());
-        AssertErrorCode(lostReply, 22);
+        PyValue? activationResult = null;
+        var activationFailure = await Record.ExceptionAsync(async () => activationResult = await fixture.Service.CallAsync(call));
+        Assert.True(activationFailure is null,
+            $"activation failed after commit: {activationFailure}; source={rig.Space.SolarSystemOf(session)}; " +
+            $"session={session.GetInt("solarsystemid")}; problems={string.Join(" | ", rig.Problems)}");
+        Assert.Equal(PyNone.Instance, activationResult);
         Assert.Equal(1, (await rig.Items.GetAsync(filamentId))!.Quantity);
-        Assert.Equal(sourceSystemId, session.GetInt("solarsystemid"));
         Assert.True(!sessionClosed, "The public session closed after a lost simulation reply.");
-        Assert.Null(rig.Space.SolarSystemOf(session));
+
         var committedDestination = await ActivationDestinationAsync(rig);
         var committedShip = (await rig.Items.GetAsync(run.Data.CreatorShipId))!;
         var committedCharacter = (await rig.Characters.GetAsync(characterId))!;
         Assert.Equal((committedDestination, committedDestination), (committedShip.LocationId, committedCharacter.SolarSystemId));
+        await rig.Space.QuiesceAsync();
         Assert.False(rig.Simulator.DropNextPublicMoveReply);
-        Assert.Single(fixture.Simulation!.Moves);
+        var moves = fixture.Simulation!.Moves.ToArray();
+        Assert.Equal(2, moves.Length);
+        Assert.Equal(moves[0].OperationId, moves[1].OperationId);
+        Assert.Equal(committedDestination, moves[0].Destination.LocationId);
+        Assert.Equal(moves[0].Destination, moves[1].Destination);
+        Assert.Equal(committedDestination, session.GetInt("solarsystemid"));
+        Assert.Equal(committedDestination, rig.Space.SolarSystemOf(session));
         var snapshot = await rig.Ships.LoadAsync(characterId);
         Assert.NotNull(snapshot);
         Assert.Equal((committedDestination, CharacterShips.InSpaceFlag), (snapshot.Ship.LocationId, snapshot.Ship.Flag));
@@ -423,6 +472,19 @@ public sealed class NeedlejackActivationHostTests
         return capitalTypeId;
     }
 
+    private static async Task<long> AddCloakModuleAsync(AbyssalHostFlowTests.Rig rig, long characterId, long shipId)
+    {
+        long moduleId = 0;
+        await rig.Transaction(async (connection, transaction) =>
+        {
+            moduleId = await rig.Items.CreateAsync(connection, transaction,
+                new NewItem(11370, characterId, shipId, Slots.HighFirst, 1, Singleton: true));
+            await new PgModuleStateStore(rig.Source, rig.Schemas[3]).SetAsync(
+                connection, transaction, moduleId, ItemState.Online);
+        });
+        return moduleId;
+    }
+
     private static async Task<long> CreateFilamentAsync(AbyssalHostFlowTests.Rig rig, long characterId, long shipId, int typeId, long quantity)
     {
         long itemId = 0;
@@ -473,6 +535,15 @@ public sealed class NeedlejackActivationHostTests
     {
         await using var command = rig.Source.CreateCommand($"SELECT destination_system_id FROM {rig.Schemas[4]}.needlejack_activations");
         return (int)(await command.ExecuteScalarAsync())!;
+    }
+
+    private static long[] ErrorCharacterIds(MachoWrappedException error, int code)
+    {
+        var errors = Assert.IsType<PyList>(ErrorValue(error, "errors"));
+        return errors.Items.Select(value => Assert.IsType<PyList>(value))
+            .Where(row => row.Items[0] == new PyInt(code))
+            .Select(row => Assert.IsType<PyLong>(Assert.Single(Assert.IsType<PyList>(row.Items[1]).Items)).Value)
+            .ToArray();
     }
 
     private static void AssertErrorCode(MachoWrappedException error, int expected)
@@ -543,6 +614,7 @@ public sealed class NeedlejackActivationHostTests
     public class NeedlejackSimulation : DispatchProxy
     {
         public ConcurrentQueue<SimMovePublicParticipant> Moves { get; } = new();
+        public List<SimEffect> Activations { get; } = [];
         public ConcurrentDictionary<long, double[]> Positions { get; } = new();
         public ConcurrentDictionary<long, ulong> PositionSessions { get; } = new();
         public TaskCompletionSource<bool>? MoveEntered { get; set; }
@@ -554,6 +626,11 @@ public sealed class NeedlejackActivationHostTests
             if (method.Name == "get_IsConnected") return true;
             if (method.Name.StartsWith("add_") || method.Name.StartsWith("remove_")) return null;
             if (method.Name == nameof(ISimulation.EnterAsync)) return Task.FromResult<string?>(null);
+            if (method.Name == nameof(ISimulation.ActivateAsync))
+            {
+                Activations.Add((SimEffect)args![1]!);
+                return Task.FromResult(new CommandReply(true, 0, null));
+            }
             if (method.Name == nameof(ISimulation.MovePublicParticipantInOrderAsync))
                 return MovePublicAsync((SimMovePublicParticipant)args![0]!,
                     (Action<SimMovePublicParticipantReply>)args[1]!);

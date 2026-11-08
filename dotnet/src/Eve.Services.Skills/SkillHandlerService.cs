@@ -429,6 +429,30 @@ public static SkillAugmentationReader CreateAugmentationReader(
 
     private static long AccountOf(ServiceCall call) => call.Session.UserId ?? 0;
 
+    private async ValueTask<(long AccountId, bool IsAlphaClone, int RaceId)?> TryFreeSkillPointStateAsync(
+        long characterId,
+        CancellationToken cancellationToken)
+    {
+        if (isAlphaClone is null)
+        {
+            return null;
+        }
+
+        var character = await characters.GetAsync(characterId, cancellationToken);
+        if (character is null || character.AccountId <= 0)
+        {
+            return null;
+        }
+
+        var alpha = isAlphaClone(character.AccountId);
+        if (alpha && (character.RaceId <= 0 || !catalog.HasAlphaCloneGrade(character.RaceId)))
+        {
+            return null;
+        }
+
+        return (character.AccountId, alpha, character.RaceId);
+    }
+
     private async ValueTask<(long AccountId, bool IsAlphaClone, int RaceId)> FreeSkillPointStateAsync(
         long characterId,
         CancellationToken cancellationToken)
@@ -438,14 +462,8 @@ public static SkillAugmentationReader CreateAugmentationReader(
             throw new InvalidOperationException("The account clone-state resolver is unavailable.");
         }
 
-        var character = await characters.GetAsync(characterId, cancellationToken)
-            ?? throw new InvalidDataException($"Character {characterId} has no stored race for free skill-point rules.");
-        if (character.AccountId <= 0 || character.RaceId <= 0 || !catalog.HasAlphaCloneGrade(character.RaceId))
-        {
-            throw new InvalidDataException($"Character {characterId} has invalid race or pinned SDE clone-grade data.");
-        }
-
-        return (character.AccountId, isAlphaClone(character.AccountId), character.RaceId);
+        return await TryFreeSkillPointStateAsync(characterId, cancellationToken)
+            ?? throw new InvalidDataException($"Character {characterId} has invalid account, race or pinned SDE clone-grade data.");
     }
 
     /// <summary>The character's skills and queue as they are now (what has finished is settled first).</summary>
@@ -689,9 +707,14 @@ public static SkillAugmentationReader CreateAugmentationReader(
             return new PyDict([]);
         }
 
-        var state = await FreeSkillPointStateAsync(id, call.Cancellation);
+        var state = await TryFreeSkillPointStateAsync(id, call.Cancellation);
+        if (state is not { } resolved)
+        {
+            return new PyDict([]);
+        }
+
         return SkillPointMap(await training.FreeSkillPointsAppliedAsync(
-            id, state.AccountId, null, state.IsAlphaClone, state.RaceId, call.Cancellation));
+            id, resolved.AccountId, null, resolved.IsAlphaClone, resolved.RaceId, call.Cancellation));
     }
 
     [Method("GetFreeSkillPointsAppliedToSkills")]
@@ -702,12 +725,20 @@ public static SkillAugmentationReader CreateAugmentationReader(
             return new PyDict([]);
         }
 
-        var state = await FreeSkillPointStateAsync(id, call.Cancellation);
         var selectedSkills = SkillPointTargets(call.Arg(0));
-        return selectedSkills.Count == 0
-            ? new PyDict([])
-            : SkillPointMap(await training.FreeSkillPointsAppliedAsync(
-                id, state.AccountId, selectedSkills, state.IsAlphaClone, state.RaceId, call.Cancellation));
+        if (selectedSkills.Count == 0)
+        {
+            return new PyDict([]);
+        }
+
+        var state = await TryFreeSkillPointStateAsync(id, call.Cancellation);
+        if (state is not { } resolved)
+        {
+            return new PyDict([]);
+        }
+
+        return SkillPointMap(await training.FreeSkillPointsAppliedAsync(
+            id, resolved.AccountId, selectedSkills, resolved.IsAlphaClone, resolved.RaceId, call.Cancellation));
     }
 
     [Method("ApplyFreeSkillPointsToQueue")]
@@ -730,12 +761,12 @@ public static SkillAugmentationReader CreateAugmentationReader(
         {
             return None;
         }
-        var state = await FreeSkillPointStateAsync(id, call.Cancellation);
         var selectedSkills = SkillPointTargets(call.Arg(0));
         if (selectedSkills.Count == 0)
         {
             return None;
         }
+        var state = await FreeSkillPointStateAsync(id, call.Cancellation);
         var (_, remaining) = await training.ApplyFreeSkillPointsAsync(
             id, state.AccountId, selectedSkills, state.IsAlphaClone, state.RaceId, call.Cancellation);
         return new PyInt(remaining);

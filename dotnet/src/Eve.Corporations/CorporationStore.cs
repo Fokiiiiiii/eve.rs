@@ -348,6 +348,44 @@ public sealed partial class CorporationStore
                         (is_npc AND member_limit = -1) OR (NOT is_npc AND member_limit >= 0)
                     );
                 """),
+                new Migration("016_war_negotiations", """
+                    CREATE TABLE war_negotiations (
+                        war_negotiation_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                        war_id bigint NOT NULL CHECK (war_id > 0),
+                        war_negotiation_type_id smallint NOT NULL CHECK (war_negotiation_type_id IN (0,2)),
+                        owner_id1 bigint NOT NULL CHECK (owner_id1 > 0),
+                        owner_id2 bigint NOT NULL CHECK (owner_id2 > 0),
+                        declared_by_id bigint NOT NULL CHECK (declared_by_id > 0),
+                        against_id bigint NOT NULL CHECK (against_id > 0),
+                        isk_value numeric(38,2) NOT NULL CHECK (isk_value >= 0),
+                        owner_id1_account_key integer NOT NULL CHECK (owner_id1_account_key BETWEEN 1000 AND 1006),
+                        description text NOT NULL,
+                        negotiation_state smallint NOT NULL DEFAULT 0 CHECK (negotiation_state BETWEEN 0 AND 3),
+                        created_by_character_id bigint NOT NULL CHECK (created_by_character_id > 0),
+                        created_date_time bigint NOT NULL CHECK (created_date_time > 0),
+                        time_accepted bigint,
+                        time_declined bigint,
+                        time_retracted bigint
+                    );
+                    CREATE INDEX war_negotiations_pending_owner1 ON war_negotiations(owner_id1,war_negotiation_id DESC) WHERE negotiation_state=0;
+                    CREATE INDEX war_negotiations_pending_owner2 ON war_negotiations(owner_id2,war_negotiation_id DESC) WHERE negotiation_state=0;
+                    CREATE INDEX war_negotiations_pending_declared ON war_negotiations(declared_by_id,war_negotiation_id DESC) WHERE negotiation_state=0;
+                    CREATE INDEX war_negotiations_pending_against ON war_negotiations(against_id,war_negotiation_id DESC) WHERE negotiation_state=0;
+                """),
+                new Migration("017_peace_treaties", """
+                    CREATE TABLE peace_treaties (
+                        peace_treaty_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                        war_id bigint NOT NULL CHECK (war_id > 0),
+                        owner_id bigint NOT NULL CHECK (owner_id > 0),
+                        other_owner_id bigint NOT NULL CHECK (other_owner_id > 0),
+                        peace_reason smallint NOT NULL,
+                        created_date_time bigint NOT NULL,
+                        expiry_date_time bigint NOT NULL,
+                        UNIQUE(war_id,owner_id,other_owner_id,peace_reason)
+                    );
+                    CREATE INDEX peace_treaties_owner_expiry ON peace_treaties(owner_id,expiry_date_time,peace_treaty_id DESC);
+                    CREATE INDEX peace_treaties_other_expiry ON peace_treaties(other_owner_id,expiry_date_time,peace_treaty_id DESC);
+                """),
     ];
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
         Migrations.ApplyAsync(source, schema, MigrationSet(), cancellationToken);
@@ -496,7 +534,7 @@ public sealed partial class CorporationStore
     }
 
     /// <summary>
-    /// Accountants and junior accountants can read every wallet division; other members need the selected division's Account Take role.
+    /// Directors, accountants, and junior accountants can read every wallet division; other members need the selected division's Account Take role.
     /// An omitted division therefore requires one of the accountant roles. This check is read-only.
     /// </summary>
     public async Task<bool> CanReadWalletDivisionAsync(long characterId,int? accountKey,CancellationToken token = default)

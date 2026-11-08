@@ -294,7 +294,7 @@ pub enum Out {
     Accepted { session: SessionId, command: u8, at: i64 },
 
     /// The result of a host position query; it does not move the ship.
-    Position { session: SessionId, command: u8, position: Vec3 },
+    Position { session: SessionId, command: u8, position: Vec3, direction: Option<Vec3>, radius: Option<f64> },
     /// The scan targets of the scene for the host's probe scan (command 27); it does not move anything.
     ScanTargets { session: SessionId, command: u8, targets: Vec<crate::link::ScanTarget> },
     /// The things a directional scan can see (command 28); it does not move anything.

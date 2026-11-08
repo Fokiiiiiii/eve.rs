@@ -80,6 +80,29 @@ public class MachoTests
         Assert.Equal("UNKNOWN(99)", MachoMessage.TypeName(99));
     }
 
+    [Fact]
+    public void Fractional_command_and_address_types_are_not_truncated_to_known_values()
+    {
+        var address = new PyTuple([new PyInt(8), Str("svc"), PyNone.Instance]);
+        var packet = MachoPacket.Decode(new PyTuple([
+            new PyReal(6.5), address, address, PyNone.Instance, PyNone.Instance, PyNone.Instance]))!;
+        var decodedAddress = MachoAddress.Decode(new PyTuple([new PyReal(8.5), Str("svc"), PyNone.Instance]));
+
+        Assert.Equal(0, packet.Type);
+        Assert.Equal(AddressKind.Unknown, decodedAddress.Kind);
+        Assert.Null(decodedAddress.Service);
+
+        var integralReal = MachoPacket.Decode(new PyTuple([
+            new PyReal(6.0), address, address, PyNone.Instance, PyNone.Instance, PyNone.Instance]))!;
+        var nonFiniteReal = MachoPacket.Decode(new PyTuple([
+            new PyReal(double.NaN), address, address, PyNone.Instance, PyNone.Instance, PyNone.Instance]))!;
+        var outOfRangeReal = MachoPacket.Decode(new PyTuple([
+            new PyReal((double)int.MaxValue + 1), address, address, PyNone.Instance, PyNone.Instance, PyNone.Instance]))!;
+        Assert.Equal(6, integralReal.Type);
+        Assert.Equal(0, nonFiniteReal.Type);
+        Assert.Equal(0, outOfRangeReal.Type);
+    }
+
     private static PyValue Body(PyValue remoteObject, PyValue method, PyValue args, PyValue kwargs) =>
         new PyTuple([new PyTuple([new PyInt(0), new PySubStream(new PyTuple([remoteObject, method, args, kwargs]))])]);
 
@@ -91,6 +114,12 @@ public class MachoTests
         Assert.Equal([new PyInt(7)], request.Args);
         Assert.Equal(PyNone.Instance, request.Kwargs);
         Assert.Equal(new PyInt(1), request.RemoteObject);
+    }
+
+    [Fact]
+    public void A_pylist_is_not_a_positional_argument_tuple()
+    {
+        Assert.Null(CallRequest.Decode(Body(new PyInt(1), Str("GetTime"), new PyList([new PyInt(7)]), PyNone.Instance)));
     }
 
     [Theory]

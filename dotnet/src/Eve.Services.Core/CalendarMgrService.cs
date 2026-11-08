@@ -3,6 +3,7 @@ using System.Globalization;
 using Eve.Marshal;
 using Eve.Wallet;
 using Npgsql;
+using System.Collections.Generic;
 
 namespace Eve.Services.Core;
 
@@ -39,6 +40,7 @@ public sealed partial class CalendarMgrService
     private readonly Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? _readCurrentGroups;
     private readonly CalendarCspaBilling? _cspaBilling;
     private readonly Func<long> _nowUnixMs;
+    private readonly CalendarEventMutationGates _eventMutationGates = new();
 
     public CalendarMgrService() => _nowUnixMs = static () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     public CalendarMgrService(
@@ -142,6 +144,7 @@ public sealed partial class CalendarMgrService
     private async Task<PyValue> EditEventAsync(ServiceCall call, short expectedTag)
     {
         var eventId = CalendarWire.LongArg(call, 0);
+        using var mutation = await _eventMutationGates.EnterAsync(eventId, call.Cancellation);
         var oldEventDateTime = CalendarWire.LongArg(call, 1);
         var calendarEvent = await Store.GetEventByIdAsync(eventId, call.Cancellation);
         if (calendarEvent is null) throw EventNotFound();
@@ -172,6 +175,7 @@ public sealed partial class CalendarMgrService
     public async Task<PyValue> DeleteEvent(ServiceCall call)
     {
         var eventId = CalendarWire.LongArg(call, 0);
+        using var mutation = await _eventMutationGates.EnterAsync(eventId, call.Cancellation);
         var ownerId = CalendarWire.LongArg(call, 1);
         var calendarEvent = await Store.GetEventByIdAsync(eventId, call.Cancellation);
         if (calendarEvent is null) throw EventNotFound();
@@ -190,6 +194,7 @@ public sealed partial class CalendarMgrService
     public async Task<PyValue> UpdateEventParticipants(ServiceCall call)
     {
         var eventId = CalendarWire.LongArg(call, 0);
+        using var mutation = await _eventMutationGates.EnterAsync(eventId, call.Cancellation);
         var add = CalendarWire.CharacterIds(call.Arg(1));
         var remove = CalendarWire.CharacterIds(call.Arg(2));
         var calendarEvent = await Store.GetEventByIdAsync(eventId, call.Cancellation);
@@ -213,7 +218,6 @@ public sealed partial class CalendarMgrService
             if (active.Count > CalendarLimits.MaxInvitees) throw CalendarWire.TooManyInvitees();
         }
 
-        var before = await Store.GetResponsesToEventAsync(eventId, calendarEvent.OwnerId, call.Cancellation);
         decimal? chargedBalance = null;
         var update = add.Count > 0
             ? await Store.UpdateParticipantsAsync(eventId, calendarEvent.OwnerId, add, remove, call.Cancellation,
@@ -223,22 +227,14 @@ public sealed partial class CalendarMgrService
                         call, connection, transaction, actualEventId, actualInvitees, "participants", cancellationToken);
                 })
             : await Store.UpdateParticipantsAsync(eventId, calendarEvent.OwnerId, add, remove, call.Cancellation);
-        if (update == CalendarParticipantUpdateResult.TooManyInvitees) throw CalendarWire.TooManyInvitees();
-        if (update != CalendarParticipantUpdateResult.Updated)
+        if (update.Result == CalendarParticipantUpdateResult.TooManyInvitees) throw CalendarWire.TooManyInvitees();
+        if (update.Result != CalendarParticipantUpdateResult.Updated)
             throw EventNotFound();
         AnnounceCspaWalletBalance(CalendarWire.CharacterId(call), chargedBalance);
-        var after = await Store.GetResponsesToEventAsync(eventId, calendarEvent.OwnerId, call.Cancellation);
-        var beforeVisible = before.Where(row => row.Status != CalendarResponseStates.Uninvited)
-            .Select(row => row.CharacterId).ToHashSet();
-        var afterVisible = after.Where(row => row.Status != CalendarResponseStates.Uninvited)
-            .Select(row => row.CharacterId).ToHashSet();
-        var added = afterVisible.Except(beforeVisible).ToArray();
-        var removed = beforeVisible.Except(afterVisible).ToArray();
-        var updated = await Store.GetEventByIdAsync(eventId, call.Cancellation);
-        if (updated is not null)
+        if (update.Event is { } updated)
         {
-            await NotifyNewAsync(updated, call, characterIds: added);
-            await NotifyRemoveAsync(updated, false, call, removed);
+            await NotifyNewAsync(updated, call, characterIds: update.AddedCharacterIds);
+            await NotifyRemoveAsync(updated, false, call, update.RemovedCharacterIds);
         }
         return PyNone.Instance;
     }
@@ -310,6 +306,7 @@ public sealed partial class CalendarMgrService
     public async Task<PyValue> SendEventResponse(ServiceCall call)
     {
         var eventId = CalendarWire.LongArg(call, 0);
+        using var mutation = await _eventMutationGates.EnterAsync(eventId, call.Cancellation);
         var ownerId = CalendarWire.LongArg(call, 1);
         var response = checked((short)CalendarWire.IntArg(call, 2));
         var characterId = CalendarWire.CharacterId(call);
@@ -323,11 +320,12 @@ public sealed partial class CalendarMgrService
             throw ClientNotify("You are not invited to that calendar event.");
         if (response is < CalendarResponseStates.Declined or > CalendarResponseStates.Maybe)
             throw ClientNotify("Invalid calendar response.");
-        if (!await Store.SendResponseAsync(eventId, ownerId, characterId, response, call.Cancellation))
+        var update = await Store.SendResponseAsync(eventId, ownerId, characterId, response, call.Cancellation);
+        if (!update.Updated || update.Event is null)
             throw ClientNotify(calendarEvent.Tag == CalendarTags.Personal
                 ? "You are not invited to that calendar event."
                 : "You do not have access to that calendar event.");
-        await NotifyResponseAsync(calendarEvent, response, call);
+        await NotifyResponseAsync(update.Event, response, call);
         return PyNone.Instance;
     }
 
@@ -432,6 +430,71 @@ public sealed partial class CalendarMgrService
 
     internal static MachoWrappedException EventNotFound() =>
         ClientNotify("Calendar event not found.");
+
+    private sealed class CalendarEventMutationGates
+    {
+        private readonly object _sync = new();
+        private readonly Dictionary<long, Gate> _gates = [];
+
+        public async ValueTask<IDisposable> EnterAsync(long eventId, CancellationToken cancellationToken)
+        {
+            Gate gate;
+            lock (_sync)
+            {
+                if (!_gates.TryGetValue(eventId, out gate!))
+                    _gates[eventId] = gate = new Gate();
+                gate.Users++;
+            }
+
+            try
+            {
+                await gate.Semaphore.WaitAsync(cancellationToken);
+                return new Lease(this, eventId, gate);
+            }
+            catch
+            {
+                DropReference(eventId, gate);
+                throw;
+            }
+        }
+
+        private void Exit(long eventId, Gate gate)
+        {
+            lock (_sync)
+            {
+                gate.Semaphore.Release();
+                DropReferenceLocked(eventId, gate);
+            }
+        }
+
+        private void DropReference(long eventId, Gate gate)
+        {
+            lock (_sync)
+                DropReferenceLocked(eventId, gate);
+        }
+
+        private void DropReferenceLocked(long eventId, Gate gate)
+        {
+            if (--gate.Users == 0)
+            {
+                _gates.Remove(eventId);
+                gate.Semaphore.Dispose();
+            }
+        }
+
+        private sealed class Gate
+        {
+            public SemaphoreSlim Semaphore { get; } = new(1, 1);
+            public int Users { get; set; }
+        }
+
+        private sealed class Lease(CalendarEventMutationGates owner, long eventId, Gate gate) : IDisposable
+        {
+            private CalendarEventMutationGates? _owner = owner;
+
+            public void Dispose() => Interlocked.Exchange(ref _owner, null)?.Exit(eventId, gate);
+        }
+    }
 }
 
 /// <summary>Calendar month and event reads, addressed separately by the client's ProxySvc.</summary>

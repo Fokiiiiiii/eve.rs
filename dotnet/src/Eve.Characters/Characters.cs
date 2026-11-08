@@ -445,11 +445,11 @@ public sealed partial class PgCharacterStore
     }
 
     /// <summary>Records a character's current Upwell structure, inside the caller's transaction.</summary>
-    public async Task SetStructureAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long structureId, CancellationToken cancellationToken = default)
+    public async Task SetStructureAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long? structureId, CancellationToken cancellationToken = default)
     {
         await using var command = new NpgsqlCommand($"UPDATE {_schema}.characters SET structure_id = $1 WHERE id = $2", connection, transaction)
         {
-            Parameters = { new() { Value = structureId }, new() { Value = characterId } },
+            Parameters = { new() { Value = (object?)structureId ?? DBNull.Value }, new() { Value = characterId } },
         };
         await command.ExecuteNonQueryAsync(cancellationToken);
     }

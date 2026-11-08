@@ -9,11 +9,15 @@ namespace Eve.Dungeons;
 public sealed record RoomPlacement(int Index, string Key, long? RoomId, double[] Anchor, double[] EntryPoint);
 
 /// <summary>
-/// An acceleration gate of a dungeon: <paramref name="GateIndex"/> is its place in the dungeon's gate list (its id within the instance), the room it leads
-/// to, the ids it may be used by (<paramref name="AllowedRaces"/>, empty for none), and its position in the system.
+/// An acceleration gate of a dungeon: <paramref name="GateIndex"/> is its place in the dungeon's gate list (its id within the instance),
+/// <paramref name="SourceRoomKey"/> anchors its position, <see cref="ClearanceRoomKey"/> controls when it unlocks, and
+/// <paramref name="DestinationRoomKey"/> is the room it leads to.
 /// </summary>
-/// <summary>The room the gate is in (its <paramref name="SourceRoomKey"/>): it is locked until that room is cleared.</summary>
-public sealed record GatePlacement(int GateIndex, string Key, long TypeId, string DestinationRoomKey, string SourceRoomKey, IReadOnlyList<long> AllowedRaces, double Radius, double[] Position);
+public sealed record GatePlacement(int GateIndex, string Key, long TypeId, string DestinationRoomKey, string SourceRoomKey, IReadOnlyList<long> AllowedRaces, double Radius, double[] Position)
+{
+    /// <summary>The room whose completion unlocks the gate; it can differ from the room used to anchor its position.</summary>
+    public string? ClearanceRoomKey { get; init; }
+}
 
 /// <summary>The rooms and the placed gates of one dungeon instance in its system.</summary>
 public sealed record DungeonLayout(IReadOnlyList<RoomPlacement> Rooms, IReadOnlyList<GatePlacement> Gates)
@@ -51,17 +55,29 @@ public static class DungeonRoomLayout
         {
             throw new ArgumentException("the origin has three coordinates", nameof(origin));
         }
-        var ordered = dungeon.Rooms.OrderBy(room => room.Entry ? 0 : 1).ThenBy(room => SuffixOf(room.Key)).ToList();
+        var ordered = dungeon.Rooms
+            .OrderBy(room => room.Entry || room.Key == dungeon.EntryRoomKey
+                ? 0
+                : string.Equals(room.InitialState, "active", StringComparison.OrdinalIgnoreCase) ? 1 : 2)
+            .ThenBy(room => SuffixOf(room.Key))
+            .ToList();
         var rooms = new RoomPlacement[ordered.Count];
         for (var index = 0; index < ordered.Count; index++)
         {
-            var anchor = AnchorOf(index, origin);
+            var anchor = ordered[index].PositionOffset is { } offset
+                ? Translate(origin, offset)
+                : AnchorOf(index, origin);
             rooms[index] = new RoomPlacement(index, ordered[index].Key, ordered[index].RoomID, anchor, EntryPointOf(anchor, origin));
         }
         var indexOf = rooms.ToDictionary(room => room.Key, room => room.Index, StringComparer.Ordinal);
+        var entryKey = dungeon.EntryRoomKey is { } explicitEntry && indexOf.ContainsKey(explicitEntry)
+            ? explicitEntry
+            : ordered.FirstOrDefault(room => room.Entry)?.Key ?? ordered.FirstOrDefault(room =>
+                string.Equals(room.InitialState, "active", StringComparison.OrdinalIgnoreCase))?.Key ?? ordered.FirstOrDefault()?.Key;
+        var entryIndex = entryKey is not null && indexOf.TryGetValue(entryKey, out var foundEntry) ? foundEntry : 0;
 
-        // a gate is in the room before the one it leads to, and the site's own ring for the first room
-        var placed = new List<(int GateIndex, DungeonGate Gate, int Source)>();
+        // Use an authored source room; EveJS places gates with no source room at the entry site.
+        var placed = new List<(int GateIndex, DungeonGate Gate, int PositionSource, int ClearanceSource)>();
         for (var gateIndex = 0; gateIndex < dungeon.Gates.Count; gateIndex++)
         {
             var gate = dungeon.Gates[gateIndex];
@@ -69,25 +85,41 @@ public static class DungeonRoomLayout
             {
                 continue;
             }
-            placed.Add((gateIndex, gate, Math.Max(0, destination - 1)));
+            var positionSource = entryIndex;
+            // EveJS unlocks a gate to the next ordered room after the preceding room completes. That progression relation is separate from
+            // the roomKey used to anchor the gate; when roomKey is absent, the gate is placed at the entry site.
+            var clearanceSource = Math.Max(0, destination - 1);
+            if (gate.SourceRoomKey is { } sourceKey)
+            {
+                if (!indexOf.TryGetValue(sourceKey, out positionSource))
+                {
+                    continue;
+                }
+                clearanceSource = positionSource;
+            }
+            placed.Add((gateIndex, gate, positionSource, clearanceSource));
         }
-        var perSource = placed.GroupBy(entry => entry.Source).ToDictionary(group => group.Key, group => group.Count());
+        var perSource = placed.GroupBy(entry => entry.PositionSource).ToDictionary(group => group.Key, group => group.Count());
         var seen = new Dictionary<int, int>();
         var gates = new GatePlacement[placed.Count];
         for (var i = 0; i < placed.Count; i++)
         {
-            var (gateIndex, gate, source) = placed[i];
+            var (gateIndex, gate, source, clearanceSource) = placed[i];
             var ordinal = seen.GetValueOrDefault(source);
             seen[source] = ordinal + 1;
             var angle = 2 * Math.PI * ordinal / perSource[source];
             var anchor = rooms[source].Anchor;
-            var position = new[]
+            double[] position = gate.PositionOffset is { } offset
+                ? Translate(anchor, offset)
+                : [
+                    anchor[0] + Math.Cos(angle) * GateRingMeters,
+                    anchor[1],
+                    anchor[2] + Math.Sin(angle) * GateRingMeters,
+                ];
+            gates[i] = new GatePlacement(gateIndex, gate.Key, gate.TypeID!.Value, gate.DestinationRoomKey!, rooms[source].Key, gate.AllowedRaces, gateRadii[gate.TypeID!.Value], position)
             {
-                anchor[0] + Math.Cos(angle) * GateRingMeters,
-                anchor[1],
-                anchor[2] + Math.Sin(angle) * GateRingMeters,
+                ClearanceRoomKey = rooms[clearanceSource].Key,
             };
-            gates[i] = new GatePlacement(gateIndex, gate.Key, gate.TypeID!.Value, gate.DestinationRoomKey!, rooms[source].Key, gate.AllowedRaces, gateRadii[gate.TypeID!.Value], position);
         }
         return new DungeonLayout(rooms, gates);
     }
@@ -109,6 +141,9 @@ public static class DungeonRoomLayout
             origin[2] + Math.Sin(bearing) * distance,
         ];
     }
+
+    private static double[] Translate(double[] origin, DungeonPosition offset) =>
+        [origin[0] + (offset.X ?? 0), origin[1] + (offset.Y ?? 0), origin[2] + (offset.Z ?? 0)];
 
     /// <summary>The point a pilot arrives at in a room: 15 km out from its anchor, on the side away from the site.</summary>
     public static double[] EntryPointOf(double[] anchor, double[] origin)

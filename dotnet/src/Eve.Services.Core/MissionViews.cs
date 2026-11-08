@@ -44,9 +44,8 @@ public static class MissionViews
             ? new PyLong(acceptedAt.ToFileTime())
             : PyNone.Instance),
         Field("Expiration Time", view.Record.ExpiresAt is { } expiration
-            && (view.Record.State == AgentMissionState.Accepted || view.Mission.ExpirationMinutes > 0)
-                ? new PyLong(expiration.ToFileTime())
-                : PyNone.Instance),
+            ? new PyLong(expiration.ToFileTime())
+            : PyNone.Instance),
         Field("Mission Briefing ID", IdOrNone(view.BriefingMessageId)),
     ]);
 

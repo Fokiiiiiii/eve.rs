@@ -18,6 +18,7 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
     private const string MonikerName = "carbon.common.script.net.moniker.Moniker";
     private const string RowName = "carbon.common.script.sys.row.Row";
     internal const int MaxTradeBulkItems = 256;
+    private const int VirtualTradeItemTypeId = 1529;
 
     /// <summary>The header of the trade's list row, in the client's order (the client reads <c>tradeContainerID</c>, <c>traders</c>, <c>money</c> and <c>items</c>).</summary>
     private static readonly string[] ListHeader = ["tradeContainerID", "traders", "state", "money", "items"];
@@ -110,7 +111,7 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
     }
 
     /// <summary>The trade the bound call is for, checked against the caller: it must be open, the caller must be in it, and it must be docked where the trade is.</summary>
-    private async ValueTask<TradeView> BoundViewAsync(ServiceCall call)
+    private async ValueTask<TradeView> BoundViewAsync(ServiceCall call, bool requireBothDocked = false)
     {
         if (trades is null || call.BoundObjectId is not { } oid || !_bound.TryGetValue(oid, out var tradeId))
             throw Notify("Trade session is no longer available.");
@@ -118,6 +119,12 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
         if (view is null || !view.IsOpen || !view.Involves(CharacterOf(call.Session)))
             throw Notify("Trade session is no longer available.");
         if (DockedLocationId(call.Session) != view.LocationId)
+        {
+            await EndAsync(view.TradeId, call.Cancellation).ConfigureAwait(false);
+            throw Notify("Both pilots must be docked in the same station or structure to trade.");
+        }
+        if (requireBothDocked && new[] { view.InitiatorId, view.TargetId }.Any(characterId =>
+                sessions.Of(characterId) is not { } participant || DockedLocationId(participant) != view.LocationId))
         {
             await EndAsync(view.TradeId, call.Cancellation).ConfigureAwait(false);
             throw Notify("Both pilots must be docked in the same station or structure to trade.");
@@ -137,7 +144,7 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
     public async ValueTask<PyValue> GetSelfInvItem(ServiceCall call)
     {
         var view = await BoundViewAsync(call).ConfigureAwait(false);
-        var stationType = stations?.Get(view.LocationId)?.TypeId ?? 0;
+        var stationType = stations?.Get(view.LocationId)?.TypeId ?? VirtualTradeItemTypeId;
         return Py.KeyVal(
             ("itemID", InventoryWire.Id(view.TradeId)),
             ("typeID", new PyInt(stationType)),
@@ -153,7 +160,7 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
     [Method("Add")]
     public async ValueTask<PyValue> Add(ServiceCall call)
     {
-        var view = await BoundViewAsync(call).ConfigureAwait(false);
+        var view = await BoundViewAsync(call, requireBothDocked: true).ConfigureAwait(false);
         var itemId = IdOf(call.Arg(0)) ?? throw Notify("That item is no longer there.");
         var sourceLocationId = call.Args.Count > 1 ? IdOf(call.Args[1]) ?? 0 : 0;
         if (sourceLocationId <= 0)
@@ -167,7 +174,7 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
     [Method("MultiAdd")]
     public async ValueTask<PyValue> MultiAdd(ServiceCall call)
     {
-        var view = await BoundViewAsync(call).ConfigureAwait(false);
+        var view = await BoundViewAsync(call, requireBothDocked: true).ConfigureAwait(false);
         var ids = ItemIdsOf(call.Arg(0));
         if (ids.Count == 0)
             return PyBool.False;
@@ -190,7 +197,7 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
     [Method("OfferMoney")]
     public async ValueTask<PyValue> OfferMoney(ServiceCall call)
     {
-        var view = await BoundViewAsync(call).ConfigureAwait(false);
+        var view = await BoundViewAsync(call, requireBothDocked: true).ConfigureAwait(false);
         var amount = Math.Round(AmountOf(call.Arg(0)), 2);
         try
         {
@@ -211,7 +218,7 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
     [Method("MakeOffer")]
     public async ValueTask<PyValue> MakeOffer(ServiceCall call)
     {
-        var view = await BoundViewAsync(call).ConfigureAwait(false);
+        var view = await BoundViewAsync(call, requireBothDocked: true).ConfigureAwait(false);
         var (container, money, items) = ManifestOf(call.Arg(0));
         if (container != view.TradeId)
             money = [];  // a manifest for another trade: the money check fails, so the offer is a mismatch
@@ -266,6 +273,33 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
         await AnnounceAsync(change, cancellationToken, announceOffer: true, primeItems: true).ConfigureAwait(false);
     }
 
+    /// <summary>Stages loaded charge stacks through the same trade path used by the player's fitted-charge drag.</summary>
+    public async Task<TradeChange> StageFittedChargesAsync(ClientSession actor, long tradeId, long shipId,
+        IReadOnlyList<(long ModuleId, long ChargeId)> fittedCharges, CancellationToken cancellationToken)
+    {
+        if (trades is null || await trades.ViewAsync(tradeId, cancellationToken).ConfigureAwait(false) is not { IsOpen: true } view
+            || !view.Involves(CharacterOf(actor)) || DockedLocationId(actor) != view.LocationId)
+            throw Notify("Trade session is no longer available.");
+        if (new[] { view.InitiatorId, view.TargetId }.Any(characterId =>
+                sessions.Of(characterId) is not { } participant || DockedLocationId(participant) != view.LocationId))
+        {
+            await EndAsync(view.TradeId, cancellationToken).ConfigureAwait(false);
+            throw Notify("Both pilots must be docked in the same station or structure to trade.");
+        }
+
+        TradeChange change;
+        try
+        {
+            change = await trades.StageFittedChargesAsync(tradeId, CharacterOf(actor), shipId, fittedCharges, cancellationToken).ConfigureAwait(false);
+        }
+        catch (TradeRefusedException refused)
+        {
+            throw Refusal(refused);
+        }
+        await AnnounceAsync(change, cancellationToken, announceOffer: true, primeItems: true).ConfigureAwait(false);
+        return change;
+    }
+
     private static long CharacterOf(ClientSession session) => session.CharacterId ?? session.GetInt("charID") ?? session.GetInt("characterID") ?? 0;
 
     private static long ActiveShipId(ClientSession session) => session.GetInt("shipid") ?? session.GetInt("activeShipID") ?? 0;
@@ -307,8 +341,11 @@ public sealed partial class TradeMgrService(CharacterSessions sessions, TradeAut
         bool announceMoney = false, bool announceOffer = false, bool primeItems = false)
     {
         var view = change.View;
-        var staged = primeItems
-            ? change.Moves.Where(move => !move.Removed && move.After.LocationId == view.TradeId).Select(move => new PyLong(move.After.Id)).ToList()
+        var stagedRootIds = primeItems
+            ? change.Moves.Where(move => !move.Removed && move.After.LocationId == view.TradeId).Select(move => move.After.Id).ToArray()
+            : [];
+        var staged = stagedRootIds.Length > 0
+            ? (await trades!.PrimingItemIdsAsync(stagedRootIds, cancellationToken).ConfigureAwait(false)).Select(id => (PyValue)new PyLong(id)).ToList()
             : [];
         var offers = announceOffer ? await OfferStatesAsync(view, cancellationToken).ConfigureAwait(false) : null;
         foreach (var traderId in new[] { view.InitiatorId, view.TargetId })

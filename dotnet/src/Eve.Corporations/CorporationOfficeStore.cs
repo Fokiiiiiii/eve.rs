@@ -471,7 +471,7 @@ public sealed class CorporationOfficeStore
         return office;
     }
 
-    public async Task UnrentAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+    public async Task<bool> UnrentAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
         CorporationOffice office, long nowMs, CancellationToken cancellationToken = default)
     {
         await using (var command = Command(connection, transaction, $"""
@@ -479,11 +479,11 @@ public sealed class CorporationOfficeStore
             WHERE office_id=$1 AND active
             """, office.OfficeId, nowMs))
             await command.ExecuteNonQueryAsync(cancellationToken);
-        await using (var bills = Command(connection, transaction, $"""
+        await using var bills = Command(connection, transaction, $"""
             UPDATE {_schema}.office_rent_bills SET status=2
             WHERE office_id=$1 AND status=0
-            """, office.OfficeId))
-            await bills.ExecuteNonQueryAsync(cancellationToken);
+            """, office.OfficeId);
+        return await bills.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
     private static decimal SeedPrice(CorporationOfficeStation station)

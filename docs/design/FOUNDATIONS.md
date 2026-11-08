@@ -24,8 +24,9 @@ see [Where they live](#where-they-live)), so a restart loses nothing.
    does. Never "update, then publish" as two steps: a crash between them loses the event.
 2. **Handlers run inside a transaction too.** A job handler and an event handler get `Connection`/`Transaction`. What they write through
    those is committed together with "this job is done" / "this event is handled". A handler that only writes to PostgreSQL therefore
-   runs **exactly once**. A handler that also touches something outside PostgreSQL (the simulation, a socket) runs **at least once**:
-   make it safe to run twice.
+   runs **exactly once**. External effects performed inside a handler before commit may run more than once, so make them safe to repeat.
+   `AfterCommit` callbacks run after the event cursor or job completion commits; they are best-effort and are not retried. Persist an
+   effect that needs durable delivery as a job or outbox row in the handler transaction.
 3. **Throwing means "try again later".** The scheduler and the bus retry with a back-off; after the last try a job is parked as `failed`
    and an event is set aside as a dead letter (the subscriber goes on). Do not catch and swallow an error you want retried.
 4. **Keep transactions that publish short.** A publishing transaction holds a shared advisory lock until it commits and the pump does not

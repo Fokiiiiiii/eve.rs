@@ -32,7 +32,7 @@ marketsvc.py は eve/client/script/ui/services/marketsvc.py、marketSvc.py は e
 | GetNewPriceHistory | marketsvc.py:338 | typeID 1 引数。 | new history rowset。読み取りのみ。 |
 | GetCharOrders | marketsvc.py:388（GetMyOrders） | 引数なし。 | owner order rowset。UI は bid / price / volRemaining / escrow / stationID 等を読む（personalMarketOrders.py:41-75）。読み取りのみ。 |
 | GetCorporationOrders | marketsvc.py:391; corpMarketOrders.py:10-11 | 引数なし。 | corporation order rowset。権限拒否は UserError。読み取りのみ。 |
-| GetMarketOrderHistory | marketsvc.py:394 | 引数なし。 | 完了 order rowset。UI は isCorp を含め利用（marketHistory.py:136,141,159-162）。期限 sweep が状態を変えた場合は expiry notification を発行。 |
+| GetMarketOrderHistory | marketsvc.py:393-394 | 引数なし。 | personal completed order rowset は常に返す。corporate rows は現在の永続メンバーシップと Accountant 権限を確認してから取得する。UI は `isCorp` で personal / corp を表示（marketHistory.py:136-160,195-205）。期限 sweep が状態を変えた場合は expiry notification を発行。 |
 | GetCharEscrow | marketsvc.py:400-401（GetMyMarketEscrow） | 引数なし。 | iskEscrow / itemsEscrow の KeyVal。UI は exception を捕捉してゼロへ fallback（同:397-409）。expiry sweep が状態を変えた場合は通知。 |
 | GetPlexOrders | marketsvc.py:730-731 | 引数なし。 | [asks, bids] tuple（cached method result）。読み取りのみ。 |
 | GetOrders | marketsvc.py:733-734 | typeID 1 引数。 | [asks, bids] tuple（cached method result）。読み取りのみ。 |

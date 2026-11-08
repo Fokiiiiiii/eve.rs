@@ -405,6 +405,8 @@ public sealed partial class SpaceContainers
             targetSpace, _nowUnixMs() + (long)CanLifetime.TotalMilliseconds, _spaceItems, (long)cycle.CycleId, _cycles, _events);
         if (!salvaged.Accepted)
         {
+            if (salvaged.Reason == "NO_SALVAGE_OUTCOME")
+                _log?.Invoke($"salvage outcome missing for wreck {cycle.TargetId} during cycle {cycle.CycleId}");
             return WorkOutcome.Refuse(salvaged.Reason);
         }
         var salvageRewards = salvaged.Rewards ?? [];

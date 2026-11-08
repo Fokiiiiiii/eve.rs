@@ -85,9 +85,9 @@ public static class BookmarkRules
 }
 
 /// <summary>
-/// The bookmark folders in PostgreSQL (schema <c>bookmarks</c>): the personal folders of a character and the shared folders its access
-/// lists give it. Every change runs in one transaction that holds the acting character's advisory lock, and a shared folder's writes also
-/// hold the folder's lock, so the active limits and the capacities hold under concurrent calls. Who may do what is <see cref="FolderAccess"/>.
+/// Character-scoped operations run under a transaction and character lock, serializing default-folder creation and per-character limits.
+/// Writes that add bookmarks to shared folders also lock the target while checking capacity. Expiry cleanup removes overdue bookmarks globally.
+/// Access rules are in <see cref="FolderAccess"/>.
 /// </summary>
 public sealed partial class BookmarkStore
 {
@@ -225,9 +225,7 @@ public sealed partial class BookmarkStore
         }, token);
     }
 
-    /// <summary>
-    /// it active (other than the caller), who hear of the deletion.
-    /// </summary>
+    /// <summary>Deletes the folder and returns other active viewers for the service's post-response deletion notice.</summary>
     public Task<IReadOnlyList<long>> DeleteFolderAsync(long characterId, long folderId, AccessLists? lists = null, CancellationToken token = default)
     {
         var access = lists ?? AccessLists.Empty;
@@ -378,7 +376,8 @@ public sealed partial class BookmarkStore
         }, token);
 
     /// <summary>
-    /// character edits it when it manages that folder or uses it and made the bookmark, and moves it only into a folder it can use.
+    /// The character can edit a bookmark if it manages the source folder, or can use the folder and created the bookmark.
+    /// The destination must be usable.
     /// </summary>
     public Task<Bookmark> UpdateBookmarkAsync(long characterId, long bookmarkId, long oldFolderId, string? memo, string? note,
         long? subfolderId, long newFolderId, bool expiryCancel, AccessLists? lists = null, CancellationToken token = default) =>
@@ -490,7 +489,10 @@ public sealed partial class BookmarkStore
             return (IReadOnlyList<Bookmark>)copies;
         }, token);
 
-    /// <summary>Removes the expired bookmarks of every folder; answers the folder and bookmark ids that went (the shared folders' viewers hear of them).</summary>
+    /// <summary>
+    /// Removes expired bookmarks globally and returns their folder and bookmark ids for notifications to active viewers who still have view
+    /// access.
+    /// </summary>
     public async Task<IReadOnlyList<(long FolderId, long BookmarkId)>> ExpireAsync(CancellationToken token = default)
     {
         await using var connection = await _source.OpenConnectionAsync(token);
@@ -521,10 +523,10 @@ public sealed partial class BookmarkStore
         return pairs;
     }
 
-    /// <summary>The characters that have the folder active (other than the given one): who hears of a change to a shared folder.</summary>
+    /// <summary>The other characters with an active connection to this folder; callers use these ids to select notification recipients.</summary>
     public async Task<IReadOnlyList<long>> ActiveViewersAsync(long folderId, long excludeCharacterId, CancellationToken token = default)
     {
-        // a read of the connections only: no character's default folder is made for the viewer lookup
+        // Read active connections directly; this viewer lookup must not create a default folder.
         await using var connection = await _source.OpenConnectionAsync(token);
         await using var transaction = await connection.BeginTransactionAsync(token);
         var viewers = await ActiveViewersAsync(connection, transaction, folderId, excludeCharacterId, token);

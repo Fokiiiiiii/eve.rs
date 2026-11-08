@@ -17,4 +17,5 @@ No gameplay or packet implementation was changed for this CI repair; the existin
 - After adjustment: `HostInputHardeningTests` had 3 passed, 0 failed, 0 skipped.
 - `Eve.Host.Tests` ping and argument-tuple cases on `eve_p3`: 3 passed, 0 failed, 0 skipped.
 - Release builds of `Eve.Services.Tests` and `Eve.Host.Tests` with warnings as errors: 0 warnings, 0 errors.
-- The graphical V24 client and a post-fix GitHub Actions run have not yet been checked.
+- GitHub Actions run 1627 for the fix commit `72454d069bce` completed successfully. Its downloaded TRX files recorded 8,658 passed, 0 failed, and 25 `NotExecuted`; those 25 are not counted as passes: 22 abyssal simulation tests require `EVE_ABYSSAL_SIM_BINARY` and `EVE_ABYSSAL_SIM_SDE`, one Universe export test requires `EVE_CLIENT_SDE_DIR`, and the Dogma and Market benchmarks each require their opt-in environment variable. The local focused runs above had 0 skipped.
+- The graphical V24 client was not run.

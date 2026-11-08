@@ -34,6 +34,7 @@ public class DispatchGoldenTests
         ("errors:plain", "unknown service"),
         ("errors:plain", "service name is not a string"),
         ("packets:arguments", "a table-string method name"),
+        ("packets:arguments", "a list-valued argument"),
         ("packets:malformed", "not a call body"),
     ];
 
@@ -75,10 +76,14 @@ public class DispatchGoldenTests
             await dispatcher.DispatchAsync(packet, session);
 
             var expected = ((JsonArray)step["responses"]!).Select(r => (string)r!).ToArray();
-            if (ErrorAnswers.Contains((id, note)))
+            if (id == "ping:response" && note == "ping")
             {
-                // The recording has the reference's None for a call it does not have; the V24.01 server answers the
-                // call with a wrapped error (DEVIATIONS.md, "Unknown service and method"). Only that answer changes.
+                // EveJS emits six synthetic samples. V24 preserves the received list and appends one local sample.
+                AssertV24PingResponse(packet, capture.Sent);
+            }
+            else if (ErrorAnswers.Contains((id, note)))
+            {
+                // V24 rejects these request shapes with a wrapped error; the EveJS recordings differ for them.
                 Assert.Single(capture.Sent);
                 Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[0]));
             }
@@ -100,6 +105,44 @@ public class DispatchGoldenTests
             Assert.Equal((string?)state["currentBoundObjectID"], session.CurrentBoundObjectId);
             Assert.Equal((string?)state["lastBoundObjectID"], session.LastBoundObjectId);
         }
+    }
+
+    private static void AssertV24PingResponse(PyValue rawRequest, IReadOnlyCollection<string> capturedResponses)
+    {
+        var request = Assert.IsType<MachoPacket>(MachoPacket.Decode(rawRequest));
+        var responseValue = MarshalCodec.Decode(Convert.FromHexString(Assert.Single(capturedResponses)));
+        var responseObject = Assert.IsType<PyObject>(responseValue);
+        Assert.Equal(ResponseBuilder.PingRspClass, JsSemantics.StringValue(responseObject.Name));
+        var response = Assert.IsType<MachoPacket>(MachoPacket.Decode(responseValue));
+        Assert.Equal(MachoMessage.PingRsp, response.Type);
+        Assert.Equal(request.Dest, response.Source);
+        Assert.Equal(request.Source, response.Dest);
+        Assert.Equal(request.UserId, response.UserId);
+        Assert.Equal(request.Oob, response.Oob);
+        Assert.Empty(Assert.IsType<PyDict>(response.NamedPayload).Entries);
+        Assert.Equal(request.Bssid, response.Bssid);
+        Assert.Equal(request.SpanId, response.SpanId);
+        Assert.Equal(request.Extra9, response.Extra9);
+        Assert.Equal(request.Extra10, response.Extra10);
+        Assert.Equal(request.Extra11, response.Extra11);
+        Assert.Equal(request.Extra12, response.Extra12);
+        Assert.Equal(request.Extra13, response.Extra13);
+
+        var requestTimes = request.Payload is PyTuple { Items.Count: > 0 } requestPayload
+            && requestPayload.Items[0] is PyList receivedTimes
+                ? receivedTimes.Items
+                : Array.Empty<PyValue>();
+        var responsePayload = Assert.IsType<PyTuple>(response.Payload);
+        var responseTimes = Assert.IsType<PyList>(responsePayload.Items[0]);
+        Assert.Equal(requestTimes.Count + 1, responseTimes.Items.Count);
+        Assert.Equal(requestTimes, responseTimes.Items.Take(requestTimes.Count));
+
+        var turnaround = Assert.IsType<PyTuple>(responseTimes.Items[^1]);
+        Assert.Equal(3, turnaround.Items.Count);
+        var fixedTime = new PyLong(Py.FileTimeFromUnixMs(FixedNowMs));
+        Assert.Equal(fixedTime, turnaround.Items[0]);
+        Assert.Equal(fixedTime, turnaround.Items[1]);
+        Assert.Equal("proxy::turnaround", JsSemantics.StringValue(turnaround.Items[2]));
     }
 
     [Theory]

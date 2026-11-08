@@ -130,6 +130,10 @@ public sealed class GlobalConfigStore
             foreach (var entry in _base.Entries)
             {
                 var name = JsSemantics.StringValue(entry.Key) ?? "";
+                if (name == GlobalConfigWrites.HoneycombWriteKey)
+                {
+                    continue;
+                }
                 if (!_overrides.TryGetValue(name, out var value))
                 {
                     entries.Add(entry);
@@ -143,7 +147,7 @@ public sealed class GlobalConfigStore
             }
             foreach (var (name, value) in _overrides.OrderBy(pair => pair.Key, StringComparer.Ordinal))
             {
-                if (value is not null && !applied.Contains(name))
+                if (value is not null && name != GlobalConfigWrites.HoneycombWriteKey && !applied.Contains(name))
                 {
                     entries.Add(new(new PyStr(name), value));
                 }
@@ -153,12 +157,12 @@ public sealed class GlobalConfigStore
     }
 
     /// <summary>
-    /// Saves a write and makes it current. A value of None or a delete removes the key (the client removes it too).
+    /// Saves a write and makes it current. Only an explicit delete removes the key; a None value is preserved.
     /// Returns the value now set, or null for a deletion. A save that fails changes nothing.
     /// </summary>
     public async ValueTask<PyValue?> ApplyAsync(string key, PyValue value, bool isDelete, CancellationToken cancellationToken = default)
     {
-        var stored = isDelete || value is PyNone ? null : value;
+        var stored = isDelete ? null : value;
         await _writes.WaitAsync(cancellationToken);
         try
         {
@@ -183,6 +187,8 @@ public sealed class GlobalConfigStore
 /// </summary>
 public static class GlobalConfigWrites
 {
+    public const string HoneycombWriteKey = "monolith_honeycomb_public_write_key";
+
     /// <summary>
     /// Keys no administrator may set or remove: the bug-report server (a value elsewhere would send reports off this machine)
     /// and the Honeycomb write key (EVE.js <c>globalConfig.js</c> protects the same two). A write to one is refused with an error.
@@ -190,7 +196,7 @@ public static class GlobalConfigWrites
     public static readonly IReadOnlySet<string> ProtectedKeys = new HashSet<string>(StringComparer.Ordinal)
     {
         "bugReporting_BugReportServer",
-        "HoneycombWriteKey",
+        HoneycombWriteKey,
     };
 
     public static MachoNetGlobalConfigUpdateCallback Create(GlobalConfigStore config, ConnectedSessions connected, Action clusterConfigChanged) =>

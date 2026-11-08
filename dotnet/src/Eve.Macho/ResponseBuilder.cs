@@ -15,7 +15,7 @@ public sealed record CallResponseOptions
     public bool WrapResultInSubstream { get; init; } = true;
 }
 
-/// <summary>Builds the packets a server sends back. Byte-compatible with the reference dispatcher.</summary>
+/// <summary>Builds the packets a server sends back using the V24 MachoNet wire shapes.</summary>
 public static class ResponseBuilder
 {
     public const string CallRspClass = "carbon.common.script.net.machoNetPacket.CallRsp";
@@ -185,18 +185,16 @@ public static class ResponseBuilder
         ]);
     }
 
-    /// <summary>A PING_RSP with the timing entries the client expects.</summary>
+    /// <summary>A PING_RSP that preserves the request's timing entries and appends this node's turnaround.</summary>
     public static PyValue PingResponse(MachoPacket request, long nowUnixMs)
     {
         var now = (nowUnixMs * FileTimeTicksPerMillisecond) + FileTimeEpochTicks;
-        PyValue Entry(string step) => new PyTuple([new PyLong(now - 20), new PyLong(now), new PyStr(step)]);
+        IReadOnlyList<PyValue> receivedTimes = request.Payload is PyTuple { Items.Count: > 0 } body && body.Items[0] is PyList list
+            ? list.Items
+            : Array.Empty<PyValue>();
         var timings = new PyList([
-            Entry("proxy::handle_message"),
-            Entry("proxy::writing"),
-            Entry("server::handle_message"),
-            Entry("server::turnaround"),
-            Entry("proxy::handle_message"),
-            Entry("proxy::writing"),
+            .. receivedTimes,
+            new PyTuple([new PyLong(now), new PyLong(now), new PyStr("proxy::turnaround")]),
         ]);
         return Packet(PingRspClass,
         [

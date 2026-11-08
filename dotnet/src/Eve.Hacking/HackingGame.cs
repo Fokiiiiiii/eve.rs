@@ -2,7 +2,7 @@ namespace Eve.Hacking;
 
 /// <summary>One hacking attempt as the analyzer starts it: the virus stats are the module's values after dogma.</summary>
 public sealed record HackingAttempt(
-    long TargetId,
+    long? TargetId,
     int ModuleTypeId,
     int GameType,
     int Difficulty,

@@ -8,6 +8,7 @@ using Eve.Characters;
 using Eve.Services;
 using Eve.Sde;
 using Eve.Universe;
+using Eve.Hacking;
 using Npgsql;
 
 namespace Eve.Host.Tests;
@@ -86,6 +87,7 @@ public sealed class HackingCompositionTests : IAsyncLifetime
 
         var host = await HostComposition.BuildAsync(Settings());
         var hacking = host.Registry.Lookup("hackingMgr") ?? throw new InvalidOperationException("hackingMgr is not registered");
+        Assert.True(hacking.HasMethod("StartNewGameInstance"));
         Assert.True(hacking.HasMethod("ClickedOnTile"));
         Assert.True(hacking.HasMethod("QuitHackingAttempt"));
 
@@ -103,4 +105,74 @@ public sealed class HackingCompositionTests : IAsyncLifetime
         Assert.Equal(before + 1, sink.Packets.Count);
         await host.ShutdownAsync();
     }
+
+    [PgFact]
+    public async Task Qa_practice_board_is_QA_role_gated_and_starts_over_the_registered_service()
+    {
+        var host = await HostComposition.BuildAsync(Settings());
+        var hacking = host.Registry.Lookup("hackingMgr") ?? throw new InvalidOperationException("hackingMgr is not registered");
+        Assert.True(hacking.HasMethod("StartNewGameInstance"));
+
+        static ServiceCall PracticeCall(ClientSession session, long callId = 1) => new()
+        {
+            Session = session,
+            Method = "StartNewGameInstance",
+            Args = [PyNone.Instance, new PyInt(HackingWire.GameTypeHacking), new PyInt(22_329), new PyInt(2),
+                new PyInt(40), new PyInt(20), new PyInt(3)],
+            CallId = new PyInt(callId),
+        };
+
+        var deniedSink = new Sink();
+        var denied = new ClientSession(deniedSink) { SessionId = 502, CharacterId = 99_002 };
+        denied.Set("role", new PyLong(0));
+        denied.Set("accountRole", new PyLong(GameMasterRoles.Qa));
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await hacking.CallAsync(PracticeCall(denied)));
+        Assert.Equal("Activate an analyzer to hack a container. Standalone practice boards require the QA role.", error.Error.UserErrorMessage);
+        Assert.Empty(deniedSink.Packets);
+
+        var sink = new Sink();
+        var qa = new ClientSession(sink) { SessionId = 503, CharacterId = 99_003 };
+        qa.Set("role", new PyLong(GameMasterRoles.Qa));
+        Assert.IsType<PyNone>(await hacking.CallAsync(PracticeCall(qa)));
+
+        var notification = Assert.IsType<PyObject>(Assert.Single(sink.Packets));
+        var packet = Assert.IsType<PyTuple>(notification.Args).Items;
+        Assert.Equal(MachoMessage.Notification, ((PyInt)packet[0]).Value);
+        var address = Assert.IsType<PyTuple>(Assert.IsType<PyObject>(packet[2]).Args).Items;
+        Assert.Equal("OnHackingTurnComplete", JsSemantics.StringValue(address[1]));
+        var body = Assert.IsType<PyBuffer>(Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(packet[4]).Items[0]).Items[1]);
+        var inner = Assert.IsType<PyTuple>(MarshalCodec.Decode(body.Value.ToArray())).Items;
+        var callArgs = Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(inner[1]).Items[1]).Items;
+        var events = Assert.IsType<PyTuple>(callArgs[0]).Items;
+        var tiles = events.Where(item => Number(Field(item, "eventID")) == HackingWire.EventTileCreated).ToList();
+        Assert.InRange(tiles.Count, 39, 64);
+        Assert.All(tiles, item =>
+        {
+            var coord = Assert.IsType<PyTuple>(Field(Field(item, "eventData"), "coord")).Items;
+            Assert.InRange(Number(coord[0]), 0, 7);
+            Assert.InRange(Number(coord[1]), 0, 7);
+        });
+        var start = events.Single(item => Number(Field(item, "eventID")) == HackingWire.EventGameStart);
+        Assert.IsType<PyDict>(Field(start, "eventData"));
+        Assert.Same(PyNone.Instance, Field(Field(start, "eventData"), "targetID"));
+        await host.ShutdownAsync();
+    }
+
+    private static PyValue Field(PyValue keyVal, string key)
+    {
+        var entries = keyVal switch
+        {
+            PyDict dict => dict.Entries,
+            PyObject { Args: PyDict dict } => dict.Entries,
+            _ => throw new Xunit.Sdk.XunitException($"Expected a hacking event mapping, got {keyVal.GetType().Name}"),
+        };
+        return entries.Single(entry => JsSemantics.StringValue(entry.Key) == key).Value;
+    }
+
+    private static long Number(PyValue value) => value switch
+    {
+        PyInt integer => integer.Value,
+        PyLong integer => integer.Value,
+        _ => throw new InvalidOperationException(value.ToString()),
+    };
 }

@@ -36,6 +36,10 @@ public sealed class HackingMgrServiceTests
         public ValueTask<HackableTarget?> FindAsync(long characterId, long targetId, CancellationToken cancellationToken) =>
             ValueTask.FromResult(Target is { } target && target.ItemId == targetId ? target : null);
 
+        public ValueTask<string?> AnalyzerStartRefusalAsync(
+            ClientSession session, HackableTarget target, double maxRange, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<string?>(null);
+
         public ValueTask<bool> InReachAsync(ClientSession session, long targetId, double maxRange, CancellationToken cancellationToken) =>
             ValueTask.FromResult(InReach);
 
@@ -79,14 +83,72 @@ public sealed class HackingMgrServiceTests
     private static IReadOnlyList<int> EventIds(Events.Event note) =>
         ((PyTuple)note.Args[0]).Items.Select(item => (int)Number(Field(item, "eventID"))).ToArray();
 
-    private static PyValue Field(PyValue keyVal, string key) =>
-        ((PyDict)((PyObject)keyVal).Args).Entries.Single(entry => JsSemantics.StringValue(entry.Key) == key).Value;
+    private static PyValue FirstHiddenNeighbour(Events.Event startNotification)
+    {
+        var tiles = ((PyTuple)startNotification.Args[0]).Items
+            .Where(item => Number(Field(item, "eventID")) == HackingWire.EventTileCreated)
+            .Select(item => Field(item, "eventData"))
+            .Select(data =>
+            {
+                var coord = Assert.IsType<PyTuple>(Field(data, "coord")).Items;
+                return (Coord: new Coord((int)Number(coord[0]), (int)Number(coord[1])),
+                    Hidden: Assert.IsType<PyBool>(Field(data, "hidden")).Value);
+            }).ToList();
+        var start = Assert.Single(tiles, tile => !tile.Hidden);
+        var available = HackingBoard.Neighbours(start.Coord)
+            .Where(coord => tiles.Any(tile => tile.Coord == coord && tile.Hidden)).ToList();
+        Assert.NotEmpty(available);
+        var selected = available[0];
+        return Tile(selected.X, selected.Y);
+    }
+
+    private static PyValue Field(PyValue keyVal, string key)
+    {
+        var entries = keyVal switch
+        {
+            PyDict dict => dict.Entries,
+            PyObject { Args: PyDict dict } => dict.Entries,
+            _ => throw new Xunit.Sdk.XunitException($"Expected a hacking event mapping, got {keyVal.GetType().Name}"),
+        };
+        return entries.Single(entry => JsSemantics.StringValue(entry.Key) == key).Value;
+    }
 
     private static long Number(PyValue value) => value switch
     {
         PyInt i => i.Value,
         _ => throw new InvalidOperationException(value.ToString()),
     };
+
+    [PgFact]
+    public async Task Analyzer_range_uses_both_simulated_radii_and_keeps_the_clients_one_meter_tolerance()
+    {
+        await using var rig = await Eve.Services.Space.Tests.Rig.CreateAsync();
+        var character = await rig.NewCharacterAsync();
+        var characterState = await rig.Characters.GetAsync(character.CharacterId);
+        var solarSystemId = characterState!.SolarSystemId;
+        var snapshot = await rig.Ships.LoadAsync(character.CharacterId);
+        var shipRadius = rig.Statics.Type(snapshot!.Ship.TypeId)!.Attributes[162];
+        Assert.True(shipRadius > 0);
+
+        var session = await rig.SessionAsync(character, 1);
+        var shipBinding = await rig.BindShipAsync(session);
+        await rig.ShipCallAsync(session, "Undock", shipBinding,
+            new PyLong(session.GetInt("shipid")!.Value), PyBool.False);
+
+        const long targetId = 7_000_000_000_000_909L;
+        Target(rig, session, "add", targetId);
+        rig.Sim.PositionRadiusAnswers[character.ShipId] = shipRadius;
+        rig.Sim.PositionRadiusAnswers[targetId] = 50;
+        rig.Sim.PositionAnswers[character.ShipId] = [0, 0, 0];
+        rig.Sim.PositionAnswers[targetId] = [shipRadius + 50 + 101, 0, 0];
+        var target = new HackableTarget(targetId, solarSystemId, 4, Relic: false);
+
+        Assert.Null(await rig.Space.AnalyzerStartRefusalAsync(session, target, 100, CancellationToken.None));
+
+        rig.Sim.PositionAnswers[targetId] = [shipRadius + 50 + 101.1, 0, 0];
+        Assert.Equal("TARGET_OUT_OF_RANGE",
+            await rig.Space.AnalyzerStartRefusalAsync(session, target, 100, CancellationToken.None));
+    }
 
     private static (HackingMgrService Service, HackingAttempts Store, FakeSite Site, ClientSession Session) Rig()
     {
@@ -113,13 +175,13 @@ public sealed class HackingMgrServiceTests
     }
 
     [Fact]
-    public async Task Clicking_an_explored_tile_sends_its_flip_and_keeps_the_attempt()
+    public async Task Clicking_a_reachable_tile_from_the_generated_start_sends_its_flip_and_keeps_the_attempt()
     {
         var (service, store, _, session) = Rig();
         await service.OpenAnalyzerAttemptAsync(session, CharacterId, ContainerId, Analyzer(), CancellationToken.None);
-        Events.Of(session);
+        var start = Assert.Single(Events.Of(session));
 
-        await service.CallAsync(Call("ClickedOnTile", session, Tile(0, 3)));
+        await service.CallAsync(Call("ClickedOnTile", session, FirstHiddenNeighbour(start)));
 
         var note = Assert.Single(Events.Of(session));
         Assert.Equal(HackingWire.EventTileFlipped, EventIds(note)[0]);
@@ -390,6 +452,236 @@ public sealed class HackingMgrServiceTests
         Assert.Single(site.ActiveReservations);
         await service.CancelAnalyzerReservationAsync(session, ContainerId, CancellationToken.None);
         Assert.Empty(site.ActiveReservations);
+    }
+
+    [PgFact]
+    public async Task The_registered_space_module_path_refuses_an_unlocked_site_container_before_reserving_it()
+    {
+        await using var rig = await Eve.Services.Space.Tests.Rig.CreateAsync();
+        await using var sites = await SiteContainerRig.CreateAsync();
+        const long containerId = 7_000_000_000_000_907L;
+        const long otherSystemContainerId = 7_000_000_000_000_908L;
+
+        var character = await rig.NewCharacterAsync(shipTypeId: 28_352);
+        var solarSystemId = (await rig.Characters.GetAsync(character.CharacterId))!.SolarSystemId;
+        await sites.InsertAsync(new SiteContainerRecord(containerId, 5_300_000_000_907,
+            solarSystemId, "containment_facility", false, 17, 306,
+            [1_000, 2_000, 3_000], 50, 4, 0, "secure", sites.Now + 86_400_000),
+            new SiteContainerRecord(otherSystemContainerId, 5_300_000_000_908,
+                solarSystemId == int.MaxValue ? solarSystemId - 1 : solarSystemId + 1,
+                "containment_facility", false, 17, 306, [1_000, 2_000, 3_000], 50, 4, 0, "secure", sites.Now + 86_400_000));
+        var analyzer = (await rig.Ships.GrantAsync(character.CharacterId, 22_329, 1, singleton: true))!.Single().After;
+        Assert.IsType<Eve.Ships.ShipChanged>(await rig.Ships.MoveAsync(
+            character.CharacterId, analyzer.Id, Eve.Services.Space.Tests.Rig.Station, character.ShipId, 19, 1));
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Skills.GrantAsync(connection, transaction, character.CharacterId, [new CharacterSkill(21_718, 1, 0)]);
+            await transaction.CommitAsync();
+        }
+        Assert.IsType<Eve.Ships.ShipChanged>(await rig.Ships.SetOnlineAsync(character.CharacterId, character.ShipId, analyzer.Id, true));
+        var session = await rig.SessionAsync(character, 1);
+        var shipBinding = await rig.BindShipAsync(session);
+        await rig.ShipCallAsync(session, "Undock", shipBinding,
+            new PyLong(session.GetInt("shipid")!.Value), PyBool.False);
+        Assert.Equal(solarSystemId, rig.Space.SolarSystemOf(session));
+        Assert.NotNull(await rig.Space.SurfaceDistanceToItemAsync(session, containerId, CancellationToken.None));
+
+        var hacks = sites.Hacks();
+        var site = new SpaceHackingSite(rig.Space)
+        {
+            Find = (_, targetId, token) => hacks.FindAsync(targetId, token),
+            Reserve = (owner, target, reservation, token) =>
+                hacks.TryReserveAsync(target, reservation, owner.CharacterId ?? 0, owner.SessionId, token),
+            Released = (reservation, token) => hacks.ReleaseReservationAsync(reservation, token),
+            Settle = (owner, target, reservation, won, token) =>
+                hacks.EndedAsync(target, reservation, won, owner.CharacterId ?? 0, token),
+        };
+        var attempts = new HackingAttempts();
+        rig.Space.HackingService = new HackingMgrService(attempts, site);
+
+        var refusal = await rig.Space.ActivateAsync(session, analyzer.Id, SpaceSessions.AnalyzerEffectName,
+            containerId, 1, CancellationToken.None);
+
+        Assert.Equal("TARGET_NOT_LOCKED", refusal?.Reason);
+        Assert.Null(attempts.Get(character.CharacterId));
+        Assert.DoesNotContain(rig.Sim.Heard.OfType<SimActivate>(), message => message.Effect.TargetId == containerId);
+        Assert.Equal(0, await ActiveReservationsAsync(sites, containerId));
+        Assert.Equal(0, (await sites.Store.GetAsync(containerId))!.Failures);
+        Assert.DoesNotContain(Events.Of(session), note => note.Name == "OnHackingTurnComplete");
+
+        Target(rig, session, "add", otherSystemContainerId);
+        var otherSystemRefusal = await rig.Space.ActivateAsync(session, analyzer.Id, SpaceSessions.AnalyzerEffectName,
+            otherSystemContainerId, 1, CancellationToken.None);
+        Assert.Equal("TARGET_NOT_FOUND", otherSystemRefusal?.Reason);
+        Assert.Equal(0, await ActiveReservationsAsync(sites, otherSystemContainerId));
+        Assert.Equal(0, (await sites.Store.GetAsync(otherSystemContainerId))!.Failures);
+
+        Target(rig, session, "add", containerId);
+        rig.Sim.PositionAnswers[containerId] = [1_000_000_000, 0, 0];
+        var rangeRefusal = await rig.Space.ActivateAsync(session, analyzer.Id, SpaceSessions.AnalyzerEffectName,
+            containerId, 1, CancellationToken.None);
+        Assert.Equal("TARGET_OUT_OF_RANGE", rangeRefusal?.Reason);
+        Assert.Equal(0, await ActiveReservationsAsync(sites, containerId));
+        Assert.Equal(0, (await sites.Store.GetAsync(containerId))!.Failures);
+
+        var flown = await rig.Ships.LoadAsync(character.CharacterId);
+        var analyzerRange = flown!.World.Get(analyzer.Id, 54);
+        var shipRadius = flown.World.Get(character.ShipId, 162);
+        rig.Sim.PositionRadiusAnswers[character.ShipId] = shipRadius;
+        rig.Sim.PositionRadiusAnswers[containerId] = 50;
+        rig.Sim.PositionAnswers[containerId] = [shipRadius + 50 + analyzerRange + 1, 0, 0];
+        var accepted = await rig.Space.ActivateAsync(session, analyzer.Id, SpaceSessions.AnalyzerEffectName,
+            containerId, 1, CancellationToken.None);
+        Assert.Null(accepted?.Reason);
+        Assert.NotNull(attempts.Get(character.CharacterId));
+        Assert.Equal(1, await ActiveReservationsAsync(sites, containerId));
+        Assert.Contains(Events.Of(session), note => note.Name == "OnHackingTurnComplete");
+
+        await rig.Space.HackingService!.CloseOnWarpAsync(session, character.CharacterId, CancellationToken.None);
+        Assert.Null(attempts.Get(character.CharacterId));
+        Assert.Equal(0, await ActiveReservationsAsync(sites, containerId));
+        Assert.Equal(1, (await sites.Store.GetAsync(containerId))!.Failures);
+    }
+
+    [PgFact]
+    public async Task Moving_out_of_analyzerrange_ends_an_idle_attempt_and_releases_its_database_reservation()
+    {
+        await using var rig = await Eve.Services.Space.Tests.Rig.CreateAsync();
+        await using var sites = await SiteContainerRig.CreateAsync();
+        const long containerId = 7_000_000_000_000_910L;
+        var character = await rig.NewCharacterAsync(shipTypeId: 28_352);
+        var solarSystemId = (await rig.Characters.GetAsync(character.CharacterId))!.SolarSystemId;
+        await sites.InsertAsync(new SiteContainerRecord(containerId, 5_300_000_000_910,
+            solarSystemId, "containment_facility", false, 17, 306, [0, 0, 0], 50, 4, 0,
+            "secure", sites.Now + 86_400_000));
+        var analyzer = (await rig.Ships.GrantAsync(character.CharacterId, 22_329, 1, singleton: true))!.Single().After;
+        Assert.IsType<Eve.Ships.ShipChanged>(await rig.Ships.MoveAsync(
+            character.CharacterId, analyzer.Id, Eve.Services.Space.Tests.Rig.Station, character.ShipId, 19, 1));
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Skills.GrantAsync(connection, transaction, character.CharacterId, [new CharacterSkill(21_718, 1, 0)]);
+            await transaction.CommitAsync();
+        }
+        Assert.IsType<Eve.Ships.ShipChanged>(await rig.Ships.SetOnlineAsync(character.CharacterId, character.ShipId, analyzer.Id, true));
+        var session = await rig.SessionAsync(character, 1);
+        var shipBinding = await rig.BindShipAsync(session);
+        await rig.ShipCallAsync(session, "Undock", shipBinding,
+            new PyLong(session.GetInt("shipid")!.Value), PyBool.False);
+
+        var hacks = sites.Hacks();
+        var site = new SpaceHackingSite(rig.Space)
+        {
+            Find = (_, targetId, token) => hacks.FindAsync(targetId, token),
+            Reserve = (owner, target, reservation, token) =>
+                hacks.TryReserveAsync(target, reservation, owner.CharacterId ?? 0, owner.SessionId, token),
+            Released = (reservation, token) => hacks.ReleaseReservationAsync(reservation, token),
+            Settle = (owner, target, reservation, won, token) =>
+                hacks.EndedAsync(target, reservation, won, owner.CharacterId ?? 0, token),
+        };
+        var attempts = new HackingAttempts();
+        rig.Space.HackingService = new HackingMgrService(attempts, site);
+        Target(rig, session, "add", containerId);
+
+        Assert.Null((await rig.Space.ActivateAsync(session, analyzer.Id, SpaceSessions.AnalyzerEffectName,
+            containerId, 1, CancellationToken.None))?.Reason);
+        Assert.NotNull(attempts.Get(character.CharacterId));
+        Assert.Equal(1, await ActiveReservationsAsync(sites, containerId));
+
+        rig.Sim.PositionAnswers[containerId] = [1_000_000_000, 0, 0];
+        var stop = Py.Tuple(new PyInt(1), Py.Tuple(new PyStr("Stop"), Py.Tuple(new PyLong(character.ShipId))));
+        rig.Sim.Say(new SimNotify((ulong)session.SessionId, "DoDestinyUpdate", "clientID",
+            MarshalCodec.Encode(Py.Tuple(new PyList([stop]), PyBool.False))));
+        await rig.Space.QuiesceAsync();
+
+        Assert.Null(attempts.Get(character.CharacterId));
+        Assert.Equal(0, await ActiveReservationsAsync(sites, containerId));
+        Assert.Equal(1, (await sites.Store.GetAsync(containerId))!.Failures);
+        var notifications = Events.Of(session);
+        var movementIndex = notifications.ToList().FindIndex(note => note.Name == "DoDestinyUpdate");
+        var lostIndex = notifications.ToList().FindLastIndex(note => note.Name == "OnHackingTurnComplete");
+        Assert.True(movementIndex >= 0 && lostIndex > movementIndex,
+            "the movement update must reach the client before the terminal hacking turn");
+        var lostTurn = notifications[lostIndex];
+        var lostEvents = Assert.IsType<PyTuple>(lostTurn.Args[0]).Items;
+        Assert.Equal(HackingWire.EventGameLost, Number(Field(Assert.Single(lostEvents), "eventID")));
+    }
+
+    [PgFact]
+    public async Task Losing_the_target_lock_while_simulation_accepts_activation_releases_the_pending_reservation()
+    {
+        await using var rig = await Eve.Services.Space.Tests.Rig.CreateAsync();
+        await using var sites = await SiteContainerRig.CreateAsync();
+        const long containerId = 7_000_000_000_000_911L;
+        var character = await rig.NewCharacterAsync(shipTypeId: 28_352);
+        var solarSystemId = (await rig.Characters.GetAsync(character.CharacterId))!.SolarSystemId;
+        await sites.InsertAsync(new SiteContainerRecord(containerId, 5_300_000_000_911,
+            solarSystemId, "containment_facility", false, 17, 306, [0, 0, 0], 50, 4, 0,
+            "secure", sites.Now + 86_400_000));
+        var analyzer = (await rig.Ships.GrantAsync(character.CharacterId, 22_329, 1, singleton: true))!.Single().After;
+        Assert.IsType<Eve.Ships.ShipChanged>(await rig.Ships.MoveAsync(
+            character.CharacterId, analyzer.Id, Eve.Services.Space.Tests.Rig.Station, character.ShipId, 19, 1));
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Skills.GrantAsync(connection, transaction, character.CharacterId, [new CharacterSkill(21_718, 1, 0)]);
+            await transaction.CommitAsync();
+        }
+        Assert.IsType<Eve.Ships.ShipChanged>(await rig.Ships.SetOnlineAsync(character.CharacterId, character.ShipId, analyzer.Id, true));
+        var session = await rig.SessionAsync(character, 1);
+        var shipBinding = await rig.BindShipAsync(session);
+        await rig.ShipCallAsync(session, "Undock", shipBinding,
+            new PyLong(session.GetInt("shipid")!.Value), PyBool.False);
+
+        var hacks = sites.Hacks();
+        var site = new SpaceHackingSite(rig.Space)
+        {
+            Find = (_, targetId, token) => hacks.FindAsync(targetId, token),
+            Reserve = (owner, target, reservation, token) =>
+                hacks.TryReserveAsync(target, reservation, owner.CharacterId ?? 0, owner.SessionId, token),
+            Released = (reservation, token) => hacks.ReleaseReservationAsync(reservation, token),
+            Settle = (owner, target, reservation, won, token) =>
+                hacks.EndedAsync(target, reservation, won, owner.CharacterId ?? 0, token),
+        };
+        var attempts = new HackingAttempts();
+        rig.Space.HackingService = new HackingMgrService(attempts, site);
+        Target(rig, session, "add", containerId);
+        var activationGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        rig.Sim.ActivateGate = activationGate;
+
+        var activation = rig.Space.ActivateAsync(session, analyzer.Id, SpaceSessions.AnalyzerEffectName,
+            containerId, 1, CancellationToken.None);
+        await WaitUntilAsync(() => rig.Sim.Heard.OfType<SimActivate>().Any(message => message.Effect.TargetId == containerId));
+        Assert.Equal(1, await ActiveReservationsAsync(sites, containerId));
+
+        Target(rig, session, "lost", containerId);
+        activationGate.SetResult();
+        Assert.Null((await activation)?.Reason);
+
+        Assert.Null(attempts.Get(character.CharacterId));
+        Assert.Equal(0, await ActiveReservationsAsync(sites, containerId));
+        Assert.Equal(0, (await sites.Store.GetAsync(containerId))!.Failures);
+        Assert.DoesNotContain(Events.Of(session), note => note.Name == "OnHackingTurnComplete");
+    }
+
+    private static void Target(Rig rig, ClientSession session, string action, long? targetId = null)
+    {
+        var values = targetId is { } id
+            ? Py.Tuple(new PyStr(action), new PyLong(id))
+            : Py.Tuple(new PyStr(action));
+        var args = Py.Tuple(new PyInt(0), Py.Tuple(new PyInt(1), values));
+        rig.Sim.Say(new SimNotify((ulong)session.SessionId, "OnTarget", "shipid", MarshalCodec.Encode(args)));
+    }
+
+    private static async Task<long> ActiveReservationsAsync(SiteContainerRig rig, long containerId)
+    {
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(
+            $"SELECT count(*) FROM {rig.SitesSchema}.site_container_hack_attempts WHERE container_id = $1 AND status = 'active'",
+            connection);
+        command.Parameters.AddWithValue(containerId);
+        return (long)(await command.ExecuteScalarAsync())!;
     }
 }
 

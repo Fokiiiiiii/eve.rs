@@ -75,12 +75,7 @@ public sealed class RowSet
     /// <summary>A <c>CIndexedRowset</c>: packed rows by the value of the key column (the query's, or the first column).</summary>
     public PyValue ToIndexedRowset()
     {
-        var keyName = Query.KeyColumn ?? Columns[0].Name;
-        var key = Columns.ToList().FindIndex(c => c.Name == keyName);
-        if (key < 0)
-        {
-            throw new InvalidOperationException($"query {Query.Name} has no column {keyName}");
-        }
+        var (keyName, key) = FindKeyColumn();
         var descriptor = Descriptor();
         return new PyObjectEx(ObjectExKind.Ex2,
             Py.Tuple(Py.Tuple(new PyToken("carbon.common.script.sys.crowset.CIndexedRowset")),
@@ -91,10 +86,22 @@ public sealed class RowSet
     /// <summary>A dictionary from the key column to a <c>util.KeyVal</c> of the row (what <c>GetXxxInfo</c> calls that return a record per id return).</summary>
     public PyValue ToKeyValsByKey()
     {
-        var keyName = Query.KeyColumn ?? Columns[0].Name;
-        var key = Columns.ToList().FindIndex(c => c.Name == keyName);
+        var (_, key) = FindKeyColumn();
         return new PyDict([.. Rows.Select(row => new KeyValuePair<PyValue, PyValue>(Value(Columns[key].Type, row[key]),
             Py.KeyVal([.. Columns.Select((c, i) => (c.Name, Value(c.Type, row[i])))])))]);
+    }
+
+    private (string Name, int Index) FindKeyColumn()
+    {
+        if (Columns.Count == 0)
+        {
+            throw new InvalidOperationException($"query {Query.Name} has no columns");
+        }
+        var name = Query.KeyColumn ?? Columns[0].Name;
+        var index = Columns.ToList().FindIndex(column => column.Name == name);
+        return index < 0
+            ? throw new InvalidOperationException($"query {Query.Name} has no column {name}")
+            : (name, index);
     }
 
     /// <summary>The first row as a <c>util.KeyVal</c>, or None when there is none.</summary>
@@ -137,6 +144,10 @@ public sealed class ReadSide : IRowsetReadSide
         {
             throw new ArgumentException($"query {query.Name} has a column name that is not a word", nameof(query));
         }
+        if (query.KeyColumn is { } keyColumn && !query.Columns.Any(column => column.Name == keyColumn))
+        {
+            throw new ArgumentException($"query {query.Name} has no key column named {keyColumn}", nameof(query));
+        }
         if (!_queries.TryAdd(query.Name, query))
         {
             throw new InvalidOperationException($"a query named '{query.Name}' is already registered");
@@ -153,7 +164,7 @@ public sealed class ReadSide : IRowsetReadSide
     {
         var query = _queries.TryGetValue(name, out var found) ? found : throw new KeyNotFoundException($"no query named '{name}'");
         var text = new StringBuilder("SELECT ");
-        text.Append(string.Join(", ", query.Columns.Select(c => $"({c.Sql})::{c.Type.SqlType()} AS {c.Name}")));
+        text.Append(string.Join(", ", query.Columns.Select(c => $"({c.Sql})::{c.Type.SqlType()} AS \"{c.Name}\"")));
         text.Append(" FROM ").Append(Resolve(query.From));
         if (query.Where is not null)
         {

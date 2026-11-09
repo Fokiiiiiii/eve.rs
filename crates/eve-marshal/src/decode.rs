@@ -9,16 +9,16 @@ use bytes::Bytes;
 use crate::error::{MarshalError, Result};
 use crate::packed_row::{self, Descriptor};
 use crate::string_table::STRING_TABLE;
-use crate::value::{ObjectExKind, SubStream, Value};
+use crate::value::{ObjectExKind, SaveSlot, SavedGraph, SavedReference, SubStream, Value};
 use crate::wire::{MARSHAL_HEADER, OPCODE_MASK, SAVE_MASK, op};
 use crate::{MAX_DECODE_ALLOCATION, MAX_DEPTH, MAX_ELEMENTS, MAX_INPUT_BYTES, MAX_STRING_BYTES};
 
 /// Decode a marshal stream, tolerating bytes after the root value.
 ///
-/// This is the same leniency as the JS reference's `marshalDecode`: a string
-/// or buffer whose declared length runs past the end of the input yields the
-/// bytes that are there instead of an error, and PyObjectEx lists that never
-/// reach their terminator end at the end of the input.
+/// This is the same root-value leniency as the JS reference's `marshalDecode`:
+/// bytes after the root value are tolerated. Every nested read stays inside
+/// the payload (before any save table), and truncated values or missing
+/// PyObjectEx terminators fail.
 ///
 /// This copies `bytes` once so the decoded strings and buffers can be views
 /// into it; use [`decode_bytes`] when the input is already a [`Bytes`] (a
@@ -64,7 +64,7 @@ pub fn split_packet(input: &[u8]) -> Option<(&[u8], &[u8])> {
 /// around [`MAX_DEPTH`] and exhaust the stack.
 fn clone_extra(value: &Value) -> usize {
     match value {
-        Value::BigUnsigned(bytes) => bytes.len(),
+        Value::BigUnsigned(bytes) | Value::BigSigned(bytes) => bytes.len(),
         Value::Str(text) | Value::WString(text) | Value::Token(text) => {
             if matches!(text, Cow::Owned(_)) {
                 text.len()
@@ -112,6 +112,8 @@ fn clone_extra(value: &Value) -> usize {
         | Value::Buffer(_)
         | Value::SubStream(SubStream::Raw(_))
         | Value::CPickled(_) => 0,
+        Value::SavedReference(_) => 0,
+        Value::SavedGraph(graph) => clone_extra(graph.root()),
     }
 }
 
@@ -166,6 +168,7 @@ fn decode_stream(
         input,
         buf: bytes,
         pos: 0,
+        value_end: bytes.len(),
         stored: Vec::new(),
         save_pos: None,
         save_end: None,
@@ -192,11 +195,18 @@ fn decode_stream(
             return Err(MarshalError::ResourceLimit("save table"));
         }
         decoder.budget.borrow_mut().container::<Value>(save_count)?;
-        decoder.stored = vec![Value::None; save_count];
+        decoder.stored = vec![None; save_count];
         decoder.save_pos = Some(bytes.len() - table_bytes);
         decoder.save_end = Some(bytes.len());
         value_end = bytes.len() - table_bytes;
+        for index_bytes in bytes[value_end..].chunks_exact(4) {
+            let index = i32::from_le_bytes(index_bytes.try_into().expect("four bytes"));
+            if index < 1 || index as usize > save_count {
+                return Err(MarshalError::SaveTable("bogus map data in marshal stream"));
+            }
+        }
     }
+    decoder.value_end = value_end;
 
     let value = decoder.value()?;
     if require_exact_end {
@@ -207,7 +217,11 @@ fn decode_stream(
             return Err(MarshalError::TrailingData("unconsumed save-table entries"));
         }
     }
-    Ok(value)
+    if decoder.saved_refs > 0 {
+        Ok(Value::SavedGraph(SavedGraph::new(value, decoder.stored)))
+    } else {
+        Ok(value)
+    }
 }
 
 /// The row descriptor of the most recent packed row, and where its bytes were.
@@ -221,7 +235,8 @@ pub(crate) struct Decoder<'a> {
     buf: &'a [u8],
     pos: usize,
     /// Values remembered by a save flag, addressed 1-based by PySavedStreamElement.
-    stored: Vec<Value>,
+    stored: Vec<Option<SaveSlot>>,
+    value_end: usize,
     save_pos: Option<usize>,
     save_end: Option<usize>,
     depth: usize,
@@ -235,23 +250,27 @@ pub(crate) struct Decoder<'a> {
 
 impl<'a> Decoder<'a> {
     fn u8(&mut self) -> Result<u8> {
-        let byte = *self.buf.get(self.pos).ok_or(MarshalError::UnexpectedEnd)?;
+        let byte = *self
+            .buf
+            .get(self.pos..self.value_end)
+            .and_then(|remaining| remaining.first())
+            .ok_or(MarshalError::UnexpectedEnd)?;
         self.pos += 1;
         Ok(byte)
     }
 
-    /// A fixed-width read that fails the way Node's `Buffer.readXxx` does:
-    /// `ERR_BUFFER_OUT_OF_BOUNDS` when the whole buffer is shorter than the
-    /// value, `ERR_OUT_OF_RANGE` when only the offset is bad.
+    /// A fixed-width read wholly inside the payload. EveJS checks valueEnd
+    /// before calling Node's Buffer methods, so truncation is an ordinary Error.
     fn take<const N: usize>(&mut self) -> Result<[u8; N]> {
         let end = self.pos.checked_add(N);
-        match end.and_then(|end| self.buf.get(self.pos..end)) {
+        match end.filter(|end| *end <= self.value_end).and_then(|end| self.buf.get(self.pos..end)) {
             Some(slice) => {
                 self.pos += N;
                 Ok(slice.try_into().expect("slice has N bytes"))
             }
-            None if self.buf.len() < N => Err(MarshalError::BufferOutOfBounds),
-            None => Err(MarshalError::OutOfRange("read past end of stream")),
+            // Every public EveJS read helper checks valueEnd before calling
+            // Node's Buffer methods, so truncation is an ordinary Error.
+            None => Err(MarshalError::UnexpectedEnd),
         }
     }
 
@@ -275,24 +294,27 @@ impl<'a> Decoder<'a> {
         Ok(size)
     }
 
-    /// The JS reference's `readBytes`: clamps to the input but always advances
-    /// by the declared length. Returns the clamped range.
-    fn range(&mut self, length: usize) -> (usize, usize) {
-        let start = self.pos.min(self.buf.len());
-        let end = self.pos.saturating_add(length).min(self.buf.len());
-        self.pos = self.pos.saturating_add(length);
-        (start, end)
+    fn bytes(&mut self, length: usize) -> Result<&'a [u8]> {
+        let end = self
+            .pos
+            .checked_add(length)
+            .filter(|end| *end <= self.value_end)
+            .ok_or(MarshalError::UnexpectedEnd)?;
+        let start = self.pos;
+        self.pos = end;
+        Ok(&self.buf[start..end])
     }
 
-    fn bytes(&mut self, length: usize) -> &'a [u8] {
-        let (start, end) = self.range(length);
-        &self.buf[start..end]
-    }
-
-    /// [`Decoder::range`] as a zero-copy view of the input.
-    fn chunk(&mut self, length: usize) -> Bytes {
-        let (start, end) = self.range(length);
-        if start == end { Bytes::new() } else { self.input.slice(start..end) }
+    /// A zero-copy view of a byte range wholly inside the payload.
+    fn chunk(&mut self, length: usize) -> Result<Bytes> {
+        let end = self
+            .pos
+            .checked_add(length)
+            .filter(|end| *end <= self.value_end)
+            .ok_or(MarshalError::UnexpectedEnd)?;
+        let start = self.pos;
+        self.pos = end;
+        Ok(if start == end { Bytes::new() } else { self.input.slice(start..end) })
     }
 
     fn save_index(&mut self) -> Result<usize> {
@@ -302,15 +324,42 @@ impl<'a> Decoder<'a> {
         if position + 4 > end {
             return Err(MarshalError::SaveTable("save index table exhausted"));
         }
-        let index = u32::from_le_bytes(self.buf[position..position + 4].try_into().expect("4 bytes"));
+        let index =
+            u32::from_le_bytes(self.buf[position..position + 4].try_into().expect("4 bytes")) as usize;
         self.save_pos = Some(position + 4);
-        Ok(index as usize)
+        if index == 0 || index > self.stored.len() {
+            return Err(MarshalError::SaveTable("save index outside the declared table"));
+        }
+        Ok(index)
+    }
+
+    fn reserve_saved(&mut self, index: usize) -> Result<SavedReference> {
+        if index == 0 || index > self.stored.len() {
+            return Err(MarshalError::SaveTable("save index outside the declared table"));
+        }
+        self.budget.borrow_mut().allocate(size_of::<SavedReference>())?;
+        let slot = SaveSlot::default();
+        let reference = SavedReference::new(index, &slot);
+        self.stored[index - 1] = Some(slot);
+        Ok(reference)
+    }
+
+    fn finish_saved(&mut self, reference: &SavedReference, value: &Value) -> Result<()> {
+        self.budget.borrow_mut().allocate(clone_allocation(value))?;
+        reference.publish(value.clone());
+        Ok(())
+    }
+
+    fn save_after_value(&mut self, value: Value) -> Result<()> {
+        let index = self.save_index()?;
+        let reference = self.reserve_saved(index)?;
+        self.finish_saved(&reference, &value)
     }
 
     /// A count read from the wire, bounded before it is used to size an
     /// allocation: every element takes at least one byte.
     fn capacity(&self, count: usize) -> usize {
-        count.min(self.buf.len().saturating_sub(self.pos))
+        count.min(self.value_end.saturating_sub(self.pos))
     }
 
     fn charge_container<T>(&self, count: usize) -> Result<usize> {
@@ -334,21 +383,22 @@ impl<'a> Decoder<'a> {
     }
 
     fn value_inner(&mut self) -> Result<Value> {
-        if self.pos >= self.buf.len() {
+        if self.pos >= self.value_end {
             return Err(MarshalError::UnexpectedEnd);
         }
 
         let raw = self.u8()?;
         let save = raw & SAVE_MASK != 0;
         let opcode = raw & OPCODE_MASK;
-        let storage_index = if save { self.save_index()? } else { 0 };
 
         // The recursion runs through this function, so it is kept a thin
         // dispatcher: every arm with real locals lives in its own function
         // and a deeply nested value costs one small frame per level, not one
         // frame sized for the largest arm.
         let value = match opcode {
-            op::ONE_TUPLE | op::TWO_TUPLE | op::TUPLE | op::ONE_LIST | op::LIST => self.sequence(opcode)?,
+            op::ONE_TUPLE | op::TWO_TUPLE | op::TUPLE | op::ONE_LIST | op::LIST => {
+                self.sequence(opcode, save)?
+            }
             op::DICT
             | op::OBJECT
             | op::OBJECT_EX1
@@ -356,49 +406,76 @@ impl<'a> Decoder<'a> {
             | op::SUB_STRUCT
             | op::CHECKSUMMED_STREAM
             | op::SUB_STREAM
-            | op::PACKED_ROW => self.compound(opcode)?,
-            _ => self.scalar(opcode, raw)?,
+            | op::PACKED_ROW => self.compound(opcode, save)?,
+            _ => {
+                let value = self.scalar(opcode, raw)?;
+                if save && is_late_saved_opcode(opcode) {
+                    self.save_after_value(value.clone())?;
+                }
+                value
+            }
         };
-
-        if save && storage_index > 0 && storage_index <= self.stored.len() {
-            self.budget.borrow_mut().allocate(clone_allocation(&value))?;
-            self.stored[storage_index - 1] = value.clone();
-        }
         Ok(value)
     }
 
     /// Tuples and lists.
     #[inline(never)]
-    fn sequence(&mut self, opcode: u8) -> Result<Value> {
-        Ok(match opcode {
-            op::ONE_TUPLE => Value::Tuple(vec![self.value()?]),
-            op::TWO_TUPLE => {
-                let first = self.value()?;
-                Value::Tuple(vec![first, self.value()?])
+    fn sequence(&mut self, opcode: u8, save: bool) -> Result<Value> {
+        let tuple = matches!(opcode, op::ONE_TUPLE | op::TWO_TUPLE | op::TUPLE);
+        let count = match opcode {
+            op::ONE_TUPLE | op::ONE_LIST => 1,
+            op::TWO_TUPLE => 2,
+            op::TUPLE | op::LIST => self.size()?,
+            _ => unreachable!(),
+        };
+        if count > MAX_ELEMENTS {
+            return Err(MarshalError::ResourceLimit("element count"));
+        }
+        if count > self.value_end.saturating_sub(self.pos) {
+            return Err(MarshalError::UnexpectedEnd);
+        }
+        let link = if save {
+            let index = self.save_index()?;
+            Some(self.reserve_saved(index)?)
+        } else {
+            None
+        };
+        let items = self.charge_container::<Value>(count)?;
+        let mut values = Vec::with_capacity(items);
+        for _ in 0..count {
+            let value = self.value()?;
+            if tuple && link.as_ref().is_some_and(|saved| is_reference_to(&value, saved)) {
+                return Err(MarshalError::SaveTable("self referencing tuple"));
             }
-            op::TUPLE => {
-                let count = self.size()?;
-                Value::Tuple(self.items(count)?)
-            }
-            op::ONE_LIST => Value::List(vec![self.value()?]),
-            _ => {
-                let count = self.size()?;
-                Value::List(self.items(count)?)
-            }
-        })
+            values.push(value);
+        }
+        let value = if tuple { Value::Tuple(values) } else { Value::List(values) };
+        if let Some(link) = link {
+            self.finish_saved(&link, &value)?;
+        }
+        Ok(value)
     }
 
     /// The other opcodes that contain values.
     #[inline(never)]
-    fn compound(&mut self, opcode: u8) -> Result<Value> {
+    fn compound(&mut self, opcode: u8, save: bool) -> Result<Value> {
         match opcode {
-            op::DICT => self.dict(),
+            op::DICT => self.dict(save),
             op::OBJECT => {
+                let index = if save { Some(self.save_index()?) } else { None };
                 let name = self.value()?;
+                let link = match index {
+                    Some(index) => Some(self.reserve_saved(index)?),
+                    None => None,
+                };
                 let args = self.value()?;
-                Ok(Value::Object { name: Box::new(name), args: Box::new(args) })
+                let value = Value::Object { name: Box::new(name), args: Box::new(args) };
+                if let Some(link) = link {
+                    self.finish_saved(&link, &value)?;
+                }
+                Ok(value)
             }
-            op::OBJECT_EX1 | op::OBJECT_EX2 => self.object_ex(opcode),
+            op::OBJECT_EX1 | op::OBJECT_EX2 => self.object_ex(opcode, save),
             op::SUB_STRUCT => Ok(Value::SubStruct(Box::new(self.value()?))),
             op::CHECKSUMMED_STREAM => {
                 let checksum = self.u32()?;
@@ -410,8 +487,20 @@ impl<'a> Decoder<'a> {
     }
 
     #[inline(never)]
-    fn dict(&mut self) -> Result<Value> {
+    fn dict(&mut self, save: bool) -> Result<Value> {
         let count = self.size()?;
+        if count > MAX_ELEMENTS {
+            return Err(MarshalError::ResourceLimit("element count"));
+        }
+        if count.checked_mul(2).is_none_or(|slots| slots > self.value_end.saturating_sub(self.pos)) {
+            return Err(MarshalError::UnexpectedEnd);
+        }
+        let link = if save {
+            let index = self.save_index()?;
+            Some(self.reserve_saved(index)?)
+        } else {
+            None
+        };
         let capacity = self.charge_container::<(Value, Value)>(count)?;
         let mut entries = Vec::with_capacity(capacity);
         for _ in 0..count {
@@ -420,13 +509,17 @@ impl<'a> Decoder<'a> {
             let key = self.value()?;
             entries.push((key, value));
         }
-        Ok(Value::Dict(entries))
+        let value = Value::Dict(entries);
+        if let Some(link) = link {
+            self.finish_saved(&link, &value)?;
+        }
+        Ok(value)
     }
 
     #[inline(never)]
     fn sub_stream(&mut self) -> Result<Value> {
         let length = self.size()?;
-        let data = self.chunk(length);
+        let data = self.chunk(length)?;
         // A nested stream that does not decode is kept as raw bytes.
         Ok(match decode_stream(&data, false, self.depth, Rc::clone(&self.budget)) {
             Ok(inner) => Value::SubStream(SubStream::Decoded(Box::new(inner))),
@@ -439,7 +532,7 @@ impl<'a> Decoder<'a> {
     fn packed_row(&mut self) -> Result<Value> {
         let descriptor = self.descriptor()?;
         let length = self.size()?;
-        let rle = self.chunk(length);
+        let rle = self.chunk(length)?;
         packed_row::decode(self, descriptor, rle)
     }
 
@@ -454,7 +547,11 @@ impl<'a> Decoder<'a> {
         if let Some(cached) = &self.descriptor {
             let (start, end) = cached.span;
             let length = end - start;
-            let upcoming = self.pos.checked_add(length).and_then(|stop| self.buf.get(self.pos..stop));
+            let upcoming = self
+                .pos
+                .checked_add(length)
+                .filter(|stop| *stop <= self.value_end)
+                .and_then(|stop| self.buf.get(self.pos..stop));
             if upcoming == Some(&self.buf[start..end]) {
                 self.pos += length;
                 return Ok(Arc::clone(&cached.descriptor));
@@ -496,11 +593,11 @@ impl<'a> Decoder<'a> {
             }
             op::SHORT_STRING => {
                 let length = usize::from(self.u8()?);
-                Value::Bytes(self.chunk(length))
+                Value::Bytes(self.chunk(length)?)
             }
             op::LONG_STRING => {
                 let length = self.byte_length()?;
-                Value::Bytes(self.chunk(length))
+                Value::Bytes(self.chunk(length)?)
             }
             op::STRING_TABLE_ITEM => {
                 let index = usize::from(self.u8()?);
@@ -516,37 +613,39 @@ impl<'a> Decoder<'a> {
                     .checked_mul(2)
                     .filter(|length| *length <= MAX_STRING_BYTES)
                     .ok_or(MarshalError::ResourceLimit("declared byte/string"))?;
-                Value::WString(Cow::Owned(utf16_lossy(self.bytes(bytes))))
+                Value::WString(Cow::Owned(utf16_lossy(self.bytes(bytes)?)))
             }
-            op::WSTRING_UCS2_CHAR => Value::WString(Cow::Owned(utf16_lossy(self.bytes(2)))),
+            op::WSTRING_UCS2_CHAR => Value::WString(Cow::Owned(utf16_lossy(self.bytes(2)?))),
             op::WSTRING_UTF8 => {
                 let length = self.byte_length()?;
-                Value::WString(Cow::Owned(String::from_utf8_lossy(self.bytes(length)).into_owned()))
+                Value::WString(Cow::Owned(String::from_utf8_lossy(self.bytes(length)?).into_owned()))
             }
             op::TOKEN => {
                 let length = self.byte_length()?;
-                Value::Token(Cow::Owned(String::from_utf8_lossy(self.bytes(length)).into_owned()))
+                Value::Token(Cow::Owned(String::from_utf8_lossy(self.bytes(length)?).into_owned()))
             }
             op::EMPTY_TUPLE => Value::Tuple(Vec::new()),
             op::EMPTY_LIST => Value::List(Vec::new()),
             op::BUFFER => {
                 let length = self.byte_length()?;
-                Value::Buffer(self.chunk(length))
+                Value::Buffer(self.chunk(length)?)
             }
             op::CPICKLED => {
-                let length = self.byte_length()?;
-                Value::CPickled(self.chunk(length))
+                let end = crate::pickle::find_end(self.buf, self.pos, self.value_end)?;
+                Value::CPickled(self.chunk(end - self.pos)?)
             }
             op::SAVED_STREAM_ELEMENT => {
                 self.saved_refs += 1;
                 let index = self.size()?;
-                match index.checked_sub(1).and_then(|slot| self.stored.get(slot)) {
-                    Some(stored) => {
-                        self.budget.borrow_mut().allocate(clone_allocation(stored))?;
-                        stored.clone()
-                    }
-                    None => Value::None,
-                }
+                let target = index
+                    .checked_sub(1)
+                    .and_then(|slot| self.stored.get(slot))
+                    .and_then(Option::as_ref)
+                    .cloned()
+                    .ok_or(MarshalError::SaveTable("invalid TY_REFERENCE in stream"))?;
+                self.budget.borrow_mut().allocate(size_of::<SavedReference>())?;
+                let reference = SavedReference::new(index, &target);
+                Value::SavedReference(reference)
             }
             _ => {
                 return Err(MarshalError::UnknownOpcode { opcode: raw, position: self.pos - 1 });
@@ -554,64 +653,83 @@ impl<'a> Decoder<'a> {
         })
     }
 
-    #[inline(never)]
-    fn items(&mut self, count: usize) -> Result<Vec<Value>> {
-        let capacity = self.charge_container::<Value>(count)?;
-        let mut items = Vec::with_capacity(capacity);
-        for _ in 0..count {
-            items.push(self.value()?);
-        }
-        Ok(items)
-    }
-
     fn var_integer(&mut self) -> Result<Value> {
         let size = self.size()?;
         if size == 0 {
             return Ok(Value::Int(0));
         }
-        let bytes = self.bytes(size);
+        let bytes = self.bytes(size)?;
         // JS reads each declared byte; a truncated integer reads `undefined`.
         if bytes.len() < size {
             return Err(MarshalError::TruncatedInteger);
         }
+        let negative = bytes.last().is_some_and(|byte| byte & 0x80 != 0);
         let mut significant = bytes.len();
+        if negative {
+            while significant > 1 && bytes[significant - 1] == 0xff && bytes[significant - 2] & 0x80 != 0 {
+                significant -= 1;
+            }
+            let signed_bytes = &bytes[..significant];
+            if signed_bytes.len() <= 8 {
+                let mut buffer = [0xff; 8];
+                buffer[..signed_bytes.len()].copy_from_slice(signed_bytes);
+                let number = i64::from_le_bytes(buffer);
+                if number >= -9_007_199_254_740_991 {
+                    return Ok(Value::Int(number));
+                }
+            }
+            return Ok(Value::BigSigned(signed_bytes.to_vec()));
+        }
+
         while significant > 0 && bytes[significant - 1] == 0 {
             significant -= 1;
         }
-        let bytes = &bytes[..significant];
-        if bytes.len() <= 8 {
+        let magnitude_bytes = &bytes[..significant];
+        if magnitude_bytes.len() <= 8 {
             let mut buffer = [0u8; 8];
-            buffer[..bytes.len()].copy_from_slice(bytes);
+            buffer[..magnitude_bytes.len()].copy_from_slice(magnitude_bytes);
             let magnitude = u64::from_le_bytes(buffer);
             if magnitude <= 9_007_199_254_740_991 {
                 return Ok(Value::Int(magnitude as i64));
             }
         }
-        Ok(Value::BigUnsigned(bytes.to_vec()))
+        Ok(Value::BigUnsigned(magnitude_bytes.to_vec()))
     }
 
     #[inline(never)]
-    fn object_ex(&mut self, opcode: u8) -> Result<Value> {
+    fn object_ex(&mut self, opcode: u8, save: bool) -> Result<Value> {
+        let index = if save { Some(self.save_index()?) } else { None };
         let header = self.value()?;
-        let terminated = |decoder: &Decoder<'_>| {
-            decoder.buf.get(decoder.pos).is_some_and(|byte| byte & OPCODE_MASK == op::PACKED_TERMINATOR)
+        let link = match index {
+            Some(index) => Some(self.reserve_saved(index)?),
+            None => None,
         };
 
         let mut list = Vec::new();
-        while self.pos < self.buf.len() {
-            if terminated(self) {
+        loop {
+            if self.buf.get(self.pos..self.value_end).and_then(|remaining| remaining.first())
+                == Some(&op::PACKED_TERMINATOR)
+            {
                 self.pos += 1;
                 break;
+            }
+            if self.pos >= self.value_end {
+                return Err(MarshalError::UnexpectedEnd);
             }
             self.budget.borrow_mut().allocate(size_of::<Value>())?;
             list.push(self.value()?);
         }
 
         let mut dict = Vec::new();
-        while self.pos < self.buf.len() {
-            if terminated(self) {
+        loop {
+            if self.buf.get(self.pos..self.value_end).and_then(|remaining| remaining.first())
+                == Some(&op::PACKED_TERMINATOR)
+            {
                 self.pos += 1;
                 break;
+            }
+            if self.pos >= self.value_end {
+                return Err(MarshalError::UnexpectedEnd);
             }
             let key = self.value()?;
             let value = self.value()?;
@@ -619,13 +737,25 @@ impl<'a> Decoder<'a> {
             dict.push((key, value));
         }
 
-        Ok(Value::ObjectEx {
+        let value = Value::ObjectEx {
             kind: if opcode == op::OBJECT_EX1 { ObjectExKind::Ex1 } else { ObjectExKind::Ex2 },
             header: Box::new(header),
             list,
             dict,
-        })
+        };
+        if let Some(link) = link {
+            self.finish_saved(&link, &value)?;
+        }
+        Ok(value)
     }
+}
+
+fn is_reference_to(value: &Value, expected: &SavedReference) -> bool {
+    matches!(value, Value::SavedReference(reference) if reference.is_same(expected))
+}
+
+fn is_late_saved_opcode(opcode: u8) -> bool {
+    matches!(opcode, op::TOKEN | op::BUFFER | op::LONG_STRING | op::CPICKLED | op::VAR_INTEGER)
 }
 
 /// One-byte strings without an allocation.

@@ -213,7 +213,10 @@ internal sealed class MarshalEncoder
                 }
                 break;
             case PyBigUnsigned big:
-                Sized(Op.VarInteger, big.Bytes);
+                VarInteger(big.Bytes, unsigned: true);
+                break;
+            case PyBigInteger big:
+                VarInteger(big.Value.ToByteArray(isUnsigned: false, isBigEndian: false), unsigned: false);
                 break;
             case PyStr text:
                 WriteString(text.Value);
@@ -323,13 +326,30 @@ internal sealed class MarshalEncoder
                 Value(checksummed.Value);
                 break;
             case PyCPickled pickled:
-                Sized(Op.CPickled, pickled.Value.Span);
+                if (PickleBoundary.FindEnd(pickled.Value.Span, 0) != pickled.Value.Length)
+                {
+                    throw MarshalException.Unencodable("pickle has bytes after its STOP opcode");
+                }
+                Out.Write(Op.CPickled);
+                Out.Write(pickled.Value.Span);
                 break;
             case PyPackedRow row:
                 PackedRowCodec.Encode(this, row);
                 break;
             default:
                 throw MarshalException.Unencodable(value.GetType().Name);
+        }
+    }
+
+    private void VarInteger(ReadOnlySpan<byte> bytes, bool unsigned)
+    {
+        Out.Write(Op.VarInteger);
+        var needsPositiveSignByte = unsigned && bytes.Length > 0 && (bytes[^1] & 0x80) != 0;
+        Size(bytes.Length + (needsPositiveSignByte ? 1 : 0));
+        Out.Write(bytes);
+        if (needsPositiveSignByte)
+        {
+            Out.Write((byte)0);
         }
     }
 

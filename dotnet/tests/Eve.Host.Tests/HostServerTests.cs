@@ -116,6 +116,46 @@ public partial class HostServerTests : IAsyncLifetime
         }
     }
 
+    private sealed class MarshalCaptureService : IService
+    {
+        public string Name => "marshalCapture";
+        public List<IReadOnlyList<PyValue>> Calls { get; } = [];
+        public bool HasMethod(string method) => method == "Accept";
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Calls.Add(call.Args.ToArray());
+            return ValueTask.FromResult<PyValue>(new PyStr("accepted"));
+        }
+    }
+
+    private static byte[] ReplaceUnique(byte[] source, byte[] marker, byte[] replacement)
+    {
+        var start = source.AsSpan().IndexOf(marker);
+        Assert.True(start >= 0, "raw RPC body marker was not found");
+        Assert.Equal(-1, source.AsSpan(start + marker.Length).IndexOf(marker));
+        var result = new byte[source.Length - marker.Length + replacement.Length];
+        source.AsSpan(0, start).CopyTo(result);
+        replacement.CopyTo(result.AsSpan(start));
+        source.AsSpan(start + marker.Length).CopyTo(result.AsSpan(start + replacement.Length));
+        return result;
+    }
+
+    private static byte[] EncodeRawCallBody(string method, params PyValue[] args) =>
+        MarshalCodec.Encode(new PyTuple([new PyInt(1), new PyStr(method), new PyTuple(args), PyNone.Instance]));
+
+    private static PyValue CallWithRawBody(SessionOpen open, long callId, byte[] body)
+    {
+        var request = Assert.IsType<PyObject>(Packets.Call(open, callId, "marshalCapture", "Accept", new PyInt(42)));
+        var fields = Assert.IsType<PyTuple>(request.Args).Items.ToArray();
+        var payload = Assert.IsType<PyTuple>(fields[4]);
+        var wrapper = Assert.IsType<PyTuple>(payload.Items[0]);
+        var wrapperFields = wrapper.Items.ToArray();
+        wrapperFields[1] = new PySubStream(body);
+        fields[4] = new PyTuple([new PyTuple(wrapperFields)]);
+        return new PyObject(request.Name, new PyTuple(fields));
+    }
+
     private sealed class BillManagerBudgetService : IService
     {
         public string Name => "billMgr";
@@ -2437,6 +2477,72 @@ public partial class HostServerTests : IAsyncLifetime
         var healthy = Open(open.SessionId + 1);
         await front.SendAsync(healthy);
         Assert.IsType<Send>(await front.ReceiveAsync());
+    }
+
+    [Fact]
+    public async Task A_payload_reading_into_the_save_table_disconnects_before_dispatch_and_the_front_survives()
+    {
+        var service = new MutationService();
+        Start(configure: registry => registry.Register(service));
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+
+        // With one save-table slot and no payload, the old decoder read the trailer's 0x01 as None.
+        await front.SendAsync(new Packet(open.SessionId, Convert.FromHexString("7e0100000001000000")));
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var refusal = Assert.IsType<Disconnect>(await front.ReceiveAsync(timeout.Token));
+        Assert.Equal(open.SessionId, refusal.SessionId);
+        Assert.Equal("InvalidPacket", refusal.Reason);
+        Assert.Equal(0, service.Mutations);
+
+        var retry = Open(5_000, 7);
+        await front.SendAsync(retry);
+        await front.ReceiveAsync(timeout.Token);
+        await front.SendAsync(new Packet(retry.SessionId,
+            MarshalCodec.Encode(Packets.Call(retry, 1, "budgetMutation", "Mutate"))));
+
+        var response = Assert.IsType<Send>(await front.ReceiveAsync(timeout.Token));
+        Assert.Equal(retry.SessionId, response.SessionId);
+        Assert.Equal("accepted", T(Result(MarshalCodec.Decode(response.Payload))));
+        Assert.Equal(1, service.Mutations);
+    }
+
+    [Fact]
+    public async Task Client_marshal_values_reach_a_registered_service_with_their_wire_identity()
+    {
+        var service = new MarshalCaptureService();
+        Start(configure: registry => registry.Register(service));
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+
+        var pickle = new byte[] { 0x80, 0x02, 0x58, 0x03, 0, 0, 0, 0x2e, 0x78, 0x2e, 0x2e };
+        var cpicked = new byte[pickle.Length + 1];
+        cpicked[0] = 0x21; // TY_PICKLER has no marshal length; its pickle ends at STOP.
+        pickle.CopyTo(cpicked, 1);
+        var body = EncodeRawCallBody("Accept", new PyInt(42), new PyInt(43), new PyInt(44), new PyInt(45));
+        body = ReplaceUnique(body, MarshalCodec.Encode(new PyInt(42))[5..], cpicked);
+        body = ReplaceUnique(body, MarshalCodec.Encode(new PyInt(44))[5..], Convert.FromHexString("2f01ff"));
+        body = ReplaceUnique(body, MarshalCodec.Encode(new PyInt(45))[5..], Convert.FromHexString("55011b01"));
+        BinaryPrimitives.WriteUInt32LittleEndian(body.AsSpan(1, 4), 1);
+        body = [.. body, 1, 0, 0, 0]; // save-table map: saved list is slot 1.
+
+        await front.SendAsync(new Packet(open.SessionId,
+            MarshalCodec.Encode(CallWithRawBody(open, 1, body))));
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var response = Assert.IsType<Send>(await front.ReceiveAsync(timeout.Token));
+        Assert.Equal("accepted", T(Result(MarshalCodec.Decode(response.Payload))));
+        var args = Assert.Single(service.Calls);
+        Assert.Equal(new PyCPickled(pickle), args[0]);
+        Assert.Equal(new PyInt(43), args[1]);
+        Assert.Equal(new PyInt(-1), args[2]);
+        var savedList = Assert.IsType<PyList>(args[3]);
+        Assert.Same(savedList, Assert.Single(savedList.Items));
     }
 
     [Fact]

@@ -258,7 +258,7 @@ pub struct Shared {
     pub blackboards: BlackboardManager,
     pub events: EventMessenger,
     pub timers: TimerManager,
-    /// Blackboard messages and item messages for observers in another tree, to be delivered by the system that owns the trees.
+    /// Messages that cannot be delivered in the current call (for another tree or a task already on the stack), to be delivered by the system.
     pub pending: Vec<Delivery>,
     /// Calls that tasks asked for at a later time.
     calls: Vec<ScheduledCall>,
@@ -909,7 +909,7 @@ impl Cx<'_> {
         }
     }
 
-    /// Tells the observers of a channel of a message: the tasks of this tree at once, the others through the system.
+    /// Tells observers of a channel message immediately when they are idle in this tree; other-tree and active-task deliveries go through the system.
     pub fn tell_blackboard_observers(
         &mut self,
         channel: &str,
@@ -933,9 +933,17 @@ impl Cx<'_> {
         if observer.task >= self.core.slots.len() {
             return;
         }
-        self.with_node(observer.task, |node, t| {
+        let delivered = self.with_node(observer.task, |node, t| {
             node.on_blackboard_message(t, observer.handler, channel, message)
         });
+        if delivered.is_none() {
+            // A task can notify its own channel from inside a callback or OnEnter. Its node is temporarily out of the arena until that call returns.
+            self.shared.pending.push(Delivery::Blackboard {
+                observer,
+                channel: channel.to_string(),
+                message: message.cloned(),
+            });
+        }
     }
 
     pub fn dispatch_call(&mut self, observer: Observer, args: &[Value]) {

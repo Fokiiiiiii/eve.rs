@@ -238,7 +238,9 @@ impl MessageChannel {
     }
 
     pub fn add_observer(&mut self, observer: Observer) {
-        self.observers.push(observer);
+        if !self.observers.contains(&observer) {
+            self.observers.push(observer);
+        }
     }
 
     /// `signal.disconnect`: takes one; nothing happens when it was not there.
@@ -541,14 +543,16 @@ mod tests {
     }
 
     #[test]
-    fn an_observer_is_taken_off_once_and_taking_off_one_that_is_not_there_does_nothing() {
+    fn adding_the_same_observer_twice_keeps_one_and_taking_off_one_that_is_not_there_does_nothing() {
         let mut channel = MessageChannel::new("A", 10);
         channel.add_observer(observer(1));
         channel.add_observer(observer(1));
+        channel.add_observer(observer(2));
+        assert_eq!(channel.observers(), &[observer(1), observer(2)]);
         channel.remove_observer(&observer(1));
-        assert_eq!(channel.observers().len(), 1);
+        assert_eq!(channel.observers(), &[observer(2)]);
         channel.remove_observer(&observer(2));
-        assert_eq!(channel.observers().len(), 1);
+        assert!(channel.observers().is_empty());
     }
 
     #[test]

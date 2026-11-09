@@ -145,13 +145,17 @@ mod tests {
         Address::new(ScopeType::Item, name).to_value()
     }
 
+    fn deliver_pending(rig: &mut Rig) {
+        for delivery in std::mem::take(&mut rig.shared.pending) {
+            rig.tree.deliver(&mut rig.ctx, &mut rig.shared, &mut rig.world, &delivery).unwrap();
+        }
+    }
+
     fn deliver_due(rig: &mut Rig, seconds: i64) {
         rig.shared.now += seconds * SECOND;
         rig.shared.fire_due_calls();
         rig.shared.fire_due_timers();
-        for delivery in std::mem::take(&mut rig.shared.pending) {
-            rig.tree.deliver(&mut rig.ctx, &mut rig.shared, &mut rig.world, &delivery).unwrap();
-        }
+        deliver_pending(rig);
     }
 
     #[test]
@@ -225,6 +229,42 @@ mod tests {
                 .unwrap()
                 .last_message_value(),
             Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn timer_monitor_reentry_keeps_one_callback_per_timer_message() {
+        let attrs = Attrs::new()
+            .with("timerAddress", item("T"))
+            .with("timeoutSeconds", 10i64)
+            .with("channelAddress", item("C"))
+            .with("trueOrFalse", true);
+        let mut rig = Rig::new();
+        rig.run(Box::new(SetBooleanValueAndResetAfterTimeout), attrs);
+        let reset_requests_before = rig.ctx.statistics.reset_requests;
+
+        let mut timeout_outputs = Vec::new();
+        let mut reentry_outputs = Vec::new();
+        let mut observer_counts = Vec::new();
+        for _ in 0..2 {
+            deliver_due(&mut rig, 10);
+            timeout_outputs.push(rig.messages_on("C"));
+
+            rig.tick().unwrap();
+            deliver_pending(&mut rig);
+            reentry_outputs.push(rig.messages_on("C"));
+            let channel =
+                rig.shared.blackboards.message_channel(crate::blackboards::item_scope(1), "T").unwrap();
+            observer_counts.push(channel.observers().len());
+        }
+
+        assert_eq!(timeout_outputs, [1, 3], "each timeout should produce one channel update");
+        assert_eq!(reentry_outputs, [2, 4], "each re-entry timer start should publish its channel update");
+        assert_eq!(observer_counts, [1, 1], "re-entry must not register the same observer again");
+        assert_eq!(
+            rig.ctx.statistics.reset_requests,
+            reset_requests_before + 4,
+            "each timeout and each root completion should request exactly one reset"
         );
     }
 }

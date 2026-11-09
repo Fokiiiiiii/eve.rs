@@ -982,6 +982,44 @@ public sealed class CharacterHostTests
         return Convert.ToInt64(await command.ExecuteScalarAsync());
     }
 
+    private static async Task WaitForPgSleepAsync(CharacterHostRig rig, string queryFragment)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (DateTime.UtcNow < deadline)
+        {
+            await using var connection = await rig.Source.OpenConnectionAsync();
+            await using var command = new NpgsqlCommand(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND datname = current_database() AND wait_event = 'PgSleep' AND query LIKE '%' || $1 || '%')",
+                connection);
+            command.Parameters.Add(new NpgsqlParameter { Value = queryFragment });
+            if ((bool)(await command.ExecuteScalarAsync())!) return;
+            await Task.Delay(10);
+        }
+        throw new TimeoutException($"PostgreSQL did not enter pg_sleep for {queryFragment}.");
+    }
+
+    private static async Task WaitForSkillOperationWaitAsync(CharacterHostRig rig, long characterId)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (DateTime.UtcNow < deadline)
+        {
+            await using var connection = await rig.Source.OpenConnectionAsync();
+            await using var command = new NpgsqlCommand(
+                "SELECT EXISTS (" +
+                "SELECT 1 FROM pg_stat_activity a WHERE a.pid <> pg_backend_pid() AND a.datname = current_database() AND a.wait_event_type = 'Lock' AND (" +
+                "a.query LIKE '%' || $2 || '.items%' OR EXISTS (" +
+                "SELECT 1 FROM pg_locks l WHERE l.pid = a.pid AND l.locktype = 'advisory' AND NOT l.granted " +
+                "AND l.classid = (((hashtextextended('skills:' || $1::text, 0) >> 32) & 4294967295)::oid) " +
+                "AND l.objid = ((hashtextextended('skills:' || $1::text, 0) & 4294967295)::oid) AND l.objsubid = 1)))",
+                connection);
+            command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+            command.Parameters.Add(new NpgsqlParameter { Value = rig.InventorySchema });
+            if ((bool)(await command.ExecuteScalarAsync())!) return;
+            await Task.Delay(10);
+        }
+        throw new TimeoutException("The extraction RPC did not reach the contested character or extractor lock.");
+    }
+
     /// <summary>The persistent notices of a character's box in the game store (the notifications table, as the mailbox writes it).</summary>
     private static async Task<JsonObject[]> NoticesAsync(CharacterHostRig rig, long characterId)
     {
@@ -1939,6 +1977,341 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         await rig.RestartAsync();
         Assert.Contains(await new PgSkillStore(rig.Source, rig.SkillsSchema).ForCharacterAsync(character),
             saved => saved.TypeId == skill.TypeId && saved.Level == 0 && saved.SkillPoints == 0);
+    }
+
+    [PgFact]
+    public async Task Concurrent_direct_purchase_and_skillbook_injection_for_the_same_skill_commit_only_one_grant()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var sessionPurchase = new ClientSession { CharacterId = character, UserId = 1, SessionId = 71_001, Sink = new RecordingPacketSink() };
+        var sessionInject = new ClientSession { CharacterId = character, UserId = 1, SessionId = 71_002, Sink = new RecordingPacketSink() };
+        sessionInject.Set("stationid", new PyInt(rig.Station));
+        var catalog = await SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        var owned = (await new PgSkillStore(rig.Source, rig.SkillsSchema).ForCharacterAsync(character)).Select(skill => skill.TypeId).ToHashSet();
+        var skill = catalog.Skills.First(candidate => candidate.Published && candidate.AvailableForPurchase && candidate.BasePrice > 0 && !owned.Contains(candidate.TypeId));
+        var book = await GiveItemAsync(rig, character, skill.TypeId, rig.Station, 4, singleton: true);
+        await rig.FundAsync(character, 100_000_000m);
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        {
+            await using var createFunction = new NpgsqlCommand(
+                $"CREATE FUNCTION {rig.SkillsSchema}.pause_skill_grant() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.6); RETURN NEW; END; $$", connection);
+            await createFunction.ExecuteNonQueryAsync();
+            await using var createTrigger = new NpgsqlCommand(
+                $"CREATE TRIGGER pause_skill_grant BEFORE INSERT ON {rig.SkillsSchema}.character_skills FOR EACH ROW EXECUTE FUNCTION {rig.SkillsSchema}.pause_skill_grant()", connection);
+            await createTrigger.ExecuteNonQueryAsync();
+        }
+
+        var purchase = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillHandler"));
+        var dogma = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("dogmaIM"));
+        async Task<bool> TryPurchaseAsync()
+        {
+            try
+            {
+                var result = Assert.IsType<PyTuple>(await CallAsync(purchase, "PurchaseSkills", sessionPurchase, new PyList([new PyInt(skill.TypeId)])));
+                Assert.Equal(new PyInt(skill.TypeId), Assert.Single(result.Items));
+                return true;
+            }
+            catch (MachoWrappedException error) when (error.Error.IsUserError)
+            {
+                return false;
+            }
+        }
+        async Task<bool> TryInjectAsync()
+        {
+            try
+            {
+                var result = Assert.IsType<PyList>(await CallAsync(dogma, "InjectSkillIntoBrain", sessionInject, new PyList([new PyLong(book)])));
+                Assert.Equal(new PyInt(skill.TypeId), Assert.Single(result.Items));
+                return true;
+            }
+            catch (MachoWrappedException error) when (error.Error.IsUserError)
+            {
+                return false;
+            }
+        }
+
+        var outcomes = await Task.WhenAll(TryPurchaseAsync(), TryInjectAsync());
+
+        Assert.Single(outcomes, succeeded => succeeded);
+        Assert.Single(await new PgSkillStore(rig.Source, rig.SkillsSchema).ForCharacterAsync(character), saved => saved.TypeId == skill.TypeId);
+        var itemRemains = await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(book) is not null;
+        var balance = await BalanceAsync(rig, character);
+        var bookConsumed = !itemRemains;
+        var purchaseCharged = balance < 100_000_000m;
+        Assert.True(bookConsumed ^ purchaseCharged, "exactly one of the skillbook and purchase payment must be consumed");
+    }
+
+    [PgFact]
+    public async Task Disabled_expert_systems_do_not_project_existing_grants_or_allow_item_activation()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync(clusterOptions: new ClusterOptions { ExpertSystemsEnabled = false });
+        var character = await rig.CreateCharacterAsync();
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = sink };
+        session.Set("stationid", new PyInt(rig.Station));
+        var catalog = ExpertSystemCatalog.LoadEmbedded();
+        var expertSystem = Assert.IsType<ExpertSystemType>(catalog.Get(63826));
+        var existingSkills = (await new PgSkillStore(rig.Source, rig.SkillsSchema).ForCharacterAsync(character)).Select(skill => skill.TypeId).ToHashSet();
+        var grant = expertSystem.SkillsGranted.First(skill => !existingSkills.Contains(skill.TypeId));
+        var now = rig.NowUnixMs;
+        var expertStore = new PgExpertSystemStore(rig.Source, rig.SkillsSchema);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await expertStore.UpsertAsync(connection, transaction,
+                new ExpertSystemEntry(character, expertSystem.TypeId, now, now + ExpertSystemRules.Day, null, "item", now));
+            await transaction.CommitAsync();
+        }
+        var itemId = await GiveItemAsync(rig, character, expertSystem.TypeId, rig.Station, 4, singleton: true);
+        var skills = Assert.IsType<PyDict>(await CallAsync(Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillHandler")), "GetSkills", session));
+
+        Assert.DoesNotContain(skills.Entries, entry => ((PyInt)entry.Key).Value == grant.TypeId);
+        var flags = Assert.IsType<PyDict>(await CallAsync(Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("machoNet")), "GetGlobalConfig", session));
+        Assert.Equal(new PyInt(0), flags.Entries.Single(entry => entry.Key is PyStr { Value: "expert_system_feature_enabled" }).Value);
+        var manager = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("expertSystemMgr"));
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => CallAsync(manager, "ConsumeExpertSystem", session, new PyLong(itemId)));
+        Assert.Equal("CustomNotify", refusal.Error.UserErrorMessage);
+        var refusalHeader = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(refusal.Error.Payload).Header);
+        var refusalArguments = Assert.IsType<PyTuple>(refusalHeader.Items[1]);
+        var refusalValues = Assert.IsType<PyDict>(refusalArguments.Items[1]);
+        var refusalMessage = Assert.IsType<PyStr>(refusalValues.Entries.Single(entry => entry.Key is PyStr { Value: "notify" }).Value);
+        Assert.Equal("Expert Systems are disabled in server config.", refusalMessage.Value);
+        Assert.NotNull(await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(itemId));
+        Assert.Single(await expertStore.ForCharacterAsync(character));
+        Assert.Empty(Notifications(sink));
+    }
+
+    [PgFact]
+    public async Task Disabled_direct_skill_purchase_refuses_the_rpc_without_charging_or_granting()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync(clusterOptions: new ClusterOptions { SkillPurchaseEnabled = false });
+        var character = await rig.CreateCharacterAsync();
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = sink };
+        var catalog = await SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        var owned = (await new PgSkillStore(rig.Source, rig.SkillsSchema).ForCharacterAsync(character)).Select(skill => skill.TypeId).ToHashSet();
+        var skill = catalog.Skills.First(candidate => candidate.Published && candidate.AvailableForPurchase && candidate.BasePrice > 0 && !owned.Contains(candidate.TypeId));
+        var startingBalance = Math.Max(10_000_000m, decimal.Round(skill.BasePrice * 1.3m, 2, MidpointRounding.AwayFromZero) + 1m);
+        await rig.FundAsync(character, startingBalance);
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillHandler"));
+        var flags = Assert.IsType<PyDict>(await CallAsync(Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("machoNet")), "GetGlobalConfig", session));
+
+        Assert.Equal(new PyInt(0), flags.Entries.Single(entry => entry.Key is PyStr { Value: "SkillPurchaseEnabled" }).Value);
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(
+            () => CallAsync(service, "PurchaseSkills", session, new PyList([new PyInt(skill.TypeId)])));
+
+        Assert.Equal("SkillPurchaseDisabled", refusal.Error.UserErrorMessage);
+        Assert.Equal(startingBalance, await BalanceAsync(rig, character));
+        Assert.DoesNotContain(await new PgSkillStore(rig.Source, rig.SkillsSchema).ForCharacterAsync(character), saved => saved.TypeId == skill.TypeId);
+        Assert.Empty(await new WalletTransactions(rig.Source, rig.WalletSchema).JournalAsync(character));
+        Assert.Empty(Notifications(sink));
+    }
+
+    [PgFact]
+    public async Task Skill_injectors_require_the_docked_hangar_or_active_ship_cargo_in_preview_and_mutation()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var catalog = await SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        var injectorType = catalog.ItemTypeId("Large Skill Injector")!.Value;
+        var remoteStation = (await StationCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source))).All.First(station => station.Id != rig.Station).Id;
+        var remote = await CreateHostItemAsync(rig, new PgItemStore(rig.Source, rig.InventorySchema),
+            new NewItem(injectorType, character, remoteStation, 4, 1, Singleton: true));
+        var wrongFlag = await CreateHostItemAsync(rig, new PgItemStore(rig.Source, rig.InventorySchema),
+            new NewItem(injectorType, character, rig.Station, 5, 1, Singleton: true));
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = new RecordingPacketSink() };
+        session.Set("stationid", new PyInt(rig.Station));
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillHandler"));
+        var items = new PgItemStore(rig.Source, rig.InventorySchema);
+
+        foreach (var itemId in new[] { remote, wrongFlag })
+        {
+            var preview = await Assert.ThrowsAsync<MachoWrappedException>(() => CallAsync(service, "CheckInjectionConstraints", session, new PyLong(itemId), new PyInt(1)));
+            Assert.Equal("CustomNotify", preview.Error.UserErrorMessage);
+            var mutation = await Assert.ThrowsAsync<MachoWrappedException>(() => CallAsync(service, "InjectSkillpoints", session, new PyLong(itemId), new PyInt(1)));
+            Assert.Equal("CustomNotify", mutation.Error.UserErrorMessage);
+            Assert.NotNull(await items.GetAsync(itemId));
+        }
+        Assert.Equal(0, await new PgSkillStore(rig.Source, rig.SkillsSchema).FreeSkillPointsAsync(character));
+
+        var capsuleType = catalog.ItemTypeId("Capsule")!.Value;
+        var shipId = await CreateHostItemAsync(rig, items, new NewItem(capsuleType, character, rig.Station, 4, 1, Singleton: true));
+        var cargoItem = await CreateHostItemAsync(rig, items, new NewItem(injectorType, character, shipId, 5, 1, Singleton: true));
+        var inSpace = new ClientSession { CharacterId = character, UserId = 1, Sink = new RecordingPacketSink() };
+        inSpace.Set("shipid", new PyLong(shipId));
+        Assert.IsType<PyNone>(await CallAsync(service, "CheckInjectionConstraints", inSpace, new PyLong(cargoItem), new PyInt(1)));
+        Assert.IsType<PyInt>(await CallAsync(service, "InjectSkillpoints", inSpace, new PyLong(cargoItem), new PyInt(1)));
+        Assert.Null(await items.GetAsync(cargoItem));
+    }
+
+    [PgFact]
+    public async Task Skill_extraction_rechecks_the_queue_after_a_concurrent_queue_save()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        Assert.Equal(1, await rig.CreateAccountAsync());
+        var character = await rig.CreateCharacterAsync();
+        var catalog = await SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        var store = new PgSkillStore(rig.Source, rig.SkillsSchema);
+        var existing = (await store.ForCharacterAsync(character)).Select(skill => skill.TypeId).ToHashSet();
+        var all = catalog.Skills.ToArray();
+        var selected = all.First(skill => skill.Published && skill.Rank >= 2 && skill.Needs.Count == 0 && !existing.Contains(skill.TypeId)
+            && !all.Any(dependent => dependent.Needs.Any(requirement => requirement.TypeId == skill.TypeId)));
+        var allocations = new Dictionary<int, CharacterSkill>();
+        var selectedPoints = SkillPoints.ForTraining(selected.Rank, 4);
+        allocations[selected.TypeId] = new CharacterSkill(selected.TypeId, SkillPoints.LevelAt(selected.Rank, selectedPoints), selectedPoints);
+        foreach (var requirement in selected.Needs)
+        {
+            var required = catalog.Get(requirement.TypeId)!;
+            var points = SkillPoints.ForTraining(required.Rank, requirement.Level);
+            allocations[required.TypeId] = new CharacterSkill(required.TypeId, requirement.Level, points);
+        }
+        var total = allocations.Values.Sum(skill => skill.SkillPoints);
+        foreach (var candidate in all.Where(skill => skill.TypeId != selected.TypeId && !existing.Contains(skill.TypeId)
+                     && !allocations.ContainsKey(skill.TypeId)
+                     && !all.Any(dependent => dependent.TypeId == skill.TypeId && dependent.Needs.Any(requirement => requirement.TypeId == selected.TypeId))))
+        {
+            if (total >= 5_500_000) break;
+            var points = Math.Min(SkillPoints.ForTraining(candidate.Rank, 5), 5_500_000 - total);
+            allocations[candidate.TypeId] = new CharacterSkill(candidate.TypeId, SkillPoints.LevelAt(candidate.Rank, points), points);
+            total += points;
+        }
+        Assert.True(total >= 5_500_000, $"The pinned SDE did not provide enough eligible test skills: {total} SP.");
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await store.GrantAsync(connection, transaction, character, allocations.Values.ToArray());
+            await transaction.CommitAsync();
+        }
+
+        var items = new PgItemStore(rig.Source, rig.InventorySchema);
+        var capsuleType = catalog.ItemTypeId("Capsule")!.Value;
+        var extractorType = catalog.ItemTypeId("Skill Extractor")!.Value;
+        var capsule = await CreateHostItemAsync(rig, items, new NewItem(capsuleType, character, rig.Station, 4, 1, Singleton: true));
+        var extractor = await CreateHostItemAsync(rig, items, new NewItem(extractorType, character, rig.Station, 4, 1, Singleton: true));
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = new RecordingPacketSink() };
+        session.Set("stationid", new PyInt(rig.Station));
+        session.Set("shipid", new PyLong(capsule));
+
+        await using var heldConnection = await rig.Source.OpenConnectionAsync();
+        await using var heldTransaction = await heldConnection.BeginTransactionAsync();
+        Assert.NotNull(await items.LockAndGetAsync(heldConnection, heldTransaction, extractor, CancellationToken.None));
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        {
+            await using var createFunction = new NpgsqlCommand(
+                $"CREATE FUNCTION {rig.SkillsSchema}.pause_skill_queue_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(1.2); RETURN NEW; END; $$", connection);
+            await createFunction.ExecuteNonQueryAsync();
+            await using var createTrigger = new NpgsqlCommand(
+                $"CREATE TRIGGER pause_skill_queue_insert BEFORE INSERT ON {rig.SkillsSchema}.skill_queue FOR EACH ROW WHEN (NEW.character_id = {character}) EXECUTE FUNCTION {rig.SkillsSchema}.pause_skill_queue_insert()", connection);
+            await createTrigger.ExecuteNonQueryAsync();
+        }
+
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillHandler"));
+        var queueSave = CallAsync(service, "SaveNewQueue", session,
+            new PyList([Py.Tuple(new PyInt(selected.TypeId), new PyInt(5))]));
+        try
+        {
+            await WaitForPgSleepAsync(rig, $"INSERT INTO {rig.SkillsSchema}.skill_queue");
+        }
+        catch
+        {
+            await queueSave;
+            throw;
+        }
+        var extraction = CallAsync(service, "ExtractSkills", session, new PyLong(extractor),
+            ExtractionRequest());
+        await WaitForSkillOperationWaitAsync(rig, character);
+        await queueSave;
+        await heldTransaction.RollbackAsync();
+
+        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => extraction);
+        Assert.Equal("CustomNotify", refusal.Error.UserErrorMessage);
+        var errorHeader = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(refusal.Error.Payload).Header);
+        var errorArguments = Assert.IsType<PyTuple>(errorHeader.Items[1]);
+        var errorValues = Assert.IsType<PyDict>(errorArguments.Items[1]);
+        var refusalMessage = Assert.IsType<PyStr>(errorValues.Entries.Single(entry => entry.Key is PyStr { Value: "notify" }).Value);
+        Assert.Contains("training queue", refusalMessage.Value, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(await items.GetAsync(extractor));
+        Assert.Equal(selectedPoints, (await store.ForCharacterAsync(character)).Single(skill => skill.TypeId == selected.TypeId).SkillPoints);
+        Assert.Equal(selected.TypeId, Assert.Single((await new PgTrainingStore(rig.Source, rig.SkillsSchema).LoadAsync(character)).Entries).TypeId);
+
+        PyDict ExtractionRequest()
+        {
+            var eligible = allocations.Values
+                .Where(candidate => !all.Any(dependent => allocations.TryGetValue(dependent.TypeId, out var trained)
+                    && trained.SkillPoints > 0 && dependent.Needs.Any(requirement => requirement.TypeId == candidate.TypeId)))
+                .ToDictionary(candidate => candidate.TypeId);
+            var requested = new List<CharacterSkill> { eligible[selected.TypeId] };
+            var points = requested[0].SkillPoints;
+            foreach (var candidate in eligible.Values.Where(candidate => candidate.TypeId != selected.TypeId).OrderBy(candidate => candidate.TypeId))
+            {
+                if (points >= 500_000) break;
+                requested.Add(candidate);
+                points += candidate.SkillPoints;
+            }
+            Assert.True(points >= 500_000, $"Only {points} extraction-eligible SP were prepared.");
+            return new PyDict([.. requested.Select(candidate => new KeyValuePair<PyValue, PyValue>(new PyInt(candidate.TypeId), new PyLong(candidate.SkillPoints)))]);
+        }
+    }
+
+    [PgFact]
+    public async Task Expert_system_expiry_retries_a_durable_lapse_notice_when_the_delete_transaction_cannot_commit()
+    {
+        var initialTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        await using var rig = await CharacterHostRig.CreateAsync(nowUnixMs: initialTime);
+        var character = await rig.CreateCharacterAsync();
+        const int expertSystemTypeId = 63826;
+        var expiredAt = initialTime - 1;
+        var installedAt = expiredAt - ExpertSystemRules.Day;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var insert = new NpgsqlCommand(
+            $"INSERT INTO {rig.SkillsSchema}.character_expert_systems(character_id, type_id, installed_at_ms, expires_at_ms, source_item_id, grant_reason, updated_at_ms) " +
+            "VALUES ($1, $2, $3, $4, NULL, 'item', $3)", connection))
+        {
+            insert.Parameters.Add(new NpgsqlParameter { Value = character });
+            insert.Parameters.Add(new NpgsqlParameter { Value = expertSystemTypeId });
+            insert.Parameters.Add(new NpgsqlParameter { Value = installedAt });
+            insert.Parameters.Add(new NpgsqlParameter { Value = expiredAt });
+            await insert.ExecuteNonQueryAsync();
+        }
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        {
+            await using var createFunction = new NpgsqlCommand(
+                $"CREATE FUNCTION {rig.SkillsSchema}.fail_expired_expert_system_commit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced expert system expiry commit failure'; END; $$", connection);
+            await createFunction.ExecuteNonQueryAsync();
+            await using var createTrigger = new NpgsqlCommand(
+                $"CREATE CONSTRAINT TRIGGER fail_expired_expert_system_commit AFTER DELETE ON {rig.SkillsSchema}.character_expert_systems DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (OLD.character_id = {character}) EXECUTE FUNCTION {rig.SkillsSchema}.fail_expired_expert_system_commit()", connection);
+            await createTrigger.ExecuteNonQueryAsync();
+            await using var due = new NpgsqlCommand(
+                $"UPDATE {rig.SchedulerSchema}.jobs SET run_at_ms = 0 WHERE kind = 'skills.expert-systems.expire' AND key = 'expire'", connection);
+            await due.ExecuteNonQueryAsync();
+        }
+
+        Assert.True(await rig.Scheduler.RunNowAsync("skills.expert-systems.expire", "expire"));
+        Assert.Equal(1, await ScalarAsync(rig, $"SELECT count(*) FROM {rig.SkillsSchema}.character_expert_systems WHERE character_id = {character}"));
+        var firstNotices = await NoticesAsync(rig, character);
+        var firstNotice = Assert.Single(firstNotices, record => record["typeID"]!.GetValue<int>() == 253);
+        Assert.Equal(expertSystemTypeId, firstNotice["data"]!["typeID"]!.GetValue<int>());
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        {
+            await using var dropTrigger = new NpgsqlCommand($"DROP TRIGGER fail_expired_expert_system_commit ON {rig.SkillsSchema}.character_expert_systems", connection);
+            await dropTrigger.ExecuteNonQueryAsync();
+            await using var dropFunction = new NpgsqlCommand($"DROP FUNCTION {rig.SkillsSchema}.fail_expired_expert_system_commit()", connection);
+            await dropFunction.ExecuteNonQueryAsync();
+        }
+        rig.AdvanceTo(initialTime + 60_000);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var due = new NpgsqlCommand(
+            $"UPDATE {rig.SchedulerSchema}.jobs SET run_at_ms = 0 WHERE kind = 'skills.expert-systems.expire' AND key = 'expire'", connection))
+            await due.ExecuteNonQueryAsync();
+        Assert.True(await rig.Scheduler.RunNowAsync("skills.expert-systems.expire", "expire"));
+
+        Assert.Equal(0, await ScalarAsync(rig, $"SELECT count(*) FROM {rig.SkillsSchema}.character_expert_systems WHERE character_id = {character}"));
+        Assert.Single(await NoticesAsync(rig, character), record => record["typeID"]!.GetValue<int>() == 253);
     }
 
     [PgFact]
@@ -3297,11 +3670,12 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         private readonly IReadOnlyDictionary<string, string> _schemas;
         private readonly ManualClock? _clock;
         private readonly string? _simSocket;
+        private readonly ClusterOptions? _clusterOptions;
         private HostRuntime _runtime;
         private Func<Task> _shutdown;
 
         private CharacterHostRig(NpgsqlDataSource source, IReadOnlyDictionary<string, string> schemas, HostRuntime runtime, Func<Task> shutdown,
-            long station, ManualClock? clock, string? simSocket)
+            long station, ManualClock? clock, string? simSocket, ClusterOptions? clusterOptions)
         {
             Source = source;
             _schemas = schemas;
@@ -3310,6 +3684,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             Station = station;
             _clock = clock;
             _simSocket = simSocket;
+            _clusterOptions = clusterOptions;
         }
 
         public NpgsqlDataSource Source { get; }
@@ -3484,7 +3859,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             return (int)(await command.ExecuteScalarAsync())!;
         }
 
-        public static async Task<CharacterHostRig> CreateAsync(long? nowUnixMs = null, string? simSocket = null)
+        public static async Task<CharacterHostRig> CreateAsync(long? nowUnixMs = null, string? simSocket = null, ClusterOptions? clusterOptions = null)
         {
             var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL")
                 ?? throw new InvalidOperationException("EVE_PG_URL is not set.");
@@ -3496,10 +3871,10 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             var source = new NpgsqlDataSourceBuilder(new NpgsqlConnectionStringBuilder(Eve.Data.PgConnection.ForTest(pgUrl)).ConnectionString).Build();
             try
             {
-                var (runtime, shutdown) = await BuildHostAsync(schemas, clock is null ? null : clock.Read, simSocket);
+                var (runtime, shutdown) = await BuildHostAsync(schemas, clock is null ? null : clock.Read, simSocket, clusterOptions);
                 var stations = await StationCatalog.LoadAsync(new Eve.Sde.SdeReader(source));
                 var station = stations.InSystem(30000142).OrderBy(s => s.Id).First().Id;
-                return new CharacterHostRig(source, schemas, runtime, shutdown, station, clock, simSocket);
+                return new CharacterHostRig(source, schemas, runtime, shutdown, station, clock, simSocket, clusterOptions);
             }
             catch
             {
@@ -3512,7 +3887,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         public async Task RestartAsync()
         {
             await _shutdown();
-            (_runtime, _shutdown) = await BuildHostAsync(_schemas, _clock is null ? null : _clock.Read, _simSocket);
+            (_runtime, _shutdown) = await BuildHostAsync(_schemas, _clock is null ? null : _clock.Read, _simSocket, _clusterOptions);
         }
 
         public async Task<long> CreateCharacterAsync(string tutorialEntryMode = "disabled", int airNpeState = 2)
@@ -3646,7 +4021,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         }
 
         private static async Task<(HostRuntime Runtime, Func<Task> Shutdown)> BuildHostAsync(IReadOnlyDictionary<string, string> schemas,
-            Func<long>? clockOverride = null, string? simSocket = null)
+            Func<long>? clockOverride = null, string? simSocket = null, ClusterOptions? clusterOptions = null)
         {
             var previous = SchemaVariables.Concat(["EVE_MARKET_SEED", "EVE_SIM", "EVE_SIM_SOCKET", "EVE_WORMHOLES"])
                 .ToDictionary(variable => variable, variable => Environment.GetEnvironmentVariable(variable));
@@ -3659,7 +4034,10 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
                 if (simSocket is not null)
                     Environment.SetEnvironmentVariable("EVE_SIM_SOCKET", simSocket);
                 Environment.SetEnvironmentVariable("EVE_WORMHOLES", "off");
-                var host = await HostComposition.BuildAsync(HostConfiguration.Read(), clockOverride);
+                var settings = HostConfiguration.Read();
+                if (clusterOptions is not null)
+                    settings = settings with { Options = clusterOptions };
+                var host = await HostComposition.BuildAsync(settings, clockOverride);
                 return (host, host.ShutdownAsync);
             }
             finally

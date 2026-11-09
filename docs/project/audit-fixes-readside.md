@@ -48,3 +48,22 @@ The two regression tests were run before the fix: registration returned normally
 - Release builds for `Eve.ReadSide`, `Eve.Services.Corporations`, `Eve.Services.Station` and their affected test projects completed with 0 warnings and 0 errors.
 
 Not verified: graphical-client interaction. Client code and EveJS sources were compared for CRowset; no separate EveJS stateful server session or graphical client run was performed.
+
+## Recheck of `/home/user/reports/90-audit-eve-readside-r14.md` (2026-11-09)
+
+The three findings in that report describe real defects in the earlier implementation, but all three are already fixed in the current `HEAD` (`6aed940a5`). They are not false positives; this recheck did not add duplicate source changes.
+
+- **P1 CRowset wire shape:** `ReadSide.cs:53-60` now returns `PyObjectEx(Ex2)`, with the descriptor in the object header and packed rows in the object's list. `StandingMgrService.cs` uses the same Ex2 shape for the empty composition response. Host dispatch checks the empty response in `Eve.Host.Tests/StandingMgrHostWireTests.cs:12-36`; `CorporationProtocolTests.cs:1616-1712` checks two data rows, the shared row descriptor's DBTYPEs, values, and a marshal round trip. The implementation was fixed in `64788c649`.
+- **Client and EveJS contract:** In V24.01, corporation selection reaches `standingsPanel.py:88-98,110-111`, then `standingsvc.py:282-283` calls `standingMgr.GetStandingCompositions`. `standingCompositionScroll.py:21-30` iterates the result, and `standingCompositionEntry.py:20-29` reads each row's `ownerID` and `standing`. `carbon/common/script/sys/crowset.py:10-16` defines CRowset as a pass-by-value list initialized from `rows`. EveJS `standingMgrService.js:224-240` wraps the result in the cache response; `standingRuntime.js:487-519` supplies and sorts the composition records; `_shared/serviceHelpers.js:157-178` emits the Ex2 header and packed rows. This confirms the current wire shape supports the client iteration and fields.
+- **P3 SQL aliases:** `ReadSide.SqlOf()` now double-quotes output aliases; affected `ORDER BY` clauses were adjusted in the `e48e14e69` fix. `ReadSideTests.cs:80-111` executes both a numeric-leading alias and the reserved word `select` against PostgreSQL.
+- **P3 KeyColumn:** `ReadSide.Register()` now rejects a configured key absent from `Columns`, and both keyed conversions share the checked lookup. `ReadSideTests.cs:53-77` covers registration rejection and consistent conversion errors. This was also fixed in `e48e14e69`.
+
+Recheck verification on 2026-11-09:
+
+- Release builds for `Eve.ReadSide`, `Eve.ReadSide.Tests`, `Eve.Corporations.Tests`, and `Eve.Host.Tests` succeeded with 0 warnings and 0 errors; the latter two builds also compiled `Eve.Services.Corporations` and `Eve.Host`.
+- All 11 `Eve.ReadSide.Tests.ReadSideTests` passed against `eve_p4`, including the database-backed alias case (0 skipped).
+- `HostServerTests.Standing_history_and_composition_keep_client_wire_shapes_through_host_dispatch` passed (1 test, 0 skipped).
+- `CorporationProtocolTests.Standing_manager_reads_character_rows_corporation_averages_history_and_npc_relations` passed against `eve_p4` (1 test, 0 skipped).
+- `StandingMgrServiceTests.Standing_history_is_scoped_to_the_active_character_and_corporation` passed against `eve_p3` (1 test, 0 skipped).
+
+Not verified in this recheck: GUI-client interaction, a complete stateful EveJS server session, or the full CI workflow. The code and client protocol were checked from source, and the focused Host dispatch test exercised the registered RPC and encoded response.

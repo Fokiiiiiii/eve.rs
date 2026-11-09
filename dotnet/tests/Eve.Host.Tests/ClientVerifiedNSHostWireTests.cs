@@ -226,9 +226,11 @@ public partial class HostServerTests
         const string objectId = "N=ProxyNode:skill-purchase-test";
         var handler = new SkillHandlerService(
             null!, null!, null!, null!, null!, null!, null!, () => FixedNowMs, null!);
-        Start(
-            configure: registry => registry.RegisterBoundObject(objectId, handler),
-            sessionOpened: session => session.Set("charid", new PyInt(characterId)));
+        Start(sessionOpened: session =>
+            {
+                session.Set("charid", new PyInt(characterId));
+                _testRegistry.RegisterBoundObjectForSession(objectId, handler, session);
+            });
         var (front, open) = await OpenFrontAsync();
         await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
             Packets.BoundCall(open, 1, objectId, "PurchaseSkills",

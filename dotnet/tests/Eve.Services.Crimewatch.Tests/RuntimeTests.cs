@@ -696,6 +696,67 @@ public class RuntimeTests : IAsyncLifetime
     }
 
     [PgFact]
+    public async Task War_legality_uses_one_affiliation_and_war_snapshot()
+    {
+        await using var relations = await RelationsRig.Create(_source!, () => _now);
+        const long attacker = 1;
+        const long target = 2;
+        const long oldCorporation = 98_000_301;
+        const long newCorporation = 98_000_302;
+        const long targetCorporation = 98_000_303;
+        Pilot(attacker, System);
+        Pilot(target, System);
+        await relations.Set(Eve.Relations.RelationKinds.CorporationMember.Name, attacker, oldCorporation);
+        await relations.Set(Eve.Relations.RelationKinds.CorporationMember.Name, target, targetCorporation);
+        await relations.Set(Eve.Relations.RelationKinds.War.Name, oldCorporation, targetCorporation);
+        var role = "relation_read_" + Guid.NewGuid().ToString("N")[..12];
+        await EnablePausedAffiliationReadsAsync(relations.RelationsSchema, role);
+
+        var builder = new NpgsqlConnectionStringBuilder(
+            PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!))
+        {
+            Options = $"-c role={role}",
+        };
+        await using var restrictedSource = NpgsqlDataSource.Create(builder.ConnectionString);
+        try
+        {
+            await using var readScheduler = new Eve.Scheduler.DurableScheduler(
+                restrictedSource, () => _now, new Eve.Scheduler.SchedulerOptions { Concurrency = 1 },
+                "readsch_" + Guid.NewGuid().ToString("N")[..12]);
+            var readRelations = new Eve.Relations.RelationStore(
+                restrictedSource, readScheduler, relations.Bus, relations.RelationsSchema);
+            var wars = new RelationWars(readRelations);
+            using var runtime = Runtime();
+            runtime.Legal = wars.AreAtWarAsync;
+            var attack = runtime.RecordAggressionAsync(
+                Attack(attacker, target, SecurityClass.HighSec, System, false));
+            await WaitForActiveRelationReadAsync(relations.RelationsSchema);
+
+            await using (var connection = await _source!.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await relations.Relations.SetAsync(connection, transaction,
+                    Eve.Relations.RelationKinds.CorporationMember.Name, attacker, newCorporation, 0, "corporation transfer");
+                await relations.Relations.EndAsync(connection, transaction,
+                    Eve.Relations.RelationKinds.War.Name, oldCorporation, targetCorporation, "corporation transfer");
+                await transaction.CommitAsync();
+            }
+
+            var result = await attack;
+            Assert.Equal(AggressionReason.Legal, result.Outcome.Reason);
+            Assert.False(result.Outcome.IsCriminalOffense);
+            Assert.Empty(_persistence.Writes); // a legal war attack does not create a limited engagement
+        }
+        finally
+        {
+            await restrictedSource.DisposeAsync();
+            await using var connection = await _source!.OpenConnectionAsync();
+            await using var command = new NpgsqlCommand($"DROP OWNED BY {role}; DROP ROLE {role}", connection);
+            await command.ExecuteNonQueryAsync();
+        }
+    }
+
+    [PgFact]
     public async Task Opposing_direct_militia_members_in_the_same_corporation_are_legal_targets()
     {
         Pilot(1, System);
@@ -1465,6 +1526,68 @@ public class RuntimeTests : IAsyncLifetime
             await drop.ExecuteNonQueryAsync();
         }
     }
+
+    private async Task EnablePausedAffiliationReadsAsync(string schema, string role)
+    {
+        await using var connection = await _source!.OpenConnectionAsync();
+        await using var command = new NpgsqlCommand($"""
+            CREATE FUNCTION {schema}.pause_affiliation_read(row_subject bigint, row_kind text)
+            RETURNS boolean LANGUAGE plpgsql VOLATILE AS $$
+            BEGIN
+                IF row_subject = 1 AND row_kind = 'affiliation.corporation'
+                   AND (current_query() ILIKE 'SELECT%' OR current_query() ILIKE 'WITH%') THEN
+                    PERFORM pg_sleep(0.5);
+                END IF;
+                RETURN TRUE;
+            END
+            $$;
+            ALTER TABLE {schema}.relations ENABLE ROW LEVEL SECURITY;
+            ALTER TABLE {schema}.relations FORCE ROW LEVEL SECURITY;
+            CREATE POLICY pause_affiliation_select ON {schema}.relations
+                FOR SELECT USING ({schema}.pause_affiliation_read(subject, kind));
+            CREATE POLICY allow_relation_insert ON {schema}.relations
+                FOR INSERT WITH CHECK (TRUE);
+            CREATE POLICY allow_relation_update ON {schema}.relations
+                FOR UPDATE USING (TRUE) WITH CHECK (TRUE);
+            CREATE POLICY allow_relation_delete ON {schema}.relations
+                FOR DELETE USING (TRUE);
+            CREATE ROLE {role} NOLOGIN;
+            GRANT USAGE ON SCHEMA {schema} TO {role};
+            GRANT SELECT ON ALL TABLES IN SCHEMA {schema} TO {role};
+            GRANT EXECUTE ON FUNCTION {schema}.pause_affiliation_read(bigint, text) TO {role};
+            """, connection);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task WaitForActiveRelationReadAsync(string schema)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var connection = await _source!.OpenConnectionAsync(timeout.Token);
+        try
+        {
+            while (true)
+            {
+                await using var command = new NpgsqlCommand("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM pg_stat_activity
+                        WHERE pid <> pg_backend_pid()
+                          AND state = 'active'
+                          AND (query ILIKE 'SELECT%' OR query ILIKE 'WITH%')
+                          AND strpos(query, 'relations') > 0
+                          AND strpos(query, $1 || '.relations') > 0
+                    )
+                    """, connection);
+                command.Parameters.AddWithValue(schema);
+                if ((bool)(await command.ExecuteScalarAsync(timeout.Token))!)
+                    return;
+                await Task.Delay(10, timeout.Token);
+            }
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            throw new TimeoutException("the war check did not enter its affiliation read");
+        }
+    }
 }
 
 internal sealed class CrimewatchPersistenceFake : ICrimewatchPersistenceCallbacks
@@ -1900,15 +2023,21 @@ internal sealed class RelationsRig : IAsyncDisposable
     private readonly string[] _schemas;
     private readonly Eve.Scheduler.DurableScheduler _scheduler;
 
-    private RelationsRig(NpgsqlDataSource source, string[] schemas, Eve.Scheduler.DurableScheduler scheduler, Eve.Relations.RelationStore relations)
+    private RelationsRig(
+        NpgsqlDataSource source, string[] schemas, Eve.Scheduler.DurableScheduler scheduler,
+        Eve.Events.EventBus bus, Eve.Relations.RelationStore relations)
     {
         _source = source;
         _schemas = schemas;
         _scheduler = scheduler;
+        Bus = bus;
         Relations = relations;
     }
 
     public Eve.Relations.RelationStore Relations { get; }
+    public Eve.Scheduler.DurableScheduler Scheduler => _scheduler;
+    public Eve.Events.EventBus Bus { get; }
+    public string RelationsSchema => _schemas[2];
 
     public static async Task<RelationsRig> Create(NpgsqlDataSource source, Func<long> now)
     {
@@ -1920,7 +2049,7 @@ internal sealed class RelationsRig : IAsyncDisposable
         var scheduler = new Eve.Scheduler.DurableScheduler(source, now, new Eve.Scheduler.SchedulerOptions { Concurrency = 1 }, schemas[0]);
         var events = new Eve.Events.EventBus(source, scheduler, null, schemas[1]);
         var relations = new Eve.Relations.RelationStore(source, scheduler, events, schemas[2]);
-        return new RelationsRig(source, schemas, scheduler, relations);
+        return new RelationsRig(source, schemas, scheduler, events, relations);
     }
 
     public async Task Set(string kind, long subject, long obj, object? attrs = null, long? until = null)

@@ -210,6 +210,51 @@ public class PopulationCapTests
     }
 
     [PgFact]
+    public async Task Selecting_another_character_in_the_same_session_reuses_its_population_slot()
+    {
+        await using var h = await Harness.CreateAsync(systems: Systems, populationCapacity: 1);
+        var (session, _) = await h.LoginAsync("same-session-switch");
+        var previous = await CreateAsync(h, session, "Previous Slot Pilot");
+        var next = await CreateAsync(h, session, "Next Slot Pilot");
+
+        await h.CallAsync(session, "SelectCharacterID", new PyLong(previous));
+
+        Assert.Equal(PyNone.Instance, await h.CallAsync(session, "SelectCharacterID", new PyLong(next)));
+
+        Assert.Equal(next, session.CharacterId);
+        Assert.Equal(new[] { next }, h.Online.Snapshot());
+        Assert.Same(session, h.Sessions.Of(next));
+        Assert.Null(h.Sessions.Of(previous));
+    }
+
+    [PgFact]
+    public async Task A_failed_character_switch_releases_its_reserved_slot_and_allows_retry()
+    {
+        var hook = new ThrowOnEntryHook();
+        await using var h = await Harness.CreateAsync(
+            entryHooks: [hook], systems: Systems, populationCapacity: 1);
+        var (session, _) = await h.LoginAsync("same-session-switch-retry");
+        var previous = await CreateAsync(h, session, "Previous Retry Pilot");
+        var next = await CreateAsync(h, session, "Next Retry Pilot");
+
+        Assert.Equal(PyNone.Instance, await h.CallAsync(session, "SelectCharacterID", new PyLong(previous)));
+        hook.FailureCharacterId = next;
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => h.CallAsync(session, "SelectCharacterID", new PyLong(next)).AsTask());
+
+        Assert.Equal(previous, session.CharacterId);
+        Assert.Equal(new[] { previous }, h.Online.Snapshot());
+        Assert.True(h.Population!.HasRoom(Home, long.MaxValue));
+
+        hook.FailureCharacterId = 0;
+        Assert.Equal(PyNone.Instance, await h.CallAsync(session, "SelectCharacterID", new PyLong(next)));
+
+        Assert.Equal(next, session.CharacterId);
+        Assert.Equal(new[] { next }, h.Online.Snapshot());
+        Assert.True(h.Population.HasRoom(Home, long.MaxValue));
+    }
+
+    [PgFact]
     public async Task Simultaneous_entries_into_the_last_room_admit_exactly_one()
     {
         await using var h = await Harness.CreateAsync(systems: Systems, populationCapacity: 2);
@@ -280,5 +325,25 @@ public class PopulationCapTests
         var service = new PopulationCapService(h.Characters, h.Population!);
 
         Assert.Empty(Slots(await CallAsync(service, stranger, "GetCharacterLoadSlot", new PyInt(character))));
+    }
+
+    private sealed class ThrowOnEntryHook : ICharacterEntryHook
+    {
+        public long FailureCharacterId { get; set; }
+
+        public ValueTask<IReadOnlyList<(string Name, PyValue Value)>> GetSessionAttributesAsync(
+            ClientSession session, long characterId, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<IReadOnlyList<(string Name, PyValue Value)>>([]);
+
+        public ValueTask OnCharacterLeavingAsync(
+            ClientSession session, long characterId, CancellationToken cancellationToken) => ValueTask.CompletedTask;
+
+        public ValueTask OnCharacterEnteredAsync(
+            ClientSession session, long characterId, CancellationToken cancellationToken)
+        {
+            if (characterId == FailureCharacterId)
+                throw new InvalidOperationException("Injected population-cap entry failure.");
+            return ValueTask.CompletedTask;
+        }
     }
 }

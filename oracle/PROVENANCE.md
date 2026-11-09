@@ -10,7 +10,8 @@ repository only carries their output.
 | Source repository | `Fokiiiiiii/evejs-v0.12.9`, branch `ccr-fd6b2132-4353h1` |
 | Source commit | `70ea5d807a328fa6d00bf07c2fb6a24ddea5e816` |
 | `fixtures/marshal/cases.json` | `node tools/oracle/marshalFixtures.js --write` (543 cases) |
-| `fixtures/destiny/cases.json` | `node tools/oracle/destinyFixtures.js --write` (4758 cases) |
+| `fixtures/destiny/cases.json` (non-`ball.encode` cases; 2931 cases) | `node tools/oracle/destinyFixtures.js --write` at source commit `70ea5d807a328fa6d00bf07c2fb6a24ddea5e816` |
+| `fixtures/destiny/cases.json` (`ball.encode`; 1827 cases) | `node tools/dev/refresh-destiny-fixtures.js <evejs-root>`; refreshed from archive version `261028.1` |
 | `fixtures/gamestore/{tables,roles,rowcodec}.json` | `node tools/oracle/gamestoreFixtures.js --write` (114 runtime tables, 59 row-group tables, 241 row-codec cases) |
 | `fixtures/gamestore/reference.sqlite`, `reference.expected.json` | `node tools/oracle/gamestoreSqliteFixture.js`: a gamestore.sqlite written by the real JS store (not byte-reproducible; committed as is) |
 | `fixtures/services/dispatch.json` | `node tools/oracle/serviceFixtures.js --write`: request packets and the response packets the real dispatcher sends for fixture services (21 scenarios) |
@@ -20,6 +21,17 @@ repository only carries their output.
 
 To refresh from a newer reference, run `oracle/scripts/sync-oracle.sh <path to
 evejs checkout>`, review the diff, and update the commit above.
+
+The supplied `/home/user/evejs-261028.1` archive has no `.git` metadata or the
+historical `tools/oracle/destinyFixtures.js` generator. The `ball.encode` group
+was therefore refreshed by directly calling its exported `encodeEntityBall`
+through `tools/dev/refresh-destiny-fixtures.js`. The archive reports package
+version `261028.1`; the encoder and static-tail sources used for that refresh
+have SHA-256 `f2af8622091ee1cca74d5ff3a3cb96856f8155169dc17b3bde947761145fe95d`
+(`server/src/space/destiny/stream/ballEncoding.js`) and
+`e631bd71d932a1ea033df799f785befbf0ce4409d345403bac03b9a8be685683`
+(`server/src/space/destiny/stream/staticBallTail.js`). The other Destiny groups
+remain from the historical source commit above.
 
 Fixture format (EJSON): see `tools/oracle/ejson.js` in EVE.js, and the Rust
 reader in `crates/eve-oracle/src/js.rs`.

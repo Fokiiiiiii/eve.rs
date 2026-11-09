@@ -5332,6 +5332,10 @@ An out-of-range station dock command starts an approach and returns `DockingAppr
 - **Advanced Contracting capacity.** The creation path uses the V24 `NUM_CONTRACTS_BY_ADVSKILL` table alongside `NUM_CONTRACTS_BY_SKILL`; no per-level increment is inferred. See the contracts creation record above.
 
 
+### Correction to the preceding station docking record (2026-11-09)
+
+The station docking paragraph immediately above is superseded: the V24.01 `RealDock` callsite sends one `CmdDock` (`eve/client/script/ui/services/menuSvcExtras/movementFunctions.py:503-518`), and its `OnDockingAccepted` consumers only update the in-flight display (`eve/client/script/parklife/spaceMgr.py:511-518`, `eve/client/script/ui/view/dockingHeroNotificationService.py:23-35`). EveJS 261028.1 records station approach completion on arrival and notes that seven of nine recorded approaches completed without another client command (`server/src/space/runtime/scene/pilotCommands.js:720-808`, `server/src/space/runtime/spaceRuntime/docking.js:146-217`). eve.rs now starts the ordinary docking delay on arrival after rechecking simulation-owned restrictions; the Host still performs its final checks. The sim-link regression covers this flow; no graphical-client timing run is recorded. Full evidence and tests are listed in [the crate-sim audit fixes](../../project/audit-fixes-crate-sim.md).
+
 ## XmppChatMgr.Hostname response semantics
 
 V24.01 `xmppchatclient/xmppchatsvc.py:283-295` stores `Hostname()` as `XmppConnection.hostname`; `xmpp/xmppConnection.py:422` passes that value to the XMPP protocol connect call. The TCP endpoint is resolved separately as `ejabberd_address` (`xmppchatsvc.py:284,306`). eve.rs returns the configured XMPP domain, matching EveJS 261018.1 `server/src/services/chat/xmppChatMgrService.js:132-135`. EveJS v0.12.9 instead returned its separately configured `xmppConnectHost` (`server/src/services/chat/xmppChatMgrService.js:133-136`, `xmppConfig.js:16-18`). The Host reply test checks the configured domain.

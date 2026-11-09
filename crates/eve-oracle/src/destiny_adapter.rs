@@ -175,24 +175,20 @@ fn boolean(node: Option<&Js>) -> Option<bool> {
     }
 }
 
-fn warp_state(node: Option<&Js>) -> Option<WarpState> {
-    if !truthy(node) {
+fn warp_state(entity: &Js) -> Option<WarpState> {
+    let get = |key: &str| entity.get(key);
+    if !["effectStamp", "warpDistance", "warpMinRange", "warpFactor"].iter().any(|key| get(key).is_some()) {
         return None;
     }
-    let get = |key: &str| node.and_then(|warp| warp.get(key));
-    let native_command = match get("nativeWarpCommand") {
-        Some(Js::Str(text)) if !text.is_empty() => trim_js(text).to_uppercase() == "GOTO",
-        _ => false,
-    };
+    let warp_factor = truthy(get("warpFactor")).then(|| to_int32(get("warpFactor"), 0.0));
     Some(WarpState {
-        effect_stamp: to_number(get("effectStamp")),
-        total_distance: to_finite(get("totalDistance"), 0.0),
-        stop_distance: to_finite(get("stopDistance"), 0.0),
-        warp_speed: truthy(get("warpSpeed")).then(|| to_number(get("warpSpeed"))),
-        native_command_is_goto: native_command,
-        raw_destination: truthy(get("rawDestination"))
-            .then(|| build_vector(get("rawDestination"), Vec3::ZERO)),
-        target_point: truthy(get("targetPoint")).then(|| build_vector(get("targetPoint"), Vec3::ZERO)),
+        effect_stamp: to_int32(get("effectStamp"), 0.0),
+        total_distance: to_finite(get("warpDistance"), 0.0),
+        stop_distance: to_finite(get("warpMinRange"), 0.0),
+        warp_speed: warp_factor.filter(|factor| *factor != 0.0),
+        native_command_is_goto: false,
+        raw_destination: None,
+        target_point: None,
     })
 }
 
@@ -347,7 +343,6 @@ pub fn ball_entity(entity: &Js) -> BallEntity {
         get("effectStamp"),
         get("destinyEffectStamp"),
         member(get("missileState"), "effectStamp"),
-        member(get("warpState"), "effectStamp"),
     ]);
     let mushroom_span = first_defined(&[
         get("span"),
@@ -366,11 +361,21 @@ pub fn ball_entity(entity: &Js) -> BallEntity {
         StaticAlliance::None
     };
 
+    let legacy_mode = legacy_mode(get("mode"));
+    let destiny_ball_mode = destiny_ball_mode(get("destinyBallMode"));
+    let orbit_mode =
+        destiny_ball_mode == Some(4) || (destiny_ball_mode.is_none() && legacy_mode == LegacyMode::Orbit);
+    let follow_range = if orbit_mode {
+        to_finite(get("orbitDistance"), to_finite(get("followRange"), 0.0))
+    } else {
+        to_finite(chain(&["followRange", "orbitDistance", "formationRange", "missileRange"]), 0.0)
+    };
+
     BallEntity {
         item_id: id_ref(get("itemID")),
         kind: kind(get("kind")),
-        legacy_mode: legacy_mode(get("mode")),
-        destiny_ball_mode: destiny_ball_mode(get("destinyBallMode")),
+        legacy_mode,
+        destiny_ball_mode,
         destiny_ball_flags: configured_flags(get("destinyBallFlags")),
         destiny_force_free: boolean(get("destinyForceFree")),
         is_free: boolean(get("isFree")),
@@ -392,13 +397,10 @@ pub fn ball_entity(entity: &Js) -> BallEntity {
         alliance_id: id_ref_skipping_blank(get("allianceID")),
         follow_target: id_ref(follow),
         mode_owner: id_ref(mode_owner),
-        follow_range: to_finite(
-            chain(&["followRange", "orbitDistance", "formationRange", "missileRange"]),
-            0.0,
-        ),
+        follow_range,
         mushroom_span: to_finite(mushroom_span, 0.0),
         effect_stamp: to_int32(effect_stamp, 0.0),
-        warp_state: warp_state(get("warpState")),
+        warp_state: warp_state(entity),
         pending_warp: truthy(get("pendingWarp")),
         warp_speed_au: to_number(get("warpSpeedAU")),
         has_session: truthy(get("session")),

@@ -2,6 +2,8 @@
 
 ## Project status
 
+Destiny crate audit r15 findings are fixed and recorded in [audit-fixes-crate-destiny.md](audit-fixes-crate-destiny.md); current EveJS ball fixtures and AddBalls2 wire regressions cover the changed behavior. Graphical-client verification remains open.
+
 EventBus audit r14 findings, SKINR notice delivery recovery, and EventBus option validation are recorded in [audit-fixes-events.md](audit-fixes-events.md).
 
 PvP Filament catalog and queue admission are wired from the matching V24.01 static schedules and Host state. The catalog currently contains 88 CCP schedules; this build has no active/future CCP schedule. See [the CX7 handoff](character-phase/handoff-pvp-filaments-cx7.md) for source hashes, V24.01 callsites, regressions, and the graphical-client check.
@@ -2843,3 +2845,4 @@ Security review follow-up: `officeManager.GetMyCorporationsOffices` now consumes
 
 - Generic `CmdDock` structure IDs now pass through Host structure access checks. The simulation waits four seconds, asks Host to recheck timers, module restrictions and ACL, and only then removes the pilot and reports `Docked`.
 - A delayed denial ends the client's docking travel state with `OnDockingFinished` while leaving the session in space. Evidence, full V24 caller/consumer tracing and comparisons are in [the deepfix handoff](service-audit/deepfix-undock-dock-sequences.md); the graphical client check remains open.
+- The crate-sim r15 audit corrected the station approach behavior: one out-of-range V24 `CmdDock` now starts following, and arrival starts the ordinary four-second docking delay after simulation-owned restrictions are rechecked. The Host's final timer/module/access decision and persisted dock transition are unchanged. Rust regressions cover arrival without a second command, cancellation, changed restrictions, and the sim-link sequence; no graphical-client run is recorded. Evidence: [crate-sim audit fixes](audit-fixes-crate-sim.md).

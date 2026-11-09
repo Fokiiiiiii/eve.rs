@@ -106,7 +106,8 @@ internal sealed partial class CharacterServicesComposition
                 readCharacterSelectionWarsAsync: async (selectedCharacters, cancellationToken) =>
                     await CharacterWarsInfo.GetCharacterSelectionWarsAsync(
                         [.. selectedCharacters.Select(character => (character.Id, character.CorporationId, character.AllianceId))], cancellationToken),
-                warFactionOfAsync: WarFactionOfAsync),
+                warFactionOfAsync: WarFactionOfAsync,
+                announceSubscriptionTime: CloneGradeSource.AnnounceSubscriptionTime),
             new MultiLoginBlockerService(session => CloneGradeSource.CloneGradeOf(session.Get("userid"))),
             new PopulationCapService(characters, SystemPopulationModel),
             new Eve.Services.CharacterInfo.ConfigService(characters, corporations, stations, solarSystems,

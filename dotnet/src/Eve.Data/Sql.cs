@@ -54,6 +54,9 @@ public static class Sql
         return schema;
     }
 
-    /// <summary>The SQL text with <c>{schema}</c> replaced by the (checked) schema name.</summary>
-    public static string In(string schema, string text) => text.Replace("{schema}", schema);
+    /// <summary>Returns a checked PostgreSQL schema name as a quoted identifier.</summary>
+    public static string QuoteSchema(string schema) => $"\"{CheckSchema(schema)}\"";
+
+    /// <summary>The SQL text with <c>{schema}</c> replaced by the checked, quoted schema identifier.</summary>
+    public static string In(string schema, string text) => text.Replace("{schema}", QuoteSchema(schema));
 }

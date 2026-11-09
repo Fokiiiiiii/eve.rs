@@ -1574,7 +1574,10 @@ public class RuntimeTests : IAsyncLifetime
                           AND state = 'active'
                           AND (query ILIKE 'SELECT%' OR query ILIKE 'WITH%')
                           AND strpos(query, 'relations') > 0
-                          AND strpos(query, $1 || '.relations') > 0
+                          AND (
+                              strpos(query, '"' || $1 || '".relations') > 0
+                              OR strpos(query, $1 || '.relations') > 0
+                          )
                     )
                     """, connection);
                 command.Parameters.AddWithValue(schema);

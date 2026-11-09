@@ -38,4 +38,6 @@ No database-backed test applies to these pure Rust encoder/oracle changes. `eve-
 - `cargo clippy -p eve-destiny -p eve-oracle -p eve-space --all-targets -- -D warnings`: passed.
 - Focused and affected checks passed: Destiny golden oracle (5 tests, including all 4,758 cases), fighter tests (18 tests, plus the exact AddBalls2 regression after the final lint edit), NPC tests (15), `eve-destiny` (4), and `payloads_match_reference` (2), `others_match_reference` (5), `scene_matches_reference` (7), and `jump_matches_reference` (4).
 - `node --check tools/dev/refresh-destiny-fixtures.js`: passed.
-- No test was skipped. No database test applies to these pure Rust encoder/oracle changes. Main Actions CI and the graphical client have not been checked yet.
+- No test was skipped. No database test applies to these pure Rust encoder/oracle changes.
+- Main Actions run `42670875284` initially concluded failure even though its visible jobs succeeded: the gate received `dotnet: abandoned`, and only 23 of the 41 declared .NET matrix shards were created. Rerunning the same commit created all 41 shards; all 50 jobs, including the Required CI gate, passed. No product or test was skipped to obtain that result.
+- The full graphical V24.01 client was not launched locally. CI's server-stack/headless live job passed, but that is not graphical-client verification.

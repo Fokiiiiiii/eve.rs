@@ -101,6 +101,13 @@ public sealed partial class SubscriptionMgrService(OmegaLicenses licenses)
         session.SendNotification("OnSubscriptionChangedServer", "clientID", new PyInt(cloneGrade));
     }
 
+    /// <summary>Tells a session its current Omega end time without changing or reannouncing its clone grade.</summary>
+    public void AnnounceSubscriptionTime(ClientSession session)
+    {
+        var endTime = licenses.Resolve(session.UserId is { } userId ? new PyInt(userId) : null).ExpiryFileTime;
+        session.SendNotification("OnSubscriptionTimeUpdateServer", "clientID", endTime is { } end ? new PyLong(end) : PyNone.Instance);
+    }
+
     /// <summary>Updates the subscription time first, then announces a clone-grade change only when the paid change crossed Alpha/Omega.</summary>
     public static void AnnouncePurchasedSubscription(ClientSession session, long previousGrade, long currentGrade, long endTime)
     {

@@ -161,43 +161,16 @@ impl Scene {
         if let Some(pending) = pilot.docking.as_ref().filter(|p| p.station_id == station_id) {
             return vec![Out::Accepted { session, command: code, at: pending.accepted_at }];
         }
-        // a doomsday's windows hold the ship: a held ship follows no orders (IMMOBILE), and a ship in its no-jump window does not dock either (the
-        // reference's disallowDocking on the running module: the module runs for that window)
-        if pilot.immobile_until > now {
-            return vec![Out::Refused { session, command: code, reason: "IMMOBILE" }];
-        }
-        if pilot.no_jump_until > now {
-            return vec![Out::Refused { session, command: code, reason: "DOCKING_BLOCKED" }];
-        }
-        if pilot.disrupted_until > now {
-            return vec![Out::Refused { session, command: code, reason: "DOCKING_DISRUPTED" }];
-        }
-        // a running module that disallows docking (disallowDocking 2354: a siege, a triage, a sensor array) keeps the ship from the station
-        if self.overlay(session, pilot.ship.spec.ship_id, DISALLOW_DOCKING) > 0.0 {
-            return vec![Out::Refused { session, command: code, reason: "DOCKING_DISALLOWED_BY_MODULE" }];
-        }
-        if pilot
-            .modules
-            .running
-            .iter()
-            .any(|run| matches!(run.effect.action.as_ref(), Some(crate::modules::Action::Panic { .. })))
-        {
-            return vec![Out::Refused { session, command: code, reason: "DOCKING_BLOCKED" }];
-        }
-        if pilot.jump.is_some() {
-            return vec![Out::Refused { session, command: code, reason: "JUMPING" }];
-        }
-        if pilot.flight.is_some() {
-            return vec![Out::Refused { session, command: code, reason: "IN_WARP" }];
-        }
-        if let Some(reason) = dock_refusal(&station, pilot.ship.spec.group_id) {
+        if let Some(reason) = self.docking_refusal(session, pilot, &station, now) {
             return vec![Out::Refused { session, command: code, reason }];
         }
         let distance = surface_distance(&pilot.ship, station.position, station.radius);
         let docking_range = docking_range(station.kind);
         if distance > docking_range {
             let out = self.approach(session, station_id, distance, docking_range, now);
-            if out.iter().any(|event| matches!(event, Out::Approaching { .. })) {
+            if station.kind == crate::world::BodyKind::Station
+                && out.iter().any(|event| matches!(event, Out::Approaching { .. }))
+            {
                 self.pilots.get_mut(&session).expect("the caller checked").docking_approach =
                     Some(station_id);
             }
@@ -206,6 +179,46 @@ impl Scene {
         let mut out = self.accept_docking(session, station_id, now);
         out.push(Out::Accepted { session, command: code, at: now });
         out
+    }
+
+    /// The simulation-owned checks shared by a direct dock request and arrival from a station approach.
+    pub(super) fn docking_refusal(
+        &self,
+        session: SessionId,
+        pilot: &Pilot,
+        station: &crate::world::Body,
+        now: i64,
+    ) -> Option<&'static str> {
+        // a doomsday's windows hold the ship: a held ship follows no orders (IMMOBILE), and a ship in its no-jump window does not dock either (the
+        // reference's disallowDocking on the running module: the module runs for that window)
+        if pilot.immobile_until > now {
+            return Some("IMMOBILE");
+        }
+        if pilot.no_jump_until > now {
+            return Some("DOCKING_BLOCKED");
+        }
+        if pilot.disrupted_until > now {
+            return Some("DOCKING_DISRUPTED");
+        }
+        // a running module that disallows docking (disallowDocking 2354: a siege, a triage, a sensor array) keeps the ship from the station
+        if self.overlay(session, pilot.ship.spec.ship_id, DISALLOW_DOCKING) > 0.0 {
+            return Some("DOCKING_DISALLOWED_BY_MODULE");
+        }
+        if pilot
+            .modules
+            .running
+            .iter()
+            .any(|run| matches!(run.effect.action.as_ref(), Some(crate::modules::Action::Panic { .. })))
+        {
+            return Some("DOCKING_BLOCKED");
+        }
+        if pilot.jump.is_some() {
+            return Some("JUMPING");
+        }
+        if pilot.flight.is_some() {
+            return Some("IN_WARP");
+        }
+        dock_refusal(station, pilot.ship.spec.group_id)
     }
 
     /// The ship is in range and the docking begins: the client is told, and the ship stops and waits for the docking to take its time.
@@ -261,8 +274,8 @@ impl Scene {
         out
     }
 
-    /// A docking asked for from too far: the ship goes to the station on its own (following it to the docking range) and the host is told how far
-    /// off it was, for the client's message. As in the reference the docking is not done on arrival: the pilot asks again.
+    /// A docking asked for from too far: the ship follows the station and the host is told how far off it was for the client's message. The
+    /// approach remains pending until arrival, when the current docking checks run again.
     pub(super) fn approach(
         &mut self,
         session: SessionId,

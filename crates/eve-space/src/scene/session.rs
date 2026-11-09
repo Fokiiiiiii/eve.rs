@@ -752,7 +752,7 @@ impl Scene {
         self.prune_pending_crime_events(now);
         let mut told = self.populate_empire_sentries(now);
         told.extend(self.populate_pochven(now));
-        let arrived: Vec<SessionId> = self
+        let arrived: Vec<(SessionId, i64)> = self
             .pilots
             .iter()
             .filter_map(|(session, pilot)| {
@@ -760,12 +760,21 @@ impl Scene {
                 let station = self.system.body(station_id).filter(|body| is_dock_body(body))?;
                 (surface_distance(&pilot.ship, station.position, station.radius)
                     <= docking_range(station.kind))
-                .then_some(*session)
+                .then_some((*session, station_id))
             })
             .collect();
-        for session in arrived {
+        for (session, station_id) in arrived {
+            let eligible = self
+                .system
+                .body(station_id)
+                .filter(|body| is_dock_body(body))
+                .zip(self.pilots.get(&session))
+                .is_some_and(|(station, pilot)| self.docking_refusal(session, pilot, station, now).is_none());
             if let Some(pilot) = self.pilots.get_mut(&session) {
                 pilot.docking_approach = None;
+            }
+            if eligible {
+                told.extend(self.accept_docking(session, station_id, now));
             }
         }
         let due: Vec<(SessionId, i64)> = self

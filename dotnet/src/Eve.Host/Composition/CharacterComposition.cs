@@ -141,15 +141,16 @@ internal sealed partial class CharacterServicesComposition
             skills, skillCatalog, training, characters, items, dogma, announcer, now, readAugmentations,
             walletTransactions: economyWallets,
             isAlphaClone: accountId => !omega.Resolve(new PyInt(accountId)).HasLicense,
-            expertSystems: expertSystems);
+            expertSystems: clusterOptions.ExpertSystemsEnabled ? expertSystems : null,
+            skillPurchaseEnabled: clusterOptions.SkillPurchaseEnabled);
         expertSystemMgr = new Eve.Services.Skills.ExpertSystemMgrService(expertSystems, skills, skillCatalog, items, source, characterSessions, dogmaSync, dogma,
             // the persistent notice of a lapse (type 253, the misc group), written whether or not the pilot is online
-            async (characterId, typeId, token) =>
+            async (characterId, typeId, expiresAtMs, token) =>
             {
                 if (notificationMailbox is { } mailbox)
-                    await mailbox.WriteNotificationsAsync(0, 253, 4, [characterId], $"expert-expired:{typeId}:{now()}",
+                    await mailbox.WriteNotificationsAsync(0, 253, 4, [characterId], $"expert-expired:{typeId}:{expiresAtMs}",
                         new System.Text.Json.Nodes.JsonObject { ["typeID"] = typeId }, token);
-            });
+            }, expertSystemsEnabled: clusterOptions.ExpertSystemsEnabled);
         // a skill booster ends at its expiry: a durable job per activation (SkillBoosterLapse)
         boosterLapse = new Eve.Services.Skills.SkillBoosterLapse(foundations.Scheduler, skills, items, source, training, announcer, characters, characterSessions, now);
         skillHandler.BoosterLapse = boosterLapse;

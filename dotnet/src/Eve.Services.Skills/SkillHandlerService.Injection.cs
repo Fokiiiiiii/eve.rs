@@ -37,7 +37,7 @@ public sealed partial class SkillHandlerService
             await using (var characterLock = new NpgsqlCommand(
                 "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", connection, transaction))
             {
-                characterLock.Parameters.Add(new NpgsqlParameter { Value = $"skill-inject:{character}" });
+                characterLock.Parameters.Add(new NpgsqlParameter { Value = $"skills:{character}" });
                 await characterLock.ExecuteScalarAsync(token);
             }
             var before = await store.ForCharacterAsync(connection, transaction, character, token);
@@ -129,6 +129,11 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
         || catalog.ItemTypeId("Large Skill Injector") == typeId
         || catalog.ItemTypeId("Daily Alpha Injector") == typeId;
 
+    private static bool IsSkillInjectorInUsableLocation(Eve.Inventory.Item item, ClientSession session, long characterId) =>
+        item.OwnerId == characterId
+        && (session.GetInt("stationid") is { } station && item.LocationId == station && item.Flag == HangarFlag
+            || session.GetInt("shipid") is { } ship && item.LocationId == ship && item.Flag == CargoFlag);
+
     [Method("GetDiminishedSpFromInjectors")]
     public async ValueTask<PyValue> GetDiminishedSpFromInjectors(ServiceCall call)
     {
@@ -146,7 +151,7 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
         if (CharacterOf(call) is not { } character || IdOf(call.Arg(0)) is not { } itemId
             || IdOf(call.Arg(1)) is not { } quantity || quantity <= 0
             || await items.GetAsync(itemId, call.Cancellation) is not { } item
-            || item.OwnerId != character || !IsSkillInjectorType(item.TypeId)
+            || !IsSkillInjectorInUsableLocation(item, call.Session, character) || !IsSkillInjectorType(item.TypeId)
             || item.Singleton && quantity != 1 || !item.Singleton && quantity > item.Quantity)
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector cannot be used.")));
 
@@ -172,7 +177,7 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
             return None;
         var current = await items.GetAsync(itemId, call.Cancellation);
         var dailyAlphaTypeId = catalog.ItemTypeId("Daily Alpha Injector");
-        if (current is null || current.OwnerId != character || !IsSkillInjectorType(current.TypeId)
+        if (current is null || !IsSkillInjectorInUsableLocation(current, call.Session, character) || !IsSkillInjectorType(current.TypeId)
             || current.Singleton && quantity != 1 || !current.Singleton && quantity > current.Quantity)
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector cannot be used.")));
         if (current.TypeId == dailyAlphaTypeId)
@@ -195,7 +200,7 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
                 await characterLock.ExecuteScalarAsync(token);
             }
             if (await items.LockAndGetAsync(connection, transaction, itemId, token) is not { } item
-                || item.OwnerId != character || item.TypeId != current.TypeId
+                || !IsSkillInjectorInUsableLocation(item, call.Session, character) || item.TypeId != current.TypeId
                 || item.Singleton && quantity != 1 || !item.Singleton && quantity > item.Quantity)
                 throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That skill injector cannot be used.")));
             if (item.TypeId == dailyAlphaTypeId
@@ -284,17 +289,18 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
                 throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("The character's Alpha skill limits could not be verified.")));
             alphaRaceId = characterRecord.RaceId;
         }
-        var view = await training.ViewAsync(character, AccountOf(call), call.Cancellation);
-        var queue = view?.Queue ?? [];
+        // Settle any completed training before extraction. Queue membership is checked again below under the shared skill lock.
+        _ = await training.ViewAsync(character, AccountOf(call), call.Cancellation);
         var extractorPoints = 500_000L;
         var updated = await store.InTransactionAsync(async (connection, transaction, token) =>
         {
             await using (var characterLock = new NpgsqlCommand(
                 "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", connection, transaction))
             {
-                characterLock.Parameters.Add(new NpgsqlParameter { Value = $"skill-inject:{character}" });
+                characterLock.Parameters.Add(new NpgsqlParameter { Value = $"skills:{character}" });
                 await characterLock.ExecuteScalarAsync(token);
             }
+            var queue = await training.LoadQueueAsync(connection, transaction, character, token);
             if (await items.LockAndGetAsync(connection, transaction, extractor.Id, token) is not { } locked
                 || locked.OwnerId != character || locked.TypeId != extractorTypeId.Value
                 || locked.LocationId != station || locked.Flag != HangarFlag || locked.Quantity < 1)
@@ -312,7 +318,7 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
             {
                 if (!byId.TryGetValue(target.SkillTypeId, out var skill) || skill.SkillPoints <= 0)
                     throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("A selected skill is not trained.")));
-                if (queue.Any(entry => entry.TypeId == target.SkillTypeId))
+                if (queue.Entries.Any(entry => entry.TypeId == target.SkillTypeId))
                     throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("A skill in the training queue cannot be extracted.")));
                 var take = Math.Min(remaining, Math.Min(skill.SkillPoints, target.Points));
                 if (take > 0)
@@ -339,7 +345,7 @@ private long DiminishedInjectorSp(long totalSp, int typeId, long quantity, long 
                     if (selected.Contains(requirement.TypeId))
                         lockedSkills.Add(requirement.TypeId);
             }
-            foreach (var entry in queue)
+            foreach (var entry in queue.Entries)
                 if (catalog.Get(entry.TypeId)?.Requirements is { } requirements)
                     foreach (var requirement in requirements)
                         if (selected.Contains(requirement.TypeId))

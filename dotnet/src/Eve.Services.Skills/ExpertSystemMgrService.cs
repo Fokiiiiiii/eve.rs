@@ -14,7 +14,8 @@ namespace Eve.Services.Skills;
 [Service("expertSystemMgr")]
 public sealed partial class ExpertSystemMgrService(
     ExpertSystems expertSystems, PgSkillStore skills, SkillCatalog skillCatalog, PgItemStore items, NpgsqlDataSource source, CharacterSessions sessions,
-    ICharacterDogmaSync? dogma, Eve.Dogma.DogmaStatic statics, Func<long, int, CancellationToken, Task>? writeLapseNotice = null)
+    ICharacterDogmaSync? dogma, Eve.Dogma.DogmaStatic statics,
+    Func<long, int, long, CancellationToken, Task>? writeLapseNotice = null, bool expertSystemsEnabled = true)
 {
 
     private const long JunkLocation = 6;
@@ -82,6 +83,8 @@ public sealed partial class ExpertSystemMgrService(
         {
             throw Refusal("That item is not an Expert System.");
         }
+        if (!expertSystemsEnabled)
+            throw Refusal("Expert Systems are disabled in server config.");
 
         var nowMs = expertSystems.NowMs;
         var trainedBefore = await skills.ForCharacterAsync(characterId, cancellationToken);
@@ -166,15 +169,16 @@ public sealed partial class ExpertSystemMgrService(
                 foreach (var entry in dueForCharacter)
                 {
                     if (await expertSystems.Store.RemoveAsync(connection, transaction, characterEntries.Key, entry.TypeId, nowMs, cancellationToken))
+                    {
                         expiredTypeIds.Add(entry.TypeId);
+                        if (writeLapseNotice is not null)
+                            await writeLapseNotice(characterEntries.Key, entry.TypeId, entry.ExpiresAtMs, cancellationToken);
+                    }
                 }
                 await transaction.CommitAsync(cancellationToken);
             }
             if (expiredTypeIds.Count > 0)
             {
-                if (writeLapseNotice is not null)
-                    foreach (var typeId in expiredTypeIds)
-                        await writeLapseNotice(characterEntries.Key, typeId, cancellationToken);
                 await Told(sessions.Of(characterEntries.Key), characterEntries.Key, null, false, expiredTypeIds[0], false,
                     grantsBefore, trainedBefore, cancellationToken, expired: true, expiredTypeIds: expiredTypeIds);
             }

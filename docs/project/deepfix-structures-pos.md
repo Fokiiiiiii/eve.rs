@@ -1,0 +1,45 @@
+# Deep correctness audit: structures and POS (2026-11-09)
+
+Scope: structure anchoring and placement, structure service-module state, fuel-out and reinforcement transitions, docking, the structure browser, and `posMgr.GetControlTowers`. The protocol comparison uses the V24.01 client build 3396210 at `/home/user/eve-logic`; the functional reference is `/home/user/evejs-261108.1`. Static placement facts come from the pinned 3396210 SDE in the local `sde` schema. PostgreSQL regressions ran against `eve_p5`.
+
+## Verified findings
+
+### Structure anchoring and placement
+
+V24.01 clamps the placement offset to 800,000 m, computes the candidate from the live ship position, and checks the candidate against ballpark balls and warp-in points. Its conflict rules include group/category deployment distances, both object radii, the 4,000,000 m moon clearance, the drilling-platform moon-beacon exception, and the Upwell jump-bridge/stargate clearance. The RPC passes item ID, X/Z, rotation, profile, name, bio, reinforcement day/hour and extra configuration. Evidence: client `structures/deployment.py:10-39,51-63,66-115`, `eve/client/script/ui/structure/deployment/deploymentEntity.py:50-64,168-179`, and `eve/client/script/ui/services/structure/structureDeployment.py:82-128,166-174`.
+
+EveJS uses the same deployment distance and clearance rules in `server/src/services/structure/structureDeploymentPlacement.js:26-111,227-247,326-414,425-479`; its RPC reaches the placement authority in `server/src/services/structure/structureDeploymentService.js:20-42`. The existing eve.rs authority had a 75,000 m ship-offset cap and an incomplete blanket 1,000,000 m collision check. The first registered Host regression for a gate point returned `CallRsp` where the client contract required `ErrorResponse` with `CantDeployBlocked`.
+
+`StructureAnchorAuthority` now uses an 800,000 m offset cap, the V24 group/category clearance rules and SDE radii for static system balls, persisted structures, moon mining beacon positions and the jump-bridge gate rule (`dotnet/src/Eve.Host/Persistence/Structures/StructureAnchorAuthority.cs:27-55,247-320`). The real Host wire regression covers a successful placement with persisted coordinates and `OnItemChange`, then moon, gate and asteroid-belt rejection with the `CantDeployBlocked` error and unchanged source items (`dotnet/tests/Eve.Host.Tests/StructureAnchorPlacementHostWireTests.cs:23-226`). The focused regression passed 1/1, and the selected Host set passed 54/54 with no skips.
+
+### Service-module online state, fuel and hull reinforcement
+
+The client refreshes available services after `OnStructureServiceChanged` and reads online service state through `structureSettings.CharacterGetServices`; see `eve/client/script/ui/services/structure/structureServices.py:21-57`. Structure fitting uses module online state/effects; see `eve/client/script/ui/shared/fittingScreen/structureFittingController.py:38-62`. EveJS persists service state and module transitions in `server/src/services/structure/structureServiceModules.js:166-215`; its state/timer fanout covers inventory and module consequences in `server/src/services/structure/structureTimerInventoryFanout.js:116-141,152-197` and `server/src/services/structure/structureState.js:429-475,4590-4607`.
+
+The Host now shares one `PgStructureServiceModuleStates` owner between the fuel and timer paths. Fuel exhaustion and entry into Hull Reinforce persist module-offline state, remove the module fuel-cycle row, and publish the module IDs through the Event Bus in the same transaction as the structure/fuel change. After commit, the structure controller receives the Dogma attribute/effect changes through `OnMultiEvent` (`dotnet/src/Eve.Structures/StructureFuel.cs:286-329`, `dotnet/src/Eve.Structures/StructureTimers.cs:107-154`, `dotnet/src/Eve.Host/Persistence/Structures/StructureNotifications.cs:67-89`, and `dotnet/src/Eve.Host/Composition/StructureComposition.cs:228-310`). `StructureServiceModuleHostWireTests` covers real Host RPC toggles, fuel consumption, concurrent/repeated online requests, state persistence and client service notifications. `StructureHullReinforceHostWireTests.Hull_reinforce_offlines_a_fitted_service_module_and_notifies_the_controller_after_commit` verifies the state transition, module state and cycle persistence, notification order, and Dogma wire payload. These tests passed in the selected Host run.
+
+Vulnerability and reinforcement deadlines remain on the existing durable `structure.timer` scheduler path. The V24 reinforcement window reads its selected reinforcement time at `eve/client/script/ui/structure/structureBrowser/reinforcementTimeWnd.py:170-173`; EveJS mutation checks and notifications are in `server/src/services/structure/structureVulnerabilityService.js:183-260`. The selected `StructureTimersTests`, `StructureTimerAnchoringDelayTests`, `StructureAnchorDelayTests`, and reinforcement Host tests passed. The verified 30-day pending reinforcement change and existing timer state machine were not changed in this task.
+
+### Docking and structure browser
+
+The client docking service calls `structureDocking.Undock` and consumes the session transition in `eve/client/script/ui/services/structure/structureDocking.py:26-81`. EveJS handles docking and undocking in `server/src/services/structure/structureDockingService.js:137-239`. The selected `Eve.Services.Space.Tests` structure docking, undocking, placement and transition tests passed 15/15; this task found no new behavior divergence in those paths.
+
+The V24 structure directory and browser consume the character structure list, structure details and dockable IDs; evidence is `eve/client/script/ui/services/structure/structureDirectory.py:33-103` and `eve/client/script/ui/structure/structureBrowser/controllers/structureBrowserController.py:49-87`. EveJS builds the same directory responses from persisted structure/docking state in `server/src/services/structure/structureDirectoryService.js:358-437`. The selected eve.rs directory/read-side and service tests passed (18 Host read-model tests and 80 Core service tests); no browser-read behavior change was needed here. Graphical rendering was not exercised.
+
+### POS control-tower list
+
+The V24 moon-mining flow reads `posMgr.GetControlTowers` and consumes rows containing tower type, item ID and solar-system ID (`eve/client/script/ui/inflight/moonmining.py:360-379`). EveJS returns normalized rows from its tower provider in `server/src/services/planet/posMgrService.js:488-503`. eve.rs previously registered the RPC without a persisted tower provider. Host composition now shares the deployed-object store and wires `ControlTowerReadModel`; it returns the current corporation's persisted group-365 control towers with the expected row shape (`dotnet/src/Eve.Host/Hosting/HostComposition.cs:181-190,442-448`, `dotnet/src/Eve.Host/Persistence/Structures/ControlTowerReadModel.cs:1-22`). `StructurePosHostWireTests.PosMgr_GetControlTowers_returns_the_corporations_persisted_towers_over_macho` uses real Host registration and PostgreSQL rows and asserts the exact wire result, including exclusion of another corporation's tower. It passed as part of the 54/54 selected Host tests.
+
+## Not verified / remaining limits
+
+- The graphical V24.01 client was not launched. All reported protocol checks are source and headless/Host regression checks.
+- EveJS source was inspected, but its runtime flow could not be loaded: requiring the placement service failed because `picocolors` is missing from the reference checkout. No runtime-parity claim is made.
+- The current Host placement validator reads static SDE balls and persisted structures. It does not enumerate all live simulation balls or the client's warp-in points. The V24 preview checks both (`deployment.py:66-69`); EveJS can use scene balls and warp-in points when a scene is available (`structureDeploymentPlacement.js:250-300,417-423`). The normal unmodified client performs its own preview validation, but equivalent Host-side coverage for dynamically spawned scene objects remains open.
+- No full test suite, nightly suite, real graphical-client session, or production EveJS dependency setup was run. No intentional gameplay difference from EveJS was introduced in the verified changes.
+
+## Checks recorded for this change
+
+- Release builds: `Eve.Structures`, `Eve.Host`, and `Eve.Host.Tests`; all succeeded with 0 warnings and 0 errors.
+- Selected PostgreSQL tests on `eve_p5`: `Eve.Host.Tests` 54 passed / 0 skipped; `Eve.Structures.Tests` 27 passed / 0 skipped; `Eve.Services.Space.Tests` 15 passed / 0 skipped; `Eve.Services.Core.Tests` 80 passed / 0 skipped; additional selected Host directory/notification/anchor checks 18 passed / 0 skipped.
+- The first placement-test filter matched no tests and was not counted. It was replaced by a fully qualified method filter; the focused test passed 1/1, and the final Host selection included that method and passed 54/54.
+- MCP code-search tools were unavailable in this session. Repository/source inspection used `rg` and line-numbered reads as the fallback.

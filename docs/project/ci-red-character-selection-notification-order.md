@@ -17,5 +17,6 @@ The headless assertions now require the exact notification prefix `OnSubscriptio
 - `tools/dev/run-eve-live.sh` with `EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p4`, `EVE_MARKET_SEED=skip`, and only `test_the_recorded_walk_replays` plus `test_a_new_character_has_the_skills_the_reference_gives`: 5 passed, 0 skipped.
 - `Eve.Host.Tests.CharacterHostTests.Host_character_selection_sends_the_subscription_time_before_the_session_change` against `eve_p4`: 1 passed, 0 skipped.
 - The same five cases were attempted against EveJS v0.12.9. The recorded-walk case failed earlier at `achievementTrackerMgr.HasEverWarped` (`True`, expected `False`). All four race cases reached and passed their selection-notification assertions, then failed on later skill-handler/history/skill-total differences. These unrelated failures were not changed or masked.
+- Main CI run `42636881594` for commit `bec083d` (which contains the notification-order test update) completed successfully with no failed jobs.
 
 Not checked: graphical-client interaction or full EveJS parity beyond the notification assertions described above. The relevant V24.01 and EveJS callsites were inspected, and the successful headless live tests exercised the registered eve.rs Host and wire notifications.

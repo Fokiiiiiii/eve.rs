@@ -73,13 +73,14 @@ of this patch.
 
 ## CI follow-up: quoted relation name in a concurrency probe
 
-After the identifier fix was pushed, CI run 1661 exposed that
+After the identifier fix was pushed, CI run 1661 exposed two concurrency probes that only matched
+the textual form `schema.relations`:
 `NpcFactionStandingTests.Concurrent_kills_in_different_systems_apply_each_loss_to_the_latest_standing`
-waited for the textual form `schema.relations`. `Sql.In` now emits the equivalent quoted form
-`"schema".relations`, so the probe timed out before starting its second kill. The same failure
-reproduced locally. The probe now accepts either exact schema spelling while still requiring the
-matching application name, active `UPDATE`, and `relations` table. The gameplay assertion and update
-ordering are unchanged; this is test coordination only.
+and `RuntimeTests.War_legality_uses_one_affiliation_and_war_snapshot`. `Sql.In` now emits the
+equivalent quoted form `"schema".relations`, so both probes timed out before reaching their second
+operation. Both failures reproduced locally. The probes now accept either exact schema spelling
+while retaining their application-name, active-query, target-table, and gameplay assertions.
+Only test coordination changed.
 
 The repository MCP code-navigation service was unavailable in this environment. Required source
 inspection therefore used `rg`, `sed`, and `nl` as a local fallback.

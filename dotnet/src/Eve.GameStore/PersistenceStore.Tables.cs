@@ -267,7 +267,7 @@ public sealed partial class PersistenceStore
     /// <summary>Records that a table was imported from a legacy source, so a later empty table is never re-seeded.</summary>
     public async Task MarkMigratedAsync(string table, OwnerFence fence, CancellationToken ct = default)
     {
-        var name = TableNames.RequireSafe(table);
+        var name = TableNames.RequirePersistence(table, "migration table");
         await using var connection = await _source.OpenConnectionAsync(ct);
         await using var tx = await connection.BeginTransactionAsync(ct);
         await AssertActiveAsync(connection, tx, fence, ct);

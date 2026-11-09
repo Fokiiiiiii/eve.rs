@@ -187,7 +187,7 @@ public class AgentDialogueTests
     }
 
     [AgentsPgFact]
-    public async Task A_decline_holds_the_agent_back_for_four_hours_and_the_request_is_not_offered_again()
+    public async Task A_decline_allows_a_new_offer_while_the_remaining_four_hour_warning_is_preserved()
     {
         await using var world = await World.CreateAsync();
         await world.MigrateAsync();
@@ -199,15 +199,13 @@ public class AgentDialogueTests
         var asked = await machine.StepAsync(Pilot, Basic(), Button(AgentDialogueToken.Decline), false, default);
         Assert.Equal("YesNo", asked.Prompt!.Method);
         var declined = Assert.IsType<AgentDialogueStep>(await asked.Prompt.Then(PyBool.True)).Reply!;
+        Assert.Contains((AgentDialogueToken.Request, AgentDialogueButton.RequestMission), declined.Actions);
         world.Now = Start + TimeSpan.FromHours(1);
         var during = await machine.DoActionAsync(Pilot, Basic(), Button(AgentDialogueToken.Request), false, default);
-        world.Now = Start + AgentMissionStore.DeclineReplayDelay;
-        var after = await machine.DoActionAsync(Pilot, Basic(), Button(AgentDialogueToken.Request), false, default);
 
-        Assert.Empty(declined.Actions);
-        Assert.Empty(during.Actions);
+        Assert.Equal(Pairs((AgentDialogueToken.Accept, AgentDialogueButton.Accept), (AgentDialogueToken.Decline, AgentDialogueButton.Decline)), during.Actions.ToArray());
         Assert.Equal(AgentMissionState.Offered, (await world.Store.ReadAsync(Pilot, Agent))!.State);
-        Assert.Equal(Pairs((AgentDialogueToken.Accept, AgentDialogueButton.Accept), (AgentDialogueToken.Decline, AgentDialogueButton.Decline)), after.Actions.ToArray());
+        Assert.Equal(Start + AgentMissionStore.DeclineReplayDelay, (await world.Store.ReadAsync(Pilot, Agent))!.DeclineUntil);
     }
 
     [AgentsPgFact]

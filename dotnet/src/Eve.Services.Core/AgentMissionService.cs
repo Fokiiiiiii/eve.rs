@@ -249,7 +249,7 @@ public sealed class AgentMissionService(
         var state = await readMissionState(characterId, call.Cancellation);
         call.Cancellation.ThrowIfCancellationRequested();
         var ticks = Integer(state?["declineTimersByAgentID"]?[agentId.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
-        return ticks > 0 ? new PyLong(ticks) : PyNone.Instance;
+        return ticks > DateTimeOffset.UtcNow.ToFileTime() ? new PyLong(ticks) : PyNone.Instance;
     }
 
     private async ValueTask<PyValue> TravelToLocationAsync(ServiceCall call, bool warp)

@@ -139,7 +139,9 @@ public sealed record MissionAgentPlace(long SolarSystemId, long CorporationId, l
 /// </summary>
 public sealed record MissionStandingGain(long EntityId, double Amount, bool Diminishing, string Message = "Agent mission standing")
 {
-    public double DeltaFrom(double current) => Diminishing ? (10 - current) * Amount : Amount;
+    public double DeltaFrom(double current) => Diminishing
+        ? (Amount < 0 ? 10 + current : 10 - current) * Amount
+        : Amount;
 }
 
 /// <summary>

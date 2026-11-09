@@ -71,5 +71,15 @@ of this patch.
   boundary, not a claim of a remotely reachable vulnerability.
 - This record does not claim a server-restart persistence scenario or a new gameplay transition.
 
+## CI follow-up: quoted relation name in a concurrency probe
+
+After the identifier fix was pushed, CI run 1661 exposed that
+`NpcFactionStandingTests.Concurrent_kills_in_different_systems_apply_each_loss_to_the_latest_standing`
+waited for the textual form `schema.relations`. `Sql.In` now emits the equivalent quoted form
+`"schema".relations`, so the probe timed out before starting its second kill. The same failure
+reproduced locally. The probe now accepts either exact schema spelling while still requiring the
+matching application name, active `UPDATE`, and `relations` table. The gameplay assertion and update
+ordering are unchanged; this is test coordination only.
+
 The repository MCP code-navigation service was unavailable in this environment. Required source
 inspection therefore used `rg`, `sed`, and `nl` as a local fallback.

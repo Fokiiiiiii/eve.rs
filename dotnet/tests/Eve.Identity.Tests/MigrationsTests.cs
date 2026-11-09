@@ -71,6 +71,48 @@ public class MigrationsTests
     }
 
     [PgFact]
+    public async Task Migrations_support_a_reserved_schema_name()
+    {
+        await using var source = Npgsql.NpgsqlDataSource.Create(PgConnection.ForTest(PgSchema.Url!));
+        const string schema = "select";
+        await using (var cleanup = source.CreateCommand("DROP SCHEMA IF EXISTS \"select\" CASCADE"))
+        {
+            await cleanup.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            var migrations = new[]
+            {
+                new Migration("0001_reserved_schema", "CREATE TABLE reserved_schema_fixture (value integer NOT NULL)")
+            };
+
+            Assert.Equal(["0001_reserved_schema"], await Migrations.ApplyAsync(source, schema, migrations));
+            Assert.Empty(await Migrations.ApplyAsync(source, schema, migrations));
+            await using var verify = source.CreateCommand(Sql.In(schema, "SELECT count(*) FROM {schema}.migrations"));
+            Assert.Equal(1L, Convert.ToInt64(await verify.ExecuteScalarAsync()));
+        }
+        finally
+        {
+            await using var cleanup = source.CreateCommand("DROP SCHEMA IF EXISTS \"select\" CASCADE");
+            await cleanup.ExecuteNonQueryAsync();
+        }
+    }
+
+    [PgFact]
+    public async Task Sql_schema_substitution_checks_the_identifier_before_running_a_query()
+    {
+        await using var schema = await PgSchema.CreateAsync();
+        var sql = Sql.In(schema.Name, "SELECT count(*) FROM {schema}.migrations WHERE name = '0001_accounts'");
+        await using (var command = schema.Source.CreateCommand(sql))
+        {
+            Assert.Equal(1L, Convert.ToInt64(await command.ExecuteScalarAsync()));
+        }
+
+        Assert.Throws<ArgumentException>(() => Sql.In("bad; name", "SELECT 1 FROM {schema}.migrations"));
+    }
+
+    [PgFact]
     public async Task Processes_that_start_together_apply_each_migration_once()
     {
         await using var schema = await PgSchema.CreateAsync(migrate: false);

@@ -73,6 +73,12 @@ where
             frame = reader.next() => {
                 let Some(payload) = frame? else { return Ok(()) };
                 let message = Message::decode(&payload).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                if let Message::Hello { version } = &message {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("the host said hello again with version {version} after the handshake"),
+                    ));
+                }
                 let replies = sim.handle_with_frame_len(message, clock(), payload.len() + 4).map_err(io::Error::other)?;
                 write_all(&mut writer, &replies).await?;
             }

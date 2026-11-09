@@ -57,7 +57,7 @@ EveJS は `liveFittingState.js:1151-1180` で総枠を得て、`invBrokerService
 
 - V24.01 の graphical client での表示・操作は行っていません。
 - `AbyssalHostFlowTests.Tournament_cutoff_waits_for_actual_host_remote_repair_result` と `Tournament_fancy_registered_wire_reads_live_two_team_metrics` は外部 Rust simulator を要します。`EVE_ABYSSAL_SIM_BINARY` と `EVE_ABYSSAL_SIM_SDE` がこの環境にないため実行していません。
-- main の CI run 1651（`582b968d`）は全 job 成功。今回の未 push commit に対する CI は push 後に確認する。
+- push 前の main CI run 1651（`582b968d`）は全 job 成功。push 後の CI run 1653（`7f9b36e9`）も全 job 成功。
 # Ammo audit findings (90-audit-eve-ships-r14)
 
 監査報告 `/home/user/reports/90-audit-eve-ships-r14.md` の3件を、eve.rs の実装、V24.01 クライアント全体の callsite、EveJS の処理と照合した。3件とも再現する不具合だったため修正した。誤検出として除外した finding はない。

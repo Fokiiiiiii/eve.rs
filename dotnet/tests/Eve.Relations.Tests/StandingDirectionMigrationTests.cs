@@ -21,14 +21,16 @@ public sealed class StandingDirectionMigrationTests
                        ('standing', 98000002, 140000002, 3.5, 1, 2),
                        ('standing', 140000003, 98000003, 4.5, 1, 2),
                        ('standing', 98000003, 140000003, 5.5, 1, 3);
-                INSERT INTO {schema}.relation_history (kind, subject, object, old_value, new_value, at_ms)
-                VALUES ('standing', 140000001, 98000001, 0, 4.5, 2);
+                INSERT INTO {schema}.relation_history (kind, subject, object, old_value, new_value, at_ms, attrs)
+                VALUES ('standing', 140000001, 98000001, 0, 4.5, 2, jsonb_build_object('legacy', 'retained'));
                 """))
             {
                 await command.ExecuteNonQueryAsync();
             }
 
-            Assert.Equal(["0002_standing_direction"], await Migrations.ApplyAsync(source, schema, migrations));
+            Assert.Equal(
+                ["0002_standing_direction", "0003_relation_history_state"],
+                await Migrations.ApplyAsync(source, schema, migrations));
             Assert.Empty(await Migrations.ApplyAsync(source, schema, migrations));
             await using var check = source.CreateCommand($"""
                 SELECT subject, object, value FROM {schema}.relations WHERE kind = 'standing' ORDER BY subject;
@@ -43,10 +45,13 @@ public sealed class StandingDirectionMigrationTests
             Assert.False(await reader.ReadAsync());
             await reader.CloseAsync();
 
-            await using var history = source.CreateCommand($"SELECT subject, object FROM {schema}.relation_history WHERE kind = 'standing'");
+            await using var history = source.CreateCommand($"SELECT subject, object, attrs, new_attrs, old_attrs FROM {schema}.relation_history WHERE kind = 'standing'");
             await using var historyReader = await history.ExecuteReaderAsync();
             Assert.True(await historyReader.ReadAsync());
             Assert.Equal((98000001L, 140000001L), (historyReader.GetInt64(0), historyReader.GetInt64(1)));
+            Assert.Equal("{\"legacy\": \"retained\"}", historyReader.GetString(2));
+            Assert.Equal(historyReader.GetString(2), historyReader.GetString(3));
+            Assert.True(historyReader.IsDBNull(4));
         }
         finally
         {

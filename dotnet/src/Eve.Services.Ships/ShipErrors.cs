@@ -58,6 +58,8 @@ public static class ShipErrors
                 return MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That item cannot be placed in that ship hold.")));
             case ShipRefusal.ContainerNesting:
                 return Notify("A cargo container cannot be placed inside another cargo container.");
+            case ShipRefusal.CannotMoveChargesBetweenModules:
+                return MachoErrors.ThrowUserError("CantMoveChargesBetweenModules");
             case ShipRefusal.NotADrone:
                 return Notify("Only drones can be placed in the Drone Bay.");
             case ShipRefusal.NoSpaceForThat:

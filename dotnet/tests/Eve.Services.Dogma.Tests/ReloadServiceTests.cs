@@ -166,6 +166,72 @@ public class ReloadServiceTests
         Assert.Equal([$"{f.Gun} 0 Remove {{ Quantity = 75 }}"], f.Rig.Rounds.Asked);
     }
 
+    [PgFact]
+    public async Task A_running_gun_unloads_only_the_rounds_the_simulation_removes_when_checking_cargo_capacity()
+    {
+        await using var f = await InSpaceAsync(inGun: 80);
+        await FillCargoToLeaveRoomAsync(f, desiredRoomInAmmoUnits: 5);
+        f.Rig.Rounds.Answer = new GunRounds(true, 5, 0);
+
+        await f.Rig.CallAsync(f.Session, "UnloadAmmo", f.Oid, new PyLong(f.Character.ShipId),
+            new PyList([new PyLong(f.Gun)]), new PyLong(f.Character.ShipId), PyNone.Instance);
+
+        Assert.Equal((75L, 205L), (await InGunAsync(f) ?? 0, await HoldAsync(f)));
+        Assert.Equal(["OnItemsChanged", "OnModuleAttributeChanges"], Events.Of(f.Session).Select(e => e.Name));
+        Assert.Equal([$"{f.Gun} 0 Remove {{ Quantity = 0 }}"], f.Rig.Rounds.Asked);
+    }
+
+    [PgFact]
+    public async Task A_capacity_refusal_restores_rounds_taken_from_a_running_gun_and_leaves_inventory_unchanged()
+    {
+        await using var f = await InSpaceAsync(inGun: 80);
+        var unitVolume = await FillCargoToLeaveRoomAsync(f, desiredRoomInAmmoUnits: 4);
+        var cargo = await f.Rig.Items.InLocationAsync(f.Character.ShipId, f.Character.CharacterId);
+        var used = await f.Rig.Ships.VolumeOfAsync(cargo.Where(item => item.Flag == Cargo));
+        var capacityAttribute = f.Rig.Statics.AttributeId("capacity")!.Value;
+        var snapshot = await f.Rig.Ships.LoadAsync(f.Character.CharacterId);
+        var capacity = snapshot!.World.Get(f.Character.ShipId, capacityAttribute);
+        f.Rig.Rounds.Answer = new GunRounds(true, 5, 0);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => f.Rig.CallAsync(f.Session, "UnloadAmmo", f.Oid,
+            new PyLong(f.Character.ShipId), new PyList([new PyLong(f.Gun)]), new PyLong(f.Character.ShipId), PyNone.Instance));
+
+        Assert.Equal("NotEnoughCargoSpace", error.Error.UserErrorMessage);
+        Assert.Equal(MachoErrors.UserErrorPayload("NotEnoughCargoSpace",
+        [
+            new(new PyStr("available"), Py.Number(Math.Round(Math.Max(0, capacity - used), 6))),
+            new(new PyStr("volume"), Py.Number(Math.Round(5 * unitVolume, 6))),
+        ]), error.Error.Payload);
+        Assert.Equal((80L, 200L), (await InGunAsync(f) ?? 0, await HoldAsync(f)));
+        Assert.Empty(Events.Of(f.Session));
+        Assert.Equal(
+            [$"{f.Gun} 0 Remove {{ Quantity = 0 }}", $"{f.Gun} 0 Add {{ Capacity = 5, Available = 5 }}"],
+            f.Rig.Rounds.Asked);
+    }
+
+    private static async Task<double> FillCargoToLeaveRoomAsync(Flight f, int desiredRoomInAmmoUnits)
+    {
+        await f.Rig.Statics.EnsureTypesAsync([Antimatter, 34]);
+        var charge = f.Rig.Statics.Type(Antimatter)!;
+        var volumeAttribute = f.Rig.Statics.AttributeId("volume")!.Value;
+        var unitVolume = ItemVolumes.Unit(Antimatter, charge.GroupId, singleton: false, charge.Attributes.GetValueOrDefault(volumeAttribute));
+        var capacityAttribute = f.Rig.Statics.AttributeId("capacity")!.Value;
+        var snapshot = await f.Rig.Ships.LoadAsync(f.Character.CharacterId);
+        var capacity = snapshot!.World.Get(f.Character.ShipId, capacityAttribute);
+        var contents = await f.Rig.Items.InLocationAsync(f.Character.ShipId, f.Character.CharacterId);
+        var used = await f.Rig.Ships.VolumeOfAsync(contents.Where(item => item.Flag == Cargo));
+        var filler = f.Rig.Statics.Type(34)!;
+        var fillerUnitVolume = ItemVolumes.Unit(34, filler.GroupId, singleton: false, filler.Attributes.GetValueOrDefault(volumeAttribute));
+        var fillerQuantity = checked((long)Math.Floor((capacity - used - desiredRoomInAmmoUnits * unitVolume) / fillerUnitVolume));
+        Assert.True(fillerQuantity > 0);
+        await PutAsync(f.Rig, f.Character.CharacterId, f.Character.ShipId, Cargo, 34, fillerQuantity);
+        var after = await f.Rig.Items.InLocationAsync(f.Character.ShipId, f.Character.CharacterId);
+        var available = Math.Max(0, capacity - await f.Rig.Ships.VolumeOfAsync(after.Where(item => item.Flag == Cargo)));
+        Assert.True(available >= desiredRoomInAmmoUnits * unitVolume - 1e-7);
+        Assert.True(available < 80 * unitVolume);
+        return unitVolume;
+    }
+
     /// <summary>Waits until the condition holds (the dry-gun handler runs apart from the test, as the link's answers do).</summary>
     private static async Task WaitForAsync(Func<bool> condition)
     {

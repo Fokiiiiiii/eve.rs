@@ -104,8 +104,65 @@ internal sealed partial class CharacterServicesComposition
                 structureServiceModuleToggle: structureServiceModuleAuthority.ToggleAsync,
                 updateDroneSettings: characters.UpdateDroneSettingsAsync,
                 createNewbieShip: CreateNewbieShipAsync,
-                unloadAmmoToContainer: UnloadAmmoToContainerAsync).ListeningForDryGuns(),
+                unloadAmmoToContainer: UnloadAmmoToContainerAsync,
+                ammoContainerSourceOwner: AmmoContainerSourceOwnerAsync).ListeningForDryGuns(),
         ];
+    }
+
+    private async Task<long?> AmmoContainerSourceOwnerAsync(
+        ClientSession session, long characterId, long shipId, long containerId, CancellationToken cancellationToken)
+    {
+        if (session.CharacterId != characterId || await items.GetAsync(containerId, cancellationToken) is not { } container)
+            return null;
+
+        var ownerId = container.OwnerId;
+        if (ownerId != characterId)
+        {
+            var corporationId = session.GetInt("corporationID") is { } corporation && corporation != 0
+                ? corporation
+                : session.GetInt("corpid") ?? 0;
+            if (corporationId <= 0 || corporationId != ownerId
+                || await corporations.MemberAsync(characterId, cancellationToken) is not { CorporationId: var memberCorporation }
+                || memberCorporation != corporationId)
+                return null;
+        }
+
+        if (!await ships.CanReachAmmoContainerAsync(characterId, shipId, containerId, ownerId, cancellationToken))
+            return null;
+
+        if (ownerId == characterId)
+            return ownerId;
+
+        if (session.DockedLocationId is { } stationId)
+        {
+            if (await CorporationDivisionOfAmmoContainerAsync(container, ownerId, stationId, cancellationToken) is not { } divisionFlag
+                || !await HostInventoryServiceFactory.HangarAccessOf(corporations)(characterId, ownerId, stationId, divisionFlag,
+                    CorporationHangarOperation.Take, cancellationToken))
+            {
+                throw MachoErrors.ThrowUserError("CrpAccessDenied",
+                    ("reason", Py.Tuple(new PyInt(101), new PyStr("UI/Corporations/AccessRestrictions/InsufficientRoles"))));
+            }
+        }
+
+        return ownerId;
+    }
+
+    private async Task<int?> CorporationDivisionOfAmmoContainerAsync(
+        Eve.Inventory.Item container, long corporationId, long stationId, CancellationToken cancellationToken)
+    {
+        var current = container;
+        var seen = new HashSet<long>();
+        for (var depth = 0; depth < 32; depth++)
+        {
+            if (!seen.Add(current.Id) || current.OwnerId != corporationId)
+                return null;
+            if (current.LocationId == stationId)
+                return ItemFlags.IsCorporationHangar(current.Flag) ? current.Flag : null;
+            if (await items.GetAsync(current.LocationId, cancellationToken) is not { } parent)
+                return null;
+            current = parent;
+        }
+        return null;
     }
 
     private async ValueTask CreateNewbieShipAsync(ClientSession session, CancellationToken cancellationToken)

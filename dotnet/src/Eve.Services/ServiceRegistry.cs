@@ -225,10 +225,6 @@ public sealed class ServiceRegistry
                 return false;
             }
             service = _boundObjects.GetValueOrDefault(oid);
-            if (service is null)
-            {
-                return false;
-            }
 
             partiallyReleased = false;
             if (session is not null && _boundObjectSessions.TryGetValue(oid, out var holders))
@@ -259,7 +255,7 @@ public sealed class ServiceRegistry
                 sessionsToForget.AddRange(ownedSessions);
             }
 
-            existed = true;
+            existed = service is not null;
             removedRegistryEntry = !partiallyReleased;
             if (removedRegistryEntry)
             {

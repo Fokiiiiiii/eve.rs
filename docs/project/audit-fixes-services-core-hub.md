@@ -44,6 +44,12 @@ The new regression tests were run before the fixes and reproduced the failures: 
 - `Eve.Corporations.Tests` `CorpStationMgrTests` on `eve_p15`: 8 passed, 0 failed, 0 skipped.
 - `git diff --check`: passed.
 
+## Push CI follow-up
+
+Push CI run 1646 reported a regression in `SpaceServiceTests.Undocking_tells_the_client_in_the_reference_order_and_answers_none`: when the registry had no service entry for an OID, `UnregisterBoundObject` returned before removing that OID from the releasing session's local list. A new `RegistryTests` case reproduced the failure before the correction. The registry now clears that session bookkeeping while still returning `false` for the absent service entry.
+
+After the correction, the Release builds of `Eve.Services` and `Eve.Services.Tests` succeeded with 0 warnings and errors; the Services registry/dispatch slice passed 225 tests, and the complete `SpaceServiceTests` class passed 168 tests on `eve_p15`, all with 0 skipped.
+
 ## Verification limits
 
 The EveJS implementation was source-compared but not started or exercised as a running server. No graphical V24.01 client session or live packet trace was run. Verification results for local builds and tests are recorded in the job summary; no skipped tests are counted as passing.

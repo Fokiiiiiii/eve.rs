@@ -213,15 +213,20 @@ def test_the_recorded_walk_replays():
             assert int(claims["exp"]) > int(datetime.now(timezone.utc).timestamp())
             assert signature
 
-        # Compare the recorded session and skills packets after checking eve.rs's extra selection notification.
+        # Match the selection-time notices, then compare the recorded session and skills packets.
         walker.ping()
         seen = [describe(n.raw) for n in walker.notifications if n.command in (p.SESSIONCHANGENOTIFICATION, p.NOTIFICATION)]
         notification_names = [event["name"] for event in notifications_of(walker)]
         if REFERENCE:
+            assert notification_names[0] == "OnSubscriptionTimeUpdateServer"
             assert "OnCharacterSelected" not in notification_names
-        else:
-            assert notification_names[0] == "OnCharacterSelected"
             seen = seen[1:]
+        else:
+            assert notification_names[:2] == [
+                "OnSubscriptionTimeUpdateServer",
+                "OnCharacterSelected",
+            ]
+            seen = seen[2:]
         recorded_changes = WALK["afterSelect"]
         assert len(seen) == len(recorded_changes), f"{len(seen)} notifications after selecting, {len(recorded_changes)} recorded"
         problems += _compare_session_change(recorded_changes[0], seen[0])
@@ -594,10 +599,15 @@ def test_a_new_character_has_the_skills_the_reference_gives(race):
         seen = [describe(n.raw) for n in client.notifications if n.command in (p.SESSIONCHANGENOTIFICATION, p.NOTIFICATION)]
         notification_names = [event["name"] for event in notifications_of(client)]
         if REFERENCE:
+            assert notification_names[0] == "OnSubscriptionTimeUpdateServer"
             assert "OnCharacterSelected" not in notification_names
-        else:
-            assert notification_names[0] == "OnCharacterSelected"
             seen = seen[1:]
+        else:
+            assert notification_names[:2] == [
+                "OnSubscriptionTimeUpdateServer",
+                "OnCharacterSelected",
+            ]
+            seen = seen[2:]
         assert len(seen) == len(race["afterSelect"]) == 2
         problems = _compare_skills_notification(race["afterSelect"][1], seen[1])
 

@@ -47,6 +47,10 @@ public sealed class PacketDispatcher
     /// </summary>
     public bool StrictRpc { get; init; }
 
+    /// <summary>Releases bound objects owned by a session which has disconnected.</summary>
+    public Task<int> ReleaseSessionBoundObjectsAsync(ClientSession session, CancellationToken cancellationToken = default) =>
+        _registry.ReleaseSessionBoundObjectsAsync(session, cancellationToken);
+
     /// <summary>Weighted work units available to one session during a rolling minute.</summary>
     public int MaxExpensiveRpcUnitsPerMinute { get; init; } = 160;
 
@@ -126,7 +130,7 @@ public sealed class PacketDispatcher
             return true;
         }
 
-        var service = _registry.Lookup(serviceName);
+        var service = _registry.Lookup(serviceName, session);
         var traceLogin = string.Equals(
             Environment.GetEnvironmentVariable("EVE_TRACE_LOGIN"), "1", StringComparison.Ordinal);
         var trace = traceRpc || traceLogin;
@@ -252,7 +256,21 @@ public sealed class PacketDispatcher
                 session,
                 call.Method == "MachoBindObject" && call.Args.Count > 0 ? call.Args[0] : null);
             SendCallResponse(packet, result, session, service.Name);
-            session.RunAfterResponse();
+            session.RunAfterResponse(error =>
+            {
+                var message = $"{service.Name}.{call.Method}: after-response callback failed ({error.GetType().Name}: {error.Message})";
+                try
+                {
+                    if (OnProblem is { } onProblem)
+                        onProblem(message, error);
+                    else
+                        Console.Error.WriteLine(message);
+                }
+                catch (Exception loggingError)
+                {
+                    Console.Error.WriteLine($"{message}; reporting failed ({loggingError.GetType().Name})");
+                }
+            });
             return true;
         }
         catch (MachoWrappedException wrapped)
@@ -618,12 +636,11 @@ public sealed class PacketDispatcher
     {
         if (value is PySubStruct substruct && BoundObjects.TryRegistration(substruct, out var registration))
         {
-            _registry.RegisterBoundObject(registration.Oid, service, registration.RefId);
+            _registry.RegisterBoundObjectForSession(registration.Oid, service, session, registration.RefId);
             if (bindParameters is not null)
             {
                 _registry.RegisterBoundObjectParams(registration.Oid, bindParameters);
             }
-            session.RememberBoundObject(registration.Oid);
         }
     }
 

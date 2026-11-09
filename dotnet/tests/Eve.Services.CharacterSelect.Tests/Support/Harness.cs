@@ -81,7 +81,8 @@ public sealed class Harness : IAsyncDisposable
         double securityStatus,
         IReadOnlyList<Eve.Services.ICharacterEntryHook>? entryHooks,
         SolarSystemCatalog? systems,
-        int populationCapacity)
+        int populationCapacity,
+        Func<PgCharacterStore, long, CancellationToken, Task<Character?>>? readCharacterById)
     {
         Source = source;
         _characterSchema = $"cs_test_{suffix}";
@@ -121,6 +122,9 @@ public sealed class Harness : IAsyncDisposable
             readCharacterSelectionWarsAsync: async (selectedCharacters, cancellationToken) =>
                 await WarsInfo.GetCharacterSelectionWarsAsync(
                     [.. selectedCharacters.Select(character => (character.Id, character.CorporationId, character.AllianceId))], cancellationToken),
+            readCharacterById: readCharacterById is null
+                ? null
+                : (id, cancellationToken) => readCharacterById(Characters, id, cancellationToken),
             warFactionOfAsync: async (characterId, cancellationToken) =>
                 (await Characters.GetAsync(characterId, cancellationToken))?.DirectFactionId ?? 0);
         var dogma = new Eve.Dogma.DogmaStatic([], [], []);
@@ -176,12 +180,14 @@ public sealed class Harness : IAsyncDisposable
         double securityStatus = 0,
         IReadOnlyList<Eve.Services.ICharacterEntryHook>? entryHooks = null,
         SolarSystemCatalog? systems = null,
-        int populationCapacity = SystemPopulation.DefaultCapacity)
+        int populationCapacity = SystemPopulation.DefaultCapacity,
+        Func<PgCharacterStore, long, CancellationToken, Task<Character?>>? readCharacterById = null)
     {
         CharacterNames.EnsureUnicodeSupport();
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
         var harness = new Harness(
-            source, Guid.NewGuid().ToString("N")[..12], newCharacterExperienceEnabled, securityStatus, entryHooks, systems, populationCapacity);
+            source, Guid.NewGuid().ToString("N")[..12], newCharacterExperienceEnabled, securityStatus, entryHooks, systems, populationCapacity,
+            readCharacterById);
         await PgCharacterStore.MigrateAsync(source, harness._characterSchema);
         await PgItemStore.MigrateAsync(source, harness._inventorySchema);
         await PgSkillStore.MigrateAsync(source, harness._skillsSchema);

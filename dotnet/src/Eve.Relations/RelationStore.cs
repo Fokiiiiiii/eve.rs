@@ -74,6 +74,27 @@ public sealed class RelationStore
         await command.ExecuteScalarAsync(cancellationToken);
     }
 
+    private async Task LockRelationAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, string kind, long subject, long obj,
+        CancellationToken cancellationToken)
+    {
+        await using var command = Sql.Command(connection, transaction,
+            "SELECT pg_advisory_xact_lock(hashtextextended($1 || ':' || $2::text || ':' || $3::text, 0))",
+            $"relations:{_schema}:{kind}", subject, obj);
+        await command.ExecuteScalarAsync(cancellationToken);
+    }
+
+    private async Task LockForWriteAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, RelationKind rules, long subject, long obj,
+        CancellationToken cancellationToken)
+    {
+        if (rules.Cardinality == Cardinality.OnePerSubject)
+        {
+            await LockSubjectAsync(connection, transaction, rules.Name, subject, cancellationToken);
+        }
+        await LockRelationAsync(connection, transaction, rules.Name, subject, obj, cancellationToken);
+    }
+
     private static Relation ReadRelation(NpgsqlDataReader r) =>
         new(r.GetInt64(0), r.GetString(1), r.GetInt64(2), r.GetInt64(3), r.GetDouble(4), r.GetString(5), r.GetInt64(6), r.IsDBNull(7) ? null : r.GetInt64(7), r.GetInt64(8));
 
@@ -95,26 +116,24 @@ public sealed class RelationStore
             throw new ArgumentException("a relation's value is a number", nameof(value));
         }
         value = rules.Clamp(value);
-        if (rules.Cardinality == Cardinality.OnePerSubject)
-        {
-            await LockSubjectAsync(connection, transaction, kind, subject, cancellationToken);
-        }
+        await LockForWriteAsync(connection, transaction, rules, subject, obj, cancellationToken);
         var now = _scheduler.Now;
 
         if (rules.Cardinality == Cardinality.OnePerSubject)
         {
-            await using var command = Sql.Command(connection, transaction, Q("DELETE FROM {schema}.relations WHERE kind = $1 AND subject = $2 AND object <> $3 RETURNING id, object, value, until_ms"), kind, subject, obj);
-            var replaced = new List<(long Id, long Object, double Value, bool Timed)>();
+            await using var command = Sql.Command(connection, transaction, Q("DELETE FROM {schema}.relations WHERE kind = $1 AND subject = $2 AND object <> $3 RETURNING id, object, value, attrs::text, until_ms"), kind, subject, obj);
+            var replaced = new List<(long Id, long Object, double Value, string AttrsJson, long? UntilMs)>();
             await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
             {
                 while (await reader.ReadAsync(cancellationToken))
                 {
-                    replaced.Add((reader.GetInt64(0), reader.GetInt64(1), reader.GetDouble(2), !reader.IsDBNull(3)));
+                    replaced.Add((reader.GetInt64(0), reader.GetInt64(1), reader.GetDouble(2), reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetInt64(4)));
                 }
             }
             foreach (var old in replaced)
             {
-                await EndedAsync(connection, transaction, rules, old.Id, subject, old.Object, old.Value, "replaced", old.Timed, now, cancellationToken);
+                await EndedAsync(connection, transaction, rules, old.Id, subject, old.Object, old.Value,
+                    old.AttrsJson, old.UntilMs, "replaced", now, cancellationToken);
             }
         }
 
@@ -135,8 +154,11 @@ public sealed class RelationStore
             }
         }
         var attrsJson = attrs is null ? null : JsonSerializer.Serialize(attrs, Json);
+        string newAttrsJson;
+        var attrsChanged = false;
         if (before is null)
         {
+            newAttrsJson = attrsJson ?? "{}";
             id = (long)(await Sql.ScalarAsync(connection, transaction, Q("""
                 INSERT INTO {schema}.relations (kind, subject, object, value, attrs, since_ms, until_ms, updated_ms)
                 VALUES ($1, $2, $3, $4, COALESCE($5::text::jsonb, '{}'), $6, $7, $6) RETURNING id
@@ -144,7 +166,8 @@ public sealed class RelationStore
         }
         else
         {
-            var attrsChanged = attrsJson is not null && !JsonEquals(attrsJson, beforeAttrs!);
+            newAttrsJson = attrsJson ?? beforeAttrs!;
+            attrsChanged = attrsJson is not null && !JsonEquals(attrsJson, beforeAttrs!);
             var unchanged = before == value && !attrsChanged && beforeUntil == untilMs;
             if (unchanged && !recordHistoryWhenUnchanged)
             {
@@ -167,13 +190,24 @@ public sealed class RelationStore
             await _scheduler.CancelAsync(connection, transaction, ExpireKind, ExpiryJobKey(kind, subject, obj), cancellationToken);
         }
 
-        var change = new RelationChange(id, kind, subject, obj, before, value, reason, now);
-        if (rules.KeepHistory && (before != value || before is null || recordHistoryWhenUnchanged))
+        var change = new RelationChange(id, kind, subject, obj, before, value, reason, now)
+        {
+            OldAttrs = ReadJson(beforeAttrs),
+            NewAttrs = ReadJson(newAttrsJson),
+            OldUntilMs = beforeUntil,
+            NewUntilMs = untilMs,
+        };
+        if (rules.KeepHistory &&
+            (before != value || before is null || attrsChanged || beforeUntil != untilMs || recordHistoryWhenUnchanged))
         {
             await Sql.ExecuteAsync(connection, transaction, Q("""
-                INSERT INTO {schema}.relation_history (relation_id, kind, subject, object, old_value, new_value, reason, at_ms, attrs)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9::text::jsonb, '{}'))
-                """), cancellationToken, id, kind, subject, obj, before, value, reason, now, attrsJson);
+                INSERT INTO {schema}.relation_history
+                    (relation_id, kind, subject, object, old_value, new_value, reason, at_ms, attrs,
+                     old_attrs, new_attrs, old_until_ms, new_until_ms)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text::jsonb,
+                        $10::text::jsonb, $11::text::jsonb, $12, $13)
+                """), cancellationToken, id, kind, subject, obj, before, value, reason, now,
+                newAttrsJson, beforeAttrs, newAttrsJson, beforeUntil, untilMs);
         }
         await _bus.PublishAsync(connection, transaction, $"relation.{kind}.changed", Payload(change), $"{kind}:{subject}", cancellationToken);
         return change;
@@ -209,9 +243,36 @@ public sealed class RelationStore
         NpgsqlConnection connection, NpgsqlTransaction transaction, string kind, long subject, long obj, double delta,
         string? reason = null, double start = 0, CancellationToken cancellationToken = default)
     {
+        return await TransformAsync(connection, transaction, kind, subject, obj, current => current + delta,
+            reason, start, cancellationToken);
+    }
+
+    /// <summary>Changes a relation's value from its current (or starting) value while holding the relation write lock.</summary>
+    public async Task<RelationChange?> TransformAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, string kind, long subject, long obj,
+        Func<double, double> transform, string? reason = null, double start = 0,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(transform);
+        var rules = Kind(kind);
+        await LockForWriteAsync(connection, transaction, rules, subject, obj, cancellationToken);
         var current = await GetAsync(kind, subject, obj, connection, transaction, cancellationToken, forUpdate: true);
-        return await SetAsync(connection, transaction, kind, subject, obj, (current?.Value ?? start) + delta, reason,
+        var nextValue = transform(current?.Value ?? start);
+        return await SetAsync(connection, transaction, kind, subject, obj, nextValue, reason,
             attrs: null, untilMs: current?.UntilMs, cancellationToken);
+    }
+
+    /// <summary><see cref="TransformAsync(NpgsqlConnection, NpgsqlTransaction, string, long, long, Func{double, double}, string?, double, CancellationToken)"/> in its own transaction.</summary>
+    public async Task<RelationChange?> TransformAsync(
+        string kind, long subject, long obj, Func<double, double> transform, string? reason = null,
+        double start = 0, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var change = await TransformAsync(connection, transaction, kind, subject, obj, transform,
+            reason, start, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return change;
     }
 
     /// <summary>Ends the relation (if it holds). Returns what ended, or <c>null</c>.</summary>
@@ -219,11 +280,13 @@ public sealed class RelationStore
         NpgsqlConnection connection, NpgsqlTransaction transaction, string kind, long subject, long obj, string? reason = null, CancellationToken cancellationToken = default)
     {
         var rules = Kind(kind);
+        await LockForWriteAsync(connection, transaction, rules, subject, obj, cancellationToken);
         await using var command = Sql.Command(connection, transaction,
-            Q("DELETE FROM {schema}.relations WHERE kind = $1 AND subject = $2 AND object = $3 RETURNING id, value, until_ms"), kind, subject, obj);
+            Q("DELETE FROM {schema}.relations WHERE kind = $1 AND subject = $2 AND object = $3 RETURNING id, value, attrs::text, until_ms"), kind, subject, obj);
         long id;
         double value;
-        bool timed;
+        string attrsJson;
+        long? untilMs;
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
         {
             if (!await reader.ReadAsync(cancellationToken))
@@ -232,24 +295,35 @@ public sealed class RelationStore
             }
             id = reader.GetInt64(0);
             value = reader.GetDouble(1);
-            timed = !reader.IsDBNull(2);
+            attrsJson = reader.GetString(2);
+            untilMs = reader.IsDBNull(3) ? null : reader.GetInt64(3);
         }
-        return await EndedAsync(connection, transaction, rules, id, subject, obj, value, reason, timed, _scheduler.Now, cancellationToken);
+        return await EndedAsync(connection, transaction, rules, id, subject, obj, value, attrsJson, untilMs,
+            reason, _scheduler.Now, cancellationToken);
     }
 
     private async Task<RelationChange> EndedAsync(
-        NpgsqlConnection connection, NpgsqlTransaction transaction, RelationKind rules, long id, long subject, long obj, double value, string? reason, bool timed, long now, CancellationToken cancellationToken)
+        NpgsqlConnection connection, NpgsqlTransaction transaction, RelationKind rules, long id, long subject,
+        long obj, double value, string oldAttrsJson, long? oldUntilMs, string? reason, long now,
+        CancellationToken cancellationToken)
     {
-        if (timed)
+        if (oldUntilMs is not null)
         {
             await _scheduler.CancelAsync(connection, transaction, ExpireKind, ExpiryJobKey(rules.Name, subject, obj), cancellationToken);
         }
-        var change = new RelationChange(id, rules.Name, subject, obj, value, null, reason, now);
+        var change = new RelationChange(id, rules.Name, subject, obj, value, null, reason, now)
+        {
+            OldAttrs = ReadJson(oldAttrsJson),
+            OldUntilMs = oldUntilMs,
+        };
         if (rules.KeepHistory)
         {
             await Sql.ExecuteAsync(connection, transaction, Q("""
-                INSERT INTO {schema}.relation_history (relation_id, kind, subject, object, old_value, new_value, reason, at_ms) VALUES ($1, $2, $3, $4, $5, NULL, $6, $7)
-                """), cancellationToken, id, rules.Name, subject, obj, value, reason, now);
+                INSERT INTO {schema}.relation_history
+                    (relation_id, kind, subject, object, old_value, new_value, reason, at_ms, attrs,
+                     old_attrs, new_attrs, old_until_ms, new_until_ms)
+                VALUES ($1, $2, $3, $4, $5, NULL, $6, $7, NULL, $8::text::jsonb, NULL, $9, NULL)
+                """), cancellationToken, id, rules.Name, subject, obj, value, reason, now, oldAttrsJson, oldUntilMs);
         }
         await _bus.PublishAsync(connection, transaction, $"relation.{rules.Name}.ended", Payload(change), $"{rules.Name}:{subject}", cancellationToken);
         return change;
@@ -257,6 +331,7 @@ public sealed class RelationStore
 
     private async Task ExpireAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string kind, long subject, long obj, long now, CancellationToken cancellationToken)
     {
+        await LockForWriteAsync(connection, transaction, Kind(kind), subject, obj, cancellationToken);
         // a relation whose end was moved later is not due yet (the job for the new time is already scheduled)
         var due = await Sql.ScalarAsync(connection, transaction,
             Q("SELECT until_ms <= $4 FROM {schema}.relations WHERE kind = $1 AND subject = $2 AND object = $3 FOR UPDATE"), cancellationToken, kind, subject, obj, now);
@@ -271,7 +346,15 @@ public sealed class RelationStore
     private static object Payload(RelationChange change) => new
     {
         change.RelationId, change.Kind, change.Subject, change.Object, change.OldValue, change.NewValue, change.Reason,
+        change.OldAttrs, change.NewAttrs, change.OldUntilMs, change.NewUntilMs,
     };
+
+    private static JsonElement? ReadJson(string? json)
+    {
+        if (json is null) return null;
+        using var document = JsonDocument.Parse(json);
+        return document.RootElement.Clone();
+    }
 
     private static bool JsonEquals(string a, string b)
     {
@@ -288,6 +371,21 @@ public sealed class RelationStore
         }
         await using var own = await _source.OpenConnectionAsync(cancellationToken);
         return await work(own);
+    }
+
+    /// <summary>Runs relation reads in one read-only PostgreSQL snapshot.</summary>
+    public async Task<T> ReadSnapshotAsync<T>(
+        Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task<T>> read,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(read);
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(
+            System.Data.IsolationLevel.RepeatableRead, cancellationToken);
+        await Sql.ExecuteAsync(connection, transaction, "SET TRANSACTION READ ONLY", cancellationToken);
+        var result = await read(connection, transaction, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return result;
     }
 
     /// <summary>The relation, if it holds. Pass the connection and transaction of a write to read its own changes.</summary>
@@ -314,6 +412,12 @@ public sealed class RelationStore
             return await reader.ReadAsync(cancellationToken) ? ReadRelation(reader) : null;
         }, cancellationToken);
 
+    public Task<IReadOnlyList<Relation>> GetManyByIdAsync(
+        string kind, IEnumerable<long> ids, NpgsqlConnection connection, NpgsqlTransaction transaction,
+        CancellationToken cancellationToken = default) =>
+        List(Q($"SELECT {Columns} FROM {{schema}}.relations WHERE kind = $1 AND id = ANY($2) ORDER BY id"),
+            connection, transaction, cancellationToken, kind, ids.ToArray());
+
     /// <summary>The value of the relation, or <paramref name="fallback"/> when it does not hold.</summary>
     public async Task<double> ValueAsync(string kind, long subject, long obj, double fallback = 0, NpgsqlConnection? connection = null, NpgsqlTransaction? transaction = null, CancellationToken cancellationToken = default) =>
         (await GetAsync(kind, subject, obj, connection, transaction, cancellationToken))?.Value ?? fallback;
@@ -336,6 +440,28 @@ public sealed class RelationStore
         return List(Q($"SELECT {Columns} FROM {{schema}}.relations WHERE kind = $1 AND ((subject = ANY($2) AND object = ANY($3)) OR (subject = ANY($3) AND object = ANY($2))) ORDER BY id"),
             null, null, cancellationToken, kind, a, b);
     }
+
+    public Task<IReadOnlyList<Relation>> BetweenAsync(
+        string kind, IEnumerable<long> sideA, IEnumerable<long> sideB,
+        NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken cancellationToken = default)
+    {
+        long[] a = [.. sideA];
+        long[] b = [.. sideB];
+        return List(Q($"SELECT {Columns} FROM {{schema}}.relations WHERE kind = $1 AND ((subject = ANY($2) AND object = ANY($3)) OR (subject = ANY($3) AND object = ANY($2))) ORDER BY id"),
+            connection, transaction, cancellationToken, kind, a, b);
+    }
+
+    public Task<IReadOnlyList<Relation>> FromAnyAsync(
+        string kind, IEnumerable<long> subjects, NpgsqlConnection connection, NpgsqlTransaction transaction,
+        CancellationToken cancellationToken = default) =>
+        List(Q($"SELECT {Columns} FROM {{schema}}.relations WHERE kind = $1 AND subject = ANY($2) ORDER BY subject, object"),
+            connection, transaction, cancellationToken, kind, subjects.ToArray());
+
+    public Task<IReadOnlyList<Relation>> InvolvingAnyAsync(
+        string kind, IEnumerable<long> owners, NpgsqlConnection connection, NpgsqlTransaction transaction,
+        CancellationToken cancellationToken = default) =>
+        List(Q($"SELECT {Columns} FROM {{schema}}.relations WHERE kind = $1 AND (subject = ANY($2) OR object = ANY($2)) ORDER BY id"),
+            connection, transaction, cancellationToken, kind, owners.ToArray());
 
     public const int ReconciliationBatchSize = 256;
 
@@ -392,47 +518,91 @@ public sealed class RelationStore
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var command = Sql.Command(connection, null, Q("""
-            SELECT id, kind, subject, object, old_value, new_value, reason, at_ms, attrs FROM {schema}.relation_history
+            SELECT id, kind, subject, object, old_value, new_value, reason, at_ms, attrs,
+                   old_attrs::text, new_attrs::text, old_until_ms, new_until_ms
+            FROM {schema}.relation_history
             WHERE kind = $1 AND subject = $2 AND ($3::bigint IS NULL OR object = $3) ORDER BY id DESC LIMIT $4
             """), kind, subject, obj, limit);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var list = new List<RelationHistoryEntry>();
         while (await reader.ReadAsync(cancellationToken))
         {
-            JsonElement? attrs = null;
-            if (!reader.IsDBNull(8))
-            {
-                using var document = JsonDocument.Parse(reader.GetString(8));
-                attrs = document.RootElement.Clone();
-            }
+            var attrs = reader.IsDBNull(8) ? null : ReadJson(reader.GetString(8));
+            var oldAttrs = reader.IsDBNull(9) ? null : ReadJson(reader.GetString(9));
+            var newAttrs = reader.IsDBNull(10) ? null : ReadJson(reader.GetString(10));
             list.Add(new RelationHistoryEntry(reader.GetInt64(0), reader.GetString(1), reader.GetInt64(2), reader.GetInt64(3),
                 reader.IsDBNull(4) ? null : reader.GetDouble(4), reader.IsDBNull(5) ? null : reader.GetDouble(5),
                 reader.IsDBNull(6) ? null : reader.GetString(6), reader.GetInt64(7))
             {
                 Attrs = attrs,
+                OldAttrs = oldAttrs,
+                NewAttrs = newAttrs,
+                OldUntilMs = reader.IsDBNull(11) ? null : reader.GetInt64(11),
+                NewUntilMs = reader.IsDBNull(12) ? null : reader.GetInt64(12),
             });
         }
         return list;
     }
 
-    private async Task<long?> OneObjectAsync(string kind, long subject, NpgsqlConnection? connection, NpgsqlTransaction? transaction, CancellationToken cancellationToken) =>
-        (await FromAsync(kind, subject, connection, transaction, cancellationToken)).Select(r => (long?)r.Object).FirstOrDefault();
-
     /// <summary>Where a character belongs.</summary>
     public async Task<Affiliation> AffiliationOfAsync(long character, NpgsqlConnection? connection = null, NpgsqlTransaction? transaction = null, CancellationToken cancellationToken = default)
     {
-        var corporation = await OneObjectAsync(RelationKinds.CorporationMember.Name, character, connection, transaction, cancellationToken);
-        var alliance = corporation is { } c ? await OneObjectAsync(RelationKinds.AllianceMember.Name, c, connection, transaction, cancellationToken) : null;
-        var faction = await OneObjectAsync(RelationKinds.FactionMember.Name, character, connection, transaction, cancellationToken)
-            ?? (corporation is { } cc ? await OneObjectAsync(RelationKinds.FactionMember.Name, cc, connection, transaction, cancellationToken) : null)
-            ?? (alliance is { } a ? await OneObjectAsync(RelationKinds.FactionMember.Name, a, connection, transaction, cancellationToken) : null);
-        return new Affiliation(corporation, alliance, faction);
+        return await WithConnection(connection, async c =>
+        {
+            await using var command = Sql.Command(c, transaction, Q("""
+                WITH corporation AS MATERIALIZED (
+                    SELECT object FROM {schema}.relations
+                    WHERE kind = $1 AND subject = $2 ORDER BY object LIMIT 1
+                ),
+                alliance AS MATERIALIZED (
+                    SELECT relation.object FROM {schema}.relations AS relation
+                    JOIN corporation ON relation.subject = corporation.object
+                    WHERE relation.kind = $3 ORDER BY relation.object LIMIT 1
+                ),
+                character_faction AS MATERIALIZED (
+                    SELECT object FROM {schema}.relations
+                    WHERE kind = $4 AND subject = $2 ORDER BY object LIMIT 1
+                ),
+                corporation_faction AS MATERIALIZED (
+                    SELECT relation.object FROM {schema}.relations AS relation
+                    JOIN corporation ON relation.subject = corporation.object
+                    WHERE relation.kind = $4 ORDER BY relation.object LIMIT 1
+                ),
+                alliance_faction AS MATERIALIZED (
+                    SELECT relation.object FROM {schema}.relations AS relation
+                    JOIN alliance ON relation.subject = alliance.object
+                    WHERE relation.kind = $4 ORDER BY relation.object LIMIT 1
+                )
+                SELECT
+                    (SELECT object FROM corporation),
+                    (SELECT object FROM alliance),
+                    COALESCE(
+                        (SELECT object FROM character_faction),
+                        (SELECT object FROM corporation_faction),
+                        (SELECT object FROM alliance_faction))
+                """), RelationKinds.CorporationMember.Name, character,
+                RelationKinds.AllianceMember.Name, RelationKinds.FactionMember.Name);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                throw new InvalidOperationException("affiliation lookup returned no row");
+            return new Affiliation(
+                reader.IsDBNull(0) ? null : reader.GetInt64(0),
+                reader.IsDBNull(1) ? null : reader.GetInt64(1),
+                reader.IsDBNull(2) ? null : reader.GetInt64(2));
+        }, cancellationToken);
     }
 
     /// <summary>The ids a character acts as, narrowest first: the character, its corporation, its alliance, its faction. This is the chain standings and wars are resolved along.</summary>
     public async Task<IReadOnlyList<long>> ChainOfAsync(long character, CancellationToken cancellationToken = default)
     {
-        var affiliation = await AffiliationOfAsync(character, cancellationToken: cancellationToken);
+        return await ChainOfAsync(character, connection: null, transaction: null, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<long>> ChainOfAsync(
+        long character, NpgsqlConnection? connection, NpgsqlTransaction? transaction,
+        CancellationToken cancellationToken = default)
+    {
+        var affiliation = await AffiliationOfAsync(character, connection, transaction, cancellationToken);
         return [.. new long?[] { character, affiliation.Corporation, affiliation.Alliance, affiliation.Faction }.Where(id => id is not null).Select(id => id!.Value).Distinct()];
     }
 

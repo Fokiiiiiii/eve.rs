@@ -7,6 +7,70 @@ public sealed class OnlineCharacters
     private readonly Dictionary<long, long> _bySession = [];
     private readonly Dictionary<long, long> _byCharacter = [];
     private readonly Dictionary<long, long?> _previousBySession = [];
+    private readonly Dictionary<long, LifecycleGate> _lifecycleGates = [];
+
+    /// <summary>Serializes character entry with changes to that character's offline deletion state.</summary>
+    public async ValueTask<IAsyncDisposable> AcquireCharacterLifecycleLockAsync(
+        long characterId,
+        CancellationToken cancellationToken = default)
+    {
+        LifecycleGate gate;
+        lock (_gate)
+        {
+            if (_lifecycleGates.TryGetValue(characterId, out var existing))
+                gate = existing;
+            else
+                _lifecycleGates.Add(characterId, gate = new LifecycleGate());
+            gate.References++;
+        }
+
+        try
+        {
+            await gate.Semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+            return new LifecycleLease(this, characterId, gate);
+        }
+        catch
+        {
+            DropLifecycleReference(characterId, gate);
+            throw;
+        }
+    }
+
+    private void ReleaseLifecycleLock(long characterId, LifecycleGate gate)
+    {
+        gate.Semaphore.Release();
+        DropLifecycleReference(characterId, gate);
+    }
+
+    private void DropLifecycleReference(long characterId, LifecycleGate gate)
+    {
+        lock (_gate)
+        {
+            gate.References--;
+            if (gate.References == 0 && _lifecycleGates.TryGetValue(characterId, out var current) && ReferenceEquals(current, gate))
+            {
+                _lifecycleGates.Remove(characterId);
+                gate.Semaphore.Dispose();
+            }
+        }
+    }
+
+    private sealed class LifecycleGate
+    {
+        public SemaphoreSlim Semaphore { get; } = new(1, 1);
+        public int References { get; set; }
+    }
+
+    private sealed class LifecycleLease(OnlineCharacters owner, long characterId, LifecycleGate gate) : IAsyncDisposable
+    {
+        private OnlineCharacters? _owner = owner;
+
+        public ValueTask DisposeAsync()
+        {
+            Interlocked.Exchange(ref _owner, null)?.ReleaseLifecycleLock(characterId, gate);
+            return ValueTask.CompletedTask;
+        }
+    }
 
     public int Count
     {

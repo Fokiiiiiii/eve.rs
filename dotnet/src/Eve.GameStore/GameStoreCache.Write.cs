@@ -17,12 +17,17 @@ public sealed partial class GameStoreCache
         public bool FullDirty;
         public bool Dirty;
         public readonly HashSet<string> Transient = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, ForcedTransientWrite> ForcedTransient = new(StringComparer.Ordinal);
+        public long NextForcedTransientVersion;
         public bool InFlight;
+        public TaskCompletionSource? FlushCompletion;
         public (PersistenceOperation Operation, Batch Batch)? Pending;
         public Timer? Timer;
     }
 
-    private sealed record Batch(List<RowUpsert> Upserts, List<string> Deletes)
+    private sealed record ForcedTransientWrite(long Version, JsonNode? Value);
+
+    private sealed record Batch(List<RowUpsert> Upserts, List<string> Deletes, IReadOnlyDictionary<string, long> ForcedTransientVersions)
     {
         public bool IsEmpty => Upserts.Count == 0 && Deletes.Count == 0;
     }
@@ -98,6 +103,10 @@ public sealed partial class GameStoreCache
                         return new WriteResult(true, null);
                     }
                     state.Root = (JsonObject)newRoot.DeepClone();
+                    if (options.Transient && options.Force)
+                    {
+                        state.ForcedTransient["/"] = new ForcedTransientWrite(++state.NextForcedTransientVersion, state.Root.DeepClone());
+                    }
                     if (persist)
                     {
                         MarkRootWriteDirty(state, options.KnownChangedPaths);
@@ -124,13 +133,17 @@ public sealed partial class GameStoreCache
                     state.Transient.Add(NormalizePath(path));
                 }
                 var finalKey = segments[^1];
-                if (TryChild(current, finalKey, out var existing) && JsonNode.DeepEquals(existing, data))
+                if (!options.Force && TryChild(current, finalKey, out var existing) && JsonNode.DeepEquals(existing, data))
                 {
                     return new WriteResult(true, null);
                 }
                 if (!SetChild(current, finalKey, data?.DeepClone()))
                 {
                     return new WriteResult(false, "WRITE_ERROR");
+                }
+                if (options.Transient && options.Force)
+                {
+                    state.ForcedTransient[NormalizePath(path)] = new ForcedTransientWrite(++state.NextForcedTransientVersion, data?.DeepClone());
                 }
                 if (persist)
                 {
@@ -197,7 +210,17 @@ public sealed partial class GameStoreCache
             }
             else
             {
+                var markers = state.Transient.ToArray();
                 ClearTransientPrefixes(state, normalized);
+                var cleared = markers.Where(marker => !state.Transient.Contains(marker)).ToArray();
+                foreach (var marker in cleared)
+                {
+                    MarkRowDirty(state, Segments(marker));
+                }
+                if (cleared.Length > 0)
+                {
+                    ScheduleFlush(state);
+                }
             }
         }
     }

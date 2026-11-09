@@ -161,6 +161,19 @@ fn enter() -> Message {
     }))
 }
 
+fn enter_out_of_docking_range() -> Message {
+    let ship = ship();
+    Message::Enter(Box::new(Enter {
+        session_id: SESSION,
+        scene: SceneKey::solar_system(SYSTEM),
+        how: How::InSpace,
+        station_id: 0,
+        position: Some([1_000_000.0 + 70_000.0 + ship.radius + 50_000.0, 0.0, 0.0]),
+        direction: Some([-1.0, 0.0, 0.0]),
+        ship,
+    }))
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_destiny_update_is_sent_without_waiting_for_a_second_boundary() {
     let mut host = start();
@@ -256,6 +269,80 @@ async fn a_ship_is_sent_out_bound_told_to_dock_and_reported_docked() {
             session_id: SESSION,
             station_id: STATION,
             condition: eve_space::health::Condition::FULL
+        }
+    );
+
+    drop(host.stream);
+    assert!(host.served.await.unwrap().is_ok(), "a host that closes is a clean end");
+}
+
+#[tokio::test]
+async fn a_station_dock_approach_is_accepted_on_arrival_without_a_second_command() {
+    let mut host = start();
+    host.hello().await;
+    host.send(enter_out_of_docking_range()).await;
+    assert_eq!(host.recv().await, Message::EnterReply { session_id: SESSION, outcome: Ok(()) });
+
+    host.send(Message::Bind { session_id: SESSION }).await;
+    let mut names = Vec::new();
+    while names.len() < 5 {
+        match host.recv().await {
+            Message::Notify { name, id_type, session_id, .. } => {
+                assert_eq!((id_type.as_str(), session_id), ("clientID", SESSION));
+                names.push(name);
+            }
+            Message::DamageableEntityUpserted { solar_system_id, entity_id, .. }
+            | Message::DamageableEntityRemoved { solar_system_id, entity_id } => {
+                assert_eq!(solar_system_id, SYSTEM);
+                assert!(entity_id > 0);
+            }
+            other => panic!("expected a notification or scene update, got {other:?}"),
+        }
+    }
+    assert_eq!(names[..2], ["OnSetTimeDilation", "DoSimClockRebase"]);
+    assert!(names[2..].iter().all(|name| name == "DoDestinyUpdate"));
+
+    host.send(Message::Command { session_id: SESSION, command: 4, args: vec![STATION as f64] }).await;
+    let (approach, saw_approach_update) = host.recv_response().await;
+    assert_eq!(approach, Message::Approaching { session_id: SESSION, command: 4, distance: 50_000.0 });
+    assert!(saw_approach_update, "the approach course is sent before the command reply");
+
+    // One CmdDock starts the approach. The ship enters range after the simulated clock advances.
+    host.clock.store(NOON + 400 * SECOND, Ordering::SeqCst);
+    let (accepted, _) = host.recv_response().await;
+    match accepted {
+        Message::Notify { name, id_type, session_id, .. } if name == "OnDockingAccepted" => {
+            assert_eq!((id_type.as_str(), session_id), ("charid", SESSION));
+        }
+        other => panic!("expected automatic docking acceptance on arrival, got {other:?}"),
+    }
+    assert!(matches!(
+        host.recv().await,
+        Message::Notify { name, id_type, session_id, .. }
+            if name == "DoDestinyUpdate" && id_type == "clientID" && session_id == SESSION
+    ));
+
+    host.clock.store(NOON + 405 * SECOND, Ordering::SeqCst);
+    assert_eq!(
+        host.recv_response().await.0,
+        Message::Accepted {
+            session_id: SESSION,
+            command: eve_space::scene::DOCKING_READY_COMMAND,
+            at: STATION,
+        }
+    );
+    host.send(Message::Command {
+        session_id: SESSION,
+        command: eve_space::scene::DOCKING_DECISION_COMMAND,
+        args: vec![STATION as f64, 1.0],
+    })
+    .await;
+    assert_eq!(
+        host.recv_response().await.0,
+        Message::Docked {
+            session_id: SESSION,
+            station_id: STATION,
+            condition: eve_space::health::Condition::FULL,
         }
     );
 

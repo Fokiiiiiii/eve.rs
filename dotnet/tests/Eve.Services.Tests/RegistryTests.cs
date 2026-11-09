@@ -230,6 +230,17 @@ public class RegistryTests
     }
 
     [Fact]
+    public void Releasing_an_unregistered_oid_still_clears_the_sessions_bookkeeping()
+    {
+        var registry = new ServiceRegistry();
+        var session = new ClientSession();
+        session.RememberBoundObject("N=1:stale");
+
+        Assert.False(registry.UnregisterBoundObject("N=1:stale", session));
+        Assert.Empty(session.BoundOids);
+    }
+
+    [Fact]
     public void Releasing_removes_the_object_its_parameters_and_the_sessions_bookkeeping()
     {
         var registry = new ServiceRegistry();

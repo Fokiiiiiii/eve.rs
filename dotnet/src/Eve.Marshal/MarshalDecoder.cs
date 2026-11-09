@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -6,8 +7,7 @@ namespace Eve.Marshal;
 
 /// <summary>
 /// One pass over a marshal stream. Strings and buffers in the result are slices of
-/// the input (no copy); a string or buffer whose declared length runs past the end
-/// of the input yields the bytes that are there, as in the JS reference.
+/// the input (no copy); every read is restricted to the value area before the save table.
 /// </summary>
 internal sealed class MarshalDecoder
 {
@@ -19,7 +19,8 @@ internal sealed class MarshalDecoder
     private readonly ReadOnlyMemory<byte> _input;
 
     private long _pos;
-    private PyValue[] _stored = [];
+    private long _valueEnd;
+    private PyValue?[] _stored = [];
     private long? _savePos;
     private long? _saveEnd;
     private int _depth;
@@ -61,6 +62,7 @@ internal sealed class MarshalDecoder
         }
         _depth = depth;
         _budget = budget;
+        _valueEnd = _len;
     }
 
     /// <summary>
@@ -91,11 +93,20 @@ internal sealed class MarshalDecoder
             }
             decoder._budget.Charge(saveCount);
             decoder._stored = new PyValue[saveCount];
-            Array.Fill(decoder._stored, PyNone.Instance);
             decoder._savePos = decoder._len - tableBytes;
             decoder._saveEnd = decoder._len;
             valueEnd = decoder._len - tableBytes;
+            for (var position = valueEnd; position < decoder._len; position += 4)
+            {
+                var index = BinaryPrimitives.ReadUInt32LittleEndian(
+                    decoder._buf.AsSpan(decoder._start + (int)position, 4));
+                if (index == 0 || index > saveCount)
+                {
+                    throw MarshalException.SaveTable("save index outside the declared table");
+                }
+            }
         }
+        decoder._valueEnd = valueEnd;
 
         var value = decoder.Value();
         if (requireExactEnd)
@@ -116,7 +127,7 @@ internal sealed class MarshalDecoder
 
     private byte U8()
     {
-        if (_pos >= _len)
+        if (_pos >= _valueEnd)
         {
             throw MarshalException.UnexpectedEnd();
         }
@@ -124,21 +135,17 @@ internal sealed class MarshalDecoder
     }
 
     /// <summary>
-    /// A fixed-width read that fails the way Node's <c>Buffer.readXxx</c> does:
-    /// <c>ERR_BUFFER_OUT_OF_BOUNDS</c> when the whole buffer is shorter than the value,
-    /// <c>ERR_OUT_OF_RANGE</c> when only the offset is bad.
+    /// Reads a fixed-width value wholly within the payload area.
     /// </summary>
     private ReadOnlySpan<byte> Take(int count)
     {
-        if (_pos + count <= _len)
+        if (count >= 0 && count <= _valueEnd - _pos)
         {
             var span = _buf.AsSpan(_start + (int)_pos, count);
             _pos += count;
             return span;
         }
-        throw _len < count
-            ? MarshalException.BufferOutOfBounds()
-            : MarshalException.OutOfRange("read past end of stream");
+        throw MarshalException.UnexpectedEnd();
     }
 
     private uint U32() => BinaryPrimitives.ReadUInt32LittleEndian(Take(4));
@@ -149,12 +156,16 @@ internal sealed class MarshalDecoder
         var size => size,
     };
 
-    /// <summary>The JS reference's <c>readBytes</c>: clamps to the input but always advances by the declared length.</summary>
+    /// <summary>Reads bytes wholly inside this stream's value area, excluding any save table.</summary>
     private (int Start, int End) Range(long length)
     {
-        var start = (int)Math.Min(_pos, _len);
-        var end = (int)Math.Min(_pos + length, _len);
-        _pos += length;
+        if (length < 0 || length > _valueEnd - _pos)
+        {
+            throw MarshalException.UnexpectedEnd();
+        }
+        var start = (int)_pos;
+        var end = checked((int)(_pos + length));
+        _pos = end;
         return (start, end);
     }
 
@@ -183,15 +194,35 @@ internal sealed class MarshalDecoder
         }
         var index = BinaryPrimitives.ReadUInt32LittleEndian(_buf.AsSpan(_start + (int)position, 4));
         _savePos = position + 4;
+        if (index == 0 || index > _stored.Length)
+        {
+            throw MarshalException.SaveTable("save index outside the declared table");
+        }
         return index;
     }
 
-    /// <summary>A count read from the wire, bounded before it is used to size an allocation: every element takes at least one byte.</summary>
+    private void Store(long index, PyValue value)
+    {
+        if (index == 0)
+        {
+            return;
+        }
+        if (index < 1 || index > _stored.Length)
+        {
+            throw MarshalException.SaveTable("save index outside the declared table");
+        }
+        _stored[index - 1] = value;
+    }
+
+    /// <summary>A count read from the wire, checked against the minimum encoded bytes before allocation.</summary>
     private int Capacity(long count, int valuesPerEntry = 1)
     {
-        var capacity = (int)Math.Min(count, Math.Max(0, _len - _pos));
-        _budget.Charge((long)capacity * (valuesPerEntry + 1));
-        return capacity;
+        if (count < 0 || count > (_valueEnd - _pos) / valuesPerEntry)
+        {
+            throw MarshalException.UnexpectedEnd();
+        }
+        _budget.Charge(count * (valuesPerEntry + 1));
+        return (int)count;
     }
 
     internal void ChargeAllocation(long count) => _budget.Charge(count);
@@ -219,7 +250,7 @@ internal sealed class MarshalDecoder
 
     private PyValue ValueInner()
     {
-        if (_pos >= _len)
+        if (_pos >= _valueEnd)
         {
             throw MarshalException.UnexpectedEnd();
         }
@@ -227,50 +258,94 @@ internal sealed class MarshalDecoder
         var raw = U8();
         var save = (raw & Wire.SaveMask) != 0;
         var opcode = (byte)(raw & Wire.OpcodeMask);
-        var storageIndex = save ? SaveIndex() : 0;
 
-        var value = opcode switch
+        if (opcode is Op.OneTuple or Op.TwoTuple or Op.Tuple or Op.OneList or Op.List)
         {
-            Op.OneTuple or Op.TwoTuple or Op.Tuple or Op.OneList or Op.List => Sequence(opcode),
-            Op.Dict or Op.Object or Op.ObjectEx1 or Op.ObjectEx2 or Op.SubStruct or Op.ChecksummedStream or Op.SubStream or Op.PackedRow => Compound(opcode),
-            _ => Scalar(opcode, raw),
-        };
+            return Sequence(opcode, save);
+        }
+        if (opcode is Op.Dict or Op.Object or Op.ObjectEx1 or Op.ObjectEx2 or Op.SubStruct or Op.ChecksummedStream or Op.SubStream or Op.PackedRow)
+        {
+            return Compound(opcode, save);
+        }
 
-        if (save && storageIndex > 0 && storageIndex <= _stored.Length)
+        var value = Scalar(opcode, raw);
+        if (save && IsSavedAfterValue(opcode))
         {
-            _stored[storageIndex - 1] = value;
+            Store(SaveIndex(), value);
         }
         return value;
     }
 
-    private PyValue Sequence(byte opcode)
+    private static bool IsSavedAfterValue(byte opcode) =>
+        opcode is Op.Token or Op.Buffer or Op.LongString or Op.CPickled or Op.VarInteger;
+
+    private PyValue Sequence(byte opcode, bool save)
     {
         switch (opcode)
         {
             case Op.OneTuple:
-                return new PyTuple(Items(1));
+                return ReadTuple(1, save);
             case Op.TwoTuple:
-                return new PyTuple(Items(2));
+                return ReadTuple(2, save);
             case Op.Tuple:
-                return new PyTuple(Items(Size()));
+                return ReadTuple(Size(), save);
             case Op.OneList:
-                return new PyList(Items(1));
+                return ReadList(1, save);
             default:
-                return new PyList(Items(Size()));
+                return ReadList(Size(), save);
         }
     }
 
-    private PyValue Compound(byte opcode)
+    private PyTuple ReadTuple(long count, bool save)
+    {
+        var items = new List<PyValue>(Capacity(count));
+        var tuple = new PyTuple(items);
+        if (save)
+        {
+            Store(SaveIndex(), tuple);
+        }
+        for (long i = 0; i < count; i++)
+        {
+            var item = Value(precharged: true);
+            if (ReferenceEquals(item, tuple))
+            {
+                throw MarshalException.SaveTable("self referencing tuple");
+            }
+            items.Add(item);
+        }
+        return tuple;
+    }
+
+    private PyList ReadList(long count, bool save)
+    {
+        var items = new List<PyValue>(Capacity(count));
+        var list = new PyList(items);
+        if (save)
+        {
+            Store(SaveIndex(), list);
+        }
+        for (long i = 0; i < count; i++)
+        {
+            items.Add(Value(precharged: true));
+        }
+        return list;
+    }
+
+    private PyValue Compound(byte opcode, bool save)
     {
         switch (opcode)
         {
             case Op.Dict:
-                return ReadDict();
+                return ReadDict(save);
             case Op.Object:
+                var storageIndex = save ? SaveIndex() : 0;
                 var name = Value();
-                return new PyObject(name, Value());
+                var obj = new PyObject(name, PyNone.Instance);
+                Store(storageIndex, obj);
+                obj.Complete(Value());
+                return obj;
             case Op.ObjectEx1 or Op.ObjectEx2:
-                return ObjectEx(opcode);
+                return ObjectEx(opcode, save);
             case Op.SubStruct:
                 return new PySubStruct(Value());
             case Op.ChecksummedStream:
@@ -283,10 +358,15 @@ internal sealed class MarshalDecoder
         }
     }
 
-    private PyValue ReadDict()
+    private PyValue ReadDict(bool save)
     {
         var count = Size();
         var entries = new List<KeyValuePair<PyValue, PyValue>>(Capacity(count, valuesPerEntry: 2));
+        var dict = new PyDict(entries);
+        if (save)
+        {
+            Store(SaveIndex(), dict);
+        }
         for (long i = 0; i < count; i++)
         {
             // The wire stores each pair value first, then key.
@@ -294,7 +374,7 @@ internal sealed class MarshalDecoder
             var key = Value(precharged: true);
             entries.Add(new(key, value));
         }
-        return new PyDict(entries);
+        return dict;
     }
 
     private PyValue SubStream()
@@ -333,7 +413,7 @@ internal sealed class MarshalDecoder
         if (_descriptor is { } cached)
         {
             var length = cached.End - cached.Start;
-            if (_pos + length <= _len
+            if (_pos + length <= _valueEnd
                 && _buf.AsSpan(_start + (int)_pos, length).SequenceEqual(_buf.AsSpan(_start + cached.Start, length)))
             {
                 _pos += length;
@@ -418,24 +498,19 @@ internal sealed class MarshalDecoder
             case Op.Buffer:
                 return new PyBuffer(Chunk(Size()));
             case Op.CPickled:
-                return new PyCPickled(Chunk(Size()));
+                var pickleEnd = PickleBoundary.FindEnd(_buf.AsSpan(_start, (int)_valueEnd), (int)_pos);
+                return new PyCPickled(Chunk(pickleEnd - _pos));
             case Op.SavedStreamElement:
                 _savedRefs++;
                 var slot = Size();
-                return slot >= 1 && slot <= _stored.Length ? _stored[slot - 1] : PyNone.Instance;
+                if (slot >= 1 && slot <= _stored.Length && _stored[slot - 1] is { } stored)
+                {
+                    return stored;
+                }
+                throw MarshalException.SaveTable("TY_REFERENCE points to an unpublished save slot");
             default:
                 throw MarshalException.UnknownOpcode(raw, (int)_pos - 1);
         }
-    }
-
-    private List<PyValue> Items(long count)
-    {
-        var items = new List<PyValue>(Capacity(count));
-        for (long i = 0; i < count; i++)
-        {
-            items.Add(Value(precharged: true));
-        }
-        return items;
     }
 
     private PyValue VarInteger()
@@ -445,54 +520,57 @@ internal sealed class MarshalDecoder
         {
             return new PyInt(0);
         }
-        var bytes = Bytes(size);
-        // JS reads each declared byte; a truncated integer reads `undefined`.
-        if (bytes.Length < size)
+        if (size > _valueEnd - _pos)
         {
             throw MarshalException.TruncatedInteger();
         }
-        var significant = bytes.Length;
-        while (significant > 0 && bytes[significant - 1] == 0)
+        var bytes = Bytes(size);
+        var value = new BigInteger(bytes, isUnsigned: false, isBigEndian: false);
+        if (value >= -9_007_199_254_740_991L && value <= 9_007_199_254_740_991L)
         {
-            significant--;
+            return new PyInt((long)value);
         }
-        bytes = bytes[..significant];
-        if (bytes.Length <= 8)
+        if (value.Sign >= 0)
         {
-            Span<byte> buffer = stackalloc byte[8];
-            bytes.CopyTo(buffer);
-            var magnitude = BinaryPrimitives.ReadUInt64LittleEndian(buffer);
-            if (magnitude <= 9_007_199_254_740_991UL)
-            {
-                return new PyInt((long)magnitude);
-            }
+            return new PyBigUnsigned(value.ToByteArray(isUnsigned: true, isBigEndian: false));
         }
-        return new PyBigUnsigned(bytes.ToArray());
+        return new PyBigInteger(value);
     }
 
-    private bool Terminated() => _pos < _len && (At(_pos) & Wire.OpcodeMask) == Op.PackedTerminator;
+    private bool Terminated() => _pos < _valueEnd && At(_pos) == Op.PackedTerminator;
 
-    private PyValue ObjectEx(byte opcode)
+    private PyValue ObjectEx(byte opcode, bool save)
     {
+        var storageIndex = save ? SaveIndex() : 0;
         var header = Value();
         var list = new List<PyValue>();
-        while (_pos < _len)
+        var dict = new List<KeyValuePair<PyValue, PyValue>>();
+        var result = new PyObjectEx(opcode == Op.ObjectEx1 ? ObjectExKind.Ex1 : ObjectExKind.Ex2, header, list, dict);
+        Store(storageIndex, result);
+        var listTerminated = false;
+        while (_pos < _valueEnd)
         {
             if (Terminated())
             {
                 _pos++;
+                listTerminated = true;
                 break;
             }
             _budget.Charge(1);
             list.Add(Value());
         }
+        if (!listTerminated)
+        {
+            throw MarshalException.UnexpectedEnd();
+        }
 
-        var dict = new List<KeyValuePair<PyValue, PyValue>>();
-        while (_pos < _len)
+        var dictTerminated = false;
+        while (_pos < _valueEnd)
         {
             if (Terminated())
             {
                 _pos++;
+                dictTerminated = true;
                 break;
             }
             var key = Value();
@@ -500,7 +578,11 @@ internal sealed class MarshalDecoder
             _budget.Charge(1);
             dict.Add(new(key, value));
         }
-        return new PyObjectEx(opcode == Op.ObjectEx1 ? ObjectExKind.Ex1 : ObjectExKind.Ex2, header, list, dict);
+        if (!dictTerminated)
+        {
+            throw MarshalException.UnexpectedEnd();
+        }
+        return result;
     }
 
     /// <summary>Node's <c>toString("utf16le")</c>: whole code units only, invalid surrogates replaced.</summary>

@@ -233,7 +233,7 @@ def _pairs_json(pairs):
 def to_ejson(value):
     if value is None or isinstance(value, bool):
         return value
-    if isinstance(value, (m.Long, m.BigUnsigned)):
+    if isinstance(value, (m.Long, m.BigSigned, m.BigUnsigned)):
         return {"$big": str(int(value))}
     if isinstance(value, int):
         return _number(value)

@@ -107,6 +107,14 @@ pub fn value_to_number(value: &Value) -> f64 {
         Value::Int(number) | Value::Long(number) => *number as f64,
         Value::Real(number) => *number,
         Value::BigUnsigned(bytes) => bytes.iter().rev().fold(0.0, |acc, &b| acc * 256.0 + f64::from(b)),
+        Value::BigSigned(bytes) => {
+            let unsigned = bytes.iter().rev().fold(0.0, |acc, &b| acc * 256.0 + f64::from(b));
+            if bytes.last().is_some_and(|byte| byte & 0x80 != 0) {
+                unsigned - 2.0f64.powi((bytes.len().saturating_mul(8)).min(i32::MAX as usize) as i32)
+            } else {
+                unsigned
+            }
+        }
         Value::Str(text) | Value::WString(text) | Value::Token(text) => number_from_str(text),
         Value::Bytes(bytes) | Value::Buffer(bytes) => number_from_str(&utf8_lossy(bytes)),
         _ => f64::NAN,

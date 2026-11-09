@@ -57,7 +57,7 @@ EveJS は `liveFittingState.js:1151-1180` で総枠を得て、`invBrokerService
 
 - V24.01 の graphical client での表示・操作は行っていません。
 - `AbyssalHostFlowTests.Tournament_cutoff_waits_for_actual_host_remote_repair_result` と `Tournament_fancy_registered_wire_reads_live_two_team_metrics` は外部 Rust simulator を要します。`EVE_ABYSSAL_SIM_BINARY` と `EVE_ABYSSAL_SIM_SDE` がこの環境にないため実行していません。
-- GitHub Actions / main CI の結果は push 後に確認します。
+- main の CI run 1651（`582b968d`）は全 job 成功。今回の未 push commit に対する CI は push 後に確認する。
 # Ammo audit findings (90-audit-eve-ships-r14)
 
 監査報告 `/home/user/reports/90-audit-eve-ships-r14.md` の3件を、eve.rs の実装、V24.01 クライアント全体の callsite、EveJS の処理と照合した。3件とも再現する不具合だったため修正した。誤検出として除外した finding はない。
@@ -129,8 +129,11 @@ Host のこのテストでは `SpaceSessions` を構成したが、pilot を実 
 
 `eve_p5` に対し、修正対象プロジェクトを Release build し warning 0 / error 0 を確認した。変更に関連する選択テストは次のとおり。
 
+最新 `origin/main` を merge した後にも `Eve.Host.Tests`, `Eve.Ships.Tests`, `Eve.Services.Dogma.Tests` を `-warnaserror` 付き Release build し、すべて warning 0 / error 0 を確認した。
+
 - `Eve.Host.Tests.CharacterHostTests`: 62 passed / 0 failed / 1 skipped。
 - `Eve.Ships.Tests` の `AmmoTests`, `AmmoRaceTests`, `ReloadTests`: 18 passed / 0 failed / 0 skipped。
 - `Eve.Services.Dogma.Tests` の `ReloadServiceTests`, `ShipErrorTests`, `MissingDogmaRpcTests`, `StructureControlInfoTests`: 23 passed / 0 failed / 0 skipped。
+- merge 後の `tools/dev/run-eve-live.sh` で `test_a_new_character_has_the_skills_the_reference_gives` を実 Host / front / Rust simulation に対して実行し、4 race case が passed / 0 failed / 0 skipped。初回は `EVE_MARKET_SEED=auto` による Host 起動待ちで test 開始前に終了し、`EVE_MARKET_SEED=skip` で再実行した。
 
-Host の skip は `Confirmed_ship_clone_jump_moves_the_capsule_settles_state_and_notifies_after_space_entry` で、`EVE_ABYSSAL_SIM_BINARY` と `EVE_ABYSSAL_SIM_SDE` がないため実行されなかった。pass に含めていない。client GUI、実 Rust simulator の grouped unload、EveJS runtime は未確認。EveJS はソース delivery のため行単位照合のみ行った。
+Host の skip は `Confirmed_ship_clone_jump_moves_the_capsule_settles_state_and_notifies_after_space_entry` で、`EVE_ABYSSAL_SIM_BINARY` と `EVE_ABYSSAL_SIM_SDE` がないため実行されなかった。pass に含めていない。client GUI と実 Rust simulator 上の grouped ammo unload は未確認。EveJS runtime は実行せず、ソース delivery のため行単位照合のみ行った。

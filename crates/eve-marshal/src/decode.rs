@@ -199,8 +199,8 @@ fn decode_stream(
         decoder.save_pos = Some(bytes.len() - table_bytes);
         decoder.save_end = Some(bytes.len());
         value_end = bytes.len() - table_bytes;
-        for index_bytes in bytes[value_end..].chunks_exact(4) {
-            let index = i32::from_le_bytes(index_bytes.try_into().expect("four bytes"));
+        for index_bytes in bytes[value_end..].as_chunks::<4>().0 {
+            let index = i32::from_le_bytes(*index_bytes);
             if index < 1 || index as usize > save_count {
                 return Err(MarshalError::SaveTable("bogus map data in marshal stream"));
             }

@@ -1141,7 +1141,14 @@ public sealed class CharacterHostTests
         Assert.Equal("5", messageStatus["labelMask"]?.ToString());
         Assert.Equal("1004", notification["typeID"]?.ToString());
         Assert.Equal(CharacterHostRigCorporation.ToString(), notification["senderID"]?.ToString());
-        var mailNotice = Assert.Single(Notifications(sink), row => row.Name == "OnNotificationReceived");
+        var notices = Notifications(sink);
+        var noticeDeadline = DateTime.UtcNow.AddSeconds(5);
+        while (!notices.Any(row => row.Name == "OnNotificationReceived") && DateTime.UtcNow < noticeDeadline)
+        {
+            await Task.Delay(10);
+            notices = Notifications(sink);
+        }
+        var mailNotice = Assert.Single(notices, row => row.Name == "OnNotificationReceived");
         Assert.Equal(new PyInt(1004), mailNotice.Args[1]);
         var noticeData = mailNotice.Args[4];
         Assert.False(string.IsNullOrWhiteSpace(Eve.Macho.JsSemantics.StringValue(Field(noticeData, "senderName"))));

@@ -61,6 +61,64 @@ public class RelationTests
     }
 
     [PgFact]
+    public async Task History_records_war_attribute_changes_that_keep_the_same_value()
+    {
+        await using var rig = await Rig.Create();
+        var events = new List<RelationChange>();
+        rig.Bus.Subscribe("war-history", ["relation.war.changed", "relation.war.ended"], (ctx, _) =>
+        {
+            events.Add(ctx.Event.Payload<RelationChange>()!);
+            return Task.CompletedTask;
+        });
+        await rig.Bus.PumpAsync();
+
+        var firstUntil = rig.Now + 10_000;
+        var secondUntil = rig.Now + 20_000;
+        await rig.Set("war", Corp, Corp2, 0, "declared", new { mutual = false }, firstUntil);
+        await rig.Set("war", Corp, Corp2, 0, "accepted", new { mutual = true }, firstUntil);
+
+        var history = await rig.Relations.HistoryAsync("war", Corp, Corp2);
+        Assert.Equal(2, history.Count);
+        Assert.False(history[0].OldAttrs!.Value.GetProperty("mutual").GetBoolean());
+        Assert.True(history[0].NewAttrs!.Value.GetProperty("mutual").GetBoolean());
+        Assert.True(history[0].Attrs!.Value.GetProperty("mutual").GetBoolean());
+        Assert.Equal(firstUntil, history[0].OldUntilMs);
+        Assert.Equal(firstUntil, history[0].NewUntilMs);
+
+        await rig.Set("war", Corp, Corp2, 0, "extended", until: secondUntil);
+        history = await rig.Relations.HistoryAsync("war", Corp, Corp2);
+        Assert.True(history[0].OldAttrs!.Value.GetProperty("mutual").GetBoolean());
+        Assert.True(history[0].NewAttrs!.Value.GetProperty("mutual").GetBoolean());
+        Assert.Equal(firstUntil, history[0].OldUntilMs);
+        Assert.Equal(secondUntil, history[0].NewUntilMs);
+
+        await rig.Commit((connection, transaction) => rig.Relations.AdjustAsync(
+            connection, transaction, "war", Corp, Corp2, 1, "adjusted"));
+        history = await rig.Relations.HistoryAsync("war", Corp, Corp2);
+        Assert.True(history[0].OldAttrs!.Value.GetProperty("mutual").GetBoolean());
+        Assert.True(history[0].NewAttrs!.Value.GetProperty("mutual").GetBoolean());
+        Assert.Equal(secondUntil, history[0].OldUntilMs);
+        Assert.Equal(secondUntil, history[0].NewUntilMs);
+
+        await rig.Commit((connection, transaction) => rig.Relations.EndAsync(
+            connection, transaction, "war", Corp, Corp2, "ended"));
+        history = await rig.Relations.HistoryAsync("war", Corp, Corp2);
+        Assert.Null(history[0].NewValue);
+        Assert.True(history[0].OldAttrs!.Value.GetProperty("mutual").GetBoolean());
+        Assert.Null(history[0].NewAttrs);
+        Assert.Null(history[0].Attrs);
+        Assert.Equal(secondUntil, history[0].OldUntilMs);
+        Assert.Null(history[0].NewUntilMs);
+
+        await rig.Bus.PumpAsync();
+        var endedEvent = Assert.Single(events, change => change.NewValue is null);
+        Assert.True(endedEvent.OldAttrs!.Value.GetProperty("mutual").GetBoolean());
+        Assert.Null(endedEvent.NewAttrs);
+        Assert.Equal(secondUntil, endedEvent.OldUntilMs);
+        Assert.Null(endedEvent.NewUntilMs);
+    }
+
+    [PgFact]
     public async Task Adjust_adds_to_the_value_within_the_range_and_keeps_the_rest()
     {
         await using var rig = await Rig.Create();
@@ -92,6 +150,81 @@ public class RelationTests
         var history = await rig.Relations.HistoryAsync("affiliation.corporation", Pilot);
         Assert.Contains(history, h => h.Object == Corp && h.NewValue is null && h.Reason == "replaced");
         Assert.Equal([Pilot, Corp2], await rig.Relations.ChainOfAsync(Pilot));
+    }
+
+    [PgFact]
+    public async Task Concurrent_first_sets_to_a_many_relation_serialize_and_keep_history()
+    {
+        await using var rig = await Rig.Create();
+
+        await using (var firstConnection = await rig.Source.OpenConnectionAsync())
+        await using (var firstTransaction = await firstConnection.BeginTransactionAsync())
+        {
+            await rig.Relations.SetAsync(firstConnection, firstTransaction, "standing", Pilot, Other, 1,
+                "first set");
+
+            await using var secondConnection = await rig.Source.OpenConnectionAsync();
+            await using var secondTransaction = await secondConnection.BeginTransactionAsync();
+            var secondPid = await BackendPidAsync(secondConnection, secondTransaction);
+            using var secondCancellation = new CancellationTokenSource();
+            var secondWrite = rig.Relations.SetAsync(secondConnection, secondTransaction, "standing", Pilot, Other, 2,
+                "second set", cancellationToken: secondCancellation.Token);
+            var waiting = await IsWaitingForAdvisoryLockAsync(rig, secondPid, secondWrite);
+            if (!waiting)
+            {
+                secondCancellation.Cancel();
+                try { await secondWrite; } catch (OperationCanceledException) { }
+            }
+            Assert.True(waiting, "a concurrent first SetAsync should wait for the relation's transaction lock");
+
+            await firstTransaction.CommitAsync();
+            await secondWrite;
+            await secondTransaction.CommitAsync();
+        }
+
+        Assert.Equal(2, await rig.Relations.ValueAsync("standing", Pilot, Other));
+        Assert.Equal(
+            [(1.0, 2.0, "second set"), ((double?)null, 1.0, "first set")],
+            (await rig.Relations.HistoryAsync("standing", Pilot, Other))
+                .Select(entry => (entry.OldValue, entry.NewValue, entry.Reason)));
+
+    }
+
+    [PgFact]
+    public async Task Concurrent_first_adjustments_to_a_many_relation_serialize_and_accumulate()
+    {
+        await using var rig = await Rig.Create();
+        const long adjustedObject = Other + 1;
+        await using (var firstConnection = await rig.Source.OpenConnectionAsync())
+        await using (var firstTransaction = await firstConnection.BeginTransactionAsync())
+        {
+            await rig.Relations.AdjustAsync(firstConnection, firstTransaction, "standing", Pilot, adjustedObject, 1.5,
+                "first adjustment");
+
+            await using var secondConnection = await rig.Source.OpenConnectionAsync();
+            await using var secondTransaction = await secondConnection.BeginTransactionAsync();
+            var secondPid = await BackendPidAsync(secondConnection, secondTransaction);
+            using var secondCancellation = new CancellationTokenSource();
+            var secondWrite = rig.Relations.AdjustAsync(secondConnection, secondTransaction, "standing", Pilot,
+                adjustedObject, 2.5, "second adjustment", cancellationToken: secondCancellation.Token);
+            var waiting = await IsWaitingForAdvisoryLockAsync(rig, secondPid, secondWrite);
+            if (!waiting)
+            {
+                secondCancellation.Cancel();
+                try { await secondWrite; } catch (OperationCanceledException) { }
+            }
+            Assert.True(waiting, "a concurrent first AdjustAsync should wait for the relation's transaction lock");
+
+            await firstTransaction.CommitAsync();
+            await secondWrite;
+            await secondTransaction.CommitAsync();
+        }
+
+        Assert.Equal(4, await rig.Relations.ValueAsync("standing", Pilot, adjustedObject));
+        Assert.Equal(
+            [(1.5, 4.0, "second adjustment"), ((double?)null, 1.5, "first adjustment")],
+            (await rig.Relations.HistoryAsync("standing", Pilot, adjustedObject))
+                .Select(entry => (entry.OldValue, entry.NewValue, entry.Reason)));
     }
 
     [PgFact]

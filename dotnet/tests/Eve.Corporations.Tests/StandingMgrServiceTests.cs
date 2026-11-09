@@ -52,14 +52,16 @@ public sealed class StandingMgrServiceTests
             var callerHistory = Assert.IsType<PyList>(await ((IService)service).CallAsync(Call("GetStandingTransactions", ownerSession, npcStandingOwner, otherOwner)));
             Assert.Empty(callerHistory.Items);
 
-            var ownComposition = UnwrapCached(await ((IService)service).CallAsync(Call("GetStandingCompositions", ownerSession, npcStandingOwner, corporation.Id)));
-            Assert.Single(CompositionLines(ownComposition).Items);
+            var ownComposition = CompositionRowset(UnwrapCached(await ((IService)service).CallAsync(
+                Call("GetStandingCompositions", ownerSession, npcStandingOwner, corporation.Id))));
+            var ownCompositionRow = Assert.IsType<PyPackedRow>(Assert.Single(ownComposition.List));
+            Assert.Equal([new PyReal(2.5), new PyInt(owner)], ownCompositionRow.Values);
             var foreignComposition = UnwrapCached(await ((IService)service).CallAsync(
                 Call("GetStandingCompositions", ownerSession, npcStandingOwner, otherCorporation.Id)));
-            Assert.Empty(CompositionLines(foreignComposition).Items);
+            Assert.Empty(CompositionRowset(foreignComposition).List);
             var otherCorporationView = UnwrapCached(await ((IService)service).CallAsync(
                 Call("GetStandingCompositions", otherSession, npcStandingOwner, corporation.Id)));
-            Assert.Empty(CompositionLines(otherCorporationView).Items);
+            Assert.Empty(CompositionRowset(otherCorporationView).List);
         }
         finally
         {
@@ -89,8 +91,31 @@ public sealed class StandingMgrServiceTests
 
     private static ClientSession Session(long characterId) => new() { CharacterId = characterId };
 
-    /// <summary>The rows of a CRowset: it is an object-ex whose list holds one packed row per row.</summary>
-    private static PyList CompositionLines(PyValue result) => new(Assert.IsType<PyObjectEx>(result).List);
+    private static PyObjectEx CompositionRowset(PyValue result)
+    {
+        var rowset = Assert.IsType<PyObjectEx>(result);
+        Assert.Equal(ObjectExKind.Ex2, rowset.Kind);
+        Assert.Empty(rowset.Dict);
+
+        var header = Assert.IsType<PyTuple>(rowset.Header).Items;
+        Assert.Equal(2, header.Count);
+        var classHeader = Assert.IsType<PyTuple>(header[0]).Items;
+        Assert.Equal(new PyToken("carbon.common.script.sys.crowset.CRowset"), Assert.Single(classHeader));
+        var attributes = Assert.IsType<PyDict>(header[1]);
+        var descriptorAttribute = Assert.Single(attributes.Entries);
+        Assert.Equal(new PyStr("header"), descriptorAttribute.Key);
+        var descriptorHeader = descriptorAttribute.Value;
+        Assert.Equal(
+            [new PackedColumn("standing", 5), new PackedColumn("ownerID", 3)],
+            Descriptor.ColumnsFromHeader(descriptorHeader));
+
+        foreach (var value in rowset.List)
+        {
+            var row = Assert.IsType<PyPackedRow>(value);
+            Assert.Equal(descriptorHeader, row.Header);
+        }
+        return rowset;
+    }
 
     private static PyValue UnwrapCached(PyValue result)
     {

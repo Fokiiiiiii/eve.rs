@@ -195,7 +195,16 @@ impl<'a> Encoder<'a> {
                     self.out.extend_from_slice(&number.to_le_bytes());
                 }
             }
-            Value::BigUnsigned(bytes) => self.sized(op::VAR_INTEGER, bytes)?,
+            Value::BigUnsigned(bytes) => {
+                self.out.push(op::VAR_INTEGER);
+                let needs_sign_padding = bytes.last().is_some_and(|byte| byte & 0x80 != 0);
+                self.size(bytes.len() + usize::from(needs_sign_padding))?;
+                self.out.extend_from_slice(bytes);
+                if needs_sign_padding {
+                    self.out.push(0);
+                }
+            }
+            Value::BigSigned(bytes) => self.sized(op::VAR_INTEGER, bytes)?,
             Value::Str(text) => self.string(text)?,
             Value::Bytes(bytes) => self.byte_string(bytes)?,
             Value::Buffer(bytes) => self.sized(op::BUFFER, bytes)?,
@@ -277,8 +286,21 @@ impl<'a> Encoder<'a> {
                 self.out.extend_from_slice(&checksum.to_le_bytes());
                 self.value(value)?;
             }
-            Value::CPickled(bytes) => self.sized(op::CPICKLED, bytes)?,
+            Value::CPickled(bytes) => {
+                let end = crate::pickle::find_end(bytes, 0, bytes.len())?;
+                if end != bytes.len() {
+                    return Err(MarshalError::Unencodable("pickle has bytes after its STOP opcode"));
+                }
+                self.out.push(op::CPICKLED);
+                self.out.extend_from_slice(bytes);
+            }
             Value::PackedRow(row) => packed_row::encode(self, row)?,
+            Value::SavedGraph(graph) => self.value(graph.root())?,
+            Value::SavedReference(reference) => {
+                let value =
+                    reference.value().ok_or(MarshalError::Unencodable("unresolved saved reference"))?;
+                self.value(&value)?;
+            }
         }
         Ok(())
     }

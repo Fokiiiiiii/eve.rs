@@ -88,11 +88,11 @@ fn element_count_limit_rejects_a_large_declared_list_before_allocation() {
 }
 
 #[test]
-fn truncated_strings_are_lenient_like_the_reference_but_exact_mode_rejects_them() {
+fn truncated_strings_are_rejected_like_the_reference_in_both_modes() {
     // PyShortString declaring 255 bytes with one present.
     let bytes = stream(&[0x10, 0xff, 0x61]);
-    assert_eq!(decode(&bytes), Ok(Value::Bytes(vec![0x61].into())));
-    assert!(decode_exact(&bytes).is_err());
+    assert_eq!(decode(&bytes), Err(MarshalError::UnexpectedEnd));
+    assert_eq!(decode_exact(&bytes), Err(MarshalError::UnexpectedEnd));
 }
 
 #[test]

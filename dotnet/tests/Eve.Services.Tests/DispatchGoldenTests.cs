@@ -586,7 +586,7 @@ public class DispatchGoldenTests
         var boundCapture = new Capture();
         var boundSession = new ClientSession(boundCapture) { SessionId = 904 };
         const string marketObjectId = "N=900:904";
-        registry.RegisterBoundObject(marketObjectId, service);
+        registry.RegisterBoundObjectForSession(marketObjectId, service, boundSession);
         await dispatcher.DispatchAsync(BoundCallRequestPacket(marketObjectId, "GetOrders"), boundSession);
         await dispatcher.DispatchAsync(BoundCallRequestPacket(marketObjectId, "BuyMultipleItems"), boundSession);
         Assert.Equal(3, service.Calls);
@@ -650,7 +650,7 @@ public class DispatchGoldenTests
         var inventoryCapture = new Capture();
         var inventorySession = new ClientSession(inventoryCapture) { SessionId = 902 };
         const string inventoryObjectId = "N=901:902";
-        registry.RegisterBoundObject(inventoryObjectId, inventoryService);
+        registry.RegisterBoundObjectForSession(inventoryObjectId, inventoryService, inventorySession);
         await dispatcher.DispatchAsync(CallRequestPacket("invbroker", "GetInventoryFromId"), inventorySession);
         for (var index = 0; index < 4; index++)
             await dispatcher.DispatchAsync(BoundCallRequestPacket(inventoryObjectId, "GetCapacity"), inventorySession);

@@ -39,12 +39,34 @@ public sealed partial class DogmaIMService
         var location = IdOf(call.Arg(3)) ?? shipId;
         if (call.Session.DockedLocationId is null && rounds is not null)
         {
-            await LoadInSpaceAsync(call.Session, character, shipId, [.. IdsOf(call.Arg(1))], [.. IdsOf(call.Arg(2))], location, call.Cancellation);
+            long? sourceOwnerId = null;
+            if (location != shipId)
+            {
+                sourceOwnerId = ammoContainerSourceOwner is { } resolveOwner
+                    ? await resolveOwner(call.Session, character, shipId, location, call.Cancellation)
+                    : null;
+                if (sourceOwnerId is null)
+                    throw MachoErrors.ThrowUserError("GenericTooFarAway");
+            }
+            await LoadInSpaceAsync(call.Session, character, shipId, [.. IdsOf(call.Arg(1))], [.. IdsOf(call.Arg(2))], location,
+                call.Cancellation, sourceOwnerId);
             return None;
         }
         if (IsHangarContainer(location) && call.Session.DockedLocationId is { } station)
         {
             location = station;
+        }
+        if (location != shipId && location != call.Session.DockedLocationId)
+        {
+            var sourceOwnerId = ammoContainerSourceOwner is { } resolveOwner
+                ? await resolveOwner(call.Session, character, shipId, location, call.Cancellation)
+                : null;
+            if (sourceOwnerId is not { } ownerId)
+                throw MachoErrors.ThrowUserError("GenericTooFarAway");
+            var containerOutcome = await ships.LoadAmmoFromContainerAsync(
+                character, shipId, [.. IdsOf(call.Arg(1))], [.. IdsOf(call.Arg(2))], location, ownerId, call.Cancellation);
+            TellAmmo(call.Session, character, containerOutcome);
+            return None;
         }
         var outcome = await ships.LoadAmmoAsync(character, shipId, [.. IdsOf(call.Arg(1))], [.. IdsOf(call.Arg(2))], location, call.Cancellation);
         TellAmmo(call.Session, character, outcome);
@@ -81,6 +103,10 @@ public sealed partial class DogmaIMService
             location = station;
         }
         var quantity = IdOf(call.Arg(3)) is { } asked and > 0 ? asked : (long?)null;
+        if (flag is { } destinationFlag && Eve.Fitting.Slots.IsSlotFlag(destinationFlag))
+        {
+            throw MachoErrors.ThrowUserError("CantMoveChargesBetweenModules");
+        }
         if (call.Session.DockedLocationId is null && rounds is not null)
         {
             return await UnloadInSpaceAsync(call.Session, character, shipId, [.. IdsOf(call.Arg(1))], location, flag, quantity, call.Cancellation);
@@ -100,6 +126,10 @@ public sealed partial class DogmaIMService
         var outcome = unloadAmmo is null
             ? await ships.UnloadAmmoAsync(character, shipId, moduleIds, location, flag, quantity, call.Cancellation)
             : await unloadAmmo(character, shipId, moduleIds, location, flag, quantity, call.Cancellation);
+        if (outcome is ShipRefused refusedAmmo)
+        {
+            throw ShipErrors.Of(refusedAmmo, statics);
+        }
         TellAmmo(call.Session, character, outcome);
         return UnloadedItemIds(outcome, location, flag);
     }

@@ -75,6 +75,38 @@ public class ReloadTests
     }
 
     [PgFact]
+    public async Task A_reload_in_space_uses_the_reachable_container_named_by_the_selected_rounds_and_rechecks_it_when_complete()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (character, gun, _) = await InSpaceArmedAsync(rig, inHold: 0);
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var container = await rig.Items.CreateAsync(connection, transaction,
+            new NewItem(17365, character.CharacterId, character.ShipId, Cargo, 1, Singleton: true));
+        await transaction.CommitAsync();
+        var stack = await PutAsync(rig, character.CharacterId, container, CharacterShips.ContainerFlag, Antimatter, 40);
+
+        var plan = Assert.Single(await rig.Ships.PlanReloadsAsync(character.CharacterId, character.ShipId,
+            [gun], [stack], container, sourceOwnerId: character.CharacterId));
+
+        Assert.Equal(((long?)container, (long?)character.CharacterId, (int?)CharacterShips.ContainerFlag),
+            (plan.SourceLocationId, plan.SourceOwnerId, plan.SourceFlag));
+        Assert.Equal((80L, 40L), (await rig.Ships.ReloadRoomAsync(character.CharacterId, plan))!.Value);
+        Assert.Equal(40L, Assert.Single(await rig.Items.InContainerAsync(container)).Quantity);
+        Assert.Null(await ChargeAsync(rig, character));
+
+        var loaded = Assert.IsType<Reloaded>(await rig.Ships.CompleteReloadAsync(character.CharacterId, plan, GunRounds.Idle));
+
+        Assert.Equal((Antimatter, 40L, character.CharacterId, character.ShipId, Slot),
+            ((await ChargeAsync(rig, character))!.TypeId, (await ChargeAsync(rig, character))!.Quantity,
+                (await ChargeAsync(rig, character))!.OwnerId, (await ChargeAsync(rig, character))!.LocationId,
+                (await ChargeAsync(rig, character))!.Flag));
+        Assert.Empty(await rig.Items.InContainerAsync(container));
+        var removal = Assert.IsType<ItemChanged>(loaded.Changed.Events[0]);
+        Assert.Equal((container, CharacterShips.ContainerFlag), (removal.PreviousLocationId, removal.PreviousFlag));
+    }
+
+    [PgFact]
     public async Task A_reload_that_has_run_loads_the_gun_from_the_hold_and_the_client_is_told_in_the_order_of_the_recording()
     {
         await using var rig = await Rig.CreateAsync();

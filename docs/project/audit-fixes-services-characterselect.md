@@ -34,7 +34,7 @@
 
 **修正:** 共有 subscription state owner の `SubscriptionMgrService.AnnounceSubscriptionTime` を Host から `CharUnboundMgrService` に渡し、選択ハンドラの最初の処理として呼ぶ。Omega の終端 FILETIME または Alpha/期限切れの `None` を送り、clone grade 通知は重複させない。
 
-**テスト:** Host 登録を通す `CharacterHostTests.Host_character_selection_sends_the_subscription_time_before_the_session_change` は Omega の time 通知、`OnCharacterSelected`、session change packet の順序と packet 種別を検査する。`Host_character_selection_tells_alpha_and_expired_accounts_none_even_when_selection_fails` は Alpha 相当および期限切れ account について、選択失敗時も先頭に time=`None` のみが届くことを検査する。修正前の Host テストでは subscription-time 通知が欠落して失敗した。
+**テスト:** Host 登録を通す `CharacterHostTests.Host_character_selection_sends_the_subscription_time_before_the_session_change` は Omega の time 通知、`OnCharacterSelected`、session change packet の順序と packet 種別を検査する。`Host_character_selection_tells_alpha_and_expired_accounts_none_even_when_selection_fails` は Alpha 相当および期限切れ account について、選択失敗時も先頭に time=`None` のみが届くことを検査する。headless の login-to-character 比較も EveJS の選択先頭通知（`charService.js:1543-1545`）と V24 の PLEX panel handler（`plexPanel.py:160-163`）に合わせ、`OnSubscriptionTimeUpdateServer`、`OnCharacterSelected` の順を明示してから記録済み session/skill packet を照合する。修正前の Host テストでは subscription-time 通知が欠落して失敗した。
 
 ## 検証記録
 

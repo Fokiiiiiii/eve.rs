@@ -136,6 +136,19 @@ public class OwnerTests
     }
 
     [PgFact]
+    public async Task Force_exclusive_is_rejected_for_non_maintenance_roles_without_revoking_maintenance()
+    {
+        await using var pg = await PgScope.CreateAsync();
+        var maintenance = await pg.Store.AcquireOwnerAsync("maintenance", "m", new AcquireOptions(ForceExclusive: true));
+
+        var error = await Fails(
+            pg.Store.AcquireOwnerAsync("world", "w", new AcquireOptions(ForceExclusive: true)));
+
+        Assert.Equal(PersistenceCodes.ForceExclusiveMaintenanceOnly, error.Code);
+        await pg.Store.AssertOwnerAsync(maintenance);
+    }
+
+    [PgFact]
     public async Task Bad_arguments_are_rejected_with_their_codes()
     {
         await using var pg = await PgScope.CreateAsync();

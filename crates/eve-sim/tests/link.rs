@@ -112,6 +112,14 @@ impl Host {
         self.stream.write_all(&message.encode()).await.unwrap();
     }
 
+    async fn receive(&mut self) -> std::io::Result<Message> {
+        let mut length = [0u8; 4];
+        self.stream.read_exact(&mut length).await?;
+        let mut payload = vec![0u8; u32::from_le_bytes(length) as usize];
+        self.stream.read_exact(&mut payload).await?;
+        Message::decode(&payload).map_err(std::io::Error::other)
+    }
+
     async fn recv(&mut self) -> Message {
         let mut length = [0u8; 4];
         tokio::time::timeout(Duration::from_secs(2), self.stream.read_exact(&mut length))
@@ -371,6 +379,21 @@ async fn a_host_that_speaks_another_version_or_skips_hello_is_turned_away() {
     let mut host = start();
     host.send(Message::Bind { session_id: 1 }).await;
     assert!(host.served.await.unwrap().is_err());
+}
+
+#[tokio::test]
+async fn a_hello_after_handshake_is_rejected_without_acknowledging_its_version() {
+    let mut host = start();
+    host.hello().await;
+    host.send(Message::Hello { version: PROTOCOL_VERSION + 1 }).await;
+
+    let response = tokio::time::timeout(Duration::from_secs(2), host.receive())
+        .await
+        .expect("the server closes a connection that sends a second Hello");
+    assert!(response.is_err(), "a post-handshake Hello must not receive HelloAck");
+
+    let error = host.served.await.unwrap().unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
 }
 
 #[tokio::test]

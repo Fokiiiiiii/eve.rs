@@ -399,7 +399,7 @@ fn le_bytes_to_decimal(bytes: &[u8]) -> String {
 
 /// The decimal digits of a little-endian two's-complement integer.
 fn le_bytes_to_signed_decimal(bytes: &[u8]) -> String {
-    if !bytes.last().is_some_and(|byte| byte & 0x80 != 0) {
+    if bytes.last().is_none_or(|byte| byte & 0x80 == 0) {
         return le_bytes_to_decimal(bytes);
     }
     let mut magnitude: Vec<u8> = bytes.iter().map(|byte| !byte).collect();

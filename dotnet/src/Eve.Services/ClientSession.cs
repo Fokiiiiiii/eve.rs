@@ -163,8 +163,8 @@ public sealed class ClientSession
         }
     }
 
-    /// <summary>Runs what the call in progress queued with <see cref="AfterResponse"/>; the dispatcher does this once the answer is sent.</summary>
-    public void RunAfterResponse()
+    /// <summary>Runs the queued post-response actions independently after the call answer has been sent.</summary>
+    public void RunAfterResponse(Action<Exception>? onFailure = null)
     {
         Action[] pending;
         lock (_gate)
@@ -174,7 +174,21 @@ public sealed class ClientSession
         }
         foreach (var action in pending)
         {
-            action();
+            try
+            {
+                action();
+            }
+            catch (Exception error)
+            {
+                try
+                {
+                    onFailure?.Invoke(error);
+                }
+                catch
+                {
+                    // Reporting a post-response failure must not change the already-sent RPC answer either.
+                }
+            }
         }
     }
 

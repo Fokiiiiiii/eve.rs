@@ -84,19 +84,17 @@ public class CodecTests
     }
 
     [Fact]
-    public void A_ucs2_string_cut_short_yields_the_whole_code_units_there_are()
+    public void A_truncated_ucs2_string_is_rejected()
     {
         // Declares 2 code units (4 bytes) but only 3 bytes follow.
-        var value = Assert.IsType<PyWString>(Decode(0x12, 2, 0x41, 0x00, 0x42));
-        Assert.Equal("A", value.Value);
+        Assert.Throws<MarshalException>(() => Decode(0x12, 2, 0x41, 0x00, 0x42));
     }
 
     [Fact]
-    public void A_string_longer_than_the_input_yields_the_bytes_there_are()
+    public void Sized_strings_and_buffers_cannot_be_truncated_at_the_input_end()
     {
-        var value = Assert.IsType<PyBytes>(Decode(0x13, 10, 1, 2, 3));
-        Assert.Equal([1, 2, 3], value.Value.ToArray());
-        Assert.IsType<PyBuffer>(Decode(0x0d, 200));
+        Assert.Throws<MarshalException>(() => Decode(0x13, 10, 1, 2, 3));
+        Assert.Throws<MarshalException>(() => Decode(0x0d, 200));
     }
 
     [Fact]
@@ -348,7 +346,7 @@ public class CodecTests
     }
 
     [Fact]
-    public void Saved_values_and_references_decode_within_the_budget()
+    public void A_reference_to_an_unpublished_slot_is_not_returned_as_none()
     {
         var encoded = new byte[]
         {
@@ -357,10 +355,7 @@ public class CodecTests
             1, 0, 0, 0,
         };
 
-        var value = Assert.IsType<PyList>(MarshalCodec.DecodeExact(encoded));
-
-        Assert.Equal(2, value.Items.Count);
-        Assert.All(value.Items, item => Assert.Same(PyNone.Instance, item));
+        Assert.Throws<MarshalException>(() => MarshalCodec.DecodeExact(encoded));
     }
 
     [Fact]

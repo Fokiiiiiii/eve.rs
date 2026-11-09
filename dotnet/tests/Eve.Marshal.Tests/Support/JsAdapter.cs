@@ -271,6 +271,8 @@ internal static class JsAdapter
                 return new JsNum(number.Value);
             case PyBigUnsigned big:
                 return new JsBig(new BigInteger(big.Bytes, isUnsigned: true).ToString(CultureInfo.InvariantCulture));
+            case PyBigInteger big:
+                return new JsBig(big.Value.ToString(CultureInfo.InvariantCulture));
             case PyStr text:
                 return new JsStr(text.Value);
             // Every string opcode and PyBuffer decode to a JS Buffer.

@@ -85,6 +85,47 @@ def test_official_client_string_table_is_selected_explicitly():
     assert payload == m.encode("*fleetid", string_table=OFFICIAL_STRING_TABLE)
     assert rest == b"tail"
 
+def test_marshal_audit_lengthless_pickle_and_signed_varint():
+    pickle = bytes((0x80, 0x02, 0x58, 0x03, 0, 0, 0, 0x2e, 0x78, 0x2e, 0x2e))
+    expected = bytes.fromhex("7e000000002c21800258030000002e782e2e09")
+    value = (m.CPickled(pickle), 1)
+    assert m.encode(value) == expected
+    decoded = m.decode_exact(expected)
+    assert bytes(decoded[0]) == pickle
+    assert decoded[1] == 1
+
+    assert m.decode_exact(bytes.fromhex("7e000000002f01ff")) == -1
+    assert m.decode_exact(bytes.fromhex("7e000000002f0180")) == -128
+    assert m.decode_exact(bytes.fromhex("7e000000002f027fff")) == -129
+    negative_safe_limit = bytes.fromhex("7e000000002f07000000000000e0")
+    assert m.decode_exact(negative_safe_limit) == m.BigSigned(-(2**53))
+    signed_minimum = m.BigSigned(-(2**63))
+    signed_minimum_wire = bytes.fromhex("7e000000002f080000000000000080")
+    assert m.encode(signed_minimum) == signed_minimum_wire
+    assert m.decode_exact(signed_minimum_wire) == signed_minimum
+    unsigned_maximum = m.BigUnsigned((2**64) - 1)
+    unsigned_maximum_wire = bytes.fromhex("7e000000002f09ffffffffffffffff00")
+    assert m.encode(unsigned_maximum) == unsigned_maximum_wire
+    assert m.decode_exact(unsigned_maximum_wire) == unsigned_maximum
+
+def test_marshal_audit_payload_boundary_and_terminators():
+    for wire in (
+        "7e0100000001000000",
+        "7e00000000130a010203",
+        "7e000000002201",
+        "7e0000000022012d",
+    ):
+        with pytest.raises(m.MarshalError):
+            m.decode(bytes.fromhex(wire))
+
+def test_marshal_audit_saved_reference_registration():
+    with pytest.raises(m.MarshalError):
+        m.decode_exact(bytes.fromhex("7e010000001502411b0101000000"))
+
+    self_list = m.decode_exact(bytes.fromhex("7e0100000055011b0101000000"))
+    assert isinstance(self_list, m.List)
+    assert self_list[0] is self_list
+
 def test_native_python_containers_use_their_official_marshal_opcodes():
     assert m.encode([1, 2]) == m.encode(m.List([1, 2]))
     assert m.encode({"first": 1, "second": 2}) == m.encode(m.Dict([("first", 1), ("second", 2)]))

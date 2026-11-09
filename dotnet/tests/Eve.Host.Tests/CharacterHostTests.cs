@@ -2128,6 +2128,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             Py.Tuple(new PyLong(rig.Station), new PyInt(3)), nested));
 
         Assert.Equal("CantMoveChargesBetweenModules", error.Error.UserErrorMessage);
+        Assert.Equal(MachoErrors.UserErrorPayload("CantMoveChargesBetweenModules"), error.Error.Payload);
         var items = new PgItemStore(rig.Source, rig.InventorySchema);
         Assert.Equal((ship, 28, 40L), ((await items.GetAsync(charge))!.LocationId, (await items.GetAsync(charge))!.Flag,
             (await items.GetAsync(charge))!.Quantity));
@@ -2229,8 +2230,57 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             Py.Tuple(new PyLong(rig.Station), new PyInt(3)), nested));
 
         Assert.Equal("NotEnoughCargoSpace", error.Error.UserErrorMessage);
+        Assert.Equal(MachoErrors.UserErrorPayload("NotEnoughCargoSpace",
+        [
+            new(new PyStr("available"), Py.Number(Math.Round(Math.Max(0, capacity - cargoQuantity * unitVolume), 6))),
+            new(new PyStr("volume"), Py.Number(Math.Round(80 * unitVolume, 6))),
+        ]), error.Error.Payload);
         var items = new PgItemStore(rig.Source, rig.InventorySchema);
         Assert.Equal(80, (await items.GetAsync(firstCharge))!.Quantity + (await items.GetAsync(secondCharge))!.Quantity);
+        Assert.Equal(cargoQuantity, (await items.GetAsync(cargoStack))!.Quantity);
+        Assert.Empty(Notifications(sink));
+    }
+
+    [PgFact]
+    public async Task DogmaIM_unload_ammo_in_space_returns_the_cargo_capacity_user_error_without_mutating_items()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync(simSocket: "tcp:127.0.0.1:1");
+        var character = await rig.CreateCharacterAsync();
+        const int systemId = 30000142;
+        var ship = await GiveItemAsync(rig, character, 587, systemId, CharacterShips.InSpaceFlag, singleton: true);
+        await SetShipAsync(rig, character, ship);
+        var firstGun = await GiveItemAsync(rig, character, 10678, ship, 28, singleton: true);
+        var secondGun = await GiveItemAsync(rig, character, 10678, ship, 29, singleton: true);
+        var firstCharge = await PutItemAsync(rig, character, 222, ship, 28, quantity: 40, singleton: false);
+        var secondCharge = await PutItemAsync(rig, character, 222, ship, 29, quantity: 40, singleton: false);
+        var dogma = await Eve.Dogma.DogmaStatic.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        await dogma.EnsureTypesAsync([587, 222]);
+        var capacity = dogma.Type(587)!.Attributes[dogma.AttributeId("capacity")!.Value];
+        var unitVolume = dogma.Type(222)!.Attributes[dogma.AttributeId("volume")!.Value];
+        var cargoQuantity = checked((long)Math.Floor((capacity - 42 * unitVolume) / unitVolume));
+        var cargoStack = await PutItemAsync(rig, character, 222, ship, CharacterShips.CargoFlag, cargoQuantity, singleton: false);
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = sink };
+        session.Set("solarsystemid", new PyLong(systemId));
+        session.Set("shipid", new PyLong(ship));
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("dogmaIM"));
+        var nested = Py.Tuple(new PyStr("UnloadAmmo"), Py.Tuple(
+            new PyLong(ship), new PyList([new PyLong(firstGun), new PyLong(secondGun)]), new PyLong(ship), PyNone.Instance), PyNone.Instance);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => CallAsync(service, "MachoBindObject", session,
+            Py.Tuple(new PyLong(systemId), new PyInt(3)), nested));
+
+        Assert.Equal("NotEnoughCargoSpace", error.Error.UserErrorMessage);
+        Assert.Equal(MachoErrors.UserErrorPayload("NotEnoughCargoSpace",
+        [
+            new(new PyStr("available"), Py.Number(Math.Round(Math.Max(0, capacity - cargoQuantity * unitVolume), 6))),
+            new(new PyStr("volume"), Py.Number(Math.Round(80 * unitVolume, 6))),
+        ]), error.Error.Payload);
+        var items = new PgItemStore(rig.Source, rig.InventorySchema);
+        Assert.Equal((ship, 28, 40L), ((await items.GetAsync(firstCharge))!.LocationId, (await items.GetAsync(firstCharge))!.Flag,
+            (await items.GetAsync(firstCharge))!.Quantity));
+        Assert.Equal((ship, 29, 40L), ((await items.GetAsync(secondCharge))!.LocationId, (await items.GetAsync(secondCharge))!.Flag,
+            (await items.GetAsync(secondCharge))!.Quantity));
         Assert.Equal(cargoQuantity, (await items.GetAsync(cargoStack))!.Quantity);
         Assert.Empty(Notifications(sink));
     }
@@ -2303,6 +2353,9 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         var deniedSink = new RecordingPacketSink();
         var denied = await Assert.ThrowsAsync<MachoWrappedException>(() => LoadAsync(deniedSink));
         Assert.Equal("CrpAccessDenied", denied.Error.UserErrorMessage);
+        Assert.Equal(MachoErrors.UserErrorPayload("CrpAccessDenied",
+            [new(new PyStr("reason"), Py.Tuple(new PyInt(101), new PyStr("UI/Corporations/AccessRestrictions/InsufficientRoles")))]),
+            denied.Error.Payload);
         Assert.Equal((corporation, container, CharacterShips.ContainerFlag, 40L),
             ((await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(stack))!.OwnerId,
                 (await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(stack))!.LocationId,
@@ -2352,6 +2405,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             Py.Tuple(new PyLong(rig.Station), new PyInt(3)), nested));
 
         Assert.Equal("GenericTooFarAway", error.Error.UserErrorMessage);
+        Assert.Equal(MachoErrors.UserErrorPayload("GenericTooFarAway"), error.Error.Payload);
         Assert.Equal((character, container, CharacterShips.ContainerFlag, 40L),
             ((await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(stack))!.OwnerId,
                 (await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(stack))!.LocationId,

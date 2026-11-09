@@ -487,9 +487,17 @@ public sealed partial class CharacterShips
         long characterId, long shipId, long moduleId, long destinationLocationId, int? destinationFlag, long? quantity, GunRounds gun, CancellationToken cancellationToken = default) =>
         WithFreshRowsAsync(() => UnloadAmmoOnceAsync(characterId, shipId, [moduleId], destinationLocationId, destinationFlag, quantity, AmmoWhere.Space, gun, cancellationToken));
 
+    /// <summary>Unloads a grouped request after the simulation reports each running gun's actual rounds.</summary>
+    public Task<ShipOutcome> UnloadAmmoInSpaceBatchAsync(
+        long characterId, long shipId, IReadOnlyList<long> moduleIds, long destinationLocationId, int? destinationFlag, long? quantity,
+        IReadOnlyDictionary<long, GunRounds> moduleRounds, CancellationToken cancellationToken = default) =>
+        WithFreshRowsAsync(() => UnloadAmmoOnceAsync(characterId, shipId, moduleIds, destinationLocationId, destinationFlag, quantity,
+            AmmoWhere.Space, null, cancellationToken, moduleRounds: moduleRounds));
+
     private async Task<ShipOutcome> UnloadAmmoOnceAsync(
         long characterId, long shipId, IReadOnlyList<long> moduleIds, long destinationLocationId, int? destinationFlag, long? quantity, AmmoWhere where, GunRounds? gun,
-        CancellationToken cancellationToken, long? destinationOwnerId = null, bool containerDestination = false)
+        CancellationToken cancellationToken, long? destinationOwnerId = null, bool containerDestination = false,
+        IReadOnlyDictionary<long, GunRounds>? moduleRounds = null)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -564,29 +572,12 @@ public sealed partial class CharacterShips
             .Concat(work.Stacks.Values.Where(s => s.LocationId == targetLocation && s.Flag == flag && leaving.Any(c => c.TypeId == s.TypeId)))
             .Concat(cargoContents));
 
-        if (targetLocation == shipId && flag == CargoFlag && leaving.Count > 0
-            && CapacityAttributeOf(CargoFlag) is { } cargoCapacityAttribute)
+        if (targetLocation == shipId && flag == CargoFlag && leaving.Count > 0)
         {
-            var moving = leaving.Select(charge =>
+            if (await CargoCapacityRefusalAsync(work.Snapshot, cargoContents,
+                    MovingCharges(work.Snapshot, leaving, quantity, gun, moduleRounds), cancellationToken) is { } refusal)
             {
-                var rounds = gun is { Running: true } ? gun.Before - gun.After : quantity;
-                if (rounds is <= 0)
-                    return null;
-                var amount = rounds is { } requested ? Math.Min(charge.Quantity, requested) : charge.Quantity;
-                return amount > 0 ? charge with { Quantity = charge.Singleton ? charge.Quantity : amount } : null;
-            }).OfType<Item>().ToArray();
-            if (moving.Length > 0)
-            {
-                await statics.EnsureTypesAsync(cargoContents.Select(item => item.TypeId).Concat(moving.Select(item => item.TypeId)), cancellationToken);
-                var capacity = work.Snapshot.World.Get(shipId, cargoCapacityAttribute);
-                var used = await VolumeOfAsync(cargoContents, cancellationToken);
-                var required = await VolumeOfAsync(moving, cancellationToken);
-                var available = Math.Max(0, capacity - used);
-                if (required > available + RoomTolerance)
-                {
-                    return new ShipRefused(ShipRefusal.NotEnoughCargoSpace, ModuleTypeId: moving[0].TypeId,
-                        ShipTypeId: work.Snapshot.Ship.TypeId, Available: Math.Round(available, 6), Volume: Math.Round(required, 6));
-                }
+                return refusal;
             }
         }
         foreach (var moduleId in moduleIds.Distinct())
@@ -600,7 +591,8 @@ public sealed partial class CharacterShips
             try
             {
                 // a gun that runs has lost the rounds the simulation took: that many leave the charge (none, when it had none to give)
-                var leaves = gun is { Running: true } ? gun.Before - gun.After : quantity;
+                var moduleGun = moduleRounds?.GetValueOrDefault(moduleId) ?? gun;
+                var leaves = moduleGun is { Running: true } ? moduleGun.Before - moduleGun.After : quantity;
                 if (leaves is not null and <= 0)
                 {
                     continue;
@@ -614,6 +606,36 @@ public sealed partial class CharacterShips
         }
         await transaction.CommitAsync(cancellationToken);
         return Finish(work);
+    }
+
+    private static Item[] MovingCharges(
+        ShipSnapshot snapshot, IEnumerable<Item> charges, long? quantity, GunRounds? gun, IReadOnlyDictionary<long, GunRounds>? moduleRounds) => charges.Select(charge =>
+    {
+        var moduleId = snapshot.Fitted.FirstOrDefault(module => module.Flag == charge.Flag)?.Id;
+        var moduleGun = moduleId is { } id ? moduleRounds?.GetValueOrDefault(id) ?? gun : gun;
+        var rounds = moduleGun is { Running: true } ? moduleGun.Before - moduleGun.After : quantity;
+        if (rounds is <= 0)
+            return null;
+        var amount = rounds is { } requested ? Math.Min(charge.Quantity, requested) : charge.Quantity;
+        return amount > 0 ? charge with { Quantity = charge.Singleton ? charge.Quantity : amount } : null;
+    }).OfType<Item>().ToArray();
+
+    private async Task<ShipRefused?> CargoCapacityRefusalAsync(
+        ShipSnapshot snapshot, IReadOnlyList<Item> cargoContents, IReadOnlyList<Item> moving, CancellationToken cancellationToken)
+    {
+        if (moving.Count == 0 || CapacityAttributeOf(CargoFlag) is not { } capacityAttribute)
+        {
+            return null;
+        }
+        await statics.EnsureTypesAsync(cargoContents.Select(item => item.TypeId).Concat(moving.Select(item => item.TypeId)), cancellationToken);
+        var capacity = snapshot.World.Get(snapshot.Ship.Id, capacityAttribute);
+        var used = await VolumeOfAsync(cargoContents, cancellationToken);
+        var required = await VolumeOfAsync(moving, cancellationToken);
+        var available = Math.Max(0, capacity - used);
+        return required > available + RoomTolerance
+            ? new ShipRefused(ShipRefusal.NotEnoughCargoSpace, ModuleTypeId: moving[0].TypeId,
+                ShipTypeId: snapshot.Ship.TypeId, Available: Math.Round(available, 6), Volume: Math.Round(required, 6))
+            : null;
     }
 
     private async Task<bool> IsCargoContainerItemAsync(Item item, CancellationToken cancellationToken)

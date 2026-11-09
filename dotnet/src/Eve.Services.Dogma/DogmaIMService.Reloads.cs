@@ -197,25 +197,65 @@ public sealed partial class DogmaIMService
     private async Task<PyValue> UnloadInSpaceAsync(
         ClientSession session, long characterId, long shipId, IReadOnlyList<long> moduleIds, long location, int? flag, long? quantity, CancellationToken cancellationToken)
     {
-        var unloaded = new List<PyValue>();
-        foreach (var moduleId in moduleIds.Distinct())
+        var adjusted = new Dictionary<long, GunRounds>();
+        ShipOutcome outcome;
+        try
         {
-            ShipOutcome outcome;
-            try
+            foreach (var moduleId in moduleIds.Distinct())
             {
-                outcome = await rounds!.AdjustAsync(
+                adjusted[moduleId] = await rounds!.AdjustAsync(
                     session, moduleId, 0, new RoundsChange.Remove(quantity ?? 0),
-                    gun => ships.UnloadAmmoInSpaceAsync(characterId, shipId, moduleId, location, flag, quantity, gun, cancellationToken), cancellationToken);
+                    gun => Task.FromResult(gun), cancellationToken);
             }
-            catch (Exception error) when (error is not OperationCanceledException)
+            outcome = await ships.UnloadAmmoInSpaceBatchAsync(characterId, shipId, moduleIds, location, flag, quantity, adjusted, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            await RestoreUnloadedRoundsAsync(session, adjusted);
+            throw;
+        }
+        catch (Exception error)
+        {
+            await RestoreUnloadedRoundsAsync(session, adjusted);
+            log?.Invoke($"the requested ammunition could not be unloaded: {error.Message}");
+            return None;
+        }
+        if (outcome is ShipRefused refused)
+        {
+            await RestoreUnloadedRoundsAsync(session, adjusted);
+            throw ShipErrors.Of(refused, statics);
+        }
+        if (outcome is not AmmoChanged)
+        {
+            await RestoreUnloadedRoundsAsync(session, adjusted);
+            return None;
+        }
+        TellAmmo(session, characterId, outcome);
+        return UnloadedItemIds(outcome, location, flag);
+    }
+
+    /// <summary>The database refused the grouped unload after the simulation removed rounds, so put the same rounds back into each running gun.</summary>
+    private async Task RestoreUnloadedRoundsAsync(ClientSession session, IReadOnlyDictionary<long, GunRounds> adjusted)
+    {
+        if (rounds is null)
+        {
+            return;
+        }
+        foreach (var (moduleId, gun) in adjusted)
+        {
+            var removed = gun.Before - gun.After;
+            if (!gun.Running || removed <= 0)
             {
-                log?.Invoke($"module {moduleId} could not be unloaded: {error.Message}");
                 continue;
             }
-            TellAmmo(session, characterId, outcome);
-            if (UnloadedItemIds(outcome, location, flag) is PyList ids)
-                unloaded.AddRange(ids.Items);
+            try
+            {
+                await rounds.AdjustAsync(session, moduleId, 0, new RoundsChange.Add(gun.Before, removed), _ => Task.FromResult(true), CancellationToken.None);
+            }
+            catch (Exception error)
+            {
+                log?.Invoke($"the {removed} rounds removed from module {moduleId} could not be restored: {error.Message}");
+            }
         }
-        return unloaded.Count == 0 ? None : new PyList(unloaded);
     }
 }

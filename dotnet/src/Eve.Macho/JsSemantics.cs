@@ -72,6 +72,7 @@ public static class JsSemantics
         PyBuffer buffer => Encoding.UTF8.GetString(buffer.Value.Span),
         PyInt number => number.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
         PyLong number => number.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        PyBigInteger number => number.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
         PyBool flag => flag.Value ? "true" : "false",
         PyReal number => number.Value.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
         PyTuple tuple => string.Join(",", tuple.Items.Select(ToJsString)),
@@ -97,6 +98,10 @@ public static class JsSemantics
             case PyBigUnsigned big:
                 var magnitude = new System.Numerics.BigInteger(big.Bytes, isUnsigned: true);
                 return magnitude <= long.MaxValue ? new PyLong((long)magnitude) : throw new MarshalException(MarshalErrorKind.OutOfRange, "value out of range: BigInt beyond int64");
+            case PyBigInteger big:
+                return big.Value >= long.MinValue && big.Value <= long.MaxValue
+                    ? new PyLong((long)big.Value)
+                    : throw new MarshalException(MarshalErrorKind.OutOfRange, "value out of range: BigInt beyond int64");
             case PyTuple tuple:
                 return new PyTuple([.. tuple.Items.Select(AsReceived)]);
             case PyList list:

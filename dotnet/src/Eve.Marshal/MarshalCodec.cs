@@ -22,10 +22,9 @@ public static class MarshalCodec
 
     /// <summary>
     /// Decodes a marshal stream, tolerating bytes after the root value: the same leniency as the JS
-    /// reference's <c>marshalDecode</c>. A string or buffer whose declared length runs past the end
-    /// of the input yields the bytes that are there instead of an error, and PyObjectEx lists that
-    /// never reach their terminator end at the end of the input. Strings and buffers in the result
-    /// are slices of <paramref name="input"/>: keep it alive and unchanged while using them.
+    /// reference's <c>marshalDecode</c>. Reads may not cross the payload boundary or enter the save
+    /// table. Strings and buffers in the result are slices of <paramref name="input"/>: keep it alive
+    /// and unchanged while using them.
     /// </summary>
     public static PyValue Decode(ReadOnlyMemory<byte> input) => MarshalDecoder.DecodeStream(input, false, 0);
 

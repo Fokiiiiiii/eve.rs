@@ -1,4 +1,6 @@
 use std::borrow::Cow;
+use std::fmt;
+use std::sync::{Arc, RwLock, Weak};
 
 pub use bytes::Bytes;
 
@@ -8,8 +10,8 @@ pub use crate::packed_row::{Descriptor, PackedColumn, PackedRow};
 ///
 /// One type serves both directions. The decoder never produces a variant the
 /// encoder cannot write back, except [`Value::Checksummed`] (which the encoder
-/// also writes) and [`Value::BigUnsigned`] (variable-width integers beyond
-/// 2^53, written back as a variable-width integer).
+/// also writes) and [`Value::BigUnsigned`] / [`Value::BigSigned`] (variable-width
+/// integers beyond 2^53, written back as variable-width integers).
 ///
 /// The JS reference collapses several wire types into one JS type (every
 /// string opcode decodes to a `Buffer`, every small integer to a `number`).
@@ -29,8 +31,11 @@ pub enum Value {
     /// PyReal; a zero is written as the one-byte PyZeroReal.
     Real(f64),
     /// A variable-width integer that does not fit in a JS safe integer, as
-    /// minimal little-endian bytes (no trailing zero byte).
+    /// little-endian unsigned magnitude bytes.
     BigUnsigned(Vec<u8>),
+    /// A negative variable-width integer that does not fit in a JS safe
+    /// integer, as minimal little-endian two's-complement bytes.
+    BigSigned(Vec<u8>),
 
     Str(Cow<'static, str>),
     /// A Python `str`: PyEmptyString, PyCharString, PyShortString or
@@ -64,6 +69,94 @@ pub enum Value {
     /// Raw Python pickle bytes (cPicked).
     CPickled(Bytes),
     PackedRow(Box<PackedRow>),
+    /// A graph edge to a saved value. This keeps reference identity, including
+    /// cycles, without recursively owning the target value.
+    SavedReference(SavedReference),
+    /// Keeps the save slots alive for references in `root`. References point
+    /// back to these slots weakly, so cyclic marshal graphs do not leak.
+    SavedGraph(SavedGraph),
+}
+
+pub(crate) type SaveSlot = Arc<RwLock<Option<Value>>>;
+
+/// A reference to a value registered in the marshal save table.
+#[derive(Clone)]
+pub struct SavedReference {
+    index: usize,
+    target: Weak<RwLock<Option<Value>>>,
+}
+
+impl SavedReference {
+    pub(crate) fn new(index: usize, target: &SaveSlot) -> Self {
+        Self { index, target: Arc::downgrade(target) }
+    }
+
+    pub fn index(&self) -> usize {
+        self.index
+    }
+
+    /// The saved value when its slot has been published.
+    pub fn value(&self) -> Option<Value> {
+        self.target.upgrade()?.read().expect("saved value lock poisoned").clone()
+    }
+
+    pub(crate) fn publish(&self, value: Value) {
+        *self
+            .target
+            .upgrade()
+            .expect("save slot remains owned during decode")
+            .write()
+            .expect("saved value lock poisoned") = Some(value);
+    }
+
+    pub(crate) fn is_same(&self, other: &Self) -> bool {
+        Weak::ptr_eq(&self.target, &other.target)
+    }
+}
+
+/// The root value and the save slots that own values referenced from it.
+#[derive(Clone)]
+pub struct SavedGraph {
+    root: Box<Value>,
+    slots: Arc<Vec<Option<SaveSlot>>>,
+}
+
+impl SavedGraph {
+    pub(crate) fn new(root: Value, slots: Vec<Option<SaveSlot>>) -> Self {
+        Self { root: Box::new(root), slots: Arc::new(slots) }
+    }
+
+    pub fn root(&self) -> &Value {
+        &self.root
+    }
+
+    pub fn saved_slot_count(&self) -> usize {
+        self.slots.len()
+    }
+}
+
+impl fmt::Debug for SavedGraph {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_tuple("SavedGraph").field(&self.root).finish()
+    }
+}
+
+impl PartialEq for SavedGraph {
+    fn eq(&self, other: &Self) -> bool {
+        self.root == other.root
+    }
+}
+
+impl fmt::Debug for SavedReference {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_tuple("SavedReference").field(&self.index).finish()
+    }
+}
+
+impl PartialEq for SavedReference {
+    fn eq(&self, other: &Self) -> bool {
+        self.is_same(other)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

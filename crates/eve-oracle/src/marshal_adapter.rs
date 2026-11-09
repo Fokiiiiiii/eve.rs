@@ -255,6 +255,10 @@ fn packed_row(js: &Js) -> Result<Value> {
 // ─── Value -> JS (the decoder's output shapes) ──────────────────────────────
 
 pub fn value_to_js(value: &Value) -> Js {
+    value_to_js_graph(value, &mut Vec::new())
+}
+
+fn value_to_js_graph(value: &Value, active_references: &mut Vec<usize>) -> Js {
     match value {
         Value::None => Js::Null,
         Value::Bool(flag) => Js::Bool(*flag),
@@ -262,6 +266,7 @@ pub fn value_to_js(value: &Value) -> Js {
         Value::Long(number) => Js::Big(number.to_string()),
         Value::Real(number) => Js::Num(*number),
         Value::BigUnsigned(bytes) => Js::Big(le_bytes_to_decimal(bytes)),
+        Value::BigSigned(bytes) => Js::Big(le_bytes_to_signed_decimal(bytes)),
         Value::Str(text) => Js::Str(text.to_string()),
         // Every string opcode and PyBuffer decode to a JS Buffer.
         Value::Bytes(bytes) | Value::Buffer(bytes) => Js::Buf(bytes.to_vec()),
@@ -271,62 +276,97 @@ pub fn value_to_js(value: &Value) -> Js {
         Value::Token(text) => {
             Js::obj([("type", Js::Str("token".into())), ("value", Js::Str(text.to_string()))])
         }
-        Value::Tuple(items) => Js::Arr(items.iter().map(value_to_js).collect()),
+        Value::Tuple(items) => {
+            Js::Arr(items.iter().map(|item| value_to_js_graph(item, active_references)).collect())
+        }
         Value::List(items) => Js::obj([
             ("type", Js::Str("list".into())),
-            ("items", Js::Arr(items.iter().map(value_to_js).collect())),
+            ("items", Js::Arr(items.iter().map(|item| value_to_js_graph(item, active_references)).collect())),
         ]),
         Value::Dict(entries) => {
-            Js::obj([("type", Js::Str("dict".into())), ("entries", pairs_to_js(entries))])
+            Js::obj([("type", Js::Str("dict".into())), ("entries", pairs_to_js(entries, active_references))])
         }
         Value::Object { name, args } => Js::obj([
             ("type", Js::Str("object".into())),
-            ("name", value_to_js(name)),
-            ("args", value_to_js(args)),
+            ("name", value_to_js_graph(name, active_references)),
+            ("args", value_to_js_graph(args, active_references)),
         ]),
         Value::ObjectEx { kind, header, list, dict } => Js::obj([
             ("type", Js::Str(if *kind == ObjectExKind::Ex1 { "objectex1" } else { "objectex2" }.into())),
-            ("header", value_to_js(header)),
-            ("list", Js::Arr(list.iter().map(value_to_js).collect())),
-            ("dict", pairs_to_js(dict)),
+            ("header", value_to_js_graph(header, active_references)),
+            ("list", Js::Arr(list.iter().map(|item| value_to_js_graph(item, active_references)).collect())),
+            ("dict", pairs_to_js(dict, active_references)),
         ]),
-        Value::SubStruct(inner) => {
-            Js::obj([("type", Js::Str("substruct".into())), ("value", value_to_js(inner))])
-        }
-        Value::SubStream(SubStream::Decoded(inner)) => {
-            Js::obj([("type", Js::Str("substream".into())), ("value", value_to_js(inner))])
-        }
+        Value::SubStruct(inner) => Js::obj([
+            ("type", Js::Str("substruct".into())),
+            ("value", value_to_js_graph(inner, active_references)),
+        ]),
+        Value::SubStream(SubStream::Decoded(inner)) => Js::obj([
+            ("type", Js::Str("substream".into())),
+            ("value", value_to_js_graph(inner, active_references)),
+        ]),
         Value::SubStream(SubStream::Raw(bytes)) => {
             Js::obj([("type", Js::Str("substream".into())), ("raw", Js::Buf(bytes.to_vec()))])
         }
         Value::Checksummed { checksum, value } => Js::obj([
             ("type", Js::Str("checksummed".into())),
             ("checksum", Js::Num(f64::from(*checksum))),
-            ("value", value_to_js(value)),
+            ("value", value_to_js_graph(value, active_references)),
         ]),
         Value::CPickled(bytes) => {
             Js::obj([("type", Js::Str("cpicked".into())), ("data", Js::Buf(bytes.to_vec()))])
         }
-        Value::PackedRow(row) => packed_row_to_js(row),
+        Value::PackedRow(row) => packed_row_to_js(row, active_references),
+        Value::SavedGraph(graph) => value_to_js_graph(graph.root(), active_references),
+        Value::SavedReference(reference) => {
+            if active_references.contains(&reference.index()) {
+                Js::obj([("type", Js::Str("reference".into())), ("index", Js::Num(reference.index() as f64))])
+            } else if let Some(value) = reference.value() {
+                active_references.push(reference.index());
+                let decoded = value_to_js_graph(&value, active_references);
+                active_references.pop();
+                decoded
+            } else {
+                Js::Null
+            }
+        }
     }
 }
 
-fn pairs_to_js(entries: &[(Value, Value)]) -> Js {
-    Js::Arr(entries.iter().map(|(key, value)| Js::Arr(vec![value_to_js(key), value_to_js(value)])).collect())
+fn pairs_to_js(entries: &[(Value, Value)], active_references: &mut Vec<usize>) -> Js {
+    Js::Arr(
+        entries
+            .iter()
+            .map(|(key, value)| {
+                Js::Arr(vec![
+                    value_to_js_graph(key, active_references),
+                    value_to_js_graph(value, active_references),
+                ])
+            })
+            .collect(),
+    )
 }
 
-fn packed_row_to_js(row: &PackedRow) -> Js {
+fn packed_row_to_js(row: &PackedRow, active_references: &mut Vec<usize>) -> Js {
     let columns = descriptor_columns(row.header())
-        .map(|entries| entries.iter().map(value_to_js).collect())
+        .map(|entries| entries.iter().map(|entry| value_to_js_graph(entry, active_references)).collect())
         .unwrap_or_default();
     Js::obj([
         ("type", Js::Str("packedrow".into())),
-        ("header", value_to_js(row.header())),
+        ("header", value_to_js_graph(row.header(), active_references)),
         ("columns", Js::Arr(columns)),
-        ("values", Js::Arr(row.values.iter().map(value_to_js).collect())),
+        (
+            "values",
+            Js::Arr(row.values.iter().map(|value| value_to_js_graph(value, active_references)).collect()),
+        ),
         (
             "fields",
-            Js::Obj(row.fields().iter().map(|(name, value)| (name.clone(), value_to_js(value))).collect()),
+            Js::Obj(
+                row.fields()
+                    .iter()
+                    .map(|(name, value)| (name.clone(), value_to_js_graph(value, active_references)))
+                    .collect(),
+            ),
         ),
         ("rleData", Js::Buf(row.rle.as_ref().map(|rle| rle.to_vec()).unwrap_or_default())),
     ])
@@ -357,9 +397,30 @@ fn le_bytes_to_decimal(bytes: &[u8]) -> String {
     text
 }
 
+/// The decimal digits of a little-endian two's-complement integer.
+fn le_bytes_to_signed_decimal(bytes: &[u8]) -> String {
+    if !bytes.last().is_some_and(|byte| byte & 0x80 != 0) {
+        return le_bytes_to_decimal(bytes);
+    }
+    let mut magnitude: Vec<u8> = bytes.iter().map(|byte| !byte).collect();
+    let mut carry = true;
+    for byte in &mut magnitude {
+        if !carry {
+            break;
+        }
+        let (value, overflow) = byte.overflowing_add(1);
+        *byte = value;
+        carry = overflow;
+    }
+    while magnitude.last() == Some(&0) {
+        magnitude.pop();
+    }
+    format!("-{}", le_bytes_to_decimal(&magnitude))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::le_bytes_to_decimal;
+    use super::{le_bytes_to_decimal, le_bytes_to_signed_decimal};
 
     #[test]
     fn decimal_conversion() {
@@ -367,5 +428,8 @@ mod tests {
         assert_eq!(le_bytes_to_decimal(&[0x2a]), "42");
         assert_eq!(le_bytes_to_decimal(&[0xff; 8]), "18446744073709551615");
         assert_eq!(le_bytes_to_decimal(&[1, 1, 1, 1, 1, 1, 1, 1, 1]), "18519084246547628289");
+        assert_eq!(le_bytes_to_signed_decimal(&[0xff]), "-1");
+        assert_eq!(le_bytes_to_signed_decimal(&[0x80]), "-128");
+        assert_eq!(le_bytes_to_signed_decimal(&[0x7f, 0xff]), "-129");
     }
 }

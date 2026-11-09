@@ -150,6 +150,29 @@ public class TableStoreTests
     }
 
     [PgFact]
+    public async Task Migration_markers_reject_internal_and_sqlite_tables()
+    {
+        await using var pg = await PgScope.CreateAsync();
+        var fence = await World(pg);
+        var names = new[] { "_migrations", "_persistence_outbox", "_persistence_owners", "sqlite_master" };
+        var rejected = new List<string>();
+
+        foreach (var name in names)
+        {
+            try
+            {
+                await pg.Store.MarkMigratedAsync(name, fence);
+            }
+            catch (ArgumentException)
+            {
+                rejected.Add(name);
+            }
+        }
+
+        Assert.Equal(names, rejected);
+    }
+
+    [PgFact]
     public async Task Several_processes_may_create_the_schema_and_a_table_at_once()
     {
         await using var pg = await PgScope.CreateAsync();

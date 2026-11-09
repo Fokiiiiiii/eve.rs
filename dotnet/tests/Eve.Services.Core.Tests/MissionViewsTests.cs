@@ -67,6 +67,8 @@ public class MissionViewsTests
             LoyaltyPoints: 153, DungeonLocation: new MissionDungeonLocation(30005204, 12.5, -8, 400));
         var fields = MissionViews.Objective(view).Entries.ToDictionary(entry => ((PyStr)entry.Key).Value, entry => entry.Value);
         var dungeon = Assert.IsType<PyDict>(Assert.IsType<PyList>(fields["dungeons"]).Items[0]);
+        Assert.DoesNotContain(dungeon.Entries, entry => entry.Key is PyStr { Value: "completed" });
+        Assert.Equal(PyNone.Instance, dungeon.Entries.Single(entry => ((PyStr)entry.Key).Value == "objectiveCompleted").Value);
         Assert.Equal(3509, ((PyInt)dungeon.Entries.Single(entry => ((PyStr)entry.Key).Value == "dungeonID").Value).Value);
         Assert.Equal(500021, ((PyInt)dungeon.Entries.Single(entry => ((PyStr)entry.Key).Value == "ownerID").Value).Value);
         var location = Assert.IsType<PyDict>(dungeon.Entries.Single(entry => ((PyStr)entry.Key).Value == "location").Value);
@@ -83,6 +85,22 @@ public class MissionViewsTests
         Assert.Equal(100000, ((PyInt)reward.Items[1]).Value);
         Assert.Equal(2, ((PyInt)fields["missionState"]).Value);
         Assert.Equal(153, ((PyInt)fields["loyaltyPoints"]).Value);
+    }
+
+    [Fact]
+    public void A_completed_dungeon_objective_is_visible_while_the_mission_is_still_accepted()
+    {
+        var record = new AgentMissionRecord(1, 2, AgentMissionState.Accepted,
+            new AgentMissionContent(9301, 57289, "Kill Step", "", false), null, null, null, null, null, null,
+            ObjectiveCompleted: true);
+        var fields = MissionViews.Objective(new HeldMissionView(Kill(), record, null))
+            .Entries.ToDictionary(entry => ((PyStr)entry.Key).Value, entry => entry.Value);
+
+        Assert.Equal(1, ((PyInt)fields["completionStatus"]).Value);
+        Assert.Equal((int)AgentMissionState.Accepted, ((PyInt)fields["missionState"]).Value);
+        var dungeon = Assert.IsType<PyDict>(Assert.Single(Assert.IsType<PyList>(fields["dungeons"]).Items));
+        Assert.Equal(new PyInt(1), dungeon.Entries.Single(entry => ((PyStr)entry.Key).Value == "completed").Value);
+        Assert.Equal(new PyInt(1), dungeon.Entries.Single(entry => ((PyStr)entry.Key).Value == "objectiveCompleted").Value);
     }
 
     [Fact]

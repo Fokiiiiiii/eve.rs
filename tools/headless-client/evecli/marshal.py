@@ -16,9 +16,10 @@ Value model (mirrors `eve_marshal::Value`):
     tuple, List, Dict        -> Dict is a list of (key, value) pairs in wire order
     Object, ObjectEx, SubStruct, SubStream, Checksummed, CPickled, PackedRow
 
-The decoder is as lenient as the JS one (a string longer than the input yields
-the bytes that are there) and adds bounds: nesting depth and allocation are
-limited so that a hostile peer cannot exhaust the stack or memory.
+The decoder tolerates bytes after the root value like the JS reference, while
+keeping every read inside the value area and rejecting truncated fields. It
+also bounds nesting depth and collection allocation so a hostile peer cannot
+exhaust the stack or memory.
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ MARSHAL_HEADER = 0x7E
 SAVE_MASK = 0x40
 OPCODE_MASK = 0x3F
 MAX_DEPTH = 256
+MAX_ELEMENTS = 1_000_000
 
 _TABLE_INDEX = {}
 for _position, _text in enumerate(STRING_TABLE):
@@ -136,6 +138,57 @@ class MarshalError(Exception):
         super().__init__(message)
         self.kind = kind
 
+_PICKLE_NO_ARG = {
+    0x28, 0x29, 0x30, 0x31, 0x32, 0x4E, 0x51, 0x52, 0x5D, 0x61, 0x62, 0x64, 0x65,
+    0x6C, 0x6F, 0x73, 0x74, 0x75, 0x7D, 0x81, 0x85, 0x86, 0x87, 0x88, 0x89,
+}
+_PICKLE_FIXED_ARG = {
+    0x47: 8, 0x4A: 4, 0x4B: 1, 0x4D: 2, 0x68: 1, 0x6A: 4,
+    0x71: 1, 0x72: 4, 0x80: 1, 0x82: 1, 0x83: 2, 0x84: 4,
+}
+_PICKLE_LINE_ARG = {
+    0x46: 1, 0x49: 1, 0x4C: 1, 0x50: 1, 0x53: 1, 0x56: 1,
+    0x67: 1, 0x70: 1, 0x63: 2, 0x69: 2,
+}
+_PICKLE_COUNTED_ARG = {0x54: 4, 0x55: 1, 0x58: 4, 0x8A: 1, 0x8B: 4}
+
+def _pickle_end(data: bytes, start: int, end: Optional[int] = None) -> int:
+    """Return the position after STOP in a Python 2 protocol-0-to-2 pickle."""
+    limit = len(data) if end is None else end
+    position = start
+    while position < limit:
+        opcode = data[position]
+        position += 1
+        if opcode == 0x2E:  # STOP
+            return position
+        if opcode in _PICKLE_NO_ARG:
+            continue
+        if opcode in _PICKLE_FIXED_ARG:
+            width = _PICKLE_FIXED_ARG[opcode]
+            if width > limit - position:
+                raise MarshalError("unexpected end of pickle data")
+            position += width
+            continue
+        if opcode in _PICKLE_LINE_ARG:
+            for _ in range(_PICKLE_LINE_ARG[opcode]):
+                newline = data.find(b"\n", position, limit)
+                if newline < 0:
+                    raise MarshalError("unexpected end of pickle data")
+                position = newline + 1
+            continue
+        if opcode in _PICKLE_COUNTED_ARG:
+            width = _PICKLE_COUNTED_ARG[opcode]
+            if width > limit - position:
+                raise MarshalError("unexpected end of pickle data")
+            length = data[position] if width == 1 else struct.unpack_from("<I", data, position)[0]
+            content_start = position + width
+            if length > limit - content_start:
+                raise MarshalError("unexpected end of pickle data")
+            position = content_start + length
+            continue
+        raise MarshalError(f"unknown pickle opcode 0x{opcode:02x} at position {position - 1}")
+    raise MarshalError("unexpected end of pickle data")
+
 # ─── Value types ────────────────────────────────────────────────────────────
 
 class Long(int):
@@ -143,6 +196,9 @@ class Long(int):
 
 class BigUnsigned(int):
     """A variable-width integer beyond 2**53 - 1 (decode only; written back as one)."""
+
+class BigSigned(int):
+    """A negative variable-width integer beyond JavaScript's safe integer range."""
 
 class PyString(bytes):
     """A Python 2 `str`: what the string opcodes decode to."""
@@ -560,9 +616,18 @@ class _Encoder:
             out.append(Op.TRUE)
         elif value is False:
             out.append(Op.FALSE)
+        elif isinstance(value, BigSigned):
+            number = int(value)
+            length = 1
+            while not -(1 << (8 * length - 1)) <= number < (1 << (8 * length - 1)):
+                length += 1
+            self.sized(Op.VAR_INTEGER, number.to_bytes(length, "little", signed=True))
         elif isinstance(value, BigUnsigned):
             length = (int(value).bit_length() + 7) // 8
-            self.sized(Op.VAR_INTEGER, int(value).to_bytes(length, "little"))
+            data = int(value).to_bytes(length, "little")
+            if data and data[-1] & 0x80:
+                data += b"\x00"
+            self.sized(Op.VAR_INTEGER, data)
         elif isinstance(value, Long):
             self.long(int(value))
         elif isinstance(value, int):
@@ -595,7 +660,11 @@ class _Encoder:
                     return
             self.byte_string(data)
         elif isinstance(value, CPickled):
-            self.sized(Op.CPICKLED, bytes(value))
+            data = bytes(value)
+            if _pickle_end(data, 0) != len(data):
+                raise MarshalError("pickle has bytes after its STOP opcode")
+            out.append(Op.CPICKLED)
+            out += data
         elif isinstance(value, (bytes, bytearray)):
             self.sized(Op.BUFFER, bytes(value))
         elif isinstance(value, Dict):
@@ -816,6 +885,8 @@ def split_packet(data: bytes):
         return None
     return data[4 : 4 + length], data[4 + length :]
 
+_UNSET = object()
+
 def _decode_stream(data: bytes, require_exact: bool, depth: int, string_table: tuple = STRING_TABLE) -> Any:
     decoder = _Decoder(data, depth, string_table)
     header = decoder.u8()
@@ -827,10 +898,15 @@ def _decode_stream(data: bytes, require_exact: bool, depth: int, string_table: t
         table_bytes = save_count * 4
         if len(data) - decoder.pos < table_bytes:
             raise MarshalError("invalid marshal save table: save table larger than the stream")
-        decoder.stored = [None] * save_count
+        decoder.stored = [_UNSET] * save_count
         decoder.save_pos = len(data) - table_bytes
         decoder.save_end = len(data)
         value_end = len(data) - table_bytes
+        for position in range(value_end, len(data), 4):
+            (index,) = struct.unpack_from("<i", data, position)
+            if not 1 <= index <= save_count:
+                raise MarshalError("bogus map data in marshal stream")
+    decoder.value_end = value_end
     value = decoder.value()
     if require_exact:
         if decoder.pos != value_end:
@@ -844,6 +920,7 @@ class _Decoder:
         self.buf = data
         self.string_table = string_table
         self.pos = 0
+        self.value_end = len(data)
         self.stored: list = []
         self.save_pos: Optional[int] = None
         self.save_end: Optional[int] = None
@@ -852,18 +929,17 @@ class _Decoder:
         self.descriptor_cache: Optional[tuple] = None
 
     def u8(self) -> int:
-        if self.pos >= len(self.buf):
+        if self.pos >= self.value_end:
             raise MarshalError("unexpected end of marshal data")
         byte = self.buf[self.pos]
         self.pos += 1
         return byte
 
     def take(self, fmt: str, width: int):
-        """A fixed-width read that fails the way Node's Buffer.readXxx does."""
+        """Read a fixed-width value without crossing the payload/save-table boundary."""
         end = self.pos + width
-        if end > len(self.buf):
-            kind = "RangeError:ERR_BUFFER_OUT_OF_BOUNDS" if len(self.buf) < width else "RangeError:ERR_OUT_OF_RANGE"
-            raise MarshalError("read past end of stream", kind)
+        if end > self.value_end:
+            raise MarshalError("unexpected end of marshal data")
         (value,) = struct.unpack_from(fmt, self.buf, self.pos)
         self.pos = end
         return value
@@ -876,11 +952,12 @@ class _Decoder:
         return self.u32() if first == 0xFF else first
 
     def chunk(self, length: int) -> bytes:
-        """The JS `readBytes`: clamps to the input but always advances by the declared length."""
-        start = min(self.pos, len(self.buf))
-        end = min(self.pos + length, len(self.buf))
+        """Return a byte slice wholly inside this stream's value area."""
+        if length < 0 or length > self.value_end - self.pos:
+            raise MarshalError("unexpected end of marshal data")
+        start = self.pos
         self.pos += length
-        return self.buf[start:end]
+        return self.buf[start:self.pos]
 
     def save_index(self) -> int:
         if self.save_pos is None or self.save_end is None:
@@ -889,7 +966,14 @@ class _Decoder:
             raise MarshalError("invalid marshal save table: save index table exhausted")
         (index,) = struct.unpack_from("<I", self.buf, self.save_pos)
         self.save_pos += 4
+        if not 1 <= index <= len(self.stored):
+            raise MarshalError("invalid marshal save table: save index outside the declared table")
         return index
+
+    def store(self, index: int, value) -> None:
+        if not 1 <= index <= len(self.stored):
+            raise MarshalError("invalid marshal save table: save index outside the declared table")
+        self.stored[index - 1] = value
 
     def value(self):
         if self.depth >= MAX_DEPTH:
@@ -901,24 +985,25 @@ class _Decoder:
             self.depth -= 1
 
     def _value(self):
-        if self.pos >= len(self.buf):
+        if self.pos >= self.value_end:
             raise MarshalError("unexpected end of marshal data")
         raw = self.u8()
         save = bool(raw & SAVE_MASK)
         opcode = raw & OPCODE_MASK
-        storage_index = self.save_index() if save else 0
-        value = self._decode_opcode(opcode, raw)
-        if save and 0 < storage_index <= len(self.stored):
-            self.stored[storage_index - 1] = value
+        value = self._decode_opcode(opcode, raw, save)
+        if save and opcode in (Op.TOKEN, Op.BUFFER, Op.LONG_STRING, Op.CPICKLED, Op.VAR_INTEGER):
+            self.store(self.save_index(), value)
         return value
 
     def items(self, count: int) -> list:
+        if count > MAX_ELEMENTS or count > self.value_end - self.pos:
+            raise MarshalError("unexpected end of marshal data")
         items = []
         for _ in range(count):
             items.append(self.value())
         return items
 
-    def _decode_opcode(self, opcode: int, raw: int):
+    def _decode_opcode(self, opcode: int, raw: int, save: bool = False):
         if opcode == Op.NONE:
             return None
         if opcode == Op.TRUE:
@@ -973,31 +1058,62 @@ class _Decoder:
         if opcode == Op.EMPTY_TUPLE:
             return ()
         if opcode == Op.ONE_TUPLE:
-            return (self.value(),)
+            index = self.save_index() if save else 0
+            value = (self.value(),)
+            if index:
+                self.store(index, value)
+            return value
         if opcode == Op.TWO_TUPLE:
+            index = self.save_index() if save else 0
             first = self.value()
-            return (first, self.value())
+            value = (first, self.value())
+            if index:
+                self.store(index, value)
+            return value
         if opcode == Op.TUPLE:
-            return tuple(self.items(self.size()))
+            count = self.size()
+            index = self.save_index() if save else 0
+            value = tuple(self.items(count))
+            if index:
+                self.store(index, value)
+            return value
         if opcode == Op.EMPTY_LIST:
             return List()
         if opcode == Op.ONE_LIST:
-            return List([self.value()])
+            value = List()
+            if save:
+                self.store(self.save_index(), value)
+            value.append(self.value())
+            return value
         if opcode == Op.LIST:
-            return List(self.items(self.size()))
+            count = self.size()
+            value = List()
+            if save:
+                self.store(self.save_index(), value)
+            value.extend(self.items(count))
+            return value
         if opcode == Op.DICT:
             count = self.size()
+            if count > MAX_ELEMENTS or count * 2 > self.value_end - self.pos:
+                raise MarshalError("unexpected end of marshal data")
             pairs = Dict()
+            if save:
+                self.store(self.save_index(), pairs)
             for _ in range(count):
                 value = self.value()  # the wire stores the value first, then the key
                 key = self.value()
                 pairs.append((key, value))
             return pairs
         if opcode == Op.OBJECT:
+            index = self.save_index() if save else 0
             name = self.value()
-            return Object(name, self.value())
+            value = Object(name, None)
+            if index:
+                self.store(index, value)
+            value.args = self.value()
+            return value
         if opcode in (Op.OBJECT_EX1, Op.OBJECT_EX2):
-            return self.object_ex(1 if opcode == Op.OBJECT_EX1 else 2)
+            return self.object_ex(1 if opcode == Op.OBJECT_EX1 else 2, save)
         if opcode == Op.SUB_STRUCT:
             return SubStruct(self.value())
         if opcode == Op.SUB_STREAM:
@@ -1012,13 +1128,16 @@ class _Decoder:
         if opcode == Op.BUFFER:
             return Buffer(self.chunk(self.size()))
         if opcode == Op.CPICKLED:
-            return CPickled(self.chunk(self.size()))
+            end = _pickle_end(self.buf, self.pos, self.value_end)
+            value = CPickled(self.buf[self.pos:end])
+            self.pos = end
+            return value
         if opcode == Op.SAVED_STREAM_ELEMENT:
             self.saved_refs += 1
             index = self.size()
-            if 0 < index <= len(self.stored):
-                return _clone(self.stored[index - 1])
-            return None
+            if 0 < index <= len(self.stored) and self.stored[index - 1] is not _UNSET:
+                return self.stored[index - 1]
+            raise MarshalError("invalid TY_REFERENCE in stream")
         if opcode == Op.PACKED_ROW:
             return self.packed_row()
         raise MarshalError(f"unknown marshal opcode 0x{raw:02x} at position {self.pos - 1}")
@@ -1028,27 +1147,33 @@ class _Decoder:
         if size == 0:
             return 0
         data = self.chunk(size)
-        if len(data) < size:
-            raise MarshalError("truncated variable-width integer", "TypeError")
-        number = int.from_bytes(data, "little")
-        return number if number <= 2**53 - 1 else BigUnsigned(number)
+        number = int.from_bytes(data, "little", signed=True)
+        if -(2**53 - 1) <= number <= 2**53 - 1:
+            return number
+        return BigSigned(number) if number < 0 else BigUnsigned(number)
 
-    def object_ex(self, kind: int) -> ObjectEx:
+    def object_ex(self, kind: int, save: bool = False) -> ObjectEx:
+        index = self.save_index() if save else 0
         header = self.value()
-        items = []
-        while self.pos < len(self.buf):
-            if self.buf[self.pos] & OPCODE_MASK == Op.PACKED_TERMINATOR:
+        value = ObjectEx(kind, header)
+        if index:
+            self.store(index, value)
+        while self.pos < self.value_end:
+            if self.buf[self.pos] == Op.PACKED_TERMINATOR:
                 self.pos += 1
                 break
-            items.append(self.value())
-        pairs = []
-        while self.pos < len(self.buf):
-            if self.buf[self.pos] & OPCODE_MASK == Op.PACKED_TERMINATOR:
+            value.items.append(self.value())
+        else:
+            raise MarshalError("unexpected end of marshal data")
+        while self.pos < self.value_end:
+            if self.buf[self.pos] == Op.PACKED_TERMINATOR:
                 self.pos += 1
                 break
             key = self.value()
-            pairs.append((key, self.value()))
-        return ObjectEx(kind, header, items, pairs)
+            value.pairs.append((key, self.value()))
+        else:
+            raise MarshalError("unexpected end of marshal data")
+        return value
 
     def descriptor(self) -> Descriptor:
         """Read a packed row's DBRowDescriptor. Every row of a rowset repeats the same
@@ -1057,7 +1182,7 @@ class _Decoder:
         if self.descriptor_cache is not None:
             (start, end), cached = self.descriptor_cache
             length = end - start
-            if self.buf[self.pos : self.pos + length] == self.buf[start:end] and self.pos + length <= len(self.buf):
+            if self.pos + length <= self.value_end and self.buf[self.pos : self.pos + length] == self.buf[start:end]:
                 self.pos += length
                 return cached
         start = self.pos
@@ -1147,7 +1272,7 @@ def plain(value):
 
     The wire keeps several string types apart: a `PyString` (what most server
     strings decode to) becomes `str`, or stays `bytes` if it is not UTF-8;
-    `WString`/`Token` become `str`; `Long`/`BigUnsigned` become `int`; `Dict`
+    `WString`/`Token` become `str`; `Long`/`BigSigned`/`BigUnsigned` become `int`; `Dict`
     becomes a `dict` (keys converted the same way); `List` a `list`; a
     `SubStream` is unwrapped; an `Object` becomes `(name, args)`."""
     if isinstance(value, PyString):
@@ -1155,7 +1280,7 @@ def plain(value):
             return bytes(value).decode("utf-8")
         except UnicodeDecodeError:
             return bytes(value)
-    if isinstance(value, (Long, BigUnsigned)):
+    if isinstance(value, (Long, BigSigned, BigUnsigned)):
         return int(value)
     if isinstance(value, (WString, Token)):
         return str(value)

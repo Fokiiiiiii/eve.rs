@@ -1514,13 +1514,14 @@ fn a_speed_fraction_keeps_the_course_but_wakes_a_stopped_ship() {
 }
 
 #[test]
-fn a_dock_request_from_out_of_range_stops_in_range_until_asked_again() {
+fn a_dock_request_from_out_of_range_is_accepted_on_arrival_without_a_second_command() {
     let mut scene = scene();
     let station = scene.system.body(STATION).unwrap().clone();
     // 50 km off the station's surface, at rest
     scene.pilots.get_mut(&SESSION).unwrap().ship.position =
         Vec3::new(1_000_000.0 + 1_047.0 + 50_000.0, 0.0, 0.0);
     scene.pilots.get_mut(&SESSION).unwrap().ship.velocity = Vec3::ZERO;
+    scene.bind(SESSION, NOON);
     let started = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);
     assert_eq!(started.last(), Some(&Out::Approaching { session: SESSION, command: 4, distance: 50_000.0 }));
 
@@ -1535,14 +1536,17 @@ fn a_dock_request_from_out_of_range_stops_in_range_until_asked_again() {
         - station.radius;
     assert!(distance <= DOCKING_RANGE, "ship stopped {distance} m from the station surface");
     assert!(scene.pilots[&SESSION].docking_approach.is_none());
-    assert!(scene.pilots[&SESSION].docking.is_none());
-    assert!(!arrived.iter().any(|out| matches!(out, Out::Notify { name: "OnDockingAccepted", .. })));
-    assert!(!arrived.iter().any(|out| matches!(out, Out::Accepted { command: 4, .. })));
-
-    let accepted = scene.command(SESSION, Command::Dock { station_id: STATION }, arrived_at);
-    assert!(accepted.iter().any(|out| matches!(out, Out::Notify { name: "OnDockingAccepted", .. })));
-    assert!(accepted.iter().any(|out| matches!(out, Out::Accepted { command: 4, .. })));
     assert!(scene.pilots[&SESSION].docking.is_some());
+    assert!(matches!(
+        arrived.first(),
+        Some(Out::Notify { name: "OnDockingAccepted", id_type: "charid", .. })
+    ));
+    let stop_update = arrived
+        .iter()
+        .find(|out| matches!(out, Out::Notify { name: "DoDestinyUpdate", .. }))
+        .expect("the pilot and observers receive the docking stop update");
+    assert_eq!(action_names(stop_update), ["SetBallMassive", "Stop"]);
+    assert!(!arrived.iter().any(|out| matches!(out, Out::Accepted { command: 4, .. })));
 
     let ready = scene.poll(arrived_at + seconds(4));
     assert_eq!(ready, [Out::Accepted { session: SESSION, command: DOCKING_READY_COMMAND, at: STATION }]);
@@ -1555,6 +1559,41 @@ fn a_dock_request_from_out_of_range_stops_in_range_until_asked_again() {
         completed.iter().any(|out| matches!(out, Out::Docked { session: SESSION, station_id: STATION, .. }))
     );
     assert!(scene.ship(SESSION, arrived_at + seconds(4)).is_none());
+}
+
+#[test]
+fn a_new_movement_order_cancels_a_pending_station_dock_approach() {
+    let mut scene = scene();
+    scene.pilots.get_mut(&SESSION).unwrap().ship.position =
+        Vec3::new(1_000_000.0 + 1_047.0 + 50_000.0, 0.0, 0.0);
+    scene.pilots.get_mut(&SESSION).unwrap().ship.velocity = Vec3::ZERO;
+    let started = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);
+    assert!(started.iter().any(|out| matches!(out, Out::Approaching { .. })));
+
+    let cancelled = scene.command(SESSION, Command::Stop, NOON + seconds(1));
+    assert!(cancelled.iter().any(|out| matches!(out, Out::Accepted { command: 3, .. })));
+    let later = scene.poll(NOON + seconds(400));
+    assert!(scene.pilots[&SESSION].docking_approach.is_none());
+    assert!(scene.pilots[&SESSION].docking.is_none());
+    assert!(!later.iter().any(|out| matches!(out, Out::Notify { name: "OnDockingAccepted", .. })));
+}
+
+#[test]
+fn a_station_dock_approach_that_arrives_while_blocked_is_not_accepted() {
+    let mut scene = scene();
+    scene.pilots.get_mut(&SESSION).unwrap().ship.position =
+        Vec3::new(1_000_000.0 + 1_047.0 + 50_000.0, 0.0, 0.0);
+    scene.pilots.get_mut(&SESSION).unwrap().ship.velocity = Vec3::ZERO;
+    let started = scene.command(SESSION, Command::Dock { station_id: STATION }, NOON);
+    assert!(started.iter().any(|out| matches!(out, Out::Approaching { .. })));
+
+    let arrived_at = NOON + seconds(400);
+    scene.pilots.get_mut(&SESSION).unwrap().no_jump_until = arrived_at + seconds(1);
+    let arrived = scene.poll(arrived_at);
+    assert!(scene.pilots[&SESSION].docking_approach.is_none());
+    assert!(scene.pilots[&SESSION].docking.is_none());
+    assert!(!arrived.iter().any(|out| matches!(out, Out::Notify { name: "OnDockingAccepted", .. })));
+    assert!(!arrived.iter().any(|out| matches!(out, Out::Refused { command: 4, .. })));
 }
 
 #[test]

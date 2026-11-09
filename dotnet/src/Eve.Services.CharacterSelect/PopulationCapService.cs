@@ -80,7 +80,7 @@ public sealed partial class PopulationCapService(
         if (await OwnedCharacterAsync(call) is not { } character)
             return new PyDict([]);
         var home = HomeOf(character, call.Session);
-        var systems = Decide(character, home).Systems;
+        var systems = Decide(character, home, call.Session.SessionId).Systems;
         if (systems.Count == 1 && systems[0] != character.SolarSystemId)
             await MoveAsync(character, systems[0], call.Cancellation);
         return Slots(character.Id, systems);
@@ -94,7 +94,7 @@ public sealed partial class PopulationCapService(
             throw Info("That character is not available on this account.");
         var target = Number(call.Arg(1)) is { } systemId and > 0 ? systemId : 0;
         var slotKey = JsSemantics.StringValue(call.Arg(2));
-        var offered = Decide(character, HomeOf(character, call.Session)).Systems;
+        var offered = Decide(character, HomeOf(character, call.Session), call.Session.SessionId).Systems;
         if (target == 0 || !offered.Contains((int)target) || slotKey != LoadSlotKey(character.Id, target))
             throw Info("That solar system is not offered for this character.");
         await MoveAsync(character, (int)target, call.Cancellation);
@@ -102,13 +102,13 @@ public sealed partial class PopulationCapService(
     }
 
     /// <summary>The systems the character may load into now, or the refusal when no system takes it.</summary>
-    private Decision Decide(Character character, long home)
+    private Decision Decide(Character character, long home, long sessionId)
     {
-        if (population.HasRoom(home, character.Id))
+        if (population.HasRoom(home, character.Id, sessionId))
             return new([(int)home]);
         if (character.StationId > 0)
             throw Full();
-        var alternatives = population.Alternatives((int)home, character.Id);
+        var alternatives = population.Alternatives((int)home, character.Id, sessionId);
         return alternatives.Count == 0 ? throw Full() : new(alternatives);
     }
 

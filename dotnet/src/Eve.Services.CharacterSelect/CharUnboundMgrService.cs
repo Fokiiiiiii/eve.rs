@@ -40,7 +40,8 @@ public sealed partial class CharUnboundMgrService(
     Func<CreationRequest, CancellationToken, Task<CreationOutcome>>? createCharacter = null,
     Func<long, long, CancellationToken, Task<bool>>? isCorporationCeo = null,
     Func<IReadOnlyList<Character>, CancellationToken, Task<IReadOnlyList<PyValue>>>? readCharacterSelectionWarsAsync = null,
-    Func<long, CancellationToken, ValueTask<long>>? warFactionOfAsync = null)
+    Func<long, CancellationToken, ValueTask<long>>? warFactionOfAsync = null,
+    Action<ClientSession>? announceSubscriptionTime = null)
 {
     /// <summary>What every session's role gets on top of the account's (the client shows staff roles and the base bits alike).</summary>
     public const long SessionBaseRole = 0x6000000080000000;
@@ -327,6 +328,7 @@ public sealed partial class CharUnboundMgrService(
     [Method("SelectCharacterID")]
     public async ValueTask<PyValue> SelectCharacterID(ServiceCall call)
     {
+        announceSubscriptionTime?.Invoke(call.Session);
         var skipTutorial = call.Args.Count > 2
             ? BooleanLike(call.Arg(2))
             : BooleanLike(call.Kwarg("skipTutorial") ?? None);
@@ -334,7 +336,10 @@ public sealed partial class CharUnboundMgrService(
         if (AccountOf(call) is not { } account || characterId <= 0)
             return None;
 
-        var character = await characters.GetAsync(characterId, Token(call));
+        await using var lifecycle = await online.AcquireCharacterLifecycleLockAsync(characterId, Token(call));
+        var character = readCharacterById is null
+            ? await characters.GetAsync(characterId, Token(call))
+            : await readCharacterById(characterId, Token(call));
         if (character is null)
             return None;
         if (character.AccountId != account || character.IsDeleted)
@@ -344,11 +349,12 @@ public sealed partial class CharUnboundMgrService(
         // The population cap is checked here as well as on the selection screen, because the screen's answer can be stale by now. The room is
 
         using var seat = population is not null && character.SolarSystemId > 0
-            ? population.TryReserve(character.SolarSystemId, character.Id) ?? throw Info("That solar system has no room for another pilot. Try again later.")
+            ? population.TryReserve(character.SolarSystemId, character.Id, call.Session.SessionId) ?? throw Info("That solar system has no room for another pilot. Try again later.")
             : null;
 
         var previousCharacterId = call.Session.CharacterId;
         var previousAttributes = call.Session.SnapshotAttributes();
+        using var notifications = call.Session.DeferNotifications();
         if (!online.TryBeginEnter(character.Id, call.Session.SessionId))
             throw Info($"{character.Name} is already online.");
 
@@ -432,6 +438,7 @@ public sealed partial class CharUnboundMgrService(
             AirNpeNotifications.NotifyStateChanged(call.Session, character.Id, airNpeStateChanged);
             if (!online.CompleteEnter(call.Session.SessionId))
                 throw new OperationCanceledException("The session closed during character entry.");
+            notifications.Commit();
             return None;
         }
         catch
@@ -515,6 +522,7 @@ public sealed partial class CharUnboundMgrService(
     [Method("PrepareCharacterForDelete")]
     public async ValueTask<PyValue> PrepareCharacterForDelete(ServiceCall call)
     {
+        await using var lifecycle = await online.AcquireCharacterLifecycleLockAsync(RequestCharacterId(call), Token(call));
         var (character, account) = await OwnedOfflineCharacter(call);
         await EnsureNotCorporationCeo(character, Token(call));
         if (character.DeletePrepareAt is { } queued)

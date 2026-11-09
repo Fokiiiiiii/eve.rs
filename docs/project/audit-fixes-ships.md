@@ -112,3 +112,25 @@ client checkout は `1dbb5711a072a146e1d228365668ac05655eefe1`。EveJS checkout 
 - 変更対象 Host / Ships / Dogma test projects の Release build はそれぞれ 0 warnings / 0 errors。
 - Host の1 skipped は `CharacterHostTests.Confirmed_ship_clone_jump_moves_the_capsule_settles_state_and_notifies_after_space_entry` に既存 skip 属性があるため。pass には数えていない。
 - GUI client / 実 client trace は未確認。EveJS は実行せず、ソース参照のみ。
+
+## インスペース grouped unload の追補
+
+容量不足の Host 経路も確認したところ、dock 内の grouped unload と異なり、インスペース処理はモジュールごとにシミュレーションを更新してから個別 transaction で在庫を更新し、`ShipRefused` を UserError に変換していなかった。2基の gun が各40発を保持し、cargo に42発分の空きがあるケースでは、V24.01 が呼ぶ grouped `UnloadAmmo` は全量を先に検査すべきだが、元の Host 経路は1基目の40発だけ移して2基目を無言で拒否していた。
+
+V24.01 `clientDogmaLocation.py:1127-1132` は容量不足を `NotEnoughCargoSpace` として扱い、`1136-1140` は複数 module ID の `UnloadAmmo` を一度に呼ぶ。EveJS `moduleOperation.js:4042-4051,4088-4099` も grouped request の対象を順に処理する。eve.rs は各 gun の実残弾差を simulation から集めた後、全対象の在庫移動と容量検査を単一 domain transaction で行う。拒否時は `ShipErrors.Of` で `NotEnoughCargoSpace` を返し、inventory を変えず、既に simulation から引いた残弾を `RoundsChange.Add` で戻す。実残弾差を使うため、発射済みで DB の item 数量より simulation の残弾が少ない場合も、DB 数量を使った保守的な誤拒否をしない。
+
+正しい再現条件に直した Host E2E テストは、修正前に `Assert.Throws` が「exception が出なかった」と失敗した。修正後は `CharacterHostTests.DogmaIM_unload_ammo_in_space_returns_the_cargo_capacity_user_error_without_mutating_items` が実 Host 登録 route を通り、exact UserError payload、両 charge item と cargo の不変、通知なしを確認する。`ReloadServiceTests` の active-gun ケースは sim が5発を取り除き DB charge が80発ある状態で、5発分の room なら5発だけ unload されること、room が4発分なら正しい error・inventory 不変・5発の simulation restore request を確認する。
+
+Host のこのテストでは `SpaceSessions` を構成したが、pilot を実 simulator に参加させていない。稼働 gun の前後差と容量 refusal 後の restore は Dogma test rig の `FakeRounds` で検証した。GUI client と実 Rust simulator 上の grouped ammo unload は未確認。
+
+最初の Host テスト草案は `EVE_SIM=off` で実行してしまい、インスペース route を通っていなかったため、その結果は回帰確認に使わなかった。`simSocket` を設定して Host の `SpaceSessions` を構成した後、旧 per-module route で exception が出ない red を確認し、その後の実装で同じ Host test が通ることを確認した。
+
+## 最終検証
+
+`eve_p5` に対し、修正対象プロジェクトを Release build し warning 0 / error 0 を確認した。変更に関連する選択テストは次のとおり。
+
+- `Eve.Host.Tests.CharacterHostTests`: 62 passed / 0 failed / 1 skipped。
+- `Eve.Ships.Tests` の `AmmoTests`, `AmmoRaceTests`, `ReloadTests`: 18 passed / 0 failed / 0 skipped。
+- `Eve.Services.Dogma.Tests` の `ReloadServiceTests`, `ShipErrorTests`, `MissingDogmaRpcTests`, `StructureControlInfoTests`: 23 passed / 0 failed / 0 skipped。
+
+Host の skip は `Confirmed_ship_clone_jump_moves_the_capsule_settles_state_and_notifies_after_space_entry` で、`EVE_ABYSSAL_SIM_BINARY` と `EVE_ABYSSAL_SIM_SDE` がないため実行されなかった。pass に含めていない。client GUI、実 Rust simulator の grouped unload、EveJS runtime は未確認。EveJS はソース delivery のため行単位照合のみ行った。

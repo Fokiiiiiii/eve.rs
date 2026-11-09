@@ -154,7 +154,10 @@ public sealed class NpcFactionStandingTests
                       AND application_name = $1
                       AND state = 'active'
                       AND query ILIKE 'UPDATE%'
-                      AND strpos(query, $2 || '.relations') > 0
+                      AND (
+                          strpos(query, '"' || $2 || '".relations') > 0
+                          OR strpos(query, $2 || '.relations') > 0
+                      )
                 )
                 """, connection);
             command.Parameters.AddWithValue(applicationName);

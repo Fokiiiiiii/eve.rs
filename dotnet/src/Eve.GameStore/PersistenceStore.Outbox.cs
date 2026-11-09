@@ -98,6 +98,10 @@ public sealed partial class PersistenceStore
             }
             await tx.CommitAsync(ct);
             _ensuredTables.TryAdd(name, 0);
+            if (AfterEnqueueCommitAsync is { } afterCommit)
+            {
+                await afterCommit(operation, ct);
+            }
             return operation;
         }
         catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
@@ -116,6 +120,22 @@ public sealed partial class PersistenceStore
         await using var tx = await connection.BeginTransactionAsync(ct);
         var active = await AssertActiveAsync(connection, tx, fence, ct);
         var operation = await ReadOperationAsync(connection, tx, operationId, ct);
+        return operation is null ? null : RequireOwnedBy(operation, active);
+    }
+
+    /// <summary>Finds an unacknowledged journal entry for a table owned by this fence.</summary>
+    public async Task<PersistenceOperation?> FindOperationForTableAsync(string table, OwnerFence fence, CancellationToken ct = default)
+    {
+        var name = TableNames.RequirePersistence(table, "persistence operation table");
+        await using var connection = await _source.OpenConnectionAsync(ct);
+        await using var tx = await connection.BeginTransactionAsync(ct);
+        var active = await AssertActiveAsync(connection, tx, fence, ct);
+        await using var command = Command(
+            connection, tx,
+            $"SELECT {OperationColumns} FROM {Qualified(TableNames.Outbox)} WHERE table_name = @table AND owner_role = @role FOR UPDATE",
+            ("table", NpgsqlDbType.Text, name), ("role", NpgsqlDbType.Text, active.OwnerRole));
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        var operation = await reader.ReadAsync(ct) ? ReadOperation(reader) : null;
         return operation is null ? null : RequireOwnedBy(operation, active);
     }
 
@@ -261,6 +281,9 @@ public sealed partial class PersistenceStore
     /// <summary>Applies a journaled batch and removes it in one transaction. Null when it is already gone.</summary>
     /// <summary>Optional transaction-bound observer called before a pending journal operation is applied.</summary>
     public Func<NpgsqlConnection, NpgsqlTransaction, PersistenceOperation, CancellationToken, Task>? BeforeApplyOperationAsync { get; set; }
+
+    /// <summary>Optional observer after an enqueue transaction commits, for simulating a lost commit acknowledgment.</summary>
+    public Func<PersistenceOperation, CancellationToken, Task>? AfterEnqueueCommitAsync { get; set; }
 
     public async Task<PersistenceOperation?> ReconcileOperationAsync(long operationId, string expectedTable, OwnerFence fence, CancellationToken ct = default)
     {

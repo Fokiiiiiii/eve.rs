@@ -31,10 +31,12 @@ public partial class HostServerTests
     public async Task Agent_mgr_read_rpcs_are_registered_on_the_host_and_return_client_consumed_shapes()
     {
         const long acceptedAt = 133801234567890123;
-        var state = JsonNode.Parse("""
+        var replayUntil = DateTimeOffset.UtcNow.AddHours(1).ToFileTime();
+        var expiredReplay = DateTimeOffset.UtcNow.AddHours(-1).ToFileTime();
+        var state = JsonNode.Parse($$"""
             {
               "completedCareerAgentIDs": { "7004": true, "7005": false },
-              "declineTimersByAgentID": { "7004": "133801234567890123" },
+              "declineTimersByAgentID": { "7004": "{{replayUntil}}", "7005": "{{expiredReplay}}" },
               "epicArcProgress": {
                 "missionStatusByArcID": {
                   "1200": {
@@ -322,8 +324,10 @@ public partial class HostServerTests
         var noMissionOid = BoundObjects.ExtractName(Assert.IsType<PySubStruct>(noMissionBinding.Items[0]))!;
         Assert.Equal(PyNone.Instance,
             await BoundCallAsync(14, noMissionOid, "GetMissionJournalInfo", new PyTuple([])));
-        Assert.Equal(new PyLong(acceptedAt),
+        Assert.Equal(new PyLong(replayUntil),
             await BoundCallAsync(23, oid, "GetReplayTimestamp", new PyTuple([])));
+        Assert.Equal(PyNone.Instance,
+            await BoundCallAsync(30, noMissionOid, "GetReplayTimestamp", new PyTuple([])));
         var keywords = Assert.IsType<PyDict>(await BoundCallAsync(
             24, oid, "GetMissionKeywords", new PyTuple([new PyStr("courier-12")])));
         Assert.Equal("Unknown Agent", T(Get(keywords, new PyStr("agentName"))));

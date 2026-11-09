@@ -2847,3 +2847,7 @@ Security review follow-up: `officeManager.GetMyCorporationsOffices` now consumes
 - A delayed denial ends the client's docking travel state with `OnDockingFinished` while leaving the session in space. Evidence, full V24 caller/consumer tracing and comparisons are in [the deepfix handoff](service-audit/deepfix-undock-dock-sequences.md); the graphical client check remains open.
 - The crate-sim r15 audit corrected the station approach behavior: one out-of-range V24 `CmdDock` now starts following, and arrival starts the ordinary four-second docking delay after simulation-owned restrictions are rechecked. The Host's final timer/module/access decision and persisted dock transition are unchanged. Rust regressions cover arrival without a second command, cancellation, changed restrictions, and the sim-link sequence; no graphical-client run is recorded. Evidence: [crate-sim audit fixes](audit-fixes-crate-sim.md).
 - The crate-space r15 audit also made the recorded scene comparisons require the pinned SDE, so a missing static-data setup fails visibly instead of returning early as a passing test. Evidence: [crate-space audit fixes](audit-fixes-crate-space.md).
+
+## GameStore persistence audit fixes (2026-11-09)
+
+- The seven verified findings from the GameStore audit are fixed with PostgreSQL regressions. The GameStore and Importer slices pass on `eve_p3` and `eve_p9`; selected Host results, the single optional skip, and the notification-test synchronization fix are recorded with the EveJS/client checks in [GameStore audit fixes](audit-fixes-gamestore.md).

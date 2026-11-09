@@ -34,6 +34,16 @@ public static class AgentMissionStoreRecords
             {
                 missions.Remove(key);
             }
+
+            if (record.DeclineUntil is { } declineUntil)
+            {
+                if (merged["declineTimersByAgentID"] is not JsonObject replayTimers)
+                {
+                    replayTimers = new JsonObject();
+                    merged["declineTimersByAgentID"] = replayTimers;
+                }
+                replayTimers[key] = FileTime(declineUntil);
+            }
         }
         return merged;
     }

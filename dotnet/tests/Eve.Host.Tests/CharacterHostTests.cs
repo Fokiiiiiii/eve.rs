@@ -2047,6 +2047,261 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
     }
 
     [PgFact]
+    public async Task DogmaIM_unload_ammo_rejects_a_fitting_destination_without_changing_items_or_notifying()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var ship = await GiveItemAsync(rig, character, 587, rig.Station, ItemFlags.Hangar, singleton: true);
+        await SetShipAsync(rig, character, ship);
+        var gun = await GiveItemAsync(rig, character, 10678, ship, 28, singleton: true);
+        var otherGun = await GiveItemAsync(rig, character, 10678, ship, 29, singleton: true);
+        var charge = await PutItemAsync(rig, character, 222, ship, 28, quantity: 40, singleton: false);
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = sink };
+        session.Set("stationid", new PyLong(rig.Station));
+        session.Set("shipid", new PyLong(ship));
+        var dogma = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("dogmaIM"));
+        var nested = Py.Tuple(new PyStr("UnloadAmmo"), Py.Tuple(
+            new PyLong(ship), new PyList([new PyLong(gun)]),
+            Py.Tuple(new PyLong(ship), new PyLong(character), new PyInt(29)), PyNone.Instance), PyNone.Instance);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => CallAsync(dogma, "MachoBindObject", session,
+            Py.Tuple(new PyLong(rig.Station), new PyInt(3)), nested));
+
+        Assert.Equal("CantMoveChargesBetweenModules", error.Error.UserErrorMessage);
+        var items = new PgItemStore(rig.Source, rig.InventorySchema);
+        Assert.Equal((ship, 28, 40L), ((await items.GetAsync(charge))!.LocationId, (await items.GetAsync(charge))!.Flag,
+            (await items.GetAsync(charge))!.Quantity));
+        Assert.Equal(otherGun, Assert.Single(await items.InLocationAsync(ship, character), item => item.Flag == 29).Id);
+        Assert.Equal((222, 40L), ((await items.GetAsync(charge))!.TypeId, (await items.GetAsync(charge))!.Quantity));
+        Assert.Empty(Notifications(sink));
+    }
+
+    [PgFact]
+    public async Task DogmaIM_load_ammo_from_a_personal_container_moves_the_selected_stack_into_the_fitted_module()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var ship = await GiveItemAsync(rig, character, 587, rig.Station, ItemFlags.Hangar, singleton: true);
+        await SetShipAsync(rig, character, ship);
+        var gun = await GiveItemAsync(rig, character, 10678, ship, 28, singleton: true);
+        var container = await GiveItemAsync(rig, character, 17365, rig.Station, ItemFlags.Hangar, singleton: true);
+        var stack = await PutItemAsync(rig, character, 222, container, CharacterShips.ContainerFlag, quantity: 40, singleton: false);
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = sink };
+        session.Set("stationid", new PyLong(rig.Station));
+        session.Set("shipid", new PyLong(ship));
+        var dogma = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("dogmaIM"));
+        var nested = Py.Tuple(new PyStr("LoadAmmo"), Py.Tuple(
+            new PyLong(ship), new PyList([new PyLong(gun)]), new PyList([new PyLong(stack)]), new PyLong(container)), PyNone.Instance);
+
+        var bound = Assert.IsType<PyTuple>(await CallAsync(dogma, "MachoBindObject", session,
+            Py.Tuple(new PyLong(rig.Station), new PyInt(3)), nested));
+
+        Assert.IsType<PyNone>(bound.Items[1]);
+        var items = new PgItemStore(rig.Source, rig.InventorySchema);
+        var loaded = Assert.IsType<Eve.Inventory.Item>(await items.GetAsync(stack));
+        Assert.Equal((character, ship, 28, 40L), (loaded.OwnerId, loaded.LocationId, loaded.Flag, loaded.Quantity));
+        Assert.Empty(await items.InLocationAsync(container, character));
+        Assert.Contains("OnChargeBeingLoadedToModule", Notifications(sink).Select(notification => notification.Name));
+        await rig.RestartAsync();
+        var persisted = Assert.IsType<Eve.Inventory.Item>(await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(stack));
+        Assert.Equal((character, ship, 28, 40L), (persisted.OwnerId, persisted.LocationId, persisted.Flag, persisted.Quantity));
+    }
+
+    [PgFact]
+    public async Task DogmaIM_unload_ammo_fits_the_exact_remaining_cargo_volume_and_merges_the_stack()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var ship = await GiveItemAsync(rig, character, 587, rig.Station, ItemFlags.Hangar, singleton: true);
+        await SetShipAsync(rig, character, ship);
+        var gun = await GiveItemAsync(rig, character, 10678, ship, 28, singleton: true);
+        var charge = await PutItemAsync(rig, character, 222, ship, 28, quantity: 40, singleton: false);
+        var dogma = await Eve.Dogma.DogmaStatic.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        await dogma.EnsureTypesAsync([587, 222]);
+        var capacity = dogma.Type(587)!.Attributes[dogma.AttributeId("capacity")!.Value];
+        var unitVolume = dogma.Type(222)!.Attributes[dogma.AttributeId("volume")!.Value];
+        var cargoQuantity = checked((long)Math.Floor((capacity - 40 * unitVolume) / unitVolume));
+        var cargoStack = await PutItemAsync(rig, character, 222, ship, CharacterShips.CargoFlag, cargoQuantity, singleton: false);
+        var session = new ClientSession { CharacterId = character, UserId = 1 };
+        session.Set("stationid", new PyLong(rig.Station));
+        session.Set("shipid", new PyLong(ship));
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("dogmaIM"));
+        var nested = Py.Tuple(new PyStr("UnloadAmmo"), Py.Tuple(
+            new PyLong(ship), new PyList([new PyLong(gun)]), new PyLong(ship), PyNone.Instance), PyNone.Instance);
+
+        var bound = Assert.IsType<PyTuple>(await CallAsync(service, "MachoBindObject", session,
+            Py.Tuple(new PyLong(rig.Station), new PyInt(3)), nested));
+
+        Assert.IsType<PyList>(bound.Items[1]);
+        var items = new PgItemStore(rig.Source, rig.InventorySchema);
+        Assert.Equal(cargoQuantity + 40, (await items.GetAsync(cargoStack))!.Quantity);
+        Assert.Null(await items.GetAsync(charge));
+        Assert.True((cargoQuantity + 40) * unitVolume <= capacity + 1e-7);
+    }
+
+    [PgFact]
+    public async Task DogmaIM_unload_ammo_preflights_all_modules_when_ship_cargo_has_room_for_only_one()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var ship = await GiveItemAsync(rig, character, 587, rig.Station, ItemFlags.Hangar, singleton: true);
+        await SetShipAsync(rig, character, ship);
+        var firstGun = await GiveItemAsync(rig, character, 10678, ship, 28, singleton: true);
+        var secondGun = await GiveItemAsync(rig, character, 10678, ship, 29, singleton: true);
+        var firstCharge = await PutItemAsync(rig, character, 222, ship, 28, quantity: 40, singleton: false);
+        var secondCharge = await PutItemAsync(rig, character, 222, ship, 29, quantity: 40, singleton: false);
+        var dogma = await Eve.Dogma.DogmaStatic.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        await dogma.EnsureTypesAsync([587, 222]);
+        var capacity = dogma.Type(587)!.Attributes[dogma.AttributeId("capacity")!.Value];
+        var unitVolume = dogma.Type(222)!.Attributes[dogma.AttributeId("volume")!.Value];
+        var cargoQuantity = checked((long)Math.Floor((capacity - 40 * unitVolume) / unitVolume));
+        var cargoStack = await PutItemAsync(rig, character, 222, ship, CharacterShips.CargoFlag, cargoQuantity, singleton: false);
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = sink };
+        session.Set("stationid", new PyLong(rig.Station));
+        session.Set("shipid", new PyLong(ship));
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("dogmaIM"));
+        var nested = Py.Tuple(new PyStr("UnloadAmmo"), Py.Tuple(
+            new PyLong(ship), new PyList([new PyLong(firstGun), new PyLong(secondGun)]), new PyLong(ship), PyNone.Instance), PyNone.Instance);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => CallAsync(service, "MachoBindObject", session,
+            Py.Tuple(new PyLong(rig.Station), new PyInt(3)), nested));
+
+        Assert.Equal("NotEnoughCargoSpace", error.Error.UserErrorMessage);
+        var items = new PgItemStore(rig.Source, rig.InventorySchema);
+        Assert.Equal(80, (await items.GetAsync(firstCharge))!.Quantity + (await items.GetAsync(secondCharge))!.Quantity);
+        Assert.Equal(cargoQuantity, (await items.GetAsync(cargoStack))!.Quantity);
+        Assert.Empty(Notifications(sink));
+    }
+
+    [PgFact]
+    public async Task DogmaIM_unload_ammo_to_a_personal_container_returns_the_landed_item_and_persists_both_sides()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var ship = await GiveItemAsync(rig, character, 587, rig.Station, ItemFlags.Hangar, singleton: true);
+        await SetShipAsync(rig, character, ship);
+        var gun = await GiveItemAsync(rig, character, 10678, ship, 28, singleton: true);
+        var charge = await PutItemAsync(rig, character, 222, ship, 28, quantity: 40, singleton: false);
+        var container = await GiveItemAsync(rig, character, 17365, rig.Station, ItemFlags.Hangar, singleton: true);
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = sink };
+        session.Set("stationid", new PyLong(rig.Station));
+        session.Set("shipid", new PyLong(ship));
+        var dogma = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("dogmaIM"));
+        var nested = Py.Tuple(new PyStr("UnloadAmmo"), Py.Tuple(
+            new PyLong(ship), new PyList([new PyLong(gun)]),
+            Py.Tuple(new PyLong(container), new PyLong(character), new PyInt(CharacterShips.ContainerFlag)), new PyLong(20)), PyNone.Instance);
+
+        var bound = Assert.IsType<PyTuple>(await CallAsync(dogma, "MachoBindObject", session,
+            Py.Tuple(new PyLong(rig.Station), new PyInt(3)), nested));
+
+        var movedId = InventoryId(Assert.Single(Assert.IsType<PyList>(bound.Items[1]).Items));
+        var items = new PgItemStore(rig.Source, rig.InventorySchema);
+        Assert.Equal((character, container, CharacterShips.ContainerFlag, 20L),
+            ((await items.GetAsync(movedId))!.OwnerId, (await items.GetAsync(movedId))!.LocationId,
+                (await items.GetAsync(movedId))!.Flag, (await items.GetAsync(movedId))!.Quantity));
+        Assert.Equal((ship, 28, 20L), ((await items.GetAsync(charge))!.LocationId, (await items.GetAsync(charge))!.Flag,
+            (await items.GetAsync(charge))!.Quantity));
+        var notifications = Notifications(sink).Select(notification => notification.Name).ToArray();
+        Assert.Contains("OnItemChange", notifications);
+        Assert.Contains("OnModuleAttributeChanges", notifications);
+        Assert.True(Array.IndexOf(notifications, "OnItemChange") < Array.IndexOf(notifications, "OnModuleAttributeChanges"));
+        await rig.RestartAsync();
+        var persisted = new PgItemStore(rig.Source, rig.InventorySchema);
+        Assert.Equal(20, (await persisted.GetAsync(movedId))!.Quantity);
+        Assert.Equal(20, (await persisted.GetAsync(charge))!.Quantity);
+    }
+
+    [PgFact]
+    public async Task DogmaIM_load_ammo_from_a_corporation_container_requires_take_access_and_changes_item_owner()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        await rig.AddCorporationMemberAsync(character);
+        var corporation = (await rig.Characters.GetAsync(character))!.CorporationId;
+        var ship = await GiveItemAsync(rig, character, 587, rig.Station, ItemFlags.Hangar, singleton: true);
+        await SetShipAsync(rig, character, ship);
+        var gun = await GiveItemAsync(rig, character, 10678, ship, 28, singleton: true);
+        var container = await GiveItemAsync(rig, corporation, 17365, rig.Station, ItemFlags.CorpSAG1, singleton: true);
+        var stack = await PutItemAsync(rig, corporation, 222, container, CharacterShips.ContainerFlag, quantity: 40, singleton: false);
+        var dogma = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("dogmaIM"));
+
+        async Task<PyValue> LoadAsync(RecordingPacketSink sink)
+        {
+            var session = new ClientSession { CharacterId = character, UserId = 1, Sink = sink };
+            session.Set("stationid", new PyLong(rig.Station));
+            session.Set("shipid", new PyLong(ship));
+            session.Set("corpid", new PyLong(corporation));
+            var nested = Py.Tuple(new PyStr("LoadAmmo"), Py.Tuple(
+                new PyLong(ship), new PyList([new PyLong(gun)]), new PyList([new PyLong(stack)]), new PyLong(container)), PyNone.Instance);
+            return Assert.IsType<PyTuple>(await CallAsync(dogma, "MachoBindObject", session,
+                Py.Tuple(new PyLong(rig.Station), new PyInt(3)), nested)).Items[1];
+        }
+
+        var deniedSink = new RecordingPacketSink();
+        var denied = await Assert.ThrowsAsync<MachoWrappedException>(() => LoadAsync(deniedSink));
+        Assert.Equal("CrpAccessDenied", denied.Error.UserErrorMessage);
+        Assert.Equal((corporation, container, CharacterShips.ContainerFlag, 40L),
+            ((await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(stack))!.OwnerId,
+                (await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(stack))!.LocationId,
+                (await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(stack))!.Flag,
+                (await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(stack))!.Quantity));
+        Assert.Empty(Notifications(deniedSink));
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var roles = new NpgsqlCommand(
+            $"UPDATE {rig.CorporationsSchema}.members SET roles_hq=$2 WHERE character_id=$1", connection))
+        {
+            roles.Parameters.Add(new NpgsqlParameter { Value = character });
+            roles.Parameters.Add(new NpgsqlParameter { Value = (1L << 13) | (1L << 20) });
+            Assert.Equal(1, await roles.ExecuteNonQueryAsync());
+        }
+
+        var allowedSink = new RecordingPacketSink();
+        Assert.IsType<PyNone>(await LoadAsync(allowedSink));
+        var loaded = await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(stack);
+        Assert.Equal((character, ship, 28, 40L), (loaded!.OwnerId, loaded.LocationId, loaded.Flag, loaded.Quantity));
+        Assert.Contains("OnChargeBeingLoadedToModule", Notifications(allowedSink).Select(notification => notification.Name));
+        Assert.Contains("OnItemChange", Notifications(allowedSink).Select(notification => notification.Name));
+        await rig.RestartAsync();
+        var persisted = await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(stack);
+        Assert.Equal((character, ship, 28, 40L), (persisted!.OwnerId, persisted.LocationId, persisted.Flag, persisted.Quantity));
+    }
+
+    [PgFact]
+    public async Task DogmaIM_load_ammo_from_an_out_of_range_container_refuses_without_mutating_or_notifying()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var ship = await GiveItemAsync(rig, character, 587, rig.Station, ItemFlags.Hangar, singleton: true);
+        await SetShipAsync(rig, character, ship);
+        var gun = await GiveItemAsync(rig, character, 10678, ship, 28, singleton: true);
+        var container = await GiveItemAsync(rig, character, 17365, rig.Station + 1, ItemFlags.Hangar, singleton: true);
+        var stack = await PutItemAsync(rig, character, 222, container, CharacterShips.ContainerFlag, quantity: 40, singleton: false);
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = sink };
+        session.Set("stationid", new PyLong(rig.Station));
+        session.Set("shipid", new PyLong(ship));
+        var dogma = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("dogmaIM"));
+        var nested = Py.Tuple(new PyStr("LoadAmmo"), Py.Tuple(
+            new PyLong(ship), new PyList([new PyLong(gun)]), new PyList([new PyLong(stack)]), new PyLong(container)), PyNone.Instance);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => CallAsync(dogma, "MachoBindObject", session,
+            Py.Tuple(new PyLong(rig.Station), new PyInt(3)), nested));
+
+        Assert.Equal("GenericTooFarAway", error.Error.UserErrorMessage);
+        Assert.Equal((character, container, CharacterShips.ContainerFlag, 40L),
+            ((await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(stack))!.OwnerId,
+                (await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(stack))!.LocationId,
+                (await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(stack))!.Flag,
+                (await new PgItemStore(rig.Source, rig.InventorySchema).GetAsync(stack))!.Quantity));
+        Assert.Empty(Notifications(sink));
+    }
+
+    [PgFact]
     public async Task DogmaIM_concurrent_ammo_unloads_serialize_capacity_checks_for_a_corporation_container()
     {
         await using var rig = await CharacterHostRig.CreateAsync();

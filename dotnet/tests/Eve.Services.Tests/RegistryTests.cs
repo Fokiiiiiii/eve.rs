@@ -74,8 +74,7 @@ public class RegistryTests
         var registry = new ServiceRegistry();
         var service = new AsyncReleaseStub();
         var session = new ClientSession();
-        registry.RegisterBoundObject("N=1:1", service, new PyLong(100));
-        session.RememberBoundObject("N=1:1");
+        registry.RegisterBoundObjectForSession("N=1:1", service, session, new PyLong(100));
         Assert.False(await registry.UnregisterBoundObjectAsync("N=1:1", session, 99));
         Assert.Same(service, registry.Lookup("N=1:1"));
         Assert.Contains("N=1:1", session.BoundOids);
@@ -98,8 +97,7 @@ public class RegistryTests
         var service = new AsyncReleaseStub();
         var owner = new ClientSession();
         var foreign = new ClientSession();
-        registry.RegisterBoundObject(oid, service, new PyLong(100));
-        owner.RememberBoundObject(oid);
+        registry.RegisterBoundObjectForSession(oid, service, owner, new PyLong(100));
         var dispatcher = new PacketDispatcher(registry, () => 0);
         static PyValue Release(long refId) => Py.Tuple(
             new PyInt(Eve.Macho.MachoMessage.Notification), PyNone.Instance, PyNone.Instance, PyNone.Instance,
@@ -122,6 +120,39 @@ public class RegistryTests
         Assert.True(await dispatch);
         Assert.True(await dispatcher.DispatchAsync(Release(100), owner));
         Assert.Equal(1, service.Calls);
+    }
+
+    [Fact]
+    public async Task Releasing_one_shared_bound_object_holder_keeps_the_other_until_its_release()
+    {
+        const string oid = "N=1:shared";
+        var registry = new ServiceRegistry();
+        var service = new AsyncReleaseStub();
+        var first = new ClientSession();
+        var second = new ClientSession();
+        registry.RegisterBoundObjectForSession(oid, service, first, new PyLong(100));
+        registry.RegisterBoundObjectForSession(oid, service, second, new PyLong(100));
+        var dispatcher = new PacketDispatcher(registry, () => 0);
+        static PyValue Release(string objectId) => Py.Tuple(
+            new PyInt(Eve.Macho.MachoMessage.Notification), PyNone.Instance, PyNone.Instance, PyNone.Instance,
+            Py.Tuple(Py.Tuple(new PyStr(objectId), new PyStr("ClientHasReleasedTheseObjects"), Py.Tuple(), PyNone.Instance)),
+            Py.Dict(("OID-", Py.Dict((objectId, new PyLong(100))))));
+
+        Assert.True(await dispatcher.DispatchAsync(Release(oid), first));
+        Assert.Empty(first.BoundOids);
+        Assert.Contains(oid, second.BoundOids);
+        Assert.Null(registry.Lookup(oid, first));
+        Assert.Same(service, registry.Lookup(oid, second));
+        Assert.Same(service, registry.Lookup(oid));
+        Assert.Equal(0, service.Calls);
+
+        var finalRelease = dispatcher.DispatchAsync(Release(oid), second);
+        Assert.False(finalRelease.IsCompleted);
+        Assert.Null(registry.Lookup(oid));
+        Assert.Empty(second.BoundOids);
+        Assert.Equal(1, service.Calls);
+        service.Completion.SetResult();
+        Assert.True(await finalRelease);
     }
 
     [Fact]

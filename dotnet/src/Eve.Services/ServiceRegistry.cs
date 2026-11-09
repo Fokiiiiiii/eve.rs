@@ -10,6 +10,7 @@ public sealed class ServiceRegistry
 {
     private readonly Dictionary<string, IService> _services = new(StringComparer.Ordinal);
     private readonly Dictionary<string, IService> _boundObjects = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, HashSet<ClientSession>> _boundObjectSessions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, PyValue?> _boundObjectParams = new(StringComparer.Ordinal);
     private readonly Dictionary<string, long> _boundObjectRefIds = new(StringComparer.Ordinal);
     private readonly object _gate = new();
@@ -57,11 +58,33 @@ public sealed class ServiceRegistry
     {
         lock (_gate)
         {
-            _boundObjects[oid] = service;
-            if (refId is PyLong { Value: var value } && (!_boundObjectRefIds.TryGetValue(oid, out var previous) || value > previous))
+            RegisterBoundObjectCore(oid, service, refId);
+        }
+    }
+
+    /// <summary>Records that a bind handed <paramref name="oid"/> to <paramref name="session"/>.</summary>
+    public void RegisterBoundObjectForSession(string oid, IService service, ClientSession session, PyValue? refId = null)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        lock (_gate)
+        {
+            RegisterBoundObjectCore(oid, service, refId);
+            if (!_boundObjectSessions.TryGetValue(oid, out var sessions))
             {
-                _boundObjectRefIds[oid] = value;
+                sessions = new HashSet<ClientSession>(ReferenceEqualityComparer.Instance);
+                _boundObjectSessions.Add(oid, sessions);
             }
+            sessions.Add(session);
+        }
+        session.RememberBoundObject(oid);
+    }
+
+    private void RegisterBoundObjectCore(string oid, IService service, PyValue? refId)
+    {
+        _boundObjects[oid] = service;
+        if (refId is PyLong { Value: var value } && (!_boundObjectRefIds.TryGetValue(oid, out var previous) || value > previous))
+        {
+            _boundObjectRefIds[oid] = value;
         }
     }
 
@@ -104,6 +127,34 @@ public sealed class ServiceRegistry
         var receipt = DetachBoundObject(oid, session, releasedRefId, out var existed);
         if (receipt is not null) await receipt(cancellationToken).ConfigureAwait(false);
         return existed;
+    }
+
+    /// <summary>Releases the bound-object references held by a session which has disconnected.</summary>
+    public async Task<int> ReleaseSessionBoundObjectsAsync(ClientSession session, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        var released = 0;
+        var failures = new List<Exception>();
+        foreach (var oid in session.BoundOids)
+        {
+            try
+            {
+                var cleanup = DetachBoundObject(oid, session, null, out var existed);
+                if (existed) released++;
+                if (cleanup is not null) await cleanup(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception error)
+            {
+                failures.Add(error);
+            }
+        }
+        if (failures.Count > 0)
+            throw new AggregateException("Bound objects held by the session could not all be released.", failures);
+        return released;
     }
 
     private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, Func<CancellationToken, ValueTask>> _pendingBoundReleases = new();
@@ -164,55 +215,104 @@ public sealed class ServiceRegistry
 
         IService? service;
         bool existed;
+        bool removedRegistryEntry;
+        bool partiallyReleased;
+        var sessionsToForget = new List<ClientSession>();
         lock (_gate)
         {
             if (releasedRefId is { } released && _boundObjectRefIds.TryGetValue(oid, out var latest) && released < latest)
             {
                 return false;
             }
-            _boundObjectRefIds.Remove(oid);
             service = _boundObjects.GetValueOrDefault(oid);
-            if (service is ICapturedBoundObjectReleaseHandler capturing)
-                captured = capturing.CaptureBoundObjectRelease(oid, session);
-            existed = _boundObjects.Remove(oid);
-            _boundObjectParams.Remove(oid);
-        }
-
-        releasedService = existed ? service : null;
-        var preserveIdentity = service is IReusableBoundObject { ReuseBoundObjectForSession: true };
-        if (service is IBoundObjectReleaseHandler handler)
-        {
-            handler.OnBoundObjectReleased(oid, session);
-        }
-
-        if (session is not null)
-        {
-            session.ForgetBoundObject(oid);
-            if (!preserveIdentity)
+            if (service is null)
             {
-                foreach (var name in session.BoundObjectIds.Where(pair => pair.Value == oid).Select(pair => pair.Key).ToList())
+                return false;
+            }
+
+            partiallyReleased = false;
+            if (session is not null && _boundObjectSessions.TryGetValue(oid, out var holders))
+            {
+                if (!holders.Remove(session))
                 {
-                    session.BoundObjectIds.Remove(name);
+                    return false;
+                }
+                sessionsToForget.Add(session);
+                if (holders.Count > 0)
+                {
+                    // An OID can be shared by sessions. Dropping one holder must not revoke the others.
+                    partiallyReleased = true;
+                }
+                else
+                {
+                    _boundObjectSessions.Remove(oid);
                 }
             }
-            foreach (var name in session.BoundObjectStates.Where(pair => pair.Value.ObjectId == oid).Select(pair => pair.Key).ToList())
+            else if (session is not null)
             {
-                session.BoundObjectStates.Remove(name);
+                // A direct registry registration can be used by internal callers and tests which do not
+                // have a bind owner record. Preserve the historic one-holder release behavior for those.
+                sessionsToForget.Add(session);
             }
-            if (session.CurrentBoundObjectId == oid)
+            else if (_boundObjectSessions.Remove(oid, out var ownedSessions))
             {
-                session.CurrentBoundObjectId = null;
+                sessionsToForget.AddRange(ownedSessions);
             }
-            if (session.LastBoundObjectId == oid)
+
+            existed = true;
+            removedRegistryEntry = !partiallyReleased;
+            if (removedRegistryEntry)
             {
-                session.LastBoundObjectId = null;
+                _boundObjectRefIds.Remove(oid);
+                _boundObjects.Remove(oid);
+                _boundObjectParams.Remove(oid);
+                if (service is ICapturedBoundObjectReleaseHandler capturing)
+                    captured = capturing.CaptureBoundObjectRelease(oid, session);
             }
+        }
+
+        releasedService = removedRegistryEntry ? service : null;
+        var preserveIdentity = service is IReusableBoundObject { ReuseBoundObjectForSession: true };
+        foreach (var holder in sessionsToForget)
+        {
+            ForgetSessionBoundObject(holder, oid, preserveIdentity);
+        }
+        if (removedRegistryEntry && service is IBoundObjectReleaseHandler handler)
+        {
+            handler.OnBoundObjectReleased(oid, session);
         }
         return existed;
     }
 
+    private static void ForgetSessionBoundObject(ClientSession session, string oid, bool preserveIdentity)
+    {
+        session.ForgetBoundObject(oid);
+        if (!preserveIdentity)
+        {
+            foreach (var name in session.BoundObjectIds.Where(pair => pair.Value == oid).Select(pair => pair.Key).ToList())
+            {
+                session.BoundObjectIds.Remove(name);
+            }
+        }
+        foreach (var name in session.BoundObjectStates.Where(pair => pair.Value.ObjectId == oid).Select(pair => pair.Key).ToList())
+        {
+            session.BoundObjectStates.Remove(name);
+        }
+        if (session.CurrentBoundObjectId == oid)
+        {
+            session.CurrentBoundObjectId = null;
+        }
+        if (session.LastBoundObjectId == oid)
+        {
+            session.LastBoundObjectId = null;
+        }
+    }
+
     /// <summary>A service by name or alias, or the service that owns a bound object's OID.</summary>
-    public IService? Lookup(string? name)
+    public IService? Lookup(string? name) => Lookup(name, null);
+
+    /// <summary>A service by name, or a bound object's service if this session holds that object.</summary>
+    public IService? Lookup(string? name, ClientSession? session)
     {
         if (string.IsNullOrEmpty(name))
         {
@@ -220,7 +320,20 @@ public sealed class ServiceRegistry
         }
         lock (_gate)
         {
-            return _services.GetValueOrDefault(name) ?? _boundObjects.GetValueOrDefault(name);
+            if (_services.TryGetValue(name, out var service))
+            {
+                return service;
+            }
+            if (!_boundObjects.TryGetValue(name, out service) || session is null)
+            {
+                return service;
+            }
+            if (_boundObjectSessions.TryGetValue(name, out var sessions))
+            {
+                return sessions.Contains(session) ? service : null;
+            }
+            // Keep explicit test and internal registrations compatible; a production bind records its holder above.
+            return session.BoundOids.Contains(name, StringComparer.Ordinal) ? service : null;
         }
     }
 

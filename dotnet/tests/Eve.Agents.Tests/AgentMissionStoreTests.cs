@@ -111,19 +111,70 @@ public class AgentMissionStoreTests
     }
 
     [PgFact]
-    public async Task A_declined_offer_is_not_offered_again_for_four_hours()
+    public async Task A_declined_offer_can_be_reissued_and_keeps_its_four_hour_deadline()
     {
         await using var rig = await Rig.Create();
         await rig.Store.OfferAsync(Character, Agent, Courier, Rig.Start, "offer:1");
         await rig.Store.DeclineAsync(Character, Agent, Rig.Start, "decline:1");
 
-        var early = await Assert.ThrowsAsync<AgentMissionRefusedException>(() =>
-            rig.Store.OfferAsync(Character, Agent, Courier, Rig.Start + TimeSpan.FromHours(3), "offer:2"));
-        Assert.Equal("replay_wait", early.Reason);
+        var reoffered = await rig.Store.OfferAsync(Character, Agent, Courier, Rig.Start + TimeSpan.FromHours(3), "offer:2");
+        Assert.NotNull(reoffered);
+        Assert.Equal(AgentMissionState.Offered, (await rig.Store.ReadAsync(Character, Agent))!.State);
+        Assert.Equal(Rig.Start + AgentMissionStore.DeclineReplayDelay,
+            (await rig.Store.ReadAsync(Character, Agent))!.DeclineUntil);
+        Assert.Equal(["offered:0>1", "declined:1>5", "offered:5>1"], await rig.JournalAsync(Character, Agent));
+    }
 
-        var later = await rig.Store.OfferAsync(Character, Agent, Courier, Rig.Start + TimeSpan.FromHours(4), "offer:3");
-        Assert.NotNull(later);
-        Assert.Equal(["offered:0>1", "offer_declined:1>5", "offered:5>1"], await rig.JournalAsync(Character, Agent));
+    [PgFact]
+    public async Task A_decline_retry_with_the_same_reference_is_idempotent()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Store.OfferAsync(Character, Agent, Courier, Rig.Start, "offer:decline-retry");
+
+        var first = await rig.Store.DeclineAsync(Character, Agent, Rig.Start, "decline:retry");
+        var retry = await rig.Store.DeclineAsync(Character, Agent, Rig.Start, "decline:retry");
+
+        Assert.Equal("declined", first!.Action);
+        Assert.Null(retry);
+        Assert.Equal(AgentMissionState.Declined, (await rig.Store.ReadAsync(Character, Agent))!.State);
+        Assert.Equal(Rig.Start + AgentMissionStore.DeclineReplayDelay,
+            (await rig.Store.ReadAsync(Character, Agent))!.DeclineUntil);
+        Assert.Equal(["offered:0>1", "declined:1>5"], await rig.JournalAsync(Character, Agent));
+    }
+
+    [PgFact]
+    public async Task Concurrent_decline_retries_write_one_transition_and_one_deadline()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Store.OfferAsync(Character, Agent, Courier, Rig.Start, "offer:decline-concurrent");
+
+        var first = rig.Store.DeclineAsync(Character, Agent, Rig.Start, "decline:concurrent");
+        var second = rig.Store.DeclineAsync(Character, Agent, Rig.Start, "decline:concurrent");
+        var changes = await Task.WhenAll(first, second);
+
+        Assert.Single(changes, change => change is not null);
+        Assert.Equal(AgentMissionState.Declined, (await rig.Store.ReadAsync(Character, Agent))!.State);
+        Assert.Equal(Rig.Start + AgentMissionStore.DeclineReplayDelay,
+            (await rig.Store.ReadAsync(Character, Agent))!.DeclineUntil);
+        Assert.Equal(["offered:0>1", "declined:1>5"], await rig.JournalAsync(Character, Agent));
+        Assert.Equal(2, rig.Changes.Count);
+    }
+
+    [PgFact]
+    public async Task A_decline_deadline_survives_a_store_restart_and_can_be_used_by_the_next_offer()
+    {
+        await using var rig = await Rig.Create();
+        await rig.Store.OfferAsync(Character, Agent, Courier, Rig.Start, "offer:decline-restart");
+        await rig.Store.DeclineAsync(Character, Agent, Rig.Start, "decline:restart");
+
+        var restarted = rig.Restart();
+        var persisted = await restarted.ReadAsync(Character, Agent);
+        var reoffered = await restarted.OfferAsync(Character, Agent, Courier,
+            Rig.Start + TimeSpan.FromHours(2), "offer:after-restart");
+
+        Assert.Equal(Rig.Start + AgentMissionStore.DeclineReplayDelay, persisted!.DeclineUntil);
+        Assert.NotNull(reoffered);
+        Assert.Equal(persisted.DeclineUntil, (await restarted.ReadAsync(Character, Agent))!.DeclineUntil);
     }
 
     [PgFact]

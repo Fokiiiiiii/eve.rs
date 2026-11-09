@@ -71,21 +71,25 @@ public static class MissionViews
     public static PyDict Objective(HeldMissionView view)
     {
         var mission = view.Mission;
-        var completed = view.Record.State == AgentMissionState.Completed;
+        var completed = view.Record.ObjectiveCompleted || view.Record.State == AgentMissionState.Completed;
         var dungeons = new List<PyValue>();
         if (mission.Kill?.DungeonId is { } dungeonId)
         {
-
-            dungeons.Add(new PyDict(
-            [
+            var dungeon = new List<KeyValuePair<PyValue, PyValue>>
+            {
                 Field("briefingMessage", IdOrNone(view.BriefingMessageId)),
                 Field("dungeonID", new PyInt(dungeonId)),
+            };
+            if (completed) dungeon.Add(Field("completed", new PyInt(1)));
+            dungeon.AddRange(
+            [
                 Field("location", DungeonLocation(view)),
 
                 Field("objectiveCompleted", completed ? new PyInt(1) : PyNone.Instance),
                 Field("ownerID", IdOrNone(mission.FactionId)),
                 Field("optional", PyBool.False),
-            ]));
+            ]);
+            dungeons.Add(new PyDict(dungeon));
         }
         var objectives = new List<PyValue>();
         if (view.Fetch is { } fetch)

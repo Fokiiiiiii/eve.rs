@@ -37,9 +37,11 @@ public sealed partial class DogmaIMService
     }
 
     private async Task LoadInSpaceAsync(
-        ClientSession session, long characterId, long shipId, IReadOnlyList<long> moduleIds, IReadOnlyList<long> chargeItemIds, long ammoLocationId, CancellationToken cancellationToken)
+        ClientSession session, long characterId, long shipId, IReadOnlyList<long> moduleIds, IReadOnlyList<long> chargeItemIds, long ammoLocationId,
+        CancellationToken cancellationToken, long? sourceOwnerId = null)
     {
-        foreach (var plan in await ships.PlanReloadsAsync(characterId, shipId, moduleIds, chargeItemIds, ammoLocationId, cancellationToken))
+        foreach (var plan in await ships.PlanReloadsAsync(characterId, shipId, moduleIds, chargeItemIds, ammoLocationId, cancellationToken,
+            sourceOwnerId: sourceOwnerId))
         {
             if (plan.ReloadMs <= 0)
             {
@@ -92,6 +94,12 @@ public sealed partial class DogmaIMService
         var answered = false;
         try
         {
+            if (plan.SourceLocationId is { } sourceLocationId && sourceLocationId != plan.ShipId
+                && (ammoContainerSourceOwner is not { } resolveOwner
+                    || await resolveOwner(session, characterId, plan.ShipId, sourceLocationId, cancellationToken) != plan.SourceOwnerId))
+            {
+                return;
+            }
             if (await ships.ReloadRoomAsync(characterId, plan, cancellationToken) is { } room)
             {
                 answered = true;

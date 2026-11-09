@@ -58,6 +58,9 @@ public enum ShipRefusal
 
     /// <summary>A cargo container cannot be moved inside another cargo container.</summary>
     ContainerNesting,
+
+    /// <summary>A charge cannot be unloaded directly into a ship's fitting slot.</summary>
+    CannotMoveChargesBetweenModules,
 }
 
 public abstract record ShipOutcome;

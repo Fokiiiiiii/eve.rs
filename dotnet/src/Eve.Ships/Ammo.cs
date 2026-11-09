@@ -42,7 +42,17 @@ public sealed record GunRounds(bool Running, long Before, long After)
 /// A reload a pilot asked for in space (<c>LoadAmmo</c>): the module, the kind of charge, the stacks of the hold the rounds come from (all the stacks of the kind when it names
 /// none) and how long the module takes. A module that takes no time (<see cref="ReloadMs"/> is 0) is loaded at once.
 /// </summary>
-public sealed record ReloadPlan(long ShipId, long ModuleId, int ModuleTypeId, int ModuleFlag, int ChargeTypeId, IReadOnlyList<long> SourceItemIds, int ReloadMs);
+public sealed record ReloadPlan(
+    long ShipId,
+    long ModuleId,
+    int ModuleTypeId,
+    int ModuleFlag,
+    int ChargeTypeId,
+    IReadOnlyList<long> SourceItemIds,
+    int ReloadMs,
+    long? SourceLocationId = null,
+    long? SourceOwnerId = null,
+    int? SourceFlag = null);
 
 /// <summary>
 /// A reload that was done: what the client is told, and the rounds the gun was given by the simulation that the hold could not give it

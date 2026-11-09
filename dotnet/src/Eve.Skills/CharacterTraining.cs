@@ -127,6 +127,10 @@ public sealed class CharacterTraining(
         return BuildView(characterId, accountId, await store.LoadAsync(characterId, cancellationToken), await SkillsOfAsync(characterId, cancellationToken), Now);
     }
 
+    /// <summary>Reads the saved queue inside the caller's transaction after it has taken this character's skill lock.</summary>
+    public Task<QueueState> LoadQueueAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId,
+        CancellationToken cancellationToken = default) => store.LoadAsync(connection, transaction, characterId, cancellationToken);
+
     /// <summary>Previews free points for the saved queue (null) or the supplied skill targets.</summary>
     public async Task<IReadOnlyDictionary<int, long>> FreeSkillPointsAppliedAsync(
         long characterId,

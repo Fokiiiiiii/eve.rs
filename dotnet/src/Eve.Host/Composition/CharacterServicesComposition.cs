@@ -37,9 +37,10 @@ namespace Eve.Host;
 
 internal sealed partial class CharacterServicesComposition
 {
-    internal static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch, Eve.Calendar.ICalendarStore? CalendarStore, Eve.Calendar.ICalendarAudienceReader? CalendarAudience, Eve.Services.Core.CalendarCspaBilling? CalendarCspaBilling, Eve.Services.Core.GameRpcCallbacks? GameRpcCallbacks, Eve.Services.Core.KeeperRpcCallbacks? KeeperRpcCallbacks, CharacterSessions? CharacterSessions, OnlineStatusNotifications? OnlineStatusNotifications, Func<long, long, CancellationToken, ValueTask<decimal>>? ContractBrokerFeeAdjustment, Func<long, long, CancellationToken, ValueTask<bool>>? HasContractManagerRole, Func<long, long, short, CancellationToken, ValueTask<bool>>? CanManageCalendarGroupEvent, Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? ReadCurrentCalendarGroups, Eve.Services.Core.ReadDynamicBountyCallback? ReadDynamicBounty)> CharacterServicesAsync(NpgsqlDataSource source, PgAccountDirectory accounts, OnlineCharacters online, Func<long> now, Foundations foundations, PersistenceStore mailStore, OwnerSession mailStoreOwner, GameStoreCache mailCache, string newCharacterExperienceMode, IOmegaAccountStore omegaAccounts, ConnectedSessions connected, PublicGateway.NoticeHub notices, Action<List<ICharacterEntryHook>>? receiveEntryHooks = null, Action<SpaceContainers?>? receiveSpaceContainers = null, Action<CharacterShips>? receiveTournamentShips = null)
+    internal static async Task<(IReadOnlyList<IService> Services, SpaceSessions? Space, SimClient? Simulation, Eve.Services.Crimewatch.CrimewatchRuntime? Crimewatch, Eve.Calendar.ICalendarStore? CalendarStore, Eve.Calendar.ICalendarAudienceReader? CalendarAudience, Eve.Services.Core.CalendarCspaBilling? CalendarCspaBilling, Eve.Services.Core.GameRpcCallbacks? GameRpcCallbacks, Eve.Services.Core.KeeperRpcCallbacks? KeeperRpcCallbacks, CharacterSessions? CharacterSessions, OnlineStatusNotifications? OnlineStatusNotifications, Func<long, long, CancellationToken, ValueTask<decimal>>? ContractBrokerFeeAdjustment, Func<long, long, CancellationToken, ValueTask<bool>>? HasContractManagerRole, Func<long, long, short, CancellationToken, ValueTask<bool>>? CanManageCalendarGroupEvent, Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? ReadCurrentCalendarGroups, Eve.Services.Core.ReadDynamicBountyCallback? ReadDynamicBounty)> CharacterServicesAsync(NpgsqlDataSource source, PgAccountDirectory accounts, OnlineCharacters online, Func<long> now, Foundations foundations, PersistenceStore mailStore, OwnerSession mailStoreOwner, GameStoreCache mailCache, string newCharacterExperienceMode, IOmegaAccountStore omegaAccounts, ConnectedSessions connected, PublicGateway.NoticeHub notices, Action<List<ICharacterEntryHook>>? receiveEntryHooks = null, Action<SpaceContainers?>? receiveSpaceContainers = null, Action<CharacterShips>? receiveTournamentShips = null, ClusterOptions? clusterOptions = null)
     {
-        var composition = new CharacterServicesComposition(source, accounts, online, now, foundations, mailStore, mailStoreOwner, mailCache, newCharacterExperienceMode, omegaAccounts, connected, notices);
+        var composition = new CharacterServicesComposition(source, accounts, online, now, foundations, mailStore, mailStoreOwner, mailCache,
+            newCharacterExperienceMode, omegaAccounts, connected, notices, clusterOptions);
         var result = await composition.RunAsync();
         if (result.Services.Count != 0)
         {
@@ -50,7 +51,7 @@ internal sealed partial class CharacterServicesComposition
         return result;
     }
 
-    public CharacterServicesComposition(NpgsqlDataSource source, PgAccountDirectory accounts, OnlineCharacters online, Func<long> now, Foundations foundations, PersistenceStore mailStore, OwnerSession mailStoreOwner, GameStoreCache mailCache, string newCharacterExperienceMode, IOmegaAccountStore omegaAccounts, ConnectedSessions connected, PublicGateway.NoticeHub notices)
+    public CharacterServicesComposition(NpgsqlDataSource source, PgAccountDirectory accounts, OnlineCharacters online, Func<long> now, Foundations foundations, PersistenceStore mailStore, OwnerSession mailStoreOwner, GameStoreCache mailCache, string newCharacterExperienceMode, IOmegaAccountStore omegaAccounts, ConnectedSessions connected, PublicGateway.NoticeHub notices, ClusterOptions? clusterOptions = null)
     {
         this.source = source;
         this.accounts = accounts;
@@ -63,6 +64,7 @@ internal sealed partial class CharacterServicesComposition
         this.mailStoreOwner = mailStoreOwner;
         this.mailCache = mailCache;
         this.notices = notices;
+        this.clusterOptions = clusterOptions ?? new ClusterOptions { NewCharacterExperienceMode = newCharacterExperienceMode };
         this.newCharacterExperienceMode = newCharacterExperienceMode;
     }
 
@@ -164,7 +166,8 @@ internal sealed partial class CharacterServicesComposition
     private OwnerSession mailStoreOwner;
     private GameStoreCache mailCache;
     private PublicGateway.NoticeHub notices;
-    private string newCharacterExperienceMode;
+    private ClusterOptions clusterOptions = default!;
+    private string newCharacterExperienceMode = default!;
     private long build;
     private string characterSchema = default!;
     private string inventorySchema = default!;

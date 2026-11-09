@@ -448,7 +448,7 @@ impl Writer {
     }
 
     fn count(&mut self, count: usize) {
-        self.0.extend_from_slice(&(count as u16).to_le_bytes());
+        self.0.extend_from_slice(&(count.min(usize::from(u16::MAX)) as u16).to_le_bytes());
     }
 }
 
@@ -562,7 +562,10 @@ impl BallEntity {
         if let ConfiguredFlags::Value(_) = self.destiny_ball_flags {
             return self.configured_flags(0) & flag::IS_INTERACTIVE != 0;
         }
-        if matches!(self.kind, Kind::Drone | Kind::Fighter) {
+        if self.kind == Kind::Fighter {
+            return false;
+        }
+        if self.kind == Kind::Drone {
             return self.controller_positive || self.owner_positive;
         }
         if self.is_npc_ship() {
@@ -835,24 +838,27 @@ fn static_tail(entity: &BallEntity, ball_mode: u8) -> Result<Vec<u8>, BallError>
     }
 
     // appendMiniGeometrySections
-    if !entity.mini_balls.is_empty() {
-        out.count(entity.mini_balls.len());
-        for ball in &entity.mini_balls {
+    let mini_balls = capped_geometry(&entity.mini_balls);
+    if !mini_balls.is_empty() {
+        out.count(mini_balls.len());
+        for ball in mini_balls {
             out.vec3(ball.center);
             out.f32(ball.radius);
         }
     }
-    if !entity.mini_capsules.is_empty() {
-        out.count(entity.mini_capsules.len());
-        for capsule in &entity.mini_capsules {
+    let mini_capsules = capped_geometry(&entity.mini_capsules);
+    if !mini_capsules.is_empty() {
+        out.count(mini_capsules.len());
+        for capsule in mini_capsules {
             out.vec3(capsule.a);
             out.vec3(capsule.b);
             out.f32(capsule.radius);
         }
     }
-    if !entity.mini_boxes.is_empty() {
-        out.count(entity.mini_boxes.len());
-        for mini_box in &entity.mini_boxes {
+    let mini_boxes = capped_geometry(&entity.mini_boxes);
+    if !mini_boxes.is_empty() {
+        out.count(mini_boxes.len());
+        for mini_box in mini_boxes {
             out.vec3(mini_box.corner);
             out.vec3(mini_box.local_x);
             out.vec3(mini_box.local_y);
@@ -860,4 +866,8 @@ fn static_tail(entity: &BallEntity, ball_mode: u8) -> Result<Vec<u8>, BallError>
         }
     }
     Ok(out.0)
+}
+
+fn capped_geometry<T>(items: &[T]) -> &[T] {
+    &items[..items.len().min(usize::from(u16::MAX))]
 }

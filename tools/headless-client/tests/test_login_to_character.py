@@ -220,8 +220,8 @@ def test_the_recorded_walk_replays():
         if REFERENCE:
             assert "OnCharacterSelected" not in notification_names
         else:
-            assert notification_names[0] == "OnCharacterSelected"
-            seen = seen[1:]
+            assert notification_names[:2] == ["OnSubscriptionTimeUpdateServer", "OnCharacterSelected"]
+            seen = seen[2:]
         recorded_changes = WALK["afterSelect"]
         assert len(seen) == len(recorded_changes), f"{len(seen)} notifications after selecting, {len(recorded_changes)} recorded"
         problems += _compare_session_change(recorded_changes[0], seen[0])

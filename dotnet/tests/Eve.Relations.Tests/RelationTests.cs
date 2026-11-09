@@ -111,6 +111,15 @@ public class RelationTests
         Assert.Null(history[0].NewUntilMs);
 
         await rig.Bus.PumpAsync();
+        Assert.Equal(
+            [
+                ((double?)null, (double?)0, (long?)null, firstUntil),
+                ((double?)0, (double?)0, firstUntil, firstUntil),
+                ((double?)0, (double?)0, firstUntil, secondUntil),
+                ((double?)0, (double?)1, secondUntil, secondUntil),
+                ((double?)1, (double?)null, secondUntil, (long?)null),
+            ],
+            events.Select(change => (change.OldValue, change.NewValue, change.OldUntilMs, change.NewUntilMs)));
         var endedEvent = Assert.Single(events, change => change.NewValue is null);
         Assert.True(endedEvent.OldAttrs!.Value.GetProperty("mutual").GetBoolean());
         Assert.Null(endedEvent.NewAttrs);

@@ -332,11 +332,12 @@ public class CharUnboundMgrTests
     {
         var hook = new FailingEntryHook();
         await using var h = await Harness.CreateAsync(entryHooks: [hook]);
-        var (session, _) = await h.LoginAsync("entry-rollback");
+        var (session, sink) = await h.LoginAsync("entry-rollback");
         var previousId = await CreateAsync(h, session, "Previous Pilot");
         var failingId = await CreateAsync(h, session, "Failing Pilot");
 
         Assert.Equal(PyNone.Instance, await h.CallAsync(session, "SelectCharacterID", new PyInt(previousId)));
+        var packetCountBeforeFailedEntry = sink.Sent.Count;
         hook.FailureCharacterId = failingId;
         var previousDeferredShip = new PyLong((await h.Characters.GetAsync(previousId))!.ShipId!.Value);
         session.Set("deferredDockedShipId", previousDeferredShip);
@@ -358,9 +359,78 @@ public class CharUnboundMgrTests
         Assert.Equal(previousDeferredShip, session.Get("deferredDockedShipId"));
         Assert.Null(session.Get("failedEntryBootstrap"));
         Assert.Equal(previousId, session.CharacterId);
+        Assert.Equal(packetCountBeforeFailedEntry, sink.Sent.Count);
         Assert.True(h.Online.TryEnter(previousId, session.SessionId));
         Assert.Contains(previousId, h.Online.Snapshot());
         Assert.DoesNotContain(failingId, h.Online.Snapshot());
+
+        hook.FailureCharacterId = 0;
+        hook.BeforeFailure = null;
+        hook.OnSuccessfulEntry = null;
+        Assert.Equal(PyNone.Instance, await h.CallAsync(session, "SelectCharacterID", new PyInt(failingId)));
+        Assert.Equal(packetCountBeforeFailedEntry + 2, sink.Sent.Count);
+        Assert.Equal(failingId, session.CharacterId);
+        Assert.Contains(failingId, h.Online.Snapshot());
+        Assert.DoesNotContain(previousId, h.Online.Snapshot());
+    }
+
+    [PgFact]
+    public async Task Selection_and_delete_reservation_are_serialized_for_the_same_character()
+    {
+        long characterId = 0;
+        var selectionRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var continueSelection = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        async Task<Character?> ReadForSelection(PgCharacterStore store, long id, CancellationToken cancellationToken)
+        {
+            var character = await store.GetAsync(id, cancellationToken);
+            if (id == characterId)
+            {
+                selectionRead.TrySetResult();
+                await continueSelection.Task.WaitAsync(cancellationToken);
+            }
+            return character;
+        }
+
+        await using var h = await Harness.CreateAsync(readCharacterById: ReadForSelection);
+        var (session, _) = await h.LoginAsync("entry-delete-race");
+        characterId = await CreateAsync(h, session, "Lifecycle Pilot");
+
+        var selection = h.CallAsync(session, "SelectCharacterID", new PyLong(characterId)).AsTask();
+        await selectionRead.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var preparation = h.CallAsync(session, "PrepareCharacterForDelete", new PyLong(characterId)).AsTask();
+        try
+        {
+            var completed = await Task.WhenAny(preparation, Task.Delay(TimeSpan.FromMilliseconds(250)));
+            Assert.NotSame(preparation, completed);
+            Assert.Null((await h.Characters.GetAsync(characterId))!.DeletePrepareAt);
+        }
+        finally
+        {
+            continueSelection.TrySetResult();
+        }
+
+        Assert.Equal(PyNone.Instance, await selection);
+        var error = await ErrorOfAsync(async () => await preparation);
+        Assert.Equal("That character is currently online and cannot be deleted.", InfoText(error));
+        Assert.Null((await h.Characters.GetAsync(characterId))!.DeletePrepareAt);
+        Assert.True(h.Online.IsOnline(characterId));
+    }
+
+    [PgFact]
+    public async Task A_completed_delete_reservation_prevents_a_later_character_entry()
+    {
+        await using var h = await Harness.CreateAsync();
+        var (session, _) = await h.LoginAsync("delete-entry-order");
+        var characterId = await CreateAsync(h, session, "Queued Pilot");
+
+        Assert.IsType<PyLong>(await h.CallAsync(session, "PrepareCharacterForDelete", new PyLong(characterId)));
+
+        var error = await ErrorOfAsync(async () => await h.CallAsync(session, "SelectCharacterID", new PyLong(characterId)));
+
+        Assert.Equal("That character is queued for deletion and cannot enter the game.", InfoText(error));
+        Assert.Null(session.CharacterId);
+        Assert.False(h.Online.IsOnline(characterId));
+        Assert.NotNull((await h.Characters.GetAsync(characterId))!.DeletePrepareAt);
     }
 
     [PgFact]
@@ -917,6 +987,7 @@ public class CharUnboundMgrTests
         {
             if (characterId == FailureCharacterId)
             {
+                session.SendNotification("OnServerSkillsChanged", "charid", new PyLong(characterId));
                 BeforeFailure?.Invoke();
                 throw new InvalidOperationException("Injected character-entry failure.");
             }

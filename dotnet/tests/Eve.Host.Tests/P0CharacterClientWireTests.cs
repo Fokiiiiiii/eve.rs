@@ -133,6 +133,11 @@ public partial class HostServerTests
         const int secondAlternativeId = 30_000_144;
         var character = WireCharacter(characterId, 1, "Moving Pilot", 1, 1, homeSystemId);
         var populationSessions = new CharacterSessions();
+        // This RPC runs in character selection before the selected character enters; the resident pilot is another live session.
+        var occupyingSession = new ClientSession { SessionId = occupyingCharacterId };
+        occupyingSession.Set("charid", new PyLong(occupyingCharacterId));
+        occupyingSession.Set("solarsystemid2", new PyInt(homeSystemId));
+        populationSessions.Enter(occupyingCharacterId, occupyingSession);
         var population = new SystemPopulation(
             populationSessions,
             new SolarSystemCatalog([
@@ -158,13 +163,7 @@ public partial class HostServerTests
 
         Start(
             configure: registry => registry.Register(service),
-            sessionOpened: session =>
-            {
-                session.UserId = 1;
-                session.CharacterId = occupyingCharacterId;
-                session.Set("solarsystemid2", new PyInt(homeSystemId));
-                populationSessions.Enter(occupyingCharacterId, session);
-            });
+            sessionOpened: session => session.UserId = 1);
         var (front, open) = await OpenFrontAsync();
 
         async Task<PyValue> BoundCall(uint callId, string method, PyValue args)

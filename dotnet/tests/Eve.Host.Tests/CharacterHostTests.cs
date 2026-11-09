@@ -74,11 +74,11 @@ public sealed class CharacterHostTests
         Assert.IsType<PyNone>(await CallAsync(service, "SelectCharacterID", session, new PyLong(character)));
 
         var notifications = Notifications(sink);
-        Assert.Equal(new[] { "OnSubscriptionTimeUpdateServer", "OnCharacterSelected" },
+        Assert.Equal(new[] { "OnSubscriptionTimeUpdateServer" },
             notifications.Select(notification => notification.Name));
         Assert.Equal(new PyLong(OmegaLicenses.DefaultOmegaExpiryFileTime), Assert.Single(notifications[0].Args));
         Assert.Equal(
-            new long[] { (long)MachoMessage.Notification, (long)MachoMessage.Notification, (long)MachoMessage.SessionChangeNotification },
+            new long[] { (long)MachoMessage.Notification, (long)MachoMessage.SessionChangeNotification },
             sink.Sent.Select(packet => Assert.IsType<PyInt>(Assert.IsType<PyTuple>(Assert.IsType<PyObject>(packet).Args).Items[0]).Value));
     }
 

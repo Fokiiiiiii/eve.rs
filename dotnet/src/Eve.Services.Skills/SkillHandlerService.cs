@@ -11,7 +11,8 @@ namespace Eve.Services.Skills;
 [Service("skillHandler", Aliases = ["skillMgr"])]
 public sealed partial class SkillHandlerService(
     PgSkillStore store, SkillCatalog catalog, CharacterTraining training, PgCharacterStore characters, Eve.Inventory.PgItemStore items, Eve.Dogma.DogmaStatic dogmaStatic, TrainingAnnouncer announcer, Func<long> nowUnixMs,
-    SkillAugmentationReader readAugmentations, Func<double>? nextBoosterRoll = null, Eve.Wallet.WalletTransactions? walletTransactions = null, Func<long, bool>? isAlphaClone = null, ExpertSystems? expertSystems = null)
+    SkillAugmentationReader readAugmentations, Func<double>? nextBoosterRoll = null, Eve.Wallet.WalletTransactions? walletTransactions = null, Func<long, bool>? isAlphaClone = null,
+    ExpertSystems? expertSystems = null, bool skillPurchaseEnabled = true)
 {
     /// <summary>The durable job that ends an activated booster at its expiry (set by the Host; null where no scheduler runs).</summary>
     public SkillBoosterLapse? BoosterLapse { get; set; }

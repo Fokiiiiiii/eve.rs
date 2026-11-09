@@ -209,6 +209,7 @@ public async Task FundWalletAsync(long ownerId, decimal isk)
     {
         var sink = new Capture();
         var session = new ClientSession(sink) { SessionId = 26_859_804_000_001, ClientId = 34_065_450, UserId = userId };
+        session.Set("stationid", new PyInt(60_000_001));
         if (characterId is { } id)
         {
             session.CharacterId = id;

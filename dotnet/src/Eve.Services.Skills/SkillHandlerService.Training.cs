@@ -175,7 +175,7 @@ public sealed partial class SkillHandlerService
     public async ValueTask<PyValue> PurchaseSkills(ServiceCall call)
     {
         if (CharacterOf(call) is not { } character) return None;
-        if (walletTransactions is null)
+        if (!skillPurchaseEnabled || walletTransactions is null)
             throw MachoErrors.ThrowUserError("SkillPurchaseDisabled");
         var ids = call.Arg(0) switch
         {

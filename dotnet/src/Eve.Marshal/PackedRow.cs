@@ -492,7 +492,7 @@ internal static class PackedRowCodec
         {
             PyNone => 0.0,
             PyBool flag => flag.Value ? 1.0 : 0.0,
-            PyInt or PyLong or PyReal or PyBigUnsigned or PyStr or PyWString or PyToken or PyBytes or PyBuffer => JsNumber.ValueToNumber(value),
+            PyInt or PyLong or PyReal or PyBigUnsigned or PyBigInteger or PyStr or PyWString or PyToken or PyBytes or PyBuffer => JsNumber.ValueToNumber(value),
             _ => 0.0,
         };
         return double.IsFinite(number) ? number : 0.0;
@@ -528,6 +528,10 @@ internal static class PackedRowCodec
                 big.Bytes.CopyTo(buffer);
                 var unsigned = BinaryPrimitives.ReadUInt64LittleEndian(buffer);
                 return unsigned <= long.MaxValue ? (long)unsigned : throw MarshalException.OutOfRange("64-bit column");
+            case PyBigInteger big:
+                return big.Value >= long.MinValue && big.Value <= long.MaxValue
+                    ? (long)big.Value
+                    : throw MarshalException.OutOfRange("64-bit column");
             case PyStr text:
                 return TextToInt64(text.Value);
             case PyWString text:

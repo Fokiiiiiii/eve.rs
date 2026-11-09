@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace Eve.Marshal;
 
 /// <summary>
@@ -154,6 +156,9 @@ public sealed record PyBigUnsigned(byte[] Bytes) : PyValue
     public override int GetHashCode() => Seq.Hash(Bytes);
 }
 
+/// <summary>A signed variable-width integer whose value is outside JavaScript's safe integer range.</summary>
+public sealed record PyBigInteger(BigInteger Value) : PyValue;
+
 public sealed record PyStr(string Value) : PyValue;
 
 /// <summary>A Python <c>str</c>: PyEmptyString, PyCharString, PyShortString or PyLongString.</summary>
@@ -202,7 +207,16 @@ public sealed record PyDict(IReadOnlyList<KeyValuePair<PyValue, PyValue>> Entrie
     public override int GetHashCode() => Seq.Hash(Entries);
 }
 
-public sealed record PyObject(PyValue Name, PyValue Args) : PyValue;
+public sealed record PyObject : PyValue
+{
+    public PyObject(PyValue name, PyValue args) => (Name, Args) = (name, args);
+
+    public PyValue Name { get; }
+
+    public PyValue Args { get; private set; }
+
+    internal void Complete(PyValue args) => Args = args;
+}
 
 public enum ObjectExKind
 {

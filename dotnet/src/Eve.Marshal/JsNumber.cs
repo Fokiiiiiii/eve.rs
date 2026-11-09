@@ -199,6 +199,7 @@ public static class JsNumber
         PyLong number => number.Value,
         PyReal number => number.Value,
         PyBigUnsigned big => big.Bytes.Reverse().Aggregate(0.0, (acc, b) => (acc * 256.0) + b),
+        PyBigInteger big => (double)big.Value,
         PyStr text => NumberFromString(text.Value),
         PyWString text => NumberFromString(text.Value),
         PyToken text => NumberFromString(text.Value),

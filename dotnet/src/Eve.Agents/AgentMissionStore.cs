@@ -47,6 +47,9 @@ public sealed record AgentMissionChange(
     string Reference,
     long MissionId);
 
+/// <summary>A decline transition and whether its stored prior timer makes this a second decline inside the free window.</summary>
+public sealed record AgentMissionDecline(AgentMissionChange Change, AgentMissionContent Content, bool Penalized);
+
 /// <summary>A transition the state does not allow (for example an accept with no offer). Nothing is changed.</summary>
 public sealed class AgentMissionRefusedException(string reason, string message) : Exception(message)
 {
@@ -160,13 +163,10 @@ public sealed class AgentMissionStore
         {
             if (current?.State == AgentMissionState.Offered) throw Refused("already_offered", "the agent has already offered a mission");
             if (current?.State == AgentMissionState.Accepted) throw Refused("already_accepted", "the mission is already accepted");
-            if (current?.DeclineUntil is { } until && until > now)
-            {
-                throw Refused("replay_wait", "the agent does not offer again yet");
-            }
             return new AgentMissionRecord(
                 characterId, agentId, AgentMissionState.Offered, content,
-                OfferedAt: now, ExpiresAt: ExpiryAt(content, now), AcceptedAt: null, CompletedAt: null, DeclineUntil: null, QuitAt: null);
+                OfferedAt: now, ExpiresAt: ExpiryAt(content, now), AcceptedAt: null, CompletedAt: null,
+                DeclineUntil: current?.DeclineUntil is { } until && until > now ? until : null, QuitAt: null);
         });
 
     /// <summary>The character accepts the offer. An offer past its expiry is refused; <see cref="ExpireOffersAsync"/> removes it.</summary>
@@ -181,11 +181,35 @@ public sealed class AgentMissionStore
 
     public Task<AgentMissionChange?> DeclineAsync(
         long characterId, long agentId, DateTimeOffset now, string reference, CancellationToken cancellationToken = default) =>
-        ChangeAsync(characterId, agentId, reference, "offer_declined", now, cancellationToken, current =>
+        ChangeAsync(characterId, agentId, reference, "declined", now, cancellationToken, current =>
         {
             if (current?.State != AgentMissionState.Offered) throw Refused("not_offered", "there is no offer to decline");
             return current with { State = AgentMissionState.Declined, ExpiresAt = null, DeclineUntil = now + DeclineReplayDelay };
         });
+
+    /// <summary>Declines inside the caller's transaction and reports whether the existing decline deadline is still active.</summary>
+    public async Task<AgentMissionDecline?> DeclineInAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, long agentId, DateTimeOffset now,
+        string reference, CancellationToken cancellationToken = default)
+    {
+        Validate(characterId, agentId, reference, "declined");
+        var penalized = false;
+        AgentMissionContent? content = null;
+        var change = await ChangeInAsync(connection, transaction, characterId, agentId, reference, "declined", now,
+            cancellationToken, current =>
+            {
+                if (current?.State != AgentMissionState.Offered) throw Refused("not_offered", "there is no offer to decline");
+                penalized = current.DeclineUntil is { } until && until > now;
+                content = current.Content;
+                return current with
+                {
+                    State = AgentMissionState.Declined,
+                    ExpiresAt = null,
+                    DeclineUntil = now + DeclineReplayDelay,
+                };
+            });
+        return change is null ? null : new AgentMissionDecline(change, content!, penalized);
+    }
 
     /// <summary>The character quits the accepted mission.</summary>
     public Task<AgentMissionChange?> QuitAsync(

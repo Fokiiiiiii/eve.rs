@@ -46,6 +46,8 @@ internal sealed partial class CharacterServicesComposition
     /// <summary>The wave director of the dungeons (set by the space composition, which runs first).</summary>
     private Eve.Services.Space.Waves.DungeonWaveDirector? dungeonWavesDirector;
 
+    private const int AgentMissionDeclinedStandingEventTypeId = 75;
+
 
     private MissionDungeonRuntime? missionDungeons;
 
@@ -396,7 +398,17 @@ internal sealed partial class CharacterServicesComposition
                     if (missionDungeons is { } dungeons) await dungeons.OnQuitAsync(characterId, agentId, token);
                 },
                 OnMissionTurnIn: async (characterId, agentId, token) => missionDungeons is { } dungeons &&
-                    await dungeons.OnMissionTurnInAsync(characterId, agentId, token)));
+                    await dungeons.OnMissionTurnInAsync(characterId, agentId, token),
+                OnMissionDecline: async (characterId, agent, now, reference, token) =>
+                {
+                    await DeclineInTransactionAsync(source, agentMissionStore, foundations.Relations,
+                        characterId, agent, now, reference, token,
+                        modifications =>
+                        {
+                            characterSessions.Of(characterId)?.SendNotification("OnStandingsModified", "charid", modifications);
+                            return Task.CompletedTask;
+                        });
+                }));
         await AttachMissionDungeonsAsync();
     }
 
@@ -827,6 +839,78 @@ internal sealed partial class CharacterServicesComposition
                 characterSessions.Of(characterId)?.SendNotification("OnStandingsModified", "charid", modifications);
                 return Task.CompletedTask;
             });
+    }
+
+    /// <summary>Commits a decline and, for a second decline inside four hours, its direct agent and corporation losses together.</summary>
+    internal static async Task<Eve.Agents.AgentMissionDecline?> DeclineInTransactionAsync(
+        NpgsqlDataSource source, Eve.Agents.AgentMissionStore agentMissionStore, Eve.Relations.RelationStore relations,
+        long characterId, Eve.Services.Core.AgentMissionAgentData agent, DateTimeOffset now, string reference,
+        CancellationToken cancellationToken, Func<PyValue, Task>? afterStandingCommit = null)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        Eve.Agents.AgentMissionDecline? decline;
+        try
+        {
+            decline = await agentMissionStore.DeclineInAsync(
+                connection, transaction, characterId, agent.AgentId, now, reference, cancellationToken);
+        }
+        catch (Eve.Agents.AgentMissionRefusedException)
+        {
+            return null;
+        }
+        if (decline is null)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return null;
+        }
+
+        var standingChanges = decline.Penalized
+            ? Eve.Services.Core.AgentMissionStandingRules.DeclinePenaltyFor(agent, decline.Content)
+            : [];
+        var applicable = standingChanges.Where(change => Math.Abs(change.Amount) > ZeroStandingChangeEpsilon).ToArray();
+        foreach (var ownerId in applicable.Select(change => change.EntityId).Distinct().OrderBy(ownerId => ownerId))
+        {
+            await Sql.ExecuteAsync(connection, transaction,
+                "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", cancellationToken,
+                $"mission-standing:{characterId}:{ownerId}");
+        }
+
+        var modifications = new List<PyValue>(applicable.Length);
+        foreach (var change in applicable)
+        {
+            var kind = Eve.Relations.RelationKinds.Standing.Name;
+            var current = await relations.ValueAsync(kind, change.EntityId, characterId, 0, connection, transaction, cancellationToken);
+            var next = Math.Clamp(Math.Floor((current + change.DeltaFrom(current)) * 1000d + 0.5d) / 1000d, -10d, 10d);
+            var rawChange = change.Diminishing || current == next
+                ? change.Amount
+                : (next - current) / (next > current ? 10d - current : 10d + current);
+            var reason = JsonSerializer.Serialize(new
+            {
+                eventTypeID = AgentMissionDeclinedStandingEventTypeId,
+                eventDateTime = Py.FileTimeFromUnixMs(now.ToUnixTimeMilliseconds()),
+                modification = rawChange,
+                msg = change.Message,
+                int_1 = (int?)null,
+                int_2 = (int?)null,
+                int_3 = (int?)null,
+            });
+            await relations.SetAsync(connection, transaction, kind, change.EntityId, characterId, next, reason,
+                cancellationToken: cancellationToken, recordHistoryWhenUnchanged: true);
+            modifications.Add(new PyList([
+                new PyInt(change.EntityId),
+                new PyInt(characterId),
+                Py.Number(rawChange),
+                Py.Number(-10),
+                Py.Number(10),
+            ]));
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        if (modifications.Count > 0 && afterStandingCommit is not null)
+            await afterStandingCommit(new PyList(modifications));
+        agentMissionStore.Announce(decline.Change);
+        return decline;
     }
 
     /// <summary>

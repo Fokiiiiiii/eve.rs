@@ -58,6 +58,8 @@ public class AgentMissionStoreTests
         Assert.False(missions.ContainsKey("3008418"));
         Assert.Equal(2, missions.Count);
         Assert.Equal(legacy["missionsByAgentID"]!["3008417"]!.ToJsonString(), missions["3008417"]!.ToJsonString());
+        Assert.Equal(Now.AddHours(4).UtcDateTime.ToFileTimeUtc(),
+            merged["declineTimersByAgentID"]!["3008418"]!.GetValue<long>());
     }
 
     [Fact]

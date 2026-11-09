@@ -700,6 +700,17 @@ internal sealed class SessionActor
         finally
         {
             _session.Close();
+            try
+            {
+                using var cleanupTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                var released = await _dispatcher.ReleaseSessionBoundObjectsAsync(_session, cleanupTimeout.Token);
+                if (released > 0)
+                    _options.Log?.Invoke($"session {_session.SessionId}: released {released} bound objects at disconnect");
+            }
+            catch (Exception error)
+            {
+                _options.Log?.Invoke($"session {_session.SessionId}: bound-object cleanup remains pending ({error.GetType().Name})");
+            }
             if (_options.SessionClosedAsync is { } closed)
             {
                 try

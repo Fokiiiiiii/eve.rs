@@ -22,6 +22,7 @@ public sealed class ClientSession
     private readonly Dictionary<string, PyValue> _attributes = new(StringComparer.Ordinal);
     private readonly object _gate = new();
     private readonly Dictionary<long, Action<PyValue?>> _clientCalls = new();
+    private readonly AsyncLocal<NotificationBatch?> _notificationBatch = new();
 
     public ClientSession(IPacketSink? sink = null) => Sink = sink;
 
@@ -149,6 +150,85 @@ public sealed class ClientSession
         lock (_gate) Sink?.Send(packet);
     }
 
+    /// <summary>Defers this session's notifications and session changes until the caller commits the batch.</summary>
+    public NotificationBatch DeferNotifications()
+    {
+        lock (_gate)
+        {
+            if (_notificationBatch.Value is not null)
+                throw new InvalidOperationException("A notification batch is already active for this session call.");
+            var batch = new NotificationBatch(this);
+            _notificationBatch.Value = batch;
+            return batch;
+        }
+    }
+
+    private void SendNotificationPacket(PyValue packet)
+    {
+        if (_notificationBatch.Value is { } batch && batch.TryDefer(packet))
+            return;
+        Sink?.Send(packet);
+    }
+
+    private void CommitNotifications(NotificationBatch batch)
+    {
+        lock (_gate)
+        {
+            if (!ReferenceEquals(_notificationBatch.Value, batch))
+                throw new InvalidOperationException("The notification batch is not active in this session call.");
+            foreach (var packet in batch.CommitPackets())
+                Sink?.Send(packet);
+        }
+    }
+
+    private void EndNotifications(NotificationBatch batch)
+    {
+        lock (_gate)
+        {
+            batch.Discard();
+            if (ReferenceEquals(_notificationBatch.Value, batch))
+                _notificationBatch.Value = null;
+        }
+    }
+
+    /// <summary>Notifications collected during a character entry; disposal discards any uncommitted packets.</summary>
+    public sealed class NotificationBatch(ClientSession session) : IDisposable
+    {
+        private readonly List<PyValue> _packets = [];
+        private int _state;
+
+        internal bool TryDefer(PyValue packet)
+        {
+            if (_state != 0)
+                return false;
+            _packets.Add(packet);
+            return true;
+        }
+
+        internal IReadOnlyList<PyValue> CommitPackets()
+        {
+            if (_state != 0)
+                throw new InvalidOperationException("The notification batch has already ended.");
+            _state = 1;
+            var packets = _packets.ToArray();
+            _packets.Clear();
+            return packets;
+        }
+
+        internal void Discard()
+        {
+            if (_state == 0)
+            {
+                _state = 2;
+                _packets.Clear();
+            }
+        }
+
+        public void Commit() => session.CommitNotifications(this);
+
+        public void Dispose() => session.EndNotifications(this);
+    }
+
     private readonly List<Action> _afterResponse = [];
 
     /// <summary>
@@ -163,8 +243,8 @@ public sealed class ClientSession
         }
     }
 
-    /// <summary>Runs what the call in progress queued with <see cref="AfterResponse"/>; the dispatcher does this once the answer is sent.</summary>
-    public void RunAfterResponse()
+    /// <summary>Runs the queued post-response actions independently after the call answer has been sent.</summary>
+    public void RunAfterResponse(Action<Exception>? onFailure = null)
     {
         Action[] pending;
         lock (_gate)
@@ -174,7 +254,21 @@ public sealed class ClientSession
         }
         foreach (var action in pending)
         {
-            action();
+            try
+            {
+                action();
+            }
+            catch (Exception error)
+            {
+                try
+                {
+                    onFailure?.Invoke(error);
+                }
+                catch
+                {
+                    // Reporting a post-response failure must not change the already-sent RPC answer either.
+                }
+            }
         }
     }
 
@@ -219,13 +313,13 @@ public sealed class ClientSession
     public void SendNotification(string name, string idType, params PyValue[] args)
     {
         lock (_gate)
-            Send(ClientNotification.Build(UserId ?? 0, NodeId, name, idType, args, ++_notificationSequence));
+            SendNotificationPacket(ClientNotification.Build(UserId ?? 0, NodeId, name, idType, args, ++_notificationSequence));
     }
 
     public void SendServiceNotification(string service, string method, IReadOnlyList<PyValue> args)
     {
         lock (_gate)
-            Send(ClientNotification.BuildService(UserId ?? 0, NodeId, service, method, args, ++_notificationSequence));
+            SendNotificationPacket(ClientNotification.BuildService(UserId ?? 0, NodeId, service, method, args, ++_notificationSequence));
     }
 
     public event Action<ClientSession, IReadOnlyList<string>>? AttributesChanged;
@@ -291,7 +385,7 @@ private Action<string>? _disconnectClient;
             }
             // Keep the announced order identical to the committed attribute order.
             if (announced.Count > 0)
-                Send(SessionChangeNotification.Build(SessionId, ClientId, UserId ?? 0, NodeId, announced));
+                SendNotificationPacket(SessionChangeNotification.Build(SessionId, ClientId, UserId ?? 0, NodeId, announced));
         }
         if (changed.Count > 0)
             AttributesChanged?.Invoke(this, changed);

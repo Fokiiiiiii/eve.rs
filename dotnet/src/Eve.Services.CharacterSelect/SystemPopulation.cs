@@ -25,7 +25,7 @@ public sealed class SystemPopulation
     private readonly SolarSystemCatalog _systems;
 
     private readonly object _gate = new();
-    private readonly Dictionary<Seat, (long System, long Character)> _seats = [];
+    private readonly Dictionary<Seat, (long System, long Character, long? Session)> _seats = [];
 
     public SystemPopulation(CharacterSessions sessions, SolarSystemCatalog systems, int capacity = DefaultCapacity)
     {
@@ -43,19 +43,21 @@ public sealed class SystemPopulation
     /// <summary>The static data of a system, or null when it is unknown.</summary>
     public SolarSystemInfo? Get(long solarSystemId) => solarSystemId is > 0 and <= int.MaxValue ? _systems.Get((int)solarSystemId) : null;
 
-    /// <summary>The characters in the game in a system, not counting <paramref name="characterId"/>.</summary>
-    public int LoadOf(long solarSystemId, long characterId) => Loads(characterId).GetValueOrDefault(solarSystemId);
+    /// <summary>The characters in the game in a system, not counting <paramref name="characterId"/> or the replaced session.</summary>
+    public int LoadOf(long solarSystemId, long characterId, long? replacingSessionId = null) =>
+        Loads(characterId, replacingSessionId).GetValueOrDefault(solarSystemId);
 
-    /// <summary>True when the system takes one more character (not counting <paramref name="characterId"/>).</summary>
-    public bool HasRoom(long solarSystemId, long characterId) => LoadOf(solarSystemId, characterId) < Capacity;
+    /// <summary>True when the system takes one more character, excluding the selected character and a replaced session.</summary>
+    public bool HasRoom(long solarSystemId, long characterId, long? replacingSessionId = null) =>
+        LoadOf(solarSystemId, characterId, replacingSessionId) < Capacity;
 
     /// <summary>
     /// The nearest systems that have room for the character, nearest first, never the home system, wormhole space or Pochven.
     /// At most <see cref="MaxAlternatives"/>.
     /// </summary>
-    public IReadOnlyList<int> Alternatives(int homeSystemId, long characterId)
+    public IReadOnlyList<int> Alternatives(int homeSystemId, long characterId, long? replacingSessionId = null)
     {
-        var loads = Loads(characterId);
+        var loads = Loads(characterId, replacingSessionId);
         return [.. _systems.Systems
             .Where(system => system.Id != homeSystemId && IsOfferable(system) && loads.GetValueOrDefault(system.Id) < Capacity)
             .Select(system => (system.Id, Distance: _systems.LightYearsBetween(homeSystemId, system.Id) ?? double.MaxValue))
@@ -73,14 +75,14 @@ public sealed class SystemPopulation
     /// taken under one lock, so two entries into the last room admit one. A seat counts as a character in its system until it is disposed:
     /// the entry disposes it when it ends (the session counts from then on, so a refused entry leaves the count as it was).
     /// </summary>
-    public Seat? TryReserve(long solarSystemId, long characterId)
+    public Seat? TryReserve(long solarSystemId, long characterId, long? replacingSessionId = null)
     {
         lock (_gate)
         {
-            if (LoadOf(solarSystemId, characterId) >= Capacity)
+            if (LoadOf(solarSystemId, characterId, replacingSessionId) >= Capacity)
                 return null;
             var seat = new Seat(this);
-            _seats[seat] = (solarSystemId, characterId);
+            _seats[seat] = (solarSystemId, characterId, replacingSessionId);
             return seat;
         }
     }
@@ -100,24 +102,30 @@ public sealed class SystemPopulation
         public void Dispose() => Interlocked.Exchange(ref _owner, null)?.Release(this);
     }
 
-    /// <summary>Characters in the game per system, leaving out <paramref name="characterId"/> (the one being placed).</summary>
-    private Dictionary<long, int> Loads(long characterId)
+    /// <summary>Characters in the game per system, leaving out <paramref name="characterId"/> and a session being replaced.</summary>
+    private Dictionary<long, int> Loads(long characterId, long? replacingSessionId = null)
     {
         var loads = new Dictionary<long, int>();
+        KeyValuePair<Seat, (long System, long Character, long? Session)>[] reservations;
+        lock (_gate)
+            reservations = [.. _seats];
+        var reservedSessions = reservations
+            .Where(reservation => reservation.Value.Session is not null)
+            .Select(reservation => reservation.Value.Session!.Value)
+            .ToHashSet();
         foreach (var session in _sessions.All())
         {
-            if (session.CharacterId is not { } playing || playing == characterId)
+            if (session.SessionId == replacingSessionId || reservedSessions.Contains(session.SessionId) ||
+                session.CharacterId is not { } playing || playing == characterId)
                 continue;
             if ((session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid")) is { } system)
                 loads[system] = loads.GetValueOrDefault(system) + 1;
         }
-        lock (_gate)
+        foreach (var reservation in reservations)
         {
-            foreach (var (system, playing) in _seats.Values)
-            {
-                if (playing != characterId)
-                    loads[system] = loads.GetValueOrDefault(system) + 1;
-            }
+            var (system, playing, session) = reservation.Value;
+            if (playing != characterId && (replacingSessionId is null || session != replacingSessionId))
+                loads[system] = loads.GetValueOrDefault(system) + 1;
         }
         return loads;
     }

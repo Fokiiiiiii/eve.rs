@@ -27,14 +27,14 @@ public sealed class NpcFactionStanding(RelationStore relations, Func<long> nowMs
                 return null;
         }
 
-        var standing = await relations.ValueAsync(RelationKinds.Standing.Name, factionId, characterId, 0, cancellationToken: cancellationToken);
-        var next = UndockContraband.StandingAfter(standing, LossPerKillRaw);
-        if (next == standing)
-            return null;
         var reason = npcCorporationId > 0 && npcTypeId > 0
             ? System.Text.Json.JsonSerializer.Serialize(new { eventTypeID = 77, modification = LossPerKillRaw, msg = "Combat ship kill", int_1 = npcCorporationId, int_2 = systemId, int_3 = npcTypeId })
             : Reason;
-        await relations.SetAsync(RelationKinds.Standing.Name, factionId, characterId, next, reason, cancellationToken);
+        var change = await relations.TransformAsync(RelationKinds.Standing.Name, factionId, characterId,
+            standing => UndockContraband.StandingAfter(standing, LossPerKillRaw), reason,
+            cancellationToken: cancellationToken);
+        if (change?.NewValue is not { } next)
+            return null;
         lock (_gate)
         {
             _lastApplied[key] = now;

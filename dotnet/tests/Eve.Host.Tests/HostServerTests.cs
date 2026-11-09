@@ -35,6 +35,7 @@ public partial class HostServerTests : IAsyncLifetime
     private Task _serving = Task.CompletedTask;
     private readonly List<string> _log = [];
     private readonly List<TestFront> _fronts = [];
+    private ServiceRegistry _testRegistry = null!;
 
     private static readonly ClusterOptions Options = new();
 
@@ -43,9 +44,10 @@ public partial class HostServerTests : IAsyncLifetime
     private static byte[] PasswordHash(byte value) =>
         Enumerable.Repeat(value, LoginAttempt.PasswordHashLength).ToArray();
 
-    private void Start(AccountOptions? identity = null, int maxPending = 10_000, Action<ServiceRegistry>? configure = null, IAccountDirectory? accounts = null, bool strictRpc = false, Action<string, Exception?>? onProblem = null, Action<ClientSession>? sessionOpened = null, long maxOutboundBytes = 8 * 1024 * 1024, long maxPendingBytes = 16 * 1024 * 1024, int maxConnections = 1_024, ISsoTokenVerifier? ssoTokenVerifier = null, GameRpcCallbacks? gameRpcCallbacks = null, SubmitInGameReportCallback? submitInGameReport = null)
+    private void Start(AccountOptions? identity = null, int maxPending = 10_000, Action<ServiceRegistry>? configure = null, IAccountDirectory? accounts = null, bool strictRpc = false, Action<string, Exception?>? onProblem = null, Action<ClientSession>? sessionOpened = null, long maxOutboundBytes = 8 * 1024 * 1024, long maxPendingBytes = 16 * 1024 * 1024, int maxConnections = 1_024, ISsoTokenVerifier? ssoTokenVerifier = null, GameRpcCallbacks? gameRpcCallbacks = null, SubmitInGameReportCallback? submitInGameReport = null, Func<ClientSession, Task>? sessionClosed = null)
     {
         var registry = new ServiceRegistry();
+        _testRegistry = registry;
         Func<long> now = () => FixedNowMs;
         var calendarStore = new TestCalendarStore();
         var calendarAudience = new TestCalendarAudienceReader();
@@ -60,7 +62,7 @@ public partial class HostServerTests : IAsyncLifetime
         var dispatcher = new PacketDispatcher(registry, now) { StrictRpc = strictRpc, OnProblem = onProblem };
         var encoded = MarshalCodec.Encode(config);
         _server = new HostServer(
-            new HostOptions { MaxFrontConnections = maxConnections, MaxPendingPacketsPerSession = maxPending, MaxPendingBytesPerSession = maxPendingBytes, MaxQueuedOutboundBytesPerSession = maxOutboundBytes, SsoTokenVerifier = ssoTokenVerifier, Log = message => { lock (_log) { _log.Add(message); } }, SessionOpened = sessionOpened },
+            new HostOptions { MaxFrontConnections = maxConnections, MaxPendingPacketsPerSession = maxPending, MaxPendingBytesPerSession = maxPendingBytes, MaxQueuedOutboundBytesPerSession = maxOutboundBytes, SsoTokenVerifier = ssoTokenVerifier, Log = message => { lock (_log) { _log.Add(message); } }, SessionOpened = sessionOpened, SessionClosedAsync = sessionClosed },
             dispatcher,
             accounts ?? new InMemoryAccountDirectory(identity ?? new AccountOptions { AutoCreate = true }),
             () => encoded);
@@ -866,8 +868,7 @@ public partial class HostServerTests : IAsyncLifetime
         {
             registry.Register(billMgr);
             registry.Register(registryService);
-            registry.RegisterBoundObject(boundObjectId, registryService);
-        });
+        }, sessionOpened: session => _testRegistry.RegisterBoundObjectForSession(boundObjectId, registryService, session));
         var front = await Handshaken(await ConnectAsync());
         var open = Open();
         await front.SendAsync(open);

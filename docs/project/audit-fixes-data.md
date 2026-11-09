@@ -58,10 +58,10 @@ The two new database tests were each run red before their corresponding fixes. A
 - The focused space-service slices (`UndockContrabandTests` and `PgEssStoreTests`): 18 passed,
   0 failed, 0 skipped.
 
-These database tests used the job's `eve_p8` database. Its pinned build-3396210 SDE fixture was
-populated from the local matching SDE cache, with remaining read-only SDE tables temporarily
-federated from the already-loaded `eve_p7` test catalog because the local disk was full. This was
-test-environment setup only; no SDE files or Rust source changes are part of this patch.
+These database tests used the job's `eve_p8` database. Before the final pre-push rerun, the matching
+pinned build-3396210 SDE was loaded directly from the local cache into `eve_p8` (61 tables,
+668,618 records). This was test-environment setup only; no SDE files or Rust source changes are part
+of this patch.
 
 ## Not checked
 

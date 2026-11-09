@@ -15,12 +15,12 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
  && mkdir -p /out \
  && cp target/release/eve-net target/release/eve-sim target/release/eve-sde /out/
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:de4fe90a98845d75910b9769662465c84de1a934665c431279d1382b2bddc02b AS dotnet
+FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:212fe4cb74627d5adf9817a4088906ae3edff1bd853bb27565d4b46731efe61e AS dotnet
 WORKDIR /src
 COPY dotnet dotnet
 RUN dotnet publish dotnet/src/Eve.Host -c Release -o /out/host --nologo
 
-FROM mcr.microsoft.com/dotnet/runtime:10.0@sha256:a3f9f81954b9c810af2ed18849716c8dc74a4707bd0907fdbd69be81554c0f30 AS runtime
+FROM mcr.microsoft.com/dotnet/runtime:10.0@sha256:4f1f30cf0bb4ab0c8b2daa84613051683456f8df4a9bf7c812e20d74962992ac AS runtime
 # curl does eve-sde's downloading
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates \

@@ -39,4 +39,5 @@
 - V24.01 全体を `rg` で検索し、Skill Purchase、injector preview/mutation、extraction、Expert System consume、feature flag、expiry notification の呼び出し元・RPC callsite・通知定義を追いました。上記に挙げた file:line は各 client-visible flow の根拠です。
 - EveJS は該当 runtime / projection / notification source を読み、対応フローを照合しました。実行可能な EveJS test script / test suite は確認できていないため、EveJS との実行比較は未実施です。
 - V24.01 の graphical client を実際に接続する検証はしていません。
-- 作業前に確認した main の最新 full CI run 1653（commit `7f9b36e9dc23`）は green で、全 jobs が成功でした。直前の run 1646 は `Undocking_tells_the_client_in_the_reference_order_and_answers_none` で赤でしたが、root cause は未登録 OID の解放時に session の OID bookkeeping を消さなかった点で、`5f948819f` の `ServiceRegistry` 修正が回帰テストを追加しています。修正後の run 1653 は green です。root-cause 記録は `docs/project/audit-fixes-services-core-hub.md` にあります。今回はまだ push していないため、この Skills change の CI run は未確認です。
+- 監査作業前の main full CI run 1653（commit `7f9b36e9dc23`）は green でした。直前の run 1646 は `Undocking_tells_the_client_in_the_reference_order_and_answers_none` で赤でしたが、root cause は未登録 OID の解放時に session の OID bookkeeping を消さなかった点で、`5f948819f` の `ServiceRegistry` 修正が回帰テストを追加しています。修正後の run 1653 は green です。root-cause 記録は `docs/project/audit-fixes-services-core-hub.md` にあります。
+- この Skills 修正は commit `7d2e7d34ee62` として main に push 済みです。push 対応 main CI run 1656 は全 job 成功でした: [run 1656](https://github.com/Fokiiiiiii/eve.rs/actions/runs/42664943245)。

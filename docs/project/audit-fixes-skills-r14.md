@@ -1,6 +1,6 @@
 # スキル機能監査 r14 の修正記録
 
-対象監査: `/home/user/reports/90-audit-eve-skills-r14.md`（2026-11-07）  
+対象監査: `/home/user/reports/90-audit-eve-skills-r14.md`（2026-11-07）
 比較対象: V24.01 eve-logic (`/home/user/eve-logic`) と EveJS (`/home/user/evejs-261028.1`)
 
 ## 結果

@@ -1,4 +1,5 @@
 use eve_destiny::Kind;
+use eve_marshal::Value;
 
 use super::*;
 use crate::brains::rat_tests::{
@@ -43,6 +44,29 @@ fn results_of(told: &[Out]) -> Vec<(i64, Option<&'static str>)> {
         .unwrap_or_default()
 }
 
+fn add_balls_buffer(told: &[Out], wanted_id: i64) -> Vec<u8> {
+    for out in told {
+        let Out::Notify { name: "DoDestinyUpdate", args, .. } = out else { continue };
+        let Some(Value::List(actions)) = args.first() else { continue };
+        for action in actions {
+            let Value::Tuple(action) = action else { continue };
+            let Some(Value::Tuple(inner)) = action.get(1) else { continue };
+            if !matches!(inner.first(), Some(Value::Str(name)) if name == "AddBalls2") {
+                continue;
+            }
+            let Some(Value::Tuple(arguments)) = inner.get(1) else { continue };
+            let Some(Value::Tuple(add_balls)) = arguments.first() else { continue };
+            let Some(Value::Buffer(buffer)) = add_balls.first() else { continue };
+            if buffer.len() > 5 + 8 + 1 + 4 + 24
+                && i64::from_le_bytes(buffer[5..13].try_into().expect("ball id")) == wanted_id
+            {
+                return buffer.to_vec();
+            }
+        }
+    }
+    panic!("no AddBalls2 record for item {wanted_id} in {told:?}");
+}
+
 #[test]
 fn a_squadron_launched_is_a_fighter_of_the_pilot_that_circles_its_ship_and_is_no_drone() {
     let (scene, squadron, told) = launched();
@@ -53,6 +77,9 @@ fn a_squadron_launched_is_a_fighter_of_the_pilot_that_circles_its_ship_and_is_no
     // the pilot hears of its squadron as it does of a ship that came into space, and it is circling its ship
     assert!(notified(&told, "OnDroneStateChange").is_empty());
     assert!(!actions_named(&told, "Orbit").is_empty());
+    let buffer = add_balls_buffer(&told, SQUADRON_SHIP);
+    assert_eq!(buffer[0], 1, "AddBalls2 buffer kind");
+    assert_eq!(buffer[42] & 0x08, 0, "fighter ball must not carry IS_INTERACTIVE");
 }
 
 #[test]

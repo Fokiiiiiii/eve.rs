@@ -217,16 +217,9 @@ def test_the_recorded_walk_replays():
         walker.ping()
         seen = [describe(n.raw) for n in walker.notifications if n.command in (p.SESSIONCHANGENOTIFICATION, p.NOTIFICATION)]
         notification_names = [event["name"] for event in notifications_of(walker)]
-        if REFERENCE:
-            assert notification_names[0] == "OnSubscriptionTimeUpdateServer"
-            assert "OnCharacterSelected" not in notification_names
-            seen = seen[1:]
-        else:
-            assert notification_names[:2] == [
-                "OnSubscriptionTimeUpdateServer",
-                "OnCharacterSelected",
-            ]
-            seen = seen[2:]
+        assert notification_names[0] == "OnSubscriptionTimeUpdateServer"
+        assert "OnCharacterSelected" not in notification_names
+        seen = seen[1:]
         recorded_changes = WALK["afterSelect"]
         assert len(seen) == len(recorded_changes), f"{len(seen)} notifications after selecting, {len(recorded_changes)} recorded"
         problems += _compare_session_change(recorded_changes[0], seen[0])
@@ -277,11 +270,9 @@ def test_new_account_enters_a_new_character_with_named_arguments():
         assert m.plain(contract_escrow["iskEscrow"]) == 0.0
         assert m.plain(contract_escrow["itemsEscrow"]) == 0
 
-        if not REFERENCE:
-            selected = next(event for event in notifications_of(client) if event["name"] == "OnCharacterSelected")
-            # Zero positional arguments: GameUI.OnCharacterSelected(self) and StationSvc.OnCharacterSelected(self)
-            # take none, so a one-element tuple would raise TypeError inside the scatter.
-            assert selected["args"] == {"$tuple": [0, {"$tuple": [1, {"$tuple": []}]}]}
+        selection_names = [event["name"] for event in notifications_of(client)]
+        assert selection_names[0] == "OnSubscriptionTimeUpdateServer"
+        assert "OnCharacterSelected" not in selection_names
         mail = m.plain(client.call("mailMgr", "SyncMail", None, None))
         expected_title = "Welcome to EveJS Elysian" if REFERENCE else "Welcome to New Eden"
         assert any(header[1]["title"] == expected_title for header in mail[1]["newMail"])
@@ -598,16 +589,9 @@ def test_a_new_character_has_the_skills_the_reference_gives(race):
         client.ping()
         seen = [describe(n.raw) for n in client.notifications if n.command in (p.SESSIONCHANGENOTIFICATION, p.NOTIFICATION)]
         notification_names = [event["name"] for event in notifications_of(client)]
-        if REFERENCE:
-            assert notification_names[0] == "OnSubscriptionTimeUpdateServer"
-            assert "OnCharacterSelected" not in notification_names
-            seen = seen[1:]
-        else:
-            assert notification_names[:2] == [
-                "OnSubscriptionTimeUpdateServer",
-                "OnCharacterSelected",
-            ]
-            seen = seen[2:]
+        assert notification_names[0] == "OnSubscriptionTimeUpdateServer"
+        assert "OnCharacterSelected" not in notification_names
+        seen = seen[1:]
         assert len(seen) == len(race["afterSelect"]) == 2
         problems = _compare_skills_notification(race["afterSelect"][1], seen[1])
 
@@ -1238,9 +1222,9 @@ def test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level()
         notifications_of(back)
         assert attempt(back, "charUnboundMgr", "SelectCharacterID", character, None, False) == ("ok", None)
         received = notifications_of(back)
-        if not REFERENCE:
-            assert sum(event["name"] == "OnCharacterSelected" for event in received) == 1
-            received = [event for event in received if event["name"] != "OnCharacterSelected"]
+        assert received[0]["name"] == "OnSubscriptionTimeUpdateServer"
+        assert "OnCharacterSelected" not in [event["name"] for event in received]
+        received = received[1:]
         problems += differences(
             blank_times(events_form(substitute(away["notifications"], mapping))), blank_times(events_form(received)), "finished while away: events", float_tolerance=DOGMA_TOLERANCE)
         problems += view_problems(away["after"], training_view(back), "finished while away: after")

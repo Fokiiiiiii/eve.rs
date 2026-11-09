@@ -422,9 +422,6 @@ public sealed partial class CharUnboundMgrService(
                     await hook.OnCharacterLeavingAsync(call.Session, oldCharacterId, Token(call));
                 }
             }
-            if (changingCharacter)
-                call.Session.SendNotification("OnCharacterSelected", "clientID");
-
             var announced = call.Session.Change([.. attributes.Select(attribute => (attribute.Key, attribute.Value))]);
             if (announced.Any(change => change.Name == "charid"))
             {

@@ -62,6 +62,65 @@ public sealed class CharacterHostTests
     }
 
     [PgFact]
+    public async Task Host_character_selection_sends_the_subscription_time_before_the_session_change()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        Assert.Equal(1, await rig.CreateAccountAsync());
+        var character = await rig.CreateCharacterAsync();
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession(sink) { SessionId = 55_001, ClientId = 55_002, UserId = 1 };
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charUnboundMgr"));
+
+        Assert.IsType<PyNone>(await CallAsync(service, "SelectCharacterID", session, new PyLong(character)));
+
+        var notifications = Notifications(sink);
+        Assert.Equal(new[] { "OnSubscriptionTimeUpdateServer", "OnCharacterSelected" },
+            notifications.Select(notification => notification.Name));
+        Assert.Equal(new PyLong(OmegaLicenses.DefaultOmegaExpiryFileTime), Assert.Single(notifications[0].Args));
+        Assert.Equal(
+            new long[] { (long)MachoMessage.Notification, (long)MachoMessage.Notification, (long)MachoMessage.SessionChangeNotification },
+            sink.Sent.Select(packet => Assert.IsType<PyInt>(Assert.IsType<PyTuple>(Assert.IsType<PyObject>(packet).Args).Items[0]).Value));
+    }
+
+    [PgFact]
+    public async Task Host_character_selection_tells_alpha_and_expired_accounts_none_even_when_selection_fails()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        Assert.Equal(1, await rig.CreateAccountAsync());
+        var character = await rig.CreateCharacterAsync();
+        int expiredAccount;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var command = new NpgsqlCommand(
+            $"INSERT INTO {rig.IdentitySchema}.accounts (user_name, password_hash) VALUES ('expired-subscription-test', '\\x00'::bytea) RETURNING id",
+            connection))
+            expiredAccount = (int)(await command.ExecuteScalarAsync())!;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var command = new NpgsqlCommand(
+            $"UPDATE {rig.IdentitySchema}.accounts SET subscription_end_at = $2 WHERE id = $1", connection))
+        {
+            command.Parameters.Add(new NpgsqlParameter { Value = expiredAccount });
+            command.Parameters.Add(new NpgsqlParameter { Value = DateTimeOffset.UtcNow.AddDays(-1) });
+            Assert.Equal(1, await command.ExecuteNonQueryAsync());
+        }
+
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charUnboundMgr"));
+        async Task AssertFailedSelectionAnnouncesNone(long userId, long sessionId)
+        {
+            var sink = new RecordingPacketSink();
+            var session = new ClientSession(sink) { SessionId = sessionId, ClientId = sessionId + 1, UserId = userId };
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(
+                () => CallAsync(service, "SelectCharacterID", session, new PyLong(character)));
+            Assert.True(error.Error.IsUserError);
+            var notification = Assert.Single(Notifications(sink));
+            Assert.Equal("OnSubscriptionTimeUpdateServer", notification.Name);
+            Assert.Same(PyNone.Instance, Assert.Single(notification.Args));
+        }
+
+        await AssertFailedSelectionAnnouncesNone(userId: 99, sessionId: 55_101);
+        await AssertFailedSelectionAnnouncesNone(expiredAccount, sessionId: 55_201);
+    }
+
+    [PgFact]
     public async Task Public_record_in_a_list_reaches_the_client_with_membership_and_authoritative_militia_values()
     {
         await using var rig = await CharacterHostRig.CreateAsync();

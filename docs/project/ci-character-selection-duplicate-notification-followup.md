@@ -25,9 +25,10 @@ The evidence supports sending the subscription update first and then the normal 
 
 - `Eve.Services.CharacterSelect` and `Eve.Services.CharacterSelect.Tests` Release builds passed with warnings treated as errors.
 - Focused database-backed character-selection tests on `eve_p6`: 56 passed, 0 failed, 0 skipped.
-- Focused Host test slice: 63 passed, 0 failed, 1 skipped. The skipped abyssal simulation case was subsequently run with the built `eve-sim` and pinned SDE and passed separately (1 passed, 0 skipped).
+- Focused Host test slice (`CharacterHostTests`, `CharacterReSculptHostTests`, `JumpCloneSettlementHostWireTests`, and `TournamentRegionCompositionTests`) with the built `eve-sim` and pinned SDE: 72 passed, 0 failed, 0 skipped.
 - The three targeted live selection checks, including the recorded walk, all four race cases, and named-argument character entry: 6 passed, 0 failed, 0 skipped.
+- The same selection checks were attempted against EveJS v0.12.9. The recorded-walk case failed earlier on an unrelated `achievementTrackerMgr.HasEverWarped` state mismatch; the four race cases reached and passed the selection-notice assertions, then failed on later skill/history differences. This is not a full EveJS end-to-end parity pass.
 - The extended queue-finishes-while-away skill-speed check is not a pass. It skipped at the configured speed because the measured speed was `57000`, and a forced-speed attempt reached later skill-state/attribute differences. Its notification assertion was updated in this follow-up and still needs a clean focused rerun under the intended nightly setup.
 - The Host test project built with the pre-existing untracked `dotnet/tests/Eve.Host.Tests/InventoryAuditHostWireTests.cs` excluded. Building with that local file included fails at line 194 because it passes `PgModuleStateStore` where `IReadOnlyList<ICharacterEntryHook>` is required. That unrelated worktree file was left untouched.
 
-The headless tests exercise the registered eve.rs Host and packet flow. The graphical V24.01 client was not run. Main CI for this correction is pending.
+The headless tests exercise the registered eve.rs Host and packet flow. The graphical V24.01 client was not run. Main CI run `42650955347` for the pre-correction base `7f9b36e9d` completed green; CI for this correction is pending.

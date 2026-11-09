@@ -47,12 +47,14 @@ EveJSでは実際の`recordNpcFactionStandingLoss`と`standingRuntime.applyStand
 - `Eve.Characters.Tests`: `CreationTests` — 21 passed
 - `Eve.Corporations.Tests`: `AllianceTests`, `CorporationProtocolTests`, `CorporationTests`, `StandingMgrServiceTests`, `WarRegistryTests` — 120 passed
 - `Eve.FactionWarfare.Tests`: `FwDatabaseTests` — 15 passed
-- `Eve.Host.Tests`: relation/war/affiliation/mission/reprocessing integration classes — 23 passed;追加でCrimewatch、StandingMgr、WarRegistry wire tests — 12 passed
+- `Eve.Host.Tests`: relation/war/affiliation/mission/reprocessing integration classes — 29 passed;追加でCrimewatch、StandingMgr、WarRegistry wire testsとweapon legality host test — 11 passed
 - `Eve.Services.CharacterSelect.Tests`: `CharUnboundMgrTests` — 36 passed
 - `Eve.Services.Dogma.Tests`: `StandingCommandTests` — 5 passed
 - `Eve.Services.Crimewatch.Tests`: `RuntimeTests`, `NpcSecurityStatusRecoverySubscriberTests` — 38 passed
 - `Eve.Services.Space.Tests`: `NpcFactionStandingTests`, `UndockContrabandTests` — 8 passed
 - `Eve.Services.Station.Tests`: `ReprocessingServiceTests` — 13 passed
+
+上記の対象クラス合計は314 passed、0 failed、0 skipped。mainをmergeした後、Relations、Crimewatch、Spaceのproduction/test 6 projectをRelease buildし、すべて0 warnings / 0 errorsだった。初回の広いHost filterは関連外の`AbyssalHostFlowTests.Real_sim_cleanup_confirms_live_npc_environment_and_reward_scene_removal_with_another_run_intact`も拾い、120 passed、1 skippedだったため集計に含めていない。関係するHostクラスを個別指定して再実行し、上記29 + 11件がすべてskipなしで通過した。
 
 回帰テストは実DBで永続化、relation history、domain event順序、期限job、NPC standingのrestart、Crimewatchの実`RecordAggressionAsync`結果を確認する。Host側の既存wire testsも通過し、standings notification shapeを担う既存コード（`/home/user/eve-logic/eve/client/script/ui/services/standingsvc.py:41-73`、`/home/user/wt-cx4/dotnet/src/Eve.Host/Composition/SpaceComposition.cs:451-470`）に変更はない。
 

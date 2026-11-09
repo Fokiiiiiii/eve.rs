@@ -434,7 +434,7 @@ fn pack_number(value: &Value) -> f64 {
     let number = match value {
         Value::None => return 0.0,
         Value::Bool(flag) => f64::from(u8::from(*flag)),
-        Value::Int(_) | Value::Long(_) | Value::Real(_) | Value::BigUnsigned(_) => {
+        Value::Int(_) | Value::Long(_) | Value::Real(_) | Value::BigUnsigned(_) | Value::BigSigned(_) => {
             jsnum::value_to_number(value)
         }
         Value::Str(_) | Value::WString(_) | Value::Token(_) | Value::Bytes(_) | Value::Buffer(_) => {
@@ -467,6 +467,15 @@ fn pack_i64(value: &Value) -> Result<i64> {
             let mut buffer = [0u8; 8];
             buffer[..bytes.len()].copy_from_slice(bytes);
             i64::try_from(u64::from_le_bytes(buffer)).map_err(|_| out_of_range)?
+        }
+        Value::BigSigned(bytes) => {
+            if bytes.len() > 8 {
+                return Err(out_of_range);
+            }
+            let fill = if bytes.last().is_some_and(|byte| byte & 0x80 != 0) { 0xff } else { 0 };
+            let mut buffer = [fill; 8];
+            buffer[..bytes.len()].copy_from_slice(bytes);
+            i64::from_le_bytes(buffer)
         }
         Value::Str(text) | Value::WString(text) | Value::Token(text) => text_to_i64(text)?,
         Value::Bytes(bytes) | Value::Buffer(bytes) => text_to_i64(&String::from_utf8_lossy(bytes))?,

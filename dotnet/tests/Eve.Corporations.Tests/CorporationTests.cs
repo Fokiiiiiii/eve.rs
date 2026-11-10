@@ -418,6 +418,7 @@ public sealed class CorporationOfficeTests
         await SetOfficeRoleAsync(rig, actor, CorporationRoles.RentOffice);
         var service = CreateService(rig);
         var quote = await QuoteAsync(service, actor, corporation.Id);
+        Assert.Equal(CorporationOfficeStore.NpcStationOfficeRentalCostIsk, quote);
         Assert.Equal(new Eve.Marshal.PyInt(Eve.Macho.MachoMessage.ProxyNodeId),
             service.MachoResolveObject(Call("MachoResolveObject", actor, corporation.Id, new Eve.Marshal.PyLong(Station.Id))));
         var bound = Assert.IsType<Eve.Marshal.PyTuple>(await service.MachoBindObject(Call("MachoBindObject", actor, corporation.Id,
@@ -425,31 +426,25 @@ public sealed class CorporationOfficeTests
         Assert.IsType<Eve.Marshal.PySubStruct>(bound.Items[0]);
         Assert.Equal(await service.GetMyCorporationsOffices(Call("GetMyCorporationsOffices", actor, corporation.Id)), bound.Items[1]);
         var before = (await rig.Wallets.GetAsync(corporation.Id))!.Isk;
-        var currentPrice = quote + 1m;
-        await using (var update = rig.Source.CreateCommand($"UPDATE {rig.CorporationSchema}.office_station_prices SET price_isk=$2 WHERE station_id=$1"))
-        {
-            update.Parameters.Add(new Npgsql.NpgsqlParameter { Value = Station.Id });
-            update.Parameters.Add(new Npgsql.NpgsqlParameter { Value = currentPrice });
-            await update.ExecuteNonQueryAsync();
-        }
-        var call = Call("RentOffice", actor, corporation.Id, new Eve.Marshal.PyLong((long)quote));
+        var clientQuote = quote + 1m;
+        var call = Call("RentOffice", actor, corporation.Id, new Eve.Marshal.PyLong((long)clientQuote));
 
         await service.RentOffice(call);
         await service.RentOffice(call);
 
         var offices = await rig.OfficeStore.ForCorporationAsync(corporation.Id);
         var office = Assert.Single(offices);
-        Assert.Equal(currentPrice, office.RentIsk);
+        Assert.Equal(quote, office.RentIsk);
         Assert.Equal(CorporationOfficeStore.OfficeFolderTypeId, (await rig.Items.GetAsync(office.OfficeFolderId))!.TypeId);
         Assert.Equal(rig.Now + CorporationOfficeStore.RentalCycleMs, office.ExpiresAtMs);
-        Assert.Equal(before - currentPrice, (await rig.Wallets.GetAsync(corporation.Id))!.Isk);
+        Assert.Equal(before - quote, (await rig.Wallets.GetAsync(corporation.Id))!.Isk);
 
         await using var bill = rig.Source.CreateCommand(
             $"SELECT amount_isk,due_at_ms,status FROM {rig.CorporationSchema}.office_rent_bills WHERE corporation_id=$1");
         bill.Parameters.Add(new Npgsql.NpgsqlParameter { Value = corporation.Id });
         await using var reader = await bill.ExecuteReaderAsync();
         Assert.True(await reader.ReadAsync());
-        Assert.Equal(currentPrice, reader.GetDecimal(0));
+        Assert.Equal(quote, reader.GetDecimal(0));
         Assert.Equal(rig.Now + CorporationOfficeStore.RentalCycleMs, reader.GetInt64(1));
         Assert.Equal((short)0, reader.GetInt16(2));
         Assert.False(await reader.ReadAsync());
@@ -577,21 +572,15 @@ public sealed class CorporationOfficeTests
             MidpointRounding.AwayFromZero);
         var quote = await service.GetImpoundReleasePrice(Call("GetImpoundReleasePrice", actor, corporation.Id));
         Assert.Equal(expectedFee, (decimal)Assert.IsType<Eve.Marshal.PyReal>(quote).Value);
-        var currentFee = expectedFee + 1m;
-        await using (var update = rig.Source.CreateCommand($"UPDATE {rig.CorporationSchema}.office_station_prices SET price_isk=$2 WHERE station_id=$1"))
-        {
-            update.Parameters.Add(new Npgsql.NpgsqlParameter { Value = Station.Id });
-            update.Parameters.Add(new Npgsql.NpgsqlParameter { Value = currentFee * 2m });
-            await update.ExecuteNonQueryAsync();
-        }
+        var clientQuote = expectedFee + 1m;
         var before = (await rig.Wallets.GetAsync(corporation.Id))!.Isk;
         var ownerBefore = (await rig.Wallets.GetAsync(Station.OwnerId))?.Isk ?? 0m;
 
         await service.GetItemsFromImpound(Call("GetItemsFromImpound", actor, corporation.Id,
-            new Eve.Marshal.PyReal((double)expectedFee)));
+            new Eve.Marshal.PyReal((double)clientQuote)));
 
-        Assert.Equal(before - currentFee, (await rig.Wallets.GetAsync(corporation.Id))!.Isk);
-        Assert.Equal(ownerBefore + currentFee, (await rig.Wallets.GetAsync(Station.OwnerId))!.Isk);
+        Assert.Equal(before - expectedFee, (await rig.Wallets.GetAsync(corporation.Id))!.Isk);
+        Assert.Equal(ownerBefore + expectedFee, (await rig.Wallets.GetAsync(Station.OwnerId))!.Isk);
         Assert.Equal(Eve.Inventory.ItemFlags.CorpSAG1, (await rig.Items.GetAsync(itemId))!.Flag);
     }
 

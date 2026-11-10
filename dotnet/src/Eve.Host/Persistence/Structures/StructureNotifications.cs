@@ -1,6 +1,9 @@
 using Eve.Events;
+using Eve.Dogma;
 using Eve.Marshal;
 using Eve.Services;
+using Eve.Services.Ships;
+using Eve.Ships;
 using Eve.Structures;
 
 namespace Eve.Host;
@@ -66,6 +69,22 @@ public static class StructureNotifications
             var change = context.Event.Payload<StructureServiceChanged>()!;
             foreach (var session in sessions.InStructure(change.StructureId))
                 session.SendNotification("OnStructureServiceChanged", "clientID", new PyLong(change.StructureId));
+            return Task.CompletedTask;
+        });
+        events.Subscribe("structure.service_module.notify", [StructureTimers.ServiceModulesOfflinedTopic], (context, _) =>
+        {
+            var change = context.Event.Payload<StructureServiceModulesOfflined>()!;
+            var dogmaEvents = change.ModuleIds.SelectMany(moduleId => new DogmaEvent[]
+            {
+                new AttributeChanged(moduleId, BuiltInEffects.IsOnline, 1, 0),
+                new EffectChanged(moduleId, BuiltInEffects.Online, false),
+            }).ToArray();
+            var fileTime = Py.FileTimeFromUnixMs(change.OccurredAtMs);
+            foreach (var session in sessions.All().Where(session => session.GetInt("shipid") == change.StructureId))
+            {
+                if (session.CharacterId is { } characterId)
+                    ShipNotifications.SendEvents(session, characterId, change.StructureId, dogmaEvents, fileTime);
+            }
             return Task.CompletedTask;
         });
     }

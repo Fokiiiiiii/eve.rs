@@ -268,7 +268,7 @@ public sealed class StructureAnchorTests
         route.CorporationCreatedMs = Now - StructureTimes.Day;
         Assert.Equal("CustomNotify", (await Refused(route.Pilot(), item)).Name);
         route.CorporationCreatedMs = Now - 30 * StructureTimes.Day;
-        var far = await Refused(route.Pilot(), item, 100_000, 0);
+        var far = await Refused(route.Pilot(), item, 900_000, 0);
         Assert.Equal(("CustomNotify", "That structure is too far away to deploy."), (far.Name, far.Notice));
         var unsupported = await Refused(route.Pilot(), await route.GiveAsync(Tritanium, Ship));
         Assert.Equal(("CustomNotify", "That structure type is not supported by the current deployment service."), (unsupported.Name, unsupported.Notice));

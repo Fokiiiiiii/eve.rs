@@ -22,6 +22,9 @@ public sealed record StructureAnchored(long StructureId, int SolarSystemId, int 
 /// <summary>The payload of <see cref="StructureTimers.ServiceChangedTopic"/>: a service module went online (<c>OnlineSinceMs</c> is when) or offline (0).</summary>
 public sealed record StructureServiceChanged(long StructureId, int SolarSystemId, int ServiceId, int State, long OnlineSinceMs);
 
+/// <summary>The service modules taken offline when a structure enters Hull Reinforce or runs out of fuel.</summary>
+public sealed record StructureServiceModulesOfflined(long StructureId, int SolarSystemId, long[] ModuleIds, long OccurredAtMs);
+
 /// <summary>
 /// The glue of the timeline: loads a structure, applies an event with <see cref="StructureStateMachine"/>, saves the result, publishes <c>structure.state_changed</c> and schedules the next
 /// deadline as the durable job <c>structure.timer</c> (key <c>structure:{id}</c>), all in the caller's transaction (FOUNDATIONS rules 1 to 3). The job handler is idempotent: it applies
@@ -32,6 +35,7 @@ public sealed class StructureTimers
     public const string JobKind = "structure.timer";
     public const string StateChangedTopic = "structure.state_changed";
     public const string ServiceChangedTopic = "structure.service_changed";
+    public const string ServiceModulesOfflinedTopic = "structure.service_modules_offlined";
 
     private sealed record TimerJob(long StructureId);
 
@@ -39,6 +43,7 @@ public sealed class StructureTimers
     private readonly DurableScheduler _scheduler;
     private readonly EventBus _events;
     private readonly IStructureRulesSource _rules;
+    private readonly IStructureServiceModuleStates? _moduleStates;
     private readonly Func<double> _roll;
     private readonly Func<NpgsqlConnection, NpgsqlTransaction, StructureRecord, CancellationToken, Task<StructureUnanchorDrop>>? _completeUnanchor;
     private readonly Func<NpgsqlConnection, NpgsqlTransaction, StructureRecord, CancellationToken, Task<StructureUnanchorDrop?>>? _completeDestruction;
@@ -50,12 +55,14 @@ public sealed class StructureTimers
         IStructureRulesSource rules,
         Func<double>? roll = null,
         Func<NpgsqlConnection, NpgsqlTransaction, StructureRecord, CancellationToken, Task<StructureUnanchorDrop>>? completeUnanchor = null,
-        Func<NpgsqlConnection, NpgsqlTransaction, StructureRecord, CancellationToken, Task<StructureUnanchorDrop?>>? completeDestruction = null)
+        Func<NpgsqlConnection, NpgsqlTransaction, StructureRecord, CancellationToken, Task<StructureUnanchorDrop?>>? completeDestruction = null,
+        IStructureServiceModuleStates? moduleStates = null)
     {
         _store = store;
         _scheduler = scheduler;
         _events = events;
         _rules = rules;
+        _moduleStates = moduleStates;
         _roll = roll ?? Random.Shared.NextDouble;
         _completeUnanchor = completeUnanchor;
         _completeDestruction = completeDestruction;
@@ -97,6 +104,10 @@ public sealed class StructureTimers
         {
             unanchorDrop = await loot(connection, transaction, record, cancellationToken);
         }
+        var offlinedModuleIds = transition.Changed && record.Snapshot.State != StructureState.HullReinforce &&
+            transition.Next.State == StructureState.HullReinforce
+                ? await OfflineServiceModulesAsync(connection, transaction, structureId, cancellationToken)
+                : [];
         if (transition.Changed)
         {
             await _store.SaveAsync(connection, transaction, transition.Next, cancellationToken);
@@ -107,8 +118,40 @@ public sealed class StructureTimers
                     record.Snapshot.State, record.Snapshot.Upkeep, unanchorDrop),
                 $"structure:{structureId}", cancellationToken);
         }
+        await PublishServiceModulesOfflinedAsync(connection, transaction, structureId, offlinedModuleIds, cancellationToken);
         await ScheduleAsync(connection, transaction, transition.Next, rules, cancellationToken);
         return transition;
+    }
+
+    /// <summary>Publishes the modules a fuel job turned off after its structure service/state events, in the same transaction.</summary>
+    internal async Task PublishServiceModulesOfflinedAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long structureId,
+        IReadOnlyList<long> moduleIds,
+        CancellationToken cancellationToken = default)
+    {
+        var ids = moduleIds.Where(id => id > 0).Distinct().Order().ToArray();
+        if (ids.Length == 0 || await _store.GetAsync(connection, transaction, structureId, false, cancellationToken) is not { } record)
+            return;
+        await _events.PublishInTransactionAsync(connection, transaction, ServiceModulesOfflinedTopic,
+            new StructureServiceModulesOfflined(structureId, record.SolarSystemId, ids, _scheduler.Now), $"structure:{structureId}", cancellationToken);
+    }
+
+    private async Task<long[]> OfflineServiceModulesAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long structureId,
+        CancellationToken cancellationToken)
+    {
+        if (_moduleStates is null)
+            return [];
+        var cycles = await _store.ServiceModuleFuelCyclesAsync(connection, transaction, structureId, cancellationToken);
+        foreach (var cycle in cycles)
+            await _moduleStates.SetAsync(connection, transaction, cycle.ModuleId, false, cancellationToken);
+        if (cycles.Count > 0)
+            await _store.DeleteAllServiceModuleFuelCyclesAsync(connection, transaction, structureId, cancellationToken);
+        return [.. cycles.Select(cycle => cycle.ModuleId)];
     }
 
     /// <summary>Creates the structure and anchors it (the 15 minute anchoring vulnerability begins). Returns null when the id is taken.</summary>

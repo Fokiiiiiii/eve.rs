@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using Eve.Characters;
 using Eve.Data;
 using Eve.Host;
+using Eve.Host.Persistence;
 using Eve.Identity;
 using Eve.Dogma;
 using Eve.Fitting;
@@ -91,6 +92,7 @@ internal static class HostComposition
         Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? readCurrentCalendarGroups = null;
         Func<long, long, CancellationToken, ValueTask<bool>>? isCharacterInCurrentCorporation = null;
         NpgsqlDataSource? dataSource = null; // owned by the runtime: shut down with it, so its pooled connections return to the server
+        PgDeployedStore? deployedRecords = null;
         Eve.Host.Persistence.PersistenceInGameReportStore? inGameReportStore = null;
         Eve.Host.Persistence.PgAccruedTimeStore? accruedTimeStore = null;
         Eve.Host.Persistence.RaffleProxyStore? raffleProxyStore = null;
@@ -181,8 +183,9 @@ internal static class HostComposition
             var sde = new Eve.Sde.SdeReader(source);
             await Eve.Host.Persistence.PersistenceTournamentStore.MigrateAsync(source);
             await Eve.Host.Persistence.PersistenceTournamentArenas.MigrateAsync(source);
+            deployedRecords = new PgDeployedStore(source, Env("EVE_SPACE_SCHEMA", PgSpaceItemStore.DefaultSchema));
             var tournamentArenas = new Eve.Host.Persistence.PersistenceTournamentArenas(source, sde, contractCharacters,
-                contractItems, new PgDeployedStore(source, Env("EVE_SPACE_SCHEMA", PgSpaceItemStore.DefaultSchema)), foundations.Events);
+                contractItems, deployedRecords, foundations.Events);
             if (Env("EVE_TOURNAMENT_ARENA_IMPORT", "") is { Length: > 0 } arenaImportPath)
             {
                 var arenaJson = await File.ReadAllTextAsync(arenaImportPath);
@@ -225,7 +228,7 @@ internal static class HostComposition
             await Eve.Host.Persistence.PersistenceTournamentMatches.MigrateCutoffIntentAsync(source);
             await Eve.Host.Persistence.PersistenceTournamentMatches.MigrateMetricsIntentAsync(source);
             tournamentMatches = new Eve.Host.Persistence.PersistenceTournamentMatches(source, tournamentArenas, contractItems,
-                new PgDeployedStore(source, Env("EVE_SPACE_SCHEMA", PgSpaceItemStore.DefaultSchema)), foundations.Events, simulation, sde,
+                deployedRecords, foundations.Events, simulation, sde,
                 scheduler: foundations.Scheduler, sessions: characterSessions,
                 fleetSchema: Env("EVE_FLEET_SCHEMA", Eve.Services.Space.FleetStore.DefaultSchema), space: space,
                 tournamentShips: tournamentShips, tournamentCharacters: contractCharacters, tournamentContainers: tournamentContainers);
@@ -439,6 +442,9 @@ internal static class HostComposition
             readJumpTimers: readJumpTimers,
             readDynamicBounty: readDynamicBounty,
             readNonDiminishingInjections: readNonDiminishingInjections,
+            readControlTowerRows: deployedRecords is { } deployed
+                ? new ControlTowerReadModel(deployed).ReadAsync
+                : static (_, _) => ValueTask.FromResult<IReadOnlyList<ControlTowerRow>>([]),
             submitInGameReport: inGameReportStore is { } reportStore ? reportStore.SubmitAsync : null,
             keeperRpcCallbacks: keeperRpcCallbacks,
             superWeaponRpcCallbacks: superWeaponCallbacks,

@@ -1627,6 +1627,13 @@ public sealed class CharacterHostTests
         Assert.Equal(new PyInt(1), await CallAsync(charMgr, "CreateLabel", session, new PyStr("Fleet"), new PyInt(7)));
         Assert.Equal(new PyInt(2), await CallAsync(charMgr, "CreateLabel", session, new PyStr("Friends"), new PyInt(3)));
         await CallAsync(charMgr, "AssignLabels", session, new PyList([new PyLong(77_001)]), new PyLong(3));
+        var noContacts = Py.KeyVal(
+            ("addresses", Py.Rowset(["contactID", "inWatchlist", "relationshipID", "labelMask"], [])),
+            ("blocked", Py.Rowset(["senderID"], [])));
+        Assert.Equal(noContacts, await CallAsync(charMgr, "GetContactList", session));
+        await CallAsync(charMgr, "AddContact", session, new PyLong(77_001), new PyInt(0),
+            PyBool.False, PyBool.False, new PyStr(""));
+        await CallAsync(charMgr, "AssignLabels", session, new PyList([new PyLong(77_001)]), new PyLong(3));
         Assert.IsType<PyNone>(await CallAsync(charMgr, "DeleteLabel", session, new PyLong(2)));
 
         var expectedLabels = new PyDict([new KeyValuePair<PyValue, PyValue>(

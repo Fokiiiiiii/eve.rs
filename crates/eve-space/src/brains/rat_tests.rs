@@ -325,6 +325,141 @@ fn lowsec_security_status_loss_makes_station_sentries_lock_and_fire() {
 }
 
 #[test]
+fn an_empire_sentry_acquires_a_criminal_within_its_sde_attack_range() {
+    let sentry_engages_at = |distance: f64| {
+        let mut lowsec = (*system()).clone();
+        lowsec.security = 0.4;
+        let mut scene = Scene::new(Arc::new(lowsec));
+        scene.undock(PLAYER, spec(), STATION, NOON).unwrap();
+        scene.bind(PLAYER, NOON);
+        run(&mut scene, NOON, 1);
+
+        let (sentry_session, sentry_position) = scene
+            .pilots
+            .iter()
+            .find(|(_, pilot)| pilot.ship.spec.group_id == 99)
+            .map(|(session, pilot)| (*session, pilot.ship.position))
+            .unwrap();
+        let criminal_id = scene.pilots[&PLAYER].ship.spec.ship_id;
+        let mut criminal = scene.pilots[&PLAYER].ship.spec.clone();
+        criminal.security_status = -1.0;
+        scene.respec(PLAYER, criminal, LATER);
+        scene.crimewatch_flag_active(PLAYER, true, i64::MAX, LATER);
+        scene.pilots.get_mut(&PLAYER).unwrap().ship.position =
+            Vec3::new(sentry_position.x + distance, sentry_position.y, sentry_position.z);
+
+        let told = run(&mut scene, LATER, 8);
+        let locked = scene.locked_by(sentry_session).contains(&criminal_id);
+        (locked, notified(&told, "OnTarget").len(), actions_named(&told, "OnSpecialFX").len())
+    };
+
+    let (locked_within_range, target_notifications, weapon_fx) = sentry_engages_at(600_000.0);
+    assert!(locked_within_range, "the sentry must lock at 600 km, within its SDE 1,000 km range");
+    assert!(target_notifications > 0, "OnTarget must report the lock");
+    assert!(weapon_fx > 0, "the sentry's turret must activate within its SDE range");
+
+    let (locked_outside_range, target_notifications, weapon_fx) = sentry_engages_at(1_100_000.0);
+    assert!(!locked_outside_range, "the sentry must not lock beyond its SDE range");
+    assert_eq!(target_notifications, 0, "OnTarget must not report an out-of-range lock");
+    assert_eq!(weapon_fx, 0, "the sentry must not activate its turret beyond its SDE range");
+}
+
+#[test]
+fn an_applied_local_illegal_attack_arms_sentries_only_within_their_sde_range() {
+    let sentry_engages_at = |distance: f64| {
+        let mut lowsec = (*system()).clone();
+        lowsec.security = 0.4;
+        let mut scene = Scene::new(Arc::new(lowsec));
+        scene.undock(PLAYER, spec(), STATION, NOON).unwrap();
+        scene.bind(PLAYER, NOON);
+        run(&mut scene, NOON, 1);
+
+        let (sentry_session, sentry_position) = scene
+            .pilots
+            .iter()
+            .find(|(_, pilot)| pilot.ship.spec.group_id == 99)
+            .map(|(session, pilot)| (*session, pilot.ship.position))
+            .unwrap();
+        let attacker_ship = scene.pilots[&PLAYER].ship.spec.ship_id;
+        scene.pilots.get_mut(&PLAYER).unwrap().ship.position =
+            Vec3::new(sentry_position.x + distance, sentry_position.y, sentry_position.z);
+        scene.queue_empire_sentry_offense(PLAYER);
+
+        let told = run(&mut scene, LATER, 8);
+        (
+            scene.locked_by(sentry_session).contains(&attacker_ship),
+            notified(&told, "OnTarget").len(),
+            actions_named(&told, "OnSpecialFX").len(),
+        )
+    };
+
+    let (locked_within_range, target_notifications, weapon_fx) = sentry_engages_at(600_000.0);
+    assert!(locked_within_range, "the sentry must lock an attacker at 600 km after an applied offense");
+    assert!(target_notifications > 0, "OnTarget must report the sentry lock");
+    assert!(weapon_fx > 0, "the sentry's turret must activate");
+
+    let (locked_outside_range, target_notifications, weapon_fx) = sentry_engages_at(1_100_000.0);
+    assert!(!locked_outside_range, "the sentry must not lock beyond its SDE range");
+    assert_eq!(target_notifications, 0, "OnTarget must not report an out-of-range lock");
+    assert_eq!(weapon_fx, 0, "the sentry must not activate beyond its SDE range");
+}
+
+#[test]
+fn a_gate_sentry_acquires_a_local_offender_within_its_sde_range() {
+    let mut lowsec = (*system()).clone();
+    lowsec.security = 0.4;
+    let gate_position = Vec3::new(10_000_000.0, 10_000_000.0, 10_000_000.0);
+    lowsec.bodies.push(Body {
+        id: 50_000_000,
+        type_id: 56317,
+        group_id: 10,
+        category_id: 2,
+        owner_id: 0,
+        name: "Testing gate".to_string(),
+        kind: BodyKind::Stargate,
+        position: gate_position,
+        radius: 15_000.0,
+        graphic_id: None,
+        detail: Detail::Stargate {
+            destination_system: 30_000_022,
+            destination_gate: 50_100_000,
+            destination_name: "outside".to_string(),
+            destination_security: 0.5,
+            destination_faction: None,
+            hazardous: false,
+            facing: None,
+            heading: None,
+        },
+    });
+    let mut scene = Scene::new(Arc::new(lowsec));
+    scene.undock(PLAYER, spec(), STATION, NOON).unwrap();
+    scene.bind(PLAYER, NOON);
+    run(&mut scene, NOON, 1);
+
+    let (sentry_session, sentry_position) = scene
+        .pilots
+        .iter()
+        .filter(|(_, pilot)| pilot.ship.spec.group_id == 99)
+        .map(|(session, pilot)| (*session, pilot.ship.position))
+        .find(|(_, position)| {
+            let dx = position.x - gate_position.x;
+            let dy = position.y - gate_position.y;
+            let dz = position.z - gate_position.z;
+            (dx * dx + dy * dy + dz * dz).sqrt() < 100_000.0
+        })
+        .expect("the gate must have Empire sentries in its scene");
+    let attacker_ship = scene.pilots[&PLAYER].ship.spec.ship_id;
+    scene.pilots.get_mut(&PLAYER).unwrap().ship.position =
+        Vec3::new(sentry_position.x + 600_000.0, sentry_position.y, sentry_position.z);
+    scene.queue_empire_sentry_offense(PLAYER);
+
+    let told = run(&mut scene, LATER, 8);
+    assert!(scene.locked_by(sentry_session).contains(&attacker_ship), "the gate sentry must lock at 600 km");
+    assert!(!notified(&told, "OnTarget").is_empty(), "the gate sentry lock must be reported");
+    assert!(!actions_named(&told, "OnSpecialFX").is_empty(), "the gate sentry turret must fire");
+}
+
+#[test]
 fn a_lowsec_status_loss_before_the_first_scene_poll_reaches_sentries() {
     let mut lowsec = (*system()).clone();
     lowsec.security = 0.4;

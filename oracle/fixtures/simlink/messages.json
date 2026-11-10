@@ -23,6 +23,12 @@
    "hex": "120000008ce9030000000000000100505c18a3010000"
   },
   {
+   "name": "Empire sentry offense",
+   "kind": "EmpireSentryOffense",
+   "sessionId": "1001",
+   "hex": "09000000a1e903000000000000"
+  },
+  {
    "name": "ensure private Abyssal room scene",
    "kind": "EnsureAbyssalScene",
    "requestId": "41",
@@ -8162,6 +8168,11 @@
    "name": "cutoff invalid evidence",
    "reason": "bad-value",
    "hex": "4f00000091470000000000000081c3c9010000000000000000000000005100000000000000020000000000000000c06c2f57b5db01007c0d9558b5db0101010001000000000000000200000000000000030000"
+  },
+  {
+   "name": "Empire sentry offense zero session",
+   "reason": "bad-value",
+   "hex": "09000000a10000000000000000"
   }
  ]
 }

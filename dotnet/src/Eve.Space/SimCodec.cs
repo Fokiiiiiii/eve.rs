@@ -23,7 +23,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// <summary>The wire uses little-endian integers and length-prefixed text and byte strings.</summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 94;
+    public const ushort ProtocolVersion = 95;
 
     /// <summary>The longest name of a dynamic slim-item field, in bytes (protocol 76).</summary>
     public const int SlimFieldNameMax = 64;
@@ -620,6 +620,14 @@ public static partial class SimCodec
                         message = new SimCrimewatchFlagActive(flagSession, isCriminal, expiresAtUnixMs);
                         break;
                     }
+            case Kind.EmpireSentryOffense:
+            {
+                var offenseSession = r.U64();
+                if (offenseSession == 0)
+                    throw new SimLinkException(SimLinkError.BadValue, "Empire sentry offense session");
+                message = new SimEmpireSentryOffense(offenseSession);
+                break;
+            }
             case Kind.Notify:
                 message = new SimNotify(r.U64(), r.Text(), r.Text(), r.Bytes());
                 break;

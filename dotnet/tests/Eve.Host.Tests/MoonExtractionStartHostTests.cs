@@ -1,6 +1,7 @@
 using Eve.Macho;
 using Eve.Events;
 using Eve.Scheduler;
+using Eve.Inventory;
 using Eve.Marshal;
 using Eve.Sde;
 using Eve.Services;
@@ -20,19 +21,23 @@ public sealed class MoonExtractionStartHostTests
 {
     private const long Corporation = 98_000_001, OtherCorporation = 98_000_002, Structure = 1_000_000_000_301, Character = 20;
     private const long SolarSystem = 30_000_142, PochvenSystem = 30_000_021;
-    private const int Athanor = 35835;
+    private const int Athanor = 35835, MoonDrillTypeId = 45_009;
 
     private sealed class Route : IAsyncDisposable
     {
         private readonly string _schema;
+        private readonly string _inventorySchema;
 
-        private Route(string schema, NpgsqlDataSource source, StructureStore structures, MoonExtractionStore store, MoonExtractionsRpcService moon, Sink packets, DurableScheduler scheduler, TestClock clock)
+        private Route(string schema, string inventorySchema, NpgsqlDataSource source, StructureStore structures, PgItemStore items,
+            MoonExtractionStore store, MoonExtractionsRpcService moon, Sink packets, DurableScheduler scheduler, TestClock clock)
         {
             _schema = schema;
+            _inventorySchema = inventorySchema;
             Scheduler = scheduler;
             Clock = clock;
             Source = source;
             Structures = structures;
+            Items = items;
             Store = store;
             Moon = moon;
             Packets = packets;
@@ -44,6 +49,7 @@ public sealed class MoonExtractionStartHostTests
         public DurableScheduler Scheduler { get; }
         public TestClock Clock { get; }
         public StructureStore Structures { get; }
+        public PgItemStore Items { get; }
         public MoonExtractionStore Store { get; }
         public MoonExtractionsRpcService Moon { get; }
         public Sink Packets { get; }
@@ -58,8 +64,11 @@ public sealed class MoonExtractionStartHostTests
             Assert.NotNull(await sde.BuildAsync());
             var rules = await MoonRulesSource.LoadAsync(sde);
             var schema = "moon_host_" + Guid.NewGuid().ToString("N")[..12];
+            var inventorySchema = "moon_inventory_" + Guid.NewGuid().ToString("N")[..12];
             await StructureStore.MigrateAsync(source, schema);
+            await PgItemStore.MigrateAsync(source, inventorySchema);
             var structures = new StructureStore(source, schema);
+            var items = new PgItemStore(source, inventorySchema);
             var store = new MoonExtractionStore(source, schema);
             await DurableScheduler.MigrateAsync(source, schema + "_sch");
             await EventBus.MigrateAsync(source, schema + "_evt");
@@ -69,14 +78,14 @@ public sealed class MoonExtractionStartHostTests
             var moons = new MoonExtractions(structures, store, scheduler, bus, rules);
             moons.Register();
             Route? route = null;
-            var authority = new StructureMoonAuthority(source, structures, moons, rules, new StructurePilotStore(structures),
+            var authority = new StructureMoonAuthority(source, structures, items, moons, rules, new StructurePilotStore(structures),
                 async (_, _, _) =>
                 {
                     if (route?.BeforeMoonAccess is { } before) await before();
                     return route?.MoonAccessAllowed == true;
                 });
             var sink = new Sink();
-            route = new Route(schema, source, structures, store, new MoonExtractionsRpcService(
+            route = new Route(schema, inventorySchema, source, structures, items, store, new MoonExtractionsRpcService(
                 readState: async () => (JsonObject?)await store.ReadLegacyAsync(),
                 mutationBackend: authority.CallAsync,
                 readAccess: authority.ValidateReadAccessAsync), sink, scheduler, clock);
@@ -90,12 +99,20 @@ public sealed class MoonExtractionStartHostTests
         }
 
         /// <summary>A refinery of the corporation with its moon drill online (or not), and the moon's resources (or none).</summary>
-        public async Task RefineryAsync(bool drillOnline = true, bool withMoon = true, long structure = Structure, long owner = Corporation, long solarSystem = SolarSystem)
+        public async Task RefineryAsync(bool drillOnline = true, bool withMoon = true, long structure = Structure, long owner = Corporation,
+            long solarSystem = SolarSystem, bool onlineMoonDrill = true)
         {
             await using var connection = await Source.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
             await Structures.CreateAsync(connection, transaction, new NewStructure(structure, Athanor, (int)solarSystem, 0, 0, 0, 0, owner, 0, "Refinery", ""));
             await Structures.SetServiceAsync(connection, transaction, structure, StructureServiceIds.MoonMining, drillOnline ? ServiceState.Online : ServiceState.Offline, 0);
+            if (drillOnline && onlineMoonDrill)
+            {
+                var moduleId = await Items.CreateAsync(connection, transaction,
+                    new NewItem(MoonDrillTypeId, owner, structure, 164, 1, true));
+                await Structures.SetServiceModuleFuelCycleAsync(connection, transaction, structure, moduleId, MoonDrillTypeId,
+                    [StructureServiceIds.MoonMining], Clock.Now, Clock.Now + StructureFuel.HourMs, 0);
+            }
             var pilot = await new StructurePilotStore(Structures).AcquireAsync(connection, transaction,
                 new StructurePilotRequest(structure, Character + structure - Structure, 100 + structure - Structure,
                     500 + structure - Structure, structure, false), false);
@@ -136,6 +153,7 @@ public sealed class MoonExtractionStartHostTests
         {
             await using var connection = await Source.OpenConnectionAsync();
             await using (var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{_schema}\" CASCADE", connection)) await command.ExecuteNonQueryAsync();
+            await using (var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{_inventorySchema}\" CASCADE", connection)) await command.ExecuteNonQueryAsync();
             await using (var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{_schema}_sch\" CASCADE", connection)) await command.ExecuteNonQueryAsync();
             await using (var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{_schema}_evt\" CASCADE", connection)) await command.ExecuteNonQueryAsync();
             await Source.DisposeAsync();
@@ -231,6 +249,27 @@ public sealed class MoonExtractionStartHostTests
         Assert.Equal(new PyInt(Corporation), Field(payload, "ownerID"));
         Assert.Single((await route.Store.ReadLegacyAsync())["extractions"]!.AsObject());
         Assert.Equal(new[] { "OnMoonExtractionUpdate" }, NotificationNames(route.Packets));
+    }
+
+    [PgFact]
+    public async Task Registered_moon_service_refuses_start_when_the_online_service_has_no_fitted_drill()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.RefineryAsync(onlineMoonDrill: false);
+        var registry = new ServiceRegistry();
+        registry.Register(route.Moon);
+        var dispatcher = new PacketDispatcher(registry, () => route.Clock.Now) { StrictRpc = true };
+
+        Assert.True(await dispatcher.DispatchAsync(RpcPacket("moonExtractions", "StartNewExtraction", 73,
+            new PyLong(Structure), new PyReal(518_460), PyBool.False), route.Session));
+
+        var response = Assert.IsType<PyObject>(route.Packets.Sent.Last(packet => packet is PyObject value &&
+            JsSemantics.StringValue(value.Name) == ResponseBuilder.ErrorResponseClass));
+        Assert.Equal(MachoMessage.ErrorResponse, Assert.IsType<PyInt>(Assert.IsType<PyTuple>(response.Args).Items[0]).Value);
+        Assert.Equal("An online Standup Moon Drill is required.", Notice(await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            route.Moon.CallAsync(route.Start()).AsTask())));
+        Assert.Empty((await route.Store.ReadLegacyAsync())["extractions"]!.AsObject());
+        Assert.Empty(NotificationNames(route.Packets));
     }
 
     [PgFact]

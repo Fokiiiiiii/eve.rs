@@ -91,6 +91,13 @@ def seeded_structure():
             f"insert into {schema}.structure_services (structure_id, service_id, state) select {STRUCTURE}, {service}, 1 "
             f"where not exists (select 1 from {schema}.structure_services where structure_id = {STRUCTURE} and service_id = {service})"
         )
+    drill = dbseed.new_item(45009, owner=1000006, location=STRUCTURE, flag=164, singleton=True)
+    online_since = int(time.time() * 1000)
+    dbseed.sql(
+        f"insert into {schema}.structure_service_module_fuel "
+        f"(structure_id, module_id, module_type_id, service_ids, online_since_ms, next_fuel_cycle_ms, fuel_remainder) "
+        f"values ({STRUCTURE}, {drill}, 45009, array[14], {online_since}, {online_since + 3600000}, 0)"
+    )
     dbseed.sql(
         f"insert into {schema}.structure_moon_resources (structure_id, moon_id, solar_system_id, owner_corporation_id, yield_multiplier, resources) "
         f"select {STRUCTURE}, {MOON}, {SYSTEM}, 1000006, 1.0, '{MOON_RESOURCES}' "

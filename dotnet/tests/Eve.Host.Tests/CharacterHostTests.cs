@@ -67,6 +67,7 @@ public sealed class CharacterHostTests
         await using var rig = await CharacterHostRig.CreateAsync();
         Assert.Equal(1, await rig.CreateAccountAsync());
         var character = await rig.CreateCharacterAsync();
+        await rig.SetFactionWarfareEnlistmentAsync(Eve.FactionWarfare.FwStore.CorporationKind, 900_001_001, 500_001);
         var sink = new RecordingPacketSink();
         var session = new ClientSession(sink) { SessionId = 55_001, ClientId = 55_002, UserId = 1 };
         var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charUnboundMgr"));
@@ -77,6 +78,7 @@ public sealed class CharacterHostTests
         Assert.Equal(new[] { "OnSubscriptionTimeUpdateServer" },
             notifications.Select(notification => notification.Name));
         Assert.Equal(new PyLong(OmegaLicenses.DefaultOmegaExpiryFileTime), Assert.Single(notifications[0].Args));
+        Assert.Equal(500_001, session.GetInt("warfactionid"));
         Assert.Equal(
             new long[] { (long)MachoMessage.Notification, (long)MachoMessage.SessionChangeNotification },
             sink.Sent.Select(packet => Assert.IsType<PyInt>(Assert.IsType<PyTuple>(Assert.IsType<PyObject>(packet).Args).Items[0]).Value));

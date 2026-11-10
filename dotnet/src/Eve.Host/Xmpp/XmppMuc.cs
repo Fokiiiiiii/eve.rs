@@ -147,13 +147,12 @@ private bool CanAccessRoom(ClientSession? session, long characterId, string room
                 RetireEmptyResourceWarsChannel(room);
         }
 
-        var from = RoomJid(room, leaving.Nickname);
         if (visible)
         {
             foreach (var occupant in remaining)
-                occupant.Link.Send($"<presence from='{XmppXml.Escape(from)}' to='{XmppXml.Escape(occupant.Link.Jid)}' type='unavailable'/>");
+                occupant.Link.Send(Presence(room, leaving, occupant.Link.Jid, selfPresence: false, available: false));
         }
-        link.Send($"<presence from='{XmppXml.Escape(from)}' to='{XmppXml.Escape(link.Jid)}' type='unavailable'/>");
+        link.Send(Presence(room, leaving, link.Jid, selfPresence: true, available: false));
     }
 
     internal void LeaveAllRooms(XmppLink link)
@@ -487,16 +486,18 @@ private bool CanAccessRoom(ClientSession? session, long characterId, string room
 
     private string RoomJid(string room, string nickname) => $"{room}@{ConferenceDomain}/{nickname}";
 
-    private string Presence(string room, XmppOccupant occupant, string to, bool selfPresence)
+    private string Presence(string room, XmppOccupant occupant, string to, bool selfPresence, bool available = true)
     {
         var from = $"{room}@conference.{occupant.Link.Domain}/{occupant.Nickname}";
         var staff = (occupant.Link.AccountRole & (Eve.Services.GameMasterRoles.ChatAdministrator | Eve.Services.GameMasterRoles.Gml)) != 0;
         var owner = PlayerChannels?.Get(room)?.OwnerCharacterId == occupant.Link.CharacterId;
         var affiliation = owner ? "owner" : staff ? "admin" : "member";
         var channel = PlayerChannels?.Get(room);
-        var role = owner || staff ? "moderator" : channel is { MembersByDefault: false } && !channel.Allows(occupant.Link.CharacterId) ? "visitor" : "participant";
+        var role = !available ? "none" : owner || staff ? "moderator" : channel is { MembersByDefault: false } && !channel.Allows(occupant.Link.CharacterId) ? "visitor" : "participant";
+        var type = available ? "" : " type='unavailable'";
+        var userData = UserDataXml(occupant.Link.CharacterId);
         var self = selfPresence ? "<status code='110'/>" : "";
-        return $"<presence from='{XmppXml.Escape(from)}' to='{XmppXml.Escape(to)}'><x xmlns='{MucUserNamespace}'><item affiliation='{affiliation}' role='{role}'/>{self}</x></presence>";
+        return $"<presence from='{XmppXml.Escape(from)}' to='{XmppXml.Escape(to)}'{type}>{userData}<x xmlns='{MucUserNamespace}'><item affiliation='{affiliation}' role='{role}' jid='{XmppXml.Escape(occupant.Link.Jid)}'/>{self}</x></presence>";
     }
 
     internal IReadOnlyList<string> ResyncChannels(ClientSession session)

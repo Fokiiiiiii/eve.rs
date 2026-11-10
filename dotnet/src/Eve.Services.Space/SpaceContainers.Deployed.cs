@@ -122,6 +122,7 @@ public sealed partial class SpaceContainers
                     _sim.PlaceControlTower(new SimPlaceControlTower(
                         record.DeployableId, record.SolarSystemId, record.Name, record.TypeId, record.GroupId, record.Position, record.Radius, record.ActivateAtMs <= now,
                         record.OwnerId, record.CorporationId, record.AllianceId, record.ShipId));
+                    await RestoreControlTowerSlimStateAsync(record, CancellationToken.None);
                     continue;
                 }
                 if (record.Kind == InhibitorKind)

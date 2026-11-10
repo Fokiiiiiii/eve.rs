@@ -36,7 +36,8 @@ public sealed partial class CharacterShips
     /// The disruptor leaves the hold for the solar system, as a singleton of its own (a stack gives one unit and keeps the rest). Answers the item in space and what the
     /// client is told changed, in order; null when the item is no longer in the pilot's hold.
     /// </summary>
-    public async Task<(Item Disruptor, IReadOnlyList<ItemChanged> Changes)?> DropDisruptorAsync(long characterId, long shipId, long itemId, int solarSystemId, CancellationToken cancellationToken = default)
+    public async Task<(Item Disruptor, IReadOnlyList<ItemChanged> Changes)?> DropDisruptorAsync(
+        long characterId, long shipId, long itemId, int solarSystemId, CancellationToken cancellationToken = default, long? deployedOwnerId = null)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -47,19 +48,20 @@ public sealed partial class CharacterShips
         {
             return null;
         }
+        var ownerId = deployedOwnerId is > 0 ? deployedOwnerId.Value : characterId;
         (Item Disruptor, IReadOnlyList<ItemChanged> Changes) dropped;
         if (!item.Singleton && item.Quantity > 1)
         {
-            var created = await items.MoveStackAsync(connection, transaction, item, 1, characterId, solarSystemId, InSpaceFlag, cancellationToken);
+            var created = await items.MoveStackAsync(connection, transaction, item, 1, ownerId, solarSystemId, InSpaceFlag, cancellationToken);
             await items.MakeSingletonAsync(connection, transaction, created.Id, cancellationToken);
             var disruptor = created with { Singleton = true };
             dropped = (disruptor, [new ItemChanged(item with { Quantity = item.Quantity - 1 }, shipId, CargoFlag, item.Quantity), new ItemChanged(disruptor, 0, InSpaceFlag, 0)]);
         }
         else
         {
-            await items.MoveToOwnerAsync(connection, transaction, item.Id, characterId, solarSystemId, InSpaceFlag, cancellationToken);
+            await items.MoveToOwnerAsync(connection, transaction, item.Id, ownerId, solarSystemId, InSpaceFlag, cancellationToken);
             await items.MakeSingletonAsync(connection, transaction, item.Id, cancellationToken);
-            var disruptor = item with { LocationId = solarSystemId, Flag = InSpaceFlag, Singleton = true, Quantity = 1 };
+            var disruptor = item with { OwnerId = ownerId, LocationId = solarSystemId, Flag = InSpaceFlag, Singleton = true, Quantity = 1 };
             dropped = (disruptor, [new ItemChanged(disruptor, shipId, CargoFlag, item.Quantity)]);
         }
         await transaction.CommitAsync(cancellationToken);

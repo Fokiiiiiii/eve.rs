@@ -389,8 +389,15 @@ fn a_control_tower_is_in_space_unanchored_until_the_host_anchors_it_and_stops_no
     let (mut scene, t) = crowd();
     let (a, system) = (scene.pilots[&A].ship.position, scene.solar_system_id());
     scene.place_control_tower(tower(system, a, false), t);
+    let tower_id = 990_000_000_300;
+    let tower_position = eve_destiny::Vec3::new(a.x + 50_000.0, a.y, a.z);
+    assert!(matches!(
+        scene.command(A, Command::PositionOf { target_id: tower_id }, t).last(),
+        Some(Out::Position { session: A, command: 23, position, direction: None, radius: Some(radius) })
+            if *position == tower_position && *radius == 3_394.0
+    ));
     scene.place_control_tower(tower(system, a, true), t);
-    let role = |scene: &Scene| scene.deployables[&990_000_000_300].role.clone();
+    let role = |scene: &Scene| scene.deployables[&tower_id].role.clone();
     assert_eq!(role(&scene), Role::ControlTower { active: false }, "given once: the first placement stands");
 
     scene.set_disruptor_active(990_000_000_300, true);

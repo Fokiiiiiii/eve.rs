@@ -230,6 +230,25 @@ public partial class HostServerTests
                 throw new Xunit.Sdk.XunitException("The module toggle did not return a Macho response.");
             }
 
+            async Task<IReadOnlyList<(string Name, string IdType, PyTuple Args)>> DrainNotificationsAsync()
+            {
+                var notices = new List<(string Name, string IdType, PyTuple Args)>();
+                using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
+                while (true)
+                {
+                    try
+                    {
+                        var packet = await front.ReceiveAsync(timeout.Token);
+                        if (packet is Send send && Envelope(send).Type == MachoMessage.Notification)
+                            notices.Add(DecodeClientNotification(send));
+                    }
+                    catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+                    {
+                        return notices;
+                    }
+                }
+            }
+
             var oid = await BindAsync(1);
             var wrongOwner = await ToggleAsync(2, oid, targetModuleId: wrongOwnerModuleId);
             Assert.Equal(MachoMessage.ErrorResponse, Envelope(wrongOwner.Response).Type);
@@ -405,6 +424,40 @@ public partial class HostServerTests
                 Assert.Equal(3L, (long)(await count.ExecuteScalarAsync())!);
                 await transaction.CommitAsync();
             }
+
+            await events.PumpAsync();
+            _ = await DrainNotificationsAsync();
+            nowMs += StructureFuel.HourMs;
+            Assert.Equal(1, await scheduler.RunDueAsync());
+            await events.PumpAsync();
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                Assert.Equal(ItemState.Offline, await modules.StateAsync(connection, transaction, moduleId));
+                Assert.Equal(ServiceState.Offline,
+                    (await structures.ServicesAsync(connection, transaction, ServiceToggleStructure))[StructureServiceIds.Market]);
+                Assert.Null(await structures.ServiceModuleFuelCycleAsync(connection, transaction, ServiceToggleStructure, moduleId));
+                var structure = Assert.IsType<StructureRecord>(await structures.GetAsync(connection, transaction, ServiceToggleStructure, false));
+                Assert.Equal(UpkeepState.LowPower, structure.Snapshot.Upkeep);
+                await transaction.CommitAsync();
+            }
+            var fuelOutNotices = await DrainNotificationsAsync();
+            var moduleOfflineNotice = Assert.Single(fuelOutNotices, notice => notice.Name == "OnMultiEvent");
+            Assert.Equal("clientID", moduleOfflineNotice.IdType);
+            var offlineEvents = Assert.IsType<PyList>(moduleOfflineNotice.Args.Items[0]).Items;
+            Assert.Equal(new[] { "OnModuleAttributeChange", "OnGodmaShipEffect" }, offlineEvents.Select(value =>
+            {
+                var eventAndTime = Assert.IsType<PyTuple>(value);
+                var dogmaEvent = Assert.IsType<PyTuple>(eventAndTime.Items[0]);
+                return JsSemantics.StringValue(dogmaEvent.Items[0]);
+            }));
+            var attributeEvent = Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(offlineEvents[0]).Items[0]);
+            Assert.Equal(new PyInt(2), attributeEvent.Items[3]);
+            Assert.Equal(new PyInt(0), attributeEvent.Items[5]);
+            Assert.Equal(new PyInt(1), attributeEvent.Items[6]);
+            var effectEvent = Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(offlineEvents[1]).Items[0]);
+            Assert.Equal(new PyInt(16), effectEvent.Items[2]);
+            Assert.Equal(new PyInt(0), effectEvent.Items[4]);
         }
         finally
         {

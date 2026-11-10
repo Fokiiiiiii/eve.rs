@@ -9,6 +9,8 @@ internal sealed class FakeSim : ISimulation
 
     public bool DropPublicMoveReply { get; set; }
 
+    public bool FailNextSlimField { get; set; }
+
     public TaskCompletionSource? PublicMoveStarted { get; set; }
     public TaskCompletionSource? PublicMoveRelease { get; set; }
 
@@ -347,7 +349,26 @@ internal sealed class FakeSim : ISimulation
 
     public void PlaceAnalysisBeacon(SimPlaceAnalysisBeacon beacon) => Heard.Enqueue(beacon);
 
-    public void SetSlimField(long itemId, string fieldName, SimSlimValue value) => Heard.Enqueue(new SimSetSlimField(itemId, fieldName, value));
+    public void SetSlimField(long itemId, string fieldName, SimSlimValue value)
+    {
+        if (!IsConnected)
+            return;
+        if (FailNextSlimField)
+        {
+            FailNextSlimField = false;
+            throw new InvalidOperationException("test simulation rejected a slim field update");
+        }
+        Heard.Enqueue(new SimSetSlimField(itemId, fieldName, value));
+    }
+
+    public Task<bool> TrySetSlimFieldAsync(long itemId, string fieldName, SimSlimValue value, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!IsConnected)
+            return Task.FromResult(false);
+        SetSlimField(itemId, fieldName, value);
+        return Task.FromResult(true);
+    }
 
     public void SetAnalysisBeaconState(long deployableId, SimAnalysisBeaconState state) => Heard.Enqueue(new SimSetAnalysisBeaconState(deployableId, state));
 

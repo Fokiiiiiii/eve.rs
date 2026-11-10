@@ -28,6 +28,8 @@ EveJS 261108.1 `server/src/services/character/charMgrService.js:1035-1055` updat
 
 - Test-first failures were observed for both findings before their fixes: null `LastLogoffAt` after abrupt close, and an unexpected contact row after assigning a label to an unknown ID.
 - Focused tests passed on the job's database `eve_p4`: the abrupt disconnect/explicit logoff Host flow, the contact-label Host persistence/restart flow, and the CharacterInfo service label mutation flow. Each focused run reported zero skipped tests.
+- Release builds with warnings treated as errors succeeded with 0 warnings for `Eve.Host`, `Eve.Services.CharacterInfo`, `Eve.Host.Tests`, and `Eve.Services.CharacterInfo.Tests`.
+- Class-level checks on `eve_p4`: `CharMgrTests` 33 passed / 0 skipped; `CharacterHostTests` 68 passed / 1 skipped; `HostServerTests` 439 passed / 0 skipped. The one `CharacterHostTests` skip is the existing `RealAbyssalSimPgFact`, which requires external simulator binary/SDE configuration and is not counted as a pass.
 - The pinned SDE data was loaded into `eve_p4` for the Host fixture. No SDE data is part of this change.
 - No graphical V24.01 client session or fresh packet capture was run.
 - The `CLAUDE.md`-requested CBM/Serena MCP code tools were not available in this environment; source verification used local line-numbered files and full-tree `rg` searches instead.

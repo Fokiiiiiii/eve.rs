@@ -1,4 +1,5 @@
 using Eve.Dogma;
+using Eve.Inventory;
 using Eve.Space;
 using Eve.Structures;
 using Npgsql;
@@ -31,11 +32,14 @@ public sealed class SpaceStructures
     private readonly StructureStore _store;
     private readonly StructureTimers _timers;
     private readonly DogmaStatic _statics;
+    private readonly PgItemStore? _items;
+    private readonly MoonExtractionStore? _moonExtractions;
     private readonly Action<string>? _log;
     private readonly object _damageOrder = new();
     private Task _damageQueue = Task.CompletedTask;
 
-    public SpaceStructures(ISimulation sim, SpaceSessions space, NpgsqlDataSource source, StructureStore store, StructureTimers timers, DogmaStatic statics, Action<string>? log = null)
+    public SpaceStructures(ISimulation sim, SpaceSessions space, NpgsqlDataSource source, StructureStore store, StructureTimers timers, DogmaStatic statics,
+        Action<string>? log = null, PgItemStore? items = null, MoonExtractionStore? moonExtractions = null)
     {
         _sim = sim;
         _space = space;
@@ -43,6 +47,8 @@ public sealed class SpaceStructures
         _store = store;
         _timers = timers;
         _statics = statics;
+        _items = items;
+        _moonExtractions = moonExtractions;
         _log = log;
         _sim.Received += OnReceived;
         _space.SystemEntered += SystemEntered;
@@ -77,7 +83,7 @@ public sealed class SpaceStructures
             {
                 if (_statics.Type(record.TypeId) is { } type)
                 {
-                    _sim.PlaceStructure(Placement(record, type));
+                    _sim.PlaceStructure(await PlacementAsync(connection, record, type, cancellationToken));
                 }
                 else
                 {
@@ -108,7 +114,7 @@ public sealed class SpaceStructures
             await _statics.EnsureTypesAsync([record.TypeId], cancellationToken);
             if (_statics.Type(record.TypeId) is { } type)
             {
-                _sim.PlaceStructure(Placement(record, type));
+                _sim.PlaceStructure(await PlacementAsync(connection, record, type, cancellationToken));
             }
         }
         catch (Exception error)
@@ -173,7 +179,8 @@ public sealed class SpaceStructures
 
     private void SystemEntered(int solarSystemId) => _space.Background(() => RestoreAsync(solarSystemId));
 
-    private static SimPlaceStructure Placement(StructureRecord record, Eve.Dogma.TypeDef type)
+    private async Task<SimPlaceStructure> PlacementAsync(NpgsqlConnection connection, StructureRecord record, Eve.Dogma.TypeDef type,
+        CancellationToken cancellationToken)
     {
         var attributes = type.Attributes;
         double Attribute(int id) => attributes.GetValueOrDefault(id, 0d);
@@ -187,6 +194,9 @@ public sealed class SpaceStructures
             [Attribute(ShieldDamageLimit), Attribute(ArmorDamageLimit), Attribute(StructureDamageLimit)],
             [Attribute(ShieldRepairPause), Attribute(ArmorRepairPause), Attribute(HullRepairPause)]);
         var snapshot = record.Snapshot;
+        var moonMining = _items is not null && _moonExtractions is not null
+            ? await StructureMoonMiningSlim.ReadAsync(connection, _items, _moonExtractions, _statics, snapshot.StructureId, cancellationToken)
+            : new StructureMoonMiningSlimState(Array.Empty<SimStructureModule>(), 0);
         return new SimPlaceStructure(
             snapshot.StructureId,
             record.SolarSystemId,
@@ -201,7 +211,9 @@ public sealed class SpaceStructures
             health,
             StatusOf(snapshot.State, snapshot.Upkeep, snapshot.StateEndsMs > 0
                 ? new StructureTimerInfo(snapshot.StateStartedMs, snapshot.StateEndsMs, snapshot.TimerPausedMs)
-                : null));
+                : null),
+            Modules: moonMining.Modules,
+            ClosestMoonId: moonMining.ClosestMoonId);
     }
 
     /// <summary>The slim state the client shows: the state, the upkeep and the timer when one runs (repair and unanchoring are not sent yet).</summary>

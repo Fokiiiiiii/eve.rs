@@ -117,7 +117,7 @@ public sealed class MoonExtractionStartHostTests
         public ClientSession DockedAt(long structure)
         {
             var offset = structure - Structure;
-            var session = new ClientSession(Packets) { SessionId = 100 + offset };
+            var session = new ClientSession(Packets) { SessionId = 100 + offset, ClientId = Character + offset };
             session.Set("charid", new PyInt(Character + offset));
             session.Set("shipid", new PyLong(structure));
             session.Set("corpid", new PyInt(Corporation));
@@ -177,6 +177,26 @@ public sealed class MoonExtractionStartHostTests
     private static PyValue Field(PyValue payload, string name) => Assert.IsType<PyDict>(Assert.IsType<PyObject>(payload).Args).Entries
         .Single(entry => Assert.IsType<PyStr>(entry.Key).Value == name).Value;
 
+    private static PyValue RpcPacket(string service, string method, int callId, params PyValue[] args)
+    {
+        var source = new MachoAddress(AddressKind.Client, CallId: new PyInt(callId), ClientId: new PyLong(Character));
+        var destination = new MachoAddress(AddressKind.Node, Service: service, CallId: new PyInt(callId), NodeId: new PyInt(MachoMessage.ProxyNodeId));
+        var body = new PyTuple([new PyInt(1), new PyStr(method), new PyTuple(args), new PyDict([])]);
+        var payload = new PyTuple([new PyTuple([new PyInt(0), new PySubStream(body)])]);
+        return new PyObject(new PyStr("carbon.common.script.net.machoNetPacket.CallReq"), new PyTuple([
+            new PyInt(MachoMessage.CallReq), source.Encode(), destination.Encode(), new PyLong(Character), payload, PyNone.Instance,
+        ]));
+    }
+
+    private static PyValue LastResponse(Sink sink) => sink.Sent.Last(packet => MachoPacket.Decode(packet)?.Type == MachoMessage.CallRsp);
+
+    private static PyValue Result(PyValue response)
+    {
+        var fields = Assert.IsType<PyTuple>(Assert.IsType<PyObject>(response).Args).Items;
+        Assert.Equal(MachoMessage.CallRsp, Assert.IsType<PyInt>(fields[0]).Value);
+        return Assert.IsType<PySubStream>(Assert.IsType<PyTuple>(fields[4]).Items[0]).Decoded!;
+    }
+
     [PgFact]
     public async Task Starting_a_chunk_answers_the_extraction_and_tells_the_pilot()
     {
@@ -188,6 +208,28 @@ public sealed class MoonExtractionStartHostTests
         Assert.Equal(new PyInt(518_460), Field(payload, "durationSeconds"));
         Assert.Equal(new PyLong(Structure), Field(payload, "structureID"));
         Assert.Equal(new PyInt(Corporation), Field(payload, "ownerID"));
+        Assert.Equal(new[] { "OnMoonExtractionUpdate" }, NotificationNames(route.Packets));
+    }
+
+    [PgFact]
+    public async Task Registered_moon_service_dispatches_the_client_rpc_and_persists_its_start()
+    {
+        await using var route = await Route.CreateAsync(PgUrl());
+        await route.RefineryAsync();
+        var registry = new ServiceRegistry();
+        registry.Register(route.Moon);
+        var dispatcher = new PacketDispatcher(registry, () => route.Clock.Now) { StrictRpc = true };
+
+        Assert.True(await dispatcher.DispatchAsync(RpcPacket("moonExtractions", "StartNewExtraction", 72,
+            new PyLong(Structure), new PyReal(518_460), PyBool.False), route.Session));
+
+        var response = LastResponse(route.Packets);
+        Assert.Equal(MachoMessage.CallRsp, Assert.IsType<MachoPacket>(MachoPacket.Decode(response)).Type);
+        var payload = Result(response);
+        Assert.Equal(new PyInt(518_460), Field(payload, "durationSeconds"));
+        Assert.Equal(new PyLong(Structure), Field(payload, "structureID"));
+        Assert.Equal(new PyInt(Corporation), Field(payload, "ownerID"));
+        Assert.Single((await route.Store.ReadLegacyAsync())["extractions"]!.AsObject());
         Assert.Equal(new[] { "OnMoonExtractionUpdate" }, NotificationNames(route.Packets));
     }
 

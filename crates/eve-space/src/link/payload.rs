@@ -440,6 +440,29 @@ impl Message {
                     }
                 }
             }
+            Self::RemoveUnpilotedShip { request_id, scene, ship_id } => {
+                assert!(*request_id > 0 && scene.is_valid() && scene.instance_id == 0 && *ship_id > 0);
+                out.extend_from_slice(&request_id.to_le_bytes());
+                put_scene_key(&mut out, *scene);
+                out.extend_from_slice(&ship_id.to_le_bytes());
+            }
+            Self::RemoveUnpilotedShipReply { request_id, scene, ship_id, outcome } => {
+                assert!(*request_id > 0 && scene.is_valid() && scene.instance_id == 0 && *ship_id > 0);
+                out.extend_from_slice(&request_id.to_le_bytes());
+                put_scene_key(&mut out, *scene);
+                out.extend_from_slice(&ship_id.to_le_bytes());
+                match outcome {
+                    Ok(removed) => {
+                        out.push(u8::from(*removed));
+                        put_text(&mut out, "");
+                    }
+                    Err(error) => {
+                        assert!(!error.is_empty());
+                        out.push(2);
+                        put_text(&mut out, error);
+                    }
+                }
+            }
             Self::GetSceneBody { request_id, scene, item_id } => {
                 assert!(*request_id > 0 && scene.is_valid() && scene.instance_id == 0 && *item_id > 0);
                 out.extend_from_slice(&request_id.to_le_bytes());

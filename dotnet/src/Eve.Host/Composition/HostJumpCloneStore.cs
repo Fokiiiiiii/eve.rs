@@ -14,7 +14,7 @@ namespace Eve.Host;
 internal sealed class HostJumpCloneStore(PgJumpCloneStore clones, NpgsqlDataSource source, PgSkillStore skills,
     WalletTransactions wallet, PgWalletStore walletStore, PgCharacterStore characters, PgItemStore items, DogmaStatic statics,
     StationCatalog stations, Eve.Structures.StructureStore structures, SolarSystemCatalog solarSystems,
-    Eve.Services.Skills.SkillBoosterLapse boosters) : IJumpCloneStore
+    Eve.Services.Skills.SkillBoosterLapse boosters, CharacterTraining training) : IJumpCloneStore
 {
 
     private const int JumpCloneInstallationReference = 55;
@@ -24,6 +24,8 @@ internal sealed class HostJumpCloneStore(PgJumpCloneStore clones, NpgsqlDataSour
 
 
     private const int CorporationWalletKey = 1000;
+
+    private const int FollowsJumpClonesAttributeId = 1916;
 
     public async ValueTask<JumpCloneSnapshot> ReadAsync(long characterId, CancellationToken cancellationToken)
     {
@@ -129,6 +131,9 @@ internal sealed class HostJumpCloneStore(PgJumpCloneStore clones, NpgsqlDataSour
         decimal fee, long ownerCorporationId, int cooldownHours, long nowFileTime,
         CancellationToken cancellationToken)
     {
+        // A changed implant set changes learning attributes. Rebase the active skill at the old
+        // rate before the transaction swaps the body, following PilotImplants' ordering.
+        var learningUpdate = await RebaseForJumpAsync(characterId, targetCloneId, fee, cooldownHours, nowFileTime, cancellationToken);
         // the zero balances are opened on their own, so that a refused jump keeps them
         await using (var setup = await source.OpenConnectionAsync(cancellationToken))
         await using (var setupTransaction = await setup.BeginTransactionAsync(cancellationToken))
@@ -151,7 +156,9 @@ internal sealed class HostJumpCloneStore(PgJumpCloneStore clones, NpgsqlDataSour
         var body = (await items.InLocationAsync(characterId, characterId, cancellationToken))
             .Where(item => item.Flag == PilotAugmentations.ImplantFlag).ToList();
         await statics.EnsureTypesAsync(body.Select(item => item.TypeId).ToArray(), cancellationToken);
-        var bodyImplants = body.Select(item => (PilotAugmentations.SlotOf(statics.Type(item.TypeId)), item.TypeId)).ToList();
+        var followingImplants = body.Where(FollowsJumpClones).ToList();
+        var bodyImplants = body.Where(item => !FollowsJumpClones(item))
+            .Select(item => (PilotAugmentations.SlotOf(statics.Type(item.TypeId)), item.TypeId)).ToList();
 
         // A ship clone can be activated only while its physical ship is still in the destination system. Keep the item row locked
         // until settlement commits, so a concurrent ship relocation cannot make the client arrive at a stale destination.
@@ -201,11 +208,19 @@ internal sealed class HostJumpCloneStore(PgJumpCloneStore clones, NpgsqlDataSour
         {
             return new CloneJumpResult("INSUFFICIENT_FUNDS");
         }
-        // the body that left keeps its implants in the clone at the origin; the target's implants are the body's now
-        foreach (var implant in body)
+        // Only body implants without followsJumpClones are stored in the origin clone. Following
+        // implants remain the same inventory items and override a destination implant in their slot.
+        foreach (var implant in body.Except(followingImplants))
             await items.DeleteAsync(connection, transaction, implant.Id, cancellationToken);
-        foreach (var typeId in target.ImplantTypeIds)
+        var implantsForNewBody = MergeImplantsBySlot(target.ImplantTypeIds, followingImplants);
+        var preservedFollowers = followingImplants.ToDictionary(
+            implant => PilotAugmentations.SlotOf(statics.Type(implant.TypeId)), implant => implant.TypeId);
+        foreach (var (slot, typeId) in implantsForNewBody)
+        {
+            if (preservedFollowers.TryGetValue(slot, out var existingTypeId) && existingTypeId == typeId)
+                continue;
             await items.CreateAsync(connection, transaction, new NewItem(typeId, characterId, characterId, PilotAugmentations.ImplantFlag, 1, Singleton: true), cancellationToken);
+        }
         var solarSystem = station is not null ? solarSystems.Get(station.SolarSystemId)
             : structure is not null ? solarSystems.Get(structure.SolarSystemId)
             : solarSystems.Get(character.SolarSystemId);
@@ -224,12 +239,61 @@ internal sealed class HostJumpCloneStore(PgJumpCloneStore clones, NpgsqlDataSour
         if (endedBoosters)
             await boosters.AnnounceEndedAsync(characterId, cancellationToken);
         return station is not null
-            ? new CloneJumpResult(null, station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId)
+            ? new CloneJumpResult(null, station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId, LearningUpdate: learningUpdate)
             : structure is not null
                 ? new CloneJumpResult(null, SolarSystemId: solarSystem.Id, ConstellationId: solarSystem.ConstellationId,
-                    RegionId: solarSystem.RegionId, StructureId: structure.Snapshot.StructureId)
+                    RegionId: solarSystem.RegionId, StructureId: structure.Snapshot.StructureId, LearningUpdate: learningUpdate)
                 : new CloneJumpResult(null, SolarSystemId: solarSystem.Id, ConstellationId: solarSystem.ConstellationId,
-                    RegionId: solarSystem.RegionId);
+                    RegionId: solarSystem.RegionId, LearningUpdate: learningUpdate);
+    }
+
+    private async Task<TrainingUpdate?> RebaseForJumpAsync(long characterId, long targetCloneId, decimal fee,
+        int cooldownHours, long nowFileTime, CancellationToken cancellationToken)
+    {
+        var character = await characters.GetAsync(characterId, cancellationToken);
+        if (character?.ShipId is not { } currentShipId ||
+            await items.GetAsync(currentShipId, cancellationToken) is not { TypeId: CharacterShips.CapsuleTypeId } ||
+            fee > 0 && await IskBalanceAsync(characterId, cancellationToken) < fee)
+            return null;
+
+        var snapshot = await clones.ReadAsync(characterId, cancellationToken);
+        var target = snapshot.Clones.FirstOrDefault(clone => clone.JumpCloneId == targetCloneId);
+        if (target is null || target.LocationKind is not ("station" or "structure" or "ship") ||
+            CloneJumpRules.CooldownActive(snapshot.TimeLastJumpFileTime, cooldownHours, nowFileTime) ||
+            target.LocationKind == "station" && stations.Get(target.LocationId) is null)
+            return null;
+
+        if (target.LocationKind == "ship" &&
+            (await items.GetAsync(target.LocationId, cancellationToken) is not { } targetShip ||
+             targetShip.Flag != CharacterShips.InSpaceFlag || targetShip.LocationId != character.SolarSystemId))
+            return null;
+
+        var body = (await items.InLocationAsync(characterId, characterId, cancellationToken))
+            .Where(item => item.Flag == PilotAugmentations.ImplantFlag).ToArray();
+        await statics.EnsureTypesAsync([.. body.Select(item => item.TypeId), .. target.ImplantTypeIds], cancellationToken);
+        var followers = body.Where(FollowsJumpClones).ToArray();
+        var currentTypes = body.Select(item => (PilotAugmentations.SlotOf(statics.Type(item.TypeId)), item.TypeId))
+            .OrderBy(implant => implant.Item1).ThenBy(implant => implant.Item2).ToArray();
+        var nextTypes = MergeImplantsBySlot(target.ImplantTypeIds, followers)
+            .OrderBy(implant => implant.Slot).ThenBy(implant => implant.TypeId).ToArray();
+        if (currentTypes.SequenceEqual(nextTypes))
+            return null;
+
+        return await training.RebaseRunningAsync(characterId, character.AccountId, cancellationToken);
+    }
+
+    private bool FollowsJumpClones(Item item) =>
+        statics.Type(item.TypeId)?.Attributes.GetValueOrDefault(FollowsJumpClonesAttributeId, 0) > 0;
+
+    private List<(int Slot, int TypeId)> MergeImplantsBySlot(IReadOnlyList<int> targetImplantTypeIds,
+        IReadOnlyList<Item> followingImplants)
+    {
+        var bySlot = new SortedDictionary<int, int>();
+        foreach (var typeId in targetImplantTypeIds)
+            bySlot[PilotAugmentations.SlotOf(statics.Type(typeId))] = typeId;
+        foreach (var implant in followingImplants)
+            bySlot[PilotAugmentations.SlotOf(statics.Type(implant.TypeId))] = implant.TypeId;
+        return [.. bySlot.Select(pair => (pair.Key, pair.Value))];
     }
 
     private static JumpCloneRecord Map(InstalledJumpClone clone) =>

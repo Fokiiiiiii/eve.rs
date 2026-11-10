@@ -984,6 +984,17 @@ pub enum Message {
         item_id: i64,
         outcome: Result<bool, String>,
     },
+    RemoveUnpilotedShip {
+        request_id: u64,
+        scene: SceneKey,
+        ship_id: i64,
+    },
+    RemoveUnpilotedShipReply {
+        request_id: u64,
+        scene: SceneKey,
+        ship_id: i64,
+        outcome: Result<bool, String>,
+    },
     GetSceneBody {
         request_id: u64,
         scene: SceneKey,
@@ -1681,6 +1692,8 @@ impl Message {
             Self::QueryTournamentWreckReply { .. } => kind::QUERY_TOURNAMENT_WRECK_REPLY,
             Self::RemoveTournamentWreck { .. } => kind::REMOVE_TOURNAMENT_WRECK,
             Self::RemoveTournamentWreckReply { .. } => kind::REMOVE_TOURNAMENT_WRECK_REPLY,
+            Self::RemoveUnpilotedShip { .. } => kind::REMOVE_UNPILOTED_SHIP,
+            Self::RemoveUnpilotedShipReply { .. } => kind::REMOVE_UNPILOTED_SHIP_REPLY,
             Self::GetSceneBody { .. } => kind::GET_SCENE_BODY,
             Self::GetSceneBodyReply { .. } => kind::GET_SCENE_BODY_REPLY,
             Self::GetAbyssalParticipantPose { .. } => kind::GET_ABYSSAL_PARTICIPANT_POSE,

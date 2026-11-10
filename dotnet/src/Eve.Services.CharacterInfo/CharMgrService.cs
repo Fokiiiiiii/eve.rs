@@ -763,9 +763,8 @@ public sealed partial class CharMgrService(
             var contacts = data.Contacts.ToDictionary(contact => contact.ContactId);
             foreach (var contactId in contactIds)
             {
-                var existing = contacts.GetValueOrDefault(contactId);
-                contacts[contactId] = new CharMgrContact(contactId, existing?.InWatchlist ?? false,
-                    existing?.RelationshipId ?? 0, (existing?.LabelMask ?? 0) | labelMask);
+                if (contacts.TryGetValue(contactId, out var existing))
+                    contacts[contactId] = existing with { LabelMask = existing.LabelMask | labelMask };
             }
             return data with { Contacts = contacts.Values.OrderBy(contact => contact.ContactId).ToArray() };
         });

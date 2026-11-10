@@ -109,21 +109,28 @@ public sealed partial class AccountService(PgWalletStore wallets, Eve.Corporatio
             limit: null, cancellationToken: call.Cancellation,
             fromTimeMs: filterByMonth ? monthStartMs : recentAfter, untilTimeMs: nextMonthStartMs);
         var rows = entries
-            .Select(WalletTransactionInfo)
+            .Select(entry => WalletTransactionInfo(entry, isCorpWallet))
             .ToArray();
         return new PyList(rows);
     }
 
-    private static PyValue WalletTransactionInfo(Eve.Wallet.JournalEntry entry)
+    private static PyValue WalletTransactionInfo(Eve.Wallet.JournalEntry entry, bool isCorpWallet)
     {
         var transactionDate = DateTimeOffset.FromUnixTimeMilliseconds(entry.TimeMs).UtcDateTime.ToFileTimeUtc();
+        var ownerId1 = entry.OwnerId;
+        var ownerId2 = entry.CounterpartyId;
+        if (isCorpWallet && (entry.RefTypeId is 96 or 97) && ownerId2 > 0)
+        {
+            ownerId1 = entry.CounterpartyId;
+            ownerId2 = entry.OwnerId;
+        }
         return Py.KeyVal([
             new KeyValuePair<PyValue, PyValue>(new PyStr("transactionID"), new PyLong(entry.Id)),
             new KeyValuePair<PyValue, PyValue>(new PyStr("transactionDate"), new PyLong(transactionDate)),
             new KeyValuePair<PyValue, PyValue>(new PyStr("referenceID"), new PyLong(entry.ReferenceId ?? 0)),
             new KeyValuePair<PyValue, PyValue>(new PyStr("entryTypeID"), new PyInt(entry.RefTypeId)),
-            new KeyValuePair<PyValue, PyValue>(new PyStr("ownerID1"), new PyLong(entry.OwnerId)),
-            new KeyValuePair<PyValue, PyValue>(new PyStr("ownerID2"), new PyLong(entry.CounterpartyId)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("ownerID1"), new PyLong(ownerId1)),
+            new KeyValuePair<PyValue, PyValue>(new PyStr("ownerID2"), new PyLong(ownerId2)),
             new KeyValuePair<PyValue, PyValue>(new PyStr("accountKey"), new PyInt(entry.AccountKey)),
             new KeyValuePair<PyValue, PyValue>(new PyStr("amount"), new PyReal((double)entry.Amount)),
             new KeyValuePair<PyValue, PyValue>(new PyStr("balance"), new PyReal((double)entry.Balance)),

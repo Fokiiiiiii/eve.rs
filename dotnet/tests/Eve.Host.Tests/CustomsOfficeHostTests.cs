@@ -184,20 +184,69 @@ public sealed class CustomsOfficeHostTests : IAsyncLifetime
                 Customs = customs,
             };
             var customerFeesBefore = (await wallets.JournalForAccountAsync(pilot, 1000))
-                .Where(row => row.Reason == "planetary customs fee").Sum(row => row.Amount);
+                .Where(row => row.RefTypeId is 96 or 97).Sum(row => row.Amount);
             var ownerCreditsBefore = (await wallets.JournalForAccountAsync(corporationId, 1000))
-                .Where(row => row.Reason == "planetary customs office tax").Sum(row => row.Amount);
+                .Where(row => row.RefTypeId is 96 or 97).Sum(row => row.Amount);
             await ImportExportWithPlanetAsync(inventory, session, officeId, padId,
                 new PyDict([new KeyValuePair<PyValue, PyValue>(new PyLong(stockId), new PyLong(1))]),
                 new PyDict([new KeyValuePair<PyValue, PyValue>(new PyInt(waterType), new PyLong(1))]), rate);
             var customerFeesAfter = (await wallets.JournalForAccountAsync(pilot, 1000))
-                .Where(row => row.Reason == "planetary customs fee").Sum(row => row.Amount);
+                .Where(row => row.RefTypeId is 96 or 97).Sum(row => row.Amount);
             var ownerCreditsAfter = (await wallets.JournalForAccountAsync(corporationId, 1000))
-                .Where(row => row.Reason == "planetary customs office tax").Sum(row => row.Amount);
+                .Where(row => row.RefTypeId is 96 or 97).Sum(row => row.Amount);
             var customerTax = Math.Abs(customerFeesAfter - customerFeesBefore);
             var ownerTax = ownerCreditsAfter - ownerCreditsBefore;
             Assert.True(customerTax > ownerTax);
             Assert.InRange(Math.Abs(customerTax - ownerTax * 1.10m), 0m, 2.20m);
+
+            var journalDate = DateTimeOffset.UtcNow;
+            var journal = Assert.IsType<PyList>(await host.Registry.Lookup("account")!.CallAsync(new ServiceCall
+            {
+                Method = "GetTransactions",
+                Args = [new PyInt(1000), new PyInt(journalDate.Year), new PyInt(journalDate.Month), PyBool.False],
+                Session = session,
+            }));
+            var constructions = journal.Items.Where(row => JournalField(row, "entryTypeID") is PyInt { Value: 98 }).ToArray();
+            Assert.NotEmpty(constructions);
+            Assert.All(constructions, row => Assert.Equal(new PyLong(planetId), JournalField(row, "referenceID")));
+            var planetaryTaxes = journal.Items.Where(row => JournalField(row, "entryTypeID") is PyInt { Value: 96 or 97 }).ToArray();
+            Assert.Equal(4, planetaryTaxes.Length);
+            Assert.Equal([96, 96, 97, 97], planetaryTaxes.Select(row => Assert.IsType<PyInt>(JournalField(row, "entryTypeID")).Value).Order());
+            Assert.Equal(2, planetaryTaxes.Count(row => JournalField(row, "ownerID2") == new PyLong(office.OwnerId)));
+            Assert.Equal(2, planetaryTaxes.Count(row => JournalField(row, "ownerID2") == new PyLong(1000125)));
+            Assert.All(planetaryTaxes, row =>
+            {
+                Assert.Equal(new PyLong(planetId), JournalField(row, "referenceID"));
+            });
+            var corporateJournal = Assert.IsType<PyList>(await host.Registry.Lookup("account")!.CallAsync(new ServiceCall
+            {
+                Method = "GetTransactions",
+                Args = [new PyInt(1000), new PyInt(journalDate.Year), new PyInt(journalDate.Month), PyBool.True],
+                Session = session,
+            }));
+            var corporateTaxes = corporateJournal.Items.Where(row => JournalField(row, "entryTypeID") is PyInt { Value: 96 or 97 }).ToArray();
+            Assert.Equal(2, corporateTaxes.Length);
+            Assert.Equal([96, 97], corporateTaxes.Select(row => Assert.IsType<PyInt>(JournalField(row, "entryTypeID")).Value).Order());
+            Assert.All(corporateTaxes, row =>
+            {
+                Assert.Equal(new PyLong(pilot), JournalField(row, "ownerID1"));
+                Assert.Equal(new PyLong(corporationId), JournalField(row, "ownerID2"));
+                Assert.Equal(new PyLong(planetId), JournalField(row, "referenceID"));
+            });
+            foreach (var entryType in new[] { 96, 97 })
+            {
+                var ownerDebit = Assert.Single(planetaryTaxes, row =>
+                    JournalField(row, "entryTypeID") == new PyInt(entryType) &&
+                    JournalField(row, "ownerID2") == new PyLong(office.OwnerId));
+                var concordDebit = Assert.Single(planetaryTaxes, row =>
+                    JournalField(row, "entryTypeID") == new PyInt(entryType) &&
+                    JournalField(row, "ownerID2") == new PyLong(1000125));
+                var corporateCredit = Assert.Single(corporateTaxes, row =>
+                    JournalField(row, "entryTypeID") == new PyInt(entryType));
+                Assert.True(Assert.IsType<PyReal>(JournalField(concordDebit, "amount")).Value < 0);
+                Assert.Equal(-Assert.IsType<PyReal>(JournalField(ownerDebit, "amount")).Value,
+                    Assert.IsType<PyReal>(JournalField(corporateCredit, "amount")).Value, 2);
+            }
             await host.ShutdownAsync();
 
             host = await HostComposition.BuildAsync(Settings());
@@ -586,15 +635,16 @@ public sealed class CustomsOfficeHostTests : IAsyncLifetime
             var colonyAfterImport = await ColonyDocumentAsync();
             Assert.NotEqual(colonyBeforeImport, colonyAfterImport);
             var importTaxEntries = (await wallets.JournalForAccountAsync(pilot, 1000))
-                .Where(row => row.Reason == "planetary customs fee").ToArray();
+                .Where(row => row.RefTypeId == 96).ToArray();
             Assert.Single(importTaxEntries);
+            Assert.Equal(planetId, importTaxEntries[0].ReferenceId);
             var importTax = Math.Abs(importTaxEntries[0].Amount);
             Assert.True(importTax > 0);
             await customs.ImportExportAsync(session, officeId, padId, new Dictionary<long, long>(),
                 new Dictionary<int, long> { [waterType] = 1 }, rate, CancellationToken.None);
             Assert.Equal(2L, await StockQuantityAsync());
             var customerTaxEntries = (await wallets.JournalForAccountAsync(pilot, 1000))
-                .Where(row => row.Reason == "planetary customs fee").ToArray();
+                .Where(row => row.RefTypeId is 96 or 97).ToArray();
             var customerTax = Math.Abs(customerTaxEntries.Sum(row => row.Amount));
 
             var cash = Assert.IsType<PyReal>(await host.Registry.Lookup("account")!.CallAsync(new ServiceCall
@@ -613,10 +663,11 @@ public sealed class CustomsOfficeHostTests : IAsyncLifetime
             Assert.Equal(30m, await ScalarAsync<decimal>(source,
                 $"SELECT isk FROM {Schema("EVE_WALLET_SCHEMA")}.balances WHERE owner_id = {ownerCorporation.Id} AND account_key = 1000"));
             var ownerEntries = (await reopenedWallets.JournalForAccountAsync(ownerCorporation.Id, 1000))
-                .Where(row => row.Reason == "planetary customs office tax").ToArray();
+                .Where(row => row.RefTypeId is 96 or 97).ToArray();
             Assert.Equal(2, ownerEntries.Length);
             Assert.Equal(30m, ownerEntries.Sum(row => row.Amount));
-            Assert.All(ownerEntries, row => Assert.Equal(97, row.RefTypeId));
+            Assert.Equal([96, 97], ownerEntries.Select(row => row.RefTypeId).Order());
+            Assert.All(ownerEntries, row => Assert.Equal(planetId, row.ReferenceId));
             Assert.Equal(cashBeforeSettlement - (double)customerTax, Assert.IsType<PyReal>(await host.Registry.Lookup("account")!.CallAsync(new ServiceCall
             {
                 Method = "GetCashBalance",
@@ -645,7 +696,7 @@ public sealed class CustomsOfficeHostTests : IAsyncLifetime
             var colonyBeforeFailedSettlement = await ColonyDocumentAsync();
             var ownerBalanceBeforeFailedSettlement = await OwnerBalanceAsync();
             var customerTaxEntriesBeforeFailedSettlement = (await reopenedWallets.JournalForAccountAsync(pilot, 1000))
-                .Count(row => row.Reason == "planetary customs fee");
+                .Count(row => row.RefTypeId is 96 or 97);
             await Assert.ThrowsAsync<InsufficientFundsException>(async () =>
                 await customs.ImportExportAsync(session, officeId, padId,
                     new Dictionary<long, long> { [stockId] = 1 }, new Dictionary<int, long> { [waterType] = 1 },
@@ -655,9 +706,9 @@ public sealed class CustomsOfficeHostTests : IAsyncLifetime
             Assert.Equal(colonyBeforeFailedSettlement, await ColonyDocumentAsync());
             Assert.Equal(ownerBalanceBeforeFailedSettlement, await OwnerBalanceAsync());
             Assert.Equal(customerTaxEntriesBeforeFailedSettlement,
-                (await reopenedWallets.JournalForAccountAsync(pilot, 1000)).Count(row => row.Reason == "planetary customs fee"));
+                (await reopenedWallets.JournalForAccountAsync(pilot, 1000)).Count(row => row.RefTypeId is 96 or 97));
             Assert.Equal(ownerEntries.Length, (await reopenedWallets.JournalForAccountAsync(ownerCorporation.Id, 1000))
-                .Count(row => row.Reason == "planetary customs office tax"));
+                .Count(row => row.RefTypeId is 96 or 97));
         }
         finally
         {
@@ -842,6 +893,10 @@ public sealed class CustomsOfficeHostTests : IAsyncLifetime
         await using var command = source.CreateCommand(sql);
         return (T)(await command.ExecuteScalarAsync())!;
     }
+
+    private static PyValue JournalField(PyValue row, string name) =>
+        Assert.IsType<PyDict>(Assert.IsType<PyObject>(row).Args).Entries
+            .Single(entry => Assert.IsType<PyStr>(entry.Key).Value == name).Value;
 
     private static HostSettings Settings() => new(
         "", "disabled", new ClusterOptions { NewCharacterExperienceEnabled = false, NewCharacterExperienceMode = "disabled" },

@@ -28,3 +28,11 @@ The report records zero P1–P3 findings and identifies no reproducible defect i
 - The full `CatalogTests` class and its cache, filtering, and containment cases were not run; only the focused type-summary test ran.
 - EveJS source was compared, but an EveJS runtime scenario was not executed. The graphical V24.01 client was not launched.
 - No gameplay RPC or persisted player-state flow is owned by `Eve.Sde`; this recheck did not claim end-to-end graphical-client acceptance.
+
+## Reverification (2026-11-10)
+
+- Rechecked the SDE reader and its callers against the current source tree, the V24.01 client, and the job-specified EveJS checkout `/home/user/evejs-261108.1`. The audit report still contains no P1–P3 findings; no source defect was confirmed and no code change or regression test was warranted.
+- `eve_p6` contained SDE build 3396210. `eve_p12` was absent and was created as a PostgreSQL template copy of `eve_p6`, so the two databases had the same pinned SDE for this verification.
+- `/root/.dotnet/dotnet build dotnet/tests/Eve.Characters.Tests/Eve.Characters.Tests.csproj --configuration Release -m:1` succeeded with 0 warnings and 0 errors.
+- `CatalogTests.ReadTypeSummariesAsync_returns_ordered_catalog_fields` passed on `eve_p6` and `eve_p12` separately (1 passed each, 0 failed, 0 skipped).
+- Codebase-memory MCP and Serena were unavailable and `codebase-memory-mcp` was not installed; repository search and line-numbered source inspection used `rg`, `nl`, and `sed` as the fallback.

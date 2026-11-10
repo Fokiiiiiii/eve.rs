@@ -721,7 +721,8 @@ def test_a_corporation_unanchors_and_scoops_its_control_tower():
         item = dbseed.sql(
             f"select owner_id, location_id, flag, custom_info from {dbseed.schema('INVENTORY')}.items where id = {tower}"
         )
-        assert item.startswith(f"{character}|{LEGAL_SYSTEM}|") and "unanchor" in item.lower(), item
+        # Drop assigns a POS tower to its corporation; Scoop returns the hull to this pilot's cargo below.
+        assert item.startswith(f"{corporation}|{LEGAL_SYSTEM}|") and "unanchor" in item.lower(), item
 
         try:
             assert client.call_bound(ship[0], "Scoop", tower, None) is None

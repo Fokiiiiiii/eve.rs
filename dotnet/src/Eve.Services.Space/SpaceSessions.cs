@@ -489,6 +489,12 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
     /// <summary>The unanchoring of a player control tower by its corporation (posMgr.UnanchorStructure); the host's space composition sets it.</summary>
     public Func<ClientSession, long, CancellationToken, Task>? ControlTowerUnanchor { get; set; }
 
+    /// <summary>The anchoring of a player control tower through posMgr.AnchorStructure; set by the space composition.</summary>
+    public Func<ClientSession, long, IReadOnlyList<double>, CancellationToken, Task>? ControlTowerAnchor { get; set; }
+
+    /// <summary>The legacy POS tower's explicit online/offline dogma effect; unrelated fitted-module effects return null to the normal module path.</summary>
+    public Func<ClientSession, long, bool, CancellationToken, Task<ModuleResult?>>? ControlTowerModuleOperation { get; set; }
+
     /// <summary>The probe scan of the probes in space (set by the composition root): the scanMgr requests answer through it.</summary>
     public SpaceProbeScans? ProbeScans { get; set; }
 

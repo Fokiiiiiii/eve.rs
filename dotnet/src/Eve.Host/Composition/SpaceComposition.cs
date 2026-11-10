@@ -539,6 +539,7 @@ internal sealed partial class CharacterServicesComposition
             await foundations.Scheduler.EnsureRecurringAsync("space.ess.tick", "tick", TimeSpan.FromSeconds(10));
             deployedStore = new PgDeployedStore(source, spaceSchema);
             spaceContainers = new SpaceContainers(sim, ships, items, new PgSpaceItemStore(source, spaceSchema), new PgWorkCycleLedger(source, spaceSchema), new Eve.Services.Space.EventBusFacts(foundations.Events), dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: cans: {message}"), deployed: deployedStore, scheduler: foundations.Scheduler, source: source);
+            new Eve.Services.Space.ControlTowerFuelNotifications(characterSessions, dogma).Subscribe(foundations.Events);
 
             // Tournament beacons are durable deployed items; restore them when their system scene opens.
             var tournamentSimulation = sim ?? throw new InvalidOperationException("Tournament beacon restoration requires simulation.");
@@ -582,11 +583,23 @@ internal sealed partial class CharacterServicesComposition
                     await siteContainerHacks.OnItemLeftAsync(context.Connection, context.Transaction, previousLocationId, token);
             });
             foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.ControlTowerFuelJob, async (context, token) =>
-                await spaceContainers.ControlTowerFuelAsync(context.Connection, context.Transaction, context.Payload<Eve.Services.Space.SpaceContainers.ControlTowerFuelDue>()!.DeployableId, context.ScheduledForMs, token));
+            {
+                if (await spaceContainers.ControlTowerFuelAsync(context.Connection, context.Transaction,
+                    context.Payload<Eve.Services.Space.SpaceContainers.ControlTowerFuelDue>()!.DeployableId, context.ScheduledForMs, token))
+                    context.AfterCommit(_ => { foundations.Events.Wake(); return Task.CompletedTask; });
+            });
+            foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.ControlTowerOnlineJob, async (context, token) =>
+            {
+                var due = context.Payload<Eve.Services.Space.SpaceContainers.ControlTowerOnlineDue>()!;
+                if (await spaceContainers.CompleteControlTowerOnlineAsync(context.Connection, context.Transaction, due.DeployableId, due.StartedAtMs, token))
+                    context.AfterCommit(_ => { foundations.Events.Wake(); return Task.CompletedTask; });
+            });
             foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.ControlTowerUnanchorJob, async (context, token) =>
                 await spaceContainers.CompleteControlTowerUnanchorAsync(context.Payload<Eve.Services.Space.SpaceContainers.ControlTowerUnanchorDue>()!.DeployableId,
                     context.Connection, context.Transaction, foundations.Events, token));
             spaceSessions.ControlTowerUnanchor = spaceContainers.UnanchorControlTowerAsync;
+            spaceSessions.ControlTowerAnchor = spaceContainers.AnchorControlTowerAsync;
+            spaceSessions.ControlTowerModuleOperation = spaceContainers.ControlTowerModuleOperationAsync;
             foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.AnchorJob, async (context, token) =>
             {
                 var id = context.Payload<Eve.Services.Space.SpaceContainers.DisruptorAnchorDue>()!.DeployableId;

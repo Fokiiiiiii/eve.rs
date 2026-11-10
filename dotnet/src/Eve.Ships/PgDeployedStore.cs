@@ -82,16 +82,38 @@ public sealed class PgDeployedStore
     public async Task<string?> TowerStateAsync(long deployableId, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
-        await using var command = new NpgsqlCommand($"SELECT tower_state FROM {_schema}.deployed WHERE deployable_id = $1", connection);
+        return await TowerStateAsync(connection, null, deployableId, cancellationToken);
+    }
+
+    /// <summary>Reads a tower state under the same lock/transaction as a deployed-record transition.</summary>
+    public async Task<string?> TowerStateAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long deployableId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"SELECT tower_state FROM {_schema}.deployed WHERE deployable_id = $1", connection, transaction);
         command.Parameters.Add(new NpgsqlParameter { Value = deployableId });
         return await command.ExecuteScalarAsync(cancellationToken) as string;
+    }
+
+    /// <summary>The start time of an in-progress control-tower state transition, or null when the state has no timer.</summary>
+    public async Task<long?> TowerStateStartedAtMsAsync(long deployableId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        return await TowerStateStartedAtMsAsync(connection, null, deployableId, cancellationToken);
+    }
+
+    /// <summary>The transition start time read with its deployed record's transaction.</summary>
+    public async Task<long?> TowerStateStartedAtMsAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long deployableId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"SELECT tower_state_started_at_ms FROM {_schema}.deployed WHERE deployable_id = $1", connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = deployableId });
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+        return value is long startedAtMs ? startedAtMs : null;
     }
 
     /// <summary>Sets the fuel state of a control tower (a tower that is not recorded is left alone).</summary>
     public async Task SetTowerStateAsync(long deployableId, string state, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
-        await using var command = new NpgsqlCommand($"UPDATE {_schema}.deployed SET tower_state = $2 WHERE deployable_id = $1", connection);
+        await using var command = new NpgsqlCommand($"UPDATE {_schema}.deployed SET tower_state = $2, tower_state_started_at_ms = NULL WHERE deployable_id = $1", connection);
         command.Parameters.Add(new NpgsqlParameter { Value = deployableId });
         command.Parameters.Add(new NpgsqlParameter { Value = state });
         await command.ExecuteNonQueryAsync(cancellationToken);
@@ -100,9 +122,19 @@ public sealed class PgDeployedStore
     /// <summary>The same as <see cref="SetTowerStateAsync(long, string, CancellationToken)"/>, inside the caller's transaction (a durable job's).</summary>
     public async Task SetTowerStateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long deployableId, string state, CancellationToken cancellationToken = default)
     {
-        await using var command = new NpgsqlCommand($"UPDATE {_schema}.deployed SET tower_state = $2 WHERE deployable_id = $1", connection, transaction);
+        await using var command = new NpgsqlCommand($"UPDATE {_schema}.deployed SET tower_state = $2, tower_state_started_at_ms = NULL WHERE deployable_id = $1", connection, transaction);
         command.Parameters.Add(new NpgsqlParameter { Value = deployableId });
         command.Parameters.Add(new NpgsqlParameter { Value = state });
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>Sets a control-tower transition and its start time atomically.</summary>
+    public async Task SetTowerStateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long deployableId, string state, long startedAtMs, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"UPDATE {_schema}.deployed SET tower_state = $2, tower_state_started_at_ms = $3 WHERE deployable_id = $1", connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = deployableId });
+        command.Parameters.Add(new NpgsqlParameter { Value = state });
+        command.Parameters.Add(new NpgsqlParameter { Value = startedAtMs });
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 

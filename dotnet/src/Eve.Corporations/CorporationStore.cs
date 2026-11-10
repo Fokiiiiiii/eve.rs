@@ -386,6 +386,21 @@ public sealed partial class CorporationStore
                     CREATE INDEX peace_treaties_owner_expiry ON peace_treaties(owner_id,expiry_date_time,peace_treaty_id DESC);
                     CREATE INDEX peace_treaties_other_expiry ON peace_treaties(other_owner_id,expiry_date_time,peace_treaty_id DESC);
                 """),
+                new Migration("018_medal_award_visibility", """
+                    UPDATE medal_awards a
+                    SET status = CASE
+                        WHEN (m.data->>'status') ~ '^[1-3]$' THEN (m.data->>'status')::integer
+                        ELSE 3
+                    END
+                    FROM medals m
+                    WHERE m.id=a.medal_id;
+                    UPDATE medals
+                    SET data=jsonb_set(
+                        CASE WHEN jsonb_typeof(data)='object' THEN data ELSE '{}'::jsonb END,
+                        '{status}',to_jsonb(3),true);
+                    ALTER TABLE medal_awards ALTER COLUMN status SET DEFAULT 3;
+                    ALTER TABLE medal_awards ADD CONSTRAINT medal_awards_status_check CHECK (status BETWEEN 1 AND 3);
+                """),
     ];
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
         Migrations.ApplyAsync(source, schema, MigrationSet(), cancellationToken);

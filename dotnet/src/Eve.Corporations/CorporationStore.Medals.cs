@@ -14,7 +14,7 @@ public sealed partial class CorporationStore
     public sealed record MedalGraphic(long Part, string Graphic, long Color);
     public sealed record Medal(long Id, long CorporationId, long CreatorId, string Title, string Description,
         long CreatedMs, long Status, bool IsDeleted, IReadOnlyList<MedalGraphic> Graphics, long RecipientCount);
-    public sealed record MedalAward(long MedalId, long CharacterId, long IssuerId, string Reason, long CreatedMs);
+    public sealed record MedalAward(long MedalId, long CharacterId, long IssuerId, string Reason, long CreatedMs, long Status);
     public sealed record ReceivedMedal(Medal Medal, MedalAward Award);
 
     public long ClockMs => _now();
@@ -38,18 +38,21 @@ public sealed partial class CorporationStore
         }, token);
     }
 
-    public async Task SetMedalStatusesAsync(long corporationId, IReadOnlyList<(long MedalId, long Status)> statuses,
+    public async Task SetMedalStatusesAsync(long characterId, IReadOnlyList<(long MedalId, long Status)> statuses,
         CancellationToken token = default)
     {
+        if (characterId <= 0 || statuses.Any(status => status.MedalId <= 0 || status.Status is < 1 or > 3))
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
         if (statuses.Count == 0) return;
         await WriteAsync(async (connection, tx) =>
         {
             foreach (var (medalId, status) in statuses)
             {
                 await using var command = Command(connection, tx,
-                    $"UPDATE {_schema}.medals SET data=jsonb_set(data,'{{status}}',to_jsonb($3::bigint),true) WHERE corporation_id=$1 AND id=$2",
-                    corporationId, medalId, status);
-                await command.ExecuteNonQueryAsync(token);
+                    $"UPDATE {_schema}.medal_awards SET status=$3 WHERE character_id=$1 AND medal_id=$2",
+                    characterId, medalId, status);
+                if (await command.ExecuteNonQueryAsync(token) < 1)
+                    throw new CorporationError("CORPORATION_ACCESS_DENIED");
             }
             return true;
         }, token);
@@ -93,14 +96,15 @@ public sealed partial class CorporationStore
     {
         await using var connection = await _source.OpenConnectionAsync(token);
         await using var command = Command(connection, null,
-            $"SELECT a.medal_id,a.character_id,a.issuer_id,a.reason,a.created_ms " +
+            $"SELECT a.medal_id,a.character_id,a.issuer_id,a.reason,a.created_ms,a.status " +
             $"FROM {_schema}.medal_awards a JOIN {_schema}.medals m ON m.id=a.medal_id " +
             "WHERE m.corporation_id=$1 AND m.id=$2 ORDER BY a.created_ms,a.award_id",
             corporationId, medalId);
         await using var reader = await command.ExecuteReaderAsync(token);
         var recipients = new List<MedalAward>();
         while (await reader.ReadAsync(token))
-            recipients.Add(new(reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetString(3), reader.GetInt64(4)));
+            recipients.Add(new(reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetString(3),
+                reader.GetInt64(4), reader.GetInt64(5)));
         return recipients;
     }
 
@@ -109,14 +113,14 @@ public sealed partial class CorporationStore
         await using var connection = await _source.OpenConnectionAsync(token);
         await using var command = Command(connection, null,
             $"SELECT m.id,m.corporation_id,m.creator_id,m.title,m.description,m.created_ms,m.data,0::bigint," +
-            "a.medal_id,a.character_id,a.issuer_id,a.reason,a.created_ms " +
+            "a.medal_id,a.character_id,a.issuer_id,a.reason,a.created_ms,a.status " +
             $"FROM {_schema}.medal_awards a JOIN {_schema}.medals m ON m.id=a.medal_id " +
             "WHERE a.character_id=$1 ORDER BY m.id,a.created_ms,a.award_id", characterId);
         await using var reader = await command.ExecuteReaderAsync(token);
         var received = new List<ReceivedMedal>();
         while (await reader.ReadAsync(token))
             received.Add(new(ReadMedal(reader), new(reader.GetInt64(8), reader.GetInt64(9), reader.GetInt64(10),
-                reader.GetString(11), reader.GetInt64(12))));
+                reader.GetString(11), reader.GetInt64(12), reader.GetInt64(13))));
         return received;
     }
 

@@ -1,0 +1,29 @@
+# ESS startup placement and public scene entry
+
+## Finding
+
+Main CI runs 1682 (`695e0cd9`) and 1683 (`d916d77b`) followed the ESS startup changes. Run 1682 timed out before the Host opened its local socket; its Windows job also saw the simulation link close before the handshake. Run 1683 had a different end-to-end symptom: the Host started, but the race-1 undock walk failed. Its results do not support treating the two runs as identical startup failures.
+
+The local `run-eve-live.sh` reproduction with `EVE_MARKET_SEED=skip` connected the Host to the simulation, then logged `outbound queue is full (64 frames)`. `PlaceEssBallsAsync` had read every registered ESS and sent 3,285 `PlaceStructure` messages before the Host listener was ready. Switching those sends to await queue capacity prevented the link drop but the listener still missed the 60-second gate while all 3,285 messages drained. This isolated ESS scene population as the startup regression; the first run without `EVE_MARKET_SEED=skip` was still in the optional NPC market seed and was not an ESS reproduction.
+
+The fix keeps SDE eligibility and persisted bank identity unchanged, but places at most the destination system's ESS immediately before an entry command. An absent ESS produces no placement. The simulation's `PlaceStructure` handler creates the solar-system scene if needed and treats an already present structure ID as an idempotent no-op (`crates/eve-space/src/sim/dispatch.rs:1759-1773`, `crates/eve-space/src/scene/structures.rs:180-185`). `SimClient.PlaceStructureAsync` waits for space in the bounded outbound queue; subsequent entry messages follow it in queue order.
+
+## Client and reference evidence
+
+- V24.01 `dynamicResourceSvc.py:69-73` fetches ESS data for the current solar system. On a system session change, `:175-181` invalidates the ESS cache and refreshes its view. Before requesting the main-bank link, `:100-115` checks the current ballpark and rejects when `ballpark.GetBall(state.ess_item_id)` is absent. The ESS entity therefore has to be in the destination scene before the client binds that scene and tries to use the bank. Source: `/home/user/eve-logic/eve/client/script/ui/shared/dynamicResource/dynamicResourceSvc.py`.
+- EveJS 261108.1 builds each solar-system scene by calling `ensureSystemEssEntity(this)` (`server/src/space/runtime/solarSystemScene.js:178-183`). The helper checks public solar-system scene kind and SDE claimability, then adds that system's bank (`server/src/space/encounterSurveillanceSystem.js:126-150,224-238`). It does not iterate every known system during server startup.
+- Stargate entry gets its destination system from the SDE `mapStargates` rows loaded into `GateRules`; other supported jump paths already carry the destination system. This lets Host scene preparation happen before the simulator command that moves the ship.
+
+## Code and checks
+
+- `EssComposition.PlaceEssBallAsync` reads a single bank from `PgEssStore`, uses the ESS type's SDE geometry and dogma attributes, and gets deterministic placement from the existing `SdeSiteAnchors` cache. `SpaceComposition` wires it into `SpaceSessions.PrepareSolarSystemForEntryAsync`; preparation is called before normal space login, undock, public relocation, gate jump, wormhole jump, bridge, conduit, and cynosural-jump entry. The broader ESS entry beacon/gate flow is still open and is not claimed complete here.
+- `SimClientTests.Structure_placement_waits_for_outbound_capacity_without_breaking_the_link` fills the bounded queue and verifies the async placement waits while the link stays connected. `RelocationTests.A_public_entry_prepares_its_destination_before_the_simulation_enters_it` verifies preparation precedes the simulator entry.
+- The focused Release service test selection passed 247/247 on `eve_p3`: `GateRulesTests`, `RelocationTests`, `WormholeJumpServiceTests`, `CynoJumpHostTests`, `SpaceServiceTests`, and `ActivityTravelRpcServicesTests`. `EssSystemDeploymentCompositionTests` passed 1/1 on `eve_p3`, including the 3,285-system registration and restart case. `SimClientTests` passed 41/41.
+- The final `run-eve-live.sh` walk passed 1/1, with 0 skips, for `test_a_linkable_hull_starts_and_cancels_an_in_space_main_bank_link` against SDE system 30000208. It started the Host within the script's 60-second socket gate, moved the pilot into the system, warped to its bank, linked and settled the Main Bank, consumed a reserve key, and settled a Reserve Bank pulse. The captured Host log had `connected to the simulation` and `listening` lines and no outbound-queue-full message. The initial live attempt stopped at an old `None` expectation; after checking V24 `dynamicResourceSvc.py:258-260` and EveJS `dynamicResourceState.js:270-279`, the headless assertion was corrected to require the exact empty map `{}` and to check the active link's character ID. This made the idle-shape assertion stricter and consistent with both sources.
+- Release builds with warnings treated as errors passed with 0 warnings for `Eve.Host`, `Eve.Services.Space`, `Eve.Space`, `Eve.Host.Tests`, `Eve.Services.Space.Tests`, and `Eve.Space.Tests`. `git diff --check` passed. These are headless and database-backed checks; the checked-out GUI client was not used.
+
+## CI and compatibility notes
+
+- Run 1682's actual socket timeout was reproduced locally; run 1683's end-to-end race-1 undock failure remains a separate behavior to inspect if it recurs after this change.
+- No bank data, SDE eligibility rule, ESS RPC payload, notification, payout state, or client wire behavior was changed. The Host still exposes the bank ball directly; CCP's separate ESS entry beacon and ship-restricted acceleration-gate transition remain open as documented in `evejs-261108-port-ess.md`.
+- The newest two main-CI runs were not checked after the fix because no commit has been pushed yet; this handoff records local validation only.

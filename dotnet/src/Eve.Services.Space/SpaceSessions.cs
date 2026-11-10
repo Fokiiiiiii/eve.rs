@@ -521,6 +521,12 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
     /// <summary>The stargate rules of the client data and the SDE (set by the composition root): the ship lists of the gates, the tolls and the destinations.</summary>
     public Gates.GateRules? GateRules { get; set; }
 
+    /// <summary>Prepares a public solar-system scene before a ship enters it (the Host uses this for persisted structures such as an ESS).</summary>
+    public Func<int, CancellationToken, Task>? PrepareSolarSystemForEntryAsync { get; set; }
+
+    private Task PrepareSolarSystemAsync(int solarSystemId, CancellationToken cancellationToken) =>
+        PrepareSolarSystemForEntryAsync is { } prepare ? prepare(solarSystemId, cancellationToken) : Task.CompletedTask;
+
     /// <summary>Charges a gate toll to a character's wallet (set by the composition root): false when the wallet cannot pay.</summary>
     public Func<long, decimal, string, CancellationToken, Task<bool>>? ChargeGateToll { get; set; }
 
@@ -730,16 +736,25 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
             snapshot,
             _statics,
             await SecurityStatusAsync(characterId, cancellationToken));
-        var refusal = await _sim.EnterAsync(
-            new SimEnter(
-                sessionId,
-                  SimSceneKey.SolarSystem(systemId),
-                EnterHow.InSpace,
-                0,
-                ship,
-                state.Position,
-                state.Direction),
-            cancellationToken);
+        string? refusal;
+        try
+        {
+            await PrepareSolarSystemAsync(systemId, cancellationToken);
+            refusal = await _sim.EnterAsync(
+                new SimEnter(
+                    sessionId,
+                    SimSceneKey.SolarSystem(systemId),
+                    EnterHow.InSpace,
+                    0,
+                    ship,
+                    state.Position,
+                    state.Direction),
+                cancellationToken);
+        }
+        catch (SimUnavailableException error)
+        {
+            refusal = error.Message;
+        }
         if (refusal is not null)
         {
             _log?.Invoke($"space login for character {characterId} was refused: {refusal}");

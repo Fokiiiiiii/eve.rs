@@ -30,6 +30,10 @@ internal sealed partial class CharacterServicesComposition
     private Eve.Services.Space.EssMgrService? _essMgrService;
     private Eve.Services.Space.EssMgrService EssMgr => _essMgrService ??= new(EssCallbacks());
     private Dictionary<int, string> _essQuadrantBySystem = [];
+    private readonly SemaphoreSlim _essGeometryGate = new(1, 1);
+    private EssGeometry? _essGeometry;
+
+    private sealed record EssGeometry(int GroupId, double Radius, double ShieldCapacity, double ArmorHp, double StructureHp);
 
     private PgEssStore Ess => _ess ??= new PgEssStore(
         source, new WalletTransactions(source, walletSchema), essSchema,
@@ -213,42 +217,61 @@ internal sealed partial class CharacterServicesComposition
     /// <summary>The system's reserve quadrant as the cache manager lists its keys (null when the system is in no quadrant).</summary>
     private string? EssQuadrantOf(int systemId) => _essQuadrantBySystem.TryGetValue(systemId, out var quadrant) ? quadrant : null;
 
-    /// <summary>The ESS balls use deterministic SDE anchor placement and the ESS type's static geometry when available.</summary>
-    private async Task PlaceEssBallsAsync(ISimulation simulation)
+    /// <summary>Places the one ESS in a system before its next pilot enters, using its persisted identity and deterministic SDE anchor.</summary>
+    private async Task PlaceEssBallAsync(ISimulation simulation, int solarSystemId, CancellationToken cancellationToken)
     {
-        var type = dogma.Type(EssRules.TypeEncounterSurveillanceSystem);
-        double Attribute(int id) => type?.Attributes.GetValueOrDefault(id, 0d) ?? 0d;
-        var staticType = (await sde.ReadAsync("types", [(long)EssRules.TypeEncounterSurveillanceSystem])).SingleOrDefault();
-        if (staticType is null)
+        var state = await Ess.ReadAsync(solarSystemId, cancellationToken);
+        if (state is null)
+            return;
+
+        var geometry = await EssGeometryAsync(cancellationToken);
+        var anchors = await (_siteAnchors ??= new Eve.Services.Space.Sites.SdeSiteAnchors(sde))
+            .OfAsync(solarSystemId, cancellationToken);
+        var (_, position) = Eve.Services.Space.Sites.SitePlacement.Place(anchors, $"ess:{state.SolarSystemId}:{state.EssId}");
+        var placed = await simulation.PlaceStructureAsync(new SimPlaceStructure(
+            state.EssId,
+            state.SolarSystemId,
+            "Encounter Surveillance System",
+            EssRules.TypeEncounterSurveillanceSystem,
+            geometry.GroupId,
+            position,
+            geometry.Radius,
+            state.OwnerId ?? 0,
+            0,
+            0,
+            new SimStructureHealth(geometry.ShieldCapacity, geometry.ArmorHp, geometry.StructureHp,
+                [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], 0, [0, 0, 0], [0, 0, 0]),
+            new SimStructureStatus(StructureState.ShieldVulnerable, UpkeepState.FullPower, null, null, null)), cancellationToken);
+        if (!placed)
+            throw new SimUnavailableException($"the simulation disconnected while placing ESS {state.EssId}");
+    }
+
+    private async Task<EssGeometry> EssGeometryAsync(CancellationToken cancellationToken)
+    {
+        if (_essGeometry is { } cached)
+            return cached;
+        await _essGeometryGate.WaitAsync(cancellationToken);
+        try
         {
-            throw new InvalidDataException($"The SDE has no record for ESS type {EssRules.TypeEncounterSurveillanceSystem}.");
+            if (_essGeometry is { } loaded)
+                return loaded;
+            var staticType = (await sde.ReadAsync("types", [(long)EssRules.TypeEncounterSurveillanceSystem], cancellationToken)).SingleOrDefault();
+            if (staticType is null)
+                throw new InvalidDataException($"The SDE has no record for ESS type {EssRules.TypeEncounterSurveillanceSystem}.");
+            var radius = staticType.Doc.TryGetProperty("radius", out var radiusValue) && radiusValue.TryGetDouble(out var staticRadius)
+                ? staticRadius
+                : 0d;
+            if (!double.IsFinite(radius) || radius < 0)
+                throw new InvalidDataException($"The SDE has an unusable radius for ESS type {EssRules.TypeEncounterSurveillanceSystem}.");
+            var type = dogma.Type(EssRules.TypeEncounterSurveillanceSystem);
+            return _essGeometry = new EssGeometry(type?.GroupId ?? 0, radius,
+                type?.Attributes.GetValueOrDefault(263, 0d) ?? 0d,
+                type?.Attributes.GetValueOrDefault(265, 0d) ?? 0d,
+                type?.Attributes.GetValueOrDefault(9, 0d) ?? 0d);
         }
-        var radius = staticType.Doc.TryGetProperty("radius", out var radiusValue) && radiusValue.TryGetDouble(out var staticRadius)
-            ? staticRadius
-            : 0d;
-        if (!double.IsFinite(radius) || radius < 0)
+        finally
         {
-            throw new InvalidDataException($"The SDE has an unusable radius for ESS type {EssRules.TypeEncounterSurveillanceSystem}.");
-        }
-        var anchors = new Eve.Services.Space.Sites.SdeSiteAnchors(sde);
-        var placements = await Ess.ListPlacementsAsync();
-        var anchorsBySystem = await anchors.ForSystemsAsync(placements.Select(state => state.SolarSystemId));
-        foreach (var state in placements)
-        {
-            var (_, position) = Eve.Services.Space.Sites.SitePlacement.Place(anchorsBySystem[state.SolarSystemId], $"ess:{state.SolarSystemId}:{state.EssId}");
-            simulation.PlaceStructure(new SimPlaceStructure(
-                state.EssId,
-                state.SolarSystemId,
-                "Encounter Surveillance System",
-                EssRules.TypeEncounterSurveillanceSystem,
-                type?.GroupId ?? 0,
-                position,
-                radius,
-                state.OwnerId ?? 0,
-                0,
-                0,
-                new SimStructureHealth(Attribute(263), Attribute(265), Attribute(9), [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], 0, [0, 0, 0], [0, 0, 0]),
-                new SimStructureStatus(StructureState.ShieldVulnerable, UpkeepState.FullPower, null, null, null)));
+            _essGeometryGate.Release();
         }
     }
 

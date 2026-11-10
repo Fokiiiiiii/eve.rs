@@ -31,5 +31,5 @@ No reported finding was false, so none were skipped. Graphical-client verificati
 - `HostServerTests` class passed (440/440, 0 skipped).
 - `CharacterHostTests` class passed (69 passed, 1 skipped, 0 failed). The one skip is `Confirmed_ship_clone_jump_moves_the_capsule_settles_state_and_notifies_after_space_entry`, which requires `EVE_ABYSSAL_SIM_BINARY` and `EVE_ABYSSAL_SIM_SDE`; those optional simulation inputs were not configured. It is not counted as a pass.
 - Release builds with warnings treated as errors succeeded with 0 warnings and 0 errors for `Eve.Services.CharacterInfo`, `Eve.Host`, `Eve.Services.CharacterInfo.Tests`, and `Eve.Host.Tests`.
-- P2 was pushed as part of `b5097a2765c0` and CI run 1675 completed successfully with no failed jobs. P3 is prepared locally for its own push; its CI result is pending.
+- P2 was pushed in `b5097a2765c0`; CI run 1675 passed with no failed jobs. P3 was pushed in `c464d39c0` (with this report update in `4a506e84b`); CI run 1676 passed with no failed jobs.
 - The code changes were not tested with a graphical client.

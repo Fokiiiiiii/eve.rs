@@ -23,7 +23,7 @@ namespace Eve.Host.Tests;
 /// calls, the cache notifications, and the rows surviving a Host restart.
 /// </summary>
 [Collection("host-composition")]
-public sealed class CharacterHostTests
+public sealed partial class CharacterHostTests
 {
     private const long ProxyNode = MachoMessage.ProxyNodeId;
 
@@ -4023,7 +4023,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             "EVE_ASSET_SAFETY_SCHEMA", "EVE_CRIMEWATCH_SCHEMA", "EVE_CORPORATIONS_SCHEMA", "EVE_MARKET_SCHEMA", "EVE_FLEET_SCHEMA",
             "EVE_GAMESTORE_SCHEMA", "EVE_SCHEDULER_SCHEMA", "EVE_EVENTS_SCHEMA", "EVE_RELATIONS_SCHEMA", "EVE_CONTENT_SCHEMA",
             "EVE_STRUCTURES_SCHEMA", "EVE_AGENTS_SCHEMA", "EVE_FACTIONWARFARE_SCHEMA",
-            "EVE_SKINR_SCHEMA",
+            "EVE_SKINR_SCHEMA", "EVE_ESS_SCHEMA",
         ];
 
         private const long CorporationId = 900_001_001;
@@ -4053,6 +4053,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         internal Eve.Host.PublicGateway.PublicGatewayRoutes Gateway => _runtime.PublicGateway;
         internal Eve.Events.EventBus Events => _runtime.Events ?? throw new InvalidOperationException("the event bus is not composed");
         public CharacterSessions Sessions => Assert.IsType<CharacterSessions>(_runtime.CharacterSessions);
+        public Eve.Space.SimClient Simulation => _runtime.Simulation ?? throw new InvalidOperationException("the simulation is not composed");
         public async Task WaitForSimulationConnectionAsync()
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -4385,7 +4386,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         private static async Task<(HostRuntime Runtime, Func<Task> Shutdown)> BuildHostAsync(IReadOnlyDictionary<string, string> schemas,
             Func<long>? clockOverride = null, string? simSocket = null, ClusterOptions? clusterOptions = null)
         {
-            var previous = SchemaVariables.Concat(["EVE_MARKET_SEED", "EVE_SIM", "EVE_SIM_SOCKET", "EVE_WORMHOLES"])
+            var previous = SchemaVariables.Concat(["EVE_MARKET_SEED", "EVE_SIM", "EVE_SIM_SOCKET", "EVE_WORMHOLES", "EVE_ESS_SYSTEMS"])
                 .ToDictionary(variable => variable, variable => Environment.GetEnvironmentVariable(variable));
             try
             {
@@ -4393,6 +4394,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
                     Environment.SetEnvironmentVariable(variable, schema);
                 Environment.SetEnvironmentVariable("EVE_MARKET_SEED", "skip");
                 Environment.SetEnvironmentVariable("EVE_SIM", simSocket is null ? "off" : "on");
+                Environment.SetEnvironmentVariable("EVE_ESS_SYSTEMS", "");
                 if (simSocket is not null)
                     Environment.SetEnvironmentVariable("EVE_SIM_SOCKET", simSocket);
                 Environment.SetEnvironmentVariable("EVE_WORMHOLES", "off");

@@ -148,6 +148,7 @@ internal sealed partial class CharacterServicesComposition
 
     private async Task SpaceSimulation()
     {
+        _siteAnchors ??= new Eve.Services.Space.Sites.SdeSiteAnchors(sde);
         _dynamicBounty = new PgDynamicBountyStore(source,
             solarSystems.Systems.Select(system => new DynamicBountySystem(system.Id, system.RegionId, system.Security)), npcSchema);
         RegisterDynamicBountyJobs();

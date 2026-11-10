@@ -220,8 +220,7 @@ internal sealed partial class CharacterServicesComposition
     /// <summary>Places the one ESS in a system before its next pilot enters, using its persisted identity and deterministic SDE anchor.</summary>
     private async Task PlaceEssBallAsync(ISimulation simulation, int solarSystemId, CancellationToken cancellationToken)
     {
-        var state = await Ess.ReadAsync(solarSystemId, cancellationToken);
-        if (state is null)
+        if (await Ess.PlacementAsync(solarSystemId, cancellationToken) is not { } state)
             return;
 
         var geometry = await EssGeometryAsync(cancellationToken);
@@ -255,26 +254,26 @@ internal sealed partial class CharacterServicesComposition
         {
             if (_essGeometry is { } loaded)
                 return loaded;
-            var staticType = (await sde.ReadAsync("types", [(long)EssRules.TypeEncounterSurveillanceSystem], cancellationToken)).SingleOrDefault();
-            if (staticType is null)
-                throw new InvalidDataException($"The SDE has no record for ESS type {EssRules.TypeEncounterSurveillanceSystem}.");
+            await dogma.EnsureTypesAsync([EssRules.TypeEncounterSurveillanceSystem], cancellationToken);
+            var type = dogma.Type(EssRules.TypeEncounterSurveillanceSystem)
+                ?? throw new InvalidDataException($"The SDE has no dogma type for ESS {EssRules.TypeEncounterSurveillanceSystem}.");
+            var staticType = (await sde.ReadAsync("types", [(long)EssRules.TypeEncounterSurveillanceSystem], cancellationToken)).SingleOrDefault()
+                ?? throw new InvalidDataException($"The SDE has no record for ESS type {EssRules.TypeEncounterSurveillanceSystem}.");
             var radius = staticType.Doc.TryGetProperty("radius", out var radiusValue) && radiusValue.TryGetDouble(out var staticRadius)
                 ? staticRadius
                 : 0d;
             if (!double.IsFinite(radius) || radius < 0)
                 throw new InvalidDataException($"The SDE has an unusable radius for ESS type {EssRules.TypeEncounterSurveillanceSystem}.");
-            var type = dogma.Type(EssRules.TypeEncounterSurveillanceSystem);
-            return _essGeometry = new EssGeometry(type?.GroupId ?? 0, radius,
-                type?.Attributes.GetValueOrDefault(263, 0d) ?? 0d,
-                type?.Attributes.GetValueOrDefault(265, 0d) ?? 0d,
-                type?.Attributes.GetValueOrDefault(9, 0d) ?? 0d);
+            return _essGeometry = new EssGeometry(type.GroupId, radius,
+                type.Attributes.GetValueOrDefault(263, 0d),
+                type.Attributes.GetValueOrDefault(265, 0d),
+                type.Attributes.GetValueOrDefault(9, 0d));
         }
         finally
         {
             _essGeometryGate.Release();
         }
     }
-
 
     private async Task TickEssAsync(CancellationToken cancellationToken)
     {

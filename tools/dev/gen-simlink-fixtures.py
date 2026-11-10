@@ -11,7 +11,7 @@ import struct
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "..", "..", "oracle", "fixtures", "simlink", "messages.json")
 
-KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateState": 6, "CrimewatchFlagActive": 140, "Command": 7,
+KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateState": 6, "CrimewatchFlagActive": 140, "EmpireSentryOffense": 161, "Command": 7,
          "ShipSpec": 8, "Notify": 9, "Docked": 10, "Refused": 11, "Accepted": 12, "EnterReply": 13, "Approaching": 14,
          "Jumping": 15, "Jumped": 16, "Targets": 17, "TargetRefused": 18, "Activate": 19, "Condition": 20,
          "Destroyed": 21, "Spawn": 22, "SpawnReply": 23, "Destroy": 24, "Respawn": 25, "PlaceWreck": 26, "ChargeSpent": 27,
@@ -411,6 +411,8 @@ def build(m):
     k = m["kind"]
     if k == "CrimewatchFlagActive":
         return frame(k, u64(m["sessionId"]) + bytes([1 if m["isCriminal"] else 0]) + i64(m["expiresAtUnixMs"]))
+    if k == "EmpireSentryOffense":
+        return frame(k, u64(m["sessionId"]))
     if k == "EnsureAbyssalScene":
         return frame(k, u64(m["requestId"]) + abyssal_scene_spec(m["spec"]))
     if k == "EnsureAbyssalSceneObject":
@@ -835,6 +837,7 @@ valid = [
     {"name": "hello ack", "kind": "HelloAck", "version": 82, "pollHz": 4},
     {"name": "active Crimewatch flag", "kind": "CrimewatchFlagActive", "sessionId": "1001",
      "isCriminal": True, "expiresAtUnixMs": "1800000000000"},
+    {"name": "Empire sentry offense", "kind": "EmpireSentryOffense", "sessionId": "1001"},
     {"name": "ensure private Abyssal room scene", "kind": "EnsureAbyssalScene", "requestId": "41",
      "spec": {"scene": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 1},
               "environment": {"globalModifiers": [{"attributeId": 37, "operation": 1, "value": 1.25}],
@@ -2099,6 +2102,8 @@ for label, roster in [("empty", []), ("duplicate character", [["1", "2"], ["1", 
 invalid.append({"name": "cutoff unknown status", "reason": "bad-value", "hex": build(dict(named("cutoff registration pending"), status=4)).hex()})
 invalid.append({"name": "cutoff ready without evidence", "reason": "bad-value", "hex": build(dict(named("cutoff ready"), evidence=[])).hex()})
 invalid.append({"name": "cutoff invalid evidence", "reason": "bad-value", "hex": build(dict(named("cutoff ready"), evidence=[["1", "2", 3]])).hex()})
+invalid.append({"name": "Empire sentry offense zero session", "reason": "bad-value",
+                "hex": frame("EmpireSentryOffense", u64("0")).hex()})
 
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 with open(OUT, "w", encoding="utf-8") as f:

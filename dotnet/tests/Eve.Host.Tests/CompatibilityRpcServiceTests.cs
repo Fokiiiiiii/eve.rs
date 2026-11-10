@@ -258,6 +258,7 @@ public sealed class CompatibilityRpcServiceTests
             foreach (var table in new[] { "characterEnergyState", "shipCosmetics", "shipLogoFittings", "planetRuntimeState", "industryRuntime" })
                 await cache.LoadAsync(table);
             await PgItemStore.MigrateAsync(source, inventorySchema);
+            await SkinLicenseActivationIntents.MigrateAsync(source, inventorySchema);
             var items = new PgItemStore(source, inventorySchema);
 
             const long now = 1_700_000_000_000L;
@@ -286,7 +287,7 @@ public sealed class CompatibilityRpcServiceTests
             var session = Session(20);
             var energy = Assert.IsType<PyObjectEx>(await new CharacterEnergyMgrRpcService(cache, () => now).CallAsync(Call("GetMyEnergyState", session)));
             var energyFields = Assert.IsType<PyList>(Assert.IsType<PyTuple>(energy.Header).Items[1]);
-            Assert.Equal(new PyInt(22), energyFields.Items[0]);
+            Assert.Equal(new PyReal(22), energyFields.Items[0]);
             var enabled = Assert.IsType<PyDict>(await new ShipCosmeticsMgrRpcService(cache, cache, nowUnixMs: () => now)
                 .CallAsync(Call("GetEnabledCosmetics", session, new PyInt(55))));
             Assert.Equal(new PyInt(900), Assert.Single(enabled.Entries).Value);
@@ -316,7 +317,8 @@ public sealed class CompatibilityRpcServiceTests
             var wiredCosmetics = new ShipCosmeticsMgrRpcService(cache, cache, items, source, skinCatalog, () => now,
                 (_, _, skinId) => appliedSkinId = skinId,
                 (_, skinId) => activatedSkinId = skinId,
-                (_, item, quantity, _) => { consumedItemId = item.Id; consumedQuantity = quantity; return ValueTask.CompletedTask; });
+                (_, item, quantity, _) => { consumedItemId = item.Id; consumedQuantity = quantity; return ValueTask.CompletedTask; },
+                inventorySchema: inventorySchema);
             await wiredCosmetics.CallAsync(Call("ActivateSkinLicense", session, new PyList([new PyLong(licenseItemId)])));
             Assert.Equal((long?)license.SkinId, activatedSkinId);
             Assert.Equal(licenseItemId, consumedItemId);

@@ -92,6 +92,79 @@ public sealed class ShipCosmeticsMgrRpcServiceTests
         Assert.Equal("SHIP_SKIN_LICENSE_BULK_LIMIT_EXCEEDED", refusal.Error.UserErrorMessage);
     }
 
+    [Fact]
+    public async Task License_activation_survives_reload_before_the_deferred_game_store_flush()
+    {
+        var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL");
+        Assert.False(string.IsNullOrWhiteSpace(pgUrl));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(pgUrl!));
+        var sde = new SdeReader(source);
+        Assert.NotNull(await sde.BuildAsync());
+        var catalog = await ShipCosmeticsCatalog.LoadAsync(sde);
+        var license = catalog.LicenseTypes.Values.First(entry => catalog.Skins.ContainsKey(entry.SkinId));
+        var schema = "rpc_activation_reload_" + Guid.NewGuid().ToString("N");
+        var inventorySchema = "rpc_activation_reload_items_" + Guid.NewGuid().ToString("N");
+        var store = new PersistenceStore(source, schema);
+        try
+        {
+            await store.EnsureSchemaAsync();
+            await PgItemStore.MigrateAsync(source, inventorySchema);
+            await SkinLicenseActivationIntents.MigrateAsync(source, inventorySchema);
+            var items = new PgItemStore(source, inventorySchema);
+            long itemId;
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                itemId = await items.CreateAsync(connection, transaction,
+                    new NewItem(license.LicenseTypeId, 20, 600, 4, 1));
+                await transaction.CommitAsync();
+            }
+
+            await using var owner = await OwnerSession.StartAsync(store, PersistenceRoles.World,
+                "rpc-activation-reload-" + Guid.NewGuid().ToString("N"));
+            await using var cache = new GameStoreCache(store, owner,
+                new GameStoreCacheOptions { ProcessRole = PersistenceRoles.World, FlushDelay = TimeSpan.FromHours(1) });
+            await cache.RecoverAsync();
+            await cache.LoadAsync("shipCosmetics");
+            var service = new ShipCosmeticsMgrRpcService(cache, cache, items, source, catalog,
+                () => 1_700_000_000_000L,
+                flushSkinCosmetics: _ => Task.FromResult(false),
+                inventorySchema: inventorySchema);
+            var session = new ClientSession();
+            session.Set("charid", new PyInt(20));
+
+            await service.CallAsync(Call("ActivateSkinLicense", session, new PyList([new PyLong(itemId)])));
+            Assert.Null(await items.GetAsync(itemId));
+
+            await using var reloadedCache = new GameStoreCache(store, owner,
+                new GameStoreCacheOptions { ProcessRole = PersistenceRoles.World, FlushDelay = TimeSpan.FromHours(1) });
+            await reloadedCache.RecoverAsync();
+            await reloadedCache.LoadAsync("shipCosmetics");
+            Assert.False(reloadedCache.Read("shipCosmetics",
+                $"/characters/20/skinOverridesBySkinID/{license.SkinId}").Success);
+            await SkinLicenseActivationIntents.RecoverAsync(source, inventorySchema, reloadedCache);
+            Assert.True(reloadedCache.Read("shipCosmetics",
+                $"/characters/20/skinOverridesBySkinID/{license.SkinId}").Success);
+
+            await using var persistedReader = new GameStoreCache(store, null,
+                new GameStoreCacheOptions { ProcessRole = PersistenceRoles.Reader });
+            await persistedReader.LoadAsync("shipCosmetics");
+            Assert.True(persistedReader.Read("shipCosmetics",
+                $"/characters/20/skinOverridesBySkinID/{license.SkinId}").Success);
+            await using var pendingCountConnection = await source.OpenConnectionAsync();
+            await using var pendingCountCommand = new NpgsqlCommand($"SELECT count(*) FROM {inventorySchema}.skin_license_activation_intents", pendingCountConnection);
+            Assert.Equal(0L, (long)(await pendingCountCommand.ExecuteScalarAsync())!);
+        }
+        finally
+        {
+            await using var connection = await source.OpenConnectionAsync();
+            await using var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE", connection);
+            await command.ExecuteNonQueryAsync();
+            await using var inventoryCommand = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{inventorySchema}\" CASCADE", connection);
+            await inventoryCommand.ExecuteNonQueryAsync();
+        }
+    }
+
     [Theory]
     [InlineData("success")]
     [InlineData("false_payload")]
@@ -116,6 +189,7 @@ public sealed class ShipCosmeticsMgrRpcServiceTests
         {
             await store.EnsureSchemaAsync();
             await PgItemStore.MigrateAsync(source, inventorySchema);
+            await SkinLicenseActivationIntents.MigrateAsync(source, inventorySchema);
             var items = new PgItemStore(source, inventorySchema);
             var itemOwner = scenario == "foreign_owner" ? 21L : 20L;
             long itemId;
@@ -150,7 +224,8 @@ public sealed class ShipCosmeticsMgrRpcServiceTests
                     Assert.NotNull(committed);
                     Assert.Equal(remainingQuantity, committed.Quantity);
                     notifications.Add(("item", before.Id, characterId));
-                });
+                },
+                inventorySchema: inventorySchema);
             var session = new ClientSession();
             if (scenario != "no_character")
                 session.Set("charid", new PyInt(20));
@@ -221,6 +296,7 @@ public sealed class ShipCosmeticsMgrRpcServiceTests
         {
             await store.EnsureSchemaAsync();
             await PgItemStore.MigrateAsync(source, inventorySchema);
+            await SkinLicenseActivationIntents.MigrateAsync(source, inventorySchema);
             var items = new PgItemStore(source, inventorySchema);
             long itemId;
             await using (var connection = await source.OpenConnectionAsync())
@@ -238,7 +314,8 @@ public sealed class ShipCosmeticsMgrRpcServiceTests
             await cache.RecoverAsync();
             await cache.LoadAsync("shipCosmetics");
             var service = new ShipCosmeticsMgrRpcService(cache, cache, items, source, catalog,
-                () => 1_700_000_000_000L);
+                () => 1_700_000_000_000L,
+                inventorySchema: inventorySchema);
             var session = new ClientSession();
             session.Set("charid", new PyInt(20));
 

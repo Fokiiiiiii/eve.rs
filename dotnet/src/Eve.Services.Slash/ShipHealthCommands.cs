@@ -1,3 +1,4 @@
+using System.Globalization;
 using Eve.Dogma;
 using Eve.Fitting;
 using Eve.Inventory;
@@ -16,6 +17,10 @@ public sealed class ShipHealthCommands(CharacterShips ships, DogmaStatic statics
 {
     private const int HullPoints = 9;
     private const int Damage = 3;
+    private const int ShieldCapacity = 263;
+    private const int ShieldCharge = 264;
+    private const int ArmorHitPoints = 265;
+    private const int ArmorDamage = 266;
 
     /// <summary>The heat of the slots: the values a heal in space sets to nothing.</summary>
     private static readonly int[] HeatAttributes = [1175, 1176, 1177];
@@ -46,7 +51,39 @@ public sealed class ShipHealthCommands(CharacterShips ships, DogmaStatic statics
         return $"Applied {preset.Name} test damage to your active ship{modules}.";
     }
 
-    public async Task<string> HealAsync(ClientSession session, CancellationToken cancellationToken)
+    public Task<string> HealAsync(ClientSession session, CancellationToken cancellationToken) =>
+        HealAsync(session, "", cancellationToken);
+
+    public async Task<string> HealAsync(ClientSession session, string argument, CancellationToken cancellationToken)
+    {
+        var text = argument.Trim();
+        if (text.Length == 0 || text.Equals("me", StringComparison.OrdinalIgnoreCase))
+            return await HealShipAsync(session, cancellationToken);
+
+        var parts = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 2 && parts[1] == "0" && long.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var targetId) && targetId > 0)
+            return "Targeted destruction via /heal <entityID> 0 is unavailable.";
+        if (parts.Length != 1 || !long.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var moduleId) || moduleId <= 0)
+            return "Usage: /heal [me|ownedModuleID]";
+        if (session.CharacterId is not { } characterId)
+            return "Select a character before using /heal.";
+        long? activeShipId = null;
+        if (session.GetInt("stationid") is null)
+        {
+            if (session.GetInt("solarsystemid") is null || session.GetInt("shipid") is not { } flyingShipId || flyingShipId <= 0)
+                return "Dock before using /heal <moduleID>.";
+            activeShipId = flyingShipId;
+        }
+        if (await ships.HealModuleAsync(characterId, moduleId, activeShipId, cancellationToken) is not { } changed)
+            return "Usage: /heal [me|ownedModuleID]";
+
+        var attributes = ModuleDamageAttributes(changed, statics.Type(changed.Module.TypeId));
+        if (attributes.Count > 0)
+            session.SendNotification("OnModuleAttributeChanges", "clientID", new PyList(attributes));
+        return $"Repaired module {moduleId}.";
+    }
+
+    private async Task<string> HealShipAsync(ClientSession session, CancellationToken cancellationToken)
     {
         if (session.CharacterId is not { } characterId)
         {
@@ -84,6 +121,28 @@ public sealed class ShipHealthCommands(CharacterShips ships, DogmaStatic statics
             SendItems(session, changed, changed.Modules);
         }
         return "Restored full shields, armor, hull, capacitor, and fitted modules on your active ship.";
+    }
+
+    /// <summary>The V24 native module repair menu reports only health attributes backed by this type's SDE capacities.</summary>
+    private IReadOnlyList<PyValue> ModuleDamageAttributes(ModuleConditionChanged changed, TypeDef? type)
+    {
+        if (type is null) return [];
+        var attributes = new List<PyValue>();
+        var fileTime = Py.FileTimeFromUnixMs(nowUnixMs());
+        Add(ShieldCharge, ShieldCapacity, changed.Before.ShieldCharge, changed.After.ShieldCharge);
+        Add(ArmorDamage, ArmorHitPoints, changed.Before.ArmorDamage, changed.After.ArmorDamage);
+        Add(Damage, HullPoints, changed.Before.Damage, changed.After.Damage);
+        return attributes;
+
+        void Add(int attributeId, int capacityAttributeId, double beforeFraction, double afterFraction)
+        {
+            var capacity = Math.Max(0, type.Attributes.GetValueOrDefault(capacityAttributeId));
+            var before = Math.Round(capacity * beforeFraction, 6);
+            var after = Math.Round(capacity * afterFraction, 6);
+            if (before != after)
+                attributes.Add(ShipNotifications.AttributeChange(
+                    changed.Module.OwnerId, changed.Module.Id, attributeId, fileTime, before, after));
+        }
     }
 
     /// <summary>The ship's item and what the client knows of its name, then the items of the modules that changed.</summary>

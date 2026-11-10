@@ -1,18 +1,21 @@
 # d916d77 simulation startup backpressure
 
-## 検証した事実
+## 原因
 
-- main の CI run 1683（`d916d77b670d`）は `test_a_ship_undocks_flies_and_docks_as_the_reference_did[race-1]` で失敗した。undock RPC は `CustomNotify` を返し、後続の ballpark と dock 通知が欠けていた。
-- 同じ run の `live-logs/host.out` に `the simulation link: outbound queue is full (64 frames)` が記録されている。
-- `RegisterEssSystemsAsync` は pinned SDE の対象 nullsec 全てに ESS を登録する（`dotnet/src/Eve.Host/Composition/EssComposition.cs:44-65,69-88`）。この SDE に同じ条件を照会すると 3,285 系が対象だった。
-- `d916d77` は ESS 配置前に全系のアンカーを一括取得するよう変更した。その後のループは配置ごとに同期 `PlaceStructure` を呼び、`SimClient.Send` は満杯の bounded queue を link failure にする（`dotnet/src/Eve.Host/Composition/EssComposition.cs:233-253`, `dotnet/src/Eve.Space/SimClient.cs:27-29,584-603,1174`）。これにより 3,285 件の配置が 64 枠へ一気に送られる。
-- `SimClient.SendAsync` は queue に空きが出るまで待機する既存の backpressure 経路である（`dotnet/src/Eve.Space/SimClient.cs:659-689`）。配置初期化からこの経路を使うようにした。
+- main CI run 1683（`d916d77b670d`）のlive undock walkが失敗した。Host logには `the simulation link: outbound queue is full (64 frames)` があり、undock RPCは `CustomNotify` を返し、後続のballpark / dock通知が届かなかった。
+- 最初の修正ではESS配置をbounded simulation queueの空きまで待つようにしたが、run 1684では3,285個のnullsec ESSを起動時に全て送るため、Host listenerが60秒の接続期限に間に合わなかった。起動時の全系一括配置が回帰の原因だった。
 
-## 変更と確認
+## 現在の動作
 
-- `ISimulation.PlaceStructureAsync` を追加し、`SimClient` では `SendAsync` に接続した。ESS 初期配置はこの API を await し、送信途中の切断を初期化エラーとして報告する。
-- `SimClientTests.Structure_placements_apply_backpressure_without_breaking_the_simulation_link` は送信側 stream を止め、queue 容量の 2 倍の構造物配置を行い、link を維持したまま全 frame を送ることを確認する。
+- main commit `7988cf92c` で、ESS配置を系へのentry前に移した。`SpaceComposition` は `PrepareSolarSystemForEntryAsync` を `PlaceEssBallAsync` に接続する（`dotnet/src/Eve.Host/Composition/SpaceComposition.cs:337-338`）。`SpaceSessions` はentry前にこの準備callbackを呼ぶ（`dotnet/src/Eve.Services.Space/SpaceSessions.cs:524-528`）。login/undockは `SpaceSessions.Ships.cs:100`、relocationは `SpaceSessions.Relocation.cs:163,432`、gateは `SpaceSessions.Movement.cs:367`、wormholeは `SpaceWormholes.cs:198`、cynosural jumpは `SpaceSessions.CynoJump.cs:78,129,209`。
+- `PlaceEssBallAsync` は宛先系の永続ESSを最大1件読み、存在しない場合はstructureを送らない。存在すればpinned SDEからgeometryと決定的なanchorを導き、entry commandより前に配置する（`dotnet/src/Eve.Host/Composition/EssComposition.cs:220-245`）。simulation clientは配置通知を送るためにoutbound queueが空くまで待つ（`dotnet/src/Eve.Space/SimClient.cs:1175`）。
+- 先行commit `681246e13` の `SystemEntered` subscriptionはentry後の配置だったため、現在のentry前callbackに置き換わった。現在の全体説明は `docs/project/ess-startup-entry-placement.md` に記録した。
+
+## 検証
+
+- run 1685は最初のsystem-entry版の後にgreen。run 1686はentry前の現行実装を含み、必須job全て成功した。Host test 6 shards、Windows、server-stack/headless-client E2E（22.6分）を含む。
+- 回帰テストは満杯のoutbound queue（`dotnet/tests/Eve.Space.Tests/SimClientTests.cs:910`）とsimulation entry前の準備順（`dotnet/tests/Eve.Services.Space.Tests/RelocationTests.cs:20`）を検証する。live headless ESS scenarioとclient期待値の根拠は `docs/project/ess-startup-entry-placement.md` に記録した。
 
 ## 未確認
 
-- この修正後の server stack と graphical V24.01 client はまだ実行していない。push 後の main CI live job で undock シナリオを確認する。
+- graphical V24.01 clientでは確認していない。CI run 1686はheadless clientを使った。

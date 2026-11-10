@@ -15,7 +15,7 @@ Headless tests and QA runs need the same game-master actions a human GM uses in 
 | `/isk [me] <amount>`, `/wallet`, `/setisk` | `IskCommands` | Journal reference 3 (the client's `refGMCashTransfer`) |
 | `/setstanding`, `/fullstandings`, `/maxagentstandings` | `StandingCommands` | Rows subject = owner, object = character (DEVIATIONS G2, G4) |
 | `/lp`, `/addlp`, `/setlp` | `LoyaltyCommands` | Per corporation; the LP store announces each change |
-| `/ship`, `/giveme`, `/giveitem`, `/fit`, `/unfit`, `/giveskill`, `/npc`, `/dmg`, `/heal`, `/repair`, `/deathtest`, `/suicide` | the existing command classes | `/repair` is `/heal` (DEVIATIONS G6) |
+| `/ship`, `/giveme`, `/giveitem`, `/fit`, `/unfit`, `/giveskill`, `/npc`, `/dmg`, `/heal`, `/repair`, `/deathtest`, `/suicide` | the existing command classes | `/heal` without arguments mends the active ship; `/heal <ownedModuleID>` mends only that module in the hangar or on the character's active ship in space; `/heal <entityID> 0` is refused because no general space-entity destruction owner is wired |
 | `/npc <n> <hull> still` | `NpcCommands` (the word `still` is removed from the arguments) | the NPCs get no top speed, so they hold their place (DEVIATIONS #64) |
 | `/solar <system>`, `/tele <character>` | `TeleportCommands` over `SpaceSessions.RelocateAsync` | the relocation of a pilot (DEVIATIONS G8) |
 | `/tr <me\|characterID> <destination>` | `TeleportCommands.TrAsync` | the system, a pilot's place, `pos=`, `offset=` (DEVIATIONS G14) |
@@ -33,6 +33,8 @@ Headless tests and QA runs need the same game-master actions a human GM uses in 
 | `/asteroid rewards` | `AsteroidCommands` over `SpaceContainers.RocksInSystemAsync` | the rocks of the pilot's system with their ore and units (DEVIATIONS G23) |
 | `/skyhook state <id> <state>` | `SkyhookCommands` over `PersistenceSkyhookStateWriter` | an orbital skyhook's state in the sovereignty table (DEVIATIONS G24) |
 | `/entity deploy <amount> <type>` | `EntityCommands` over `ISpaceSpawns` | entity-category NPC hulls in space around the pilot (DEVIATIONS G25) |
+| `/structure state|timer|deploytimer|unanchor|abandontimer` | `StructureGmCommands` over `StructureGmAuthority`, `StructureTimers`, and `StructureStore` | V24 structure menu states and durable timers; staff role is required |
+| `/extraction advance mid|stop|ready|decay [structureID]` | `StructureGmCommands` over `StructureGmAuthority` and `MoonExtractions` | V24 moon schedule controls; phase times, durable jobs, and `OnMoonExtractionUpdate` move together |
 | `/pi program` | not built | the forced install needs the client's own inputs (DEVIATIONS G10) |
 
 ## GM and QA screen (client InsiderWnd)
@@ -40,7 +42,7 @@ The client's dedicated screen is the Insider window (`eve/devtools/script/inside
 
 | Menu entry | Remote call (client code) | eve.rs |
 |---|---|---|
-| Tools, Macro entries, Ship/Drone/Charge helpers, UI links to `/heal`, `/tr`, `/warpto`, `/nuke`, `/entity deploy` | `RemoteSvc('slash').SlashCmd(text)` | `/heal` served; the others not yet (see the next table) |
+| Tools, Macro entries, Ship/Drone/Charge helpers, UI links to `/heal`, `/tr`, `/warpto`, `/nuke`, `/entity deploy`, `/structure`, `/extraction advance` | `RemoteSvc('slash').SlashCmd(text)` | `/heal` accepts an owned module ID; structure and extraction menu actions are served with the Staff gate |
 | Tournament, reload FSD pickle | `RemoteSvc('localizationServer').ReloadFSDPickle()` | served (`CoreCompatibilityServiceAdapters`) |
 | Standings tool (channel) | `slash.SlashCmd('/setstanding "<owner id>" <character id> <value> "<reason>"')` | served; owner-first form accepted |
 | Map and system tools | `RemoteSvc('stationSvc').GetSolarSystem`, `RemoteSvc('lookupSvc').LookupLocationsByGroup` | served |
@@ -50,7 +52,7 @@ Slash commands the screen and its helper service send (`eve/devtools/script/svc_
 
 | Command | Served |
 |---|---|
-| `heal`, `repair` | yes |
+| `heal`, `repair` | yes; no argument mends the active ship, one owned module ID mends only that module. The `/heal <entityID> 0` destroy form is refused without a matching entity-destruction owner. |
 | `giveskill` | yes |
 | `setstanding` | yes (owner-first form added in G12) |
 | `removeskill` | yes (G13) |
@@ -62,13 +64,15 @@ Slash commands the screen and its helper service send (`eve/devtools/script/svc_
 | `load`, `unload` | yes (G19: charges docked; DEVIATIONS G19) |
 | `entity deploy` | yes (G25: entity category, DEVIATIONS G25) |
 | `skyhook state` | yes (G24: the client's five states and unknown, DEVIATIONS G24) |
+| `structure state`, `timer`, `deploytimer`, `unanchor`, `abandontimer` | yes (the V24 structure menu; `StructureGmAuthority`) |
+| `extraction advance mid|stop|ready|decay` | yes (the V24 moon schedule menu; durable phase/job updates and `OnMoonExtractionUpdate`) |
 | `createitem` | yes (G13): cargo of the ship in space, hangar when docked |
 | `bp` | yes (G15: `help`, `list`, `jobs`, `lookup`; DEVIATIONS G15) |
 | `dogmaupdate` | yes (G21) |
 | `killright` | yes (G22) |
 | `asteroid rewards` | yes (G23: the rocks of the pilot's system) |
 
-Every command the screen sends is served. A word that no command serves still answers `Unknown command`, so the screen shows an error rather than a fake success.
+Every command listed above is registered or explicitly refused. A word that no command serves still answers `Unknown command`, so the screen shows an error rather than a fake success. The native `/heal <entityID> 0` and broad `/unspawn <entityID>` operations still need general Space entity lifecycle owners; existing `/unspawn` only removes hulls created by eve.rs' `/spawn` commands.
 
 ## Principles
 - Words and semantics come from EveJS (`services/chat/chatCommands.js` and its command modules). Where EveJS lacks a thing, the client contract (eve-logic) and the real game decide, and the choice is recorded in DEVIATIONS.

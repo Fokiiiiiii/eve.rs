@@ -3,8 +3,10 @@ namespace Eve.Structures;
 /// <summary>The structure states the client knows (<c>structures/const.py</c> STATE_*; EVE.js <c>STRUCTURE_STATE</c>). The ids are on the wire and in the table.</summary>
 public static class StructureState
 {
+    public const int Unknown = 0;
     public const int Unanchored = 1;
     public const int Anchoring = 2;
+    public const int OnlineDeprecated = 100;
     public const int FittingInvulnerable = 101;
     public const int OnliningVulnerable = 102;
     public const int ShieldVulnerable = 110;
@@ -16,13 +18,18 @@ public static class StructureState
     public const int DeployVulnerable = 116;
     public const int FobInvulnerable = 118;
 
+    /// <summary>The values exposed by V24's <c>structures.STATES</c> GM menu.</summary>
+    public static bool IsKnown(int state) => state is Unknown or Unanchored or Anchoring or OnlineDeprecated or FittingInvulnerable or
+        OnliningVulnerable or ShieldVulnerable or ArmorReinforce or ArmorVulnerable or HullReinforce or HullVulnerable or AnchorVulnerable or
+        DeployVulnerable or FobInvulnerable;
+
     /// <summary>The states in which a structure can be shot at (client <c>STATE_VULNERABILITY</c>).</summary>
     public static bool IsVulnerable(int state) =>
         state is OnliningVulnerable or ShieldVulnerable or ArmorVulnerable or HullVulnerable or AnchorVulnerable or DeployVulnerable;
 
     /// <summary>The states in which an unanchoring in progress is called off (client <c>STATE_CANCELS_UNANCHOR</c>).</summary>
     public static bool CancelsUnanchor(int state) =>
-        state is Unanchored or Anchoring or FittingInvulnerable or ArmorReinforce or ArmorVulnerable or HullReinforce or HullVulnerable or AnchorVulnerable or DeployVulnerable;
+        state is Unknown or Unanchored or Anchoring or FittingInvulnerable or ArmorReinforce or ArmorVulnerable or HullReinforce or HullVulnerable or AnchorVulnerable or DeployVulnerable;
 }
 
 /// <summary>The upkeep states (client <c>UPKEEP_STATE_*</c>).</summary>

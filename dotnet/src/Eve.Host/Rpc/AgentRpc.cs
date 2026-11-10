@@ -174,7 +174,8 @@ internal sealed partial class CharacterServicesComposition
                     (table, token) => mailCache.FlushTableAsync(table, token),
                     () => sovereigntyWriteGate).SetStateAsync),
                 spaceSessions is null ? null : new EntityCommands(new ItemTypeNames(sde), spaceSessions),
-                spaceSessions is null ? null : new EssCommands(new ShipTypeNames(sde), dogma, ships, (session, token) => EssMgr.AttemptLinkToMainBank(new ServiceCall { Method = "AttemptLinkToMainBank", Args = [], Session = session, Cancellation = token }))),
+                spaceSessions is null ? null : new EssCommands(new ShipTypeNames(sde), dogma, ships, (session, token) => EssMgr.AttemptLinkToMainBank(new ServiceCall { Method = "AttemptLinkToMainBank", Args = [], Session = session, Cancellation = token })),
+                structureGm: new StructureGmCommands(structureGm.ExecuteAsync)),
             .. spaceSessions is null
                 ? new IService[] { new ShipFittingInfoOnlyService(new ShipService(null!, now, getShipFittingInfo: ShipFittingInfoOf)) }
                 : new IService[] { new ShipService(spaceSessions, now, spaceContainers, spaceDrones, getShipFittingInfo: ShipFittingInfoOf, ships: ships,

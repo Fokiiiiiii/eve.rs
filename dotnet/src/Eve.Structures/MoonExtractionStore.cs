@@ -97,13 +97,15 @@ public sealed class MoonExtractionStore
         return list;
     }
 
-    /// <summary>Writes the mutable columns of an extraction: its state, the chunk's readiness, the fracture, the completion and the field's decay.</summary>
+    /// <summary>Writes the mutable columns of an extraction, including the phase times moved by the V24 GM scheduling controls.</summary>
     public async Task UpdateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, MoonExtraction e, CancellationToken cancellationToken = default) =>
         await Sql.ExecuteAsync(connection, transaction, Q("""
-            UPDATE {schema}.structure_moon_extractions SET state = $2, ready_notified_ms = $3, fracture_started_ms = $4, fracture_complete_ms = $5,
-                completed_ms = $6, completed_reason = $7, field_decayed_ms = $8, chunk_exploded_ms = $9
+            UPDATE {schema}.structure_moon_extractions SET start_ms = $2, chunk_available_ms = $3, natural_decay_ms = $4, state = $5,
+                ready_notified_ms = $6, fracture_started_ms = $7, fracture_complete_ms = $8, completed_ms = $9, completed_reason = $10,
+                field_decayed_ms = $11, chunk_exploded_ms = $12
             WHERE extraction_id = $1
-            """), cancellationToken, e.ExtractionId, e.State, e.ReadyNotifiedMs, e.FractureStartedMs, e.FractureCompleteMs, e.CompletedMs, e.CompletedReason, e.FieldDecayedMs, e.ChunkExplodedMs);
+            """), cancellationToken, e.ExtractionId, e.StartMs, e.ChunkAvailableMs, e.NaturalDecayMs, e.State, e.ReadyNotifiedMs,
+            e.FractureStartedMs, e.FractureCompleteMs, e.CompletedMs, e.CompletedReason, e.FieldDecayedMs, e.ChunkExplodedMs);
 
     /// <summary>The extraction of a structure that is active or fracturing, or null.</summary>
     public async Task<MoonExtraction?> ActiveForStructureAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long structureId, CancellationToken cancellationToken = default)

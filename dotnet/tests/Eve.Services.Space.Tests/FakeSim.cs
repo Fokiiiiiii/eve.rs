@@ -13,6 +13,7 @@ internal sealed class FakeSim : ISimulation
 
     public TaskCompletionSource? PublicMoveStarted { get; set; }
     public TaskCompletionSource? PublicMoveRelease { get; set; }
+    public Action<SimEnter>? OnEnter { get; set; }
 
     public async Task<SimMovePublicParticipantReply> MovePublicParticipantInOrderAsync(SimMovePublicParticipant move,
         Action<SimMovePublicParticipantReply> beforeFollowingMessages, CancellationToken cancellationToken = default)
@@ -453,6 +454,7 @@ internal sealed class FakeSim : ISimulation
         {
             throw new SimUnavailableException("the simulation is not running");
         }
+        OnEnter?.Invoke(enter);
         Heard.Enqueue(enter);
         return Task.FromResult(EnterAnswer);
     }

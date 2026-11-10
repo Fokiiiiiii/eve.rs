@@ -359,6 +359,19 @@ public sealed partial class SpaceSessions
             throw MovementRefused(policy, "jump");
         }
         await CheckGateRulesAsync(pilot, gateId, cancellationToken);
+        if (GateRules?.DestinationOf(gateId) is { } destinationGate &&
+            GateRules.SolarSystemOf(destinationGate) is { } destinationSystem)
+        {
+            try
+            {
+                await PrepareSolarSystemAsync(destinationSystem, cancellationToken);
+            }
+            catch (SimUnavailableException error)
+            {
+                _log?.Invoke($"jump of session {session.SessionId}: {error.Message}");
+                throw JumpRefused("SCENE_NOT_FOUND");
+            }
+        }
         // the toll is paid before the simulation hears the jump; a jump that does not happen gets it back
         var toll = await ChargeTollAsync(session, pilot, gateId, cancellationToken);
         CommandReply reply;

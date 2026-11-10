@@ -671,6 +671,32 @@ impl Sim {
         updates
     }
 
+    pub(super) fn remove_unpiloted_ship(
+        &mut self,
+        request_id: u64,
+        scene_key: SceneKey,
+        ship_id: i64,
+        now: i64,
+    ) -> Vec<Message> {
+        let mut updates = Vec::new();
+        let outcome =
+            if request_id == 0 || !scene_key.is_valid() || scene_key.instance_id != 0 || ship_id <= 0 {
+                Err("BAD_UNPILOTED_SHIP_REMOVAL".to_string())
+            } else if let Some(scene) = self.scenes.get_mut(&scene_key) {
+                let removed = scene.remove_unpiloted_ship(ship_id, now);
+                if let Some(messages) = removed {
+                    updates = Self::messages(messages);
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            } else {
+                Err("SCENE_NOT_LOADED".to_string())
+            };
+        updates.push(Message::RemoveUnpilotedShipReply { request_id, scene: scene_key, ship_id, outcome });
+        updates
+    }
+
     pub(super) fn get_scene_body(&self, request_id: u64, scene_key: SceneKey, item_id: i64) -> Vec<Message> {
         let outcome =
             if request_id == 0 || !scene_key.is_valid() || scene_key.instance_id != 0 || item_id <= 0 {

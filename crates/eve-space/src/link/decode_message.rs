@@ -965,6 +965,40 @@ impl Message {
                     Message::RemoveTournamentWreckReply { request_id, scene, item_id, outcome }
                 }
             }
+            kind::REMOVE_UNPILOTED_SHIP => {
+                let request_id = r.u64()?;
+                let scene = read_scene_key(&mut r)?;
+                let ship_id = r.i64()?;
+                if request_id == 0 || !scene.is_valid() || scene.instance_id != 0 || ship_id <= 0 {
+                    return Err(DecodeError::BadValue("unpiloted ship removal"));
+                }
+                Message::RemoveUnpilotedShip { request_id, scene, ship_id }
+            }
+            kind::REMOVE_UNPILOTED_SHIP_REPLY => {
+                let request_id = r.u64()?;
+                let scene = read_scene_key(&mut r)?;
+                let ship_id = r.i64()?;
+                if request_id == 0 || !scene.is_valid() || scene.instance_id != 0 || ship_id <= 0 {
+                    return Err(DecodeError::BadValue("unpiloted ship removal reply"));
+                }
+                let status = r.u8()?;
+                let removed = match status {
+                    0 => false,
+                    1 => true,
+                    2 => false,
+                    _ => return Err(DecodeError::BadValue("unpiloted ship removal status")),
+                };
+                let error = r.text()?;
+                if (status == 2 && error.is_empty()) || (status != 2 && !error.is_empty()) {
+                    return Err(DecodeError::BadValue("unpiloted ship removal error"));
+                }
+                Message::RemoveUnpilotedShipReply {
+                    request_id,
+                    scene,
+                    ship_id,
+                    outcome: if status == 2 { Err(error) } else { Ok(removed) },
+                }
+            }
             kind::GET_SCENE_BODY => {
                 let request_id = r.u64()?;
                 let scene = read_scene_key(&mut r)?;

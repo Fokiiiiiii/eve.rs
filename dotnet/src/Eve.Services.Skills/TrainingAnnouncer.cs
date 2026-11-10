@@ -159,7 +159,7 @@ public sealed class TrainingAnnouncer(CharacterTraining training, SkillCatalog c
         session.SendNotification("OnFreeSkillPointsChanged", "charid", new PyInt(remaining));
     }
 
-    /// <summary>A queue was saved: the skill that gave way (when it changed), the queue, whether it runs, and every client of the account.</summary>
+    /// <summary>A queue was saved: the skill that gave way (when it changed), and the queue state for this character.</summary>
     public async Task AnnounceSavedAsync(ClientSession session, QueueSaved saved)
     {
         var update = saved.Update;
@@ -174,7 +174,6 @@ public sealed class TrainingAnnouncer(CharacterTraining training, SkillCatalog c
         {
             SkillNotifications.QueuePaused(session);
         }
-        TellTheAccount(session, update.AccountId);
     }
 
     /// <summary>

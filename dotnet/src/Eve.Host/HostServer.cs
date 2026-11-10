@@ -44,7 +44,7 @@ public sealed record HostOptions
     /// <summary>Persist account session start before the initial state is sent.</summary>
     public Func<ClientSession, CancellationToken, Task>? SessionOpenedAsync { get; init; }
 
-    /// <summary>Persist character logoff state before the session closes and offline presence is announced.</summary>
+    /// <summary>Persist character logoff state before close handlers announce the character as offline.</summary>
     public Func<ClientSession, Task>? SessionClosingAsync { get; init; }
 
     /// <summary>Persist account session end when its actor closes.</summary>

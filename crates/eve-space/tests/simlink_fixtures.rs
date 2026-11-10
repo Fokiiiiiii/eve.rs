@@ -1199,6 +1199,20 @@ fn message_of(case: &Value) -> Message {
                 .and_then(Value::as_str)
                 .map_or_else(|| Ok(case["present"].as_bool().unwrap()), |e| Err(e.to_owned())),
         },
+        "RemoveUnpilotedShip" => Message::RemoveUnpilotedShip {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            ship_id: wide(case, "shipId"),
+        },
+        "RemoveUnpilotedShipReply" => Message::RemoveUnpilotedShipReply {
+            request_id: number("requestId"),
+            scene: scene_key(&case["scene"]),
+            ship_id: wide(case, "shipId"),
+            outcome: case
+                .get("error")
+                .and_then(Value::as_str)
+                .map_or_else(|| Ok(case["removed"].as_bool().unwrap()), |error| Err(error.to_owned())),
+        },
         "MovePublicParticipant" => Message::MovePublicParticipant {
             request_id: number("requestId"),
             operation_id: text(case, "operationId"),

@@ -47,11 +47,11 @@ DELIVERIES_FLAG = 173
 ASTRAHUS = 35832
 OBELISK = 20187  # the freighter has room for the control tower hull
 # a system where Upwell structures can be anchored (its pinned SDE record does not forbid category 65 or the Astrahus group): low security, not a
-# trade hub, one station and no asteroid belt (mapSolarSystems, npcStations, mapAsteroidBelts in the pinned SDE)
+# trade hub, one station and no asteroid belt. The selected anchor point is also checked against all pinned SDE placement balls.
 LEGAL_SYSTEM, LEGAL_STATION = 30000903, 60014062
 LEGAL_CONSTELLATION, LEGAL_REGION = 20000132, 10000011
 LEGAL_STATION_POSITION = (-1121428807680.0, 197508833280.0, 1232634716160.0)
-WARP_OFF = 2_000_000.0  # metres from the station: the anchor needs 1000 km from every station, belt and structure
+WARP_OFF = 5_000_000.0  # m from the station; the candidate is 4,725,338 m from its nearest moon (4,205,000 m minimum, including radii)
 ANCHOR_STATE = 115  # StructureState.AnchorVulnerable: the state a new anchor is left in (StructureModel.cs)
 ONLINE_STATE = 110  # StructureState.ShieldVulnerable: an online structure, which may be unanchored
 STATE_CHANGED = "OnStructureStateChanged"
@@ -482,8 +482,9 @@ def test_a_director_anchors_an_astrahus_from_its_ship_in_a_legal_system_and_the_
     """structureDeployment.Anchor by a Director of a player corporation at least seven days old, in a system the pinned SDE allows (V24.01
     sovPlayerDeployment.js; the wiki's Anchoring structures): the Astrahus leaves the ship (the item is consumed), the structure is created in the
     corporation in its anchoring state (AnchorVulnerable) with its default profile, the simulation places it in the system (the pilot sees it in
-    the ballpark), and the corporation's sessions hear OnStructureStateChanged. The pilot warps 2000 km from the station first (the free-space rule),
-    and the anchor is asked again until the warp is over, as in the warp test. Then the Director unanchors and cancels the unanchoring."""
+    the ballpark), and the corporation's sessions hear OnStructureStateChanged. The pilot warps 5000 km from the station first (the free-space rule),
+    and the anchor is asked again until the warp is over, as in the warp test. The 5,000 km destination is outside the pinned SDE moon
+    clearance; the former 2,000 km point was only 1,724,888 m from moon 40057788. Then the Director unanchors and cancels the unanchoring."""
     run = run_token()
     with base.connect(f"walk-anchor-ok-{run}") as client:
         character, ship_id, fitted, _ = arrive(client, RACE, run)

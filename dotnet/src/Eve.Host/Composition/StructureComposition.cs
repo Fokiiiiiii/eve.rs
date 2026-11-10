@@ -53,6 +53,7 @@ internal sealed partial class CharacterServicesComposition
     private Eve.Services.Space.SpaceStructures? spaceStructures;
     private Eve.Structures.MoonExtractionStore moonExtractionStore = default!;
     private Eve.Structures.MoonExtractions moonExtractions = default!;
+    private StructureGmAuthority structureGm = default!;
     private StructureMoonAuthority structureMoon = default!;
 
     /// <summary>The structures as the directory and profile readers see them: the legacy shape of the structures schema.</summary>
@@ -398,6 +399,8 @@ internal sealed partial class CharacterServicesComposition
             moonRigRules.ReadAsync);
         moonExtractions.Register();
         moonExtractions.Subscribe();
+        structureGm = new StructureGmAuthority(source, structureStore, structureTimers, moonExtractions, foundations.Scheduler, foundations.Events);
+        MoonExtractionGmNotifications.Subscribe(foundations.Events, characterSessions);
         if (spaceContainers is not null)
         {
             new SpaceMoonFields(moonExtractionStore, structureStore, items, new PgSpaceItemStore(source, spaceSchema),

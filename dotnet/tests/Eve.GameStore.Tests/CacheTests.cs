@@ -254,6 +254,77 @@ public class CacheTests
     }
 
     [PgFact]
+    public async Task Clearing_a_transient_marker_persists_its_value_without_another_write()
+    {
+        await using var pg = await PgScope.CreateAsync();
+        await using (var h = await Harness.StartAsync(pg))
+        {
+            await h.Cache.LoadAsync("characters");
+            h.Cache.Write("characters", "/1", J("""{"name":"a","session":{"online":false}}"""));
+            await h.Cache.FlushTableAsync("characters");
+            h.Cache.Write("characters", "/1/session", J("""{"online":true}"""), new WriteOptions(Transient: true));
+
+            h.Cache.SetTransientPaths("characters", ["/1/session"], enabled: false);
+            await h.Cache.FlushAllAsync();
+
+            Assert.Equal("""{"1":{"name":"a","session":{"online":true}}}""", await Stored(pg, "characters"));
+        }
+
+        await using var reloaded = await Harness.StartAsync(pg, instance: "b");
+        await reloaded.Cache.LoadAsync("characters");
+        Assert.True((bool)reloaded.Cache.Read("characters", "/1/session/online").Data!);
+    }
+
+    [PgFact]
+    public async Task A_transient_array_element_is_excluded_as_a_json_null_in_the_flush_snapshot()
+    {
+        await using var pg = await PgScope.CreateAsync();
+        await using var h = await Harness.StartAsync(pg);
+        await h.Cache.LoadAsync("characters");
+        h.Cache.Write("characters", "/1", J("""{"sessionTokens":["old","secret","tail"]}"""));
+        await h.Cache.FlushTableAsync("characters");
+
+        h.Cache.Write("characters", "/1/sessionTokens/1", J("\"new-secret\""), new WriteOptions(Transient: true));
+        h.Cache.Write("characters", "/2", J("""{"name":"other-row"}"""));
+        await h.Cache.FlushAllAsync();
+
+        Assert.Equal("new-secret", (string)h.Cache.Read("characters", "/1/sessionTokens/1").Data!);
+        Assert.Equal("""{"1":{"sessionTokens":["old",null,"tail"]},"2":{"name":"other-row"}}""", await Stored(pg, "characters"));
+    }
+
+    [PgFact]
+    public async Task A_forced_transient_write_is_included_in_its_flush_batch()
+    {
+        await using var pg = await PgScope.CreateAsync();
+        await using var h = await Harness.StartAsync(pg);
+        await h.Cache.LoadAsync("characters");
+        h.Cache.Write("characters", "/1", J("""{"name":"a"}"""));
+        await h.Cache.FlushTableAsync("characters");
+
+        h.Cache.Write("characters", "/1/session", J("""{"online":true}"""), new WriteOptions(Transient: true, Force: true));
+        Assert.True(h.Cache.IsTransient("characters", "/1/session"));
+        await h.Cache.FlushTableAsync("characters");
+
+        Assert.Equal("""{"1":{"name":"a","session":{"online":true}}}""", await Stored(pg, "characters"));
+    }
+
+    [PgFact]
+    public async Task A_forced_transient_write_persists_even_when_the_cached_value_is_unchanged()
+    {
+        await using var pg = await PgScope.CreateAsync();
+        await using var h = await Harness.StartAsync(pg);
+        await h.Cache.LoadAsync("characters");
+        h.Cache.Write("characters", "/1", J("""{"session":{"online":false}}"""));
+        await h.Cache.FlushTableAsync("characters");
+
+        h.Cache.Write("characters", "/1/session", J("""{"online":true}"""), new WriteOptions(Transient: true));
+        h.Cache.Write("characters", "/1/session", J("""{"online":true}"""), new WriteOptions(Transient: true, Force: true));
+        await h.Cache.FlushTableAsync("characters");
+
+        Assert.Equal("""{"1":{"session":{"online":true}}}""", await Stored(pg, "characters"));
+    }
+
+    [PgFact]
     public async Task Removing_a_path_clears_the_transient_markers_beneath_it()
     {
         await using var pg = await PgScope.CreateAsync();
@@ -269,7 +340,7 @@ public class CacheTests
     }
 
     [PgFact]
-    public async Task A_failed_flush_keeps_every_change_and_the_retry_writes_them()
+    public async Task A_flush_reconciles_an_untracked_table_operation_before_writing_cache_changes()
     {
         await using var pg = await PgScope.CreateAsync();
         await using var h = await Harness.StartAsync(pg);
@@ -278,33 +349,57 @@ public class CacheTests
         h.Cache.Write("characters", "/2", J("2"));
 
         // An unfinished batch of the same table blocks the journal.
-        var blocker = await pg.Store.EnqueueAsync("characters", [new RowUpsert("blocker", "0")], [], h.Session!.Fence);
-        var error = await Assert.ThrowsAsync<PersistenceException>(() => h.Cache.FlushTableAsync("characters"));
-        Assert.Equal(PersistenceCodes.OperationPending, error.Code);
-        h.Cache.Write("characters", "/3", J("3")); // a write between the failure and the retry
+        await pg.Store.EnqueueAsync("characters", [new RowUpsert("blocker", "0")], [], h.Session!.Fence);
+        await h.Cache.FlushTableAsync("characters");
+        Assert.Empty(await pg.Store.ListAllOperationsAsync());
+        h.Cache.Write("characters", "/3", J("3")); // a later write still flushes against the recovered baseline
 
-        await pg.Store.ReconcileOperationAsync(blocker.OperationId, "characters", h.Session.Fence);
         await h.Cache.FlushTableAsync("characters");
         // The blocker's own row is the journal's business: the cache never had it, so it stays.
         Assert.Equal("""{"1":1,"2":2,"3":3,"blocker":0}""", await Stored(pg, "characters"));
     }
 
     [PgFact]
-    public async Task A_batch_left_journaled_by_an_interrupted_flush_is_finished_first()
+    public async Task A_retry_reconciles_an_enqueue_whose_commit_acknowledgment_was_lost()
+    {
+        await using var pg = await PgScope.CreateAsync();
+        await using var h = await Harness.StartAsync(pg);
+        await h.Cache.LoadAsync("characters");
+        var loseAcknowledgment = 1;
+        pg.Store.AfterEnqueueCommitAsync = (_, _) =>
+        {
+            if (Interlocked.Exchange(ref loseAcknowledgment, 0) == 1)
+            {
+                throw new IOException("enqueue commit acknowledgment was lost");
+            }
+            return Task.CompletedTask;
+        };
+
+        h.Cache.Write("characters", "/1", J("""{"name":"committed"}"""));
+        await Assert.ThrowsAsync<IOException>(() => h.Cache.FlushTableAsync("characters"));
+        var journaled = Assert.Single(await pg.Store.ListOperationsAsync(h.Session!.Fence));
+        Assert.Equal(OperationState.Pending, journaled.State);
+        var upsert = Assert.Single(journaled.Upserts);
+        Assert.Equal("1", upsert.Key);
+        Assert.Equal("""{"name":"committed"}""", Fixtures.Canon(JsonNode.Parse(upsert.Json)!));
+
+        await h.Cache.FlushTableAsync("characters");
+
+        Assert.Equal("""{"1":{"name":"committed"}}""", await Stored(pg, "characters"));
+        Assert.Empty(await pg.Store.ListAllOperationsAsync());
+    }
+
+    [PgFact]
+    public async Task A_flush_reconciles_a_journaled_batch_before_building_a_new_diff()
     {
         await using var pg = await PgScope.CreateAsync();
         await using var h = await Harness.StartAsync(pg);
         await h.Cache.LoadAsync("characters");
         h.Cache.Write("characters", "/1", J("1"));
 
-        // Journal the batch but fail before it is applied: take the table's rows away
-        // by making the reconcile fail once, via a stale-then-fresh fence is not possible
-        // here, so simulate the interruption by pre-journaling the same rows.
-        var journaled = await pg.Store.EnqueueAsync("characters", [new RowUpsert("1", "1")], [], h.Session!.Fence);
-        var error = await Assert.ThrowsAsync<PersistenceException>(() => h.Cache.FlushTableAsync("characters"));
-        Assert.Equal(PersistenceCodes.OperationPending, error.Code);
-        await pg.Store.ReconcileOperationAsync(journaled.OperationId, "characters", h.Session.Fence);
-        await h.Cache.FlushTableAsync("characters");
+        // Simulate a prior flush that committed its batch but lost its in-memory pending record.
+        await pg.Store.EnqueueAsync("characters", [new RowUpsert("1", "1")], [], h.Session!.Fence);
+        Assert.Equal(0, await h.Cache.FlushTableAsync("characters"));
         Assert.Equal("""{"1":1}""", await Stored(pg, "characters"));
         Assert.Empty(await pg.Store.ListAllOperationsAsync());
     }
@@ -422,6 +517,36 @@ public class CacheTests
         await h.Cache.DisposeAsync();
         Assert.Equal("""{"1":1}""", await Stored(pg, "characters"));
         Assert.Throws<InvalidOperationException>(() => h.Cache.Write("characters", "/2", J("2")));
+        await h.Session!.DisposeAsync();
+    }
+
+    [PgFact]
+    public async Task Dispose_waits_for_an_in_flight_flush_and_drains_changes_written_during_it()
+    {
+        await using var pg = await PgScope.CreateAsync();
+        var h = await Harness.StartAsync(pg);
+        await h.Cache.LoadAsync("characters");
+        var enteredApply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseApply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        pg.Store.BeforeApplyOperationAsync = async (_, _, _, ct) =>
+        {
+            enteredApply.TrySetResult();
+            await releaseApply.Task.WaitAsync(ct);
+        };
+
+        h.Cache.Write("characters", "/1", J("""{"name":"first"}"""));
+        var firstFlush = h.Cache.FlushTableAsync("characters");
+        await enteredApply.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        h.Cache.Write("characters", "/2", J("""{"name":"second"}"""));
+
+        var dispose = h.Cache.DisposeAsync().AsTask();
+        var disposeReturnedBeforeApply = await Task.WhenAny(dispose, Task.Delay(100)) == dispose;
+        releaseApply.TrySetResult();
+        await dispose;
+        await firstFlush;
+
+        Assert.Equal("""{"1":{"name":"first"},"2":{"name":"second"}}""", await Stored(pg, "characters"));
+        Assert.False(disposeReturnedBeforeApply);
         await h.Session!.DisposeAsync();
     }
 

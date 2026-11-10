@@ -192,8 +192,11 @@ not exist is the scene: which balls a system has, who is where, how commands cha
 - 2026-09-29, approach and orders: commands 5 to 7 (follow, orbit, align), `Accepted` after every accepted command and `Approaching`
   (kind 14) for a dock from beyond the range. A ship that follows or orbits is steered stepwise (a quarter of a second at most) by where
   its body is (`crates/eve-space/src/motion.rs`); `docs/reference/compat/DEVIATIONS.md` #20 says how that differs from the client's own law. The
-  reference does not dock a ship that arrives by itself (`approach.json`: it follows the station to the docking range and waits for
-  the pilot to ask again), and nor does the sim.
+  The original `approach.json` trace (reference commit `b637d2a`) recorded a ship waiting for another request after reaching range. That is
+  historical evidence for that reference build, not the current V24.01 transition: the client calls `CmdDock` once from `RealDock`, and EveJS
+  261028.1 records station approaches being accepted on arrival. The scene now keeps the pending station target, rechecks current simulation
+  eligibility at arrival, and enters the existing four-second acceptance flow; the Host still makes its final movement and access decision.
+  The separate structure-docking RPC is unchanged.
 
 - 2026-09-29, while building the slice: `Enter` names the solar system and `EnterReply` answers it (the host must know
   whether an undock worked before it answers the client); `Accepted` answers a `Dock` (the call's answer is the time);

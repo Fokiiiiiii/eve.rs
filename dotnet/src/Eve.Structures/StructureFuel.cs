@@ -293,15 +293,13 @@ public sealed class StructureFuel
         }
         if (await _bay.QuantityAsync(connection, transaction, structureId, cancellationToken) < hourly)
         {
-            await ModulesFuelOutAsync(connection, transaction, structureId, moduleCycles, cancellationToken);
-            await _timers.FuelOutAsync(connection, transaction, structureId, cancellationToken);
+            await FuelOutAsync(connection, transaction, structureId, moduleCycles, cancellationToken);
             return;
         }
         var fuel = await _bay.TakeAsync(connection, transaction, structureId, hourly, allowPartial: false, cancellationToken);
         if (fuel.Taken < hourly)
         {
-            await ModulesFuelOutAsync(connection, transaction, structureId, moduleCycles, cancellationToken);
-            await _timers.FuelOutAsync(connection, transaction, structureId, cancellationToken);
+            await FuelOutAsync(connection, transaction, structureId, moduleCycles, cancellationToken);
             return;
         }
         foreach (var (serviceId, cycles) in dueServices)
@@ -311,7 +309,7 @@ public sealed class StructureFuel
         await ScheduleNextHourAsync(connection, transaction, structureId, cancellationToken);
     }
 
-    private async Task ModulesFuelOutAsync(
+    private async Task FuelOutAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         long structureId,
@@ -322,6 +320,10 @@ public sealed class StructureFuel
             foreach (var cycle in moduleCycles)
                 await _moduleStates.SetAsync(connection, transaction, cycle.ModuleId, false, cancellationToken);
         await _store.DeleteAllServiceModuleFuelCyclesAsync(connection, transaction, structureId, cancellationToken);
+        await _timers.FuelOutAsync(connection, transaction, structureId, cancellationToken);
+        if (_moduleStates is not null)
+            await _timers.PublishServiceModulesOfflinedAsync(connection, transaction, structureId,
+                [.. moduleCycles.Select(cycle => cycle.ModuleId)], cancellationToken);
     }
 
     private async Task ScheduleNextHourAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, CancellationToken cancellationToken)

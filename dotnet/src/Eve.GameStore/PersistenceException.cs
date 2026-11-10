@@ -29,6 +29,7 @@ public static class PersistenceCodes
     public const string OwnerStale = "PERSISTENCE_OWNER_STALE";
     public const string OwnerActive = "PERSISTENCE_OWNER_ACTIVE";
     public const string OwnerConflict = "PERSISTENCE_OWNER_CONFLICT";
+    public const string ForceExclusiveMaintenanceOnly = "PERSISTENCE_FORCE_EXCLUSIVE_MAINTENANCE_ONLY";
     public const string OwnerReleaseFailed = "PERSISTENCE_OWNER_RELEASE_FAILED";
     public const string OperationOwnerMismatch = "PERSISTENCE_OPERATION_OWNER_MISMATCH";
     public const string OperationNotFound = "PERSISTENCE_OPERATION_NOT_FOUND";

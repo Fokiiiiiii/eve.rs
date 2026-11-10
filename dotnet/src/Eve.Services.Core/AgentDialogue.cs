@@ -90,7 +90,8 @@ public sealed record AgentDialogueSources(
     IAgentLocatorPort? Locator = null,
     Func<AgentMissionChange, CancellationToken, ValueTask>? OnAccepted = null,
     Func<long, long, CancellationToken, ValueTask>? OnQuit = null,
-    Func<long, long, CancellationToken, ValueTask<bool>>? OnMissionTurnIn = null);
+    Func<long, long, CancellationToken, ValueTask<bool>>? OnMissionTurnIn = null,
+    Func<long, AgentMissionAgentData, DateTimeOffset, string, CancellationToken, ValueTask>? OnMissionDecline = null);
 
 
 public sealed record AgentDialogueReply(PyValue AgentSays, IReadOnlyList<(long ActionId, int ButtonType)> Actions, PyDict LastActionInfo)
@@ -163,13 +164,12 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
         switch (button)
         {
             case AgentDialogueButton.RequestMission when mission?.State is not (AgentMissionState.Offered or AgentMissionState.Accepted) && standing.CanUse:
-                if (mission?.DeclineUntil is { } until && until > now) break;
                 if (await sources.PickOffer(agent, characterId, cancellationToken) is { } content)
                 {
                     try
                     {
                         await sources.Store.OfferAsync(characterId, agent.AgentId, content, now,
-                            $"offer:{characterId}:{agent.AgentId}:{now.ToUnixTimeMilliseconds()}", cancellationToken);
+                            $"offer:{characterId}:{agent.AgentId}:{now.ToUnixTimeMilliseconds()}:{mission?.DeclineUntil?.ToUnixTimeMilliseconds() ?? 0}", cancellationToken);
                     }
                     catch (AgentMissionRefusedException)
                     {
@@ -219,8 +219,11 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
                         {
                             try
                             {
-                                await sources.Store.DeclineAsync(characterId, agent.AgentId, now,
-                                    $"decline:{characterId}:{agent.AgentId}:{now.ToUnixTimeMilliseconds()}", cancellationToken);
+                                var reference = $"decline:{characterId}:{agent.AgentId}:{now.ToUnixTimeMilliseconds()}:{mission.DeclineUntil?.ToUnixTimeMilliseconds() ?? 0}";
+                                if (sources.OnMissionDecline is { } onDecline)
+                                    await onDecline(characterId, agent, now, reference, cancellationToken);
+                                else
+                                    await sources.Store.DeclineAsync(characterId, agent.AgentId, now, reference, cancellationToken);
                                 return AgentDialogueStep.Of(await ConversationAsync(characterId, agent, standing, atAgentLocation, cancellationToken,
                                     LastInfo(declined: true)));
                             }
@@ -332,8 +335,7 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
                 ? new AgentDialogueReply(ResearchTooLow(), [], lastInfo)
                 : new AgentDialogueReply(PlainText(TooLowStandingsText), [], lastInfo);
         }
-        var canRequest = mission?.DeclineUntil is not { } until || until <= now;
-        var offerable = canRequest && await sources.PickOffer(agent, characterId, cancellationToken) is not null;
+        var offerable = await sources.PickOffer(agent, characterId, cancellationToken) is not null;
         IReadOnlyList<(long ActionId, int ButtonType)> actions = offerable ? [(AgentDialogueToken.Request, AgentDialogueButton.RequestMission)] : [];
         return new AgentDialogueReply(
             Greeting(null),

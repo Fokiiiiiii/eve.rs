@@ -17,6 +17,63 @@ public sealed partial class GameStoreCache
         {
             obj.Remove(segments[^1]);
         }
+        else if (parent is JsonArray array
+            && int.TryParse(segments[^1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var index)
+            && index < array.Count)
+        {
+            array[index] = null;
+        }
+    }
+
+    private static bool SetSnapshotChild(JsonNode parent, string key, JsonNode? value)
+    {
+        if (parent is JsonObject obj)
+        {
+            obj[key] = value;
+            return true;
+        }
+        if (parent is JsonArray array
+            && int.TryParse(key, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var index))
+        {
+            while (array.Count <= index)
+            {
+                array.Add(null);
+            }
+            array[index] = value;
+            return true;
+        }
+        return false;
+    }
+
+    private static void RestoreForcedTransientPath(JsonObject target, JsonObject source, string path, JsonNode? value)
+    {
+        var segments = Segments(path);
+        if (segments.Length == 0)
+        {
+            return;
+        }
+        JsonNode sourceParent = source;
+        JsonNode targetParent = target;
+        for (var i = 0; i < segments.Length - 1; i++)
+        {
+            if (!TryChild(sourceParent, segments[i], out var sourceChild) || sourceChild is not (JsonObject or JsonArray))
+            {
+                return;
+            }
+            if (!TryChild(targetParent, segments[i], out var targetChild)
+                || targetChild is not (JsonObject or JsonArray)
+                || targetChild.GetType() != sourceChild.GetType())
+            {
+                targetChild = sourceChild is JsonArray ? new JsonArray() : new JsonObject();
+                if (!SetSnapshotChild(targetParent, segments[i], targetChild))
+                {
+                    return;
+                }
+            }
+            sourceParent = sourceChild;
+            targetParent = targetChild;
+        }
+        SetSnapshotChild(targetParent, segments[^1], value?.DeepClone());
     }
 
     /// <summary>What gets persisted: the cache without its transient paths.</summary>
@@ -26,14 +83,22 @@ public sealed partial class GameStoreCache
         {
             return state.Root;
         }
-        var snapshot = (JsonObject)state.Root.DeepClone();
+        if (state.ForcedTransient.TryGetValue("/", out var forcedRoot))
+        {
+            return forcedRoot.Value is JsonObject root ? (JsonObject)root.DeepClone() : [];
+        }
+        var snapshot = state.Transient.Contains("/") ? new JsonObject() : (JsonObject)state.Root.DeepClone();
         foreach (var path in state.Transient)
         {
             if (path == "/")
             {
-                return [];
+                continue;
             }
             DeletePath(snapshot, path);
+        }
+        foreach (var (path, forced) in state.ForcedTransient)
+        {
+            RestoreForcedTransientPath(snapshot, state.Root, path, forced.Value);
         }
         return snapshot;
     }
@@ -86,7 +151,19 @@ public sealed partial class GameStoreCache
         }
         state.DirtyRows = [];
         state.FullDirty = false;
-        return new Batch(upserts, deletes);
+        var forcedVersions = state.ForcedTransient.ToDictionary(pair => pair.Key, pair => pair.Value.Version, StringComparer.Ordinal);
+        return new Batch(upserts, deletes, forcedVersions);
+    }
+
+    private static void ClearForcedTransientWrites(TableState state, Batch batch)
+    {
+        foreach (var (path, version) in batch.ForcedTransientVersions)
+        {
+            if (state.ForcedTransient.TryGetValue(path, out var forced) && forced.Version == version)
+            {
+                state.ForcedTransient.Remove(path);
+            }
+        }
     }
 
     private static void AdvanceBaseline(TableState state, Batch batch)
@@ -107,22 +184,34 @@ public sealed partial class GameStoreCache
     /// is in flight only schedules another, because diffing against a baseline
     /// that has not been acknowledged could miss a delete.
     /// </summary>
-    public async Task<int> FlushTableAsync(string table, CancellationToken ct = default)
+    public Task<int> FlushTableAsync(string table, CancellationToken ct = default) =>
+        FlushTableCoreAsync(table, ct, duringShutdown: false);
+
+    private async Task<int> FlushTableCoreAsync(string table, CancellationToken ct, bool duringShutdown)
     {
         var state = StateOf(table);
         if (state is null)
         {
             return 0;
         }
+        if (_stopping && !duringShutdown)
+        {
+            throw new InvalidOperationException("gameStore shutdown is in progress");
+        }
         RequireFlusher(table);
         lock (state.Gate)
         {
+            if (_stopping && !duringShutdown)
+            {
+                throw new InvalidOperationException("gameStore shutdown is in progress");
+            }
             if (state.InFlight)
             {
                 state.Dirty = true;
                 return 0;
             }
             state.InFlight = true;
+            state.FlushCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             state.Dirty = false;
         }
         try
@@ -135,12 +224,27 @@ public sealed partial class GameStoreCache
             {
                 pending = state.Pending;
             }
+            if (pending is null)
+            {
+                var journaled = await _store.FindOperationForTableAsync(table, fence, ct);
+                if (journaled is not null)
+                {
+                    var recoveredBatch = new Batch([.. journaled.Upserts], [.. journaled.Deletes], new Dictionary<string, long>(StringComparer.Ordinal));
+                    var recovered = (journaled, recoveredBatch);
+                    lock (state.Gate)
+                    {
+                        state.Pending = recovered;
+                    }
+                    pending = recovered;
+                }
+            }
             if (pending is { } earlier)
             {
                 await _store.ReconcileOperationAsync(earlier.Operation.OperationId, table, fence, ct);
                 lock (state.Gate)
                 {
                     AdvanceBaseline(state, earlier.Batch);
+                    ClearForcedTransientWrites(state, earlier.Batch);
                     state.Pending = null;
                 }
             }
@@ -152,6 +256,10 @@ public sealed partial class GameStoreCache
             }
             if (batch.IsEmpty)
             {
+                lock (state.Gate)
+                {
+                    ClearForcedTransientWrites(state, batch);
+                }
                 return 0;
             }
 
@@ -177,6 +285,7 @@ public sealed partial class GameStoreCache
             lock (state.Gate)
             {
                 AdvanceBaseline(state, batch);
+                ClearForcedTransientWrites(state, batch);
                 state.Pending = null;
             }
             _options.OnFlushed?.Invoke(table, batch.Upserts, batch.Deletes);
@@ -193,11 +302,15 @@ public sealed partial class GameStoreCache
         finally
         {
             bool again;
+            TaskCompletionSource? completion;
             lock (state.Gate)
             {
                 state.InFlight = false;
+                completion = state.FlushCompletion;
+                state.FlushCompletion = null;
                 again = state.Dirty;
             }
+            completion?.TrySetResult();
             if (again && !_stopping)
             {
                 ScheduleFlush(state);
@@ -237,6 +350,49 @@ public sealed partial class GameStoreCache
             }
         }
         return changed;
+    }
+
+    private async Task DrainOnDisposeAsync(IReadOnlyCollection<TableState> states)
+    {
+        while (true)
+        {
+            var running = new List<Task>();
+            foreach (var state in states)
+            {
+                lock (state.Gate)
+                {
+                    if (state.InFlight && state.FlushCompletion is { } completion)
+                    {
+                        running.Add(completion.Task);
+                    }
+                }
+            }
+            if (running.Count > 0)
+            {
+                await Task.WhenAll(running);
+                continue;
+            }
+
+            var pending = new List<TableState>();
+            foreach (var state in states)
+            {
+                lock (state.Gate)
+                {
+                    if (state.Dirty || state.DirtyRows.Count > 0 || state.FullDirty || state.Pending is not null)
+                    {
+                        pending.Add(state);
+                    }
+                }
+            }
+            if (pending.Count == 0)
+            {
+                return;
+            }
+            foreach (var state in pending)
+            {
+                await FlushTableCoreAsync(state.Name, CancellationToken.None, duringShutdown: true);
+            }
+        }
     }
 
     private void ScheduleFlush(TableState state)
@@ -285,7 +441,7 @@ public sealed partial class GameStoreCache
         }
         if (!IsReader)
         {
-            await FlushAllAsync();
+            await DrainOnDisposeAsync(all);
         }
     }
 }

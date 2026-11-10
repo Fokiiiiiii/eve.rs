@@ -131,6 +131,13 @@ public sealed partial class PersistenceStore
         options ??= new AcquireOptions();
         var role = NormalizeRole(ownerRole);
         var instance = NormalizeInstance(instanceId);
+        if (options.ForceExclusive && role != PersistenceRoles.Maintenance)
+        {
+            throw new PersistenceException(
+                "ForceExclusive may only be used by the maintenance owner",
+                PersistenceCodes.ForceExclusiveMaintenanceOnly,
+                new Dictionary<string, object?> { ["ownerRole"] = role });
+        }
         var exclusive = options.Exclusive || role == PersistenceRoles.Maintenance;
         var leaseMs = NormalizeLease(options.LeaseMs);
 

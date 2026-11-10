@@ -126,7 +126,7 @@ public sealed class MarketSeedV4Tests
         Assert.Equal(1,ask.MinimumVolume);
         Assert.Equal("4",ask.Range);
         Assert.Equal(new DateTimeOffset(2025,9,30,12,0,0,TimeSpan.Zero),ask.Issued);
-        Assert.Equal(90,ask.Duration);
+        Assert.Equal(365,ask.Duration);
         Assert.Equal($"tq:{RegionId}:20",ask.StableKey);
         Assert.Equal(["\"page-1\"","\"page-2\""],result.Metadata.Regions.Single().Pages.Select(page=>page.ETag));
         Assert.Equal(LastModified,result.Metadata.Regions.Single().LastModified);
@@ -359,7 +359,7 @@ public sealed class MarketSeedV4Tests
     }
 
     private static string Order(long id,long type,long location,bool buy,decimal price) =>
-        $"{{\"order_id\":{id},\"type_id\":{type},\"location_id\":{location},\"system_id\":30000142,\"is_buy_order\":{buy.ToString().ToLowerInvariant()},\"price\":{price.ToString(System.Globalization.CultureInfo.InvariantCulture)},\"volume_total\":1000,\"volume_remain\":800,\"min_volume\":1,\"range\":\"4\",\"issued\":\"2025-09-30T12:00:00Z\",\"duration\":90}}";
+        $"{{\"order_id\":{id},\"type_id\":{type},\"location_id\":{location},\"system_id\":30000142,\"is_buy_order\":{buy.ToString().ToLowerInvariant()},\"price\":{price.ToString(System.Globalization.CultureInfo.InvariantCulture)},\"volume_total\":1000,\"volume_remain\":800,\"min_volume\":1,\"range\":\"4\",\"issued\":\"2025-09-30T12:00:00Z\",\"duration\":365}}";
 
     private static HttpResponseMessage Response(string json,int pages,DateTimeOffset modified,DateTimeOffset expires,string etag)
     {

@@ -42,12 +42,12 @@ use crate::strike::{Strike, StrikeShape};
 
 use crate::ship::{ModuleSpec, NpcCombat, NpcIdentity, NpcSelfRepair, NpcWeapon, ShipSpec, ShipStance};
 
-use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
+use crate::weapons::{Aoe, Arc, Charge, CrystalWear, Spool, Turret};
 
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 95;
+pub const PROTOCOL_VERSION: u16 = 96;
 
 /// A battlefield's capture point the host puts in space (protocol 77): a ball the pilots of its system see. Its factions (the attacker and the
 /// occupier, 0 for none) and its next point time (a FILETIME, 0 for none) are the dynamic slim fields the client reads from it.
@@ -117,10 +117,10 @@ fn structure_field_partition_is_valid(allowed: &[i64], moved: &[i64], held: &[i6
 pub mod kind;
 
 /// What the host changes in the rounds of a gun, in the order the simulation hears it (the host asks for it when a pilot loads or unloads a gun in space).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ChargeOp {
     /// Rounds go into the gun: up to `capacity` of them in all, and no more than `available` more (what the hold has of the kind).
-    Add { capacity: i64, available: i64 },
+    Add { capacity: i64, available: i64, crystal_wear: Option<CrystalWear> },
     /// Rounds come out of the gun: `quantity` of them, all of them when it is 0.
     Remove { quantity: i64 },
 }
@@ -1235,6 +1235,8 @@ pub enum Message {
         session_id: u64,
         module_id: i64,
         rounds_left: i64,
+        charge_type_id: i32,
+        crystal_damage: Option<f64>,
     },
     /// The host asks a scene to spawn an NPC (answered with `SpawnReply`).
     Spawn(Box<Spawn>),

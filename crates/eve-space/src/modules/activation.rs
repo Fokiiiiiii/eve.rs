@@ -2,6 +2,11 @@ use super::*;
 use crate::missile_entity::AUTO_TARGET_ID;
 use crate::wire::{filetime, id, int, list, real, tuple};
 
+fn crystal_damage_at_precision(damage: f64) -> f64 {
+    let scaled = damage * 1_000_000_000_000.0;
+    if scaled.is_finite() { scaled.round() / 1_000_000_000_000.0 } else { damage }
+}
+
 impl Scene {
     pub(crate) fn dogma_notify(session: SessionId, name: &'static str, args: Vec<Value>) -> Out {
         Out::Notify { session, name, id_type: "clientID", args }
@@ -799,8 +804,12 @@ impl Scene {
             return answer(false, 0, 0);
         };
         let before = *rounds;
+        let added_crystal_wear = match op {
+            ChargeOp::Add { crystal_wear, .. } if charge.type_id == charge_type => Some(crystal_wear),
+            _ => None,
+        };
         *rounds = match op {
-            ChargeOp::Add { capacity, available } if charge.type_id == charge_type => {
+            ChargeOp::Add { capacity, available, .. } if charge.type_id == charge_type => {
                 before + (capacity - before).max(0).min(available.max(0))
             }
             ChargeOp::Add { .. } => before,
@@ -808,6 +817,11 @@ impl Scene {
             ChargeOp::Remove { .. } => 0,
         };
         let after = *rounds;
+        if let Some(crystal_wear) = added_crystal_wear
+            && let Some(charge) = run.effect.turret.as_mut().and_then(|turret| turret.charge.as_mut())
+        {
+            charge.crystal_wear = crystal_wear;
+        }
         // A gun waiting on reload starts its next cycle with the loaded rounds, or stops if none arrived.
         let waiting = std::mem::take(&mut run.pending_reload);
         let mut out = answer(true, before, after);
@@ -965,12 +979,77 @@ impl Scene {
                 .is_some_and(|action| matches!(action, Action::Charged { fallback: Some(_), .. }));
             return (Vec::new(), has_fallback);
         }
+
+        if let Some(mut wear) =
+            run.effect.turret.as_ref().and_then(|turret| turret.charge).and_then(|charge| charge.crystal_wear)
+        {
+            if !wear.is_valid() {
+                return (Vec::new(), false);
+            }
+            if wear.volatility_chance <= 0.0
+                || wear.volatility_damage <= 0.0
+                || !super::effects::crystal_wear_hits(session, module_id, at, wear.volatility_chance)
+            {
+                return (Vec::new(), true);
+            }
+            let previous_damage = wear.damage;
+            wear.damage =
+                crystal_damage_at_precision(previous_damage + wear.volatility_damage).min(wear.hit_points);
+            let burned_out = wear.damage >= wear.hit_points;
+            if let Some(charge) = run.effect.turret.as_mut().and_then(|turret| turret.charge.as_mut()) {
+                charge.crystal_wear = Some(wear);
+            }
+            *rounds = if burned_out { 0 } else { old };
+            let key = charge_key(
+                ship_id,
+                &crate::weapons::Charge {
+                    type_id,
+                    flag,
+                    rounds: old,
+                    per_cycle,
+                    reloads: false,
+                    crystal_wear: Some(wear),
+                },
+            );
+            let mut changes = vec![attribute_change_of(
+                owner,
+                key.clone(),
+                3,
+                at,
+                number(wear.damage),
+                number(previous_damage),
+            )];
+            if burned_out {
+                changes.push(attribute_change_of(owner, key, 805, at, number(0.0), number(old as f64)));
+            }
+            return (
+                vec![
+                    Self::dogma_notify(session, "OnModuleAttributeChanges", vec![Value::List(changes)]),
+                    Out::ChargeSpent {
+                        session,
+                        module_id,
+                        rounds_left: *rounds,
+                        charge_type_id: type_id,
+                        crystal_damage: Some(wear.damage),
+                    },
+                ],
+                !burned_out,
+            );
+        }
+
         *rounds = new;
         let line = attribute_change_of(
             owner,
             charge_key(
                 ship_id,
-                &crate::weapons::Charge { type_id, flag, rounds: old, per_cycle, reloads: false },
+                &crate::weapons::Charge {
+                    type_id,
+                    flag,
+                    rounds: old,
+                    per_cycle,
+                    reloads: false,
+                    crystal_wear: None,
+                },
             ),
             805,
             at,
@@ -982,7 +1061,13 @@ impl Scene {
         (
             vec![
                 Self::dogma_notify(session, "OnModuleAttributeChanges", vec![Value::List(vec![line])]),
-                Out::ChargeSpent { session, module_id, rounds_left: new },
+                Out::ChargeSpent {
+                    session,
+                    module_id,
+                    rounds_left: new,
+                    charge_type_id: 0,
+                    crystal_damage: None,
+                },
             ],
             action_charge.is_some() && (new > 0 || ends_cycle) || action_charge.is_none() && new >= per_cycle,
         )

@@ -1010,8 +1010,46 @@ fn a_turret_shoots_at_the_start_of_each_cycle_and_the_one_shot_at_is_told() {
 fn charged_gun(rounds: i64) -> Effect {
     let mut gun = laser_effect(spec().ship_id, laser());
     gun.turret.as_mut().unwrap().charge =
-        Some(Charge { type_id: 222, flag: 28, rounds, per_cycle: 1, reloads: false });
+        Some(Charge { type_id: 222, flag: 28, rounds, per_cycle: 1, reloads: false, crystal_wear: None });
     gun
+}
+
+fn crystal_gun(wear: CrystalWear) -> Effect {
+    let mut gun = laser_effect(spec().ship_id, laser());
+    gun.turret.as_mut().unwrap().charge = Some(Charge {
+        type_id: 23071,
+        flag: 28,
+        rounds: 1,
+        per_cycle: 0,
+        reloads: false,
+        crystal_wear: Some(wear),
+    });
+    gun
+}
+
+fn charge_attribute_changes(out: &[Out], session: SessionId) -> Vec<(i64, Value, Value)> {
+    out.iter()
+        .filter_map(|event| match event {
+            Out::Notify { session: recipient, name: "OnModuleAttributeChanges", args, .. }
+                if *recipient == session =>
+            {
+                let Some(Value::List(lines)) = args.first() else { panic!("{args:?}") };
+                Some(
+                    lines
+                        .iter()
+                        .filter_map(|line| {
+                            let Value::Tuple(fields) = line else { panic!("{line:?}") };
+                            let Value::Int(attribute) = fields[3] else { panic!("{:?}", fields[3]) };
+                            matches!(attribute, 3 | 805)
+                                .then(|| (attribute, fields[5].clone(), fields[6].clone()))
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            }
+            _ => None,
+        })
+        .flatten()
+        .collect()
 }
 
 /// The rounds the host is told are left, in the order it is told them.
@@ -1050,6 +1088,111 @@ fn a_turret_spends_a_round_for_each_shot_and_stops_with_no_charges_when_they_are
     );
 }
 
+#[test]
+fn a_laser_crystal_keeps_its_round_wears_after_each_shot_and_is_removed_at_hitpoints() {
+    let (mut scene, npc, now) = duel();
+    let crystal =
+        CrystalWear { volatility_chance: 1.0, volatility_damage: 0.5, hit_points: 1.0, damage: 0.25 };
+    let first = scene.activate(npc, crystal_gun(crystal), now);
+    assert_eq!(rounds_left(&first), [1], "a shot does not consume the loaded crystal: {first:?}");
+    assert!(
+        first.iter().any(|event| matches!(
+            event,
+            Out::ChargeSpent {
+                module_id: NPC_SHIP,
+                rounds_left: 1,
+                charge_type_id: 23071,
+                crystal_damage: Some(damage),
+                ..
+            } if (*damage - 0.75).abs() < f64::EPSILON
+        )),
+        "the absolute damage after one cycle is reported: {first:?}"
+    );
+    assert_eq!(
+        charge_attribute_changes(&first, npc),
+        [(3, Value::Real(0.75), Value::Real(0.25))],
+        "the client sees crystal damage under its slot/type tuple"
+    );
+
+    let second = scene.poll(now + 2_500 * SECOND / 1_000 + 1);
+    assert_eq!(rounds_left(&second), [0], "the second wear reaches hitpoints: {second:?}");
+    assert!(
+        second.iter().any(|event| matches!(
+            event,
+            Out::ChargeSpent {
+                module_id: NPC_SHIP,
+                rounds_left: 0,
+                charge_type_id: 23071,
+                crystal_damage: Some(damage),
+                ..
+            } if (*damage - 1.0).abs() < f64::EPSILON
+        )),
+        "burnout is persisted with absolute damage: {second:?}"
+    );
+    assert_eq!(
+        charge_attribute_changes(&second, npc),
+        [(3, Value::Int(1), Value::Real(0.75)), (805, Value::Int(0), Value::Int(1))],
+        "the client first learns the final damage, then that the charge is gone"
+    );
+    assert!(format!("{second:?}").contains("NoCharges"), "burnout stops the module: {second:?}");
+}
+
+#[test]
+fn a_real_sde_crystal_burns_out_on_its_four_thousandth_volatility_hit() {
+    let (mut scene, npc, now) = duel();
+    let wear =
+        CrystalWear { volatility_chance: 1.0, volatility_damage: 0.00025, hit_points: 1.0, damage: 0.0 };
+    let cycle = 2_500 * SECOND / 1_000;
+    let mut effect = crystal_gun(wear);
+    effect.turret.as_mut().unwrap().raw_damage = [0.0; 4];
+    let mut last = scene.activate(npc, effect, now);
+    for shot in 1..4_000 {
+        last = scene.poll(now + shot * cycle + 1);
+    }
+
+    assert_eq!(rounds_left(&last), [0], "the SDE wear reaches hitpoints on shot 4,000: {last:?}");
+    assert_eq!(
+        charge_attribute_changes(&last, npc),
+        [(3, Value::Int(1), Value::Real(0.99975)), (805, Value::Int(0), Value::Int(1))],
+        "the client learns the final wear before the crystal is removed"
+    );
+}
+
+#[test]
+fn loading_a_crystal_updates_the_wear_state_of_a_running_weapon() {
+    use crate::link::ChargeOp;
+
+    let (mut scene, npc, now) = duel();
+    let not_wearing =
+        CrystalWear { volatility_chance: 0.0, volatility_damage: 0.5, hit_points: 1.0, damage: 0.0 };
+    let first = scene.activate(npc, crystal_gun(not_wearing), now);
+    assert!(first.iter().all(|event| !matches!(event, Out::ChargeSpent { crystal_damage: Some(_), .. })));
+
+    let worn = CrystalWear { volatility_chance: 1.0, volatility_damage: 0.5, hit_points: 1.0, damage: 0.25 };
+    assert!(matches!(
+        scene
+            .adjust_charge(
+                1,
+                npc,
+                NPC_SHIP,
+                23071,
+                ChargeOp::Add { capacity: 1, available: 1, crystal_wear: Some(worn) },
+                now + 1,
+            )
+            .as_slice(),
+        [Out::ChargeAdjusted { running: true, before: 1, after: 1, .. }]
+    ));
+    let next = scene.poll(now + 2_500 * SECOND / 1_000 + 1);
+    assert!(
+        next.iter().any(|event| matches!(
+            event,
+            Out::ChargeSpent { rounds_left: 1, charge_type_id: 23071, crystal_damage: Some(damage), .. }
+                if (*damage - 0.75).abs() < f64::EPSILON
+        )),
+        "the next cycle uses the host's loaded crystal state: {next:?}"
+    );
+}
+
 /// What the host is answered when it changes the rounds of a gun: whether it runs, the rounds it had and the rounds it has.
 fn adjusted(out: &[Out]) -> (bool, i64, i64) {
     match out {
@@ -1071,20 +1214,40 @@ fn rounds_the_host_adds_to_a_gun_that_runs_are_spent_by_the_shots_that_follow() 
             PLAYER,
             999,
             222,
-            ChargeOp::Add { capacity: 8, available: 100 },
+            ChargeOp::Add { capacity: 8, available: 100, crystal_wear: None },
             now
         )),
         (false, 0, 0)
     );
     // up to the capacity and no more than the hold has: 2 rounds in it, room for 6, and the hold has 4
-    let topped = scene.adjust_charge(2, npc, NPC_SHIP, 222, ChargeOp::Add { capacity: 8, available: 4 }, now);
+    let topped = scene.adjust_charge(
+        2,
+        npc,
+        NPC_SHIP,
+        222,
+        ChargeOp::Add { capacity: 8, available: 4, crystal_wear: None },
+        now,
+    );
     assert_eq!(adjusted(&topped), (true, 2, 6));
     // a kind that is not the one it fires is left as it is (it has room: 6 of 8)
-    let other =
-        scene.adjust_charge(4, npc, NPC_SHIP, 223, ChargeOp::Add { capacity: 8, available: 100 }, now);
+    let other = scene.adjust_charge(
+        4,
+        npc,
+        NPC_SHIP,
+        223,
+        ChargeOp::Add { capacity: 8, available: 100, crystal_wear: None },
+        now,
+    );
     assert_eq!(adjusted(&other), (true, 6, 6));
     // the hold has more than the gun takes
-    let more = scene.adjust_charge(3, npc, NPC_SHIP, 222, ChargeOp::Add { capacity: 8, available: 100 }, now);
+    let more = scene.adjust_charge(
+        3,
+        npc,
+        NPC_SHIP,
+        222,
+        ChargeOp::Add { capacity: 8, available: 100, crystal_wear: None },
+        now,
+    );
     assert_eq!(adjusted(&more), (true, 6, 8));
     // the next shot spends from what it comes to now
     let next = scene.poll(now + 2_500 * SECOND / 1_000 + 1);
@@ -1119,7 +1282,7 @@ fn a_turret_with_fewer_rounds_than_a_cycle_spends_is_refused_and_one_without_a_c
         [Out::Refused { reason: "NO_AMMO", .. }]
     ));
     empty.turret.as_mut().unwrap().charge =
-        Some(Charge { type_id: 222, flag: 28, rounds: 5, per_cycle: 8, reloads: false });
+        Some(Charge { type_id: 222, flag: 28, rounds: 5, per_cycle: 8, reloads: false, crystal_wear: None });
     assert!(matches!(scene.activate(npc, empty, now).as_slice(), [Out::Refused { reason: "NO_AMMO", .. }]));
     // a gun that takes no charge is never short of rounds
     let started = scene.activate(npc, laser_effect(spec().ship_id, laser()), now);
@@ -2176,7 +2339,14 @@ fn a_turret_that_reloads_waits_for_its_load_and_resumes_with_it_at_the_next_cycl
     }
     assert!(rounds_left(&waiting).is_empty() && !format!("{waiting:?}").contains("NoCharges"), "{waiting:?}");
     // the host loads five rounds: the gun starts its next cycle at once, with the shot of that cycle spending one
-    let loaded = scene.adjust_charge(1, npc, NPC_SHIP, 222, ChargeOp::Add { capacity: 8, available: 5 }, at);
+    let loaded = scene.adjust_charge(
+        1,
+        npc,
+        NPC_SHIP,
+        222,
+        ChargeOp::Add { capacity: 8, available: 5, crystal_wear: None },
+        at,
+    );
     assert_eq!(answered(&loaded), (true, 0, 5), "{loaded:?}");
     assert_eq!(rounds_left(&loaded), [4], "{loaded:?}");
     // the gun runs on until the five are spent, then waits again
@@ -2188,7 +2358,14 @@ fn a_turret_that_reloads_waits_for_its_load_and_resumes_with_it_at_the_next_cycl
     assert_eq!(rounds_left(&more), [3, 2, 1, 0], "{more:?}");
     assert!(!format!("{more:?}").contains("NoCharges"), "{more:?}");
     // a load that brings nothing stops it with the error the client shows, and nothing more is fired
-    let empty = scene.adjust_charge(2, npc, NPC_SHIP, 222, ChargeOp::Add { capacity: 8, available: 0 }, at);
+    let empty = scene.adjust_charge(
+        2,
+        npc,
+        NPC_SHIP,
+        222,
+        ChargeOp::Add { capacity: 8, available: 0, crystal_wear: None },
+        at,
+    );
     assert_eq!(answered(&empty), (true, 0, 0), "{empty:?}");
     assert!(format!("{empty:?}").contains("NoCharges"), "{empty:?}");
     let mut after = Vec::new();

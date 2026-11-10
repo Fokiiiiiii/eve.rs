@@ -296,7 +296,11 @@ public class SimCodecTests
         (double)m["damageReductionFactor"]!, (double)m["damageReductionSensitivity"]!,
         m["dot"] is { } d ? new SimDot((double)d["durationMs"]!, (double)d["maxDamagePerTick"]!, (double)d["maxHpPercentPerTick"]!) : null);
 
-    private static SimTurretCharge? ChargeOf(JsonNode? c) => c is null ? null : new SimTurretCharge((int)c["typeId"]!, (int)c["flag"]!, (long)c["rounds"]!, (long)c["perCycle"]!, (bool?)c["reloads"] ?? false);
+    private static SimCrystalWear? CrystalWearOf(JsonNode? w) => w is null ? null : new SimCrystalWear(
+        (double)w["volatilityChance"]!, (double)w["volatilityDamage"]!, (double)w["hitPoints"]!, (double)w["damage"]!);
+
+    private static SimTurretCharge? ChargeOf(JsonNode? c) => c is null ? null : new SimTurretCharge(
+        (int)c["typeId"]!, (int)c["flag"]!, (long)c["rounds"]!, (long)c["perCycle"]!, (bool?)c["reloads"] ?? false, CrystalWearOf(c["crystalWear"]));
 
     private static double[] VectorOf(JsonNode n) => [.. ((JsonArray)n).Select(x => (double)x!)];
 
@@ -601,11 +605,13 @@ public class SimCodecTests
                 Wide(c, "deliveredUnits"), (bool)c["complete"]!),
             "BuffState" => new SimBuffState(Session(), Wide(c, "shipId"), ((JsonArray)c["entries"]!).Select(entry => new SimBuffEntry((int)entry!["collectionId"]!, (double)entry["value"]!, (double)entry["remainingMs"]!)).ToArray()),
             "ModuleEnded" => new SimModuleEnded(Session(), Wide(c, "moduleId"), (byte)(int)c["reason"]!),
-            "ChargeSpent" => new SimChargeSpent(Session(), Wide(c, "moduleId"), Wide(c, "roundsLeft")),
+            "ChargeSpent" => new SimChargeSpent(Session(), Wide(c, "moduleId"), Wide(c, "roundsLeft"),
+                c["chargeTypeId"] is JsonNode typeId ? (int)typeId : 0,
+                c["crystalDamage"] is JsonNode damage ? (double)damage : null),
             "UpdateEffect" => new SimUpdateEffect(Session(), Wide(c, "moduleId"), (double)c["durationMs"]!, (double)c["capacitorNeed"]!, c["turret"] is null ? null : TurretOf(c["turret"]!), ChangesOf(c["changes"]!)),
             "AdjustCharge" => new SimAdjustCharge(
                 (ulong)Wide(c, "requestId"), Session(), Wide(c, "moduleId"), (int)c["chargeType"]!,
-                (string)c["op"]! == "add" ? new SimChargeOp.Add(Wide(c, "capacity"), Wide(c, "available")) : new SimChargeOp.Remove(Wide(c, "quantity"))),
+                (string)c["op"]! == "add" ? new SimChargeOp.Add(Wide(c, "capacity"), Wide(c, "available"), CrystalWearOf(c["crystalWear"])) : new SimChargeOp.Remove(Wide(c, "quantity"))),
             "ChargeAdjusted" => new SimChargeAdjusted((ulong)Wide(c, "requestId"), (bool)c["running"]!, Wide(c, "before"), Wide(c, "after")),
             "Targets" => new SimTargets(Session(), (byte)(int)c["command"]!, (bool)c["pending"]!, [.. ((JsonArray)c["targets"]!).Select(x => long.Parse((string)x!, CultureInfo.InvariantCulture))]),
             "TargetRefused" => new SimTargetRefused(Session(), (byte)(int)c["command"]!, (string)c["reason"]!, (int)c["targetType"]!, (double)c["desiredRange"]!, (double)c["actualDistance"]!),

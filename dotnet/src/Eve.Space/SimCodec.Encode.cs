@@ -310,6 +310,7 @@ public static partial class SimCodec
             w.I64(charge.Rounds);
             w.I64(charge.PerCycle);
             w.U8(charge.Reloads ? (byte)1 : (byte)0);
+            WriteCrystalWear(w, charge.CrystalWear);
         }
         else
         {
@@ -368,6 +369,24 @@ public static partial class SimCodec
             w.U8(0);
         }
         w.U8(t.RequiresGunnery ? (byte)1 : (byte)0);
+    }
+
+    private static void WriteCrystalWear(Writer w, SimCrystalWear? wear)
+    {
+        if (wear is null)
+        {
+            w.U8(0);
+            return;
+        }
+        if (!wear.IsValid)
+        {
+            throw new ArgumentException("a laser crystal has finite volatility and damage within its hit points", nameof(wear));
+        }
+        w.U8(1);
+        w.F64(wear.VolatilityChance);
+        w.F64(wear.VolatilityDamage);
+        w.F64(wear.HitPoints);
+        w.F64(wear.Damage);
     }
 
 /// <summary>A deployable's charge: its type, its group, its name and the radius of its ball (a positive number).</summary>
@@ -1359,6 +1378,25 @@ private static void WriteStructureDamageCorrelation(
                 w.U64(m.SessionId);
                 w.I64(m.ModuleId);
                 w.I64(m.RoundsLeft);
+                if (m.CrystalDamage is { } crystalDamage)
+                {
+                    if (m.ChargeTypeId <= 0 || !double.IsFinite(crystalDamage) || crystalDamage < 0)
+                    {
+                        throw new ArgumentException("a crystal wear report has a charge type and finite damage", nameof(m));
+                    }
+                    w.I32(m.ChargeTypeId);
+                    w.U8(1);
+                    w.F64(crystalDamage);
+                }
+                else
+                {
+                    if (m.ChargeTypeId != 0)
+                    {
+                        throw new ArgumentException("a charge type is only present with crystal damage", nameof(m));
+                    }
+                    w.I32(0);
+                    w.U8(0);
+                }
                 break;
             case SimBuffState m:
                 w.U8(Kind.BuffState);
@@ -1401,11 +1439,13 @@ private static void WriteStructureDamageCorrelation(
                         w.U8(0);
                         w.I64(add.Capacity);
                         w.I64(add.Available);
+                        WriteCrystalWear(w, add.CrystalWear);
                         break;
                     case SimChargeOp.Remove remove:
                         w.U8(1);
                         w.I64(remove.Quantity);
                         w.I64(0);
+                        WriteCrystalWear(w, null);
                         break;
                     default:
                         throw new ArgumentException($"unknown charge op {m.Op}");

@@ -318,6 +318,7 @@ pub(super) fn put_turret(out: &mut Vec<u8>, turret: &Turret) {
             out.extend_from_slice(&charge.rounds.to_le_bytes());
             out.extend_from_slice(&charge.per_cycle.to_le_bytes());
             out.push(u8::from(charge.reloads));
+            put_crystal_wear(out, charge.crystal_wear);
         }
     }
     match &turret.missile {
@@ -369,6 +370,18 @@ pub(super) fn put_turret(out: &mut Vec<u8>, turret: &Turret) {
         }
     }
     out.push(u8::from(turret.requires_gunnery));
+}
+
+fn put_crystal_wear(out: &mut Vec<u8>, wear: Option<crate::weapons::CrystalWear>) {
+    match wear {
+        None => out.push(0),
+        Some(wear) => {
+            out.push(1);
+            for value in [wear.volatility_chance, wear.volatility_damage, wear.hit_points, wear.damage] {
+                out.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+    }
 }
 
 pub(super) fn put_effect(out: &mut Vec<u8>, effect: &Effect) {

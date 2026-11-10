@@ -1,5 +1,17 @@
 use super::*;
 
+fn put_crystal_wear(out: &mut Vec<u8>, wear: Option<crate::weapons::CrystalWear>) {
+    match wear {
+        None => out.push(0),
+        Some(wear) => {
+            out.push(1);
+            for value in [wear.volatility_chance, wear.volatility_damage, wear.hit_points, wear.damage] {
+                out.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+    }
+}
+
 fn put_wreck_placement(out: &mut Vec<u8>, placement: &WreckPlacement) {
     put_scene_key(out, placement.scene);
     out.extend_from_slice(&placement.wreck_id.to_le_bytes());
@@ -986,10 +998,18 @@ impl Message {
                 out.extend_from_slice(&ship_type_id.to_le_bytes());
                 out.extend_from_slice(&corporation_id.to_le_bytes());
             }
-            Self::ChargeSpent { session_id, module_id, rounds_left } => {
+            Self::ChargeSpent { session_id, module_id, rounds_left, charge_type_id, crystal_damage } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.extend_from_slice(&module_id.to_le_bytes());
                 out.extend_from_slice(&rounds_left.to_le_bytes());
+                out.extend_from_slice(&charge_type_id.to_le_bytes());
+                match crystal_damage {
+                    Some(damage) => {
+                        out.push(1);
+                        out.extend_from_slice(&damage.to_le_bytes());
+                    }
+                    None => out.push(0),
+                }
             }
             Self::PlaceContainer(can) => {
                 out.extend_from_slice(&can.session_id.to_le_bytes());
@@ -1266,12 +1286,17 @@ impl Message {
                 out.extend_from_slice(&module_id.to_le_bytes());
                 out.extend_from_slice(&charge_type.to_le_bytes());
                 let (code, first, second) = match *op {
-                    ChargeOp::Add { capacity, available } => (0u8, capacity, available),
+                    ChargeOp::Add { capacity, available, .. } => (0u8, capacity, available),
                     ChargeOp::Remove { quantity } => (1u8, quantity, 0),
                 };
                 out.push(code);
                 out.extend_from_slice(&first.to_le_bytes());
                 out.extend_from_slice(&second.to_le_bytes());
+                let wear = match op {
+                    ChargeOp::Add { crystal_wear, .. } => *crystal_wear,
+                    ChargeOp::Remove { .. } => None,
+                };
+                put_crystal_wear(&mut out, wear);
             }
             Self::BuffState { session_id, ship_id, entries } => {
                 out.extend_from_slice(&session_id.to_le_bytes());

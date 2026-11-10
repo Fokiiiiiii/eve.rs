@@ -506,7 +506,16 @@ public sealed record SimDot(double DurationMs, double MaxDamagePerTick, double M
 /// The charge a turret fires: its type, the flag it sits at in the ship (the slot of the module), the rounds left and the rounds a cycle takes. The simulation
 /// spends them cycle by cycle (<see cref="SimChargeSpent"/>) and stops the weapon when they are gone.
 /// </summary>
-public sealed record SimTurretCharge(int TypeId, int Flag, long Rounds, long PerCycle, bool Reloads = false);
+public sealed record SimTurretCharge(int TypeId, int Flag, long Rounds, long PerCycle, bool Reloads = false, SimCrystalWear? CrystalWear = null);
+
+/// <summary>The SDE crystal volatility rule and persisted damage of a laser crystal that wears instead of consuming a round per cycle.</summary>
+public sealed record SimCrystalWear(double VolatilityChance, double VolatilityDamage, double HitPoints, double Damage)
+{
+    public bool IsValid => double.IsFinite(VolatilityChance) && VolatilityChance is >= 0 and <= 1
+        && double.IsFinite(VolatilityDamage) && VolatilityDamage >= 0
+        && double.IsFinite(HitPoints) && HitPoints > 0
+        && double.IsFinite(Damage) && Damage is >= 0 && Damage <= HitPoints;
+}
 
 /// <summary>What the host changes in the rounds of a gun that runs: rounds go in (up to the capacity, and no more than the hold has) or come out (all of them when the quantity is 0).</summary>
 public abstract record SimChargeOp
@@ -516,7 +525,7 @@ public abstract record SimChargeOp
     }
 
     /// <summary>Rounds go into the gun: up to <paramref name="Capacity"/> of them in all, and no more than <paramref name="Available"/> more.</summary>
-    public sealed record Add(long Capacity, long Available) : SimChargeOp;
+    public sealed record Add(long Capacity, long Available, SimCrystalWear? CrystalWear = null) : SimChargeOp;
 
     /// <summary>Rounds come out of the gun: <paramref name="Quantity"/> of them, all of them when it is 0.</summary>
     public sealed record Remove(long Quantity) : SimChargeOp;
@@ -547,7 +556,7 @@ public sealed record SimUpdateEffect(ulong SessionId, long ModuleId, double Dura
 public sealed record SimChargeAdjusted(ulong RequestId, bool Running, long Before, long After) : SimMessage;
 
 /// <summary>A turret of this session's ship spent rounds: how many it has left (the host keeps the quantity of the charge item).</summary>
-public sealed record SimChargeSpent(ulong SessionId, long ModuleId, long RoundsLeft) : SimMessage;
+public sealed record SimChargeSpent(ulong SessionId, long ModuleId, long RoundsLeft, int ChargeTypeId = 0, double? CrystalDamage = null) : SimMessage;
 
 /// <summary>
 /// An effect the host asks the simulation to run, with what the host has worked out for it (dogma): the numbers of the ship with and without it, the cycle and

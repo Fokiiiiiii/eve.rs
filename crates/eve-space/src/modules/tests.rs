@@ -4481,7 +4481,7 @@ fn a_controlled_structure_point_defense_waits_for_the_correlated_authorization()
     );
     assert!(applied.iter().any(|out| matches!(
         out,
-        Out::ChargeSpent { session, module_id, rounds_left: 1 }
+        Out::ChargeSpent { session, module_id, rounds_left: 1, .. }
             if *session == A && *module_id == MODULE
     )));
     assert!(applied.iter().any(|out| matches!(
@@ -4551,7 +4551,7 @@ fn a_controlled_structure_point_defense_waits_for_the_correlated_authorization()
     assert!(
         denied.iter().any(|out| matches!(
             out,
-            Out::ChargeSpent { session, module_id, rounds_left: 0 }
+            Out::ChargeSpent { session, module_id, rounds_left: 0, .. }
                 if *session == A && *module_id == MODULE
         )),
         "a correlated no-grant still settles the cycle's charge"
@@ -4652,6 +4652,7 @@ fn a_controlled_structure_vorton_arc_rechecks_and_authorizes_each_hop() {
             rounds: 2,
             per_cycle: 1,
             reloads: false,
+            crystal_wear: None,
         }),
         missile: None,
         spool: None,
@@ -4717,7 +4718,7 @@ fn a_controlled_structure_vorton_arc_rechecks_and_authorizes_each_hop() {
     );
     assert!(first_link.iter().any(|out| matches!(
         out,
-        Out::ChargeSpent { session, module_id, rounds_left: 1 }
+        Out::ChargeSpent { session, module_id, rounds_left: 1, .. }
             if *session == A && *module_id == MODULE
     )));
     assert_ne!(scene.pilots[&npc_session].ship.health, npc_before);
@@ -4876,7 +4877,7 @@ fn a_controlled_structure_strike_authorizes_each_pulse_with_fresh_candidates() {
     );
     assert!(first_result.iter().any(|out| matches!(
         out,
-        Out::ChargeSpent { session, module_id, rounds_left: 1 }
+        Out::ChargeSpent { session, module_id, rounds_left: 1, .. }
             if *session == A && *module_id == MODULE
     )));
     assert_ne!(scene.pilots[&B].ship.health, before);

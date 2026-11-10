@@ -181,14 +181,16 @@ public sealed partial class PlanetMgrService
 
     private async Task CreditOfficeOwnerAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, long ownerCorporationId, long payerCharacterId,
-        double fee, long now, CancellationToken cancellationToken)
+        long planetId, double fee, int reference, long nowUnixMs, CancellationToken cancellationToken)
     {
         var amount = Math.Round((decimal)fee, 2);
-        if (ownerCorporationId <= 0 || ownerCorporationId == 1000125 || amount <= 0)
+        if (ownerCorporationId <= 0 || ownerCorporationId == CustomsOfficeOwner || amount <= 0)
             return;
         await wallets.EnsureAsync(connection, transaction, ownerCorporationId, cancellationToken);
+        var description = reference == RefPlanetaryImportTax ? "Planetary import tax" : "Planetary export tax";
         await wallets.AdjustAsync(connection, transaction, ownerCorporationId, amount, payerCharacterId,
-            RefPlanetaryExportTax, "planetary customs office tax", now,
-            $"poco-tax:{ownerCorporationId}:{payerCharacterId}:{now}:{Guid.NewGuid():N}", cancellationToken);
+            reference, description, nowUnixMs,
+            $"poco-tax:{ownerCorporationId}:{payerCharacterId}:{reference}:{nowUnixMs}:{Guid.NewGuid():N}",
+            cancellationToken, planetId);
     }
 }

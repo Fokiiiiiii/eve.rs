@@ -1,3 +1,4 @@
+using System.Text;
 using System.Net;
 using System.Net.Sockets;
 using Eve.Host;
@@ -7,6 +8,7 @@ using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Core;
 using Eve.Services.Skills;
+using Npgsql;
 
 namespace Eve.Host.Tests;
 
@@ -135,6 +137,191 @@ public partial class HostServerTests
         Assert.Same(PyNone.Instance, await HostRpcAsync(
             front, open, 1, "billMgr", "CharPayBill", new PyInt(billId)));
         Assert.Equal((billId, characterId), payment);
+    }
+
+    [PgFact]
+    public async Task Character_bill_payment_settles_through_the_registered_host_route()
+    {
+        await using var rig = await CharacterHostTests.CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        await rig.FundAsync(character, 1_000m);
+        await rig.AddCorporationMemberAsync(character);
+        var corporationId = (await rig.Characters.GetAsync(character))!.CorporationId;
+        const decimal amount = 125.25m;
+        long billId;
+
+        var walletStore = new Eve.Wallet.PgWalletStore(rig.Source, rig.WalletSchema);
+        var transactions = new Eve.Wallet.WalletTransactions(rig.Source, rig.WalletSchema);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await walletStore.OpenAsync(connection, transaction, corporationId, 0m, 0);
+            await transactions.OpenCorporationDivisionsAsync(connection, transaction, corporationId);
+            await transaction.CommitAsync();
+        }
+
+        var corporationStore = new Eve.Corporations.CorporationStore(
+            rig.Source, rig.Characters, walletStore, transactions,
+            new Eve.Skills.PgSkillStore(rig.Source, rig.SkillsSchema), () => rig.NowUnixMs,
+            rig.CorporationsSchema, events: rig.Events);
+        const long externalId = 98_000_002;
+        var issuedBill = await corporationStore.CreateCharacterBillAsync(
+            character, 4, amount, corporationId, DateTimeOffset.UtcNow.AddDays(30).ToFileTime(),
+            "host-character-bill", externalId: externalId);
+        Assert.Equal(issuedBill, await corporationStore.CreateCharacterBillAsync(
+            character, 4, amount, corporationId, issuedBill.DueFiletime,
+            "host-character-bill", externalId: externalId));
+        billId = issuedBill.BillId;
+        await rig.Events.PumpAsync();
+
+        var billMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("billMgr"));
+        StartComposed(registry => registry.Register(billMgr), session =>
+        {
+            session.CharacterId = character;
+            session.UserId = 1;
+            session.Set("charid", new PyLong(character));
+            session.Set("corpid", new PyLong(corporationId));
+        });
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+
+        Assert.Same(PyNone.Instance,
+            await HostRpcAsync(front, open, 1, "billMgr", "CharPayBill", new PyLong(billId)));
+
+        Assert.Equal(874.75m, await transactions.AccountBalanceAsync(new Eve.Wallet.WalletAccount(character)));
+        Assert.Equal(amount, await transactions.AccountBalanceAsync(new Eve.Wallet.WalletAccount(corporationId)));
+        await using var verify = await rig.Source.OpenConnectionAsync();
+        await using var bill = new NpgsqlCommand(
+            $"SELECT paid FROM {rig.CorporationsSchema}.character_bills WHERE bill_id = $1", verify);
+        bill.Parameters.Add(new NpgsqlParameter { Value = billId });
+        Assert.True((bool)(await bill.ExecuteScalarAsync())!);
+
+        await rig.Events.PumpAsync();
+        await using var persistence = new Eve.GameStore.PersistenceStore(rig.Source, rig.GameStoreSchema);
+        await persistence.EnsureSchemaAsync();
+        var noticeTable = await persistence.LoadTableAsync("notifications", createIfMissing: false);
+        var notices = noticeTable["boxes"]![character.ToString()]!["byID"]!.AsObject()
+            .Select(pair => pair.Value!.AsObject()).ToArray();
+        Assert.Collection(notices.OrderBy(value => value["notificationID"]!.GetValue<long>()),
+            issued =>
+            {
+                Assert.Equal(9, issued["typeID"]!.GetValue<int>());
+                Assert.Equal(2, issued["groupID"]!.GetValue<int>());
+                Assert.Equal(billId, issued["data"]!["billID"]!.GetValue<long>());
+                Assert.Equal(externalId, issued["data"]!["externalID"]!.GetValue<long>());
+            },
+            paid =>
+            {
+                Assert.Equal(12, paid["typeID"]!.GetValue<int>());
+                Assert.Equal(2, paid["groupID"]!.GetValue<int>());
+                Assert.Equal(billId, paid["data"]!["billID"]!.GetValue<long>());
+                Assert.Equal(externalId, paid["data"]!["externalID"]!.GetValue<long>());
+                Assert.Equal("long", paid["data"]!["paidDateTime"]!["type"]!.GetValue<string>());
+                Assert.Equal(character, paid["data"]!["paidByOwnerID"]!.GetValue<long>());
+            });
+    }
+
+    [PgFact]
+    public async Task Character_bill_payment_refuses_short_balance_and_serializes_paid_retries()
+    {
+        await using var rig = await CharacterHostTests.CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        await rig.FundAsync(character, 0m);
+        await rig.AddCorporationMemberAsync(character);
+        var corporationId = (await rig.Characters.GetAsync(character))!.CorporationId;
+        var walletStore = new Eve.Wallet.PgWalletStore(rig.Source, rig.WalletSchema);
+        var transactions = new Eve.Wallet.WalletTransactions(rig.Source, rig.WalletSchema);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await walletStore.OpenAsync(connection, transaction, corporationId, 0m, 0);
+            await transactions.OpenCorporationDivisionsAsync(connection, transaction, corporationId);
+            await transaction.CommitAsync();
+        }
+        var corporationStore = new Eve.Corporations.CorporationStore(
+            rig.Source, rig.Characters, walletStore, transactions,
+            new Eve.Skills.PgSkillStore(rig.Source, rig.SkillsSchema), () => rig.NowUnixMs,
+            rig.CorporationsSchema, events: rig.Events);
+        const decimal amount = 125.25m;
+        var bill = await corporationStore.CreateCharacterBillAsync(
+            character, 2, amount, corporationId, DateTimeOffset.UtcNow.AddDays(30).ToFileTime(),
+            "host-character-bill-short-balance");
+        await rig.Events.PumpAsync();
+
+        var billMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("billMgr"));
+        StartComposed(registry => registry.Register(billMgr), session =>
+        {
+            session.CharacterId = character;
+            session.UserId = 1;
+            session.Set("charid", new PyLong(character));
+            session.Set("corpid", new PyLong(corporationId));
+        });
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        await front.ReceiveAsync();
+
+        async Task<Send> FailedCallAsync(long callId)
+        {
+            await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.CallWithKwargs(
+                open, callId, "billMgr", "CharPayBill", new PyTuple([new PyLong(bill.BillId)]), TransportKwargs()))));
+            var send = Assert.IsType<Send>(await front.ReceiveAsync());
+            Assert.Equal(MachoMessage.ErrorResponse, Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(send.Payload))).Type);
+            return send;
+        }
+
+        var insufficient = await FailedCallAsync(1);
+        Assert.Equal("NotEnoughMoney", UserErrorKey(insufficient));
+        var errorState = Assert.IsType<PyTuple>(Assert.IsType<PyObject>(MarshalCodec.Decode(insufficient.Payload)).Args);
+        var errorPayload = Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(errorState.Items[4]).Items[2]);
+        var errorObject = Assert.IsType<PyObjectEx>(Assert.IsType<PySubStream>(errorPayload.Items[0]).Decoded);
+        var errorHeader = Assert.IsType<PyTuple>(errorObject.Header);
+        var substitutions = Assert.IsType<PyDict>(Assert.IsType<PyTuple>(errorHeader.Items[1]).Items[1]);
+        PyValue Substitution(string name) => substitutions.Entries.Single(entry => entry.Key switch
+        {
+            PyStr text => text.Value == name,
+            PyBytes bytes => Encoding.UTF8.GetString(bytes.Value.Span) == name,
+            _ => false,
+        }).Value;
+        Assert.Equal(new PyReal(125.25d), Substitution("amount"));
+        Assert.Equal(new PyReal(0), Substitution("balance"));
+        Assert.Equal(0m, await transactions.AccountBalanceAsync(new Eve.Wallet.WalletAccount(character)));
+        await using (var verify = await rig.Source.OpenConnectionAsync())
+        await using (var unpaid = new NpgsqlCommand(
+            $"SELECT paid FROM {rig.CorporationsSchema}.character_bills WHERE bill_id=$1", verify))
+        {
+            unpaid.Parameters.Add(new NpgsqlParameter { Value = bill.BillId });
+            Assert.False((bool)(await unpaid.ExecuteScalarAsync())!);
+        }
+
+        await rig.FundAsync(character, 200m);
+        Assert.Same(PyNone.Instance,
+            await HostRpcAsync(front, open, 2, "billMgr", "CharPayBill", new PyLong(bill.BillId)));
+        await rig.Events.PumpAsync();
+        Assert.Equal(74.75m, await transactions.AccountBalanceAsync(new Eve.Wallet.WalletAccount(character)));
+        Assert.Equal(amount, await transactions.AccountBalanceAsync(new Eve.Wallet.WalletAccount(corporationId)));
+
+        var duplicate = await FailedCallAsync(3);
+        Assert.Equal("CustomNotify", UserErrorKey(duplicate));
+        Assert.Contains("BILL_NOT_PAYABLE", Encoding.ASCII.GetString(duplicate.Payload.Span));
+        Assert.Equal(74.75m, await transactions.AccountBalanceAsync(new Eve.Wallet.WalletAccount(character)));
+        Assert.Single(await transactions.JournalAsync(character),
+            entry => entry.OperationKey.StartsWith($"character-bill:{bill.BillId}:payment", StringComparison.Ordinal));
+
+        var concurrentBill = await corporationStore.CreateCharacterBillAsync(
+            character, 2, 20m, corporationId, DateTimeOffset.UtcNow.AddDays(30).ToFileTime(),
+            "host-character-bill-concurrent-payment");
+        await rig.Events.PumpAsync();
+        var simultaneous = await Task.WhenAll(
+            corporationStore.PayCharacterBillAsync(concurrentBill.BillId, character, rig.NowUnixMs),
+            corporationStore.PayCharacterBillAsync(concurrentBill.BillId, character, rig.NowUnixMs));
+        Assert.Single(simultaneous, payment => payment.Paid);
+        Assert.Single(simultaneous, payment => !payment.Paid && payment.Error == "BILL_NOT_PAYABLE");
+        Assert.Equal(54.75m, await transactions.AccountBalanceAsync(new Eve.Wallet.WalletAccount(character)));
+        Assert.Equal(145.25m, await transactions.AccountBalanceAsync(new Eve.Wallet.WalletAccount(corporationId)));
+        await rig.Events.PumpAsync();
     }
 
     private void StartComposed(Action<ServiceRegistry> configure, Action<ClientSession>? sessionOpened = null)

@@ -43,9 +43,24 @@ public sealed class BillMgrService(
             {
                 var characterId = call.Session.CharacterId.GetValueOrDefault();
                 var billId = PositiveId(call.Arg(0));
-                if (characterId <= 0 || billId <= 0 || _callbacks.PayCharacterBillAsync is not { } payCharacter ||
-                    !await payCharacter(billId, characterId, call.Cancellation))
+                if (characterId <= 0 || billId <= 0)
                     throw new CorporationError("BILL_NOT_PAYABLE");
+                if (_callbacks.PayCharacterBillAsync is { } payCharacter)
+                {
+                    if (!await payCharacter(billId, characterId, call.Cancellation))
+                        throw new CorporationError("BILL_NOT_PAYABLE");
+                    return PyNone.Instance;
+                }
+
+                var payment = await corporations.PayCharacterBillAsync(billId, characterId, nowUnixMs(), call.Cancellation);
+                if (!payment.Paid)
+                {
+                    if (payment.Error == "INSUFFICIENT_FUNDS")
+                        throw MachoErrors.ThrowUserError("NotEnoughMoney",
+                            ("amount", new PyReal((double)payment.Amount)),
+                            ("balance", new PyReal((double)(payment.Balance ?? 0m))));
+                    throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(payment.Error ?? "BILL_PAYMENT_FAILED")));
+                }
                 return PyNone.Instance;
             }
 

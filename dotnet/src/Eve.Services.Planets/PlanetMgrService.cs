@@ -455,7 +455,8 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
     private async Task<ChangeResult> ChangeCoreAsync(long owner, long planetId, Func<Colony, ChangeContext, Task<List<ColonyCommand>>> build,
         CancellationToken cancellationToken, Func<NpgsqlConnection, NpgsqlTransaction, Task>? extra = null)
     {
-        var now = Ticks();
+        var nowUnixMs = nowMs();
+        var now = Py.FileTimeFromUnixMs(nowUnixMs);
         var body = await BodyAsync(planetId, cancellationToken);
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -477,7 +478,7 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         if (outcome.IskCost > 0)
         {
             var balance = await wallets.AdjustAsync(connection, transaction, owner, -outcome.IskCost, 0, PlanetaryConstructionRef, "planetary interaction",
-                now, $"pi:{owner}:{planetId}:{now}:{Guid.NewGuid():N}", cancellationToken);
+                nowUnixMs, $"pi:{owner}:{planetId}:{now}:{Guid.NewGuid():N}", cancellationToken, planetId);
             if (balance < 0) throw MachoErrors.ThrowUserError("CannotBuildNotEnoughCash");
         }
         var snapshot = outcome.Abandoned ? [] : Snapshot(colony);

@@ -1618,6 +1618,39 @@ public sealed class CharacterHostTests
 
 
     [PgFact]
+    public async Task Assigning_personal_labels_does_not_create_a_missing_address_book_contact()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var session = new ClientSession { CharacterId = character, UserId = 1 };
+        var charMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charMgr"));
+        const long contactId = 77_001;
+
+        Assert.Equal(new PyInt(1), await CallAsync(charMgr, "CreateLabel", session, new PyStr("Fleet"), new PyInt(7)));
+        Assert.IsType<PyNone>(await CallAsync(charMgr, "AssignLabels", session,
+            new PyList([new PyLong(contactId)]), new PyLong(1)));
+
+        var expectedEmptyContacts = Py.KeyVal(
+            ("addresses", Py.Rowset(["contactID", "inWatchlist", "relationshipID", "labelMask"], [])),
+            ("blocked", Py.Rowset(["senderID"], [])));
+        Assert.Equal(expectedEmptyContacts, await CallAsync(charMgr, "GetContactList", session));
+
+        Assert.IsType<PyNone>(await CallAsync(charMgr, "AddContact", session,
+            new PyLong(contactId), new PyLong(-10), PyBool.False));
+        Assert.IsType<PyNone>(await CallAsync(charMgr, "AssignLabels", session,
+            new PyList([new PyLong(contactId)]), new PyLong(1)));
+        var expectedContact = Py.KeyVal(
+            ("addresses", Py.Rowset(["contactID", "inWatchlist", "relationshipID", "labelMask"],
+                [new PyList([new PyInt(contactId), new PyInt(0), new PyInt(-10), new PyInt(1)])])),
+            ("blocked", Py.Rowset(["senderID"], [])));
+        Assert.Equal(expectedContact, await CallAsync(charMgr, "GetContactList", session));
+
+        await rig.RestartAsync();
+        charMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charMgr"));
+        Assert.Equal(expectedContact, await CallAsync(charMgr, "GetContactList", session));
+    }
+
+    [PgFact]
     public async Task Character_contact_labels_persist_through_the_host_and_a_restart()
     {
         await using var rig = await CharacterHostRig.CreateAsync();
@@ -1628,6 +1661,8 @@ public sealed class CharacterHostTests
 
         Assert.Equal(new PyInt(1), await CallAsync(charMgr, "CreateLabel", session, new PyStr("Fleet"), new PyInt(7)));
         Assert.Equal(new PyInt(2), await CallAsync(charMgr, "CreateLabel", session, new PyStr("Friends"), new PyInt(3)));
+        Assert.IsType<PyNone>(await CallAsync(charMgr, "AddContact", session,
+            new PyLong(77_001), new PyLong(0), PyBool.False));
         await CallAsync(charMgr, "AssignLabels", session, new PyList([new PyLong(77_001)]), new PyLong(3));
         Assert.IsType<PyNone>(await CallAsync(charMgr, "DeleteLabel", session, new PyLong(2)));
 
@@ -3698,6 +3733,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
 
         public NpgsqlDataSource Source { get; }
         public ServiceRegistry Registry => _runtime.Registry;
+        public HostServer Server => _runtime.Server;
         internal Eve.Host.PublicGateway.PublicGatewayRoutes Gateway => _runtime.PublicGateway;
         internal Eve.Events.EventBus Events => _runtime.Events ?? throw new InvalidOperationException("the event bus is not composed");
         public CharacterSessions Sessions => Assert.IsType<CharacterSessions>(_runtime.CharacterSessions);
@@ -3860,11 +3896,12 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         }
 
         /// <summary>A fresh account in the identity schema (Omega until 2100 by the schema's default); the first one is account 1.</summary>
-        public async Task<int> CreateAccountAsync()
+        public async Task<int> CreateAccountAsync(string userName = "mct-test")
         {
             await using var connection = await Source.OpenConnectionAsync();
             await using var command = new NpgsqlCommand(
-                $"INSERT INTO {IdentitySchema}.accounts (user_name, password_hash) VALUES ('mct-test', '\\x00'::bytea) RETURNING id", connection);
+                $"INSERT INTO {IdentitySchema}.accounts (user_name, password_hash) VALUES ($1, '\\x00'::bytea) RETURNING id", connection);
+            command.Parameters.Add(new NpgsqlParameter { Value = userName });
             return (int)(await command.ExecuteScalarAsync())!;
         }
 
@@ -3899,10 +3936,10 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             (_runtime, _shutdown) = await BuildHostAsync(_schemas, _clock is null ? null : _clock.Read, _simSocket, _clusterOptions);
         }
 
-        public async Task<long> CreateCharacterAsync(string tutorialEntryMode = "disabled", int airNpeState = 2)
+        public async Task<long> CreateCharacterAsync(string tutorialEntryMode = "disabled", int airNpeState = 2, int accountId = 1)
         {
             var character = new NewCharacter(
-                AccountId: 1,
+                AccountId: accountId,
                 Name: $"ClonePilot{Guid.NewGuid():N}"[..18],
                 Gender: 0, RaceId: 1, BloodlineId: 1, AncestryId: 1, SchoolId: 0, TypeId: 1373,
                 CorporationId: CorporationId, FactionId: null,

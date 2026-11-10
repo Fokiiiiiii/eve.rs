@@ -91,6 +91,8 @@ internal static class HostComposition
         Func<long, long, short, CancellationToken, ValueTask<bool>>? canManageCalendarGroupEvent = null;
         Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? readCurrentCalendarGroups = null;
         Func<long, long, CancellationToken, ValueTask<bool>>? isCharacterInCurrentCorporation = null;
+        Func<long, DateTimeOffset, CancellationToken, Task>? persistCharacterLogoff = null;
+        Func<long> clock = clockOverride ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         NpgsqlDataSource? dataSource = null; // owned by the runtime: shut down with it, so its pooled connections return to the server
         PgDeployedStore? deployedRecords = null;
         Eve.Host.Persistence.PersistenceInGameReportStore? inGameReportStore = null;
@@ -122,6 +124,7 @@ internal static class HostComposition
             var contractSkills = new PgSkillStore(source, Env("EVE_SKILLS_SCHEMA", PgSkillStore.DefaultSchema));
             var contractCharacters = new Eve.Characters.PgCharacterStore(source,
                 Env("EVE_CHARACTERS_SCHEMA", Eve.Characters.PgCharacterStore.DefaultSchema));
+            persistCharacterLogoff = contractCharacters.SetLastLogoffAsync;
             var contractWalletStore = new PgWalletStore(source, Env("EVE_WALLET_SCHEMA", PgWalletStore.DefaultSchema));
             var contractCorporations = new Eve.Corporations.CorporationStore(source, contractCharacters,
                 contractWalletStore, contractWallets, contractSkills, () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
@@ -156,7 +159,6 @@ internal static class HostComposition
             var configSchema = Env("EVE_GLOBAL_CONFIG_SCHEMA", PgGlobalConfigPersistence.DefaultSchema);
             await PgGlobalConfigPersistence.MigrateAsync(source, configSchema);
             globalConfigPersistence = new PgGlobalConfigPersistence(source, configSchema);
-            Func<long> clock = clockOverride ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
             foundations = await Foundations.CreateAsync(source, clock, Env, message => Console.Error.WriteLine($"eve-host: {message}"));
               if (raffleProxyStore is { } raffleStore)
               {
@@ -594,6 +596,15 @@ internal static class HostComposition
                         return;
                     var rowId = await history.OpenAsync(accountId, DateTime.UtcNow.Ticks, ct);
                     session.Set("accruedSessionId", new Eve.Marshal.PyLong(rowId));
+                },
+                SessionClosingAsync = async session =>
+                {
+                    if (session.CharacterId is not { } characterId || characterId <= 0 ||
+                        characterSessions?.Of(characterId) is not { } current || !ReferenceEquals(current, session) ||
+                        persistCharacterLogoff is not { } persist)
+                        return;
+                    await persist(
+                        characterId, DateTimeOffset.FromUnixTimeMilliseconds(clock()), CancellationToken.None);
                 },
                 SessionClosedAsync = async session =>
                 {

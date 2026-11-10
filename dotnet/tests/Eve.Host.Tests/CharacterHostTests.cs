@@ -3698,6 +3698,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
 
         public NpgsqlDataSource Source { get; }
         public ServiceRegistry Registry => _runtime.Registry;
+        public HostServer Server => _runtime.Server;
         internal Eve.Host.PublicGateway.PublicGatewayRoutes Gateway => _runtime.PublicGateway;
         internal Eve.Events.EventBus Events => _runtime.Events ?? throw new InvalidOperationException("the event bus is not composed");
         public CharacterSessions Sessions => Assert.IsType<CharacterSessions>(_runtime.CharacterSessions);
@@ -3860,11 +3861,12 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         }
 
         /// <summary>A fresh account in the identity schema (Omega until 2100 by the schema's default); the first one is account 1.</summary>
-        public async Task<int> CreateAccountAsync()
+        public async Task<int> CreateAccountAsync(string userName = "mct-test")
         {
             await using var connection = await Source.OpenConnectionAsync();
             await using var command = new NpgsqlCommand(
-                $"INSERT INTO {IdentitySchema}.accounts (user_name, password_hash) VALUES ('mct-test', '\\x00'::bytea) RETURNING id", connection);
+                $"INSERT INTO {IdentitySchema}.accounts (user_name, password_hash) VALUES ($1, '\\x00'::bytea) RETURNING id", connection);
+            command.Parameters.Add(new NpgsqlParameter { Value = userName });
             return (int)(await command.ExecuteScalarAsync())!;
         }
 
@@ -3899,10 +3901,10 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             (_runtime, _shutdown) = await BuildHostAsync(_schemas, _clock is null ? null : _clock.Read, _simSocket, _clusterOptions);
         }
 
-        public async Task<long> CreateCharacterAsync(string tutorialEntryMode = "disabled", int airNpeState = 2)
+        public async Task<long> CreateCharacterAsync(string tutorialEntryMode = "disabled", int airNpeState = 2, int accountId = 1)
         {
             var character = new NewCharacter(
-                AccountId: 1,
+                AccountId: accountId,
                 Name: $"ClonePilot{Guid.NewGuid():N}"[..18],
                 Gender: 0, RaceId: 1, BloodlineId: 1, AncestryId: 1, SchoolId: 0, TypeId: 1373,
                 CorporationId: CorporationId, FactionId: null,

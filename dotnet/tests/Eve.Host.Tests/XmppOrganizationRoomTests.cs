@@ -1,6 +1,7 @@
 using System.Text;
 using Eve.Marshal;
 using Eve.Services;
+using Eve.Services.CharacterInfo;
 using Eve.Host.Xmpp;
 using Xunit;
 using Npgsql;
@@ -429,6 +430,161 @@ public sealed class XmppOrganizationRoomTests
         Assert.DoesNotContain(secondOutput, item => item.Contains("<body>old corp</body>", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void Faction_warfare_session_changes_move_live_xmpp_occupants_to_the_new_militia_channel()
+    {
+        var eventOrder = new List<string>();
+        var sessions = new ConnectedSessions();
+        var changingSession = Character(42, "changing-token", 100, 200, 300);
+        changingSession.Sink = new DelegatePacketSink(_ => eventOrder.Add("session-change"));
+        changingSession.Set("warfactionid", new PyLong(500_001));
+        var formerMemberSession = Character(77, "former-token", 101, 201, 301);
+        formerMemberSession.Set("warfactionid", new PyLong(500_001));
+        var destinationMemberSession = Character(88, "destination-token", 102, 202, 302);
+        destinationMemberSession.Set("warfactionid", new PyLong(500_002));
+        sessions.Add(changingSession);
+        sessions.Add(formerMemberSession);
+        sessions.Add(destinationMemberSession);
+
+        var hub = new XmppChatHub(sessions, new XmppChatSettings("chat.example", "127.0.0.1"));
+        var changingOutput = new List<string>();
+        var formerMemberOutput = new List<string>();
+        var destinationMemberOutput = new List<string>();
+        var changing = Connect(hub, 42, "changing-token", changingOutput, _ => eventOrder.Add("xmpp-presence"));
+        var formerMember = Connect(hub, 77, "former-token", formerMemberOutput);
+        var destinationMember = Connect(hub, 88, "destination-token", destinationMemberOutput);
+
+        changing.OnStanza(Parse("<presence to='faction_500001@conference.chat.example/Changing'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+        formerMember.OnStanza(Parse("<presence to='faction_500001@conference.chat.example/Former'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+        destinationMember.OnStanza(Parse("<presence to='faction_500002@conference.chat.example/Destination'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+
+        eventOrder.Clear();
+        changingSession.Change(("warfactionid", new PyLong(500_002)));
+
+        Assert.Equal("session-change", eventOrder.First());
+        Assert.True(eventOrder.IndexOf("session-change") < eventOrder.IndexOf("xmpp-presence"));
+        Assert.Contains(changingOutput, item => item.Contains("from='faction_500001@conference.chat.example/Changing'", StringComparison.Ordinal)
+            && item.Contains("type='unavailable'", StringComparison.Ordinal));
+        Assert.Contains(formerMemberOutput, item => item.Contains("from='faction_500001@conference.chat.example/Changing'", StringComparison.Ordinal)
+            && item.Contains("type='unavailable'", StringComparison.Ordinal));
+        Assert.Contains(changingOutput, item => item.Contains("from='faction_500002@conference.chat.example/Changing'", StringComparison.Ordinal)
+            && item.Contains("code='110'", StringComparison.Ordinal));
+        Assert.Contains(destinationMemberOutput, item => item.Contains("from='faction_500002@conference.chat.example/Changing'", StringComparison.Ordinal));
+
+        changing.OnStanza(Parse("<message type='groupchat' to='faction_500001@conference.chat.example'><body>stale militia</body></message>"));
+        Assert.DoesNotContain(formerMemberOutput, item => item.Contains("<body>stale militia</body>", StringComparison.Ordinal));
+        changing.OnStanza(Parse("<message type='groupchat' to='faction_500002@conference.chat.example'><body>new militia</body></message>"));
+        Assert.Contains(destinationMemberOutput, item => item.Contains("<body>new militia</body>", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Muc_presence_and_user_data_iq_publish_client_roster_metadata()
+    {
+        var sessions = new ConnectedSessions();
+        var pilot = Character(42, "pilot-token", 100, 200, 300);
+        pilot.Set("role", new PyLong(1_048_576));
+        pilot.Set("warfactionid", new PyLong(500_001));
+        sessions.Add(pilot);
+
+        var hub = new XmppChatHub(sessions, new XmppChatSettings("chat.example", "127.0.0.1"), motdStore: null,
+            readChatUserData: (characterId, _) => ValueTask.FromResult<CharMgrChatUserData?>(characterId switch
+            {
+                42 => new CharMgrChatUserData(42, "Pilot & One", 1376, true, 100, 200, 500_001),
+                43 => new CharMgrChatUserData(43, "Offline Pilot", 1377, false, 101, 201, 0),
+                _ => null,
+            }));
+        var output = new List<string>();
+        var client = Connect(hub, 42, "pilot-token", output);
+        client.OnStanza(Parse("<presence to='corp_100@conference.chat.example/Pilot'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+
+        var presence = Parse(output.Single(item => item.Contains("from='corp_100@conference.chat.example/Pilot'", StringComparison.Ordinal)
+            && item.Contains("<presence", StringComparison.Ordinal)));
+        var presenceData = Assert.IsType<XmppElement>(presence.Child("eve_user_data"));
+        Assert.Equal("[42,\"Pilot & One\",1376,true,null]", presenceData.Attribute("info"));
+        Assert.Equal("100", presenceData.Attribute("corpid"));
+        Assert.Equal("1048576", presenceData.Attribute("role"));
+        Assert.Equal("500001", presenceData.Attribute("warfactionid"));
+        Assert.Equal("200", presenceData.Attribute("allianceid"));
+        Assert.Equal("42@chat.example/client-42", presence.Child("x")?.Child("item")?.Attribute("jid"));
+
+        client.OnStanza(Parse("<iq type='get' id='userdata' to='chat.example'><query xmlns='urn:xmpp:eve_user_data' jid='43@chat.example'/></iq>"));
+        var response = Parse(output.Single(item => item.Contains("id='userdata'", StringComparison.Ordinal)));
+        Assert.Equal("result", response.Attribute("type"));
+        var query = Assert.IsType<XmppElement>(response.Child("query"));
+        Assert.Equal("urn:xmpp:eve_user_data", query.Attribute("xmlns"));
+        Assert.Equal("43@chat.example", query.Attribute("jid"));
+        var iqData = Assert.IsType<XmppElement>(query.Child("eve_user_data"));
+        Assert.Equal("[43,\"Offline Pilot\",1377,false,null]", iqData.Attribute("info"));
+        Assert.Equal("101", iqData.Attribute("corpid"));
+        Assert.Equal("0", iqData.Attribute("role"));
+        Assert.Equal("None", iqData.Attribute("warfactionid"));
+        Assert.Equal("201", iqData.Attribute("allianceid"));
+    }
+
+    [Fact]
+    public void Chat_role_session_changes_refresh_each_occupied_room_presence()
+    {
+        var sessions = new ConnectedSessions();
+        var pilotSession = Character(42, "pilot-token", 100, 200, 300);
+        pilotSession.Set("characterName", new PyStr("Pilot"));
+        pilotSession.Set("role", new PyLong(1));
+        var observerSession = Character(77, "observer-token", 100, 201, 301);
+        observerSession.Set("characterName", new PyStr("Observer"));
+        sessions.Add(pilotSession);
+        sessions.Add(observerSession);
+
+        var hub = new XmppChatHub(sessions, new XmppChatSettings("chat.example", "127.0.0.1"));
+        var pilotOutput = new List<string>();
+        var observerOutput = new List<string>();
+        var pilot = Connect(hub, 42, "pilot-token", pilotOutput);
+        var observer = Connect(hub, 77, "observer-token", observerOutput);
+        pilot.OnStanza(Parse("<presence to='corp_100@conference.chat.example/Pilot'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+        observer.OnStanza(Parse("<presence to='corp_100@conference.chat.example/Observer'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+
+        pilotSession.Change(("role", new PyLong(2)));
+
+        Assert.Contains(pilotOutput, item => item.Contains("from='corp_100@conference.chat.example/Pilot'", StringComparison.Ordinal)
+            && item.Contains("type='unavailable'", StringComparison.Ordinal));
+        Assert.Contains(observerOutput, item => item.Contains("from='corp_100@conference.chat.example/Pilot'", StringComparison.Ordinal)
+            && item.Contains("type='unavailable'", StringComparison.Ordinal));
+        Assert.Contains(pilotOutput, item => item.Contains("from='corp_100@conference.chat.example/Pilot'", StringComparison.Ordinal)
+            && item.Contains("role='2'", StringComparison.Ordinal));
+        Assert.Contains(observerOutput, item => item.Contains("from='corp_100@conference.chat.example/Pilot'", StringComparison.Ordinal)
+            && item.Contains("role='2'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Chat_role_session_changes_refresh_an_invisible_occupants_own_roster()
+    {
+        var sessions = new ConnectedSessions();
+        var pilotSession = Character(42, "pilot-token", 100, 200, 300);
+        pilotSession.Set("characterName", new PyStr("Pilot"));
+        pilotSession.Set("accountRole", new PyLong(Eve.Services.GameMasterRoles.ChtInvisible));
+        pilotSession.Set("role", new PyLong(1));
+        var observerSession = Character(77, "observer-token", 100, 201, 301);
+        observerSession.Set("characterName", new PyStr("Observer"));
+        sessions.Add(pilotSession);
+        sessions.Add(observerSession);
+
+        var hub = new XmppChatHub(sessions, new XmppChatSettings("chat.example", "127.0.0.1"));
+        var pilotOutput = new List<string>();
+        var observerOutput = new List<string>();
+        var pilot = Connect(hub, 42, "pilot-token", pilotOutput);
+        var observer = Connect(hub, 77, "observer-token", observerOutput);
+        observer.OnStanza(Parse("<presence to='corp_100@conference.chat.example/Observer'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+        pilot.OnStanza(Parse("<presence to='corp_100@conference.chat.example/Pilot'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
+        pilotOutput.Clear();
+        observerOutput.Clear();
+
+        pilotSession.Change(("role", new PyLong(2)));
+
+        Assert.Contains(pilotOutput, item => item.Contains("from='corp_100@conference.chat.example/Pilot'", StringComparison.Ordinal)
+            && item.Contains("type='unavailable'", StringComparison.Ordinal));
+        Assert.Contains(pilotOutput, item => item.Contains("from='corp_100@conference.chat.example/Pilot'", StringComparison.Ordinal)
+            && item.Contains("role='2'", StringComparison.Ordinal));
+        Assert.DoesNotContain(observerOutput, item => item.Contains("from='corp_100@conference.chat.example/Pilot'", StringComparison.Ordinal));
+    }
+
     private static ClientSession Character(long characterId, string token, long corporationId, long allianceId, long fleetId)
     {
         var session = new ClientSession { CharacterId = characterId };
@@ -440,9 +596,13 @@ public sealed class XmppOrganizationRoomTests
         return session;
     }
 
-    private static XmppClientSession Connect(XmppChatHub hub, long characterId, string token, List<string> output)
+    private static XmppClientSession Connect(XmppChatHub hub, long characterId, string token, List<string> output, Action<string>? onSend = null)
     {
-        var client = new XmppClientSession(hub, output.Add, _ => { });
+        var client = new XmppClientSession(hub, stanza =>
+        {
+            output.Add(stanza);
+            onSend?.Invoke(stanza);
+        }, _ => { });
         client.OnStanza(Auth(characterId, token));
         client.OnStanza(Bind($"client-{characterId}"));
         return client;
@@ -474,5 +634,10 @@ public sealed class XmppOrganizationRoomTests
         var parser = new XmppStreamParser();
         parser.Feed(Encoding.UTF8.GetBytes("<stream:stream xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams'>"));
         return Assert.IsType<XmppStanza>(parser.Feed(Encoding.UTF8.GetBytes(stanza)).Single()).Element;
+    }
+
+    private sealed class DelegatePacketSink(Action<PyValue> send) : IPacketSink
+    {
+        public void Send(PyValue packet) => send(packet);
     }
 }

@@ -414,6 +414,7 @@ public sealed class CharacterHostTests
         {
             "OnJumpCloneCacheInvalidated", "OnStationJumpCloneCacheInvalidated", "OnShipJumpCloneCacheInvalidated",
             "OnJumpCloneCacheInvalidated", "OnStationJumpCloneCacheInvalidated", "OnShipJumpCloneCacheInvalidated",
+            "OnServerImplantsChanged",
         }, Notifications(sink).Select(n => n.Name).ToArray());
         var state = await BoundAsync(service, session, "GetCloneState");
         var clones = Rows(Field(state, "clones"));
@@ -447,6 +448,101 @@ public sealed class CharacterHostTests
         Assert.Equal(new[] { replacement }, Rows(Field(await BoundAsync(restarted, session, "GetCloneState"), "clones"))
             .Select(row => ((PyLong)row.Items[0]).Value).ToArray());
         Assert.Equal(0m, await BalanceAsync(rig, character));
+    }
+
+    [PgFact]
+    public async Task Clone_jump_keeps_SDE_marked_implants_that_follow_the_pilot_and_refreshes_the_client_cache()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, Sink = sink };
+        session.Set("stationid", new PyInt(rig.Station));
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
+        var stations = await StationCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        var away = stations.All.OrderBy(s => s.Id).First(s => s.Id != rig.Station);
+
+        var capsule = await GiveItemAsync(rig, character, CharacterShips.CapsuleTypeId, rig.Station, ItemFlags.Hangar, singleton: true);
+        await SetShipAsync(rig, character, capsule);
+        await FundAsync(rig, character, 1_000_000m);
+        await GiveItemAsync(rig, character, 9941, character, 89, singleton: true);
+        await GiveItemAsync(rig, character, 33329, character, 89, singleton: true);
+        var target = await rig.AddCloneAsync(character, away.Id, "station", "Away body", [9942]);
+
+        await BoundAsync(service, session, "CloneJump", new PyLong(away.Id), new PyLong(target), new PyReal(900_000.0), PyBool.False);
+
+        var statics = await Eve.Dogma.DogmaStatic.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        await statics.EnsureTypesAsync([9942, 33329]);
+        var expectedBody = new[] { 9942, 33329 }
+            .Select(typeId => (Slot: (int)statics.Type(typeId)!.Attributes[Eve.Ships.PilotAugmentations.ImplantSlotAttributeId], TypeId: typeId))
+            .OrderBy(implant => implant.Slot).ThenBy(implant => implant.TypeId);
+        var actualBody = (await BodyImplantTypesAsync(rig, character))
+            .Select(typeId => (Slot: (int)statics.Type(typeId)!.Attributes[Eve.Ships.PilotAugmentations.ImplantSlotAttributeId], TypeId: typeId))
+            .OrderBy(implant => implant.Slot).ThenBy(implant => implant.TypeId);
+
+        var state = await BoundAsync(service, session, "GetCloneState");
+        var replacement = Assert.Single(Rows(Field(state, "clones")));
+        Assert.Equal(new[] { 9941 }, Rows(Field(state, "implants"))
+            .Where(row => ((PyLong)row.Items[0]).Value == ((PyLong)replacement.Items[0]).Value)
+            .Select(row => (int)((PyInt)row.Items[1]).Value).ToArray());
+        Assert.Equal(expectedBody, actualBody);
+        Assert.Equal(new[]
+        {
+            "OnJumpCloneCacheInvalidated", "OnStationJumpCloneCacheInvalidated", "OnShipJumpCloneCacheInvalidated",
+            "OnJumpCloneCacheInvalidated", "OnStationJumpCloneCacheInvalidated", "OnShipJumpCloneCacheInvalidated",
+            "OnServerImplantsChanged",
+        }, Notifications(sink).Select(n => n.Name).ToArray());
+    }
+
+    [PgFact]
+    public async Task Clone_jump_rebases_a_running_queue_when_implants_change_its_learning_rate()
+    {
+        const long startUnixMs = 1_800_000_000_000;
+        await using var rig = await CharacterHostRig.CreateAsync(startUnixMs);
+        var character = await rig.CreateCharacterAsync();
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = sink };
+        session.Set("stationid", new PyInt(rig.Station));
+        rig.Sessions.Enter(character, session);
+        var cloneService = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
+        var skillHandler = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillHandler"));
+        var stations = await StationCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        var away = stations.All.OrderBy(station => station.Id).First(station => station.Id != rig.Station);
+        var catalog = await SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        var owned = (await new PgSkillStore(rig.Source, rig.SkillsSchema).ForCharacterAsync(character))
+            .Select(skill => skill.TypeId).ToHashSet();
+        var skill = catalog.Skills.First(candidate => candidate.Published && candidate.Rank == 1
+            && candidate.PrimaryAttribute == 166 && candidate.Needs.Count == 0 && !owned.Contains(candidate.TypeId));
+        await rig.SetSkillLevelAsync(character, skill.TypeId, 0);
+
+        var capsule = await GiveItemAsync(rig, character, CharacterShips.CapsuleTypeId, rig.Station, ItemFlags.Hangar, singleton: true);
+        await SetShipAsync(rig, character, capsule);
+        await FundAsync(rig, character, 1_000_000m);
+        await GiveItemAsync(rig, character, 9941, character, 89, singleton: true);
+        await GiveItemAsync(rig, character, 33329, character, 89, singleton: true);
+        var target = await rig.AddCloneAsync(character, away.Id, "station", "Willpower body", [9942]);
+        await BoundAsync(skillHandler, session, "SaveNewQueue", new PyList([Py.Tuple(new PyInt(skill.TypeId), new PyInt(1))]));
+        var beforeQueue = Assert.IsType<PyList>(Assert.IsType<PyTuple>(await BoundAsync(skillHandler, session, "GetSkillQueueAndFreePoints")).Items[0]);
+        var beforeLine = Assert.IsType<PyObject>(Assert.Single(beforeQueue.Items));
+        var beforeEnd = Integer(Field(beforeLine, "trainingEndTime"));
+        sink.Sent.Clear();
+
+        await BoundAsync(cloneService, session, "CloneJump", new PyLong(away.Id), new PyLong(target), new PyReal(900_000.0), PyBool.False);
+
+        var afterQueue = Assert.IsType<PyList>(Assert.IsType<PyTuple>(await BoundAsync(skillHandler, session, "GetSkillQueueAndFreePoints")).Items[0]);
+        var afterLine = Assert.IsType<PyObject>(Assert.Single(afterQueue.Items));
+        Assert.Equal(Integer(Field(beforeLine, "trainingStartSP")), Integer(Field(afterLine, "trainingStartSP")));
+        Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(startUnixMs).ToFileTime(), Integer(Field(afterLine, "trainingStartTime")));
+        Assert.True(Integer(Field(afterLine, "trainingEndTime")) > beforeEnd);
+        var notificationNames = Notifications(sink).Select(notification => notification.Name).ToArray();
+        var expectedNotificationNames = new[]
+        {
+            "OnJumpCloneCacheInvalidated", "OnStationJumpCloneCacheInvalidated", "OnShipJumpCloneCacheInvalidated",
+            "OnJumpCloneCacheInvalidated", "OnStationJumpCloneCacheInvalidated", "OnShipJumpCloneCacheInvalidated",
+            "OnServerImplantsChanged", "OnModuleAttributeChanges", "OnModuleAttributeChanges",
+            "OnServerBrainUpdated", "OnNewSkillQueueSaved", "OnMultipleCharactersTrainingUpdated",
+        };
+        Assert.True(expectedNotificationNames.SequenceEqual(notificationNames), string.Join(", ", notificationNames));
     }
 
     [PgFact]
@@ -3073,6 +3169,220 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
     }
 
     [PgFact]
+    public async Task A_late_MCT_expiry_pauses_the_lowest_SP_queue_at_the_slot_boundary()
+    {
+        const long startUnixMs = 1_800_000_000_000;
+        const long expiryUnixMs = startUnixMs + 60_000;
+        const long lateUnixMs = expiryUnixMs + 10 * 60_000;
+        await using var rig = await CharacterHostRig.CreateAsync(startUnixMs);
+        Assert.Equal(1, await rig.CreateAccountAsync());
+        var lowerSp = await rig.CreateCharacterAsync();
+        var higherSp = await rig.CreateCharacterAsync();
+        var lowerSink = new RecordingPacketSink();
+        var higherSink = new RecordingPacketSink();
+        var lowerSession = new ClientSession { CharacterId = lowerSp, UserId = 1, Sink = lowerSink };
+        var higherSession = new ClientSession { CharacterId = higherSp, UserId = 1, Sink = higherSink };
+        rig.Sessions.Enter(lowerSp, lowerSession);
+        rig.Sessions.Enter(higherSp, higherSession);
+
+        var catalog = await SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        var lowerSkills = (await new PgSkillStore(rig.Source, rig.SkillsSchema).ForCharacterAsync(lowerSp)).Select(skill => skill.TypeId).ToHashSet();
+        var higherSkills = (await new PgSkillStore(rig.Source, rig.SkillsSchema).ForCharacterAsync(higherSp)).Select(skill => skill.TypeId).ToHashSet();
+        var candidates = catalog.Skills.Where(skill => skill.Published && skill.Rank == 1 && skill.Needs.Count == 0
+                && !lowerSkills.Contains(skill.TypeId) && !higherSkills.Contains(skill.TypeId))
+            .OrderBy(skill => skill.TypeId).Take(2).ToArray();
+        Assert.Equal(2, candidates.Length);
+        var trainingSkill = candidates[0];
+        await rig.SetSkillLevelAsync(lowerSp, trainingSkill.TypeId, 0);
+        await rig.SetSkillLevelAsync(higherSp, trainingSkill.TypeId, 0);
+        await rig.SetSkillLevelAsync(higherSp, candidates[1].TypeId, 5);
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var slot = new NpgsqlCommand(
+            $"INSERT INTO {rig.IdentitySchema}.account_training_slots(account_id, slot, ends_at) VALUES (1, 2, $1)", connection))
+        {
+            slot.Parameters.Add(new NpgsqlParameter { Value = DateTimeOffset.FromUnixTimeMilliseconds(expiryUnixMs) });
+            await slot.ExecuteNonQueryAsync();
+        }
+
+        var skillHandler = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillHandler"));
+        var queue = new PyList([.. Enumerable.Range(1, 5)
+            .Select(level => (PyValue)Py.Tuple(new PyInt(trainingSkill.TypeId), new PyInt(level)))]);
+        await BoundAsync(skillHandler, lowerSession, "SaveNewQueue", queue);
+        await BoundAsync(skillHandler, higherSession, "SaveNewQueue", queue);
+        lowerSink.Sent.Clear();
+        higherSink.Sent.Clear();
+
+        var jobKind = Eve.Services.Skills.MultipleTrainingSlotExpiry.JobKind;
+        var jobKey = $"1:{expiryUnixMs}";
+        await rig.Scheduler.ScheduleAsync(new Eve.Scheduler.JobSpec(jobKind, expiryUnixMs)
+        {
+            Key = jobKey,
+            Payload = new Eve.Services.Skills.MultipleTrainingSlotExpiry.AccountJob(
+                1, DateTimeOffset.FromUnixTimeMilliseconds(expiryUnixMs).ToFileTime()),
+        });
+
+        rig.AdvanceTo(expiryUnixMs);
+        var boundaryPoints = Integer(await BoundAsync(skillHandler, lowerSession, "GetSkillPoints"));
+        rig.AdvanceTo(lateUnixMs);
+
+        var deadline = DateTime.UtcNow.AddSeconds(20);
+        while (await rig.Scheduler.FindAsync(jobKind, jobKey) is not null && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+        Assert.Null(await rig.Scheduler.FindAsync(jobKind, jobKey));
+
+        Assert.Equal(boundaryPoints, Integer(await BoundAsync(skillHandler, lowerSession, "GetSkillPoints")));
+        Assert.False((await new PgTrainingStore(rig.Source, rig.SkillsSchema).LoadAsync(lowerSp)).Running);
+        Assert.True((await new PgTrainingStore(rig.Source, rig.SkillsSchema).LoadAsync(higherSp)).Running);
+        var lowerNotices = Notifications(lowerSink);
+        Assert.Equal(["OnServerSkillsChanged", "OnMultipleCharactersTrainingUpdated"], lowerNotices.Select(notification => notification.Name));
+        Assert.Equal("OnSkillQueuePausedServer", Eve.Macho.JsSemantics.StringValue(lowerNotices[0].Args[1]));
+        Assert.Equal(["OnMultipleCharactersTrainingUpdated"], Notifications(higherSink).Select(notification => notification.Name));
+    }
+
+    [PgFact]
+    public async Task Host_startup_applies_a_missed_MCT_expiry_at_its_saved_boundary()
+    {
+        const long startUnixMs = 1_800_000_000_000;
+        const long expiryUnixMs = startUnixMs + 60_000;
+        const long restartUnixMs = expiryUnixMs + 10 * 60_000;
+        await using var rig = await CharacterHostRig.CreateAsync(startUnixMs);
+        Assert.Equal(1, await rig.CreateAccountAsync());
+        var lowerSp = await rig.CreateCharacterAsync();
+        var higherSp = await rig.CreateCharacterAsync();
+        var lowerSession = new ClientSession { CharacterId = lowerSp, UserId = 1, Sink = new RecordingPacketSink() };
+        var higherSession = new ClientSession { CharacterId = higherSp, UserId = 1, Sink = new RecordingPacketSink() };
+        rig.Sessions.Enter(lowerSp, lowerSession);
+        rig.Sessions.Enter(higherSp, higherSession);
+
+        var catalog = await SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        var lowerSkills = (await new PgSkillStore(rig.Source, rig.SkillsSchema).ForCharacterAsync(lowerSp)).Select(skill => skill.TypeId).ToHashSet();
+        var higherSkills = (await new PgSkillStore(rig.Source, rig.SkillsSchema).ForCharacterAsync(higherSp)).Select(skill => skill.TypeId).ToHashSet();
+        var candidates = catalog.Skills.Where(skill => skill.Published && skill.Rank == 1 && skill.Needs.Count == 0
+                && !lowerSkills.Contains(skill.TypeId) && !higherSkills.Contains(skill.TypeId))
+            .OrderBy(skill => skill.TypeId).Take(2).ToArray();
+        Assert.Equal(2, candidates.Length);
+        await rig.SetSkillLevelAsync(lowerSp, candidates[0].TypeId, 0);
+        await rig.SetSkillLevelAsync(higherSp, candidates[0].TypeId, 0);
+        await rig.SetSkillLevelAsync(higherSp, candidates[1].TypeId, 5);
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var slot = new NpgsqlCommand(
+            $"INSERT INTO {rig.IdentitySchema}.account_training_slots(account_id, slot, ends_at) VALUES (1, 2, $1)", connection))
+        {
+            slot.Parameters.Add(new NpgsqlParameter { Value = DateTimeOffset.FromUnixTimeMilliseconds(expiryUnixMs) });
+            await slot.ExecuteNonQueryAsync();
+        }
+
+        var skillHandler = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillHandler"));
+        var queue = new PyList([.. Enumerable.Range(1, 5)
+            .Select(level => (PyValue)Py.Tuple(new PyInt(candidates[0].TypeId), new PyInt(level)))]);
+        await BoundAsync(skillHandler, lowerSession, "SaveNewQueue", queue);
+        await BoundAsync(skillHandler, higherSession, "SaveNewQueue", queue);
+        rig.AdvanceTo(expiryUnixMs);
+        var boundaryPoints = Integer(await BoundAsync(skillHandler, lowerSession, "GetSkillPoints"));
+
+        rig.AdvanceTo(restartUnixMs);
+        await rig.RestartAsync();
+        rig.Sessions.Enter(lowerSp, lowerSession);
+        rig.Sessions.Enter(higherSp, higherSession);
+        skillHandler = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillHandler"));
+
+        Assert.Equal(boundaryPoints, Integer(await BoundAsync(skillHandler, lowerSession, "GetSkillPoints")));
+        Assert.False((await new PgTrainingStore(rig.Source, rig.SkillsSchema).LoadAsync(lowerSp)).Running);
+        Assert.True((await new PgTrainingStore(rig.Source, rig.SkillsSchema).LoadAsync(higherSp)).Running);
+        Assert.Equal(5, Assert.IsType<PyList>(await BoundAsync(skillHandler, lowerSession, "GetSkillQueue")).Items.Count);
+    }
+
+    [PgFact]
+    public async Task A_stale_MCT_expiry_job_does_not_pause_queues_after_the_slot_was_extended()
+    {
+        const long nowUnixMs = 1_800_000_000_000;
+        const long oldExpiryUnixMs = nowUnixMs - 60_000;
+        const long currentExpiryUnixMs = nowUnixMs + 24 * 60 * 60_000;
+        await using var rig = await CharacterHostRig.CreateAsync(nowUnixMs);
+        Assert.Equal(1, await rig.CreateAccountAsync());
+        var firstCharacter = await rig.CreateCharacterAsync();
+        var secondCharacter = await rig.CreateCharacterAsync();
+        var firstSink = new RecordingPacketSink();
+        var secondSink = new RecordingPacketSink();
+        var firstSession = new ClientSession { CharacterId = firstCharacter, UserId = 1, Sink = firstSink };
+        var secondSession = new ClientSession { CharacterId = secondCharacter, UserId = 1, Sink = secondSink };
+        rig.Sessions.Enter(firstCharacter, firstSession);
+        rig.Sessions.Enter(secondCharacter, secondSession);
+
+        var catalog = await SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        var firstSkills = (await new PgSkillStore(rig.Source, rig.SkillsSchema).ForCharacterAsync(firstCharacter)).Select(skill => skill.TypeId).ToHashSet();
+        var secondSkills = (await new PgSkillStore(rig.Source, rig.SkillsSchema).ForCharacterAsync(secondCharacter)).Select(skill => skill.TypeId).ToHashSet();
+        var typeId = catalog.Skills.First(skill => skill.Published && skill.Rank == 1 && skill.Needs.Count == 0
+            && !firstSkills.Contains(skill.TypeId) && !secondSkills.Contains(skill.TypeId)).TypeId;
+        await rig.SetSkillLevelAsync(firstCharacter, typeId, 0);
+        await rig.SetSkillLevelAsync(secondCharacter, typeId, 0);
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var slot = new NpgsqlCommand(
+            $"INSERT INTO {rig.IdentitySchema}.account_training_slots(account_id, slot, ends_at) VALUES (1, 2, $1)", connection))
+        {
+            slot.Parameters.Add(new NpgsqlParameter { Value = DateTimeOffset.FromUnixTimeMilliseconds(currentExpiryUnixMs) });
+            await slot.ExecuteNonQueryAsync();
+        }
+
+        var skillHandler = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillHandler"));
+        var queue = new PyList([.. Enumerable.Range(1, 5)
+            .Select(level => (PyValue)Py.Tuple(new PyInt(typeId), new PyInt(level)))]);
+        await BoundAsync(skillHandler, firstSession, "SaveNewQueue", queue);
+        await BoundAsync(skillHandler, secondSession, "SaveNewQueue", queue);
+        firstSink.Sent.Clear();
+        secondSink.Sent.Clear();
+
+        var kind = Eve.Services.Skills.MultipleTrainingSlotExpiry.JobKind;
+        var key = $"1:{oldExpiryUnixMs}";
+        await rig.Scheduler.ScheduleAsync(new Eve.Scheduler.JobSpec(kind, currentExpiryUnixMs)
+        {
+            Key = $"1:{currentExpiryUnixMs}",
+            Payload = new Eve.Services.Skills.MultipleTrainingSlotExpiry.AccountJob(
+                1, DateTimeOffset.FromUnixTimeMilliseconds(currentExpiryUnixMs).ToFileTime()),
+        });
+        await rig.Scheduler.ScheduleAsync(new Eve.Scheduler.JobSpec(kind, nowUnixMs)
+        {
+            Key = key,
+            Payload = new Eve.Services.Skills.MultipleTrainingSlotExpiry.AccountJob(
+                1, DateTimeOffset.FromUnixTimeMilliseconds(oldExpiryUnixMs).ToFileTime()),
+        });
+
+        var deadline = DateTime.UtcNow.AddSeconds(20);
+        while (await rig.Scheduler.FindAsync(kind, key) is not null && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+        Assert.Null(await rig.Scheduler.FindAsync(kind, key));
+        Assert.True((await new PgTrainingStore(rig.Source, rig.SkillsSchema).LoadAsync(firstCharacter)).Running);
+        Assert.True((await new PgTrainingStore(rig.Source, rig.SkillsSchema).LoadAsync(secondCharacter)).Running);
+        Assert.Empty(Notifications(firstSink));
+        Assert.Empty(Notifications(secondSink));
+        Assert.NotNull(await rig.Scheduler.FindAsync(kind, $"1:{currentExpiryUnixMs}"));
+    }
+
+    [PgFact]
+    public async Task Saving_a_skill_queue_does_not_invalidate_the_account_MCT_cache()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        Assert.Equal(1, await rig.CreateAccountAsync());
+        var character = await rig.CreateCharacterAsync();
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, UserId = 1, Sink = sink };
+        rig.Sessions.Enter(character, session);
+        var catalog = await SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        var owned = (await new PgSkillStore(rig.Source, rig.SkillsSchema).ForCharacterAsync(character)).Select(skill => skill.TypeId).ToHashSet();
+        var type = catalog.Skills.First(skill => skill.Published && skill.Rank == 1 && skill.Needs.Count == 0 && !owned.Contains(skill.TypeId));
+        await rig.SetSkillLevelAsync(character, type.TypeId, 0);
+        var skillHandler = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillHandler"));
+
+        await BoundAsync(skillHandler, session, "SaveNewQueue",
+            new PyList([Py.Tuple(new PyInt(type.TypeId), new PyInt(1))]));
+
+        Assert.Equal(["OnNewSkillQueueSaved"], Notifications(sink).Select(notification => notification.Name));
+    }
+
+    [PgFact]
     public async Task Host_startup_recreates_expiry_jobs_for_existing_training_slots()
     {
         await using var rig = await CharacterHostRig.CreateAsync();
@@ -3284,7 +3594,8 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             Assert.Equal([9942], atOrigin.ImplantTypeIds);
             Assert.Equal(
                 ["OnItemsChanged", "OnJumpCloneCacheInvalidated", "OnStationJumpCloneCacheInvalidated", "OnShipJumpCloneCacheInvalidated",
-                    "OnJumpCloneCacheInvalidated", "OnStationJumpCloneCacheInvalidated", "OnShipJumpCloneCacheInvalidated"],
+                    "OnJumpCloneCacheInvalidated", "OnStationJumpCloneCacheInvalidated", "OnShipJumpCloneCacheInvalidated",
+                    "OnServerImplantsChanged", "OnModuleAttributeChanges", "OnModuleAttributeChanges", "OnServerBrainUpdated"],
                 Notifications(sink).Select(notification => notification.Name));
 
             await rig.RestartAsync();
@@ -3400,7 +3711,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         // This is the Host's PostgreSQL store, with unused authorities null because this scenario exercises InstallAsync only.
         var hostStore = new HostJumpCloneStore(cloneRows, rig.Source, new PgSkillStore(rig.Source, rig.SkillsSchema),
             new WalletTransactions(rig.Source, rig.WalletSchema), new PgWalletStore(rig.Source, rig.WalletSchema), rig.Characters,
-            new PgItemStore(rig.Source, rig.InventorySchema), null!, null!, null!, null!, null!);
+            new PgItemStore(rig.Source, rig.InventorySchema), null!, null!, null!, null!, null!, null!);
         var attempts = await Task.WhenAll(candidates.Select(async character =>
         {
             try

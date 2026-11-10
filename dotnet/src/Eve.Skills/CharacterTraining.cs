@@ -127,6 +127,14 @@ public sealed class CharacterTraining(
         return BuildView(characterId, accountId, await store.LoadAsync(characterId, cancellationToken), await SkillsOfAsync(characterId, cancellationToken), Now);
     }
 
+    /// <summary>What the queue and skills were at a saved time boundary, settling completed levels only through that time.</summary>
+    public async Task<TrainingView> ViewAtAsync(long characterId, long accountId, long atFileTime, CancellationToken cancellationToken = default)
+    {
+        await SettleAtFileTimeAsync(characterId, accountId, int.MaxValue, atFileTime, atFileTime, cancellationToken);
+        return BuildView(characterId, accountId, await store.LoadAsync(characterId, cancellationToken),
+            await SkillsOfAsync(characterId, cancellationToken), atFileTime);
+    }
+
     /// <summary>Reads the saved queue inside the caller's transaction after it has taken this character's skill lock.</summary>
     public Task<QueueState> LoadQueueAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId,
         CancellationToken cancellationToken = default) => store.LoadAsync(connection, transaction, characterId, cancellationToken);
@@ -677,9 +685,13 @@ public sealed class CharacterTraining(
     }
 
     /// <summary>Stops the running skill, keeping the points it has gained; the queue stays as it is. Null when nothing was running.</summary>
-    public async Task<TrainingUpdate?> AbortAsync(long characterId, long accountId, CancellationToken cancellationToken = default)
+    public Task<TrainingUpdate?> AbortAsync(long characterId, long accountId, CancellationToken cancellationToken = default) =>
+        AbortAtAsync(characterId, accountId, Now, cancellationToken);
+
+    /// <summary>Stops a queue at a historical boundary, retaining only the skill points earned by that instant.</summary>
+    public async Task<TrainingUpdate?> AbortAtAsync(long characterId, long accountId, long atFileTime, CancellationToken cancellationToken = default)
     {
-        await SettleAsync(characterId, accountId, cancellationToken);
+        await SettleAtFileTimeAsync(characterId, accountId, int.MaxValue, atFileTime, atFileTime, cancellationToken);
 
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -687,7 +699,7 @@ public sealed class CharacterTraining(
         var remap = await skills.ReadNeuralRemapAsync(connection, transaction, characterId, forUpdate: true, cancellationToken);
         skills.CacheNeuralRemap(characterId, remap);
         var rate = RateOf(characterId, accountId);
-        var now = Now;
+        var now = atFileTime;
         var state = await store.LoadAsync(connection, transaction, characterId, cancellationToken);
         if (!state.Running)
         {

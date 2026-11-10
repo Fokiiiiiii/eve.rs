@@ -26,6 +26,41 @@ public class SimClientTests
         }
     }
 
+    [Fact]
+    public async Task A_slim_field_send_reports_that_the_simulation_is_disconnected()
+    {
+        await using var client = new SimClient(_ => throw new IOException("not connected"));
+
+        Assert.False(await client.TrySetSlimFieldAsync(42, "wormholeAge", new SimSlimInt(1)));
+    }
+
+    [Fact]
+    public async Task A_slim_field_send_is_queued_and_received_when_the_simulation_is_connected()
+    {
+        var (sim, client) = await ConnectedAsync();
+        await using var _ = sim;
+        await using var __ = client;
+        var expected = new SimSetSlimField(42, "wormholeAge", new SimSlimInt(1));
+
+        Assert.True(await client.TrySetSlimFieldAsync(expected.ItemId, expected.FieldName, expected.Value));
+        await Until(() => sim.HeardNow().OfType<SimSetSlimField>().Contains(expected));
+
+        Assert.Contains(expected, sim.HeardNow().OfType<SimSetSlimField>());
+    }
+
+    [Fact]
+    public async Task A_slim_field_send_fails_if_the_simulation_stream_breaks_before_the_frame_is_written()
+    {
+        var stream = new FailingWriteStream();
+        await using var client = new SimClient(_ => Task.FromResult<Stream>(stream));
+        client.RetryAfter = TimeSpan.FromMinutes(1);
+        client.Start();
+        await Until(() => client.IsConnected);
+
+        await Assert.ThrowsAsync<SimUnavailableException>(() => client.TrySetSlimFieldAsync(42, "wormholeAge", new SimSlimInt(1)));
+        await Until(() => !client.IsConnected);
+    }
+
     private static async Task<(FakeSimulation Sim, SimClient Client)> ConnectedAsync(
         Func<SimMessage, IEnumerable<SimMessage>>? reply = null,
         Action<string>? log = null,
@@ -907,6 +942,51 @@ public class SimClientTests
                 return;
             WriteStarted.TrySetResult();
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            WriteAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Flush() { }
+    }
+
+    private sealed class FailingWriteStream : Stream
+    {
+        private readonly byte[] _helloAck = SimCodec.Encode(new SimHelloAck(SimCodec.ProtocolVersion, 4));
+        private int _helloAckOffset;
+        private int _writeCount;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (_helloAckOffset < _helloAck.Length)
+            {
+                var count = Math.Min(buffer.Length, _helloAck.Length - _helloAckOffset);
+                _helloAck.AsMemory(_helloAckOffset, count).CopyTo(buffer);
+                _helloAckOffset += count;
+                return count;
+            }
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return 0;
+        }
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _writeCount) == 1)
+                return ValueTask.CompletedTask;
+            return ValueTask.FromException(new IOException("the simulated IPC write failed"));
         }
 
         public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>

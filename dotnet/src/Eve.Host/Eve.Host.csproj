@@ -15,6 +15,7 @@
   <ItemGroup>
     <EmbeddedResource Include="Migrations/*.sql" />
     <EmbeddedResource Include="SkinrMigrations/*.sql" />
+    <EmbeddedResource Include="SkinActivationMigrations/*.sql" />
     <EmbeddedResource Include="Assets/ProjectDiscovery/*.gz;Assets/ProjectDiscovery/*.json" />
     <EmbeddedResource Include="Assets/ProjectDiscovery/*.png">
       <LogicalName>Eve.Host.Assets.ProjectDiscovery.%(Filename)%(Extension)</LogicalName>

@@ -47,6 +47,8 @@ internal sealed partial class CharacterServicesComposition
         fittingSchema = Env("EVE_FITTING_SCHEMA", PgModuleStateStore.DefaultSchema);
         await PgCharacterStore.MigrateAsync(source, characterSchema);
         await PgItemStore.MigrateAsync(source, inventorySchema);
+        await SkinLicenseActivationIntents.MigrateAsync(source, inventorySchema);
+        await SkinLicenseActivationIntents.RecoverAsync(source, inventorySchema, mailCache);
         industrySchema = Env("EVE_INDUSTRY_SCHEMA", "industry");
         if (!System.Text.RegularExpressions.Regex.IsMatch(industrySchema, "^[a-z_][a-z0-9_]*$", System.Text.RegularExpressions.RegexOptions.CultureInvariant))
             throw new InvalidOperationException("EVE_INDUSTRY_SCHEMA is not a valid PostgreSQL schema name.");

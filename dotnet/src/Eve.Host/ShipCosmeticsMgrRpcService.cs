@@ -24,9 +24,12 @@ public sealed class ShipCosmeticsMgrRpcService : IService
     private readonly Action<long, long, long?>? _shipSkinChanged;
     private readonly Action<long, long>? _skinLicenseActivated;
     private readonly Func<long, Item, long, CancellationToken, ValueTask>? _inventoryItemConsumed;
+    private readonly Func<CancellationToken, Task<bool>>? _flushSkinCosmetics;
+    private readonly string _inventorySchema;
 
     public ShipCosmeticsMgrRpcService(GameStoreCache? store = null, GameStoreCache? logoStore = null, PgItemStore? items = null,
-        NpgsqlDataSource? source = null, ShipCosmeticsCatalog? catalog = null, Func<long>? nowUnixMs = null, Action<long, long, long?>? shipSkinChanged = null, Action<long, long>? skinLicenseActivated = null, Func<long, Item, long, CancellationToken, ValueTask>? inventoryItemConsumed = null)
+        NpgsqlDataSource? source = null, ShipCosmeticsCatalog? catalog = null, Func<long>? nowUnixMs = null, Action<long, long, long?>? shipSkinChanged = null, Action<long, long>? skinLicenseActivated = null, Func<long, Item, long, CancellationToken, ValueTask>? inventoryItemConsumed = null,
+        Func<CancellationToken, Task<bool>>? flushSkinCosmetics = null, string inventorySchema = PgItemStore.DefaultSchema)
     {
         _store = store;
         _logoStore = logoStore ?? store;
@@ -37,6 +40,8 @@ public sealed class ShipCosmeticsMgrRpcService : IService
         _shipSkinChanged = shipSkinChanged;
         _skinLicenseActivated = skinLicenseActivated;
         _inventoryItemConsumed = inventoryItemConsumed;
+        _flushSkinCosmetics = flushSkinCosmetics;
+        _inventorySchema = inventorySchema;
     }
 
     public string Name => "shipCosmeticsMgr";
@@ -221,7 +226,7 @@ public sealed class ShipCosmeticsMgrRpcService : IService
             plan.Add((item, license));
         }
         var previousOverrides = new Dictionary<long, JsonObject?>();
-        var consumedItems = new List<(Item Item, SkinLicenseDefinition License, long RemainingQuantity)>();
+        var consumedItems = new List<(Item Item, SkinLicenseDefinition License, long RemainingQuantity, Guid IntentId)>();
         try
         {
             await using var connection = await _source.OpenConnectionAsync(call.Cancellation);
@@ -240,22 +245,44 @@ public sealed class ShipCosmeticsMgrRpcService : IService
                 var path = OverridePath(characterId, entry.License.SkinId);
                 previousOverrides[entry.License.SkinId] = _store.Read("shipCosmetics", path).Data as JsonObject;
                 var skin = _catalog.Skins[entry.License.SkinId];
-                var write = _store.Write("shipCosmetics", path, new JsonObject
+                var activatedAt = _now();
+                var intentId = Guid.NewGuid();
+                var overrideRecord = new JsonObject
                 {
                     ["skinID"] = entry.License.SkinId, ["licenseTypeID"] = entry.License.LicenseTypeId,
                     ["skinMaterialID"] = entry.License.SkinMaterialId > 0 ? entry.License.SkinMaterialId : skin.SkinMaterialId,
                     ["expiresAtFileTime"] = entry.License.DurationDays > 0 ? FileTimeAfterDays(entry.License.DurationDays) : null,
-                    ["isSingleUse"] = entry.License.IsSingleUse, ["revoked"] = false, ["updatedAt"] = NowIso(),
+                    ["isSingleUse"] = entry.License.IsSingleUse, ["revoked"] = false,
+                    ["updatedAt"] = DateTimeOffset.FromUnixTimeMilliseconds(activatedAt).ToString("O", CultureInfo.InvariantCulture),
+                    ["activationIntentId"] = intentId.ToString("D"),
                     ["source"] = "shipCosmeticsMgr.ActivateSkinLicense",
-                });
+                };
+                var write = _store.Write("shipCosmetics", path, overrideRecord);
                 if (!write.Success) Notify("That SKIN license could not be activated.");
+                await SkinLicenseActivationIntents.InsertAsync(connection, transaction, _inventorySchema,
+                    intentId, characterId, entry.License.SkinId, path, overrideRecord.ToJsonString(), activatedAt,
+                    call.Cancellation);
                 if (locked!.Quantity == 1) await _items.DeleteAsync(connection, transaction, locked.Id, call.Cancellation);
                 else await _items.SetQuantityAsync(connection, transaction, locked.Id, locked.Quantity - 1, call.Cancellation);
-                consumedItems.Add((locked, entry.License, locked.Quantity - 1));
+                consumedItems.Add((locked, entry.License, locked.Quantity - 1, intentId));
             }
             await transaction.CommitAsync(call.Cancellation);
         }
         catch { RestoreOverrides(characterId, previousOverrides); throw; }
+        try
+        {
+            var persisted = _flushSkinCosmetics is null
+                ? await FlushSkinCosmeticsAsync(CancellationToken.None)
+                : await _flushSkinCosmetics(CancellationToken.None);
+            if (persisted)
+                await SkinLicenseActivationIntents.CompleteAsync(_source!, _inventorySchema,
+                    consumedItems.Select(entry => entry.IntentId).ToArray(), CancellationToken.None);
+        }
+        catch (Exception error)
+        {
+            // The inventory transaction also committed the replayable intent, so a later flush or startup recovery can finish the grant.
+            Console.Error.WriteLine($"eve-host: SKIN activation GameStore flush failed: {error.Message}");
+        }
         foreach (var entry in consumedItems)
         {
             if (_inventoryItemConsumed is not null)
@@ -263,6 +290,12 @@ public sealed class ShipCosmeticsMgrRpcService : IService
             _skinLicenseActivated?.Invoke(characterId, entry.License.SkinId);
         }
         return PyNone.Instance;
+    }
+
+    private async Task<bool> FlushSkinCosmeticsAsync(CancellationToken cancellationToken)
+    {
+        await _store!.FlushTableAsync("shipCosmetics", cancellationToken);
+        return true;
     }
 
     private void RestoreOverrides(long characterId, IReadOnlyDictionary<long, JsonObject?> previousOverrides)

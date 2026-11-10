@@ -3,6 +3,7 @@ using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Planets;
+using Eve.Services;
 using Eve.Space;
 using Eve.Ships;
 
@@ -676,6 +677,76 @@ public class SpaceContainerTests
         await restarted.RestoreAsync((int)system);
         Assert.Equal(spawnCount + 1, rig.Sim.Heard.OfType<SimSpawn>().Count(spawn => spawn.Ship.ShipId == launched.Id));
         Assert.Equal(spaceItem.Position, (await rig.SpaceItems.GetAsync(launched.Id))!.Position);
+    }
+
+    [PgFact]
+    public async Task Launching_from_a_space_container_is_refused_while_the_pilot_is_warping()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (flying, can) = await WithACanAsync(rig);
+        var activeShip = (await rig.Items.GetAsync(flying.Session.GetInt("shipid")!.Value))!;
+        var launchable = (await rig.Ships.GrantAsync(flying.Character.CharacterId, activeShip.TypeId, 1, singleton: true))!
+            .Single().After;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Items.MoveAsync(connection, transaction, launchable.Id, can, 0);
+            await transaction.CommitAsync();
+        }
+
+        await rig.Space.WarpAsync(flying.Session, 40_491_233, 0, CancellationToken.None);
+        Assert.True(rig.Space.IsWarping(flying.Session));
+        var before = await rig.Items.GetAsync(launchable.Id);
+
+        IService eject = new Eve.Host.EjectRpcService((call, sourceId, itemId, token) => new ValueTask(
+            rig.Containers.LaunchShipOrContainerFromWreckOrContainerAsync(call.Session, sourceId, itemId, token)));
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await eject.CallAsync(new ServiceCall
+            {
+                Method = "LaunchShipOrContainerFromWreckOrContainer",
+                Args = [new PyLong(can), new PyLong(launchable.Id)],
+                Session = flying.Session,
+            }));
+
+        Assert.Equal("ShipInWarp", UserError(error).Name);
+        Assert.Equal(before, await rig.Items.GetAsync(launchable.Id));
+        Assert.Null(await rig.SpaceItems.GetAsync(launchable.Id));
+        Assert.DoesNotContain(rig.Sim.Heard.OfType<SimSpawn>(), spawn => spawn.Ship.ShipId == launchable.Id);
+    }
+
+    [PgFact]
+    public async Task Launch_in_progress_is_refused_if_warp_starts_before_the_inventory_commit()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (flying, can) = await WithACanAsync(rig);
+        var activeShip = (await rig.Items.GetAsync(flying.Session.GetInt("shipid")!.Value))!;
+        var launchable = (await rig.Ships.GrantAsync(flying.Character.CharacterId, activeShip.TypeId, 1, singleton: true))!
+            .Single().After;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Items.MoveAsync(connection, transaction, launchable.Id, can, 0);
+            await transaction.CommitAsync();
+        }
+
+        var positionStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var positionRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        rig.Sim.PositionOfCommandStarted = positionStarted;
+        rig.Sim.PositionOfCommandRelease = positionRelease;
+        var before = await rig.Items.GetAsync(launchable.Id);
+        var launch = rig.Containers.LaunchShipOrContainerFromWreckOrContainerAsync(
+            flying.Session, can, launchable.Id, CancellationToken.None);
+        await positionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await rig.Space.WarpAsync(flying.Session, 40_491_233, 0, CancellationToken.None);
+        Assert.True(rig.Space.IsWarping(flying.Session));
+        positionRelease.SetResult();
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () => await launch);
+
+        Assert.Equal("ShipInWarp", UserError(error).Name);
+        Assert.Equal(before, await rig.Items.GetAsync(launchable.Id));
+        Assert.Null(await rig.SpaceItems.GetAsync(launchable.Id));
+        Assert.DoesNotContain(rig.Sim.Heard.OfType<SimSpawn>(), spawn => spawn.Ship.ShipId == launchable.Id);
     }
 
     [PgFact]

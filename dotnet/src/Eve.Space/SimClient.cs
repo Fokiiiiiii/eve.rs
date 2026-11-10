@@ -25,7 +25,7 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     private readonly CancellationTokenSource _stop = new();
     // MaxFrame bounds each frame; 64 queued frames cap retained payload at about 64 MiB.
     internal const int OutboundQueueCapacity = 64;
-    private readonly Channel<byte[]> _outbox = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(OutboundQueueCapacity)
+    private readonly Channel<OutboundFrame> _outbox = Channel.CreateBounded<OutboundFrame>(new BoundedChannelOptions(OutboundQueueCapacity)
     {
         SingleReader = true,
         FullMode = BoundedChannelFullMode.Wait,
@@ -61,6 +61,8 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     private Task? _run;
     private volatile bool _connected;
     private TimeSpan _retryDelay = RetryDelay;
+
+    private sealed record OutboundFrame(byte[] Bytes, TaskCompletionSource<bool>? Written);
 
     public SimClient(Func<CancellationToken, Task<Stream>> connect, Action<string>? log = null)
         : this(connect, log, null)
@@ -190,9 +192,7 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         lock (_pendingGate)
         {
             // whatever was queued for a link that broke is stale
-            while (_outbox.Reader.TryRead(out _))
-            {
-            }
+            FailQueuedOutboundsLocked("the simulation link broke before the queued message was written");
             _outboundFailure = null;
             _overloadedLinkLostPending = false;
             _activeSession = session;
@@ -200,9 +200,19 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         }
         var writer = Task.Run(async () =>
         {
-            await foreach (var frame in _outbox.Reader.ReadAllAsync(session.Token))
+            await foreach (var outbound in _outbox.Reader.ReadAllAsync(session.Token))
             {
-                await stream.WriteAsync(frame, session.Token);
+                try
+                {
+                    await stream.WriteAsync(outbound.Bytes, session.Token);
+                    outbound.Written?.TrySetResult(true);
+                }
+                catch (Exception error)
+                {
+                    outbound.Written?.TrySetException(new SimUnavailableException($"the link to the simulation broke before the frame was written: {error.Message}"));
+                    session.Cancel();
+                    throw;
+                }
             }
         }, session.Token);
         try
@@ -456,6 +466,7 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         {
             _connected = false;
             _activeSession = null;
+            FailQueuedOutboundsLocked("the simulation link closed before the queued message was written");
             FailPendingLocked();
         }
     }
@@ -469,9 +480,16 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
             _connected = false;
             _activeSession = null;
             _overloadedLinkLostPending = false;
+            FailQueuedOutboundsLocked("the simulation link broke before the queued message was written");
             FailPendingLocked();
             return true;
         }
+    }
+
+    private void FailQueuedOutboundsLocked(string message)
+    {
+        while (_outbox.Reader.TryRead(out var outbound))
+            outbound.Written?.TrySetException(new SimUnavailableException(message));
     }
 
     private void FailPendingLocked()
@@ -559,6 +577,7 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     private SimUnavailableException? TryEnqueueLocked(
         SimMessage message,
+        TaskCompletionSource<bool>? written,
         out CancellationTokenSource? sessionToCancel,
         out bool overloaded)
     {
@@ -566,7 +585,7 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         overloaded = false;
         if (_outboundFailure is { } failed)
             return failed;
-        if (_outbox.Writer.TryWrite(EncodeOutbound(message)))
+        if (_outbox.Writer.TryWrite(new OutboundFrame(EncodeOutbound(message), written)))
             return null;
 
         var failure = new SimUnavailableException($"outbound queue is full ({OutboundQueueCapacity} frames)");
@@ -600,13 +619,35 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         {
             if (!_connected)
                 return; // nobody is there to hear it
-            failure = TryEnqueueLocked(message, out sessionToCancel, out overloaded);
+            failure = TryEnqueueLocked(message, null, out sessionToCancel, out overloaded);
         }
         if (failure is null)
             return;
         // One-way operations have no result channel; Lost is their recovery signal.
         if (overloaded)
             FailOverloadedLink(failure, sessionToCancel);
+    }
+
+    private async Task<bool> TrySendOneWayAsync(SimMessage message, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var written = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        SimUnavailableException? failure;
+        CancellationTokenSource? sessionToCancel;
+        bool overloaded;
+        lock (_pendingGate)
+        {
+            if (!_connected)
+                return false;
+            failure = TryEnqueueLocked(message, written, out sessionToCancel, out overloaded);
+        }
+        if (failure is not null)
+        {
+            if (overloaded)
+                FailOverloadedLink(failure, sessionToCancel);
+            return false;
+        }
+        return await written.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<bool> SendAsync(SimMessage message, CancellationToken cancellationToken)
@@ -624,7 +665,7 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                 var session = _activeSession;
                 if (!_connected || session is null || session.IsCancellationRequested)
                     return false;
-                if (_outbox.Writer.TryWrite(frame))
+                if (_outbox.Writer.TryWrite(new OutboundFrame(frame, null)))
                     return true;
                 sessionToken = session.Token;
             }
@@ -716,7 +757,7 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                         () => CancelPending(_pendingGate, pending, session, completion, completion, cancellationToken),
                         () =>
                         {
-                            failure = TryEnqueueLocked(request, out sessionToCancel, out overloaded);
+                            failure = TryEnqueueLocked(request, null, out sessionToCancel, out overloaded);
                             if (failure is not null)
                                 TryRemoveExact(pending, session, completion);
                         });
@@ -1037,7 +1078,7 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                         () => CancelPending(_pendingGate, _adjusting, request.RequestId, pending, completion, cancellationToken),
                         () =>
                         {
-                            failure = TryEnqueueLocked(request, out sessionToCancel, out overloaded);
+                            failure = TryEnqueueLocked(request, null, out sessionToCancel, out overloaded);
                             if (failure is not null)
                                 TryRemoveExact(_adjusting, request.RequestId, pending);
                         });
@@ -1137,6 +1178,9 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     public void SetAnalysisBeaconState(long deployableId, SimAnalysisBeaconState state) => Send(new SimSetAnalysisBeaconState(deployableId, state));
 
     public void SetSlimField(long itemId, string fieldName, SimSlimValue value) => Send(new SimSetSlimField(itemId, fieldName, value));
+
+    public Task<bool> TrySetSlimFieldAsync(long itemId, string fieldName, SimSlimValue value, CancellationToken cancellationToken = default) =>
+        TrySendOneWayAsync(new SimSetSlimField(itemId, fieldName, value), cancellationToken);
 
     public void PlaceInhibitor(SimPlaceInhibitor inhibitor) => Send(inhibitor);
 

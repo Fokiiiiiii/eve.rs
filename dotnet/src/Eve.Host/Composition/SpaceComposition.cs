@@ -341,6 +341,8 @@ internal sealed partial class CharacterServicesComposition
             ships.TransitionEventWriter = spaceSessions.Transitions.WriteEventAsync;
             spaceSessions.SafetyLevelOf = (character, token) => crimewatchStore.SafetyOfAsync(character, token);   // the ship safety the pilot has set
             spaceSessions.Aggression = async (request, token) => await crimewatchRuntime.RecordAggressionAsync(request, token);   // timers and flag changes for an attack
+            spaceSessions.ModuleAggression = async (request, moduleId, token) => await crimewatchRuntime.RecordModuleAggressionAsync(request, moduleId, token);
+            spaceSessions.ModuleCombatActivityEnded = crimewatchRuntime.EndModuleCombatActivityAsync;
             spaceSessions.SecurityStatusOf = securityStatusOf;   // the ship in space shows it
             spaceSessions.CrimewatchStateOf = crimewatchRuntime.StateOfAsync;
             spaceSessions.RecordNpcTimerAsync = crimewatchRuntime.RecordNpcTimerAsync;

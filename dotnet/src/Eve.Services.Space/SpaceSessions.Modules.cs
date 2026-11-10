@@ -519,13 +519,21 @@ public sealed partial class SpaceSessions
                     _log?.Invoke($"crimewatch could not record remote assistance by {characterId} on {remoteRequest.Target}: {error.Message}");
                 }
             }
-            if (victim is not null && securityClass is { } crimeWhere && Aggression is { } record)
+            if (victim is not null && securityClass is { } crimeWhere)
             {
                 // Crimewatch owns attack timers and flags; the module runs whatever it keeps
                 try
                 {
                     var security = _systems.Get(pilot.SolarSystemId)?.Security ?? 0;
-                    await record(new AggressionRequest(characterId, victim.CharacterId, victim.ShipId, pilot.SolarSystemId, security, crimeWhere, await IsCapsuleAsync(victim, crimeWhere, cancellationToken)), cancellationToken);
+                    var request = new AggressionRequest(characterId, victim.CharacterId, victim.ShipId, pilot.SolarSystemId, security, crimeWhere, await IsCapsuleAsync(victim, crimeWhere, cancellationToken));
+                    if (ModuleAggression is { } recordModule)
+                    {
+                        await recordModule(request, moduleId, cancellationToken);
+                    }
+                    else if (Aggression is { } record)
+                    {
+                        await record(request, cancellationToken);
+                    }
                 }
                 catch (Exception error) when (error is not OperationCanceledException)
                 {
@@ -558,6 +566,12 @@ public sealed partial class SpaceSessions
     /// Crimewatch (timers, flags, what a crime brings) hangs here.
     /// </summary>
     public Func<AggressionRequest, CancellationToken, Task>? Aggression { get; set; }
+
+    /// <summary>Host records the accepted offensive module and associates Crimewatch timers with its simulation lifetime.</summary>
+    public Func<AggressionRequest, long, CancellationToken, Task>? ModuleAggression { get; set; }
+
+    /// <summary>Host ends the Crimewatch combat activity when the simulation reports the final module cycle.</summary>
+    public Func<long, long, CancellationToken, Task>? ModuleCombatActivityEnded { get; set; }
 
     public Func<AggressionRequest, int, CancellationToken, Task<PolicyDecision>>? RemoteAssistancePolicyOf { get; set; }
 

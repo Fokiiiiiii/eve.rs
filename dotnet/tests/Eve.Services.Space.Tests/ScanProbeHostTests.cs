@@ -824,6 +824,49 @@ public class ScanProbeHostTests
     }
 
     [PgFact]
+    public async Task A_ship_with_active_jump_cloak_is_hidden_from_directional_and_probe_scans_until_it_expires()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _, launchers) = await LaunchersOfAsync(rig, 18_639, 30_028, 8);
+        const long jumpCloakedShip = 980050000079;
+        const long visibleShip = 980050000080;
+        var targetSession = new ClientSession { SessionId = 900_000_000_079 };
+        var system = (int)session.GetInt("solarsystemid2")!.Value;
+        var cloakEnds = Py.FileTimeFromUnixMs(rig.Now) + Eve.Services.Space.SpaceSessions.JumpCloakTicks;
+        rig.Space.EnterJumpCloakedPilotForTest(targetSession, 900_000_000_079, jumpCloakedShip, 586, system, cloakEnds);
+
+        rig.Sim.DirectionalAnswer =
+        [
+            Thing(jumpCloakedShip, 1, 586, 1e9, 0, 0),
+            Thing(visibleShip, 1, 586, 1.1e9, 0, 0),
+        ];
+        var directional = await ConeAsync(rig, session, Math.PI * 2, 14.3 * 149_597_870_700.0, 1, 0, 0);
+        Assert.Equal(new long[] { visibleShip }, directional);
+
+        await rig.Space.LaunchAsync(session, launchers[0], 4, CancellationToken.None);
+        var probes = Placed(rig).Select(probe => probe.ProbeId).ToArray();
+        rig.Sim.ScanTargetsAnswer =
+        [
+            ProbeFrigate(jumpCloakedShip, [0, 0, 0]),
+            ProbeFrigate(visibleShip, [0, 0, 0]),
+        ];
+        double[][] spread = [[1e10, 0, 1e10], [-1e10, 0, 1e10], [-1e10, 0, -1e10], [1e10, 0, -1e10]];
+        Events.Of(session);
+        await rig.ProbeScans.RequestScansAsync(session, ScanRequest(probes.Select((id, index) => (id, spread[index], 1)).ToArray()), CancellationToken.None);
+        rig.Now += 1_250;
+        await rig.Scheduler.RunDueAsync();
+        rig.Now += 7_500;
+        await rig.Scheduler.RunDueAsync();
+        var (results, absent) = ResultsTold(Events.Of(session));
+        Assert.Equal(new long[] { visibleShip }, results.Select(row => Events.Number(Field(row, "id"))).ToArray());
+        Assert.Empty(absent);
+
+        rig.Now += 60_001;
+        directional = await ConeAsync(rig, session, Math.PI * 2, 14.3 * 149_597_870_700.0, 1, 0, 0);
+        Assert.Equal(new long[] { jumpCloakedShip, visibleShip }.OrderBy(id => id), directional.OrderBy(id => id));
+    }
+
+    [PgFact]
     public async Task The_range_of_the_scan_bounds_what_a_cone_finds_and_a_scan_with_no_direction_finds_nothing()
     {
         await using var rig = await Rig.CreateAsync();

@@ -1,3 +1,4 @@
+using Eve.Inventory;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Core;
@@ -15,19 +16,22 @@ namespace Eve.Host;
 public sealed class StructureMoonAuthority
 {
     private const long StationManagerRole = 2048;
+    private const int MoonDrillTypeId = 45_009;
 
     private readonly NpgsqlDataSource _source;
     private readonly StructureStore _structures;
+    private readonly PgItemStore _items;
     private readonly MoonExtractions _moons;
     private readonly MoonRulesSource _rules;
     private readonly StructurePilotStore _pilots;
     private readonly Func<long, long, CancellationToken, ValueTask<bool>> _hasMoonAccess;
 
-    public StructureMoonAuthority(NpgsqlDataSource source, StructureStore structures, MoonExtractions moons, MoonRulesSource rules,
+    public StructureMoonAuthority(NpgsqlDataSource source, StructureStore structures, PgItemStore items, MoonExtractions moons, MoonRulesSource rules,
         StructurePilotStore pilots, Func<long, long, CancellationToken, ValueTask<bool>> hasMoonAccess)
     {
         _source = source;
         _structures = structures;
+        _items = items;
         _moons = moons;
         _rules = rules;
         _pilots = pilots;
@@ -162,6 +166,16 @@ public sealed class StructureMoonAuthority
             throw StructureDefenseDenied();
         var services = await _structures.ServicesAsync(connection, transaction, structureId, call.Cancellation);
         if (services.GetValueOrDefault(Eve.Structures.StructureServiceIds.MoonMining) != ServiceState.Online)
+            throw DrillRequired();
+        var onlineDrills = (await _structures.ServiceModuleFuelCyclesAsync(connection, transaction, structureId, call.Cancellation))
+            .Where(module => module.ModuleTypeId == MoonDrillTypeId && module.ServiceIds.Contains(Eve.Structures.StructureServiceIds.MoonMining))
+            .Select(module => module.ModuleId)
+            .ToHashSet();
+        if (onlineDrills.Count == 0)
+            throw DrillRequired();
+        var fittedDrill = (await _items.InContainerAsync(connection, transaction, structureId, call.Cancellation))
+            .Any(item => onlineDrills.Contains(item.Id) && item.TypeId == MoonDrillTypeId && item.Flag is >= 164 and <= 171);
+        if (!fittedDrill)
             throw DrillRequired();
         return record;
     }

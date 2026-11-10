@@ -3176,6 +3176,57 @@ fn moon_chunk_ball_targets_the_refinery_module_and_replays_each_drill_phase() {
 }
 
 #[test]
+fn a_moon_chunk_without_a_drill_is_placed_and_never_plays_a_drill_effect() {
+    use crate::link::MoonChunkPlacement;
+
+    const CHUNK: i64 = 1_040_000_000_103;
+    const MOON: i64 = 40_000_004;
+    let mut scene = scene();
+    scene.bind(SESSION, NOON);
+    scene.place_structure(
+        crate::link::StructurePlacement {
+            name: "Athanor".to_string(),
+            type_id: 35_835,
+            group_id: 1_406,
+            modules: vec![],
+            closest_moon_id: MOON,
+            ..structure_placement(&scene, NOON)
+        },
+        NOON,
+    );
+
+    let chunk = MoonChunkPlacement {
+        chunk_id: CHUNK,
+        solar_system_id: scene.solar_system_id(),
+        name: "Moon chunk".to_string(),
+        type_id: 46_030,
+        group_id: 1_940,
+        category_id: 25,
+        owner_id: 1,
+        graphic_id: 12_345,
+        position: [100.0, 200.0, 300.0],
+        direction: [0.0, 0.0, 1.0],
+        radius: 10_000.0,
+        source_structure_id: STRUCTURE,
+        module_id: 0,
+        module_type_id: 0,
+        moon_id: MOON,
+        phase: "tractor_phase".to_string(),
+        phase_started_filetime: NOON,
+    };
+
+    let added = scene.upsert_moon_chunk(chunk.clone(), NOON + SECOND);
+    assert_eq!(action_names(&added[0]), ["AddBalls2"]);
+    assert!(scene.system.bodies.iter().any(|body| body.id == CHUNK));
+
+    let mut stasis = chunk;
+    stasis.phase = "stasis_phase".to_string();
+    stasis.phase_started_filetime = NOON + 3 * SECOND;
+    let updated = scene.upsert_moon_chunk(stasis, NOON + 4 * SECOND);
+    assert!(updated.iter().all(|out| !action_names(out).contains(&"OnSpecialFX".to_string())));
+}
+
+#[test]
 fn a_hit_on_a_structure_is_cut_to_its_layers_limit_each_second_and_an_emptied_shield_is_told_to_the_host_once()
  {
     let mut scene = scene();

@@ -77,6 +77,28 @@ fn moon_mining_link_messages_round_trip_the_drill_slim_and_chunk_lifecycle() {
 }
 
 #[test]
+fn moon_chunk_without_an_online_drill_round_trips_with_both_module_fields_zero() {
+    let mut message = messages()[2].clone();
+    let Message::UpsertMoonChunk(chunk) = &mut message else { panic!("upsert fixture changed") };
+    chunk.module_id = 0;
+    chunk.module_type_id = 0;
+
+    let frame = message.encode();
+    let decoded = Message::decode(&frame[4..]).unwrap();
+    assert_eq!(message, decoded);
+    assert_eq!(frame, decoded.encode());
+
+    for (module_id, module_type_id) in [(0, 45_009), (1_040_000_000_002, 0)] {
+        let mut partial = message.clone();
+        let Message::UpsertMoonChunk(chunk) = &mut partial else { panic!("upsert fixture changed") };
+        chunk.module_id = module_id;
+        chunk.module_type_id = module_type_id;
+        let frame = partial.encode();
+        assert!(matches!(Message::decode(&frame[4..]), Err(super::DecodeError::BadValue("moon chunk"))));
+    }
+}
+
+#[test]
 fn moon_mining_link_messages_reject_bad_phase_and_removal_effects() {
     let mut invalid_phase = messages()[2].clone();
     let Message::UpsertMoonChunk(chunk) = &mut invalid_phase else { panic!("upsert fixture changed") };

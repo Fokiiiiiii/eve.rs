@@ -54,6 +54,7 @@ public sealed partial class SpaceContainers
 
     /// <summary>A control tower's record never ends by time (its removal is the host's, see <see cref="UnanchorControlTowerAsync"/>).</summary>
     private const long NeverExpires = long.MaxValue;
+    internal const long NeverAnchored = long.MaxValue;
 
     /// <summary>The record kind of a Mobile Observatory (protocol 72): anchored by its durable job, pinging its system while it is anchored.</summary>
     internal const string ObservatoryKind = "mobile_observatory";
@@ -254,7 +255,10 @@ public sealed partial class SpaceContainers
             throw Refuse("Mobile Observatories cannot be anchored in deadspace.");
         }
 
-        var dropped = await _ships.DropDisruptorAsync(character, shipId, itemId, system, cancellationToken)
+        var corporation = (int)(session.GetInt("corpid") ?? 0);
+        var alliance = (int)(session.GetInt("allianceid") ?? 0);
+        var deployedOwnerId = tower && corporation > 0 ? corporation : character;
+        var dropped = await _ships.DropDisruptorAsync(character, shipId, itemId, system, cancellationToken, deployedOwnerId)
             ?? throw Refuse("That item is no longer in your ship's cargo hold.");
         var (deployable, changes) = dropped;
         foreach (var change in changes)
@@ -269,14 +273,14 @@ public sealed partial class SpaceContainers
             : beacon
                 ? (long)BeaconActivationDelay(item.TypeId).TotalMilliseconds
                 : (long)Math.Max(0, type.Attributes.GetValueOrDefault(AnchoringDelayAttribute));
-        var activateAt = now + anchoringDelayMs;
+        var activateAt = tower ? NeverAnchored : now + anchoringDelayMs;
         var lifetime = inhibitor ? InhibitorLifetime : observatory ? ObservatoryLifetime : beacon ? BeaconLifetime(item.TypeId) : LifetimeOf(item.TypeId);
         var expiresAt = tower ? NeverExpires : now + (long)lifetime.TotalMilliseconds;
-        var corporation = (int)(session.GetInt("corpid") ?? 0);
-        var alliance = (int)(session.GetInt("allianceid") ?? 0);
         await _deployed.SaveAsync(new DeployedRecord(
-            deployable.Id, inhibitor ? InhibitorKind : beacon ? BeaconKind : observatory ? ObservatoryKind : tower ? ControlTowerKind : DisruptorKind, system, type.Name, item.TypeId, type.GroupId, position, radius, character, corporation,
+            deployable.Id, inhibitor ? InhibitorKind : beacon ? BeaconKind : observatory ? ObservatoryKind : tower ? ControlTowerKind : DisruptorKind, system, type.Name, item.TypeId, type.GroupId, position, radius, deployable.OwnerId, corporation,
             alliance, shipId, expiresAt, activateAt, range), cancellationToken);
+        if (tower)
+            await _deployed.SetTowerStateAsync(deployable.Id, TowerUnanchored, cancellationToken);
         if (inhibitor)
         {
             _sim.PlaceInhibitor(new SimPlaceInhibitor(
@@ -295,14 +299,15 @@ public sealed partial class SpaceContainers
         else if (tower)
         {
             _sim.PlaceControlTower(new SimPlaceControlTower(
-                deployable.Id, system, type.Name, item.TypeId, type.GroupId, position, radius, anchoringDelayMs <= 0, character, corporation, alliance, shipId));
+                deployable.Id, system, type.Name, item.TypeId, type.GroupId, position, radius, false, deployable.OwnerId, corporation, alliance, shipId));
+            SetControlTowerSlimState(deployable.Id, StructureUnanchored, null);
         }
         else
         {
             _sim.PlaceDisruptor(new SimPlaceDisruptor(
                 deployable.Id, system, type.Name, item.TypeId, type.GroupId, position, radius, range, anchoringDelayMs <= 0, character, corporation, alliance, shipId));
         }
-        if (anchoringDelayMs > 0 || tower)
+        if (anchoringDelayMs > 0 && !tower)
         {
             await _scheduler.ScheduleAsync(new JobSpec(AnchorJob, activateAt)
             {
@@ -312,15 +317,6 @@ public sealed partial class SpaceContainers
             }, cancellationToken);
         }
 
-        if (tower && _scheduler is not null)
-        {
-            await _scheduler.ScheduleAsync(new JobSpec(ControlTowerFuelJob, activateAt)
-            {
-                Key = $"tower:{deployable.Id}",
-                Payload = new ControlTowerFuelDue(deployable.Id),
-                OnDuplicate = OnDuplicate.Replace,
-            }, cancellationToken);
-        }
         return deployable.Id;
     }
 
@@ -471,6 +467,14 @@ public sealed partial class SpaceContainers
             _log?.Invoke($"the beacon {deployableId} was not lit: an anchored Mobile Cynosural Inhibitor covers it");
             await _deployed.SaveAsync(record with { ActivateAtMs = NeverLit }, cancellationToken);
             return;
+        }
+        if (record.Kind == ControlTowerKind)
+        {
+            var towerState = await _deployed.TowerStateAsync(deployableId, cancellationToken);
+            if (towerState != TowerAnchoring || record.ActivateAtMs == NeverAnchored || record.ActivateAtMs > _nowUnixMs())
+                return;
+            await _deployed.SetTowerStateAsync(deployableId, TowerOffline, cancellationToken);
+            SetControlTowerSlimState(deployableId, StructureAnchored, null);
         }
         _sim.SetDisruptorActive(deployableId, true);
         if (record.Kind == ObservatoryKind && _scheduler is not null)

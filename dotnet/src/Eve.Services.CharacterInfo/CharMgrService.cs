@@ -36,6 +36,16 @@ public sealed record CharMgrPersonalData(
 }
 
 public sealed record CharMgrOrganizationInfo(long CorporationId, long AllianceId, long WarFactionId);
+
+/// <summary>The public character and current affiliation fields the EVE chat roster publishes.</summary>
+public sealed record CharMgrChatUserData(
+    long CharacterId,
+    string CharacterName,
+    int TypeId,
+    bool IsFemale,
+    long CorporationId,
+    long AllianceId,
+    long WarFactionId);
 [Service("charMgr")]
 public sealed partial class CharMgrService(
     PgCharacterStore characters,
@@ -166,6 +176,29 @@ public sealed partial class CharMgrService(
         readCharacterById is null
             ? await characters.GetAsync(characterId, cancellationToken)
             : await readCharacterById(characterId, cancellationToken);
+
+    /// <summary>Reads the public identity and live organization projection used by XMPP roster metadata.</summary>
+    public async ValueTask<CharMgrChatUserData?> ReadChatUserDataAsync(long characterId, CancellationToken cancellationToken = default)
+    {
+        if (characterId <= 0 || await ReadCharacterByIdAsync(characterId, cancellationToken) is not { } character)
+            return null;
+
+        var organization = readOrganizationInfo is null
+            ? null
+            : (await readOrganizationInfo([character], cancellationToken)).GetValueOrDefault(character.Id);
+        var warFactionId = organization?.WarFactionId
+            ?? (readMilitiaFactionId is null
+                ? character.DirectFactionId ?? 0
+                : await readMilitiaFactionId(character, cancellationToken) ?? 0);
+        return new CharMgrChatUserData(
+            character.Id,
+            character.Name,
+            character.TypeId,
+            character.Gender != 0,
+            organization?.CorporationId ?? character.CorporationId,
+            organization?.AllianceId ?? character.AllianceId ?? 0,
+            Math.Max(0, warFactionId));
+    }
 
     private async ValueTask<Character?> CharacterAsync(ServiceCall call)
     {

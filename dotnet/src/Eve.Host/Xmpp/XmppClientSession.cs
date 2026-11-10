@@ -209,7 +209,7 @@ internal sealed class XmppClientSession(XmppChatHub hub, Action<string> send, Ac
         {
             var requested = child.Child("resource")?.Text.Trim() ?? "";
             var resource = requested.Length > 0 && requested.Length <= 64 ? requested : "eveclient";
-            var link = hub.Bind(_characterId, resource, send, () => closeWith(null));
+            var link = await hub.BindAsync(_characterId, resource, send, () => closeWith(null), cancellationToken).ConfigureAwait(false);
             if (link is null)
             {
                 Error(iq, "cancel", "item-not-found");
@@ -223,6 +223,15 @@ internal sealed class XmppClientSession(XmppChatHub hub, Action<string> send, Ac
         if (type is "set" && child?.Name == "session" && _phase == Phase.Bound)
         {
             send($"<iq type='result' id='{XmppXml.Escape(id)}'/>");
+            return;
+        }
+        if (type == "get" && child?.Name == "query" && child.Attribute("xmlns") == "urn:xmpp:eve_user_data"
+            && _phase == Phase.Bound && _link is { } userDataLink)
+        {
+            var requestedJid = child.Attribute("jid") ?? userDataLink.Jid;
+            var userData = await hub.ReadChatUserDataAsync(XmppXml.CharacterId(requestedJid), cancellationToken).ConfigureAwait(false);
+            var userDataXml = hub.UserDataXml(XmppXml.CharacterId(requestedJid), userData);
+            send($"<iq type='result' id='{XmppXml.Escape(id)}' from='{XmppXml.Escape(hub.Settings.Domain)}' to='{XmppXml.Escape(userDataLink.Jid)}'><query xmlns='urn:xmpp:eve_user_data' jid='{XmppXml.Escape(requestedJid)}'>{userDataXml}</query></iq>");
             return;
         }
         if (type == "set" && child?.Name == "query" && child.Attribute("xmlns") == "http://jabber.org/protocol/muc#admin"

@@ -23,6 +23,7 @@ public partial class HostServerTests
                 session.Set("allianceid", new PyLong(99));
                 session.Set("corpid", new PyLong(100));
                 session.Set("fleetid", new PyLong(101));
+                session.Set("warfactionid", new PyLong(500_001));
                 session.Set("corprole", new PyLong(Eve.Corporations.CorporationRoles.Director));
                 sessions.Add(session);
             });
@@ -39,8 +40,11 @@ public partial class HostServerTests
         var channels = Assert.IsType<PyList>(
             await HostRpcAsync(front, open, 4, "XmppChatMgr", "ResyncSystemChannelAccess"));
         Assert.Equal(
-            ["wormhole_31000001", "alliance_99", "corp_100", "fleet_101"],
+            ["wormhole_31000001", "alliance_99", "corp_100", "fleet_101", "faction_500001"],
             channels.Items.Select(channel => Encoding.ASCII.GetString(Assert.IsType<PyBytes>(channel).Value.Span)));
+
+        var militiaLink = Assert.IsType<XmppLink>(hub.Bind(42, "militia", _ => { }, () => { }));
+        Assert.True(hub.TryJoinRoom(militiaLink, "faction_500001", "Pilot", "", out _));
 
         Assert.Same(PyNone.Instance,
             await HostRpcAsync(front, open, 5, "XmppChatMgr", "CreatePlayerOwnedChannel", new PyStr("private room")));

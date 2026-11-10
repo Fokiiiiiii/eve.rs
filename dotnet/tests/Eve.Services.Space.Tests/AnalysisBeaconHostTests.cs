@@ -55,7 +55,10 @@ public sealed class AnalysisBeaconHostTests
         await AnalysisBeaconDirector.MigrateAsync(rig.Source, rig.SpaceSchema);
         var director = new AnalysisBeaconDirector(
             rig.Source, rig.SpaceSchema, AnalysisBeaconRules.LoadEmbedded(), scheduler ?? rig.Scheduler, bus ?? rig.Bus!, rig.Sim, rig.Ships, rig.Items, rig.Statics, rig.Space,
-            rig.Deployed, new SpaceDungeonNpcs(rig.Space), new NpcSelector(NpcAuthority.Load()), () => rig.Now);
+            rig.Deployed, new SpaceDungeonNpcs(rig.Space), new NpcSelector(NpcAuthority.Load()), () => rig.Now,
+            initialCharacterEnergy: (_, now) => CharacterEnergyState.Default(now),
+            characterEnergyChanged: (session, state) => session.SendNotification(
+                "OnCharacterEnergyChanged", "charid", new PyInt(session.CharacterId ?? 0), state.ToClientValue(rig.Now)));
         await director.AttachAsync();
         rig.Containers.LaunchAnalysisBeacon = director.LaunchAsync;
         rig.Containers.RegisterDeployedKind(AnalysisBeaconDirector.Kind, director.ExpireAsync, director.RestoreAsync);
@@ -165,7 +168,7 @@ public sealed class AnalysisBeaconHostTests
     {
         await using var rig = await Rig.CreateAsync();
         await rig.UseBusAsync();
-        await DirectorAsync(rig);
+        var director = await DirectorAsync(rig);
         var (session, _, beacon) = await PilotWithBeaconAsync(rig);
         var point = await rig.Space.DropPointAsync(session, AnalysisBeaconRules.DeployDistanceMeters, CancellationToken.None);
         Assert.NotNull(point);
@@ -278,6 +281,67 @@ public sealed class AnalysisBeaconHostTests
         Assert.Equal(3, complete.State.LinkState);
         Assert.Equal(shipId, complete.State.LinkedShipId);
         Assert.Equal(4, rig.Sim.Heard.OfType<SimSpawn>().Count());
+    }
+
+    [PgFact]
+    public async Task Linking_a_crab_updates_the_character_energy_rpc_and_notifies_the_linking_client()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await rig.UseBusAsync();
+        var director = await DirectorAsync(rig);
+        var (session, _, beacon) = await PilotWithBeaconAsync(rig);
+        await rig.Containers.LaunchFromShipAsync(session, beacon, CancellationToken.None);
+        await AdvanceAsync(rig, TwentySeconds);
+        var bound = await rig.BindBeyonceAsync(session);
+        var energyService = new Eve.Host.CharacterEnergyMgrRpcService(
+            nowUnixMs: () => rig.Now, persistedCharacterEnergy: director.ReadCharacterEnergyStateAsync);
+
+        static PyList EnergyFields(PyValue value)
+        {
+            var header = Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(value).Header);
+            Assert.Equal(new PyToken("characterenergy.characterEnergyState.CharacterEnergyState"), header.Items[0]);
+            var fields = Assert.IsType<PyList>(header.Items[1]);
+            Assert.Equal(6, fields.Items.Count);
+            Assert.IsType<PyLong>(fields.Items[1]);
+            Assert.All(fields.Items.Where((_, index) => index != 1), field =>
+                Assert.IsType<PyReal>(field));
+            return fields;
+        }
+
+        static double EnergyValue(PyValue value) => EnergyFields(value).Items[0] switch
+        {
+            PyInt integer => integer.Value,
+            PyReal real => real.Value,
+            _ => throw new InvalidOperationException("the character energy is not numeric"),
+        };
+
+        async Task<double> EnergyAsync(Eve.Host.CharacterEnergyMgrRpcService service) => EnergyValue(await service.CallAsync(new Eve.Services.ServiceCall
+            {
+                Method = "GetMyEnergyState",
+                Args = [],
+                Session = session,
+            }));
+
+        Assert.Equal(100d, await EnergyAsync(energyService));
+        Events.Of(session);
+
+        await rig.BeyonceCallAsync(session, "CallComponentFromClient", bound, new PyLong(beacon),
+            PyStrOfClient("linkWithShip"), PyStrOfClient("InitiateLink"));
+
+        var expectedEnergy = 100 - AnalysisBeaconRules.CharacterEnergyCostOf(StandardCrab);
+        Assert.Equal(expectedEnergy, await EnergyAsync(energyService), 8);
+        var changed = Assert.Single(Events.Of(session), notification => notification.Name == "OnCharacterEnergyChanged");
+        Assert.Equal("charid", changed.IdType);
+        Assert.Equal(new PyInt(session.CharacterId!.Value), changed.Args[0]);
+        var notifiedState = Assert.IsType<Eve.Marshal.PyObjectEx>(changed.Args[1]);
+        Assert.Equal(expectedEnergy, EnergyValue(notifiedState), 8);
+        Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(rig.Now)), EnergyFields(notifiedState).Items[1]);
+
+        var restartedStore = new AnalysisBeaconStore(rig.Source, rig.SpaceSchema);
+        var restartedEnergyService = new Eve.Host.CharacterEnergyMgrRpcService(nowUnixMs: () => rig.Now,
+            persistedCharacterEnergy: (characterId, template, token) =>
+                restartedStore.ReadCharacterEnergyAsync(characterId, template, rig.Now, token));
+        Assert.Equal(expectedEnergy, await EnergyAsync(restartedEnergyService), 8);
     }
 
     [PgFact]
@@ -530,9 +594,10 @@ public sealed class AnalysisBeaconHostTests
         {
             await using var connection = await rig.Source.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
-            var allowed = await store.TryConsumeLinkResourcesAsync(connection, transaction, character, system, typeId, rig.Now, CancellationToken.None);
+            var allowed = await store.TryConsumeLinkResourcesAsync(connection, transaction, character, system, typeId,
+                CharacterEnergyState.Default(rig.Now), rig.Now, CancellationToken.None);
             await transaction.CommitAsync();
-            return allowed;
+            return allowed.Allowed;
         }
 
         Assert.True(await Spend(characterId, systemId, StandardCrab));
@@ -546,6 +611,14 @@ public sealed class AnalysisBeaconHostTests
         var systemAttempts = await Task.WhenAll(Enumerable.Range(0, 40).Select(index => Spend(100_000 + index, systemId + 2, StandardCrab)));
         Assert.Equal(34, systemAttempts.Count(allowed => allowed));
         Assert.False(await Spend(100_100, systemId + 2, StandardCrab));
+
+        var sameCharacterAttempts = await Task.WhenAll(Enumerable.Range(0, 4)
+            .Select(_ => Spend(characterId + 2, systemId + 3, StandardCrab)));
+        Assert.Equal(3, sameCharacterAttempts.Count(allowed => allowed));
+        var depleted = await store.ReadCharacterEnergyAsync(characterId + 2,
+            CharacterEnergyState.Default(rig.Now), rig.Now, CancellationToken.None);
+        Assert.NotNull(depleted);
+        Assert.Equal(0d, depleted.EnergyLevel, 8);
 
         rig.Now += 22 * 60 * 60 * 1000L;
         Assert.True(await Spend(characterId, systemId, CarrierCrab));

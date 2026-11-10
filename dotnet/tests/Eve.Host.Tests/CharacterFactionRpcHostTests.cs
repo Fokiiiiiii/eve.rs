@@ -36,12 +36,12 @@ public partial class HostServerTests
             Py.Tuple(
                 new PyToken("characterenergy.characterEnergyState.CharacterEnergyState"),
                 Py.List(
-                    Py.Number(100),
+                    new PyReal(100),
                     new PyLong(Py.FileTimeFromUnixMs(FixedNowMs)),
-                    Py.Number(1),
-                    Py.Number(792),
-                    Py.Number(0),
-                    Py.Number(100))),
+                    new PyReal(1),
+                    new PyReal(792),
+                    new PyReal(0),
+                    new PyReal(100))),
             [],
             []);
 

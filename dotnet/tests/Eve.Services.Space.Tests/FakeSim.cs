@@ -9,6 +9,8 @@ internal sealed class FakeSim : ISimulation
 
     public bool DropPublicMoveReply { get; set; }
 
+    public bool FailNextSlimField { get; set; }
+
     public TaskCompletionSource? PublicMoveStarted { get; set; }
     public TaskCompletionSource? PublicMoveRelease { get; set; }
 
@@ -347,7 +349,26 @@ internal sealed class FakeSim : ISimulation
 
     public void PlaceAnalysisBeacon(SimPlaceAnalysisBeacon beacon) => Heard.Enqueue(beacon);
 
-    public void SetSlimField(long itemId, string fieldName, SimSlimValue value) => Heard.Enqueue(new SimSetSlimField(itemId, fieldName, value));
+    public void SetSlimField(long itemId, string fieldName, SimSlimValue value)
+    {
+        if (!IsConnected)
+            return;
+        if (FailNextSlimField)
+        {
+            FailNextSlimField = false;
+            throw new InvalidOperationException("test simulation rejected a slim field update");
+        }
+        Heard.Enqueue(new SimSetSlimField(itemId, fieldName, value));
+    }
+
+    public Task<bool> TrySetSlimFieldAsync(long itemId, string fieldName, SimSlimValue value, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!IsConnected)
+            return Task.FromResult(false);
+        SetSlimField(itemId, fieldName, value);
+        return Task.FromResult(true);
+    }
 
     public void SetAnalysisBeaconState(long deployableId, SimAnalysisBeaconState state) => Heard.Enqueue(new SimSetAnalysisBeaconState(deployableId, state));
 
@@ -439,6 +460,9 @@ internal sealed class FakeSim : ISimulation
     /// <summary>What a directional scan (command 28) is answered with: what the scene has that a cone can see.</summary>
     public IReadOnlyList<SimDirectionalTarget> DirectionalAnswer { get; set; } = [];
 
+    public TaskCompletionSource? PositionOfCommandStarted { get; set; }
+    public TaskCompletionSource? PositionOfCommandRelease { get; set; }
+
     public Task<CommandReply> CommandAsync(ulong sessionId, byte code, double[] args, CancellationToken cancellationToken = default)
     {
         Heard.Enqueue(new SimCommand(sessionId, code, args));
@@ -480,13 +504,7 @@ internal sealed class FakeSim : ISimulation
         }
         if (code == SimCommands.PositionOf)
         {
-            var targetId = (long)args[0];
-            return Task.FromResult(new CommandReply(true, 0, null)
-            {
-                Position = PositionAnswers.GetValueOrDefault(targetId, [0, 0, 0]),
-                Direction = [1, 0, 0],
-                Radius = PositionRadiusAnswers.GetValueOrDefault(targetId),
-            });
+            return PositionOfAsync(args, cancellationToken);
         }
         if (code == SimCommands.Jump && JumpHandler is { } jumpHandler)
         {
@@ -505,6 +523,20 @@ internal sealed class FakeSim : ISimulation
             return conduitJumpHandler(new SimCommand(sessionId, code, args), cancellationToken);
         }
         return Task.FromResult(code switch { SimCommands.WarpTo or SimCommands.WarpToPoint => WarpAnswer, SimCommands.Jump => JumpAnswer, SimCommands.CynoJump or SimCommands.OpenBridge or SimCommands.BridgeJump or SimCommands.ConduitJump => CynoJumpAnswer, _ => DockAnswer });
+    }
+
+    private async Task<CommandReply> PositionOfAsync(double[] args, CancellationToken cancellationToken)
+    {
+        PositionOfCommandStarted?.TrySetResult();
+        if (PositionOfCommandRelease is { } release)
+            await release.Task.WaitAsync(cancellationToken);
+        var targetId = (long)args[0];
+        return new CommandReply(true, 0, null)
+        {
+            Position = PositionAnswers.GetValueOrDefault(targetId, [0, 0, 0]),
+            Direction = [1, 0, 0],
+            Radius = PositionRadiusAnswers.GetValueOrDefault(targetId),
+        };
     }
 
     /// <summary>How far a wreck or can is said to be (null: there is none).</summary>

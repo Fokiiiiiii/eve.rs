@@ -8,6 +8,8 @@ public sealed record BeaconRow(
     long DeployableId, int TypeId, int SolarSystemId, long OwnerId, long ShipId, long DeployedMs, long ActivateAtMs, bool Active, int LinkState,
     long LinkCompleteMs, long LinkedShipId, long ScanMs, long ScanUpdatedMs, string? Outcome, bool Rewarded, int WavesMade, long LinkedCharacterId = 0);
 
+public sealed record AnalysisBeaconLinkResources(bool Allowed, CharacterEnergyState CharacterEnergy);
+
 /// <summary>
 /// The tables of the CRAB runtime (<see cref="AnalysisBeaconDirector"/>): one row per beacon, and one row per Rogue Drone it has made, so a kill is a delete and the
 /// count of the drones alive is a query. Character CEQ and system interference are persisted in separate keyed rows. The beacon's item and its position, lifetime and ball are the
@@ -127,12 +129,13 @@ public sealed class AnalysisBeaconStore(NpgsqlDataSource source, string schema)
         Sql.ExecuteAsync(connection, transaction, Q("UPDATE {schema}.analysis_beacons SET rewarded = true WHERE deployable_id = $1"), cancellationToken, deployableId);
 
     /// <summary>Regenerates and atomically spends character energy and system interference for one link.</summary>
-    public async Task<bool> TryConsumeLinkResourcesAsync(
-        NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, int systemId, int typeId, long nowMs, CancellationToken cancellationToken)
+    public async Task<AnalysisBeaconLinkResources> TryConsumeLinkResourcesAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long characterId, int systemId, int typeId,
+        CharacterEnergyState initialCharacterEnergy, long nowMs, CancellationToken cancellationToken)
     {
         await Sql.ExecuteAsync(connection, transaction, Q(
             "INSERT INTO {schema}.analysis_beacon_character_energy (character_id, amount, updated_ms) VALUES ($1, $2, $3) ON CONFLICT (character_id) DO NOTHING"),
-            cancellationToken, characterId, AnalysisBeaconRules.MaximumCharacterEnergy, nowMs);
+            cancellationToken, characterId, initialCharacterEnergy.EnergyLevel, initialCharacterEnergy.LastRechargeAtUnixMs);
         await Sql.ExecuteAsync(connection, transaction, Q(
             "INSERT INTO {schema}.analysis_beacon_system_interference (solar_system_id, amount, updated_ms) VALUES ($1, 0, $2) ON CONFLICT (solar_system_id) DO NOTHING"),
             cancellationToken, systemId, nowMs);
@@ -157,23 +160,54 @@ public sealed class AnalysisBeaconStore(NpgsqlDataSource source, string schema)
             interference = reader.GetDouble(0);
             interferenceUpdated = reader.GetInt64(1);
         }
-        energy = AnalysisBeaconRules.RegenerateResource(energy, energyUpdated, nowMs, AnalysisBeaconRules.MaximumCharacterEnergy, AnalysisBeaconRules.CharacterEnergyFullRegeneration);
+        var characterEnergy = (initialCharacterEnergy with { EnergyLevel = energy, LastRechargeAtUnixMs = energyUpdated }).At(nowMs);
+        energy = characterEnergy.EnergyLevel;
+        energyUpdated = characterEnergy.LastRechargeAtUnixMs;
         interference = AnalysisBeaconRules.RegenerateResource(
             AnalysisBeaconRules.MaximumSignalInterference - interference, interferenceUpdated, nowMs,
             AnalysisBeaconRules.MaximumSignalInterference, AnalysisBeaconRules.SignalInterferenceFullDecay, decays: true);
         interference = AnalysisBeaconRules.MaximumSignalInterference - interference;
         var energyCost = AnalysisBeaconRules.CharacterEnergyCostOf(typeId);
-        var allowed = energy + 1e-9 >= energyCost && interference < AnalysisBeaconRules.MaximumSignalInterference;
+        var allowed = energy - energyCost >= characterEnergy.MinEnergyLevel - 1e-9
+            && interference < AnalysisBeaconRules.MaximumSignalInterference;
         if (allowed)
         {
-            energy = Math.Max(0, energy - energyCost);
+            energy = Math.Max(characterEnergy.MinEnergyLevel, energy - energyCost);
             interference = Math.Min(AnalysisBeaconRules.MaximumSignalInterference, interference + AnalysisBeaconRules.SignalInterferenceCostOf(typeId));
         }
         await Sql.ExecuteAsync(connection, transaction, Q(
             "UPDATE {schema}.analysis_beacon_character_energy SET amount = $2, updated_ms = $3 WHERE character_id = $1"), cancellationToken, characterId, energy, Math.Max(nowMs, energyUpdated));
         await Sql.ExecuteAsync(connection, transaction, Q(
             "UPDATE {schema}.analysis_beacon_system_interference SET amount = $2, updated_ms = $3 WHERE solar_system_id = $1"), cancellationToken, systemId, interference, Math.Max(nowMs, interferenceUpdated));
-        return allowed;
+        return new AnalysisBeaconLinkResources(allowed,
+            characterEnergy with { EnergyLevel = energy, LastRechargeAtUnixMs = Math.Max(nowMs, energyUpdated) });
+    }
+
+    /// <summary>Reads a character's persisted CEQ row, shaped with the shared CharacterEnergyState parameters.</summary>
+    public async Task<CharacterEnergyState?> ReadCharacterEnergyAsync(
+        long characterId, CharacterEnergyState template, long nowMs, CancellationToken cancellationToken)
+    {
+        if (characterId <= 0) return null;
+        try
+        {
+            await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+            double energy;
+            long updated;
+            await using (var command = Sql.Command(connection, null, Q(
+                "SELECT amount, updated_ms FROM {schema}.analysis_beacon_character_energy WHERE character_id = $1"), characterId))
+            await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+            {
+                if (!await reader.ReadAsync(cancellationToken)) return null;
+                energy = reader.GetDouble(0);
+                updated = reader.GetInt64(1);
+            }
+            return (template with { EnergyLevel = energy, LastRechargeAtUnixMs = updated }).At(nowMs);
+        }
+        catch (PostgresException error) when (error.SqlState is "42P01" or "3F000")
+        {
+            // Space can be disabled during startup; without the CRAB schema the legacy row remains the read source.
+            return null;
+        }
     }
 
     /// <summary>A link that can start: the beacon is idle and has no ship. Answers whether the link was taken (a second request does not take it again).</summary>

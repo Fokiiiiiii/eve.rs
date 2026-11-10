@@ -531,6 +531,8 @@ internal static class HostComposition
         var charMgr = characterServices.OfType<Eve.Services.CharacterInfo.CharMgrService>().FirstOrDefault();
         Func<long, CancellationToken, ValueTask<IReadOnlyList<long>>>? readBlockedOwners =
             charMgr is null ? null : charMgr.ReadBlockedOwnersAsync;
+        Func<long, CancellationToken, ValueTask<Eve.Services.CharacterInfo.CharMgrChatUserData?>>? readChatUserData =
+            charMgr is null ? null : charMgr.ReadChatUserDataAsync;
         if (xmppSettings.Enabled && dataSource is { } xmppDataSource)
         {
             var xmppSchema = Env("EVE_XMPP_SCHEMA", "eve_xmpp");
@@ -541,7 +543,8 @@ internal static class HostComposition
             new Eve.Host.Xmpp.XmppChatSettings(xmppSettings.Domain, xmppSettings.ConnectHost),
             xmppMotdStore,
             readBlockedOwners,
-            xmppPlayerChannelStore);
+            xmppPlayerChannelStore,
+            readChatUserData);
         registry.Register(new Eve.Host.Xmpp.XmppChatMgrService(xmppHub));
         if (xmppSettings.Enabled)
         {

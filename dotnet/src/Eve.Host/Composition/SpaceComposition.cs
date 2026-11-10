@@ -291,9 +291,7 @@ internal sealed partial class CharacterServicesComposition
                     solarSystems.Systems.ToDictionary(system => system.Id, system => system.NebulaTypeId));
                 await wormholes.EnsureWorldAsync(ulong.Parse(Env("EVE_WORMHOLE_SEED", "20261012"), System.Globalization.CultureInfo.InvariantCulture), now());
                 wormholes.RegisterJobs();
-                spaceSessions.Wormholes = wormholes;
-                wormholes.Changed += spaceSessions.PublishWormholeChange;
-                wormholes.StateChanged += spaceSessions.PublishWormholeStateChangeAsync;
+                spaceSessions.BindWormholes(wormholes);
             }
 
             var tollWallets = new Eve.Wallet.WalletTransactions(source, walletSchema);
@@ -669,7 +667,11 @@ internal sealed partial class CharacterServicesComposition
             var beacons = new Eve.Services.Space.Beacons.AnalysisBeaconDirector(
                 source, spaceSchema, Eve.Services.Space.Beacons.AnalysisBeaconRules.LoadEmbedded(), foundations.Scheduler, foundations.Events, sim, ships, items, dogma,
                 spaceSessions, deployedStore, new Eve.Services.Space.SpaceDungeonNpcs(spaceSessions), new NpcSelector(npcAuthority), now,
-                message => Console.Error.WriteLine($"eve-host: {message}"));
+                message => Console.Error.WriteLine($"eve-host: {message}"),
+                initialCharacterEnergy: (characterId, nowMs) => Eve.Services.Space.Beacons.CharacterEnergyState.FromGameStore(
+                    mailCache.Read("characterEnergyState", $"/characters/{characterId}").Data as JsonObject, nowMs),
+                characterEnergyChanged: (session, state) => session.SendNotification(
+                    "OnCharacterEnergyChanged", "charid", new PyInt(session.CharacterId ?? 0), state.ToClientValue(now())));
             await beacons.AttachAsync();
             spaceContainers.RegisterDeployedKind(Eve.Services.Space.Beacons.AnalysisBeaconDirector.Kind, beacons.ExpireAsync, beacons.RestoreAsync);
             spaceContainers.LaunchAnalysisBeacon = beacons.LaunchAsync;

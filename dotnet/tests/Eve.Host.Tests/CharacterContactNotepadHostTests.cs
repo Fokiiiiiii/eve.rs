@@ -61,9 +61,18 @@ public sealed class CharacterContactNotepadHostTests
         Assert.Equal(new PyStr("client note"), Field(note, "note"));
 
         Assert.Same(PyNone.Instance, await CallAsync(charMgr, "SaveCharacterSetting", session,
-            new PyStr("windowState"), new PyStr("open")));
+            new PyStr("chatFilters"), new PyStr("bannedWords: []\nhighlightWords: []\nblinkOnHighlightWords: []")));
+        var savedSettings = Assert.IsType<PyDict>(await CallAsync(charMgr, "GetCharacterSettings", session));
+        var chatFilters = new PyStr("bannedWords: []\nhighlightWords: []\nblinkOnHighlightWords: []");
+        Assert.Equal(chatFilters, savedSettings.Entries.Single(entry => entry.Key == new PyStr("chatFilters")).Value);
+
+        await rig.RestartAsync();
+        charMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charMgr"));
+        var restartedSettings = Assert.IsType<PyDict>(await CallAsync(charMgr, "GetCharacterSettings", session));
+        Assert.Equal(chatFilters, restartedSettings.Entries.Single(entry => entry.Key == new PyStr("chatFilters")).Value);
+
         Assert.Same(PyNone.Instance, await CallAsync(charMgr, "DeleteCharacterSetting", session,
-            new PyStr("windowState")));
+            new PyStr("chatFilters")));
 
         await rig.RestartAsync();
         charMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charMgr"));

@@ -63,17 +63,26 @@ public sealed class AnalysisBeaconDirector
     private readonly Func<long> _nowUnixMs;
     private readonly Action<string>? _log;
     private readonly NpgsqlDataSource _source;
+    private readonly Func<long, long, CharacterEnergyState>? _initialCharacterEnergy;
+    private readonly Action<ClientSession, CharacterEnergyState>? _characterEnergyChanged;
 
     public AnalysisBeaconDirector(
         NpgsqlDataSource source, string schema, AnalysisBeaconRules rules, DurableScheduler scheduler, EventBus bus, ISimulation sim, CharacterShips ships,
         PgItemStore items, DogmaStatic statics, SpaceSessions space, PgDeployedStore deployed, IDungeonNpcSpawner spawner, NpcSelector selector, Func<long> nowUnixMs,
-        Action<string>? log = null)
+        Action<string>? log = null, Func<long, long, CharacterEnergyState>? initialCharacterEnergy = null,
+        Action<ClientSession, CharacterEnergyState>? characterEnergyChanged = null)
     {
         (_source, _rules, _scheduler, _bus, _sim, _ships, _items, _statics, _space, _deployed, _spawner, _selector, _nowUnixMs, _log) =
             (source, rules, scheduler, bus, sim, ships, items, statics, space, deployed, spawner, selector, nowUnixMs, log);
+        (_initialCharacterEnergy, _characterEnergyChanged) = (initialCharacterEnergy, characterEnergyChanged);
         _store = new AnalysisBeaconStore(source, schema);
         _spaceItems = new PgSpaceItemStore(source, schema);
     }
+
+    /// <summary>Reads the persisted CEQ state for CharacterEnergyMgr, or null when no CRAB has initialized one.</summary>
+    public Task<CharacterEnergyState?> ReadCharacterEnergyStateAsync(
+        long characterId, CharacterEnergyState template, CancellationToken cancellationToken = default) =>
+        _store.ReadCharacterEnergyAsync(characterId, template, _nowUnixMs(), cancellationToken);
 
     /// <summary>Creates the beacon tables in the space schema (applied once).</summary>
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema, CancellationToken cancellationToken = default) =>
@@ -253,6 +262,7 @@ public sealed class AnalysisBeaconDirector
         var now = _nowUnixMs();
         var refusal = (string?)null;
         BeaconRow? row = null;
+        CharacterEnergyState? energyAfter = null;
         await using (var connection = await _source.OpenConnectionAsync(cancellationToken))
         await using (var transaction = await connection.BeginTransactionAsync(cancellationToken))
         {
@@ -280,13 +290,21 @@ public sealed class AnalysisBeaconDirector
             {
                 refusal = "the ship is not in space";
             }
-            else if (!await _store.TryConsumeLinkResourcesAsync(connection, transaction, character, row.SolarSystemId, row.TypeId, now, cancellationToken))
+            else
             {
-                refusal = "the character lacks Complex Encryption Qubits or system signal interference is saturated";
-            }
-            else if (!await _store.StartLinkAsync(connection, transaction, deployableId, shipId, character, now + (long)AnalysisBeaconRules.LinkDuration.TotalMilliseconds, cancellationToken))
-            {
-                refusal = "the beacon is already linked";
+                var initialEnergy = _initialCharacterEnergy?.Invoke(character, now) ?? CharacterEnergyState.Default(now);
+                var resources = await _store.TryConsumeLinkResourcesAsync(
+                    connection, transaction, character, row.SolarSystemId, row.TypeId, initialEnergy, now, cancellationToken);
+                energyAfter = resources.CharacterEnergy;
+                if (!resources.Allowed)
+                {
+                    refusal = "the character lacks Complex Encryption Qubits or system signal interference is saturated";
+                }
+                else if (!await _store.StartLinkAsync(connection, transaction, deployableId, shipId, character,
+                             now + (long)AnalysisBeaconRules.LinkDuration.TotalMilliseconds, cancellationToken))
+                {
+                    refusal = "the beacon is already linked";
+                }
             }
             if (refusal is null)
             {
@@ -307,6 +325,15 @@ public sealed class AnalysisBeaconDirector
         {
             _log?.Invoke($"the link of beacon {deployableId} by ship {shipId} was refused: {refusal}");
             return;
+        }
+        try
+        {
+            if (energyAfter is { } energy)
+                _characterEnergyChanged?.Invoke(session, energy);
+        }
+        catch (Exception error)
+        {
+            _log?.Invoke($"the character energy notification for beacon {deployableId} failed: {error.Message}");
         }
         _sim.SetAnalysisBeaconState(deployableId, StateOf(row!));
         _scheduler.Wake();

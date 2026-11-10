@@ -93,6 +93,7 @@ internal static class HostComposition
         Func<long, long, short, CancellationToken, ValueTask<bool>>? canManageCalendarGroupEvent = null;
         Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? readCurrentCalendarGroups = null;
         Func<long, long, CancellationToken, ValueTask<bool>>? isCharacterInCurrentCorporation = null;
+        Func<long> clock = clockOverride ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         NpgsqlDataSource? dataSource = null; // owned by the runtime: shut down with it, so its pooled connections return to the server
         PgDeployedStore? deployedRecords = null;
         Eve.Host.Persistence.PersistenceInGameReportStore? inGameReportStore = null;
@@ -158,7 +159,6 @@ internal static class HostComposition
             var configSchema = Env("EVE_GLOBAL_CONFIG_SCHEMA", PgGlobalConfigPersistence.DefaultSchema);
             await PgGlobalConfigPersistence.MigrateAsync(source, configSchema);
             globalConfigPersistence = new PgGlobalConfigPersistence(source, configSchema);
-            Func<long> clock = clockOverride ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
             foundations = await Foundations.CreateAsync(source, clock, Env, message => Console.Error.WriteLine($"eve-host: {message}"));
               if (raffleProxyStore is { } raffleStore)
               {

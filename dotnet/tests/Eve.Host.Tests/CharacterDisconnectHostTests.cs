@@ -1,189 +1,166 @@
 using System.Net;
 using System.Net.Sockets;
+using Eve.Characters;
 using Eve.Host;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
-using Npgsql;
-using Xunit;
 
 namespace Eve.Host.Tests;
 
-public partial class HostServerTests
+[Collection("host-composition")]
+public sealed class CharacterDisconnectHostTests
 {
     [PgFact]
-    public async Task Abrupt_disconnect_persists_logoff_before_presence_notice_and_clean_logoff_is_not_rewritten()
+    public async Task Abrupt_disconnect_updates_corporation_last_online_and_clean_logoff_is_not_recorded_twice()
     {
-        const long now = 1_790_646_377_000;
-        const long characterSessionId = 5_501_001;
-        await using var rig = await CharacterHostTests.CharacterHostRig.CreateAsync(now);
-        var character = await rig.CreateCharacterAsync();
-        var observer = await rig.CreateCharacterAsync();
-        await rig.AddCorporationMemberAsync(character);
-        var corporationId = (await rig.Characters.GetAsync(character))!.CorporationId;
-        await using (var connection = await rig.Source.OpenConnectionAsync())
-        await using (var makeCharacterDirector = new NpgsqlCommand(
-            $"UPDATE {rig.CorporationsSchema}.corporations SET ceo_id = $1 WHERE id = $2", connection))
-        {
-            makeCharacterDirector.Parameters.Add(new NpgsqlParameter { Value = character });
-            makeCharacterDirector.Parameters.Add(new NpgsqlParameter { Value = corporationId });
-            Assert.Equal(1, await makeCharacterDirector.ExecuteNonQueryAsync());
-        }
-        var firstLogoff = DateTimeOffset.FromUnixTimeMilliseconds(now + 60_000);
-        var explicitLogoff = firstLogoff.AddMinutes(1);
-        var afterExplicitLogoff = explicitLogoff.AddHours(1);
+        const long now = 1_800_000_000_000;
+        await using var rig = await CharacterHostTests.CharacterHostRig.CreateAsync(nowUnixMs: now);
+        Assert.Equal(1, await rig.CreateAccountAsync());
+        var observerAccount = await rig.CreateAccountAsync("mct-observer");
+        var target = await rig.CreateCharacterAsync();
+        var observer = await rig.CreateCharacterAsync(accountId: observerAccount);
+        await rig.AddCorporationMemberAsync(target);
+        await rig.AddCorporationMemberAsync(observer);
+        await rig.Characters.SetLastLogoffAsync(target,
+            DateTimeOffset.FromUnixTimeMilliseconds(now - (long)TimeSpan.FromDays(3).TotalMilliseconds));
 
-        var charMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charMgr"));
-        foreach (var (ownerId, contactId) in new[] { (character, observer), (observer, character) })
-        {
-            await charMgr.CallAsync(new ServiceCall
-            {
-                Method = "AddContact",
-                Args = [new PyLong(contactId), new PyInt(-10), PyBool.True, PyBool.False, new PyStr("")],
-                Session = new ClientSession { CharacterId = ownerId, UserId = 1 },
-            });
-        }
-
-        var observerSink = new LogoffObservingSink(() =>
-            rig.Characters.GetAsync(character).GetAwaiter().GetResult()?.LastLogoffAt);
-        rig.Sessions.Enter(observer, new ClientSession
-        {
-            SessionId = 5_501_002,
-            CharacterId = observer,
-            UserId = 1,
-            Sink = observerSink,
-        });
-        await rig.OnlineStatusNotifications.FlushAsync();
-
-        _server = rig.Server;
-        _listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-        _listener.Bind(new IPEndPoint(IPAddress.Loopback, 0));
-        _listener.Listen(16);
-        _serving = _server.ServeAsync(_listener, _cancel.Token);
-
-        TestFront? firstFront = null;
-        TestFront? secondFront = null;
+        using var stop = new CancellationTokenSource();
+        using var listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        listener.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        listener.Listen(8);
+        var serving = rig.Server.ServeAsync(listener, stop.Token);
+        TestFront? targetFront = null;
+        TestFront? observerFront = null;
         try
         {
-            firstFront = await Handshaken(await ConnectAsync());
-            var firstOpen = Open(characterSessionId, 1);
-            await OpenCharacterSessionAsync(firstFront, firstOpen, character);
-            Assert.NotNull(rig.Sessions.Of(character));
-            await rig.OnlineStatusNotifications.FlushAsync();
+            targetFront = await OpenFrontAsync();
+            observerFront = await OpenFrontAsync();
+            var targetOpen = new SessionOpen(81_001, 81_002, 1, 0, "127.0.0.1", "EN", "GB");
+            var observerOpen = new SessionOpen(82_001, 82_002, (uint)observerAccount, 0, "127.0.0.1", "EN", "GB");
+            await OpenSessionAsync(targetFront, targetOpen);
+            await OpenSessionAsync(observerFront, observerOpen);
+            var callId = 1L;
 
-            rig.AdvanceTo(firstLogoff.ToUnixTimeMilliseconds());
-            firstFront.Dispose();
-            await WaitUntilAsync(() => rig.Sessions.Of(character) is null);
-            await rig.OnlineStatusNotifications.FlushAsync();
+            await CallAsync(observerFront, observerOpen, callId++, "charUnboundMgr", "SelectCharacterID", new PyLong(observer));
+            await CallAsync(observerFront, observerOpen, callId++, "charMgr", "AddContact",
+                new PyLong(target), new PyInt(-10), PyBool.True, PyBool.False, new PyStr(""));
+            await CallAsync(targetFront, targetOpen, callId++, "charUnboundMgr", "SelectCharacterID", new PyLong(target));
+            Assert.Equal(target, rig.Sessions.Of(target)?.CharacterId);
+            await CallAsync(targetFront, targetOpen, callId++, "charMgr", "AddContact",
+                new PyLong(observer), new PyInt(-10), PyBool.True, PyBool.False, new PyStr(""));
+            Assert.Equal(-1, LastOnlineHours(await CallAsync(observerFront, observerOpen, callId++,
+                "corpRegistry", "GetMemberTrackingInfoSimple"), target));
 
-            Assert.Equal(firstLogoff, (await rig.Characters.GetAsync(character))!.LastLogoffAt);
-            Assert.Contains(firstLogoff, observerSink.LogoffTimesAtNotice);
-            Assert.Equal(new PyInt(0), await ReadLastOnlineAsync(rig, character));
+            targetFront.Dispose();
+            var offlineNotice = await ReadNotificationAsync(observerFront, "OnContactLoggedOff");
+            Assert.Equal("clientID", offlineNotice.IdType);
+            Assert.Equal(new PyLong(target), Assert.Single(offlineNotice.Args));
+            Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(now), (await rig.Characters.GetAsync(target))!.LastLogoffAt);
+            await WaitUntilAsync(() => rig.Sessions.Of(target) is null);
+            var afterDisconnect = await CallAsync(observerFront, observerOpen, callId++,
+                "corpRegistry", "GetMemberTrackingInfoSimple");
+            Assert.Equal(0, LastOnlineHours(afterDisconnect, target));
+            Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(now), (await rig.Characters.GetAsync(target))!.LastLogoffAt);
 
-            secondFront = await Handshaken(await ConnectAsync());
-            var secondOpen = Open(characterSessionId + 1, 1);
-            await OpenCharacterSessionAsync(secondFront, secondOpen, character);
-            await rig.OnlineStatusNotifications.FlushAsync();
-
-            rig.AdvanceTo(explicitLogoff.ToUnixTimeMilliseconds());
-            Assert.Same(PyBool.True, await CallAsync(secondFront, secondOpen, 2,
+            rig.AdvanceTo(now + 5_000);
+            Assert.Equal(PyBool.True, await CallAsync(observerFront, observerOpen, callId++,
                 "userSvc", "UserLogOffCharacter"));
-            Assert.Equal(explicitLogoff, (await rig.Characters.GetAsync(character))!.LastLogoffAt);
-
-            rig.AdvanceTo(afterExplicitLogoff.ToUnixTimeMilliseconds());
-            secondFront.Dispose();
-            await WaitUntilAsync(() => rig.Sessions.Of(character) is null);
-            await rig.OnlineStatusNotifications.FlushAsync();
-
-            Assert.Equal(explicitLogoff, (await rig.Characters.GetAsync(character))!.LastLogoffAt);
-            Assert.Equal([firstLogoff, explicitLogoff], observerSink.LogoffTimesAtNotice);
-            Assert.Equal(new[]
-            {
-                "OnContactLoggedOn", "OnContactLoggedOff", "OnContactLoggedOn", "OnContactLoggedOff",
-            }, observerSink.NotificationNames);
+            var explicitLogoffAt = DateTimeOffset.FromUnixTimeMilliseconds(now + 5_000);
+            rig.AdvanceTo(now + 10_000);
+            observerFront.Dispose();
+            await WaitUntilAsync(() => rig.Sessions.Of(observer) is null);
+            Assert.Equal(explicitLogoffAt, (await rig.Characters.GetAsync(observer))!.LastLogoffAt);
         }
         finally
         {
-            firstFront?.Dispose();
-            secondFront?.Dispose();
-            try
-            {
-                await WaitUntilAsync(() => rig.Sessions.Of(character) is null);
-                await rig.OnlineStatusNotifications.FlushAsync();
-            }
-            catch (TimeoutException)
-            {
-                // Preserve the test failure; the caller still tears down the Host and its database.
-            }
+            targetFront?.Dispose();
+            observerFront?.Dispose();
+            await stop.CancelAsync();
+            listener.Dispose();
+            await serving;
+        }
+
+        async Task<TestFront> OpenFrontAsync()
+        {
+            var front = await TestFront.ConnectAsync((IPEndPoint)listener.LocalEndPoint!);
+            await front.SendAsync(new Hello(HostCodec.ProtocolVersion, 0xFFAA));
+            Assert.IsType<HelloAck>(await front.ReceiveAsync());
+            Assert.IsType<ClusterConfig>(await front.ReceiveAsync());
+            return front;
         }
     }
 
-    private static async Task OpenCharacterSessionAsync(TestFront front, SessionOpen open, long characterId)
+    private static async Task OpenSessionAsync(TestFront front, SessionOpen open)
     {
         await front.SendAsync(open);
-        Assert.IsType<Send>(await front.ReceiveAsync());
-        Assert.Same(PyNone.Instance, await CallAsync(front, open, 1, "charUnboundMgr", "SelectCharacterID", new PyLong(characterId)));
+        Assert.Equal(open.SessionId, Assert.IsType<Send>(await front.ReceiveAsync()).SessionId);
     }
 
-    private static async Task<PyValue?> CallAsync(TestFront front, SessionOpen open, long correlation,
+    private static async Task<PyValue> CallAsync(TestFront front, SessionOpen open, long callId,
         string service, string method, params PyValue[] args)
     {
         await front.SendAsync(new Packet(open.SessionId,
-            MarshalCodec.Encode(Packets.Call(open, correlation, service, method, args))));
+            MarshalCodec.Encode(Packets.Call(open, callId, service, method, args))));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         while (true)
         {
-            var send = Assert.IsType<Send>(await front.ReceiveAsync(timeout.Token));
-            var response = MarshalCodec.Decode(send.Payload);
-            var header = ((PyTuple)Assert.IsType<PyObject>(response).Args).Items;
-            if (header[0] is PyInt { Value: 7 })
-                return Result(response);
+            var message = await front.ReceiveAsync(timeout.Token);
+            if (message is Disconnect disconnect)
+                throw new Xunit.Sdk.XunitException($"Host disconnected session: {disconnect.Reason}");
+            var response = Assert.IsType<Send>(message);
+            var decoded = MarshalCodec.Decode(response.Payload);
+            var packet = MachoPacket.Decode(decoded);
+            if (packet?.Type != MachoMessage.CallRsp)
+                continue;
+            var state = ((PyTuple)((PyObject)decoded!).Args).Items;
+            var payload = Assert.IsType<PyTuple>(state[4]);
+            return payload.Items[0] is PySubStream { Decoded: { } inner } ? inner : payload.Items[0];
         }
     }
+
+    private static async Task<(string Name, string IdType, PyValue[] Args)> ReadNotificationAsync(TestFront front, string name)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (true)
+        {
+            var message = await front.ReceiveAsync(timeout.Token);
+            if (message is Disconnect disconnect)
+                throw new Xunit.Sdk.XunitException($"Host disconnected session: {disconnect.Reason}");
+            if (message is not Send send)
+                continue;
+            var state = ((PyTuple)((PyObject)MarshalCodec.Decode(send.Payload)).Args).Items;
+            if (Number(state[0]) != MachoMessage.Notification)
+                continue;
+            var address = MachoAddress.Decode(state[2]);
+            if (address.BroadcastId != name)
+                continue;
+            var body = Assert.IsType<PyBuffer>(Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(state[4]).Items[0]).Items[1]);
+            var notification = Assert.IsType<PyTuple>(MarshalCodec.Decode(body.Value.ToArray()));
+            var args = Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(notification.Items[1]).Items[1]);
+            return (address.BroadcastId!, address.IdType!, [.. args.Items]);
+        }
+    }
+
+    private static long LastOnlineHours(PyValue value, long characterId)
+    {
+        var rows = Assert.IsType<PyList>(value);
+        var row = rows.Items.Select(Assert.IsType<PyList>)
+            .Single(item => Number(item.Items[0]) == characterId);
+        return Number(row.Items[8]);
+    }
+
+    private static long Number(PyValue value) => value switch
+    {
+        PyInt integer => integer.Value,
+        PyLong integer => integer.Value,
+        _ => throw new Xunit.Sdk.XunitException($"Expected an integer, received {value.GetType().Name}.")
+    };
 
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
-        var deadline = DateTime.UtcNow.AddSeconds(10);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         while (!condition())
-        {
-            if (DateTime.UtcNow >= deadline)
-                throw new TimeoutException("The character session did not reach the requested state.");
-            await Task.Delay(10);
-        }
-    }
-
-    private static async Task<PyValue> ReadLastOnlineAsync(CharacterHostTests.CharacterHostRig rig, long characterId)
-    {
-        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("corpRegistry"));
-        var response = await service.CallAsync(new ServiceCall
-        {
-            Method = "GetMemberTrackingInfo",
-            Args = [],
-            Session = new ClientSession { CharacterId = characterId, UserId = 1 },
-        });
-        var rowset = Assert.IsType<PyDict>(Assert.IsType<PyObject>(response).Args);
-        var lines = Assert.IsType<PyList>(rowset.Entries.Single(entry => entry.Key == new PyStr("lines")).Value);
-        var row = lines.Items.Select(item => Assert.IsType<PyPackedRow>(item))
-            .Single(item => item.Values[0] == new PyInt(characterId));
-        return row.Values[9];
-    }
-
-    private sealed class LogoffObservingSink(Func<DateTimeOffset?> readLastLogoffAt) : IPacketSink
-    {
-        public List<string> NotificationNames { get; } = [];
-        public List<DateTimeOffset?> LogoffTimesAtNotice { get; } = [];
-
-        public void Send(PyValue packet)
-        {
-            if (packet is not PyObject { Args: PyTuple state } || state.Items.Count < 5 ||
-                state.Items[0] is not PyInt { Value: MachoMessage.Notification } ||
-                state.Items[2] is not PyObject { Args: PyTuple address } || address.Items.Count < 2 ||
-                address.Items[1] is not PyStr name)
-                return;
-
-            NotificationNames.Add(name.Value);
-            if (name.Value == "OnContactLoggedOff")
-                LogoffTimesAtNotice.Add(readLastLogoffAt());
-        }
+            await Task.Delay(10, timeout.Token);
     }
 }

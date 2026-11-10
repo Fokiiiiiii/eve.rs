@@ -51,10 +51,11 @@ Host wire E2E は public 10M item exchange の broker/tax/deposit `40k/100k/100k
 
 - 変更前に seed import は期待 2 件に対して 3 件を保持、private fee は 10,000 / 0 / 0 に対して公開式の 40,000 / 100,000 / 0 を記録する失敗を再現した。
 - 追加した資金不足 wire ケースは最初 `exceptions.RuntimeError` を返した。明示 mapping 後は `eveexceptions.UserError` (`CustomInfo`) と同じ EveJS 文面になり、DB state が rollback する。
-- Release builds (`--warnaserror`): `Eve.Market`, `Eve.Services.Core`, `Eve.Host` — all succeeded with 0 warnings and 0 errors。
-- `Eve.Market.Tests`: `MarketSeedImportTests`, `MarketSeedV4Tests`, `MatchingTests`, `OrderBookMatchTests` — 13 passed, 0 failed, 0 skipped。Postgres は `eve_p5`、SDE build 3396210 をロード。
-- `Eve.Services.Core.Tests`: `ContractFeesCalculatorTests` と `ContractProxyServiceTests` — 40 passed, 0 failed, 0 skipped。
-- `Eve.Host.Tests.HostServerTests`: contract batch/read/mutation, audit/create retry, persistence and public/private create methods — 12 passed, 0 failed, 0 skipped。DB-backed tests は `eve_p5` で実行。
+- `origin/main` の `eaa3c5b49a08` を merge した後、Release builds (`--warnaserror`) を再実行: `Eve.Market`, `Eve.Services.Core`, `Eve.Host` は全て 0 warnings / 0 errors。
+- 同じ merge 後の `Eve.Market.Tests`: `MarketSeedImportTests`, `MarketSeedV4Tests`, `MatchingTests`, `OrderBookMatchTests` — 13 passed, 0 failed, 0 skipped。Postgres は `eve_p5`、SDE build 3396210 をロード。
+- 同じ merge 後の `Eve.Services.Core.Tests`: `ContractFeesCalculatorTests` と `ContractProxyServiceTests` — 40 passed, 0 failed, 0 skipped。
+- 同じ merge 後の `Eve.Host.Tests.HostServerTests`: contract batch/read/mutation, audit/create retry, persistence and public/private create methods — 12 passed, 0 failed, 0 skipped。DB-backed tests は `eve_p5` で実行。
+- main CI run 1686 (`eaa3c5b49a08`) は全必須ジョブが success。ESS startup修正を含むheadless E2Eは22.6分で完了した。
 - EveJS `cargo test equal_issue_times_keep_deterministic_station_and_order_ties` — 1 passed。EveJS server package に contract test script / contract test file はなく、contract rule は前版と現版の source diff で追跡した。
 
 **未確認:** graphical V24.01 client、実 Tranquility での取引 trace、EveJS private contract flow の実行。

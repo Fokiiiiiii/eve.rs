@@ -207,19 +207,19 @@ public sealed class PgEssStore
         return states;
     }
 
-    /// <summary>The persisted identity needed to put each Main Bank ball in its solar system without hydrating its histories.</summary>
-    public async Task<IReadOnlyList<(int SolarSystemId, long EssId, long? OwnerId)>> ListPlacementsAsync(CancellationToken cancellationToken = default)
+    /// <summary>The identity needed to place the Main Bank ball when its system enters the simulation.</summary>
+    public async Task<(int SolarSystemId, long EssId, long? OwnerId)?> PlacementAsync(int solarSystemId, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var command = Command(
-            "SELECT solar_system_id, ess_id, owner_id FROM {schema}.systems ORDER BY solar_system_id", connection, null);
-        var placements = new List<(int SolarSystemId, long EssId, long? OwnerId)>();
+            "SELECT solar_system_id, ess_id, owner_id FROM {schema}.systems WHERE solar_system_id = $1", connection, null);
+        command.Parameters.AddWithValue(solarSystemId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
+        if (!await reader.ReadAsync(cancellationToken))
         {
-            placements.Add((reader.GetInt32(0), reader.GetInt64(1), reader.IsDBNull(2) ? null : reader.GetInt64(2)));
+            return null;
         }
-        return placements;
+        return (reader.GetInt32(0), reader.GetInt64(1), reader.IsDBNull(2) ? null : reader.GetInt64(2));
     }
 
     /// <summary>

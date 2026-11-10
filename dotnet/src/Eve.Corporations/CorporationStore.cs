@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Eve.Characters;
 using Eve.Data;
+using Eve.Events;
 using Eve.Sde;
 using Eve.Skills;
 using Eve.Wallet;
@@ -21,6 +22,7 @@ public sealed partial class CorporationStore
     private readonly PgCharacterStore _characters;
     private readonly PgWalletStore _walletStore;
     private readonly WalletTransactions _wallets;
+    private readonly EventBus? _events;
     private readonly PgSkillStore _skills;
     private readonly CorporationMemberLimitRules _memberLimitRules;
     private readonly string _schema;
@@ -35,12 +37,13 @@ public sealed partial class CorporationStore
     public CorporationStore(NpgsqlDataSource source, PgCharacterStore characters, PgWalletStore walletStore,
         WalletTransactions wallets, PgSkillStore skills, Func<long> now, string schema = DefaultSchema,
         Func<NpgsqlConnection,NpgsqlTransaction,long,long,long,long,bool,CancellationToken,Task>? setBlueprintLock = null,
-        SdeReader? sde = null)
+        SdeReader? sde = null, EventBus? events = null)
     {
         if (!System.Text.RegularExpressions.Regex.IsMatch(schema, "^[a-z_][a-z0-9_]{0,62}$"))
             throw new ArgumentException($"not a usable schema name: {schema}", nameof(schema));
         _source = source; _characters = characters; _walletStore = walletStore; _wallets = wallets; _skills = skills; _now = now; _schema = schema;
         _setBlueprintLock = setBlueprintLock;
+        _events = events;
         _memberLimitRules = new CorporationMemberLimitRules(sde ?? new SdeReader(source));
     }
 
@@ -400,6 +403,25 @@ public sealed partial class CorporationStore
                         '{status}',to_jsonb(3),true);
                     ALTER TABLE medal_awards ALTER COLUMN status SET DEFAULT 3;
                     ALTER TABLE medal_awards ADD CONSTRAINT medal_awards_status_check CHECK (status BETWEEN 1 AND 3);
+                """),
+                new Migration("019_character_bills", """
+                    CREATE TABLE character_bills (
+                        bill_id bigint PRIMARY KEY DEFAULT nextval('alliance_bill_ids'),
+                        bill_type_id integer NOT NULL CHECK (bill_type_id > 0),
+                        amount_isk numeric(38,2) NOT NULL CHECK (amount_isk > 0),
+                        interest numeric(38,2) NOT NULL DEFAULT 0 CHECK (interest >= 0),
+                        debtor_character_id bigint NOT NULL CHECK (debtor_character_id > 0),
+                        creditor_id bigint NOT NULL CHECK (creditor_id > 0),
+                        due_filetime bigint NOT NULL CHECK (due_filetime > 0),
+                        external_id bigint NOT NULL DEFAULT -1,
+                        external_id2 bigint NOT NULL DEFAULT -1,
+                        paid boolean NOT NULL DEFAULT false,
+                        paid_filetime bigint,
+                        paid_by_owner_id bigint,
+                        operation_key text NOT NULL UNIQUE CHECK (length(operation_key) > 0),
+                        request_fingerprint text NOT NULL
+                    );
+                    CREATE INDEX character_bills_debtor ON character_bills(debtor_character_id,due_filetime,bill_id);
                 """),
     ];
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>

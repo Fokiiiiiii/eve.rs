@@ -159,7 +159,8 @@ public sealed partial class PlanetMgrService
 {
     var owner = session.CharacterId ?? throw MachoErrors.ThrowUserError("CustomsOfficeAccessDenied");
     var planetId = Customs.PlanetOf(officeId) ?? throw MachoErrors.ThrowUserError("CustomsOfficeNotFound");
-    var now = Ticks();
+    var nowUnixMs = nowMs();
+    var now = Py.FileTimeFromUnixMs(nowUnixMs);
     var body = await BodyAsync(planetId, cancellationToken);
     await using var connection = await source.OpenConnectionAsync(cancellationToken);
     await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -206,9 +207,14 @@ public sealed partial class PlanetMgrService
 
     var (importTax, exportTax) = Customs.Taxes(catalog, pad.TypeId, imported, exports, rate);
     var (ownerImportTax, ownerExportTax) = Customs.Taxes(catalog, pad.TypeId, imported, exports, ownerRate.Value);
-    await ChargeAsync(connection, transaction, owner, importTax, RefPlanetaryImportTax, now, cancellationToken);
-    await ChargeAsync(connection, transaction, owner, exportTax, RefPlanetaryExportTax, now, cancellationToken);
-    await CreditOfficeOwnerAsync(connection, transaction, office.OwnerId, owner, ownerImportTax + ownerExportTax, now, cancellationToken);
+    await ChargeTaxComponentsAsync(connection, transaction, owner, office.OwnerId, planetId,
+        importTax, ownerImportTax, RefPlanetaryImportTax, nowUnixMs, cancellationToken);
+    await ChargeTaxComponentsAsync(connection, transaction, owner, office.OwnerId, planetId,
+        exportTax, ownerExportTax, RefPlanetaryExportTax, nowUnixMs, cancellationToken);
+    await CreditOfficeOwnerAsync(connection, transaction, office.OwnerId, owner, planetId,
+        ownerImportTax, RefPlanetaryImportTax, nowUnixMs, cancellationToken);
+    await CreditOfficeOwnerAsync(connection, transaction, office.OwnerId, owner, planetId,
+        ownerExportTax, RefPlanetaryExportTax, nowUnixMs, cancellationToken);
     await store.SaveAsync(connection, transaction, owner, planetId, ColonyDocument.From(colony), now, cancellationToken);
     await transaction.CommitAsync(cancellationToken);
     await notify(owner, new PyInt(planetId));
@@ -259,12 +265,25 @@ public sealed partial class PlanetMgrService
     }
 
     /// <summary>A fee, charged to the wallet in the transaction (whole cents; refused when the balance would be negative).</summary>
-    private async Task ChargeAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long owner, double fee, int reference, long now, CancellationToken cancellationToken)
+    private async Task ChargeTaxComponentsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long owner, long officeOwnerId,
+        long planetId, double totalFee, double officeOwnerFee, int reference, long nowUnixMs, CancellationToken cancellationToken)
     {
-        var cents = Math.Round((decimal)fee, 2);
-        if (cents <= 0) return;
-        var balance = await wallets.AdjustAsync(connection, transaction, owner, -cents, 0, reference, "planetary customs fee", now,
-            $"pi-customs:{owner}:{reference}:{now}:{Guid.NewGuid():N}", cancellationToken);
-        if (balance < 0) throw MachoErrors.ThrowUserError("CannotBuildNotEnoughCash");
+        var total = Math.Round((decimal)totalFee, 2);
+        if (total <= 0) return;
+        var officeOwner = Math.Clamp(Math.Round((decimal)officeOwnerFee, 2), 0m, total);
+        var concord = total - officeOwner;
+        var description = reference == RefPlanetaryImportTax ? "Planetary import tax" : "Planetary export tax";
+        if (officeOwner > 0)
+        {
+            var balance = await wallets.AdjustAsync(connection, transaction, owner, -officeOwner, officeOwnerId, reference, description, nowUnixMs,
+                $"pi-customs:{owner}:{reference}:office:{nowUnixMs}:{Guid.NewGuid():N}", cancellationToken, planetId);
+            if (balance < 0) throw MachoErrors.ThrowUserError("CannotBuildNotEnoughCash");
+        }
+        if (concord > 0)
+        {
+            var balance = await wallets.AdjustAsync(connection, transaction, owner, -concord, CustomsOfficeOwner, reference, description, nowUnixMs,
+                $"pi-customs:{owner}:{reference}:concord:{nowUnixMs}:{Guid.NewGuid():N}", cancellationToken, planetId);
+            if (balance < 0) throw MachoErrors.ThrowUserError("CannotBuildNotEnoughCash");
+        }
     }
 }

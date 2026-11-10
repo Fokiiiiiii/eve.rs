@@ -25,6 +25,6 @@ The fix keeps SDE eligibility and persisted bank identity unchanged, but places 
 
 ## CI and compatibility notes
 
-- Run 1682's actual socket timeout and run 1683's queue-overflow/race-1 undock failure were reproduced locally before the fix. Main run 1684 confirmed backpressure alone did not clear the startup timeout. Run 1685 on cx4's lazy-entry commit passed all jobs, including end-to-end, Windows, and all six Host test shards. The run after this branch's pre-entry ordering refinement is pending push.
+- Run 1682's actual socket timeout and run 1683's queue-overflow/race-1 undock failure were reproduced locally before the fix. Main run 1684 confirmed backpressure alone did not clear the startup timeout. Run 1685 on cx4's lazy-entry commit passed all jobs; run 1686 on this branch's awaited pre-entry refinement also passed all jobs.
 - No bank data, SDE eligibility rule, ESS RPC payload, notification, payout state, or client wire behavior was changed. The Host still exposes the bank ball directly; CCP's separate ESS entry beacon and ship-restricted acceleration-gate transition remain open as documented in `evejs-261108-port-ess.md`.
-- The newest main-CI runs are 1685 (success) and 1684 (failure before lazy placement). No CI run has tested this branch's final pre-entry ordering refinement yet.
+- Main CI run 1685 on cx4's lazy-placement commit passed. Run 1686 on `eaa3c5b49` also passed all jobs after this branch's awaited pre-entry ordering refinement: end-to-end 22.6 minutes, Windows 15.4 minutes, and all six Host test shards succeeded. The newest two main-CI runs, 1685 and 1686, are green.

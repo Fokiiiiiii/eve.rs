@@ -30,7 +30,10 @@ internal sealed partial class CharacterServicesComposition
     private Eve.Services.Space.EssMgrService? _essMgrService;
     private Eve.Services.Space.EssMgrService EssMgr => _essMgrService ??= new(EssCallbacks());
     private Dictionary<int, string> _essQuadrantBySystem = [];
-    private Eve.Services.Space.Sites.SdeSiteAnchors _essSiteAnchors = default!;
+    private readonly SemaphoreSlim _essGeometryGate = new(1, 1);
+    private EssGeometry? _essGeometry;
+
+    private sealed record EssGeometry(int GroupId, double Radius, double ShieldCapacity, double ArmorHp, double StructureHp);
 
     private PgEssStore Ess => _ess ??= new PgEssStore(
         source, new WalletTransactions(source, walletSchema), essSchema,
@@ -214,50 +217,63 @@ internal sealed partial class CharacterServicesComposition
     /// <summary>The system's reserve quadrant as the cache manager lists its keys (null when the system is in no quadrant).</summary>
     private string? EssQuadrantOf(int systemId) => _essQuadrantBySystem.TryGetValue(systemId, out var quadrant) ? quadrant : null;
 
-    /// <summary>Places one system's ESS when the simulation first materializes that system.</summary>
-    private async Task PlaceEssBallsAsync(ISimulation simulation, int solarSystemId)
+    /// <summary>Places the one ESS in a system before its next pilot enters, using its persisted identity and deterministic SDE anchor.</summary>
+    private async Task PlaceEssBallAsync(ISimulation simulation, int solarSystemId, CancellationToken cancellationToken)
     {
+        if (await Ess.PlacementAsync(solarSystemId, cancellationToken) is not { } state)
+            return;
+
+        var geometry = await EssGeometryAsync(cancellationToken);
+        var anchors = await (_siteAnchors ??= new Eve.Services.Space.Sites.SdeSiteAnchors(sde))
+            .OfAsync(solarSystemId, cancellationToken);
+        var (_, position) = Eve.Services.Space.Sites.SitePlacement.Place(anchors, $"ess:{state.SolarSystemId}:{state.EssId}");
+        var placed = await simulation.PlaceStructureAsync(new SimPlaceStructure(
+            state.EssId,
+            state.SolarSystemId,
+            "Encounter Surveillance System",
+            EssRules.TypeEncounterSurveillanceSystem,
+            geometry.GroupId,
+            position,
+            geometry.Radius,
+            state.OwnerId ?? 0,
+            0,
+            0,
+            new SimStructureHealth(geometry.ShieldCapacity, geometry.ArmorHp, geometry.StructureHp,
+                [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], 0, [0, 0, 0], [0, 0, 0]),
+            new SimStructureStatus(StructureState.ShieldVulnerable, UpkeepState.FullPower, null, null, null)), cancellationToken);
+        if (!placed)
+            throw new SimUnavailableException($"the simulation disconnected while placing ESS {state.EssId}");
+    }
+
+    private async Task<EssGeometry> EssGeometryAsync(CancellationToken cancellationToken)
+    {
+        if (_essGeometry is { } cached)
+            return cached;
+        await _essGeometryGate.WaitAsync(cancellationToken);
         try
         {
-            if (await Ess.PlacementAsync(solarSystemId) is not { } state)
-                return;
-
-            await dogma.EnsureTypesAsync([EssRules.TypeEncounterSurveillanceSystem]);
+            if (_essGeometry is { } loaded)
+                return loaded;
+            await dogma.EnsureTypesAsync([EssRules.TypeEncounterSurveillanceSystem], cancellationToken);
             var type = dogma.Type(EssRules.TypeEncounterSurveillanceSystem)
                 ?? throw new InvalidDataException($"The SDE has no dogma type for ESS {EssRules.TypeEncounterSurveillanceSystem}.");
-            var staticType = (await sde.ReadAsync("types", [(long)EssRules.TypeEncounterSurveillanceSystem])).SingleOrDefault()
+            var staticType = (await sde.ReadAsync("types", [(long)EssRules.TypeEncounterSurveillanceSystem], cancellationToken)).SingleOrDefault()
                 ?? throw new InvalidDataException($"The SDE has no record for ESS type {EssRules.TypeEncounterSurveillanceSystem}.");
             var radius = staticType.Doc.TryGetProperty("radius", out var radiusValue) && radiusValue.TryGetDouble(out var staticRadius)
                 ? staticRadius
                 : 0d;
             if (!double.IsFinite(radius) || radius < 0)
                 throw new InvalidDataException($"The SDE has an unusable radius for ESS type {EssRules.TypeEncounterSurveillanceSystem}.");
-
-            var anchors = await _essSiteAnchors.OfAsync(solarSystemId);
-            var (_, position) = Eve.Services.Space.Sites.SitePlacement.Place(anchors, $"ess:{state.SolarSystemId}:{state.EssId}");
-            double Attribute(int id) => type.Attributes.GetValueOrDefault(id, 0d);
-            var structure = new SimPlaceStructure(
-                state.EssId,
-                state.SolarSystemId,
-                "Encounter Surveillance System",
-                EssRules.TypeEncounterSurveillanceSystem,
-                type.GroupId,
-                position,
-                radius,
-                state.OwnerId ?? 0,
-                0,
-                0,
-                new SimStructureHealth(Attribute(263), Attribute(265), Attribute(9), [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], 0, [0, 0, 0], [0, 0, 0]),
-                new SimStructureStatus(StructureState.ShieldVulnerable, UpkeepState.FullPower, null, null, null));
-            if (!await simulation.PlaceStructureAsync(structure))
-                throw new SimUnavailableException($"the simulation disconnected before ESS {state.EssId} could be placed");
+            return _essGeometry = new EssGeometry(type.GroupId, radius,
+                type.Attributes.GetValueOrDefault(263, 0d),
+                type.Attributes.GetValueOrDefault(265, 0d),
+                type.Attributes.GetValueOrDefault(9, 0d));
         }
-        catch (Exception error)
+        finally
         {
-            Console.Error.WriteLine($"eve-host: ess: the bank of system {solarSystemId} was not put in space: {error}");
+            _essGeometryGate.Release();
         }
     }
-
 
     private async Task TickEssAsync(CancellationToken cancellationToken)
     {

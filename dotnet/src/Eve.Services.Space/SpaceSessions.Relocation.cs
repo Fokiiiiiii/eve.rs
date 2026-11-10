@@ -158,6 +158,14 @@ public sealed partial class SpaceSessions
         if (wasInSpace && (pilot!.ShipId != snapshot.Ship.Id || pilot.SimulationScene.InstanceId != 0))
             return "The active ship is not in a public space scene.";
         var normalizedOperation = operationId is null ? Guid.NewGuid().ToString("D") : Guid.Parse(operationId).ToString("D");
+        try
+        {
+            await PrepareSolarSystemAsync(solarSystemId, cancellationToken);
+        }
+        catch (SimUnavailableException)
+        {
+            return "Space is not available right now. Try again in a moment.";
+        }
         if (!wasInSpace && operationId is not null)
         {
             await SyncBuffsAsync(snapshot.World, snapshot.Ship.Id, cancellationToken);
@@ -419,6 +427,14 @@ public sealed partial class SpaceSessions
         var id = (ulong)session.SessionId;
         var solarSystemId = pending.Enter.Scene.LocationId;
         if (_systems.Get(solarSystemId) is not { } place) return "Solar system not found.";
+        try
+        {
+            await PrepareSolarSystemAsync(solarSystemId, cancellationToken);
+        }
+        catch (SimUnavailableException)
+        {
+            return "Space is not available right now. Try again in a moment.";
+        }
         if (pending.Moved is null)
         {
             var relocation = await _ships.RelocateAsync(pending.CharacterId, solarSystemId, place.ConstellationId, place.RegionId, cancellationToken);

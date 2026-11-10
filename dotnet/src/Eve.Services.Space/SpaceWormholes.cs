@@ -193,6 +193,9 @@ public sealed partial class SpaceSessions
             throw MovementRefused(policy, "jump");
         }
         var world = Wormholes ?? throw JumpRefused("STARGATE_NOT_FOUND");
+        var end = await world.EndAsync(endId, cancellationToken);
+        if (end is { } activeEnd)
+            await PrepareSolarSystemAsync(activeEnd.DestinationSystemId, cancellationToken);
         var connectionId = endId / 2;
         var transitGate = _wormholeTransitGates.GetOrAdd(connectionId, static _ => new SemaphoreSlim(1, 1));
         // This gate avoids duplicate database work within one Host. AttemptJumpAsync also locks the connection row, which serializes other Hosts.

@@ -94,7 +94,7 @@ def test_a_docked_character_reads_its_systems_ess_as_the_client_does():
         ess_system, ess_id = placed
         assert set(data) == ESS_KEYS
         assert (data["essID"], data["solarSystemID"]) == (ess_id, ess_system)
-        assert data["mainBankLink"] is None and data["reserveBankActiveLinks"] == 0
+        assert data["mainBankLink"] == {} and data["reserveBankActiveLinks"] == 0
         assert data["mainValue"] == 0 and data["reserveValue"] == 0
         # the keys of the system's quadrant: the 15 and the 45 variant of one quadrant, or none when the system is in no quadrant
         assert keys == [] or set(keys) in QUADRANT_KEY_PAIRS, keys
@@ -103,7 +103,7 @@ def test_a_docked_character_reads_its_systems_ess_as_the_client_does():
         # a link the client asks for: refused here (no ESS in space), answered with None and no change to the state
         assert client.call("essMgr", "AttemptLinkToMainBank") is None
         after = m.plain(client.call("essMgr", "GetDataForClientSolarSystem"))
-        assert after["mainBankLink"] is None
+        assert after["mainBankLink"] == {}
         assert client.call("essMgr", "RequestMainBankUnlink") is None
 
 def test_a_linkable_hull_starts_and_cancels_an_in_space_main_bank_link():
@@ -156,7 +156,8 @@ def test_a_linkable_hull_starts_and_cancels_an_in_space_main_bank_link():
         linked = client.call("essMgr", "AttemptLinkToMainBank")
         assert linked is None
         data = m.plain(client.call("essMgr", "GetDataForClientSolarSystem"))
-        assert data["mainBankLink"] is not None
+        assert data["mainBankLink"], data
+        assert data["mainBankLink"]["characterID"] == pilot
         assert data["essID"] == ess_id
 
         pilot_cash_before = dbseed.isk_of(pilot)
@@ -169,9 +170,9 @@ def test_a_linkable_hull_starts_and_cancels_an_in_space_main_bank_link():
         while time.monotonic() < deadline:
             time.sleep(1)
             data = m.plain(client.call("essMgr", "GetDataForClientSolarSystem"))
-            if data["mainBankLink"] is None:
+            if data["mainBankLink"] == {}:
                 break
-        assert data["mainBankLink"] is None, data
+        assert data["mainBankLink"] == {}, data
         assert data["mainValue"] == 0, data
         assert abs((dbseed.isk_of(pilot) - pilot_cash_before) - 800) < 0.01
         assert int(psql(f"SELECT count(*) FROM {wallet_schema}.journal WHERE owner_id = {pilot} AND account_key = 1000 "

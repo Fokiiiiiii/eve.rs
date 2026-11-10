@@ -2,8 +2,8 @@
 
 A character that has selected its station asks the essMgr and the dynamic resource cache for the ESS of the system it is in, the way the client does
 (dynamicResourceSvc.py: GetESSDataForCurrentSystem, IsPlayerLinkedToReserveBank, GetESSAccessHistoryForCurrentSystem, GetESSReserveBankKeysForCurrentSystem;
-essSystemInfoContainer.py: GetESSSystemDetails). The host decides whether that system has an ESS: an operator places one with EVE_ESS_SYSTEMS, and the test
-reads the placement from EVE_LIVE_ESS_SYSTEM=<solarSystemId>:<essId> (the same entry). Without that variable the test expects no ESS in the system. A link the
+essSystemInfoContainer.py: GetESSSystemDetails). Claimable nullsec systems get an ESS from the pinned SDE; EVE_LIVE_ESS_SYSTEM=<solarSystemId>:<essId>
+selects an explicit operator override for the in-space path. Without that variable this test expects no ESS in its starting station's system. A link the
 client asks for is refused by the server when the ESS object is not in space (no geometry), and the refusal changes nothing, as the client expects.
 
     EVE_LIVE_HOST=host:port EVE_LIVE_ESS_SYSTEM=30000142:900000001 pytest tests/test_ess.py

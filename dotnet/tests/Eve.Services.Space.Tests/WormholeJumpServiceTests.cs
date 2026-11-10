@@ -219,6 +219,39 @@ public sealed class WormholeJumpServiceTests
     }
 
     [PgFact]
+    public async Task A_slim_state_job_is_not_consumed_when_the_simulation_is_offline()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var type = new WormholeType(1001, 7, 25 * 60, 1e9, 0, 1e8, 302);
+        await using var world = await JWorld.CreateAsync(rig, type);
+        var end = Assert.Single(await world.World.EndsInSystemAsync(JSystem));
+        var jobKey = $"{end.BodyId / 2}:1";
+        rig.Sim.Heard.Clear();
+        rig.Sim.IsConnected = false;
+
+        rig.Now += (long)TimeSpan.FromHours(1).TotalMilliseconds;
+        Assert.Equal(1, await rig.Scheduler.RunDueAsync());
+
+        Assert.Empty(rig.Sim.Heard.OfType<SimSetSlimField>());
+        var pending = await rig.Scheduler.FindAsync(WormholeJobs.SlimStateKind, jobKey);
+        Assert.NotNull(pending);
+        Assert.Equal(("pending", 1), (pending.State, pending.Attempts));
+
+        rig.Sim.IsConnected = true;
+        rig.Now += 5_000;
+        Assert.Equal(1, await rig.Scheduler.RunDueAsync());
+
+        Assert.Null(await rig.Scheduler.FindAsync(WormholeJobs.SlimStateKind, jobKey));
+        var expectedEnds = await world.World.EndsForConnectionAsync(end.BodyId / 2);
+        var expectedUpdates = expectedEnds.SelectMany(wormholeEnd => new[]
+        {
+            new SimSetSlimField(wormholeEnd.BodyId, "wormholeAge", new SimSlimInt(wormholeEnd.AgeState)),
+            new SimSetSlimField(wormholeEnd.BodyId, "wormholeSize", new SimSlimReal(wormholeEnd.Size)),
+        });
+        Assert.Equal(expectedUpdates, rig.Sim.Heard.OfType<SimSetSlimField>());
+    }
+
+    [PgFact]
     public async Task A_pilot_is_polarized_at_the_arrival_end_and_cannot_immediately_jump_back()
     {
         await using var rig = await Rig.CreateAsync();

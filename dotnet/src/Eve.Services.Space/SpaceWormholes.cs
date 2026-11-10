@@ -123,7 +123,7 @@ public sealed partial class SpaceSessions
             return;
         try
         {
-            await ApplyWormholeStateChangeAsync(world, connectionId, cancellationToken).ConfigureAwait(false);
+            await ApplyWormholeStateChangeAsync(world, connectionId, waitForWrite: false, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
@@ -133,16 +133,28 @@ public sealed partial class SpaceSessions
 
     /// <summary>A durable state job uses this path so a failed DB read or simulation send reaches the Scheduler for retry.</summary>
     public Task PublishWormholeStateChangeForRetryAsync(long connectionId, CancellationToken cancellationToken = default) =>
-        Wormholes is { } world ? ApplyWormholeStateChangeAsync(world, connectionId, cancellationToken) : Task.CompletedTask;
+        Wormholes is { } world ? ApplyWormholeStateChangeAsync(world, connectionId, waitForWrite: true, cancellationToken) : Task.CompletedTask;
 
-    private async Task ApplyWormholeStateChangeAsync(WormholeWorld world, long connectionId, CancellationToken cancellationToken)
+    private async Task ApplyWormholeStateChangeAsync(WormholeWorld world, long connectionId, bool waitForWrite, CancellationToken cancellationToken)
     {
         if (_sim is null)
             return;
         foreach (var end in await world.EndsForConnectionAsync(connectionId, cancellationToken))
         {
-            _sim.SetSlimField(end.BodyId, "wormholeAge", new SimSlimInt(end.AgeState));
-            _sim.SetSlimField(end.BodyId, "wormholeSize", new SimSlimReal(end.Size));
+            var age = new SimSlimInt(end.AgeState);
+            var size = new SimSlimReal(end.Size);
+            if (waitForWrite)
+            {
+                if (!await _sim.TrySetSlimFieldAsync(end.BodyId, "wormholeAge", age, cancellationToken).ConfigureAwait(false))
+                    throw new SimUnavailableException($"the simulation link could not queue the wormholeAge update for end {end.BodyId}");
+                if (!await _sim.TrySetSlimFieldAsync(end.BodyId, "wormholeSize", size, cancellationToken).ConfigureAwait(false))
+                    throw new SimUnavailableException($"the simulation link could not queue the wormholeSize update for end {end.BodyId}");
+            }
+            else
+            {
+                _sim.SetSlimField(end.BodyId, "wormholeAge", age);
+                _sim.SetSlimField(end.BodyId, "wormholeSize", size);
+            }
         }
     }
 

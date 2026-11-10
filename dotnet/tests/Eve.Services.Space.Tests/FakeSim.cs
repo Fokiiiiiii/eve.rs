@@ -351,12 +351,23 @@ internal sealed class FakeSim : ISimulation
 
     public void SetSlimField(long itemId, string fieldName, SimSlimValue value)
     {
+        if (!IsConnected)
+            return;
         if (FailNextSlimField)
         {
             FailNextSlimField = false;
             throw new InvalidOperationException("test simulation rejected a slim field update");
         }
         Heard.Enqueue(new SimSetSlimField(itemId, fieldName, value));
+    }
+
+    public Task<bool> TrySetSlimFieldAsync(long itemId, string fieldName, SimSlimValue value, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!IsConnected)
+            return Task.FromResult(false);
+        SetSlimField(itemId, fieldName, value);
+        return Task.FromResult(true);
     }
 
     public void SetAnalysisBeaconState(long deployableId, SimAnalysisBeaconState state) => Heard.Enqueue(new SimSetAnalysisBeaconState(deployableId, state));

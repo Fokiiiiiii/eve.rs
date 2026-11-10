@@ -1618,6 +1618,39 @@ public sealed class CharacterHostTests
 
 
     [PgFact]
+    public async Task Assigning_personal_labels_does_not_create_a_missing_address_book_contact()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var session = new ClientSession { CharacterId = character, UserId = 1 };
+        var charMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charMgr"));
+        const long contactId = 77_001;
+
+        Assert.Equal(new PyInt(1), await CallAsync(charMgr, "CreateLabel", session, new PyStr("Fleet"), new PyInt(7)));
+        Assert.IsType<PyNone>(await CallAsync(charMgr, "AssignLabels", session,
+            new PyList([new PyLong(contactId)]), new PyLong(1)));
+
+        var expectedEmptyContacts = Py.KeyVal(
+            ("addresses", Py.Rowset(["contactID", "inWatchlist", "relationshipID", "labelMask"], [])),
+            ("blocked", Py.Rowset(["senderID"], [])));
+        Assert.Equal(expectedEmptyContacts, await CallAsync(charMgr, "GetContactList", session));
+
+        Assert.IsType<PyNone>(await CallAsync(charMgr, "AddContact", session,
+            new PyLong(contactId), new PyLong(-10), PyBool.False));
+        Assert.IsType<PyNone>(await CallAsync(charMgr, "AssignLabels", session,
+            new PyList([new PyLong(contactId)]), new PyLong(1)));
+        var expectedContact = Py.KeyVal(
+            ("addresses", Py.Rowset(["contactID", "inWatchlist", "relationshipID", "labelMask"],
+                [new PyList([new PyInt(contactId), new PyInt(0), new PyInt(-10), new PyInt(1)])])),
+            ("blocked", Py.Rowset(["senderID"], [])));
+        Assert.Equal(expectedContact, await CallAsync(charMgr, "GetContactList", session));
+
+        await rig.RestartAsync();
+        charMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("charMgr"));
+        Assert.Equal(expectedContact, await CallAsync(charMgr, "GetContactList", session));
+    }
+
+    [PgFact]
     public async Task Character_contact_labels_persist_through_the_host_and_a_restart()
     {
         await using var rig = await CharacterHostRig.CreateAsync();
@@ -1628,6 +1661,8 @@ public sealed class CharacterHostTests
 
         Assert.Equal(new PyInt(1), await CallAsync(charMgr, "CreateLabel", session, new PyStr("Fleet"), new PyInt(7)));
         Assert.Equal(new PyInt(2), await CallAsync(charMgr, "CreateLabel", session, new PyStr("Friends"), new PyInt(3)));
+        Assert.IsType<PyNone>(await CallAsync(charMgr, "AddContact", session,
+            new PyLong(77_001), new PyLong(0), PyBool.False));
         await CallAsync(charMgr, "AssignLabels", session, new PyList([new PyLong(77_001)]), new PyLong(3));
         Assert.IsType<PyNone>(await CallAsync(charMgr, "DeleteLabel", session, new PyLong(2)));
 

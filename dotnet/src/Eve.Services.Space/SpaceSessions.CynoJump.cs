@@ -75,6 +75,7 @@ public sealed partial class SpaceSessions
         {
             throw MovementRefused(policy, "jump");
         }
+        await PrepareSolarSystemAsync(destinationSystem, cancellationToken);
         CommandReply reply;
         try
         {
@@ -125,6 +126,7 @@ public sealed partial class SpaceSessions
         }
         var jumpingPilots = _pilots.Values.Where(p => ReferenceEquals(p, pilot) || passengers.Contains(p.ShipId)).ToArray();
         foreach (var jumper in jumpingPilots) RequirePublicMoveSettled(jumper.Session);
+        await PrepareSolarSystemAsync(destinationSystem, cancellationToken);
         var args = new List<double> { fieldId, destinationSystem, JumpDriveRules.ConduitRangeMeters };
         args.AddRange(passengers.Select(ship => (double)ship));
         CommandReply reply;
@@ -204,6 +206,7 @@ public sealed partial class SpaceSessions
         {
             throw MovementRefused(policy, "jump");
         }
+        await PrepareSolarSystemAsync(destinationSystem, cancellationToken);
         CommandReply reply;
         try
         {

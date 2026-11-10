@@ -21,6 +21,7 @@ public sealed class GateRules
     private readonly IReadOnlyDictionary<long, int> _listOfGate;
     private readonly IReadOnlyDictionary<int, IReadOnlySet<int>> _groupsOfList;
     private readonly IReadOnlyDictionary<long, long> _destinationOf;
+    private readonly IReadOnlyDictionary<long, int> _systemOfGate;
     private readonly IReadOnlyDictionary<long, int> _typeOfGate;
     private readonly IReadOnlyDictionary<int, AlignmentToll> _tollOfType;
     private readonly IReadOnlyDictionary<int, DeployBlocker> _blockerOfType;
@@ -28,11 +29,13 @@ public sealed class GateRules
 
     public GateRules(IReadOnlyDictionary<long, int> listOfGate, IReadOnlyDictionary<int, IReadOnlySet<int>> groupsOfList,
         IReadOnlyDictionary<long, long> destinationOf, IReadOnlyDictionary<long, int> typeOfGate, IReadOnlyDictionary<int, AlignmentToll> tollOfType,
-        IReadOnlyDictionary<int, DeployBlocker>? blockerOfType = null, IEnumerable<GateSite>? sites = null)
+        IReadOnlyDictionary<int, DeployBlocker>? blockerOfType = null, IEnumerable<GateSite>? sites = null,
+        IReadOnlyDictionary<long, int>? systemOfGate = null)
     {
         _listOfGate = listOfGate;
         _groupsOfList = groupsOfList;
         _destinationOf = destinationOf;
+        _systemOfGate = systemOfGate ?? new Dictionary<long, int>();
         _typeOfGate = typeOfGate;
         _tollOfType = tollOfType;
         _blockerOfType = blockerOfType ?? new Dictionary<int, DeployBlocker>();
@@ -61,11 +64,13 @@ public sealed class GateRules
             }
         }
         var destinations = new Dictionary<long, long>();
+        var systems = new Dictionary<long, int>();
         var types = new Dictionary<long, int>();
         var sites = new List<GateSite>();
         foreach (var row in await sde.ReadAsync("mapStargates", cancellationToken: cancellationToken))
         {
             var type = row.Doc.GetProperty("typeID").GetInt32();
+            systems[row.Key] = row.Doc.GetProperty("solarSystemID").GetInt32();
             types[row.Key] = type;
             if (row.Doc.TryGetProperty("destination", out var destination) && destination.TryGetProperty("stargateID", out var gate))
             {
@@ -78,7 +83,7 @@ public sealed class GateRules
                     position.GetProperty("x").GetDouble(), position.GetProperty("y").GetDouble(), position.GetProperty("z").GetDouble()));
             }
         }
-        return new GateRules(lists.ToDictionary(pair => pair.Key, pair => pair.Value), groupsOfList, destinations, types, tolls, blockers, sites);
+        return new GateRules(lists.ToDictionary(pair => pair.Key, pair => pair.Value), groupsOfList, destinations, types, tolls, blockers, sites, systems);
     }
 
     /// <summary>Whether a ship of this group may go through the gate. A gate with no list admits every ship.</summary>
@@ -87,6 +92,9 @@ public sealed class GateRules
 
     /// <summary>The gate at the other end (the SDE destination), or null for a gate the SDE does not have.</summary>
     public long? DestinationOf(long gateId) => _destinationOf.TryGetValue(gateId, out var destination) ? destination : null;
+
+    /// <summary>The solar system containing a stargate, from the SDE, or null for an unknown gate.</summary>
+    public int? SolarSystemOf(long gateId) => _systemOfGate.TryGetValue(gateId, out var systemId) ? systemId : null;
 
     /// <summary>The alignment toll of a gate's type, or null when the type has none.</summary>
     public AlignmentToll? TollOf(long gateId) =>

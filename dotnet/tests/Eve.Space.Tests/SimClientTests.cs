@@ -907,6 +907,30 @@ public class SimClientTests
     }
 
     [Fact]
+    public async Task Structure_placement_waits_for_outbound_capacity_without_breaking_the_link()
+    {
+        var stream = new BlockingWriteStream();
+        await using var client = new SimClient(_ => Task.FromResult<Stream>(stream));
+        client.RetryAfter = TimeSpan.FromMinutes(1);
+        client.Start();
+        await Until(() => client.IsConnected);
+
+        client.Bind(200);
+        await stream.WriteStarted.Task.WaitAsync(Patience);
+        for (var i = 0; i < SimClient.OutboundQueueCapacity; i++)
+            Assert.True(await client.PlaceStructureAsync(Structure(10_000 + i)));
+
+        var waiting = client.PlaceStructureAsync(Structure(20_000));
+        Assert.False(waiting.IsCompleted);
+        Assert.True(client.IsConnected);
+
+        stream.ReleaseWrites();
+
+        Assert.True(await Within(waiting));
+        Assert.True(client.IsConnected);
+    }
+
+    [Fact]
     public async Task Structure_placements_apply_backpressure_without_breaking_the_simulation_link()
     {
         var stream = new GatedWriteStream();
@@ -1000,6 +1024,8 @@ public class SimClientTests
         private int _writeCount;
 
         public TaskCompletionSource WriteStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private TaskCompletionSource WriteRelease { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public void ReleaseWrites() => WriteRelease.TrySetResult();
 
         public override bool CanRead => true;
         public override bool CanSeek => false;
@@ -1028,7 +1054,7 @@ public class SimClientTests
             if (Interlocked.Increment(ref _writeCount) == 1)
                 return;
             WriteStarted.TrySetResult();
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            await WriteRelease.Task.WaitAsync(cancellationToken);
         }
 
         public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>

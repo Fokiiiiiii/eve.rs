@@ -18,15 +18,37 @@ public sealed class ContractFeesCalculatorTests
     }
 
     [Fact]
-    public void Private_courier_uses_tenth_cost_and_has_no_deposit()
+    public void Private_courier_has_a_flat_broker_fee_and_no_public_tax_or_deposit()
     {
         var fees = ContractFeesCalculator.Calculate(3, 1, 10_000_000m, 0m, 1440, 0, 0, 1m);
 
-        Assert.Equal(0.0004m, fees.BrokerFeeRate);
+        Assert.Equal(0m, fees.BrokerFeeRate);
         Assert.Equal(10_000L, fees.BrokerFee);
-        Assert.Equal(0.001m, fees.SalesTaxRate);
-        Assert.Equal(10_000L, fees.SalesTax);
+        Assert.Equal(0m, fees.SalesTaxRate);
+        Assert.Equal(0L, fees.SalesTax);
         Assert.Equal(0L, fees.Deposit);
+    }
+
+    [Theory]
+    [InlineData(1, 1)]
+    [InlineData(1, 2)]
+    [InlineData(1, 3)]
+    [InlineData(2, 1)]
+    [InlineData(2, 2)]
+    [InlineData(2, 3)]
+    [InlineData(3, 1)]
+    [InlineData(3, 2)]
+    [InlineData(3, 3)]
+    public void Every_nonpublic_availability_uses_the_fixed_broker_fee(short contractType,short availability)
+    {
+        var fees = ContractFeesCalculator.Calculate(contractType,availability,250_000_000m,100_000_000m,
+            20_160,5,5,0.2m);
+
+        Assert.Equal(0m,fees.BrokerFeeRate);
+        Assert.Equal(10_000m,fees.BrokerFee);
+        Assert.Equal(0m,fees.SalesTaxRate);
+        Assert.Equal(0L,fees.SalesTax);
+        Assert.Equal(0L,fees.Deposit);
     }
 
     [Fact]
@@ -40,7 +62,7 @@ public sealed class ContractFeesCalculatorTests
     [Fact]
     public void Extra_expiry_day_applies_broker_percentage_and_multiplier()
     {
-        var fees = ContractFeesCalculator.Calculate(1, 1, 10_000_000m, 0m, 2880, 0, 0, 1m);
+        var fees = ContractFeesCalculator.Calculate(1, 0, 10_000_000m, 0m, 2880, 0, 0, 1m);
 
         Assert.Equal(0.0045m, fees.BrokerFeeRate);
         Assert.Equal(47_250L, fees.BrokerFee);

@@ -38,6 +38,7 @@ namespace Eve.Host;
 internal sealed partial class CharacterServicesComposition
 {
     private Eve.Services.Space.Scanning.ICosmicSiteSource? scanBookmarkSites;
+    private Eve.Services.Space.Sites.SdeSiteAnchors? _siteAnchors;
     private async Task EnsureSitesAsync(int solarSystemId)
     {
         try
@@ -147,7 +148,7 @@ internal sealed partial class CharacterServicesComposition
 
     private async Task SpaceSimulation()
     {
-        _essSiteAnchors = new Eve.Services.Space.Sites.SdeSiteAnchors(sde);
+        _siteAnchors ??= new Eve.Services.Space.Sites.SdeSiteAnchors(sde);
         _dynamicBounty = new PgDynamicBountyStore(source,
             solarSystems.Systems.Select(system => new DynamicBountySystem(system.Id, system.RegionId, system.Security)), npcSchema);
         RegisterDynamicBountyJobs();
@@ -242,8 +243,9 @@ internal sealed partial class CharacterServicesComposition
             var fallbackRelic = FallbackOf(1207);
             // the sites of J-space: each wormhole system's class from the committed data (its plan is WormholeSites, the wormhole templates)
             var jSpaceClasses = Eve.Universe.JSpaceSystems.Load().ToDictionary(system => system.Id, system => system.WormholeClass);
+            var siteAnchors = _siteAnchors ??= new Eve.Services.Space.Sites.SdeSiteAnchors(sde);
             cosmicSites = new Eve.Services.Space.Sites.CosmicSiteDirector(
-                source, foundations.Content, foundations.Scheduler, Eve.Services.Space.Sites.SiteTemplates.Load(), new Eve.Services.Space.Sites.SdeSiteAnchors(sde), solarSystems,
+                source, foundations.Content, foundations.Scheduler, Eve.Services.Space.Sites.SiteTemplates.Load(), siteAnchors, solarSystems,
                 message => Console.Error.WriteLine($"eve-host: {message}"), system => spaceSessions?.HasPilotsIn(system) ?? false,
                 system => jSpaceClasses.TryGetValue(system, out var wormholeClass) ? wormholeClass : null);
             cosmicSites.Attach(foundations.Content, foundations.Events);
@@ -333,6 +335,7 @@ internal sealed partial class CharacterServicesComposition
                 });
             spaceSessions.UseBounties(bountyStore);
             spaceSessions.Ess = Ess;   // the Main Bank share of a bounty earned in an ESS system
+            spaceSessions.PrepareSolarSystemForEntryAsync = (systemId, token) => PlaceEssBallAsync(sim, systemId, token);
             spaceSessions.DynamicBounties = _dynamicBounty;
             spaceSessions.RecordDynamicBountyPaidInTransactionAsync = RecordDynamicBountyPaidInTransactionAsync;
             spaceSessions.RecordDynamicBountyLossInTransactionAsync = RecordDynamicBountyLossInTransactionAsync;
@@ -621,8 +624,6 @@ internal sealed partial class CharacterServicesComposition
                 placingSites.PlaceResources = (system, site, template, origin) => spaceContainers!.PlaceSiteResourcesAsync(system, site, template, origin);
             if (cosmicSites is { } endingSites)
                 endingSites.RemoveResources = (connection, transaction, system, site) => spaceContainers!.RemoveSiteResourcesAsync(connection, transaction, system, site);
-            if (sim is { } essSimulation)
-                spaceSessions.SystemEntered += system => _ = PlaceEssBallsAsync(essSimulation, system);
             spaceSessions.SystemEntered += system => _ = EnsureSitesAsync(system);
             // the NPC waves of the dungeons (A-W1): the host runs their sweep and kill subscriber; a feature starts a dungeon through DungeonWaveDirector.StartAsync
             await Eve.Services.Space.Waves.DungeonWaveDirector.MigrateAsync(source, spaceSchema);

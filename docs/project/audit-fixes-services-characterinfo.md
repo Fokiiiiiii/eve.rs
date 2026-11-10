@@ -1,35 +1,35 @@
-# CharacterInfo service audit fixes
+# CharacterInfo services audit fixes
 
-This record verifies the findings in `/home/user/reports/90-audit-services-characterinfo-r15.md` against the current repository, the V24.01 client source in `/home/user/eve-logic`, and the requested EveJS checkout `/home/user/evejs-261108.1`.
+`/home/user/reports/90-audit-services-characterinfo-r15.md` was checked against the Host and service implementations, V24.01 client source in `/home/user/eve-logic`, and EveJS 261108.1 in `/home/user/evejs-261108.1` before changes.
 
-## P2: Persist logoff time on abrupt transport close
+## Findings
 
-**Finding confirmed.** Before this change, `HostServer.SessionActor.RunAsync` called `_session.Close()` before its close callback. The composed close handler then removed presence (`HostComposition.cs`, `session.Closed` handler), but only the explicit `UserLogOffCharacter` flow persisted `Character.LastLogoffAt` (`CharacterLogoff.cs`). The database value is read by `CorpRegistryService.MemberTrackingRows` to produce `lastOnline` (`CorpRegistryService.cs:823-828`).
+### P2 — Abrupt disconnect did not persist character logoff time
 
-The whole V24.01 client source search for `lastLogoff`, `lastLogoffAt`, `LastLogoff`, `logoffDateTime`, `lastOnline`, and `logoffDate` finds the member tracking consumer in `eve/client/script/ui/shared/neocom/corporation/corp_ui_member_tracking.py`. It calls `GetMemberTrackingInfo` at line 103, filters and renders `member.lastOnline` at lines 127-139, sorts on it at lines 159-167, and shows `member.logoffDateTime` to directors at lines 157-170. This confirms the corporation member tracking impact.
+**Confirmed.** Before the fix, `SessionActor` closed the session before its `SessionClosedAsync` callback (`dotnet/src/Eve.Host/HostServer.cs`), while the Host's disconnect cleanup only removed presence. Only the explicit `UserLogOffCharacter` path persisted `LastLogoffAt`. EveJS persists character logoff state from its socket-disconnect path (`server/src/network/tcp/index.js:257-264`, `server/src/services/_shared/sessionDisconnect.js:312-355`) before its offline transition (`server/src/services/online/onlineStatusRuntime.js:140-151`). V24.01 corporation member tracking consumes `lastOnline` at `eve/client/script/ui/shared/neocom/corporation/corp_ui_member_tracking.py:127-139`.
 
-EveJS 261108.1 calls `disconnectCharacterSession` from the TCP socket lifecycle (`server/src/network/tcp/index.js:263-275`). That handler persists disconnect state at `server/src/services/_shared/sessionDisconnect.js:353-355`; its online transition handler stores the transition timestamp before notifying observers at `server/src/services/online/onlineStatusRuntime.js:140-155`.
+Host now persists `LastLogoffAt` before `ClientSession.Close()` can announce offline presence, and only when the closing session is still the character's current session. This leaves a prior explicit logoff timestamp intact instead of writing a second, later time.
 
-The server now runs `HostOptions.SessionClosingAsync` before `ClientSession.Close()` (`dotnet/src/Eve.Host/HostServer.cs:44-51, 697-718`). The Host composition takes the character lifecycle lock, verifies that this is still the character's current session, and stores the timestamp before existing close handlers remove presence (`dotnet/src/Eve.Host/Hosting/HostComposition.cs:594-606`). Explicit logoff already stores its timestamp and clears the session character binding, so the close callback does not overwrite that value.
+### P3 — AssignLabels created unknown personal contacts
 
-The new PostgreSQL Host test sends the real `charUnboundMgr.SelectCharacterID` RPC over a socket, abruptly closes the transport, checks the persisted time when the observer receives `OnContactLoggedOff`, and reads `lastOnline` through the director-only `corpRegistry.GetMemberTrackingInfo` wire rowset. It then verifies that explicit logoff's timestamp is not rewritten by a later transport close. The test failed before the fix because `LastLogoffAt` remained null.
+**Confirmed.** The old `CharMgrService.AssignLabels` created a `CharMgrContact` when the ID was absent. EveJS `server/src/services/character/charMgrService.js:1035-1055` updates only a contact already in the address book. V24.01 `eve/client/script/ui/shared/neocom/addressBook/addressbookService.py:1096-1116` calls `AssignLabels`, then opens `AddToAddressBook` for a single unknown ID; that flow sends `AddContact` only after confirmation (`:705-816`). Cancelling therefore must leave the contact absent.
 
-**Not substantiated:** The audit also attributed an incorrect character-selection sort to this field. The whole-client search above found no V24.01 consumer of the server's `logoffDate` character-selection field. I have not counted that as a confirmed impact; the corporation member tracking impact is independently confirmed.
+`AssignLabels` now updates only existing contacts. After confirmation, the client creates the contact through `AddContact` and re-sends its label assignment. Service and Host tests cover both the unknown-ID case and the confirmed-add case, including Host restart persistence.
 
-## P3: Ignore unknown IDs in personal `AssignLabels`
+## Verification
 
-**Finding confirmed.** The previous `CharMgrService.AssignLabels` implementation inserted a new `CharMgrContact` when an ID was absent. V24.01 `addressbookService.py:1096-1116` calls `AssignLabels` before opening the add-contact modal; when the modal is canceled, the method returns without adding the contact. The modal only calls `AddContact` after confirmation (`addressbookService.py:767-790`). Thus the previous server behavior persisted a ghost contact on cancel.
+The DB-backed Host tests use `eve_p5` with the pinned SDE. Both new E2E regressions failed before their respective fixes and passed afterward. The P2 E2E runs the real Host TCP front, checks the offline notification and persisted timestamp, checks corporation `lastOnline`, and verifies explicit logoff is not overwritten during close. The P3 Host regression checks the `GetContactList` wire-shaped result before and after `AddContact`, and after restart.
 
-EveJS 261108.1 `server/src/services/character/charMgrService.js:1035-1055` updates label masks only for contacts already present. The Host creates `CharMgrService` in `dotnet/src/Eve.Host/Rpc/CharacterRpc.cs:76-87`, and `HostComposition.cs:482-485` registers the composed character services, so the behavior is exercised through the registered Host route.
+No reported finding was false, so none were skipped. Graphical-client verification was not performed. CBM/Serena MCP-based source navigation was unavailable; source paths and line evidence were checked directly.
 
-`AssignLabels` now updates only existing contacts (`dotnet/src/Eve.Services.CharacterInfo/CharMgrService.cs:754-771`). Service and PostgreSQL Host regressions verify that an unknown ID remains absent, then `AddContact` followed by `AssignLabels` persists the requested mask. The Host regression failed before the fix because the contact list contained the unknown ID.
+## Test and build results
 
-## Verification record
-
-- Test-first failures were observed for both findings before their fixes: null `LastLogoffAt` after abrupt close, and an unexpected contact row after assigning a label to an unknown ID.
-- Focused tests passed on the job's database `eve_p4`: the abrupt disconnect/explicit logoff Host flow, the contact-label Host persistence/restart flow, and the CharacterInfo service label mutation flow. Each focused run reported zero skipped tests.
-- Release builds with warnings treated as errors succeeded with 0 warnings for `Eve.Host`, `Eve.Services.CharacterInfo`, `Eve.Host.Tests`, and `Eve.Services.CharacterInfo.Tests`.
-- Class-level checks on `eve_p4`: `CharMgrTests` 33 passed / 0 skipped; `CharacterHostTests` 68 passed / 1 skipped; `HostServerTests` 439 passed / 0 skipped. The one `CharacterHostTests` skip is the existing `RealAbyssalSimPgFact`, which requires external simulator binary/SDE configuration and is not counted as a pass.
-- The pinned SDE data was loaded into `eve_p4` for the Host fixture. No SDE data is part of this change.
-- No graphical V24.01 client session or fresh packet capture was run.
-- The `CLAUDE.md`-requested CBM/Serena MCP code tools were not available in this environment; source verification used local line-numbered files and full-tree `rg` searches instead.
+- Before P2 fix: the new DB-backed Host disconnect E2E failed because the old three-day `LastLogoffAt` remained visible after the offline notification.
+- After P2 fix: `CharacterDisconnectHostTests` passed (1/1, 0 skipped).
+- Before P3 fix: the new DB-backed Host test failed because `AssignLabels` inserted the missing contact into `GetContactList.addresses`.
+- After P3 fix: the two focused Host label tests passed (2/2, 0 skipped); the `CharMgrTests` class passed (33/33, 0 skipped).
+- `HostServerTests` class passed (440/440, 0 skipped).
+- `CharacterHostTests` class passed (69 passed, 1 skipped, 0 failed). The one skip is `Confirmed_ship_clone_jump_moves_the_capsule_settles_state_and_notifies_after_space_entry`, which requires `EVE_ABYSSAL_SIM_BINARY` and `EVE_ABYSSAL_SIM_SDE`; those optional simulation inputs were not configured. It is not counted as a pass.
+- Release builds with warnings treated as errors succeeded with 0 warnings and 0 errors for `Eve.Services.CharacterInfo`, `Eve.Host`, `Eve.Services.CharacterInfo.Tests`, and `Eve.Host.Tests`.
+- P2 was pushed in `b5097a2765c0`; CI run 1675 passed with no failed jobs. P3 was pushed in `c464d39c0` (with this report update in `4a506e84b`); CI run 1676 passed with no failed jobs.
+- The code changes were not tested with a graphical client.

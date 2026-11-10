@@ -151,6 +151,25 @@ public static partial class SimCodec
         return new SimStructureStatus(state, upkeep, timer, unanchoring, repairing);
     }
 
+    private static SimStructureModule[] ReadStructureModules(ref Reader r)
+    {
+        var count = r.U32();
+        if (count > 256 || count > r.Remaining / 16)
+            throw new SimLinkException(SimLinkError.BadValue, "structure modules");
+        var modules = new SimStructureModule[(int)count];
+        var seen = new HashSet<long>();
+        for (var index = 0; index < modules.Length; index++)
+        {
+            var itemId = r.I64();
+            var typeId = r.I32();
+            var flagId = r.I32();
+            if (itemId <= 0 || typeId <= 0 || flagId <= 0 || !seen.Add(itemId))
+                throw new SimLinkException(SimLinkError.BadValue, "structure modules");
+            modules[index] = new SimStructureModule(itemId, typeId, flagId);
+        }
+        return modules;
+    }
+
     private static double[] ReadVector(ref Reader r) => [r.F64(), r.F64(), r.F64()];
 
     /// <summary>A dynamic slim-item field value (protocol 76): a tag (0 none, 1 int, 2 real, 3 bool, 4 text, 5 tuple), then its payload.</summary>

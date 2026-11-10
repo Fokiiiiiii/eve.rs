@@ -1185,6 +1185,12 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     public void SetStructureState(SimSetStructureState state) => Send(state);
 
+    public void SetStructureMoonMiningState(SimSetStructureMoonMiningState state) => Send(state);
+
+    public void UpsertMoonChunk(SimUpsertMoonChunk chunk) => Send(chunk);
+
+    public void RemoveMoonChunk(SimRemoveMoonChunk removal) => Send(removal);
+
     public void PlaceDisruptor(SimPlaceDisruptor disruptor) => Send(disruptor);
 
     public void SetDisruptorActive(long deployableId, bool active) => Send(new SimSetDisruptorActive(deployableId, active));

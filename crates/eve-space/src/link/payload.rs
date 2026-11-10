@@ -1456,6 +1456,8 @@ impl Message {
                 );
                 put_structure_status(&mut out, &structure.status);
                 out.extend_from_slice(&structure.planet_id.to_le_bytes());
+                put_structure_modules(&mut out, &structure.modules);
+                out.extend_from_slice(&structure.closest_moon_id.to_le_bytes());
             }
             Self::PlaceWormhole(wormhole) => {
                 out.extend_from_slice(&wormhole.wormhole_id.to_le_bytes());
@@ -1492,6 +1494,36 @@ impl Message {
                 out.extend_from_slice(&solar_system_id.to_le_bytes());
                 out.extend_from_slice(&structure_id.to_le_bytes());
                 put_structure_status(&mut out, status);
+            }
+            Self::SetStructureMoonMiningState { solar_system_id, structure_id, closest_moon_id, modules } => {
+                out.extend_from_slice(&solar_system_id.to_le_bytes());
+                out.extend_from_slice(&structure_id.to_le_bytes());
+                out.extend_from_slice(&closest_moon_id.to_le_bytes());
+                put_structure_modules(&mut out, modules);
+            }
+            Self::UpsertMoonChunk(chunk) => {
+                out.extend_from_slice(&chunk.chunk_id.to_le_bytes());
+                out.extend_from_slice(&chunk.solar_system_id.to_le_bytes());
+                put_text(&mut out, &chunk.name);
+                out.extend_from_slice(&chunk.type_id.to_le_bytes());
+                out.extend_from_slice(&chunk.group_id.to_le_bytes());
+                out.extend_from_slice(&chunk.category_id.to_le_bytes());
+                out.extend_from_slice(&chunk.owner_id.to_le_bytes());
+                out.extend_from_slice(&chunk.graphic_id.to_le_bytes());
+                put_vector(&mut out, &chunk.position);
+                put_vector(&mut out, &chunk.direction);
+                out.extend_from_slice(&chunk.radius.to_le_bytes());
+                out.extend_from_slice(&chunk.source_structure_id.to_le_bytes());
+                out.extend_from_slice(&chunk.module_id.to_le_bytes());
+                out.extend_from_slice(&chunk.module_type_id.to_le_bytes());
+                out.extend_from_slice(&chunk.moon_id.to_le_bytes());
+                put_text(&mut out, &chunk.phase);
+                out.extend_from_slice(&chunk.phase_started_filetime.to_le_bytes());
+            }
+            Self::RemoveMoonChunk { solar_system_id, chunk_id, effect } => {
+                out.extend_from_slice(&solar_system_id.to_le_bytes());
+                out.extend_from_slice(&chunk_id.to_le_bytes());
+                out.extend_from_slice(&effect.to_le_bytes());
             }
             Self::RemoveProbe { probe_id } => out.extend_from_slice(&probe_id.to_le_bytes()),
             Self::PlaceDisruptor(disruptor)

@@ -231,6 +231,22 @@ pub(super) fn put_structure_status(out: &mut Vec<u8>, status: &crate::world::Str
     });
 }
 
+pub(super) fn put_structure_modules(out: &mut Vec<u8>, modules: &[StructureModule]) {
+    assert!(
+        modules.len() <= 256
+            && modules.iter().all(|module| module.item_id > 0 && module.type_id > 0 && module.flag_id > 0)
+            && modules.iter().map(|module| module.item_id).collect::<std::collections::HashSet<_>>().len()
+                == modules.len(),
+        "invalid structure modules"
+    );
+    out.extend_from_slice(&(modules.len() as u32).to_le_bytes());
+    for module in modules {
+        out.extend_from_slice(&module.item_id.to_le_bytes());
+        out.extend_from_slice(&module.type_id.to_le_bytes());
+        out.extend_from_slice(&module.flag_id.to_le_bytes());
+    }
+}
+
 pub(super) fn put_optional_vector(out: &mut Vec<u8>, vector: Option<[f64; 3]>) {
     match vector {
         Some(vector) => {

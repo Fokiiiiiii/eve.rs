@@ -173,7 +173,7 @@ impl Scene {
     }
 
     /// Every bound view in this system: structures are visible from anywhere in their system.
-    fn structure_audience(&self) -> Vec<SessionId> {
+    pub(crate) fn structure_audience(&self) -> Vec<SessionId> {
         self.view_sessions()
     }
 
@@ -200,6 +200,8 @@ impl Scene {
                 alliance_id: i64::from(placement.alliance_id),
                 status: placement.status,
                 planet_id: placement.planet_id,
+                modules: placement.modules,
+                closest_moon_id: placement.closest_moon_id,
             },
         };
         let stamp = self.next_stamp(now);
@@ -263,6 +265,38 @@ impl Scene {
         self.structure_audience()
             .into_iter()
             .map(|session| Self::update(session, vec![change.clone()]))
+            .collect()
+    }
+
+    /// The host refreshes the fitted module tuples and refinery target moon on the slim item.
+    pub(crate) fn set_structure_moon_mining_state(
+        &mut self,
+        structure_id: i64,
+        closest_moon_id: i64,
+        modules: Vec<crate::link::StructureModule>,
+        at: i64,
+    ) -> Vec<Out> {
+        let Some(index) = self.structure_index(structure_id) else { return Vec::new() };
+        let Detail::Structure { modules: current_modules, closest_moon_id: current_moon, .. } =
+            &self.system.bodies[index].detail
+        else {
+            return Vec::new();
+        };
+        if *current_moon == closest_moon_id && *current_modules == modules {
+            return Vec::new();
+        }
+        let stamp = self.next_stamp(at);
+        let system = Arc::make_mut(&mut self.system);
+        if let Detail::Structure { modules: current_modules, closest_moon_id: current_moon, .. } =
+            &mut system.bodies[index].detail
+        {
+            *current_modules = modules;
+            *current_moon = closest_moon_id;
+        }
+        let changed = payload::structure_slim_change(stamp, system, index);
+        self.structure_audience()
+            .into_iter()
+            .map(|session| Self::update(session, vec![changed.clone()]))
             .collect()
     }
 

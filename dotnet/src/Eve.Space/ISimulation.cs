@@ -264,6 +264,15 @@ public interface ISimulation
 
     /// <summary>The host changes a structure's slim state (protocol 59).</summary>
     void SetStructureState(SimSetStructureState state);
+
+    /// <summary>Updates the client-visible moon drill fit and moon on a structure already in space.</summary>
+    void SetStructureMoonMiningState(SimSetStructureMoonMiningState state);
+
+    /// <summary>Places a moon chunk or advances its position and drill effect phase (protocol 94).</summary>
+    void UpsertMoonChunk(SimUpsertMoonChunk chunk);
+
+    /// <summary>Takes a moon chunk out of space, optionally with the fracture explosion (protocol 94).</summary>
+    void RemoveMoonChunk(SimRemoveMoonChunk removal);
     /// <summary>Puts a mobile warp disruptor in space where its pilot dropped it, anchored or not (protocol 48).</summary>
     void PlaceDisruptor(SimPlaceDisruptor disruptor);
     /// <summary>Says a mobile warp disruptor is anchored or not (protocol 48).</summary>

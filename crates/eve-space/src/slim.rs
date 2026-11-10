@@ -117,6 +117,7 @@ pub fn body_entries(system: &SolarSystem, body: &Body) -> Entries {
         }
         BodyKind::Stargate => stargate_fields(system, body, &mut entries),
         BodyKind::Structure => structure_fields(body, &mut entries),
+        BodyKind::MoonChunk => moon_chunk_fields(body, &mut entries),
         BodyKind::Wormhole => wormhole_fields(body, &mut entries),
         BodyKind::AbyssalConduit => {
             if let Detail::AbyssalConduit { is_open, .. } = &body.detail {
@@ -156,7 +157,9 @@ fn wormhole_fields(body: &Body, entries: &mut Entries) {
 
 /// `(start, end, paused)`, its unanchoring time and whether it is repaired.
 fn structure_fields(body: &Body, entries: &mut Entries) {
-    let Detail::Structure { corporation_id, alliance_id, status, planet_id } = &body.detail else {
+    let Detail::Structure { corporation_id, alliance_id, status, planet_id, modules, closest_moon_id } =
+        &body.detail
+    else {
         return;
     };
     if *planet_id > 0 {
@@ -166,6 +169,12 @@ fn structure_fields(body: &Body, entries: &mut Entries) {
     }
     entries.push(("corpID", id(*corporation_id)));
     entries.push(("allianceID", optional_id(*alliance_id)));
+    entries.push((
+        "modules",
+        list(modules.iter().map(|module| {
+            tuple([id(module.item_id), int(i64::from(module.type_id)), int(i64::from(module.flag_id))])
+        })),
+    ));
     entries.push(("state", int(i64::from(status.state))));
     entries.push(("upkeepState", int(i64::from(status.upkeep_state))));
     let timer = match status.timer {
@@ -177,6 +186,15 @@ fn structure_fields(body: &Body, entries: &mut Entries) {
     entries.push(("timer", timer));
     entries.push(("unanchoring", status.unanchoring.map_or(Value::None, filetime)));
     entries.push(("repairing", status.repairing.map_or(Value::None, Value::Bool)));
+    if body.group_id == 1_406 {
+        entries.push(("closestMoonID", optional_id(*closest_moon_id)));
+    }
+}
+
+fn moon_chunk_fields(body: &Body, entries: &mut Entries) {
+    if let Some(graphic_id) = body.graphic_id {
+        entries.push(("graphicID", id(graphic_id)));
+    }
 }
 
 pub fn ship_entries(ship: &Ship) -> Entries {

@@ -23,7 +23,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// <summary>The wire uses little-endian integers and length-prefixed text and byte strings.</summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 93;
+    public const ushort ProtocolVersion = 94;
 
     /// <summary>The longest name of a dynamic slim-item field, in bytes (protocol 76).</summary>
     public const int SlimFieldNameMax = 64;
@@ -1387,11 +1387,63 @@ public static partial class SimCodec
                     var health = ReadStructureHealth(ref r);
                     var status = ReadStructureStatus(ref r);
                     var planet = r.I64();
-                    if (!(double.IsFinite(radius) && radius >= 0))
+                    var modules = ReadStructureModules(ref r);
+                    var closestMoonId = r.I64();
+                    if (!(double.IsFinite(radius) && radius >= 0) || structure <= 0 || system <= 0 || type <= 0 || group <= 0 || owner <= 0 || closestMoonId < 0)
                     {
                         throw new SimLinkException(SimLinkError.BadValue, "bad structure");
                     }
-                    message = new SimPlaceStructure(structure, system, name, type, group, position, radius, owner, corporation, alliance, health, status, planet);
+                    message = new SimPlaceStructure(structure, system, name, type, group, position, radius, owner, corporation, alliance, health, status, planet,
+                        modules, closestMoonId);
+                    break;
+                }
+            case Kind.SetStructureMoonMiningState:
+                {
+                    var system = r.I32();
+                    var structure = r.I64();
+                    var moon = r.I64();
+                    var modules = ReadStructureModules(ref r);
+                    if (system <= 0 || structure <= 0 || moon < 0)
+                        throw new SimLinkException(SimLinkError.BadValue, "structure moon-mining state");
+                    message = new SimSetStructureMoonMiningState(system, structure, moon, modules);
+                    break;
+                }
+            case Kind.UpsertMoonChunk:
+                {
+                    var chunk = r.I64();
+                    var system = r.I32();
+                    var name = r.Text();
+                    var type = r.I32();
+                    var group = r.I32();
+                    var category = r.I32();
+                    var owner = r.I64();
+                    var graphic = r.I32();
+                    var position = ReadVector(ref r);
+                    var direction = ReadVector(ref r);
+                    var radius = r.F64();
+                    var structure = r.I64();
+                    var module = r.I64();
+                    var moduleType = r.I32();
+                    var moon = r.I64();
+                    var phase = r.Text();
+                    var phaseStarted = r.I64();
+                    if (chunk <= 0 || system <= 0 || type <= 0 || group <= 0 || category <= 0 || owner <= 0 || graphic <= 0 ||
+                        structure <= 0 || module <= 0 || moduleType <= 0 || moon <= 0 || phaseStarted <= 0 ||
+                        !ValidMoonChunkPhase(phase) || !double.IsFinite(radius) || radius <= 0 ||
+                        position.Any(value => !double.IsFinite(value)) || direction.Any(value => !double.IsFinite(value)))
+                        throw new SimLinkException(SimLinkError.BadValue, "moon chunk");
+                    message = new SimUpsertMoonChunk(chunk, system, name, type, group, category, owner, graphic, position, direction, radius,
+                        structure, module, moduleType, moon, phase, phaseStarted);
+                    break;
+                }
+            case Kind.RemoveMoonChunk:
+                {
+                    var system = r.I32();
+                    var chunk = r.I64();
+                    var effect = r.I32();
+                    if (system <= 0 || chunk <= 0 || effect is not (0 or 3))
+                        throw new SimLinkException(SimLinkError.BadValue, "moon chunk removal");
+                    message = new SimRemoveMoonChunk(system, chunk, effect);
                     break;
                 }
             case Kind.ControlStructure:

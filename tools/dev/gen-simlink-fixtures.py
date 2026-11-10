@@ -31,7 +31,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "RemoveAbyssalParticipant": 110, "RemoveAbyssalParticipantReply": 111, "GetAbyssalParticipantPose": 112, "GetAbyssalParticipantPoseReply": 113,
          "EnsureAbyssalSceneObject": 114, "EnsureAbyssalSceneObjectReply": 115, "EnsureAbyssalRewardCache": 116, "EnsureAbyssalRewardCacheReply": 117,
          "EnsureAbyssalLootContainer": 118, "EnsureAbyssalLootContainerReply": 119, "EnsureAbyssalEnvironmentObject": 120, "EnsureAbyssalEnvironmentObjectReply": 121,
-         "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124, "ServiceNotify": 125, "GetSceneBody": 126, "GetSceneBodyReply": 127, "EnsureTournamentBeacon": 128, "EnsureTournamentBeaconReply": 129, "RemoveTournamentBeacon": 130, "RemoveTournamentBeaconReply": 131, "QueryTournamentWreck": 132, "QueryTournamentWreckReply": 133, "RemoveTournamentWreck": 134, "RemoveTournamentWreckReply": 135, "MovePublicParticipant": 136, "MovePublicParticipantReply": 137, "EnterPublicParticipant": 138, "EnterPublicParticipantReply": 139, "RegisterTournamentCutoff": 142, "RegisterTournamentCutoffReply": 143, "ReadTournamentCutoff": 144, "ReadTournamentCutoffReply": 145, "ReleaseTournamentCutoff": 146, "ReleaseTournamentCutoffReply": 147, "RegisterTournamentMetrics": 148, "RegisterTournamentMetricsReply": 149, "ReadTournamentMetrics": 150, "ReadTournamentMetricsReply": 151, "ReleaseTournamentMetrics": 152, "ReleaseTournamentMetricsReply": 153, "RemoveUnpilotedShip": 156, "RemoveUnpilotedShipReply": 157}
+         "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124, "ServiceNotify": 125, "GetSceneBody": 126, "GetSceneBodyReply": 127, "EnsureTournamentBeacon": 128, "EnsureTournamentBeaconReply": 129, "RemoveTournamentBeacon": 130, "RemoveTournamentBeaconReply": 131, "QueryTournamentWreck": 132, "QueryTournamentWreckReply": 133, "RemoveTournamentWreck": 134, "RemoveTournamentWreckReply": 135, "MovePublicParticipant": 136, "MovePublicParticipantReply": 137, "EnterPublicParticipant": 138, "EnterPublicParticipantReply": 139, "RegisterTournamentCutoff": 142, "RegisterTournamentCutoffReply": 143, "ReadTournamentCutoff": 144, "ReadTournamentCutoffReply": 145, "ReleaseTournamentCutoff": 146, "ReleaseTournamentCutoffReply": 147, "RegisterTournamentMetrics": 148, "RegisterTournamentMetricsReply": 149, "ReadTournamentMetrics": 150, "ReadTournamentMetricsReply": 151, "ReleaseTournamentMetrics": 152, "ReleaseTournamentMetricsReply": 153, "RemoveUnpilotedShip": 156, "RemoveUnpilotedShipReply": 157, "UpsertMoonChunk": 158, "RemoveMoonChunk": 159, "SetStructureMoonMiningState": 160}
 
 def slim_value(v):  # a dynamic slim-item field value (protocol 76): a tag (0 none, 1 int, 2 real, 3 bool, 4 text, 5 tuple), then its payload
     tag = v["tag"]
@@ -388,6 +388,11 @@ def structure_health(m):  # protocol 60: the vitals (points, then the resonances
         out += struct.pack("<4d", *v["resonances"][layer])
     return out + struct.pack("<d", m["shieldRechargeMs"]) + struct.pack("<6d", *(m["perSecond"] + m["repairPause"]))
 
+def structure_modules(modules):  # protocol 94: fitted structure modules, including the Standup Moon Drill service slot
+    return struct.pack("<I", len(modules)) + b"".join(
+        i64(module["itemId"]) + struct.pack("<ii", module["typeId"], module["flagId"])
+        for module in modules)
+
 def abyssal_static_object(obj):
     body = scene_key({"scene": obj["scene"]}) + i64(obj["itemId"])
     body += struct.pack("<iii", obj["typeId"], obj["groupId"], obj["categoryId"]) + i64(obj["ownerId"])
@@ -675,7 +680,19 @@ def build(m):
         return frame(k, i64(m["structureId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["typeName"]) + struct.pack("<ii", m["typeId"], m["groupId"])
                      + struct.pack("<3d", *m["position"]) + struct.pack("<d", m["radius"]) + i64(m["ownerId"])
                      + struct.pack("<ii", m["corporationId"], m["allianceId"]) + structure_health(m) + structure_status(m["status"])
-                     + i64(m["planetId"]))  # protocol 67: the planet whose customs office this is (0 for an Upwell structure)
+                     + i64(m["planetId"]) + structure_modules(m["modules"]) + i64(m["closestMoonId"]))
+    if k == "SetStructureMoonMiningState":
+        return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["structureId"]) + i64(m["closestMoonId"])
+                     + structure_modules(m["modules"]))
+    if k == "UpsertMoonChunk":
+        return frame(k, i64(m["chunkId"]) + struct.pack("<i", m["solarSystemId"]) + s(m["name"])
+                     + struct.pack("<iii", m["typeId"], m["groupId"], m["categoryId"]) + i64(m["ownerId"])
+                     + struct.pack("<i", m["graphicId"]) + struct.pack("<6d", *m["position"], *m["direction"])
+                     + struct.pack("<d", m["radius"]) + i64(m["sourceStructureId"]) + i64(m["moduleId"])
+                     + struct.pack("<i", m["moduleTypeId"]) + i64(m["moonId"]) + s(m["phase"])
+                     + i64(m["phaseStartedFileTime"]))
+    if k == "RemoveMoonChunk":
+        return frame(k, struct.pack("<i", m["solarSystemId"]) + i64(m["chunkId"]) + struct.pack("<i", m["effect"]))
     if k == "RemoveStructure":
         return frame(k, i64(m["structureId"]))
     if k == "PlaceWormhole":  # protocol 63: end, client slim state, far end (system, body ID, class, position, radius) and largest ship
@@ -1459,14 +1476,21 @@ valid = [
      "corporationId": 98000001, "allianceId": 0, "shipId": "9988400001943"},
     {"name": "scanner probe recalled by its pilot", "kind": "RemoveProbe", "probeId": "990000000000001"},
     {"name": "structure put in space by the host with a running timer", "kind": "PlaceStructure", "structureId": "1040000000000001", "solarSystemId": 30100032,
-     "typeName": "Astrahus", "typeId": 35832, "groupId": 1657, "planetId": 0,
+     "typeName": "Astrahus", "typeId": 35832, "groupId": 1657, "planetId": 0, "modules": [], "closestMoonId": "0",
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 60000.0, "ownerId": "98000001",
      "corporationId": 98000001, "allianceId": 0,
      "vitals": {"shieldCapacity": 200000000.0, "armorHp": 4000000.0, "structureHp": 6000000.0,
                 "resonances": {"shield": [1.0, 1.0, 1.0, 1.0], "armor": [1.0, 1.0, 1.0, 1.0], "structure": [1.0, 1.0, 1.0, 1.0]}},
      "shieldRechargeMs": 110000.0, "perSecond": [14400000.0, 5000.0, 5000.0], "repairPause": [500.0, 500.0, 500.0],
      "status": {"state": 110, "upkeepState": 3, "timer": [132000000000000000, 132000860000000000, None], "unanchoring": None, "repairing": None}},
-    {"name": "customs office of a planet put in orbit by the host (protocol 67)", "kind": "PlaceStructure", "structureId": "1200000040486618", "solarSystemId": 30100032, "typeName": "Customs Office", "typeId": 2233, "groupId": 1025, "planetId": 40486618, "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 8000.0, "ownerId": "1000125", "corporationId": 0, "allianceId": 0, "vitals": {"shieldCapacity": 0.0, "armorHp": 0.0, "structureHp": 0.0, "resonances": {"shield": [1.0, 1.0, 1.0, 1.0], "armor": [1.0, 1.0, 1.0, 1.0], "structure": [1.0, 1.0, 1.0, 1.0]}}, "shieldRechargeMs": 0.0, "perSecond": [0.0, 0.0, 0.0], "repairPause": [0.0, 0.0, 0.0], "status": {"state": 110, "upkeepState": 3, "timer": None, "unanchoring": None, "repairing": None}},
+    {"name": "customs office of a planet put in orbit by the host (protocol 67)", "kind": "PlaceStructure", "structureId": "1200000040486618", "solarSystemId": 30100032, "typeName": "Customs Office", "typeId": 2233, "groupId": 1025, "planetId": 40486618, "modules": [], "closestMoonId": "0", "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 8000.0, "ownerId": "1000125", "corporationId": 0, "allianceId": 0, "vitals": {"shieldCapacity": 0.0, "armorHp": 0.0, "structureHp": 0.0, "resonances": {"shield": [1.0, 1.0, 1.0, 1.0], "armor": [1.0, 1.0, 1.0, 1.0], "structure": [1.0, 1.0, 1.0, 1.0]}}, "shieldRechargeMs": 0.0, "perSecond": [0.0, 0.0, 0.0], "repairPause": [0.0, 0.0, 0.0], "status": {"state": 110, "upkeepState": 3, "timer": None, "unanchoring": None, "repairing": None}},
+    {"name": "host updates the refinery moon and fitted drill modules", "kind": "SetStructureMoonMiningState", "solarSystemId": 30000001, "structureId": "1040000000001", "closestMoonId": "40000004", "modules": [{"itemId": "1040000000002", "typeId": 45009, "flagId": 164}]},
+    {"name": "host projects a moon chunk with its tractor phase", "kind": "UpsertMoonChunk", "chunkId": "1040000000003", "solarSystemId": 30000001,
+     "name": "Moon chunk", "typeId": 46030, "groupId": 1940, "categoryId": 25, "ownerId": "98000001", "graphicId": 12345,
+     "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0], "radius": 10000.0,
+     "sourceStructureId": "1040000000001", "moduleId": "1040000000002", "moduleTypeId": 45009, "moonId": "40000004",
+     "phase": "tractor_phase", "phaseStartedFileTime": "134351688000000000"},
+    {"name": "host removes a fractured moon chunk", "kind": "RemoveMoonChunk", "solarSystemId": 30000001, "chunkId": "1040000000003", "effect": 3},
     {"name": "host sets a text slim field of a deployable (fwAttackMethod)", "kind": "SetSlimField", "itemId": "4250000000000016", "fieldName": "fwAttackMethod", "value": {"tag": "text", "value": "attackFwAllEnemies"}},
     {"name": "host sets a capture point's faction tuple (attacker, occupier)", "kind": "SetSlimField", "itemId": "4250000000000016", "fieldName": "component_fwCapturePoint_factionInfo", "value": {"tag": "tuple", "items": [{"tag": "int", "value": "500003"}, {"tag": "int", "value": "500001"}]}},
     {"name": "host sets a real threshold slim field", "kind": "SetSlimField", "itemId": "4250000000000016", "fieldName": "hostile_response_threshold", "value": {"tag": "real", "value": -5.0}},

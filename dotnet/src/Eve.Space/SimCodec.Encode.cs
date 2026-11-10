@@ -95,6 +95,22 @@ public static partial class SimCodec
         w.U8(status.Repairing is null ? (byte)0 : status.Repairing.Value ? (byte)2 : (byte)1);
     }
 
+    private static void WriteStructureModules(Writer w, IReadOnlyList<SimStructureModule> modules)
+    {
+        if (modules.Count > 256 || modules.Any(module => module.ItemId <= 0 || module.TypeId <= 0 || module.FlagId <= 0) ||
+            modules.Select(module => module.ItemId).Distinct().Count() != modules.Count)
+            throw new SimLinkException(SimLinkError.BadValue, "structure modules");
+        w.U32((uint)modules.Count);
+        foreach (var module in modules)
+        {
+            w.I64(module.ItemId);
+            w.I32(module.TypeId);
+            w.I32(module.FlagId);
+        }
+    }
+
+    private static bool ValidMoonChunkPhase(string phase) => phase is "tractor_phase" or "stasis_phase" or "fracture_phase";
+
     /// <summary>A dynamic slim-item field value (protocol 76); see <c>ReadSlimValue</c>. The same limits are checked on the way out.</summary>
     private static void WriteSlimValue(Writer w, SimSlimValue value, int depth)
     {
@@ -1519,6 +1535,51 @@ private static void WriteStructureDamageCorrelation(
                 WriteStructureHealth(w, m.Health);
                 WriteStructureStatus(w, m.Status);
                 w.I64(m.PlanetId);
+                WriteStructureModules(w, m.Modules ?? Array.Empty<SimStructureModule>());
+                w.I64(m.ClosestMoonId);
+                break;
+            case SimSetStructureMoonMiningState m:
+                if (m.SolarSystemId <= 0 || m.StructureId <= 0 || m.ClosestMoonId < 0)
+                    throw new SimLinkException(SimLinkError.BadValue, "structure moon-mining state");
+                w.U8(Kind.SetStructureMoonMiningState);
+                w.I32(m.SolarSystemId);
+                w.I64(m.StructureId);
+                w.I64(m.ClosestMoonId);
+                WriteStructureModules(w, m.Modules);
+                break;
+            case SimUpsertMoonChunk m:
+                if (m.ChunkId <= 0 || m.SolarSystemId <= 0 || m.TypeId <= 0 || m.GroupId <= 0 || m.CategoryId <= 0 || m.OwnerId <= 0 || m.GraphicId <= 0 ||
+                    m.SourceStructureId <= 0 || m.ModuleId <= 0 || m.ModuleTypeId <= 0 || m.MoonId <= 0 || m.PhaseStartedFileTime <= 0 ||
+                    m.Name.Length == 0 || m.Name.Length > ushort.MaxValue || !ValidMoonChunkPhase(m.Phase) ||
+                    m.Position.Count != 3 || m.Position.Any(value => !double.IsFinite(value)) ||
+                    m.Direction.Count != 3 || m.Direction.Any(value => !double.IsFinite(value)) || !double.IsFinite(m.Radius) || m.Radius <= 0)
+                    throw new SimLinkException(SimLinkError.BadValue, "moon chunk");
+                w.U8(Kind.UpsertMoonChunk);
+                w.I64(m.ChunkId);
+                w.I32(m.SolarSystemId);
+                w.Text(m.Name);
+                w.I32(m.TypeId);
+                w.I32(m.GroupId);
+                w.I32(m.CategoryId);
+                w.I64(m.OwnerId);
+                w.I32(m.GraphicId);
+                WriteVector(w, m.Position);
+                WriteVector(w, m.Direction);
+                w.F64(m.Radius);
+                w.I64(m.SourceStructureId);
+                w.I64(m.ModuleId);
+                w.I32(m.ModuleTypeId);
+                w.I64(m.MoonId);
+                w.Text(m.Phase);
+                w.I64(m.PhaseStartedFileTime);
+                break;
+            case SimRemoveMoonChunk m:
+                if (m.SolarSystemId <= 0 || m.ChunkId <= 0 || m.Effect is not (0 or 3))
+                    throw new SimLinkException(SimLinkError.BadValue, "moon chunk removal");
+                w.U8(Kind.RemoveMoonChunk);
+                w.I32(m.SolarSystemId);
+                w.I64(m.ChunkId);
+                w.I32(m.Effect);
                 break;
             case SimControlStructure m:
                 if (m.SolarSystemId <= 0 || m.StructureId < 0 || m.CharacterId < 0 || m.ControlLeaseGeneration < 0 || (m.Active && (m.StructureId == 0 || m.CharacterId == 0 || m.ControlLeaseGeneration == 0)))

@@ -6,7 +6,7 @@ namespace Eve.Market.Tests;
 /// <summary>
 /// The import path of the host's first start (CorporationComposition.MarketSeed, M9): the ESI capture writes an artifact, the artifact is
 /// read back, its orders are streamed into the store as v4 seeds, and the book serves them. The orders of an unknown type and of a station
-/// the SDE does not list are not imported.
+/// the SDE does not list, or of a player with the V24 maximum 90-day duration are not imported.
 /// </summary>
 public class MarketSeedImportTests
 {
@@ -18,7 +18,7 @@ public class MarketSeedImportTests
         await using var r = await TradeRig.Create();
         var station = r.Station;
         using var handler = new FakeHandler((_, _) => Task.FromResult(Response(
-            $"[{Order(1,34,station.Id,false,12.50m)},{Order(2,34,station.Id,true,10.25m)},{Order(3,999,station.Id,true,1m)},{Order(4,34,1000000000001,true,1m)}]",
+            $"[{Order(1, 34, station.Id, false, 12.50m, 365)},{Order(2, 34, station.Id, true, 10.25m, 365)},{Order(3, 999, station.Id, true, 1m, 365)},{Order(4, 34, 1000000000001, true, 1m, 365)},{Order(5, 34, station.Id, false, 11.50m, 90)}]",
             1,LastModified,DateTimeOffset.UtcNow.AddMinutes(5),"\"import-1\"")));
         using var client = new HttpClient(handler);
         await using var artifact = new MemoryStream();
@@ -41,8 +41,8 @@ public class MarketSeedImportTests
         Assert.Empty((await r.Book.BookAsync(station.RegionId,999,r.Now)).Asks);
     }
 
-    private static string Order(long id,long type,long location,bool buy,decimal price) =>
-        $"{{\"order_id\":{id},\"type_id\":{type},\"location_id\":{location},\"system_id\":30000142,\"is_buy_order\":{buy.ToString().ToLowerInvariant()},\"price\":{price.ToString(System.Globalization.CultureInfo.InvariantCulture)},\"volume_total\":1000,\"volume_remain\":800,\"min_volume\":1,\"range\":\"4\",\"issued\":\"2025-09-30T12:00:00Z\",\"duration\":90}}";
+    private static string Order(long id,long type,long location,bool buy,decimal price,long duration) =>
+        $"{{\"order_id\":{id},\"type_id\":{type},\"location_id\":{location},\"system_id\":30000142,\"is_buy_order\":{buy.ToString().ToLowerInvariant()},\"price\":{price.ToString(System.Globalization.CultureInfo.InvariantCulture)},\"volume_total\":1000,\"volume_remain\":800,\"min_volume\":1,\"range\":\"4\",\"issued\":\"2025-09-30T12:00:00Z\",\"duration\":{duration}}}";
 
     private static HttpResponseMessage Response(string json,int pages,DateTimeOffset modified,DateTimeOffset expires,string etag)
     {

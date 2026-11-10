@@ -26,6 +26,7 @@ Pinned SDE build 3396210 の `typeDogma.jsonl:9870`、type 23071 Imperial Navy M
 
 - 指定 EveJS checkout の durability policy を Node から直接実行した。type 23071 の実SDE値、hitごとの決定論的 roll 0 で4,000回評価し、最終 damage 1.0 / `burnedOut=true` を確認した。
 - eve.rs は `weapons::tests::a_real_sde_crystal_burns_out_on_its_four_thousandth_volatility_hit` で、実sim cycle、最終 dogma damage/quantity change、charge spent を検査する。`AmmoHostTests` ではHost側の永続化、duplicate report、焼損削除、Dogma attributeをDB上で検査する。`HomeStationHostTests.Registered_invbroker_returns_persisted_crystal_damage_from_item_state` は登録済み invbroker の wire 応答を実SDE crystal item で検査する。
+- push 後の GitHub Actions main CI run 1698 (`03aca3da7`) は全 job success。headless end-to-end、Windows、Rust gates、.NET build/test shards を含む。CIの個々の test skip 数は別途集計していない。今回のローカル focused tests は全て skip 0。
 - EveJS は `Math.random` を使い、Rust は module/cycle 時刻を鍵にした決定論的 hash roll を使う。cycle の再処理で摩耗結果を重複させないための実装差であり、SDE chance threshold は同じである。固定の roll 0 と chance 0/1 のケース以外で分布の統計比較はしていない。
 - EveJS の durability policy は実行したが、EveJS server 全体とDBを起動した end-to-end 比較はしていない。GUI クライアント上での操作もしていない。
 
@@ -48,4 +49,3 @@ Pinned SDE build 3396210 の `typeDogma.jsonl:9870`、type 23071 Imperial Navy M
 
 - 今回は一般的な dogma stacking / attribute evaluation、skill bonus、fitting validation・保存fit、module activation の他の effect、capacitor、heat、drone damage、damage application、repair、shield/armor recharge を再監査・再実行していない。既存の監査・status は `docs/project/audit-fixes-dogma.md`、`docs/project/audit-fixes-fitting.md`、`docs/project/COMBAT_STATUS.md` に記録されているが、この変更の検証として数えていない。
 - GUI V24.01 client、EveJS server 全体との同一DB end-to-end、長期の volatility chance 分布、並行する複数 turret / weapon bank での結晶寿命は未確認。
-- push 後の GitHub Actions main CI は未確認。

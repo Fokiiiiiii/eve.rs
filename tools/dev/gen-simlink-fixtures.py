@@ -31,7 +31,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "RemoveAbyssalParticipant": 110, "RemoveAbyssalParticipantReply": 111, "GetAbyssalParticipantPose": 112, "GetAbyssalParticipantPoseReply": 113,
          "EnsureAbyssalSceneObject": 114, "EnsureAbyssalSceneObjectReply": 115, "EnsureAbyssalRewardCache": 116, "EnsureAbyssalRewardCacheReply": 117,
          "EnsureAbyssalLootContainer": 118, "EnsureAbyssalLootContainerReply": 119, "EnsureAbyssalEnvironmentObject": 120, "EnsureAbyssalEnvironmentObjectReply": 121,
-         "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124, "ServiceNotify": 125, "GetSceneBody": 126, "GetSceneBodyReply": 127, "EnsureTournamentBeacon": 128, "EnsureTournamentBeaconReply": 129, "RemoveTournamentBeacon": 130, "RemoveTournamentBeaconReply": 131, "QueryTournamentWreck": 132, "QueryTournamentWreckReply": 133, "RemoveTournamentWreck": 134, "RemoveTournamentWreckReply": 135, "MovePublicParticipant": 136, "MovePublicParticipantReply": 137, "EnterPublicParticipant": 138, "EnterPublicParticipantReply": 139, "RegisterTournamentCutoff": 142, "RegisterTournamentCutoffReply": 143, "ReadTournamentCutoff": 144, "ReadTournamentCutoffReply": 145, "ReleaseTournamentCutoff": 146, "ReleaseTournamentCutoffReply": 147, "RegisterTournamentMetrics": 148, "RegisterTournamentMetricsReply": 149, "ReadTournamentMetrics": 150, "ReadTournamentMetricsReply": 151, "ReleaseTournamentMetrics": 152, "ReleaseTournamentMetricsReply": 153}
+         "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124, "ServiceNotify": 125, "GetSceneBody": 126, "GetSceneBodyReply": 127, "EnsureTournamentBeacon": 128, "EnsureTournamentBeaconReply": 129, "RemoveTournamentBeacon": 130, "RemoveTournamentBeaconReply": 131, "QueryTournamentWreck": 132, "QueryTournamentWreckReply": 133, "RemoveTournamentWreck": 134, "RemoveTournamentWreckReply": 135, "MovePublicParticipant": 136, "MovePublicParticipantReply": 137, "EnterPublicParticipant": 138, "EnterPublicParticipantReply": 139, "RegisterTournamentCutoff": 142, "RegisterTournamentCutoffReply": 143, "ReadTournamentCutoff": 144, "ReadTournamentCutoffReply": 145, "ReleaseTournamentCutoff": 146, "ReleaseTournamentCutoffReply": 147, "RegisterTournamentMetrics": 148, "RegisterTournamentMetricsReply": 149, "ReadTournamentMetrics": 150, "ReadTournamentMetricsReply": 151, "ReleaseTournamentMetrics": 152, "ReleaseTournamentMetricsReply": 153, "RemoveUnpilotedShip": 156, "RemoveUnpilotedShipReply": 157}
 
 def slim_value(v):  # a dynamic slim-item field value (protocol 76): a tag (0 none, 1 int, 2 real, 3 bool, 4 text, 5 tuple), then its payload
     tag = v["tag"]
@@ -448,6 +448,11 @@ def build(m):
             body += i64(m["ownerId"]) + i64(m["launcherId"]) + struct.pack("<i4d", m["typeId"], *m["center"], m["radius"])
         if k.endswith("Reply"):
             body += bytes([2 if m.get("error") is not None else int(m["present"])]) + s(m.get("error") or "")
+        return frame(k, body)
+    if k in ("RemoveUnpilotedShip", "RemoveUnpilotedShipReply"):
+        body = u64(m["requestId"]) + scene_key(m) + i64(m["shipId"])
+        if k == "RemoveUnpilotedShipReply":
+            body += bytes([2 if m.get("error") is not None else int(m["removed"])]) + s(m.get("error") or "")
         return frame(k, body)
     if k in ("RegisterTournamentCutoff", "RegisterTournamentCutoffReply", "ReadTournamentCutoff", "ReadTournamentCutoffReply", "ReleaseTournamentCutoff", "ReleaseTournamentCutoffReply"):
         body = u64(m["requestId"]) + scene_key(m) + i64(m["matchId"]) + i64(m["generation"]) + i64(m["start"]) + i64(m["deadline"])
@@ -884,6 +889,8 @@ valid = [
     {"name": "tournament wreck removal refused", "kind": "RemoveTournamentWreckReply", "requestId": "57", "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000004", "present": False, "error": "GUARD_MISMATCH"},
     {"name": "remove guarded tournament wreck", "kind": "RemoveTournamentWreck", "requestId": "57", "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000004", "ownerId": "90000001", "launcherId": "140000001", "typeId": 26557, "center": [1.0, 2.0, 3.0], "radius": 5000.0},
     {"name": "tournament wreck removed", "kind": "RemoveTournamentWreckReply", "requestId": "57", "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000004", "present": True, "error": None},
+    {"name": "remove abandoned unpiloted ship", "kind": "RemoveUnpilotedShip", "requestId": "9", "scene": {"locationId": 30000001, "instanceId": "0", "roomIndex": 0}, "shipId": "9001"},
+    {"name": "removed abandoned unpiloted ship", "kind": "RemoveUnpilotedShipReply", "requestId": "9", "scene": {"locationId": 30000001, "instanceId": "0", "roomIndex": 0}, "shipId": "9001", "removed": True, "error": None},
     {"name": "move public pilot to explicit pose", "kind": "MovePublicParticipant", "requestId": "58", "operationId": "01234567-89ab-cdef-0123-456789abcdef", "sessionId": "42", "shipId": "9988400001939", "source": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "destination": {"locationId": 30000144, "instanceId": "0", "roomIndex": 0}, "useAnchor": False, "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0]},
     {"name": "move public pilot to anchor", "kind": "MovePublicParticipant", "requestId": "59", "operationId": "00000000-0000-0000-0000-000000000000", "sessionId": "42", "shipId": "9988400001939", "source": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "destination": {"locationId": 30000144, "instanceId": "0", "roomIndex": 0}, "useAnchor": True, "position": [0.0, 0.0, 0.0], "direction": [0.0, 0.0, 0.0]},
     {"name": "public pilot moved", "kind": "MovePublicParticipantReply", "requestId": "58", "error": None},

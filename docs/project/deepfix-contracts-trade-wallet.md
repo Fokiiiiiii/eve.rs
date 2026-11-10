@@ -20,20 +20,37 @@ V24.01 の `eve/client/script/ui/shared/neocom/wallet/walletSvc.py:125-127` は�
 
 ウォレット送金、corporation division、office rent 決済通知の記録は [deepfix-wallet-journal.md](service-audit/deepfix-wallet-journal.md) にある。同記録が残している journal entry type ごとの説明と市場税・注文約定の完全な追跡は、この変更では完了扱いにしない。
 
+### PI 税と wallet journal
+
+V24.01 の `planet/importExportUI.py:537-550` は customs office の bound inventory で `ImportExportWithPlanet(spaceportPinID, importData, exportData, taxRate)` を呼び、`eve/common/script/planet/entities/spaceportPin.py:70-86` は import/export 税額を同じ UI の rate で計算する。`accountsvc.py:108-130` は個人・法人 wallet の月指定を `GetTransactions(accountKey, year, month, isCorpWallet)` へ渡す。`transactionsPanel.py:34-40,126-134` は各 transaction の `entryTypeID`, `referenceID`, `ownerID1`, `ownerID2` を表示・owner cache に使用し、`walletEntryFormat.py:124-141` は Planetary import / export / construction の `referenceID` を planet として解釈する。
+
+Client の `eveplanet/taxRate.py:55-64` は player corporation の税率と高セキュリティ時の CONCORD 税率を別 owner ID の成分として返す。CCP の [Customs Offices](https://support.eveonline.com/hc/en-us/articles/203269921-Customs-Offices) と [Planetary Interaction](https://support.eveonline.com/hc/en-us/articles/203269871-Planetary-Interaction) は owner corporation と CONCORD に払う二税、および別々の wallet journal entry を説明する。pin 3396210 の SDE `npcCorporations.jsonl:125` は owner ID 1000125 を CONCORD とする。
+
+EveJS の `planetaryCustomsSettlementState.js:260-285` は import total を一行、export total を同額の二行に分ける。`:724-735` は debit 行を `ownerID1=character`, `ownerID2=office owner`, `referenceID=planetID` とし、`:991-1024` は各 debit leg 全額を owner corporation へ credit する。`accountService.js:573-624,817-846` は巨大な customs office item ID を `ownerID2` にできない理由、planetary journal row fields、月単位の取得を明示する。
+
+eve.rs は数値を作らず、合算した税額と owner-only 税額を既存の SDE 計算から取得する。各 ref 96/97 の個人 debit を office-owner portion と CONCORD portion に分けて記録し、法人 wallet には owner portion だけを同一 DB transaction 内で credit する。支払い各行は Unix ms、planet を `referenceID`、owner corporation または SDE 上の CONCORD (1000125) を `ownerID2` にする。EveJS の均等な export 二分割と full-total owner credit は、CCP の納税先説明と区別できないため採用せず、計算済み成分ごとの額にする。
+
+`PlanetMgrService.ChangeCoreAsync` と `ImportExportCoreAsync` は simulation の保存時刻に FILETIME を使う一方、wallet の `TimeMs` は Unix ms である。以前は同じ FILETIME を仕訳へ渡し、月指定 `account.GetTransactions` から行が消えていた。PI Host 回帰は登録済み `account.GetTransactions` 経由で 96/97 journal の件数、owner IDs、planet references、owner credit を確認する。また construction ref 98 の `referenceID` も以前は 0 だったため、同じ Host query から planet ID を確認する。
+
 ## 実行して確認した結果
 
 - 変更前の赤テスト: 個人請求の登録 Host route が `BILL_NOT_PAYABLE` を返した。
 - 通知 payload の `externalID` assertion も追加直後に失敗し、V24.01 が `FormatBillNotification` で参照する field を出していないことを実 Host 経路で再現した後、修正した。
-- Release build: `Eve.Host.Tests` と `Eve.Corporations.Tests` を `-warnaserror` で build。参照先の変更済み production projects も含め、警告 0、エラー 0。
+- Release build: `Eve.Host.Tests`, `Eve.Corporations.Tests`, `Eve.Services.Station`, `Eve.Services.Station.Tests` はすべて警告 0、エラー 0。Station.Tests の初回 `--no-restore` build は assets file がなく失敗し、restore 後の build は成功。
 - `eve_p4` 上の個人請求 Host wire slice: 2 passed、0 failed、0 skipped。成功、残高不足、再試行、二重支払い防止、並行支払い、通知永続化を含む。
-- `Activity_alpha_injector_and_bill_rpcs`, `BillMgrHostRpcTests`, 個人請求の Host tests は 4 passed、0 failed、0 skipped（上記2件を含む）。
-- `eve_p4` 上の CorporationStore 参照クラス: `AccountRpcTests`, `AllianceTests`, `BillMgrServiceTests`, `CorpStationMgrTests`, `CorporationProtocolTests`, `CorporationTests`, `ItemLockTests`, `MembershipTests`, `StandingMgrServiceTests`, `WarRegistryTests` は 144 passed、0 failed、0 skipped。初回に migration 一覧 assertion が追加 migration を含まず失敗したため、期待一覧へ `018_character_bills` を明記して同じ範囲を再実行した。最新 `origin/main` には `018_medal_award_visibility` が入ったため、統合後の請求 migration は `019_character_bills` に採番し直した。
+- merge 後の `Activity_alpha_injector_and_bill_rpcs`, `BillMgrHostRpcTests`, 個人請求、登録 corporation medal/office Host tests は 6 passed、0 failed、0 skipped。
+- merge 後の `eve_p4` 上の CorporationStore 参照クラス: `AccountRpcTests`, `AllianceTests`, `BillMgrServiceTests`, `CorpStationMgrTests`, `CorporationOfficeTests`, `CorporationProtocolTests`, `CorporationTests`, `ItemLockTests`, `MembershipTests`, `StandingMgrServiceTests`, `WarRegistryTests` は 159 passed、0 failed、0 skipped。初回 migration 一覧 assertion は追加 migration を含まず失敗したため、期待一覧を修正した。最新 `origin/main` に `018_medal_award_visibility` が入ったため、統合後の請求 migration は `019_character_bills` とし、migration 一覧と DB-backed class filter を再実行した。
+- `eve_p4` 上の `StationRecordTests` は 1 passed、0 failed、0 skipped。V24 station cache fixture は office rental cost の値と wire 型を含め照合された。
+- 変更前の PI Host journal 回帰は、月指定 `GetTransactions` が FILETIME 混入のため 0 行を返し失敗した。後続の赤テストで construction ref 98 の `referenceID=0` と高セキュリティ customs の二税内訳不足も個別に確認した後、planet reference と owner/CONCORD の各 tax component を加えた。旧 Host assertion が freeform reason や import の ref 97 を期待していたため、V24.01 の ref 96/97 に照らして更新した。
+- `eve_p4` の PI / wallet Host 参照クラス (`CustomsOfficeHostTests`, `AccountWalletHostRpcTests`, `WalletAuditHostRpcTests`, `PlanetOwnerConcurrencyHostWireTests`) は 7 passed、0 failed、0 skipped。
+- `eve_p4` の `CorporationProtocolTests` は 55 passed、0 failed、0 skipped。`Eve.Services.Wallet.Tests` の `TransactionHistoryTests` は 1 passed、0 failed、0 skipped。
 
 ## 未確認の範囲
 
 - 実際の V24.01 graphical client、実クライアント packet trace、通知 UI 上の表示は確認していない。
 - EveJS の server process を起動して同一シナリオを実行していない。比較は指定された EveJS ソース経路の追跡による。
 - この変更は個人請求を作る generic store API を提供する。既存 Host composition には個人請求を発行する production producer や、個人請求を列挙する RPC が見当たらず、その発行・発見経路は未実装のまま。
+- 実 V24 graphical client、実 packet trace、EveJS server process での同一 PI 操作は動かしていない。PI Host 回帰は `ImportExportWithPlanet` の production service 実装をテスト用 space provider から bound call し、journal read は登録 Host service を通す。inventory broker の production space registration を使うライブ PI walk はこの変更後に未実行。
 - corporation/alliance debtor の支払いレシート通知、すべての請求生成元と期限・更新・失効処理はこの変更で検証・修正していない。
 - 契約の検索・絞り込み、入札順・延長などの残存経路、直接取引全体はこの変更では再実行していない。既存 handoff の範囲を超えて完了とは判定しない。
-- 全 journal reference / description 種別、derived tax rows、market order/fill と sales tax の caller-to-wallet 経路は未確認。市場税の互換性判断は既存 deviation 記録に残る。
+- PI 以外の全 journal reference / description 種別、derived tax rows、market order/fill と sales tax の caller-to-wallet 経路は未確認。市場税の互換性判断は既存 deviation 記録に残る。

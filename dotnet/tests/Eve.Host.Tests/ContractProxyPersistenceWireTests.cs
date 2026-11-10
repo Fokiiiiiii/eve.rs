@@ -164,7 +164,7 @@ public partial class HostServerTests
     }
 
     [Fact]
-    public async Task Create_contract_persists_items_fees_expiry_and_creation_notification_over_host()
+    public async Task Create_public_and_private_contracts_persists_their_fees_items_expiry_and_notifications_over_host()
     {
         var connectionString = Environment.GetEnvironmentVariable("EVE_PG_URL")
             ?? throw new InvalidOperationException("EVE_PG_URL must name the assigned PostgreSQL lane");
@@ -196,7 +196,7 @@ public partial class HostServerTests
                 await using var balance = new NpgsqlCommand($"UPDATE {walletSchema}.balances SET isk=1000000 WHERE owner_id=42 AND account_key=1000", connection, transaction);
                 await balance.ExecuteNonQueryAsync();
                 offeredItemId = await itemStore.CreateAsync(connection, transaction,
-                    new NewItem(34, 42, 3001, ItemFlags.Hangar, Quantity: 3), CancellationToken.None);
+                    new NewItem(34, 42, 3001, ItemFlags.Hangar, Quantity: 4), CancellationToken.None);
                 await transaction.CommitAsync();
             }
             var writer = new PersistenceContractWriteModel(source, itemStore, wallets, () => nowMs,
@@ -206,53 +206,126 @@ public partial class HostServerTests
             var open = Open();
             await front.SendAsync(open);
             _ = await front.ReceiveAsync();
-            var creation = new PyObject(new PyStr("contracts.contractStruct.ContractStruct"), new PyTuple([
-                new PyInt(1), PyBool.False, new PyInt(0), new PyInt(1440), new PyInt(0),
-                new PyInt(3001), new PyInt(0), new PyInt(1000), new PyInt(0), new PyInt(0),
-                new PyStr("persistent contract"), new PyStr(""),
-                new PyList([new PyTuple([new PyInt(offeredItemId), new PyInt(2)])]),
-                new PyInt(4), new PyList([]), PyBool.False, PyBool.False]));
-            await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.CallWithKwargs(
-                open, 1, "contractProxy", "CreateContract", new PyTuple([creation]),
-                Eve.Services.Py.Dict(("machoVersion", new PyInt(1)), ("confirm", PyNone.Instance))))));
-            PyValue? result = null;
-            while (result is null)
+            PyValue Creation(long assignedToId, long quantity, string title) =>
+                new PyObject(new PyStr("contracts.contractStruct.ContractStruct"), new PyTuple([
+                    new PyInt(1), PyBool.False, new PyInt(assignedToId), new PyInt(1440), new PyInt(0),
+                    new PyInt(3001), new PyInt(0), new PyInt(10_000_000), new PyInt(0), new PyInt(0),
+                    new PyStr(title), new PyStr(""),
+                    new PyList([new PyTuple([new PyInt(offeredItemId), new PyInt(quantity)])]),
+                    new PyInt(4), new PyList([]), PyBool.False, PyBool.False]));
+
+            async Task<Send> SendCreate(uint callId, long assignedToId, long quantity, string title)
             {
-                var send = Assert.IsType<Send>(await front.ReceiveAsync());
-                var response = MarshalCodec.Decode(send.Payload);
-                if (response is not PyObject { Args: PyTuple args } || args.Items.Count < 3 ||
-                    MachoAddress.Decode(args.Items[2]).CallId != new PyInt(1))
-                    continue;
-                Assert.Equal(new PyInt(7), args.Items[0]);
-                result = Result(response);
+                var creation = Creation(assignedToId,quantity,title);
+                await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.CallWithKwargs(
+                    open, callId, "contractProxy", "CreateContract", new PyTuple([creation]),
+                    Eve.Services.Py.Dict(("machoVersion", new PyInt(1)), ("confirm", PyNone.Instance))))));
+                while (true)
+                {
+                    var send = Assert.IsType<Send>(await front.ReceiveAsync());
+                    var response = MarshalCodec.Decode(send.Payload);
+                    if (response is not PyObject { Args: PyTuple args } || args.Items.Count < 3 ||
+                        MachoAddress.Decode(args.Items[2]).CallId != new PyInt(callId))
+                        continue;
+                    return send;
+                }
             }
-            var contractId = Assert.IsType<PyInt>(Assert.Single(Assert.IsType<PyList>(result).Items)).Value;
-            await using (var state = source.CreateCommand($"SELECT status, title, reward_escrow, price_isk FROM {contractsSchema}.contract_records WHERE contract_id=$1"))
+
+            async Task<long> Create(uint callId, long assignedToId, long quantity, string title)
             {
+                var send = await SendCreate(callId,assignedToId,quantity,title);
+                var response = MarshalCodec.Decode(send.Payload);
+                var state = Assert.IsType<PyTuple>(Assert.IsType<PyObject>(response).Args);
+                Assert.Equal(new PyInt(7), state.Items[0]);
+                var result = Result(response);
+                return Assert.IsType<PyInt>(Assert.Single(Assert.IsType<PyList>(result).Items)).Value;
+            }
+
+            var publicContractId = await Create(1, 0, 2, "public contract");
+            var privateContractId = await Create(2, 43, 1, "private contract");
+            async Task<(short Availability, long Assignee, decimal Price, decimal BrokerFee, decimal SalesTax, decimal Deposit)> Terms(long contractId)
+            {
+                await using var state = source.CreateCommand($"SELECT availability, assignee_id, price_isk, creation_fee_isk, sales_tax_isk, deposit_isk FROM {contractsSchema}.contract_records WHERE contract_id=$1");
                 state.Parameters.AddWithValue(contractId);
                 await using var reader = await state.ExecuteReaderAsync();
                 Assert.True(await reader.ReadAsync());
-                Assert.Equal((short)0, reader.GetInt16(0));
-                Assert.Equal("persistent contract", reader.GetString(1));
-                Assert.Equal(0m, reader.GetDecimal(2));
-                Assert.Equal(1000m, reader.GetDecimal(3));
+                return (reader.GetInt16(0), reader.GetInt64(1), reader.GetDecimal(2), reader.GetDecimal(3), reader.GetDecimal(4), reader.GetDecimal(5));
             }
-            Assert.Equal(1, (await itemStore.GetAsync(offeredItemId, CancellationToken.None))!.Quantity);
-            await using var escrowIdQuery = source.CreateCommand($"SELECT item_id FROM {contractsSchema}.contract_items WHERE contract_id=$1");
-            escrowIdQuery.Parameters.AddWithValue(contractId);
-            var escrowItemId = (long)(await escrowIdQuery.ExecuteScalarAsync())!;
-            var escrowItem = await itemStore.GetAsync(escrowItemId, CancellationToken.None);
-            Assert.NotNull(escrowItem);
-            Assert.Equal(9_300_000_000 + contractId, escrowItem.LocationId);
-            Assert.Equal(2, escrowItem.Quantity);
-            Assert.True(await wallets.AccountBalanceAsync(new WalletAccount(42), CancellationToken.None) < 1_000_000m);
-            await using var expiry = source.CreateCommand($"SELECT count(*) FROM {schedulerSchema}.jobs WHERE kind=$1 AND key=$2");
-            expiry.Parameters.AddWithValue(ContractExpiryJobs.JobKind);
-            expiry.Parameters.AddWithValue(contractId.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            Assert.Equal(1L, (long)(await expiry.ExecuteScalarAsync())!);
+            Assert.Equal(((short)0, 0L, 10_000_000m, 40_000m, 100_000m, 100_000m), await Terms(publicContractId));
+            Assert.Equal(((short)1, 43L, 10_000_000m, 10_000m, 0m, 0m), await Terms(privateContractId));
+
+            await using (var state = source.CreateCommand($"SELECT status, title, reward_escrow FROM {contractsSchema}.contract_records WHERE contract_id=$1"))
+            {
+                state.Parameters.AddWithValue(publicContractId);
+                await using var reader = await state.ExecuteReaderAsync();
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal((short)0, reader.GetInt16(0));
+                Assert.Equal("public contract", reader.GetString(1));
+                Assert.Equal(0m, reader.GetDecimal(2));
+            }
+            Assert.Equal(750_000m, await wallets.AccountBalanceAsync(new WalletAccount(42), CancellationToken.None));
+            await using (var escrowItems = source.CreateCommand($"SELECT contract_id, item_id, quantity FROM {contractsSchema}.contract_items ORDER BY contract_id"))
+            await using (var reader = await escrowItems.ExecuteReaderAsync())
+            {
+                Assert.True(await reader.ReadAsync());
+                var publicEscrow = await itemStore.GetAsync(reader.GetInt64(1), CancellationToken.None);
+                Assert.NotNull(publicEscrow);
+                Assert.Equal(9_300_000_000 + publicContractId, publicEscrow.LocationId);
+                Assert.Equal(2, reader.GetInt64(2));
+                Assert.True(await reader.ReadAsync());
+                var privateEscrow = await itemStore.GetAsync(reader.GetInt64(1), CancellationToken.None);
+                Assert.NotNull(privateEscrow);
+                Assert.Equal(9_300_000_000 + privateContractId, privateEscrow.LocationId);
+                Assert.Equal(1, reader.GetInt64(2));
+                Assert.False(await reader.ReadAsync());
+            }
+            await using (var expiry = source.CreateCommand($"SELECT count(*) FROM {schedulerSchema}.jobs WHERE kind=$1"))
+            {
+                expiry.Parameters.AddWithValue(ContractExpiryJobs.JobKind);
+                Assert.Equal(2L, (long)(await expiry.ExecuteScalarAsync())!);
+            }
             await using var notice = source.CreateCommand($"SELECT payload->>'name' FROM {eventsSchema}.outbox WHERE topic=$1 ORDER BY id");
             notice.Parameters.AddWithValue(ContractNotifications.Topic);
-            Assert.Equal("OnContractCreated", (string?)await notice.ExecuteScalarAsync());
+            await using (var reader = await notice.ExecuteReaderAsync())
+            {
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal("OnContractCreated", reader.GetString(0));
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal("OnContractCreated", reader.GetString(0));
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal("OnContractAssigned", reader.GetString(0));
+                Assert.False(await reader.ReadAsync());
+            }
+
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            await using (var balance = new NpgsqlCommand(
+                $"UPDATE {walletSchema}.balances SET isk=9999 WHERE owner_id=42 AND account_key=1000", connection, transaction))
+            {
+                Assert.Equal(1, await balance.ExecuteNonQueryAsync());
+                await transaction.CommitAsync();
+            }
+            var insufficient = await SendCreate(3, 43, 1, "private contract without funds");
+            Assert.Equal("CustomInfo", UserErrorKey(insufficient));
+            Assert.Contains(
+                "Contract reward escrow and broker fee requires 10000.00 ISK, but the wallet does not have enough funds.",
+                System.Text.Encoding.ASCII.GetString(insufficient.Payload.Span));
+            Assert.Equal(9999m, await wallets.AccountBalanceAsync(new WalletAccount(42), CancellationToken.None));
+            var remainingItem = await itemStore.GetAsync(offeredItemId, CancellationToken.None);
+            Assert.NotNull(remainingItem);
+            Assert.Equal((42L, 3001L, ItemFlags.Hangar, 1L),
+                (remainingItem.OwnerId, remainingItem.LocationId, remainingItem.Flag, remainingItem.Quantity));
+            await using (var state = source.CreateCommand($"SELECT count(*) FROM {contractsSchema}.contract_records"))
+                Assert.Equal(2L, (long)(await state.ExecuteScalarAsync())!);
+            await using (var expiry = source.CreateCommand($"SELECT count(*) FROM {schedulerSchema}.jobs WHERE kind=$1"))
+            {
+                expiry.Parameters.AddWithValue(ContractExpiryJobs.JobKind);
+                Assert.Equal(2L, (long)(await expiry.ExecuteScalarAsync())!);
+            }
+            await using var finalNotice = source.CreateCommand(
+                $"SELECT count(*) FROM {eventsSchema}.outbox WHERE topic=$1");
+            finalNotice.Parameters.AddWithValue(ContractNotifications.Topic);
+            Assert.Equal(3L, (long)(await finalNotice.ExecuteScalarAsync())!);
         }
         finally
         {

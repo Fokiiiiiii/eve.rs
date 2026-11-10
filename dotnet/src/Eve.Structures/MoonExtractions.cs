@@ -31,6 +31,9 @@ public sealed record MoonExtractionEnded(long ExtractionId, long StructureId, lo
 /// <summary>The payload of <see cref="MoonExtractions.FieldDecayedTopic"/>: the ore field of a fractured or decayed chunk has decayed.</summary>
 public sealed record MoonFieldDecayed(long ExtractionId, long StructureId, long SolarSystemId);
 
+/// <summary>The extraction times were moved by the V24 moon scheduling GM buttons.</summary>
+public sealed record MoonExtractionAdvanced(MoonExtraction Extraction, long ShiftMs, long ActorCharacterId);
+
 /// <summary>
 /// The moon extractions of the Standup Moon Drill (ST-6a; EVE.js moonExtractionsService): a refinery whose moon drill is online and whose moon has resources starts a chunk
 /// that grows for 6 to 56 days at 720 000 m3 a day (30 000 m3 an hour) of the moon's ores. The chunk turns ready at its arrival, and it fractures by itself at its natural
@@ -49,6 +52,7 @@ public sealed class MoonExtractions
     public const string ChunkExplodedTopic = "moon.chunk_exploded";
     public const string EndedTopic = "moon.extraction_ended";
     public const string FieldDecayedTopic = "moon.field_decayed";
+    public const string AdvancedTopic = "moon.extraction_advanced";
 
     public const long MinimumDurationSeconds = 518_460;
     public const long MaximumDurationSeconds = 4_838_400;
@@ -67,6 +71,10 @@ public sealed class MoonExtractions
     public enum StartOutcome { Started, Existing, NoStructure, DrillOffline, NoMoonResources }
 
     public sealed record StartResult(StartOutcome Outcome, MoonExtraction? Extraction);
+
+    public enum AdvanceOutcome { Advanced, NoActiveExtraction, UnknownPhase }
+
+    public sealed record AdvanceResult(AdvanceOutcome Outcome, MoonExtraction? Extraction, long ShiftMs = 0);
 
     private sealed record ExtractionJob(long ExtractionId);
 
@@ -190,6 +198,55 @@ public sealed class MoonExtractions
             return false;
         await CompleteAsync(connection, transaction, e, Cancelled, true, cancellationToken, actorCharacterId);
         return true;
+    }
+
+    /// <summary>
+    /// Moves an active extraction to one of the phases exposed by the V24 moon scheduling GM buttons. Start, arrival and natural decay move together,
+    /// preserving the extraction's duration and ore volume; its durable arrival and fracture jobs are replaced in the same transaction.
+    /// </summary>
+    public async Task<AdvanceResult> AdminAdvanceAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long structureId,
+        string phase,
+        CancellationToken cancellationToken = default,
+        long actorCharacterId = 0)
+    {
+        var extraction = (await _store.OpenAsync(connection, transaction, structureId, true, cancellationToken)).FirstOrDefault();
+        if (extraction is null || extraction.State != "active")
+            return new AdvanceResult(AdvanceOutcome.NoActiveExtraction, null);
+
+        var now = _scheduler.Now;
+        var midpoint = extraction.StartMs + (extraction.ChunkAvailableMs - extraction.StartMs) / 2;
+        var target = phase.Trim().ToLowerInvariant() switch
+        {
+            "mid" => now,
+            "stop" => checked(now + 60 * StructureTimes.Second),
+            "ready" => now,
+            "decay" => checked(now + 5 * StructureTimes.Second),
+            _ => long.MinValue,
+        };
+        if (target == long.MinValue)
+            return new AdvanceResult(AdvanceOutcome.UnknownPhase, extraction);
+
+        var phaseTime = phase.Trim().ToLowerInvariant() switch
+        {
+            "mid" => midpoint,
+            "stop" or "ready" => extraction.ChunkAvailableMs,
+            _ => extraction.NaturalDecayMs,
+        };
+        var shift = Math.Min(0, target - phaseTime);
+        var advanced = extraction with
+        {
+            StartMs = checked(extraction.StartMs + shift),
+            ChunkAvailableMs = checked(extraction.ChunkAvailableMs + shift),
+            NaturalDecayMs = checked(extraction.NaturalDecayMs + shift),
+        };
+        await _store.UpdateAsync(connection, transaction, advanced, cancellationToken);
+        await ScheduleAsync(connection, transaction, advanced, cancellationToken);
+        await _events.PublishInTransactionAsync(connection, transaction, AdvancedTopic,
+            new MoonExtractionAdvanced(advanced, shift, actorCharacterId), $"structure:{structureId}", cancellationToken);
+        return new AdvanceResult(AdvanceOutcome.Advanced, advanced, shift);
     }
 
     /// <summary>

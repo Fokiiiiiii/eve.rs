@@ -197,14 +197,15 @@ public sealed partial class ContractProxyService(
         var contracting = await skillLevel(issuerId, ContractingSkill, call.Cancellation);
         var advanced = await skillLevel(issuerId, AdvancedContractingSkill, call.Cancellation);
         var corporationContracting = info.ForCorp ? await skillLevel(issuerId, CorporationContractingSkill, call.Cancellation) : 0;
-        var accounting = await skillLevel(issuerId, AccountingSkill, call.Cancellation);
-        var brokerRelations = await skillLevel(issuerId, BrokerRelationsSkill, call.Cancellation);
+        var isPrivate = availability > 0;
+        var accounting = isPrivate ? 0 : await skillLevel(issuerId, AccountingSkill, call.Cancellation);
+        var brokerRelations = isPrivate ? 0 : await skillLevel(issuerId, BrokerRelationsSkill, call.Cancellation);
 
         // The client gives the shared 500-contract allowance to assignments inside the issuer's corporation.
         var limit = availability == 2 || assignedCharacterIsInIssuerCorporation ? ContractCreationLimits.MaxNumContracts
             : info.ForCorp ? ContractCreationLimits.Corporation(corporationContracting)
             : ContractCreationLimits.Personal(contracting, advanced);
-        var brokerFeeAdjustment = readBrokerFeeAdjustment is null
+        var brokerFeeAdjustment = isPrivate || readBrokerFeeAdjustment is null
             ? 1m
             : await readBrokerFeeAdjustment(issuerId, call.Session.GetInt("solarsystemid2") ?? 0, call.Cancellation);
         var fees = ContractFeesCalculator.Calculate((short)info.ContractType, (short)availability, info.Price, info.Reward,
@@ -243,6 +244,14 @@ public sealed partial class ContractProxyService(
         catch (ContractUserErrorException error)
         {
             throw MachoErrors.ThrowUserError(error.Message, error.Values.ToArray());
+        }
+        catch (Eve.Wallet.InsufficientFundsException)
+        {
+            var feeTotal = fees.BrokerFee + fees.SalesTax + fees.Deposit;
+            var required = info.Reward + feeTotal;
+            var description = isPrivate ? "Contract reward escrow and broker fee" : "Contract reward escrow and fees";
+            throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr(
+                $"{description} requires {required.ToString("F2", CultureInfo.InvariantCulture)} ISK, but the wallet does not have enough funds.")));
         }
         catch (ArgumentException error)
         {

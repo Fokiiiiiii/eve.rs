@@ -123,6 +123,89 @@ public sealed class StructureTimers
         return transition;
     }
 
+    /// <summary>Sets a structure's state from the V24 GM menu, clearing its current state timer as EveJS does.</summary>
+    public Task<StructureTransition?> AdminSetStateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, int state, CancellationToken cancellationToken = default) =>
+        AdminChangeAsync(connection, transaction, structureId, (snapshot, _, now) => !StructureState.IsKnown(state)
+            ? new StructureTransition(snapshot, false, "INVALID_STRUCTURE_STATE")
+            : new StructureTransition(snapshot with
+            {
+                State = state,
+                StateStartedMs = now,
+                StateEndsMs = 0,
+                TimerPausedMs = 0,
+                UnanchorEndsMs = StructureState.CancelsUnanchor(state) ? 0 : snapshot.UnanchorEndsMs,
+            }, true), cancellationToken);
+
+    /// <summary>Sets the current state's remaining timer from the V24 GM menu.</summary>
+    public Task<StructureTransition?> AdminSetStateTimerAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, long remainingMs, CancellationToken cancellationToken = default) =>
+        AdminChangeAsync(connection, transaction, structureId, (snapshot, _, now) => remainingMs < 0 || now > long.MaxValue - remainingMs
+            ? new StructureTransition(snapshot, false, "INVALID_TIMER")
+            : new StructureTransition(snapshot with { StateStartedMs = now, StateEndsMs = now + remainingMs, TimerPausedMs = 0 }, true), cancellationToken);
+
+    /// <summary>Sets the deployment timer and state from the V24 GM menu.</summary>
+    public Task<StructureTransition?> AdminSetDeployTimerAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, long remainingMs, CancellationToken cancellationToken = default) =>
+        AdminChangeAsync(connection, transaction, structureId, (snapshot, _, now) => remainingMs < 0 || now > long.MaxValue - remainingMs
+            ? new StructureTransition(snapshot, false, "INVALID_TIMER")
+            : new StructureTransition(snapshot with
+            {
+                State = StructureState.DeployVulnerable,
+                StateStartedMs = now,
+                StateEndsMs = now + remainingMs,
+                TimerPausedMs = 0,
+                UnanchorEndsMs = 0,
+            }, true), cancellationToken);
+
+    /// <summary>Sets the remaining unanchoring time from the V24 GM menu, subject to the client's unanchor-cancelling states.</summary>
+    public Task<StructureTransition?> AdminSetUnanchorTimerAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, long remainingMs, CancellationToken cancellationToken = default) =>
+        AdminChangeAsync(connection, transaction, structureId, (snapshot, _, now) =>
+            StructureState.CancelsUnanchor(snapshot.State)
+                ? new StructureTransition(snapshot, false, "UNANCHOR_NOT_ALLOWED")
+                : remainingMs < 0 || now > long.MaxValue - remainingMs
+                    ? new StructureTransition(snapshot, false, "INVALID_TIMER")
+                    : new StructureTransition(snapshot with { UnanchorEndsMs = now + remainingMs }, true), cancellationToken);
+
+    /// <summary>Sets the Low Power abandonment timer from the V24 GM menu.</summary>
+    public Task<StructureTransition?> AdminSetAbandonTimerAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long structureId, long remainingMs, CancellationToken cancellationToken = default) =>
+        AdminChangeAsync(connection, transaction, structureId, (snapshot, rules, now) =>
+            snapshot.Upkeep != UpkeepState.LowPower
+                ? new StructureTransition(snapshot, false, "STRUCTURE_NOT_LOW_POWER")
+                : !rules.CanBeAbandoned
+                    ? new StructureTransition(snapshot, false, "STRUCTURE_CANNOT_BE_ABANDONED")
+                    : remainingMs < 0 || now > long.MaxValue - remainingMs
+                        ? new StructureTransition(snapshot, false, "INVALID_TIMER")
+                        : new StructureTransition(snapshot with { AbandonAtMs = now + remainingMs }, true), cancellationToken);
+
+    private async Task<StructureTransition?> AdminChangeAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long structureId,
+        Func<StructureSnapshot, StructureRules, long, StructureTransition> change,
+        CancellationToken cancellationToken)
+    {
+        var record = await _store.GetAsync(connection, transaction, structureId, true, cancellationToken);
+        if (record is null)
+            return null;
+        if (record.Snapshot.DestroyedMs > 0)
+            return new StructureTransition(record.Snapshot, false, "STRUCTURE_GONE");
+
+        var rules = _rules.RulesOf(record.TypeId, record.SolarSystemId) with { AnchoringMs = record.Snapshot.AnchoringMs };
+        var transition = change(record.Snapshot, rules, _scheduler.Now);
+        if (transition.Refusal is not null)
+            return transition;
+        if (transition.Changed)
+        {
+            await _store.SaveAsync(connection, transaction, transition.Next, cancellationToken);
+            var next = transition.Next;
+            await _events.PublishInTransactionAsync(connection, transaction, StateChangedTopic,
+                new StructureStateChanged(structureId, record.SolarSystemId, next.State, next.Upkeep,
+                    new StructureTimerInfo(next.StateStartedMs, next.StateEndsMs, next.TimerPausedMs), false, null,
+                    record.Snapshot.State, record.Snapshot.Upkeep),
+                $"structure:{structureId}", cancellationToken);
+        }
+        await ScheduleAsync(connection, transaction, transition.Next, rules, cancellationToken);
+        return transition;
+    }
+
     /// <summary>Publishes the modules a fuel job turned off after its structure service/state events, in the same transaction.</summary>
     internal async Task PublishServiceModulesOfflinedAsync(
         NpgsqlConnection connection,

@@ -35,6 +35,7 @@ public static class MarketSeedV4
     public const string Source = "ESI";
     public const string DataSource = "tranquility";
     public const string CompatibilityDate = "2025-09-30";
+    private const long NpcOrderDurationThresholdDays = 90;
     private const string Endpoint = "https://esi.evetech.net/latest";
     private const int MaxRegionAttempts = 3;
     private const int MaxRateLimitRetries = 8;
@@ -406,8 +407,11 @@ public static class MarketSeedV4
                 total <= 0 || remain < 0 || remain > total || minimum <= 0 || duration <= 0 || string.IsNullOrWhiteSpace(range))
                 throw new InvalidDataException($"Invalid ESI order values at region {regionId}, page {page}, row {index}.");
 
-            // SDE membership alone defines a known type; station membership excludes every player structure.
-            if (!validTypeIds.Contains(typeId) || !npcStationIds.Contains(locationId)) continue;
+            // ESI omits the order owner. The V24 client caps player orders at 90 days, so retain
+            // only longer-duration orders at SDE NPC stations with known types.
+            if (!validTypeIds.Contains(typeId) || !npcStationIds.Contains(locationId) ||
+                duration <= NpcOrderDurationThresholdDays)
+                continue;
             retained.Add(new Order(regionId,orderId,typeId,locationId,systemId,buy,price,total,remain,minimum,range,issued,duration));
         }
 

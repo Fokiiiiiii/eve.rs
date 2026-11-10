@@ -693,8 +693,7 @@ internal sealed partial class CharacterServicesComposition
                 // the NPC waves of the sites: a kill of a site's NPC is counted by the content runtime; the next wave starts when one is done
                 var waves = new Eve.Services.Space.Sites.SiteNpcs(sitesOfWaves, foundations.Content, spaceSessions);
                 siteNpcs = waves;
-                foundations.Events.Subscribe(Eve.Services.Space.Sites.SiteNpcs.SubscriberName, Eve.Services.Space.Sites.SiteNpcs.Topics,
-                    (context, token) => waves.OnObjectiveCompletedAsync(context.Event.Json(), token));
+                waves.Register(foundations.Events);
             }
             probeScans.Register();
             spaceSessions.ProbeScans = probeScans;

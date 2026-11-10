@@ -46,6 +46,68 @@ public sealed class SiteNpcTests
     }
 
     [PgFact]
+    public async Task Core_citadel_spawns_its_documented_sleeper_types_and_restores_the_remaining_types_after_a_scene_rebuild()
+    {
+        var (rig, character, session) = await InSpaceAsync();
+        await using var _ = rig;
+        var host = await SiteHost.CreateAsync(rig);
+        var system = (int)session.GetInt("solarsystemid")!.Value;
+        var site = await host.StartCoreCitadelAsync(system);
+
+        await host.Waves.SpawnForSystemAsync(system);
+        var firstWave = SiteSpawns(rig, [site]);
+        Assert.Equal([30196, 30197, 30198], firstWave.Select(spawn => spawn.Ship.TypeId).Order().ToArray());
+
+        var keeper = firstWave.Single(spawn => spawn.Ship.TypeId == 30197);
+        rig.Sim.Say(Destroyed(keeper, character.ShipId));
+        await WaitForAsync(rig, async () =>
+            (await host.Content.ObjectivesOfAsync(site.InstanceId)).Single(objective => objective.Index == 0).Progress == 1);
+        using (var state = JsonDocument.Parse((await host.Content.GetAsync(site.InstanceId))!.DataJson))
+        {
+            Assert.Equal(1, state.RootElement.GetProperty("npcTypeKills").GetProperty("30197").GetInt32());
+        }
+
+        rig.Space.ForgetNpcsOf(system);
+        var beforeRebuild = SiteSpawns(rig, [site]).Length;
+        await host.Waves.SpawnForSystemAsync(system);
+        var restored = SiteSpawns(rig, [site]).Skip(beforeRebuild).ToArray();
+        Assert.Equal([30196, 30198], restored.Select(spawn => spawn.Ship.TypeId).Order().ToArray());
+        Assert.Equal(1, SiteSpawns(rig, [site]).Count(spawn => spawn.Ship.TypeId == 30197));
+
+        foreach (var spawn in restored)
+        {
+            rig.Sim.Say(Destroyed(spawn, character.ShipId));
+        }
+        var template = host.Templates.ById(site.TemplateId)!;
+        await WaitForAsync(rig, () => Task.FromResult(SiteSpawns(rig, [site]).Length == firstWave.Length + restored.Length + template.Waves[1].Amount));
+        var secondWave = SiteSpawns(rig, [site]).Skip(firstWave.Length + restored.Length).ToArray();
+        Assert.Equal(8, secondWave.Count(spawn => spawn.Ship.TypeId == 30216));
+        Assert.Equal(3, secondWave.Count(spawn => spawn.Ship.TypeId == 30196));
+        Assert.Equal(1, secondWave.Count(spawn => spawn.Ship.TypeId == 30198));
+
+        foreach (var spawn in secondWave)
+        {
+            rig.Sim.Say(Destroyed(spawn, character.ShipId));
+        }
+        var thirdWaveEnd = firstWave.Length + restored.Length + secondWave.Length + template.Waves[2].Amount;
+        await WaitForAsync(rig, () => Task.FromResult(SiteSpawns(rig, [site]).Length == thirdWaveEnd));
+        var thirdWave = SiteSpawns(rig, [site]).Skip(firstWave.Length + restored.Length + secondWave.Length).ToArray();
+        Assert.Equal(8, thirdWave.Count(spawn => spawn.Ship.TypeId == 30216));
+        Assert.Equal(3, thirdWave.Count(spawn => spawn.Ship.TypeId == 30197));
+        Assert.Equal(3, thirdWave.Count(spawn => spawn.Ship.TypeId == 30198));
+
+        foreach (var spawn in thirdWave)
+        {
+            rig.Sim.Say(Destroyed(spawn, character.ShipId));
+        }
+        var fourthWaveEnd = thirdWaveEnd + template.Waves[3].Amount;
+        await WaitForAsync(rig, () => Task.FromResult(SiteSpawns(rig, [site]).Length == fourthWaveEnd));
+        var fourthWave = SiteSpawns(rig, [site]).Skip(thirdWaveEnd).ToArray();
+        Assert.Equal(8, fourthWave.Count(spawn => spawn.Ship.TypeId == 30216));
+        Assert.Equal(2, fourthWave.Count(spawn => spawn.Ship.TypeId == 30199));
+    }
+
+    [PgFact]
     public async Task A_kill_of_a_site_npc_counts_for_its_wave_and_the_next_wave_is_made_at_the_site()
     {
         var (rig, c, session) = await InSpaceAsync();
@@ -201,8 +263,8 @@ public sealed class SiteNpcTests
             director.Attach(content, rig.Bus!);
             await content.AttachAsync();
             var waves = new SiteNpcs(director, content, rig.Space);
-            rig.Bus!.Subscribe(SiteNpcs.SubscriberName, SiteNpcs.Topics, (context, token) => waves.OnObjectiveCompletedAsync(context.Event.Json(), token));
-            await rig.Bus.PumpAsync();
+            waves.Register(rig.Bus!);
+            await rig.Bus!.PumpAsync();
             return new SiteHost(rig, director, content, waves, templates);
         }
 
@@ -212,6 +274,29 @@ public sealed class SiteNpcTests
             await using var transaction = await connection.BeginTransactionAsync();
             await Director.FillAsync(connection, transaction, solarSystemId);
             await transaction.CommitAsync();
+        }
+
+        public async Task<SiteRecord> StartCoreCitadelAsync(int solarSystemId)
+        {
+            var template = Templates.ById("wormhole-3704")!;
+            await using var connection = await Rig.Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            var started = await Content.StartAsync(connection, transaction, template.DefinitionId, solarSystemId, new
+            {
+                siteID = CosmicSiteDirector.SiteIdOf(solarSystemId, 0),
+                solarSystemID = solarSystemId,
+                template = template.Id,
+                family = template.Family,
+                slot = 0,
+                targetID = "test-core-citadel",
+                position = new[] { 12_000d, 24_000d, 36_000d },
+                anchorID = 1,
+                difficulty = template.Difficulty,
+                dungeonID = template.DungeonId,
+                entryObjectTypeID = template.EntryObjectTypeId,
+            });
+            await transaction.CommitAsync();
+            return (await Director.ActiveAsync(solarSystemId)).Single(site => site.InstanceId == started.Id);
         }
     }
 }

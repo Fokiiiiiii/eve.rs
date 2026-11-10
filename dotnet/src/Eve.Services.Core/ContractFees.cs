@@ -29,6 +29,9 @@ public static class ContractFeesCalculator
             brokerFeeAdjustment <= 0)
             throw new ArgumentOutOfRangeException(nameof(contractType), "contract fee inputs are outside the V24 contract limits");
 
+        if (availability > 0)
+            return new ContractFees(0m, BrokerMinimum, 0m, 0, 0);
+
         var multiplier = contractType == 3 ? 0.1m : 1m;
         var baseValue = Math.Max(price, reward);
         var additionalDays = expiryMinutes / 1440 - 1;

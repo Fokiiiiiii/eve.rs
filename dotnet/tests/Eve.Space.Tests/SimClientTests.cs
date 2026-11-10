@@ -906,6 +906,35 @@ public class SimClientTests
         await Until(() => !client.IsConnected && Volatile.Read(ref lost) == 1);
     }
 
+    [Fact]
+    public async Task Structure_placement_waits_for_outbound_capacity_without_breaking_the_link()
+    {
+        var stream = new BlockingWriteStream();
+        await using var client = new SimClient(_ => Task.FromResult<Stream>(stream));
+        client.RetryAfter = TimeSpan.FromMinutes(1);
+        client.Start();
+        await Until(() => client.IsConnected);
+
+        client.Bind(200);
+        await stream.WriteStarted.Task.WaitAsync(Patience);
+        for (var i = 0; i < SimClient.OutboundQueueCapacity; i++)
+            Assert.True(await client.PlaceStructureAsync(Structure(10_000 + i)));
+
+        var waiting = client.PlaceStructureAsync(Structure(20_000));
+        Assert.False(waiting.IsCompleted);
+        Assert.True(client.IsConnected);
+
+        stream.ReleaseWrites();
+
+        Assert.True(await Within(waiting));
+        Assert.True(client.IsConnected);
+    }
+
+    private static SimPlaceStructure Structure(long id) => new(
+        id, 30_100_032, "Encounter Surveillance System", 55_914, 4_079, [1d, 2d, 3d], 1d, 1, 0, 0,
+        new SimStructureHealth(1, 1, 1, [1d, 1d, 1d, 1d, 1d, 1d, 1d, 1d, 1d, 1d, 1d, 1d], 0, [0d, 0d, 0d], [0d, 0d, 0d]),
+        new SimStructureStatus(1, 1, null, null, null));
+
     private sealed class BlockingWriteStream : Stream
     {
         private readonly byte[] _helloAck = SimCodec.Encode(new SimHelloAck(SimCodec.ProtocolVersion, 4));
@@ -913,6 +942,8 @@ public class SimClientTests
         private int _writeCount;
 
         public TaskCompletionSource WriteStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private TaskCompletionSource WriteRelease { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public void ReleaseWrites() => WriteRelease.TrySetResult();
 
         public override bool CanRead => true;
         public override bool CanSeek => false;
@@ -941,7 +972,7 @@ public class SimClientTests
             if (Interlocked.Increment(ref _writeCount) == 1)
                 return;
             WriteStarted.TrySetResult();
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            await WriteRelease.Task.WaitAsync(cancellationToken);
         }
 
         public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>

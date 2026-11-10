@@ -1173,6 +1173,9 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     public void PlaceStructure(SimPlaceStructure structure) => Send(structure);
 
+    public Task<bool> PlaceStructureAsync(SimPlaceStructure structure, CancellationToken cancellationToken = default) =>
+        SendAsync(structure, cancellationToken);
+
     public void PlaceWormhole(SimPlaceWormhole wormhole) => Send(wormhole);
 
     public void RemoveWormhole(long wormholeId) => Send(new SimRemoveWormhole(wormholeId));

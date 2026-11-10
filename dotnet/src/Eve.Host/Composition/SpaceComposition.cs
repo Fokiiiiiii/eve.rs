@@ -38,6 +38,7 @@ namespace Eve.Host;
 internal sealed partial class CharacterServicesComposition
 {
     private Eve.Services.Space.Scanning.ICosmicSiteSource? scanBookmarkSites;
+    private Eve.Services.Space.Sites.SdeSiteAnchors? _siteAnchors;
     private async Task EnsureSitesAsync(int solarSystemId)
     {
         try
@@ -241,8 +242,9 @@ internal sealed partial class CharacterServicesComposition
             var fallbackRelic = FallbackOf(1207);
             // the sites of J-space: each wormhole system's class from the committed data (its plan is WormholeSites, the wormhole templates)
             var jSpaceClasses = Eve.Universe.JSpaceSystems.Load().ToDictionary(system => system.Id, system => system.WormholeClass);
+            var siteAnchors = _siteAnchors ??= new Eve.Services.Space.Sites.SdeSiteAnchors(sde);
             cosmicSites = new Eve.Services.Space.Sites.CosmicSiteDirector(
-                source, foundations.Content, foundations.Scheduler, Eve.Services.Space.Sites.SiteTemplates.Load(), new Eve.Services.Space.Sites.SdeSiteAnchors(sde), solarSystems,
+                source, foundations.Content, foundations.Scheduler, Eve.Services.Space.Sites.SiteTemplates.Load(), siteAnchors, solarSystems,
                 message => Console.Error.WriteLine($"eve-host: {message}"), system => spaceSessions?.HasPilotsIn(system) ?? false,
                 system => jSpaceClasses.TryGetValue(system, out var wormholeClass) ? wormholeClass : null);
             cosmicSites.Attach(foundations.Content, foundations.Events);
@@ -332,10 +334,10 @@ internal sealed partial class CharacterServicesComposition
                 });
             spaceSessions.UseBounties(bountyStore);
             spaceSessions.Ess = Ess;   // the Main Bank share of a bounty earned in an ESS system
+            spaceSessions.PrepareSolarSystemForEntryAsync = (systemId, token) => PlaceEssBallAsync(sim, systemId, token);
             spaceSessions.DynamicBounties = _dynamicBounty;
             spaceSessions.RecordDynamicBountyPaidInTransactionAsync = RecordDynamicBountyPaidInTransactionAsync;
             spaceSessions.RecordDynamicBountyLossInTransactionAsync = RecordDynamicBountyLossInTransactionAsync;
-            await PlaceEssBallsAsync(sim);   // each ESS is a ball in space, so a pilot in its system can link to it
             spaceSessions.Events = foundations.Events;   // what happens in space is announced on the bus as well
             spaceSessions.BuffStore = new Eve.Ships.PgShipBuffStore(source, spaceSchema);   // the buffs a restart keeps (track C8)
             ships.TransitionEventWriter = spaceSessions.Transitions.WriteEventAsync;

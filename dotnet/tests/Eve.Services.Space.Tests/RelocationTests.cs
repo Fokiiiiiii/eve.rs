@@ -17,6 +17,28 @@ public class RelocationTests
     private static SolarSystemInfo Elsewhere(Rig rig, int system) => rig.Systems.Systems.First(candidate => candidate.Id != system);
 
     [PgFact]
+    public async Task A_public_entry_prepares_its_destination_before_the_simulation_enters_it()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var character = await rig.NewCharacterAsync();
+        var session = await rig.SessionAsync(character);
+        var origin = (int)session.GetInt("solarsystemid2")!.Value;
+        var target = Elsewhere(rig, origin);
+        var order = new List<string>();
+        rig.Space.PrepareSolarSystemForEntryAsync = (systemId, _) =>
+        {
+            Assert.Equal(target.Id, systemId);
+            order.Add("prepared");
+            return Task.CompletedTask;
+        };
+        rig.Sim.OnEnter = enter => order.Add($"entered:{enter.Scene.LocationId}");
+
+        Assert.Null(await rig.Space.RelocateAsync(session, target.Id, null, null, CancellationToken.None));
+
+        Assert.Equal(new[] { "prepared", $"entered:{target.Id}" }, order);
+    }
+
+    [PgFact]
     public async Task A_docked_pilot_relocated_into_another_system_is_in_space_there_at_the_anchor()
     {
         await using var rig = await Rig.CreateAsync();

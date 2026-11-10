@@ -77,9 +77,11 @@ internal static class HostComposition
         var registry = new ServiceRegistry();
         var online = new OnlineCharacters();
         var connected = new ConnectedSessions();
+        var logoffNow = clockOverride ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         Eve.Host.Xmpp.XmppListener? xmppListener = null;
         System.Security.Cryptography.X509Certificates.X509Certificate2? xmppCertificate = null;
         CharacterSessions? characterSessions = null;
+        PgCharacterStore? characterStore = null;
         OnlineStatusNotifications? onlineStatusNotifications = null;
         List<ICharacterEntryHook>? characterEntryHooks = null;
         PublicGateway.PublicGatewayRoutes? publicGateway = null;
@@ -120,7 +122,7 @@ internal static class HostComposition
                 Env("EVE_IDENTITY_SCHEMA", Eve.Identity.PgAccountDirectory.DefaultSchema));
             await raffleProxyStore.MigrateAsync();
             var contractSkills = new PgSkillStore(source, Env("EVE_SKILLS_SCHEMA", PgSkillStore.DefaultSchema));
-            var contractCharacters = new Eve.Characters.PgCharacterStore(source,
+            var contractCharacters = characterStore = new Eve.Characters.PgCharacterStore(source,
                 Env("EVE_CHARACTERS_SCHEMA", Eve.Characters.PgCharacterStore.DefaultSchema));
             var contractWalletStore = new PgWalletStore(source, Env("EVE_WALLET_SCHEMA", PgWalletStore.DefaultSchema));
             var contractCorporations = new Eve.Corporations.CorporationStore(source, contractCharacters,
@@ -407,11 +409,11 @@ internal static class HostComposition
                 return ValueTask.FromResult(PersistenceCharacterRpcReadModel.ReadJumpTimers(character));
             }
             : null;
-        ReadNonDiminishingInjectionCountCallback? readNonDiminishingInjections = mailStore is { } characterStore
+        ReadNonDiminishingInjectionCountCallback? readNonDiminishingInjections = mailStore is { } legacyCharacterStore
             ? async (characterId, cancellationToken) =>
             {
                 var state = await PersistenceReadHelpers.ReadOptionalTableAsync(
-                    characterStore, "skillTradingState", cancellationToken);
+                    legacyCharacterStore, "skillTradingState", cancellationToken);
                 return PersistenceCharacterRpcReadModel.ReadNonDiminishingInjections(state, characterId);
             }
             : null;
@@ -588,6 +590,19 @@ internal static class HostComposition
                         return;
                     var rowId = await history.OpenAsync(accountId, DateTime.UtcNow.Ticks, ct);
                     session.Set("accruedSessionId", new Eve.Marshal.PyLong(rowId));
+                },
+                SessionClosingAsync = async session =>
+                {
+                    if (session.CharacterId is not { } characterId || characterId <= 0 ||
+                        characterStore is not { } characters || characterSessions is not { } sessions)
+                        return;
+
+                    await using var lifecycle = await online.AcquireCharacterLifecycleLockAsync(characterId);
+                    if (!ReferenceEquals(sessions.Of(characterId), session))
+                        return;
+
+                    await characters.SetLastLogoffAsync(characterId,
+                        DateTimeOffset.FromUnixTimeMilliseconds(logoffNow()));
                 },
                 SessionClosedAsync = async session =>
                 {

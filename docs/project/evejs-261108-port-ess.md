@@ -14,6 +14,7 @@ CCP's [18.11 patch notes](https://www.eveonline.com/ru/news/view/patch-notes-for
 
 - PostgreSQL owns ESS bank values, link and reserve state, histories, and the next payout deadline. The Host already registered the `essMgr` service and its RPC/notification callbacks in `dotnet/src/Eve.Host/Composition/EssComposition.cs:34-42,166-194`; the bank mutation and payout logic lives in `dotnet/src/Eve.Services.Space/Ess/PgEssStore.cs`.
 - The client payload already carried bank identity, balances, reserve state, and main-link fields. Host wire persistence and notifications are exercised by `dotnet/tests/Eve.Host.Tests/EssMainBankHostPersistenceTests.cs:15-25,90-133`.
+- The 10-second durable scheduler already runs `TickEssAsync` (`dotnet/src/Eve.Host/Composition/SpaceComposition.cs:538-539`). For systems with tick events, the Host sends per-link theft/disconnect notifications, then broadcasts `OnSystemESSDataChanged` with current store state (`dotnet/src/Eve.Host/Composition/EssComposition.cs:255-289`); the added countdown fields therefore travel on the existing state-change notification.
 - The reserve-bank quadrant mapping, key consumption, bounty shares, and durable clock remain in their existing shared owners; this change did not introduce a second ESS state store.
 
 ## Ported

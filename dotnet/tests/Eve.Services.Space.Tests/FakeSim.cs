@@ -365,6 +365,12 @@ internal sealed class FakeSim : ISimulation
 
     public void SetStructureState(SimSetStructureState state) => Heard.Enqueue(state);
 
+    public void SetStructureMoonMiningState(SimSetStructureMoonMiningState state) => Heard.Enqueue(state);
+
+    public void UpsertMoonChunk(SimUpsertMoonChunk chunk) => Heard.Enqueue(chunk);
+
+    public void RemoveMoonChunk(SimRemoveMoonChunk removal) => Heard.Enqueue(removal);
+
     public void PlaceDisruptor(SimPlaceDisruptor disruptor) => Heard.Enqueue(disruptor);
 
     public void SetDisruptorActive(long deployableId, bool active) => Heard.Enqueue(new SimSetDisruptorActive(deployableId, active));

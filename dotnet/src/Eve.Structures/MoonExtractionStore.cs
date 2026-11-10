@@ -9,7 +9,8 @@ namespace Eve.Structures;
 public sealed record MoonExtraction(
     long ExtractionId, long StructureId, long MoonId, long SolarSystemId, long OwnerCorporationId, long StartMs, long ChunkAvailableMs, long NaturalDecayMs,
     long DurationSeconds, double YieldMultiplier, long CalendarEventId, string State, long ReadyNotifiedMs, long FractureStartedMs, long FractureCompleteMs,
-    IReadOnlyDictionary<long, double> OreVolumeM3, long CreatedMs, long CompletedMs, string CompletedReason, long FieldDecayedMs, long FieldDecayMs = -1);
+    IReadOnlyDictionary<long, double> OreVolumeM3, long CreatedMs, long CompletedMs, string CompletedReason, long FieldDecayedMs, long FieldDecayMs = -1,
+    long ChunkExplodedMs = 0);
 
 public sealed record MoonResourceProfile(long StructureId, long MoonId, long SolarSystemId, long OwnerCorporationId, double YieldMultiplier, IReadOnlyDictionary<long, double> Resources);
 
@@ -25,7 +26,7 @@ public sealed class MoonExtractionStore
     private const string ExtractionColumns =
         "extraction_id, structure_id, moon_id, solar_system_id, owner_corporation_id, start_ms, chunk_available_ms, natural_decay_ms, duration_seconds, " +
         "yield_multiplier, calendar_event_id, state, ready_notified_ms, fracture_started_ms, fracture_complete_ms, ore_volume::text, created_ms, completed_ms, completed_reason, " +
-        "field_decayed_ms, field_decay_ms";
+        "field_decayed_ms, field_decay_ms, chunk_exploded_ms";
 
     private readonly NpgsqlDataSource _source;
     private readonly string _schema;
@@ -100,9 +101,9 @@ public sealed class MoonExtractionStore
     public async Task UpdateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, MoonExtraction e, CancellationToken cancellationToken = default) =>
         await Sql.ExecuteAsync(connection, transaction, Q("""
             UPDATE {schema}.structure_moon_extractions SET state = $2, ready_notified_ms = $3, fracture_started_ms = $4, fracture_complete_ms = $5,
-                completed_ms = $6, completed_reason = $7, field_decayed_ms = $8
+                completed_ms = $6, completed_reason = $7, field_decayed_ms = $8, chunk_exploded_ms = $9
             WHERE extraction_id = $1
-            """), cancellationToken, e.ExtractionId, e.State, e.ReadyNotifiedMs, e.FractureStartedMs, e.FractureCompleteMs, e.CompletedMs, e.CompletedReason, e.FieldDecayedMs);
+            """), cancellationToken, e.ExtractionId, e.State, e.ReadyNotifiedMs, e.FractureStartedMs, e.FractureCompleteMs, e.CompletedMs, e.CompletedReason, e.FieldDecayedMs, e.ChunkExplodedMs);
 
     /// <summary>The extraction of a structure that is active or fracturing, or null.</summary>
     public async Task<MoonExtraction?> ActiveForStructureAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long structureId, CancellationToken cancellationToken = default)
@@ -168,12 +169,12 @@ public sealed class MoonExtractionStore
         await Sql.ExecuteAsync(connection, transaction, Q("""
             INSERT INTO {schema}.structure_moon_extractions (extraction_id, structure_id, moon_id, solar_system_id, owner_corporation_id, start_ms, chunk_available_ms,
                 natural_decay_ms, duration_seconds, yield_multiplier, calendar_event_id, state, ready_notified_ms, fracture_started_ms, fracture_complete_ms, ore_volume,
-                created_ms, completed_ms, completed_reason, field_decay_ms)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::text::jsonb, $17, $18, $19, $20)
+                created_ms, completed_ms, completed_reason, field_decay_ms, chunk_exploded_ms)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::text::jsonb, $17, $18, $19, $20, $21)
             ON CONFLICT (extraction_id) DO NOTHING
             """), cancellationToken, e.ExtractionId, e.StructureId, e.MoonId, e.SolarSystemId, e.OwnerCorporationId, e.StartMs, e.ChunkAvailableMs, e.NaturalDecayMs,
             e.DurationSeconds, e.YieldMultiplier, e.CalendarEventId, e.State, e.ReadyNotifiedMs, e.FractureStartedMs, e.FractureCompleteMs, OreJson(e.OreVolumeM3),
-            e.CreatedMs, e.CompletedMs, e.CompletedReason, e.FieldDecayMs);
+            e.CreatedMs, e.CompletedMs, e.CompletedReason, e.FieldDecayMs, e.ChunkExplodedMs);
 
     private async Task<int> InsertProfileAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, MoonResourceProfile p, CancellationToken cancellationToken) =>
         await Sql.ExecuteAsync(connection, transaction, Q("""
@@ -187,7 +188,7 @@ public sealed class MoonExtractionStore
     private static MoonExtraction ReadExtraction(NpgsqlDataReader r) => new(
         r.GetInt64(0), r.GetInt64(1), r.GetInt64(2), r.GetInt64(3), r.GetInt64(4), r.GetInt64(5), r.GetInt64(6), r.GetInt64(7), r.GetInt64(8), r.GetDouble(9),
         r.GetInt64(10), r.GetString(11), r.GetInt64(12), r.GetInt64(13), r.GetInt64(14), OreOf(r.GetString(15)), r.GetInt64(16), r.GetInt64(17), r.GetString(18),
-        r.GetInt64(19), r.GetInt64(20));
+        r.GetInt64(19), r.GetInt64(20), r.GetInt64(21));
 
     public static JsonObject ToLegacy(MoonExtraction e) => new()
     {

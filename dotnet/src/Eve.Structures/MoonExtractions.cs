@@ -22,6 +22,9 @@ public sealed record MoonExtractionStarted(long ExtractionId, long StructureId, 
 /// <summary>The payload of <see cref="MoonExtractions.FractureStartedTopic"/>.</summary>
 public sealed record MoonFractureStarted(long ExtractionId, long StructureId, long SolarSystemId, long OwnerCorporationId, long ActorCharacterId);
 
+/// <summary>The payload of <see cref="MoonExtractions.ChunkExplodedTopic"/>: the manual fracture's chunk explosion at 25 seconds.</summary>
+public sealed record MoonChunkExploded(long ExtractionId, long StructureId, long SolarSystemId);
+
 /// <summary>The payload of <see cref="MoonExtractions.EndedTopic"/>: the extraction is completed (<c>fractured</c>, <c>cancelled</c>, <c>decayed</c> or <c>offlined</c>).</summary>
 public sealed record MoonExtractionEnded(long ExtractionId, long StructureId, long SolarSystemId, long OwnerCorporationId, string Reason, long EndedMs, long ActorCharacterId = 0);
 
@@ -38,10 +41,12 @@ public sealed class MoonExtractions
 {
     public const string ArrivalJobKind = "moon.chunk_arrival";
     public const string FractureJobKind = "moon.auto_fracture";
+    public const string ChunkExplosionJobKind = "moon.chunk_explosion";
     public const string FieldDecayJobKind = "moon.field_decay";
     public const string ChunkArrivedTopic = "moon.chunk_arrived";
     public const string StartedTopic = "moon.extraction_started";
     public const string FractureStartedTopic = "moon.fracture_started";
+    public const string ChunkExplodedTopic = "moon.chunk_exploded";
     public const string EndedTopic = "moon.extraction_ended";
     public const string FieldDecayedTopic = "moon.field_decayed";
 
@@ -51,6 +56,8 @@ public sealed class MoonExtractions
     public const double YieldPerDayM3 = 720_000;
     /// <summary>The time a fracture takes from the fire to the chunk's fracture (EVE.js FRACTURE_TOTAL_DURATION_SECONDS).</summary>
     public const long FractureMs = 30_000;
+    /// <summary>The chunk's terminal explosion happens five seconds before the 30 s fracture finishes (EVE.js moonExtractionsService).</summary>
+    public const long ChunkExplosionDelayMs = 25_000;
 
     public const string Fractured = "fractured";
     public const string Cancelled = "cancelled";
@@ -83,11 +90,12 @@ public sealed class MoonExtractions
 
     private static string KeyOf(long extractionId) => $"extraction:{extractionId}";
 
-    /// <summary>Registers the three job handlers. Call it once, before the foundations start.</summary>
+    /// <summary>Registers the four job handlers. Call it once, before the foundations start.</summary>
     public void Register()
     {
         _scheduler.Register(ArrivalJobKind, (job, token) => ArrivalAsync(job, token));
         _scheduler.Register(FractureJobKind, (job, token) => FractureDueAsync(job, token));
+        _scheduler.Register(ChunkExplosionJobKind, (job, token) => ChunkExplosionAsync(job, token));
         _scheduler.Register(FieldDecayJobKind, (job, token) => FieldDecayAsync(job, token));
     }
 
@@ -165,6 +173,9 @@ public sealed class MoonExtractions
         var fired = e with { State = "fracturing", FractureStartedMs = now, FractureCompleteMs = now + FractureMs };
         await _store.UpdateAsync(connection, transaction, fired, cancellationToken);
         await _scheduler.ScheduleAsync(connection, transaction, new JobSpec(FractureJobKind, fired.FractureCompleteMs) { Key = KeyOf(e.ExtractionId), Payload = new ExtractionJob(e.ExtractionId) }, cancellationToken);
+        await _scheduler.ScheduleAsync(connection, transaction,
+            new JobSpec(ChunkExplosionJobKind, fired.FractureStartedMs + ChunkExplosionDelayMs) { Key = KeyOf(e.ExtractionId), Payload = new ExtractionJob(e.ExtractionId) },
+            cancellationToken);
         await _events.PublishInTransactionAsync(connection, transaction, FractureStartedTopic,
             new MoonFractureStarted(e.ExtractionId, e.StructureId, e.SolarSystemId, e.OwnerCorporationId, actorCharacterId), $"structure:{e.StructureId}", cancellationToken);
         return FractureOutcome.Fired;
@@ -202,6 +213,9 @@ public sealed class MoonExtractions
         var payload = new ExtractionJob(e.ExtractionId);
         if (e.State == "active" && e.ReadyNotifiedMs == 0)
             await _scheduler.ScheduleAsync(connection, transaction, new JobSpec(ArrivalJobKind, e.ChunkAvailableMs) { Key = key, Payload = payload }, cancellationToken);
+        if (e.State == "fracturing" && e.ChunkExplodedMs == 0)
+            await _scheduler.ScheduleAsync(connection, transaction,
+                new JobSpec(ChunkExplosionJobKind, e.FractureStartedMs + ChunkExplosionDelayMs) { Key = key, Payload = payload }, cancellationToken);
         var fractureAt = e.State == "fracturing" ? e.FractureCompleteMs : e.NaturalDecayMs;
         await _scheduler.ScheduleAsync(connection, transaction, new JobSpec(FractureJobKind, fractureAt) { Key = key, Payload = payload }, cancellationToken);
     }
@@ -252,6 +266,25 @@ public sealed class MoonExtractions
         await CompleteAsync(job.Connection, job.Transaction, e, Decayed, false, cancellationToken);
     }
 
+    /// <summary>The manual fracture's chunk explodes at 25 s; the ore field appears at 30 s when the fracture job completes.</summary>
+    private async Task ChunkExplosionAsync(JobContext job, CancellationToken cancellationToken)
+    {
+        var id = (job.Payload<ExtractionJob>() ?? throw new InvalidOperationException("moon.chunk_explosion job without a payload")).ExtractionId;
+        var e = await _store.GetAsync(job.Connection, job.Transaction, id, true, cancellationToken);
+        if (e is null || e.State != "fracturing" || e.ChunkExplodedMs > 0)
+            return;
+        var due = e.FractureStartedMs + ChunkExplosionDelayMs;
+        var now = _scheduler.Now;
+        if (due > now)
+        {
+            job.RunAgainAt(due, new ExtractionJob(id));
+            return;
+        }
+        await _store.UpdateAsync(job.Connection, job.Transaction, e with { ChunkExplodedMs = now }, cancellationToken);
+        await _events.PublishInTransactionAsync(job.Connection, job.Transaction, ChunkExplodedTopic,
+            new MoonChunkExploded(e.ExtractionId, e.StructureId, e.SolarSystemId), $"structure:{e.StructureId}", cancellationToken);
+    }
+
     /// <summary>The ore field of a fractured or decayed chunk lasts for the refinery's field lifetime; then it is marked decayed.</summary>
     private async Task FieldDecayAsync(JobContext job, CancellationToken cancellationToken)
     {
@@ -275,6 +308,7 @@ public sealed class MoonExtractions
         var key = KeyOf(e.ExtractionId);
         await _store.UpdateAsync(connection, transaction, e with { State = "completed", CompletedReason = reason, CompletedMs = now }, cancellationToken);
         await _scheduler.CancelAsync(connection, transaction, ArrivalJobKind, key, cancellationToken);
+        await _scheduler.CancelAsync(connection, transaction, ChunkExplosionJobKind, key, cancellationToken);
         if (cancelFractureJob)
             await _scheduler.CancelAsync(connection, transaction, FractureJobKind, key, cancellationToken);
         if (reason is Fractured or Decayed)

@@ -8,6 +8,7 @@ public enum SpaceItemKind
     ContainerOrWreck = 0,
     LaunchedShip = 1,
     ActiveShip = 2,
+    MoonChunk = 3,
 }
 
 /// <summary>A durable space item: its pose and ownership live here, while its inventory item and contents stay in the inventory store.</summary>
@@ -136,7 +137,7 @@ public sealed class PgSpaceItemStore
 
     public async Task<IReadOnlyList<SpaceItem>> MoonFieldAsync(long extractionId, CancellationToken cancellationToken = default)
     {
-        await using var command = _source.CreateCommand($"SELECT {Columns} FROM {_schema}.space_items WHERE moon_extraction_id = $1 ORDER BY moon_rock_ordinal, item_id");
+        await using var command = _source.CreateCommand($"SELECT {Columns} FROM {_schema}.space_items WHERE moon_extraction_id = $1 AND moon_rock_ordinal > 0 ORDER BY moon_rock_ordinal, item_id");
         command.Parameters.Add(new NpgsqlParameter { Value = extractionId });
         return await ReadAllAsync(command, cancellationToken);
     }
@@ -145,10 +146,32 @@ public sealed class PgSpaceItemStore
         NpgsqlConnection connection, NpgsqlTransaction transaction, long extractionId, CancellationToken cancellationToken = default)
     {
         await using var command = new NpgsqlCommand(
-            $"SELECT {Columns} FROM {_schema}.space_items WHERE moon_extraction_id = $1 ORDER BY moon_rock_ordinal, item_id",
+            $"SELECT {Columns} FROM {_schema}.space_items WHERE moon_extraction_id = $1 AND moon_rock_ordinal > 0 ORDER BY moon_rock_ordinal, item_id",
             connection, transaction);
         command.Parameters.Add(new NpgsqlParameter { Value = extractionId });
         return await ReadAllAsync(command, cancellationToken);
+    }
+
+    /// <summary>The single non-mineable chunk ball for an open extraction, if it is persisted.</summary>
+    public async Task<SpaceItem?> MoonChunkAsync(long extractionId, CancellationToken cancellationToken = default)
+    {
+        await using var command = _source.CreateCommand($"SELECT {Columns} FROM {_schema}.space_items WHERE moon_extraction_id = $1 AND kind = $2 ORDER BY item_id LIMIT 1");
+        command.Parameters.Add(new NpgsqlParameter { Value = extractionId });
+        command.Parameters.Add(new NpgsqlParameter { Value = (int)SpaceItemKind.MoonChunk });
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
+    }
+
+    public async Task<SpaceItem?> MoonChunkAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long extractionId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"SELECT {Columns} FROM {_schema}.space_items WHERE moon_extraction_id = $1 AND kind = $2 ORDER BY item_id LIMIT 1",
+            connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = extractionId });
+        command.Parameters.Add(new NpgsqlParameter { Value = (int)SpaceItemKind.MoonChunk });
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
     }
 
     /// <summary>What is due to go by <paramref name="nowMs"/>.</summary>

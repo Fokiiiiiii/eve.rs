@@ -237,7 +237,7 @@ internal sealed partial class CharacterServicesComposition
         if (sim is not null && spaceSessions is not null)
         {
             spaceStructures = new Eve.Services.Space.SpaceStructures(sim, spaceSessions, source, structureStore, structureTimers, dogma,
-                message => Console.Error.WriteLine($"eve-host: space structures: {message}"));
+                message => Console.Error.WriteLine($"eve-host: space structures: {message}"), items, moonExtractionStore);
             spaceStructures.Subscribe(foundations.Events);
             spaceSessions.PlaceStructuresAsync = RestoreStructuresAndCynoBeaconsAsync;
 
@@ -398,6 +398,13 @@ internal sealed partial class CharacterServicesComposition
             moonRigRules.ReadAsync);
         moonExtractions.Register();
         moonExtractions.Subscribe();
+        if (sim is not null && spaceSessions is not null && spaceStructures is not null)
+        {
+            var spaceMoonChunks = new Eve.Services.Space.SpaceMoonChunks(
+                sim, spaceSessions, source, structureStore, moonExtractionStore, items, new PgSpaceItemStore(source, spaceSchema), dogma, now,
+                spaceStructures, message => Console.Error.WriteLine($"eve-host: moon chunks: {message}"));
+            spaceMoonChunks.Subscribe(foundations.Events);
+        }
         if (spaceContainers is not null)
         {
             new SpaceMoonFields(moonExtractionStore, structureStore, items, new PgSpaceItemStore(source, spaceSchema),

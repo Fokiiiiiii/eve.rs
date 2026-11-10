@@ -3128,9 +3128,7 @@ fn moon_chunk_ball_targets_the_refinery_module_and_replays_each_drill_phase() {
     assert_eq!(graphic_field("effectStarted"), Some(crate::wire::filetime(NOON)));
     assert_eq!(
         graphic_field("triggers"),
-        Some(crate::wire::list(
-            ["moduleID", "moonID", "shipID", "targetID"].map(|name| crate::wire::text(name))
-        ))
+        Some(crate::wire::list(["moduleID", "moonID", "shipID", "targetID"].map(crate::wire::text)))
     );
 
     assert!(

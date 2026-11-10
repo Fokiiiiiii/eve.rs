@@ -12,7 +12,8 @@ namespace Eve.Corporations;
 public sealed class CorporationOfficeStore
 {
     public const long RentalCycleMs = 30L * 24 * 60 * 60 * 1000;
-    public const decimal MinimumRentIsk = 10_000m;
+    public const decimal NpcStationOfficeRentalCostIsk = 10_000m;
+    public const decimal MinimumRentIsk = NpcStationOfficeRentalCostIsk;
     public const int ImpoundedFlag = 50;
     public const int OfficeFolderTypeId = 26;
 
@@ -90,6 +91,9 @@ public sealed class CorporationOfficeStore
             ALTER TABLE office_rent_bills ADD CONSTRAINT office_rent_bills_amount_isk_check CHECK (amount_isk >= 0);
             -- a structure's bill names the owner the rent is credited to; a station's bill has none (its owner is read from the station)
             ALTER TABLE office_rent_bills ADD COLUMN creditor_id bigint CHECK (creditor_id > 0);
+            """),
+        new Migration("011_static_npc_office_rent", """
+            DROP TABLE IF EXISTS office_station_prices;
             """)
     ];
 
@@ -391,61 +395,6 @@ public sealed class CorporationOfficeStore
         return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
     }
 
-    public async Task<decimal> PriceQuoteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
-        CorporationOfficeStation station, int occupiedOffices, long nowMs,
-        CancellationToken cancellationToken = default)
-    {
-        if (station.Id <= 0 || station.TypeId <= 0 || station.OwnerId <= 0 || station.SolarSystemId <= 0 ||
-            station.OfficeCapacity <= 0)
-            throw new CorporationError("OFFICE_STATION_DATA_INVALID");
-
-        var day = Math.Max(0, nowMs / (24L * 60 * 60 * 1000));
-        var seed = SeedPrice(station);
-        await using (var insert = Command(connection, transaction, $"""
-            INSERT INTO {_schema}.office_station_prices
-                (station_id,owner_id,solar_system_id,type_id,office_capacity,price_isk,pricing_day)
-            VALUES ($1,$2,$3,$4,$5,$6,$7)
-            ON CONFLICT (station_id) DO NOTHING
-            """, station.Id, station.OwnerId, station.SolarSystemId, station.TypeId,
-            station.OfficeCapacity, seed, day))
-            await insert.ExecuteNonQueryAsync(cancellationToken);
-
-        decimal price;
-        long priorDay;
-        await using (var read = Command(connection, transaction, $"""
-            SELECT price_isk,pricing_day FROM {_schema}.office_station_prices
-            WHERE station_id=$1 FOR UPDATE
-            """, station.Id))
-        await using (var reader = await read.ExecuteReaderAsync(cancellationToken))
-        {
-            if (!await reader.ReadAsync(cancellationToken)) throw new CorporationError("OFFICE_PRICE_STATE_MISSING");
-            price = reader.GetDecimal(0);
-            priorDay = reader.GetInt64(1);
-        }
-
-        var elapsed = Math.Max(0, day - priorDay);
-        if (elapsed > 0)
-        {
-            var free = Math.Max(0, station.OfficeCapacity - occupiedOffices);
-            var multiplier = free == 0 ? 1.05m : free == 1 ? 1m :
-                Math.Max(0.95m, 1m - Math.Min(0.05m, (free - 1) * 0.005m));
-            for (long i = 0; i < Math.Min(elapsed, 5000); i++)
-            {
-                price = multiplier > 1 && price > decimal.MaxValue / multiplier
-                    ? decimal.MaxValue
-                    : Math.Max(MinimumRentIsk, decimal.Round(price * multiplier, 2, MidpointRounding.AwayFromZero));
-            }
-            await using var update = Command(connection, transaction, $"""
-                UPDATE {_schema}.office_station_prices
-                SET owner_id=$2,solar_system_id=$3,type_id=$4,office_capacity=$5,price_isk=$6,pricing_day=$7
-                WHERE station_id=$1
-                """, station.Id, station.OwnerId, station.SolarSystemId, station.TypeId,
-                station.OfficeCapacity, price, day);
-            await update.ExecuteNonQueryAsync(cancellationToken);
-        }
-        return Math.Max(MinimumRentIsk, price);
-    }
-
     public async Task<CorporationOffice> RentAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
         long corporationId, long officeFolderId, CorporationOfficeStation station, decimal price, long nowMs,
         CancellationToken cancellationToken = default, long? creditorId = null)
@@ -484,15 +433,6 @@ public sealed class CorporationOfficeStore
             WHERE office_id=$1 AND status=0
             """, office.OfficeId);
         return await bills.ExecuteNonQueryAsync(cancellationToken) > 0;
-    }
-
-    private static decimal SeedPrice(CorporationOfficeStation station)
-    {
-        // shortcut: the SDE has no live office rents, so station IDs seed a stable 10k-110k price; replace this when authoritative office prices are available.
-        var seed = unchecked((ulong)station.Id * 0x9E3779B185EBCA87UL ^
-            (ulong)station.TypeId * 0xC2B2AE3D27D4EB4FUL ^
-            (ulong)station.SolarSystemId * 0x165667B19E3779F9UL ^ (ulong)station.OwnerId);
-        return MinimumRentIsk + seed % 1001UL * 100UL;
     }
 
     private static CorporationOffice ReadOffice(NpgsqlDataReader reader) =>

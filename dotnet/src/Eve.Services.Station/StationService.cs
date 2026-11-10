@@ -14,7 +14,6 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
 
     private const long DockingCostPerVolume = 0;
     private const long MaxShipVolumeDockable = 50_000_000;
-    private const long OfficeRentalCost = 10_000;
 
     /// <summary>The reference reports this for every station, whatever the station's own value.</summary>
     private const double ReprocessingEfficiency = 0.5;
@@ -44,7 +43,7 @@ public sealed partial class StationService(StationCatalog stations, PgCharacterS
         ("corporationID", new PyInt(s.OwnerId)),
         ("dockingCostPerVolume", new PyInt(DockingCostPerVolume)),
         ("maxShipVolumeDockable", new PyInt(MaxShipVolumeDockable)),
-        ("officeRentalCost", new PyInt(OfficeRentalCost)),
+        ("officeRentalCost", new PyInt((long)Eve.Corporations.CorporationOfficeStore.NpcStationOfficeRentalCostIsk)),
         ("operationID", new PyInt(s.OperationId)),
         ("stationTypeID", new PyInt(s.TypeId)), // the reference names it twice
         ("security", Py.Number(Math.Round(s.Security, 6))),

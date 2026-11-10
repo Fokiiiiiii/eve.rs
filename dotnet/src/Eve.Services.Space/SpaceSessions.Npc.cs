@@ -634,9 +634,11 @@ public sealed partial class SpaceSessions
         if (amount <= 0 || Npcs is not { } selector)
         {
             return 0;
-        }        var (selection, error, _) = selector.Select(query);
+        }
+        var (selection, error, _) = selector.Select(query);
         if (selection is null)
-        {            _log?.Invoke($"site {siteId}: the wave {query} names no NPC ({error})");
+        {
+            _log?.Invoke($"site {siteId}: the wave {query} names no NPC ({error})");
             return 0;
         }
         await EnsureNpcTypesAsync(selection.ShipTypes, cancellationToken).ConfigureAwait(false);
@@ -649,6 +651,37 @@ public sealed partial class SpaceSessions
         await EnsureNpcTypesAsync(plan.Profiles.Select(profile => profile.ShipTypeId), cancellationToken).ConfigureAwait(false);
         var anchor = new SpawnAnchor(solarSystemId, 0, position, SiteNpcDistanceMeters, SiteNpcSpreadMeters, SiteId: siteId);
         var (composition, _) = await SpawnGroupAsync(plan.Profiles, anchor, cancellationToken).ConfigureAwait(false);
+        return composition.Sum(part => part.Count);
+    }
+
+    /// <summary>The exact profiles of one authored site wave, made at the site's place without a pool roll.</summary>
+    internal async Task<int> SpawnSiteProfilesWaveAsync(int solarSystemId, long siteId, double[] position, IReadOnlyList<string> profileIds, CancellationToken cancellationToken)
+    {
+        if (profileIds.Count == 0 || Npcs is not { } selector)
+        {
+            return 0;
+        }
+        var profiles = new List<NpcProfile>(profileIds.Count);
+        foreach (var profileId in profileIds)
+        {
+            if (selector.Authority.Profile(profileId) is not { } profile)
+            {
+                _log?.Invoke($"site {siteId}: the exact wave profile '{profileId}' is not in the NPC authority");
+                return 0;
+            }
+            profiles.Add(profile);
+        }
+        await EnsureNpcTypesAsync(profiles.Select(profile => profile.ShipTypeId), cancellationToken).ConfigureAwait(false);
+        foreach (var profile in profiles)
+        {
+            if (!NpcHull.HasHitPoints(_statics.Type(profile.ShipTypeId)))
+            {
+                _log?.Invoke($"site {siteId}: the exact wave profile '{profile.Id}' has no damageable hull");
+                return 0;
+            }
+        }
+        var anchor = new SpawnAnchor(solarSystemId, 0, position, SiteNpcDistanceMeters, SiteNpcSpreadMeters, SiteId: siteId);
+        var (composition, _) = await SpawnGroupAsync(profiles, anchor, cancellationToken).ConfigureAwait(false);
         return composition.Sum(part => part.Count);
     }
 

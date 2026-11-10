@@ -61,4 +61,23 @@ public sealed class WormholeSiteTemplatesTests
         Assert.DoesNotContain(templates.For(SiteTemplate.Anomaly, "combat", "highsec"), template => template.IsWormhole);
         Assert.DoesNotContain(templates.For(SiteTemplate.Signature, "data", "nullsec"), template => template.IsWormhole);
     }
+
+    [Fact]
+    public void Exact_wormhole_wave_compositions_resolve_to_npc_profiles_and_match_their_objectives()
+    {
+        var authority = NpcAuthority.Load();
+        var templates = SiteTemplates.Load();
+        foreach (var template in templates.All.Where(template => template.IsWormhole))
+        foreach (var wave in template.Waves.Where(wave => wave.ProfileCounts is { Count: > 0 }))
+        {
+            Assert.Equal(wave.Amount, wave.ProfileCounts!.Sum(row => row.Count));
+            foreach (var row in wave.ProfileCounts!)
+            {
+                var profile = authority.Profile(row.ProfileId);
+                Assert.NotNull(profile);
+                Assert.True(row.Count > 0);
+                Assert.True(profile!.ShipTypeId > 0);
+            }
+        }
+    }
 }

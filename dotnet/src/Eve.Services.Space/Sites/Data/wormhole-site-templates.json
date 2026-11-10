@@ -17,19 +17,38 @@
    "waves": [
     {
      "query": "sleepers_deadspace",
-     "amount": 3
+     "amount": 3,
+     "profileCounts": [
+      { "profileId": "parity_sleeper_30197_sleepless_keeper", "count": 1 },
+      { "profileId": "parity_sleeper_30196_sleepless_sentinel", "count": 1 },
+      { "profileId": "parity_sleeper_30198_sleepless_warden", "count": 1 }
+     ]
     },
     {
      "query": "sleepers_deadspace",
-     "amount": 12
+     "amount": 12,
+     "profileCounts": [
+      { "profileId": "parity_sleeper_30216_emergent_keeper", "count": 8 },
+      { "profileId": "parity_sleeper_30196_sleepless_sentinel", "count": 3 },
+      { "profileId": "parity_sleeper_30198_sleepless_warden", "count": 1 }
+     ]
     },
     {
      "query": "sleepers_deadspace",
-     "amount": 14
+     "amount": 14,
+     "profileCounts": [
+      { "profileId": "parity_sleeper_30216_emergent_keeper", "count": 8 },
+      { "profileId": "parity_sleeper_30197_sleepless_keeper", "count": 3 },
+      { "profileId": "parity_sleeper_30198_sleepless_warden", "count": 3 }
+     ]
     },
     {
      "query": "sleepers_deadspace",
-     "amount": 10
+     "amount": 10,
+     "profileCounts": [
+      { "profileId": "parity_sleeper_30216_emergent_keeper", "count": 8 },
+      { "profileId": "parity_sleeper_30199_sleepless_guardian", "count": 2 }
+     ]
     }
    ],
    "containers": []

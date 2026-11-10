@@ -2,7 +2,9 @@ using System.Text.Json;
 
 namespace Eve.Services.Space.Sites;
 
-public sealed record SiteWave(string Query, int Amount);
+public sealed record SiteNpcCount(string ProfileId, int Count);
+
+public sealed record SiteWave(string Query, int Amount, IReadOnlyList<SiteNpcCount>? ProfileCounts = null);
 
 /// <summary>A rock of a deposit site: its ore type, its quantity, and its offset from the site's origin (metres).</summary>
 public sealed record SiteRock(int TypeId, long Quantity, double[] Offset);

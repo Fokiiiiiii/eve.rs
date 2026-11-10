@@ -143,6 +143,16 @@ internal sealed class EssRig : IAsyncDisposable
 
 public sealed class PgEssStoreTests
 {
+    [PgFact]
+    public async Task Placement_reads_only_the_selected_systems_ball_identity()
+    {
+        await using var rig = await EssRig.CreateAsync();
+        await rig.Ess.RegisterAsync(Jita, EssId, Owner, Now);
+
+        Assert.Equal((Jita, EssId, (long?)Owner), await rig.Ess.PlacementAsync(Jita));
+        Assert.Null(await rig.Ess.PlacementAsync(Jita + 1));
+    }
+
     private const int Jita = 30000142;
     private const int Elsewhere = 30000144;
     private const long Owner = 98_000_001;

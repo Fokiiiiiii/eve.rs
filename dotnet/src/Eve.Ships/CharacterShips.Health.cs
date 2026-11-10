@@ -98,6 +98,42 @@ public sealed partial class CharacterShips
     public Task<ConditionChanged?> HealAsync(long characterId, long expectedShipId, CancellationToken cancellationToken) =>
         expectedShipId > 0 ? HealActiveShipAsync(characterId, expectedShipId, cancellationToken) : Task.FromResult<ConditionChanged?>(null);
 
+    /// <summary>Mends a module owned by the character, leaving every other ship and module untouched.</summary>
+    public async Task<ModuleConditionChanged?> HealModuleAsync(long characterId, long moduleId, long? expectedActiveShipId = null, CancellationToken cancellationToken = default)
+    {
+        if (characterId <= 0 || moduleId <= 0 || await characters.GetAsync(characterId, cancellationToken) is not { } character
+            || expectedActiveShipId is { } expected && (expected <= 0 || character.ShipId != expected))
+            return null;
+
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+        if (await items.LockAndGetAsync(connection, transaction, moduleId, cancellationToken) is not { } module
+            || module.OwnerId != characterId)
+            return null;
+
+        await statics.EnsureTypesAsync([module.TypeId], cancellationToken);
+        if (statics.Type(module.TypeId)?.CategoryId is not (ModuleCategory or SubsystemCategory))
+            return null;
+        if (expectedActiveShipId is { } activeShipId)
+        {
+            if (module.LocationId != activeShipId)
+                return null;
+            var (fitted, _) = await ShipSnapshot.SlotsOfAsync(
+                statics, await items.InLocationAsync(activeShipId, characterId, cancellationToken), cancellationToken);
+            if (!fitted.Any(item => item.Id == moduleId))
+                return null;
+        }
+
+        var before = (await modules.ModuleConditionsAsync(connection, transaction, [moduleId], cancellationToken))
+            .GetValueOrDefault(moduleId, ModuleCondition.Untouched);
+        var after = ModuleCondition.Mended;
+        if (before != after)
+            await modules.SetModuleConditionsAsync(connection, transaction, new Dictionary<long, ModuleCondition> { [moduleId] = after }, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new ModuleConditionChanged(module, before, after);
+    }
+
     private async Task<ConditionChanged?> HealActiveShipAsync(long characterId, long? expectedShipId, CancellationToken cancellationToken)
     {
         if (await ActiveShipAsync(characterId, cancellationToken) is not var (ship, fitted, owner)

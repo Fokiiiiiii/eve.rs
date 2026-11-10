@@ -231,10 +231,11 @@ internal sealed partial class CharacterServicesComposition
             throw new InvalidDataException($"The SDE has an unusable radius for ESS type {EssRules.TypeEncounterSurveillanceSystem}.");
         }
         var anchors = new Eve.Services.Space.Sites.SdeSiteAnchors(sde);
-        foreach (var state in await Ess.ListPlacementsAsync())
+        var placements = await Ess.ListPlacementsAsync();
+        var anchorsBySystem = await anchors.ForSystemsAsync(placements.Select(state => state.SolarSystemId));
+        foreach (var state in placements)
         {
-            var systemAnchors = await anchors.OfAsync(state.SolarSystemId);
-            var (_, position) = Eve.Services.Space.Sites.SitePlacement.Place(systemAnchors, $"ess:{state.SolarSystemId}:{state.EssId}");
+            var (_, position) = Eve.Services.Space.Sites.SitePlacement.Place(anchorsBySystem[state.SolarSystemId], $"ess:{state.SolarSystemId}:{state.EssId}");
             simulation.PlaceStructure(new SimPlaceStructure(
                 state.EssId,
                 state.SolarSystemId,

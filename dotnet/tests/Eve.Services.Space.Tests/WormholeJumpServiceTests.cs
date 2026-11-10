@@ -41,7 +41,7 @@ public sealed class WormholeJumpServiceTests
         public WormholeWorld World { get; }
         public string Schema => _schema;
 
-        public WormholeWorld Reopen(Rig rig, WormholeType type)
+        public WormholeWorld Reopen(Rig rig, WormholeType type, Eve.Scheduler.DurableScheduler? scheduler = null)
         {
             var classes = new Dictionary<int, int> { [JSystem] = 1, [OtherJSystem] = 2, [KSystem] = 7 };
             var systems = new[]
@@ -49,7 +49,7 @@ public sealed class WormholeJumpServiceTests
                 new JSpaceSystem(JSystem, "J1", 1, null, null, null, [new JSpaceStatic("AAA", type.TypeId)], "test"),
                 new JSpaceSystem(OtherJSystem, "J2", 2, null, null, null, [], "test"),
             };
-            return new WormholeWorld(rig.Source, rig.Scheduler, _schema,
+            return new WormholeWorld(rig.Source, scheduler ?? rig.Scheduler, _schema,
                 new Dictionary<int, WormholeType> { [type.TypeId] = type }, classes, systems,
                 new Dictionary<int, int> { [JSystem] = 111, [OtherJSystem] = 222, [KSystem] = 333 });
         }
@@ -68,9 +68,7 @@ public sealed class WormholeJumpServiceTests
                 new Dictionary<int, int> { [JSystem] = 111, [OtherJSystem] = 222, [KSystem] = 333 });
             await world.EnsureWorldAsync(7, rig.Now);
             world.RegisterJobs();
-            rig.Space.Wormholes = world;
-            world.Changed += rig.Space.PublishWormholeChange;
-            world.StateChanged += rig.Space.PublishWormholeStateChangeAsync;
+            rig.Space.BindWormholes(world);
             return new JWorld(rig.Source, schema, world);
         }
 
@@ -182,6 +180,78 @@ public sealed class WormholeJumpServiceTests
     }
 
     [PgFact]
+    public async Task A_failed_age_bucket_slim_update_retries_after_a_scheduler_restart()
+    {
+        await using var rig = await Rig.CreateAsync();
+        const int maxStableMinutes = 25 * 60;
+        var type = new WormholeType(1001, 7, maxStableMinutes, 1e9, 0, 1e8, 302);
+        await using var world = await JWorld.CreateAsync(rig, type);
+        var end = Assert.Single(await world.World.EndsInSystemAsync(JSystem));
+        var jobKey = $"{end.BodyId / 2}:1";
+        rig.Sim.Heard.Clear();
+        rig.Sim.FailNextSlimField = true;
+
+        rig.Now += (long)TimeSpan.FromHours(1).TotalMilliseconds;
+        Assert.Equal(1, await rig.Scheduler.RunDueAsync());
+
+        Assert.Empty(rig.Sim.Heard.OfType<SimSetSlimField>());
+        var pending = await rig.Scheduler.FindAsync(WormholeJobs.SlimStateKind, jobKey);
+        Assert.NotNull(pending);
+        Assert.Equal(("pending", 1), (pending.State, pending.Attempts));
+
+        await using var restartedScheduler = new Eve.Scheduler.DurableScheduler(rig.Source, () => rig.Now, null, rig.SchedulerSchema);
+        var restartedWorld = world.Reopen(rig, type, restartedScheduler);
+        rig.Space.BindWormholes(restartedWorld);
+        restartedWorld.RegisterJobs();
+
+        rig.Now += 5_000;
+        Assert.Equal(1, await restartedScheduler.RunDueAsync());
+
+        Assert.Null(await restartedScheduler.FindAsync(WormholeJobs.SlimStateKind, jobKey));
+        var expectedEnds = await restartedWorld.EndsForConnectionAsync(end.BodyId / 2);
+        var updates = rig.Sim.Heard.OfType<SimSetSlimField>().ToArray();
+        var expectedUpdates = expectedEnds.SelectMany(wormholeEnd => new[]
+        {
+            new SimSetSlimField(wormholeEnd.BodyId, "wormholeAge", new SimSlimInt(wormholeEnd.AgeState)),
+            new SimSetSlimField(wormholeEnd.BodyId, "wormholeSize", new SimSlimReal(wormholeEnd.Size)),
+        });
+        Assert.Equal(expectedUpdates, updates);
+    }
+
+    [PgFact]
+    public async Task A_slim_state_job_is_not_consumed_when_the_simulation_is_offline()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var type = new WormholeType(1001, 7, 25 * 60, 1e9, 0, 1e8, 302);
+        await using var world = await JWorld.CreateAsync(rig, type);
+        var end = Assert.Single(await world.World.EndsInSystemAsync(JSystem));
+        var jobKey = $"{end.BodyId / 2}:1";
+        rig.Sim.Heard.Clear();
+        rig.Sim.IsConnected = false;
+
+        rig.Now += (long)TimeSpan.FromHours(1).TotalMilliseconds;
+        Assert.Equal(1, await rig.Scheduler.RunDueAsync());
+
+        Assert.Empty(rig.Sim.Heard.OfType<SimSetSlimField>());
+        var pending = await rig.Scheduler.FindAsync(WormholeJobs.SlimStateKind, jobKey);
+        Assert.NotNull(pending);
+        Assert.Equal(("pending", 1), (pending.State, pending.Attempts));
+
+        rig.Sim.IsConnected = true;
+        rig.Now += 5_000;
+        Assert.Equal(1, await rig.Scheduler.RunDueAsync());
+
+        Assert.Null(await rig.Scheduler.FindAsync(WormholeJobs.SlimStateKind, jobKey));
+        var expectedEnds = await world.World.EndsForConnectionAsync(end.BodyId / 2);
+        var expectedUpdates = expectedEnds.SelectMany(wormholeEnd => new[]
+        {
+            new SimSetSlimField(wormholeEnd.BodyId, "wormholeAge", new SimSlimInt(wormholeEnd.AgeState)),
+            new SimSetSlimField(wormholeEnd.BodyId, "wormholeSize", new SimSlimReal(wormholeEnd.Size)),
+        });
+        Assert.Equal(expectedUpdates, rig.Sim.Heard.OfType<SimSetSlimField>());
+    }
+
+    [PgFact]
     public async Task A_pilot_is_polarized_at_the_arrival_end_and_cannot_immediately_jump_back()
     {
         await using var rig = await Rig.CreateAsync();
@@ -289,10 +359,8 @@ public sealed class WormholeJumpServiceTests
             await transaction.CommitAsync();
         }
 
-        using var secondHostSpace = new SpaceSessions(rig.Sim, rig.Ships, rig.Statics, rig.Stations, rig.Systems, () => rig.Now, rig.Log.Add)
-        {
-            Wormholes = world.World,
-        };
+        using var secondHostSpace = new SpaceSessions(rig.Sim, rig.Ships, rig.Statics, rig.Stations, rig.Systems, () => rig.Now, rig.Log.Add);
+        secondHostSpace.BindWormholes(world.World);
         secondHostSpace.EnterPilotForTest(secondSession, secondCharacter.CharacterId, secondSession.GetInt("shipid")!.Value, 601, JSystem);
 
         var firstInSimulation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

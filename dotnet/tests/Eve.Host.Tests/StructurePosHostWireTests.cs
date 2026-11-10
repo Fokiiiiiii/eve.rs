@@ -1,0 +1,64 @@
+using Eve.Macho;
+using Eve.Marshal;
+using Eve.Host.Persistence;
+using Eve.Ships;
+using Eve.Data;
+using Npgsql;
+using Xunit;
+
+namespace Eve.Host.Tests;
+
+public partial class HostServerTests
+{
+    [StructureControlPgFact]
+    public async Task PosMgr_GetControlTowers_returns_the_corporations_persisted_towers_over_macho()
+    {
+        const int ownerCorporationId = 98_710_051;
+        const int otherCorporationId = 98_710_052;
+        const int solarSystemId = 30_000_142;
+        const int towerGroupId = 365;
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL") ?? throw new InvalidOperationException("EVE_PG_URL is required");
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
+        var schema = "pos_towers_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            await PgSpaceItemStore.MigrateAsync(source, schema);
+            var deployed = new PgDeployedStore(source, schema);
+            await deployed.SaveAsync(new DeployedRecord(
+                9_871_005_101, "control_tower", solarSystemId, "Anchored", 16_213, towerGroupId,
+                [1, 2, 3], 1_000, ownerCorporationId, ownerCorporationId, 0, 20_000_001, long.MaxValue, 1));
+            await deployed.SaveAsync(new DeployedRecord(
+                9_871_005_102, "control_tower", solarSystemId + 1, "Anchoring", 16_214, towerGroupId,
+                [4, 5, 6], 1_000, ownerCorporationId, ownerCorporationId, 0, 20_000_002, long.MaxValue, FixedNowMs + 60_000));
+            await deployed.SaveAsync(new DeployedRecord(
+                9_871_005_103, "control_tower", solarSystemId, "Other corporation", 16_215, towerGroupId,
+                [7, 8, 9], 1_000, otherCorporationId, otherCorporationId, 0, 20_000_003, long.MaxValue, 1));
+
+            var readModel = new ControlTowerReadModel(deployed);
+            Start(
+                sessionOpened: session => session.Set("corpid", new PyLong(ownerCorporationId)),
+                readControlTowerRows: readModel.ReadAsync);
+            var front = await Handshaken(await ConnectAsync());
+            var open = Open();
+            await front.SendAsync(open);
+            _ = await front.ReceiveAsync();
+            await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.CallWithKwargs(
+                open, 1, "posMgr", "GetControlTowers", new PyTuple([]), MachoVersion()))));
+            var reply = Assert.IsType<Send>(await front.ReceiveAsync());
+            Assert.Equal(MachoMessage.CallRsp, Envelope(reply).Type);
+            var rows = Assert.IsType<PyList>(Result(MarshalCodec.Decode(reply.Payload)));
+            Assert.Equal(
+                [
+                    new PyList([new PyInt(16_213), new PyLong(9_871_005_101), new PyInt(solarSystemId)]),
+                    new PyList([new PyInt(16_214), new PyLong(9_871_005_102), new PyInt(solarSystemId + 1)]),
+                ],
+                rows.Items);
+        }
+        finally
+        {
+            await using var connection = await source.OpenConnectionAsync();
+            await using var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE", connection);
+            await command.ExecuteNonQueryAsync();
+        }
+    }
+}

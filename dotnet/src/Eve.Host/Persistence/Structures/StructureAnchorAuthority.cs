@@ -16,11 +16,9 @@ using Npgsql;
 namespace Eve.Host;
 
 /// <summary>
-
-
-
-/// seven days old, 1000 km from every station, structure and belt, not in a trade hub, an extra-large structure not in high-security space. The item is
-/// consumed and the structure created in one transaction with <c>structure.anchored</c>; the simulation shows the structure when a pilot is in the system.
+/// Anchors an Upwell structure from a ship after validating its deployment point against the static system objects and live structures. The
+/// inventory item is consumed with the structure row and <c>structure.anchored</c> event in one transaction; the simulation shows the structure
+/// when a pilot is in the system.
 /// </summary>
 public sealed class StructureAnchorAuthority
 {
@@ -29,11 +27,33 @@ public sealed class StructureAnchorAuthority
 
     private const long DirectorRole = 1, StationManagerRole = 2048;
     private const long NpcCorporationFirst = 1_000_000, NpcCorporationLimit = 2_000_000;
-    private const double MaximumDistanceFromShipM = 75_000;
-    private const double MinimumDistanceFromObjectsM = 1_000_000;
+    private const double MaximumDistanceFromShipM = 800_000;
+    private const double MinimumMoonDistanceM = 4_000_000;
+    private const double MaximumMiningBeaconDistanceM = 250_000;
     private const long MinimumCorporationAgeMs = 7 * StructureTimes.Day;
+    private const int AutoMoonMinerTypeId = 81_826;
+    private const int MoonMiningBeaconTypeId = 46_329;
+    private const int MoonGroupId = 8, StargateGroupId = 10, UpwellJumpBridgeGroupId = 1_408, StructureCategoryId = 65;
     private const int FleetHangarFlag = 155, InfrastructureHoldFlag = 185;
     private static readonly int[] SourceFlags = [ItemFlags.Cargo, FleetHangarFlag, InfrastructureHoldFlag];
+    private static readonly string[] StaticPlacementBallTables =
+        ["mapAsteroidBelts", "mapMoons", "mapPlanets", "mapSecondarySuns", "mapStars", "mapStargates", "npcStations"];
+    // V24 structures/deployment.py:10-39, 73-104; group/category IDs and distances match EveJS's
+    // structureDeploymentPlacement.js:26-111. Radii come from the pinned SDE or each static ball record.
+    private static readonly IReadOnlyDictionary<int, double> GroupDeploymentDistances = new Dictionary<int, double>
+    {
+        [1_915] = 0,
+        [14] = 5_000, [186] = 5_000, [12] = 5_000, [306] = 5_000, [340] = 5_000, [448] = 5_000, [649] = 5_000, [1_978] = 5_000,
+        [1_998] = 100_000, [226] = 100_000, [1_273] = 1_000_000, [1_876] = 2_000_000,
+        [925] = 1_000_000, [1_408] = 500_000, [2_016] = 500_000, [2_017] = 200_000, [1_012] = 10_000_000,
+    };
+    private static readonly IReadOnlyDictionary<int, double> CategoryDeploymentDistances = new Dictionary<int, double>
+    {
+        [11] = 5_000, [6] = 5_000, [18] = 5_000, [87] = 5_000, [22] = 5_000, [25] = 5_000,
+        [2] = 1_000_000, [46] = 1_000_000, [40] = 1_000_000, [3] = 1_000_000, [23] = 1_000_000, [65] = 1_000_000,
+    };
+
+    private readonly record struct PlacementBall(long ItemId, int TypeId, double X, double Y, double Z, double? Radius);
 
     private readonly NpgsqlDataSource _source;
     private readonly StructureStore _store;
@@ -226,42 +246,78 @@ public sealed class StructureAnchorAuthority
 
     private async Task RequireFreeSpaceAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, int systemId, int typeId, double x, double y, double z, CancellationToken cancellationToken)
     {
+        var balls = new List<PlacementBall>();
+        foreach (var table in StaticPlacementBallTables)
+        {
+            balls.AddRange(await StaticPlacementBallsAsync(connection, transaction, table, systemId, cancellationToken));
+        }
         foreach (var structure in await _store.ListAsync(connection, transaction, includeGone: false, cancellationToken))
         {
-            if (structure.SolarSystemId == systemId && Distance(x, y, z, structure.X, structure.Y, structure.Z) < MinimumDistanceFromObjectsM)
-            {
-                throw MachoErrors.ThrowUserError("CantDeployBlocked", ("typeID", new PyInt(structure.TypeId)));
-            }
+            if (structure.SolarSystemId == systemId)
+                balls.Add(new PlacementBall(structure.Snapshot.StructureId, structure.TypeId, structure.X, structure.Y, structure.Z, null));
         }
-        foreach (var (blockerType, bx, by, bz) in await StaticObjectsAsync(connection, transaction, "npcStations", systemId, cancellationToken))
+
+        await _dogma.EnsureTypesAsync(balls.Select(ball => ball.TypeId).Append(typeId), cancellationToken);
+        var deployedType = _dogma.Type(typeId)
+            ?? throw new InvalidOperationException($"structure type {typeId} has no static dogma data");
+        var deployedRadius = Radius(deployedType);
+        var deployedDistance = DeploymentDistance(deployedType);
+        var isDrillingPlatform = _dogma.GroupName(deployedType.GroupId) is "Refinery" or "Upwell Moon Drill";
+        var hasMiningBeaconInRange = false;
+        foreach (var ball in balls)
         {
-            if (Distance(x, y, z, bx, by, bz) < MinimumDistanceFromObjectsM)
+            var blocker = _dogma.Type(ball.TypeId)
+                ?? throw new InvalidOperationException($"placement blocker type {ball.TypeId} has no static dogma data");
+            var blockerRadius = ball.Radius ?? Radius(blocker);
+            var distance = Distance(x, y, z, ball.X, ball.Y, ball.Z);
+            if (blocker.GroupId == MoonGroupId)
             {
-                throw MachoErrors.ThrowUserError("CantDeployBlocked", ("typeID", new PyInt(blockerType)));
+                var beacon = Eve.Services.Space.MoonMiningPointCatalog.Resolve(ball.ItemId, systemId);
+                var beaconInRange = beacon is { } point && Distance(x, y, z, point.X, point.Y, point.Z) < MaximumMiningBeaconDistanceM;
+                hasMiningBeaconInRange |= beaconInRange;
+                if (distance < MinimumMoonDistanceM + deployedRadius + blockerRadius && !(isDrillingPlatform && beaconInRange))
+                    throw MachoErrors.ThrowUserError("CantDeployBlocked", ("typeID", new PyInt(ball.TypeId)));
             }
+
+            if (deployedType.GroupId == UpwellJumpBridgeGroupId && blocker.GroupId == StargateGroupId &&
+                distance < 100_000_000 + deployedRadius + blockerRadius)
+                throw MachoErrors.ThrowUserError("CantDeployBlocked", ("typeID", new PyInt(ball.TypeId)));
+
+            var minimum = DeploymentDistance(blocker);
+            if (blocker.CategoryId == StructureCategoryId)
+                minimum = Math.Min(minimum, deployedDistance);
+            if (minimum > 0 && distance < minimum + deployedRadius + blockerRadius)
+                throw MachoErrors.ThrowUserError("CantDeployBlocked", ("typeID", new PyInt(ball.TypeId)));
         }
-        foreach (var (blockerType, bx, by, bz) in await StaticObjectsAsync(connection, transaction, "mapAsteroidBelts", systemId, cancellationToken))
-        {
-            if (Distance(x, y, z, bx, by, bz) < MinimumDistanceFromObjectsM)
-            {
-                throw MachoErrors.ThrowUserError("CantDeployBlocked", ("typeID", new PyInt(blockerType)));
-            }
-        }
+        if (typeId == AutoMoonMinerTypeId && !hasMiningBeaconInRange)
+            throw MachoErrors.ThrowUserError("CantDeployBlocked", ("typeID", new PyInt(MoonMiningBeaconTypeId)));
     }
 
-    private static async Task<List<(int TypeId, double X, double Y, double Z)>> StaticObjectsAsync(
+    private static async Task<List<PlacementBall>> StaticPlacementBallsAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, string table, int systemId, CancellationToken cancellationToken)
     {
-        var objects = new List<(int, double, double, double)>();
+        var objects = new List<PlacementBall>();
         await using var command = Sql.Command(connection, transaction,
-            $"SELECT (doc->>'typeID')::int, (doc->'position'->>'x')::float8, (doc->'position'->>'y')::float8, (doc->'position'->>'z')::float8 FROM sde.\"{table}\" WHERE (doc->>'solarSystemID')::int = $1", systemId);
+            $"SELECT key, (doc->>'typeID')::int, (doc->>'radius')::float8, " +
+            "COALESCE((doc->'position'->>'x')::float8, 0), COALESCE((doc->'position'->>'y')::float8, 0), " +
+            $"COALESCE((doc->'position'->>'z')::float8, 0) FROM sde.\"{table}\" WHERE (doc->>'solarSystemID')::int = $1", systemId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            objects.Add((reader.GetInt32(0), reader.GetDouble(1), reader.GetDouble(2), reader.GetDouble(3)));
+            var itemId = long.Parse(reader.GetString(0), System.Globalization.CultureInfo.InvariantCulture);
+            objects.Add(new PlacementBall(itemId, reader.GetInt32(1), reader.GetDouble(3), reader.GetDouble(4), reader.GetDouble(5),
+                reader.IsDBNull(2) ? null : reader.GetDouble(2)));
         }
         return objects;
     }
+
+    private static double Radius(TypeDef type) =>
+        type.Attributes.TryGetValue(162, out var radius) && double.IsFinite(radius) && radius >= 0 ? radius : 0;
+
+    private static double DeploymentDistance(TypeDef type) =>
+        GroupDeploymentDistances.TryGetValue(type.GroupId, out var groupDistance)
+            ? groupDistance
+            : CategoryDeploymentDistances.GetValueOrDefault(type.CategoryId);
 
     private async Task RequireCorporationAgeAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long corporationId, CancellationToken cancellationToken)
     {

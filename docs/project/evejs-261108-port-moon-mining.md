@@ -13,30 +13,30 @@ Metenox は手動の抽出スケジュールとは別系統である。クライ
 
 ## eve.rs に既にあった動作
 
-- `MoonExtractions.cs:37-42, 88-162, 209-240` は手動抽出の期間、永続化、開始・到着・破砕・キャンセルの状態遷移を実装済みだった。durable scheduler とイベントトランザクションも既存の仕組みを使う。
-- `SpaceMoonFields.cs:55-82` は抽出終了イベントから採掘可能な鉱石フィールドを作る。`MoonOwnerNotifications.cs:42-50, 63-80` は開始・到着・破砕・終了イベントの通知経路を持つ。
+- `MoonExtractions.cs:37-43, 130-164, 172-201, 256-277` は手動抽出の期間、永続化、開始・到着・破砕・キャンセルの状態遷移を実装済みだった。durable scheduler とイベントトランザクションも既存の仕組みを使う。
+- `SpaceMoonFields.cs:55-82` は抽出終了イベントから採掘可能な鉱石フィールドを作る。`MoonOwnerNotifications.cs:40-67` は開始・到着・破砕・終了イベントの通知経路を持つ。
 - `.NET` には Metenox の構造・サービス識別や配置制約の基盤があるが、この調査で `autoMoonMining` の RPC/cycle 処理は見つからなかった。これは今回追加していない。
 
 ## 今回追加した動作
 
 - `SpaceMoonChunks.cs:65-108, 110-134` が開始、チャンク到着、ドリル発射、破砕、終了イベントを購読し、システム進入時に DB の抽出状態から再構成する。再構成は抽出行をロックし、永続 inventory / `space_items` を再利用するため、同時復元や再起動でチャンクが重複しない。
-- `SpaceMoonChunks.cs:136-217, 286-315` は SDE の moon 座標、moon chunk type の描画属性、精錬所と Standup Moon Drill の実 item を使って scene entity と `effects.MultiEffect` を作る。抽出中は牽引位置を時刻から計算し、到着時に stasis、手動破砕時に fracture phase に移る。`StructureMoonMiningSlim.cs:11-40` と `SpaceStructures.cs:181-219` は V24 クライアントが turret set と moon を解決できるよう、ドリル module tuple と `closestMoonID` を structure slim に載せる。
-- `MoonExtractions.cs:211-234, 260-271, 323-340` は手動破砕から 25 秒後にチャンクを爆発除去し、30 秒後の既存 fracture job で鉱石フィールドを作る。爆発済み時刻を `MoonExtractionStore.cs:10-31, 100-110, 190-196` と migration `dotnet/src/Eve.Structures/Migrations/0010_moon_chunk_exploded.sql` に保存するため、再起動後に爆発済みチャンクを再生成しない。
-- シミュレーション wire protocol 94 に chunk upsert/remove と structure moon-mining slim 更新を追加した。破砕・自然破砕では destruction effect 3、キャンセル / オフラインでは静かな除去を送る（`SpaceMoonChunks.cs:92-105, 220-245`）。通常の `OnMoonExtractionUpdate` は既存の RPC / extraction 通知経路を維持し、視覚フェーズは V24 の `OnSpecialFX` 形に合わせた sim message から送る。
-- 既存 fixture generator で wire fixture を生成し直した。実 Host registry を経由する RPC テストは `MoonExtractionStartHostTests.cs:200-222`、DB を使う空間投影・到着・破砕・爆発・再起動テストは `MoonMiningChunkTests.cs:23-160` にある。
+- `SpaceMoonChunks.cs:65-134, 136-217, 286-315` は SDE の moon 座標、moon chunk type の描画属性、精錬所と Standup Moon Drill の実 item を使って scene entity と `effects.MultiEffect` を作る。抽出中は牽引位置を時刻から計算し、到着時に stasis、手動破砕時に fracture phase に移る。`StructureMoonMiningSlim.cs:11-40` と `SpaceStructures.cs:182-217` は V24 クライアントが turret set と moon を解決できるよう、ドリル module tuple と `closestMoonID` を structure slim に載せる。Host 組み立てでの subscriber 登録は `StructureComposition.cs:404-410`。
+- `MoonExtractions.cs:172-190, 267-278, 326-343, 362-380` は手動破砕から 25 秒後にチャンクを爆発除去し、30 秒後の既存 fracture job で鉱石フィールドを作る。爆発済み時刻を `MoonExtractionStore.cs:10-31, 101-112, 190-193` と migration `dotnet/src/Eve.Structures/Migrations/0010_moon_chunk_exploded.sql` に保存するため、再起動後に爆発済みチャンクを再生成しない。
+- `SimCodec.cs:26` と `SimCodec.Shared.cs:51-53` の protocol 94 に chunk upsert/remove と structure moon-mining slim 更新を追加した。破砕・自然破砕では destruction effect 3、キャンセル / オフラインでは静かな除去を送る（`SpaceMoonChunks.cs:92-105, 220-245`）。通常の `OnMoonExtractionUpdate` は既存の RPC / extraction 通知経路を維持し、視覚フェーズは V24 の `OnSpecialFX` 形に合わせた sim message から送る。
+- 既存 fixture generator で wire fixture を生成し直した。実 Macho dispatcher / service registry を通す RPC テストは `MoonExtractionStartHostTests.cs:214-234`、DB を使う空間投影・到着・破砕・爆発・再起動テストは `MoonMiningChunkTests.cs:24-160` にある。
 
 ## EveJS との差分と不採用項目
 
 - EveJS 261108.1 の `moonMiningSpaceRuntime.js:146-205, 225-345, 361-465, 668-711` は chunk path / phase effect / spawn / movement / restore を実装する。`moonExtractionsService.js:671-690, 1073-1094, 1215-1253, 1381-1419` は発射時のフェーズ更新、25 秒爆発、抽出開始、到着・自動破砕の処理を持つ。eve.rs では同じクライアント可視動作を既存の DB・scheduler・event bus・SDE 所有者へ組み替えた。
 - EveJS `moonExtractionRules.js:224-235` のチャンク shell tier 境界（14 / 28 / 42 日相当）は現時点で EveJS 実装と SDE の type/group/render data 以上の独立した TQ 根拠を確認できていない。コードは既存の抽出 volume 計算からモデルを選ぶためこのルールを機能参照として使うが、境界自体を CCP 公式仕様としては扱わない。実クライアントで各境界を通る表示は未確認。
-- EveJS 261108.1 にある GM 用 extraction-time advance helper は採用しない。対象はプレイヤーの V24 RPC と phase effect でなく、管理用時刻操作だからである。
+- EveJS 261108.1 にある GM 用 extraction-time advance helper はこの port の変更には含めていない。対象はプレイヤーの V24 RPC と phase effect でなく、管理用時刻操作だからである。現在のブランチには origin/main 由来の GM scheduling endpoint が別途あるが、この port はその実装を変更していない。
 - EveJS に専用 moon mining test file / npm test script はなく、ローカルの SDE/scene 全体を使った runtime 比較はできなかった。合成 scene を使う read-only probe では `spawnChunkForExtraction` の chunk type、tractor phase、module / target と `effects.MultiEffect` の構成を確認したが、EveJS の DB 経由 end-to-end 検証ではない。
 
 ## 実行した検証
 
 - Release build: `Eve.Space`, `Eve.Ships`, `Eve.Structures`, `Eve.Services.Space`, `Eve.Host`。各 build は 0 warning / 0 error。
-- Rust: `cargo fmt --all --check`; `cargo check -p eve-space`; `cargo clippy -p eve-space -- -D warnings`; `cargo test -p eve-space moon_mining` (2 passed); `cargo test -p eve-space --test simlink_fixtures` (13 passed)。
-- DB `eve_p3` を使った .NET focused class tests: `Eve.Space.Tests` 550 passed、`Eve.Structures.Tests` 25 passed、`Eve.Services.Space.Tests` 73 passed、`Eve.Ships.Tests` 9 passed、`Eve.Host.Tests` 28 passed。skip はなし。
+- Rust: `cargo fmt --all -- --check`; `cargo check -p eve-space`; `cargo clippy -p eve-space -- -D warnings`; `cargo test -p eve-space moon_mining` (2 passed); `cargo test -p eve-space moon_chunk` (1 passed); `cargo test -p eve-space --test simlink_fixtures` (13 passed)。
+- DB `eve_p3` を使った .NET focused class tests: `Eve.Space.Tests` 550 passed、`Eve.Structures.Tests` 25 passed、`Eve.Services.Space.Tests` 73 passed、`Eve.Ships.Tests` 9 passed、`Eve.Host.Tests` の `MoonExtractionStartHostTests` / `MoonExtractionStoreTests` / `MoonOwnerNotificationTests` / `MoonRigReadModelTests` / `StructureCompositionTests` / `GmMenuSlashHostWireTests` は 47 passed。skip はなし。Host composition のテスト前に `EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p3 cargo run -p eve-sde --bin eve-sde -- ensure --missions --keep-archive` で公式 mission SDE build 3405148 を `sde_mission` に投入した。最新 `origin/main` merge 後は `MoonMiningChunkTests` / `SiteNpcTests` / `WormholeSiteTemplatesTests` を再実行し、10 passed / 0 skipped。`Eve.Host`、`Eve.Services.Space.Tests`、`Eve.Host.Tests` の Release build は各 0 warning / 0 error。
 
 ## 未確認
 

@@ -52,9 +52,10 @@ NPC office quote handler も直接呼ぶことを試したが、この実行環�
 - `Eve.Corporations.Tests` Release slice: 192 passed, 0 failed, 0 skipped (`EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p3`)。protocol/migration を含む corporation tests と office tests を含む。
 - Host medal filters: 3 passed, 0 failed, 0 skipped (`eve_p3`)。
 - Host office filters: 12 passed, 0 failed, 0 skipped (`eve_p3`)。
-- Corporation / alliance / war / standing related Host selection: 102 passed, 0 failed, 0 skipped (`eve_p3`)。
-- `StationServiceTests`: 12 passed, 0 failed, 0 skipped (`eve_p3`)。
-- Release builds with warnings as errors succeeded with 0 warnings / 0 errors for `Eve.Corporations`, `Eve.Services.Corporations`, `Eve.Services.Station`, `Eve.Host`, `Eve.Corporations.Tests`, and `Eve.Host.Tests`。
+- merge 前の corporation / alliance / war / standing related Host selection: 102 passed, 0 failed, 0 skipped (`eve_p3`)。
+- merge 後 `Eve.Services.Station.Tests.StationServiceTests`: 12 passed, 0 failed, 0 skipped (`eve_p3`)。
+- merge 後の Release builds with warnings as errors は `Eve.Corporations`, `Eve.Services.Corporations`, `Eve.Services.Station`, `Eve.Host`, `Eve.Corporations.Tests`, `Eve.Host.Tests`, `Eve.Services.Station.Tests` で成功し、全て warning 0 / error 0。
+- `StationServiceTests` filter を誤って Host.Tests に向けた最初の実行は test case 0 件であり、pass としては数えない。正しい `Eve.Services.Station.Tests` で上記 focused test を実行した。
 - EveJS 261108.1 isolated GameStore direct service flow: `SetMedalStatus → GetMedalsReceived`, recipient status 2 persisted.
 
 ### 未確認

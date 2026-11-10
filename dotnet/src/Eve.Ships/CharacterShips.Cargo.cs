@@ -36,6 +36,7 @@ public sealed record MoonMiningObserverEvent(long MinedAtMs, OreMinedEvent Ore)
 
 /// <summary>What one volatility roll of a mining crystal did: whether it hit, whether the crystal broke (and was removed), and its damage after the roll.</summary>
 public sealed record CrystalVolatility(bool Hit, bool Broke, double Damage);
+public sealed record CrystalWearUpdate(bool Changed, bool Broke, double PreviousDamage, double Damage);
 
 /// <summary>The fact of a granted salvage cycle (<c>salvage.wreck_salvaged</c>), written in the grant's transaction; <c>ContainerId</c> is 0 when no can was left.</summary>
 public sealed record SalvageWreckedEvent(
@@ -488,9 +489,7 @@ private sealed record ShipHoldRule(
             await transaction.CommitAsync(cancellationToken);
             return new(false, false, 0);
         }
-        var previous = double.TryParse(crystal.CustomInfo, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var stored)
-            ? Math.Clamp(stored, 0, 1)
-            : 0;
+        var previous = CrystalDamageState.DamageOf(crystal);
         var next = Math.Min(1, previous + damage);
         if (next <= previous + 1e-9)
         {
@@ -499,6 +498,7 @@ private sealed record ShipHoldRule(
         }
         if (next < 1 - 1e-9)
         {
+            await items.MakeSingletonAsync(connection, transaction, crystalId, cancellationToken);
             await items.SetCustomInfoAsync(connection, transaction, crystalId, next.ToString("R", System.Globalization.CultureInfo.InvariantCulture), cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return new(true, false, next);
@@ -506,6 +506,61 @@ private sealed record ShipHoldRule(
         await items.DeleteAsync(connection, transaction, crystalId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new(true, true, 1);
+    }
+
+    /// <summary>Applies the simulation's absolute wear report to the laser crystal currently loaded in the named module.</summary>
+    public async Task<CrystalWearUpdate> ApplyWeaponCrystalDamageAsync(
+        long characterId, long moduleId, int chargeTypeId, double damage, CancellationToken cancellationToken = default)
+    {
+        if (chargeTypeId <= 0 || !double.IsFinite(damage) || damage < 0)
+        {
+            return new(false, false, 0, 0);
+        }
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+        if (await items.GetAsync(moduleId, cancellationToken) is not { } module || module.OwnerId != characterId)
+        {
+            return new(false, false, 0, 0);
+        }
+        await statics.EnsureTypesAsync([module.TypeId, chargeTypeId], cancellationToken);
+        if (!CrystalDamageState.IsDamageable(statics, chargeTypeId)
+            || await items.InLocationAsync(module.LocationId, characterId, cancellationToken) is not { } contents)
+        {
+            return new(false, false, 0, 0);
+        }
+        var (_, charges) = await ShipSnapshot.SlotsOfAsync(statics, contents, cancellationToken);
+        var found = charges.FirstOrDefault(charge => charge.Flag == module.Flag && charge.TypeId == chargeTypeId);
+        var crystal = found is null ? null : await items.LockAndGetAsync(connection, transaction, found.Id, cancellationToken);
+        if (crystal is null || crystal.OwnerId != characterId || crystal.LocationId != module.LocationId
+            || crystal.Flag != module.Flag || crystal.TypeId != chargeTypeId)
+        {
+            return new(false, false, 0, 0);
+        }
+        var previous = CrystalDamageState.DamageOf(crystal);
+        if (damage <= previous + 1e-12)
+        {
+            return new(false, false, previous, previous);
+        }
+        var hitPointsId = statics.AttributeId("hp");
+        var hitPoints = hitPointsId is { } hp ? statics.Type(chargeTypeId)?.Attributes.GetValueOrDefault(hp) ?? 0 : 0;
+        if (!double.IsFinite(hitPoints) || hitPoints <= 0)
+        {
+            return new(false, false, previous, previous);
+        }
+        var next = Math.Min(hitPoints, damage);
+        var broke = next >= hitPoints;
+        if (broke)
+        {
+            await items.DeleteAsync(connection, transaction, crystal.Id, cancellationToken);
+        }
+        else
+        {
+            await items.MakeSingletonAsync(connection, transaction, crystal.Id, cancellationToken);
+            await items.SetCustomInfoAsync(connection, transaction, crystal.Id, next.ToString("R", System.Globalization.CultureInfo.InvariantCulture), cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return new(true, broke, previous, next);
     }
 
     /// <summary>

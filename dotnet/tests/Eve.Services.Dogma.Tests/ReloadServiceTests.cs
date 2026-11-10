@@ -123,7 +123,7 @@ public class ReloadServiceTests
         var ready = Assert.Single(LinesOf(told[4]));
         Assert.Equal(((long)NextActivationTime, Py.FileTimeFromUnixMs(Rig.ClockMs + 5000), 0L), (ready.Attribute, Events.Number(ready.Old), Events.Number(ready.New)));
         // a gun that does not run is not asked of the simulation but through the lane: it is answered that it does not
-        Assert.Equal([$"{f.Gun} {Antimatter} Add {{ Capacity = 80, Available = 200 }}"], f.Rig.Rounds.Asked);
+        Assert.Equal([$"{f.Gun} {Antimatter} Add {{ Capacity = 80, Available = 200, CrystalWear =  }}"], f.Rig.Rounds.Asked);
     }
 
     [PgFact]
@@ -205,7 +205,7 @@ public class ReloadServiceTests
         Assert.Equal((80L, 200L), (await InGunAsync(f) ?? 0, await HoldAsync(f)));
         Assert.Empty(Events.Of(f.Session));
         Assert.Equal(
-            [$"{f.Gun} 0 Remove {{ Quantity = 0 }}", $"{f.Gun} 0 Add {{ Capacity = 5, Available = 5 }}"],
+            [$"{f.Gun} 0 Remove {{ Quantity = 0 }}", $"{f.Gun} 0 Add {{ Capacity = 5, Available = 5, CrystalWear =  }}"],
             f.Rig.Rounds.Asked);
     }
 
@@ -269,7 +269,7 @@ public class ReloadServiceTests
         const long NotFitted = 999;
         f.Rig.Rounds.RunDry(new SpentGun(f.Session, f.Character.CharacterId, f.Character.ShipId, NotFitted, Antimatter));
         await f.Rig.Rounds.AdjustmentCompleted.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal([$"{NotFitted} 0 Add {{ Capacity = 0, Available = 0 }}"], f.Rig.Rounds.Asked);
+        Assert.Equal([$"{NotFitted} 0 Add {{ Capacity = 0, Available = 0, CrystalWear =  }}"], f.Rig.Rounds.Asked);
         Assert.False(f.Rig.Timers.IsSet($"dogma.reload:{NotFitted}"));
     }
 

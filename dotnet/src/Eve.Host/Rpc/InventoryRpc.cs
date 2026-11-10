@@ -47,8 +47,8 @@ internal sealed partial class CharacterServicesComposition
         marketInventoryBroker = WithCustoms(HostInventoryServiceFactory.CreateInvBroker(items, itemTypes, stations, ships, dogma, now,
             spaceContainers, spaceDrones, corporations, characterEntryHooks,
             controlledStructureInventory: structureControlReadModel.InventoryAsync,
-            crystalDamage: async (itemIds, token) => (await modules.ModuleConditionsAsync(itemIds, token))
-                .ToDictionary(entry => entry.Key, entry => entry.Value.Damage),
+            crystalDamage: async (itemIds, token) => (await items.GetManyAsync(itemIds, token))
+                .ToDictionary(item => item.Id, Eve.Ships.CrystalDamageState.DamageOf),
             officeStore: corporationOfficeStore,
             capsuleerDeliveriesAccess: HostInventoryServiceFactory.CapsuleerDeliveriesAccessOf(corporations),
             characterSessions: characterSessions));

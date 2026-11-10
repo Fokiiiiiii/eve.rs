@@ -224,7 +224,8 @@ private readonly TransitionRuntime _transitions;
             (ulong)Interlocked.Increment(ref _adjustRequests), id, moduleId, chargeType,
             change switch
             {
-                RoundsChange.Add add => new SimChargeOp.Add(add.Capacity, add.Available),
+                RoundsChange.Add add => new SimChargeOp.Add(add.Capacity, add.Available,
+                    add.CrystalWear is { } wear ? new SimCrystalWear(wear.VolatilityChance, wear.VolatilityDamage, wear.HitPoints, wear.Damage) : null),
                 RoundsChange.Remove remove => new SimChargeOp.Remove(remove.Quantity),
                 _ => throw new ArgumentException($"unknown change {change}"),
             });
@@ -1221,7 +1222,24 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                     break;
                 case SimChargeSpent spent when _pilots.TryGetValue(spent.SessionId, out var shooter):
                     var chargeOwnerId = shooter.ModuleChargeOwners.TryGetValue(spent.ModuleId, out var moduleOwner) ? moduleOwner : shooter.CharacterId;
-                    _charges.Enqueue(spent.SessionId, chargeOwnerId, spent.ModuleId, spent.RoundsLeft);
+                    if (spent.CrystalDamage is { } crystalDamage)
+                    {
+                        _charges.EnqueueWork(spent.SessionId, async () =>
+                        {
+                            try
+                            {
+                                await _ships.ApplyWeaponCrystalDamageAsync(chargeOwnerId, spent.ModuleId, spent.ChargeTypeId, crystalDamage).ConfigureAwait(false);
+                            }
+                            catch (Exception error)
+                            {
+                                _log?.Invoke($"the laser crystal of module {spent.ModuleId} could not be updated: {error.Message}");
+                            }
+                        });
+                    }
+                    else
+                    {
+                        _charges.Enqueue(spent.SessionId, chargeOwnerId, spent.ModuleId, spent.RoundsLeft);
+                    }
 
                     if (!IsStructureObserver(shooter.Session)
                         && shooter.RunningModules.TryGetValue(spent.ModuleId, out var gun) && gun.Reloads && spent.RoundsLeft < gun.PerCycle)

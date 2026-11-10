@@ -1712,8 +1712,7 @@ impl Message {
                     || !radius.is_finite()
                     || radius <= 0.0
                     || source_structure_id <= 0
-                    || module_id <= 0
-                    || module_type_id <= 0
+                    || !((module_id == 0 && module_type_id == 0) || (module_id > 0 && module_type_id > 0))
                     || moon_id <= 0
                     || phase_started_filetime <= 0
                     || !matches!(phase.as_str(), "tractor_phase" | "stasis_phase" | "fracture_phase")

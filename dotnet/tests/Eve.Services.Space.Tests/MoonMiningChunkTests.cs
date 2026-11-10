@@ -169,4 +169,65 @@ public sealed class MoonMiningChunkTests
         Assert.NotEmpty(field);
         Assert.All(field, rock => Assert.True(rock.MoonRockOrdinal > 0));
     }
+
+    [PgFact]
+    public async Task A_persisted_extraction_without_a_drill_still_projects_its_chunk_without_a_drill_effect()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await StructureStore.MigrateAsync(rig.Source, rig.StructureSchema);
+        var structures = new StructureStore(rig.Source, rig.StructureSchema);
+        var extractionsStore = new MoonExtractionStore(rig.Source, rig.StructureSchema);
+        var rules = new Rules();
+        var extractions = new MoonExtractions(structures, extractionsStore, rig.Scheduler, rig.Events, rules);
+        extractions.Register();
+        var chunks = new SpaceMoonChunks(rig.Sim, rig.Space, rig.Source, structures, extractionsStore,
+            rig.Items, rig.SpaceItems, rig.Statics, () => rig.Now, log: rig.Log.Add);
+        chunks.Subscribe(rig.Events);
+        await rig.Events.PumpAsync();
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await structures.CreateAsync(connection, transaction,
+                new NewStructure(StructureId, AthanorTypeId, SolarSystemId, 0, 0, 0, 0, CorporationId, 0, "Moon refinery", ""));
+            await structures.SetServiceAsync(connection, transaction, StructureId, StructureServiceIds.MoonMining,
+                ServiceState.Online, rig.Now, manageFuelCycle: false);
+            await extractionsStore.ImportAsync(connection, transaction, new System.Text.Json.Nodes.JsonObject
+            {
+                ["resourcesByStructureID"] = new System.Text.Json.Nodes.JsonObject
+                {
+                    [StructureId.ToString()] = new System.Text.Json.Nodes.JsonObject
+                    {
+                        ["moonID"] = MoonId,
+                        ["solarSystemID"] = SolarSystemId,
+                        ["ownerID"] = CorporationId,
+                        ["resources"] = new System.Text.Json.Nodes.JsonObject { ["45490"] = 0.75, ["45494"] = 0.25 },
+                    },
+                },
+            });
+            await transaction.CommitAsync();
+        }
+
+        MoonExtraction started;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            var result = await extractions.StartAsync(connection, transaction, StructureId, 518_460, false);
+            Assert.Equal(MoonExtractions.StartOutcome.Started, result.Outcome);
+            started = Assert.IsType<MoonExtraction>(result.Extraction);
+            await transaction.CommitAsync();
+        }
+
+        var pump = await rig.Events.PumpAsync();
+        Assert.Equal(1, pump.Delivered);
+        Assert.Null(pump.RetryAtMs);
+        var projection = Assert.Single(rig.Sim.Heard.OfType<SimUpsertMoonChunk>());
+        Assert.Equal(0, projection.ModuleId);
+        Assert.Equal(0, projection.ModuleTypeId);
+        Assert.Empty(rig.Sim.Heard.OfType<SimSetStructureMoonMiningState>().Last().Modules);
+        var chunk = Assert.Single(await rig.SpaceItems.InSystemAsync(SolarSystemId), item => item.Kind == SpaceItemKind.MoonChunk);
+        Assert.Equal(started.ExtractionId, chunk.MoonExtractionId);
+        Assert.Equal(chunk.ItemId, projection.ChunkId);
+        Assert.DoesNotContain(rig.Log, message => message.Contains("no fitted Standup Moon Drill", StringComparison.Ordinal));
+    }
 }

@@ -155,8 +155,7 @@ public sealed class SpaceMoonChunks
 
         var moonMiningState = await StructureMoonMiningSlim.ReadAsync(
             connection, _items, _extractions, _statics, structure.Snapshot.StructureId, cancellationToken);
-        var drill = moonMiningState.Modules.FirstOrDefault(module => module.TypeId == MoonDrillTypeId && module.FlagId is >= 164 and <= 171)
-            ?? throw new InvalidDataException($"moon extraction {extractionId} has no fitted Standup Moon Drill item");
+        var drill = moonMiningState.Modules.FirstOrDefault(module => module.TypeId == MoonDrillTypeId && module.FlagId is >= 164 and <= 171);
         if (moonMiningState.ClosestMoonId > 0 && moonMiningState.ClosestMoonId != extraction.MoonId)
             throw new InvalidDataException($"moon extraction {extractionId} targets another moon than the refinery profile");
 
@@ -211,7 +210,7 @@ public sealed class SpaceMoonChunks
         var effectStartedFileTime = FileTime(pose.PhaseStartedMs);
         var chunk = new SimUpsertMoonChunk(
             itemId, (int)extraction.SolarSystemId, shell.Name, shell.TypeId, shell.GroupId, shell.CategoryId, extraction.OwnerCorporationId, shell.GraphicId,
-            pose.Position, pose.Direction, shellRadius, structure.Snapshot.StructureId, drill.ItemId, drill.TypeId, extraction.MoonId,
+            pose.Position, pose.Direction, shellRadius, structure.Snapshot.StructureId, drill?.ItemId ?? 0, drill?.TypeId ?? 0, extraction.MoonId,
             pose.Phase, effectStartedFileTime);
         var structureState = new SimSetStructureMoonMiningState((int)extraction.SolarSystemId, structure.Snapshot.StructureId, extraction.MoonId, moonMiningState.Modules);
         return new ChunkProjection(chunk, structureState);

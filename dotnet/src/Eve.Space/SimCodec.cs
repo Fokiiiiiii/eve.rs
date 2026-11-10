@@ -427,6 +427,23 @@ public static partial class SimCodec
                         : new SimRemoveTournamentWreckReply(id, scene, item, status == 1, status == 2 ? error : null);
                     break;
                 }
+            case Kind.RemoveUnpilotedShip:
+                {
+                    var request = new SimRemoveUnpilotedShip(r.U64(), ReadSceneKey(ref r), r.I64());
+                    if (request.RequestId == 0 || !request.Scene.IsValid || request.Scene.InstanceId != 0 || request.ShipId <= 0)
+                        throw new SimLinkException(SimLinkError.BadValue, "bad unpiloted ship removal");
+                    message = request;
+                    break;
+                }
+            case Kind.RemoveUnpilotedShipReply:
+                {
+                    var id = r.U64(); var scene = ReadSceneKey(ref r); var ship = r.I64(); var status = r.U8(); var error = r.Text();
+                    if (id == 0 || !scene.IsValid || scene.InstanceId != 0 || ship <= 0 || status > 2 ||
+                        (status == 2 && error.Length == 0) || (status != 2 && error.Length != 0))
+                        throw new SimLinkException(SimLinkError.BadValue, "bad unpiloted ship removal reply");
+                    message = new SimRemoveUnpilotedShipReply(id, scene, ship, status == 1, status == 2 ? error : null);
+                    break;
+                }
             case Kind.GetSceneBody:
                 {
                     var request = new SimGetSceneBody(r.U64(), ReadSceneKey(ref r), r.I64());

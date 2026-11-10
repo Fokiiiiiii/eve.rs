@@ -30,6 +30,7 @@ internal sealed partial class CharacterServicesComposition
     private Eve.Services.Space.EssMgrService? _essMgrService;
     private Eve.Services.Space.EssMgrService EssMgr => _essMgrService ??= new(EssCallbacks());
     private Dictionary<int, string> _essQuadrantBySystem = [];
+    private Eve.Services.Space.Sites.SdeSiteAnchors _essSiteAnchors = default!;
 
     private PgEssStore Ess => _ess ??= new PgEssStore(
         source, new WalletTransactions(source, walletSchema), essSchema,
@@ -213,35 +214,34 @@ internal sealed partial class CharacterServicesComposition
     /// <summary>The system's reserve quadrant as the cache manager lists its keys (null when the system is in no quadrant).</summary>
     private string? EssQuadrantOf(int systemId) => _essQuadrantBySystem.TryGetValue(systemId, out var quadrant) ? quadrant : null;
 
-    /// <summary>The ESS balls use deterministic SDE anchor placement and the ESS type's static geometry when available.</summary>
-    private async Task PlaceEssBallsAsync(ISimulation simulation)
+    /// <summary>Places one system's ESS when the simulation first materializes that system.</summary>
+    private async Task PlaceEssBallsAsync(ISimulation simulation, int solarSystemId)
     {
-        var type = dogma.Type(EssRules.TypeEncounterSurveillanceSystem);
-        double Attribute(int id) => type?.Attributes.GetValueOrDefault(id, 0d) ?? 0d;
-        var staticType = (await sde.ReadAsync("types", [(long)EssRules.TypeEncounterSurveillanceSystem])).SingleOrDefault();
-        if (staticType is null)
+        try
         {
-            throw new InvalidDataException($"The SDE has no record for ESS type {EssRules.TypeEncounterSurveillanceSystem}.");
-        }
-        var radius = staticType.Doc.TryGetProperty("radius", out var radiusValue) && radiusValue.TryGetDouble(out var staticRadius)
-            ? staticRadius
-            : 0d;
-        if (!double.IsFinite(radius) || radius < 0)
-        {
-            throw new InvalidDataException($"The SDE has an unusable radius for ESS type {EssRules.TypeEncounterSurveillanceSystem}.");
-        }
-        var anchors = new Eve.Services.Space.Sites.SdeSiteAnchors(sde);
-        var placements = await Ess.ListPlacementsAsync();
-        var anchorsBySystem = await anchors.ForSystemsAsync(placements.Select(state => state.SolarSystemId));
-        foreach (var state in placements)
-        {
-            var (_, position) = Eve.Services.Space.Sites.SitePlacement.Place(anchorsBySystem[state.SolarSystemId], $"ess:{state.SolarSystemId}:{state.EssId}");
+            if (await Ess.PlacementAsync(solarSystemId) is not { } state)
+                return;
+
+            await dogma.EnsureTypesAsync([EssRules.TypeEncounterSurveillanceSystem]);
+            var type = dogma.Type(EssRules.TypeEncounterSurveillanceSystem)
+                ?? throw new InvalidDataException($"The SDE has no dogma type for ESS {EssRules.TypeEncounterSurveillanceSystem}.");
+            var staticType = (await sde.ReadAsync("types", [(long)EssRules.TypeEncounterSurveillanceSystem])).SingleOrDefault()
+                ?? throw new InvalidDataException($"The SDE has no record for ESS type {EssRules.TypeEncounterSurveillanceSystem}.");
+            var radius = staticType.Doc.TryGetProperty("radius", out var radiusValue) && radiusValue.TryGetDouble(out var staticRadius)
+                ? staticRadius
+                : 0d;
+            if (!double.IsFinite(radius) || radius < 0)
+                throw new InvalidDataException($"The SDE has an unusable radius for ESS type {EssRules.TypeEncounterSurveillanceSystem}.");
+
+            var anchors = await _essSiteAnchors.OfAsync(solarSystemId);
+            var (_, position) = Eve.Services.Space.Sites.SitePlacement.Place(anchors, $"ess:{state.SolarSystemId}:{state.EssId}");
+            double Attribute(int id) => type.Attributes.GetValueOrDefault(id, 0d);
             simulation.PlaceStructure(new SimPlaceStructure(
                 state.EssId,
                 state.SolarSystemId,
                 "Encounter Surveillance System",
                 EssRules.TypeEncounterSurveillanceSystem,
-                type?.GroupId ?? 0,
+                type.GroupId,
                 position,
                 radius,
                 state.OwnerId ?? 0,
@@ -249,6 +249,10 @@ internal sealed partial class CharacterServicesComposition
                 0,
                 new SimStructureHealth(Attribute(263), Attribute(265), Attribute(9), [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], 0, [0, 0, 0], [0, 0, 0]),
                 new SimStructureStatus(StructureState.ShieldVulnerable, UpkeepState.FullPower, null, null, null)));
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine($"eve-host: ess: the bank of system {solarSystemId} was not put in space: {error}");
         }
     }
 

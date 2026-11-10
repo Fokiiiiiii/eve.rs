@@ -147,6 +147,7 @@ internal sealed partial class CharacterServicesComposition
 
     private async Task SpaceSimulation()
     {
+        _essSiteAnchors = new Eve.Services.Space.Sites.SdeSiteAnchors(sde);
         _dynamicBounty = new PgDynamicBountyStore(source,
             solarSystems.Systems.Select(system => new DynamicBountySystem(system.Id, system.RegionId, system.Security)), npcSchema);
         RegisterDynamicBountyJobs();
@@ -335,7 +336,6 @@ internal sealed partial class CharacterServicesComposition
             spaceSessions.DynamicBounties = _dynamicBounty;
             spaceSessions.RecordDynamicBountyPaidInTransactionAsync = RecordDynamicBountyPaidInTransactionAsync;
             spaceSessions.RecordDynamicBountyLossInTransactionAsync = RecordDynamicBountyLossInTransactionAsync;
-            await PlaceEssBallsAsync(sim);   // each ESS is a ball in space, so a pilot in its system can link to it
             spaceSessions.Events = foundations.Events;   // what happens in space is announced on the bus as well
             spaceSessions.BuffStore = new Eve.Ships.PgShipBuffStore(source, spaceSchema);   // the buffs a restart keeps (track C8)
             ships.TransitionEventWriter = spaceSessions.Transitions.WriteEventAsync;
@@ -621,6 +621,8 @@ internal sealed partial class CharacterServicesComposition
                 placingSites.PlaceResources = (system, site, template, origin) => spaceContainers!.PlaceSiteResourcesAsync(system, site, template, origin);
             if (cosmicSites is { } endingSites)
                 endingSites.RemoveResources = (connection, transaction, system, site) => spaceContainers!.RemoveSiteResourcesAsync(connection, transaction, system, site);
+            if (sim is { } essSimulation)
+                spaceSessions.SystemEntered += system => _ = PlaceEssBallsAsync(essSimulation, system);
             spaceSessions.SystemEntered += system => _ = EnsureSitesAsync(system);
             // the NPC waves of the dungeons (A-W1): the host runs their sweep and kill subscriber; a feature starts a dungeon through DungeonWaveDirector.StartAsync
             await Eve.Services.Space.Waves.DungeonWaveDirector.MigrateAsync(source, spaceSchema);

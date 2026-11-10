@@ -4,6 +4,7 @@ using Eve.Marshal;
 using Eve.Npc;
 using Eve.Wallet;
 using Npgsql;
+using NpgsqlTypes;
 
 namespace Eve.Services.Space;
 
@@ -143,6 +144,30 @@ public sealed class PgEssStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>Registers the static ESS sites in one database round trip; their stable IDs keep every bank's contents and payout deadline.</summary>
+    public async Task RegisterManyAsync(IReadOnlyList<(int SolarSystemId, long EssId)> systems, long nowMs, CancellationToken cancellationToken = default)
+    {
+        if (systems.Count == 0)
+            return;
+
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = Command(
+            """
+            INSERT INTO {schema}.systems (solar_system_id, ess_id, beacon_id, type_id, owner_id, current_output, next_payout_ms)
+            SELECT site.solar_system_id, site.ess_id, site.ess_id, $3, NULL, $4, $5
+            FROM unnest($1::integer[], $2::bigint[]) AS site(solar_system_id, ess_id)
+            ON CONFLICT (solar_system_id) DO UPDATE SET
+                ess_id = EXCLUDED.ess_id,
+                beacon_id = EXCLUDED.beacon_id,
+                owner_id = EXCLUDED.owner_id
+            """,
+            connection, null, systems.Select(system => system.SolarSystemId).ToArray(), systems.Select(system => system.EssId).ToArray(),
+            EssRules.TypeEncounterSurveillanceSystem, EssRules.EquilibriumOutput, nowMs + EssRules.AutoPayIntervalMs);
+        command.Parameters[0].NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Integer;
+        command.Parameters[1].NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Bigint;
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     /// <summary>The ESS of a system, or null when it has none.</summary>
     public async Task<EssState?> ReadAsync(int solarSystemId, CancellationToken cancellationToken = default)
     {
@@ -180,6 +205,21 @@ public sealed class PgEssStore
             }
         }
         return states;
+    }
+
+    /// <summary>The persisted identity needed to put each Main Bank ball in its solar system without hydrating its histories.</summary>
+    public async Task<IReadOnlyList<(int SolarSystemId, long EssId, long? OwnerId)>> ListPlacementsAsync(CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = Command(
+            "SELECT solar_system_id, ess_id, owner_id FROM {schema}.systems ORDER BY solar_system_id", connection, null);
+        var placements = new List<(int SolarSystemId, long EssId, long? OwnerId)>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            placements.Add((reader.GetInt32(0), reader.GetInt64(1), reader.IsDBNull(2) ? null : reader.GetInt64(2)));
+        }
+        return placements;
     }
 
     /// <summary>
@@ -626,7 +666,11 @@ public sealed class PgEssStore
         ReserveBankThefts: [.. state.ReserveThefts.Select(theft => (PyValue)Py.Dict(
             ("characterID", Py.Number(theft.CharacterId)),
             ("amount", Py.Number((double)theft.Amount)),
-            ("lastTheft", Py.FileTimeLong(NpcBounty.Filetime(theft.AtMs)))))]);
+            ("lastTheft", Py.FileTimeLong(NpcBounty.Filetime(theft.AtMs)))))])
+    {
+        NextScheduledAutopaymentFileTime = NpcBounty.Filetime(state.NextPayoutMs),
+        LastAutopaymentFileTime = NpcBounty.Filetime(state.NextPayoutMs - EssRules.AutoPayIntervalMs),
+    };
 
     private static EssMgrMainBankLink ToClientLink(EssLinkRecord link) =>
         new(link.Id, link.CharacterId, NpcBounty.Filetime(link.StartedMs), NpcBounty.Filetime(link.CompletesMs));

@@ -370,6 +370,9 @@ public sealed class PgEssStoreTests
         Assert.Equal(0m, await rig.BalanceAsync(Owner));
         var state = (await rig.Ess.ReadAsync(Jita))!;
         Assert.Equal((0m, Now + 2 * EssRules.AutoPayIntervalMs), (state.MainValue, state.NextPayoutMs));
+        var client = PgEssStore.ToClient(state);
+        Assert.Equal(NpcBounty.Filetime(Now + 2 * EssRules.AutoPayIntervalMs), client.NextScheduledAutopaymentFileTime);
+        Assert.Equal(NpcBounty.Filetime(Now + EssRules.AutoPayIntervalMs), client.LastAutopaymentFileTime);
     }
 
     [PgFact]

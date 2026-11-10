@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
+using Eve.Skills;
 
 namespace Eve.Services.Core;
 
@@ -38,7 +39,8 @@ public sealed record ShipCloneDestination(long ShipId, int SolarSystemId, IReadO
 /// The outcome of a clone jump's state change. A refusal names the reason (<c>MUST_LEAVE_SHIP</c>, <c>CLONE_NOT_FOUND</c>,
 /// <c>INSUFFICIENT_FUNDS</c>, <c>COOLDOWN_ACTIVE</c>); otherwise the station the character is in now, with its solar system, constellation and region.
 /// </summary>
-public sealed record CloneJumpResult(string? Refusal, long StationId = 0, int SolarSystemId = 0, int ConstellationId = 0, int RegionId = 0, long StructureId = 0);
+public sealed record CloneJumpResult(string? Refusal, long StationId = 0, int SolarSystemId = 0, int ConstellationId = 0,
+    int RegionId = 0, long StructureId = 0, TrainingUpdate? LearningUpdate = null);
 
 
 public static class CloneJumpRules
@@ -115,6 +117,9 @@ public sealed class JumpCloneSpaceLink
     public IJumpCloneSpace? Space { get; set; }
 
     public Func<long, long, IReadOnlyList<int>, CancellationToken, Task>? CloneDeletedNotification { get; set; }
+
+    /// <summary>Announces the skill-queue rebase after a clone jump changes the active implants.</summary>
+    public Func<long, TrainingUpdate?, Task>? LearningChanged { get; set; }
 }
 
 /// <summary>
@@ -473,6 +478,7 @@ public sealed partial class JumpCloneService(Func<long> nowUnixMs, IJumpCloneSto
             Invalidate(call.Session, current, characterId);
             if (target.LocationId != current)
                 Invalidate(call.Session, target.LocationId, characterId);
+            await TellImplantsChangedAsync(call.Session, characterId, shipJump?.LearningUpdate);
             return PyNone.Instance;
         }
 
@@ -500,7 +506,15 @@ public sealed partial class JumpCloneService(Func<long> nowUnixMs, IJumpCloneSto
         Invalidate(call.Session, current, characterId);
         if (target.LocationId != current)
             Invalidate(call.Session, target.LocationId, characterId);
+        await TellImplantsChangedAsync(call.Session, characterId, result.LearningUpdate);
         return PyNone.Instance;
+    }
+
+    private async Task TellImplantsChangedAsync(ClientSession session, long characterId, TrainingUpdate? learningUpdate)
+    {
+        session.SendNotification("OnServerImplantsChanged", "clientID", new PyList([]));
+        if (spaceLink?.LearningChanged is { } announce)
+            await announce(characterId, learningUpdate);
     }
 
     private async ValueTask<PyValue> Install(ServiceCall call)

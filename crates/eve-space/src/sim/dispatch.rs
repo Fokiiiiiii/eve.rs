@@ -788,6 +788,7 @@ impl Sim {
             | Message::RemoveTournamentBeacon { .. }
             | Message::QueryTournamentWreck { .. }
             | Message::RemoveTournamentWreck { .. }
+            | Message::RemoveUnpilotedShip { .. }
             | Message::GetSceneBody { .. }
             | Message::GetAbyssalParticipantPose { .. }
             | Message::Enter(..)
@@ -1068,6 +1069,9 @@ impl Sim {
                     Some((owner_id, launcher_id, type_id, center, radius)),
                     now,
                 ));
+            }
+            Message::RemoveUnpilotedShip { request_id, scene, ship_id } => {
+                return Ok(self.remove_unpiloted_ship(request_id, scene, ship_id, now));
             }
             Message::MovePublicParticipant {
                 request_id,

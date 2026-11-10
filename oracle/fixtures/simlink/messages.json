@@ -480,6 +480,32 @@
    "hex": "240000008739000000000000000ec4c9010000000000000000000000000484d71700000000010000"
   },
   {
+   "name": "remove abandoned unpiloted ship",
+   "kind": "RemoveUnpilotedShip",
+   "requestId": "9",
+   "scene": {
+    "locationId": 30000001,
+    "instanceId": "0",
+    "roomIndex": 0
+   },
+   "shipId": "9001",
+   "hex": "210000009c090000000000000081c3c9010000000000000000000000002923000000000000"
+  },
+  {
+   "name": "removed abandoned unpiloted ship",
+   "kind": "RemoveUnpilotedShipReply",
+   "requestId": "9",
+   "scene": {
+    "locationId": 30000001,
+    "instanceId": "0",
+    "roomIndex": 0
+   },
+   "shipId": "9001",
+   "removed": true,
+   "error": null,
+   "hex": "240000009d090000000000000081c3c9010000000000000000000000002923000000000000010000"
+  },
+  {
    "name": "move public pilot to explicit pose",
    "kind": "MovePublicParticipant",
    "requestId": "58",

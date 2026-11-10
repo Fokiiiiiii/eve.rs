@@ -3,6 +3,12 @@ use crate::locators::{CAPITAL, LARGE, SUPERCAPITAL, category_of};
 use crate::modules::DISALLOW_DOCKING;
 
 impl Scene {
+    /// Removes a ship held by the scene under the synthetic session created when its pilot ejected or boarded another ship.
+    pub fn remove_unpiloted_ship(&mut self, ship_id: i64, now: i64) -> Option<Vec<Out>> {
+        let fake_session = self.unpiloted.remove(&ship_id)?;
+        self.leave(fake_session, Departure::Docked, now)
+    }
+
     /// Puts a ship in space at the station it undocks from, moving away at its top speed.
     pub fn undock(
         &mut self,

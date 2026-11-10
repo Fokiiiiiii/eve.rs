@@ -32,8 +32,12 @@ public sealed record CombatState(long WeaponsUntilMs, long PvpUntilMs, long NpcU
 
     // the client's states of the timers (weaponsTimerState…): idle, and idle + 2 while it runs; the criminal timer is 303 for a criminal and 304 for a suspect
     public const int WeaponsIdle = 100;
+    public const int WeaponsActive = 101;
     public const int PvpIdle = 200;
+    public const int PvpActive = 201;
     public const int CriminalIdle = 300;
+    public const int CriminalActive = 301;
+    public const int SuspectActive = 302;
     public const int NpcIdle = 400;
     public const int DisapprovalIdle = 500;
     private const int CriminalRunning = 303;

@@ -21,6 +21,95 @@ public class WeaponHostTests
         (await rig.Ships.LoadAsync(character.CharacterId, CancellationToken.None))!.Fitted.Single(m => m.TypeId == 3638).Id;
 
     [PgFact]
+    public async Task An_active_player_combat_module_holds_client_timers_and_its_limited_engagement_until_the_simulation_ends_it()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var attacker = await rig.NewCharacterAsync("Space Tester", 1);
+        var victim = await rig.NewCharacterAsync("Space Victim", 2);
+        var session = await InSpaceAsync(rig, attacker, 1);
+        var other = await InSpaceAsync(rig, victim, 2);
+        var gun = await GunOfAsync(rig, attacker);
+        var systemId = session.GetInt("solarsystemid")!.Value;
+        var schema = "cw_" + Guid.NewGuid().ToString("N")[..12];
+        await Eve.Crimewatch.PgCrimewatchStore.MigrateAsync(rig.Source, schema);
+        try
+        {
+            using var timers = new Eve.Scheduler.LocalTimers(delay: static (_, token) => Task.Delay(Timeout.InfiniteTimeSpan, token));
+            using var crimewatch = new Eve.Services.Crimewatch.CrimewatchRuntime(
+                new Eve.Crimewatch.PgCrimewatchStore(rig.Source, schema), rig.CharacterSessions, () => rig.Now,
+                new EmptyCrimewatchPersistence(), localTimers: timers);
+            var store = new Eve.Crimewatch.PgCrimewatchStore(rig.Source, schema);
+            var service = new Eve.Services.Crimewatch.CrimewatchService(store, crimewatch, () => rig.Now);
+            await store.UpdateAsync(victim.CharacterId,
+                state => state.FlagAsSuspect(rig.Now) with { SolarSystemId = systemId }, rig.Now);
+            rig.Space.WeaponTargetContextOf = (_, _, _) => Task.FromResult(
+                new WeaponTargetContext(AttackerIsPlayer: true, TargetIsPlayerProperty: true, TargetIsSuspect: true));
+            rig.Space.ModuleAggression = async (request, moduleId, token) =>
+                await crimewatch.RecordModuleAggressionAsync(request, moduleId, token);
+            rig.Space.ModuleCombatActivityEnded = crimewatch.EndModuleCombatActivityAsync;
+
+            Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(
+                session, gun, "targetAttack", other.GetInt("shipid")!.Value, 1000, CancellationToken.None));
+
+            async Task<PyTuple> ClientStates(ClientSession pilot) => Assert.IsType<PyTuple>(await service.GetClientStates(new ServiceCall
+            {
+                Method = "GetClientStates",
+                Args = [],
+                Session = pilot,
+                Cancellation = CancellationToken.None,
+            }));
+
+            var attackerStates = await ClientStates(session);
+            var attackerTimers = Assert.IsType<PyTuple>(attackerStates.Items[0]);
+            Assert.Equal([new PyInt(101), PyNone.Instance], Assert.IsType<PyTuple>(attackerTimers.Items[0]).Items);
+            Assert.Equal([new PyInt(201), PyNone.Instance], Assert.IsType<PyTuple>(attackerTimers.Items[1]).Items);
+            var victimTimers = Assert.IsType<PyTuple>((await ClientStates(other)).Items[0]);
+            Assert.Equal([new PyInt(201), PyNone.Instance], Assert.IsType<PyTuple>(victimTimers.Items[1]).Items);
+            Assert.Equal(-1, (await crimewatch.LimitedEngagementsOfAsync(attacker.CharacterId, rig.Now))[victim.CharacterId]);
+            var attackerNotes = Events.Of(session, clear: false);
+            var created = attackerNotes.ToList().FindIndex(note => note.Name == "OnCrimewatchEngagementCreated");
+            var stopped = attackerNotes.ToList().FindIndex(note => note.Name == "OnCrimewatchEngagementStopTimeout");
+            Assert.True(created >= 0 && stopped > created, string.Join(",", attackerNotes.Select(note => note.Name)));
+
+            rig.Sim.Deliver(new SimModuleEnded((ulong)session.SessionId, gun, SimModuleEndReasons.Done));
+            await Rig.UntilAsync(() => Events.Of(session, clear: false)
+                .LastOrDefault(note => note.Name == "OnWeaponsTimerUpdate")?.Args[0] is PyInt { Value: 102 });
+            Assert.Equal(rig.Now + Eve.Crimewatch.CombatState.WeaponsDurationMs,
+                (await crimewatch.StateOfAsync(attacker.CharacterId)).WeaponsUntilMs);
+            Assert.Equal(rig.Now + Eve.Crimewatch.CombatState.PvpDurationMs,
+                (await crimewatch.StateOfAsync(victim.CharacterId)).PvpUntilMs);
+            Assert.Equal(rig.Now + Eve.Services.Crimewatch.CrimewatchRuntime.LimitedEngagementDurationMs,
+                (await crimewatch.LimitedEngagementsOfAsync(attacker.CharacterId, rig.Now))[victim.CharacterId]);
+
+            var neutral = await rig.NewCharacterAsync("Neutral Victim", 3);
+            var neutralSession = await InSpaceAsync(rig, neutral, 3);
+            rig.Space.WeaponTargetContextOf = (_, _, _) => Task.FromResult(
+                new WeaponTargetContext(AttackerIsPlayer: true, TargetIsPlayerProperty: true));
+            rig.Space.SafetyLevelOf = (_, _) => Task.FromResult(Eve.Crimewatch.SafetyLevel.None);
+            Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(
+                session, gun, "targetAttack", neutralSession.GetInt("shipid")!.Value, 1000, CancellationToken.None));
+            var criminalStates = await ClientStates(session);
+            Assert.Equal([new PyInt(301), PyNone.Instance],
+                Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(criminalStates.Items[0]).Items[3]).Items);
+            Assert.Equal(Eve.Crimewatch.Flag.Criminal,
+                (await crimewatch.StateOfAsync(attacker.CharacterId)).FlagAt(rig.Now));
+
+            rig.Sim.Deliver(new SimModuleEnded((ulong)session.SessionId, gun, SimModuleEndReasons.Done));
+            await Rig.UntilAsync(() => Events.Of(session, clear: false)
+                .LastOrDefault(note => note.Name == "OnCriminalTimerUpdate")?.Args[0] is PyInt { Value: 303 });
+            var stoppedCriminal = await ClientStates(session);
+            Assert.Equal([new PyInt(303), new PyLong(Eve.Services.Py.FileTimeFromUnixMs(
+                rig.Now + Eve.Crimewatch.CombatState.FlagDurationMs))],
+                Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(stoppedCriminal.Items[0]).Items[3]).Items);
+        }
+        finally
+        {
+            await using var drop = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await drop.ExecuteNonQueryAsync();
+        }
+    }
+
+    [PgFact]
     public async Task A_gun_is_started_at_a_ship_nobody_flies_and_the_simulation_is_given_what_it_shoots()
     {
         await using var rig = await Rig.CreateAsync();
@@ -377,13 +466,29 @@ public class WeaponHostTests
           public Task<long?> StartDuelChallengeAsync(long challengerCharacterId, long targetCharacterId, long challengerCorporationId, long challengerAllianceId, CancellationToken cancellationToken) =>
               Task.FromResult<long?>(null);
 
-          public Task<IReadOnlyList<Eve.Services.Crimewatch.LimitedEngagement>> LimitedEngagementsAsync(long nowUnixMs, long? characterId, CancellationToken cancellationToken) =>
-              Task.FromResult<IReadOnlyList<Eve.Services.Crimewatch.LimitedEngagement>>([]);
+          private readonly Dictionary<(long First, long Second), long> _engagements = [];
 
-          public Task UpsertLimitedEngagementAsync(long firstCharacterId, long secondCharacterId, long expiresAtUnixMs, CancellationToken cancellationToken) => Task.CompletedTask;
+          public Task<IReadOnlyList<Eve.Services.Crimewatch.LimitedEngagement>> LimitedEngagementsAsync(long nowUnixMs, long? characterId, CancellationToken cancellationToken)
+          {
+              IReadOnlyList<Eve.Services.Crimewatch.LimitedEngagement> rows = [.. _engagements
+                  .Where(entry => entry.Value > nowUnixMs && (characterId is null || entry.Key.First == characterId || entry.Key.Second == characterId))
+                  .Select(entry => new Eve.Services.Crimewatch.LimitedEngagement(entry.Key.First, entry.Key.Second, entry.Value))];
+              return Task.FromResult(rows);
+          }
 
-          public Task<bool> ExpireLimitedEngagementAsync(long firstCharacterId, long secondCharacterId, long expectedExpiresAtUnixMs, long nowUnixMs, CancellationToken cancellationToken) =>
-              Task.FromResult(false);
+          public Task UpsertLimitedEngagementAsync(long firstCharacterId, long secondCharacterId, long expiresAtUnixMs, CancellationToken cancellationToken)
+          {
+              _engagements[(Math.Min(firstCharacterId, secondCharacterId), Math.Max(firstCharacterId, secondCharacterId))] = expiresAtUnixMs;
+              return Task.CompletedTask;
+          }
+
+          public Task<bool> ExpireLimitedEngagementAsync(long firstCharacterId, long secondCharacterId, long expectedExpiresAtUnixMs, long nowUnixMs, CancellationToken cancellationToken)
+          {
+              var key = (Math.Min(firstCharacterId, secondCharacterId), Math.Max(firstCharacterId, secondCharacterId));
+              var expired = _engagements.TryGetValue(key, out var until) && until == expectedExpiresAtUnixMs && until <= nowUnixMs;
+              if (expired) _engagements.Remove(key);
+              return Task.FromResult(expired);
+          }
 
           public Task<bool> RespondToDuelChallengeAsync(long responderCharacterId, long challengerCharacterId, long challengeExpiresAtFileTime, bool accept, long? engagementExpiresAtUnixMs, CancellationToken cancellationToken) =>
               Task.FromResult(false);

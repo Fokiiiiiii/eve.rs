@@ -1102,6 +1102,123 @@ public class RuntimeTests : IAsyncLifetime
     }
 
     [PgFact]
+    public async Task Concurrent_module_activities_keep_one_engagement_ongoing_until_the_last_module_ends()
+    {
+        Pilot(1, System);
+        Pilot(2, System);
+        var suspect = Aggression.Record(CombatState.Idle, CombatState.Idle,
+            SecurityClass.LowSec, System, false, false, _now).Attacker;
+        await Store.UpdateAsync(2, state => suspect with { SolarSystemId = System }, _now);
+        using var runtime = Runtime();
+
+        var attacks = await Task.WhenAll(
+            runtime.RecordModuleAggressionAsync(Attack(1, 2, SecurityClass.HighSec, System, false), 90_001),
+            runtime.RecordModuleAggressionAsync(Attack(1, 2, SecurityClass.HighSec, System, false), 90_002));
+        await runtime.RecordModuleAggressionAsync(Attack(1, 2, SecurityClass.HighSec, System, false), 90_001);
+
+        Assert.All(attacks, attack => Assert.Equal(AggressionReason.TargetFlagged, attack.Outcome.Reason));
+        var active = await runtime.ClientTimersOfAsync(1);
+        Assert.Equal(new TimerView(101, null), active.Weapons);
+        Assert.Equal(new TimerView(201, null), active.Pvp);
+        Assert.Equal(CrimewatchRuntime.LimitedEngagementTimeoutOngoing,
+            (await runtime.LimitedEngagementsOfAsync(1, _now))[2]);
+        var startedNotes = Told(1);
+        Assert.Single(startedNotes, note => note.Name == "OnCrimewatchEngagementCreated");
+        Assert.Single(startedNotes, note => note.Name == "OnCrimewatchEngagementStopTimeout");
+
+        var refreshes = _waits.Made.Where(wait => wait.After == TimeSpan.FromSeconds(1)).ToArray();
+        Assert.Single(refreshes);
+        _now += 16 * 60_000;
+        refreshes[0].Done.SetResult();
+        await Settle(() => _waits.Made.Count(wait => wait.After == TimeSpan.FromSeconds(1)) >= 2);
+        Assert.Equal(2, _waits.Made.Count(wait => wait.After == TimeSpan.FromSeconds(1)));
+        Assert.Equal(_now + CombatState.WeaponsDurationMs, (await runtime.StateOfAsync(1)).WeaponsUntilMs);
+        Assert.Equal(_now + CombatState.PvpDurationMs, (await runtime.StateOfAsync(2)).PvpUntilMs);
+        Assert.Equal(_now + CrimewatchRuntime.LimitedEngagementDurationMs, _persistence.Engagements[(1, 2)]);
+
+        await runtime.EndModuleCombatActivityAsync(1, 90_001);
+        var stillActive = await runtime.ClientTimersOfAsync(1);
+        Assert.Equal(new TimerView(101, null), stillActive.Weapons);
+        Assert.Equal(CrimewatchRuntime.LimitedEngagementTimeoutOngoing,
+            (await runtime.LimitedEngagementsOfAsync(1, _now))[2]);
+        Assert.DoesNotContain(Told(1), note => note.Name == "OnCrimewatchEngagementStartTimeout");
+
+        await runtime.EndModuleCombatActivityAsync(1, 90_002);
+        var stopped = await runtime.ClientTimersOfAsync(1);
+        Assert.Equal(new TimerView(102, _now + CombatState.WeaponsDurationMs), stopped.Weapons);
+        Assert.Equal(new TimerView(202, _now + CombatState.PvpDurationMs), stopped.Pvp);
+        Assert.Equal(_now + CrimewatchRuntime.LimitedEngagementDurationMs,
+            (await runtime.LimitedEngagementsOfAsync(1, _now))[2]);
+        Assert.Single(Told(1), note => note.Name == "OnCrimewatchEngagementStartTimeout");
+        Assert.Single(Told(2), note => note.Name == "OnCrimewatchEngagementStartTimeout");
+    }
+
+    [PgFact]
+    public async Task A_limited_engagement_created_during_module_combat_stays_ongoing_until_the_last_module_ends()
+    {
+        Pilot(1, System);
+        Pilot(2, System);
+        using var runtime = Runtime();
+
+        await runtime.RecordModuleAggressionAsync(Attack(1, 2, SecurityClass.ZeroSec, System, false), 90_011);
+        var suspect = Aggression.Record(CombatState.Idle, CombatState.Idle,
+            SecurityClass.LowSec, System, false, false, _now).Attacker;
+        await Store.UpdateAsync(2, state => suspect with { SolarSystemId = System }, _now);
+        await runtime.RecordModuleAggressionAsync(Attack(1, 2, SecurityClass.HighSec, System, false), 90_012);
+
+        Assert.Equal(CrimewatchRuntime.LimitedEngagementTimeoutOngoing,
+            (await runtime.LimitedEngagementsOfAsync(1, _now))[2]);
+        await runtime.EndModuleCombatActivityAsync(1, 90_012);
+        Assert.Equal(CrimewatchRuntime.LimitedEngagementTimeoutOngoing,
+            (await runtime.LimitedEngagementsOfAsync(1, _now))[2]);
+
+        await runtime.EndModuleCombatActivityAsync(1, 90_011);
+        Assert.Equal(_now + CrimewatchRuntime.LimitedEngagementDurationMs,
+            (await runtime.LimitedEngagementsOfAsync(1, _now))[2]);
+        Assert.Single(Told(1), note => note.Name == "OnCrimewatchEngagementStartTimeout");
+        Assert.Single(Told(2), note => note.Name == "OnCrimewatchEngagementStartTimeout");
+    }
+
+    [PgFact]
+    public async Task An_active_lowsec_attack_holds_the_suspect_state_until_the_module_stops()
+    {
+        Pilot(1, System);
+        Pilot(2, System);
+        using var runtime = Runtime();
+
+        var result = await runtime.RecordModuleAggressionAsync(
+            Attack(1, 2, SecurityClass.LowSec, System, false), 90_021);
+
+        Assert.Equal(AggressionReason.Suspect, result.Outcome.Reason);
+        Assert.Equal(new TimerView(302, null), (await runtime.ClientTimersOfAsync(1)).Criminal);
+        await runtime.EndModuleCombatActivityAsync(1, 90_021);
+        Assert.Equal(new TimerView(304, Start + CombatState.FlagDurationMs),
+            (await runtime.ClientTimersOfAsync(1)).Criminal);
+    }
+
+    [PgFact]
+    public async Task A_restart_restores_persisted_module_combat_deadlines_as_countdowns()
+    {
+        Pilot(1, System);
+        Pilot(2, System);
+        var suspect = Aggression.Record(CombatState.Idle, CombatState.Idle,
+            SecurityClass.LowSec, System, false, false, _now).Attacker;
+        await Store.UpdateAsync(2, state => suspect with { SolarSystemId = System }, _now);
+        var first = Runtime();
+        await first.RecordModuleAggressionAsync(Attack(1, 2, SecurityClass.HighSec, System, false), 90_101);
+        Assert.Equal(new TimerView(101, null), (await first.ClientTimersOfAsync(1)).Weapons);
+        first.Dispose();
+
+        using var restarted = Runtime();
+        await restarted.ResumeAsync();
+        var timers = await restarted.ClientTimersOfAsync(1);
+        Assert.Equal(new TimerView(102, Start + CombatState.WeaponsDurationMs), timers.Weapons);
+        Assert.Equal(new TimerView(202, Start + CombatState.PvpDurationMs), timers.Pvp);
+        Assert.Equal(Start + CrimewatchRuntime.LimitedEngagementDurationMs,
+            (await restarted.LimitedEngagementsOfAsync(1, Start))[2]);
+    }
+
+    [PgFact]
     public async Task A_persisted_engagement_expires_once_and_notifies_both_online_pilots()
     {
         Pilot(1, System);

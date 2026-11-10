@@ -1207,6 +1207,10 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                 // an effect the simulation ended on its own account (the cycles done, the capacitor short, the target gone): the module is taken out of the
                 // numbers the ship is sent with, and the ship is sent again so the simulation drops the module's modifiers (FP-C1)
                 case SimModuleEnded ended when _pilots.TryGetValue(ended.SessionId, out var endedPilot):
+                    if (ModuleCombatActivityEnded is { } endCombatActivity)
+                    {
+                        Background(() => endCombatActivity(endedPilot.CharacterId, ended.ModuleId, CancellationToken.None));
+                    }
                     bool moduleRemoved;
                     lock (endedPilot.ModuleLifecycleSync)
                     {

@@ -107,7 +107,11 @@ public partial class HostServerTests
             Assert.Equal(new PyInt(systemId), Field(initial, "solarSystemID"));
             Assert.Equal(new PyInt(10_000), Field(initial, "mainValue"));
             Assert.Equal(new PyInt(2_000), Field(initial, "reserveValue"));
-            Assert.Same(PyNone.Instance, Field(initial, "mainBankLink"));
+            Assert.Empty(Assert.IsType<PyDict>(Field(initial, "mainBankLink")).Entries);
+            Assert.Equal(new PyLong(DateTimeOffset.FromUnixTimeMilliseconds(now + EssRules.AutoPayIntervalMs).ToFileTime()),
+                Field(initial, "nextScheduledAutopayment"));
+            Assert.Equal(new PyLong(DateTimeOffset.FromUnixTimeMilliseconds(now).ToFileTime()),
+                Field(initial, "lastAutopayment"));
             Assert.Same(PyBool.False, await Rpc("IsClientLinkedToReserveBank"));
             Assert.Empty(Assert.IsType<PyList>(await Rpc("GetMainBankTheftsForClientSolarSystem")).Items);
             Assert.Empty(Assert.IsType<PyList>(await Rpc("GetReserveBankTheftsForClientSolarSystem")).Items);
@@ -117,7 +121,11 @@ public partial class HostServerTests
             Assert.Equal(new PyInt(systemId), linkArgs.Items[0]);
             var changedArgs = await AssertNotification("OnSystemESSDataChanged");
             Assert.Equal(new PyInt(systemId), changedArgs.Items[0]);
-            Assert.IsType<PyDict>(changedArgs.Items[1]);
+            var linkNotificationData = Assert.IsType<PyDict>(changedArgs.Items[1]);
+            Assert.Equal(new PyLong(DateTimeOffset.FromUnixTimeMilliseconds(now + EssRules.AutoPayIntervalMs).ToFileTime()),
+                Field(linkNotificationData, "nextScheduledAutopayment"));
+            Assert.Equal(new PyLong(DateTimeOffset.FromUnixTimeMilliseconds(now).ToFileTime()),
+                Field(linkNotificationData, "lastAutopayment"));
             var linked = await store.ReadAsync(systemId);
             Assert.NotNull(linked?.MainLink);
             Assert.Equal(characterId, linked!.MainLink!.CharacterId);
@@ -145,7 +153,7 @@ public partial class HostServerTests
             Assert.Equal(new PyInt(0), Field(disconnect, "reason"));
             changedArgs = await AssertNotification("OnSystemESSDataChanged");
             Assert.Equal(new PyInt(systemId), changedArgs.Items[0]);
-            Assert.Same(PyNone.Instance, Field(Assert.IsType<PyDict>(changedArgs.Items[1]), "mainBankLink"));
+            Assert.Empty(Assert.IsType<PyDict>(Field(Assert.IsType<PyDict>(changedArgs.Items[1]), "mainBankLink")).Entries);
             var unlinked = await store.ReadAsync(systemId);
             Assert.Null(unlinked?.MainLink);
             Assert.Empty(Assert.IsType<PyList>(await Rpc("GetMainBankTheftsForClientSolarSystem")).Items);

@@ -88,10 +88,12 @@ public sealed class SpaceDirectionalScans
         var reply = await _sim.CommandAsync((ulong)session.SessionId, DirectionalScanCommand, [], cancellationToken);
         await _statics.EnsureTypesAsync(reply.DirectionalTargets.Select(target => target.TypeId).Distinct().ToArray(), cancellationToken);
 
+        var cloakedShips = _space.CloakedShipIds();
         var found = new List<(double Surface, long Id, int TypeId, int GroupId)>();
         foreach (var target in reply.DirectionalTargets)
         {
-            if (_statics.Type(target.TypeId) is not { } type || !Visible(target, type))
+            if (_statics.Type(target.TypeId) is not { } type || !Visible(target, type) ||
+                (target.Kind == KindShip && cloakedShips.Contains(target.Id)))
             {
                 continue;
             }

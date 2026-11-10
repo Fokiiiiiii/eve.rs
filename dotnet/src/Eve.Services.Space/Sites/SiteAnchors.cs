@@ -27,6 +27,33 @@ public sealed class SdeSiteAnchors(SdeReader sde) : ISiteAnchors
         return task.WaitAsync(cancellationToken);
     }
 
+    /// <summary>Reads the anchors of several systems with one SDE query per source table.</summary>
+    public async Task<IReadOnlyDictionary<int, IReadOnlyList<SiteAnchor>>> ForSystemsAsync(
+        IEnumerable<int> solarSystemIds, CancellationToken cancellationToken = default)
+    {
+        var systems = solarSystemIds.Distinct().ToArray();
+        var anchorsBySystem = systems.ToDictionary(system => system, _ => new List<SiteAnchor>());
+        if (systems.Length == 0)
+            return anchorsBySystem.ToDictionary(pair => pair.Key, pair => (IReadOnlyList<SiteAnchor>)pair.Value);
+
+        var systemIds = systems.Select(system => (long)system).ToArray();
+        foreach (var table in Tables)
+        {
+            var rows = await sde.ReadByFieldAsync(table, "solarSystemID", systemIds, cancellationToken);
+            foreach (var row in rows)
+            {
+                if (!row.Doc.TryGetProperty("solarSystemID", out var systemValue) || !systemValue.TryGetInt32(out var systemId) ||
+                    SiteAnchor.FromSdeRow(row) is not { } anchor || !anchorsBySystem.TryGetValue(systemId, out var anchors))
+                {
+                    continue;
+                }
+                anchors.Add(anchor);
+            }
+        }
+
+        return anchorsBySystem.ToDictionary(pair => pair.Key, pair => (IReadOnlyList<SiteAnchor>)pair.Value.AsReadOnly());
+    }
+
     private async Task<IReadOnlyList<SiteAnchor>> ReadAsync(int solarSystemId)
     {
         var anchors = new List<SiteAnchor>();

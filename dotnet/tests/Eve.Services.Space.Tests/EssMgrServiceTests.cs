@@ -54,7 +54,7 @@ public sealed class EssMgrServiceTests
 
         var payload = Assert.IsType<PyDict>(await Call(rpc, session, "GetDataForClientSolarSystem"));
         Assert.Equal(
-            ["essID", "beaconID", "typeID", "solarSystemID", "currentOutput", "mainValue", "reserveValue", "mainBankLink", "reserveBankLastPulseInitiated", "reserveBankPulsesRemaining", "reserveBankPulsesTotal", "reserveBankActiveLinks"],
+            ["essID", "beaconID", "typeID", "solarSystemID", "currentOutput", "mainValue", "reserveValue", "nextScheduledAutopayment", "lastAutopayment", "mainBankLink", "reserveBankLastPulseInitiated", "reserveBankPulsesRemaining", "reserveBankPulsesTotal", "reserveBankActiveLinks"],
             payload.Entries.Select(entry => Assert.IsType<PyStr>(entry.Key).Value));
         Assert.Equal(new PyInt(900000000), Value(payload, "essID"));
         Assert.Equal(new PyInt(900000000), Value(payload, "beaconID"));
@@ -63,6 +63,8 @@ public sealed class EssMgrServiceTests
         Assert.Equal(new PyReal(17.25), Value(payload, "currentOutput"));
         Assert.Equal(new PyReal(1234.567), Value(payload, "mainValue"));
         Assert.Equal(new PyInt(-98), Value(payload, "reserveValue"));
+        Assert.Equal(new PyLong(3002), Value(payload, "nextScheduledAutopayment"));
+        Assert.Equal(new PyLong(2002), Value(payload, "lastAutopayment"));
         Assert.Equal(new PyLong(1337), Value(payload, "reserveBankLastPulseInitiated"));
         Assert.Equal(new PyInt(3), Value(payload, "reserveBankPulsesRemaining"));
         Assert.Equal(new PyInt(9), Value(payload, "reserveBankPulsesTotal"));
@@ -143,7 +145,11 @@ public sealed class EssMgrServiceTests
         ReserveBankPulsesTotal: 9,
         ReserveLinkedCharacterIds: new HashSet<long> { CharacterId, CharacterId + 1 },
         MainBankThefts: [new PyDict([new(new PyStr("bank"), new PyStr("main"))])],
-        ReserveBankThefts: [new PyDict([new(new PyStr("bank"), new PyStr("reserve"))])]);
+        ReserveBankThefts: [new PyDict([new(new PyStr("bank"), new PyStr("reserve"))])])
+    {
+        NextScheduledAutopaymentFileTime = 3002,
+        LastAutopaymentFileTime = 2002,
+    };
 
     private static ClientSession Session(IPacketSink? sink = null)
     {

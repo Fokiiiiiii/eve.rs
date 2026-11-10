@@ -809,6 +809,9 @@ impl Message {
                 out.push(u8::from(*is_criminal));
                 out.extend_from_slice(&expires_at_unix_ms.to_le_bytes());
             }
+            Self::EmpireSentryOffense { session_id } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+            }
             Self::ControlStructure {
                 session_id,
                 solar_system_id,

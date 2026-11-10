@@ -618,6 +618,8 @@ internal sealed class FakeSim : ISimulation
     public void CrimewatchFlagActive(ulong sessionId, bool isCriminal, long expiresAtUnixMs) =>
         Heard.Enqueue(new SimCrimewatchFlagActive(sessionId, isCriminal, expiresAtUnixMs));
 
+    public void EmpireSentryOffense(ulong sessionId) => Heard.Enqueue(new SimEmpireSentryOffense(sessionId));
+
     public void Say(SimMessage message) => Received?.Invoke(message);
 
     public void Lose() => Lost?.Invoke();

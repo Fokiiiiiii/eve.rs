@@ -36,6 +36,8 @@ const SKIRMISH_GAP_METRES: f64 = 40_000.0;
 const SHOT_CYCLE_MS: f64 = 4_000.0;
 const EMPIRE_SENTRY_CYCLE_MS: f64 = 2_500.0;
 pub(crate) const EMPIRE_SENTRY_GROUP_ID: i32 = 99;
+/// The Empire sentry's AI firing radius, from the pinned SDE `entityAttackRange` attribute.
+pub(crate) const EMPIRE_SENTRY_ATTACK_RANGE: f64 = 1_000_000.0;
 const EMPIRE_SENTRY_DISTANCE_METRES: f64 = 50_000.0;
 const CONCORD_FACTION_ID: i64 = 500_006;
 const EMPIRE_SENTRY_OFFSETS: [[f64; 3]; 8] = [
@@ -94,7 +96,7 @@ fn empire_sentry_type(type_id: i32) -> NpcType {
         mass: 1_000.0,
         max_velocity: 0.0,
         agility: 0.0,
-        max_target_range: 1_000_000.0,
+        max_target_range: EMPIRE_SENTRY_ATTACK_RANGE,
         max_locked: 8,
         scan_resolution: 0.0,
         signature_radius: 0.0,

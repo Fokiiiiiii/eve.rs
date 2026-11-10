@@ -1238,6 +1238,8 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     public void CrimewatchFlagActive(ulong sessionId, bool isCriminal, long expiresAtUnixMs) =>
         Send(new SimCrimewatchFlagActive(sessionId, isCriminal, expiresAtUnixMs));
 
+    public void EmpireSentryOffense(ulong sessionId) => Send(new SimEmpireSentryOffense(sessionId));
+
     public async ValueTask DisposeAsync()
     {
         await _stop.CancelAsync();

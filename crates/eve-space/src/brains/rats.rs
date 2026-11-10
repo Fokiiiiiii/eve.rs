@@ -12,7 +12,9 @@ use eve_behaviors::trees::combat::{
 use eve_behaviors::trees::role::create_register_entity_role;
 use eve_behaviors::value::Value;
 
-use crate::pochven_population::{CAMP, CAMP_EDENCOM, Owners, SENTRY_EDENCOM, SENTRY_TRIGLAVIAN};
+use crate::pochven_population::{
+    CAMP, CAMP_EDENCOM, EMPIRE_SENTRY_ATTACK_RANGE, Owners, SENTRY_EDENCOM, SENTRY_TRIGLAVIAN,
+};
 
 /// The name the tree is given an NPC by (`Scene::spawn_npc_with_behavior`).
 pub const BELT_RAT: &str = "belt rat";
@@ -39,7 +41,7 @@ pub fn create_belt_rat_behavior_tree() -> BehaviorTree {
     )
 }
 
-/// Empire sentries only acquire a ship after its security status falls in their system.
+/// Empire sentries acquire a ship only after a local illegal offense, security-status loss, or criminal-flag activation.
 pub fn create_empire_sentry_behavior_tree() -> BehaviorTree {
     selector()
         .named("Empire Sentry")
@@ -47,7 +49,7 @@ pub fn create_empire_sentry_behavior_tree() -> BehaviorTree {
         .add(create_combat_behavior(Combat {
             orbit_velocity: Value::Int(0),
             orbit_range: Value::Float(0.0),
-            attack_range: Value::Float(550_000.0),
+            attack_range: Value::Float(EMPIRE_SENTRY_ATTACK_RANGE),
             proximity_sensor_tags: Value::Tuple(Vec::new()),
             security_status_loss_only: true,
             ..Combat::default()

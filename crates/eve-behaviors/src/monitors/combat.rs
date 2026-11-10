@@ -5,8 +5,8 @@ use std::collections::BTreeSet;
 use crate::consts::{CATEGORY_DRONE, CATEGORY_FIGHTER, is_player_owner};
 use crate::env::WorldError;
 use crate::events::message::{
-    CRIMEWATCH_EVENT_STARTED, CRIMINAL_FLAG_ACTIVE, INDIRECT_OFFENSE_EVENT, MAX_LOCKED_TARGETS_CHANGED,
-    ON_CLOAK_BALL, SEC_STATUS_LOST_EVENT,
+    CRIMEWATCH_EVENT_STARTED, CRIMINAL_FLAG_ACTIVE, EMPIRE_SENTRY_OFFENSE, INDIRECT_OFFENSE_EVENT,
+    MAX_LOCKED_TARGETS_CHANGED, ON_CLOAK_BALL, SEC_STATUS_LOST_EVENT,
 };
 use crate::groups::mixin::get_member_bubble_set;
 use crate::monitors::ballparks::item_subject;
@@ -461,7 +461,7 @@ impl Task for MaxLockedTargetsChangedMonitor {
     }
 }
 
-/// Puts a ship that lost security status in my bubble on the combat targets (`MonitorSecurityStatusLoss`).
+/// Puts a ship that lost security status, committed a local illegal offense, or has an active criminal flag in my bubble on the combat targets.
 #[derive(Debug, Default)]
 pub struct MonitorSecurityStatusLoss {
     solar_system_id: Option<i64>,
@@ -477,6 +477,7 @@ impl Task for MonitorSecurityStatusLoss {
         if let Some(solar_system_id) = t.world().solar_system_id() {
             self.solar_system_id = Some(solar_system_id);
             t.subscribe_item(solar_system_id, SEC_STATUS_LOST_EVENT, 0);
+            t.subscribe_item(solar_system_id, EMPIRE_SENTRY_OFFENSE, 0);
             t.subscribe_item(solar_system_id, CRIMINAL_FLAG_ACTIVE, 0);
         }
         let Some(address) = t.required_address("combatTargetsAddress") else {
@@ -495,6 +496,7 @@ impl Task for MonitorSecurityStatusLoss {
         t.set_status_to_invalid();
         if let Some(solar_system_id) = self.solar_system_id.filter(|s| *s != 0) {
             t.unsubscribe_item(solar_system_id, SEC_STATUS_LOST_EVENT, 0);
+            t.unsubscribe_item(solar_system_id, EMPIRE_SENTRY_OFFENSE, 0);
             t.unsubscribe_item(solar_system_id, CRIMINAL_FLAG_ACTIVE, 0);
         }
     }
@@ -774,6 +776,26 @@ mod tests {
         rig.clean_up_task();
         assert!(rig.shared.events.subscribers(30000142, SEC_STATUS_LOST_EVENT).is_empty());
         assert!(rig.shared.events.subscribers(30000142, CRIMINAL_FLAG_ACTIVE).is_empty());
+    }
+
+    #[test]
+    fn an_applied_empire_sentry_offense_adds_only_a_ship_in_my_bubble_to_combat_targets() {
+        let attrs = Attrs::new().with("combatTargetsAddress", item("Combat"));
+        let mut rig = Rig::new();
+        rig.post(ScopeType::Item, "Combat", Value::None);
+        rig.world.solar_system = Some(30000142);
+        rig.world.add_ball(1, [0.0; 3], 2).new_bubble_id = 3;
+        rig.world.add_ball(40, [0.0; 3], 1).new_bubble_id = 3;
+        rig.world.add_ball(41, [0.0; 3], 1).new_bubble_id = 4;
+        rig.run(Box::new(MonitorSecurityStatusLoss::default()), attrs);
+
+        tell(&mut rig, 30000142, EMPIRE_SENTRY_OFFENSE, &[Value::Int(1), Value::Int(41)]);
+        assert_eq!(combat_set(&mut rig), Value::None, "different bubble");
+        tell(&mut rig, 30000142, EMPIRE_SENTRY_OFFENSE, &[Value::Int(1), Value::Int(40)]);
+        assert_eq!(combat_set(&mut rig), Value::Set(vec![Value::Int(40)]));
+
+        rig.clean_up_task();
+        assert!(rig.shared.events.subscribers(30000142, EMPIRE_SENTRY_OFFENSE).is_empty());
     }
 
     #[test]

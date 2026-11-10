@@ -486,6 +486,7 @@ impl Sim {
                 | Message::ShipSpec { session_id, .. }
                 | Message::Bind { session_id }
                 | Message::CrimewatchFlagActive { session_id, .. }
+                | Message::EmpireSentryOffense { session_id }
                 | Message::Leave { session_id, .. }
                 | Message::UpdateState { session_id, .. } => {
                     self.sessions.get(session_id).map(|key| vec![*key])
@@ -796,6 +797,7 @@ impl Sim {
             | Message::Bind { .. }
             | Message::UpdateState { .. }
             | Message::CrimewatchFlagActive { .. }
+            | Message::EmpireSentryOffense { .. }
             | Message::Spawn(..)
             | Message::Destroy { .. }
             | Message::Respawn { .. }
@@ -1151,6 +1153,13 @@ impl Sim {
                 .scene_of(session_id)
                 .map(|scene| {
                     scene.crimewatch_flag_active(session_id, is_criminal, expires_at_unix_ms, now);
+                    Vec::new()
+                })
+                .unwrap_or_default(),
+            Message::EmpireSentryOffense { session_id } => self
+                .scene_of(session_id)
+                .map(|scene| {
+                    scene.queue_empire_sentry_offense(session_id);
                     Vec::new()
                 })
                 .unwrap_or_default(),

@@ -408,9 +408,14 @@ public sealed class SpaceProbeScans
     private async Task<IReadOnlyList<ScanTargetSite>> SimulationTargetsAsync(ClientSession session, CancellationToken cancellationToken)
     {
         var reply = await _sim.CommandAsync((ulong)session.SessionId, ScanTargetsCommand, [], cancellationToken);
+        var cloakedShips = _space.CloakedShipIds();
         var sites = new List<ScanTargetSite>();
         foreach (var target in reply.ScanTargets)
         {
+            if (target.Kind == KindShip && cloakedShips.Contains(target.Id))
+            {
+                continue;
+            }
             await _statics.EnsureTypesAsync([target.TypeId], cancellationToken);
             if (_statics.Type(target.TypeId) is not { } type)
             {

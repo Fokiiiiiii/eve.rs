@@ -338,8 +338,14 @@ pub enum Out {
         ship_type_id: i32,
         corporation_id: i32,
     },
-    /// A turret spent rounds: how many it has left (the host keeps the quantity of the charge item).
-    ChargeSpent { session: SessionId, module_id: i64, rounds_left: i64 },
+    /// A turret spent rounds, or a laser crystal took wear: the host keeps the quantity or absolute damage of the loaded charge item.
+    ChargeSpent {
+        session: SessionId,
+        module_id: i64,
+        rounds_left: i64,
+        charge_type_id: i32,
+        crystal_damage: Option<f64>,
+    },
     /// The answer to `AdjustCharge`: whether the gun runs, the rounds it had and the rounds it has.
     ChargeAdjusted { session: SessionId, request_id: u64, running: bool, before: i64, after: i64 },
     /// A can the host asked for (`PlaceContainer`) is in space: where, and how it lies.

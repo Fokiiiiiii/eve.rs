@@ -149,12 +149,17 @@ def dot_bytes(d):
     # a breacher pod's damage over time (protocol 42): a flag, then its duration, its cap per tick and its percentage per tick
     return bytes([1]) + struct.pack("<3d", d["durationMs"], d["maxDamagePerTick"], d["maxHpPercentPerTick"]) if d else bytes([0])
 
+def crystal_wear(wear):
+    return bytes([0]) if not wear else bytes([1]) + struct.pack(
+        "<4d", wear["volatilityChance"], wear["volatilityDamage"], wear["hitPoints"], wear["damage"]
+    )
+
 def turret(t):
     body = struct.pack("<i", t["weaponTypeId"]) + s(t["fx"])
     body += struct.pack("<8d", *t["rawDamage"], t["optimalRange"], t["falloff"], t["trackingSpeed"], t["signatureResolution"])
     c = t.get("charge")
     # the charge's reloads byte (protocol 38, FP-C8): the gun reloads from its hold when its rounds run out
-    body += bytes([0]) if not c else bytes([1]) + struct.pack("<iiqq", c["typeId"], c["flag"], c["rounds"], c["perCycle"]) + bytes([1 if c.get("reloads") else 0])
+    body += bytes([0]) if not c else bytes([1]) + struct.pack("<iiqq", c["typeId"], c["flag"], c["rounds"], c["perCycle"]) + bytes([1 if c.get("reloads") else 0]) + crystal_wear(c.get("crystalWear"))
     m = t.get("missile")
     body += bytes([0]) if not m else (bytes([1]) + struct.pack("<ii", m["chargeTypeId"], m["groupId"]) + s(m["name"])
                                       + struct.pack("<10d", m["radius"], m["mass"], m["agility"], m["hitPoints"], m["maxVelocity"], m["flightTimeMs"],
@@ -622,7 +627,11 @@ def build(m):
                      + i64(m["killerShipId"]) + wreck_kind(m.get("wreckKind"))
                      + struct.pack("<ii", m["shipTypeId"], m["corporationId"]))
     if k == "ChargeSpent":
-        return frame(k, u64(m["sessionId"]) + i64(m["moduleId"]) + i64(m["roundsLeft"]))
+        damage = m.get("crystalDamage")
+        charge_type = int(m.get("chargeTypeId", 0))
+        return frame(k, u64(m["sessionId"]) + i64(m["moduleId"]) + i64(m["roundsLeft"])
+                     + struct.pack("<iB", charge_type, 0 if damage is None else 1)
+                     + (b"" if damage is None else struct.pack("<d", damage)))
     # protocol 38 (FP-C4b, FP-C5): a refresh of a running effect: the cycle, the capacitor a cycle costs, the turret (a flag, then the turret) and the changes
     if k == "UpdateEffect":
         t = m.get("turret")
@@ -631,7 +640,8 @@ def build(m):
     if k == "AdjustCharge":
         add = m["op"] == "add"
         return frame(k, u64(m["requestId"]) + u64(m["sessionId"]) + i64(m["moduleId"]) + struct.pack("<i", m["chargeType"])
-                     + bytes([0 if add else 1]) + i64(m["capacity"] if add else m["quantity"]) + i64(m["available"] if add else "0"))
+                     + bytes([0 if add else 1]) + i64(m["capacity"] if add else m["quantity"]) + i64(m["available"] if add else "0")
+                     + crystal_wear(m.get("crystalWear") if add else None))
     if k == "ChargeAdjusted":
         return frame(k, u64(m["requestId"]) + bytes([1 if m["running"] else 0]) + i64(m["before"]) + i64(m["after"]))
     if k == "Respawn":
@@ -1793,6 +1803,19 @@ valid += [
     {"name": "confirmed private NPC environment refresh", "kind": "RefreshAbyssalNpcReply", "requestId": "57", "ok": True},
     {"name": "confirmed no-death scene cleanup of settled NPC and cache-wreck IDs", "kind": "RemoveAbyssalScene", "requestId": "59",
      "scene": CACHE_ROOM, "settledNpcIds": [PRIVATE_NPC["ship"]["shipId"]], "settledLootIds": ["9988400002421"]},
+    {"name": "activate a damageable laser crystal", "kind": "Activate", "sessionId": "1790646377000015",
+     "effect": {"moduleId": "9988400002719", "moduleType": 450, "effectId": 10, "fx": "effects.Laser",
+                "durationMs": 2500.0, "capacitorNeed": 1.0, "repeat": 1000, "targetId": "980050000108",
+                "turret": {"weaponTypeId": 450, "requiresGunnery": True, "fx": "effects.Laser", "rawDamage": [0.0, 5.0, 7.0, 0.0],
+                           "optimalRange": 10000.0, "falloff": 5000.0, "trackingSpeed": 0.4, "signatureResolution": 40000.0,
+                           "charge": {"typeId": 23071, "flag": 28, "rounds": 1, "perCycle": 0,
+                                      "crystalWear": {"volatilityChance": 1.0, "volatilityDamage": 0.00025, "hitPoints": 1.0, "damage": 0.375}}},
+                "onChanges": [], "offChanges": []}},
+    {"name": "absolute laser crystal damage after a firing cycle", "kind": "ChargeSpent", "sessionId": "1790646377000015",
+     "moduleId": "9988400002719", "roundsLeft": "1", "chargeTypeId": 23071, "crystalDamage": 0.37525},
+    {"name": "load a worn laser crystal into a gun that runs", "kind": "AdjustCharge", "requestId": "45", "sessionId": "1790646377000015",
+     "moduleId": "9988400002719", "chargeType": 23071, "op": "add", "capacity": "1", "available": "1",
+     "crystalWear": {"volatilityChance": 1.0, "volatilityDamage": 0.00025, "hitPoints": 1.0, "damage": 0.375}},
 ]
 
 for case in valid:
@@ -2104,6 +2127,11 @@ invalid.append({"name": "cutoff ready without evidence", "reason": "bad-value", 
 invalid.append({"name": "cutoff invalid evidence", "reason": "bad-value", "hex": build(dict(named("cutoff ready"), evidence=[["1", "2", 3]])).hex()})
 invalid.append({"name": "Empire sentry offense zero session", "reason": "bad-value",
                 "hex": frame("EmpireSentryOffense", u64("0")).hex()})
+crystal_spent = named("absolute laser crystal damage after a firing cycle")
+invalid.append({"name": "crystal damage without a positive charge type", "reason": "bad-value",
+                "hex": build(dict(crystal_spent, chargeTypeId=0)).hex()})
+invalid.append({"name": "negative crystal damage", "reason": "bad-value",
+                "hex": build(dict(crystal_spent, crystalDamage=-0.1)).hex()})
 
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 with open(OUT, "w", encoding="utf-8") as f:

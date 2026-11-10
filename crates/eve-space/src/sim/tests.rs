@@ -4199,6 +4199,7 @@ fn a_controlled_structure_uses_real_locks_for_remote_neutralizers() {
             rounds: 2,
             per_cycle: 1,
             reloads: false,
+            crystal_wear: None,
         }),
         missile: Some(crate::missiles::Missile {
             charge_type_id: 37_844,
@@ -4834,5 +4835,5 @@ fn tether_host_policy_dispatches_to_the_real_scene_and_transitions_return_to_the
         )
         .unwrap_err();
     assert!(wrong_direction.0.contains("kind 81"));
-    assert_eq!(crate::link::PROTOCOL_VERSION, 95);
+    assert_eq!(crate::link::PROTOCOL_VERSION, 96);
 }

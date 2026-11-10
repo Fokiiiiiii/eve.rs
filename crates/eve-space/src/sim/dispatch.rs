@@ -215,8 +215,14 @@ impl Sim {
                 ship_type_id,
                 corporation_id,
             },
-            Out::ChargeSpent { session, module_id, rounds_left } => {
-                Message::ChargeSpent { session_id: session, module_id, rounds_left }
+            Out::ChargeSpent { session, module_id, rounds_left, charge_type_id, crystal_damage } => {
+                Message::ChargeSpent {
+                    session_id: session,
+                    module_id,
+                    rounds_left,
+                    charge_type_id,
+                    crystal_damage,
+                }
             }
             Out::ChargeAdjusted { request_id, running, before, after, .. } => {
                 Message::ChargeAdjusted { request_id, running, before, after }

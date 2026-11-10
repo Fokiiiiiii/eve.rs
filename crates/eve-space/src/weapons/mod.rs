@@ -132,9 +132,31 @@ impl Spool {
     }
 }
 
+/// A laser crystal's SDE volatility and the damage the current item has already taken.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CrystalWear {
+    pub volatility_chance: f64,
+    pub volatility_damage: f64,
+    pub hit_points: f64,
+    pub damage: f64,
+}
+
+impl CrystalWear {
+    pub fn is_valid(self) -> bool {
+        self.volatility_chance.is_finite()
+            && (0.0..=1.0).contains(&self.volatility_chance)
+            && self.volatility_damage.is_finite()
+            && self.volatility_damage >= 0.0
+            && self.hit_points.is_finite()
+            && self.hit_points > 0.0
+            && self.damage.is_finite()
+            && (0.0..=self.hit_points).contains(&self.damage)
+    }
+}
+
 /// The ammunition in a turret: the kind, the slot it sits in (the client knows a loaded charge by the ship, the slot and the kind), the rounds it holds and the
-/// rounds a cycle spends.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// rounds a cycle spends. A damageable laser crystal has a wear rule and does not spend its one item per shot.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Charge {
     pub type_id: i32,
     pub flag: i32,
@@ -143,6 +165,7 @@ pub struct Charge {
     /// The gun reloads from the hold when its rounds run out (the host answers the spend with a load): the simulation waits for that answer
     /// instead of stopping the gun (FP-C8).
     pub reloads: bool,
+    pub crystal_wear: Option<CrystalWear>,
 }
 
 /// Where and how a ship moves, for the sake of a shot.

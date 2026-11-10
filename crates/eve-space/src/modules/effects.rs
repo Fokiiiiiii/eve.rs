@@ -23,6 +23,25 @@ pub(super) fn npc_repair_cycle_is_delayed(session: SessionId, module_id: i64, at
     roll < chance
 }
 
+/// Give each module cycle a repeatable uniform volatility roll, so a retried cycle cannot wear a crystal twice.
+pub(super) fn crystal_wear_hits(session: SessionId, module_id: i64, at: i64, chance: f64) -> bool {
+    if chance <= 0.0 {
+        return false;
+    }
+    if chance >= 1.0 {
+        return true;
+    }
+    let mut bits = session
+        ^ (module_id as u64).rotate_left(23)
+        ^ (at as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93)
+        ^ 0xA076_1D64_78BD_642F;
+    bits = (bits ^ (bits >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    bits = (bits ^ (bits >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    bits ^= bits >> 31;
+    let roll = (bits >> 11) as f64 / ((1_u64 << 53) as f64);
+    roll < chance
+}
+
 impl Scene {
     /// What the client of the ship an effect is projected at is told, for its HUD (`hudIconStates.js` of the reference): as the effect goes on `OnJamStart` (who, which module,
     /// the target, what the HUD calls it, when and for how long: a cycle and a tick over), `OnEwarStart` and the buff bar refreshed; as each cycle begins the timer again; as it ends

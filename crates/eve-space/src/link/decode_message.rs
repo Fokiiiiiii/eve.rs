@@ -1405,7 +1405,21 @@ impl Message {
                 corporation_id: r.i32()?,
             },
             kind::CHARGE_SPENT => {
-                Message::ChargeSpent { session_id: r.u64()?, module_id: r.i64()?, rounds_left: r.i64()? }
+                let session_id = r.u64()?;
+                let module_id = r.i64()?;
+                let rounds_left = r.i64()?;
+                let charge_type_id = r.i32()?;
+                let crystal_damage = match r.u8()? {
+                    0 => None,
+                    1 => Some(r.f64()?),
+                    _ => return Err(DecodeError::BadValue("crystal damage")),
+                };
+                if !matches!((charge_type_id, crystal_damage), (0, None) | (1..=i32::MAX, Some(_)))
+                    || crystal_damage.is_some_and(|damage| !damage.is_finite() || damage < 0.0)
+                {
+                    return Err(DecodeError::BadValue("crystal wear report"));
+                }
+                Message::ChargeSpent { session_id, module_id, rounds_left, charge_type_id, crystal_damage }
             }
             kind::PLACE_CONTAINER => {
                 let session_id = r.u64()?;
@@ -1986,9 +2000,11 @@ impl Message {
                 let charge_type = r.i32()?;
                 let code = r.u8()?;
                 let (first, second) = (r.i64()?, r.i64()?);
+                let crystal_wear = read_crystal_wear(&mut r)?;
                 let op = match code {
-                    0 => ChargeOp::Add { capacity: first, available: second },
-                    1 => ChargeOp::Remove { quantity: first },
+                    0 => ChargeOp::Add { capacity: first, available: second, crystal_wear },
+                    1 if crystal_wear.is_none() => ChargeOp::Remove { quantity: first },
+                    1 => return Err(DecodeError::BadValue("remove charge has crystal wear")),
                     _ => return Err(DecodeError::BadValue("charge op")),
                 };
                 Message::AdjustCharge { request_id, session_id, module_id, charge_type, op }

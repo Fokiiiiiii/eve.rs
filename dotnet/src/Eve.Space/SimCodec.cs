@@ -23,7 +23,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// <summary>The wire uses little-endian integers and length-prefixed text and byte strings.</summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 95;
+    public const ushort ProtocolVersion = 96;
 
     /// <summary>The longest name of a dynamic slim-item field, in bytes (protocol 76).</summary>
     public const int SlimFieldNameMax = 64;
@@ -1201,8 +1201,25 @@ public static partial class SimCodec
                 message = new SimActivate(r.U64(), ReadEffect(ref r));
                 break;
             case Kind.ChargeSpent:
-                message = new SimChargeSpent(r.U64(), r.I64(), r.I64());
-                break;
+                {
+                    var session = r.U64();
+                    var module = r.I64();
+                    var rounds = r.I64();
+                    var chargeType = r.I32();
+                    double? damage = r.U8() switch
+                    {
+                        0 => null,
+                        1 => r.F64(),
+                        _ => throw new SimLinkException(SimLinkError.BadValue, "bad crystal damage"),
+                    };
+                    if (chargeType == 0 && damage is not null || chargeType > 0 && damage is null || chargeType < 0
+                        || damage is { } value && (!double.IsFinite(value) || value < 0))
+                    {
+                        throw new SimLinkException(SimLinkError.BadValue, "bad crystal wear report");
+                    }
+                    message = new SimChargeSpent(session, module, rounds, chargeType, damage);
+                    break;
+                }
             case Kind.AdjustCharge:
                 {
                     var request = r.U64();
@@ -1211,10 +1228,12 @@ public static partial class SimCodec
                     var type = r.I32();
                     var op = r.U8();
                     var (first, second) = (r.I64(), r.I64());
+                    var crystalWear = ReadCrystalWear(ref r);
                     message = new SimAdjustCharge(request, session, module, type, op switch
                     {
-                        0 => new SimChargeOp.Add(first, second),
-                        1 => new SimChargeOp.Remove(first),
+                        0 => new SimChargeOp.Add(first, second, crystalWear),
+                        1 when crystalWear is null => new SimChargeOp.Remove(first),
+                        1 => throw new SimLinkException(SimLinkError.BadValue, "remove charge has crystal wear"),
                         _ => throw new SimLinkException(SimLinkError.BadValue, "charge op"),
                     });
                     break;

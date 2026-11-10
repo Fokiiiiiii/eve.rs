@@ -981,7 +981,7 @@ public static partial class SimCodec
                 0 => false,
                 1 => true,
                 _ => throw new SimLinkException(SimLinkError.BadValue, "bad charge reloads"),
-            }),
+            }, ReadCrystalWear(ref r)),
             _ => throw new SimLinkException(SimLinkError.BadValue, "bad charge"),
         };
         var missile = r.U8() switch
@@ -1015,6 +1015,23 @@ public static partial class SimCodec
             _ => throw new SimLinkException(SimLinkError.BadValue, "bad requires_gunnery"),
         };
         return new SimTurret(weaponType, fx, damage, optimal, falloff, tracking, resolution, charge, missile, spool, aoe, arc, requiresGunnery);
+    }
+
+    private static SimCrystalWear? ReadCrystalWear(ref Reader r) => r.U8() switch
+    {
+        0 => null,
+        1 => ReadCrystalWearValues(ref r),
+        _ => throw new SimLinkException(SimLinkError.BadValue, "bad crystal wear"),
+    };
+
+    private static SimCrystalWear ReadCrystalWearValues(ref Reader r)
+    {
+        var wear = new SimCrystalWear(r.F64(), r.F64(), r.F64(), r.F64());
+        if (!wear.IsValid)
+        {
+            throw new SimLinkException(SimLinkError.BadValue, "bad crystal wear values");
+        }
+        return wear;
     }
 
     private static SimAoe ReadAoe(ref Reader r)

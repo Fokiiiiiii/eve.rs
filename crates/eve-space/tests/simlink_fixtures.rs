@@ -323,6 +323,14 @@ fn turret_of(w: &Value) -> Turret {
             rounds: c["rounds"].as_i64().unwrap(),
             per_cycle: c["perCycle"].as_i64().unwrap(),
             reloads: c.get("reloads").and_then(Value::as_bool).unwrap_or(false),
+            crystal_wear: c.get("crystalWear").filter(|wear| !wear.is_null()).map(|wear| {
+                eve_space::weapons::CrystalWear {
+                    volatility_chance: wear["volatilityChance"].as_f64().unwrap(),
+                    volatility_damage: wear["volatilityDamage"].as_f64().unwrap(),
+                    hit_points: wear["hitPoints"].as_f64().unwrap(),
+                    damage: wear["damage"].as_f64().unwrap(),
+                }
+            }),
         }),
         missile: w.get("missile").filter(|m| !m.is_null()).map(|m| Missile {
             charge_type_id: m["chargeTypeId"].as_i64().unwrap() as i32,
@@ -1526,6 +1534,8 @@ fn message_of(case: &Value) -> Message {
             session_id: session_id(),
             module_id: wide(case, "moduleId"),
             rounds_left: wide(case, "roundsLeft"),
+            charge_type_id: case.get("chargeTypeId").and_then(Value::as_i64).unwrap_or(0) as i32,
+            crystal_damage: case.get("crystalDamage").and_then(Value::as_f64),
         },
         "BuffState" => Message::BuffState {
             session_id: session_id(),
@@ -1555,9 +1565,18 @@ fn message_of(case: &Value) -> Message {
             module_id: wide(case, "moduleId"),
             charge_type: number("chargeType") as i32,
             op: match case["op"].as_str().unwrap() {
-                "add" => {
-                    ChargeOp::Add { capacity: wide(case, "capacity"), available: wide(case, "available") }
-                }
+                "add" => ChargeOp::Add {
+                    capacity: wide(case, "capacity"),
+                    available: wide(case, "available"),
+                    crystal_wear: case.get("crystalWear").filter(|wear| !wear.is_null()).map(|wear| {
+                        eve_space::weapons::CrystalWear {
+                            volatility_chance: wear["volatilityChance"].as_f64().unwrap(),
+                            volatility_damage: wear["volatilityDamage"].as_f64().unwrap(),
+                            hit_points: wear["hitPoints"].as_f64().unwrap(),
+                            damage: wear["damage"].as_f64().unwrap(),
+                        }
+                    }),
+                },
                 "remove" => ChargeOp::Remove { quantity: wide(case, "quantity") },
                 other => panic!("unknown charge op {other}"),
             },

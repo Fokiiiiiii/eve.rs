@@ -1,5 +1,26 @@
 use super::*;
 
+pub(super) fn read_crystal_wear(
+    reader: &mut Reader<'_>,
+) -> Result<Option<crate::weapons::CrystalWear>, DecodeError> {
+    match reader.u8()? {
+        0 => Ok(None),
+        1 => {
+            let wear = crate::weapons::CrystalWear {
+                volatility_chance: reader.f64()?,
+                volatility_damage: reader.f64()?,
+                hit_points: reader.f64()?,
+                damage: reader.f64()?,
+            };
+            if !wear.is_valid() {
+                return Err(DecodeError::BadValue("crystal wear"));
+            }
+            Ok(Some(wear))
+        }
+        _ => Err(DecodeError::BadValue("crystal wear")),
+    }
+}
+
 use crate::missiles::Dot;
 
 pub(super) fn read_weapon(reader: &mut Reader) -> Result<NpcWeapon, DecodeError> {
@@ -84,7 +105,8 @@ pub(super) fn read_turret(reader: &mut Reader) -> Result<Turret, DecodeError> {
                 1 => true,
                 _ => return Err(DecodeError::BadValue("charge reloads")),
             };
-            Some(Charge { type_id, flag, rounds, per_cycle, reloads })
+            let crystal_wear = read_crystal_wear(reader)?;
+            Some(Charge { type_id, flag, rounds, per_cycle, reloads, crystal_wear })
         }
         _ => return Err(DecodeError::BadValue("charge")),
     };

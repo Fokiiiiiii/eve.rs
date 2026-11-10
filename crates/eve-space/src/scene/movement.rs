@@ -119,11 +119,21 @@ impl Scene {
         let command = Command::PositionOf { target_id }.code();
         let refused = |reason| vec![Out::Refused { session, command, reason }];
         let target =
-            self.system.body(target_id).map(|body| (body.position, None, Some(body.radius))).or_else(|| {
-                self.pilots.values().find(|pilot| pilot.ship.spec.ship_id == target_id).map(|pilot| {
-                    (pilot.ship.position, Some(pilot.ship.direction), Some(pilot.ship.spec.radius))
+            self.system
+                .body(target_id)
+                .map(|body| (body.position, None, Some(body.radius)))
+                .or_else(|| {
+                    self.pilots.values().find(|pilot| pilot.ship.spec.ship_id == target_id).map(|pilot| {
+                        (pilot.ship.position, Some(pilot.ship.direction), Some(pilot.ship.spec.radius))
+                    })
                 })
-            });
+                .or_else(|| {
+                    self.deployables.get(&target_id).and_then(|deployable| match &deployable.role {
+                        crate::deployable::Role::DeadspacePocket
+                        | crate::deployable::Role::JumpBridge { .. } => None,
+                        _ => Some((deployable.position, None, Some(deployable.spec.radius))),
+                    })
+                });
         let Some((position, direction, radius)) = target else {
             return refused("TARGET_NOT_FOUND");
         };

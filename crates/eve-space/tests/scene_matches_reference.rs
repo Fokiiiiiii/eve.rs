@@ -44,12 +44,17 @@ impl Recorded {
     }
 }
 
+#[test]
+fn recorded_scene_comparisons_require_static_data() {
+    assert!(
+        Sde::locate().is_some(),
+        "recorded scene comparisons require the pinned SDE; run `cargo run -p eve-sde -- ensure` first"
+    );
+}
+
 /// The scene the recording was made in, with the recorded ship in space at `now`.
-fn scene_at(now: i64) -> Option<(Scene, Recorded)> {
-    let Some(sde) = Sde::locate() else {
-        eprintln!("no static data found (EVE_SDE_DIR or .cache/sde): skipped");
-        return None;
-    };
+fn scene_at(now: i64) -> (Scene, Recorded) {
+    let sde = Sde::locate().expect("recorded scene comparisons require the pinned SDE");
     let world = World::load(sde).expect("the static data loads");
     let recorded = Recorded { recording: fixture("undock.json") };
     let race = recorded.race().clone();
@@ -57,12 +62,12 @@ fn scene_at(now: i64) -> Option<(Scene, Recorded)> {
     let spec = recorded_ship(&race, &ball, recorded_direction(&race)).spec;
     let mut scene = Scene::new(Arc::new(world.system(SYSTEM).unwrap()));
     scene.undock(SESSION, spec, race["stationID"].as_i64().unwrap(), now).unwrap();
-    Some((scene, recorded))
+    (scene, recorded)
 }
 
 #[test]
 fn binding_says_what_the_reference_said() {
-    let Some((mut scene, recorded)) = scene_at(SIM_TIME) else { return };
+    let (mut scene, recorded) = scene_at(SIM_TIME);
     let out = scene.bind(SESSION, SIM_TIME);
     let bind = step(recorded.race(), "bind the ballpark");
     let events: Vec<&Value> = bind["events"].as_array().unwrap().iter().collect();
@@ -124,7 +129,7 @@ fn binding_says_what_the_reference_said() {
 fn the_ship_comes_out_where_the_reference_put_its_ship() {
     // the reference's table of undock points is ours too: the recorded ship stands on the line that leaves our undock point along the way both face
     // (the reference's had been flying for about a second when it was first seen), and faces the same way to the last digits
-    let Some((mut scene, recorded)) = scene_at(SIM_TIME) else { return };
+    let (mut scene, recorded) = scene_at(SIM_TIME);
     let race = recorded.race();
     let (_, _, ball) = initial_ship_addition(race);
     let seen = vec_at(&ball, 13);
@@ -167,7 +172,7 @@ fn recorded_warp() -> (Value, Vec<(f64, String, Value)>) {
 
 #[test]
 fn a_warp_is_answered_with_the_update_the_reference_sent() {
-    let Some((mut scene, _)) = scene_at(SIM_TIME) else { return };
+    let (mut scene, _) = scene_at(SIM_TIME);
     let (race, recorded) = recorded_warp();
     let planet = race["planetID"].as_i64().unwrap();
     let now = SIM_TIME + 50_000_000;
@@ -192,7 +197,7 @@ fn a_warp_is_answered_with_the_update_the_reference_sent() {
 
 #[test]
 fn a_warp_drops_out_and_comes_to_rest_when_the_reference_ship_did() {
-    let Some((mut scene, _)) = scene_at(SIM_TIME) else { return };
+    let (mut scene, _) = scene_at(SIM_TIME);
     let (race, recorded) = recorded_warp();
     let planet = race["planetID"].as_i64().unwrap();
     let now = SIM_TIME + 50_000_000;
@@ -268,7 +273,7 @@ fn recorded_command(recorded: &Recorded, label: &str) -> (i64, Command, Value) {
 
 #[test]
 fn each_command_is_answered_with_the_update_the_reference_sent() {
-    let Some((mut scene, recorded)) = scene_at(SIM_TIME) else { return };
+    let (mut scene, recorded) = scene_at(SIM_TIME);
     scene.bind(SESSION, SIM_TIME);
     for label in ["speed fraction", "go in a direction", "go in another direction", "stop"] {
         let (stamp, command, expected) = recorded_command(&recorded, label);
@@ -336,7 +341,7 @@ fn forbid_extra_update(args: &Value, label: &str) {
 
 #[test]
 fn each_order_is_answered_with_the_update_the_reference_sent() {
-    let Some((mut scene, _)) = scene_at(SIM_TIME) else { return };
+    let (mut scene, _) = scene_at(SIM_TIME);
     let movement = fixture("movement.json");
     let race = &movement["races"][0];
     let station = race["stationID"].as_i64().unwrap();
@@ -438,7 +443,7 @@ fn a_docking_is_accepted_and_finished_as_the_reference_did() {
     let dock = step(&recording["races"][0], "dock").clone();
     let stamp = destiny_actions(&dock).into_iter().next().unwrap().0;
     let now = at_stamp(stamp);
-    let Some((mut scene, recorded)) = scene_at(now) else { return };
+    let (mut scene, recorded) = scene_at(now);
     let station = recorded.race()["stationID"].as_i64().unwrap();
     let sentries = scene.poll(now);
     assert_eq!(sentries.len(), 64);

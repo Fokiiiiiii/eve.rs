@@ -27,7 +27,7 @@ V24.01 の `eve/client/script/ui/shared/neocom/wallet/walletSvc.py:125-127` は�
 - Release build: `Eve.Host.Tests` と `Eve.Corporations.Tests` を `-warnaserror` で build。参照先の変更済み production projects も含め、警告 0、エラー 0。
 - `eve_p4` 上の個人請求 Host wire slice: 2 passed、0 failed、0 skipped。成功、残高不足、再試行、二重支払い防止、並行支払い、通知永続化を含む。
 - `Activity_alpha_injector_and_bill_rpcs`, `BillMgrHostRpcTests`, 個人請求の Host tests は 4 passed、0 failed、0 skipped（上記2件を含む）。
-- `eve_p4` 上の CorporationStore 参照クラス: `AccountRpcTests`, `AllianceTests`, `BillMgrServiceTests`, `CorpStationMgrTests`, `CorporationProtocolTests`, `CorporationTests`, `ItemLockTests`, `MembershipTests`, `StandingMgrServiceTests`, `WarRegistryTests` は 144 passed、0 failed、0 skipped。初回に migration 一覧 assertion が追加 migration を含まず失敗したため、期待一覧へ `018_character_bills` を明記して同じ範囲を再実行した。
+- `eve_p4` 上の CorporationStore 参照クラス: `AccountRpcTests`, `AllianceTests`, `BillMgrServiceTests`, `CorpStationMgrTests`, `CorporationProtocolTests`, `CorporationTests`, `ItemLockTests`, `MembershipTests`, `StandingMgrServiceTests`, `WarRegistryTests` は 144 passed、0 failed、0 skipped。初回に migration 一覧 assertion が追加 migration を含まず失敗したため、期待一覧へ `018_character_bills` を明記して同じ範囲を再実行した。最新 `origin/main` には `018_medal_award_visibility` が入ったため、統合後の請求 migration は `019_character_bills` に採番し直した。
 
 ## 未確認の範囲
 

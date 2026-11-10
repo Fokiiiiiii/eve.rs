@@ -958,7 +958,8 @@ private static PyValue RowField(PyValue value,string key)
                 "015_skill_based_member_limits",
                 "016_war_negotiations",
                 "017_peace_treaties",
-                "018_character_bills"
+                "018_medal_award_visibility",
+                "019_character_bills"
             },applied);
 
             await using var read = await rig.Source.OpenConnectionAsync();
@@ -974,8 +975,18 @@ private static PyValue RowField(PyValue value,string key)
             }
             await using (var award = read.CreateCommand())
             {
-                award.CommandText = $"SELECT award_id FROM {schema}.medal_awards WHERE medal_id=7 AND character_id=8";
-                Assert.True((long)(await award.ExecuteScalarAsync())! > 0);
+                award.CommandText = $"SELECT status FROM {schema}.medal_awards WHERE medal_id=7 AND character_id=8";
+                Assert.Equal(3,(int)(await award.ExecuteScalarAsync())!);
+            }
+            await using (var medalStatus = read.CreateCommand())
+            {
+                medalStatus.CommandText = $"SELECT data->>'status' FROM {schema}.medals WHERE id=7";
+                Assert.Equal("3",(string)(await medalStatus.ExecuteScalarAsync())!);
+            }
+            await using (var awardId = read.CreateCommand())
+            {
+                awardId.CommandText = $"SELECT award_id FROM {schema}.medal_awards WHERE medal_id=7 AND character_id=8";
+                Assert.True((long)(await awardId.ExecuteScalarAsync())! > 0);
             }
             await using (var ceoState = read.CreateCommand())
             {
@@ -1372,14 +1383,17 @@ private static PyValue RowField(PyValue value,string key)
         var founderMedalId = Assert.IsType<PyInt>(await FounderRpc("CreateMedal",
             new PyWString("Founder"), new PyWString("For service"), graphics)).Value;
         var privateFounderMedal = new PyDict([new(new PyInt(founderMedalId), new PyInt(2))]);
+        await Assert.ThrowsAsync<CorporationError>(async () => await FounderRpc("SetMedalStatus", privateFounderMedal));
+        Assert.IsType<PyNone>(await FounderRpc("GiveMedalToCharacters", new PyInt(founderMedalId),
+            new PyInt(founder), new PyWString("Founder award")));
         Assert.IsType<PyNone>(await FounderRpc("SetMedalStatus", privateFounderMedal));
         var outsiderSession = new ClientSession { CharacterId = outsider };
         ValueTask<PyValue> OutsiderRpc(string method, params PyValue[] args) =>
             service.CallAsync(Call(outsiderSession, method, args));
         var outsiderMedals = Assert.IsType<PyTuple>(CachedPayload(await OutsiderRpc(
             "GetAllCorpMedals", new PyInt(corp.Id))));
-        Assert.Empty(Lines(outsiderMedals.Items[0]));
-        Assert.Empty(Assert.IsType<PyList>(Field(await OutsiderRpc(
+        Assert.Single(Lines(outsiderMedals.Items[0]));
+        Assert.Single(Assert.IsType<PyList>(Field(await OutsiderRpc(
             "GetMedalDetails", new PyInt(founderMedalId)), "info")).Items);
         Assert.Empty(Lines(await OutsiderRpc("GetRecipientsOfMedal", new PyInt(founderMedalId))));
 
@@ -1437,30 +1451,36 @@ private static PyValue RowField(PyValue value,string key)
         Assert.Equal(new PyInt(0), Field(emptyDetail, "numberOfRecipients"));
 
         var status = new PyDict([new(new PyInt(medalId), new PyInt(2))]);
-        Assert.IsType<PyNone>(await MemberRpc("SetMedalStatus", status));
+        await Assert.ThrowsAsync<CorporationError>(async () => await MemberRpc("SetMedalStatus", status));
         await Assert.ThrowsAsync<CorporationError>(async () => await MemberRpc("GiveMedalToCharacters",
             new PyInt(medalId), new PyList([new PyInt(founder), new PyInt(outsider)]), new PyWString("Partial award")));
         Assert.IsType<PyNone>(await MemberRpc("GiveMedalToCharacters",
             new PyInt(medalId), new PyList([new PyInt(founder)]), new PyWString("Service award")));
         Assert.IsType<PyNone>(await MemberRpc("GiveMedalToCharacters",
             new PyInt(medalId), new PyList([new PyInt(founder)]), new PyWString("Repeat award")));
+        Assert.IsType<PyNone>(await FounderRpc("SetMedalStatus", status));
 
         var recipientRows = Lines(await MemberRpc("GetRecipientsOfMedal", new PyInt(medalId)));
-        Assert.Equal(2, recipientRows.Count);
-        var firstRecipient = Assert.IsType<PyList>(recipientRows[0]);
+        Assert.Empty(recipientRows);
+        var recipientRowsAsRecipient = Lines(await FounderRpc("GetRecipientsOfMedal", new PyInt(medalId)));
+        Assert.Equal(2, recipientRowsAsRecipient.Count);
+        var firstRecipient = Assert.IsType<PyList>(recipientRowsAsRecipient[0]);
         Assert.Equal(new PyInt(founder), firstRecipient.Items[1]);
         Assert.Equal(new PyInt(member), firstRecipient.Items[2]);
         Assert.Equal(new PyWString("Service award"), firstRecipient.Items[3]);
         Assert.IsType<PyLong>(firstRecipient.Items[4]);
-        var secondRecipient = Assert.IsType<PyList>(recipientRows[1]);
+        var secondRecipient = Assert.IsType<PyList>(recipientRowsAsRecipient[1]);
         Assert.Equal(new PyWString("Repeat award"), secondRecipient.Items[3]);
 
         var received = Assert.IsType<PyTuple>(await FounderRpc("GetMedalsReceived"));
-        var receivedRows = Lines(received.Items[0]);
-        Assert.Equal(2, receivedRows.Count);
-        Assert.Equal(new PyWString("Service award"), Assert.IsType<PyList>(receivedRows[0]).Items[4]);
-        Assert.Equal(new PyWString("Repeat award"), Assert.IsType<PyList>(receivedRows[1]).Items[4]);
-        Assert.Single(Lines(received.Items[1]));
+        var receivedRows = Lines(received.Items[0]).Select(value => Assert.IsType<PyList>(value))
+            .Where(row => Assert.IsType<PyInt>(row.Items[0]).Value == medalId).ToArray();
+        Assert.Equal(2, receivedRows.Length);
+        Assert.Equal(new PyWString("Service award"), receivedRows[0].Items[4]);
+        Assert.Equal(new PyWString("Repeat award"), receivedRows[1].Items[4]);
+        Assert.Equal(new PyInt(2), receivedRows[0].Items[3]);
+        Assert.Equal(new PyInt(2), receivedRows[1].Items[3]);
+        Assert.Equal(2, Lines(received.Items[1]).Count);
         var crossCharacterReceived = Assert.IsType<PyTuple>(await MemberRpc("GetMedalsReceived", new PyInt(founder)));
         Assert.Empty(Lines(crossCharacterReceived.Items[0]));
 

@@ -6,7 +6,7 @@ Date: 2026-11-04
 
 Reviewed comments and private-member usage in `dotnet/src/Eve.Corporations` and its tests. Corrected the summaries for shareholding and rent-bill records, clarified station-bill creditor behavior and wallet-division access, replaced the item-lock store summary with its vote/read responsibility, and corrected the station-bill test class summary. Removed three file banners that repeated historical EVE.js provenance and an old source hash. The historical `PROVENANCE.md` remains unchanged.
 
-Updated the station rent seed comment to state its limit: the SDE has no live office rents, so the existing code derives a stable 10k–110k value from station data until authoritative office prices are available. No runtime code or assertions changed.
+The station-ID seeded 10k–110k NPC office pricing described by the earlier comment sweep has since been removed. The pinned SDE has no office rental price field; the implementation now uses EveJS 261108.1’s static 10,000 ISK NPC-station rental value consistently for quote, rent settlement, impound release, and stationSvc.GetStation. See `docs/project/deepfix-corporations.md` for the source comparison and registered Host regression.
 
 The slice had no stale issue/status markers or commented-out code. CBM call/usage checks found no private member safe to remove; no helper or member was deleted.
 

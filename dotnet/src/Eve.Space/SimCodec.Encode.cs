@@ -1232,6 +1232,11 @@ private static void WriteStructureDamageCorrelation(
                         w.U8(m.IsCriminal ? (byte)1 : (byte)0);
                         w.I64(m.ExpiresAtUnixMs);
                         break;
+            case SimEmpireSentryOffense m:
+                if (m.SessionId == 0) throw new SimLinkException(SimLinkError.BadValue, "Empire sentry offense session");
+                w.U8(Kind.EmpireSentryOffense);
+                w.U64(m.SessionId);
+                break;
             case SimNotify m:
                 w.U8(Kind.Notify);
                 w.U64(m.SessionId);

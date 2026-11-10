@@ -535,6 +535,13 @@ internal sealed partial class CharacterServicesComposition
                 },
                 now,
                 async (character, token) => await spaceSessions.AffiliationChangedAsync(character, token)).Attach();
+            crimewatchRuntime.Aggressed += result =>
+            {
+                if (result.Action == Eve.Crimewatch.PolicyAction.Attack &&
+                    result.Outcome.Reason is Eve.Crimewatch.AggressionReason.Criminal or Eve.Crimewatch.AggressionReason.Suspect)
+                    spaceSessions?.ReportEmpireSentryOffense(result.Request.Attacker, result.Request.SolarSystemId);
+                return Task.CompletedTask;
+            };
             var bounties = spaceSessions;
             foundations.Scheduler.Register("space.bounty.pay", async (_, token) => await bounties.PayBountiesAsync(token));
             await foundations.Scheduler.EnsureRecurringAsync("space.bounty.pay", "pay", TimeSpan.FromSeconds(10));

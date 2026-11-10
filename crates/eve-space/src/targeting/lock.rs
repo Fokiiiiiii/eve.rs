@@ -1,4 +1,5 @@
 use super::*;
+use crate::pochven_population::EMPIRE_SENTRY_GROUP_ID;
 
 // EVE targeting caps ordinary ships at 300 km and Upwell structures at 490 km; carriers and supercarriers are exempt.
 const SHIP_LOCK_RANGE_CAP: f64 = 300_000.0;
@@ -10,7 +11,7 @@ const SUPERCARRIER_GROUP_ID: i32 = 659;
 fn effective_target_range(spec: &crate::ship::ShipSpec) -> f64 {
     let cap = if spec.category_id == STRUCTURE_CATEGORY_ID {
         STRUCTURE_LOCK_RANGE_CAP
-    } else if matches!(spec.group_id, CARRIER_GROUP_ID | SUPERCARRIER_GROUP_ID) {
+    } else if matches!(spec.group_id, EMPIRE_SENTRY_GROUP_ID | CARRIER_GROUP_ID | SUPERCARRIER_GROUP_ID) {
         f64::INFINITY
     } else {
         SHIP_LOCK_RANGE_CAP

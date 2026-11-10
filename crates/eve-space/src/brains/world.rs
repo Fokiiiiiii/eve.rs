@@ -54,6 +54,7 @@ impl<'a> SceneWorld<'a> {
         self.tell_proximity(shared);
         self.tell_aggressions(shared);
         self.tell_security_status_losses(shared);
+        self.tell_empire_sentry_offenses(shared);
         self.tell_criminal_flags(shared);
         self.tell_protection(shared);
         self.tell_destroyed(shared);
@@ -178,6 +179,21 @@ impl<'a> SceneWorld<'a> {
             } else {
                 self.scene.queue_security_status_loss(owner_id, ship_id);
             }
+        }
+    }
+
+    fn tell_empire_sentry_offenses(&mut self, shared: &mut Shared) {
+        let pending = std::mem::take(&mut self.scene.pending_empire_sentry_offenses);
+        let solar_system_id = i64::from(self.scene.solar_system_id());
+        if shared.events.subscribers(solar_system_id, message::EMPIRE_SENTRY_OFFENSE).is_empty() {
+            return;
+        }
+        for (owner_id, ship_id) in pending {
+            shared.tell_subscribers(
+                Subject::Item(solar_system_id),
+                message::EMPIRE_SENTRY_OFFENSE,
+                &[Value::Int(owner_id), Value::Int(ship_id)],
+            );
         }
     }
 

@@ -15,7 +15,8 @@ impl Scene {
         if placement.solar_system_id != self.solar_system_id()
             || placement.chunk_id <= 0
             || placement.source_structure_id <= 0
-            || placement.module_id <= 0
+            || !((placement.module_id == 0 && placement.module_type_id == 0)
+                || (placement.module_id > 0 && placement.module_type_id > 0))
             || placement.moon_id <= 0
             || !matches!(placement.phase.as_str(), "tractor_phase" | "stasis_phase" | "fracture_phase")
         {
@@ -78,8 +79,11 @@ impl Scene {
                     ],
                 ));
             }
-            if phase_changed {
-                actions.push(payload::moon_chunk_effect(stamp, body));
+            if phase_changed && let Some(effect) = payload::moon_chunk_effect(stamp, body) {
+                actions.push(effect);
+            }
+            if actions.is_empty() {
+                return Vec::new();
             }
             return self
                 .structure_audience()

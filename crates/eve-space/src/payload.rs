@@ -163,11 +163,15 @@ pub fn add_moon_chunk(stamp: u32, system: &SolarSystem, index: usize) -> Result<
         slim::body_entries(system, body).into_iter().map(|(key, value)| (word(key), value)).collect(),
     );
     let ball = action(stamp, "AddBalls2", [tuple([buffer, list([slim])])]);
-    Ok(vec![ball, moon_chunk_effect(stamp, body)])
+    let mut actions = vec![ball];
+    if let Some(effect) = moon_chunk_effect(stamp, body) {
+        actions.push(effect);
+    }
+    Ok(actions)
 }
 
 /// `OnSpecialFX` for the refinery's Standup Moon Drill. `effectStarted` is the sim FILETIME when this phase began.
-pub fn moon_chunk_effect(stamp: u32, body: &crate::world::Body) -> Value {
+pub fn moon_chunk_effect(stamp: u32, body: &crate::world::Body) -> Option<Value> {
     let Detail::MoonChunk {
         source_structure_id,
         module_id,
@@ -177,9 +181,12 @@ pub fn moon_chunk_effect(stamp: u32, body: &crate::world::Body) -> Value {
         phase_started_filetime,
     } = &body.detail
     else {
-        return action(stamp, "OnSpecialFX", []);
+        return None;
     };
-    action(
+    if *module_id <= 0 || *module_type_id <= 0 {
+        return None;
+    }
+    Some(action(
         stamp,
         "OnSpecialFX",
         [
@@ -207,7 +214,7 @@ pub fn moon_chunk_effect(stamp: u32, body: &crate::world::Body) -> Value {
                 ),
             ]),
         ],
-    )
+    ))
 }
 
 /// Replays every persisted moon chunk to a pilot who enters a loaded system.

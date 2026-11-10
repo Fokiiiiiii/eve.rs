@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Globalization;
 using System.Text.Json.Nodes;
 
@@ -792,6 +793,35 @@ public class SimCodecTests
         var placeRoundTrip = SimCodec.Decode(placeFrame.AsMemory(4));
         Assert.Equal(typeof(SimPlaceStructure), placeRoundTrip.GetType());
         Assert.Equal(Convert.ToHexString(placeFrame), Convert.ToHexString(SimCodec.Encode(placeRoundTrip)));
+    }
+
+    [Fact]
+    public void A_moon_chunk_without_a_drill_round_trips_only_with_both_module_fields_zero()
+    {
+        var chunk = new SimUpsertMoonChunk(1_040_000_000_003, 30_000_001, "Moon chunk", 46_030, 1_940, 25, 98_000_001, 12_345,
+            [100, 200, 300], [0, 0, 1], 10_000, 1_040_000_000_001, 0, 0, 40_000_004, "tractor_phase", 134_351_688_000_000_000);
+        var frame = SimCodec.Encode(chunk);
+        var decoded = SimCodec.Decode(frame.AsMemory(4));
+        Assert.Equal(typeof(SimUpsertMoonChunk), decoded.GetType());
+        Assert.Equal(Convert.ToHexString(frame), Convert.ToHexString(SimCodec.Encode(decoded)));
+
+        foreach (var partial in new[] { chunk with { ModuleId = 0, ModuleTypeId = 45_009 }, chunk with { ModuleId = 1_040_000_000_002, ModuleTypeId = 0 } })
+        {
+            var error = Assert.Throws<SimLinkException>(() => SimCodec.Encode(partial));
+            Assert.Equal(SimLinkError.BadValue, error.Error);
+        }
+
+        const int moduleIdOffset = 4 + 1 + sizeof(long) + sizeof(int) + sizeof(ushort) + 10 + 3 * sizeof(int) + sizeof(long) + sizeof(int)
+            + 6 * sizeof(double) + sizeof(double) + sizeof(long);
+        var missingType = frame.ToArray();
+        BinaryPrimitives.WriteInt64LittleEndian(missingType.AsSpan(moduleIdOffset, sizeof(long)), 1_040_000_000_002);
+        var missingTypeError = Assert.Throws<SimLinkException>(() => SimCodec.Decode(missingType.AsMemory(4)));
+        Assert.Equal(SimLinkError.BadValue, missingTypeError.Error);
+
+        var missingItem = SimCodec.Encode(chunk with { ModuleId = 1_040_000_000_002, ModuleTypeId = 45_009 });
+        BinaryPrimitives.WriteInt64LittleEndian(missingItem.AsSpan(moduleIdOffset, sizeof(long)), 0);
+        var missingItemError = Assert.Throws<SimLinkException>(() => SimCodec.Decode(missingItem.AsMemory(4)));
+        Assert.Equal(SimLinkError.BadValue, missingItemError.Error);
     }
 
     [Theory]

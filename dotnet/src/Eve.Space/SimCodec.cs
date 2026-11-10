@@ -1428,7 +1428,7 @@ public static partial class SimCodec
                     var phase = r.Text();
                     var phaseStarted = r.I64();
                     if (chunk <= 0 || system <= 0 || type <= 0 || group <= 0 || category <= 0 || owner <= 0 || graphic <= 0 ||
-                        structure <= 0 || module <= 0 || moduleType <= 0 || moon <= 0 || phaseStarted <= 0 ||
+                        structure <= 0 || !ValidMoonChunkModule(module, moduleType) || moon <= 0 || phaseStarted <= 0 ||
                         !ValidMoonChunkPhase(phase) || !double.IsFinite(radius) || radius <= 0 ||
                         position.Any(value => !double.IsFinite(value)) || direction.Any(value => !double.IsFinite(value)))
                         throw new SimLinkException(SimLinkError.BadValue, "moon chunk");

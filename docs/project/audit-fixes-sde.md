@@ -17,22 +17,17 @@ The report records zero P1–P3 findings and identifies no reproducible defect i
 - The audit report cites EveJS snapshot `261028.1`; this recheck used the job-specified `/home/user/evejs-261108.1`. `server/src/gameStore/tableOwnership.js:24-28` classifies non-runtime tables as static reference data. `server/src/services/_shared/referenceData.js:336-392` reads the loaded static game store or JSON table and caches the normalized result in process; `server/src/services/_shared/staticJsonTableReader.js:8-40` validates table names and reads the JSON file. This confirms the report's static-data boundary, while not treating EveJS's in-memory layout as an eve.rs architecture requirement.
 - The comparison found no client-visible behavior divergence in the audited SDE reader contract. This recheck introduces no intentional EveJS compatibility difference.
 
-## Verification run
+## Verification (2026-11-10)
 
-- `target/release/eve-sde ensure` loaded pinned build 3396210 into `sde` on both local PostgreSQL databases, `eve_p6` and `eve_p12` (61 tables, 668,618 records each). The archive was downloaded from CCP's official URL recorded for build 3396210 in `sde/lock.json`; the extracted SDE remains ignored under `.cache/sde`.
+- Rechecked the SDE reader and its callers against the current source tree, the V24.01 client, and the job-specified EveJS checkout `/home/user/evejs-261108.1`. The audit report still contains no P1–P3 findings; no source defect was confirmed and no code change or regression test was warranted.
+- `eve_p6` contained SDE build 3396210 and 62 `sde` tables including `_build`. `eve_p12` was absent and was created as a PostgreSQL template copy of `eve_p6`; both databases reported build 3396210 and 62 tables.
+- The extracted SDE is ignored under `.cache/sde`. `sde/lock.json` records SHA-256 `17ae0c7f00fec4c2b79f785a9c35debdc5ae9edde558d18dc26d51cf87279b3e` and both CCP and EVE Ref URLs, but explicitly attributes this archive copy to the EVE Ref mirror; the CCP-hosted archive was not compared in this recheck.
 - `/root/.dotnet/dotnet build dotnet/tests/Eve.Characters.Tests/Eve.Characters.Tests.csproj --configuration Release -m:1` succeeded with 0 warnings and 0 errors.
-- `CatalogTests.ReadTypeSummariesAsync_returns_ordered_catalog_fields` passed against `eve_p6` (1 passed, 0 failed, 0 skipped) and `eve_p12` (1 passed, 0 failed, 0 skipped).
+- `CatalogTests.ReadTypeSummariesAsync_returns_ordered_catalog_fields` passed on `eve_p6` and `eve_p12` separately (1 passed each, 0 failed, 0 skipped).
+- Codebase-memory MCP and Serena were unavailable and `codebase-memory-mcp` was not installed; repository search and line-numbered source inspection used `rg`, `nl`, and `sed` as the fallback.
 
 ## Not checked
 
 - The full `CatalogTests` class and its cache, filtering, and containment cases were not run; only the focused type-summary test ran.
 - EveJS source was compared, but an EveJS runtime scenario was not executed. The graphical V24.01 client was not launched.
 - No gameplay RPC or persisted player-state flow is owned by `Eve.Sde`; this recheck did not claim end-to-end graphical-client acceptance.
-
-## Reverification (2026-11-10)
-
-- Rechecked the SDE reader and its callers against the current source tree, the V24.01 client, and the job-specified EveJS checkout `/home/user/evejs-261108.1`. The audit report still contains no P1–P3 findings; no source defect was confirmed and no code change or regression test was warranted.
-- `eve_p6` contained SDE build 3396210. `eve_p12` was absent and was created as a PostgreSQL template copy of `eve_p6`, so the two databases had the same pinned SDE for this verification.
-- `/root/.dotnet/dotnet build dotnet/tests/Eve.Characters.Tests/Eve.Characters.Tests.csproj --configuration Release -m:1` succeeded with 0 warnings and 0 errors.
-- `CatalogTests.ReadTypeSummariesAsync_returns_ordered_catalog_fields` passed on `eve_p6` and `eve_p12` separately (1 passed each, 0 failed, 0 skipped).
-- Codebase-memory MCP and Serena were unavailable and `codebase-memory-mcp` was not installed; repository search and line-numbered source inspection used `rg`, `nl`, and `sed` as the fallback.

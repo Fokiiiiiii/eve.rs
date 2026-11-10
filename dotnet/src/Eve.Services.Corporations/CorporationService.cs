@@ -61,12 +61,12 @@ public sealed partial class CorporationService(
         var characterId = call.Args.Count == 0 ? SessionCharacterId(call.Session) : MedalInteger(call.Arg(0));
         var received = await store.MedalsReceivedAsync(characterId, call.Cancellation);
         if (characterId != SessionCharacterId(call.Session))
-            received = received.Where(r => r.Medal.Status == 3).ToArray();
+            received = received.Where(r => r.Award.Status == 3).ToArray();
         var info = received.Select(r => (PyValue)Py.List(
             CorporationWire.Id(r.Medal.Id), CorporationWire.Id(r.Award.IssuerId), CorporationWire.Id(r.Medal.CorporationId),
-            CorporationWire.Id(r.Medal.Status), new PyWString(r.Award.Reason),
+            CorporationWire.Id(r.Award.Status), new PyWString(r.Award.Reason),
             CorporationWire.Time(r.Award.CreatedMs != 0 ? r.Award.CreatedMs : r.Medal.CreatedMs),
-            new PyInt(r.Medal.IsDeleted ? 1 : 0)));
+            new PyInt(r.Award.Status == 1 || r.Medal.IsDeleted ? 1 : 0)));
         var graphics = received.DistinctBy(r => r.Medal.Id)
             .SelectMany(r => r.Medal.Graphics.Select(g => (r.Medal.Id, g)));
         return Py.Tuple(
@@ -134,11 +134,13 @@ public sealed partial class CorporationService(
     [Method("SetMedalStatus")]
     public async ValueTask<PyValue> SetMedalStatus(ServiceCall call)
     {
-        var (corporationId, _) = await RequireMedalManagerAsync(call);
+        var characterId = SessionCharacterId(call.Session);
+        if (characterId <= 0 || await characters.GetAsync(characterId, call.Cancellation) is null)
+            throw new CorporationError("CORPORATION_ACCESS_DENIED");
         var rawStatuses = call.Arg(0);
         if (MedalStatusEntryCount(rawStatuses) > 500)
             throw new CorporationError("MEDAL_BULK_LIMIT_EXCEEDED");
-        await store.SetMedalStatusesAsync(corporationId, MedalStatusEntries(rawStatuses), call.Cancellation);
+        await store.SetMedalStatusesAsync(characterId, MedalStatusEntries(rawStatuses), call.Cancellation);
         return PyNone.Instance;
     }
 
@@ -165,9 +167,11 @@ public sealed partial class CorporationService(
     {
         var corporationId = await CurrentCorporationIdAsync(call);
         var medalId = MedalInteger(call.Arg(0));
+        var characterId = SessionCharacterId(call.Session);
         var recipients = corporationId > 0
             ? await store.MedalRecipientsAsync(corporationId, medalId, call.Cancellation)
             : Array.Empty<CorporationStore.MedalAward>();
+        recipients = recipients.Where(recipient => recipient.CharacterId == characterId || recipient.Status == 3).ToArray();
         return Py.Rowset(["medalID", "recepientID", "issuerID", "reason", "date"], recipients.Select(a => (PyValue)Py.List(
             CorporationWire.Id(a.MedalId), CorporationWire.Id(a.CharacterId), CorporationWire.Id(a.IssuerId),
             new PyWString(a.Reason), CorporationWire.Time(a.CreatedMs))));

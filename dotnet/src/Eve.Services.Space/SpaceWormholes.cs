@@ -64,7 +64,25 @@ public sealed partial class SpaceSessions
     }
 
     /// <summary>The wormhole world, or null when the host has no client data for it (then no wormhole exists).</summary>
-    public WormholeWorld? Wormholes { get; set; }
+    public WormholeWorld? Wormholes { get; private set; }
+
+    /// <summary>Connects the Host-owned world to the simulation, including the scheduler's retryable state-delivery path.</summary>
+    public void BindWormholes(WormholeWorld world)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+        if (ReferenceEquals(Wormholes, world))
+            return;
+        if (Wormholes is { } previous)
+        {
+            previous.Changed -= PublishWormholeChange;
+            previous.StateChanged -= PublishWormholeStateChangeAsync;
+            previous.SlimStateSyncRequested -= PublishWormholeStateChangeForRetryAsync;
+        }
+        Wormholes = world;
+        world.Changed += PublishWormholeChange;
+        world.StateChanged += PublishWormholeStateChangeAsync;
+        world.SlimStateSyncRequested += PublishWormholeStateChangeForRetryAsync;
+    }
 
     private readonly ConcurrentDictionary<long, SemaphoreSlim> _wormholeTransitGates = new();
 
@@ -105,15 +123,26 @@ public sealed partial class SpaceSessions
             return;
         try
         {
-            foreach (var end in await world.EndsForConnectionAsync(connectionId, cancellationToken))
-            {
-                _sim.SetSlimField(end.BodyId, "wormholeAge", new SimSlimInt(end.AgeState));
-                _sim.SetSlimField(end.BodyId, "wormholeSize", new SimSlimReal(end.Size));
-            }
+            await ApplyWormholeStateChangeAsync(world, connectionId, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
             _log?.Invoke($"the slim state of wormhole connection {connectionId} could not be sent to the simulation: {error.Message}");
+        }
+    }
+
+    /// <summary>A durable state job uses this path so a failed DB read or simulation send reaches the Scheduler for retry.</summary>
+    public Task PublishWormholeStateChangeForRetryAsync(long connectionId, CancellationToken cancellationToken = default) =>
+        Wormholes is { } world ? ApplyWormholeStateChangeAsync(world, connectionId, cancellationToken) : Task.CompletedTask;
+
+    private async Task ApplyWormholeStateChangeAsync(WormholeWorld world, long connectionId, CancellationToken cancellationToken)
+    {
+        if (_sim is null)
+            return;
+        foreach (var end in await world.EndsForConnectionAsync(connectionId, cancellationToken))
+        {
+            _sim.SetSlimField(end.BodyId, "wormholeAge", new SimSlimInt(end.AgeState));
+            _sim.SetSlimField(end.BodyId, "wormholeSize", new SimSlimReal(end.Size));
         }
     }
 

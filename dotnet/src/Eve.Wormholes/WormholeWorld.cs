@@ -58,11 +58,18 @@ public sealed class WormholeWorld
         remove => Jobs.Changed -= value;
     }
 
-    /// <summary>Raised after a successful transit changes mass or an age-state job changes a connection's slim state.</summary>
+    /// <summary>Raised after a successful transit changes mass; a simulator update failure does not undo the committed jump.</summary>
     public event Func<long, CancellationToken, Task>? StateChanged
     {
         add => Jobs.StateChanged += value;
         remove => Jobs.StateChanged -= value;
+    }
+
+    /// <summary>Raised by a durable slim-state job; exceptions are allowed to retry the job.</summary>
+    public event Func<long, CancellationToken, Task>? SlimStateSyncRequested
+    {
+        add => Jobs.SlimStateSyncRequested += value;
+        remove => Jobs.SlimStateSyncRequested -= value;
     }
 
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema) => WormholeStore.MigrateAsync(source, schema);

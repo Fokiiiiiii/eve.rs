@@ -291,9 +291,7 @@ internal sealed partial class CharacterServicesComposition
                     solarSystems.Systems.ToDictionary(system => system.Id, system => system.NebulaTypeId));
                 await wormholes.EnsureWorldAsync(ulong.Parse(Env("EVE_WORMHOLE_SEED", "20261012"), System.Globalization.CultureInfo.InvariantCulture), now());
                 wormholes.RegisterJobs();
-                spaceSessions.Wormholes = wormholes;
-                wormholes.Changed += spaceSessions.PublishWormholeChange;
-                wormholes.StateChanged += spaceSessions.PublishWormholeStateChangeAsync;
+                spaceSessions.BindWormholes(wormholes);
             }
 
             var tollWallets = new Eve.Wallet.WalletTransactions(source, walletSchema);

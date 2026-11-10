@@ -45,7 +45,11 @@ public sealed class WormholeJobs
     /// <summary>Raised for every connection that opens or collapses, unless the caller captures the change (<c>sink</c>).</summary>
     public event Action<WormholeChange>? Changed;
 
+    /// <summary>Post-commit state update after a transit; the Host handles simulator failures without changing the completed jump.</summary>
     public event Func<long, CancellationToken, Task>? StateChanged;
+
+    /// <summary>A scheduled slim-state delivery. A failure must escape so the durable job is retried.</summary>
+    public event Func<long, CancellationToken, Task>? SlimStateSyncRequested;
 
     public void Publish(WormholeChange change) => Changed?.Invoke(change);
 
@@ -54,6 +58,14 @@ public sealed class WormholeJobs
         if (StateChanged is null)
             return;
         foreach (var callback in StateChanged.GetInvocationList().Cast<Func<long, CancellationToken, Task>>())
+            await callback(connectionId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task PublishSlimStateSyncRequestedAsync(long connectionId, CancellationToken cancellationToken)
+    {
+        if (SlimStateSyncRequested is null)
+            return;
+        foreach (var callback in SlimStateSyncRequested.GetInvocationList().Cast<Func<long, CancellationToken, Task>>())
             await callback(connectionId, cancellationToken).ConfigureAwait(false);
     }
 
@@ -230,7 +242,7 @@ public sealed class WormholeJobs
         var stored = await _store.GetAsync(context.Connection, context.Transaction, job.ConnectionId, forUpdate: false, cancellationToken);
         if (stored is null || !stored.Active || stored.ExpiresMs <= context.NowMs)
             return;
-        context.AfterCommit(token => PublishStateChangedAsync(job.ConnectionId, token));
+        await PublishSlimStateSyncRequestedAsync(job.ConnectionId, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task RespawnStaticAsync(JobContext context, CancellationToken cancellationToken)

@@ -32,7 +32,14 @@ public sealed record EssMgrSystemData(
     int ReserveBankPulsesTotal = 0,
     IReadOnlySet<long>? ReserveLinkedCharacterIds = null,
     IReadOnlyList<PyValue>? MainBankThefts = null,
-    IReadOnlyList<PyValue>? ReserveBankThefts = null);
+    IReadOnlyList<PyValue>? ReserveBankThefts = null)
+{
+    /// <summary>The persisted deadline of the next Main Bank automatic payout, in the client's FILETIME units.</summary>
+    public long NextScheduledAutopaymentFileTime { get; init; }
+
+    /// <summary>The start of the current automatic payout window, derived from its persisted deadline.</summary>
+    public long LastAutopaymentFileTime { get; init; }
+}
 
 public sealed record EssMgrOperationRequest(
     EssMgrOperation Operation,
@@ -188,7 +195,7 @@ public sealed partial class EssMgrService
                 ("characterID", Py.Number(mainLink.CharacterId)),
                 ("startedAt", Py.FileTimeLong(mainLink.StartedAtFileTime)),
                 ("completesAt", Py.FileTimeLong(mainLink.CompletesAtFileTime)))
-            : PyNone.Instance;
+            : new PyDict([]);
 
         return Py.Dict(
             ("essID", Py.Number(state.EssId)),
@@ -198,6 +205,8 @@ public sealed partial class EssMgrService
             ("currentOutput", Number(state.CurrentOutput)),
             ("mainValue", Number(state.MainValue)),
             ("reserveValue", Number(state.ReserveValue)),
+            ("nextScheduledAutopayment", Py.FileTimeLong(state.NextScheduledAutopaymentFileTime)),
+            ("lastAutopayment", Py.FileTimeLong(state.LastAutopaymentFileTime)),
             ("mainBankLink", link),
             ("reserveBankLastPulseInitiated", state.ReserveBankLastPulseInitiatedFileTime is > 0
                 ? Py.FileTimeLong(state.ReserveBankLastPulseInitiatedFileTime.Value)

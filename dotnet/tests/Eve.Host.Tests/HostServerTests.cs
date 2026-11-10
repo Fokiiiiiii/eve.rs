@@ -44,7 +44,7 @@ public partial class HostServerTests : IAsyncLifetime
     private static byte[] PasswordHash(byte value) =>
         Enumerable.Repeat(value, LoginAttempt.PasswordHashLength).ToArray();
 
-    private void Start(AccountOptions? identity = null, int maxPending = 10_000, Action<ServiceRegistry>? configure = null, IAccountDirectory? accounts = null, bool strictRpc = false, Action<string, Exception?>? onProblem = null, Action<ClientSession>? sessionOpened = null, long maxOutboundBytes = 8 * 1024 * 1024, long maxPendingBytes = 16 * 1024 * 1024, int maxConnections = 1_024, ISsoTokenVerifier? ssoTokenVerifier = null, GameRpcCallbacks? gameRpcCallbacks = null, SubmitInGameReportCallback? submitInGameReport = null, Func<ClientSession, Task>? sessionClosed = null)
+    private void Start(AccountOptions? identity = null, int maxPending = 10_000, Action<ServiceRegistry>? configure = null, IAccountDirectory? accounts = null, bool strictRpc = false, Action<string, Exception?>? onProblem = null, Action<ClientSession>? sessionOpened = null, long maxOutboundBytes = 8 * 1024 * 1024, long maxPendingBytes = 16 * 1024 * 1024, int maxConnections = 1_024, ISsoTokenVerifier? ssoTokenVerifier = null, GameRpcCallbacks? gameRpcCallbacks = null, SubmitInGameReportCallback? submitInGameReport = null, Func<ClientSession, Task>? sessionClosed = null, ReadControlTowerRowsCallback? readControlTowerRows = null)
     {
         var registry = new ServiceRegistry();
         _testRegistry = registry;
@@ -52,7 +52,8 @@ public partial class HostServerTests : IAsyncLifetime
         var calendarStore = new TestCalendarStore();
         var calendarAudience = new TestCalendarAudienceReader();
         foreach (var service in CoreServices.Create(new NoAccounts(), now, calendarStore, calendarAudience,
-                     gameRpcCallbacks: gameRpcCallbacks, submitInGameReport: submitInGameReport))
+                     gameRpcCallbacks: gameRpcCallbacks, submitInGameReport: submitInGameReport,
+                     readControlTowerRows: readControlTowerRows))
         {
             registry.Register(service);
         }

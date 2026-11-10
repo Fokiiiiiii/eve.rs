@@ -228,8 +228,10 @@ internal sealed partial class CharacterServicesComposition
         var refineryTypeIds = await PersistenceMarketStructureDirectory.ReadRefineryTypeIdsAsync(sde);
         var unanchorDrop = CreateStructureUnanchorDropAuthority();
         var destructionLoot = CreateStructureDestructionLootAuthority();
+        var structureModuleStates = new PgStructureServiceModuleStates(modules);
         structureTimers = new Eve.Structures.StructureTimers(structureStore, foundations.Scheduler, foundations.Events, rules,
-            completeUnanchor: unanchorDrop.CompleteAsync, completeDestruction: destructionLoot.CompleteAsync);
+            completeUnanchor: unanchorDrop.CompleteAsync, completeDestruction: destructionLoot.CompleteAsync,
+            moduleStates: structureModuleStates);
         structureTimers.Register();
 
         if (sim is not null && spaceSessions is not null)
@@ -302,7 +304,7 @@ internal sealed partial class CharacterServicesComposition
             structureTimers,
             serviceFuelRules,
             new InventoryStructureFuelBay(items, dogma, foundations.Events),
-            new PgStructureServiceModuleStates(modules));
+            structureModuleStates);
         structureFuel.Register();
         structureServiceModuleAuthority = new StructureServiceModuleAuthority(
             source, structureStore, structurePilots, structureControlReadModel, items, modules, dogma, structureFuel);

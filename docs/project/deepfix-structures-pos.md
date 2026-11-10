@@ -1,4 +1,4 @@
-# Deep correctness audit: structures and POS (2026-11-09)
+# Deep correctness audit: structures and POS (2026-11-10)
 
 Scope: structure anchoring and placement, structure service-module state, fuel-out and reinforcement transitions, docking, the structure browser, and `posMgr.GetControlTowers`. The protocol comparison uses the V24.01 client build 3396210 at `/home/user/eve-logic`; the functional reference is `/home/user/evejs-261108.1`. Static placement facts come from the pinned 3396210 SDE in the local `sde` schema. PostgreSQL regressions ran against `eve_p5`.
 
@@ -39,7 +39,8 @@ The V24 moon-mining flow reads `posMgr.GetControlTowers` and consumes rows conta
 
 ## Checks recorded for this change
 
-- Release builds: `Eve.Structures`, `Eve.Host`, and `Eve.Host.Tests`; all succeeded with 0 warnings and 0 errors.
-- Selected PostgreSQL tests on `eve_p5`: `Eve.Host.Tests` 54 passed / 0 skipped; `Eve.Structures.Tests` 27 passed / 0 skipped; `Eve.Services.Space.Tests` 15 passed / 0 skipped; `Eve.Services.Core.Tests` 80 passed / 0 skipped; additional selected Host directory/notification/anchor checks 18 passed / 0 skipped.
-- The first placement-test filter matched no tests and was not counted. It was replaced by a fully qualified method filter; the focused test passed 1/1, and the final Host selection included that method and passed 54/54.
+- After merging `origin/main`, Release builds of `Eve.Structures`, `Eve.Host`, and `Eve.Host.Tests` succeeded with 0 warnings and 0 errors.
+- PostgreSQL checks used `EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p5`. On the merged tree: structure tests 27 + 9 passed / 0 skipped; Space docking/placement and related structure tests 15 + 10 passed / 0 skipped; Core directory/POS tests 88 passed / 0 skipped; `WarEligibilityOwnerSourcesTests` 6 passed / 0 skipped.
+- The merged-tree Host structure/POS selection (`FullyQualifiedName~Structure|FullyQualifiedName~PosMgr`) passed 161, failed 0, and skipped 1. The skipped case was `AbyssalHostFlowTests.Referee_from_real_structure_returns_to_same_structure_with_same_ship_and_condition`; it is reported separately and is not counted as passed. The separate Host selection for `WarEligibilityOwnerSourcesTests` passed 6/6 with no skips. Before the merge, the narrow selected Host suite passed 54/54 with no skips; after the merge the wider selection included the same placement, POS, service-module, hull-reinforce and directory coverage.
+- The first placement-test filter matched no tests and was not counted. It was replaced by a fully qualified method filter; the focused placement regression passed 1/1 before merge and ran again in the merged-tree Host selection.
 - MCP code-search tools were unavailable in this session. Repository/source inspection used `rg` and line-numbered reads as the fallback.

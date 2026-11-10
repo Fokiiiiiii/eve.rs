@@ -108,7 +108,7 @@ public sealed partial class OfficeManagerService(
         if (await StructureSiteAsync(call) is { } site)
             return OfficePriceValue(await structures!.RentForAsync(call.Session.CharacterId ?? 0, site.StructureId, call.Cancellation));
         var station = LocalStation(call);
-        var price = await QuoteAsync(station, call.Cancellation);
+        var price = Quote(station);
         return OfficePriceValue(price);
     }
 
@@ -140,7 +140,7 @@ public sealed partial class OfficeManagerService(
                 var occupied = await store.CountAtStationAsync(connection, transaction, station.Id, call.Cancellation);
                 if (occupied >= station.OfficeCapacity) throw new CorporationError("OFFICE_SLOTS_FULL");
                 // The client quote is display-only; settle at the server's current price.
-                rentPrice = await store.PriceQuoteAsync(connection, transaction, station, occupied, atStation, call.Cancellation);
+                rentPrice = Quote(station);
 
                 var officeFolderId = await items.CreateAsync(connection, transaction,
                     new Eve.Inventory.NewItem(CorporationOfficeStore.OfficeFolderTypeId, corporationId, station.Id,
@@ -227,8 +227,7 @@ public sealed partial class OfficeManagerService(
             await store.WriteAsync(async (connection, transaction) =>
             {
                 await store.LockStationAsync(connection, transaction, station.Id, call.Cancellation);
-                var occupied = await store.CountAtStationAsync(connection, transaction, station.Id, call.Cancellation);
-                var rent = await store.PriceQuoteAsync(connection, transaction, station, occupied, atStation, call.Cancellation);
+                var rent = Quote(station);
                 // The client quote is display-only; settle at the server's current release fee.
                 fee = decimal.Round(rent / 2m, 2, MidpointRounding.AwayFromZero);
 
@@ -314,7 +313,7 @@ public sealed partial class OfficeManagerService(
             return new PyInt(0);
         var contents = await items.InLocationAsync(station.Id, corporationId, call.Cancellation);
         if (!contents.Any(item => item.Flag == ImpoundedFlag)) return new PyInt(0);
-        var rent = await QuoteAsync(station, call.Cancellation);
+        var rent = Quote(station);
         return new PyReal((double)decimal.Round(rent / 2m, 2, MidpointRounding.AwayFromZero));
     }
 
@@ -371,13 +370,13 @@ public sealed partial class OfficeManagerService(
         return corporationId;
     }
 
-    private async Task<decimal> QuoteAsync(CorporationOfficeStation station, CancellationToken token) =>
-        await store.WriteAsync(async (connection, transaction) =>
-        {
-            await store.LockStationAsync(connection, transaction, station.Id, token);
-            var occupied = await store.CountAtStationAsync(connection, transaction, station.Id, token);
-            return await store.PriceQuoteAsync(connection, transaction, station, occupied, now(), token);
-        }, token);
+    private static decimal Quote(CorporationOfficeStation station)
+    {
+        if (station.Id <= 0 || station.TypeId <= 0 || station.OwnerId <= 0 || station.SolarSystemId <= 0 ||
+            station.OfficeCapacity <= 0 || station.OfficeRentalCostIsk < 0)
+            throw new CorporationError("OFFICE_STATION_DATA_INVALID");
+        return station.OfficeRentalCostIsk;
+    }
 
     private async Task<(Corporation Corporation, SessionRoles Roles)> RequireAuthorityAsync(long actor,
         long corporationId, long stationId, CancellationToken token)

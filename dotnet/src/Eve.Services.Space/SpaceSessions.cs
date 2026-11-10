@@ -272,6 +272,10 @@ private readonly TransitionRuntime _transitions;
     internal void EnterPilotForTest(ClientSession session, long characterId, long shipId, int typeId, int solarSystemId) =>
         _pilots[(ulong)session.SessionId] = new Pilot(session, characterId, shipId, typeId, solarSystemId, 0);
 
+    /// <summary>Adds a pilot whose gate-cloak protection is active, for scan visibility tests.</summary>
+    internal void EnterJumpCloakedPilotForTest(ClientSession session, long characterId, long shipId, int typeId, int solarSystemId, long expiresAt) =>
+        _pilots[(ulong)session.SessionId] = new Pilot(session, characterId, shipId, typeId, solarSystemId, expiresAt, jumpCloak: true);
+
 internal void StartStructureDamageModuleForTest(ulong session, long moduleId, string effectName, SimEffect effect)
     {
         var pilot = _pilots[session];
@@ -474,8 +478,18 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
 
     public bool IsCloaked(ClientSession session) =>
         _pilots.TryGetValue((ulong)session.SessionId, out var pilot) && ReferenceEquals(pilot.Session, session) &&
-        ((!pilot.ProtectionEnded && pilot.JumpCloak && pilot.InvulnerableUntil > FileTimeNow()) ||
-            pilot.RunningModules.Values.Any(module => Effects.CloakingEffect.IsCloakingEffect(module.EffectName)));
+        IsCloaked(pilot, FileTimeNow());
+
+    /// <summary>The ships whose current Host-owned cloak state hides them from scans, sampled at one instant for a scan response.</summary>
+    internal IReadOnlySet<long> CloakedShipIds()
+    {
+        var now = FileTimeNow();
+        return _pilots.Values.Where(pilot => IsCloaked(pilot, now)).Select(pilot => pilot.ShipId).ToHashSet();
+    }
+
+    private static bool IsCloaked(Pilot pilot, long now) =>
+        (!pilot.ProtectionEnded && pilot.JumpCloak && pilot.InvulnerableUntil > now) ||
+        pilot.RunningModules.Values.Any(module => Effects.CloakingEffect.IsCloakingEffect(module.EffectName));
 
     public bool IsModuleActive(ClientSession session, long moduleId) =>
         moduleId > 0 && _pilots.TryGetValue((ulong)session.SessionId, out var pilot) && pilot.ActiveModules.ContainsKey(moduleId);
@@ -1207,6 +1221,10 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                 // an effect the simulation ended on its own account (the cycles done, the capacitor short, the target gone): the module is taken out of the
                 // numbers the ship is sent with, and the ship is sent again so the simulation drops the module's modifiers (FP-C1)
                 case SimModuleEnded ended when _pilots.TryGetValue(ended.SessionId, out var endedPilot):
+                    if (ModuleCombatActivityEnded is { } endCombatActivity)
+                    {
+                        Background(() => endCombatActivity(endedPilot.CharacterId, ended.ModuleId, CancellationToken.None));
+                    }
                     bool moduleRemoved;
                     lock (endedPilot.ModuleLifecycleSync)
                     {

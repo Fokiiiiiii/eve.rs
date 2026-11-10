@@ -3,6 +3,7 @@ using Eve.Data;
 using Eve.Host;
 using Eve.Macho;
 using Eve.Marshal;
+using Eve.Services;
 using Eve.Services.Crimewatch;
 using Npgsql;
 
@@ -29,6 +30,43 @@ public partial class HostServerTests
 
         public Task<bool> RespondToDuelChallengeAsync(long responderCharacterId, long challengerCharacterId, long challengeExpiresAtFileTime, bool accept, long? engagementExpiresAtUnixMs, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+    }
+
+    private sealed class CrimewatchWireEngagementPersistence : ICrimewatchPersistenceCallbacks
+    {
+        private readonly Dictionary<(long First, long Second), long> _engagements = [];
+
+        public Task<IReadOnlyList<SecurityStatusTransaction>> SecurityStatusTransactionsOfAsync(long characterId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<SecurityStatusTransaction>>([]);
+
+        public Task<long?> StartDuelChallengeAsync(long challengerCharacterId, long targetCharacterId, long challengerCorporationId, long challengerAllianceId, CancellationToken cancellationToken) =>
+            Task.FromResult<long?>(null);
+
+        public Task<IReadOnlyList<LimitedEngagement>> LimitedEngagementsAsync(long nowUnixMs, long? characterId, CancellationToken cancellationToken)
+        {
+            IReadOnlyList<LimitedEngagement> rows = [.. _engagements
+                .Where(entry => entry.Value > nowUnixMs &&
+                    (characterId is null || entry.Key.First == characterId || entry.Key.Second == characterId))
+                .Select(entry => new LimitedEngagement(entry.Key.First, entry.Key.Second, entry.Value))];
+            return Task.FromResult(rows);
+        }
+
+        public Task UpsertLimitedEngagementAsync(long firstCharacterId, long secondCharacterId, long expiresAtUnixMs, CancellationToken cancellationToken)
+        {
+            _engagements[(Math.Min(firstCharacterId, secondCharacterId), Math.Max(firstCharacterId, secondCharacterId))] = expiresAtUnixMs;
+            return Task.CompletedTask;
+        }
+
+        public Task<bool> ExpireLimitedEngagementAsync(long firstCharacterId, long secondCharacterId, long expectedExpiresAtUnixMs, long nowUnixMs, CancellationToken cancellationToken)
+        {
+            var key = (Math.Min(firstCharacterId, secondCharacterId), Math.Max(firstCharacterId, secondCharacterId));
+            var expired = _engagements.TryGetValue(key, out var until) && until == expectedExpiresAtUnixMs && until <= nowUnixMs;
+            if (expired) _engagements.Remove(key);
+            return Task.FromResult(expired);
+        }
+
+        public Task<bool> RespondToDuelChallengeAsync(long responderCharacterId, long challengerCharacterId, long challengeExpiresAtFileTime, bool accept, long? engagementExpiresAtUnixMs, CancellationToken cancellationToken) =>
+            Task.FromResult(false);
     }
 
     private static NpgsqlDataSource CrimewatchTestDataSource() => NpgsqlDataSource.Create(
@@ -102,6 +140,134 @@ public partial class HostServerTests
         var reply = MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
         Assert.Equal(MachoMessage.CallRsp, Assert.IsType<MachoPacket>(MachoPacket.Decode(reply)).Type);
         Assert.Equal(new PyReal(0.03125), Result(reply));
+    }
+
+    [PgFact]
+    public async Task Crimewatch_host_persists_and_notifies_the_retail_security_loss_at_a_negative_status()
+    {
+        const long characterId = 90000021;
+        const long targetId = 90000022;
+        const long shipId = 90000023;
+        const long systemId = 30000142;
+        const long now = 1_800_000_000_000;
+        const double retailPenaltyResult = -0.4699;
+        var crimewatchSchema = "cw_" + Guid.NewGuid().ToString("N")[..12];
+        var relationSchema = "rel_" + Guid.NewGuid().ToString("N")[..12];
+        var schedulerSchema = "sch_" + Guid.NewGuid().ToString("N")[..12];
+        var eventSchema = "evt_" + Guid.NewGuid().ToString("N")[..12];
+        await using var dataSource = CrimewatchTestDataSource();
+        await PgCrimewatchStore.MigrateAsync(dataSource, crimewatchSchema);
+        await Eve.Scheduler.DurableScheduler.MigrateAsync(dataSource, schedulerSchema);
+        await Eve.Events.EventBus.MigrateAsync(dataSource, eventSchema);
+        await Eve.Relations.RelationStore.MigrateAsync(dataSource, relationSchema);
+        await using var scheduler = new Eve.Scheduler.DurableScheduler(dataSource, () => now, schema: schedulerSchema);
+        var events = new Eve.Events.EventBus(dataSource, scheduler, schema: eventSchema);
+        var relations = new Eve.Relations.RelationStore(dataSource, scheduler, events, relationSchema);
+        try
+        {
+            await using (var connection = await dataSource.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await relations.SetAsync(connection, transaction,
+                    Eve.Relations.RelationKinds.SecurityStatus.Name, characterId,
+                    Eve.Relations.RelationStore.World, -0.25, "test-seed");
+                await transaction.CommitAsync();
+            }
+
+            var store = new PgCrimewatchStore(dataSource, crimewatchSchema);
+            var sessions = new Eve.Services.CharacterSessions();
+            using var timerService = new Eve.Scheduler.LocalTimers(
+                delay: static (_, token) => Task.Delay(Timeout.InfiniteTimeSpan, token));
+            using var runtime = new CrimewatchRuntime(store, sessions, () => now,
+                new CrimewatchWirePersistence(), localTimers: timerService);
+            var securityStatusOf = (long id, CancellationToken token) => relations.ValueAsync(
+                Eve.Relations.RelationKinds.SecurityStatus.Name, id,
+                Eve.Relations.RelationStore.World, 0, cancellationToken: token);
+            new SecurityStatusPenalties(
+                runtime,
+                sessions,
+                securityStatusOf,
+                (_, _) => Task.FromResult<int?>(587),
+                async (change, connection, transaction, token) =>
+                {
+                    var attrs = new Dictionary<string, object?>
+                    {
+                        ["eventTypeID"] = change.EventTypeID,
+                        ["otherOwnerID"] = change.OtherOwnerID,
+                        ["otherTypeID"] = change.OtherTypeID,
+                        ["locationID"] = change.LocationID,
+                        ["modification"] = change.Modification,
+                        ["targetShipItemID"] = change.TargetShipItemId,
+                    };
+                    await relations.SetAsync(connection, transaction,
+                        Eve.Relations.RelationKinds.SecurityStatus.Name,
+                        change.CharacterId, Eve.Relations.RelationStore.World,
+                        change.NextStatus, change.Reason, attrs, cancellationToken: token);
+                },
+                () => now).Attach();
+            var service = new CrimewatchService(store, runtime, () => now, securityStatusOf);
+            Start(strictRpc: true,
+                configure: registry => registry.Register(service),
+                sessionOpened: session =>
+                {
+                    session.CharacterId = characterId;
+                    session.Set("charid", new PyLong(characterId));
+                    session.Set("shipid", new PyLong(shipId));
+                    session.Set("solarsystemid", new PyLong(systemId));
+                    sessions.Enter(characterId, session);
+                });
+
+            var front = await Handshaken(await ConnectAsync());
+            var open = Open();
+            await front.SendAsync(open);
+            _ = await front.ReceiveAsync();
+            var kwargs = new PyDict([new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1))]);
+            await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+                Packets.CallWithKwargs(open, 1, "crimewatch", "MachoBindObject",
+                    new PyTuple([new PyTuple([new PyInt(systemId), new PyInt(1)]), PyNone.Instance]), kwargs))));
+            var bind = MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
+            var binding = Assert.IsType<PyTuple>(Result(bind));
+            var oid = BoundObjects.ExtractName(Assert.IsType<PySubStruct>(binding.Items[0]))!;
+            Assert.Equal(new PyReal(-0.25), await HostBoundRpcAsync(
+                front, open, 2, oid, "GetMySecurityStatus", new PyTuple([]), kwargs));
+
+            var aggression = await runtime.RecordAggressionAsync(new AggressionRequest(
+                characterId, targetId, 90000024, systemId, 0.9,
+                Eve.Universe.SecurityClass.HighSec, TargetIsCapsule: false));
+            Assert.Equal(AggressionReason.Criminal, aggression.Outcome.Reason);
+
+            MachoPacket DecodeNotification(Send message) =>
+                Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(message.Payload)));
+            var notifications = new List<MachoPacket>();
+            for (var index = 0; index < 6; index++)
+            {
+                var notification = DecodeNotification(Assert.IsType<Send>(await front.ReceiveAsync()));
+                Assert.Equal(MachoMessage.Notification, notification.Type);
+                notifications.Add(notification);
+            }
+            Assert.Equal(
+                ["OnModuleAttributeChanges", "OnSecurityStatusUpdate", "OnWeaponsTimerUpdate",
+                    "OnPvpTimerUpdate", "OnCriminalTimerUpdate", "OnSystemCriminalFlagUpdates"],
+                notifications.Select(notification => notification.Dest.BroadcastId));
+            Assert.Equal(new PyReal(retailPenaltyResult), NotificationArguments(notifications[1]).Single());
+
+            Assert.Equal(retailPenaltyResult, await securityStatusOf(characterId, CancellationToken.None));
+            var penalty = Assert.Single(await relations.HistoryAsync(
+                Eve.Relations.RelationKinds.SecurityStatus.Name, characterId,
+                Eve.Relations.RelationStore.World, 1));
+            Assert.Equal("aggression", penalty.Reason);
+            Assert.Equal(retailPenaltyResult, penalty.NewValue);
+            Assert.Equal(new PyReal(retailPenaltyResult), await HostBoundRpcAsync(
+                front, open, 3, oid, "GetMySecurityStatus", new PyTuple([]), kwargs));
+        }
+        finally
+        {
+            foreach (var schema in new[] { crimewatchSchema, relationSchema, schedulerSchema, eventSchema })
+            {
+                await using var drop = dataSource.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+                await drop.ExecuteNonQueryAsync();
+            }
+        }
     }
 
     [Fact]
@@ -194,6 +360,111 @@ public partial class HostServerTests
         var timers = Assert.IsType<PyTuple>(states.Items[0]);
         Assert.Equal([new PyInt(100), PyNone.Instance], Assert.IsType<PyTuple>(timers.Items[0]).Items);
         Assert.Equal([new PyInt(202), new PyLong(Eve.Services.Py.FileTimeFromUnixMs(pvpExpiry))], Assert.IsType<PyTuple>(timers.Items[1]).Items);
+    }
+
+    [Fact]
+    public async Task Registered_crimewatch_route_returns_active_module_states_and_ongoing_engagement_then_the_stopped_expiries()
+    {
+        const long characterId = 90000011;
+        const long targetId = 90000012;
+        const long moduleId = 90000013;
+        const long now = 1_800_000_000_000;
+        const long systemId = 30000142;
+        const long targetShipId = 90000014;
+        var schema = "cw_" + Guid.NewGuid().ToString("N")[..12];
+        await using var dataSource = CrimewatchTestDataSource();
+        await PgCrimewatchStore.MigrateAsync(dataSource, schema);
+        var store = new PgCrimewatchStore(dataSource, schema);
+        var sessions = new Eve.Services.CharacterSessions();
+        var timerService = new Eve.Scheduler.LocalTimers(delay: static (_, token) => Task.Delay(Timeout.InfiniteTimeSpan, token));
+        var runtime = new CrimewatchRuntime(store, sessions, () => now, new CrimewatchWireEngagementPersistence(), localTimers: timerService);
+        try
+        {
+            await store.UpdateAsync(targetId,
+                state => state.FlagAsSuspect(now) with { SolarSystemId = systemId }, now);
+            var service = new CrimewatchService(store, runtime, () => now);
+            Start(strictRpc: true,
+                configure: registry => registry.Register(service),
+                sessionOpened: session =>
+                {
+                    session.CharacterId = characterId;
+                    session.Set("charid", new PyLong(characterId));
+                    session.Set("solarsystemid", new PyLong(systemId));
+                    sessions.Enter(characterId, session);
+                });
+
+            var front = await Handshaken(await ConnectAsync());
+            var open = Open();
+            await front.SendAsync(open);
+            _ = await front.ReceiveAsync();
+            var kwargs = new PyDict([new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1))]);
+            await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+                Packets.CallWithKwargs(open, 1, "crimewatch", "MachoBindObject",
+                    new PyTuple([new PyTuple([new PyInt(systemId), new PyInt(1)]), PyNone.Instance]), kwargs))));
+            var bind = MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
+            var binding = Assert.IsType<PyTuple>(Result(bind));
+            var oid = BoundObjects.ExtractName(Assert.IsType<PySubStruct>(binding.Items[0]))!;
+
+            await runtime.RecordModuleAggressionAsync(
+                new AggressionRequest(characterId, targetId, targetShipId, systemId, 0.9,
+                    Eve.Universe.SecurityClass.HighSec, TargetIsCapsule: false),
+                moduleId);
+
+            static MachoPacket Decode(Send message) =>
+                Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(message.Payload)));
+            var activityNotifications = new List<MachoPacket>();
+            for (var i = 0; i < 5; i++)
+            {
+                var notification = Decode(Assert.IsType<Send>(await front.ReceiveAsync()));
+                Assert.Equal(MachoMessage.Notification, notification.Type);
+                activityNotifications.Add(notification);
+            }
+            var activityNames = activityNotifications.Select(notification => notification.Dest.BroadcastId).ToList();
+            Assert.True(activityNames.IndexOf("OnCrimewatchEngagementCreated") >= 0);
+            Assert.True(activityNames.IndexOf("OnCrimewatchEngagementStopTimeout") > activityNames.IndexOf("OnCrimewatchEngagementCreated"));
+            Assert.Contains("OnWeaponsTimerUpdate", activityNames);
+            Assert.Contains("OnPvpTimerUpdate", activityNames);
+
+            var active = Assert.IsType<PyTuple>(await HostBoundRpcAsync(
+                front, open, 2, oid, "GetClientStates", new PyTuple([]), kwargs));
+            var activeTimers = Assert.IsType<PyTuple>(active.Items[0]);
+            Assert.Equal([new PyInt(101), PyNone.Instance], Assert.IsType<PyTuple>(activeTimers.Items[0]).Items);
+            Assert.Equal([new PyInt(201), PyNone.Instance], Assert.IsType<PyTuple>(activeTimers.Items[1]).Items);
+            var activeEngagement = Assert.Single(Assert.IsType<PyDict>(active.Items[1]).Entries);
+            Assert.Equal(InventoryWire.Id(targetId), activeEngagement.Key);
+            Assert.Equal(new PyLong(CrimewatchRuntime.LimitedEngagementTimeoutOngoing), activeEngagement.Value);
+
+            await runtime.EndModuleCombatActivityAsync(characterId, moduleId);
+            var stoppedNames = new List<string>();
+            for (var i = 0; i < 3; i++)
+            {
+                var notification = Decode(Assert.IsType<Send>(await front.ReceiveAsync()));
+                Assert.Equal(MachoMessage.Notification, notification.Type);
+                stoppedNames.Add(notification.Dest.BroadcastId!);
+            }
+            Assert.True(stoppedNames.IndexOf("OnCrimewatchEngagementStartTimeout") >= 0);
+            Assert.Contains("OnWeaponsTimerUpdate", stoppedNames);
+            Assert.Contains("OnPvpTimerUpdate", stoppedNames);
+
+            var stopped = Assert.IsType<PyTuple>(await HostBoundRpcAsync(
+                front, open, 3, oid, "GetClientStates", new PyTuple([]), kwargs));
+            var stoppedTimers = Assert.IsType<PyTuple>(stopped.Items[0]);
+            Assert.Equal([new PyInt(102), new PyLong(Eve.Services.Py.FileTimeFromUnixMs(now + CombatState.WeaponsDurationMs))],
+                Assert.IsType<PyTuple>(stoppedTimers.Items[0]).Items);
+            Assert.Equal([new PyInt(202), new PyLong(Eve.Services.Py.FileTimeFromUnixMs(now + CombatState.PvpDurationMs))],
+                Assert.IsType<PyTuple>(stoppedTimers.Items[1]).Items);
+            var stoppedEngagement = Assert.Single(Assert.IsType<PyDict>(stopped.Items[1]).Entries);
+            Assert.Equal(new PyLong(Eve.Services.Py.FileTimeFromUnixMs(now + CrimewatchRuntime.LimitedEngagementDurationMs)),
+                stoppedEngagement.Value);
+            Assert.Equal(now + CombatState.PvpDurationMs, (await store.StateOfAsync(targetId)).PvpUntilMs);
+        }
+        finally
+        {
+            runtime.Dispose();
+            timerService.Dispose();
+            await using var drop = dataSource.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await drop.ExecuteNonQueryAsync();
+        }
     }
 
     [Fact]

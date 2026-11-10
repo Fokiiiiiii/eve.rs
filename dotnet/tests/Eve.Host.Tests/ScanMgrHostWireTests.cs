@@ -1,14 +1,91 @@
+using System.Reflection;
 using System.Text.Json.Nodes;
+using Eve.Dogma;
 using Eve.Host;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Core;
+using Eve.Services.Space.Scanning;
+using Eve.Space;
 
 namespace Eve.Host.Tests;
 
 public partial class HostServerTests
 {
+    private class DirectionalScanSimulation : DispatchProxy
+    {
+        public IReadOnlyList<SimDirectionalTarget> DirectionalTargets { get; set; } = [];
+
+        protected override object? Invoke(MethodInfo? method, object?[]? args)
+        {
+            ArgumentNullException.ThrowIfNull(method);
+            if (method.Name == "get_IsConnected") return true;
+            if (method.Name is "add_Received" or "remove_Received" or "add_Lost" or "remove_Lost") return null;
+            if (method.Name == nameof(ISimulation.CommandAsync))
+            {
+                var command = (byte)args![1]!;
+                if (command == SimCommands.PositionOf)
+                    return Task.FromResult(new CommandReply(true, 0, null) { Position = [0, 0, 0] });
+                if (command == 28)
+                    return Task.FromResult(new CommandReply(true, 0, null) { DirectionalTargets = DirectionalTargets });
+            }
+            throw new NotSupportedException($"Unexpected simulation call {method.Name}.");
+        }
+    }
+
+    [PgFact]
+    public async Task Cone_scan_on_the_registered_host_wire_hides_a_jump_cloaked_ship_until_the_gate_cloak_expires()
+    {
+        const int systemId = 30_000_142;
+        const long characterId = 90_000_801;
+        const long ownShipId = 90_000_802;
+        const long cloakedShipId = 90_000_803;
+        var simulation = DispatchProxy.Create<ISimulation, DirectionalScanSimulation>();
+        var recorder = (DirectionalScanSimulation)(object)simulation;
+        recorder.DirectionalTargets = [new SimDirectionalTarget(cloakedShipId, 1, 586, [1e9, 0, 0], 40, false, false)];
+        await using var rig = await AbyssalHostFlowTests.Rig.Create(simulation);
+        var statics = await DogmaStatic.LoadAsync(rig.Sde);
+        rig.Space.DirectionalScans = new SpaceDirectionalScans(rig.Space, (ISimulation)rig.Simulator, statics);
+        var targetSession = new ClientSession { SessionId = 90_000_804 };
+        rig.Space.EnterJumpCloakedPilotForTest(targetSession, 90_000_805, cloakedShipId, 586, systemId,
+            Py.FileTimeFromUnixMs(rig.Now) + Eve.Services.Space.SpaceSessions.JumpCloakTicks);
+        var composition = typeof(CharacterServicesComposition);
+        void SetCompositionField(string name, object value) =>
+            composition.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(rig.Host, value);
+        SetCompositionField("now", (Func<long>)(() => rig.Now));
+        SetCompositionField("incursionAnomalyReadModel", new PersistenceIncursionAnomalyReadModel(
+            (_, _, _) => Task.FromResult<IReadOnlyList<Eve.Content.ContentInstance>>([]),
+            (_, _) => Task.FromResult(new JsonObject()),
+            () => rig.Now));
+        SetCompositionField("signalTrackerRegistrationProvider", new SignalTrackerRegistrationProvider(rig.Sessions));
+        var service = (IService)composition.GetMethod("ScanMgrRpc", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(rig.Host, null)!;
+        Start(
+            configure: registry => registry.Register(service),
+            sessionOpened: session =>
+            {
+                session.CharacterId = characterId;
+                session.Set("solarsystemid2", new PyInt(systemId));
+                rig.Space.EnterPilotForTest(session, characterId, ownShipId, 601, systemId);
+            });
+
+        var (front, open) = await OpenFrontAsync();
+        var binding = Assert.IsType<PySubStruct>(await HostRpcAsync(front, open, 1, "scanMgr", "GetSystemScanMgr"));
+        var objectId = BoundObjects.ExtractName(binding)!;
+        var args = new PyTuple([new PyReal(Math.PI * 2), new PyReal(14.3 * 149_597_870_700d), new PyReal(1), new PyReal(0), new PyReal(0)]);
+
+        var hidden = Assert.IsType<PyList>(await HostBoundRpcAsync(front, open, 2, objectId, "ConeScan", args));
+        Assert.Empty(hidden.Items);
+
+        rig.Now += 60_001;
+        var visible = Assert.IsType<PyList>(await HostBoundRpcAsync(front, open, 3, objectId, "ConeScan", args));
+        var row = Assert.IsType<PyObject>(Assert.Single(visible.Items));
+        Assert.Equal(new PyLong(cloakedShipId), WireField(row, "id"));
+        Assert.Equal(new PyInt(586), WireField(row, "typeID"));
+        Assert.Equal(new PyInt(25), WireField(row, "groupID"));
+    }
+
     [Fact]
     public async Task ScanMgr_full_state_and_registration_include_the_current_signature_map_over_host_wire()
     {

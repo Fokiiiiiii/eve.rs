@@ -46,6 +46,8 @@ public static partial class SimCodec
         public const byte ReadTournamentCutoffReply = 145;
         public const byte ReleaseTournamentCutoff = 146;
         public const byte ReleaseTournamentCutoffReply = 147;
+        public const byte RemoveUnpilotedShip = 156;
+        public const byte RemoveUnpilotedShipReply = 157;
         public const byte Docked = 10;
         public const byte Refused = 11;
         public const byte Accepted = 12;

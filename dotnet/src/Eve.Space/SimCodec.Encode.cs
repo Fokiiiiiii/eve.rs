@@ -1070,6 +1070,15 @@ private static void WriteStructureDamageCorrelation(
                 if (m.RequestId == 0 || !m.Scene.IsValid || m.Scene.InstanceId != 0 || m.ItemId <= 0 || m.Error is { Length: 0 }) throw new ArgumentException("Invalid tournament wreck reply.", nameof(message));
                 w.U8(Kind.RemoveTournamentWreckReply); w.U64(m.RequestId); WriteSceneKey(w, m.Scene); w.I64(m.ItemId);
                 w.U8(m.Error is not null ? (byte)2 : m.Removed ? (byte)1 : (byte)0); w.Text(m.Error ?? string.Empty); break;
+            case SimRemoveUnpilotedShip m:
+                if (m.RequestId == 0 || !m.Scene.IsValid || m.Scene.InstanceId != 0 || m.ShipId <= 0)
+                    throw new ArgumentException("Invalid unpiloted ship removal.", nameof(message));
+                w.U8(Kind.RemoveUnpilotedShip); w.U64(m.RequestId); WriteSceneKey(w, m.Scene); w.I64(m.ShipId); break;
+            case SimRemoveUnpilotedShipReply m:
+                if (m.RequestId == 0 || !m.Scene.IsValid || m.Scene.InstanceId != 0 || m.ShipId <= 0 || m.Error is { Length: 0 })
+                    throw new ArgumentException("Invalid unpiloted ship removal reply.", nameof(message));
+                w.U8(Kind.RemoveUnpilotedShipReply); w.U64(m.RequestId); WriteSceneKey(w, m.Scene); w.I64(m.ShipId);
+                w.U8(m.Error is not null ? (byte)2 : m.Removed ? (byte)1 : (byte)0); w.Text(m.Error ?? string.Empty); break;
             case SimGetSceneBody m:
                 if (m.RequestId == 0 || !m.Scene.IsValid || m.Scene.InstanceId != 0 || m.ItemId <= 0)
                     throw new ArgumentException("Invalid scene body request.", nameof(message));

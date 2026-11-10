@@ -158,6 +158,9 @@ public sealed record SimQueryTournamentWreckReply(ulong RequestId, SimSceneKey S
 public sealed record SimRemoveTournamentWreck(ulong RequestId, SimSceneKey Scene, long ItemId,
     long OwnerId, long LauncherId, int TypeId, IReadOnlyList<double> Center, double Radius) : SimMessage;
 public sealed record SimRemoveTournamentWreckReply(ulong RequestId, SimSceneKey Scene, long ItemId, bool Removed, string? Error) : SimMessage;
+/// <summary>Removes one abandoned, unpiloted ship from a loaded public solar-system scene.</summary>
+public sealed record SimRemoveUnpilotedShip(ulong RequestId, SimSceneKey Scene, long ShipId) : SimMessage;
+public sealed record SimRemoveUnpilotedShipReply(ulong RequestId, SimSceneKey Scene, long ShipId, bool Removed, string? Error) : SimMessage;
 public sealed record SimGetSceneBody(ulong RequestId, SimSceneKey Scene, long ItemId) : SimMessage;
 public sealed record SimGetSceneBodyReply(ulong RequestId, SimSceneKey Scene, long ItemId,
     int TypeId, int GroupId, int CategoryId, IReadOnlyList<double> Position, string? Error) : SimMessage;

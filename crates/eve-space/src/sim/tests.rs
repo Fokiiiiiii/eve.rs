@@ -929,6 +929,58 @@ fn a_wormhole_end_placed_in_a_system_nobody_is_in_is_still_there_after_a_poll() 
 }
 
 #[test]
+fn scoop_removes_an_abandoned_ship_from_the_scene_before_acknowledging_it() {
+    let mut simulation = sim();
+    let scene_key = SceneKey::solar_system(SYSTEM);
+    simulation.handle(enter(SESSION, STATION, SYSTEM), NOON).unwrap();
+    let mut observer = spec();
+    observer.ship_id += 1;
+    observer.character_id += 1;
+    observer.owner_id += 1;
+    observer.corporation_id += 1;
+    for module in &mut observer.modules {
+        module.item_id += 1;
+    }
+    simulation
+        .handle(
+            Message::Enter(Box::new(Enter {
+                session_id: SESSION + 1,
+                scene: scene_key,
+                how: How::Undock,
+                station_id: STATION,
+                ship: observer,
+                position: None,
+                direction: None,
+            })),
+            NOON,
+        )
+        .unwrap();
+    simulation.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
+    simulation.handle(Message::Bind { session_id: SESSION + 1 }, NOON).unwrap();
+    let ship_id = spec().ship_id;
+    simulation.handle(Message::Leave { session_id: SESSION, why: 3 }, NOON + SECOND).unwrap();
+    assert!(simulation.scenes[&scene_key].unpiloted.contains_key(&ship_id));
+
+    let removed = simulation
+        .handle(Message::RemoveUnpilotedShip { request_id: 91, scene: scene_key, ship_id }, NOON + 2 * SECOND)
+        .unwrap();
+
+    assert!(matches!(removed.last(), Some(Message::RemoveUnpilotedShipReply {
+        request_id: 91, scene, ship_id: reply_ship_id, outcome: Ok(true)
+    }) if *scene == scene_key && *reply_ship_id == ship_id));
+    assert!(!simulation.scenes[&scene_key].unpiloted.contains_key(&ship_id));
+    assert!(!simulation.scenes[&scene_key].pilots.values().any(|pilot| pilot.ship.spec.ship_id == ship_id));
+    assert!(removed.iter().any(|message| matches!(message,
+        Message::Notify { session_id, name, .. }
+            if *session_id == SESSION + 1 && name == "DoDestinyUpdate")));
+
+    let absent = simulation
+        .handle(Message::RemoveUnpilotedShip { request_id: 92, scene: scene_key, ship_id }, NOON + 3 * SECOND)
+        .unwrap();
+    assert!(matches!(absent.as_slice(), [Message::RemoveUnpilotedShipReply { outcome: Ok(false), .. }]));
+}
+
+#[test]
 fn host_wormhole_slim_updates_reach_bound_pilots_as_slim_item_changes() {
     let mut sim = undocked();
     sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();

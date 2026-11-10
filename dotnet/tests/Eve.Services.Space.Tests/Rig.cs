@@ -253,7 +253,16 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
 
     public Eve.Npc.PgBountyStore Bounties { get; }
 
-    public ShipService Ship { get; }
+    public ShipService Ship { get; private set; }
+
+    /// <summary>Enables the same item row writer the Host supplies for ship inventory notifications.</summary>
+    public void UseShipInventoryService()
+    {
+        Ship = new ShipService(Space, () => ClockMs, Containers, Drones, ships: Ships,
+            rowOf: item => new Eve.Services.ItemRow(item.Id, item.TypeId, item.OwnerId, item.LocationId, item.Flag,
+                item.Singleton ? -1 : item.Quantity, Statics.Type(item.TypeId)?.GroupId ?? 0, Statics.Type(item.TypeId)?.CategoryId ?? 0));
+        Registry.Register(Ship);
+    }
 
     public SpaceContainers Containers { get; }
 

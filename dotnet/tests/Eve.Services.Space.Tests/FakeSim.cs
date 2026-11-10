@@ -346,6 +346,15 @@ internal sealed class FakeSim : ISimulation
 
     public void PlaceStructure(SimPlaceStructure structure) => Heard.Enqueue(structure);
 
+    public Task<bool> PlaceStructureAsync(SimPlaceStructure structure, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!IsConnected)
+            return Task.FromResult(false);
+        PlaceStructure(structure);
+        return Task.FromResult(true);
+    }
+
     public void PlaceWormhole(SimPlaceWormhole wormhole) => Heard.Enqueue(wormhole);
 
     public void RemoveWormhole(long wormholeId) => Heard.Enqueue(new SimRemoveWormhole(wormholeId));

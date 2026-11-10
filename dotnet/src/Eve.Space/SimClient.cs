@@ -1172,7 +1172,6 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     public void RemoveProbe(long probeId) => Send(new SimRemoveProbe(probeId));
 
     public void PlaceStructure(SimPlaceStructure structure) => Send(structure);
-
     public Task<bool> PlaceStructureAsync(SimPlaceStructure structure, CancellationToken cancellationToken = default) =>
         SendAsync(structure, cancellationToken);
 

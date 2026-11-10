@@ -132,6 +132,8 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         _suffix = suffix;
         _schemas = [$"pc_{suffix}", $"pi_{suffix}", $"ps_{suffix}", $"pw_{suffix}", $"pf_{suffix}", $"pn_{suffix}", $"pp_{suffix}", $"pd_{suffix}", $"pe_{suffix}", $"pl_{suffix}", $"pt_{suffix}"];
         Events = new Eve.Events.EventBus(source, new Eve.Scheduler.DurableScheduler(source, () => Now, null, _schemas[7]), null, _schemas[8]);
+        CharacterSessions = new CharacterSessions();
+        new ControlTowerFuelNotifications(CharacterSessions, statics).Subscribe(Events);
         SpaceItems = new PgSpaceItemStore(source, _schemas[6]);
         Deployed = new Eve.Ships.PgDeployedStore(source, _schemas[6]);
         Probes = new Eve.Ships.PgProbeStore(source, _schemas[6]);
@@ -159,9 +161,23 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
             await Space.CompleteShipSelfDestructAsync(countdown, token);
         });
         Containers = new SpaceContainers(Sim, Ships, Items, SpaceItems, new Eve.Ships.PgWorkCycleLedger(source, _schemas[6]), new EventBusFacts(Events), statics, Space, () => Now, Log.Add, deployed: Deployed, scheduler: Scheduler, source: source);
+        Space.ControlTowerAnchor = Containers.AnchorControlTowerAsync;
+        Space.ControlTowerUnanchor = Containers.UnanchorControlTowerAsync;
+        Space.ControlTowerModuleOperation = Containers.ControlTowerModuleOperationAsync;
         Scheduler.Register(SpaceContainers.AnchorJob, async (context, token) => await Containers.AnchorAsync(context.Payload<SpaceContainers.DisruptorAnchorDue>()!.DeployableId, token));
         Scheduler.Register(SpaceContainers.ObservatoryPingJob, async (context, token) => await Containers.PingObservatoryAsync(context.Payload<SpaceContainers.ObservatoryPingDue>()!.DeployableId, token));
-        Scheduler.Register(SpaceContainers.ControlTowerFuelJob, async (context, token) => await Containers.ControlTowerFuelAsync(context.Connection, context.Transaction, context.Payload<SpaceContainers.ControlTowerFuelDue>()!.DeployableId, context.ScheduledForMs, token));
+        Scheduler.Register(SpaceContainers.ControlTowerFuelJob, async (context, token) =>
+        {
+            if (await Containers.ControlTowerFuelAsync(context.Connection, context.Transaction,
+                context.Payload<SpaceContainers.ControlTowerFuelDue>()!.DeployableId, context.ScheduledForMs, token))
+                context.AfterCommit(_ => { Events.Wake(); return Task.CompletedTask; });
+        });
+        Scheduler.Register(SpaceContainers.ControlTowerOnlineJob, async (context, token) =>
+        {
+            var due = context.Payload<SpaceContainers.ControlTowerOnlineDue>()!;
+            if (await Containers.CompleteControlTowerOnlineAsync(context.Connection, context.Transaction, due.DeployableId, due.StartedAtMs, token))
+                context.AfterCommit(_ => { Events.Wake(); return Task.CompletedTask; });
+        });
         Scheduler.Register(SpaceContainers.ControlTowerUnanchorJob, async (context, token) => await Containers.CompleteControlTowerUnanchorAsync(context.Payload<SpaceContainers.ControlTowerUnanchorDue>()!.DeployableId, token));
         Space.Probes = new Eve.Services.Space.SpaceProbes(Ships, statics, Probes, Space, Sim, () => Now);
         ProbeScans = new Eve.Services.Space.SpaceProbeScans(Space, Sim, statics, Probes, Ships, Skills, Scheduler, Space.Probes, () => Now, sites: null, random: new Random(7));
@@ -185,6 +201,8 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
     public string SchedulerSchema => _schemas[7];
     /// <summary>The schema of the rig's event bus (a restarted bus over the same cursors is made over it).</summary>
     public string EventsSchema => _schemas[8];
+
+    public CharacterSessions CharacterSessions { get; }
 
     public string BountySchema => _schemas[5];
 
@@ -443,6 +461,7 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         session.Set("regionid", new PyInt(character.RegionId));
         session.Set("locationid", new PyInt(character.StationId));
         session.Set("shipid", new PyLong(created.ShipId));
+        CharacterSessions.Enter(created.CharacterId, session);
         _fleetSessions[created.CharacterId] = session;
         return session;
     }

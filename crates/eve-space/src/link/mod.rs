@@ -12,6 +12,8 @@ mod field_partition_tests;
 mod moon_mining_tests;
 mod payload;
 mod reader;
+#[cfg(test)]
+mod structure_tests;
 mod tournament_cutoff;
 pub(crate) mod tournament_metrics;
 use self::decode::*;

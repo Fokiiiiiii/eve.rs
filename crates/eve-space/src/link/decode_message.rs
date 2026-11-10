@@ -1577,7 +1577,7 @@ impl Message {
                     || solar_system_id <= 0
                     || type_id <= 0
                     || group_id <= 0
-                    || owner_id <= 0
+                    || owner_id < 0
                     || closest_moon_id < 0
                 {
                     return Err(DecodeError::BadValue("structure"));

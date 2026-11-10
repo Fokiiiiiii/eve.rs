@@ -1194,6 +1194,13 @@ impl Message {
                 }
                 Message::CrimewatchFlagActive { session_id, is_criminal, expires_at_unix_ms }
             }
+            kind::EMPIRE_SENTRY_OFFENSE => {
+                let session_id = r.u64()?;
+                if session_id == 0 {
+                    return Err(DecodeError::BadValue("Empire sentry offense session"));
+                }
+                Message::EmpireSentryOffense { session_id }
+            }
             kind::CONTROL_STRUCTURE => {
                 let session_id = r.u64()?;
                 let solar_system_id = r.i32()?;

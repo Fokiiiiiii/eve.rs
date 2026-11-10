@@ -810,6 +810,8 @@ pub struct Scene {
     pub(crate) aggressions: Vec<crate::weapons::Aggression>,
     /// Security status losses waiting for sentry brains; bounded and retained only while the ship's Crimewatch timer is active.
     pub(crate) pending_security_status_losses: Vec<(i64, i64)>,
+    /// Local illegal attacks waiting for sentry brains to process the offender.
+    pub(crate) pending_empire_sentry_offenses: Vec<(i64, i64)>,
     /// Active criminal flags waiting for sentry brains; bounded and retained only while the flag is live.
     pub(crate) pending_criminal_flag_activations: Vec<(i64, i64)>,
     /// The missiles that are on their way to a ship, by id: entities of their own, apart from the ships (`crate::missile_entity`).
@@ -910,6 +912,7 @@ impl Scene {
             rng: PythonRandom::new(0x5348_4f54),
             aggressions: Vec::new(),
             pending_security_status_losses: Vec::new(),
+            pending_empire_sentry_offenses: Vec::new(),
             pending_criminal_flag_activations: Vec::new(),
             missiles: BTreeMap::new(),
             missile_sequence: 0,
@@ -951,6 +954,17 @@ impl Scene {
 
     pub(crate) fn queue_security_status_loss(&mut self, owner_id: i64, ship_id: i64) {
         enqueue_crime_event(&mut self.pending_security_status_losses, (owner_id, ship_id));
+    }
+
+    pub(crate) fn queue_empire_sentry_offense(&mut self, session: SessionId) {
+        let Some(pilot) = self.pilots.get(&session) else { return };
+        if pilot.ship.spec.character_id <= 0 || pilot.ship.spec.group_id == 29 {
+            return;
+        }
+        enqueue_crime_event(
+            &mut self.pending_empire_sentry_offenses,
+            (pilot.ship.spec.owner_id, pilot.ship.spec.ship_id),
+        );
     }
 
     pub(crate) fn queue_criminal_flag_activation(&mut self, owner_id: i64, ship_id: i64) {

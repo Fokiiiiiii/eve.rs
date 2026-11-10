@@ -1402,6 +1402,7 @@ fn message_of(case: &Value) -> Message {
             is_criminal: case["isCriminal"].as_bool().unwrap(),
             expires_at_unix_ms: wide(case, "expiresAtUnixMs"),
         },
+        "EmpireSentryOffense" => Message::EmpireSentryOffense { session_id: session_id() },
         "ShipSpec" => Message::ShipSpec { session_id: session_id(), ship: Box::new(ship_of(&case["ship"])) },
         "Notify" => Message::Notify {
             session_id: session_id(),

@@ -40,6 +40,21 @@ public class SpaceEventsTests
         new((ulong)session.SessionId, shipId, 0, Place, Facing, 47, killerShip, FrigateWreck);
 
     [PgFact]
+    public async Task An_applied_illegal_attack_reports_only_the_matching_public_pilot_to_the_simulation()
+    {
+        var (rig, character, session) = await InSpaceAsync();
+        await using var _ = rig;
+        var solarSystemId = session.GetInt("solarsystemid")!.Value;
+
+        rig.Space.ReportEmpireSentryOffense(character.CharacterId, solarSystemId);
+        rig.Space.ReportEmpireSentryOffense(character.CharacterId, solarSystemId + 1);
+        rig.Space.ReportEmpireSentryOffense(character.CharacterId + 1, solarSystemId);
+
+        Assert.Equal(new SimEmpireSentryOffense((ulong)session.SessionId),
+            Assert.Single(rig.Sim.Heard.OfType<SimEmpireSentryOffense>()));
+    }
+
+    [PgFact]
     public async Task An_npc_destroyed_by_a_pilot_is_raised_with_the_pilots_character_what_it_was_and_where()
     {
         var (rig, c, session) = await InSpaceAsync();

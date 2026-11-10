@@ -16,6 +16,8 @@ pub const UPSERT_MOON_CHUNK: u8 = 158;
 pub const REMOVE_MOON_CHUNK: u8 = 159;
 /// The host updates the V24-visible drill modules and target moon on a structure (protocol 94).
 pub const SET_STRUCTURE_MOON_MINING_STATE: u8 = 160;
+/// The Host reports an applied local illegal attack so Empire sentries can respond (protocol 95).
+pub const EMPIRE_SENTRY_OFFENSE: u8 = 161;
 pub const REGISTER_TOURNAMENT_CUTOFF: u8 = 142;
 pub const REGISTER_TOURNAMENT_CUTOFF_REPLY: u8 = 143;
 pub const READ_TOURNAMENT_CUTOFF: u8 = 144;

@@ -236,7 +236,7 @@ internal sealed partial class CharacterServicesComposition
         foreach (var state in placements)
         {
             var (_, position) = Eve.Services.Space.Sites.SitePlacement.Place(anchorsBySystem[state.SolarSystemId], $"ess:{state.SolarSystemId}:{state.EssId}");
-            simulation.PlaceStructure(new SimPlaceStructure(
+            var structure = new SimPlaceStructure(
                 state.EssId,
                 state.SolarSystemId,
                 "Encounter Surveillance System",
@@ -248,7 +248,9 @@ internal sealed partial class CharacterServicesComposition
                 0,
                 0,
                 new SimStructureHealth(Attribute(263), Attribute(265), Attribute(9), [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], 0, [0, 0, 0], [0, 0, 0]),
-                new SimStructureStatus(StructureState.ShieldVulnerable, UpkeepState.FullPower, null, null, null)));
+                new SimStructureStatus(StructureState.ShieldVulnerable, UpkeepState.FullPower, null, null, null));
+            if (!await simulation.PlaceStructureAsync(structure))
+                throw new SimUnavailableException($"the simulation disconnected before ESS {state.EssId} could be placed");
         }
     }
 

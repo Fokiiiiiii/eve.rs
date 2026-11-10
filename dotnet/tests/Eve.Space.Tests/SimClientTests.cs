@@ -906,6 +906,93 @@ public class SimClientTests
         await Until(() => !client.IsConnected && Volatile.Read(ref lost) == 1);
     }
 
+    [Fact]
+    public async Task Structure_placements_apply_backpressure_without_breaking_the_simulation_link()
+    {
+        var stream = new GatedWriteStream();
+        await using var client = new SimClient(_ => Task.FromResult<Stream>(stream));
+        client.RetryAfter = TimeSpan.FromMinutes(1);
+        client.Start();
+        await Until(() => client.IsConnected);
+
+        var sends = Enumerable.Range(0, SimClient.OutboundQueueCapacity * 2)
+            .Select(index => client.PlaceStructureAsync(Structure(8_000 + index)))
+            .ToArray();
+        await stream.OutboundWriteStarted.Task.WaitAsync(Patience);
+
+        Assert.True(client.IsConnected);
+        Assert.Contains(sends, send => !send.IsCompleted);
+
+        stream.ReleaseWrites();
+        Assert.All(await Within(Task.WhenAll(sends)), sent => Assert.True(sent));
+        await Until(() => stream.CompletedWrites == sends.Length + 1); // hello, then each structure
+        Assert.True(client.IsConnected);
+    }
+
+    private static SimPlaceStructure Structure(long id) => new(
+        id, 30_100_032, "Encounter Surveillance System", 40328, 22, [1d, 2d, 3d], 10_000, 0, 0, 0,
+        new SimStructureHealth(1, 1, 1, [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], 0, [0, 0, 0], [0, 0, 0]),
+        new SimStructureStatus(0, 0, null, null, null));
+
+    private sealed class GatedWriteStream : Stream
+    {
+        private readonly byte[] _helloAck = SimCodec.Encode(new SimHelloAck(SimCodec.ProtocolVersion, 4));
+        private readonly TaskCompletionSource _releaseWrites = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _helloAckOffset;
+        private int _writeCount;
+        private int _completedWrites;
+
+        public TaskCompletionSource OutboundWriteStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int CompletedWrites => Volatile.Read(ref _completedWrites);
+        public void ReleaseWrites() => _releaseWrites.TrySetResult();
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (_helloAckOffset < _helloAck.Length)
+            {
+                var count = Math.Min(buffer.Length, _helloAck.Length - _helloAckOffset);
+                _helloAck.AsMemory(_helloAckOffset, count).CopyTo(buffer);
+                _helloAckOffset += count;
+                return ValueTask.FromResult(count);
+            }
+            return WaitForEndAsync(cancellationToken);
+        }
+
+        private static async ValueTask<int> WaitForEndAsync(CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return 0;
+        }
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _writeCount) > 1)
+            {
+                OutboundWriteStarted.TrySetResult();
+                await _releaseWrites.Task.WaitAsync(cancellationToken);
+            }
+            Interlocked.Increment(ref _completedWrites);
+        }
+
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            WriteAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Flush() { }
+    }
+
     private sealed class BlockingWriteStream : Stream
     {
         private readonly byte[] _helloAck = SimCodec.Encode(new SimHelloAck(SimCodec.ProtocolVersion, 4));
